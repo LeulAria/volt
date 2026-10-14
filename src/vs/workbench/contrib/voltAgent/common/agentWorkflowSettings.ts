@@ -8,16 +8,21 @@ import { Extensions, IConfigurationRegistry } from '../../../../platform/configu
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING } from '../../../services/voltRuntime/common/compaction.js';
 import { HANDOFF_BUDGET_PERCENT_SETTING, HANDOFF_DEFAULT_MAX_TOKENS, HANDOFF_DEFAULT_PERCENT, HANDOFF_MAX_TOKENS_SETTING, HANDOFF_MIN_TOKENS } from '../../../services/voltRuntime/common/contextHandoff.js';
-import { DEFAULT_ORCH_LIMITS, ORCH_LIMIT_MAX, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, ORCH_KEEP_WORKING_SETTING, ORCH_LIMIT_MAX, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING } from '../../../services/voltRuntime/common/orchestration/limitRecovery.js';
 
-export { ORCH_MAX_PARALLEL_SETTING as AGENT_MULTITASK_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING as AGENT_MULTITASK_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING as AGENT_MULTITASK_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING as AGENT_RESUME_AFTER_RESTART_SETTING, COMPACT_OLD_THREADS_SETTING as AGENT_COMPACT_OLD_THREADS_SETTING, LIMIT_AUTO_RESUME_SETTING as AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING };
+export { ORCH_MAX_PARALLEL_SETTING as AGENT_MULTITASK_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING as AGENT_MULTITASK_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING as AGENT_MULTITASK_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING as AGENT_RESUME_AFTER_RESTART_SETTING, ORCH_KEEP_WORKING_SETTING as AGENT_KEEP_WORKING_SETTING, COMPACT_OLD_THREADS_SETTING as AGENT_COMPACT_OLD_THREADS_SETTING, LIMIT_AUTO_RESUME_SETTING as AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING };
 
 Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfiguration({
 	id: 'volt.agent.workflow',
 	title: localize('voltAgent.workflowConfigTitle', "Agent Workflow"),
 	type: 'object',
 	properties: {
+		[ORCH_KEEP_WORKING_SETTING]: {
+			type: 'boolean',
+			default: true,
+			description: localize('voltAgent.keepWorking', "Keep agents working until the task is done. When a chat's work stops part way (an error past the quick retries, an agent that crashed or stopped responding, Volt restarting or crashing, many automatic wake-ups in a row), Volt restarts it on its own: after 15 seconds, then waiting longer each time, at most 30 minutes apart, for as long as it takes. A turn that ends with its plan unfinished continues while it makes progress. Stopping a chat, or sending it something else, ends this. Usage limits are handled by their own settings."),
+		},
 		[ORCH_RESUME_AFTER_RESTART_SETTING]: {
 			type: 'string',
 			enum: ['off', 'subagents', 'all'],

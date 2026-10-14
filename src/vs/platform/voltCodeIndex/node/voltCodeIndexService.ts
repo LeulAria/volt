@@ -9,7 +9,7 @@ import { FileAccess } from '../../../base/common/network.js';
 import { getNextTickChannel, ProxyChannel } from '../../../base/parts/ipc/common/ipc.js';
 import { Client } from '../../../base/parts/ipc/node/ipc.cp.js';
 import { ILogService } from '../../log/common/log.js';
-import { IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexOptions, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexService, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult, IVoltLspBudget, IVoltLspLimits, IVoltWorkspaceActivity } from '../common/voltCodeIndex.js';
+import { IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexFindFilesRequest, IVoltCodeIndexFindFilesResult, IVoltCodeIndexOptions, IVoltFffStatus, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexService, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult, IVoltLspBudget, IVoltLspLimits, IVoltWorkspaceActivity } from '../common/voltCodeIndex.js';
 import type { ICodeIndexWorker } from './codeIndexEngine.js';
 
 /** The index process (and its file watchers) stays up this long after the last use. */
@@ -117,6 +117,18 @@ export class VoltCodeIndexService extends Disposable implements IVoltCodeIndexSe
 
 	symbols(request: IVoltCodeIndexSymbolsRequest): Promise<IVoltCodeIndexSymbolsResult> {
 		return this.use().symbols(request).catch(err => this.failed(err));
+	}
+
+	findFiles(request: IVoltCodeIndexFindFilesRequest): Promise<IVoltCodeIndexFindFilesResult> {
+		return this.use().findFiles(request).catch(err => this.failed(err));
+	}
+
+	fffStatus(fffPath?: string): Promise<IVoltFffStatus> {
+		return this.connect().fffStatus(fffPath);
+	}
+
+	installFff(): Promise<IVoltFffStatus> {
+		return this.use().installFff();
 	}
 
 	status(roots?: readonly string[]): Promise<readonly IVoltCodeIndexStatus[]> {

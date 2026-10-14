@@ -50,7 +50,7 @@ suite('Run metrics and traces', () => {
 		assert.deepStrictEqual(snap.tools, { count: 2, errors: 1, totalMs: 1300, maxMs: 900, slowest: 'shell' });
 		assert.deepStrictEqual([snap.retries, snap.loops, snap.stalls, snap.compactions, snap.continuations, snap.errors], [1, 1, 1, 1, 1, 1]);
 		assert.deepStrictEqual(snap.tokens, { input: 100, output: 20, cache: 50 });
-		assert.strictEqual(formatRunMetrics(snap), 'agent/pool agent done: prepared 4ms, agent ready 50ms, prompt 60ms, first event 1.0s, first text 2.5s, end 5.0s; tools 2 (1.3s, max 900ms shell, 1 failed); retries 1, stalls 1, loops 1, compactions 1, continuations 1');
+		assert.strictEqual(formatRunMetrics(snap), 'agent/pool agent done: prepared 4ms, agent ready 50ms, prompt 60ms, first event 1.0s, first text 2.5s, end 5.0s; tools 2 (1.3s, max 900ms shell, 1 failed); retries 1, stalls 1, loops 1, compactions 1, continuations 1, requests 1 (max input 150)');
 	});
 
 	test('an eval sample comes from the metrics, and a regression is never a success', () => {
@@ -94,5 +94,25 @@ suite('Run metrics and traces', () => {
 		assert.strictEqual(decoded.length, 2);
 		assert.strictEqual(decoded[1].kind, 'metrics');
 		assert.strictEqual(traceEnvelopes(decoded, 's', 'r1').length, 1);
+	});
+
+	test('tool output tokens by tool and file, model requests, and how much of the retrieved context was used', () => {
+		const metrics = new RunMetrics('r1', 's', 'native', 'agent', 0);
+		metrics.noteRetrieval({ ms: 40, tokens: 900, files: ['src/a.ts', 'src/b.ts', 'src/c.ts'], partial: false });
+		metrics.observe({ type: 'tool.start', callId: 'c1', name: 'read_file', input: JSON.stringify({ path: 'src/a.ts' }) }, 1);
+		metrics.observe({ type: 'tool.end', callId: 'c1', output: 'x'.repeat(700) }, 2);
+		metrics.observe({ type: 'tool.start', callId: 'c2', name: 'grep', input: JSON.stringify({ pattern: 'foo', path: 'src' }) }, 3);
+		metrics.observe({ type: 'tool.end', callId: 'c2', output: 'src/c.ts:\n  1: foo' }, 4);
+		metrics.observe({ type: 'tool.start', callId: 'c3', name: 'edit_file', locations: [{ path: 'src/b.ts' }] }, 5);
+		metrics.observe({ type: 'tool.end', callId: 'c3' }, 6);
+		metrics.observe({ type: 'usage', input: 1_000, output: 50, cache: 4_000 }, 7);
+		metrics.observe({ type: 'usage', input: 200, output: 80, cache: 5_000 }, 8);
+		const snapshot = metrics.snapshot();
+		assert.deepStrictEqual(snapshot.usage?.byTool.map(meter => [meter.name, meter.calls]), [['read_file', 1], ['grep', 1]]);
+		assert.strictEqual(snapshot.usage?.byFile[0].path, 'src/a.ts');
+		assert.strictEqual(snapshot.usage?.requests, 2);
+		assert.strictEqual(snapshot.usage?.maxRequestInput, 5_200);
+		assert.deepStrictEqual(snapshot.retrieval, { ms: 40, tokens: 900, files: 3, used: 2, partial: false }, 'a.ts read and b.ts edited; c.ts only appeared in output');
+		assert.match(formatRunMetrics(snapshot), /retrieval 40ms 900 tokens, 2\/3 files used/);
 	});
 });

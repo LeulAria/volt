@@ -699,8 +699,8 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 	private readonly jsCallStackCollector: Delayer<void>;
 	private readonly jsCallStackCollectorStopScheduler: RunOnceScheduler;
 
-	/** When the development build last reloaded this window for a gone renderer. */
-	private devReloadTimes: number[] = [];
+	/** When this window was last reloaded for a crashed renderer (see `onWindowError`). */
+	private crashReloadTimes: number[] = [];
 
 	constructor(
 		config: IWindowCreationOptions,
@@ -1144,15 +1144,22 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 				// Process gone
 				else if (type === WindowError.PROCESS_GONE) {
-					// Not when the app is going down (a killed renderer, a quit), and at most 3 reloads a
-					// minute, so a renderer that dies while starting gets the dialog instead of a reload loop.
+					// A renderer that crashed is reloaded instead of waiting on a dialog: Volt's agents run in
+					// it, and with the lid closed nobody is there to click Reopen. The workbench restores and
+					// the orchestrator restarts the work that was running. Not when the app is going down (a
+					// killed renderer, a quit), and at most 3 reloads a minute, so a renderer that dies while
+					// starting gets the dialog instead of a reload loop.
 					const now = Date.now();
-					this.devReloadTimes = this.devReloadTimes.filter(time => now - time < 60_000);
-					if (!this.environmentMainService.isBuilt && details?.reason !== 'killed' && !this.lifecycleMainService.quitRequested && this.devReloadTimes.length < 3) {
-						this.devReloadTimes.push(now);
-						this.logService.error('[volt] renderer gone in development, reloading the window instead of quitting');
+					this.crashReloadTimes = this.crashReloadTimes.filter(time => now - time < 60_000);
+					if (details?.reason !== 'killed' && details?.reason !== 'clean-exit' && !this.lifecycleMainService.quitRequested && this.crashReloadTimes.length < 3) {
+						this.crashReloadTimes.push(now);
+						this.logService.error(`[volt] renderer gone (${details?.reason ?? 'unknown'}), reloading the window instead of waiting on a dialog`);
 						try {
-							this.webContents.reloadIgnoringCache();
+							if (this.environmentMainService.isBuilt) {
+								this.webContents.reload();
+							} else {
+								this.webContents.reloadIgnoringCache();
+							}
 						} catch (error) {
 							this.logService.error(error);
 						}

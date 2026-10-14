@@ -7,9 +7,10 @@ import type { IVoltCodeIndexLine } from './voltCodeIndex.js';
 
 /**
  * Matching candidate files in-process, line by line the way ripgrep reports them. Only patterns
- * whose meaning is the same in JavaScript and in ripgrep's regex engine run here; anything else
- * (Unicode classes like \w, POSIX classes, possessive quantifiers, inline flags mid-pattern)
- * goes to ripgrep with the candidate files, so results never depend on which engine ran.
+ * whose meaning is the same in JavaScript and in ripgrep's regex engine run here: `\w \d \s \b`
+ * and their negations are translated to the Unicode classes ripgrep means by them; anything else
+ * (POSIX classes, `\p{...}` names, possessive quantifiers, inline flags mid-pattern) goes to
+ * ripgrep with the candidate files, so results never depend on which engine ran.
  */
 
 export interface IJsMatcher {
@@ -22,13 +23,76 @@ export interface IJsMatcher {
 
 const UNSUPPORTED = [
 	/\[\[:/, // POSIX classes
-	/\\[wWbBdDsSAzZQEGKhHRXNCpPk]/, // Unicode-aware classes and engine-specific escapes
+	/\\[AzZQEGKhHRXNCpPk]/, // engine-specific escapes and Unicode class names (spelled differently in JS)
 	/\\[xu]\{/, // braced code points
 	/[*+?}]\+/, // possessive quantifiers
 	/\(\?>/, // atomic groups
 	/\(\?#/, // comments
 	/\(\?P>/, // recursion
 ];
+
+/**
+ * ripgrep's Unicode-aware classes (Rust regex, Unicode on), as JavaScript `u`-flag syntax. Rust's
+ * `\w` is Alphabetic + Mark + Decimal_Number + Connector_Punctuation + Join_Control; `\d` is
+ * Decimal_Number; `\s` is White_Space; `\b` is a boundary between `\w` and not `\w`.
+ * JavaScript's own `\w \d \s \b` are ASCII (and `\s` a different set), hence the rewrite.
+ */
+const WORD = '\\p{Alphabetic}\\p{M}\\p{Nd}\\p{Pc}\\p{Join_Control}';
+const OUTSIDE: Record<string, string> = {
+	w: `[${WORD}]`,
+	W: `[^${WORD}]`,
+	d: '\\p{Nd}',
+	D: '\\P{Nd}',
+	s: '\\p{White_Space}',
+	S: '\\P{White_Space}',
+	b: `(?:(?<=[${WORD}])(?![${WORD}])|(?<![${WORD}])(?=[${WORD}]))`,
+	B: `(?:(?<=[${WORD}])(?=[${WORD}])|(?<![${WORD}])(?![${WORD}]))`,
+};
+/** Inside `[...]`; `\W` has no in-class form without the `v` flag, and `\b` means backspace there. */
+const INSIDE: Record<string, string> = {
+	w: WORD,
+	d: '\\p{Nd}',
+	D: '\\P{Nd}',
+	s: '\\p{White_Space}',
+	S: '\\P{White_Space}',
+};
+
+/** Rewrites `\w \d \s \b` (and negations) to ripgrep's meaning; undefined when a use has no JS form. */
+export function translateUnicodeClasses(source: string): string | undefined {
+	let out = '';
+	let inClass = false;
+	for (let i = 0; i < source.length; i++) {
+		const c = source[i];
+		if (c === '\\') {
+			const next = source[i + 1] ?? '';
+			i++;
+			if ('wWdDsSbB'.includes(next) && next) {
+				const replacement = inClass ? INSIDE[next] : OUTSIDE[next];
+				if (replacement === undefined) {
+					return undefined;
+				}
+				out += replacement;
+			} else {
+				out += c + next;
+			}
+			continue;
+		}
+		if (c === '[' && !inClass) {
+			inClass = true;
+		} else if (c === ']' && inClass) {
+			inClass = false;
+		}
+		out += c;
+	}
+	return out;
+}
+
+/** True when ripgrep's `-w` (match surrounded by non-word characters) equals `\b...\b` for this text. */
+function wordEdged(text: string): boolean {
+	const edge = /^[\p{Alphabetic}\p{M}\p{Nd}\p{Pc}\p{Join_Control}]$/u;
+	const chars = [...text];
+	return chars.length > 0 && edge.test(chars[0]) && edge.test(chars[chars.length - 1]);
+}
 
 /** Converts newlines in a pattern to `\r?\n` (outside classes), as ripgrep does with `--crlf`. */
 function crlf(source: string): string {
@@ -96,8 +160,10 @@ function hasRustClassSyntax(source: string): boolean {
  * A JavaScript matcher with ripgrep's meaning, or undefined when the pattern must go to ripgrep.
  */
 export function createJsMatcher(pattern: string, isRegExp: boolean, caseSensitive: boolean, multiline: boolean, wholeWord: boolean): IJsMatcher | undefined {
-	if (wholeWord) {
-		return undefined; // ripgrep's -w is Unicode-aware
+	// ripgrep's -w wraps the pattern in non-word-or-edge guards; for a literal that starts and
+	// ends with a word character that is exactly `\b...\b`. Anything else stays with ripgrep.
+	if (wholeWord && (isRegExp || !wordEdged(pattern))) {
+		return undefined;
 	}
 	let source: string;
 	let ignoreCase = !caseSensitive;
@@ -117,8 +183,16 @@ export function createJsMatcher(pattern: string, isRegExp: boolean, caseSensitiv
 			return undefined;
 		}
 		source = source.replace(/\(\?P<([A-Za-z_]\w*)>/g, '(?<$1>').replace(/\(\?P=([A-Za-z_]\w*)\)/g, '\\k<$1>');
+		const translated = translateUnicodeClasses(source);
+		if (translated === undefined) {
+			return undefined;
+		}
+		source = translated;
 	} else {
 		source = pattern.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+		if (wholeWord) {
+			source = `${OUTSIDE.b}(?:${source})${OUTSIDE.b}`;
+		}
 	}
 	const hasNewline = /\\n|\n/.test(source);
 	if (hasNewline && !multiline) {

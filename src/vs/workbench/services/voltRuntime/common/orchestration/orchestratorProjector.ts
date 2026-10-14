@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IOrchState, IOrchTask, IOrchThread, OrchEvent } from './orchestrator.js';
+import { isRescueTurnId } from './rescue.js';
 
 /**
  * Folds one event into the state. Pure and total: an event about an unknown thread or task is a
@@ -82,11 +83,13 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 			return updateThread(state, event.threadId, thread => {
 				// A turn that goes out ends a usage-limit park, except the resume of that park: it holds
 				// until the provider answers (`limit.recovered`) or the resume ends.
-				const { pause: _pause, wakeups: _wakeups, limit: _limit, ...rest } = thread;
+				const { pause: _pause, wakeups: _wakeups, limit: _limit, rescue: _rescue, ...rest } = thread;
 				const keep = event.turn.limitProbe !== undefined && thread.limit ? { limit: thread.limit } : {};
 				const automatic = event.turn.kind === 'notification';
 				const wakeups = automatic ? (thread.wakeups ?? 0) + 1 : event.turn.kind === 'external' ? thread.wakeups : 0;
-				return { ...rest, ...keep, active: event.turn, turns: thread.turns + 1, ...(wakeups ? { wakeups } : {}) };
+				// A prompt (the user's, or one they queued) takes over from a restart Volt was waiting to send.
+				const rescue = thread.rescue && (event.turn.kind !== 'prompt' || isRescueTurnId(event.turn.id)) ? { rescue: thread.rescue } : {};
+				return { ...rest, ...keep, ...rescue, active: event.turn, turns: thread.turns + 1, ...(wakeups ? { wakeups } : {}) };
 			});
 		case 'turn.steered':
 			return state;
@@ -233,6 +236,18 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 					return thread;
 				}
 				const { limit: _limit, ...rest } = thread;
+				return rest;
+			});
+		case 'rescue.armed':
+			return updateThread(state, event.threadId, thread => ({ ...thread, rescue: event.rescue }));
+		case 'rescue.deferred':
+			return updateThread(state, event.threadId, thread => thread.rescue ? { ...thread, rescue: { ...thread.rescue, notBefore: event.notBefore } } : thread);
+		case 'rescue.cleared':
+			return updateThread(state, event.threadId, thread => {
+				if (!thread.rescue) {
+					return thread;
+				}
+				const { rescue: _rescue, ...rest } = thread;
 				return rest;
 			});
 		case 'move.requested':

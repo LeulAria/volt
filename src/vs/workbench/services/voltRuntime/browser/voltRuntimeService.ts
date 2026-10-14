@@ -48,8 +48,9 @@ import { countUserTurns, IVoltImageAttachment, IVoltSendRequest, IVoltSession } 
 import { Schemas } from '../../../../base/common/network.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { IVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
-import { codeIndexEnabled, INSTANT_GREP_TOOL_NAME, lspAllowedFor, readCodeIndexOptions, rtkEnabled } from '../common/codeIntelligence.js';
-import type { ISearchIndex } from './tools/searchTools.js';
+import { codeIndexEnabled, INSTANT_GREP_TOOL_NAME, lspAllowedFor, readCodeIndexOptions, readFffSettings, readRtkExclusions, retrievalEnabled, rtkEnabled } from '../common/codeIntelligence.js';
+import { ContextRetriever, IRetrievedContext, parsePorcelainZ } from './search/contextRetriever.js';
+import { ISearchIndex, VoltSearch } from './search/voltSearch.js';
 import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
 import { agentCompactionPrompt, compactedHistory, compactInstructions, isCompactCommand } from '../common/compaction.js';
 import { buildContextHandoff, compactionBudget, handoffBudget, HANDOFF_BUDGET_PERCENT_SETTING, HANDOFF_MAX_TOKENS_SETTING, handoffPath, handoffToolCall, HandoffReason, IContextHandoff, IHandoffActivity, IHandoffFile, IHandoffToolCall } from '../common/contextHandoff.js';
@@ -204,7 +205,9 @@ interface IRunState {
 	/** The agent came from the pool or a cold start: a spare like it helps the next new chat. */
 	spare?: ISpareRequest;
 	/** Reasons this run was already sent back for (each at most once). */
-	readonly continued: { regression: boolean; todos: boolean };
+	readonly continued: { regression: boolean; todos: boolean; errors?: number };
+	/** Agent runs: files the agent changed, with their error counts before (for the new-errors check). */
+	changedFiles?: Map<string, { readonly uri: URI; readonly baseline: ReadonlyMap<string, number> }>;
 	regressed?: boolean;
 	/** What the run did besides talking, kept with its reply for handoffs to other sessions. */
 	activity?: { readonly tools: IHandoffToolCall[]; readonly files: IHandoffFile[]; readonly calls: Map<string, { kind?: string; name: string; title?: string; input: string; paths: string[] }> };
@@ -260,6 +263,8 @@ interface ISessionState extends IVoltSession {
 	agentJoinedLate?: IAgentSessionHandle;
 	/** The user restarted the agent while a turn held it: the next prompt starts a fresh one. */
 	restartPending?: boolean;
+	/** Files the context retriever already showed this chat's agent with their code. */
+	retrievalSeen?: Set<string>;
 	/** Catalog ref the live agent session was started for. */
 	agentRef?: string;
 	/** Folder the live agent session was started in. A chat moved to another project needs a new one. */
@@ -398,6 +403,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly hookFollowups = new Map<string, number>();
 	private readonly codeIntel: CodeIntelHost;
 	private readonly searchIndex: ISearchIndex;
+	/** Every search Volt runs: the agent's tools and the context retriever (index, FFF, ripgrep). */
+	private readonly search: VoltSearch;
+	private readonly retriever: ContextRetriever;
+	/** `git status` per root, briefly cached: the retriever ranks changed files up. */
+	private readonly workingTreeChangesByRoot = new Map<string, { readonly at: number; readonly value: Promise<ReadonlySet<string>> }>();
 	private readonly mcpHost: McpHost;
 	private readonly journal: NativeJournal;
 	private readonly nativeRestores = new Map<string, Promise<void>>();
@@ -474,7 +484,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			service: codeIndexService,
 			enabled: () => codeIndexEnabled(this.configurationService),
 			options: () => readCodeIndexOptions(this.configurationService),
+			fff: () => readFffSettings(this.configurationService),
 		};
+		this.search = this._register(new VoltSearch(searchService, this.searchIndex, fileService.onDidFilesChange));
+		this.retriever = new ContextRetriever(this.search, fileService);
 		this.mcpHost = this._register(new McpHost(fileService, stdio, requestService, logService));
 		this.journal = this._register(new NativeJournal(joinPath(environmentService.userRoamingDataHome, 'voltNative'), fileService, logService));
 		this.traces = this._register(new RunTraceJournal(joinPath(environmentService.userRoamingDataHome, 'voltTraces'), fileService, logService));
@@ -2323,8 +2336,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			stdio: this.stdio,
 			hostTools: this.hostTools,
 			root: () => this.executionRoot(session),
+			search: this.search,
 			codeIndex: this.searchIndex,
 			rtk: () => rtkEnabled(this.configurationService),
+			rtkExclusions: () => readRtkExclusions(this.configurationService),
 			meta: {
 				grantGroups: () => session.extraGroups ?? [],
 				...(state ? {
@@ -2388,6 +2403,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		// alongside the settle wait and the hooks: skills and rules, memory, MCP connections, the key.
 		const allowMcp = modePolicy(request.mode).allowMcp;
 		const early = this.nativeTurnInputs(this.executionRoot(session), allowMcp);
+		// The code the message names, searched while the turn gets ready (snippets, ~1.5k tokens at most).
+		const retrieval = isCompactCommand(request.text) ? undefined : this.retrieveContext(session, run, request.text, false);
 		const apiKeyRead = this.apiKey(profile);
 		void apiKeyRead.catch(() => undefined);
 		// A cancelled run's tools may still be finishing; give them a moment before this one starts its own.
@@ -2430,7 +2447,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (hookNotes === undefined || !this.isCurrent(session, run)) {
 			return;
 		}
-		const promptText = [request.text, pasted, hookNotes.length ? `<hook_context>\n${hookNotes.join('\n\n')}\n</hook_context>` : undefined].filter(Boolean).join('\n\n');
+		const retrieved = await retrieval;
+		if (!this.isCurrent(session, run)) {
+			return;
+		}
+		const promptText = [request.text, pasted, hookNotes.length ? `<hook_context>\n${hookNotes.join('\n\n')}\n</hook_context>` : undefined, retrieved?.text].filter(Boolean).join('\n\n');
 		this.syncNativeTranscript(session, state, promptText, images);
 
 		// The root can only differ from the early read if the chat moved while the previous run settled.
@@ -2673,14 +2694,54 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return message ? { kind: 'inject', message } : { kind: 'continue' };
 	}
 
+	/**
+	 * A file change in a CLI agent's run (Claude Code, Codex): remembers the file's error counts as
+	 * they were (the editor's markers lag the write), so the run can be checked for new errors.
+	 */
+	private noteAgentChange(session: ISessionState, runId: string, uri: URI, kind: 'edit' | 'create' | 'delete'): void {
+		this.search.invalidate();
+		const run = session.run;
+		if (!run || run.engine !== 'agent' || run.runId !== runId || run.ended || kind === 'delete') {
+			return;
+		}
+		const files = run.changedFiles ??= new Map();
+		const key = uri.toString();
+		if (!files.has(key)) {
+			files.set(key, { uri, baseline: this.codeIntel.errorCounts(uri) });
+		}
+		this.codeIntel.noteWrite(uri);
+	}
+
+	/** When a CLI agent wants to stop: new compiler or linter errors in its files send it back (twice at most). */
+	private async agentErrorGate(session: ISessionState, run: IRunState): Promise<string | undefined> {
+		const attempts = run.continued.errors ?? 0;
+		if (!run.changedFiles?.size || attempts >= 2 || !modePolicy(run.mode).allowWrites || run.cancel.token.isCancellationRequested) {
+			return undefined;
+		}
+		const message = await this.reviewNewErrors([...run.changedFiles.values()].map(file => [file.uri, file.baseline] as const), this.executionRoot(session)?.fsPath, attempts + 1);
+		if (!message || !this.isCurrent(session, run)) {
+			return undefined;
+		}
+		run.continued.errors = attempts + 1;
+		run.metrics.noteContinuation();
+		this.logService.info(`[volt] run ${run.runId} continues: new errors in changed files`);
+		this.emit(session, run.runId, { type: 'notice', severity: 'info', title: localize('volt.check.newErrors', "Files the agent changed have new errors. Asking it to fix them."), description: 'Volt check' });
+		return message;
+	}
+
 	/** New compiler or linter errors in the files the run changed (language services already know). */
-	private async reviewCompletion(state: INativeState, attempt: number): Promise<string | undefined> {
-		const files = [...state.changed.entries()].filter(([uri]) => DIAGNOSED_EXTENSIONS.test(uri.path));
+	private reviewCompletion(state: INativeState, attempt: number): Promise<string | undefined> {
+		return this.reviewNewErrors(state.changed.entries(), state.cwd, attempt);
+	}
+
+	/** The message that sends an agent back when files it changed have errors they did not have before. */
+	private async reviewNewErrors(changed: Iterable<readonly [URI, ReadonlyMap<string, number>]>, cwd: string | undefined, attempt: number): Promise<string | undefined> {
+		const files = [...changed].filter(([uri]) => DIAGNOSED_EXTENSIONS.test(uri.path));
 		if (!files.length) {
 			return undefined;
 		}
 		const found = await Promise.all(files.map(async ([uri, baseline]) => ({ uri, added: await this.codeIntel.newErrors(uri, baseline).catch(() => []) })));
-		const root = state.cwd ? URI.file(state.cwd) : undefined;
+		const root = cwd ? URI.file(cwd) : undefined;
 		const lines = found.flatMap(({ uri, added }) => added.slice(0, 10).map(item => `${root ? relativeToRoot(root, uri) : uri.fsPath}:${item.line}:${item.column} ${item.message.split('\n')[0]}${item.source ? ` (${item.source})` : ''}`));
 		if (!lines.length) {
 			return undefined;
@@ -3255,6 +3316,53 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		};
 	}
 
+	/**
+	 * The code a message names, found before the agent's first step (Settings > Code Intelligence).
+	 * Volt's own models get snippets within ~1.5k tokens; CLI agents, which read files themselves,
+	 * get a short list of files. Nothing when the message names nothing code-like.
+	 */
+	private async retrieveContext(session: ISessionState, run: IRunState, text: string, forAgent: boolean): Promise<IRetrievedContext | undefined> {
+		const root = this.executionRoot(session);
+		if (!root || root.scheme !== Schemas.file || !retrievalEnabled(this.configurationService)) {
+			return undefined;
+		}
+		try {
+			const result = await this.retriever.retrieve(root, text, {
+				budgetTokens: forAgent ? 400 : 1_500,
+				deadlineMs: forAgent ? 300 : 500,
+				snippets: !forAgent,
+				...(session.retrievalSeen ? { seen: session.retrievalSeen } : {}),
+				changed: () => this.workingTreeChanges(root),
+				token: run.cancel.token,
+			});
+			if (result && this.isCurrent(session, run)) {
+				run.metrics.noteRetrieval(result);
+				const seen = session.retrievalSeen ??= new Set();
+				for (const path of result.withCode) {
+					seen.add(path);
+				}
+				this.logService.trace(`[volt] retrieval: ${result.ms}ms, ${result.searches} searches, ${result.tokens} tokens, ${result.files.length} files${result.partial ? ' (cut short)' : ''}`);
+			}
+			return result;
+		} catch (err) {
+			this.logService.trace('[volt] retrieval failed', err);
+			return undefined;
+		}
+	}
+
+	/** Files the work tree has changed, relative to the repository root (cached for a few seconds). */
+	private workingTreeChanges(root: URI): Promise<ReadonlySet<string>> {
+		const key = root.toString();
+		const cached = this.workingTreeChangesByRoot.get(key);
+		if (cached && Date.now() - cached.at < 5_000) {
+			return cached.value;
+		}
+		const value = this.stdio.exec({ id: `volt-status-${generateUuid().slice(0, 8)}`, command: 'git status --porcelain=v1 -z --untracked-files=normal', cwd: root.fsPath, timeoutMs: 2_000, inlineChars: 400_000 })
+			.then(result => result.exitCode === 0 ? parsePorcelainZ(result.combined) : new Set<string>(), () => new Set<string>());
+		this.workingTreeChangesByRoot.set(key, { at: Date.now(), value });
+		return value;
+	}
+
 	/** Worth telling a CLI agent about instant_grep: a big project whose index is ready. */
 	private async largeIndexedProject(root: URI | undefined): Promise<boolean> {
 		if (!root || root.scheme !== Schemas.file || !this.searchIndex.enabled() || !this.hostTools.getMcpServers().length || !this.hostTools.listTools().some(tool => tool.name === INSTANT_GREP_TOOL_NAME)) {
@@ -3272,6 +3380,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		const token = run.cancel.token;
+		// A short list of the files the message names, found while the agent starts.
+		const retrieval = isCompactCommand(request.text) ? undefined : this.retrieveContext(session, run, request.text, true);
 		// Another model from the same CLI is another agent session: restart it; the recap carries the thread over.
 		const hasLiveAgent = () => !!session.agentHandle && session.agentProviderId === provider.id && session.agentRef === item.ref
 			&& session.agentCwd === this.executionRoot(session)?.fsPath && session.agentSandboxKey === this.sandboxKey(session.sessionId) && (provider.isLive?.(session.agentHandle) ?? true);
@@ -3336,7 +3446,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					}
 					// After a move: the conversation so far happened in the old folder.
 					const moved = session.moved?.model;
-					const lead = [handoff?.text, moved, buildAcpLead(await this.contextPackInput(session, request.mode, intent, !reusedAgent && !reused))].filter(Boolean).join('\n\n') || undefined;
+					const lead = [handoff?.text, moved, buildAcpLead(await this.contextPackInput(session, request.mode, intent, !reusedAgent && !reused)), (await retrieval)?.text].filter(Boolean).join('\n\n') || undefined;
 					if (moved && session.moved?.model === moved) {
 						session.moved = undefined;
 					}
@@ -3378,7 +3488,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					let reason = first.reason;
 					// The agent wants to stop. Volt's checks may send it back once per reason.
 					while (reason === 'done' && !voltCompaction) {
-						const message = await this.qualityContinuation(session, run);
+						const message = await this.qualityContinuation(session, run) ?? await this.agentErrorGate(session, run);
 						if (!message || !this.isCurrent(session, run)) {
 							break;
 						}
@@ -3714,6 +3824,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			event,
 		};
 		this.traces.record(envelope);
+		if (event.type === 'file.change' && URI.isUri(event.uri)) {
+			this.noteAgentChange(session, runId, event.uri, event.kind);
+		}
 		for (const listener of this.listeners.get(session.sessionId) ?? []) {
 			listener(envelope);
 		}

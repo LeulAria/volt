@@ -28,6 +28,12 @@ export const RUN_START_RETRY: IRetryPolicy = { initialIntervalMs: 5_000, backoff
 export const PROVIDER_BACK_RETRY: IRetryPolicy = { initialIntervalMs: 60_000, backoffCoefficient: 2, maximumIntervalMs: 30 * 60_000, maximumAttempts: 0, jitter: 0.1 };
 
 /**
+ * Fifteen seconds, doubling, at most thirty minutes apart, with no attempt budget: restarting a
+ * chat whose work stopped before it was done (see `IOrchRescue`). It never gives up; it only waits longer.
+ */
+export const RESCUE_RETRY: IRetryPolicy = { initialIntervalMs: 15_000, backoffCoefficient: 2, maximumIntervalMs: 30 * 60_000, maximumAttempts: 0, jitter: 0.1 };
+
+/**
  * The delay before attempt `attempt + 1` after `attempt` attempts failed (attempt >= 1). A
  * server's `retry-after` hint wins when it is longer than the policy's delay; it is never cut short.
  */

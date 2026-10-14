@@ -16,7 +16,7 @@ import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
 import { isPathInside, planAllowsWrite } from '../../voltSandbox/common/sandboxPolicy.js';
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
-import { IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxEvent, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
+import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxEvent, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -286,6 +286,28 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 
 	async exec(request: IVoltExecRequest): Promise<IVoltExecResult> {
 		return this.execFor(undefined, request);
+	}
+
+	async execFile(request: IVoltExecFileRequest): Promise<IVoltExecFileResult> {
+		const env = { ...await this.env(), ...request.env };
+		return new Promise(resolve => {
+			execFile(request.file, [...request.args], {
+				cwd: request.cwd,
+				env,
+				timeout: request.timeoutMs,
+				maxBuffer: request.maxBytes ?? 1024 * 1024,
+				windowsHide: true,
+				encoding: 'utf8',
+			}, (err, stdout, stderr) => {
+				const failure = err as (NodeJS.ErrnoException & { code?: string | number; killed?: boolean }) | null;
+				resolve({
+					exitCode: !failure ? 0 : typeof failure.code === 'number' ? failure.code : null,
+					stdout: String(stdout ?? ''),
+					stderr: String(stderr ?? ''),
+					...(failure && typeof failure.code !== 'number' ? { error: failure.killed ? `timed out after ${request.timeoutMs} ms` : failure.message } : {}),
+				});
+			});
+		});
 	}
 
 	/** {@link exec} on behalf of one window; its commands stop when it reloads or closes. */

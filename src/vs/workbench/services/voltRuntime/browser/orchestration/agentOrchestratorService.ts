@@ -25,14 +25,16 @@ import { retryDelay, RUN_START_RETRY } from '../../common/jobs/retryPolicy.js';
 import { normalizeVoltMode } from '../../common/modes.js';
 import { agentTaskTools, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, DELEGATE_TASK_TOOL_NAME, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeTaskRole, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
-import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimits, IOrchMove, IOrchTurn, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, readOrchLimits } from '../../common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimits, IOrchMove, IOrchTurn, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_KEEP_WORKING_SETTING, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, readOrchLimits } from '../../common/orchestration/orchestrator.js';
 import { ILimitSignal, isClaudeProvider, isRealAnswer, LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING, limitAutoResumes, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
 import { extractRoot, IOrchIndex, IOrchRootSnapshot, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
+import { isRescueTurnId, rescueDueAt, rescueWaits } from '../../common/orchestration/rescue.js';
 import { failureRetryCount, harnessTaskId, IOrchStep, isFailureRetryTurn, runOrchCommand } from '../../common/orchestration/orchestratorDecider.js';
 import { IAgentRuntimeService } from '../../common/runtime.js';
 import { IVoltSessionContextService } from '../../common/sessionContext.js';
 import { DeadlineTimer } from '../jobs/deadlineTimer.js';
 import { DurableClaims } from '../jobs/durableClaims.js';
+import { BEACON_TTL_MS, WorkbenchBeacons } from '../jobs/workbenchBeacons.js';
 import { OrchestratorStore } from './orchestratorStore.js';
 
 /** Models one delegate_task call may run the same brief on. */
@@ -103,6 +105,15 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	private readonly limitTimer: DeadlineTimer;
 	/** Exactly-once gates shared with the other Volt workbenches (each project runs one). */
 	private readonly claims: DurableClaims;
+	/** Restarts chats whose work stopped before it was done, at their back-off (see `IOrchRescue`). */
+	private readonly rescueTimer: DeadlineTimer;
+	/** The chats each other live workbench is running, so this one never runs them twice. */
+	private readonly beacons: WorkbenchBeacons;
+	/** Chat trees another Volt window ran at startup, taken over once that window is gone (`adoptLater`). */
+	private readonly adopting = new Set<string>();
+	private adoptTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Each live run's latest plan (to-do list): a turn that ends with items open continues. */
+	private readonly plans = new Map<string, readonly { readonly content: string; readonly status: string }[]>();
 	/** Assistant text of resumes that have not heard back from the provider yet, by run. */
 	private readonly probeText = new Map<string, string>();
 	private mover: IOrchWorkspaceMover | undefined;
@@ -140,11 +151,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		this.store = new OrchestratorStore(joinPath(environmentService.userRoamingDataHome, 'voltOrchestrator'), fileService, logService);
 		this.claims = new DurableClaims(joinPath(environmentService.userRoamingDataHome, 'voltJobs', 'claims'), fileService, logService);
 		this.limitTimer = this._register(new DeadlineTimer(() => this.limitTick()));
+		this.rescueTimer = this._register(new DeadlineTimer(() => this.rescueTick()));
+		this.beacons = new WorkbenchBeacons(joinPath(environmentService.userRoamingDataHome, 'voltJobs', 'workbenches'), fileService, logService);
 		this._register(runtime.onDidEmit(envelope => this.observe(envelope)));
 		this.limits = this.readLimits();
 		this.registerTaskTools();
 		// Changes from the last quarter second (and writes still retrying) reach the disk before the window closes.
-		this._register(lifecycleService.onWillShutdown(e => e.join(this.flush(), { id: 'volt.agentOrchestrator', label: 'Saving agent orchestration' })));
+		this._register(lifecycleService.onWillShutdown(e => e.join(Promise.all([this.flush(), this.beacons.clear()]).then(() => undefined), { id: 'volt.agentOrchestrator', label: 'Saving agent orchestration' })));
 		this._register(new IntervalTimer()).cancelAndSet(() => this.checkLiveness(), WATCHDOG_MS);
 		this._register(toDisposable(() => {
 			if (this.persistTimer !== undefined) {
@@ -153,13 +166,31 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			if (this.persistRetry !== undefined) {
 				clearTimeout(this.persistRetry);
 			}
+			if (this.adoptTimer !== undefined) {
+				clearTimeout(this.adoptTimer);
+			}
 			for (const timer of this.cancelWatch.values()) {
 				clearTimeout(timer);
 			}
 		}));
-		// Parked chats wake at their reset: the timer follows the state.
-		this._register(this.onDidChange(() => this.scheduleLimitTick()));
+		// Parked chats wake at their reset, stopped work at its back-off: the timers follow the state.
+		this._register(this.onDidChange(() => {
+			this.scheduleLimitTick();
+			this.scheduleRescueTick();
+		}));
 		this._register(configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(ORCH_KEEP_WORKING_SETTING)) {
+				this.limits = this.readLimits();
+				if (!this.limits.supervise) {
+					// Turned off: chats waiting to be restarted wait for the user instead.
+					for (const thread of Object.values(this.state.threads)) {
+						if (thread.rescue) {
+							this.apply({ type: 'rescue.stop', threadId: thread.id });
+						}
+					}
+				}
+				this.scheduleRescueTick();
+			}
 			if (e.affectsConfiguration(ORCH_MAX_PARALLEL_SETTING) || e.affectsConfiguration(ORCH_MAX_PARALLEL_TOTAL_SETTING) || e.affectsConfiguration(ORCH_MAX_PER_CALL_SETTING)) {
 				const perCall = this.limits.spawnsPerCall;
 				this.limits = this.readLimits();
@@ -329,6 +360,36 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		// Nothing changed (a stagger slot not reached yet): look again.
 		if (!step.envelopes.length) {
 			this.scheduleLimitTick();
+		}
+	}
+
+	keepsWorking(): boolean {
+		return this.limits.supervise;
+	}
+
+	/** Arms one timer for the earliest chat waiting to be restarted; it reads the wall clock, so sleep does not lose it. */
+	private scheduleRescueTick(): void {
+		let next = Number.POSITIVE_INFINITY;
+		if (this.limits.supervise) {
+			for (const thread of Object.values(this.state.threads)) {
+				if (rescueWaits(thread)) {
+					next = Math.min(next, rescueDueAt(thread.rescue!, thread.id));
+				}
+			}
+		}
+		this.rescueTimer.schedule(Number.isFinite(next) ? next : undefined);
+	}
+
+	private rescueTick(): void {
+		const step = this.apply({ type: 'rescue.tick' });
+		for (const envelope of step.envelopes) {
+			const event = envelope.event;
+			if (event.type === 'rescue.armed') {
+				this.logService.info(`[volt orchestrator] ${event.threadId}: restarting its stopped work (attempt ${event.rescue.attempts}${event.rescue.error ? `, after: ${event.rescue.error.slice(0, 120)}` : ''})`);
+			}
+		}
+		if (!step.envelopes.length) {
+			this.scheduleRescueTick();
 		}
 	}
 
@@ -603,11 +664,20 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			const { index, loaded, rebuilt } = await this.loadIndex();
 			this.knownRoots = new Set(index.roots);
 			const snapshots: IOrchRootSnapshot[] = [];
+			// Trees another Volt window is running stay its own: settling them here would run them twice.
+			const elsewhere = await this.beacons.elsewhere();
+			const theirs: string[] = [];
 			for (const rootId of index.live) {
 				const snapshot = loaded.get(rootId) ?? await this.store.loadRoot(rootId);
-				if (snapshot) {
+				if (snapshot && snapshot.threads.some(thread => elsewhere.has(thread.id))) {
+					theirs.push(rootId);
+				} else if (snapshot) {
 					snapshots.push(snapshot);
 				}
+			}
+			if (theirs.length) {
+				this.logService.info(`[volt orchestrator] ${theirs.length} chat tree(s) are running in another Volt window; leaving them to it`);
+				this.adoptLater(theirs);
 			}
 			// Folded into the state as it is after the reads, so nothing applied meanwhile is dropped.
 			let state = this.state;
@@ -682,7 +752,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		}
 		let loading = this.loading.get(rootId);
 		if (!loading) {
-			loading = this.store.loadRoot(rootId).then(snapshot => {
+			loading = Promise.all([this.store.loadRoot(rootId), this.beacons.elsewhere()]).then(([snapshot, elsewhere]) => {
+				if (snapshot?.threads.some(thread => elsewhere.has(thread.id))) {
+					// Another Volt window runs this chat: its tree stays there (the chat shows from its history).
+					return;
+				}
 				if (snapshot && !Object.values(this.state.threads).some(thread => thread.rootId === rootId)) {
 					this.state = mergeRoot(this.state, snapshot);
 					this.rootEvents.set(rootId, [...snapshot.events]);
@@ -701,6 +775,59 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			this.loading.set(rootId, loading);
 		}
 		await loading;
+	}
+
+	/**
+	 * Chat trees left to another Volt window at startup. Once that window stops vouching for them
+	 * (it closed or crashed, and its beacon went stale), this one takes them over and reconciles
+	 * them like its own, so a crashed window's work is restarted too. Looks again while they are live elsewhere.
+	 */
+	private adoptLater(rootIds: readonly string[]): void {
+		rootIds.forEach(rootId => this.adopting.add(rootId));
+		if (this.adoptTimer === undefined) {
+			this.adoptTimer = setTimeout(() => {
+				this.adoptTimer = undefined;
+				if (!this._store.isDisposed) {
+					void this.adopt();
+				}
+			}, BEACON_TTL_MS + WATCHDOG_MS);
+		}
+	}
+
+	private async adopt(): Promise<void> {
+		const rootIds = [...this.adopting];
+		this.adopting.clear();
+		try {
+			const elsewhere = await this.beacons.elsewhere();
+			const still: string[] = [];
+			for (const rootId of rootIds) {
+				if (Object.values(this.state.threads).some(thread => thread.rootId === rootId)) {
+					continue;
+				}
+				const snapshot = await this.store.loadRoot(rootId);
+				if (!snapshot || Object.values(this.state.threads).some(thread => thread.rootId === rootId)) {
+					continue;
+				}
+				if (snapshot.threads.some(thread => elsewhere.has(thread.id))) {
+					still.push(rootId);
+					continue;
+				}
+				if (!isRootLive(mergeRoot(emptyOrchState(), snapshot), rootId)) {
+					continue;
+				}
+				this.state = mergeRoot(this.state, snapshot);
+				this.rootEvents.set(rootId, [...snapshot.events]);
+				this._onDidChange.fire({ threads: snapshot.threads.map(thread => thread.id), tasks: snapshot.tasks.map(task => task.id) });
+				const step = this.apply({ type: 'recover', resume: this.restartResume(), rootId }, `recover:${rootId}:${generateUuid()}`);
+				this.logService.info(`[volt orchestrator] took over ${rootId} from a Volt window that is gone: ${step.envelopes.length} change(s)`);
+			}
+			if (still.length) {
+				this.adoptLater(still);
+			}
+		} catch (err) {
+			this.logService.warn('[volt orchestrator] taking over chat trees from a closed window failed; trying again', err);
+			this.adoptLater(rootIds);
+		}
 	}
 
 	private rootIdFromHistory(threadId: string): string {
@@ -798,6 +925,18 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			if (isAutoLimitResume(turn) && !await this.claims.claim(`limit:${turn.id}`)) {
 				this.releaseRoot(threadId, 'another Volt window took its usage-limit resume');
 				return;
+			}
+			// The same for a turn Volt restarts on its own (after a restart, or stopped work): one window sends it,
+			// and none while another live window runs the chat.
+			if (isAutomaticRestart(turn)) {
+				if ((await this.beacons.elsewhere()).has(threadId)) {
+					this.releaseRoot(threadId, 'another Volt window is running it');
+					return;
+				}
+				if (!await this.claims.claim(`restart:${turn.id}`)) {
+					this.releaseRoot(threadId, 'another Volt window took its restart');
+					return;
+				}
 			}
 			const thread = this.state.threads[threadId];
 			if (thread?.taskId && thread.parentId && turn.kind === 'brief') {
@@ -995,6 +1134,9 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			case 'reasoning.start':
 				this.limitAnswered(threadId);
 				return;
+			case 'plan':
+				this.plans.set(envelope.runId, event.entries);
+				return;
 			case 'run.end':
 				this.settleRun(threadId, envelope.runId, event.reason);
 				return;
@@ -1176,6 +1318,10 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const stop = !!limit && outcome === 'failed' && this.stopsAtClaudeLimit() && isClaudeProvider(this.providerOf(this.runtime.getOrCreateSession(threadId).providerRef ?? this.state.threads[threadId]?.modelRef));
 		this.probeText.delete(runId);
 		const account = outcome === 'failed' ? this.limitAccount(threadId) : undefined;
+		// The run ended "done" with to-dos still open: the decider continues it while it makes progress.
+		const plan = this.plans.get(runId);
+		this.plans.delete(runId);
+		const openPlan = outcome === 'done' ? plan?.filter(entry => entry.status !== 'completed').map(entry => entry.content).filter(Boolean) : undefined;
 		this.apply({
 			type: 'run.settled',
 			threadId,
@@ -1185,6 +1331,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			...(reply !== undefined ? { reply } : {}),
 			...(limit && outcome === 'failed' ? { limit: { ...limit, ...(stop ? { stop: true } : {}) } } : {}),
 			...(account ? { account } : {}),
+			...(openPlan?.length ? { openPlan } : {}),
 		});
 		this.clearCancelWatch(threadId);
 		if (stop) {
@@ -1338,6 +1485,12 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			}
 		}
 		this.suspects = suspects;
+		// Tell the other Volt windows which chats this one is responsible for (running, or to restart).
+		void this.beacons.beat(Object.values(this.state.threads).filter(thread => thread.active || thread.rescue).map(thread => thread.id), now);
+		// A backstop for the restart timer (a lost timer must not leave stopped work waiting forever).
+		if (this.limits.supervise && this.rescueTimer.deadline === undefined && Object.values(this.state.threads).some(rescueWaits)) {
+			this.scheduleRescueTick();
+		}
 	}
 
 	/**
@@ -1845,6 +1998,11 @@ function touched(event: OrchEvent): { threadIds: string[]; taskIds: string[] } {
 /** A resume the limit timer sent (`~l<n>`), as opposed to the user's own Resume now (`~m<n>`). */
 function isAutoLimitResume(turn: IOrchTurn): boolean {
 	return turn.kind === 'resume' && turn.limitProbe !== undefined && /~l\d+$/.test(turn.id);
+}
+
+/** A turn Volt sent on its own to continue a chat after a restart (`~r`) or after its work stopped (`~s`). */
+function isAutomaticRestart(turn: IOrchTurn): boolean {
+	return /~r\d+$/.test(turn.id) || isRescueTurnId(turn.id);
 }
 
 registerSingleton(IAgentOrchestratorService, AgentOrchestratorService, InstantiationType.Delayed);

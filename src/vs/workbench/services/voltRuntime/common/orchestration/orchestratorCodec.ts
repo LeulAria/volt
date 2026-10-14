@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { isLiveTaskState } from './agentTasks.js';
-import { IOrchConflict, IOrchEventEnvelope, IOrchLimitPark, IOrchMove, IOrchMoveResult, IOrchQueueItem, IOrchState, IOrchTask, IOrchThread, IOrchTurn, ORCHESTRATOR_STATE_VERSION } from './orchestrator.js';
+import { IOrchConflict, IOrchEventEnvelope, IOrchLimitPark, IOrchMove, IOrchMoveResult, IOrchQueueItem, IOrchRescue, IOrchState, IOrchTask, IOrchThread, IOrchTurn, ORCHESTRATOR_STATE_VERSION } from './orchestrator.js';
 
 /**
  * Orchestration is persisted per root chat: the chat, its subagents' chats and their tasks in one
@@ -58,7 +58,7 @@ export function extractRoot(state: IOrchState, rootId: string, events: readonly 
 /** The root has something a restart must reconcile or the user must see. */
 export function isRootLive(state: IOrchState, rootId: string): boolean {
 	for (const thread of Object.values(state.threads)) {
-		if (thread.rootId === rootId && (thread.active || thread.queue.length || thread.pause || thread.inputs.length || thread.pendingHandoff || thread.limit || thread.pendingMove || thread.moving)) {
+		if (thread.rootId === rootId && (thread.active || thread.queue.length || thread.pause || thread.inputs.length || thread.pendingHandoff || thread.limit || thread.rescue || thread.pendingMove || thread.moving)) {
 			return true;
 		}
 	}
@@ -205,6 +205,25 @@ function parseTurn(value: unknown): IOrchTurn | undefined {
 		...(turn.steerable === true ? { steerable: true } : {}),
 		...(num(turn.limitProbe) !== undefined ? { limitProbe: turn.limitProbe as number } : {}),
 		...(typeof turn.limitAuto === 'boolean' ? { limitAuto: turn.limitAuto } : {}),
+		...(num(turn.planOpen) !== undefined ? { planOpen: turn.planOpen as number } : {}),
+	};
+}
+
+const RESCUE_REASONS = new Set(['failed', 'interrupted', 'wakeups']);
+
+function parseRescue(value: unknown): IOrchRescue | undefined {
+	const rescue = value as Record<string, unknown> | undefined;
+	if (!rescue || !RESCUE_REASONS.has(rescue.reason as string) || num(rescue.at) === undefined) {
+		return undefined;
+	}
+	return {
+		reason: rescue.reason as IOrchRescue['reason'],
+		at: rescue.at as number,
+		attempts: num(rescue.attempts) ?? 0,
+		...(str(rescue.error) ? { error: rescue.error as string } : {}),
+		...(str(rescue.mode) ? { mode: rescue.mode as string } : {}),
+		...optional('prompt', parsePromptLike(rescue.prompt)),
+		...(num(rescue.notBefore) !== undefined ? { notBefore: rescue.notBefore as number } : {}),
 	};
 }
 
@@ -308,6 +327,7 @@ function parseThread(value: unknown): IOrchThread | undefined {
 		...(thread.pendingHandoff && typeof (thread.pendingHandoff as { to?: unknown }).to === 'string' ? { pendingHandoff: thread.pendingHandoff as IOrchThread['pendingHandoff'] } : {}),
 		handoffs: Array.isArray(thread.handoffs) ? thread.handoffs.filter(item => !!item && typeof (item as { to?: unknown }).to === 'string' && typeof (item as { at?: unknown }).at === 'number') as IOrchThread['handoffs'] : [],
 		...optional('limit', parseLimit(thread.limit)),
+		...optional('rescue', parseRescue(thread.rescue)),
 		...optional('pendingMove', parseMove(thread.pendingMove)),
 		...optional('moving', parseMove(thread.moving)),
 		...optional('lastMove', parseMoveResult(thread.lastMove)),

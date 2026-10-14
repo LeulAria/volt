@@ -269,7 +269,7 @@ export const MANAGED_TERMINALS = `Start servers, watchers, \`docker compose up\`
  * Volt's index answers the same search in milliseconds. Their MCP tools sit behind tool search,
  * so name them. Sent once per agent session, and only for large indexed projects.
  */
-export const INDEXED_SEARCH = 'This project is indexed: search code with instant_grep (regex or literal, the same results as rg) and find symbol declarations with find_symbol, both from the volt MCP server. They answer in milliseconds where Grep, rg and find re-read every file.';
+export const INDEXED_SEARCH = 'This project is indexed: search code with instant_grep (regex or literal, the same results as rg), find symbol declarations with find_symbol, and find files by a fuzzy name with find_files, all from the volt MCP server. They answer in milliseconds where Grep, rg and find re-read every file.';
 
 /**
  * Tool descriptions say what the visual tools do; this says when to reach for them unasked. Not

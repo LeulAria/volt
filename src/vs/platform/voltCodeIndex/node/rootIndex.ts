@@ -8,16 +8,24 @@ import parcelWatcher from '@parcel/watcher';
 import { parse as parseGlob, ParsedPattern } from '../../../base/common/glob.js';
 import { isAbsolute, join, normalize, relative, sep } from '../../../base/common/path.js';
 import { isLinux, isWindows } from '../../../base/common/platform.js';
+import { FuzzyPathIndex } from '../common/fuzzyPath.js';
+import { SymbolNameIndex } from '../common/symbolNameIndex.js';
 import { literalTrigramQuery, regexTrigramQuery, toByteString, TrigramQuery } from '../common/regexQuery.js';
 import { extractSymbols, hasSymbolRules, SYMBOL_KINDS } from '../common/symbolExtract.js';
 import { createJsMatcher, IJsMatcher, matchText } from '../common/textMatch.js';
-import { IVoltCodeIndexFileHits, IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexOptions, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult, IVoltCodeSymbol, VoltCodeIndexState, VoltCodeSymbolKind } from '../common/voltCodeIndex.js';
-import { deleteSegment, ISegmentSymbols, mergeSegments, NEXT_BIT, PostingCache, releaseBuildMemory, rotl8, Segment, SegmentBuilder, TrigramTable } from './indexFormat.js';
+import { IVoltCodeIndexFileHits, IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexFindFilesRequest, IVoltCodeIndexFindFilesResult, IVoltCodeIndexOptions, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult, IVoltCodeSymbol, VoltCodeIndexState, VoltCodeSymbolKind } from '../common/voltCodeIndex.js';
+import { deleteSegment, ISegmentSymbols, mergeSegments, NEXT_BIT, PostingCache, releaseBuildMemory, rotl8, Segment, SegmentBuilder, TrigramTable, trigramBits } from './indexFormat.js';
 import { IGNORE_FILE_NAMES, listFiles, searchFiles } from './ripgrep.js';
 
 /** Text files up to this size are indexed; larger ones are always searched directly. */
 const MAX_INDEXED_BYTES = 16 * 1024 * 1024;
 const MAX_FILES = 1_000_000;
+/** Files too large to index whose trigram bitsets (2 MB each) are kept, so searches can skip them. */
+const MAX_LARGE_BITSETS = 16;
+/** A broken index tries again after this long (a full disk, too many open files, a lost watcher). */
+const HEAL_AFTER_MS = 60_000;
+/** Errors no retry can fix: the index stays off for this folder and searches use ripgrep. */
+class PermanentIndexError extends Error { }
 /** Postings held in memory while building, before they are written as a segment (~16 MB). */
 const BUILDER_POSTINGS = 2_000_000;
 const FLUSH_DELAY_MS = 1_500;
@@ -25,9 +33,14 @@ const FLUSH_AT = 256;
 const RELIST_DELAY_MS = 1_500;
 const COMPACT_SEGMENTS = 8;
 const COMPACT_DEAD_RATIO = 0.25;
-/** Up to this many candidates are matched in-process; more go to ripgrep with the file list. */
-const JS_VERIFY_MAX = 150;
+/** Above this many candidates the index is not selective enough to beat ripgrep's full scan. */
 const RG_VERIFY_MAX = 4_000;
+/**
+ * A pattern found in most files (`return`, `import`) fills the match limit within the first few
+ * of them: those are read in-process and the search stops, where ripgrep would read every file.
+ * When this many files do not fill the limit, ripgrep runs as before.
+ */
+const EARLY_SCAN_FILES = 512;
 /** When the index rules out less than this share of the files, a plain ripgrep scan is faster. */
 const UNSELECTIVE_RATIO = 0.35;
 const POSTING_CACHE_BYTES = 24 * 1024 * 1024;
@@ -106,6 +119,26 @@ function utf16Bom(bytes: Uint8Array): 'utf-16le' | 'utf-16be' | undefined {
 }
 
 function intersect(a: Uint32Array, b: Uint32Array): Uint32Array {
+	if (a.length > b.length) {
+		[a, b] = [b, a];
+	}
+	// A short list against a long one (a rare trigram and `the`): look each doc up instead of
+	// walking the long list. O(a log b) instead of O(a + b).
+	if (a.length * 16 < b.length) {
+		const out = new Uint32Array(a.length);
+		let n = 0;
+		let from = 0;
+		for (let i = 0; i < a.length; i++) {
+			from = seek(b, a[i], from);
+			if (from >= b.length) {
+				break;
+			}
+			if (b[from] === a[i]) {
+				out[n++] = a[i];
+			}
+		}
+		return out.subarray(0, n);
+	}
 	const out = new Uint32Array(Math.min(a.length, b.length));
 	let i = 0, j = 0, n = 0;
 	while (i < a.length && j < b.length) {
@@ -136,6 +169,45 @@ function unionAll(lists: readonly Uint32Array[]): Uint32Array {
 	return Uint32Array.from([...seen].sort((a, b) => a - b));
 }
 
+/**
+ * An AND drops each phrase another of its phrases contains (`em_c` next to `em_cache`): the longer
+ * one already requires it. Dropping an operand of an AND only widens the candidates, which are
+ * always checked against the files, so this can save work but never lose a match.
+ */
+function withoutContainedPhrases(query: TrigramQuery): TrigramQuery {
+	if (query.op !== 'and') {
+		return query;
+	}
+	const phrases = query.sub.filter(sub => sub.op === 'phrase').map(sub => (sub as { readonly text: string }).text);
+	const sub = query.sub.filter(part => part.op !== 'phrase' || !phrases.some(other => other !== part.text && other.length > part.text.length && other.includes(part.text)));
+	// Equal phrases: keep the first.
+	const seen = new Set<string>();
+	const unique = sub.filter(part => part.op !== 'phrase' || (seen.has(part.text) ? false : (seen.add(part.text), true)));
+	return unique.length === query.sub.length ? query : { ...query, sub: unique };
+}
+
+/** Whether a document with these trigrams can satisfy `query` (adjacency is not checked: a superset). */
+function bitsMayMatch(query: TrigramQuery, bits: Uint8Array): boolean {
+	switch (query.op) {
+		case 'all':
+			return true;
+		case 'none':
+			return false;
+		case 'and':
+			return query.sub.every(sub => bitsMayMatch(sub, bits));
+		case 'or':
+			return query.sub.some(sub => bitsMayMatch(sub, bits));
+		case 'phrase':
+			for (let i = 0; i + 2 < query.text.length; i++) {
+				const key = (query.text.charCodeAt(i) << 16) | (query.text.charCodeAt(i + 1) << 8) | query.text.charCodeAt(i + 2);
+				if (!(bits[key >>> 3] & (1 << (key & 7)))) {
+					return false;
+				}
+			}
+			return true;
+	}
+}
+
 /** The first index at or after `from` whose doc is >= `doc`. */
 function seek(docs: Uint32Array, doc: number, from: number): number {
 	let lo = from;
@@ -153,6 +225,45 @@ function seek(docs: Uint32Array, doc: number, from: number): number {
 
 function comparePaths(a: string, b: string): number {
 	return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** A path set that counts its changes, so derived lookups (the fuzzy index) know when they are stale. */
+class FileSet extends Set<string> {
+	private changes: number | undefined;
+
+	get version(): number {
+		return this.changes ?? 0;
+	}
+
+	override add(path: string): this {
+		if (!this.has(path)) {
+			this.changes = (this.changes ?? 0) + 1;
+		}
+		return super.add(path);
+	}
+
+	override delete(path: string): boolean {
+		const deleted = super.delete(path);
+		if (deleted) {
+			this.changes = (this.changes ?? 0) + 1;
+		}
+		return deleted;
+	}
+
+	override clear(): void {
+		this.changes = (this.changes ?? 0) + 1;
+		super.clear();
+	}
+}
+
+/** One segment's symbols, with a name lookup built on the first query that needs it. */
+interface ISymbolTable {
+	readonly syms: ISegmentSymbols;
+	names?: SymbolNameIndex;
+}
+
+function namesOf(table: ISymbolTable): SymbolNameIndex {
+	return table.names ??= new SymbolNameIndex(table.syms.names);
 }
 
 export function optionsKey(options: IVoltCodeIndexOptions | undefined): string {
@@ -179,7 +290,9 @@ export class RootIndex {
 	private deadCount = 0;
 
 	/** Every file ripgrep lists, of any kind. */
-	private listed = new Set<string>();
+	private listed = new FileSet();
+	/** `listed` prepared for fuzzy search, rebuilt when the list changed. */
+	private fuzzy: { readonly of: FileSet; readonly version: number; readonly index: FuzzyPathIndex } | undefined;
 	/** Indexed files and where their current document is. */
 	private readonly live = new Map<string, ILocation>();
 	private readonly large = new Set<string>();
@@ -200,11 +313,21 @@ export class RootIndex {
 	private flushing = false;
 	private compacting = false;
 	private watcher: parcelWatcher.AsyncSubscription | undefined;
+	/**
+	 * The root with symlinks resolved. File watchers report real paths (macOS: `/private/var/...`
+	 * for a root opened as `/var/...`); matched only against `root`, every event would be dropped
+	 * and new or edited files would silently stop being search candidates.
+	 */
+	private realRoot: string | undefined;
 
 	private readonly cache = new PostingCache(POSTING_CACHE_BYTES);
-	private symbolCache: { readonly bySegment: Map<number, ISegmentSymbols>; timer: ReturnType<typeof setTimeout> } | undefined;
+	private symbolCache: { readonly bySegment: Map<number, ISymbolTable>; timer: ReturnType<typeof setTimeout> } | undefined;
 	private lastSearchMs: number | undefined;
 	private waiters: (() => void)[] = [];
+	private permanent = false;
+	/** Trigram bitsets of files too large to index, valid while their size and time are unchanged. */
+	private readonly largeBits = new Map<string, { readonly size: number; readonly mtime: number; readonly bits: Uint8Array }>();
+	private lastHealAt = 0;
 	lastUsedAt = Date.now();
 
 	constructor(
@@ -261,9 +384,32 @@ export class RootIndex {
 		}
 		this.state = 'error';
 		this.error = err instanceof Error ? err.message : String(err);
+		this.permanent = err instanceof PermanentIndexError;
 		this.progress = undefined;
 		this.log(`[code index] ${this.root}: ${this.error}`);
 		this.changed();
+	}
+
+	/**
+	 * Builds the index again, at most once a minute: after a failed build, or when a query found
+	 * its files on disk gone or unreadable. Until then searches fall back to ripgrep.
+	 */
+	private heal(reason: string): void {
+		if (this.disposed || this.permanent || Date.now() - this.lastHealAt < HEAL_AFTER_MS) {
+			return;
+		}
+		this.lastHealAt = Date.now();
+		this.log(`[code index] ${this.root}: rebuilding (${reason})`);
+		void this.rebuild();
+	}
+
+	/** A query failed: an I/O error means the index on disk changed under it, so rebuild it. */
+	private queryFailed(err: unknown): { readonly kind: 'fallback'; readonly reason: string } {
+		const code = (err as { code?: unknown } | undefined)?.code;
+		if (typeof code === 'string' && /^(ENOENT|EIO|EBADF|EISDIR|ENOTDIR)$/.test(code)) {
+			this.heal(`index files unreadable: ${code}`);
+		}
+		return { kind: 'fallback', reason: `index: ${err instanceof Error ? err.message : err}` };
 	}
 
 	/** Tells the engine and anyone waiting in `prepare` that the state moved. */
@@ -391,7 +537,7 @@ export class RootIndex {
 		for (const path of manifest.binary ?? []) {
 			this.binary.add(path);
 		}
-		this.listed = new Set([...this.live.keys(), ...this.large, ...this.binary]);
+		this.listed = new FileSet([...this.live.keys(), ...this.large, ...this.binary]);
 		await this.removeStrayFiles(manifest.segments);
 		// Catch up with what changed while nothing was watching: ripgrep's list, then sizes and times.
 		await this.startWatcher(generation);
@@ -461,6 +607,7 @@ export class RootIndex {
 		this.dead.clear();
 		this.deadCount = 0;
 		this.large.clear();
+		this.largeBits.clear();
 		this.binary.clear();
 		this.dirty.clear();
 		this.inFlight.clear();
@@ -475,9 +622,9 @@ export class RootIndex {
 		await this.startWatcher(generation);
 		const listed = await listFiles(this.root, this.options, MAX_FILES);
 		if (listed.truncated) {
-			throw new Error(`more than ${MAX_FILES.toLocaleString()} files; searches use ripgrep`);
+			throw new PermanentIndexError(`more than ${MAX_FILES.toLocaleString()} files; searches use ripgrep`);
 		}
-		this.listed = new Set(listed.paths);
+		this.listed = new FileSet(listed.paths);
 		const paths = [...listed.paths].sort(comparePaths);
 		this.progress = { done: 0, total: paths.length };
 		let nextId = 1;
@@ -652,7 +799,6 @@ export class RootIndex {
 		this.binary.delete(path);
 		this.dirty.add(path);
 		this.touchedWhileCompacting?.add(path);
-		this.dropSymbols();
 		this.scheduleFlush();
 	}
 
@@ -661,7 +807,6 @@ export class RootIndex {
 		if (at) {
 			this.kill(at);
 			this.live.delete(path);
-			this.dropSymbols();
 		}
 		this.listed.delete(path);
 		this.large.delete(path);
@@ -792,7 +937,6 @@ export class RootIndex {
 			}
 			this.manifest = { ...this.manifest!, nextId: id + 1 };
 			this.cache.clear();
-			this.dropSymbols();
 			await this.persistTombstones();
 			this.retire(old);
 			this.changed();
@@ -815,6 +959,8 @@ export class RootIndex {
 		if (this.watcher) {
 			return;
 		}
+		const real = await fs.realpath(this.root).catch(() => this.root);
+		this.realRoot = real !== this.root ? real : undefined;
 		try {
 			const subscription = await parcelWatcher.subscribe(this.root, (err, events) => {
 				if (generation !== this.generation) {
@@ -843,11 +989,13 @@ export class RootIndex {
 	}
 
 	private relativePath(abs: string): string | undefined {
-		const rel = relative(this.root, abs);
-		if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
-			return undefined;
+		for (const root of this.realRoot ? [this.root, this.realRoot] : [this.root]) {
+			const rel = relative(root, abs);
+			if (rel && !rel.startsWith('..') && !isAbsolute(rel)) {
+				return sep === '/' ? rel : rel.split(sep).join('/');
+			}
 		}
-		return sep === '/' ? rel : rel.split(sep).join('/');
+		return undefined;
 	}
 
 	private onEvents(events: readonly IWatcherEvent[]): void {
@@ -910,7 +1058,7 @@ export class RootIndex {
 				this.pendingCreates.clear();
 				const listed = await listFiles(this.root, this.options, MAX_FILES);
 				if (listed.truncated) {
-					throw new Error(`more than ${MAX_FILES.toLocaleString()} files; searches use ripgrep`);
+					throw new PermanentIndexError(`more than ${MAX_FILES.toLocaleString()} files; searches use ripgrep`);
 				}
 				const now = new Set(listed.paths);
 				for (const path of [...this.listed]) {
@@ -975,7 +1123,11 @@ export class RootIndex {
 			await this.waitForChange(left);
 		}
 		if (this.state !== 'ready') {
-			return this.state === 'error' ? `index error: ${this.error}` : 'indexing';
+			if (this.state === 'error') {
+				this.heal(`retrying after: ${this.error}`);
+				return `index error: ${this.error}`;
+			}
+			return 'indexing';
 		}
 		if (this.pendingCreates.size || this.fullRelistNeeded || this.relisting) {
 			clearTimeout(this.relistTimer);
@@ -994,6 +1146,7 @@ export class RootIndex {
 	//#region Queries
 
 	private async evaluate(query: TrigramQuery, segment: Segment): Promise<Uint32Array | 'all'> {
+		query = withoutContainedPhrases(query);
 		switch (query.op) {
 			case 'all':
 				return 'all';
@@ -1079,6 +1232,38 @@ export class RootIndex {
 		return out.subarray(0, n);
 	}
 
+	/** Whether a file too large to index can match `query`: true unless its trigrams rule it out. */
+	private async largeMayMatch(path: string, query: TrigramQuery): Promise<boolean> {
+		if (query.op === 'all') {
+			return true;
+		}
+		const abs = join(this.root, path);
+		const stat = await fs.stat(abs).catch(() => undefined);
+		if (!stat) {
+			return true; // let the read decide (it skips files that are gone)
+		}
+		if (this.largeBits.size > this.large.size) {
+			for (const known of [...this.largeBits.keys()]) {
+				if (!this.large.has(known)) {
+					this.largeBits.delete(known);
+				}
+			}
+		}
+		let entry = this.largeBits.get(path);
+		if (!entry || entry.size !== stat.size || entry.mtime !== stat.mtimeMs) {
+			if (!entry && this.largeBits.size >= MAX_LARGE_BITSETS) {
+				return true;
+			}
+			const bytes = await fs.readFile(abs).catch(() => undefined);
+			if (!bytes) {
+				return true;
+			}
+			entry = { size: stat.size, mtime: stat.mtimeMs, bits: trigramBits(bytes) };
+			this.largeBits.set(path, entry);
+		}
+		return bitsMayMatch(query, entry.bits);
+	}
+
 	/** The folder below the root a query is limited to ('' for the root), or undefined when outside. */
 	private folderOf(folder: string | undefined): string | undefined {
 		if (!folder) {
@@ -1141,7 +1326,7 @@ export class RootIndex {
 		try {
 			return await this.doSearch(request);
 		} catch (err) {
-			return { kind: 'fallback', reason: `index: ${err instanceof Error ? err.message : err}` };
+			return this.queryFailed(err);
 		}
 	}
 
@@ -1158,7 +1343,8 @@ export class RootIndex {
 		const caseInsensitive = !request.caseSensitive;
 		const query = request.isRegExp ? regexTrigramQuery(request.pattern, caseInsensitive) : literalTrigramQuery(request.pattern, caseInsensitive);
 		const filtered = !!folder || !!request.includes?.length || !!request.excludes?.length;
-		if (query.op === 'all' && !filtered) {
+		const matcher = createJsMatcher(request.pattern, request.isRegExp, request.caseSensitive, request.multiline, !!request.wholeWord);
+		if (query.op === 'all' && !filtered && !matcher) {
 			return { kind: 'fallback', reason: 'unselective' }; // nothing to look up: ripgrep's full scan is faster
 		}
 		const keep = this.pathFilter(folder, request.includes, request.excludes);
@@ -1197,47 +1383,68 @@ export class RootIndex {
 				}
 			}
 		}
-		for (const path of [...this.dirty, ...this.inFlight, ...this.large]) {
+		for (const path of [...this.dirty, ...this.inFlight]) {
 			if (keep(path)) {
 				candidates.push(path);
 			}
 		}
-		const unique = [...new Set(candidates)].sort(comparePaths);
-		if (unique.length > RG_VERIFY_MAX) {
-			return { kind: 'fallback', reason: 'unselective' };
+		// Files too large to index used to be read by every search (Linux: a 23 MB header, 8 ms each).
+		for (const path of this.large) {
+			if (keep(path) && await this.largeMayMatch(path, query)) {
+				candidates.push(path);
+			}
 		}
-		if (unique.length > 2_000) {
+		const context = Math.min(5, Math.max(0, request.context ?? 0));
+		const maxLineChars = request.maxLineChars ?? 500;
+		const deduped = [...new Set(candidates)];
+		let unselective = deduped.length > RG_VERIFY_MAX;
+		if (!unselective && deduped.length > 2_000) {
 			let universe = this.dirty.size + this.inFlight.size + this.large.size;
 			for (const path of this.live.keys()) {
 				if (!filtered || keep(path)) {
 					universe++;
 				}
 			}
-			if (unique.length > universe * UNSELECTIVE_RATIO) {
+			unselective = deduped.length > universe * UNSELECTIVE_RATIO;
+		}
+		if (unselective) {
+			if (!matcher) {
 				return { kind: 'fallback', reason: 'unselective' };
 			}
+			// The candidates' order is the index's: stable for an unchanged index, as cheap as it gets.
+			const early = await this.verify(deduped.slice(0, EARLY_SCAN_FILES), matcher, context, request.maxMatches, maxLineChars);
+			if (!early.limitHit && deduped.length > EARLY_SCAN_FILES) {
+				return { kind: 'fallback', reason: 'unselective' };
+			}
+			this.lastSearchMs = Date.now() - started;
+			return {
+				kind: 'results',
+				files: early.files.sort((a, b) => comparePaths(a.path, b.path)),
+				limitHit: early.limitHit,
+				stats: { candidates: deduped.length, scanned: early.scanned, indexedFiles: this.live.size, ms: this.lastSearchMs, engine: 'index' },
+			};
 		}
-		const context = Math.min(5, Math.max(0, request.context ?? 0));
-		const maxLineChars = request.maxLineChars ?? 500;
-		const matcher = createJsMatcher(request.pattern, request.isRegExp, request.caseSensitive, request.multiline, !!request.wholeWord);
+		const unique = deduped.sort(comparePaths);
+		const ripgrep = (files: readonly string[], maxMatches: number) => searchFiles(this.root, files, {
+			pattern: request.pattern,
+			isRegExp: request.isRegExp,
+			caseSensitive: request.caseSensitive,
+			multiline: request.multiline,
+			wholeWord: !!request.wholeWord,
+			context,
+			maxMatches,
+			maxLineChars,
+		});
 		let result: { files: IVoltCodeIndexFileHits[]; limitHit: boolean; scanned: number; engine: 'index' | 'ripgrep' };
 		if (!unique.length) {
 			result = { files: [], limitHit: false, scanned: 0, engine: 'index' };
-		} else if (matcher && unique.length <= JS_VERIFY_MAX) {
+		} else if (matcher) {
+			// In-process: it stops at the match limit, and for selective candidate sets reading them
+			// here beats ripgrep's process start and file list (VOLT, ~1,500 candidates: 50 vs 200 ms).
 			result = { ...await this.verify(unique, matcher, context, request.maxMatches, maxLineChars), engine: 'index' };
 		} else {
 			try {
-				const found = await searchFiles(this.root, unique, {
-					pattern: request.pattern,
-					isRegExp: request.isRegExp,
-					caseSensitive: request.caseSensitive,
-					multiline: request.multiline,
-					wholeWord: !!request.wholeWord,
-					context,
-					maxMatches: request.maxMatches,
-					maxLineChars,
-				});
-				result = { ...found, scanned: unique.length, engine: 'ripgrep' };
+				result = { ...await ripgrep(unique, request.maxMatches), scanned: unique.length, engine: 'ripgrep' };
 			} catch (err) {
 				return { kind: 'fallback', reason: `ripgrep: ${err instanceof Error ? err.message : err}` };
 			}
@@ -1287,7 +1494,7 @@ export class RootIndex {
 		try {
 			return await this.doFiles(request);
 		} catch (err) {
-			return { kind: 'fallback', reason: `index: ${err instanceof Error ? err.message : err}` };
+			return this.queryFailed(err);
 		}
 	}
 
@@ -1311,6 +1518,38 @@ export class RootIndex {
 		return { kind: 'results', paths: out.slice(0, request.limit), limitHit: out.length > request.limit };
 	}
 
+	/** Fuzzy, typo-tolerant search over every listed file's path. */
+	async findFiles(request: IVoltCodeIndexFindFilesRequest): Promise<IVoltCodeIndexFindFilesResult> {
+		try {
+			const started = Date.now();
+			const notReady = await this.prepare(request.waitMs);
+			if (notReady) {
+				return { kind: 'fallback', reason: notReady };
+			}
+			const folder = this.folderOf(request.folder);
+			if (folder === undefined || !this.hasFilesUnder(folder)) {
+				return { kind: 'fallback', reason: 'not indexed' };
+			}
+			const prefix = folder ? `${folder}/` : '';
+			const listed = this.listed;
+			if (this.fuzzy?.of !== listed || this.fuzzy.version !== listed.version) {
+				this.fuzzy = { of: listed, version: listed.version, index: new FuzzyPathIndex([...listed]) };
+			}
+			const found = this.fuzzy.index.find(request.query, request.limit, prefix);
+			return { kind: 'results', paths: found.paths, limitHit: found.total > found.paths.length, engine: 'index', ms: Date.now() - started };
+		} catch (err) {
+			return this.queryFailed(err);
+		}
+	}
+
+	/**
+	 * Which of `paths` (root-relative) are files of this project as the index lists them, so
+	 * another engine's answer respects the same ignore files. Undefined until the list is loaded.
+	 */
+	listedFilter(): ((path: string) => boolean) | undefined {
+		return this.state === 'ready' ? path => this.listed.has(path) : undefined;
+	}
+
 	private dropSymbols(): void {
 		if (this.symbolCache) {
 			clearTimeout(this.symbolCache.timer);
@@ -1318,15 +1557,18 @@ export class RootIndex {
 		}
 	}
 
-	private async loadSymbols(): Promise<Map<number, ISegmentSymbols>> {
-		if (this.symbolCache) {
+	private async loadSymbols(): Promise<Map<number, ISymbolTable>> {
+		if (this.symbolCache && this.segments.every(segment => this.symbolCache!.bySegment.has(segment.id))) {
 			clearTimeout(this.symbolCache.timer);
 			this.symbolCache.timer = setTimeout(() => this.dropSymbols(), SYMBOLS_TTL_MS);
 			return this.symbolCache.bySegment;
 		}
-		const bySegment = new Map<number, ISegmentSymbols>();
+		// Segments come and go (flushes, compaction): keep the tables of those still here.
+		const previous = this.symbolCache?.bySegment;
+		this.dropSymbols();
+		const bySegment = new Map<number, ISymbolTable>();
 		for (const segment of this.segments) {
-			bySegment.set(segment.id, await segment.symbols());
+			bySegment.set(segment.id, previous?.get(segment.id) ?? { syms: await segment.symbols() });
 		}
 		this.symbolCache = { bySegment, timer: setTimeout(() => this.dropSymbols(), SYMBOLS_TTL_MS) };
 		return bySegment;
@@ -1336,7 +1578,7 @@ export class RootIndex {
 		try {
 			return await this.doSymbols(request);
 		} catch (err) {
-			return { kind: 'fallback', reason: `index: ${err instanceof Error ? err.message : err}` };
+			return this.queryFailed(err);
 		}
 	}
 
@@ -1399,15 +1641,32 @@ export class RootIndex {
 		};
 		const bySegment = await this.loadSymbols();
 		for (const segment of this.segments) {
-			const syms = bySegment.get(segment.id);
+			const table = bySegment.get(segment.id);
 			const dead = this.dead.get(segment.id);
-			if (!syms) {
+			if (!table) {
 				continue;
 			}
-			for (let i = 0; i < syms.names.length; i++) {
+			const syms = table.syms;
+			// Cached tables outlive edits: a changed file's old symbols are skipped here (they are read
+			// from the file below) and a removed file's are dead, so nothing stale is reported.
+			const visit = (i: number) => {
 				const doc = syms.docs[i];
 				if (!dead?.[doc]) {
-					consider(syms.names[i], syms.kinds[i], segment.docs.paths[doc], syms.lines[i]);
+					const path = segment.docs.paths[doc];
+					if (!this.dirty.has(path) && !this.inFlight.has(path)) {
+						consider(syms.names[i], syms.kinds[i], path, syms.lines[i]);
+					}
+				}
+			};
+			// Exact and prefix (any case): a hash lookup instead of a pass over every symbol.
+			const indexed = everything ? undefined : mode === 'exact' ? namesOf(table).equal(lower) : mode === 'prefix' ? namesOf(table).startingWith(lower) : undefined;
+			if (indexed) {
+				for (const i of indexed) {
+					visit(i);
+				}
+			} else {
+				for (let i = 0; i < syms.names.length; i++) {
+					visit(i);
 				}
 			}
 		}

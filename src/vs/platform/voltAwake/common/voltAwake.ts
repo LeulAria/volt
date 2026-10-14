@@ -22,7 +22,7 @@ export interface IAwakePrefs {
 	readonly lidClosedMode: boolean;
 	/** How long the hold outlasts the last run, so queued follow-ups and subagent reports land. */
 	readonly graceMinutes: number;
-	/** Lid-Closed Mode lets go after this long without a break in agent work. */
+	/** Lid-Closed Mode lets go after this long without a break in agent work. 0: never (the battery and heat guards still hold). */
 	readonly maxHours: number;
 	/** On battery, Lid-Closed Mode lets go below this charge. 0 turns the floor off. */
 	readonly batteryFloorPercent: number;
@@ -32,7 +32,8 @@ export const DEFAULT_AWAKE_PREFS: IAwakePrefs = {
 	whileAgentsWork: true,
 	lidClosedMode: true,
 	graceMinutes: 2,
-	maxHours: 12,
+	// Agents keep working for as long as their work takes (Volt restarts what stops); battery and heat still let go.
+	maxHours: 0,
 	batteryFloorPercent: 20,
 };
 
@@ -158,7 +159,7 @@ export function decideAwake(input: IAwakePolicyInput): IAwakeDecision {
 	if (input.thermal === 'critical') {
 		return { idle: true, lid: false, reason, blockedBy: 'thermal' };
 	}
-	if (input.episodeStartedAt !== undefined && input.now - input.episodeStartedAt > Math.max(1, prefs.maxHours) * HOUR) {
+	if (prefs.maxHours > 0 && input.episodeStartedAt !== undefined && input.now - input.episodeStartedAt > prefs.maxHours * HOUR) {
 		return { idle: true, lid: false, reason, blockedBy: 'cap' };
 	}
 	return { idle: true, lid: true, reason };
@@ -178,7 +179,7 @@ export function readAwakePrefs(get: (key: string) => unknown): IAwakePrefs {
 		whileAgentsWork: bool(AWAKE_WHILE_AGENTS_WORK_SETTING, DEFAULT_AWAKE_PREFS.whileAgentsWork),
 		lidClosedMode: bool(AWAKE_LID_CLOSED_MODE_SETTING, DEFAULT_AWAKE_PREFS.lidClosedMode),
 		graceMinutes: num(AWAKE_GRACE_MINUTES_SETTING, DEFAULT_AWAKE_PREFS.graceMinutes, 0, 60),
-		maxHours: num(AWAKE_MAX_HOURS_SETTING, DEFAULT_AWAKE_PREFS.maxHours, 1, 72),
+		maxHours: num(AWAKE_MAX_HOURS_SETTING, DEFAULT_AWAKE_PREFS.maxHours, 0, 720),
 		batteryFloorPercent: num(AWAKE_BATTERY_FLOOR_SETTING, DEFAULT_AWAKE_PREFS.batteryFloorPercent, 0, 90),
 	};
 }

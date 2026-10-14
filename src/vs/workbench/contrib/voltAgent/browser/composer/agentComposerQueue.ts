@@ -79,8 +79,8 @@ export function queuePauseLabel(pause: QueuePause): string {
 
 function queuePauseHint(pause: QueuePause): string {
 	switch (pause) {
-		case 'failed': return localize('voltAgent.queue.pausedErrorHint', "The last run failed, so queued prompts wait for you instead of going to the same provider.");
-		case 'interrupted': return localize('voltAgent.queue.pausedRestartHint', "Volt restarted while this chat worked. Nothing resumes on its own: Resume continues.");
+		case 'failed': return localize('voltAgent.queue.pausedErrorHint', "The last run failed, so queued prompts wait instead of going to the same provider right away. Resume sends them now.");
+		case 'interrupted': return localize('voltAgent.queue.pausedRestartHint', "Volt restarted while this chat worked. Resume continues now.");
 		case 'wakeups': return localize('voltAgent.queue.pausedWakeupsHint', "Subagent reports woke this chat many times in a row without you. Resume to keep going.");
 		case 'stopped': return localize('voltAgent.queue.pausedStopHint', "Nothing is running, so queued prompts wait for you.");
 	}

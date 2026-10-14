@@ -17,6 +17,7 @@ import { createCodeTools, ICodeIntelHost } from './codeTools.js';
 import { createFileTools, IToolDocuments } from './fileTools.js';
 import { createGitTools } from './gitTools.js';
 import { createMetaTools, IMetaToolHost } from './metaTools.js';
+import { VoltSearch } from '../search/voltSearch.js';
 import { createSearchTools, ISearchIndex } from './searchTools.js';
 import { createShellTools } from './shellTool.js';
 import { createTerminalTools } from './terminalTool.js';
@@ -35,10 +36,13 @@ export interface IBuiltinToolServices {
 	readonly readRoots?: () => readonly URI[];
 	readonly rulesFor?: (uri: URI) => string | undefined;
 	readonly codeIntel?: ICodeIntelHost;
-	/** Volt's code index: instant grep, glob and symbol lookup (ripgrep when it cannot answer). */
+	/** Volt's unified search: the code index, FFF and ripgrep behind one API. */
+	readonly search: VoltSearch;
+	/** Volt's code index, for code_nav when language servers cannot answer. */
 	readonly codeIndex?: ISearchIndex;
 	/** Run shell commands through RTK when it is installed (Settings > Code Intelligence). */
 	readonly rtk?: () => boolean;
+	readonly rtkExclusions?: () => readonly string[];
 	readonly spillDir?: () => string | undefined;
 	readonly onLog?: (path: string) => void;
 }
@@ -57,9 +61,9 @@ export function createBuiltinTools(services: IBuiltinToolServices): IVoltTool[] 
 			documents: services.documents,
 			rulesFor: services.rulesFor,
 		}),
-		...createSearchTools(services.searchService, services.root, services.codeIndex),
+		...createSearchTools(services.search, services.root),
 		...(services.codeIntel ? createCodeTools(services.codeIntel, services.root, services.codeIndex ? createCodeIndexNav(services.codeIndex) : undefined) : []),
-		...createShellTools({ stdio: services.stdio, root: services.root, spillDir: services.spillDir, onLog: services.onLog, hostTools: services.hostTools, rtk: services.rtk }),
+		...createShellTools({ stdio: services.stdio, root: services.root, spillDir: services.spillDir, onLog: services.onLog, hostTools: services.hostTools, rtk: services.rtk, rtkExclusions: services.rtkExclusions }),
 		...createTerminalTools(services.hostTools),
 		...createGitTools(services.stdio, services.root),
 		...createWebTools(services.requestService),

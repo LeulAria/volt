@@ -4,20 +4,21 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
-import { Schemas } from '../../../../../base/common/network.js';
-import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
-import { IVoltCodeIndexOptions, IVoltCodeIndexService, VoltCodeSymbolKind } from '../../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
-import { ISearchService, ITextSearchContext, QueryType, resultIsMatch } from '../../../search/common/search.js';
+import { VoltCodeSymbolKind } from '../../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { formatSymbols, SYMBOL_KIND_NAMES } from '../../common/codeIntelligence.js';
 import { pickBoolean, pickNumber, pickString } from '../../common/tools/args.js';
 import { IToolResult, IVoltTool } from '../../common/tools/tool.js';
+import { IVoltGrepFile, IVoltSearchMeta, VoltSearch } from '../search/voltSearch.js';
 import { objectSchema } from './schema.js';
-import { displayPath, resolveWorkspaceUri } from './workspacePath.js';
+import { resolveWorkspaceUri } from './workspacePath.js';
+
+export type { ISearchIndex } from '../search/voltSearch.js';
 
 const DEFAULT_MATCHES = 100;
 const DEFAULT_FILES = 200;
 const DEFAULT_SYMBOLS = 30;
+const DEFAULT_FIND_FILES = 20;
 const LINE_CHARS = 500;
 
 /** `type: "ts"` without the model having to remember brace globs. */
@@ -47,20 +48,8 @@ const FILE_TYPES: Record<string, string> = {
 	svelte: '**/*.svelte',
 };
 
-const DEFAULT_EXCLUDES = { '**/node_modules': true, '**/.git': true } as const;
-
-/**
- * Volt's code index, when Settings > Code Intelligence allows it. Searches try it first and
- * fall back to ripgrep whenever it cannot answer exactly (still building, a folder it does not
- * cover, a pattern that rules nothing out).
- */
-export interface ISearchIndex {
-	readonly service: IVoltCodeIndexService;
-	readonly enabled: () => boolean;
-	readonly options: () => IVoltCodeIndexOptions;
-}
-
-export function createSearchTools(search: ISearchService, root: () => URI | undefined, index?: ISearchIndex): IVoltTool[] {
+/** The agent's search tools, answered by Volt's unified search (index, FFF, ripgrep). */
+export function createSearchTools(search: VoltSearch, root: () => URI | undefined): IVoltTool[] {
 	return [
 		{
 			name: 'grep',
@@ -89,7 +78,7 @@ export function createSearchTools(search: ISearchService, root: () => URI | unde
 			}, ['pattern']),
 			idempotent: true,
 			timeoutMs: 60_000,
-			execute: async (args, ctx) => runGrep(search, root(), args, ctx.signal, index),
+			execute: async (args, ctx) => runGrep(search, root(), args, ctx.signal),
 		},
 		{
 			name: 'glob',
@@ -109,7 +98,27 @@ export function createSearchTools(search: ISearchService, root: () => URI | unde
 			}, ['pattern']),
 			idempotent: true,
 			timeoutMs: 60_000,
-			execute: async (args, ctx) => runGlob(search, root(), args, ctx.signal, index),
+			execute: async (args, ctx) => runGlob(search, root(), args, ctx.signal),
+		},
+		{
+			name: 'find_files',
+			group: 'search',
+			kind: 'search',
+			parallelSafe: true,
+			snippet: 'find_files - find a file by a fuzzy name or path, typos allowed',
+			description: [
+				'Find files by name when you know roughly what a file is called but not where it is: fuzzy and typo-tolerant ("rootIndx" finds rootIndex.ts), best match first.',
+				'Each word narrows the results: "sched fair" finds kernel/sched/fair.c. Use 1-2 words.',
+				'Use glob for exact patterns (all *.test.ts), grep for file contents.',
+			].join(' '),
+			schema: objectSchema({
+				query: { type: 'string', description: 'Part of a file name or path, e.g. userService or auth middleware' },
+				path: { type: 'string', description: 'Only under this folder' },
+				limit: { type: 'integer', description: `Maximum paths (default ${DEFAULT_FIND_FILES})` },
+			}, ['query']),
+			idempotent: true,
+			timeoutMs: 30_000,
+			execute: async (args, ctx) => runFindFiles(search, root(), args, ctx.signal),
 		},
 		{
 			name: 'find_symbol',
@@ -131,23 +140,17 @@ export function createSearchTools(search: ISearchService, root: () => URI | unde
 			}, ['name']),
 			idempotent: true,
 			timeoutMs: 30_000,
-			execute: async (args, ctx) => runFindSymbol(search, root(), args, ctx.signal, index),
+			execute: async (args, ctx) => runFindSymbol(search, root(), args, ctx.signal),
 		},
 	];
 }
 
-interface IFileHits {
-	readonly path: string;
-	readonly lines: Map<number, { text: string; match: boolean }>;
-	matches: number;
+/** A line saying which engine did not answer and why, only when it matters to the reader. */
+function fallbackNote(meta: IVoltSearchMeta): string {
+	return meta.fallback && /error|failed|unusable/i.test(meta.fallback) ? `\n[The code index could not answer (${meta.fallback}); searched with ripgrep.]` : '';
 }
 
-/** Whether `index` can serve searches under `folder` of the workspace at `root`. */
-function indexFor(index: ISearchIndex | undefined, root: URI | undefined, folder: URI): ISearchIndex | undefined {
-	return index && root?.scheme === Schemas.file && folder.scheme === Schemas.file && index.enabled() ? index : undefined;
-}
-
-async function runGrep(search: ISearchService, root: URI | undefined, args: unknown, signal: AbortSignal, index: ISearchIndex | undefined): Promise<IToolResult> {
+async function runGrep(search: VoltSearch, root: URI | undefined, args: unknown, signal: AbortSignal): Promise<IToolResult> {
 	const pattern = pickString(args, 'pattern', 'query', 'regex');
 	if (!pattern) {
 		return fail('grep', 'pattern is required.');
@@ -158,87 +161,31 @@ async function runGrep(search: ISearchService, root: URI | undefined, args: unkn
 	}
 	const mode = pickString(args, 'output_mode') ?? 'content';
 	const literal = pickBoolean(args, 'literal');
-	const caseSensitive = pickBoolean(args, 'case_sensitive');
-	const multiline = pickBoolean(args, 'multiline');
 	const context = Math.min(5, Math.max(0, pickNumber(args, 'context') ?? 0));
 	const limit = Math.max(1, pickNumber(args, 'head_limit') ?? (mode === 'content' ? DEFAULT_MATCHES : DEFAULT_FILES));
 	const includes = includePattern(pickString(args, 'glob', 'include'), pickString(args, 'type'));
-	const maxMatches = mode === 'content' ? limit : Math.max(limit * 20, 2_000);
-	let files: IFileHits[] | undefined;
-	let hitLimit = false;
-
-	const indexed = indexFor(index, root, folder);
-	if (indexed && root) {
-		const result = await indexed.service.search({
-			root: root.fsPath,
-			folder: folder.fsPath,
+	let result;
+	try {
+		result = await search.grep({
+			root,
+			folder,
 			pattern,
-			isRegExp: !literal,
-			caseSensitive,
-			multiline,
-			includes: includes ? Object.keys(includes) : undefined,
+			literal,
+			caseSensitive: pickBoolean(args, 'case_sensitive'),
+			multiline: pickBoolean(args, 'multiline'),
 			context,
-			maxMatches,
+			includes,
+			maxMatches: mode === 'content' ? limit : Math.max(limit * 20, 2_000),
 			maxLineChars: LINE_CHARS,
-			options: indexed.options(),
-		}).catch(() => undefined);
-		if (result?.kind === 'results') {
-			files = result.files.map(file => ({
-				path: displayPath(root, joinPath(root, file.path)),
-				lines: new Map(file.lines.map(line => [line.line, { text: line.text.replace(/\s+$/, ''), match: line.match }])),
-				matches: file.matches,
-			}));
-			hitLimit = result.limitHit || (mode === 'content' ? false : files.length > limit);
-		}
+		}, tokenFor(signal));
+	} catch (err) {
+		return fail('grep', err instanceof Error ? err.message : String(err));
 	}
-
-	if (!files) {
-		const token = tokenFor(signal);
-		try {
-			const complete = await search.textSearch({
-				type: QueryType.Text,
-				contentPattern: {
-					pattern,
-					isRegExp: !literal,
-					isCaseSensitive: caseSensitive,
-					isMultiline: multiline,
-				},
-				folderQueries: [{ folder }],
-				maxResults: mode === 'content' ? limit + 1 : maxMatches,
-				previewOptions: { matchLines: 1, charsPerLine: LINE_CHARS },
-				...(context ? { surroundingContext: context } : {}),
-				...(includes ? { includePattern: includes } : {}),
-				...(folder.path.includes('/node_modules') ? {} : { excludePattern: { ...DEFAULT_EXCLUDES } }),
-			}, token);
-			files = [];
-			let matches = 0;
-			for (const file of complete.results) {
-				const hits: IFileHits = { path: displayPath(root, file.resource), lines: new Map(), matches: 0 };
-				for (const result of file.results ?? []) {
-					if (resultIsMatch(result)) {
-						const line = (result.rangeLocations[0]?.source.startLineNumber ?? 0) + 1;
-						hits.lines.set(line, { text: firstLine(result.previewText), match: true });
-						hits.matches++;
-					} else {
-						const ctx = result as ITextSearchContext;
-						if (!hits.lines.has(ctx.lineNumber)) {
-							hits.lines.set(ctx.lineNumber, { text: firstLine(ctx.text), match: false });
-						}
-					}
-				}
-				if (hits.matches) {
-					files.push(hits);
-					matches += hits.matches;
-				}
-			}
-			hitLimit = complete.limitHit || (mode === 'content' ? matches > limit : files.length > limit);
-		} catch (err) {
-			return fail('grep', err instanceof Error ? err.message : String(err));
-		}
-	}
-
+	const files = result.files;
+	const hitLimit = result.limitHit || (mode !== 'content' && files.length > limit);
+	const note = fallbackNote(result);
 	if (!files.length) {
-		return { callId: '', name: 'grep', kind: 'search', text: `No matches for ${literal ? 'text' : 'pattern'} ${JSON.stringify(pattern)}${includes ? ` in ${Object.keys(includes).join(', ')}` : ''}.`, display: { card: 'search', shape: 'matches', files: [], truncated: false, total: 0 } };
+		return { callId: '', name: 'grep', kind: 'search', text: `No matches for ${literal ? 'text' : 'pattern'} ${JSON.stringify(pattern)}${includes ? ` in ${includes.join(', ')}` : ''}.${note}`, display: { card: 'search', shape: 'matches', files: [], truncated: false, total: 0 } };
 	}
 	const matches = files.reduce((sum, file) => sum + file.matches, 0);
 	const more = hitLimit ? `\n[More results exist. Narrow the pattern, path, glob, or type, or raise head_limit.]` : '';
@@ -246,7 +193,7 @@ async function runGrep(search: ISearchService, root: URI | undefined, args: unkn
 		const shown = files.slice(0, limit);
 		return {
 			callId: '', name: 'grep', kind: 'search',
-			text: `${files.length} file${files.length === 1 ? '' : 's'} match:\n${shown.map(file => file.path).join('\n')}${more}`,
+			text: `${files.length} file${files.length === 1 ? '' : 's'} match:\n${shown.map(file => file.path).join('\n')}${more}${note}`,
 			display: { card: 'search', shape: 'paths', paths: shown.map(file => file.path), truncated: hitLimit, total: files.length },
 		};
 	}
@@ -254,9 +201,19 @@ async function runGrep(search: ISearchService, root: URI | undefined, args: unkn
 		const shown = files.slice(0, limit);
 		return {
 			callId: '', name: 'grep', kind: 'search',
-			text: `${matches} match${matches === 1 ? '' : 'es'} in ${files.length} file${files.length === 1 ? '' : 's'}:\n${shown.map(file => `${file.path}: ${file.matches}`).join('\n')}${more}`,
+			text: `${matches} match${matches === 1 ? '' : 'es'} in ${files.length} file${files.length === 1 ? '' : 's'}:\n${shown.map(file => `${file.path}: ${file.matches}`).join('\n')}${more}${note}`,
 		};
 	}
+	const { text, view } = formatMatches(files, limit, context);
+	return {
+		callId: '', name: 'grep', kind: 'search',
+		text: `${text}${more}${note}`,
+		display: { card: 'search', shape: 'matches', files: view, truncated: hitLimit, total: matches },
+	};
+}
+
+/** `path:` then `  12: text` lines (context lines with `-`, gaps with `--`), up to `limit` matches. */
+export function formatMatches(files: readonly IVoltGrepFile[], limit: number, context: number): { text: string; view: { path: string; matches: { lineNumber: number; line: string }[] }[] } {
 	const out: string[] = [];
 	const view: { path: string; matches: { lineNumber: number; line: string }[] }[] = [];
 	let shownMatches = 0;
@@ -283,14 +240,10 @@ async function runGrep(search: ISearchService, root: URI | undefined, args: unkn
 		}
 		view.push(entry);
 	}
-	return {
-		callId: '', name: 'grep', kind: 'search',
-		text: `${out.join('\n')}${more}`,
-		display: { card: 'search', shape: 'matches', files: view, truncated: hitLimit, total: matches },
-	};
+	return { text: out.join('\n'), view };
 }
 
-async function runGlob(search: ISearchService, root: URI | undefined, args: unknown, signal: AbortSignal, index: ISearchIndex | undefined): Promise<IToolResult> {
+async function runGlob(search: VoltSearch, root: URI | undefined, args: unknown, signal: AbortSignal): Promise<IToolResult> {
 	const pattern = pickString(args, 'pattern', 'glob', 'file_pattern');
 	if (!pattern) {
 		return fail('glob', 'pattern is required.');
@@ -301,46 +254,46 @@ async function runGlob(search: ISearchService, root: URI | undefined, args: unkn
 	}
 	const limit = Math.max(1, pickNumber(args, 'limit') ?? DEFAULT_FILES);
 	const filePattern = pattern.includes('/') || pattern.startsWith('**') ? pattern : `**/${pattern}`;
-	let paths: string[] | undefined;
-	let truncated = false;
-	const indexed = indexFor(index, root, folder);
-	if (indexed && root) {
-		const result = await indexed.service.files({ root: root.fsPath, folder: folder.fsPath, pattern: filePattern, limit, options: indexed.options() }).catch(() => undefined);
-		if (result?.kind === 'results') {
-			// Index paths are relative to the root; show them relative to the root as ripgrep's are.
-			paths = result.paths.map(path => displayPath(root, joinPath(root, path)));
-			truncated = result.limitHit;
-		}
+	let result;
+	try {
+		result = await search.glob({ root, folder, pattern: filePattern, limit }, tokenFor(signal));
+	} catch (err) {
+		return fail('glob', err instanceof Error ? err.message : String(err));
 	}
-	if (!paths) {
-		try {
-			const complete = await search.fileSearch({
-				type: QueryType.File,
-				filePattern,
-				shouldGlobMatchFilePattern: true,
-				folderQueries: [{ folder }],
-				maxResults: limit + 1,
-				...(folder.path.includes('/node_modules') ? {} : { excludePattern: { ...DEFAULT_EXCLUDES } }),
-			}, tokenFor(signal));
-			const all = complete.results.map(file => displayPath(root, file.resource)).sort();
-			paths = all.slice(0, limit);
-			truncated = complete.limitHit || all.length > limit;
-		} catch (err) {
-			return fail('glob', err instanceof Error ? err.message : String(err));
-		}
-	}
+	const { paths, limitHit: truncated } = result;
 	const more = truncated ? '\n[More files match. Tighten the pattern or raise limit.]' : '';
 	return {
 		callId: '', name: 'glob', kind: 'search',
-		text: paths.length ? `${paths.join('\n')}${more}` : `No files match ${pattern}.`,
-		display: { card: 'search', shape: 'paths', paths, truncated, total: paths.length },
+		text: paths.length ? `${paths.join('\n')}${more}${fallbackNote(result)}` : `No files match ${pattern}.${fallbackNote(result)}`,
+		display: { card: 'search', shape: 'paths', paths: [...paths], truncated, total: paths.length },
 	};
 }
 
-/** Declarations without the index: one ripgrep pass for the usual declaring keywords. */
-const DECLARATION_KEYWORDS = 'function|class|interface|type|enum|def|fn|func|fun|struct|trait|impl|module|namespace|const|let|var|val|static|macro_rules!';
+async function runFindFiles(search: VoltSearch, root: URI | undefined, args: unknown, signal: AbortSignal): Promise<IToolResult> {
+	const query = pickString(args, 'query', 'name', 'pattern')?.trim();
+	if (!query) {
+		return fail('find_files', 'query is required.');
+	}
+	if (!root) {
+		return fail('find_files', 'No workspace is open.');
+	}
+	const folder = resolveWorkspaceUri(root, pickString(args, 'path', 'directory'));
+	const limit = Math.max(1, Math.min(200, pickNumber(args, 'limit') ?? DEFAULT_FIND_FILES));
+	let result;
+	try {
+		result = await search.findFiles({ root, ...(folder ? { folder } : {}), query, limit }, tokenFor(signal));
+	} catch (err) {
+		return fail('find_files', err instanceof Error ? err.message : String(err));
+	}
+	const more = result.limitHit ? '\n[More files match. Add a word or a folder, or raise limit.]' : '';
+	return {
+		callId: '', name: 'find_files', kind: 'search',
+		text: result.paths.length ? `${result.paths.join('\n')}${more}` : `No files match ${JSON.stringify(query)}. Try fewer or shorter words, or grep for the file's contents.`,
+		display: { card: 'search', shape: 'paths', paths: [...result.paths], truncated: result.limitHit, total: result.paths.length },
+	};
+}
 
-async function runFindSymbol(search: ISearchService, root: URI | undefined, args: unknown, signal: AbortSignal, index: ISearchIndex | undefined): Promise<IToolResult> {
+async function runFindSymbol(search: VoltSearch, root: URI | undefined, args: unknown, signal: AbortSignal): Promise<IToolResult> {
 	const name = pickString(args, 'name', 'symbol', 'query')?.trim();
 	if (!name) {
 		return fail('find_symbol', 'name is required.');
@@ -352,48 +305,33 @@ async function runFindSymbol(search: ISearchService, root: URI | undefined, args
 	const kind = pickString(args, 'kind') as VoltCodeSymbolKind | undefined;
 	const limit = Math.max(1, Math.min(200, pickNumber(args, 'limit') ?? DEFAULT_SYMBOLS));
 	const folder = resolveWorkspaceUri(root, pickString(args, 'path', 'directory'));
-	const indexed = indexFor(index, root, folder ?? root);
-	if (indexed) {
-		const result = await indexed.service.symbols({
-			root: root.fsPath,
-			query: name,
+	let result;
+	try {
+		result = await search.symbols({
+			root,
+			...(folder ? { folder } : {}),
+			name,
 			match,
-			...(kind && SYMBOL_KIND_NAMES.includes(kind) ? { kinds: [kind] } : {}),
-			...(folder ? { path: displayPath(root, folder) } : {}),
+			...(kind && SYMBOL_KIND_NAMES.includes(kind) ? { kind } : {}),
 			limit,
-			options: indexed.options(),
-		}).catch(() => undefined);
-		if (result?.kind === 'results') {
-			const text = formatSymbols(result.symbols, result.limitHit, name);
-			return { callId: '', name: 'find_symbol', kind: 'search', text, display: { card: 'search', shape: 'paths', paths: result.symbols.map(symbol => `${symbol.path}:${symbol.line}`), truncated: result.limitHit, total: result.symbols.length } };
-		}
+		}, tokenFor(signal));
+	} catch (err) {
+		return fail('find_symbol', err instanceof Error ? err.message : String(err));
 	}
-	const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-	const tail = match === 'exact' ? '\\b' : '\\w*';
-	const lead = match === 'fuzzy' ? '\\w*' : '';
-	return runGrep(search, root, {
-		pattern: `\\b(?:${DECLARATION_KEYWORDS})\\s+${lead}${escaped}${tail}`,
-		path: folder ? displayPath(root, folder) : undefined,
-		head_limit: limit,
-		case_sensitive: match === 'exact',
-	}, signal, undefined).then(result => ({ ...result, name: 'find_symbol' }));
+	const text = formatSymbols(result.symbols, result.limitHit, name);
+	return { callId: '', name: 'find_symbol', kind: 'search', text, display: { card: 'search', shape: 'paths', paths: result.symbols.map(symbol => `${symbol.path}:${symbol.line}`), truncated: result.limitHit, total: result.symbols.length } };
 }
 
-function includePattern(glob: string | undefined, type: string | undefined): Record<string, boolean> | undefined {
-	const patterns: Record<string, boolean> = {};
+function includePattern(glob: string | undefined, type: string | undefined): string[] | undefined {
+	const patterns: string[] = [];
 	if (glob) {
-		patterns[glob.includes('/') || glob.startsWith('**') ? glob : `**/${glob}`] = true;
+		patterns.push(glob.includes('/') || glob.startsWith('**') ? glob : `**/${glob}`);
 	}
 	const typed = type ? FILE_TYPES[type.toLowerCase().replace(/^\./, '')] ?? `**/*.${type.replace(/^\./, '')}` : undefined;
 	if (typed) {
-		patterns[typed] = true;
+		patterns.push(typed);
 	}
-	return Object.keys(patterns).length ? patterns : undefined;
-}
-
-function firstLine(preview: string): string {
-	const line = preview.split('\n')[0]?.replace(/\s+$/, '') ?? '';
-	return line.length > LINE_CHARS ? `${line.slice(0, LINE_CHARS)}…` : line;
+	return patterns.length ? patterns : undefined;
 }
 
 function tokenFor(signal: AbortSignal): CancellationToken {

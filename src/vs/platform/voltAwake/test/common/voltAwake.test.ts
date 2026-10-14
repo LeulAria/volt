@@ -63,8 +63,13 @@ suite('Volt awake policy', () => {
 	});
 
 	test('the hard cap lets go of the lid after maxHours of unbroken work', () => {
-		assert.deepStrictEqual(decideAwake({ ...base, episodeStartedAt: base.now - 13 * HOUR }), { idle: true, lid: false, reason: 'agents', blockedBy: 'cap' });
-		assert.deepStrictEqual(decideAwake({ ...base, episodeStartedAt: base.now - 11 * HOUR }), { idle: true, lid: true, reason: 'agents' });
+		const capped = { ...base, prefs: { ...DEFAULT_AWAKE_PREFS, maxHours: 12 } };
+		assert.deepStrictEqual(decideAwake({ ...capped, episodeStartedAt: base.now - 13 * HOUR }), { idle: true, lid: false, reason: 'agents', blockedBy: 'cap' });
+		assert.deepStrictEqual(decideAwake({ ...capped, episodeStartedAt: base.now - 11 * HOUR }), { idle: true, lid: true, reason: 'agents' });
+	});
+
+	test('no cap by default: the lid holds for as long as agents work', () => {
+		assert.deepStrictEqual(decideAwake({ ...base, now: 1000 * HOUR, lastBusyAt: 1000 * HOUR, episodeStartedAt: 0 }), { idle: true, lid: true, reason: 'agents' });
 	});
 
 	test('"allow sleep now" drops both holds', () => {

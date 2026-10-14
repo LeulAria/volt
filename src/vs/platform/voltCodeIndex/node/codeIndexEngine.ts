@@ -6,8 +6,9 @@
 import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import { Emitter, Event } from '../../../base/common/event.js';
-import { join, normalize, sep } from '../../../base/common/path.js';
-import { IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexOptions, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult } from '../common/voltCodeIndex.js';
+import { dirname, join, normalize, relative, sep } from '../../../base/common/path.js';
+import { IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexFindFilesRequest, IVoltCodeIndexFindFilesResult, IVoltCodeIndexOptions, IVoltFffStatus, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult } from '../common/voltCodeIndex.js';
+import { FffEngine } from './fffEngine.js';
 import { optionsKey, RootIndex } from './rootIndex.js';
 
 /** Indexes kept on disk; the least recently used beyond this are deleted. */
@@ -22,7 +23,10 @@ export interface ICodeIndexWorker {
 	warm(root: string, options?: IVoltCodeIndexOptions): Promise<void>;
 	search(request: IVoltCodeIndexSearchRequest): Promise<IVoltCodeIndexSearchResult>;
 	files(request: IVoltCodeIndexFilesRequest): Promise<IVoltCodeIndexFilesResult>;
+	findFiles(request: IVoltCodeIndexFindFilesRequest): Promise<IVoltCodeIndexFindFilesResult>;
 	symbols(request: IVoltCodeIndexSymbolsRequest): Promise<IVoltCodeIndexSymbolsResult>;
+	fffStatus(fffPath?: string): Promise<IVoltFffStatus>;
+	installFff(): Promise<IVoltFffStatus>;
 	status(roots?: readonly string[]): Promise<readonly IVoltCodeIndexStatus[]>;
 	rebuild(root: string, options?: IVoltCodeIndexOptions): Promise<void>;
 	remove(root?: string): Promise<void>;
@@ -47,12 +51,16 @@ export class CodeIndexEngine implements ICodeIndexWorker {
 	readonly onDidChangeStatus: Event<void> = this._onDidChangeStatus.event;
 	private changeTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly unloadTimer: ReturnType<typeof setInterval>;
+	/** FFF, when installed: fuzzy file search ranked by typos, frecency and git status. */
+	private readonly fff: FffEngine;
 
 	constructor(
 		private readonly dataDir: string,
 		private readonly log: (message: string) => void,
 	) {
 		this.unloadTimer = setInterval(() => void this.unloadIdle(), 60_000);
+		// Next to the indexes: `<userData>/volt-tools` for `<userData>/volt-index`.
+		this.fff = new FffEngine(join(dirname(dataDir), 'volt-tools'), log);
 	}
 
 	private dirFor(root: string): string {
@@ -95,6 +103,49 @@ export class CodeIndexEngine implements ICodeIndexWorker {
 
 	symbols(request: IVoltCodeIndexSymbolsRequest): Promise<IVoltCodeIndexSymbolsResult> {
 		return this.index(request.root, request.options).symbols(request);
+	}
+
+	/**
+	 * FFF first when it is installed and allowed (better ranking: typos, frecency, git status),
+	 * kept to the files the index lists so both engines honor the same ignore files; the index's
+	 * own fuzzy search when FFF is missing, slow, broken, or finds nothing the index would show.
+	 */
+	async findFiles(request: IVoltCodeIndexFindFilesRequest): Promise<IVoltCodeIndexFindFilesResult> {
+		const index = this.index(request.root, request.options);
+		const started = Date.now();
+		let fffSkipped: string | undefined;
+		if (request.fff !== 'off') {
+			const root = normalizeRoot(request.root);
+			const found = await this.fff.findFiles(root, request.query, request.limit, request.fffPath);
+			if (found.kind === 'results') {
+				const listed = index.listedFilter();
+				const folder = request.folder ? relative(root, normalize(request.folder)).split(sep).join('/') : '';
+				const inFolder = folder && !folder.startsWith('..') ? `${folder}/` : '';
+				const paths = found.paths.filter(path => (!listed || listed(path)) && (!inFolder || path.startsWith(inFolder)));
+				if (paths.length) {
+					return {
+						kind: 'results',
+						paths: paths.slice(0, request.limit),
+						limitHit: paths.length > request.limit || (found.total ?? 0) > found.paths.length,
+						engine: 'fff',
+						ms: Date.now() - started,
+					};
+				}
+				fffSkipped = found.paths.length ? 'every FFF match is ignored by the index' : 'no FFF match';
+			} else {
+				fffSkipped = found.reason;
+			}
+		}
+		const result = await index.findFiles(request);
+		return result.kind === 'results' && fffSkipped && request.fff !== 'off' ? { ...result, fffSkipped } : result;
+	}
+
+	fffStatus(fffPath?: string): Promise<IVoltFffStatus> {
+		return this.fff.status(fffPath);
+	}
+
+	installFff(): Promise<IVoltFffStatus> {
+		return this.fff.install();
 	}
 
 	async status(roots?: readonly string[]): Promise<readonly IVoltCodeIndexStatus[]> {
@@ -165,6 +216,7 @@ export class CodeIndexEngine implements ICodeIndexWorker {
 			if (now - index.lastUsedAt > UNLOAD_AFTER_MS) {
 				this.roots.delete(key);
 				await index.dispose();
+				await this.fff.stop(key);
 				this.log(`[code index] ${key}: unloaded (idle)`);
 			}
 		}
@@ -195,6 +247,7 @@ export class CodeIndexEngine implements ICodeIndexWorker {
 	async dispose(): Promise<void> {
 		clearInterval(this.unloadTimer);
 		clearTimeout(this.changeTimer);
+		this.fff.dispose();
 		for (const index of this.roots.values()) {
 			await index.dispose();
 		}

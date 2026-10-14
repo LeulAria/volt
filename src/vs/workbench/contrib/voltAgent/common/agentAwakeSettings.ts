@@ -36,10 +36,10 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 		[AWAKE_MAX_HOURS_SETTING]: {
 			type: 'number',
 			default: DEFAULT_AWAKE_PREFS.maxHours,
-			minimum: 1,
-			maximum: 72,
+			minimum: 0,
+			maximum: 720,
 			scope: ConfigurationScope.APPLICATION,
-			description: localize('voltAwake.maxHours', "Lid-Closed Mode lets the computer sleep after agents have worked this many hours without a break."),
+			description: localize('voltAwake.maxHours', "Lid-Closed Mode lets the computer sleep after agents have worked this many hours without a break. 0 (the default) never does: agents keep working until their work is done, and low battery or heat still let the computer sleep."),
 		},
 		[AWAKE_BATTERY_FLOOR_SETTING]: {
 			type: 'number',

@@ -37,6 +37,8 @@ export interface IShellToolHost {
 	readonly hostTools?: IVoltHostToolService;
 	/** Settings > Code Intelligence > RTK: compact the output of common dev commands with RTK when installed. */
 	readonly rtk?: () => boolean;
+	/** Commands RTK must leave alone (Settings > Code Intelligence), by their first words. */
+	readonly rtkExclusions?: () => readonly string[];
 }
 
 export function createShellTools(host: IShellToolHost): IVoltTool[] {
@@ -168,14 +170,18 @@ async function runShell(host: IShellToolHost, args: unknown, ctx: IToolContext):
 		return fail('Cancelled before the command started.');
 	}
 	ctx.signal.addEventListener('abort', onAbort);
-	// RTK picks the compact form of the command, if it has one, inside the same shell call.
-	const viaRtk = !isWindows && !!host.rtk?.() && wantsRtk(command);
+	// RTK picks the compact form of the command, if it has one: inside the same shell call on
+	// POSIX; on Windows by asking it first without a shell (cmd would splice the command into its
+	// own syntax), then running what it answers.
+	const wantsCompact = !!host.rtk?.() && wantsRtk(command, host.rtkExclusions?.());
+	const viaWrapper = wantsCompact && !isWindows;
+	const rewritten = wantsCompact && isWindows ? await rtkRewrite(host.stdio, command, cwd) : undefined;
 	let result: IVoltExecResult;
 	try {
 		result = await host.stdio.exec({
 			id,
-			command: viaRtk ? RTK_WRAPPER : command,
-			...(viaRtk ? { env: { [RTK_COMMAND_ENV]: command } } : {}),
+			command: viaWrapper ? RTK_WRAPPER : rewritten ?? command,
+			...(viaWrapper ? { env: { [RTK_COMMAND_ENV]: command } } : {}),
 			cwd,
 			timeoutMs,
 			background,
@@ -216,6 +222,20 @@ async function runShell(host: IShellToolHost, args: unknown, ctx: IToolContext):
 		isError: failed,
 		...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
 	};
+}
+
+/**
+ * RTK's compact form of `command` (`git status` -> `rtk git status`), asked without a shell so the
+ * command reaches RTK as one argument, whatever quotes or `&` it holds. Undefined when RTK has
+ * none, is missing, or is slow: the command then runs as written.
+ */
+export async function rtkRewrite(stdio: Pick<IVoltStdioService, 'execFile'>, command: string, cwd: string | undefined): Promise<string | undefined> {
+	if (!stdio.execFile) {
+		return undefined;
+	}
+	const result = await stdio.execFile({ file: 'rtk', args: ['rewrite', command], ...(cwd ? { cwd } : {}), timeoutMs: 3_000, maxBytes: 64 * 1024 }).catch(() => undefined);
+	const rewritten = result && !result.error ? result.stdout.trim() : '';
+	return rewritten && rewritten !== command.trim() ? rewritten : undefined;
 }
 
 function jobResult(name: string, job: IVoltJobOutput | undefined): IToolResult {

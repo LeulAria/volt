@@ -214,7 +214,25 @@ export function decodePostings(bytes: Uint8Array): IPostingList {
 		nexts[n] = bytes[p++];
 		n++;
 	}
-	return { docs: docs.subarray(0, n), locs: locs.subarray(0, n), nexts: nexts.subarray(0, n) };
+	// Exact-size copies: views would keep the worst-case buffers (up to 1.7x) alive in the posting cache.
+	return { docs: docs.slice(0, n), locs: locs.slice(0, n), nexts: nexts.slice(0, n) };
+}
+
+/**
+ * Every trigram key in `bytes` as a bitset (2^24 bits, 2 MB): for files too large to index, so a
+ * search can rule them out without reading them. Keys as the index builds them (ASCII folded).
+ */
+export function trigramBits(bytes: Uint8Array): Uint8Array {
+	const bits = new Uint8Array(1 << 21);
+	if (bytes.length < 3) {
+		return bits;
+	}
+	let key = (FOLD[bytes[0]] << 8) | FOLD[bytes[1]];
+	for (let i = 0; i + 2 < bytes.length; i++) {
+		key = ((key << 8) | FOLD[bytes[i + 2]]) & 0xffffff;
+		bits[key >>> 3] |= 1 << (key & 7);
+	}
+	return bits;
 }
 
 //#endregion
@@ -398,8 +416,27 @@ export class SegmentBuilder {
 export class PostingCache {
 	private readonly map = new Map<string, IPostingList>();
 	private size = 0;
+	/** Lists being read: concurrent lookups of one key (a query's overlapping phrases) share one decode. */
+	private readonly loading = new Map<string, Promise<IPostingList>>();
 
 	constructor(private readonly budget: number) { }
+
+	/** The cached list for `key`, or the one `load` reads (once, however many callers ask meanwhile). */
+	async load(key: string, load: () => Promise<IPostingList>): Promise<IPostingList> {
+		const hit = this.get(key);
+		if (hit) {
+			return hit;
+		}
+		let pending = this.loading.get(key);
+		if (!pending) {
+			pending = load().then(list => {
+				this.set(key, list);
+				return list;
+			}).finally(() => this.loading.delete(key));
+			this.loading.set(key, pending);
+		}
+		return pending;
+	}
 
 	get(key: string): IPostingList | undefined {
 		const hit = this.map.get(key);
@@ -415,6 +452,12 @@ export class PostingCache {
 		if (cost > this.budget / 4) {
 			return;
 		}
+		// Replacing a key must not count it twice: drifting over the budget would evict every new list.
+		const old = this.map.get(key);
+		if (old) {
+			this.map.delete(key);
+			this.size -= old.docs.length * 6 + 64;
+		}
 		this.map.set(key, list);
 		this.size += cost;
 		for (const [oldKey, old] of this.map) {
@@ -429,6 +472,14 @@ export class PostingCache {
 	clear(): void {
 		this.map.clear();
 		this.size = 0;
+	}
+
+	get bytes(): number {
+		return this.size;
+	}
+
+	get entries(): number {
+		return this.map.size;
 	}
 }
 
@@ -492,18 +543,13 @@ export class Segment {
 		if (index < 0) {
 			return undefined;
 		}
-		const cacheKey = `${this.id}:${key}`;
-		const cached = cache.get(cacheKey);
-		if (cached) {
-			return cached;
-		}
-		const start = this.offs[index];
-		const length = this.offs[index + 1] - start;
-		const bytes = new Uint8Array(length);
-		await this.post.read(bytes, 0, length, start);
-		const list = decodePostings(bytes);
-		cache.set(cacheKey, list);
-		return list;
+		return cache.load(`${this.id}:${key}`, async () => {
+			const start = this.offs[index];
+			const length = this.offs[index + 1] - start;
+			const bytes = new Uint8Array(length);
+			await this.post.read(bytes, 0, length, start);
+			return decodePostings(bytes);
+		});
 	}
 
 	async symbols(): Promise<ISegmentSymbols> {

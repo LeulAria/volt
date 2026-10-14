@@ -118,6 +118,49 @@ export type IVoltCodeIndexFilesResult =
 	| { readonly kind: 'fallback'; readonly reason: string }
 	| { readonly kind: 'results'; readonly paths: readonly string[]; readonly limitHit: boolean };
 
+/** Which engine answers fuzzy file searches. `auto`: FFF when it is installed, else the index. */
+export type VoltFffMode = 'auto' | 'off';
+
+export interface IVoltCodeIndexFindFilesRequest extends IVoltCodeIndexQueryBase {
+	/**
+	 * Words of a file name or path, typos allowed: `rootIndx` finds `rootIndex.ts`, `sched fair`
+	 * finds `kernel/sched/fair.c`. Each word narrows the results.
+	 */
+	readonly query: string;
+	readonly limit: number;
+	readonly fff?: VoltFffMode;
+	/** An FFF binary to use instead of Volt's own install or the one on PATH. */
+	readonly fffPath?: string;
+}
+
+export type IVoltCodeIndexFindFilesResult =
+	| { readonly kind: 'fallback'; readonly reason: string }
+	| {
+		readonly kind: 'results';
+		/** Root-relative, best first. */
+		readonly paths: readonly string[];
+		/** More files matched than `limit`. */
+		readonly limitHit: boolean;
+		readonly engine: 'fff' | 'index';
+		readonly ms: number;
+		/** Why FFF did not answer, when it was asked to. */
+		readonly fffSkipped?: string;
+	};
+
+/** FFF (github.com/dmtrKovalenko/fff), the optional engine for fuzzy file search. */
+export interface IVoltFffStatus {
+	readonly state: 'ready' | 'missing' | 'error' | 'unsupported';
+	readonly version?: string;
+	readonly path?: string;
+	/** Installed by Volt (in its user data folder), not found on PATH or set in settings. */
+	readonly managed?: boolean;
+	/** The version Volt installs. */
+	readonly bundledVersion: string;
+	readonly error?: string;
+	/** Projects with an FFF process running now. */
+	readonly running: number;
+}
+
 export type VoltCodeSymbolKind = 'function' | 'method' | 'class' | 'interface' | 'type' | 'enum' | 'variable' | 'constant' | 'module' | 'struct' | 'trait' | 'macro' | 'field';
 
 export interface IVoltCodeSymbol {
@@ -189,7 +232,13 @@ export interface IVoltCodeIndexService {
 	warm(root: string, options?: IVoltCodeIndexOptions): Promise<void>;
 	search(request: IVoltCodeIndexSearchRequest): Promise<IVoltCodeIndexSearchResult>;
 	files(request: IVoltCodeIndexFilesRequest): Promise<IVoltCodeIndexFilesResult>;
+	/** Fuzzy, typo-tolerant file search by name or path: FFF when installed, else the index. */
+	findFiles(request: IVoltCodeIndexFindFilesRequest): Promise<IVoltCodeIndexFindFilesResult>;
 	symbols(request: IVoltCodeIndexSymbolsRequest): Promise<IVoltCodeIndexSymbolsResult>;
+	/** Whether FFF is installed and where. `fffPath` is the user's setting, if any. */
+	fffStatus(fffPath?: string): Promise<IVoltFffStatus>;
+	/** Downloads Volt's pinned FFF release into the user data folder, checking its SHA-256. */
+	installFff(): Promise<IVoltFffStatus>;
 	/** The given roots, or every index on disk. */
 	status(roots?: readonly string[]): Promise<readonly IVoltCodeIndexStatus[]>;
 	/** Throws the index of `root` away and builds it again. */
@@ -208,7 +257,10 @@ export class NullVoltCodeIndexService implements IVoltCodeIndexService {
 	async warm(): Promise<void> { }
 	async search(): Promise<IVoltCodeIndexSearchResult> { return { kind: 'fallback', reason: 'unavailable' }; }
 	async files(): Promise<IVoltCodeIndexFilesResult> { return { kind: 'fallback', reason: 'unavailable' }; }
+	async findFiles(): Promise<IVoltCodeIndexFindFilesResult> { return { kind: 'fallback', reason: 'unavailable' }; }
 	async symbols(): Promise<IVoltCodeIndexSymbolsResult> { return { kind: 'fallback', reason: 'unavailable' }; }
+	async fffStatus(): Promise<IVoltFffStatus> { return { state: 'unsupported', bundledVersion: '', running: 0 }; }
+	async installFff(): Promise<IVoltFffStatus> { return { state: 'unsupported', bundledVersion: '', running: 0 }; }
 	async status(): Promise<readonly IVoltCodeIndexStatus[]> { return []; }
 	async rebuild(): Promise<void> { }
 	async remove(): Promise<void> { }

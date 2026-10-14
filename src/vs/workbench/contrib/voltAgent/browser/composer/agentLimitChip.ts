@@ -13,7 +13,8 @@ import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { ILimitChipView, limitChipView, limitParkedClock, nextBannerTick } from '../../../../services/voltRuntime/common/orchestration/limitRecovery.js';
-import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { IAgentOrchestratorService, IOrchThread } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { rescueChipView, rescueWaits } from '../../../../services/voltRuntime/common/orchestration/rescue.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
 
@@ -80,7 +81,13 @@ export class AgentLimitChip extends Disposable {
 		const limit = thread?.limit;
 		const checking = !!limit && thread?.active?.limitProbe !== undefined;
 		const visible = !!chatId && !!limit && (!thread?.active || checking);
-		this.element.classList.toggle('hidden', !visible);
+		// Without a usage limit, the chip says when Volt restarts work that stopped part way.
+		const restarting = !visible && !!chatId && !!thread && this.orchestrator.keepsWorking() && rescueWaits(thread);
+		this.element.classList.toggle('hidden', !visible && !restarting);
+		if (restarting) {
+			this.renderRescue(chatId, thread);
+			return;
+		}
 		if (!chatId || !limit || !visible) {
 			return;
 		}
@@ -123,6 +130,64 @@ export class AgentLimitChip extends Disposable {
 
 		// The countdown moves by the minute; the chip re-reads the state when it is due.
 		const next = view.dueAt !== undefined ? nextBannerTick(view.dueAt, now) : undefined;
+		if (next !== undefined) {
+			this.timer = setTimeout(() => this.render(), next - now);
+		}
+	}
+
+	/** "Stopped by an error · restarting 3:12 PM · 4m", with Retry now and Stop retrying. */
+	private renderRescue(chatId: string, thread: IOrchThread): void {
+		const now = Date.now();
+		const view = rescueChipView(thread.rescue!, thread.id, now);
+		const chip = append(this.element, $('.volt-agent-terminal-chip.volt-agent-limit-chip.armed'));
+		const main = append(chip, $('button.volt-agent-terminal-chip-main')) as HTMLButtonElement;
+		main.type = 'button';
+		const icon = append(main, $('span.volt-agent-terminal-status.volt-agent-limit-chip-icon'));
+		icon.appendChild(renderIcon(view.dueAt > now ? Codicon.history : ThemeIcon.modify(Codicon.loading, 'spin')));
+		append(main, $('span.label')).textContent = this.error ?? view.label;
+		if (view.detail && !this.error) {
+			append(main, $('span.detail')).textContent = view.detail;
+		}
+		setAgentTooltip(main, view.tooltip);
+		main.setAttribute('aria-label', [view.label, view.detail].filter(Boolean).join(', '));
+		const open = (anchor: HTMLElement) => showVoltMenu<'now' | 'stop'>(this.contextViewService, {
+			anchor,
+			position: 'below',
+			align: 'left',
+			width: 320,
+			ariaLabel: localize('voltAgent.rescueChip.menu', "Restart"),
+			className: 'volt-agent-terminal-menu',
+			sections: [{
+				id: 'rescue',
+				title: thread.rescue!.error,
+				items: [
+					{ id: 'now', label: localize('voltAgent.rescueChip.now', "Retry now"), subtitle: localize('voltAgent.rescueChip.nowDetail', "Restart the chat now instead of waiting"), icon: Codicon.debugContinue, data: 'now' },
+					{ id: 'stop', label: localize('voltAgent.rescueChip.stop', "Stop retrying"), subtitle: localize('voltAgent.rescueChip.stopDetail', "The chat waits for you instead"), icon: Codicon.circleSlash, data: 'stop' },
+				],
+			}],
+			onPick: async item => {
+				this.error = undefined;
+				const events = await this.orchestrator.dispatch(item.data === 'now' ? { type: 'rescue.now', threadId: chatId } : { type: 'rescue.stop', threadId: chatId });
+				if (item.data === 'now' && !events.length) {
+					this.error = localize('voltAgent.rescueChip.cannot', "This chat cannot restart right now");
+				}
+				this.render();
+			},
+		});
+		this.renderStore.add(addDisposableListener(main, 'click', e => {
+			EventHelper.stop(e, true);
+			open(chip);
+		}));
+		const more = append(chip, $('button.volt-agent-terminal-chip-more')) as HTMLButtonElement;
+		more.type = 'button';
+		more.setAttribute('aria-haspopup', 'menu');
+		more.appendChild(renderIcon(Codicon.chevronDown));
+		setAgentTooltip(more, localize('voltAgent.rescueChip.more', "Restart options"));
+		this.renderStore.add(addDisposableListener(more, 'click', e => {
+			EventHelper.stop(e, true);
+			open(more);
+		}));
+		const next = nextBannerTick(view.dueAt, now);
 		if (next !== undefined) {
 			this.timer = setTimeout(() => this.render(), next - now);
 		}

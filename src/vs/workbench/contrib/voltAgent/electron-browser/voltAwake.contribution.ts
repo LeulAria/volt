@@ -116,7 +116,14 @@ class VoltAwakeContribution extends Disposable implements IWorkbenchContribution
 				untracked++; // e.g. an inline review comment's run, sent without the orchestrator
 			}
 		}
-		return { working: agentHomeLiveWork(state).size + untracked, waitingOnUser, batteryPercent: this.batteryPercent };
+		// A chat Volt will restart (its work stopped part way) is work too: the timer that restarts it must not sleep.
+		let restarting = 0;
+		for (const thread of Object.values(state.threads)) {
+			if (thread.rescue && !thread.active && !thread.inputs.length) {
+				restarting++;
+			}
+		}
+		return { working: agentHomeLiveWork(state).size + untracked + restarting, waitingOnUser, batteryPercent: this.batteryPercent };
 	}
 
 	private send(force: boolean): void {

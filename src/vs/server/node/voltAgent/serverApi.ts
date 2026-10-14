@@ -311,6 +311,7 @@ export class AgentServerApi extends Disposable {
 			accessMode: runtime.getAccessMode(),
 			defaultSandbox: runtime.getDefaultSandboxSettings(),
 			autoResumeDefault: this.orchestrator.autoResumeDefault(),
+			keepsWorking: this.orchestrator.keepsWorking(),
 			projectRules: runtime.listProjectRules(),
 			savedApprovals: runtime.listSavedApprovals(),
 			receipts: runtime.listReceipts().slice(-500),

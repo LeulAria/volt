@@ -75,6 +75,8 @@ export interface IOrchTurn {
 	readonly limitProbe?: number;
 	/** That chat's own auto-resume choice, carried so a probe that hits the limit again keeps it. */
 	readonly limitAuto?: boolean;
+	/** A turn that continues an unfinished plan: the open items it started with (it must close some to go on). */
+	readonly planOpen?: number;
 }
 
 export interface IOrchQueueItem {
@@ -145,6 +147,27 @@ export interface IOrchLimitPark {
 	readonly lastError?: string;
 }
 
+/**
+ * A top-level chat whose work stopped before it was done: its run failed past the quick retries,
+ * Volt restarted under it, or the wake-up guard paused it. Volt restarts it on its own with a
+ * growing back-off (`RESCUE_RETRY`, see `rescueDueAt`), for as long as it takes, until a turn
+ * finishes or the user stops it or sends something else. Usage limits park instead (`limit`).
+ */
+export interface IOrchRescue {
+	readonly reason: 'failed' | 'interrupted' | 'wakeups';
+	/** When the work stopped (or the latest restart went out): the back-off counts from here. */
+	readonly at: number;
+	/** Restarts sent so far. A finished turn ends the record; for `wakeups` only the user's next turn does. */
+	readonly attempts: number;
+	readonly error?: string;
+	/** The stopped turn's composer mode, which the restart keeps (it runs on the chat's model then). */
+	readonly mode?: string;
+	/** The stopped turn never reached the agent: the restart sends this prompt again instead of "continue". */
+	readonly prompt?: IOrchPrompt;
+	/** Chats due at the same moment are staggered: this one not before then. */
+	readonly notBefore?: number;
+}
+
 /** The provider account a run used, as the service read it from the catalog. */
 export interface IOrchLimitAccount {
 	readonly provider: string;
@@ -211,6 +234,8 @@ export interface IOrchThread {
 	readonly handoffs: readonly IOrchHandoff[];
 	/** Parked at a usage limit, waiting for the reset. */
 	readonly limit?: IOrchLimitPark;
+	/** Its work stopped before it was done; Volt restarts it (see `IOrchRescue`). */
+	readonly rescue?: IOrchRescue;
 	/** A move to another checkout waiting for the active turn to end. */
 	readonly pendingMove?: IOrchMove;
 	/** A move under way: nothing starts until it is done. */
@@ -373,7 +398,7 @@ export type OrchCommandBody =
 	 * unless the user already asked this chat to resume. `account`: the provider account the run used
 	 * (see `IOrchLimitPark.provider`), for a park or a resume that could not reach it.
 	 */
-	| { readonly type: 'run.settled'; readonly threadId: string; readonly runId?: string; readonly turnId?: string; readonly outcome: OrchOutcome; readonly error?: string; readonly reply?: string; readonly limit?: { readonly resetAt?: number; readonly message: string; readonly stop?: boolean }; readonly account?: IOrchLimitAccount }
+	| { readonly type: 'run.settled'; readonly threadId: string; readonly runId?: string; readonly turnId?: string; readonly outcome: OrchOutcome; readonly error?: string; readonly reply?: string; readonly limit?: { readonly resetAt?: number; readonly message: string; readonly stop?: boolean }; readonly account?: IOrchLimitAccount; readonly openPlan?: readonly string[] }
 	/** A steer could not be delivered (the run ended first): reports go back to pending, a prompt back to the queue's head. */
 	| { readonly type: 'steer.failed'; readonly threadId: string; readonly steerId: string; readonly prompt: IOrchPrompt; readonly taskIds?: readonly string[] }
 	/** The effect that starts a turn failed before the runtime took it. */
@@ -417,6 +442,12 @@ export type OrchCommandBody =
 	| { readonly type: 'move.cancel'; readonly threadId: string }
 	/** The mover is done (or gave up and rolled back). */
 	| { readonly type: 'move.finished'; readonly threadId: string; readonly result: IOrchMoveResult }
+	/** The clock reached chats waiting to be restarted (see `IOrchRescue`): the first due goes, the rest get later slots. */
+	| { readonly type: 'rescue.tick' }
+	/** The user's Retry now for a chat waiting to be restarted. */
+	| { readonly type: 'rescue.now'; readonly threadId: string }
+	/** The user's Stop retrying: the chat waits for them instead. */
+	| { readonly type: 'rescue.stop'; readonly threadId: string }
 	/**
 	 * After a restart: nothing that was running is running any more. `resume` picks what continues
 	 * on its own (see `OrchRestartResume`); everything else waits for the user. `rootId` limits it to
@@ -433,6 +464,9 @@ export type OrchCommandBody =
 export type OrchRestartResume = 'off' | 'subagents' | 'all';
 
 export const ORCH_RESUME_AFTER_RESTART_SETTING = 'volt.agent.resumeAfterRestart';
+
+/** Volt restarts chats whose work stopped before it was done, and continues unfinished plans (`IOrchLimits.supervise`). */
+export const ORCH_KEEP_WORKING_SETTING = 'volt.agent.keepWorking';
 
 /** Multitask agents and subagents one chat runs at once (`runningPerParent`); more wait their turn. */
 export const ORCH_MAX_PARALLEL_SETTING = 'volt.agent.multitask.maxParallel';
@@ -491,6 +525,11 @@ export type OrchEvent =
 	| { readonly type: 'limit.woken'; readonly threadId: string; readonly wakeAt: number }
 	/** The park is over: the provider answered, the user stopped the resume, or it failed for good. */
 	| { readonly type: 'limit.cleared'; readonly threadId: string; readonly reason: 'recovered' | 'stopped' | 'failed' }
+	/** The chat waits to be restarted (or a restart went out: the record with its new attempt count). */
+	| { readonly type: 'rescue.armed'; readonly threadId: string; readonly rescue: IOrchRescue }
+	| { readonly type: 'rescue.deferred'; readonly threadId: string; readonly notBefore: number }
+	/** The work finished, or the user stopped it or took over. */
+	| { readonly type: 'rescue.cleared'; readonly threadId: string; readonly reason: 'done' | 'stopped' }
 	| { readonly type: 'move.requested'; readonly threadId: string; readonly move: IOrchMove }
 	| { readonly type: 'move.dropped'; readonly threadId: string; readonly moveId: string }
 	| { readonly type: 'move.started'; readonly threadId: string; readonly move: IOrchMove }
@@ -550,6 +589,13 @@ export interface IOrchLimits {
 	readonly maxWakeups: number;
 	/** Restarts a running turn continues through on its own; past that it waits for the user (a crash loop). */
 	readonly maxRestartResumes: number;
+	/**
+	 * Keep working until done (`ORCH_KEEP_WORKING_SETTING`): top-level chats whose work stopped
+	 * are restarted with a back-off for as long as it takes (`IOrchRescue`), and a turn that ends
+	 * with its plan unfinished continues while it makes progress. Off in the core's default; the
+	 * service turns it on from the setting.
+	 */
+	readonly supervise: boolean;
 }
 
 export const DEFAULT_ORCH_LIMITS: IOrchLimits = {
@@ -564,6 +610,7 @@ export const DEFAULT_ORCH_LIMITS: IOrchLimits = {
 	finishedTasksPerRoot: 60,
 	maxWakeups: 8,
 	maxRestartResumes: 2,
+	supervise: false,
 };
 
 /** The most each multitask setting accepts. */
@@ -583,7 +630,9 @@ export function readOrchLimits(get: (key: string) => unknown): IOrchLimits {
 	const spawnsPerCall = read(ORCH_MAX_PER_CALL_SETTING, DEFAULT_ORCH_LIMITS.spawnsPerCall, ORCH_LIMIT_MAX.spawnsPerCall);
 	// The doom-loop guard always leaves room for two full calls in one turn.
 	const maxSpawnsPerTurn = Math.max(DEFAULT_ORCH_LIMITS.maxSpawnsPerTurn, spawnsPerCall * 2);
-	return { ...DEFAULT_ORCH_LIMITS, runningPerParent, runningTotal, spawnsPerCall, maxSpawnsPerTurn };
+	// On unless turned off.
+	const supervise = get(ORCH_KEEP_WORKING_SETTING) !== false;
+	return { ...DEFAULT_ORCH_LIMITS, runningPerParent, runningTotal, spawnsPerCall, maxSpawnsPerTurn, supervise };
 }
 
 //#endregion
@@ -684,6 +733,8 @@ export interface IAgentOrchestratorService {
 	setWorkspaceMover(mover: IOrchWorkspaceMover): IDisposable;
 	/** Whether parked chats resume on their own by default (the setting). */
 	autoResumeDefault(): boolean;
+	/** Whether Volt restarts chats whose work stopped before it was done (the setting). */
+	keepsWorking(): boolean;
 }
 
 //#endregion

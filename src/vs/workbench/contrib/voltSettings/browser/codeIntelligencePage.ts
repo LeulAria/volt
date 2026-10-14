@@ -10,12 +10,11 @@ import { basename } from '../../../../base/common/path.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
-import { IVoltCodeIndexService, IVoltCodeIndexStatus } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
+import { IVoltCodeIndexService, IVoltCodeIndexStatus, IVoltFffStatus } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
-import { isWindows } from '../../../../base/common/platform.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
-import { CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, clampLspWorkspaces, LSP_ENABLED_SETTING, LSP_MAX_LOCAL_SETTING, LSP_MAX_REMOTE_SETTING, LSP_WORKTREES_SETTING, readCodeIndexOptions, RTK_ENABLED_SETTING } from '../../../services/voltRuntime/common/codeIntelligence.js';
+import { CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, clampLspWorkspaces, FFF_MODE_SETTING, readFffSettings, RETRIEVAL_ENABLED_SETTING, LSP_ENABLED_SETTING, LSP_MAX_LOCAL_SETTING, LSP_MAX_REMOTE_SETTING, LSP_WORKTREES_SETTING, readCodeIndexOptions, RTK_ENABLED_SETTING } from '../../../services/voltRuntime/common/codeIntelligence.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 
 /** The settings editor's building blocks, so this page looks like every other one. */
@@ -103,7 +102,7 @@ export class CodeIntelligencePage {
 	) { }
 
 	private setting(key: string): boolean {
-		const defaults: Record<string, boolean> = { [CODE_INDEX_ENABLED_SETTING]: true, [LSP_ENABLED_SETTING]: true, [RTK_ENABLED_SETTING]: true };
+		const defaults: Record<string, boolean> = { [CODE_INDEX_ENABLED_SETTING]: true, [LSP_ENABLED_SETTING]: true, [RTK_ENABLED_SETTING]: true, [RETRIEVAL_ENABLED_SETTING]: true };
 		const value = this.configurationService.getValue<boolean>(key);
 		return typeof value === 'boolean' ? value : defaults[key] ?? false;
 	}
@@ -130,6 +129,7 @@ export class CodeIntelligencePage {
 		if (this.setting(CODE_INDEX_ENABLED_SETTING)) {
 			this.renderIndexes(kit.settingsGroup());
 		}
+		this.renderSearch();
 
 		kit.sectionLabel(localize('voltCodeIntel.ignore', "Ignore Files"));
 		const ignore = kit.settingsGroup();
@@ -140,9 +140,7 @@ export class CodeIntelligencePage {
 			localize('voltCodeIntel.symlinks', "Ignore Symlinks"),
 			localize('voltCodeIntel.symlinksDesc', "Use with caution. Do not follow symbolic links when listing a project's files, so linked folders are left out of the index. Changing this rebuilds the index."));
 
-		if (!isWindows) {
-			this.renderRtk();
-		}
+		this.renderRtk();
 
 		kit.sectionLabel(localize('voltCodeIntel.lsp', "LSP"));
 		const lsp = kit.settingsGroup();
@@ -163,6 +161,63 @@ export class CodeIntelligencePage {
 		limitRow(LSP_MAX_REMOTE_SETTING,
 			localize('voltCodeIntel.maxRemote', "Maximum Remote LSP Workspaces"),
 			localize('voltCodeIntel.maxRemoteDesc', "How many remote projects (SSH, containers) keep language servers running at once."));
+	}
+
+	/**
+	 * The search-to-context pipeline (relevant code before the agent's first step) and FFF, the
+	 * optional engine for fuzzy file search, with its install state.
+	 */
+	private renderSearch(): void {
+		const kit = this.kit;
+		kit.sectionLabel(localize('voltCodeIntel.search', "Search and Context"));
+		const group = kit.settingsGroup();
+		this.switchRow(group, RETRIEVAL_ENABLED_SETTING,
+			localize('voltCodeIntel.retrieval', "Find Relevant Code Before the Agent Starts"),
+			localize('voltCodeIntel.retrievalDesc', "Search the project for the files, symbols and errors your message names and give the agent the best matches with their code (about 1,500 tokens at most; Claude Code and Codex get a short file list). Runs while the turn starts; skipped when a message names nothing."));
+
+		const fff = readFffSettings(this.configurationService);
+		const title = localize('voltCodeIntel.fffTitle', "Fuzzy File Search with FFF");
+		const row = kit.settingRow(group, title, localize('voltCodeIntel.fffChecking', "Checking for FFF\u2026"), host => kit.toggle(host, fff.mode !== 'off', title, () => {
+			void this.configurationService.updateValue(FFF_MODE_SETTING, fff.mode === 'off' ? 'auto' : 'off').then(() => kit.rerender());
+		}));
+		const desc = row.querySelector('.desc') as HTMLElement | null;
+		const control = append(row, $('.volt-settings-row-control'));
+		const describe = (status: IVoltFffStatus) => {
+			if (!desc || !this.kit.isCurrent()) {
+				return;
+			}
+			switch (status.state) {
+				case 'ready':
+					desc.textContent = localize('voltCodeIntel.fffReady', "FFF {0}{1}: the agent's find_files is typo-tolerant and ranks files you changed and used first. Volt runs it as its own process, one per project, stopped when idle.", status.version ?? '', status.managed ? '' : ` (${status.path})`);
+					break;
+				case 'missing':
+					desc.textContent = localize('voltCodeIntel.fffMissing', "Optional. Volt's index already answers find_files; FFF ranks better (typos, recent and changed files). Installing downloads FFF {0} (about 8 MB, MIT license) from its GitHub release and checks its SHA-256.", status.bundledVersion);
+					break;
+				case 'error':
+					desc.textContent = localize('voltCodeIntel.fffError', "FFF is installed but does not run ({0}). Volt's index answers find_files instead.", status.error ?? '');
+					break;
+				default:
+					desc.textContent = localize('voltCodeIntel.fffUnsupported', "FFF has no release for this platform. Volt's index answers find_files.");
+			}
+		};
+		void this.codeIndex.fffStatus(fff.path).then(status => {
+			describe(status);
+			if (status.state !== 'missing' && !(status.state === 'error' && status.managed) || !this.kit.isCurrent()) {
+				return;
+			}
+			const button = this.kit.store.add(createVoltButton(control, 'secondary'));
+			button.label = localize('voltCodeIntel.fffInstall', "Install FFF");
+			this.kit.store.add(button.onDidClick(() => {
+				button.enabled = false;
+				button.label = localize('voltCodeIntel.fffInstalling', "Installing\u2026");
+				void this.codeIndex.installFff().then(result => {
+					describe(result);
+					button.label = result.state === 'ready' ? localize('voltCodeIntel.fffInstalled', "Installed") : localize('voltCodeIntel.fffInstallFailed', "Failed");
+				}, () => {
+					button.label = localize('voltCodeIntel.fffInstallFailed', "Failed");
+				});
+			}));
+		}, () => describe({ state: 'unsupported', bundledVersion: '', running: 0 }));
 	}
 
 	private async run(command: string, timeoutMs = 15_000): Promise<{ ok: boolean; out: string }> {
@@ -199,7 +254,7 @@ export class CodeIntelligencePage {
 			}
 			if (!version.ok) {
 				if (desc) {
-					desc.textContent = localize('voltCodeIntel.rtkMissing', "RTK is not installed. It cuts the tokens of git, test, lint and build output by 60-90%. Install it (brew install rtk, or cargo install --git https://github.com/rtk-ai/rtk), then reopen this page.");
+					desc.textContent = localize('voltCodeIntel.rtkMissing', "RTK is not installed. It cuts the tokens of git, test, lint and build output (72% in Volt's own measurements). Install it (macOS/Linux: brew install rtk; Windows: winget, see github.com/rtk-ai/rtk; or cargo install --git https://github.com/rtk-ai/rtk), then reopen this page.");
 				}
 				hooks.remove();
 				return;

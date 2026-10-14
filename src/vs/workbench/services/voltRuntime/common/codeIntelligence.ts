@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
-import type { IVoltCodeIndexOptions, IVoltCodeSymbol, IVoltLspLimits, VoltCodeSymbolKind } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
+import type { IVoltCodeIndexOptions, IVoltCodeSymbol, IVoltLspLimits, VoltCodeSymbolKind, VoltFffMode } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import type { IVoltHostToolInfo } from './hostTools.js';
 
 /** Settings > Code Intelligence. */
@@ -18,6 +18,14 @@ export const LSP_MAX_REMOTE_SETTING = 'volt.codeIntelligence.lsp.maxRemoteWorksp
 
 /** Run the agent's shell commands through RTK (github.com/rtk-ai/rtk) when it is installed. */
 export const RTK_ENABLED_SETTING = 'volt.codeIntelligence.rtk.enabled';
+/** Commands (by their first words, e.g. `git log`) RTK never rewrites. */
+export const RTK_EXCLUDE_SETTING = 'volt.codeIntelligence.rtk.exclude';
+/** FFF (github.com/dmtrKovalenko/fff) for fuzzy file search: `auto` uses it when installed. */
+export const FFF_MODE_SETTING = 'volt.codeIntelligence.fff.mode';
+/** A specific `fff-mcp` binary, instead of Volt's install or the one on PATH. */
+export const FFF_PATH_SETTING = 'volt.codeIntelligence.fff.path';
+/** Search the project for what a message names and give the agent the best matches up front. */
+export const RETRIEVAL_ENABLED_SETTING = 'volt.codeIntelligence.retrieval.enabled';
 
 export const LSP_WORKSPACES_MIN = 1;
 export const LSP_WORKSPACES_MAX = 20;
@@ -58,6 +66,20 @@ export function rtkEnabled(configuration: IConfigurationService): boolean {
 	return configuration.getValue<boolean>(RTK_ENABLED_SETTING) !== false;
 }
 
+export function readRtkExclusions(configuration: IConfigurationService): string[] {
+	const value = configuration.getValue<unknown>(RTK_EXCLUDE_SETTING);
+	return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && !!item.trim()) : [];
+}
+
+export function readFffSettings(configuration: IConfigurationService): { readonly mode: VoltFffMode; readonly path?: string } {
+	const path = configuration.getValue<string>(FFF_PATH_SETTING)?.trim();
+	return { mode: configuration.getValue<string>(FFF_MODE_SETTING) === 'off' ? 'off' : 'auto', ...(path ? { path } : {}) };
+}
+
+export function retrievalEnabled(configuration: IConfigurationService): boolean {
+	return configuration.getValue<boolean>(RETRIEVAL_ENABLED_SETTING) !== false;
+}
+
 /** Holds the agent's command for the RTK wrapper, so no quoting can change it. */
 export const RTK_COMMAND_ENV = 'VOLT_RTK_CMD';
 
@@ -65,14 +87,25 @@ export const RTK_COMMAND_ENV = 'VOLT_RTK_CMD';
  * A POSIX shell line that runs `$VOLT_RTK_CMD` through RTK when RTK has a compact form of it
  * (`git status` becomes `rtk git status`, `cargo test` becomes `rtk cargo test`) and as written
  * otherwise, including when RTK is not installed. One process start (~5 ms) per command; the
- * exit code is the command's own.
+ * exit code is the command's own. Windows asks `rtk rewrite` without a shell instead (shellTool).
  */
 export const RTK_WRAPPER = '__volt_rtk=$(command rtk rewrite "${' + RTK_COMMAND_ENV + '}" 2>/dev/null); if [ -n "$__volt_rtk" ]; then eval "$__volt_rtk"; else eval "${' + RTK_COMMAND_ENV + '}"; fi';
 
-/** Commands RTK should not touch: already RTK, or empty. */
-export function wantsRtk(command: string): boolean {
+/**
+ * Commands RTK should not touch: empty, already RTK (no double wrap: `rtk proxy cmd` is how to
+ * get one command's raw output), carrying Volt's own wrapper variable (no recursion), or excluded
+ * in settings by their first words (`git log` excludes `git log --oneline` but not `git status`).
+ */
+export function wantsRtk(command: string, exclusions: readonly string[] = []): boolean {
 	const trimmed = command.trim();
-	return !!trimmed && !/^rtk(\s|$)/.test(trimmed);
+	if (!trimmed || /^rtk(\s|$)/.test(trimmed) || trimmed.includes(RTK_COMMAND_ENV)) {
+		return false;
+	}
+	const words = trimmed.split(/\s+/);
+	return !exclusions.some(exclusion => {
+		const prefix = exclusion.trim().split(/\s+/);
+		return prefix.length > 0 && prefix.every((word, i) => words[i] === word);
+	});
 }
 
 export const SYMBOL_KIND_NAMES: readonly VoltCodeSymbolKind[] = ['function', 'method', 'class', 'interface', 'type', 'enum', 'variable', 'constant', 'module', 'struct', 'trait', 'macro', 'field'];
@@ -89,6 +122,7 @@ export function formatSymbols(symbols: readonly IVoltCodeSymbol[], limitHit: boo
 
 export const INSTANT_GREP_TOOL_NAME = 'instant_grep';
 export const FIND_SYMBOL_TOOL_NAME = 'find_symbol';
+export const FIND_FILES_TOOL_NAME = 'find_files';
 
 export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
 	{
@@ -136,6 +170,24 @@ export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
 				limit: { type: 'integer', description: 'Maximum results (default 30)' },
 			},
 			required: ['name'],
+		},
+	},
+	{
+		name: FIND_FILES_TOOL_NAME,
+		title: 'Found files',
+		group: 'core',
+		description: [
+			'Find a file by a fuzzy name or path, typos allowed ("rootIndx" finds rootIndex.ts), best match first. Instant, from Volt\'s file index (and FFF when installed).',
+			'Each word narrows the results: "auth middleware". Use 1-2 words; use instant_grep for file contents.',
+		].join(' '),
+		inputSchema: {
+			type: 'object',
+			properties: {
+				query: { type: 'string', description: 'Part of a file name or path' },
+				path: { type: 'string', description: 'Only under this folder (relative to the project root)' },
+				limit: { type: 'integer', description: 'Maximum paths (default 20)' },
+			},
+			required: ['query'],
 		},
 	},
 ];

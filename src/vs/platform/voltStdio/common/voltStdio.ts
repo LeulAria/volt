@@ -63,6 +63,27 @@ export interface IVoltExecRequest {
 	readonly spillDir?: string;
 }
 
+/** A program run directly, without a shell: its arguments are passed as they are, never parsed. */
+export interface IVoltExecFileRequest {
+	/** Looked up on the user's PATH (with `.exe`/`.cmd` on Windows) when not a path. */
+	readonly file: string;
+	readonly args: readonly string[];
+	readonly cwd?: string;
+	readonly env?: Record<string, string>;
+	readonly timeoutMs: number;
+	/** Output beyond this many bytes per stream fails the call (default 1 MB). */
+	readonly maxBytes?: number;
+}
+
+export interface IVoltExecFileResult {
+	/** Null when the program could not start or was stopped. */
+	readonly exitCode: number | null;
+	readonly stdout: string;
+	readonly stderr: string;
+	/** Why it did not run to completion (not found, timed out, too much output). */
+	readonly error?: string;
+}
+
 export interface IVoltExecResult {
 	readonly id: string;
 	readonly exitCode: number | null;
@@ -103,6 +124,8 @@ export interface IVoltStdioService {
 	which(command: string): Promise<string | undefined>;
 	/** Runs one command and returns its separated output in a single round trip. */
 	exec(request: IVoltExecRequest): Promise<IVoltExecResult>;
+	/** Runs a program without a shell (safe for untrusted arguments on every platform). */
+	execFile?(request: IVoltExecFileRequest): Promise<IVoltExecFileResult>;
 	/** Kills a running command or job and its whole process tree. */
 	cancelExec(id: string): Promise<void>;
 	jobOutput(id: string, since?: number): Promise<IVoltJobOutput | undefined>;

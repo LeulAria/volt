@@ -137,4 +137,8 @@ export class RemoteAgentOrchestratorService extends Disposable implements IAgent
 	autoResumeDefault(): boolean {
 		return this.client.mirror.get<boolean>('runtime', 'autoResumeDefault') ?? true;
 	}
+
+	keepsWorking(): boolean {
+		return this.client.mirror.get<boolean>('runtime', 'keepsWorking') ?? true;
+	}
 }

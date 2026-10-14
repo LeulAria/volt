@@ -45,14 +45,14 @@ import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runti
 import { IPredictionSettings, IVoltPredictionService } from '../../../services/voltRuntime/common/prediction.js';
 import { IWorkbenchThemeService, ThemeSettings } from '../../../services/themes/common/workbenchThemeService.js';
 import { AGENT_DEFAULT_MODEL_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_PROMPT_HISTORY_SETTING, AGENT_VOICE_DEFAULT_REALTIME_MODEL, AGENT_VOICE_ENDPOINT_SETTING, AGENT_VOICE_ENGINE_SETTING, AGENT_VOICE_MODEL_SETTING, AGENT_VOICE_REALTIME_MODEL_SETTING, AGENT_VOICE_REALTIME_MODELS, AgentVoiceEngine } from '../../voltAgent/common/agentComposerSettings.js';
-import { AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING } from '../../voltAgent/common/agentWorkflowSettings.js';
+import { AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_KEEP_WORKING_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING } from '../../voltAgent/common/agentWorkflowSettings.js';
 import { AGENT_HOME_AUTO_SETTLE_DAYS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING } from '../../voltAgent/common/agentHomeSettings.js';
 import '../../voltAgent/common/agentAwakeSettings.js';
 
 /** Settings on the Composer page whose rows redraw when they change. */
 /** Settings on the Appearance page whose controls redraw when they change. */
 const APPEARANCE_PAGE_SETTINGS = [ThemeSettings.DETECT_COLOR_SCHEME, ThemeSettings.PREFERRED_DARK_THEME, ThemeSettings.PREFERRED_LIGHT_THEME, ThemeSettings.FILE_ICON_THEME, 'editor.fontSize', 'editor.fontFamily', 'window.zoomLevel'];
-const COMPOSER_PAGE_SETTINGS = [AGENT_PROMPT_HISTORY_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING, AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING, AGENT_HOME_AUTO_SETTLE_DAYS_SETTING];
+const COMPOSER_PAGE_SETTINGS = [AGENT_PROMPT_HISTORY_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_KEEP_WORKING_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING, AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING, AGENT_HOME_AUTO_SETTLE_DAYS_SETTING];
 import { AgentModelPicker, type IModelOption, type IProviderGroup } from '../../voltAgent/browser/picker/agentModelPicker.js';
 import { appendSettingsBlock, SettingsStickyHeads } from './settingsStickyHeads.js';
 import { VoltSettingsEditorInput } from './voltSettingsEditorInput.js';
@@ -709,7 +709,9 @@ export class VoltSettingsEditor extends EditorPane {
 			group,
 			AWAKE_LID_CLOSED_MODE_SETTING,
 			localize('voltSettings.lidClosedMode', "Lid-Closed Mode"),
-			localize('voltSettings.lidClosedModeDesc', "Agents keep working when you close the laptop lid. The computer can sleep again once they finish, below {0}% battery, if it gets too hot, or after {1} hours. Use it on a hard, ventilated surface, never in a bag.", prefs.batteryFloorPercent, prefs.maxHours),
+			prefs.maxHours > 0
+				? localize('voltSettings.lidClosedModeDesc', "Agents keep working when you close the laptop lid. The computer can sleep again once they finish, below {0}% battery, if it gets too hot, or after {1} hours. Use it on a hard, ventilated surface, never in a bag.", prefs.batteryFloorPercent, prefs.maxHours)
+				: localize('voltSettings.lidClosedModeNoCapDesc', "Agents keep working when you close the laptop lid, for as long as their work takes. The computer can sleep again once they finish, below {0}% battery, or if it gets too hot. Use it on a hard, ventilated surface, never in a bag.", prefs.batteryFloorPercent),
 		);
 		if (prefs.lidClosedMode) {
 			const state = this.awakeState;
@@ -1040,6 +1042,12 @@ export class VoltSettingsEditor extends EditorPane {
 
 		this.sectionLabel(localize('voltSettings.chatsSection', "Chats"));
 		const workflow = this.settingsGroup();
+		this.settingSwitch(
+			workflow,
+			AGENT_KEEP_WORKING_SETTING,
+			localize('voltSettings.keepWorking', "Keep working until done"),
+			localize('voltSettings.keepWorkingDesc', "When a chat's work stops part way (an error, a crashed or silent agent, Volt restarting), Volt restarts it on its own, waiting longer each time (at most 30 minutes), for as long as it takes. A turn that ends with its plan unfinished keeps going. Stop the chat to end it."),
+		);
 		const resumeOptions: ISelectOptionItem[] = [
 			{ text: localize('voltSettings.resumeSubagents', "Delegated tasks"), detail: 'subagents' },
 			{ text: localize('voltSettings.resumeAll', "Every chat"), detail: 'all' },

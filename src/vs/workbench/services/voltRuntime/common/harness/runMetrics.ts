@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IVoltEvent } from '../events.js';
+import { estimateTokens } from './contextEngine.js';
 
 /**
  * Per-run timing and health meters, for both engines. Phases are measured from the moment the
@@ -29,6 +30,26 @@ export interface IRunToolMeters {
 	readonly totalMs: number;
 	readonly maxMs: number;
 	readonly slowest?: string;
+}
+
+/** Tokens of tool output the model read, by tool and by file (the largest few). */
+export interface IRunTokenMeters {
+	readonly toolOutput: number;
+	readonly byTool: readonly { readonly name: string; readonly calls: number; readonly tokens: number }[];
+	readonly byFile: readonly { readonly path: string; readonly tokens: number }[];
+	/** Model requests (usage reports) and the largest input among them. */
+	readonly requests: number;
+	readonly maxRequestInput: number;
+}
+
+/** What the context retriever gave the agent before its first step, and how much of it the agent used. */
+export interface IRunRetrieval {
+	readonly ms: number;
+	readonly tokens: number;
+	readonly files: number;
+	/** Offered files the agent then read, searched in or edited. */
+	readonly used: number;
+	readonly partial: boolean;
 }
 
 export interface IRunMetrics {
@@ -58,6 +79,8 @@ export interface IRunMetrics {
 	readonly continuations: number;
 	readonly errors: number;
 	readonly tokens: { readonly input: number; readonly output: number; readonly cache: number };
+	readonly usage?: IRunTokenMeters;
+	readonly retrieval?: IRunRetrieval;
 }
 
 const STALL = /stall|no activity|not responding|taking longer/i;
@@ -88,6 +111,13 @@ export class RunMetrics {
 	private continuations = 0;
 	private errors = 0;
 	private readonly tokens = { input: 0, output: 0, cache: 0 };
+	private readonly toolTokens = new Map<string, { calls: number; tokens: number }>();
+	private readonly fileTokens = new Map<string, number>();
+	private readonly callPaths = new Map<string, string>();
+	private requests = 0;
+	private maxRequestInput = 0;
+	private retrieval: { ms: number; tokens: number; files: readonly string[]; partial: boolean } | undefined;
+	private readonly usedFiles = new Set<string>();
 
 	constructor(
 		readonly runId: string,
@@ -113,6 +143,21 @@ export class RunMetrics {
 		this.continuations++;
 	}
 
+	/** The context retriever's block for this run; later tool calls that touch its files count as used. */
+	noteRetrieval(retrieval: { readonly ms: number; readonly tokens: number; readonly files: readonly string[]; readonly partial: boolean }): void {
+		this.retrieval = { ...retrieval };
+	}
+
+	private noteUse(text: string | undefined): void {
+		if (text && this.retrieval) {
+			for (const path of this.retrieval.files) {
+				if (text.includes(path)) {
+					this.usedFiles.add(path);
+				}
+			}
+		}
+	}
+
 	get hasPrompted(): boolean {
 		return this.phases.has('prompt');
 	}
@@ -136,10 +181,29 @@ export class RunMetrics {
 					this.seenTools.add(event.callId);
 					this.openTools.set(event.callId, { name: event.name, at });
 					this.toolCount++;
+					const path = event.locations?.[0]?.path ?? pathArg(event.input);
+					if (path) {
+						this.callPaths.set(event.callId, path);
+					}
+					this.noteUse(event.input);
+					this.noteUse(event.locations?.map(location => location.path).join('\n'));
 				}
 				break;
 			case 'tool.end': {
 				const open = this.openTools.get(event.callId);
+				const output = typeof event.output === 'string' ? event.output : typeof event.result === 'string' ? event.result : '';
+				if (open && output) {
+					const tokens = estimateTokens(output);
+					const meter = this.toolTokens.get(open.name) ?? { calls: 0, tokens: 0 };
+					meter.calls++;
+					meter.tokens += tokens;
+					this.toolTokens.set(open.name, meter);
+					const path = this.callPaths.get(event.callId);
+					if (path) {
+						this.fileTokens.set(path, (this.fileTokens.get(path) ?? 0) + tokens);
+					}
+				}
+				this.callPaths.delete(event.callId);
 				if (open) {
 					this.openTools.delete(event.callId);
 					const ms = event.durationMs ?? Math.max(0, at - open.at);
@@ -167,6 +231,8 @@ export class RunMetrics {
 				}
 				break;
 			case 'usage':
+				this.requests++;
+				this.maxRequestInput = Math.max(this.maxRequestInput, event.used ?? event.input + (event.cache ?? 0));
 				this.tokens.input += event.input;
 				this.tokens.output += event.output;
 				this.tokens.cache += event.cache ?? 0;
@@ -220,6 +286,14 @@ export class RunMetrics {
 			continuations: this.continuations,
 			errors: this.errors,
 			tokens: { ...this.tokens },
+			usage: {
+				toolOutput: [...this.toolTokens.values()].reduce((sum, meter) => sum + meter.tokens, 0),
+				byTool: [...this.toolTokens].map(([name, meter]) => ({ name, ...meter })).sort((a, b) => b.tokens - a.tokens).slice(0, 8),
+				byFile: [...this.fileTokens].map(([path, tokens]) => ({ path, tokens })).sort((a, b) => b.tokens - a.tokens).slice(0, 5),
+				requests: this.requests,
+				maxRequestInput: this.maxRequestInput,
+			},
+			...(this.retrieval ? { retrieval: { ms: this.retrieval.ms, tokens: this.retrieval.tokens, files: this.retrieval.files.length, used: this.usedFiles.size, partial: this.retrieval.partial } } : {}),
 		};
 	}
 
@@ -236,6 +310,7 @@ export class RunMetrics {
 /** One log line: `agent/cold agent: prepared 4ms, agent ready 5.6s, prompt 5.6s, first event 6.7s, first text 9.1s, end 9.6s; tools 2 (1.2s, max 0.9s read_file)`. */
 export function formatRunMetrics(metrics: IRunMetrics): string {
 	const s = (ms: number | undefined) => ms === undefined ? '-' : ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+	const k = (tokens: number) => tokens < 1000 ? String(tokens) : `${(tokens / 1000).toFixed(1)}k`;
 	const head = `${metrics.engine}${metrics.agentSource ? `/${metrics.agentSource}` : ''} ${metrics.mode} ${metrics.outcome ?? 'running'}`;
 	const phases = [
 		`prepared ${s(metrics.preparedMs)}`,
@@ -255,6 +330,23 @@ export function formatRunMetrics(metrics: IRunMetrics): string {
 		metrics.loops ? `loops ${metrics.loops}` : '',
 		metrics.compactions ? `compactions ${metrics.compactions}` : '',
 		metrics.continuations ? `continuations ${metrics.continuations}` : '',
+		metrics.usage?.toolOutput ? `tool output ~${k(metrics.usage.toolOutput)} tokens (${metrics.usage.byTool.slice(0, 3).map(meter => `${meter.name} ${k(meter.tokens)}`).join(', ')})` : '',
+		metrics.usage?.requests ? `requests ${metrics.usage.requests} (max input ${k(metrics.usage.maxRequestInput)})` : '',
+		metrics.retrieval ? `retrieval ${s(metrics.retrieval.ms)} ${k(metrics.retrieval.tokens)} tokens, ${metrics.retrieval.used}/${metrics.retrieval.files} files used${metrics.retrieval.partial ? ', cut short' : ''}` : '',
 	].filter(Boolean).join(', ');
 	return `${head}: ${phases}; ${tools}${extra ? `; ${extra}` : ''}`;
+}
+
+/** The file a tool call is about, from its JSON arguments (`path`, `file_path`, `file`). */
+function pathArg(input: string | undefined): string | undefined {
+	if (!input || input[0] !== '{') {
+		return undefined;
+	}
+	try {
+		const args = JSON.parse(input) as Record<string, unknown>;
+		const path = args['path'] ?? args['file_path'] ?? args['file'];
+		return typeof path === 'string' ? path : undefined;
+	} catch {
+		return undefined;
+	}
 }

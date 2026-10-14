@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IChannel, ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
-import { IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { projectRunEnv } from './projectRunEnv.js';
 
 /**
@@ -37,6 +37,10 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	exec(request: IVoltExecRequest): Promise<IVoltExecResult> {
 		const env = projectRunEnv(request.cwd);
 		return this.inner.exec(env ? { ...request, env: { ...env, ...request.env } } : request);
+	}
+	execFile(request: IVoltExecFileRequest): Promise<IVoltExecFileResult> {
+		const env = projectRunEnv(request.cwd);
+		return this.inner.execFile!(env ? { ...request, env: { ...env, ...request.env } } : request);
 	}
 	cancelExec(id: string): Promise<void> { return this.inner.cancelExec(id); }
 	jobOutput(id: string, since?: number): Promise<IVoltJobOutput | undefined> { return this.inner.jobOutput(id, since); }

@@ -6,8 +6,10 @@
 import { buildTaskNotification, isLiveTaskState, isTerminalTaskState, taskNotificationDisplay } from './agentTasks.js';
 import { isRetryableFailure, isTransientFailure } from '../jobs/retryPolicy.js';
 import { LIMIT_CANARY_WAIT_MS, LIMIT_RESUME_TEXT, LIMIT_STAGGER_MS, limitAutoResumes, limitDueAt, limitResumeDisplay } from './limitRecovery.js';
-import { DEFAULT_ORCH_LIMITS, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimitPark, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchState, IOrchTask, IOrchTaskSpawn, IOrchThread, IOrchTurn, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimitPark, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchRescue, IOrchState, IOrchTask, IOrchTaskSpawn, IOrchThread, IOrchTurn, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
 import { applyOrchEvent, applyOrchEvents } from './orchestratorProjector.js';
+import { MAX_PLAN_CONTINUATIONS, planContinuationCount, planContinueText, planTurnId, RESCUE_STAGGER_MS, rescueDueAt, rescueLabel, rescueResumeText, rescueTurnId, rescueWaits } from './rescue.js';
+import { normalizeVoltMode } from '../modes.js';
 
 /**
  * The decider: command + state -> events, and the scheduler that runs after every command. Both
@@ -172,6 +174,19 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 		}
 		case 'turn.cancel':
 			return decideCancel(state, command.threadId, command.cascade, command.at);
+		case 'rescue.tick':
+			return decideRescueTick(state, command.at, limits);
+		case 'rescue.now': {
+			const thread = state.threads[command.threadId];
+			if (!thread?.rescue || !rescueWaits(thread)) {
+				return { events: [], rejected: 'The chat is not waiting to be restarted.' };
+			}
+			return { events: rescueThread(state, thread, command.at), outcome: 'started' };
+		}
+		case 'rescue.stop': {
+			const thread = state.threads[command.threadId];
+			return thread?.rescue ? { events: [{ type: 'rescue.cleared', threadId: thread.id, reason: 'stopped' }] } : { events: [] };
+		}
 		case 'turn.resume': {
 			const thread = state.threads[command.threadId];
 			if (!thread) {
@@ -199,13 +214,13 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 			return { events: [{ type: 'queue.added', threadId: thread.id, item: { id: command.steerId, prompt: command.prompt, at: command.at }, head: true }] };
 		}
 		case 'run.settled':
-			return decideRunSettled(state, command.threadId, { runId: command.runId, turnId: command.turnId }, command.outcome, command.at, command.error, command.reply, false, command.limit, command.account);
+			return decideRunSettled(state, command.threadId, { runId: command.runId, turnId: command.turnId }, command.outcome, command.at, command.error, command.reply, false, command.limit, command.account, limits, command.openPlan);
 		case 'dispatch.failed': {
 			const thread = state.threads[command.threadId];
 			if (!thread?.active || thread.active.id !== command.turnId) {
 				return { events: [] };
 			}
-			return decideRunSettled(state, thread.id, { turnId: command.turnId }, 'failed', command.at, command.error, undefined);
+			return decideRunSettled(state, thread.id, { turnId: command.turnId }, 'failed', command.at, command.error, undefined, false, undefined, undefined, limits);
 		}
 		case 'input.opened': {
 			const thread = state.threads[command.threadId];
@@ -735,6 +750,10 @@ function decideCancel(state: IOrchState, threadId: string, cascade: 'turn' | 'al
 	if (active && active.phase !== 'cancelling') {
 		events.push({ type: 'turn.cancelling', threadId: thread.id, turnId: active.id });
 	}
+	// Stopping a chat stops Volt from restarting it too.
+	if (thread.rescue) {
+		events.push({ type: 'rescue.cleared', threadId: thread.id, reason: 'stopped' });
+	}
 	if (cascade) {
 		// Stopping a turn stops the subagents it started (as a harness's own subagents stop with it);
 		// subagents from earlier turns keep working unless the user stops them all.
@@ -816,7 +835,7 @@ export function externalTurnId(runId: string): string {
 	return `x-${runId}`;
 }
 
-function decideRunSettled(state: IOrchState, threadId: string, match: { readonly runId?: string; readonly turnId?: string }, outcome: OrchOutcome, at: number, error: string | undefined, reply: string | undefined, superseded = false, limit?: { readonly resetAt?: number; readonly message: string; readonly stop?: boolean }, account?: IOrchLimitAccount): IOrchDecision {
+function decideRunSettled(state: IOrchState, threadId: string, match: { readonly runId?: string; readonly turnId?: string }, outcome: OrchOutcome, at: number, error: string | undefined, reply: string | undefined, superseded = false, limit?: { readonly resetAt?: number; readonly message: string; readonly stop?: boolean }, account?: IOrchLimitAccount, limits: IOrchLimits = DEFAULT_ORCH_LIMITS, openPlan?: readonly string[]): IOrchDecision {
 	const thread = state.threads[threadId];
 	const active = thread?.active;
 	if (!thread || !active) {
@@ -841,7 +860,16 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 		const task = thread.taskId ? state.tasks[thread.taskId] : undefined;
 		return { events: restartTurn(state, thread, active, task, at, failureResume(active, error!)) };
 	}
+	// The agent ended its turn with its plan unfinished: it goes on while each round closes items.
+	if (outcome === 'done' && !superseded && !previous && openPlan?.length && continuesPlan(state, thread, active, openPlan.length, limits)) {
+		return { events: continuePlan(thread, active, at, openPlan) };
+	}
 	const events: OrchEvent[] = [{ type: 'turn.settled', threadId: thread.id, turnId: active.id, outcome, at, ...(error ? { error } : {}) }];
+	// The work went through: a restart Volt was waiting to send is not needed any more. The
+	// wake-up guard's back-off holds until the user's next turn, so two agents cannot spin.
+	if (outcome === 'done' && thread.rescue && thread.rescue.reason !== 'wakeups') {
+		events.push({ type: 'rescue.cleared', threadId: thread.id, reason: 'done' });
+	}
 	// A usage limit parks the chat until the reset instead of failing it. A subagent's chat fails as
 	// before: its parent hears about it and decides (another model, or wait).
 	const parks = !!limit && outcome === 'failed' && !superseded && !thread.taskId;
@@ -852,6 +880,10 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 	if ((outcome === 'failed' && !superseded) || retries) {
 		// The queue waits for the user instead of resending into a failing provider.
 		events.push({ type: 'queue.paused', threadId: thread.id, reason: parks || retries ? 'limit' : 'failed' });
+	}
+	// Past the quick retries: Volt restarts the chat after a back-off, for as long as it takes.
+	if (limits.supervise && outcome === 'failed' && !superseded && !parks && !retries && !thread.taskId && active.kind !== 'external' && active.phase !== 'cancelling') {
+		events.push(armRescue(thread, 'failed', at, active, error));
 	}
 	const provider = account?.provider ?? previous?.provider;
 	const providerLabel = account?.providerLabel ?? previous?.providerLabel;
@@ -1175,6 +1207,10 @@ function decideRecover(state: IOrchState, at: number, resume: OrchRestartResume,
 			push(decideRunSettled(next, thread.id, { turnId: current.active.id }, 'interrupted', at, undefined, undefined).events);
 			if (!next.threads[thread.id]?.limit) {
 				push([{ type: 'queue.paused', threadId: thread.id, reason: 'interrupted' }]);
+				if (limits.supervise && !current.taskId && current.active.kind !== 'external' && current.active.phase !== 'cancelling') {
+					// What does not continue at once is restarted after the back-off (a crash it causes slows down, it never stops).
+					push([armRescue(next.threads[thread.id]!, 'interrupted', at, current.active)]);
+				}
 			}
 		} else if (current.queue.length && !current.pause) {
 			if (keepsGoing) {
@@ -1185,6 +1221,9 @@ function decideRecover(state: IOrchState, at: number, resume: OrchRestartResume,
 				continue;
 			}
 			push([{ type: 'queue.paused', threadId: thread.id, reason: 'interrupted' }]);
+			if (limits.supervise && !current.taskId) {
+				push([armRescue(next.threads[thread.id]!, 'interrupted', at)]);
+			}
 		}
 	}
 	for (const task of Object.values(next.tasks).filter(inScope)) {
@@ -1197,6 +1236,9 @@ function decideRecover(state: IOrchState, at: number, resume: OrchRestartResume,
 		const parent = next.threads[task.parentId];
 		if (task.delivery === 'pending' && parent && !parent.pause && !parent.active) {
 			push([{ type: 'queue.paused', threadId: parent.id, reason: 'interrupted' }]);
+			if (limits.supervise && !parent.taskId && !next.threads[parent.id]?.rescue) {
+				push([armRescue(next.threads[parent.id]!, 'interrupted', at)]);
+			}
 		}
 	}
 	return { events };
@@ -1321,6 +1363,122 @@ function restartTurn(state: IOrchState, thread: IOrchThread, active: IOrchTurn, 
 		prompt,
 		at,
 		...(unsent && active.taskIds ? { taskIds: active.taskIds } : {}),
+	}));
+	return events;
+}
+
+/**
+ * The record that has Volt restart a top-level chat whose work stopped (see `IOrchRescue`). The
+ * restarts already sent carry over, so the back-off keeps growing while the work keeps stopping.
+ */
+function armRescue(thread: IOrchThread, reason: IOrchRescue['reason'], at: number, turn?: IOrchTurn, error?: string): OrchEvent {
+	const previous = thread.rescue;
+	const mode = turn?.prompt.mode ?? previous?.mode;
+	// A turn that never reached the agent goes again as it was: "continue" would leave the agent without its task.
+	const unsent = turn && turn.phase === 'dispatching' && !turn.runId ? turn.prompt : undefined;
+	return {
+		type: 'rescue.armed',
+		threadId: thread.id,
+		rescue: {
+			reason,
+			at,
+			attempts: previous?.attempts ?? 0,
+			...(error ? { error: error.slice(0, 300) } : {}),
+			...(mode ? { mode } : {}),
+			...(unsent ? { prompt: unsent } : {}),
+		},
+	};
+}
+
+/**
+ * Restarts a chat that waited for it: the turn that was cut off continues (one that never reached
+ * the agent goes again as it was), and what waited behind it (queued prompts, subagent reports)
+ * follows. With nothing cut off and nothing waiting, the record just ends.
+ */
+function rescueThread(state: IOrchState, thread: IOrchThread, at: number): OrchEvent[] {
+	const rescue = thread.rescue!;
+	const last = thread.last;
+	const cut = !!last && (last.outcome === 'failed' || last.outcome === 'interrupted') && last.kind !== 'external';
+	if (!cut && !thread.queue.length && !hasPendingReports(state, thread.id)) {
+		return [{ type: 'rescue.cleared', threadId: thread.id, reason: 'done' }];
+	}
+	const attempts = rescue.attempts + 1;
+	const { notBefore: _notBefore, ...rest } = rescue;
+	const events: OrchEvent[] = [{ type: 'rescue.armed', threadId: thread.id, rescue: { ...rest, attempts, at } }];
+	if (thread.pause) {
+		events.push({ type: 'queue.resumed', threadId: thread.id });
+	}
+	if (cut) {
+		events.push(dispatch(thread.id, {
+			id: rescueTurnId(last!.turnId, attempts),
+			kind: 'resume',
+			prompt: rescue.prompt ?? {
+				text: rescueResumeText(rescue),
+				display: { text: rescueLabel(rescue, attempts), notification: true },
+				...(rescue.mode ? { mode: rescue.mode } : {}),
+			},
+			at,
+		}));
+	}
+	return events;
+}
+
+/** Chats whose restart is due: the first goes now, the others get slots `RESCUE_STAGGER_MS` apart. */
+function decideRescueTick(state: IOrchState, at: number, limits: IOrchLimits): IOrchDecision {
+	if (!limits.supervise) {
+		return { events: [] };
+	}
+	const due = sortedThreads(state)
+		.filter(thread => rescueWaits(thread) && rescueDueAt(thread.rescue!, thread.id) <= at)
+		.sort((a, b) => rescueDueAt(a.rescue!, a.id) - rescueDueAt(b.rescue!, b.id) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+	const events: OrchEvent[] = [];
+	due.forEach((thread, index) => {
+		if (index === 0) {
+			events.push(...rescueThread(state, thread, at));
+			return;
+		}
+		const notBefore = at + index * RESCUE_STAGGER_MS;
+		if ((thread.rescue!.notBefore ?? 0) < notBefore) {
+			events.push({ type: 'rescue.deferred', threadId: thread.id, notBefore });
+		}
+	});
+	return { events };
+}
+
+/**
+ * A turn that ended with open plan items goes on when Volt keeps working, nothing else is in the
+ * way (a queued prompt, a question, a move, a model switch, subagents still working for it, plan
+ * or ask mode), and it is the first round or the last round closed items: an agent that cannot
+ * finish says so and stops, instead of looping.
+ */
+function continuesPlan(state: IOrchState, thread: IOrchThread, active: IOrchTurn, open: number, limits: IOrchLimits): boolean {
+	const mode = normalizeVoltMode(active.prompt.mode);
+	return limits.supervise
+		&& active.kind !== 'external' && active.phase !== 'cancelling'
+		&& mode !== 'plan' && mode !== 'ask'
+		&& !thread.blocked && !thread.moving && !thread.pendingMove && !thread.pendingHandoff && !thread.limit
+		&& !thread.pause && !thread.inputs.length && !nextQueued(thread)
+		&& !liveChildren(state, thread.id).some(task => task.source === 'volt')
+		&& (active.planOpen === undefined || open < active.planOpen)
+		&& planContinuationCount(active.id) < MAX_PLAN_CONTINUATIONS;
+}
+
+function continuePlan(thread: IOrchThread, active: IOrchTurn, at: number, open: readonly string[]): OrchEvent[] {
+	const events: OrchEvent[] = [{ type: 'turn.settled', threadId: thread.id, turnId: active.id, outcome: 'done', at }];
+	if (thread.rescue && thread.rescue.reason !== 'wakeups') {
+		events.push({ type: 'rescue.cleared', threadId: thread.id, reason: 'done' });
+	}
+	events.push(dispatch(thread.id, {
+		id: planTurnId(active.id),
+		kind: 'resume',
+		prompt: {
+			text: planContinueText(open),
+			display: { text: `Continued: the plan has ${open.length} open item${open.length === 1 ? '' : 's'}`, notification: true },
+			...(active.prompt.mode ? { mode: active.prompt.mode } : {}),
+			...(active.prompt.modelRef ? { modelRef: active.prompt.modelRef } : {}),
+		},
+		at,
+		planOpen: open.length,
 	}));
 	return events;
 }
@@ -1452,8 +1610,12 @@ function scheduleRound(state: IOrchState, at: number, limits: IOrchLimits, seq: 
 			.sort(byEnded);
 		if (finished.length) {
 			if ((current.wakeups ?? 0) >= limits.maxWakeups) {
-				// Reports keep waking the chat with no user turn between: let the user decide.
+				// Reports keep waking the chat with no user turn between: let the user decide, or (keep
+				// working) go on after a back-off that grows until the user's next turn.
 				push({ type: 'queue.paused', threadId: current.id, reason: 'wakeups' });
+				if (limits.supervise && !current.taskId) {
+					push(armRescue(next.threads[current.id]!, 'wakeups', at));
+				}
 				continue;
 			}
 			const others = liveChildren(next, current.id).filter(child => child.source === 'volt');

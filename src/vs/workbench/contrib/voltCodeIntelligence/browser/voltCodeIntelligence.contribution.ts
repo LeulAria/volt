@@ -9,15 +9,17 @@ import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
 import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { IVoltCodeIndexService, NullVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { ISearchService } from '../../../services/search/common/search.js';
-import { CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, CODE_INTELLIGENCE_TOOLS, codeIndexEnabled, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, LSP_ENABLED_SETTING, LSP_MAX_LOCAL_SETTING, LSP_MAX_REMOTE_SETTING, LSP_WORKSPACES_MAX, LSP_WORKSPACES_MIN, LSP_WORKTREES_SETTING, readCodeIndexOptions, RTK_ENABLED_SETTING } from '../../../services/voltRuntime/common/codeIntelligence.js';
+import { CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, CODE_INTELLIGENCE_TOOLS, codeIndexEnabled, FFF_MODE_SETTING, FFF_PATH_SETTING, FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, LSP_ENABLED_SETTING, LSP_MAX_LOCAL_SETTING, LSP_MAX_REMOTE_SETTING, LSP_WORKSPACES_MAX, LSP_WORKSPACES_MIN, LSP_WORKTREES_SETTING, readCodeIndexOptions, readFffSettings, RETRIEVAL_ENABLED_SETTING, RTK_ENABLED_SETTING, RTK_EXCLUDE_SETTING } from '../../../services/voltRuntime/common/codeIntelligence.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
-import { createSearchTools, ISearchIndex } from '../../../services/voltRuntime/browser/tools/searchTools.js';
+import { VoltSearch } from '../../../services/voltRuntime/browser/search/voltSearch.js';
+import { createSearchTools } from '../../../services/voltRuntime/browser/tools/searchTools.js';
 
 // Desktop: the main process's index; browsers: the agent server's (both registered later, so they win).
 registerSingleton(IVoltCodeIndexService, NullVoltCodeIndexService, InstantiationType.Delayed);
@@ -50,6 +52,36 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			default: true,
 			scope: ConfigurationScope.APPLICATION,
 			markdownDescription: localize('voltCodeIntelligence.rtk', "Run the agent's shell commands through [RTK](https://github.com/rtk-ai/rtk) when it is installed: `git status`, test runners, linters and package managers print compact output, using 60-90% fewer tokens. Commands RTK does not know run as written."),
+		},
+		[RTK_EXCLUDE_SETTING]: {
+			type: 'array',
+			items: { type: 'string' },
+			default: [],
+			scope: ConfigurationScope.APPLICATION,
+			markdownDescription: localize('voltCodeIntelligence.rtkExclude', "Commands RTK never rewrites, by their first words: `git log` keeps `git log --oneline` raw but still compacts `git status`. The agent can also get one command's raw output with `rtk proxy <command>`."),
+		},
+		[FFF_MODE_SETTING]: {
+			type: 'string',
+			enum: ['auto', 'off'],
+			enumDescriptions: [
+				localize('voltCodeIntelligence.fffAuto', "Use FFF for fuzzy file search when it is installed; Volt's index otherwise."),
+				localize('voltCodeIntelligence.fffOff', "Always use Volt's index for fuzzy file search."),
+			],
+			default: 'auto',
+			scope: ConfigurationScope.APPLICATION,
+			markdownDescription: localize('voltCodeIntelligence.fff', "Fuzzy file search (the agent's `find_files`) with [FFF](https://github.com/dmtrKovalenko/fff): typo-tolerant, ranked by how recently files changed and were used. It runs as its own process; without it Volt's index answers."),
+		},
+		[FFF_PATH_SETTING]: {
+			type: 'string',
+			default: '',
+			scope: ConfigurationScope.MACHINE,
+			description: localize('voltCodeIntelligence.fffPath', "Path to an fff-mcp binary to use instead of the one Volt installs or finds on PATH."),
+		},
+		[RETRIEVAL_ENABLED_SETTING]: {
+			type: 'boolean',
+			default: true,
+			scope: ConfigurationScope.APPLICATION,
+			description: localize('voltCodeIntelligence.retrieval', "Before the agent starts, search the project for the files, symbols and errors your message names and give it the best matches, so it reads the right code first. Capped at a small token budget; skipped when a message names nothing."),
 		},
 		[LSP_ENABLED_SETTING]: {
 			type: 'boolean',
@@ -124,21 +156,23 @@ export class CodeIntelligenceHostTools extends Disposable implements IWorkbenchC
 
 	static readonly ID = 'workbench.contrib.voltCodeIntelligenceHostTools';
 
-	private readonly index: ISearchIndex;
+	private readonly search: VoltSearch;
 
 	constructor(
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 		@IVoltCodeIndexService codeIndex: IVoltCodeIndexService,
-		@ISearchService private readonly searchService: ISearchService,
+		@ISearchService searchService: ISearchService,
+		@IFileService fileService: IFileService,
 		@IConfigurationService configurationService: IConfigurationService,
 		@IWorkspaceContextService private readonly workspace: IWorkspaceContextService,
 	) {
 		super();
-		this.index = {
+		this.search = this._register(new VoltSearch(searchService, {
 			service: codeIndex,
 			enabled: () => codeIndexEnabled(configurationService),
 			options: () => readCodeIndexOptions(configurationService),
-		};
+			fff: () => readFffSettings(configurationService),
+		}, fileService.onDidFilesChange));
 		this._register(hostTools.registerToolProvider({
 			tools: CODE_INTELLIGENCE_TOOLS,
 			invoke: (name, args, call) => this.invoke(name, args, call).catch((err): IVoltHostToolResult => ({ error: err instanceof Error ? err.message : String(err) })),
@@ -147,8 +181,8 @@ export class CodeIntelligenceHostTools extends Disposable implements IWorkbenchC
 
 	private async invoke(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
 		const root = call?.cwd ? URI.file(call.cwd) : this.workspace.getWorkspace().folders[0]?.uri;
-		const tools = createSearchTools(this.searchService, () => root, this.index);
-		const tool = tools.find(candidate => candidate.name === (name === INSTANT_GREP_TOOL_NAME ? 'grep' : name === FIND_SYMBOL_TOOL_NAME ? 'find_symbol' : ''));
+		const tools = createSearchTools(this.search, () => root);
+		const tool = tools.find(candidate => candidate.name === (name === INSTANT_GREP_TOOL_NAME ? 'grep' : name === FIND_SYMBOL_TOOL_NAME ? 'find_symbol' : name === FIND_FILES_TOOL_NAME ? 'find_files' : ''));
 		if (!tool) {
 			return { error: `Unknown tool ${name}.` };
 		}
