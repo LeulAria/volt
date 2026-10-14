@@ -95,7 +95,7 @@ jobs:
 
       - name: Restore node_modules cache
         id: cache-node-modules
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .build/node_modules_cache
           key: "volt-node_modules-compile-${{ hashFiles('.build/packagelockhash') }}"
@@ -127,7 +127,7 @@ jobs:
           mkdir -p .build/node_modules_cache
           tar -czf .build/node_modules_cache/cache.tgz --files-from .build/node_modules_list.txt
 
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@v6
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         with:
           path: .build/node_modules_cache
@@ -141,7 +141,7 @@ jobs:
 
       - name: Restore built-in extensions cache
         id: cache-builtin-extensions
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           enableCrossOsArchive: true
           path: .build/builtInExtensions
@@ -200,7 +200,7 @@ jobs:
 
       - name: Restore node_modules cache
         id: cache-node-modules
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .build/node_modules_cache
           key: "volt-node_modules-darwin-${{ matrix.arch }}-${{ hashFiles('.build/packagelockhash') }}"
@@ -233,7 +233,7 @@ jobs:
           mkdir -p .build/node_modules_cache
           tar -czf .build/node_modules_cache/cache.tgz --files-from .build/node_modules_list.txt
 
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@v6
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         with:
           path: .build/node_modules_cache
@@ -377,7 +377,7 @@ jobs:
 
       - name: Restore node_modules cache
         id: cache-node-modules
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .build/node_modules_cache
           key: "volt-node_modules-linux-${{ matrix.arch }}-${{ hashFiles('.build/packagelockhash') }}"
@@ -417,7 +417,7 @@ jobs:
           mkdir -p .build/node_modules_cache
           tar -czf .build/node_modules_cache/cache.tgz --files-from .build/node_modules_list.txt
 
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@v6
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         with:
           path: .build/node_modules_cache
@@ -484,7 +484,7 @@ jobs:
 
       - name: Restore node_modules cache
         id: cache-node-modules
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .build/node_modules_cache
           key: "volt-node_modules-win32-${{ matrix.arch }}-${{ hashFiles('.build/packagelockhash') }}"
@@ -525,7 +525,7 @@ jobs:
           exec { mkdir -Force .build/node_modules_cache }
           exec { 7z.exe a .build/node_modules_cache/cache.7z -mx3 `@.build/node_modules_list.txt }
 
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@v6
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         with:
           path: .build/node_modules_cache
