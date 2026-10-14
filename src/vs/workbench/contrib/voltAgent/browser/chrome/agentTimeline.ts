@@ -10,6 +10,7 @@ import { ACP_STALL_NOTICE_TITLE } from '../../../../services/voltRuntime/common/
 import { BUDGET_NOTICE_TITLE, LOOP_NOTICE_TITLE } from '../../../../services/voltRuntime/common/harness/supervisor.js';
 import { AgentSegment, IAgentActivityItem, IFileChangeBlock, ITerminalBlock, isExploreTool, isPhantomFileBlock, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
 import { computeChangeStats, formatChangeStats, netFileEdit } from '../review/fileChangePreviewModel.js';
+import { isUsageLimitText } from '../../../../services/voltRuntime/common/acpNotices.js';
 
 export type ThreadPart =
 	| { kind: 'group'; id: string; title: string; items: IAgentActivityItem[]; thinking?: string }
@@ -725,6 +726,9 @@ export function failureTitle(message: string | undefined): string {
 	}
 	if (CONNECTION_RE.test(text)) {
 		return localize('voltAgent.run.connectionTitle', "Connection failed");
+	}
+	if (isUsageLimitText(text)) {
+		return localize('voltAgent.run.limitTitle', "Usage limit reached");
 	}
 	return localize('voltAgent.run.errorTitle', "Something went wrong");
 }

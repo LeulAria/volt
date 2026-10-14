@@ -6,6 +6,7 @@
 import '../media/agentEditor.css';
 import '../media/agentComposerInput.css';
 import { $, addDisposableListener, append, Dimension, DragAndDropObserver, getWindow, isHTMLElement, isSVGElement, runAtThisOrScheduleAtNextAnimationFrame, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
+import { isWeb } from '../../../../../base/common/platform.js';
 import type { IMouseWheelEvent } from '../../../../../base/browser/mouseEvent.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/contextview/contextview.js';
@@ -190,6 +191,7 @@ import { AgentTurnFilesTree } from './agentTurnFilesTree.js';
 import { fitImageStripToOneRow } from './agentMessageImageRow.js';
 import { DEFAULT_LABELS_CONTAINER, ResourceLabels } from '../../../../browser/labels.js';
 import { chooseFileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
+import { VOLT_FONT_FAMILY } from '../../common/agentTypography.js';
 
 /**
  * The Compact first chip shows from this fill on (setting `volt.agent.compactChipThreshold`), when
@@ -1028,6 +1030,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}));
 		this.bindAttachDrop();
 		this.threadView = this._register(new AgentThreadView());
+		// The transcript's scroller is not native: on a touch screen (the workbench in a phone or
+		// tablet browser) it scrolls only if touches drive it.
+		if (isWeb && getWindow(this.threadView.element).navigator.maxTouchPoints > 0) {
+			this._register(this.threadView.enableTouchScrolling());
+		}
 		this.threadEl = this.threadView.element;
 		this.threadInner = this.threadView.inner;
 		this._register(settleFreshText(this.threadInner));
@@ -1827,7 +1834,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		return {
 			...editorConfiguration,
-			fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif',
+			fontFamily: VOLT_FONT_FAMILY,
 			fontSize: 14,
 			fontWeight: '300',
 			lineHeight: 22,

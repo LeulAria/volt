@@ -35,6 +35,11 @@
 	width: 6px;
 }
 
+/* Touches scroll the transcript (agentThreadView.ts); the page itself must not pan or bounce. */
+.monaco-workbench.web .volt-agent-thread-scroll.touch-scrolling {
+	touch-action: pan-x;
+}
+
 /*
  * Touch screens have no hover: what the desktop reveals under the pointer stays in reach.
  */
