@@ -79,6 +79,9 @@ export interface IVoltDeviceScreen {
 	readonly scale: number;
 }
 
+/** A 3D body for the live preview, converted offline to glTF; see `readDeviceModel`. */
+export type VoltDeviceModelId = 'iphone-duo';
+
 export interface IVoltDevicePostures {
 	readonly supported: readonly VoltDevicePosture[];
 	readonly current?: VoltDevicePosture;
@@ -104,4 +107,17 @@ export interface IVoltDevicesService {
 	launchApp(host: IVoltDeviceHost, device: IVoltDeviceRef, target: string): Promise<void>;
 	getPostures(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<IVoltDevicePostures>;
 	setPosture(host: IVoltDeviceHost, device: IVoltDeviceRef, posture: VoltDevicePosture): Promise<void>;
+	/**
+	 * Streams a booted iOS simulator on this machine through Expo's device hub, installed and
+	 * started on first use. Resolves with the hub's loopback origin (`http://127.0.0.1:<port>`);
+	 * the window reads video and sends touches there itself.
+	 */
+	attachStream(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<string>;
+	/** A 3D model's glTF binary as base64, or undefined when it is not on this machine. */
+	readDeviceModel(id: VoltDeviceModelId): Promise<string | undefined>;
+	/**
+	 * The app in front: a bundle id (iOS, "com.apple.springboard" on the home screen) or package
+	 * (Android). Undefined when it cannot be told cheaply (an iOS simulator Volt has not streamed).
+	 */
+	foregroundApp(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<string | undefined>;
 }

@@ -3,7 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { join } from '../../../base/common/path.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
+import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
 import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
 import { VoltDevicesService } from '../node/voltDevicesService.js';
@@ -14,6 +16,7 @@ export class VoltDevicesMainService extends VoltDevicesService {
 	constructor(
 		@IConfigurationService configurationService: IConfigurationService,
 		@ILogService logService: ILogService,
+		@IEnvironmentMainService environmentMainService: IEnvironmentMainService,
 	) {
 		let env: Promise<NodeJS.ProcessEnv> | undefined;
 		super(() => env ??= getResolvedShellEnv(configurationService, logService, { _: [] }, process.env)
@@ -21,6 +24,6 @@ export class VoltDevicesMainService extends VoltDevicesService {
 			.catch(err => {
 				logService.warn('[volt-devices] could not resolve the shell environment', err);
 				return process.env;
-			}), logService);
+			}), logService, join(environmentMainService.userDataPath, 'voltTools'));
 	}
 }

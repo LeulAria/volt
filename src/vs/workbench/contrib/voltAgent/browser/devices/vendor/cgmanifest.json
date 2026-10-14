@@ -1,0 +1,15 @@
+{
+	"registrations": [
+		{
+			"component": { "type": "npm", "npm": { "name": "three", "version": "0.180.0" } },
+			"license": "MIT",
+			"version": "0.180.0"
+		},
+		{
+			"component": { "type": "git", "git": { "name": "t3code", "repositoryUrl": "https://github.com/pingdotgg/t3code", "commitHash": "f570bd21663f56ce94c41829d3b7d72886e25a34" } },
+			"license": "MIT",
+			"version": "f570bd21663f56ce94c41829d3b7d72886e25a34"
+		}
+	],
+	"version": 1
+}

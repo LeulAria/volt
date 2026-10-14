@@ -8,7 +8,7 @@ import { $, addDisposableListener, append, clearNode, getWindow } from '../../..
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Emitter } from '../../../../../base/common/event.js';
-import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -24,9 +24,12 @@ import { IBrowserDevice, renderBareDeviceFrame } from '../preview/browserDevices
 import { createVoltSegmented, IVoltSegmented } from '../ui/segmented/voltSegmented.js';
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { IAgentDevicesService, IDeviceShot, IDeviceTarget } from './agentDevicesService.js';
+import { DeviceLiveStream, DuoCommand, iosPointScale, isIphoneDuo, loadDeviceViewer } from './deviceLiveStream.js';
 
 /** The preview refreshes this often while on screen (plus right after every action). */
 const POLL_MS = 350;
+/** How often the device list is read again while no device is running. */
+const LIST_POLL_MS = 3000;
 /** The most a half-open device's right half leans back in 3D, in degrees. */
 const MAX_LEAN = 65;
 const PREVIEW_MAX_SIDE = 1400;
@@ -86,6 +89,8 @@ export class DevicePreview extends Disposable {
 	private readonly stage: HTMLElement;
 	private readonly scene: HTMLElement;
 	private readonly rig: HTMLElement;
+	/** Holds the 3D iPhone Duo (a WebGL canvas) in place of the CSS frame. */
+	private readonly duoHost: HTMLElement;
 	private readonly message: HTMLElement;
 	private readonly agentPill: HTMLElement;
 	private readonly posture = this._register(new MutableDisposable<DisposableStore>());
@@ -97,7 +102,17 @@ export class DevicePreview extends Disposable {
 
 	private target: IDeviceTarget | undefined;
 	private shot: IDeviceShot | undefined;
-	private screens: HTMLImageElement[] = [];
+	private screens: HTMLElement[] = [];
+	/** The live stream of the target (iOS simulators on this Mac), replacing screenshot polling once it plays. */
+	private live: DeviceLiveStream | undefined;
+	private liveKey: string | undefined;
+	private readonly liveStore = this._register(new MutableDisposable<DisposableStore>());
+	/** Devices whose stream failed, with why: they fall back to screenshots until picked again. */
+	private readonly liveFailed = new Map<string, string>();
+	private duoLoading = false;
+	/** Devices the 3D view was turned on for by default (the iPhone Duo), so turning it off sticks. */
+	private readonly duoDefaulted = new Set<string>();
+	private duoSegmentKey = '';
 	private frameKey = '';
 	private visible = false;
 	private polling = false;
@@ -156,6 +171,7 @@ export class DevicePreview extends Disposable {
 		this.stage.setAttribute('aria-label', localize('voltDevices.stage', "Device screen. Click to tap, drag to swipe, type to send keys."));
 		this.scene = append(this.stage, $('.volt-device-scene'));
 		this.rig = append(this.scene, $('.volt-device-rig'));
+		this.duoHost = append(this.stage, $('.volt-device-duo.hidden'));
 		this.message = append(this.stage, $('.volt-device-message.hidden'));
 		this.agentPill = append(this.stage, $('.volt-device-agent-pill.hidden'));
 		this.agentPill.appendChild(renderIcon(Codicon.sparkle));
@@ -202,6 +218,7 @@ export class DevicePreview extends Disposable {
 
 	setVisible(visible: boolean): void {
 		this.visible = visible;
+		this.syncLive();
 		if (visible) {
 			this.refreshSoon(0);
 		}
@@ -225,6 +242,7 @@ export class DevicePreview extends Disposable {
 		} else if (next && next.device.state !== 'booted') {
 			this.posturesKey = undefined;
 		}
+		this.syncLive();
 		this.renderToolbar();
 		this.refreshSoon(0);
 	}
@@ -246,8 +264,11 @@ export class DevicePreview extends Disposable {
 		this.frameKey = '';
 		this.postures = { supported: [] };
 		this.posturesKey = undefined;
+		this.liveFailed.delete(this.devices.keyOf(target));
+		this.stopLive();
 		clearNode(this.rig);
 		this.screens = [];
+		this.syncLive();
 		this.renderToolbar();
 		this._onDidChangeTitle.fire(this.title);
 		if (target.device.state === 'booted') {
@@ -325,6 +346,12 @@ export class DevicePreview extends Disposable {
 	}
 
 	private renderPosture(): void {
+		const live = this.live;
+		if (live?.screen?.supportsHingeAngle && this.target && isIphoneDuo(this.target.device.name)) {
+			this.renderDuoPosture(live);
+			return;
+		}
+		this.duoSegmentKey = '';
 		const supported = this.target?.device.state === 'booted' ? this.postures.supported : [];
 		if (!supported.length) {
 			this.posture.clear();
@@ -343,6 +370,48 @@ export class DevicePreview extends Disposable {
 		this.posture.value = store;
 		this.postureControl = createVoltSegmented(this.postureSlot, supported.map(id => ({ id, label: postureLabel(id) })), this.postures.current ?? supported[supported.length - 1], posture => void this.setPosture(posture), store, 'small');
 		getWindow(this.element).requestAnimationFrame(() => this.postureControl?.sync());
+	}
+
+	/**
+	 * The iPhone Duo's hinge: closed, half open (a book when held upright, a laptop when held
+	 * sideways), open flat, or standing as a laptop or a tent. Fold shapes move only the hinge;
+	 * stands also place the device.
+	 */
+	private renderDuoPosture(live: DeviceLiveStream): void {
+		const fold = live.foldState();
+		if (!fold) {
+			return;
+		}
+		type DuoShape = 'closed' | 'half' | 'open' | 'laptop' | 'tent';
+		const value: DuoShape = fold.stand && (live.screen?.hingePose === 'laptop' || live.screen?.hingePose === 'tent') ? live.screen.hingePose : fold.fold;
+		const half = fold.phoneVertical ? localize('voltDevices.duoBook', "Book") : localize('voltDevices.duoHalf', "Half Open");
+		const key = `duo:${half}`;
+		if (this.postureControl && this.duoSegmentKey === key) {
+			if (this.postureControl.value !== value) {
+				(this.postureControl as IVoltSegmented<DuoShape>).set(value, true);
+			}
+			return;
+		}
+		clearNode(this.postureSlot);
+		const store = new DisposableStore();
+		this.posture.value = store;
+		this.duoSegmentKey = key;
+		const commands: Record<DuoShape, DuoCommand> = {
+			closed: { control: 'angle', value: 0 },
+			half: { control: 'angle', value: 90 },
+			open: { control: 'angle', value: 180 },
+			laptop: { control: 'pose', value: 'laptop' },
+			tent: { control: 'pose', value: 'tent' },
+		};
+		const control = createVoltSegmented<DuoShape>(this.postureSlot, [
+			{ id: 'closed', label: localize('voltDevices.duoClosed', "Closed") },
+			{ id: 'half', label: half },
+			{ id: 'open', label: localize('voltDevices.duoOpen', "Open") },
+			{ id: 'laptop', label: localize('voltDevices.duoLaptop', "Laptop") },
+			{ id: 'tent', label: localize('voltDevices.duoTent', "Tent") },
+		], value, shape => this.live?.controlDuo(commands[shape]), store, 'small');
+		this.postureControl = control as unknown as IVoltSegmented<VoltDevicePosture>;
+		getWindow(this.element).requestAnimationFrame(() => control.sync());
 	}
 
 	private async loadPostures(): Promise<void> {
@@ -403,7 +472,7 @@ export class DevicePreview extends Disposable {
 				{ id: 'hardware', items: hardware },
 				{
 					id: 'view', items: [
-						item('reset', localize('voltDevices.resetView', "Reset 3D View"), () => { this.orbit = DEFAULT_ORBIT; this.layout(); }, undefined, !this.threeD),
+						item('reset', localize('voltDevices.resetView', "Reset 3D View"), () => { this.orbit = DEFAULT_ORBIT; this.live?.resetDuoPose(); this.layout(); }, undefined, !this.threeD),
 						item('refresh', localize('voltDevices.refresh', "Refresh Devices"), async () => { await this.devices.list(true); }, Codicon.refresh),
 						item('record', localize('voltDevices.record', "Record Window…"), () => this.commandService.executeCommand('volt.capture.recordWindow'), Codicon.record),
 						item('hosts', localize('voltDevices.hosts', "Remote Machines…"), () => this.commandService.executeCommand('workbench.action.openSettings', 'volt.devices.remoteHosts'), Codicon.remote),
@@ -450,6 +519,11 @@ export class DevicePreview extends Disposable {
 
 	private async press(button: VoltDeviceButton): Promise<void> {
 		if (!this.target) {
+			return;
+		}
+		// The stream's socket presses home and lock through the simulator's HID, without AXe.
+		if (this.live?.inputConnected && (button === 'home' || button === 'lock')) {
+			this.live.press(button === 'home' ? 'home' : 'power');
 			return;
 		}
 		await this.devices.pressButton(this.target, button, 'user').catch(err => this.fail(err));
@@ -532,6 +606,16 @@ export class DevicePreview extends Disposable {
 		}
 		if (!target || target.device.state !== 'booted') {
 			this.renderMessage();
+			// A simulator booted outside Volt (Xcode, simctl) shows up without reopening the menu.
+			void this.devices.list();
+			this.refreshSoon(LIST_POLL_MS);
+			return;
+		}
+		if (this.live?.streaming) {
+			// The live stream draws the screen; agent actions show up in it by themselves. The list
+			// is still read now and then, so a shutdown outside Volt ends the stream.
+			void this.devices.list();
+			this.refreshSoon(LIST_POLL_MS);
 			return;
 		}
 		this.polling = true;
@@ -553,13 +637,16 @@ export class DevicePreview extends Disposable {
 	}
 
 	private applyShot(shot: IDeviceShot): void {
+		if (this.live?.streaming) {
+			return;
+		}
 		this.shot = shot;
 		this.message.classList.add('hidden');
 		this.rig.classList.remove('hidden');
 		this.ensureFrame(shot);
 		for (const screen of this.screens) {
-			if (screen.src !== shot.dataUrl) {
-				screen.src = shot.dataUrl;
+			if (screen.tagName === 'IMG' && (screen as HTMLImageElement).src !== shot.dataUrl) {
+				(screen as HTMLImageElement).src = shot.dataUrl;
 			}
 		}
 	}
@@ -598,10 +685,19 @@ export class DevicePreview extends Disposable {
 			return;
 		}
 		this.frameKey = key;
+		this.buildFrame(device, units, hinged ? ['left', 'right'] : ['whole'], () => {
+			const img = $('img.volt-device-screen') as HTMLImageElement;
+			img.alt = '';
+			img.draggable = false;
+			return img;
+		});
+	}
+
+	/** The device's frame (or a bare screen when it has none) around `screen()`, per half. */
+	private buildFrame(device: IVoltDevice, units: { width: number; height: number }, halves: readonly string[], screen: () => HTMLElement): void {
 		clearNode(this.rig);
 		this.screens = [];
 		const landscape = units.width > units.height && !device.foldable;
-		const halves = hinged ? ['left', 'right'] : ['whole'];
 		for (const half of halves) {
 			const built = landscape ? undefined : renderBareDeviceFrame(frameForDevice(device, units.width, units.height), units.width, units.height);
 			const holder = append(this.rig, $(`.volt-device-half.${half}`));
@@ -619,12 +715,10 @@ export class DevicePreview extends Disposable {
 			}
 			holder.style.width = `${this.frameSize.width}px`;
 			holder.style.height = `${this.frameSize.height}px`;
-			const img = append(host, $('img.volt-device-screen')) as HTMLImageElement;
-			img.alt = '';
-			img.draggable = false;
-			img.style.width = `${units.width}px`;
-			img.style.height = `${units.height}px`;
-			this.screens.push(img);
+			const element = append(host, screen());
+			element.style.width = `${units.width}px`;
+			element.style.height = `${units.height}px`;
+			this.screens.push(element);
 		}
 		this.layout();
 	}
@@ -653,7 +747,9 @@ export class DevicePreview extends Disposable {
 	private setThreeD(on: boolean): void {
 		this.threeD = on;
 		this.frameKey = '';
-		if (this.shot) {
+		if (this.live?.streaming) {
+			this.onLiveChange();
+		} else if (this.shot) {
 			this.ensureFrame(this.shot);
 		}
 		this.renderToolbar();
@@ -662,14 +758,139 @@ export class DevicePreview extends Disposable {
 
 	//#endregion
 
+	//#region Live stream
+
+	/** Streams the target while the preview is on screen, when it is a booted iOS simulator on this Mac. */
+	private syncLive(): void {
+		const target = this.target;
+		const key = target ? this.devices.keyOf(target) : undefined;
+		const wanted = !!target && !!key && this.visible && this.devices.canStream(target) && !this.liveFailed.has(key);
+		if (!wanted || this.liveKey !== key) {
+			if (this.liveKey) {
+				this.stopLive();
+			}
+		}
+		if (!wanted || !target || !key || this.liveKey === key) {
+			return;
+		}
+		this.liveKey = key;
+		const store = new DisposableStore();
+		this.liveStore.value = store;
+		void Promise.all([this.devices.attachStream(target), loadDeviceViewer()]).then(([origin, lib]) => {
+			if (store.isDisposed) {
+				return;
+			}
+			const live = store.add(new DeviceLiveStream(lib, this.element.ownerDocument, origin, target.device.id, () => this.devices.attachStream(target)));
+			this.live = live;
+			store.add(toDisposable(() => {
+				if (this.live === live) {
+					this.live = undefined;
+				}
+			}));
+			store.add(live.onDidChange(() => this.onLiveChange()));
+			store.add(live.onDidFail(reason => this.failLive(key, reason)));
+		}, err => {
+			if (!store.isDisposed) {
+				this.failLive(key, err instanceof Error ? err.message : String(err));
+			}
+		});
+	}
+
+	private stopLive(): void {
+		const hadFrame = !!this.live?.streaming;
+		this.liveKey = undefined;
+		this.liveStore.clear();
+		this.live = undefined;
+		this.duoLoading = false;
+		this.duoHost.classList.add('hidden');
+		if (hadFrame) {
+			this.frameKey = '';
+			this.shot = undefined;
+			clearNode(this.rig);
+			this.screens = [];
+			this.rig.classList.remove('hidden');
+		}
+	}
+
+	/** Back to screenshots for this device, saying why once. */
+	private failLive(key: string, reason: string): void {
+		const name = this.target?.device.name ?? key;
+		this.liveFailed.set(key, reason);
+		this.stopLive();
+		this.notificationService.warn(localize('voltDevices.liveFailed', "Live view of {0} stopped: {1} Showing screenshots instead.", name, reason));
+		this.renderToolbar();
+		this.refreshSoon(0);
+	}
+
+	private onLiveChange(): void {
+		const live = this.live;
+		const device = this.target?.device;
+		if (!live?.streaming || !live.screen || !device) {
+			return;
+		}
+		this.message.classList.add('hidden');
+		const key = this.devices.keyOf(this.target!);
+		if (isIphoneDuo(device.name) && live.screen.supportsHingeAngle && !this.duoDefaulted.has(key)) {
+			// The Duo opens in 3D, like T3 Code shows it; turning 3D off afterwards sticks.
+			this.duoDefaulted.add(key);
+			this.threeD = true;
+			this.frameKey = '';
+			this.renderToolbar();
+		}
+		const scale = iosPointScale(device.name);
+		const units = { width: Math.round(live.screen.width / scale), height: Math.round(live.screen.height / scale) };
+		const frameKey = `live:${device.id}:${units.width}x${units.height}`;
+		if (frameKey !== this.frameKey) {
+			this.frameKey = frameKey;
+			this.buildFrame(device, units, ['whole'], () => live.canvas);
+		}
+		this.syncDuo(live);
+		this.renderPosture();
+	}
+
+	/** Shows the 3D iPhone Duo in place of the flat frame while 3D is on. */
+	private syncDuo(live: DeviceLiveStream): void {
+		const device = this.target?.device;
+		const wanted = this.threeD && !!device && isIphoneDuo(device.name) && !!live.screen?.supportsHingeAngle && !live.duoUnavailable;
+		if (!wanted) {
+			live.unmountDuo();
+			this.duoLoading = false;
+			this.duoHost.classList.add('hidden');
+			this.rig.classList.remove('hidden');
+			return;
+		}
+		if (live.hasDuo || this.duoLoading) {
+			return;
+		}
+		this.duoLoading = true;
+		void this.devices.deviceModelUrl('iphone-duo').then(url => {
+			this.duoLoading = false;
+			if (this.live !== live || !this.threeD) {
+				return;
+			}
+			if (!url) {
+				live.loseDuo(localize('voltDevices.duoModelMissing', "The iPhone Duo 3D model is not on this Mac (~/.volt/device-models/iphone-duo.glb)."));
+				this.notificationService.info(live.duoUnavailable!);
+				return;
+			}
+			this.duoHost.classList.remove('hidden');
+			this.rig.classList.add('hidden');
+			live.mountDuo(this.duoHost, url, localize('voltDevices.duoLabel', "Interactive 3D iPhone Duo. Drag the screen to touch it. Drag outside it or swipe with two fingers to turn it. Pinch over it to open or close the hinge."), cause => {
+				live.loseDuo(cause instanceof Error ? cause.message : localize('voltDevices.duoUnavailable', "The 3D view is unavailable."));
+			});
+		});
+	}
+
+	//#endregion
+
 	//#region Input
 
-	private isOnScreen(e: MouseEvent): HTMLImageElement | undefined {
+	private isOnScreen(e: MouseEvent): HTMLElement | undefined {
 		return this.screens.find(screen => screen.contains(e.target as Node));
 	}
 
 	/** A point on the screen element in the coordinates of the last screenshot. */
-	private toShot(screen: HTMLImageElement, clientX: number, clientY: number): { x: number; y: number } | undefined {
+	private toShot(screen: HTMLElement, clientX: number, clientY: number): { x: number; y: number } | undefined {
 		const shot = this.shot;
 		if (!shot) {
 			return undefined;
@@ -712,6 +933,31 @@ export class DevicePreview extends Disposable {
 			return;
 		}
 		e.preventDefault();
+		const live = this.live;
+		if (live?.inputConnected && screen === live.canvas) {
+			// Real touches: down, every move, up, straight to the simulator's HID.
+			const at = (event: PointerEvent) => {
+				const rect = screen.getBoundingClientRect();
+				return { x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)), y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)) };
+			};
+			const first = at(e);
+			live.touch('begin', first.x, first.y);
+			// Raw updates arrive as the pointer moves, not once per frame: the finger stays closer.
+			const moveEvent = 'onpointerrawupdate' in getWindow(this.stage) ? 'pointerrawupdate' : 'pointermove';
+			store.add(addDisposableListener(this.stage, moveEvent, (move: PointerEvent) => {
+				const point = at(move);
+				live.touch('move', point.x, point.y);
+			}));
+			const lift = (up: PointerEvent) => {
+				store.dispose();
+				const point = at(up);
+				live.touch('end', point.x, point.y);
+				this.showTouch(up.clientX, up.clientY);
+			};
+			store.add(addDisposableListener(this.stage, 'pointerup', lift));
+			store.add(addDisposableListener(this.stage, 'pointercancel', lift));
+			return;
+		}
 		const end = (up: PointerEvent) => {
 			store.dispose();
 			const from = this.toShot(screen, startX, startY);
@@ -741,6 +987,27 @@ export class DevicePreview extends Disposable {
 	private onKeyDown(e: KeyboardEvent): void {
 		const target = this.target;
 		if (!target || target.device.state !== 'booted' || e.metaKey || e.ctrlKey || e.altKey) {
+			return;
+		}
+		const live = this.live;
+		if (live?.inputConnected) {
+			// Hardware key presses, as a keyboard attached to the simulator types them.
+			e.preventDefault();
+			if (e.repeat) {
+				return;
+			}
+			live.key(e, 'down');
+			const store = new DisposableStore();
+			store.add(addDisposableListener(this.stage, 'keyup', up => {
+				if (up.code === e.code) {
+					store.dispose();
+					live.key(up, 'up');
+				}
+			}));
+			store.add(addDisposableListener(this.stage, 'blur', () => {
+				store.dispose();
+				live.key(e, 'up');
+			}));
 			return;
 		}
 		if (e.key === 'Enter' || e.key === 'Backspace') {

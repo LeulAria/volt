@@ -3,14 +3,16 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { decodeBase64 } from '../../../../../base/common/buffer.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { isAbsolute, join } from '../../../../../base/common/path.js';
+import { isMacintosh } from '../../../../../base/common/platform.js';
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { imagePointToInput } from '../../../../../platform/voltDevices/common/deviceCommands.js';
-import { IVoltDevice, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDevicesService, VoltDeviceButton, VoltDeviceInput, VoltDevicePosture, VoltDeviceState } from '../../../../../platform/voltDevices/common/voltDevices.js';
+import { IVoltDevice, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDevicesService, VoltDeviceButton, VoltDeviceModelId, VoltDeviceInput, VoltDevicePosture, VoltDeviceState } from '../../../../../platform/voltDevices/common/voltDevices.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { scaleScreenshot } from '../../../../services/voltRuntime/browser/host/imageCodec.js';
 import { DEVICE_TOOLS, VoltDeviceToolName } from '../../../../services/voltRuntime/common/deviceTools.js';
@@ -74,6 +76,14 @@ export interface IAgentDevicesService {
 	launchApp(target: IDeviceTarget, app: string): Promise<void>;
 	postures(target: IDeviceTarget): Promise<IVoltDevicePostures>;
 	setPosture(target: IDeviceTarget, posture: VoltDevicePosture, by: 'agent' | 'user'): Promise<void>;
+	/** Whether `target` can stream live (a booted iOS simulator on this Mac). */
+	canStream(target: IDeviceTarget): boolean;
+	/** Starts the device hub and attaches it to `target`; resolves with the hub's origin. */
+	attachStream(target: IDeviceTarget): Promise<string>;
+	/** A blob: URL of a 3D model on this machine, or undefined when it is missing. */
+	deviceModelUrl(id: VoltDeviceModelId): Promise<string | undefined>;
+	/** The bundle id or package in front, when it can be told cheaply. */
+	foregroundApp(target: IDeviceTarget): Promise<string | undefined>;
 }
 
 const LIST_TTL_MS = 3000;
@@ -109,6 +119,7 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 	private readonly shots = new Map<string, { image: { width: number; height: number }; screen: { width: number; height: number; scale: number } }>();
 	/** The device each chat used last. */
 	private readonly chatDevices = new Map<string, string>();
+	private readonly modelUrls = new Map<VoltDeviceModelId, Promise<string | undefined>>();
 
 	constructor(
 		@IVoltDevicesService private readonly devices: IVoltDevicesService,
@@ -178,6 +189,40 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 	private changed(): void {
 		this.listedAt = 0;
 		void this.list(true);
+	}
+
+	canStream(target: IDeviceTarget): boolean {
+		return isMacintosh && !target.host.ssh && target.device.platform === 'ios' && target.device.state === 'booted';
+	}
+
+	attachStream(target: IDeviceTarget): Promise<string> {
+		return this.devices.attachStream(target.host, target.device);
+	}
+
+	foregroundApp(target: IDeviceTarget): Promise<string | undefined> {
+		if (target.device.state !== 'booted') {
+			return Promise.resolve(undefined);
+		}
+		return this.devices.foregroundApp(target.host, target.device).catch(() => undefined);
+	}
+
+		deviceModelUrl(id: VoltDeviceModelId): Promise<string | undefined> {
+		let url = this.modelUrls.get(id);
+		if (!url) {
+			url = this.devices.readDeviceModel(id).then(base64 => {
+				if (!base64) {
+					this.modelUrls.delete(id);
+					return undefined;
+				}
+				const bytes = decodeBase64(base64).buffer;
+				return URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'model/gltf-binary' }));
+			}, () => {
+				this.modelUrls.delete(id);
+				return undefined;
+			});
+			this.modelUrls.set(id, url);
+		}
+		return url;
 	}
 
 	async boot(target: IDeviceTarget, timeoutMs?: number): Promise<VoltDeviceState> {

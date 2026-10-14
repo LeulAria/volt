@@ -179,6 +179,7 @@ suite('Agent runtime orchestration', () => {
 			stub({}),
 			stub({ userRoamingDataHome: URI.file('/user') }),
 			stub({ getValue: () => undefined }),
+			stub({ executeCommand: async () => undefined }),
 		));
 		await service.refreshProviders();
 		const internals = service as unknown as IRuntimeInternals;

@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidTextChunks, avdLabel, imagePointToInput, iosButtonName, iosInputCommand, isAlreadyBooted, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseSimctlDevices, parseSimctlScreen, parseSshTarget, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, simRuntimeLabel, sshCommand, stateForPosture } from '../../common/deviceCommands.js';
+import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidTextChunks, avdLabel, imagePointToInput, iosButtonName, iosInputCommand, isAlreadyBooted, looksFoldable, parseAdbDevices, parseAndroidFocus, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseSimctlDevices, parseSimctlScreen, parseSshTarget, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, simRuntimeLabel, sshCommand, stateForPosture } from '../../common/deviceCommands.js';
 
 const SIMCTL_JSON = JSON.stringify({
 	devices: {
@@ -220,5 +220,11 @@ suite('Volt devices: commands and parsers', () => {
 		assert.deepStrictEqual(imagePointToInput(236, 512, { width: 472, height: 1024 }, { width: 1179, height: 2556, scale: 3 }), { x: 197, y: 426 });
 		// Android takes pixels; points outside the image clamp to the screen.
 		assert.deepStrictEqual(imagePointToInput(600, -5, { width: 500, height: 1000 }, { width: 1080, height: 2160, scale: 1 }), { x: 1079, y: 0 });
+	});
+
+	test('parseAndroidFocus reads the package in front', () => {
+		assert.strictEqual(parseAndroidFocus('  mCurrentFocus=Window{1a2b u0 com.google.android.apps.maps/com.google.android.maps.MapsActivity}\n  mFocusedApp=ActivityRecord{3c u0 com.google.android.apps.maps/.MapsActivity t12}'), 'com.google.android.apps.maps');
+		assert.strictEqual(parseAndroidFocus('  mCurrentFocus=null\n  mFocusedApp=ActivityRecord{9 u0 com.android.launcher3/.uioverrides.QuickstepLauncher t1}'), 'com.android.launcher3');
+		assert.strictEqual(parseAndroidFocus(''), undefined);
 	});
 });

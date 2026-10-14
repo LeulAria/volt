@@ -490,3 +490,18 @@ export function imagePointToInput(x: number, y: number, image: { width: number; 
 }
 
 //#endregion
+
+/**
+ * The package in front from `dumpsys window`: the `mCurrentFocus` (or `mFocusedApp`) line names
+ * `package/activity`.
+ */
+export function parseAndroidFocus(output: string): string | undefined {
+	for (const key of ['mCurrentFocus', 'mFocusedApp']) {
+		const line = output.split(/\r?\n/).find(candidate => candidate.includes(key));
+		const match = line && /\s([A-Za-z][\w.]*)\/[\w.$]+/.exec(line);
+		if (match) {
+			return match[1];
+		}
+	}
+	return undefined;
+}

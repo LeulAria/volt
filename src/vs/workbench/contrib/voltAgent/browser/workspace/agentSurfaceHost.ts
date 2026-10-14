@@ -354,6 +354,29 @@ export function agentSessionBrowser(sessionId: string): { input: VoltBrowserEdit
 	return borrowedBrowser?.(sessionId);
 }
 
+/**
+ * Every tab in a chat's right panel, the one in front first, and whether the panel is open on
+ * screen. Undefined when the chat has no live tools area.
+ */
+export function agentSessionToolTabs(sessionId: string): { readonly open: boolean; readonly tabs: readonly { readonly input: EditorInput; readonly focused: boolean }[] } | undefined {
+	const entry = toolParts.get(sessionId);
+	if (!entry) {
+		return undefined;
+	}
+	const front = entry.part.activeGroup.activeEditor;
+	const tabs: { input: EditorInput; focused: boolean }[] = front ? [{ input: front, focused: true }] : [];
+	const seen = new Set<EditorInput>(front ? [front] : []);
+	for (const group of [entry.part.activeGroup, ...entry.part.groups.filter(group => group !== entry.part.activeGroup)]) {
+		for (const editor of group.editors) {
+			if (!seen.has(editor)) {
+				seen.add(editor);
+				tabs.push({ input: editor, focused: false });
+			}
+		}
+	}
+	return { open: [...hosts].some(host => host.showsToolsFor(sessionId)), tabs };
+}
+
 /** The host whose tools currently run up into the primary title bar. */
 let titlebarOwner: AgentSurfaceHost | undefined;
 let partClock = 0;
@@ -514,6 +537,11 @@ export class AgentSurfaceHost extends Disposable {
 			return undefined;
 		}
 		return (toolParts.get(sessionId) ?? this.createPart(sessionId)).part;
+	}
+
+	/** Its right panel is open on `sessionId`'s tabs. */
+	showsToolsFor(sessionId: string): boolean {
+		return this.shown?.sessionId === sessionId && this.announcedOpen;
 	}
 
 	/** The chat on screen that owns this tools area. */
