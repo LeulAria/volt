@@ -165,7 +165,7 @@ jobs:
       - name: Pack compilation
         run: tar -czf compilation.tar.gz out-build out-vscode-min .build/extensions
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: compilation
           path: compilation.tar.gz
@@ -260,7 +260,7 @@ jobs:
           cd ../VSCode-darwin-${{ matrix.arch }}
           zip -r -X -y -q "$GITHUB_WORKSPACE/unsigned-darwin-${{ matrix.arch }}.zip" *
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: unsigned-darwin-${{ matrix.arch }}
           path: unsigned-darwin-${{ matrix.arch }}.zip
@@ -277,7 +277,7 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: volt-darwin-${{ matrix.arch }}
           path: .build/volt-assets/*
@@ -333,7 +333,7 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: volt-darwin-universal
           path: .build/volt-assets/*
@@ -449,7 +449,7 @@ jobs:
         env:
           CHANNEL: ${{ inputs.channel }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: volt-linux-${{ matrix.arch }}
           path: .build/volt-assets/*
@@ -575,7 +575,7 @@ jobs:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: volt-win32-${{ matrix.arch }}
           path: .build/volt-assets/*
