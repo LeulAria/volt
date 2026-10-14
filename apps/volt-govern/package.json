@@ -1,0 +1,41 @@
+{
+	"name": "volt-govern",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Volt Govern: the enterprise control plane between developers and AI providers. Identity, models, MCP, skills, data rules and spend, plus the gateway Volt routes model traffic through.",
+	"license": "MIT",
+	"author": "Volt ADK",
+	"type": "module",
+	"scripts": {
+		"dev": "concurrently -k -n server,web \"npm:dev:server\" \"npm:dev:web\"",
+		"dev:server": "tsx watch src/server/main.ts",
+		"dev:web": "vite",
+		"build": "vite build && tsc -p tsconfig.server.json",
+		"start": "node dist/server/server/main.js",
+		"migrate": "tsx src/server/migrate.ts",
+		"typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json"
+	},
+	"dependencies": {
+		"@better-auth/kysely-adapter": "^1.7.7",
+		"@better-auth/scim": "^1.7.7",
+		"@better-auth/sso": "^1.7.7",
+		"@hono/node-server": "^2.1.5",
+		"better-auth": "^1.7.7",
+		"hono": "^4.13.13",
+		"kysely": "^0.29.6",
+		"pg": "^8.23.1",
+		"react": "^19.2.3",
+		"react-dom": "^19.2.3"
+	},
+	"devDependencies": {
+		"@types/node": "^24.19.2",
+		"@types/pg": "^8.23.1",
+		"@types/react": "^19.3.0",
+		"@types/react-dom": "^19.3.0",
+		"@vitejs/plugin-react": "^6.1.2",
+		"concurrently": "^10.0.6",
+		"tsx": "^4.23.15",
+		"typescript": "~5.9.3",
+		"vite": "^8.3.4"
+	}
+}
