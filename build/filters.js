@@ -65,6 +65,7 @@ module.exports.unicodeFilter = [
 	'!src/vs/base/browser/dompurify/**',
 	'!src/vs/workbench/contrib/voltAgent/browser/blocks/vendor/**',
 	'!src/vs/workbench/contrib/voltAgent/browser/ui/vendor/**',
+	'!src/vs/workbench/contrib/voltAgent/browser/devices/vendor/**',
 	'!src/vs/workbench/services/keybinding/browser/keyboardLayouts/**',
 	'!src/vs/workbench/contrib/terminal/common/scripts/psreadline/**',
 ];
@@ -85,6 +86,8 @@ module.exports.indentationFilter = [
 	'!src/vs/base/common/semver/semver.js',
 	'!src/vs/workbench/contrib/voltAgent/browser/blocks/vendor/beautifulMermaid.{js,license.txt}',
 	'!src/vs/workbench/contrib/voltAgent/browser/ui/vendor/dayjs.js',
+	'!src/vs/workbench/contrib/voltAgent/browser/devices/vendor/voltDeviceViewer.{js,license.txt}',
+	'!build/volt/deviceViewer/src/**',
 	'!src/vs/base/node/terminateProcess.sh',
 	'!src/vs/base/node/cpuUsage.sh',
 	'!src/vs/editor/common/languages/highlights/*.scm',
@@ -195,6 +198,8 @@ module.exports.copyrightFilter = [
 	'!src/vs/workbench/contrib/terminal/common/scripts/psreadline/**',
 	'!src/vs/workbench/contrib/voltAgent/browser/blocks/vendor/beautifulMermaid.js',
 	'!src/vs/workbench/contrib/voltAgent/browser/ui/vendor/dayjs.js',
+	'!src/vs/workbench/contrib/voltAgent/browser/devices/vendor/voltDeviceViewer.js',
+	'!build/volt/deviceViewer/src/**',
 ];
 
 module.exports.tsFormattingFilter = [

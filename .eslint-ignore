@@ -33,6 +33,8 @@
 **/src/**/semver.js
 **/src/vs/workbench/contrib/voltAgent/browser/blocks/vendor/beautifulMermaid.js
 **/src/vs/workbench/contrib/voltAgent/browser/ui/vendor/dayjs.js
+**/src/vs/workbench/contrib/voltAgent/browser/devices/vendor/voltDeviceViewer.js
+**/build/volt/deviceViewer/src/**
 **/src/typings/**/*.d.ts
 **/src/vs/*/**/*.d.ts
 **/src/vs/base/test/common/filters.perf.data.js
