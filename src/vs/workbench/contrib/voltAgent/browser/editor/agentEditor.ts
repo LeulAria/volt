@@ -151,6 +151,7 @@ import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
 import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
 import { createHomeAutomationsIcon, createHomeNewChatIcon } from '../home/agentHomeIcons.js';
 import { AgentLandingChrome } from '../home/agentLandingChrome.js';
+import { IAgentThreadLifecycleService } from '../home/agentThreadLifecycle.js';
 import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
 import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitation, revealCitationInChats } from './agentCitationSource.js';
 import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
@@ -957,6 +958,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentCloudTasksService private readonly cloudTasks: IAgentCloudTasksService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IAgentThreadLifecycleService private readonly threadLifecycle: IAgentThreadLifecycleService,
 		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
 		@IVoltProjectsService private readonly voltProjects: IVoltProjectsService,
 		@IDialogService private readonly dialogService: IDialogService,
@@ -3748,8 +3750,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		return /cancel|abort|stopp/.test(status);
 	}
 
+	/** The latest prompt the user sent: Volt's own rows after it (a restart, a plan continuation, subagent reports) do not take its Stop. */
 	private isLatestUser(index: number): boolean {
-		return !this.messages.slice(index + 1).some(item => item.kind === 'user');
+		return !this.messages.slice(index + 1).some(startsExchange);
 	}
 
 	private canEditUser(index: number): boolean {
@@ -5262,7 +5265,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!wasStreaming) {
 			return;
 		}
-		const index = this.messages.findLastIndex(message => message.kind === 'user');
+		const index = this.messages.findLastIndex(startsExchange);
 		if (index >= 0) {
 			getWindow(this.container).requestAnimationFrame(() => this.startUserEdit(index));
 		}
@@ -6275,6 +6278,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const threadId = this.sessionKey;
 		input?.recordMode(normalizeVoltMode(this.currentMode));
 		stashTurnDisplay(turnId, display);
+		// Sending to a settled or archived chat brings it back; until then it does not run.
+		const broughtBack = this.threadLifecycle.bringBack(threadId);
 		const request = this.sendRequest(value, display, mode);
 		const host: IAgentPromptHostOptions = {
 			...(request.runOn ? { runOn: request.runOn } : {}),
@@ -6283,6 +6288,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const frozen = this.freezeDisplay(display);
 		const pending = delivery !== 'queue' ? this.showPendingTurn(input, threadId, turnId, value, display, mode) : undefined;
 		const submitted = this.submitChain.then(async () => {
+			await broughtBack;
 			const prompt: IOrchPrompt = {
 				text: value,
 				...(display ? { display: await frozen } : {}),
@@ -6752,7 +6758,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	 */
 	private drainPromptQueue(): void {
 		if (this.orchestrator.getThread(this.sessionKey)?.pause) {
-			void this.orchestrator.dispatch({ type: 'queue.resume', threadId: this.sessionKey });
+			const threadId = this.sessionKey;
+			void this.threadLifecycle.bringBack(threadId).then(() => this.orchestrator.dispatch({ type: 'queue.resume', threadId }));
 		}
 		this.syncQueueStack();
 		this.updateSendButton();
@@ -6791,7 +6798,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!this.queuedItems.some(item => item.id === id) || this.queueEdit?.id === id) {
 			return;
 		}
-		void this.orchestrator.dispatch({ type: 'queue.sendNow', threadId: this.sessionKey, itemId: id, canSteer: this.canSteer() });
+		const threadId = this.sessionKey;
+		const canSteer = this.canSteer();
+		void this.threadLifecycle.bringBack(threadId).then(() => this.orchestrator.dispatch({ type: 'queue.sendNow', threadId, itemId: id, canSteer }));
 	}
 
 	/** Cursor's "Edit queued message": the prompt moves into the composer; Enter puts it back changed. */
