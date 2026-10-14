@@ -257,7 +257,7 @@ export function summarizeUsage(snapshot: IVoltUsageSnapshot, range: UsageRange, 
 
 //#region Placeholder
 
-const PLACEHOLDER_MODELS: Record<VoltUsageProvider, { model: string; scale: number; phase: number; tokensPerUsd: number }> = {
+const PLACEHOLDER_MODELS: Partial<Record<VoltUsageProvider, { model: string; scale: number; phase: number; tokensPerUsd: number }>> = {
 	claude: { model: 'claude-opus', scale: 9, phase: 0, tokensPerUsd: 3_000_000 },
 	cursor: { model: 'composer', scale: 6, phase: 2.1, tokensPerUsd: 1_000_000 },
 	codex: { model: 'gpt-codex', scale: 1.2, phase: 4.4, tokensPerUsd: 500_000 },
@@ -280,7 +280,11 @@ export function placeholderUsage(now = Date.now()): IVoltUsageSnapshot {
 	for (let hour = first; hour <= now; hour += step) {
 		const days = (hour - first) / DAY_MS;
 		for (const provider of VOLT_USAGE_PROVIDERS) {
-			const { model, scale, phase, tokensPerUsd } = PLACEHOLDER_MODELS[provider];
+			const sample = PLACEHOLDER_MODELS[provider];
+			if (!sample) {
+				continue;
+			}
+			const { model, scale, phase, tokensPerUsd } = sample;
 			const cost = scale * placeholderWave(days, phase);
 			const tokens = cost * tokensPerUsd;
 			buckets.push({

@@ -3,13 +3,25 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
-import { join } from '../../../base/common/path.js';
+import { dirname, join } from '../../../base/common/path.js';
 import { ILogService } from '../../log/common/log.js';
-import { IVoltTokenRates, IVoltUsageActivity, IVoltUsageBucket, IVoltUsageLimitGroup, IVoltUsageNote, IVoltUsageService, IVoltUsageSnapshot, VOLT_USAGE_HISTORY_DAYS, VoltUsageProvider } from '../common/voltUsage.js';
-import { ClaudeLimitsReader, cursorRateModel, ICursorUsage, readCodexLimits, readCursorLimits, readCursorUsage } from './usageAccounts.js';
-import { UsagePricing } from './usagePricing.js';
+import {
+	IVoltTokenRates, IVoltUsageActivity, IVoltUsageBucket, IVoltUsageLimitGroup, IVoltUsageMachineReport, IVoltUsageMachineStatus, IVoltUsageModelPrice, IVoltUsageNote,
+	IVoltUsageService, IVoltUsageSnapshot, VOLT_USAGE_HISTORY_DAYS, VoltResetCreditOutcome, VoltUsageProvider
+} from '../common/voltUsage.js';
+import {
+	claudeCachePath, claudeHomes, ClaudeLimitsReader, codexHome, cursorRateModel, IClaudeHome, ICursorUsage, readCodexLimits, readCursorAccountId, readCursorLimits, readCursorUsage,
+	redeemClaudeResetCredit, redeemCodexResetCredit, ResetCreditError
+} from './usageAccounts.js';
+import {
+	accountKey, fetchMachineReport, IMachineAnswer, IStoredMachine, LimitHolder, localMachineId, localMachineName, MachineStore, mergeLimits, mergeUsage, pairWithMachine,
+	parsePairingUrl, redeemOnMachine
+} from './usageMachines.js';
+import { applyModelPrices, modelPriceFor, UsagePricing, validModelPrice } from './usagePricing.js';
+import { readGrokLimits, readOpenCodeGoLimits } from './usageSubscriptions.js';
 import { billOncePerResponse, ICodexRateLimitSample, IParsedTranscript, ITranscriptFile, IUsageRecord, listTranscripts, parseTranscript } from './usageTranscripts.js';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -21,6 +33,13 @@ const CURSOR_TTL_MS = 2 * 60_000;
 /** The last snapshot and limits, kept in the cache folder across restarts. */
 const SAVED_FILE = 'last-usage.json';
 const SAVED_VERSION = 1;
+/** Another machine is asked at most this often unless the user refreshes. */
+const MACHINE_TTL_MS = 60_000;
+
+/** Where this machine reads a login from, to redeem its reset credits. */
+type LocalLogin =
+	| { readonly provider: 'claude'; readonly reader: ClaudeLimitsReader }
+	| { readonly provider: 'codex'; readonly codexHome: string };
 
 interface ICachedTranscript extends IParsedTranscript {
 	readonly provider: 'claude' | 'codex';
@@ -53,7 +72,9 @@ const yieldToLoop = () => new Promise<void>(resolve => setImmediate(resolve));
 /**
  * Reads token usage from the agents' own records: Claude Code and Codex transcripts on disk
  * (Volt's runs of those agents land there too) and Cursor's account usage API. Prices come
- * from LiteLLM's public list. Transcripts are parsed once and re-read only when they change.
+ * from LiteLLM's public list, unless the user set one. Transcripts are parsed once and re-read
+ * only when they change. Limits are read per login (Claude, Codex, Cursor, OpenCode Go, Grok),
+ * and other machines' usage and limits come from their Volt agent servers.
  */
 export class VoltUsageService implements IVoltUsageService {
 
@@ -61,7 +82,22 @@ export class VoltUsageService implements IVoltUsageService {
 
 	private readonly transcripts = new Map<string, ICachedTranscript>();
 	private readonly pricing: UsagePricing;
-	private readonly claudeLimits: ClaudeLimitsReader;
+	private readonly claudeReaders = new Map<string, ClaudeLimitsReader>();
+	private readonly machineStore: MachineStore;
+	private readonly machineAnswers = new Map<string, { at: number; answer: Promise<IMachineAnswer> }>();
+	private readonly pricesPath: string;
+	private prices: Record<string, IVoltUsageModelPrice> | undefined;
+	/** The last pooled answers (this machine and the others), for {@link peekUsage}. */
+	private pooledUsage: IVoltUsageSnapshot | undefined;
+	private pooledLimits: readonly IVoltUsageLimitGroup[] | undefined;
+	/** This machine's logins by account, from the last limits read. */
+	private localLogins = new Map<string, LocalLogin>();
+	/** Who can redeem for each account, from the last pooled read. */
+	private holders = new Map<string, LimitHolder[]>();
+	/** One redemption per account at a time, each with a key that survives a retry. */
+	private readonly redeeming = new Map<string, Promise<unknown>>();
+	private readonly pendingRedeemKeys = new Map<string, string>();
+	/** This machine's own snapshot. */
 	private snapshot: IVoltUsageSnapshot | undefined;
 	private building: Promise<IVoltUsageSnapshot> | undefined;
 	private limits: { at: number; value: readonly IVoltUsageLimitGroup[] } | undefined;
@@ -78,10 +114,168 @@ export class VoltUsageService implements IVoltUsageService {
 		private readonly home = homedir(),
 	) {
 		this.pricing = new UsagePricing(join(cacheDir, 'litellm-prices.json'));
-		this.claudeLimits = new ClaudeLimitsReader(this.home, join(cacheDir, 'claude-limits.json'));
+		this.machineStore = new MachineStore(join(cacheDir, 'machines.json'));
+		this.pricesPath = join(cacheDir, 'model-prices.json');
 	}
 
+	//#region Pooled: this machine and the others
+
 	async getUsage(force?: boolean): Promise<IVoltUsageSnapshot> {
+		const [local, answers, prices, cursorAccount] = await Promise.all([this.getLocalUsage(force), this.askMachines(!!force), this.getModelPrices(), readCursorAccountId(this.home).catch(() => undefined)]);
+		// A machine that turns out to be this computer (a second Volt profile here) would count everything twice.
+		const included = answers.filter(answer => answer.report?.machineId !== localMachineId());
+		const remotes = included.flatMap(answer => answer.report ? [{ machineName: answer.status.name, usage: answer.report.usage, cursorAccount: answer.report.cursorAccount }] : []);
+		const merged = mergeUsage({ machineName: localMachineName(), usage: local, cursorAccount }, remotes, included.map(answer => answer.status));
+		this.pooledUsage = { ...merged, buckets: applyModelPrices(merged.buckets, prices) };
+		return this.pooledUsage;
+	}
+
+	async getLimits(force?: boolean): Promise<readonly IVoltUsageLimitGroup[]> {
+		const [local, answers] = await Promise.all([this.getLocalLimits(force), this.askMachines(!!force)]);
+		const sources = [{ holder: 'local' as LimitHolder, machineName: localMachineName(), groups: local }];
+		for (const answer of answers) {
+			if (answer.report && answer.report.machineId !== localMachineId()) {
+				sources.push({ holder: answer.status.id, machineName: answer.status.name, groups: answer.report.limits });
+			}
+		}
+		const merged = mergeLimits(sources);
+		this.holders = merged.holders;
+		this.pooledLimits = merged.groups;
+		return merged.groups;
+	}
+
+	async redeemResetCredit(provider: VoltUsageProvider, accountId: string): Promise<VoltResetCreditOutcome> {
+		const key = accountKey(provider, accountId);
+		if (!this.holders.has(key)) {
+			await this.getLimits();
+		}
+		const holders = this.holders.get(key) ?? [];
+		try {
+			if (holders.includes('local')) {
+				return await this.redeemLocal(provider, accountId);
+			}
+			const machine = (await this.machineStore.list()).find(m => holders.includes(m.id));
+			if (!machine) {
+				throw new ResetCreditError('No machine is signed in to this account any more. Refresh and try again.', true);
+			}
+			const outcome = await redeemOnMachine(machine, provider, accountId);
+			this.machineAnswers.delete(machine.id);
+			return outcome;
+		} finally {
+			this.limits = undefined;
+		}
+	}
+
+	//#endregion
+
+	//#region Machines
+
+	async getMachines(): Promise<readonly IVoltUsageMachineStatus[]> {
+		return (await this.askMachines(false)).map(answer => answer.status);
+	}
+
+	async addMachine(pairingUrl: string, name?: string): Promise<IVoltUsageMachineStatus> {
+		const parsed = parsePairingUrl(pairingUrl);
+		if (!parsed) {
+			throw new Error('That is not a Volt pairing link. On the other computer, make a pairing code and copy its link, like http://192.168.1.20:7791/pair#code=ABCD-EFGH');
+		}
+		const token = parsed.token ?? (await pairWithMachine(parsed.url, parsed.code!)).token;
+		const probe: IStoredMachine = { id: '', name: name?.trim() || parsed.url, url: parsed.url, token };
+		const answer = await fetchMachineReport(probe, false);
+		if (answer.status.state === 'unauthorized') {
+			throw new Error('That machine refused the key. Make a new pairing code there and try again.');
+		}
+		if (answer.report?.machineId === localMachineId()) {
+			throw new Error('That address is this computer. Use the pairing link from your other computer.');
+		}
+		if (answer.status.state !== 'ok' || !answer.report) {
+			throw new Error(answer.status.state === 'offline'
+				? `Volt could not reach ${parsed.url}. Check the other machine is awake, on the same network, and shares Volt on it.`
+				: `${parsed.url} answered, but not with Volt usage. Update Volt on that machine.`);
+		}
+		const stored = await this.machineStore.put({ name: name?.trim() || answer.report.machineName, url: parsed.url, token });
+		this.machineAnswers.set(stored.id, { at: Date.now(), answer: Promise.resolve({ status: { ...answer.status, id: stored.id, name: stored.name }, report: answer.report }) });
+		return { id: stored.id, name: stored.name, url: stored.url, state: 'ok', checkedAt: Date.now() };
+	}
+
+	async removeMachine(id: string): Promise<void> {
+		await this.machineStore.remove(id);
+		this.machineAnswers.delete(id);
+	}
+
+	private async askMachines(force: boolean): Promise<IMachineAnswer[]> {
+		const machines = await this.machineStore.list();
+		return Promise.all(machines.map(machine => {
+			const cached = this.machineAnswers.get(machine.id);
+			if (cached && !force && Date.now() - cached.at < MACHINE_TTL_MS) {
+				return cached.answer;
+			}
+			const answer = fetchMachineReport(machine, force);
+			this.machineAnswers.set(machine.id, { at: Date.now(), answer });
+			return answer;
+		}));
+	}
+
+	//#endregion
+
+	//#region Model prices
+
+	async getModelPrices(): Promise<Record<string, IVoltUsageModelPrice>> {
+		if (!this.prices) {
+			const prices: Record<string, IVoltUsageModelPrice> = {};
+			try {
+				const parsed = JSON.parse(await fs.readFile(this.pricesPath, 'utf8'));
+				for (const [model, value] of Object.entries(parsed && typeof parsed === 'object' ? parsed : {})) {
+					const price = validModelPrice(value);
+					if (price && model.trim()) {
+						prices[model.trim()] = price;
+					}
+				}
+			} catch {
+				// None set yet.
+			}
+			this.prices = prices;
+		}
+		return this.prices;
+	}
+
+	async setModelPrice(model: string, price: IVoltUsageModelPrice | undefined): Promise<void> {
+		const id = model.trim();
+		if (!id) {
+			throw new Error('Enter a model id.');
+		}
+		const next = { ...await this.getModelPrices() };
+		if (price === undefined) {
+			delete next[id];
+		} else {
+			const valid = validModelPrice(price);
+			if (!valid) {
+				throw new Error('Enter input and output prices of 0 or more.');
+			}
+			next[id] = valid;
+		}
+		await fs.mkdir(dirname(this.pricesPath), { recursive: true });
+		await fs.writeFile(this.pricesPath, JSON.stringify(next, undefined, '\t'));
+		this.prices = next;
+	}
+
+	//#endregion
+
+	//#region This machine
+
+	/** This machine's own usage and limits, for another machine's Usage page (`GET /api/usage`). */
+	async getMachineReport(force?: boolean): Promise<IVoltUsageMachineReport> {
+		const [usage, limits, prices, cursorAccount] = await Promise.all([this.getLocalUsage(force), this.getLocalLimits(force), this.getModelPrices(), readCursorAccountId(this.home).catch(() => undefined)]);
+		return {
+			machineName: localMachineName(),
+			machineId: localMachineId(),
+			usage: { ...usage, buckets: applyModelPrices(usage.buckets, prices) },
+			limits,
+			...(cursorAccount ? { cursorAccount } : {}),
+		};
+	}
+
+	private async getLocalUsage(force?: boolean): Promise<IVoltUsageSnapshot> {
 		if (!force && this.snapshot && Date.now() - this.snapshot.generatedAt < SNAPSHOT_TTL_MS) {
 			return this.snapshot;
 		}
@@ -91,18 +285,18 @@ export class VoltUsageService implements IVoltUsageService {
 
 	async peekUsage(): Promise<IVoltUsageSnapshot | undefined> {
 		const snapshot = this.snapshot ?? (await this.readSaved()).snapshot;
-		if (!snapshot || Date.now() - snapshot.generatedAt >= SNAPSHOT_TTL_MS) {
+		if (!snapshot || !this.pooledUsage || Date.now() - snapshot.generatedAt >= SNAPSHOT_TTL_MS) {
 			void this.getUsage().catch(() => undefined);
 		}
-		return this.snapshot ?? snapshot;
+		return this.pooledUsage ?? this.snapshot ?? snapshot;
 	}
 
 	async peekLimits(): Promise<readonly IVoltUsageLimitGroup[] | undefined> {
 		const limits = this.limits ?? (await this.readSaved()).limits;
-		if (!limits || Date.now() - limits.at >= LIMITS_TTL_MS) {
+		if (!limits || !this.pooledLimits || Date.now() - limits.at >= LIMITS_TTL_MS) {
 			void this.getLimits().catch(() => undefined);
 		}
-		return (this.limits ?? limits)?.value;
+		return this.pooledLimits ?? (this.limits ?? limits)?.value;
 	}
 
 	/** What the previous run saved, so the Usage page has numbers the moment it opens after a restart. */
@@ -121,7 +315,7 @@ export class VoltUsageService implements IVoltUsageService {
 			.catch(error => this.logService.trace('[volt-usage] could not save the last snapshot', error));
 	}
 
-	async getLimits(force?: boolean): Promise<readonly IVoltUsageLimitGroup[]> {
+	private async getLocalLimits(force?: boolean): Promise<readonly IVoltUsageLimitGroup[]> {
 		if (!force && this.limits && Date.now() - this.limits.at < LIMITS_TTL_MS) {
 			return this.limits.value;
 		}
@@ -130,13 +324,85 @@ export class VoltUsageService implements IVoltUsageService {
 	}
 
 	async getModelRates(models: readonly string[]): Promise<Record<string, IVoltTokenRates | null>> {
-		await this.pricing.ensureLoaded();
+		const [prices] = await Promise.all([this.getModelPrices(), this.pricing.ensureLoaded()]);
 		const rates: Record<string, IVoltTokenRates | null> = {};
 		for (const model of models) {
+			// A price the user set wins, as it does on the Usage page (USD per million tokens there).
+			const custom = modelPriceFor(prices, model);
+			if (custom) {
+				rates[model] = { input: custom.input / 1e6, output: custom.output / 1e6, cacheRead: (custom.cacheRead ?? custom.input) / 1e6, cacheWrite: (custom.cacheWrite ?? custom.input) / 1e6 };
+				continue;
+			}
 			const rate = this.pricing.rate(model);
 			rates[model] = rate ? { input: rate.input, output: rate.output, cacheRead: rate.cacheRead, cacheWrite: rate.cacheWrite } : null;
 		}
 		return rates;
+	}
+
+	/**
+	 * Spends a reset credit for a login on this machine (`POST /api/usage/redeem` lands here too).
+	 * Serialized per account; the idempotency key is kept until the provider answers, so a retry
+	 * after a timeout is the same attempt and never spends a second credit.
+	 */
+	async redeemLocal(provider: VoltUsageProvider, accountId: string): Promise<VoltResetCreditOutcome> {
+		const key = accountKey(provider, accountId);
+		const previous = this.redeeming.get(key) ?? Promise.resolve();
+		const run = previous.catch(() => undefined).then(async () => {
+			if (!this.localLogins.has(key)) {
+				await this.getLocalLimits(true);
+			}
+			const login = this.localLogins.get(key);
+			if (!login || (provider !== 'claude' && provider !== 'codex')) {
+				throw new ResetCreditError('This account is not signed in on this machine any more.', true);
+			}
+			const env = await this.resolveEnv();
+			const idempotencyKey = this.pendingRedeemKeys.get(key) ?? randomUUID();
+			this.pendingRedeemKeys.set(key, idempotencyKey);
+			try {
+				let outcome: VoltResetCreditOutcome;
+				if (login.provider === 'claude') {
+					let grantId = login.reader.nextGrantId;
+					if (!grantId) {
+						login.reader.invalidate();
+						await login.reader.read(env);
+						grantId = login.reader.nextGrantId;
+					}
+					if (!grantId) {
+						throw new ResetCreditError('This Claude account has no banked resets left.', true);
+					}
+					outcome = await redeemClaudeResetCredit(this.home, login.reader.claudeHome, env, grantId, idempotencyKey);
+					login.reader.invalidate();
+				} else {
+					outcome = await redeemCodexResetCredit(this.home, login.codexHome, env, idempotencyKey);
+				}
+				this.pendingRedeemKeys.delete(key);
+				this.logService.info(`[volt-usage] redeemed a ${provider} reset credit: ${outcome}`);
+				return outcome;
+			} catch (error) {
+				if (!(error instanceof ResetCreditError) || error.settled) {
+					this.pendingRedeemKeys.delete(key);
+				}
+				throw error;
+			} finally {
+				this.limits = undefined;
+			}
+		});
+		this.redeeming.set(key, run);
+		return run;
+	}
+
+	private claudeReader(claudeHome: IClaudeHome): ClaudeLimitsReader {
+		let reader = this.claudeReaders.get(claudeHome.configDir);
+		if (!reader) {
+			reader = new ClaudeLimitsReader(this.home, claudeHome, claudeCachePath(this.cacheDir, claudeHome));
+			this.claudeReaders.set(claudeHome.configDir, reader);
+		}
+		return reader;
+	}
+
+	/** `CLAUDE_CONFIG_DIR` from the shell: a login besides the default `~/.claude`. */
+	private extraClaudeDirs(env: NodeJS.ProcessEnv): string[] {
+		return (env.CLAUDE_CONFIG_DIR ?? '').split(',').map(value => value.trim()).filter(Boolean);
 	}
 
 	private async readLimits(): Promise<readonly IVoltUsageLimitGroup[]> {
@@ -144,38 +410,61 @@ export class VoltUsageService implements IVoltUsageService {
 		// The rollout scan finds the newest Codex sample, the fallback when app-server is missing.
 		const codexFallback = async () => {
 			if (!this.codexSample) {
-				await this.getUsage().catch(() => undefined);
+				await this.getLocalUsage().catch(() => undefined);
 			}
 			return this.codexSample;
 		};
-		const settled = await Promise.allSettled([
-			readCodexLimits(this.home, env, codexFallback),
-			this.claudeLimits.read(),
-			readCursorLimits(this.home),
-		]);
+		const readers = claudeHomes(this.home, this.extraClaudeDirs(env)).map(claudeHome => this.claudeReader(claudeHome));
+		const codex = codexHome(this.home, env);
+		const reads: Promise<{ group: IVoltUsageLimitGroup | undefined; login?: LocalLogin }>[] = [
+			readCodexLimits(this.home, codex, env, codexFallback).then(group => ({ group, login: { provider: 'codex' as const, codexHome: codex } })),
+			...readers.map(reader => reader.read(env).then(group => ({ group, login: { provider: 'claude' as const, reader } }))),
+			readCursorLimits(this.home).then(group => ({ group })),
+			readOpenCodeGoLimits(this.home, env).then(group => ({ group })),
+			readGrokLimits(this.home, env).then(group => ({ group })),
+		];
+		const settled = await Promise.allSettled(reads);
 		const value: IVoltUsageLimitGroup[] = [];
+		const logins = new Map<string, LocalLogin>();
+		const seen = new Set<string>();
 		for (const result of settled) {
-			if (result.status === 'fulfilled' && result.value) {
-				value.push(result.value);
-			} else if (result.status === 'rejected') {
+			if (result.status === 'rejected') {
 				this.logService.warn('[volt-usage] limit read failed', result.reason);
+				continue;
 			}
+			const { group, login } = result.value;
+			if (!group) {
+				continue;
+			}
+			// Two directories signed in to one account read the same numbers; show it once.
+			const key = group.account ? accountKey(group.provider, group.account.id) : undefined;
+			if (key && seen.has(key)) {
+				continue;
+			}
+			if (key) {
+				seen.add(key);
+				if (login) {
+					logins.set(key, login);
+				}
+			}
+			value.push(group);
 		}
+		this.localLogins = logins;
 		this.limits = { at: Date.now(), value };
 		this.save();
 		return value;
 	}
 
 	private transcriptRoots(env: NodeJS.ProcessEnv): { root: string; provider: 'claude' | 'codex' }[] {
-		const claudeHomes = new Set([join(this.home, '.claude'), join(this.home, '.config', 'claude')]);
-		for (const dir of (env.CLAUDE_CONFIG_DIR ?? '').split(',').map(value => value.trim()).filter(Boolean)) {
-			claudeHomes.add(dir);
+		const claudeDirs = new Set([join(this.home, '.claude'), join(this.home, '.config', 'claude')]);
+		for (const dir of this.extraClaudeDirs(env)) {
+			claudeDirs.add(dir);
 		}
-		const codexHome = env.CODEX_HOME?.trim() || join(this.home, '.codex');
+		const codex = codexHome(this.home, env);
 		return [
-			...[...claudeHomes].map(dir => ({ root: join(dir, 'projects'), provider: 'claude' as const })),
-			{ root: join(codexHome, 'sessions'), provider: 'codex' },
-			{ root: join(codexHome, 'archived_sessions'), provider: 'codex' },
+			...[...claudeDirs].map(dir => ({ root: join(dir, 'projects'), provider: 'claude' as const })),
+			{ root: join(codex, 'sessions'), provider: 'codex' },
+			{ root: join(codex, 'archived_sessions'), provider: 'codex' },
 		];
 	}
 
@@ -344,4 +633,6 @@ export class VoltUsageService implements IVoltUsageService {
 			return this.cursor?.value;
 		}
 	}
+
+	//#endregion
 }
