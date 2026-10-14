@@ -45,24 +45,6 @@
 .volt-subagent-avatar.state-cancelled .volt-subagent-dot,
 .volt-subagent-avatar.state-interrupted .volt-subagent-dot { background: color-mix(in srgb, var(--vscode-foreground) 40%, transparent); }
 
-.volt-subagent-avatar.state-running::after {
-	content: '';
-	position: absolute;
-	inset: -3px;
-	border-radius: 50%;
-	border: 1.5px solid transparent;
-	border-top-color: color-mix(in srgb, #4c8dff 70%, transparent);
-	animation: volt-subagent-spin 1.1s linear infinite;
-}
-
-@keyframes volt-subagent-spin {
-	to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.volt-subagent-avatar.state-running::after { animation: none; }
-}
-
 /* A row */
 
 .volt-subagent-row {
@@ -295,8 +277,8 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 
 /*
  * "N subagents running" over the chip row, under the Tasks card and drawn like it (agentEditor.css
- * .volt-agent-tasks-card): the same fill, edge and corners, a 40px header line that opens into the
- * rows. The card is the only surface: no wrapper paints around it.
+ * .volt-agent-tasks-card): the same edge and corners with no fill, a 40px header line that opens
+ * into the rows. The card is the only surface: no wrapper paints around it.
  */
 .volt-agent-agents-card {
 	position: relative;
@@ -308,7 +290,7 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 	padding: 0 16px;
 	box-sizing: border-box;
 	border-radius: 12px;
-	background: var(--vscode-editor-background, #1e1e1e);
+	background: transparent;
 	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
 	color: var(--vscode-foreground);
 	font-size: 13px;
@@ -317,7 +299,7 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 
 .monaco-workbench.vs .volt-agent-agents-card,
 .monaco-workbench.hc-light .volt-agent-agents-card {
-	background: var(--vscode-editor-background, #ffffff);
+	background: transparent;
 	border-color: var(--vscode-widget-border, rgba(0, 0, 0, 0.1));
 }
 

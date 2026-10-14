@@ -17,7 +17,7 @@ import { Categories } from '../../../../../platform/action/common/actionCommonCa
 import { Action2, registerAction2 } from '../../../../../platform/actions/common/actions.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
-import { IQuickInputService, IQuickPick, IQuickPickItem, IQuickPickSeparator } from '../../../../../platform/quickinput/common/quickInput.js';
+import { IQuickInputButton, IQuickInputService, IQuickPick, IQuickPickItem, IQuickPickSeparator } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { defaultToggleStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
 import { IAgentHistoryService, IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
@@ -37,6 +37,11 @@ const RECENT_LIMIT = 40;
 const CONTENT_DELAY_MS = 40;
 /** Hits near the top whose replies are read for a snippet. */
 const SNIPPET_LOADS = 24;
+/**
+ * A separator with `buttons` (even none) renders as its own sticky header row; without, the quick pick
+ * squeezes its label onto the right edge of the first item, which collides with two-line rows.
+ */
+const SECTION_ROW: readonly IQuickInputButton[] = [];
 
 interface IChatPick extends IQuickPickItem {
 	readonly sessionId: string;
@@ -218,25 +223,26 @@ class AgentChatSearchPicker extends Disposable {
 				group.rows.push(row);
 			}
 			for (const group of groups.values()) {
-				items.push({ type: 'separator', label: group.name, description: `${group.rows.length}` });
+				items.push({ type: 'separator', label: group.name, description: `${group.rows.length}`, buttons: SECTION_ROW });
 				items.push(...group.rows.map(row => this.item(row, false)));
 			}
 		} else if (!query) {
 			if (rows.length) {
-				items.push({ type: 'separator', label: localize('voltAgent.chatSearch.recent', "Recent") });
+				items.push({ type: 'separator', label: localize('voltAgent.chatSearch.recent', "Recent"), buttons: SECTION_ROW });
 				items.push(...rows.map(row => this.item(row, true)));
 			}
 		} else {
 			const titles = rows.filter(row => row.kind === 'title');
 			const content = rows.filter(row => row.kind === 'content');
 			if (titles.length) {
-				items.push({ type: 'separator', label: localize('voltAgent.chatSearch.titles', "Titles") });
+				items.push({ type: 'separator', label: localize('voltAgent.chatSearch.titles', "Titles"), buttons: SECTION_ROW });
 				items.push(...titles.map(row => this.item(row, true)));
 			}
 			if (content.length) {
 				items.push({
 					type: 'separator',
 					label: localize('voltAgent.chatSearch.inConversations', "In Conversations"),
+					buttons: SECTION_ROW,
 					description: progress.building
 						? localize('voltAgent.chatSearch.progress', "searched {0} of {1} chats", progress.indexed, progress.total)
 						: undefined,
@@ -289,7 +295,8 @@ class AgentChatSearchPicker extends Disposable {
 			label: chatLabel(meta),
 			description,
 			detail,
-			iconClasses: ThemeIcon.asClassNameArray(icon),
+			// iconClass, not iconClasses: iconClasses lands on the label itself and turns the whole row into a codicon glyph.
+			iconClass: ThemeIcon.asClassName(icon),
 			highlights: {
 				label: row.title ? [...row.title.highlights] : undefined,
 				detail: detailHighlights,

@@ -7,7 +7,6 @@ import './media/appearancePage.css';
 import { $, addDisposableListener, append } from '../../../../base/browser/dom.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../base/browser/ui/contextview/contextview.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { ISelectOptionItem, SelectBox } from '../../../../base/browser/ui/selectBox/selectBox.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { Color } from '../../../../base/common/color.js';
 import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
@@ -23,6 +22,9 @@ import { ColorThemeData } from '../../../services/themes/common/colorThemeData.j
 import { IWorkbenchColorTheme, IWorkbenchThemeService, ThemeSettings } from '../../../services/themes/common/workbenchThemeService.js';
 import { AGENT_CODE_WRAP_SETTING, AGENT_THEMED_DIFFS_SETTING, AGENT_TOOL_DENSITIES, AGENT_TOOL_DENSITY_SETTING, AgentToolDensity, readToolDensity, VOLT_REDUCE_TRANSPARENCY_SETTING, VOLT_TINT_HUE_SETTING, VOLT_TINT_INTENSITY_SETTING, VOLT_UI_FONT_FAMILY_SETTING } from '../../voltAgent/common/agentAppearanceSettings.js';
 import { mixTint, tintAmount, tintColor } from '../common/voltTint.js';
+import { createVoltDropdown } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
+import { createSettingsIcon } from './settingsIcons.js';
+import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 
 /** What a theme card paints: a sidebar, an editor with a few lines of code, and an accent. */
 interface IThemeSwatch {
@@ -76,7 +78,6 @@ export interface ISettingsPageKit {
 	settingsGroup(): HTMLElement;
 	settingRow(parent: HTMLElement, title: string, desc: string | undefined, renderControl?: (host: HTMLElement) => void): HTMLElement;
 	stepper(parent: HTMLElement, valueText: string, unit: string, onCommit: (next: number) => number, step: number): void;
-	selectBox(host: HTMLElement, options: ISelectOptionItem[], selected: number, ariaLabel: string): SelectBox;
 }
 
 /** A font choice: what the picker shows, and the font-family list it writes (empty: the default). */
@@ -189,25 +190,19 @@ export class AppearancePage {
 		await this.themes.setColorTheme(theme, 'auto');
 	}
 
+	/** System / Light / Dark as a dropdown, each with its glyph. */
 	renderModeControl(host: HTMLElement): void {
-		host.classList.add('wide');
-		const control = append(host, $('.volt-settings-segmented'));
-		control.setAttribute('role', 'radiogroup');
-		const current = this.mode();
-		const options: { id: AppearanceMode; label: string }[] = [
-			{ id: 'system', label: localize('voltSettings.appearance.system', "System") },
-			{ id: 'light', label: localize('voltSettings.appearance.light', "Light") },
-			{ id: 'dark', label: localize('voltSettings.appearance.dark', "Dark") },
-		];
-		for (const option of options) {
-			const button = append(control, $('button.volt-settings-segment')) as HTMLButtonElement;
-			button.type = 'button';
-			button.setAttribute('role', 'radio');
-			button.setAttribute('aria-checked', String(option.id === current));
-			button.classList.toggle('active', option.id === current);
-			append(button, $('span')).textContent = option.label;
-			this.store.add(addDisposableListener(button, 'click', () => void this.setMode(option.id)));
-		}
+		const option = (id: AppearanceMode, label: string, description: string) => ({ id, label, description, icon: () => createSettingsIcon(`appearance-${id}`)! });
+		createVoltDropdown(host, this.contextView, {
+			options: [
+				option('system', localize('voltSettings.appearance.system', "System"), localize('voltSettings.appearance.systemDesc', "Follows macOS light and dark")),
+				option('light', localize('voltSettings.appearance.light', "Light"), localize('voltSettings.appearance.lightDesc', "Always your light theme")),
+				option('dark', localize('voltSettings.appearance.dark', "Dark"), localize('voltSettings.appearance.darkDesc', "Always your dark theme")),
+			],
+			value: this.mode(),
+			ariaLabel: localize('voltSettings.appearanceMode', "Mode"),
+			onChange: mode => void this.setMode(mode),
+		}, this.store);
 	}
 
 	/** Theme cards, dark ones then light ones. Themes load their colors first so the cards show them. */
@@ -234,13 +229,12 @@ export class AppearancePage {
 				this.themeCard(grid, theme, theme.settingsId === active, system && preferred.has(theme.settingsId) && theme.settingsId !== active);
 			}
 		}
-		const more = append(host, $('button.volt-settings-link')) as HTMLButtonElement;
-		more.type = 'button';
-		more.appendChild(renderIcon(Codicon.extensions));
-		append(more, $('span')).textContent = localize('voltSettings.appearance.more', "Browse more themes");
+		const more = this.store.add(createVoltButton(host, 'ghost', { supportIcons: true }));
+		more.element.classList.add('volt-settings-theme-more');
+		more.label = `$(${Codicon.extensions.id}) ${localize('voltSettings.appearance.more', "Browse more themes")}`;
 		// The color theme quick pick: every installed theme by scheme, plus Browse Additional Color
 		// Themes. Quick input sits above the settings overlay, so the page stays open under it.
-		this.store.add(addDisposableListener(more, 'click', () => void this.commands.executeCommand('workbench.action.selectTheme')));
+		this.store.add(more.onDidClick(() => void this.commands.executeCommand('workbench.action.selectTheme')));
 	}
 
 	private themeCard(grid: HTMLElement, theme: IWorkbenchColorTheme, active: boolean, standby: boolean): void {
@@ -380,13 +374,13 @@ export class AppearancePage {
 			group,
 			localize('voltSettings.uiFontFamily', "UI Font Family"),
 			localize('voltSettings.uiFontFamilyDesc', "Override the Volt user interface typeface"),
-			host => this.fontPicker(kit, host, UI_FONTS, VOLT_UI_FONT_FAMILY_SETTING, localize('voltSettings.uiFontFamily', "UI Font Family")),
+			host => this.fontPicker(host, UI_FONTS, VOLT_UI_FONT_FAMILY_SETTING, localize('voltSettings.uiFontFamily', "UI Font Family")),
 		);
 		const codeRow = kit.settingRow(
 			group,
 			localize('voltSettings.codeFontFamily', "Code Font Family"),
 			localize('voltSettings.codeFontFamilyDesc', "Override the font for code editors and diffs"),
-			host => this.fontPicker(kit, host, CODE_FONTS, 'editor.fontFamily', localize('voltSettings.codeFontFamily', "Code Font Family")),
+			host => this.fontPicker(host, CODE_FONTS, 'editor.fontFamily', localize('voltSettings.codeFontFamily', "Code Font Family")),
 		);
 		codeRow.classList.add('has-preview');
 		this.codeFontPreview(group);
@@ -416,13 +410,17 @@ export class AppearancePage {
 			localize('voltSettings.reduceMotionDesc', "Minimize interface animations. System follows your OS preference."),
 			host => {
 				const options = [
-					{ id: 'auto', text: localize('voltSettings.motion.system', "System") },
-					{ id: 'on', text: localize('voltSettings.motion.on', "On") },
-					{ id: 'off', text: localize('voltSettings.motion.off', "Off") },
+					{ id: 'auto', label: localize('voltSettings.motion.system', "System") },
+					{ id: 'on', label: localize('voltSettings.motion.on', "On") },
+					{ id: 'off', label: localize('voltSettings.motion.off', "Off") },
 				];
 				const current = this.configuration.getValue<string>('workbench.reduceMotion');
-				const box = kit.selectBox(append(host, $('.volt-settings-select')), options.map(option => ({ text: option.text })), Math.max(0, options.findIndex(option => option.id === current)), localize('voltSettings.reduceMotion', "Reduce Motion"));
-				this.store.add(box.onDidSelect(e => void this.configuration.updateValue('workbench.reduceMotion', options[e.index].id)));
+				createVoltDropdown(host, this.contextView, {
+					options,
+					value: options.find(option => option.id === current)?.id ?? options[0].id,
+					ariaLabel: localize('voltSettings.reduceMotion', "Reduce Motion"),
+					onChange: id => void this.configuration.updateValue('workbench.reduceMotion', id),
+				}, this.store);
 			},
 		);
 	}
@@ -517,7 +515,7 @@ export class AppearancePage {
 	}
 
 	/** A font picker; a family set elsewhere that is not in the list shows as Custom. */
-	private fontPicker(kit: ISettingsPageKit, host: HTMLElement, choices: readonly IFontChoice[], key: string, label: string): void {
+	private fontPicker(host: HTMLElement, choices: readonly IFontChoice[], key: string, label: string): void {
 		const user = this.configuration.inspect<string>(key).userValue?.trim() ?? '';
 		const options = [...choices];
 		let selected = options.findIndex(choice => choice.value === user);
@@ -525,8 +523,12 @@ export class AppearancePage {
 			options.push({ label: localize('voltSettings.font.custom', "Custom ({0})", user.split(',')[0].replace(/["']/g, '').trim()), value: user });
 			selected = options.length - 1;
 		}
-		const box = kit.selectBox(append(host, $('.volt-settings-select')), options.map(choice => ({ text: choice.label })), selected, label);
-		this.store.add(box.onDidSelect(e => void this.configuration.updateValue(key, options[e.index].value || undefined)));
+		createVoltDropdown(host, this.contextView, {
+			options: options.map((choice, index) => ({ id: String(index), label: choice.label })),
+			value: String(selected),
+			ariaLabel: label,
+			onChange: id => void this.configuration.updateValue(key, options[Number(id)].value || undefined),
+		}, this.store);
 	}
 
 	/** A two-line edit in the code font and size, tinted as chat diffs are. */

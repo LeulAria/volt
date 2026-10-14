@@ -50,6 +50,9 @@ import { basename, dirname as uriDirname } from '../../../../base/common/resourc
 import { URI } from '../../../../base/common/uri.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
+import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
+import { IOpenerService } from '../../../../platform/opener/common/opener.js';
+import { IVoltTrustDialogOptions, showVoltTrustDialog, stripMnemonic } from './voltTrustDialog.js';
 
 const BANNER_RESTRICTED_MODE = 'workbench.banner.restrictedMode';
 const STARTUP_PROMPT_SHOWN_KEY = 'workspace.trust.startupPrompt.shown';
@@ -248,6 +251,8 @@ export class WorkspaceTrustUXHandler extends Disposable implements IWorkbenchCon
 		@IRemoteAgentService private readonly remoteAgentService: IRemoteAgentService,
 		@IEnvironmentService private readonly environmentService: IEnvironmentService,
 		@IFileService private readonly fileService: IFileService,
+		@ILayoutService private readonly layoutService: ILayoutService,
+		@IOpenerService private readonly openerService: IOpenerService,
 	) {
 		super();
 
@@ -343,6 +348,22 @@ export class WorkspaceTrustUXHandler extends Disposable implements IWorkbenchCon
 				checkboxText = localize('checkboxString', "Trust the authors of all files in the parent folder '{0}'", name);
 			}
 
+			// Volt: the trust sheet (voltTrustDialog.ts); the stock prompt below stays as the fallback
+			const trustLabel = trustOption ? stripMnemonic(trustOption) : (isSingleFolderWorkspace || isEmptyWindow ?
+				localize('voltTrust.trustFolder', "Trust Folder") : localize('voltTrust.trustWorkspace', "Trust Workspace"));
+			const voltDialog: IVoltTrustDialogOptions = {
+				title: titleString ?? (this.useWorkspaceLanguage ?
+					localize('voltTrust.workspaceTitle', "Trust this workspace?") :
+					localize('voltTrust.folderTitle', "Trust this folder?")),
+				subtitle: localize('voltTrust.subtitle', "{0} can run code from these files. Only trust authors you know.", this.productService.nameShort),
+				location: !isEmptyWindow ? this.labelService.getWorkspaceLabel(workspaceIdentifier, { verbose: Verbosity.LONG }) : undefined,
+				locationLabel: isSingleFolderWorkspace ? localize('voltTrust.folder', "Folder") : localize('voltTrust.workspace', "Workspace"),
+				trustLabel,
+				restrictedLabel: dontTrustOption ? stripMnemonic(dontTrustOption) : localize('voltTrust.restricted', "Open in Restricted Mode"),
+				parentFolderLabel: checkboxText,
+				learnMoreUrl: 'https://aka.ms/vscode-workspace-trust',
+			};
+
 			// Show Workspace Trust Start Dialog
 			this.doShowModal(
 				title,
@@ -356,7 +377,8 @@ export class WorkspaceTrustUXHandler extends Disposable implements IWorkbenchCon
 					!isEmptyWindow ?
 						`\`${this.labelService.getWorkspaceLabel(workspaceIdentifier, { verbose: Verbosity.LONG })}\`` : '',
 				],
-				checkboxText
+				checkboxText,
+				voltDialog
 			);
 		}));
 	}
@@ -377,7 +399,12 @@ export class WorkspaceTrustUXHandler extends Disposable implements IWorkbenchCon
 
 	//#region Dialog
 
-	private async doShowModal(question: string, trustedOption: { label: string; sublabel: string }, untrustedOption: { label: string; sublabel: string }, markdownStrings: string[], trustParentString?: string): Promise<void> {
+	private async doShowModal(question: string, trustedOption: { label: string; sublabel: string }, untrustedOption: { label: string; sublabel: string }, markdownStrings: string[], trustParentString?: string, voltDialog?: IVoltTrustDialogOptions): Promise<void> {
+		if (voltDialog && await this.doShowVoltModal(voltDialog)) {
+			this.storageService.store(STARTUP_PROMPT_SHOWN_KEY, true, StorageScope.WORKSPACE, StorageTarget.MACHINE);
+			return;
+		}
+
 		await this.dialogService.prompt({
 			type: Severity.Info,
 			message: question,
@@ -415,6 +442,30 @@ export class WorkspaceTrustUXHandler extends Disposable implements IWorkbenchCon
 		});
 
 		this.storageService.store(STARTUP_PROMPT_SHOWN_KEY, true, StorageScope.WORKSPACE, StorageTarget.MACHINE);
+	}
+
+	/** Volt's trust sheet; false when it could not render, so the caller falls back to the stock prompt. */
+	private async doShowVoltModal(options: IVoltTrustDialogOptions): Promise<boolean> {
+		let result;
+		try {
+			result = await showVoltTrustDialog(options, this.layoutService, this.openerService);
+		} catch (error) {
+			console.error('Volt trust dialog failed, using the stock prompt', error);
+			return false;
+		}
+
+		// Same outcomes as the stock prompt's buttons
+		if (result.trusted) {
+			if (result.parentFolder) {
+				await this.workspaceTrustManagementService.setParentFolderTrust(true);
+			} else {
+				await this.workspaceTrustRequestService.completeWorkspaceTrustRequest(true);
+			}
+		} else {
+			this.updateWorkbenchIndicators(false);
+			this.workspaceTrustRequestService.cancelWorkspaceTrustRequest();
+		}
+		return true;
 	}
 
 	private async showModalOnStart(): Promise<void> {

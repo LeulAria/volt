@@ -131,8 +131,7 @@
 	color: var(--vscode-descriptionForeground);
 }
 
-.volt-external-mcp-consent-content .redirect code,
-.volt-external-mcp-code {
+.volt-external-mcp-consent-content .redirect code {
 	display: block;
 	padding: 8px 10px;
 	border-radius: 8px;
@@ -160,7 +159,8 @@
 	margin: 6px 0 12px;
 }
 
-.volt-external-mcp-snippet .volt-external-mcp-code {
+/* The chat's code card (renderCodeCard); its own hover copy is off, the button beside it stays. */
+.volt-external-mcp-snippet .volt-md-code-block {
 	flex: 1;
 	min-width: 0;
 }
@@ -188,6 +188,27 @@
 .volt-external-mcp-copy:hover {
 	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 	color: var(--vscode-foreground);
+}
+
+/* The chat message's copy glyph (createMessageCopyIcon), at the footer button's size and stroke. */
+.volt-external-mcp-copy .volt-agent-svg-icon.copy,
+.volt-external-mcp-copy .volt-agent-svg-icon.copy svg {
+	display: block;
+	width: 14px;
+	height: 14px;
+}
+
+.volt-external-mcp-copy .volt-agent-svg-icon.copy rect,
+.volt-external-mcp-copy .volt-agent-svg-icon.copy path {
+	stroke-width: 1.5;
+}
+
+.volt-external-mcp-copy .codicon {
+	font-size: 14px;
+}
+
+.volt-external-mcp-copy.copied {
+	color: var(--vscode-charts-green, #89d185);
 }
 
 .volt-external-mcp-status {

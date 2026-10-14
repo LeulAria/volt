@@ -1,0 +1,62 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Volt's dropdown trigger (voltDropdown.ts): the composer's model pill on a soft fill. */
+.monaco-workbench .volt-dropdown {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+	padding: 0 6px 0 10px;
+	border: 0;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	color: color-mix(in srgb, var(--vscode-foreground) 85%, transparent);
+	font: inherit;
+	font-size: 13px;
+	white-space: nowrap;
+	cursor: pointer;
+	outline: none;
+	-webkit-app-region: no-drag;
+	transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.monaco-workbench .volt-dropdown:hover,
+.monaco-workbench .volt-dropdown.open {
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 11%, transparent);
+}
+
+.monaco-workbench .volt-dropdown:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.monaco-workbench .volt-dropdown.danger .volt-dropdown-label {
+	color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.volt-dropdown-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-dropdown-icon {
+	flex: none;
+	width: 14px;
+	height: 14px;
+	font-size: 14px !important;
+	opacity: 0.85;
+}
+
+.volt-dropdown-chevron.codicon {
+	flex: none;
+	font-size: 14px;
+	opacity: 0.6;
+}

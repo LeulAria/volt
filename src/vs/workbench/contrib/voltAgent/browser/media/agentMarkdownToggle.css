@@ -1,0 +1,73 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Preview / Code for a markdown file in a chat's tools (agentMarkdownToggle.ts). */
+
+/* The breadcrumbs row holding the button: breadcrumbs take the room left of it. */
+.monaco-workbench .part.editor > .content .editor-group-container > .title .breadcrumbs-below-tabs.volt-md-toggle-host {
+	display: flex;
+	align-items: center;
+}
+
+.monaco-workbench .part.editor > .content .editor-group-container > .title .breadcrumbs-below-tabs.volt-md-toggle-host > .breadcrumbs-control {
+	min-width: 0;
+}
+
+.monaco-workbench .breadcrumbs-below-tabs .volt-button.volt-md-toggle {
+	flex: none;
+	gap: 4px;
+	height: 20px;
+	margin: 0 6px 0 4px;
+	padding: 0 6px;
+	border-radius: 4px;
+	font-size: 12px;
+	font-weight: 400;
+}
+
+.monaco-workbench .volt-md-toggle .codicon {
+	font-size: 13px;
+}
+
+/* No breadcrumbs showing (hidden, or turned off and removed): no row to sit in. */
+.monaco-workbench .breadcrumbs-below-tabs > .breadcrumbs-control.hidden ~ .volt-md-toggle,
+.monaco-workbench .breadcrumbs-below-tabs > .volt-md-toggle:first-child {
+	display: none;
+}
+
+/* The rendered file, laid over the text editor in place. Solid: it scrolls inside the agent window. */
+.monaco-workbench .part.editor > .content .editor-group-container > .editor-container.volt-md-preview-host {
+	position: relative;
+}
+
+.volt-md-preview {
+	position: absolute;
+	inset: 0;
+	z-index: 10;
+	overflow: auto;
+	outline: none;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-editor-foreground);
+	contain: strict;
+	--volt-skill-fg: var(--vscode-editor-foreground, #e6e6e6);
+	--volt-skill-muted: var(--vscode-descriptionForeground, #9a9a9a);
+	--volt-skill-line: var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+}
+
+.monaco-workbench.vs .volt-md-preview,
+.monaco-workbench.hc-light .volt-md-preview {
+	--volt-skill-line: var(--vscode-widget-border, rgba(0, 0, 0, 0.12));
+}
+
+.volt-md-preview-body {
+	box-sizing: border-box;
+	max-width: 860px;
+	margin: 0 auto;
+	padding: 20px 28px 48px;
+	font-size: 14px;
+	line-height: 1.7;
+	overflow-wrap: break-word;
+	user-select: text;
+	cursor: auto;
+}

@@ -10,6 +10,8 @@ import { Disposable, DisposableStore, MutableDisposable } from '../../../../../b
 import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { ConfigurationTarget, IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
@@ -20,6 +22,7 @@ import { IWorkspaceContextService, WorkbenchState } from '../../../../../platfor
 import { IViewDescriptorService } from '../../../../common/views.js';
 import { getLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
+import { IHostService } from '../../../../services/host/browser/host.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
 import { ILentPaneCompositePart, IPaneCompositePartService } from '../../../../services/panecomposite/browser/panecomposite.js';
 import { VIEWLET_ID as SEARCH_VIEWLET_ID } from '../../../../services/search/common/search.js';
@@ -33,7 +36,7 @@ import { VIEWLET_ID as SCM_VIEWLET_ID } from '../../../scm/common/scm.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { INIT_TIMEOUT_MS, runGit } from '../home/agentHomeWorkspaceActions.js';
 import { trackLentPanesCollapsed } from '../review/agentChangesEditor.js';
-import { AgentScmRepositoryFocus } from '../review/agentScmRepository.js';
+import { AgentScmRepositoryFocus, type AgentScmRepositoryState } from '../review/agentScmRepository.js';
 import { setAgentChangesSession } from '../review/agentTurnsView.js';
 import { EXPLORER_ICON_SHAPES, type SvgIconShapes } from './agentSurfaceMenu.js';
 import { createPrimarySidebarToggleIcon } from '../../../../browser/parts/titlebar/sidebarToggleIcon.js';
@@ -126,6 +129,8 @@ export class AgentFilesSidebar extends Disposable {
 	private readonly repositoryStatus: HTMLElement;
 	private readonly repositoryMessage: HTMLElement;
 	private readonly initRepositoryButton: HTMLButtonElement;
+	/** What the button under the message does: Initialize Repository, or the fix for why Git shows nothing. */
+	private repositoryAction: (() => Promise<unknown>) | undefined;
 	private readonly explorerScope = this._register(new MutableDisposable());
 	private explorerFolder: URI | undefined;
 	private readonly sash: HTMLElement;
@@ -172,6 +177,9 @@ export class AgentFilesSidebar extends Disposable {
 		@IExplorerService private readonly explorerService: IExplorerService,
 		@IVoltStdioService private readonly stdio: IVoltStdioService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@ICommandService private readonly commandService: ICommandService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IHostService private readonly hostService: IHostService,
 	) {
 		super();
 		this.scmRepository = this._register(instantiationService.createInstance(AgentScmRepositoryFocus));
@@ -222,8 +230,8 @@ export class AgentFilesSidebar extends Disposable {
 		this.initRepositoryButton = append(this.repositoryStatus, $('button.volt-agent-files-repository-init.hidden')) as HTMLButtonElement;
 		this.initRepositoryButton.type = 'button';
 		this.initRepositoryButton.appendChild(createTabIcon(this.initRepositoryButton.ownerDocument, VIEWS.find(view => view.id === 'scm')!.icon));
-		append(this.initRepositoryButton, $('span')).textContent = localize('voltAgent.filesSidebar.initRepository', "Initialize Repository");
-		this._register(addDisposableListener(this.initRepositoryButton, 'click', () => void this.initRepository()));
+		append(this.initRepositoryButton, $('span'));
+		this._register(addDisposableListener(this.initRepositoryButton, 'click', () => void this.runRepositoryAction()));
 
 		this.toggleButton = $('button.volt-agent-tools-files-toggle') as HTMLButtonElement;
 		this.toggleButton.type = 'button';
@@ -376,41 +384,103 @@ export class AgentFilesSidebar extends Disposable {
 			this.scmSession = scmSession;
 			this.scmFolder = scmFolder;
 			setAgentChangesSession(scmSession);
-			void this.scmRepository.show(scmSession, () => this.showsScmFor(scmSession), scmFolder, state => {
-				this.body.classList.toggle('repository-pending', state !== 'ready');
-				this.repositoryMessage.textContent = state === 'loading'
-					? localize('voltAgent.filesSidebar.loadingRepository', "Loading repository…")
-					: state === 'unavailable' ? localize('voltAgent.filesSidebar.repositoryUnavailable', "No Git repository is available for this folder.") : '';
-				this.initRepositoryButton.classList.toggle('hidden', state !== 'unavailable' || scmFolder?.scheme !== Schemas.file);
-			});
+			void this.scmRepository.show(scmSession, () => this.showsScmFor(scmSession), scmFolder, state => this.showRepositoryState(state, scmFolder));
 		}
 		this.layoutLent();
 		this.announceShownView();
+	}
+
+	/** Says why Source Control has no repository, in git's own words, with the one action that fixes it. */
+	private showRepositoryState(state: AgentScmRepositoryState, folder: URI | undefined): void {
+		this.body.classList.toggle('repository-pending', state.kind !== 'ready');
+		let message = '';
+		let action: { label: string; run: () => Promise<unknown> } | undefined;
+		switch (state.kind) {
+			case 'loading':
+				message = localize('voltAgent.filesSidebar.loadingRepository', "Loading repository…");
+				break;
+			case 'noFolder':
+				message = localize('voltAgent.filesSidebar.noFolder', "This chat has no local folder.");
+				break;
+			case 'notRepository':
+				message = localize('voltAgent.filesSidebar.notRepository', "This folder is not a Git repository.");
+				if (folder?.scheme === Schemas.file) {
+					action = { label: localize('voltAgent.filesSidebar.initRepository', "Initialize Repository"), run: () => this.initRepository() };
+				}
+				break;
+			case 'gitFailed':
+				message = localize('voltAgent.filesSidebar.gitFailed', "Git could not run: {0}", firstLine(state.detail));
+				action = { label: localize('voltAgent.filesSidebar.retry', "Try Again"), run: async () => this.reopenRepository() };
+				break;
+			case 'gitDisabled':
+				message = localize('voltAgent.filesSidebar.gitDisabled', "Git is turned off in settings (git.enabled).");
+				action = {
+					label: localize('voltAgent.filesSidebar.enableGit', "Turn On Git"),
+					run: async () => {
+						await this.configurationService.updateValue('git.enabled', true, ConfigurationTarget.USER);
+						this.reopenRepository();
+					},
+				};
+				break;
+			case 'extensionStopped':
+				if (state.outdated) {
+					message = localize('voltAgent.filesSidebar.appOutdated', "{0} is a Git repository, but VOLT was updated while this window was open, so Git cannot start. Relaunch to use Source Control.", state.repoRoot);
+					action = { label: localize('voltAgent.filesSidebar.relaunch', "Relaunch VOLT"), run: () => this.hostService.restart() };
+				} else {
+					message = localize('voltAgent.filesSidebar.gitStopped', "{0} is a Git repository, but the Git extension is not running.", state.repoRoot);
+					action = { label: localize('voltAgent.filesSidebar.restartExtensionHost', "Restart Extension Host"), run: () => this.commandService.executeCommand('workbench.action.restartExtensionHost') };
+				}
+				break;
+			case 'notOpened':
+				message = localize('voltAgent.filesSidebar.notOpened', "{0} is a Git repository, but Git did not open it. It may belong to another user or be ignored.", state.repoRoot);
+				action = { label: localize('voltAgent.filesSidebar.showGitOutput', "Show Git Output"), run: () => this.commandService.executeCommand('git.showOutput') };
+				break;
+		}
+		this.repositoryMessage.textContent = message;
+		this.repositoryAction = action?.run;
+		this.initRepositoryButton.classList.toggle('hidden', !action);
+		// The Source Control icon leads Initialize Repository only.
+		this.initRepositoryButton.classList.toggle('plain', state.kind !== 'notRepository');
+		this.initRepositoryButton.lastElementChild!.textContent = action?.label ?? '';
+	}
+
+	private async runRepositoryAction(): Promise<void> {
+		const action = this.repositoryAction;
+		if (!action || this.initRepositoryButton.disabled) {
+			return;
+		}
+		this.initRepositoryButton.disabled = true;
+		try {
+			await action();
+		} catch (error) {
+			this.notificationService.error(error);
+		} finally {
+			this.initRepositoryButton.disabled = false;
+		}
+	}
+
+	/** Forgets the folder, so sync asks Git to open it again. */
+	private reopenRepository(): void {
+		this.scmSession = undefined;
+		this.sync();
 	}
 
 	/** `git init` in the chat's folder, then Source Control opens the new repository. */
 	private async initRepository(): Promise<void> {
 		const session = this.scmSession;
 		const folder = this.scmFolder;
-		if (!session || folder?.scheme !== Schemas.file || this.initRepositoryButton.disabled) {
+		if (!session || folder?.scheme !== Schemas.file) {
 			return;
 		}
-		this.initRepositoryButton.disabled = true;
-		try {
-			const result = await runGit(this.stdio, folder.fsPath, ['init'], INIT_TIMEOUT_MS);
-			if (result.exitCode !== 0) {
-				this.notificationService.error(result.timedOut
-					? localize('voltAgent.initTimedOut', "git init did not finish in time")
-					: result.stderr.trim() || localize('voltAgent.initFailed', "git init failed"));
-				return;
-			}
-		} finally {
-			this.initRepositoryButton.disabled = false;
+		const result = await runGit(this.stdio, folder.fsPath, ['init'], INIT_TIMEOUT_MS);
+		if (result.exitCode !== 0) {
+			this.notificationService.error(result.timedOut
+				? localize('voltAgent.initTimedOut', "git init did not finish in time")
+				: result.stderr.trim() || localize('voltAgent.initFailed', "git init failed"));
+			return;
 		}
 		if (this.scmSession === session && this.uriIdentityService.extUri.isEqual(this.scmFolder, folder)) {
-			// Forget the folder so sync asks Git to open it again.
-			this.scmSession = undefined;
-			this.sync();
+			this.reopenRepository();
 		}
 	}
 
@@ -652,6 +722,11 @@ class AgentFilesSidebarRoomContribution extends Disposable {
 registerWorkbenchContribution2(AgentFilesSidebarRoomContribution.ID, AgentFilesSidebarRoomContribution, WorkbenchPhase.AfterRestored);
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function firstLine(text: string): string {
+	const line = text.trim().split(/\r?\n/)[0] ?? '';
+	return line.length > 200 ? `${line.slice(0, 199)}…` : line;
+}
 
 /** A tab's outline icon: thin strokes in currentColor, sized by CSS. */
 function createTabIcon(doc: Document, shapes: SvgIconShapes): SVGSVGElement {

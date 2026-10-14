@@ -11,6 +11,7 @@ import { DisposableStore, toDisposable } from '../../../../../base/common/lifecy
 import { localize } from '../../../../../nls.js';
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { formatElapsed, IOrchAgentRow, OrchAgentRowState } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
+import { AGENT_HOME_NEW_CHAT_ICON_PATH, createHomeStatusBadgeIcon } from '../home/agentHomeIcons.js';
 import { AgentTooltip, IAgentTooltipRow } from './agentTooltip.js';
 
 /**
@@ -243,7 +244,9 @@ export function subagentHoverRows(view: ISubagentView, now: number): IAgentToolt
 		rows.push({ label: view.modelLabel, ...(view.providerId ? { icon: () => createBrandIcon(view.providerId!, 14) } : { icon: Codicon.hubot }) });
 	}
 	const elapsed = elapsedText(view, now);
-	rows.push({ label: view.stateLabel, ...(elapsed ? { detail: elapsed } : {}), icon: subagentStateIcon(view.state) });
+	// Running: the left sidebar's working ring (spun in agentHomePane.css), not the codicon arc.
+	const stateIcon = view.state === 'running' ? () => createHomeStatusBadgeIcon('working') : subagentStateIcon(view.state);
+	rows.push({ label: view.stateLabel, ...(elapsed ? { detail: elapsed } : {}), icon: stateIcon });
 	if (view.detail) {
 		rows.push({ label: view.detail, icon: Codicon.terminal, muted: true });
 	}
@@ -430,7 +433,7 @@ export function createReportStackIcon(owner: HTMLElement): SVGSVGElement {
 	return svg;
 }
 
-/** The outline paper plane Cursor puts before each running subagent in the card above the composer: tip up and left, folded down its middle. */
+/** The New Chat paper plane, before each running subagent in the card above the composer and in the agents menu. */
 export function createPlaneIcon(owner: HTMLElement): SVGSVGElement {
 	const svg = owner.ownerDocument.createElementNS(SVG_NS, 'svg');
 	svg.setAttribute('viewBox', '0 0 24 24');
@@ -440,9 +443,9 @@ export function createPlaneIcon(owner: HTMLElement): SVGSVGElement {
 	svg.setAttribute('aria-hidden', 'true');
 	svg.classList.add('volt-subagent-plane');
 	const path = owner.ownerDocument.createElementNS(SVG_NS, 'path');
-	path.setAttribute('d', 'M3 4.5 21 3.5 12 21 3 4.5ZM3 4.5 12.5 12');
+	path.setAttribute('d', AGENT_HOME_NEW_CHAT_ICON_PATH);
 	path.setAttribute('stroke', 'currentColor');
-	path.setAttribute('stroke-width', '1.5');
+	path.setAttribute('stroke-width', '1.25');
 	path.setAttribute('stroke-linejoin', 'round');
 	path.setAttribute('stroke-linecap', 'round');
 	svg.appendChild(path);

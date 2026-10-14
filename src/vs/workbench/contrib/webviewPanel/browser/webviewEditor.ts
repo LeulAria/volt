@@ -187,6 +187,37 @@ export class WebviewEditor extends EditorPane {
 
 		this.synchronizeWebviewContainerDimensions(input.webview);
 		this._webviewVisibleDisposables.add(this.trackFocus(input.webview));
+		this._webviewVisibleDisposables.add(this.followHostVisibility(input));
+	}
+
+	/**
+	 * Volt: an editor part hidden with CSS (the agent window's tools when their panel closes) fires no
+	 * visibility change, and the webview lives outside it, so it would stay painted over the chat.
+	 * The webview follows the editor's own box instead: gone while it has none, laid out again after.
+	 */
+	private followHostVisibility(input: WebviewInput): IDisposable {
+		const element = this._element;
+		if (!element) {
+			return { dispose: () => { } };
+		}
+		const container = input.webview.container;
+		const observer = new ResizeObserver(() => {
+			if (this.input !== input || !this._visible) {
+				return;
+			}
+			const shown = element.getClientRects().length > 0;
+			container.style.display = shown ? '' : 'none';
+			if (shown) {
+				this.synchronizeWebviewContainerDimensions(input.webview, this._dimension);
+			}
+		});
+		observer.observe(element);
+		return {
+			dispose: () => {
+				observer.disconnect();
+				container.style.removeProperty('display');
+			}
+		};
 	}
 
 	private synchronizeWebviewContainerDimensions(webview: IOverlayWebview, dimension?: DOM.Dimension) {
@@ -194,7 +225,16 @@ export class WebviewEditor extends EditorPane {
 			return;
 		}
 
-		const rootContainer = this._workbenchLayoutService.getContainer(this.window, Parts.EDITOR_PART);
+		// Volt: clip to the editor part hosting this group, which is not always the main one (the agent window's tools).
+		const hostPart = this._element.closest<HTMLElement>('.part.editor');
+		const rootContainer = hostPart ?? this._workbenchLayoutService.getContainer(this.window, Parts.EDITOR_PART);
+		const zIndex = hostPart ? zIndexAboveFixedLayer(hostPart, webview.container.parentElement) : '';
+		const style = webview.container.style;
+		style.zIndex = zIndex;
+		// Over the transparent agent window: a solid, contained layer of its own (the volt-transparent-window rules).
+		style.background = zIndex ? 'var(--vscode-editor-background)' : '';
+		style.isolation = zIndex ? 'isolate' : '';
+		style.contain = zIndex ? 'paint' : '';
 		webview.layoutWebviewOverElement(this._element.parentElement!, dimension, rootContainer);
 	}
 
@@ -211,4 +251,21 @@ export class WebviewEditor extends EditorPane {
 
 		return store;
 	}
+}
+
+/**
+ * Volt: an editor part laid over the workbench in a fixed, stacked layer (the agent window's tools,
+ * `.volt-agent-tools-area`) paints its solid fill above the webview, which sits in the workbench
+ * container, so the webview showed as an empty panel. Returns a z-index just above the outermost
+ * such layer, or '' when the part is in the normal grid.
+ */
+function zIndexAboveFixedLayer(part: HTMLElement, overlayParent: HTMLElement | null): string {
+	let zIndex: number | undefined;
+	for (let node: HTMLElement | null = part; node && node !== overlayParent; node = node.parentElement) {
+		const style = DOM.getWindow(node).getComputedStyle(node);
+		if (style.position === 'fixed' && style.zIndex !== 'auto') {
+			zIndex = Number(style.zIndex);
+		}
+	}
+	return zIndex === undefined || isNaN(zIndex) ? '' : String(zIndex + 1);
 }

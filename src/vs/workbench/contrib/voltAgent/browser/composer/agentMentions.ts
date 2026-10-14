@@ -2783,7 +2783,8 @@ export class AgentMentionController extends Disposable {
 			return;
 		}
 		const resource = URI.file(file.path);
-		if (!isTextAttachment(file.name, file.mime)) {
+		// A paste is text whatever its language's extension maps to (.ts reads as video/mp2t).
+		if (!file.pasted && !isTextAttachment(file.name, file.mime)) {
 			void this.openerService.open(resource, { openExternal: true });
 		} else if (this.host.openResource) {
 			this.host.openResource(resource);

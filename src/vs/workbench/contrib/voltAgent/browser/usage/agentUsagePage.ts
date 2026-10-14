@@ -137,7 +137,7 @@ export class AgentUsagePage extends Disposable {
 		this.range = this.readStored(STORAGE_RANGE, RANGES.map(range => range.id), '30d');
 		this.breakdown = this.readStored(STORAGE_BREAKDOWN, ['model', 'day'], 'model');
 		const pageSize = Number(this.storage.get(STORAGE_PAGE_SIZE, StorageScope.PROFILE));
-		this.pageSize = (PAGE_SIZES as readonly number[]).includes(pageSize) ? pageSize : 25;
+		this.pageSize = (PAGE_SIZES as readonly number[]).includes(pageSize) ? pageSize : 10;
 		this.element = $('.volt-usage');
 		this.content = append(this.element, $('.volt-usage-content'));
 		this.render();

@@ -82,9 +82,14 @@ suite('Agent composer stack', () => {
 			assert.ok(el.classList.contains('summary'));
 			assert.strictEqual(el.querySelector('.volt-agent-terminal-runs-label')?.textContent, '2 terminals running');
 			assert.strictEqual(el.querySelectorAll('.volt-agent-terminal-runs-dots .dot').length, 2);
+			assert.ok(el.querySelector('.volt-agent-terminal-status .volt-browser-dock-dots'), 'the row\'s dot loader leads a live chip');
+
+			list[1] = terminal('watch', 'Watch', 'completed');
+			change.fire('chat');
+			assert.strictEqual(el.querySelector('.volt-agent-terminal-runs-label')?.textContent, '1 terminal running');
 
 			change.fire('another chat');
-			assert.strictEqual(changes, 2, 'other chats do not redraw it');
+			assert.strictEqual(changes, 3, 'other chats do not redraw it');
 
 			list.length = 0;
 			change.fire('chat');

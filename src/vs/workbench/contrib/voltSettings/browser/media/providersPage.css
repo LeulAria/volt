@@ -1,0 +1,882 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Providers & Models (providersPage.ts): providers in a list on the left, the selection on the
+ * right, straight on the page. Both panes scroll on their own inside a box that fills the window. */
+
+.volt-settings-content-inner.volt-settings-content-wide {
+	width: min(1180px, 100%);
+	padding-bottom: 24px;
+}
+
+.volt-pm {
+	display: grid;
+	grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+	gap: 14px;
+	/* The page title, its lead and the bottom padding take the rest of the window. */
+	height: max(460px, calc(100vh - 172px));
+}
+
+.volt-pm-list,
+.volt-pm-detail {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.volt-pm-list {
+	background: var(--volt-settings-surface);
+	border: 1px solid var(--volt-settings-border);
+	border-radius: var(--volt-settings-radius);
+}
+
+.volt-pm-detail-scroll {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	scrollbar-width: thin;
+	scrollbar-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent) transparent;
+}
+
+/* List */
+
+.volt-pm-filter {
+	position: relative;
+	flex: none;
+	padding: 10px 10px 4px;
+}
+
+.volt-pm-filter-icon {
+	position: absolute;
+	z-index: 1;
+	left: 19px;
+	top: 17px;
+	display: inline-flex;
+	pointer-events: none;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-pm-filter-icon .codicon {
+	font-size: 14px;
+}
+
+.monaco-workbench .volt-pm-filter .monaco-inputbox input {
+	padding-left: 27px;
+}
+
+.volt-pm-filter .monaco-inputbox {
+	height: 28px;
+	border-radius: 7px;
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent) !important;
+	border-color: transparent !important;
+}
+
+.volt-pm-filter .monaco-inputbox input {
+	background: transparent !important;
+}
+
+/* The list scrolls itself (a workbench list), inset from the panel's edges. Hover, focus and selection
+ * are the theme's list colours on the row, rounded. */
+.volt-pm-scroll {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	margin: 0 6px;
+	overflow: hidden;
+}
+
+.volt-pm-scroll .monaco-list-row {
+	border-radius: 6px;
+}
+
+/* Group titles and the no-match line are not items: no hover, no focus ring. */
+.volt-pm-scroll .monaco-list .monaco-list-row.volt-pm-row-static {
+	background: transparent !important;
+	outline: none !important;
+	cursor: default;
+}
+
+.volt-pm-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	box-sizing: border-box;
+	height: 100%;
+	padding: 0 8px;
+	color: inherit;
+	font-size: 13px;
+	cursor: pointer;
+	user-select: none;
+}
+
+/* The status dots stay quiet; the row's tooltip says what each one means. */
+.volt-pm-item .volt-settings-dot {
+	opacity: 0.2;
+}
+
+.volt-pm-item.group {
+	align-items: flex-end;
+	padding: 0 8px 5px;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	cursor: default;
+}
+
+.volt-pm-item.none {
+	padding: 0 10px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	cursor: default;
+}
+
+.volt-pm-item.add {
+	font-size: 12.5px;
+}
+
+.volt-pm-scroll .monaco-list-row:not(:hover):not(.selected) .volt-pm-item.add {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-pm-glyph {
+	display: inline-flex;
+	flex: none;
+	width: 22px;
+	justify-content: center;
+	opacity: 0.8;
+}
+
+.volt-pm-glyph .codicon {
+	font-size: 14px;
+}
+
+.volt-pm-icon {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+}
+
+.volt-pm-icon .volt-brand-icon svg,
+.volt-pm-head-icon .volt-brand-icon svg {
+	display: block;
+	overflow: visible;
+}
+
+.volt-pm-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.volt-pm-count {
+	flex: none;
+	min-width: 18px;
+	padding: 0 5px;
+	border-radius: 999px;
+	font-size: 10.5px;
+	line-height: 16px;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+	color: var(--vscode-descriptionForeground);
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.volt-pm-count.warn {
+	color: #f59e0b;
+	background: color-mix(in srgb, #f59e0b 14%, transparent);
+}
+
+.volt-pm-item.not-installed .volt-pm-name,
+.volt-pm-item.not-installed .volt-pm-icon,
+.volt-pm-item.off .volt-pm-name {
+	opacity: 0.6;
+}
+
+/* Detail */
+
+.volt-pm-detail-inner {
+	padding: 8px 18px 32px 22px;
+}
+
+.volt-pm-head {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	padding-bottom: 4px;
+}
+
+.volt-pm-head-icon {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 44px;
+	height: 44px;
+	border-radius: 11px;
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+}
+
+.volt-pm-head-icon > .codicon {
+	font-size: 20px;
+	opacity: 0.85;
+}
+
+.volt-pm-head-copy {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-pm-head-title {
+	display: flex;
+	align-items: baseline;
+	flex-wrap: wrap;
+	gap: 4px 8px;
+	font-size: 16px;
+	line-height: 1.25;
+	letter-spacing: -0.01em;
+}
+
+.volt-pm-head-title .version {
+	font-size: 12px;
+	letter-spacing: normal;
+	opacity: 0.45;
+}
+
+.volt-pm-head-title .badge {
+	align-self: center;
+	font-size: 10px;
+	line-height: 1;
+	letter-spacing: normal;
+	padding: 3px 6px;
+	border-radius: 999px;
+	color: #eab308;
+	background: color-mix(in srgb, #eab308 16%, transparent);
+}
+
+.volt-pm-head-status {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	margin-top: 5px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-pm-head-status .text {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.volt-pm-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: none;
+}
+
+.volt-pm-section-title {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 26px;
+	margin: 22px 0 8px;
+	font-size: 12px;
+	color: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
+}
+
+.volt-pm-section-title > .volt-settings-link {
+	margin: 0 -8px 0 auto;
+}
+
+.volt-pm-section-hint {
+	margin: -4px 0 10px;
+	font-size: 12px;
+	line-height: 1.45;
+	opacity: 0.55;
+}
+
+.volt-pm-detail .volt-settings-row {
+	gap: 20px;
+	min-height: 48px;
+	padding: 10px 14px;
+}
+
+.volt-pm-detail .volt-settings-row-control {
+	max-width: 60%;
+	min-width: 0;
+}
+
+.volt-pm-detail .volt-settings-group + .volt-settings-group {
+	margin-top: 10px;
+}
+
+.volt-pm-value {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 12px;
+	text-align: right;
+}
+
+code.volt-pm-value {
+	font-family: var(--monaco-monospace-font);
+	font-size: 11.5px;
+	color: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
+}
+
+/* Copy (Executable, Launch command, ids): the chat footer's copy button and its green check. */
+.volt-pm-copy {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+}
+
+.volt-pm-copy:hover {
+	color: var(--vscode-icon-foreground, var(--vscode-foreground));
+}
+
+.volt-pm-copy.copied {
+	color: var(--vscode-charts-green, #89d185);
+}
+
+.volt-pm-copy .codicon {
+	font-size: 14px;
+	color: inherit;
+}
+
+.volt-pm-copy .volt-agent-svg-icon,
+.volt-pm-copy .volt-agent-svg-icon svg {
+	display: block;
+	width: 12px;
+	height: 12px;
+}
+
+.volt-pm-copy .volt-agent-svg-icon :is(rect, path) {
+	stroke: currentColor;
+	stroke-width: 1.5;
+}
+
+.volt-pm-copy:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+/* Email addresses stay blurred until hovered, so a shared screen does not show them. */
+.volt-pm-private {
+	filter: blur(4px);
+	transition: filter 120ms ease;
+}
+
+.volt-pm-private:hover {
+	filter: none;
+}
+
+.volt-pm-form-actions {
+	justify-content: flex-end;
+	padding: 10px 14px;
+	border-top: 1px solid var(--volt-settings-border);
+}
+
+.volt-pm-desc {
+	margin: 16px 0 0;
+	font-size: 12.5px;
+	line-height: 1.5;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-input.param {
+	width: 120px;
+}
+
+.volt-pm-caps {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding: 12px 14px;
+	border-top: 1px solid var(--volt-settings-border);
+}
+
+.volt-pm-caps:first-child {
+	border-top: 0;
+}
+
+.volt-pm-cap {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 24px;
+	padding: 0 9px 0 7px;
+	border-radius: 999px;
+	font-size: 11.5px;
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.volt-pm-cap .codicon {
+	font-size: 12px;
+}
+
+.volt-pm-cap.on .codicon {
+	color: #4ade80;
+}
+
+.volt-pm-cap:not(.on) {
+	opacity: 0.45;
+}
+
+/* Overview: the providers that need a step, one row each (like a settings row): icon, name and status,
+ * that one step. The row opens the provider. */
+
+.volt-pm-setup-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 52px;
+	padding: 10px 14px;
+	cursor: pointer;
+	outline: none;
+}
+
+.volt-pm-setup-row + .volt-pm-setup-row {
+	border-top: 1px solid var(--volt-settings-border);
+}
+
+.volt-pm-setup-row:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.volt-pm-setup-row:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-pm-setup-row .volt-pm-icon {
+	width: 28px;
+	height: 28px;
+	border-radius: 7px;
+}
+
+.volt-pm-setup-row .copy {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-pm-setup-row .name {
+	font-size: 13px;
+}
+
+.volt-pm-setup-row .detail {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 3px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-pm-setup-row .detail .text {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+/* Claude accounts: avatar, email and plan, session and week bars, Switch and Forget. */
+
+.volt-pm-account {
+	display: grid;
+	grid-template-columns: 28px minmax(0, 1fr) auto;
+	grid-template-areas: "avatar copy actions" ". limits limits";
+	align-items: center;
+	column-gap: 12px;
+	row-gap: 8px;
+	min-height: 56px;
+	padding: 10px 14px;
+}
+
+.volt-pm-account + .volt-pm-account {
+	border-top: 1px solid var(--volt-settings-border);
+}
+
+.volt-pm-account-avatar {
+	grid-area: avatar;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 50%;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+}
+
+.volt-pm-account.active .volt-pm-account-avatar {
+	color: #d97757;
+	background: color-mix(in srgb, #d97757 16%, transparent);
+}
+
+.volt-pm-account-copy .name {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	font-size: 13px;
+}
+
+.volt-pm-account-copy .email {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.volt-pm-account-badge {
+	flex: none;
+	padding: 0 6px;
+	border-radius: 999px;
+	font-size: 10.5px;
+	line-height: 16px;
+	color: #4ade80;
+	background: color-mix(in srgb, #4ade80 13%, transparent);
+}
+
+.volt-pm-account-copy .detail {
+	margin-top: 3px;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-pm-account-copy .detail.warn {
+	color: #f59e0b;
+}
+
+.volt-pm-account-copy {
+	grid-area: copy;
+	min-width: 0;
+}
+
+.volt-pm-account-limits {
+	grid-area: limits;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 24px;
+}
+
+.volt-pm-account-limits.empty {
+	font-size: 11.5px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-pm-meter {
+	display: grid;
+	grid-template-columns: 52px minmax(80px, 140px) 34px;
+	align-items: center;
+	gap: 8px;
+	font-size: 11.5px;
+	color: var(--vscode-descriptionForeground);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-pm-meter .bar {
+	height: 4px;
+	border-radius: 999px;
+	overflow: hidden;
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.volt-pm-meter .fill {
+	display: block;
+	height: 100%;
+	border-radius: inherit;
+	background: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+}
+
+.volt-pm-meter.high .fill {
+	background: #f59e0b;
+}
+
+.volt-pm-meter.full .fill {
+	background: #ef4444;
+}
+
+.volt-pm-meter .value {
+	text-align: right;
+	color: var(--vscode-foreground);
+}
+
+.volt-pm-account .volt-pm-actions {
+	grid-area: actions;
+	justify-content: flex-end;
+	min-width: 64px;
+}
+
+.volt-pm-account:not(:hover):not(:focus-within) .volt-pm-account-remove {
+	opacity: 0;
+}
+
+.volt-pm-accounts .volt-settings-empty {
+	margin: 0;
+	border: 0;
+}
+
+/* Action buttons are Volt buttons (voltButton.css paints them). Text buttons in an action column share
+ * one width so a column of them lines up; icon-only ones are square. */
+.volt-pm-actions > .volt-button:not(.volt-pm-icon-button):not(.volt-button-ghost) {
+	min-width: 84px;
+}
+
+.monaco-workbench .volt-button.volt-pm-icon-button {
+	width: 26px;
+	padding: 0;
+}
+
+.volt-settings-spinner {
+	display: inline-flex;
+	justify-content: center;
+	width: 84px;
+	opacity: 0.7;
+}
+
+.volt-settings-provider-failure {
+	margin-top: 14px;
+	padding: 10px 12px;
+	border-radius: 8px;
+	background: color-mix(in srgb, #ef4444 10%, transparent);
+	font-size: 12px;
+}
+
+.volt-settings-provider-failure pre {
+	margin: 6px 0 0;
+	max-height: 140px;
+	overflow: auto;
+	white-space: pre-wrap;
+	font-family: var(--monaco-monospace-font);
+	font-size: 11px;
+	opacity: 0.8;
+}
+
+.volt-settings-provider-key {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 14px;
+	padding: 10px 12px;
+	border: 1px solid var(--volt-settings-border);
+	border-radius: var(--volt-settings-radius);
+	background: var(--volt-settings-surface);
+}
+
+.volt-settings-input.grow {
+	flex: 1;
+	width: auto;
+}
+
+.volt-settings-provider-links {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px;
+	margin: 18px 0 0 -8px;
+}
+
+.volt-settings-provider-links:empty {
+	display: none;
+}
+
+/* A provider's models: a filter, then one dense row per model. */
+
+.volt-pm-models-group {
+	padding-bottom: 6px;
+}
+
+.volt-settings-models-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 14px 6px;
+}
+
+.volt-settings-input.filter {
+	width: 220px;
+}
+
+.volt-settings-models-toolbar .count {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-models {
+	padding: 0 6px;
+}
+
+/* A workbench list sized by the page to its rows; hover, focus and selection are the theme's list
+ * colours on the row, rounded like the providers list. */
+.volt-settings-models-list {
+	position: relative;
+	overflow: hidden;
+}
+
+.volt-settings-models-list .monaco-list-row {
+	border-radius: 6px;
+}
+
+/* The hidden-models title and the no-match line are not items: no hover, no focus ring. */
+.volt-settings-models-list .monaco-list .monaco-list-row.volt-pm-row-static {
+	background: transparent !important;
+	outline: none !important;
+	cursor: default;
+}
+
+.volt-settings-models-note {
+	display: flex;
+	align-items: flex-end;
+	box-sizing: border-box;
+	height: 100%;
+	padding: 0 8px 5px;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-models-note.none {
+	align-items: center;
+	padding: 0 8px;
+	font-size: 12px;
+}
+
+.volt-settings-model-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	box-sizing: border-box;
+	height: 100%;
+	padding: 0 4px 0 8px;
+	cursor: pointer;
+}
+
+.volt-settings-model-row [hidden] {
+	display: none;
+}
+
+.volt-settings-model-row.off .name,
+.volt-settings-model-row.off .traits {
+	opacity: 0.5;
+}
+
+.volt-settings-model-row .name {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	font-size: 12.5px;
+}
+
+.volt-settings-model-row .label {
+	flex: none;
+}
+
+.volt-settings-model-row .qualifier {
+	flex: none;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-model-row .slug {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-family: var(--monaco-monospace-font);
+	font-size: 11px;
+	color: color-mix(in srgb, var(--vscode-descriptionForeground) 75%, transparent);
+}
+
+.volt-settings-model-row .traits {
+	flex: none;
+	max-width: 45%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11.5px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-pm-row-chevron {
+	display: inline-flex;
+	opacity: 0.35;
+}
+
+.volt-pm-row-chevron .codicon {
+	font-size: 12px;
+}
+
+.monaco-list-row:hover .volt-settings-model-row .volt-pm-row-chevron,
+.monaco-list-row.focused .volt-settings-model-row .volt-pm-row-chevron {
+	opacity: 0.8;
+}
+
+.volt-pm-detail .volt-settings-empty {
+	margin-top: 0;
+}
+
+.volt-pm-detail .volt-settings-form {
+	margin-top: 18px;
+}
+
+/* Dropdowns: the composer's pill in rows; in a form, as wide as the inputs beside it. */
+.monaco-workbench .volt-pm-detail .volt-settings-control > .volt-dropdown {
+	width: 100%;
+	border-radius: 7px;
+}
+
+.volt-pm-detail .volt-settings-control > .volt-dropdown .volt-dropdown-label {
+	flex: 1;
+	text-align: left;
+}
+
+.volt-pm-detail .volt-dropdown .volt-brand-icon {
+	opacity: 1;
+}
+
+@media (max-width: 1080px) {
+	.volt-pm-detail .volt-settings-model-row .traits {
+		display: none;
+	}
+}
+
+@media (max-width: 820px) {
+	.volt-pm {
+		grid-template-columns: 200px minmax(0, 1fr);
+	}
+
+	.volt-pm-detail .volt-settings-row-control {
+		max-width: none;
+	}
+}
+

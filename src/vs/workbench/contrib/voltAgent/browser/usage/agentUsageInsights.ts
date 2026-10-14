@@ -121,6 +121,8 @@ export function usageInsights(snapshot: IVoltUsageSnapshot, summary: IUsageSumma
 		charts.push({
 			wide: false, spec: {
 				type: 'line',
+				// The same hatching as the token mix beside it, rather than the default gradient.
+				fill: 'pattern',
 				title: localize('voltUsage.insights.cacheTitle', "Cache hits averaged {0} of input", percent(average)),
 				subtitle: localize('voltUsage.insights.cacheSubtitle', "Share of input read from the prompt cache. Higher is cheaper."),
 				unit: 'ratio',

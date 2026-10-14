@@ -27,6 +27,7 @@ import { AgentMentionController, IAgentDisplayMention, IAgentMention } from '../
 import { showAgentPlusMenu } from '../composer/agentPlusMenu.js';
 import { IVoltMenuHandle } from '../ui/menu/voltMenu.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
+import { IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { createModeIcon, ModeIconId } from '../chrome/agentModeIcons.js';
 import { AgentModelPicker } from '../picker/agentModelPicker.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
@@ -46,6 +47,13 @@ export interface IBrowserComposerCallbacks {
 	onStop?(): void;
 	onKeepExpanded?(): void;
 	dock?: boolean;
+	/**
+	 * The chat's model (the design prompt): the model chip shows it until the user picks another for
+	 * this draft, which then stays local to the prompt (it does not change the chat's or the app's model).
+	 */
+	chatModel?(): string | undefined;
+	/** Images can be attached: thumbnails above the text and an attach button by the mic. */
+	images?: boolean;
 }
 
 const PLUS_MODES: { id: string; label: string; icon: ModeIconId; description: string }[] = [
@@ -177,6 +185,8 @@ export class BrowserAgentComposer extends Disposable {
 	private extraContent = false;
 	private currentMode = 'Agent';
 	private plusMenu: IVoltMenuHandle | undefined;
+	/** The model picked in this draft's chip; undefined follows the chat's model. */
+	private pickedRef: string | undefined;
 
 	constructor(
 		private readonly callbacks: IBrowserComposerCallbacks,
@@ -185,6 +195,7 @@ export class BrowserAgentComposer extends Disposable {
 		@ITextResourceConfigurationService private readonly textResourceConfigurationService: ITextResourceConfigurationService,
 		@ICommandService private readonly commandService: ICommandService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
+		@IFileDialogService private readonly fileDialogService: IFileDialogService,
 	) {
 		super();
 		this.element = $('.volt-agent-input-box.follow-up.volt-browser-agent-composer.empty');
@@ -228,8 +239,17 @@ export class BrowserAgentComposer extends Disposable {
 
 		this.modelButton = append(this.element, $('button.volt-agent-model')) as HTMLButtonElement;
 		this.modelButton.type = 'button';
+		const chatModel = callbacks.chatModel;
 		this.modelPicker = this._register(this.instantiationService.createInstance(AgentModelPicker, {
 			onDidChange: () => this.updateModelButton(),
+			...(chatModel ? {
+				binding: {
+					get: () => this.pickedRef ?? chatModel(),
+					set: (ref: string | undefined) => { this.pickedRef = ref; },
+					autoLabel: localize('voltBrowser.modelAuto', "Auto"),
+					autoDescription: localize('voltBrowser.modelAutoDesc', "Follow the chat's model."),
+				},
+			} : {}),
 		}));
 		this._register(addDisposableListener(this.modelButton, 'click', e => {
 			e.preventDefault();
@@ -242,6 +262,19 @@ export class BrowserAgentComposer extends Disposable {
 		this.micButton.type = 'button';
 		setAgentTooltip(this.micButton, localize('voltBrowser.voice', "Voice"));
 		this.micButton.appendChild(createComposerMicIcon());
+		if (callbacks.images) {
+			const attachButton = append(actions, $('button.volt-agent-icon-btn.volt-browser-composer-attach')) as HTMLButtonElement;
+			attachButton.type = 'button';
+			setAgentTooltip(attachButton, localize('voltBrowser.attachImages', "Attach Images"));
+			attachButton.appendChild(renderIcon(Codicon.fileMedia));
+			actions.insertBefore(attachButton, this.micButton);
+			this._register(addDisposableListener(attachButton, 'mousedown', e => e.preventDefault()));
+			this._register(addDisposableListener(attachButton, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				void this.pickImages();
+			}));
+		}
 
 		if (!callbacks.dock && callbacks.onComment) {
 			const commentButton = append(actions, $('button.volt-browser-composer-comment')) as HTMLButtonElement;
@@ -259,6 +292,8 @@ export class BrowserAgentComposer extends Disposable {
 
 		this.sendButton = append(actions, $('button.volt-agent-send')) as HTMLButtonElement;
 		this.sendButton.type = 'button';
+		// Keep the text focused: a blur here reflows the box under the pointer and the click misses.
+		this._register(addDisposableListener(this.sendButton, 'mousedown', e => e.preventDefault()));
 		this._register(addDisposableListener(this.sendButton, 'click', () => {
 			if (this.working) {
 				this.callbacks.onStop?.();
@@ -316,6 +351,7 @@ export class BrowserAgentComposer extends Disposable {
 		if (this.model && !this.model.isDisposed()) {
 			this.model.setValue('');
 		}
+		this.resetModel();
 		this.syncPlaceholder();
 		this.syncSend();
 		this.layout();
@@ -359,6 +395,47 @@ export class BrowserAgentComposer extends Disposable {
 		this.syncPlaceholder();
 		this.syncSend();
 		this.layout();
+	}
+
+	/**
+	 * The model picked in this draft's chip when it is not the chat's own (send it to a subagent on
+	 * that model); undefined when the chip shows the chat's model.
+	 */
+	pickedModel(): { readonly ref: string; readonly label: string } | undefined {
+		const ref = this.pickedRef;
+		if (!ref || ref === this.callbacks.chatModel?.()) {
+			return undefined;
+		}
+		const option = this.modelPicker.catalog.find(item => item.ref === ref);
+		return { ref, label: option?.name ?? ref };
+	}
+
+	/** The chip follows the chat's model again (a new draft, or the chat changed its model). */
+	resetModel(): void {
+		if (!this.callbacks.chatModel) {
+			return;
+		}
+		this.pickedRef = undefined;
+		this.modelPicker.syncCatalog();
+		this.updateModelButton();
+	}
+
+	private async pickImages(): Promise<void> {
+		const resources = await this.fileDialogService.showOpenDialog({
+			title: localize('voltAgent.pickImagesTitle', "Attach Images"),
+			canSelectFiles: true,
+			canSelectFolders: false,
+			canSelectMany: true,
+			defaultUri: await this.fileDialogService.defaultFilePath(),
+			// HEIC photos are converted to JPEG on the way in.
+			filters: [{ name: localize('voltAgent.imageFilter', "Images"), extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif'] }],
+		});
+		if (!resources?.length) {
+			return;
+		}
+		this.ensureEditor();
+		await this.mentionController?.addAttachmentFiles(resources);
+		this.editor?.focus();
 	}
 
 	setPlaceholder(text: string): void {
@@ -471,9 +548,10 @@ export class BrowserAgentComposer extends Disposable {
 			}
 			const multiline = (this.model?.getLineCount() ?? 1) > 1;
 			this.element.classList.toggle('multiline', multiline);
+			// The design prompt grows to five lines, then scrolls inside itself.
 			const contentHeight = this.callbacks.dock && !multiline
 				? 22
-				: Math.min(Math.max(this.editor.getContentHeight(), 22), 120);
+				: Math.min(Math.max(this.editor.getContentHeight(), 22), this.callbacks.dock ? 120 : 5 * 22);
 			this.monacoHost.style.height = `${contentHeight}px`;
 			this.editor.layout({ width: Math.max(this.monacoHost.clientWidth, 0), height: contentHeight });
 			this.callbacks.onLayout?.();
@@ -553,6 +631,15 @@ export class BrowserAgentComposer extends Disposable {
 		this.mentionController.onDidRemoveMention = mention => this.callbacks.onRemoveMention?.(mention);
 		this.mentionController.bindDropTarget(this.element);
 		this.mentionController.setHost({ anchor: this.element });
+		if (this.callbacks.images) {
+			this.mentionController.bindImageStrip(this.element, this.monacoHost);
+			this._register(this.mentionController.onDidChangeMedia(() => {
+				this.element.classList.toggle('has-media', !!this.mentionController?.hasMedia);
+				this.syncPlaceholder();
+				this.syncSend();
+				this.layout();
+			}));
+		}
 		this._register(this.editor.onDidFocusEditorText(() => this.element.classList.add('focused')));
 		this._register(this.editor.onDidBlurEditorText(() => {
 			this.element.classList.remove('focused');

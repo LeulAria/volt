@@ -26,7 +26,7 @@ import { IVoltProjectsService, VoltProjectCommands } from '../../voltProjects/co
 import { IVoltFolderPickerService } from '../../voltProjects/browser/folderPickerService.js';
 import { showVoltModal } from '../../voltProjects/browser/ui/voltModal.js';
 import { AgentSetupService, IAgentSetupState } from './agentSetupService.js';
-import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
+import { createVoltButton, voltButtonClasses } from '../../voltAgent/browser/chrome/voltButton.js';
 
 export type SetupStep = 'agents' | 'projects' | 'done';
 
@@ -426,7 +426,7 @@ export class VoltSetupWizard {
 	private actionButton(parent: HTMLElement, label: string, tooltip: string, run: () => void, icon?: typeof Codicon.check, primary = false): void {
 		const button = append(parent, $('button.volt-setup-action')) as HTMLButtonElement;
 		button.type = 'button';
-		button.classList.toggle('primary', primary);
+		button.classList.add(...voltButtonClasses(primary ? 'primary' : 'secondary'), 'volt-button-small');
 		button.classList.toggle('icon-only', !label);
 		if (icon) {
 			button.appendChild(renderIcon(icon));

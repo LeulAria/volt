@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/browserEditor.css';
-import { $, addDisposableListener, append, Dimension, disposableWindowInterval, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, Dimension, disposableWindowInterval, getWindow, isHTMLElement, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
 import { isWeb } from '../../../../../base/common/platform.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
@@ -37,7 +37,9 @@ import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/
 import { IHostService } from '../../../../services/host/browser/host.js';
 import { IAgentMention, browserMentionColor, cloneDisplayMentions } from '../composer/agentMentions.js';
 import { BrowserCommentCard } from './browserCommentCard.js';
-import { IBrowserComment, IBrowserCommentRef, IVoltBrowserComments } from './browserCommentStore.js';
+import { IBrowserComment, IBrowserCommentMessage, IBrowserCommentRef, IVoltBrowserComments } from './browserCommentStore.js';
+import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { buildTaskPrompt, newTaskId, titleFromBrief } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import { IVoltCommentItem, VoltCommentsPane } from '../chrome/voltCommentsPane.js';
 import { BrowserAgentComposer } from './browserComposer.js';
 import { OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from '../editor/agentEditorInput.js';
@@ -221,6 +223,7 @@ export interface IVoltInputEvent {
 	modifiers?: string[];
 	deltaX?: number;
 	deltaY?: number;
+	canScroll?: boolean;
 }
 
 export interface IVoltConsoleMessage {
@@ -399,6 +402,7 @@ export class VoltBrowserView extends Disposable {
 	private commentsPane!: VoltCommentsPane;
 	private commentsButton!: HTMLButtonElement;
 	private commentsOpen = false;
+	private readonly commentsLayout = this._register(new MutableDisposable());
 	private composer: BrowserAgentComposer | undefined;
 	private dock: BrowserAgentDock | undefined;
 	private errorEl!: HTMLElement;
@@ -441,6 +445,7 @@ export class VoltBrowserView extends Disposable {
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@IVoltBrowserHistory private readonly history: IVoltBrowserHistory,
 		@IVoltBrowserComments private readonly commentStore: IVoltBrowserComments,
+		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
 	) {
 		super();
 		this.element = $('.volt-browser-view.parked');
@@ -646,6 +651,7 @@ export class VoltBrowserView extends Disposable {
 		this._register(addDisposableListener(this.overlay, 'pointermove', e => this.onDesignPointerMove(e)));
 		this._register(addDisposableListener(this.overlay, 'pointerup', e => this.onDesignPointerUp(e)));
 		this._register(addDisposableListener(this.overlay, 'pointerleave', () => this.clearHover()));
+		this._register(addDisposableListener(this.overlay, 'wheel', e => this.onDesignWheel(e), { passive: false }));
 		this._register(addDisposableListener(this.container, 'keydown', e => {
 			const event = new StandardKeyboardEvent(e);
 			if (event.keyCode === KeyCode.Escape) {
@@ -983,8 +989,19 @@ export class VoltBrowserView extends Disposable {
 			onHoverMention: mention => this.glowMark(mention),
 			onRemoveMention: mention => this.removeMark(mention.id),
 			onLayout: () => this.positionPrompt(),
+			chatModel: () => this.chatModelRef(),
+			images: true,
 		}));
 		append(this.promptEl, this.composer.element);
+	}
+
+	/** The model the chat that owns this tab sends on: its composer's pick, else the chat's stored model. */
+	private chatModelRef(): string | undefined {
+		const sessionId = this.ownerSession();
+		if (!sessionId) {
+			return undefined;
+		}
+		return this.dock?.chatModelRef() ?? this.orchestrator.getThread(sessionId)?.modelRef;
 	}
 
 	private ensureWebview(initialUrl?: string): IVoltWebview {
@@ -1793,6 +1810,21 @@ export class VoltBrowserView extends Disposable {
 		}
 	}
 
+	/** The design layer covers the page, so trackpad and wheel scrolling are passed through to it. */
+	private onDesignWheel(e: WheelEvent): void {
+		if (!this.designMode || this.eventOnPrompt(e) || !this.canSendInput()) {
+			return;
+		}
+		e.preventDefault();
+		const point = this.stagePoint(e);
+		const scale = this.deviceMode.scale || 1;
+		const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? this.stage.clientHeight : 1;
+		// Electron's wheel deltas point the other way from the DOM's.
+		this.sendInput({ type: 'mouseWheel', x: Math.round(point.x / scale), y: Math.round(point.y / scale), deltaX: -e.deltaX * unit, deltaY: -e.deltaY * unit, canScroll: true });
+		this.clearHover();
+		this.scheduleProbe(point.x, point.y);
+	}
+
 	private scheduleProbe(x: number, y: number): void {
 		const key = `${Math.round(x)}:${Math.round(y)}`;
 		if (key === this.lastProbe) {
@@ -2059,10 +2091,6 @@ export class VoltBrowserView extends Disposable {
 			mentions: cloneDisplayMentions(composer.getDisplayMentions()),
 		});
 		this.closeDraft();
-		// The list shows up with the first comment, so it can be picked and sent from there.
-		if (this.commentStore.list({ viewId: this.viewId }).length === 1) {
-			this.setCommentsOpen(true);
-		}
 		return comment;
 	}
 
@@ -2089,6 +2117,11 @@ export class VoltBrowserView extends Disposable {
 			onPick: (id, picked) => this.commentStore.update(id, { picked }),
 		}));
 		this._register(this.commentsPane.onDidChangeHeight(() => this.layoutCommentsPanel()));
+		// The list renders only what its last layout showed: when the drawer was laid out at another size
+		// (the tab parked, the stage resizing), a new comment would not show until the drawer reopened.
+		const panelObserver = new (getWindow(this.commentsPanel).ResizeObserver)(() => this.layoutCommentsPanel());
+		panelObserver.observe(this.commentsPanel);
+		this._register({ dispose: () => panelObserver.disconnect() });
 		this._register(addDisposableListener(this.commentsPanel, 'pointerdown', e => e.stopPropagation()));
 		this._register(this.commentStore.onDidChange(() => this.renderComments()));
 		this._register(this.commentStore.onDidRequestShow(scope => {
@@ -2111,7 +2144,8 @@ export class VoltBrowserView extends Disposable {
 	}
 
 	private layoutCommentsPanel(): void {
-		if (!this.commentsOpen) {
+		// Not laid out at zero while the tab is parked: the list would keep rendering nothing.
+		if (!this.commentsOpen || !this.commentsPanel.clientHeight) {
 			return;
 		}
 		this.commentsPane.fill(this.commentsPanel.clientHeight, this.commentsPanel.clientWidth);
@@ -2137,6 +2171,9 @@ export class VoltBrowserView extends Disposable {
 		}
 		this.syncPins();
 		this.layoutCommentsPanel();
+		if (this.commentsOpen) {
+			this.commentsLayout.value = scheduleAtNextAnimationFrame(getWindow(this.commentsPanel), () => this.layoutCommentsPanel());
+		}
 	}
 
 	/** Pins for this page's comments: sent ones stay until resolved; resolved ones show with the Resolved toggle. */
@@ -2282,6 +2319,7 @@ export class VoltBrowserView extends Disposable {
 	/** The send arrow on an open comment: saves it and sends it, with every other comment ticked to go. */
 	private async sendPinned(pin: IPinnedBrowserComment): Promise<void> {
 		this.collapseComment(pin);
+		this.setCommentsOpen(false);
 		const ids = [...this.commentStore.pending({ viewId: this.viewId }).map(comment => comment.id)];
 		if (!ids.includes(pin.commentId)) {
 			ids.push(pin.commentId);
@@ -2289,15 +2327,60 @@ export class VoltBrowserView extends Disposable {
 		await this.sendComments(ids);
 	}
 
-	/** Comments `ids` as one message to the chat; they stay pinned, marked sent, until resolved. */
-	private async sendComments(ids?: readonly string[]): Promise<void> {
-		this.commentStore.setSession(this.viewId, this.ownerSession());
+	/**
+	 * Comments `ids` as one message to the chat; they stay pinned, marked sent, until resolved. With
+	 * `model` (another model picked in the design prompt) they go to a new subagent on it instead.
+	 */
+	private async sendComments(ids?: readonly string[], model?: { readonly ref: string; readonly label: string }): Promise<void> {
+		const sessionId = this.ownerSession();
+		this.commentStore.setSession(this.viewId, sessionId);
 		const message = this.commentStore.take({ viewId: this.viewId }, ids);
 		if (!message) {
 			return;
 		}
 		this.clearHover();
+		if (model && sessionId && await this.spawnSubagent(sessionId, model, message)) {
+			return;
+		}
 		await this.dock?.submitFromBrowser(message.agentText, { text: message.displayText, mentions: [...message.mentions] });
+	}
+
+	/** Starts a subagent of chat `parentId` on `model` with the comments as its brief. False when it was refused. */
+	private async spawnSubagent(parentId: string, model: { readonly ref: string; readonly label: string }, message: IBrowserCommentMessage): Promise<boolean> {
+		try {
+			await this.orchestrator.ensureThreadLoaded(parentId);
+			const parent = this.orchestrator.getThread(parentId);
+			const brief = message.agentText;
+			const taskId = newTaskId(id => !!this.orchestrator.getTask(id));
+			const events = await this.orchestrator.dispatch({
+				type: 'task.spawn',
+				spawn: {
+					parentId,
+					brief,
+					title: titleFromBrief(message.displayText || brief),
+					role: 'general',
+					// The user's own work: its chat takes follow-ups like a multitask agent's.
+					origin: 'user',
+					isolation: 'shared',
+					taskId,
+					childId: `agent-${generateUuid()}`,
+					mode: 'agent',
+					modelRef: model.ref,
+					modelLabel: model.label,
+					clientRequestId: `browser:${message.ids.join(',')}`,
+					childPrompt: {
+						text: buildTaskPrompt(brief, { parentTitle: parent?.title, role: 'general', depth: (parent?.depth ?? 0) + 1, isolation: 'shared' }),
+						// The chat shows the comments; their images go to the model with the brief.
+						display: { text: message.displayText, brief: true, mentions: [...message.mentions] },
+						mode: 'agent',
+						modelRef: model.ref,
+					},
+				},
+			});
+			return events.some(event => event.type === 'task.created') || !!this.orchestrator.getTask(taskId);
+		} catch {
+			return false;
+		}
 	}
 
 	//#endregion
@@ -2387,9 +2470,12 @@ export class VoltBrowserView extends Disposable {
 			return;
 		}
 		if (submit) {
+			// Another model picked in the prompt: the request goes to a subagent on it, not into the chat.
+			const model = this.composer?.pickedModel();
 			// Send: the draft joins the comments (pinned until resolved) and goes with every one ticked.
 			if (this.pinPromptAsComment()) {
-				await this.sendComments();
+				this.setCommentsOpen(false);
+				await this.sendComments(undefined, model);
 			}
 			return;
 		}
@@ -2476,7 +2562,7 @@ export class VoltBrowserView extends Disposable {
 		}
 	}
 
-	private stagePoint(e: PointerEvent): { x: number; y: number } {
+	private stagePoint(e: MouseEvent): { x: number; y: number } {
 		const frame = (this.webview ?? this.stage).getBoundingClientRect();
 		return { x: e.clientX - frame.left, y: e.clientY - frame.top };
 	}

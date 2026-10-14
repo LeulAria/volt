@@ -20,6 +20,7 @@ import { IVoltQueryCache, IVoltQueryHandle } from '../../../services/voltRuntime
 import { IVoltProjectRecord, sessionBelongsToProject } from '../../../services/voltRuntime/common/sessionContext.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { AgentEditorInput } from '../../voltAgent/browser/editor/agentEditorInput.js';
+import { voltButtonClasses } from '../../voltAgent/browser/chrome/voltButton.js';
 
 interface IRowCopy {
 	readonly label: string;
@@ -316,9 +317,10 @@ export class VoltStorageView extends Disposable {
 		}
 		const button = append(row, $('button.volt-setup-action')) as HTMLButtonElement;
 		button.type = 'button';
+		button.classList.add(...voltButtonClasses('secondary'), 'volt-button-small');
 		const busy = this.busy.has(item.id);
 		button.disabled = busy || !canClean;
-		append(button, $('span')).textContent = busy ? localize('voltStorage.cleaning', "Cleaning...") : localize('voltStorage.clean', "Clean");
+		append(button, $('span')).textContent = busy ? localize('voltStorage.cleaning', "Cleaning") : localize('voltStorage.clean', "Clean");
 		if (!item.cleanable && !chats) {
 			button.classList.add('hidden');
 			if (item.keep === 'inUse') {

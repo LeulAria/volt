@@ -186,6 +186,13 @@ export class BrowserAgentDock extends Disposable {
 			}));
 		}
 		this._register(this.commentStore.onDidChange(() => this.sync()));
+		// The chips and cards over the composer show and hide themselves: the solid tray behind them follows (browserEditor.css).
+		const syncStack = () => this.element.classList.toggle('has-stack', this.chips.element.classList.contains('is-visible') || this.chips.element.classList.contains('has-comments') || this.composerQueue.element.classList.contains('has-stack'));
+		const stackWatch = new (getWindow(this.element).MutationObserver)(syncStack);
+		stackWatch.observe(this.chips.element, { attributes: true, attributeFilter: ['class'] });
+		stackWatch.observe(this.composerQueue.element, { attributes: true, attributeFilter: ['class'] });
+		this._register({ dispose: () => stackWatch.disconnect() });
+		syncStack();
 		append(this.composerHost, this.composer.element);
 
 		this._register(addDisposableListener(this.shellEl, 'click', e => {
@@ -300,6 +307,11 @@ export class BrowserAgentDock extends Disposable {
 			this.restoreThread();
 		}
 		this.dismissToIdle();
+	}
+
+	/** The model the owning chat's composer sends on, when that chat is open. */
+	chatModelRef(): string | undefined {
+		return this.chatEditor()?.composerModelRef();
 	}
 
 	/** The open chat that owns this browser's tools area. */

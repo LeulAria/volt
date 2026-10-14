@@ -8,6 +8,7 @@ import '../media/agentLimitChip.css';
 import { $, addDisposableListener, append, EventHelper } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
@@ -28,7 +29,7 @@ export interface IAgentLimitChipHost {
 type LimitAction = 'arm' | 'disarm' | 'resume' | 'stop' | 'switch';
 
 /**
- * The chat's usage-limit state as a chip at the top of the chat, beside its terminals:
+ * The chat's usage-limit state as the first chip of the composer's row (agentComposerChips.ts):
  *
  * - "Claude limit · resets 3:40 PM" with "Resume when Claude is back": nothing is sent on the
  *   account until the user asks (Claude stops at its limit by default). One click arms it.
@@ -44,6 +45,9 @@ type LimitAction = 'arm' | 'disarm' | 'resume' | 'stop' | 'switch';
 export class AgentLimitChip extends Disposable {
 
 	readonly element: HTMLElement;
+	private readonly _onDidChange = this._register(new Emitter<void>());
+	/** The chip showed, hid or changed width: the row lays itself out again. */
+	readonly onDidChange: Event<void> = this._onDidChange.event;
 	private readonly renderStore = this._register(new DisposableStore());
 	private timer: ReturnType<typeof setTimeout> | undefined;
 	private error: string | undefined;
@@ -55,7 +59,7 @@ export class AgentLimitChip extends Disposable {
 		@IContextViewService private readonly contextViewService: IContextViewService,
 	) {
 		super();
-		this.element = $('.volt-agent-terminal-bar.volt-agent-limit-bar.hidden');
+		this.element = $('.volt-agent-composer-chip.terminal-runs.volt-agent-limit-chip.volt-browser-dock-chip.hidden');
 		this.element.setAttribute('role', 'status');
 		this.element.setAttribute('aria-live', 'polite');
 		this._register(this.orchestrator.onDidChange(change => {
@@ -68,7 +72,16 @@ export class AgentLimitChip extends Disposable {
 		this.render();
 	}
 
+	get visible(): boolean {
+		return !this.element.classList.contains('hidden');
+	}
+
 	render(): void {
+		this.update();
+		this._onDidChange.fire();
+	}
+
+	private update(): void {
 		this.clearTimer();
 		this.renderStore.clear();
 		this.element.replaceChildren();
@@ -96,13 +109,15 @@ export class AgentLimitChip extends Disposable {
 		const clock = limitParkedClock(limit, this.orchestrator.autoResumeDefault(), now);
 		const view = limitChipView(limit, { now, auto: clock.auto, checking });
 
-		const chip = append(this.element, $(`.volt-agent-terminal-chip.volt-agent-limit-chip.${view.tone}`));
-		const main = append(chip, $('button.volt-agent-terminal-chip-main')) as HTMLButtonElement;
+		const chip = this.element;
+		chip.classList.remove('waiting', 'armed', 'checking', 'error');
+		chip.classList.add(view.tone);
+		const main = append(chip, $('button.volt-agent-terminal-runs-main')) as HTMLButtonElement;
 		main.type = 'button';
 		main.appendChild(chipIcon(view));
-		append(main, $('span.label')).textContent = this.error ?? view.label;
+		append(main, $('span.volt-agent-composer-chip-label.volt-agent-limit-chip-label')).textContent = this.error ?? view.label;
 		if (view.detail && !this.error) {
-			append(main, $('span.detail')).textContent = view.detail;
+			append(main, $('span.volt-agent-terminal-runs-detail')).textContent = view.detail;
 		}
 		if (view.primary === 'arm' && !this.error) {
 			append(main, $('span.volt-agent-limit-chip-arm')).textContent = view.armLabel;
@@ -118,7 +133,7 @@ export class AgentLimitChip extends Disposable {
 			}
 		}));
 
-		const more = append(chip, $('button.volt-agent-terminal-chip-more')) as HTMLButtonElement;
+		const more = append(chip, $('button.volt-agent-terminal-runs-more')) as HTMLButtonElement;
 		more.type = 'button';
 		more.setAttribute('aria-haspopup', 'menu');
 		more.appendChild(renderIcon(Codicon.chevronDown));
@@ -208,7 +223,7 @@ export class AgentLimitChip extends Disposable {
 		items.push({ id: 'switch', label: localize('voltAgent.limitChip.switch', "Switch model…"), subtitle: localize('voltAgent.limitChip.switchDetail', "Continue on a model that is not limited"), icon: Codicon.arrowSwap, data: 'switch' });
 		showVoltMenu<LimitAction>(this.contextViewService, {
 			anchor,
-			position: 'below',
+			position: 'above',
 			align: 'left',
 			width: 320,
 			ariaLabel: localize('voltAgent.limitChip.menu', "Usage limit"),

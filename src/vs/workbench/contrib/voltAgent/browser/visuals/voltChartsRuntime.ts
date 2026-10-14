@@ -3186,7 +3186,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 					if (this.stacked && !source.reference) {
 						nodes.area = s('path', { class: `vc-band${hatchedStack ? ' vc-band-hatched' : ''}` }, group);
 						if (hatchedStack) {
-							nodes.area.style.fill = pattern(this.defs, 'lines', source.color, { angle: [45, 135, 45, 135][index % 4], tint: 0.1, ink: 0.55 });
+							nodes.area.style.fill = pattern(this.defs, 'lines', source.color, { ...AREA_HATCH, angle: [45, 135, 45, 135][index % 4] });
 						} else {
 							nodes.area.style.fill = source.color;
 							nodes.area.style.fillOpacity = '0.9';
@@ -3194,7 +3194,7 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 					} else if (this.areaFill(visibleCount) !== 'none' && this.areaFill(visibleCount) !== 'gradient' && !source.reference) {
 						const fill = this.areaFill(visibleCount);
 						nodes.area = s('path', { class: 'vc-area' }, group);
-						nodes.area.style.fill = fill === 'pattern' ? pattern(this.defs, 'lines', source.color, { tint: 0.05, ink: 0.45 }) : source.color;
+						nodes.area.style.fill = fill === 'pattern' ? pattern(this.defs, 'lines', source.color, AREA_HATCH) : source.color;
 						if (fill === 'solid') {
 							nodes.area.style.fillOpacity = type === 'area' ? '0.3' : '0.18';
 						}
@@ -5551,6 +5551,9 @@ export function voltChartsRuntime(win: Window & typeof globalThis): IVoltChartsR
 			pill: style.pill !== false,
 		};
 	}
+
+	/** The hatch under a line or in a stacked band: one look, so a lone line matches a stacked chart beside it. */
+	const AREA_HATCH = { tint: 0.1, ink: 0.55 } as const;
 
 	/** Hatching or a dot grid in `color`, defined inside `parent` so it goes away with its chart. */
 	function pattern(parent: Element, kind: 'lines' | 'dots', color: string, options?: { readonly angle?: number; readonly tint?: number; readonly ink?: number }): string {

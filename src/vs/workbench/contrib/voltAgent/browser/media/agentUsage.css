@@ -1575,6 +1575,25 @@
 	left: calc(var(--volt-usage-now) + 10px);
 }
 
+/* When the reset label would collide with "empty in" / "Limit reached", the TS layout pass folds the
+ * reset time into that label (`merged`). When even that runs off the track, "empty in" keeps its place
+ * and the reset label goes (`tight`), or "Limit reached" gives way to the reset label (`yield`). */
+.volt-usage-runway-track .merged-reset {
+	display: none;
+	margin-left: 0.35em;
+	color: var(--volt-usage-muted);
+}
+
+.volt-usage-runway-row.merged .merged-reset {
+	display: inline;
+}
+
+.volt-usage-runway-row.merged .reset-label,
+.volt-usage-runway-row.tight .reset-label,
+.volt-usage-runway-row.yield .blocked {
+	display: none;
+}
+
 /* Between running dry and the reset, the window is empty. */
 .volt-usage-runway-track .starved {
 	position: absolute;
@@ -1615,7 +1634,8 @@
 	right: calc(100% - (var(--volt-usage-now) + (100% - var(--volt-usage-now)) * var(--volt-usage-f)) + 12px);
 }
 
-.volt-usage-runway-track .reset-label.edge {
+.volt-usage-runway-track .reset-label.edge,
+.volt-usage-runway-track .reset-label.end {
 	left: auto;
 	right: 0;
 }

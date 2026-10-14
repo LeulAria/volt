@@ -225,8 +225,10 @@ class AgentViewSidebarsContribution extends Disposable {
 	private readonly popup: HTMLElement;
 	private readonly popupListeners = this._register(new DisposableStore());
 	private readonly tabList: HTMLElement;
-	/** "On <project>" over Files, Terminal and Browser. */
-	private readonly workspaceHeading: HTMLElement;
+	/** "On <project>" over Files, Terminal and Browser; clicking it folds them. */
+	private readonly workspaceHeading: HTMLButtonElement;
+	private readonly workspaceLabel: HTMLElement;
+	private workspaceOpen = true;
 	/** The checked-out branch, first row of the git group. */
 	private readonly branchLabel: HTMLElement;
 	private readonly branchRow: HTMLElement;
@@ -371,7 +373,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		// A row ran its action: the popup has done its job. Group headers only fold their rows, so it stays.
 		this._register(addDisposableListener(this.popup, 'click', e => {
 			const target = e.target as HTMLElement | null;
-			if (target?.closest('button, [role="button"]') && !target.closest('.volt-agent-lineage-divider')) {
+			if (target?.closest('button, [role="button"]') && !target.closest('.volt-agent-lineage-divider, .volt-agent-dock-fold')) {
 				this.setPopupOpen(false);
 			}
 		}));
@@ -395,8 +397,21 @@ class AgentViewSidebarsContribution extends Disposable {
 		// Sections like Cursor's project menu: the project's tools, then git, then the agents.
 		const [changes, browser, terminal, files] = this.dockActions();
 		const workspaceSection = append(body, $('.volt-agent-dock-section.volt-agent-dock-workspace'));
-		this.workspaceHeading = append(workspaceSection, $('.volt-agent-dock-heading'));
-		const workspace = append(workspaceSection, $('.volt-agent-dock-actions'));
+		this.workspaceHeading = append(workspaceSection, $('button.volt-agent-dock-heading.volt-agent-dock-fold')) as HTMLButtonElement;
+		this.workspaceHeading.type = 'button';
+		this.workspaceLabel = append(this.workspaceHeading, $('span.label'));
+		const workspace = append(workspaceSection, $('.volt-agent-dock-actions.volt-agent-dock-group-body'));
+		const syncWorkspaceFold = () => {
+			this.workspaceHeading.setAttribute('aria-expanded', String(this.workspaceOpen));
+			this.workspaceHeading.querySelector('.codicon')?.remove();
+			this.workspaceHeading.appendChild(renderIcon(this.workspaceOpen ? Codicon.chevronDown : Codicon.chevronRight));
+			workspace.classList.toggle('hidden', !this.workspaceOpen);
+		};
+		this._register(addDisposableListener(this.workspaceHeading, 'click', () => {
+			this.workspaceOpen = !this.workspaceOpen;
+			syncWorkspaceFold();
+		}));
+		syncWorkspaceFold();
 		this.createActionRow(workspace, files);
 		this.createActionRow(workspace, terminal);
 		this.createActionRow(workspace, browser);
@@ -614,7 +629,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		const gen = ++this.statsGen;
 		let additions = 0;
 		let deletions = 0;
-		const stat = await this.commandService.executeCommand<{ insertions: number; deletions: number }>('git.api.getWorkingTreeShortStat').catch(() => undefined);
+		const stat = await this.commandService.executeCommand<{ insertions: number; deletions: number }>('git.api.getWorkingTreeShortStat', this.workspaceContextService.getWorkspace().folders.map(folder => folder.uri)).catch(() => undefined);
 		if (gen !== this.statsGen) {
 			return;
 		}
@@ -906,7 +921,7 @@ class AgentViewSidebarsContribution extends Disposable {
 	private updateWorkspaceHeading(): void {
 		const name = this.workspaceContextService.getWorkspace().folders[0]?.name
 			?? localize('voltAgent.dock.workspaceFallback', "this window");
-		this.workspaceHeading.textContent = localize('voltAgent.dock.onWorkspace', "On {0}", name);
+		this.workspaceLabel.textContent = localize('voltAgent.dock.onWorkspace', "On {0}", name);
 	}
 
 	private renderTabs(): void {

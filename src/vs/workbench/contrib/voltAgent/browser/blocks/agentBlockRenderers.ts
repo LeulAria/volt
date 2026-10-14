@@ -922,7 +922,6 @@ function renderTableBlock(parent: HTMLElement, block: ITableBlock, ctx: IBlockRe
 			if (kind === 'file') {
 				const pill = append(td, $('span.volt-agent-path-pill.volt-agent-searchable'));
 				pill.textContent = raw;
-				setAgentTooltip(pill, raw);
 				bindPathOpen(pill, parseFileTarget(raw), ctx);
 			} else {
 				const span = append(td, $('span.volt-agent-searchable'));
