@@ -1230,13 +1230,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			terminalRuns: this.terminalChips,
 			limitRun: this.limitChip,
 		}));
-		// Over the chips, two cards of one look: the agent's to-dos, then its subagents.
+		// Two cards of one look: the agent's to-dos, then its subagents.
 		this.tasksCard = this._register(new AgentTasksCard(() => this.layoutInputEditor(), target => target.kind === 'file'
 			? void this.openWorkspaceFile(target.path)
 			: void this.commandService.executeCommand(OPEN_CANVAS_COMMAND_ID, target.id)));
 		append(this.composerEl, this.tasksCard.element);
 		append(this.composerEl, this.composerQueue.agentsElement);
-		append(this.composerEl, this.composerChips.element);
 		// The same run status chip the browser's dock shows ("Waiting for approval", "Worked 2m").
 		this._register(this.onDidChangeDock(() => this.syncStatusChip()));
 		this.pendingChanges = this._register(this.instantiationService.createInstance(AgentPendingChanges, {
@@ -1289,8 +1288,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onDidChangeHeight: () => this.layoutInputEditor(),
 		}));
 		append(this.composerEl, this.worktreeSetupCard.element);
-		// Queued prompts sit right on top of the text area, under the chips (Cursor).
 		append(this.composerEl, this.composerQueue.element);
+		// The chips (run status, terminals, Changes) always sit last, right on top of the text area.
+		append(this.composerEl, this.composerChips.element);
 		this.voiceDictation = this._register(this.instantiationService.createInstance(AgentVoiceDictation));
 		this.voiceDictation.textBefore = () => this.textBeforeDictation();
 		this._register(this.voiceDictation.onDidChange(() => this.syncDictation()));

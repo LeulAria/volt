@@ -958,9 +958,18 @@
 	display: inline-flex;
 }
 
-/* The hover Stop takes the same corner while the prompt runs. */
-.volt-agent-turn.user.running:hover .volt-agent-bubble.clamped .volt-agent-user-read-more {
-	display: none;
+/* Stop holds the corner while the prompt runs, so Read more (and its fade) moves left of it. */
+.volt-agent-turn.user.running .volt-agent-bubble.clamped .volt-agent-user-read-more {
+	right: 24px;
+}
+
+.volt-agent-turn.user.running .volt-agent-bubble.clamped .volt-agent-text {
+	-webkit-mask:
+		linear-gradient(#000, #000) top / 100% calc(100% - 22px) no-repeat,
+		linear-gradient(to left, transparent 116px, #000 148px) bottom / 100% 22px no-repeat;
+	mask:
+		linear-gradient(#000, #000) top / 100% calc(100% - 22px) no-repeat,
+		linear-gradient(to left, transparent 116px, #000 148px) bottom / 100% 22px no-repeat;
 }
 
 .volt-agent-turn.user .volt-agent-text > .volt-agent-searchable {
@@ -6773,9 +6782,14 @@ pre.volt-agent-searchable {
 	overflow: auto;
 }
 
-/* Chips float up over the transcript. With the card open, or queued prompts above them, they stay in flow. */
+/* Chips float up over the transcript. Under anything else on the composer (the Context Usage card,
+	queued prompts, questions, a worktree's setup) they stay in flow. */
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-context-panel ~ .volt-agent-composer-chips.is-visible,
-.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-composer-stack.has-stack + .volt-agent-composer-chips.is-visible {
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-composer-stack.has-stack ~ .volt-agent-composer-chips.is-visible,
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-question-tray:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-clone-banner:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-subagent-bar:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-worktree-setup:not(.hidden) ~ .volt-agent-composer-chips.is-visible {
 	margin-top: 0;
 }
 

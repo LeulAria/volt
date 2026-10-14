@@ -53,6 +53,8 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 
 	static readonly AGENT_MIN_WIDTH = 180;
 	static readonly AGENT_DEFAULT_WIDTH = 230;
+	/** The agent list's width in a window that never had it dragged. */
+	static readonly AGENT_OPEN_WIDTH = 300;
 	static readonly AGENT_MAX_RATIO = 0.35;
 
 	/** Widest the agent list may be dragged in a window this wide: 35% of it. */
