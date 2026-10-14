@@ -3,6 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import { AGENT_SERVER_ENABLED_SETTING } from '../../../../services/voltAgentServer/common/agentServerClient.js';
+import { AgentEditsJournalEntry } from '../../common/agentEditsJournal.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { LcsDiff } from '../../../../../base/common/diff/diff.js';
@@ -101,6 +104,8 @@ export interface IAgentEditsService {
 	recordBaseline(sessionId: string, uri: URI, before: string | undefined, options?: IAgentBaselineOptions): void;
 	/** Start tracking a binary file; `baseline` undefined when the agent created it. */
 	recordBinaryBaseline(sessionId: string, uri: URI, baseline: IAgentBinaryBaseline | undefined, options?: { readonly renamedFrom?: URI }): void;
+	/** One entry of the agent server's edits journal: what this window would have seen of a run. */
+	applyJournalEntry(entry: AgentEditsJournalEntry): Promise<void>;
 	keepHunk(uri: URI, change: DetailedLineRangeMapping, sessionId?: string): Promise<boolean>;
 	undoHunk(uri: URI, change: DetailedLineRangeMapping, sessionId?: string): Promise<boolean>;
 	keepFile(uri: URI, sessionId?: string): Promise<void>;
@@ -467,20 +472,25 @@ export class AgentEditsService extends Disposable implements IAgentEditsService 
 		@IDialogService private readonly dialogService: IDialogService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IVoltGitService private readonly gitService: IVoltGitService,
+		@IConfigurationService configurationService: IConfigurationService,
 	) {
 		super();
-		this._register(runtime.onDidEmit(envelope => {
-			const event = envelope.event;
-			if (event.type === 'file.change' && URI.isUri(event.uri)) {
-				const existed = event.existed ?? event.kind !== 'create';
-				if (existed && event.before === undefined) {
-					return;
+		// With the agent server the runs happen there, and it journals these same events for the
+		// window (see applyJournalEntry), including the ones from while no window was open.
+		if (configurationService.getValue(AGENT_SERVER_ENABLED_SETTING) !== true) {
+			this._register(runtime.onDidEmit(envelope => {
+				const event = envelope.event;
+				if (event.type === 'file.change' && URI.isUri(event.uri)) {
+					const existed = event.existed ?? event.kind !== 'create';
+					if (existed && event.before === undefined) {
+						return;
+					}
+					this.recordBaseline(envelope.sessionId, event.uri, existed ? event.before : undefined);
+				} else if (event.type === 'run.end') {
+					void this.noteAgentFinished(envelope.sessionId);
 				}
-				this.recordBaseline(envelope.sessionId, event.uri, existed ? event.before : undefined);
-			} else if (event.type === 'run.end') {
-				void this.noteAgentFinished(envelope.sessionId);
-			}
-		}));
+			}));
+		}
 		this._register(this.fileService.onDidFilesChange(e => {
 			for (const [uri, stack] of this.entries) {
 				if (!e.contains(uri)) {
@@ -810,6 +820,26 @@ export class AgentEditsService extends Disposable implements IAgentEditsService 
 	}
 
 	/** At the end of a chat's turn, remember what its agent left in each file it is tracking. */
+	async applyJournalEntry(entry: AgentEditsJournalEntry): Promise<void> {
+		switch (entry.kind) {
+			case 'file':
+				this.recordBaseline(entry.sessionId, URI.revive(entry.uri), entry.before);
+				return;
+			case 'baseline':
+				this.recordBaseline(entry.sessionId, URI.revive(entry.uri), entry.before, {
+					...(entry.agentText !== undefined ? { agentText: entry.agentText } : {}),
+					...(entry.renamedFrom ? { renamedFrom: URI.revive(entry.renamedFrom) } : {}),
+				});
+				return;
+			case 'binary':
+				this.recordBinaryBaseline(entry.sessionId, URI.revive(entry.uri), entry.baseline, entry.renamedFrom ? { renamedFrom: URI.revive(entry.renamedFrom) } : undefined);
+				return;
+			case 'finished':
+				await this.noteAgentFinished(entry.sessionId);
+				return;
+		}
+	}
+
 	private async noteAgentFinished(sessionId: string): Promise<void> {
 		for (const stack of this.entries.values()) {
 			const entry = stack[stack.length - 1];

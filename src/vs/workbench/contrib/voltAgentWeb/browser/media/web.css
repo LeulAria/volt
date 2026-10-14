@@ -1,0 +1,230 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Only what the web page needs on top of the agent window's own CSS: the page frame the
+ * workbench grid gives the window, and the text area that stands in for the Monaco input.
+ */
+
+html.volt-layout-agent-window, html.volt-layout-agent-window body {
+	margin: 0;
+	height: 100%;
+	overflow: hidden;
+	/*
+	 * The window is translucent over macOS vibrancy; a page has nothing behind it. This plate
+	 * stands in for a typical vibrancy tone, so the translucent parts land near the window's.
+	 */
+	background: #b8b8b8;
+}
+
+.monaco-workbench.volt-web {
+	position: fixed;
+	inset: 0;
+}
+
+.monaco-workbench.volt-web > .part.auxiliarybar {
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 400px;
+}
+
+.monaco-workbench.volt-web > .volt-web-right {
+	position: absolute;
+	left: 400px;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.monaco-workbench.volt-web > .part.auxiliarybar > .content,
+.monaco-workbench.volt-web .volt-agent-side-panel,
+.monaco-workbench.volt-web .volt-agent-side-main {
+	height: 100%;
+}
+
+.monaco-workbench.volt-web .volt-web-right > .part.titlebar {
+	position: relative;
+	flex: 0 0 35px;
+	height: 35px;
+	width: 100%;
+}
+
+.monaco-workbench.volt-web .volt-web-right > .part.editor {
+	position: relative;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+.monaco-workbench.volt-web .part.editor > .content,
+.monaco-workbench.volt-web .part.editor .volt-agent-editor-instance,
+.monaco-workbench.volt-web .part.editor .volt-agent-editor {
+	height: 100%;
+}
+
+.monaco-workbench.volt-web .volt-agent-monaco {
+	position: relative;
+}
+
+.monaco-workbench.volt-web textarea.volt-web-input {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	resize: none;
+	border: 0;
+	outline: none;
+	padding: 0;
+	margin: 0;
+	background: transparent;
+	color: var(--vscode-input-foreground, var(--vscode-foreground));
+	font: inherit;
+	font-size: 13px;
+	line-height: 20px;
+	min-height: 20px;
+	overflow-y: auto;
+}
+
+.monaco-workbench.volt-web .volt-agent-placeholder.hidden {
+	display: none;
+}
+
+.volt-web-menu {
+	position: fixed;
+	z-index: 100;
+	min-width: 220px;
+	max-height: 60vh;
+	overflow: auto;
+	display: flex;
+	flex-direction: column;
+	padding: 4px;
+	border-radius: 8px;
+	background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+	border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border));
+	box-shadow: 0 8px 24px var(--vscode-widget-shadow);
+}
+
+.volt-web-banner {
+	position: fixed;
+	left: 50%;
+	top: 8px;
+	transform: translateX(-50%);
+	z-index: 200;
+	padding: 6px 12px;
+	border-radius: 6px;
+	font-size: 12px;
+	color: var(--vscode-foreground);
+	background: var(--vscode-editorWidget-background);
+	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+}
+
+/* Volt's mark, where the window has its traffic lights. */
+.monaco-workbench.volt-web .volt-web-brand {
+	position: absolute;
+	top: 0;
+	left: 14px;
+	height: 35px;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	color: var(--vscode-foreground);
+	pointer-events: none;
+}
+
+.monaco-workbench.volt-web .volt-web-brand-logo {
+	width: 18px;
+	height: 18px;
+	border-radius: 5px;
+}
+
+.volt-web-signin {
+	position: fixed;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 12px;
+	padding: 24px;
+	text-align: center;
+	background: #181818;
+	color: rgba(240, 240, 241, 0.92);
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif;
+}
+
+.volt-web-signin-logo {
+	width: 72px;
+	height: 72px;
+	border-radius: 18px;
+}
+
+.volt-web-signin-title {
+	font-size: 20px;
+	font-weight: 600;
+}
+
+.volt-web-signin-text {
+	max-width: 360px;
+	font-size: 13px;
+	line-height: 20px;
+	color: rgba(240, 240, 241, 0.6);
+}
+
+/*
+ * The thread alone, inside the mobile app. The app draws its own header and composer and passes
+ * their heights in as insets; the page is the phone's width and scrolls by touch.
+ */
+html.volt-web-embedded,
+html.volt-web-embedded body {
+	background: var(--vscode-editor-background, #181818);
+	-webkit-text-size-adjust: 100%;
+	-webkit-tap-highlight-color: transparent;
+}
+
+.monaco-workbench.volt-web.volt-web-embed > .volt-web-right {
+	left: 0;
+	top: var(--volt-embed-inset-top, 0px);
+	bottom: var(--volt-embed-inset-bottom, 0px);
+}
+
+.monaco-workbench.volt-web-embed .volt-agent-thread-scroll.touch-scrolling {
+	touch-action: pan-x;
+}
+
+.monaco-workbench.volt-web-embed .volt-agent-thread-scroll > .scrollbar {
+	display: none;
+}
+
+.monaco-workbench.volt-web-embed .volt-web-embed-dock.hidden {
+	display: none;
+}
+
+/*
+ * Inside Volt Agents (apps/desktop): the window has macOS vibrancy behind a transparent page,
+ * like the agent window, and its traffic lights sit where the browser page shows the mark.
+ */
+html.volt-shell,
+html.volt-shell body {
+	background: transparent;
+}
+
+.monaco-workbench.volt-web.volt-shell .volt-web-brand {
+	left: 84px;
+}
+
+.monaco-workbench.volt-web.volt-shell .volt-web-brand,
+.monaco-workbench.volt-web.volt-shell .volt-web-right > .part.titlebar {
+	-webkit-app-region: drag;
+}
+
+.monaco-workbench.volt-web.volt-shell .volt-web-right > .part.titlebar :is(a, button, .monaco-button, .action-item, [role="button"]) {
+	-webkit-app-region: no-drag;
+}

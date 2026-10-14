@@ -13,7 +13,7 @@ import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
 import { disposableTimeout } from '../../../../../base/common/async.js';
-import { DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { basename, dirname, isAbsolute } from '../../../../../base/common/path.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { escapeRegExpCharacters } from '../../../../../base/common/strings.js';
@@ -56,6 +56,7 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { ACCESS_MODE_OPTIONS, accessModeOption } from '../../../../services/voltRuntime/common/access/accessModes.js';
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { AgentLimitBanner } from '../composer/agentLimitBanner.js';
 import { IAgentOrchestratorService, IOrchPrompt, IOrchQueueItem, OrchDelivery } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IAgentPromptHostOptions, stashTurnDisplay } from '../orchestration/agentTurnHost.js';
 import { AgentHistoryCodec } from '../history/agentHistoryCodec.js';
@@ -89,7 +90,9 @@ import { IActionViewItem } from '../../../../../base/browser/ui/actionbar/action
 import { IBaseActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { getSimpleCodeEditorWidgetOptions } from '../../../codeEditor/browser/simpleEditorOptions.js';
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
-import { completeStreamingBlocks } from './agentSessionController.js';
+import { markReplyStopped } from './agentSessionController.js';
+import { formatWorkedDuration, resumeTurnPrompt } from './agentEditorFormat.js';
+import { createChevronIcon, createCopyIcon, createExpandIcon, createForkIcon, createMicIcon, createOpenNewAgentIcon, createPlusIcon, createSendIcon, createStopIcon, createStrokeIcon } from './agentEditorIcons.js';
 import { AgentSurfaceHost, agentSideChatParents, revealAgentSideChat } from '../workspace/agentSurfaceHost.js';
 import { openAgentPanel } from '../workspace/agentPanels.js';
 import { AgentComposerChips, shouldOfferScrollToBottom } from '../composer/agentComposerChips.js';
@@ -100,6 +103,7 @@ import { AgentComposerLists } from '../composer/agentComposerLists.js';
 import { AgentPromptHistoryNavigator, IAgentPromptHistoryEntry, readStoredPrompts, rememberPrompt } from '../composer/agentPromptHistory.js';
 import { AGENT_PROMPT_HISTORY_SETTING } from '../../common/agentComposerSettings.js';
 import { AgentComposerQueue, IAgentComposerQueueState, QueuePause } from '../composer/agentComposerQueue.js';
+import { AgentTasksCard } from '../composer/agentTasksCard.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
 import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
@@ -126,76 +130,24 @@ import { MentionCodePreview } from '../composer/mentionCodePreview.js';
 import { appendAgentScrollableList } from './agentScrollable.js';
 import { dayjs } from '../chrome/dayjs.js';
 import { createTableCopyIcon, flashCopyIconSuccess, renderAgentBlock, IBlockRenderContext } from '../blocks/agentBlockRenderers.js';
-import { AgentSegment, IAgentActivityItem, IPlanBlock, SupervisionKind } from '../blocks/agentBlocks.js';
-import { createdPlanPrompt, IRunEndTray, ITurnFileChange, PLANNING_PHRASE, runEndTray, STATUS_ROTATE_MS, STATUS_SWAP_MS, streamingActivityLines, SupervisionAction, supervisionActions, supervisionTitle, todoChecklist, turnFileChanges } from '../chrome/agentTimeline.js';
+import { AgentSegment, IAgentActivityItem, IAgentCompaction, IPlanBlock, isCompactCommand, SupervisionKind } from '../blocks/agentBlocks.js';
+import { composerTasks, createdPlanPrompt, IAgentTodoStep, IRunEndTray, ITasksCard, ITurnFileChange, PLANNING_PHRASE, runEndTray, STATUS_ROTATE_MS, STATUS_SWAP_MS, streamingActivityLines, SupervisionAction, supervisionActions, supervisionTitle, todoChecklist, turnFileChanges } from '../chrome/agentTimeline.js';
 import { AgentTurnFilesTree } from './agentTurnFilesTree.js';
 import { DEFAULT_LABELS_CONTAINER, ResourceLabels } from '../../../../browser/labels.js';
 import { chooseFileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
+import { VOLT_FONT_FAMILY } from '../../common/agentTypography.js';
 
-/** The Compact context chip shows once only this much of the window is left: 2%. */
-const COMPACT_CHIP_PERCENT = 98;
+/**
+ * The Compact context chip shows from this fill on, when the meter turns amber: before Claude
+ * compacts on its own (about 83% of a 200K window), so the user can pick the moment.
+ */
+const COMPACT_CHIP_PERCENT = 80;
+/** How long the chip reads "Context compacted" before it goes. */
+const COMPACT_DONE_MS = 2_500;
 
 /** A prompt the user sent opens an exchange (its card pins); a subagent report stays in the one above. */
 function startsExchange(message: IAgentMessage): boolean {
 	return message.kind === 'user' && message.origin !== 'notification';
-}
-
-function createSvgIcon(viewBox: string, pathD: string, extraClass?: string, stroke = false, strokeWidth = '1.5'): HTMLElement {
-	const el = extraClass ? $(`span.volt-agent-svg-icon.${extraClass}`) : $('span.volt-agent-svg-icon');
-	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
-	svg.setAttribute('viewBox', viewBox);
-	const parts = viewBox.split(' ');
-	svg.setAttribute('width', parts[2] || '24');
-	svg.setAttribute('height', parts[3] || '24');
-	svg.setAttribute('fill', 'none');
-	svg.setAttribute('aria-hidden', 'true');
-	const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
-	path.setAttribute('d', pathD);
-	if (stroke) {
-		path.setAttribute('stroke', 'currentColor');
-		path.setAttribute('stroke-width', strokeWidth);
-		path.setAttribute('stroke-linecap', 'round');
-		path.setAttribute('stroke-linejoin', 'round');
-	} else {
-		path.setAttribute('fill', 'currentColor');
-	}
-	svg.appendChild(path);
-	el.appendChild(svg);
-	return el;
-}
-
-function createStopIcon(): HTMLElement {
-	const el = $('span.volt-agent-svg-icon.stop');
-	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
-	svg.setAttribute('viewBox', '0 0 384 512');
-	svg.setAttribute('width', '24');
-	svg.setAttribute('height', '24');
-	svg.setAttribute('aria-hidden', 'true');
-	const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
-	path.setAttribute('d', 'M0 128c0-35.3 28.7-64 64-64h256c35.3 0 64 28.7 64 64v256c0 35.3-28.7 64-64 64H64c-35.3 0-64-28.7-64-64z');
-	path.setAttribute('fill', 'currentColor');
-	svg.appendChild(path);
-	el.appendChild(svg);
-	return el;
-}
-
-function createSendIcon(): HTMLElement {
-	const el = $('span.volt-agent-svg-icon.send');
-	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
-	svg.setAttribute('viewBox', '0 0 24 24');
-	svg.setAttribute('width', '24');
-	svg.setAttribute('height', '24');
-	svg.setAttribute('aria-hidden', 'true');
-	const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
-	path.setAttribute('d', 'm19.03 9.47l-6.145-6.145a1.26 1.26 0 0 0-1.77 0L4.97 9.47l1.06 1.06l5.22-5.22V21h1.5V5.31l5.22 5.22z');
-	path.setAttribute('fill', 'currentColor');
-	path.setAttribute('stroke', 'currentColor');
-	path.setAttribute('stroke-width', '1.3');
-	path.setAttribute('stroke-linecap', 'round');
-	path.setAttribute('stroke-linejoin', 'round');
-	svg.appendChild(path);
-	el.appendChild(svg);
-	return el;
 }
 
 function isUnmodifiedEnter(e: IKeyboardEvent): boolean {
@@ -222,123 +174,6 @@ interface IStashedThread {
 	/** The chat changed while parked (a run kept going); its last exchange needs a redraw. */
 	stale: boolean;
 	readonly watch: DisposableStore;
-}
-
-function createPlusIcon(): HTMLElement {
-	return createSvgIcon('0 0 14 14', 'M7 2.5v9M2.5 7h9', 'plus', true, '1');
-}
-
-function createOpenNewAgentIcon(): HTMLElement {
-	return createStrokeIcon('open-new', [
-		'M15 3h6v6',
-		'M14 10l7-7',
-		'M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5',
-	]);
-}
-
-function createMicIcon(): HTMLElement {
-	const el = $('span.volt-agent-svg-icon.mic');
-	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
-	svg.setAttribute('viewBox', '0 0 24 24');
-	svg.setAttribute('width', '24');
-	svg.setAttribute('height', '24');
-	svg.setAttribute('fill', 'none');
-	svg.setAttribute('aria-hidden', 'true');
-	const mic = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'rect');
-	mic.setAttribute('x', '9');
-	mic.setAttribute('y', '3');
-	mic.setAttribute('width', '6');
-	mic.setAttribute('height', '11');
-	mic.setAttribute('rx', '3');
-	mic.setAttribute('fill', 'currentColor');
-	const stem = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
-	stem.setAttribute('d', 'M7 11a5 5 0 0 0 10 0M12 16v3M9 19h6');
-	stem.setAttribute('stroke', 'currentColor');
-	stem.setAttribute('stroke-width', '1.8');
-	stem.setAttribute('stroke-linecap', 'round');
-	svg.appendChild(mic);
-	svg.appendChild(stem);
-	el.appendChild(svg);
-	return el;
-}
-
-function createChevronIcon(): HTMLElement {
-	return createSvgIcon(
-		'0 0 16 7',
-		'M8 6.5a.47.47 0 0 1-.35-.15l-4.5-4.5c-.2-.2-.2-.51 0-.71s.51-.2.71 0l4.15 4.15l4.14-4.14c.2-.2.51-.2.71 0s.2.51 0 .71l-4.5 4.5c-.1.1-.23.15-.35.15Z',
-		'chevron'
-	);
-}
-
-function createExpandIcon(restored: boolean): HTMLElement {
-	return createSvgIcon(
-		'0 0 24 24',
-		restored
-			? 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7'
-			: 'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7',
-		'expand',
-		true,
-		'2',
-	);
-}
-
-function createCopyIcon(): HTMLElement {
-	const el = $('span.volt-agent-svg-icon.copy');
-	const doc = el.ownerDocument;
-	const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
-	svg.setAttribute('viewBox', '0 0 24 24');
-	svg.setAttribute('width', '24');
-	svg.setAttribute('height', '24');
-	svg.setAttribute('fill', 'none');
-	svg.setAttribute('stroke', 'currentColor');
-	svg.setAttribute('stroke-width', '1');
-	svg.setAttribute('stroke-linecap', 'round');
-	svg.setAttribute('stroke-linejoin', 'round');
-	svg.setAttribute('aria-hidden', 'true');
-	const rect = doc.createElementNS('http://www.w3.org/2000/svg', 'rect');
-	rect.setAttribute('width', '14');
-	rect.setAttribute('height', '14');
-	rect.setAttribute('x', '8');
-	rect.setAttribute('y', '8');
-	rect.setAttribute('rx', '2');
-	rect.setAttribute('ry', '2');
-	const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
-	path.setAttribute('d', 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2');
-	svg.appendChild(rect);
-	svg.appendChild(path);
-	el.appendChild(svg);
-	return el;
-}
-
-function createForkIcon(): HTMLElement {
-	return createSvgIcon(
-		'0 0 24 24',
-		'M3 3L10.6575 9.80663C11.5114 10.5657 12 11.6537 12 12.7963V22M3 3V9M3 3H9M21 3L15 9M21 3V9M21 3H15',
-		'fork',
-		true,
-		'1',
-	);
-}
-
-function createStrokeIcon(extraClass: string, paths: readonly string[]): HTMLElement {
-	const el = $(`span.volt-agent-svg-icon.${extraClass}`);
-	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
-	svg.setAttribute('viewBox', '0 0 24 24');
-	svg.setAttribute('width', '24');
-	svg.setAttribute('height', '24');
-	svg.setAttribute('fill', 'none');
-	svg.setAttribute('aria-hidden', 'true');
-	for (const d of paths) {
-		const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
-		path.setAttribute('d', d);
-		path.setAttribute('stroke', 'currentColor');
-		path.setAttribute('stroke-width', '1.5');
-		path.setAttribute('stroke-linecap', 'round');
-		path.setAttribute('stroke-linejoin', 'round');
-		svg.appendChild(path);
-	}
-	el.appendChild(svg);
-	return el;
 }
 
 export interface IAgentUserMessage {
@@ -413,6 +248,17 @@ function dockActivity(message: IAgentAssistantMessage, status: string): { text: 
 	return { text: status, more: 0 };
 }
 
+/** `/compact` with nothing else: sent by the Compact context chip, or typed alone. */
+function isBareCompactCommand(message: IAgentUserMessage): boolean {
+	return isCompactCommand(message.text) && message.text.trim() === '/compact' && !message.mentions?.length;
+}
+
+/** A reply whose only content is a context compaction (a `/compact` turn). */
+function isCompactionOnlyReply(message: IAgentAssistantMessage): boolean {
+	return message.segments.some(segment => segment.kind === 'compaction')
+		&& message.segments.every(segment => segment.kind === 'compaction' || (segment.kind === 'text' && !segment.text.trim()));
+}
+
 export interface IAgentActivity {
 	status: string;
 	/** When set, the live line keeps this status instead of rotating back to "Thinking". */
@@ -430,7 +276,7 @@ export interface IAgentAssistantMessage {
 	kind: 'agent';
 	id?: string;
 	title: string;
-	steps: { label: string; state: 'done' | 'current' | 'pending' }[];
+	steps: IAgentTodoStep[];
 	changes?: string[];
 	text?: string;
 	segments: AgentSegment[];
@@ -443,6 +289,10 @@ export interface IAgentAssistantMessage {
 	tokensCache?: number;
 	tokensUsed?: number;
 	tokensWindow?: number;
+	/** `tokensUsed` is Claude's post-compaction figure: the kept summary, without the system prompt and tools. */
+	usageExcludesPrompt?: boolean;
+	/** On the chat's first reply: its first prompt-side `used` (system prompt, tools and the first message). */
+	tokensBase?: number;
 	cancelled?: boolean;
 	activity?: IAgentActivity;
 	/** The runtime run that produced this reply; Cursor's error tray calls it the request id. */
@@ -521,17 +371,6 @@ const MODE_OPTIONS: IModeOption[] = [
 	{ id: 'Ask', label: 'Ask', icon: 'ask', description: 'Answer questions without making edits' },
 ];
 
-function formatWorkedDuration(ms: number): string {
-	const totalSeconds = Math.max(0, Math.round(ms / 1000));
-	if (totalSeconds < 60) {
-		return localize('voltAgent.workedSeconds', "Worked for {0}s", Math.max(1, totalSeconds));
-	}
-	const minutes = Math.floor(totalSeconds / 60);
-	const seconds = totalSeconds % 60;
-	return seconds
-		? localize('voltAgent.workedMinutesSeconds', "Worked for {0}m {1}s", minutes, seconds)
-		: localize('voltAgent.workedMinutes', "Worked for {0}m", minutes);
-}
 
 export class AgentEditor extends EditorPane implements IAgentFindHost {
 
@@ -563,6 +402,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private sendButton!: HTMLButtonElement;
 	private suggestEl!: HTMLElement;
 	private composerQueue!: AgentComposerQueue;
+	/** The agent's to-dos, above the chips like the Context Usage card. */
+	private tasksCard: AgentTasksCard | undefined;
 	private questionTray!: AgentQuestionTray;
 	private composerChips!: AgentComposerChips;
 	private pendingChanges!: AgentPendingChanges;
@@ -571,6 +412,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private sendKind: 'mic' | 'send' = 'mic';
 	private submitting = false;
 	private cloneBanner: HTMLElement | undefined;
+	/** Compact context was clicked and its turn has not started yet. */
+	private compactRequested = false;
+	private readonly compactRequestTimeout = this._register(new MutableDisposable());
+	/** The chip showed a running compaction; when it ends, the chip says so for a moment. */
+	private compactChipWasRunning = false;
+	private readonly compactChipDone = this._register(new MutableDisposable());
+	/** How full the meter last read. */
+	private contextPercent = 0;
+	private limitBanner: AgentLimitBanner | undefined;
 	private waitingForClone: string | undefined;
 	/** Prompts reach the orchestrator in the order they were sent, even when freezing one takes longer. */
 	private submitChain: Promise<unknown> = Promise.resolve();
@@ -893,6 +743,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onCompactClick: () => this.compactContext(),
 			onStatusClick: () => this.scrollThreadToEnd(),
 		}));
+		this.tasksCard = this._register(new AgentTasksCard(() => this.layoutInputEditor()));
+		append(this.composerEl, this.tasksCard.element);
 		append(this.composerEl, this.composerChips.element);
 		// The same run status chip the browser's dock shows ("Waiting for approval", "Worked 2m").
 		this._register(this.onDidChangeDock(() => this.syncStatusChip()));
@@ -936,6 +788,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		// A subagent's chat says whose it is and how it is doing, above everything else on the composer.
 		this.subagentBar = append(this.composerEl, $('.volt-agent-subagent-bar.hidden'));
 		// Subagents and queued prompts sit right on top of the text area, under the chips (Cursor).
+		// "Usage limit reached": resume at reset / snooze, a card above the queue (the limit is why it waits).
+		this.limitBanner = this._register(new AgentLimitBanner({ orchestrator: this.orchestrator, history: this.history }));
+		append(this.composerEl, this.limitBanner.element);
 		append(this.composerEl, this.composerQueue.element);
 		this.inputBox = append(this.composerEl, $('.volt-agent-input-box'));
 		this.monacoHost = append(this.inputBox, $('.volt-agent-monaco.show-file-icons'));
@@ -1010,11 +865,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			getBranch: () => this.statusBranch(),
 			onWillOpenPanel: () => this.hidePlusMenu(),
 			getCompactState: () => this.compactState(),
+			isCompacting: () => this.compactionRunning(),
 			compact: () => this.compactContext(),
 			// Nearly out of room: offer Compact context as a chip beside Changes.
 			onDidRefresh: percent => {
-				const state = percent >= COMPACT_CHIP_PERCENT ? this.compactState() : undefined;
-				this.composerChips?.setCompactOffered(!!state && !state.blockedReason);
+				this.contextPercent = percent;
+				this.syncCompactChip();
 			},
 		}));
 		append(this.composerEl, this.contextUsageView.element);
@@ -1041,6 +897,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.findWidget = this._register(this.instantiationService.createInstance(AgentFindWidget, this));
 		this.container.appendChild(this.findWidget.getDomNode());
 
+		// The text line is only 22px of the box: a click on the rest of it (padding, placeholder, toolbar gaps) focuses the input too.
+		const blankSurfaces = new Set<EventTarget>([this.inputBox, this.monacoHost, this.placeholderEl, this.toolbarEl, this.toolbarStartEl, this.toolbarEndEl]);
+		this._register(addDisposableListener(this.inputBox, 'mousedown', e => {
+			if (e.button === 0 && e.target && blankSurfaces.has(e.target)) {
+				e.preventDefault();
+				this.inputEditor?.focus();
+			}
+		}));
 		this._register(addDisposableListener(this.plusButton, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
@@ -1449,7 +1313,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		return {
 			...editorConfiguration,
-			fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif',
+			fontFamily: VOLT_FONT_FAMILY,
 			fontSize: 14,
 			fontWeight: '300',
 			lineHeight: 22,
@@ -1539,6 +1403,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private restoreInputState(input: AgentEditorInput): void {
 		this.clearFindHighlights();
+		this.resetCompactChip();
 		this.stashThread();
 		this.thinkingStore.clear();
 		this.messages = input.messages;
@@ -1722,6 +1587,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const selected = this.selectedModel();
 		const handle: IVoltMenuHandle = showAgentPlusMenu(this.contextViewService, {
 			anchor,
+			// The chips float just above the prompt; the menu opens over them, not on them.
+			above: () => !edit && this.composerChips.element.classList.contains('is-visible') && this.composerChips.element.offsetHeight ? this.composerChips.element : undefined,
 			modes: MODE_OPTIONS.filter(option => option.id !== 'Agent'),
 			currentMode: this.currentMode,
 			actions: ['files', 'image', 'video', 'openFile', 'terminal', 'browser', 'model', 'mcp'],
@@ -2159,6 +2026,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.updateInputPlaceholder();
 			this.layoutInputEditor();
 			this.publishSessionChanges();
+			this.syncTasksCard();
 			this._onDidChangeDock.fire();
 			return;
 		}
@@ -2200,6 +2068,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.updateInputPlaceholder();
 		this.layoutInputEditor();
 		this.publishSessionChanges();
+		this.syncTasksCard();
 	}
 
 	private renderThreadMessage(exchange: HTMLElement, message: IAgentMessage, index: number): void {
@@ -2213,6 +2082,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					this.renderHandoffDivider(turn, message.handoff);
 				}
 				this.renderNotificationTurn(turn, message);
+			} else if (isBareCompactCommand(message) && !message.handoff && this.replyCompacts(index)) {
+				// Compact context, from the chip or typed alone: the reply's divider says it all.
+				turn.classList.add('compact-command');
 			} else {
 				if (message.handoff) {
 					this.renderHandoffDivider(turn, message.handoff);
@@ -2306,7 +2178,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			}
 			const next = this.messages[index + 1];
 			turns.push({
-				prompt: message.text.replace(/\s+/g, ' ').trim() || (message.chips ?? []).join(', '),
+				prompt: isBareCompactCommand(message) && this.replyCompacts(index)
+					? localize('voltAgent.compactContext', "Compact context")
+					: message.text.replace(/\s+/g, ' ').trim() || (message.chips ?? []).join(', '),
 				reply: () => {
 					if (next?.kind !== 'agent') {
 						return undefined;
@@ -2363,6 +2237,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		this.refreshContextUsage();
 		this.publishSessionChanges();
+		this.syncTasksCard();
 	}
 
 	/** Parks the shown chat's thread (nodes and listeners) so showing it again is a DOM move, not a rebuild. */
@@ -2875,12 +2750,19 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.clearEditComposer();
 		const removed = this.messages[index];
 		this.messages.splice(index);
-		if (this.input instanceof AgentEditorInput) {
-			this.input.recordTruncate(removed);
-		}
-		this.runtime.truncateSession(this.sessionKey, this.messages.filter(message => message.kind === 'user').length);
+		this.truncateSession(removed);
 		this.syncComposerPlacement();
 		this.dispatchPrompt(value, display, removed?.kind === 'user' ? removed.mode ?? this.currentMode : this.currentMode);
+	}
+
+	/** After the transcript was cut before `removed`: history and the model's transcript follow. */
+	private truncateSession(removed: IAgentMessage | undefined): void {
+		const userTurns = this.messages.filter(message => message.kind === 'user').length;
+		if (this.input instanceof AgentEditorInput) {
+			this.input.controller.truncate(removed, userTurns);
+		} else {
+			this.runtime.truncateSession(this.sessionKey, userTurns);
+		}
 	}
 
 	/** Keep the composer in the chat column so empty chats stay centered and threads pin it to the bottom. */
@@ -2954,6 +2836,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.editSendButton.appendChild(createSendIcon());
 		setAgentTooltip(this.editSendButton, localize('voltAgent.send', "Send"));
 		this.editEditorDisposables.add(addDisposableListener(this.editSendButton, 'click', () => this.sendUserEdit()));
+		const editBlankSurfaces = new Set<EventTarget>([this.editInputBox, this.editMonacoHost, toolbar, start, end]);
+		this.editEditorDisposables.add(addDisposableListener(this.editInputBox, 'mousedown', e => {
+			if (e.button === 0 && e.target && editBlankSurfaces.has(e.target)) {
+				e.preventDefault();
+				this.editEditor?.focus();
+			}
+		}));
 
 		const widgetOptions = getSimpleCodeEditorWidgetOptions();
 		widgetOptions.contextKeyValues = { [CONTEXT_IN_AGENT_INPUT.key]: true };
@@ -3212,7 +3101,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			workedMs: !streaming && message.startedAt && message.endedAt ? message.endedAt - message.startedAt : undefined,
 			workedOpenByDefault: this.liveTurns.has(message),
 			statusKey: String(message.startedAt ?? message.id ?? 'live'),
-			todos: todoChecklist(message.steps, streaming),
+			// A running turn's to-dos live in the Tasks card on the composer; the turn keeps the folded summary after.
+			todos: streaming ? undefined : todoChecklist(message.steps, false),
 			elapsedSince: streaming ? message.startedAt : undefined,
 		});
 		if (streaming) {
@@ -3221,8 +3111,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		this.freshText.apply(message, replies, streaming);
 		const tray = runEndTray(message, message === this.messages.at(-1));
+		// A reply that only compacted the chat is its divider: no footer, and its own "stopped" line.
+		const compactionOnly = isCompactionOnlyReply(message);
 		// A login failure already has the sign-in card (and its login button). The generic tray repeats it.
-		if (tray && !(tray.kind === 'failed' && hasSignInNotice(rows))) {
+		if (tray && !(tray.kind === 'failed' && hasSignInNotice(rows)) && !(compactionOnly && tray.kind !== 'failed')) {
 			this.renderRunEndTray(body, message, tray);
 		}
 		if (message.changes?.length) {
@@ -3234,7 +3126,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			}
 		}
 		if (!streaming) {
-			this.renderAgentFooter(turn, message);
+			if (!compactionOnly) {
+				this.renderAgentFooter(turn, message);
+			}
 			if (changedFiles.length) {
 				this.renderTurnFilesCard(turn, changedFiles);
 			}
@@ -3536,10 +3430,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private resumePrompt(message: IAgentAssistantMessage): string {
-		const failure = message.outcome === 'failed' ? message.failure?.message.trim() : undefined;
-		return failure
-			? localize('voltAgent.resume.promptFailed', "Continue where you left off. The previous turn ended with this error: {0}. Do not redo work that is already done.", failure)
-			: localize('voltAgent.resume.prompt', "Continue where you left off. The previous turn stopped before it finished. Do not redo work that is already done.");
+		return resumeTurnPrompt(message);
 	}
 
 	/**
@@ -3573,10 +3464,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		const display = user.mentions?.length || user.agentText ? { text: user.text, mentions: user.mentions } : undefined;
 		this.messages.splice(index);
-		if (this.input instanceof AgentEditorInput) {
-			this.input.recordTruncate(user);
-		}
-		this.runtime.truncateSession(this.sessionKey, this.messages.filter(message => message.kind === 'user').length);
+		this.truncateSession(user);
 		this.dispatchPrompt(value, display, user.mode ?? this.currentMode);
 	}
 
@@ -3942,6 +3830,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.dispatchPrompt(value, display);
 	}
 
+	/** The to-dos the composer's Tasks card shows, if any. */
+	getTasksCard(): ITasksCard | undefined {
+		return composerTasks(this.messages);
+	}
+
+	private syncTasksCard(): void {
+		this.tasksCard?.set(this.getTasksCard());
+	}
+
 	getPromptQueue(): readonly { id: string; text: string; display?: IAgentPromptDisplay }[] {
 		return this.queuedItems.map(item => ({ id: item.id, text: item.prompt.text, display: { text: queuedPreview(item) } }));
 	}
@@ -3991,6 +3888,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private syncStatusChip(): void {
 		const state = this.getDockState();
 		this.composerChips?.setStatus({ label: state.status, working: state.streaming });
+		this.syncCompactChip();
 	}
 
 	getDockState(): IAgentDockState {
@@ -4462,9 +4360,84 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!this.runtime.supportsCommand(this.sessionKey, 'compact') || this.isSubagentChat()) {
 			return undefined;
 		}
+		if (this.compactionRunning()) {
+			return { running: true, blockedReason: localize('voltAgent.compactRunning', "The agent is compacting the conversation") };
+		}
 		return this.isStreaming() || this.cloningProject()
 			? { blockedReason: localize('voltAgent.compactBusy', "Compacting is unavailable while the agent is working") }
 			: {};
+	}
+
+	/** A compaction is under way in this chat (a `/compact` turn or the agent's own), or was just asked for. */
+	private compactionRunning(): boolean {
+		if (this.compactRequested) {
+			return true;
+		}
+		const last = this.messages.at(-1);
+		return last?.kind === 'agent' && !!last.activity?.streaming
+			&& last.segments.some(segment => segment.kind === 'compaction' && segment.compaction.status === 'running');
+	}
+
+	/** The reply to the prompt at `index` shows a compaction (its divider stands in for the prompt). */
+	private replyCompacts(index: number): boolean {
+		const reply = this.messages[index + 1];
+		return reply?.kind === 'agent' && reply.segments.some(segment => segment.kind === 'compaction');
+	}
+
+	/** The newest compaction in the chat. */
+	private lastCompaction(): IAgentCompaction | undefined {
+		for (let i = this.messages.length - 1; i >= 0; i--) {
+			const message = this.messages[i];
+			if (message.kind === 'agent') {
+				const found = message.segments.findLast(segment => segment.kind === 'compaction');
+				if (found?.kind === 'compaction') {
+					return found.compaction;
+				}
+			}
+		}
+		return undefined;
+	}
+
+	/**
+	 * The Compact context chip: offered once the window is nearly full; the dots and "Compacting
+	 * context" from the click (or the agent's own compaction) until it ends; then "Context compacted"
+	 * for a moment.
+	 */
+	private syncCompactChip(): void {
+		const chips = this.composerChips;
+		if (!chips) {
+			return;
+		}
+		if (this.compactionRunning()) {
+			this.compactChipWasRunning = true;
+			this.compactChipDone.clear();
+			chips.setCompactState('running');
+			return;
+		}
+		if (this.compactChipWasRunning) {
+			this.compactChipWasRunning = false;
+			if (this.lastCompaction()?.status === 'completed') {
+				chips.setCompactState('done');
+				this.compactChipDone.value = disposableTimeout(() => {
+					this.compactChipDone.clear();
+					this.syncCompactChip();
+				}, COMPACT_DONE_MS);
+				return;
+			}
+		}
+		if (this.compactChipDone.value) {
+			return;
+		}
+		const state = this.contextPercent >= COMPACT_CHIP_PERCENT ? this.compactState() : undefined;
+		chips.setCompactState(state && !state.blockedReason ? 'offered' : 'hidden');
+	}
+
+	/** Forgets the last chat's compaction: the chip and meter describe the chat on screen. */
+	private resetCompactChip(): void {
+		this.compactRequested = false;
+		this.compactRequestTimeout.clear();
+		this.compactChipWasRunning = false;
+		this.compactChipDone.clear();
 	}
 
 	/** Runs the agent's own `/compact` as the next turn. Unlike a send, the composer draft stays. */
@@ -4473,15 +4446,32 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!state || state.blockedReason) {
 			return;
 		}
-		this.composerChips?.setCompactOffered(false);
+		// The chip turns into "Compacting context" now; the turn starts after the orchestrator and the checkpoint.
+		const sessionKey = this.sessionKey;
+		const settle = () => {
+			if (this.compactRequested && this.sessionKey === sessionKey) {
+				this.compactRequested = false;
+				this.compactRequestTimeout.clear();
+				this.syncCompactChip();
+				this.refreshContextUsage();
+			}
+		};
+		this.compactRequested = true;
+		this.compactRequestTimeout.value = disposableTimeout(settle, 30_000);
+		this.syncCompactChip();
+		this.refreshContextUsage();
 		this.thinkingStore.clear();
 		this.restoredCheckpoint = undefined;
 		this.stickToBottom = true;
-		this.submitToOrchestrator('/compact', undefined, this.currentMode, 'auto');
+		void this.submitToOrchestrator('/compact', undefined, this.currentMode, 'auto').then(accepted => {
+			if (!accepted) {
+				settle();
+			}
+		});
 	}
 
-	/** Hands a prompt to the orchestrator with the composer's model, options and checkout choice. */
-	private submitToOrchestrator(value: string, display: IAgentPromptDisplay | undefined, mode: string, delivery: OrchDelivery, turnId = generateUuid()): void {
+	/** Hands a prompt to the orchestrator with the composer's model, options and checkout choice. Resolves whether it took it. */
+	private submitToOrchestrator(value: string, display: IAgentPromptDisplay | undefined, mode: string, delivery: OrchDelivery, turnId = generateUuid()): Promise<boolean> {
 		const input = this.input instanceof AgentEditorInput ? this.input : undefined;
 		const threadId = this.sessionKey;
 		input?.recordMode(normalizeVoltMode(this.currentMode));
@@ -4492,7 +4482,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			...(request.worktreeTarget ? { worktreeTarget: request.worktreeTarget } : {}),
 		};
 		const frozen = this.freezeDisplay(display);
-		this.submitChain = this.submitChain.then(async () => {
+		const submitted = this.submitChain.then(async () => {
 			const prompt: IOrchPrompt = {
 				text: value,
 				...(display ? { display: await frozen } : {}),
@@ -4504,8 +4494,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			const result = await this.orchestrator.submit(threadId, prompt, delivery, turnId);
 			if (result.outcome === 'rejected') {
 				this.logService.warn(`[volt agent] the orchestrator did not take the prompt: ${result.reason ?? 'rejected'}`);
+				return false;
 			}
-		}).catch(err => this.logService.warn('[volt agent] sending the prompt failed', err));
+			return true;
+		}).catch(err => {
+			this.logService.warn('[volt agent] sending the prompt failed', err);
+			return false;
+		});
+		this.submitChain = submitted.then(() => undefined);
+		return submitted;
 	}
 
 	/** The display as history stores it (attachments by reference), so a queued prompt survives a restart. */
@@ -4710,22 +4707,25 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 	}
 
-	private stopAgent(): void {
+	/** A reply this panel holds outside an agent input (no controller records it). */
+	private stopDetachedReply(): boolean {
 		const last = this.messages.at(-1);
-		if (last?.kind === 'agent' && last.activity?.streaming) {
-			last.cancelled = true;
-			last.outcome = 'stopped';
-			last.activity.streaming = false;
-			last.activity.expanded = false;
-			last.activity.status = localize('voltAgent.cancelled', "Cancelled");
-			last.endedAt = Date.now();
-			last.startedAt ??= last.endedAt;
-			last.durationMs = Math.max(0, last.endedAt - last.startedAt);
-			completeStreamingBlocks(last, true);
+		if (!markReplyStopped(last)) {
+			return false;
+		}
+		this.recordReply(last, true, 'cancelled');
+		return true;
+	}
+
+	private stopAgent(): void {
+		const input = this.input;
+		const stopped = input instanceof AgentEditorInput && input.messages === this.messages
+			? input.controller.stopReply()
+			: this.stopDetachedReply();
+		if (stopped) {
 			this.updateSendButton();
 			this.renderThread(this.stickToBottom);
 			this._onDidChangeDock.fire();
-			this.recordReply(last, true, 'cancelled');
 		}
 		// Stopping a turn stops the subagents it started, as a harness's own subagents stop with it.
 		void this.orchestrator.cancel(this.sessionKey, { cascade: 'turn' });
@@ -5011,6 +5011,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					this.scheduleThreadRender();
 					break;
 				case 'turnStart':
+					// A `/compact` turn now shows its own running compaction.
+					this.compactRequested = false;
+					this.compactRequestTimeout.clear();
 					// A turn this panel sent, or one the orchestrator started (queue, subagent report).
 					this._onDidChangeDock.fire();
 					this.stickToBottom = true;
@@ -5020,6 +5023,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					this.syncQueueStack();
 					break;
 				case 'runEnd':
+					this.compactRequested = false;
+					this.compactRequestTimeout.clear();
+					this.syncCompactChip();
 					// The orchestrator sends the next queued prompt itself; after an error the queue waits.
 					this.scheduleThreadRender();
 					this.updateSendButton();
@@ -5285,6 +5291,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		await super.setInput(input, options, context, token);
 		// One pane shows every agent tab: the banner follows the tab's project.
 		this.renderCloneBanner();
+		this.limitBanner?.setSession(input.sessionId);
 		try {
 			await input.ensureLoaded();
 		} catch (err) {
@@ -5301,6 +5308,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.syncStatusChip();
 		this.pendingChanges.setSessionId(this.sessionKey);
 		this.publishSessionChanges();
+		this.syncTasksCard();
 		this.bindRuntimeSession();
 		this.contextUsageView.refreshBranch();
 		this.renderSuggestChips();

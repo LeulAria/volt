@@ -18,7 +18,7 @@ import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/ru
 import { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { AgentRunOn, AgentWorktreeTarget } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
-import { imageAttachmentsFromMentions } from '../composer/agentMentions.js';
+import { imageAttachmentsFromMentions } from '../composer/agentMentionImages.js';
 import type { IAgentPromptDisplay, IAgentUserMessage } from '../editor/agentEditor.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { AgentHistoryCodec } from '../history/agentHistoryCodec.js';

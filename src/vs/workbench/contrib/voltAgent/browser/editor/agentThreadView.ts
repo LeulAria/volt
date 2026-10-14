@@ -3,9 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, append, getWindow } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, getWindow } from '../../../../../base/browser/dom.js';
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ScrollbarVisibility } from '../../../../../base/common/scrollable.js';
 
 /**
@@ -44,6 +44,64 @@ export class AgentThreadView extends Disposable {
 		this._register(this.scroll.onScroll(() => this.syncStuckTurns()));
 	}
 
+	/**
+	 * Drag to scroll with momentum, for touch screens (the web app in a phone). The scroller is not
+	 * native, so touches move it here; listeners stay passive so taps still click.
+	 */
+	enableTouchScrolling(): IDisposable {
+		const node = this.scroll.getDomNode();
+		const targetWindow = getWindow(node);
+		node.classList.add('touch-scrolling');
+		let lastY = 0;
+		let samples: { y: number; t: number }[] = [];
+		let frame: number | undefined;
+		const stopMomentum = () => {
+			if (frame !== undefined) {
+				targetWindow.cancelAnimationFrame(frame);
+				frame = undefined;
+			}
+		};
+		const scrollBy = (dy: number) => this.scroll.setScrollPosition({ scrollTop: this.scroll.getScrollPosition().scrollTop + dy });
+		const listeners = [
+			addDisposableListener(node, 'touchstart', (e: TouchEvent) => {
+				stopMomentum();
+				lastY = e.touches[0].clientY;
+				samples = [{ y: lastY, t: e.timeStamp }];
+			}, { passive: true }),
+			addDisposableListener(node, 'touchmove', (e: TouchEvent) => {
+				const y = e.touches[0].clientY;
+				scrollBy(lastY - y);
+				lastY = y;
+				samples.push({ y, t: e.timeStamp });
+				samples = samples.filter(sample => e.timeStamp - sample.t < 100);
+			}, { passive: true }),
+			addDisposableListener(node, 'touchend', (e: TouchEvent) => {
+				const first = samples[0];
+				const last = samples.at(-1);
+				if (!first || !last || last.t - first.t <= 0 || e.timeStamp - last.t > 60) {
+					return;
+				}
+				// px per ms, decaying like UIScrollView's normal deceleration rate.
+				let velocity = (first.y - last.y) / (last.t - first.t);
+				let previous = performance.now();
+				const step = (now: number) => {
+					const dt = now - previous;
+					previous = now;
+					velocity *= Math.pow(0.998, dt);
+					const before = this.scroll.getScrollPosition().scrollTop;
+					scrollBy(velocity * dt);
+					frame = Math.abs(velocity) > 0.02 && this.scroll.getScrollPosition().scrollTop !== before ? targetWindow.requestAnimationFrame(step) : undefined;
+				};
+				frame = targetWindow.requestAnimationFrame(step);
+			}, { passive: true }),
+		];
+		return toDisposable(() => {
+			stopMomentum();
+			node.classList.remove('touch-scrolling');
+			listeners.forEach(listener => listener.dispose());
+		});
+	}
+
 	/** Pins fade edges and marks the sent card that is stuck at the top. Runs on every scroll. */
 	syncStuckTurns(): void {
 		const viewport = this.scroll.getDomNode();
@@ -59,7 +117,7 @@ export class AgentThreadView extends Disposable {
 		const targetWindow = getWindow(this.inner);
 		const cards: { turn: HTMLElement; exchange: HTMLElement | null; stuck: boolean; bottom: number; replies: { reply: HTMLElement; top: number }[] }[] = [];
 		// Only prompts the user sent pin; a subagent report scrolls with the replies under them.
-		for (const turn of this.inner.querySelectorAll<HTMLElement>('.volt-agent-turn.user:not(.notification)')) {
+		for (const turn of this.inner.querySelectorAll<HTMLElement>('.volt-agent-turn.user:not(.notification):not(.compact-command)')) {
 			const exchange = turn.parentElement;
 			if (!exchange) {
 				cards.push({ turn, exchange, stuck: false, bottom: 0, replies: [] });

@@ -13,7 +13,7 @@ import { IEnvironmentService } from '../../../../../platform/environment/common/
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
-import { IVoltEventEnvelope } from '../../common/events.js';
+import { IVoltEvent, IVoltEventEnvelope } from '../../common/events.js';
 import { IAgentWorktreeService } from '../../common/git/agentWorktree.js';
 import { IAgentHistoryService } from '../../common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
@@ -23,6 +23,8 @@ import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../
 import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimits, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome } from '../../common/orchestration/orchestrator.js';
 import { extractRoot, IOrchIndex, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
 import { harnessTaskId, IOrchStep, runOrchCommand } from '../../common/orchestration/orchestratorDecider.js';
+import { isUsageLimitStop, LIMIT_RESUME_TEXT, limitResumeTurnId, parseUsageLimitReset } from '../../common/orchestration/limitRecovery.js';
+import { orchIsTurnCurrent, orchTaskForToolCall, orchTasksOf } from '../../common/orchestration/orchestratorQueries.js';
 import { IAgentRuntimeService } from '../../common/runtime.js';
 import { IVoltSessionContextService } from '../../common/sessionContext.js';
 import { OrchestratorStore } from './orchestratorStore.js';
@@ -31,6 +33,8 @@ import { OrchestratorStore } from './orchestratorStore.js';
 const CANCEL_SETTLE_MS = 15_000;
 /** A Volt chat id for a subagent's chat; the agent editor reads session ids from this shape. */
 const CHILD_ID_PREFIX = 'agent-';
+/** setTimeout's ceiling is ~24.8 days; the limit timer re-arms at least daily. */
+const LIMIT_TIMER_MAX_MS = 86_400_000;
 
 export class AgentOrchestratorService extends Disposable implements IAgentOrchestratorService {
 
@@ -52,6 +56,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	private readonly dispatching = new Map<string, string>();
 	private readonly cancelWatch = new Map<string, ReturnType<typeof setTimeout>>();
 	private readonly lastError = new Map<string, string>();
+	/** Runs the provider's usage limit stopped, with the reset it named. */
+	private readonly limitedRuns = new Map<string, { resetAt?: number; message: string }>();
+	private limitTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Resumes sent and not yet started (submit waits for the chat to load). */
+	private readonly limitResumes = new Set<string>();
 	private readonly worktreesInFlight = new Set<string>();
 	/** `delegate_task` calls seen in a chat's stream, oldest first, waiting for the MCP call that matches. */
 	private readonly delegateCalls = new Map<string, string[]>();
@@ -90,7 +99,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			for (const timer of this.cancelWatch.values()) {
 				clearTimeout(timer);
 			}
+			if (this.limitTimer !== undefined) {
+				clearTimeout(this.limitTimer);
+			}
 		}));
+		this._register(this.onDidChange(() => this.scheduleLimitResume()));
 		void this.restore();
 	}
 
@@ -109,12 +122,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	tasksOf(threadId: string): readonly IOrchTask[] {
-		return Object.values(this.state.tasks).filter(task => task.parentId === threadId).sort((a, b) => a.createdAt - b.createdAt);
+		return orchTasksOf(this.state, threadId);
 	}
 
 	taskForToolCall(threadId: string, toolCallId: string): IOrchTask | undefined {
-		return this.state.tasks[harnessTaskId(toolCallId)]
-			?? Object.values(this.state.tasks).find(task => task.parentId === threadId && task.toolCallId === toolCallId);
+		return orchTaskForToolCall(this.state, threadId, toolCallId);
 	}
 
 	async dispatch(command: OrchCommandBody & { readonly id?: string }): Promise<readonly OrchEvent[]> {
@@ -144,9 +156,73 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		this.apply({ type: 'turn.cancel', threadId, ...(options?.cascade ? { cascade: options.cascade } : {}) });
 	}
 
+	async setLimitRecovery(threadId: string, turnId: string, choice: { readonly autoResume?: boolean; readonly snooze?: boolean }): Promise<string | undefined> {
+		await this.ensureThreadLoaded(threadId);
+		const before = this.state.threads[threadId]?.limit;
+		const step = this.apply({
+			type: 'limit.configure',
+			threadId,
+			turnId,
+			...(choice.autoResume !== undefined ? { autoResume: choice.autoResume } : {}),
+			...(choice.snooze !== undefined ? { snooze: choice.snooze } : {}),
+		});
+		if (step.decision.rejected) {
+			return step.decision.rejected;
+		}
+		const after = this.state.threads[threadId]?.limit;
+		if (after?.resetAt !== undefined && !!after.snooze !== !!before?.snooze) {
+			// The snooze itself is the chat's history snooze: it moves to Snoozed and wakes at the reset.
+			const meta = this.history.get(threadId);
+			if (after.snooze) {
+				await this.history.setSnoozed(threadId, true, after.resetAt);
+			} else if (meta?.snoozed && meta.snoozedUntil === after.resetAt) {
+				await this.history.setSnoozed(threadId, false);
+			}
+		}
+		return undefined;
+	}
+
+	/** Sends "Continue where you left off." to chats whose limit reset, then waits for the next one. */
+	private scheduleLimitResume(): void {
+		if (this.limitTimer !== undefined) {
+			clearTimeout(this.limitTimer);
+			this.limitTimer = undefined;
+		}
+		const now = Date.now();
+		let next = Number.POSITIVE_INFINITY;
+		for (const thread of Object.values(this.state.threads)) {
+			const limit = thread.limit;
+			if (!limit?.autoResume || limit.resetAt === undefined || thread.active) {
+				continue;
+			}
+			if (limit.resetAt <= now) {
+				const turnId = limitResumeTurnId(thread.id, limit.turnId);
+				if (this.limitResumes.has(turnId)) {
+					continue;
+				}
+				this.limitResumes.add(turnId);
+				this.logService.info(`[volt orchestrator] usage limit reset for ${thread.id}; resuming`);
+				void this.submit(thread.id, {
+					text: LIMIT_RESUME_TEXT,
+					display: { text: LIMIT_RESUME_TEXT },
+					...(limit.mode ? { mode: limit.mode } : {}),
+					...(limit.modelRef ? { modelRef: limit.modelRef } : {}),
+				}, 'auto', turnId).finally(() => this.limitResumes.delete(turnId));
+				continue;
+			}
+			next = Math.min(next, limit.resetAt);
+		}
+		if (Number.isFinite(next)) {
+			// A second late, so the provider's own clock has turned over too.
+			this.limitTimer = setTimeout(() => {
+				this.limitTimer = undefined;
+				this.scheduleLimitResume();
+			}, Math.min(Math.max(next - now + 1_000, 0), LIMIT_TIMER_MAX_MS));
+		}
+	}
+
 	isTurnCurrent(threadId: string, turnId: string): boolean {
-		const active = this.state.threads[threadId]?.active;
-		return active?.id === turnId && active.phase !== 'cancelling';
+		return orchIsTurnCurrent(this.state, threadId, turnId);
 	}
 
 	setTurnHost(host: IOrchTurnHost): IDisposable {
@@ -334,6 +410,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			if (this.state.threads && Object.keys(this.state.threads).length) {
 				this._onDidChange.fire({ threads: Object.keys(this.state.threads), tasks: Object.keys(this.state.tasks) });
 			}
+			this.scheduleLimitResume();
 		} catch (err) {
 			this.logService.error('[volt orchestrator] restore failed', err);
 		} finally {
@@ -516,6 +593,23 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 
 	//#region Runtime observer
 
+	/** Remembers that the usage limit stopped this run, and the latest reset time any notice named. */
+	private noteLimit(runId: string, event: Extract<IVoltEvent, { type: 'notice' | 'error' }>): void {
+		if (!isUsageLimitStop(event)) {
+			return;
+		}
+		const message = event.type === 'error' ? event.message : [event.title, event.description].filter(Boolean).join(' · ');
+		const now = Date.now();
+		const resetAt = (event.type === 'notice' ? event.resetAt : undefined)
+			?? parseUsageLimitReset(message, now);
+		const previous = this.limitedRuns.get(runId);
+		this.limitedRuns.set(runId, {
+			// The provider's own sentence beats Volt's summary of it.
+			message: previous && previous.message.length > message.length ? previous.message : message,
+			...(resetAt !== undefined || previous?.resetAt !== undefined ? { resetAt: Math.max(resetAt ?? 0, previous?.resetAt ?? 0) } : {}),
+		});
+	}
+
 	/** Every runtime event of a chat the orchestrator knows becomes a command (most are no-ops). */
 	private observe(envelope: IVoltEventEnvelope): void {
 		const threadId = envelope.sessionId;
@@ -532,14 +626,29 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			}
 			case 'error':
 				this.lastError.set(envelope.runId, event.message);
+				this.noteLimit(envelope.runId, event);
+				return;
+			case 'notice':
+				this.noteLimit(envelope.runId, event);
 				return;
 			case 'run.end': {
-				const outcome: OrchOutcome = event.reason === 'done' ? 'done' : event.reason === 'abort' ? 'cancelled' : 'failed';
-				const error = this.lastError.get(envelope.runId);
+				const limited = this.limitedRuns.get(envelope.runId);
+				this.limitedRuns.delete(envelope.runId);
+				// A run the usage limit stopped failed, even when the provider ended it as a normal turn.
+				const outcome: OrchOutcome = event.reason === 'abort' ? 'cancelled' : limited ? 'failed' : event.reason === 'done' ? 'done' : 'failed';
+				const error = limited?.message ?? this.lastError.get(envelope.runId);
 				this.lastError.delete(envelope.runId);
 				const reply = outcome === 'done' ? this.lastReply(threadId) : undefined;
 				this.clearCancelWatch(threadId);
-				this.apply({ type: 'run.settled', threadId, runId: envelope.runId, outcome, ...(error && outcome === 'failed' ? { error } : {}), ...(reply !== undefined ? { reply } : {}) });
+				this.apply({
+					type: 'run.settled',
+					threadId,
+					runId: envelope.runId,
+					outcome,
+					...(error && outcome === 'failed' ? { error } : {}),
+					...(reply !== undefined ? { reply } : {}),
+					...(limited && outcome === 'failed' ? { limit: limited.resetAt !== undefined ? { resetAt: limited.resetAt } : {} } : {}),
+				});
 				return;
 			}
 			case 'question.ask':

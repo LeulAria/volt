@@ -33,6 +33,9 @@ export type IVoltToolView =
 	| { readonly card: 'web'; readonly kind: 'search'; readonly sources: readonly { readonly url: string; readonly title?: string }[]; readonly answer?: string }
 	| { readonly card: 'web'; readonly kind: 'fetch'; readonly url: string; readonly statusCode: number };
 
+/** Where a context compaction is: summarizing, or how it ended. */
+export type VoltCompactionStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+
 export type IVoltEvent =
 	| { type: 'run.start'; runId: string; mode: VoltMode }
 	/** Which lane the intent router chose and why. Emitted once per run right after run.start. */
@@ -85,9 +88,18 @@ export type IVoltEvent =
 	 * and `cacheWrite` is prompt tokens written to it. `used` is the whole prompt the model saw.
 	 */
 	| { type: 'usage'; input: number; output: number; used?: number; cache?: number; cacheWrite?: number; size?: number }
+	/**
+	 * The agent compacted the conversation (`/compact`, or on its own near the end of the window).
+	 * Later events with the same `id` patch the first: an absent field keeps its value. `preTokens`
+	 * and `postTokens` are the context before and after as the agent counts it (Claude's `postTokens`
+	 * is the kept summary alone, without the system prompt and tools). `summary` replaces the kept
+	 * text, `summaryDelta` appends to it.
+	 */
+	| { type: 'context.compaction'; id: string; status?: VoltCompactionStatus; trigger?: 'manual' | 'auto'; preTokens?: number; postTokens?: number; durationMs?: number; summary?: string; summaryDelta?: string; error?: string }
 	| { type: 'error'; message: string; retryable?: boolean }
 	/** Provider status that is not assistant prose: usage limits, retries, and other ACP notices. */
-	| { type: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string }
+	/** `resetAt` (epoch ms): when a usage limit resets, when the provider says so in data rather than prose. */
+	| { type: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; resetAt?: number }
 	/** Provider stream is being retried. Live-only in spirit; persisted so the trace shows the stall. */
 	| { type: 'retry'; attempt: number; delayMs: number; message: string }
 	| { type: 'finish'; reason: 'stop' | 'tool_calls' | 'length' | 'error' | 'abort' }

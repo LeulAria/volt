@@ -82,7 +82,6 @@ import {
 	AGENT_FIND_TOGGLE_CASE_COMMAND_ID,
 	AGENT_FIND_TOGGLE_REGEX_COMMAND_ID,
 	AGENT_FIND_TOGGLE_WHOLE_WORD_COMMAND_ID,
-	AGENT_SIDE_PANEL_ID,
 	AGENT_SIDE_PANEL_VIEW_ID,
 	AGENT_SUBMIT_COMMAND_ID,
 	AgentEditorInput,
@@ -91,6 +90,7 @@ import {
 	OPEN_AGENT_SIDE_PANEL_COMMAND_ID,
 	AgentSidePanelIcon,
 } from './agentEditorInput.js';
+import { AGENT_SIDE_PANEL_ID } from '../../../../browser/parts/titlebar/agentLayoutChrome.js';
 import { CONTEXT_AGENT_FIND_INPUT_FOCUSED, CONTEXT_AGENT_FIND_WIDGET_VISIBLE, CONTEXT_IN_AGENT_INPUT } from './agentFindWidget.js';
 import { AgentSidePanel } from '../chrome/agentSidePanel.js';
 import { openAgentPanel, startAgentChat } from '../workspace/agentPanels.js';

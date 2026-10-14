@@ -6,6 +6,9 @@
 import { getWindow } from '../../../../../base/browser/dom.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { localize } from '../../../../../nls.js';
+import { formatDuration } from './agentMentionImages.js';
+
+export { formatDuration };
 
 /** A still from a video, sent to the model as an image. `time` is in seconds from the clip's start. */
 export interface IAgentVideoFrame {
@@ -60,17 +63,6 @@ export function normalizeVideoMime(mime: string): string {
 	return mime.split(';')[0].trim().toLowerCase() || 'video/mp4';
 }
 
-/** `0:09`, `1:02:03`; `precise` adds tenths (`0:09.4`). */
-export function formatDuration(seconds: number, precise = false): string {
-	const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
-	const tenths = Math.round(safe * 10);
-	const whole = precise ? Math.floor(tenths / 10) : Math.round(safe);
-	const h = Math.floor(whole / 3600);
-	const m = Math.floor((whole % 3600) / 60);
-	const s = whole % 60;
-	const clock = h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
-	return precise ? `${clock}.${tenths % 10}` : clock;
-}
 
 /** How many stills a clip of this length sends. */
 export function videoFrameCount(duration: number): number {

@@ -126,12 +126,77 @@ const PENDING_SYNC_MS = 40_000;
 const WATCH_SYNC_MS = 45_000;
 const CLOSED_SYNC_MS = 15 * 60_000;
 const DISCOVERY_MS = 2 * 60_000;
+
+/** What a window mirrors of the pull request service (see AgentPullRequestService.exportState). */
+export interface IAgentPrExport {
+	readonly chats: Readonly<Record<string, readonly IAgentPrLink[]>>;
+	readonly known: Readonly<Record<string, IVoltPullRequest>>;
+	readonly hosts: Readonly<Record<string, { readonly code: VoltPrErrorCode; readonly message: string }>>;
+}
+
+/** The merge method last used on a repository (the merge button's default). */
+export function readPrMergeMethod(storageService: IStorageService, repo: IVoltPrRepoRef): VoltPrMergeMethod | undefined {
+	const method = readPrMergeMethods(storageService)[prRepoId(repo)];
+	return method === 'merge' || method === 'squash' || method === 'rebase' ? method : undefined;
+}
+
+export function storePrMergeMethod(storageService: IStorageService, repo: IVoltPrRepoRef, method: VoltPrMergeMethod): void {
+	const all = readPrMergeMethods(storageService);
+	all[prRepoId(repo)] = method;
+	storageService.store(PR_MERGE_METHOD_KEY, JSON.stringify(all), StorageScope.PROFILE, StorageTarget.USER);
+}
+
+function readPrMergeMethods(storageService: IStorageService): Record<string, string> {
+	try {
+		const parsed = JSON.parse(storageService.get(PR_MERGE_METHOD_KEY, StorageScope.PROFILE, '{}'));
+		return parsed && typeof parsed === 'object' ? parsed : {};
+	} catch {
+		return {};
+	}
+}
+
+/** The chats a pull request is linked to (not dismissed). */
+export function prSessionsFor(chats: Iterable<[string, readonly IAgentPrLink[]]>, key: string): string[] {
+	const out: string[] = [];
+	for (const [sessionId, links] of chats) {
+		if (links.some(link => link.key === key && link.source !== 'dismissed')) {
+			out.push(sessionId);
+		}
+	}
+	return out;
+}
+
+/** The newest read of a pull request: from any chat's link, else the last one seen. */
+export function prSnapshot(chats: ReadonlyMap<string, readonly IAgentPrLink[]>, known: ReadonlyMap<string, IVoltPullRequest>, key: string): IVoltPullRequest | undefined {
+	let best: IAgentPrLink | undefined;
+	for (const links of chats.values()) {
+		for (const link of links) {
+			if (link.key === key && link.snapshot && (!best || (link.syncedAt ?? 0) > (best.syncedAt ?? 0))) {
+				best = link;
+			}
+		}
+	}
+	return best?.snapshot ?? known.get(key);
+}
+
+/** The folder a chat works in: its worktree, its project, or the folder it was started in. */
+export function prFolderFor(meta: IAgentSessionMeta | undefined, root: URI | undefined): string | undefined {
+	if (meta?.worktreePath) {
+		return meta.worktreePath;
+	}
+	if (root?.scheme === 'file') {
+		return root.fsPath;
+	}
+	const folder = meta?.workspaceFolders?.[0] ?? meta?.workspaceFolder;
+	return folder && !folder.includes('://') ? folder : undefined;
+}
+
 /** Chats untouched for longer are not searched for branch pull requests. */
 const DISCOVERY_RECENT_MS = 7 * 24 * 3_600_000;
 const REPO_TTL_MS = 30_000;
 const DETAIL_TTL_MS = 8_000;
 const MAX_BACKOFF_MS = 10 * 60_000;
-const MERGE_METHOD_KEY = 'volt.pullRequests.mergeMethods';
+const PR_MERGE_METHOD_KEY = 'volt.pullRequests.mergeMethods';
 
 interface IStoreFile {
 	readonly version: number;
@@ -308,25 +373,11 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 	}
 
 	sessionsFor(key: string): string[] {
-		const out: string[] = [];
-		for (const [sessionId, links] of this.chats) {
-			if (links.some(link => link.key === key && link.source !== 'dismissed')) {
-				out.push(sessionId);
-			}
-		}
-		return out;
+		return prSessionsFor(this.chats, key);
 	}
 
 	snapshot(key: string): IVoltPullRequest | undefined {
-		let best: IAgentPrLink | undefined;
-		for (const links of this.chats.values()) {
-			for (const link of links) {
-				if (link.key === key && link.snapshot && (!best || (link.syncedAt ?? 0) > (best.syncedAt ?? 0))) {
-					best = link;
-				}
-			}
-		}
-		return best?.snapshot ?? this.known.get(key);
+		return prSnapshot(this.chats, this.known, key);
 	}
 
 	hostProblem(host: string): { readonly code: VoltPrErrorCode; readonly message: string } | undefined {
@@ -334,16 +385,18 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 	}
 
 	folderFor(sessionId: string): string | undefined {
-		const meta = this.history.get(sessionId);
-		if (meta?.worktreePath) {
-			return meta.worktreePath;
+		return prFolderFor(this.history.get(sessionId), this.sessionContext.rootFor(sessionId));
+	}
+
+	/** Links, last reads and host problems, for the agent server to mirror to its windows. */
+	exportState(): IAgentPrExport {
+		const hosts: Record<string, { readonly code: VoltPrErrorCode; readonly message: string }> = {};
+		for (const [host, state] of this.hosts) {
+			if (state.problem) {
+				hosts[host] = state.problem;
+			}
 		}
-		const root = this.sessionContext.rootFor(sessionId);
-		if (root?.scheme === 'file') {
-			return root.fsPath;
-		}
-		const folder = meta?.workspaceFolders?.[0] ?? meta?.workspaceFolder;
-		return folder && !folder.includes('://') ? folder : undefined;
+		return { chats: Object.fromEntries(this.chats), known: Object.fromEntries(this.known), hosts };
 	}
 
 	async repoFor(sessionId: string): Promise<IVoltPrRepo | undefined> {
@@ -388,24 +441,11 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 	}
 
 	lastMergeMethod(repo: IVoltPrRepoRef): VoltPrMergeMethod | undefined {
-		const all = this.readMergeMethods();
-		const method = all[repoId(repo)];
-		return method === 'merge' || method === 'squash' || method === 'rebase' ? method : undefined;
+		return readPrMergeMethod(this.storageService, repo);
 	}
 
 	rememberMergeMethod(repo: IVoltPrRepoRef, method: VoltPrMergeMethod): void {
-		const all = this.readMergeMethods();
-		all[repoId(repo)] = method;
-		this.storageService.store(MERGE_METHOD_KEY, JSON.stringify(all), StorageScope.PROFILE, StorageTarget.USER);
-	}
-
-	private readMergeMethods(): Record<string, string> {
-		try {
-			const parsed = JSON.parse(this.storageService.get(MERGE_METHOD_KEY, StorageScope.PROFILE, '{}'));
-			return parsed && typeof parsed === 'object' ? parsed : {};
-		} catch {
-			return {};
-		}
+		storePrMergeMethod(this.storageService, repo, method);
 	}
 
 	//#endregion
@@ -831,7 +871,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 			if (!repo || repo.provider !== 'github' || !repo.branch || isTrunkBranch(repo.branch) || !this.hostReady(repo.host, false)) {
 				continue;
 			}
-			const key = `${repoId(repo)}\u0000${repo.branch}`;
+			const key = `${prRepoId(repo)}\u0000${repo.branch}`;
 			const entry = byBranch.get(key) ?? { repo, chats: [] };
 			entry.chats.push(meta);
 			byBranch.set(key, entry);
@@ -1080,12 +1120,12 @@ function repoFromArg(value: string, host: string): IVoltPrRepoRef {
 	return { host: host.toLowerCase(), owner, name: name.replace(/\.git$/, '') };
 }
 
-function repoId(repo: IVoltPrRepoRef): string {
+export function prRepoId(repo: IVoltPrRepoRef): string {
 	return `${repo.host}/${repo.owner}/${repo.name}`.toLowerCase();
 }
 
 function sameRepoRef(a: IVoltPrRepoRef, b: IVoltPrRepoRef): boolean {
-	return repoId(a) === repoId(b);
+	return prRepoId(a) === prRepoId(b);
 }
 
 /** Links keep the summary fields only (a detail read carries files and comments too). */

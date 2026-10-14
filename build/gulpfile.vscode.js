@@ -119,8 +119,19 @@ const vscodeResources = [
 const bootstrapEntryPoints = [
 	'out-build/main.js',
 	'out-build/cli.js',
-	'out-build/bootstrap-fork.js'
+	'out-build/bootstrap-fork.js',
+	// Volt's agent server: inlines vs/server/node/voltAgent like server-main inlines server.main.
+	'out-build/volt-agent-server-main.js'
 ];
+
+// The Volt web app the agent server serves (built with esbuild from the agent window's modules).
+const compileVoltWebTask = task.define('compile-volt-web', () => new Promise((resolve, reject) => {
+	const cp = require('child_process');
+	const child = cp.spawn(process.execPath, [path.join(root, 'build', 'volt', 'buildAgentWeb.mjs'), '--minify'], { stdio: 'inherit', cwd: root });
+	child.on('error', reject);
+	child.on('exit', code => code === 0 ? resolve() : reject(new Error(`buildAgentWeb exited with ${code}`)));
+}));
+gulp.task(compileVoltWebTask);
 
 const bundleVSCodeTask = task.define('bundle-vscode', task.series(
 	util.rimraf('out-vscode'),
@@ -243,7 +254,9 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 
 		const extensions = gulp.src(['.build/extensions/**', ...platformSpecificBuiltInExtensionsExclusions], { base: '.build', dot: true });
 
-		const sources = es.merge(src, extensions)
+		const voltWeb = gulp.src('out-volt-web/**', { base: '.' });
+
+		const sources = es.merge(src, extensions, voltWeb)
 			.pipe(filter(['**', '!**/*.{js,css}.map'], { dot: true }));
 
 		let version = packageJson.version;
@@ -508,6 +521,7 @@ BUILD_TARGETS.forEach(buildTarget => {
 			compileNonNativeExtensionsBuildTask,
 			compileExtensionMediaBuildTask,
 			minified ? minifyVSCodeTask : bundleVSCodeTask,
+			compileVoltWebTask,
 			vscodeTaskCI
 		));
 		gulp.task(vscodeTask);

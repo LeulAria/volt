@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { isLiveTaskState } from './agentTasks.js';
-import { IOrchConflict, IOrchEventEnvelope, IOrchQueueItem, IOrchState, IOrchTask, IOrchThread, IOrchTurn, ORCHESTRATOR_STATE_VERSION } from './orchestrator.js';
+import { IOrchConflict, IOrchEventEnvelope, IOrchLimitStop, IOrchQueueItem, IOrchState, IOrchTask, IOrchThread, IOrchTurn, ORCHESTRATOR_STATE_VERSION } from './orchestrator.js';
 
 /**
  * Orchestration is persisted per root chat: the chat, its subagents' chats and their tasks in one
@@ -58,7 +58,7 @@ export function extractRoot(state: IOrchState, rootId: string, events: readonly 
 /** The root has something a restart must reconcile or the user must see. */
 export function isRootLive(state: IOrchState, rootId: string): boolean {
 	for (const thread of Object.values(state.threads)) {
-		if (thread.rootId === rootId && (thread.active || thread.queue.length || thread.pause || thread.inputs.length || thread.pendingHandoff)) {
+		if (thread.rootId === rootId && (thread.active || thread.queue.length || thread.pause || thread.inputs.length || thread.pendingHandoff || thread.limit?.autoResume)) {
 			return true;
 		}
 	}
@@ -256,6 +256,26 @@ function parseThread(value: unknown): IOrchThread | undefined {
 		...(num(thread.wakeups) ? { wakeups: thread.wakeups as number } : {}),
 		...(thread.pendingHandoff && typeof (thread.pendingHandoff as { to?: unknown }).to === 'string' ? { pendingHandoff: thread.pendingHandoff as IOrchThread['pendingHandoff'] } : {}),
 		handoffs: Array.isArray(thread.handoffs) ? thread.handoffs.filter(item => !!item && typeof (item as { to?: unknown }).to === 'string' && typeof (item as { at?: unknown }).at === 'number') as IOrchThread['handoffs'] : [],
+		...withLimit(thread.limit),
+	};
+}
+
+function withLimit(value: unknown): { limit?: IOrchLimitStop } {
+	const limit = value as Record<string, unknown> | undefined;
+	if (!limit || typeof limit.turnId !== 'string' || num(limit.at) === undefined) {
+		return {};
+	}
+	return {
+		limit: {
+			turnId: limit.turnId,
+			at: limit.at as number,
+			...(num(limit.resetAt) !== undefined ? { resetAt: limit.resetAt as number } : {}),
+			...(str(limit.message) ? { message: limit.message as string } : {}),
+			...(str(limit.mode) ? { mode: limit.mode as string } : {}),
+			...(str(limit.modelRef) ? { modelRef: limit.modelRef as string } : {}),
+			...(limit.autoResume === true ? { autoResume: true } : {}),
+			...(limit.snooze === true ? { snooze: true } : {}),
+		},
 	};
 }
 

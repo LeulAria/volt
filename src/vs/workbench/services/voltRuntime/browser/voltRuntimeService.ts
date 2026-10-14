@@ -2192,7 +2192,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		const older = messages.slice(0, boundary);
 		const carry = { files: state.ledger.summary(), todo: state.todo };
-		this.emitEngine(session, run, { type: 'notice', severity: 'info', title: 'Compacting the conversation to keep it within the model\'s context.' });
+		const compactionId = generateUuid();
+		const startedAt = Date.now();
+		const preTokens = estimateTokens(input.system) + totalTokens(messages);
+		this.emitEngine(session, run, { type: 'context.compaction', id: compactionId, status: 'running', trigger: 'auto', preTokens });
 		let summary: string | undefined;
 		try {
 			let text = '';
@@ -2219,7 +2222,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		messages.splice(0, messages.length, ...next);
 		state.ledger.invalidateReferences();
 		state.promptTokens = estimateTokens(input.system) + totalTokens(messages);
-		this.emitEngine(session, run, { type: 'compaction', stages: [summary ? 'summarize' : 'mechanical'], dropped: boundary });
+		this.emitEngine(session, run, {
+			type: 'context.compaction',
+			id: compactionId,
+			status: 'completed',
+			postTokens: state.promptTokens,
+			durationMs: Date.now() - startedAt,
+			...(summary ? { summary } : {}),
+		});
 		return true;
 	}
 

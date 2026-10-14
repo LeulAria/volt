@@ -144,7 +144,8 @@ button.volt-tr-header:hover .volt-tr-chevron,
 
 /* Live verbs shimmer like the status line. */
 .volt-tr-action.shimmer,
-.volt-tr-subagent-status.shimmer {
+.volt-tr-subagent-status.shimmer,
+.volt-tr-compaction-label.shimmer {
 	background: linear-gradient(90deg,
 		var(--volt-md-fg-quaternary) 0%,
 		var(--volt-md-fg-quaternary) calc(var(--volt-shimmer, 0%) - 18%),
@@ -163,13 +164,15 @@ button.volt-tr-header:hover .volt-tr-chevron,
 }
 
 .volt-tr-action.shimmer,
-.volt-tr-subagent-status.shimmer {
+.volt-tr-subagent-status.shimmer,
+.volt-tr-compaction-label.shimmer {
 	background-size: 200% 100%;
 }
 
 @media (prefers-reduced-motion: reduce) {
 	.volt-tr-action.shimmer,
-	.volt-tr-subagent-status.shimmer {
+	.volt-tr-subagent-status.shimmer,
+	.volt-tr-compaction-label.shimmer {
 		animation: none;
 		color: var(--volt-md-fg-tertiary);
 		background: none;
@@ -918,6 +921,115 @@ button.volt-tr-header:hover .volt-tr-chevron,
 	.volt-tr-todos.live .volt-tr-todo.current .volt-tr-todo-mark .codicon {
 		animation: none;
 	}
+}
+
+/* Context compaction: a divider across the transcript, "Compacting context" while the agent summarizes. */
+
+.volt-tr-compaction {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.volt-tr-compaction-line {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+	min-height: 24px;
+}
+
+.volt-tr-compaction-line::before,
+.volt-tr-compaction-line::after {
+	content: '';
+	flex: 1;
+	min-width: 16px;
+	height: 1px;
+	background: var(--volt-md-stroke);
+}
+
+.volt-tr-compaction-pill {
+	flex: 0 1 auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	padding: 0;
+	margin: 0;
+	border: 0;
+	background: none;
+	font: inherit;
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--volt-md-fg-tertiary);
+	white-space: nowrap;
+	transition: color 0.1s ease-in-out;
+}
+
+button.volt-tr-compaction-pill {
+	cursor: pointer;
+}
+
+button.volt-tr-compaction-pill:hover,
+.volt-tr-compaction.open .volt-tr-compaction-pill {
+	color: var(--volt-md-fg-secondary);
+}
+
+button.volt-tr-compaction-pill:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+.volt-tr-compaction-icon {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	color: var(--volt-md-icon-tertiary);
+}
+
+.volt-tr-compaction-icon svg {
+	width: 13px;
+	height: 13px;
+}
+
+.volt-tr-compaction-icon .codicon {
+	font-size: 13px;
+}
+
+.volt-tr-compaction.failed .volt-tr-compaction-icon {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-tr-compaction-label {
+	flex: none;
+}
+
+.volt-tr-compaction-detail {
+	min-width: 0;
+	color: var(--volt-md-fg-quaternary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-tr-compaction .volt-tr-elapsed {
+	margin-left: 0;
+}
+
+button.volt-tr-compaction-pill:hover .volt-tr-chevron,
+.volt-tr-compaction.open .volt-tr-chevron {
+	opacity: 1;
+}
+
+.volt-tr-compaction.open .volt-tr-chevron {
+	transform: none;
+}
+
+.volt-tr-compaction-summary {
+	margin-top: 8px;
+	padding: 10px 14px;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
 }
 
 /* A message the user steered the running agent with. */

@@ -1,0 +1,26 @@
+{
+	// Declarations for the mobile app's bundled core (buildMobileCore.mjs), so the app type-checks
+	// against Volt's sources without compiling them.
+	"extends": "../../src/tsconfig.base.json",
+	"compilerOptions": {
+		"declaration": true,
+		"emitDeclarationOnly": true,
+		"noUnusedLocals": false,
+		"skipLibCheck": true,
+		"rootDir": "../..",
+		"outDir": "../../apps/mobile/src/core/types",
+		"types": ["trusted-types"],
+		"typeRoots": ["../../node_modules/@types"]
+	},
+	"files": [
+		"mobileCore.ts",
+		"../../src/typings/base-common.d.ts",
+		"../../src/typings/crypto.d.ts",
+		"../../src/typings/css.d.ts",
+		"../../src/typings/editContext.d.ts",
+		"../../src/typings/thenable.d.ts",
+		"../../src/typings/vscode-globals-nls.d.ts",
+		"../../src/typings/vscode-globals-product.d.ts",
+		"../../src/typings/vscode-globals-ttp.d.ts"
+	]
+}

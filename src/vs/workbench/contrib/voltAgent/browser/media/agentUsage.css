@@ -15,6 +15,8 @@
 	--volt-usage-claude: #e08a6a;
 	--volt-usage-codex: #d7dbe3;
 	--volt-usage-cursor: #7f9dff;
+	--volt-usage-opencode: #b8c4a0;
+	--volt-usage-grok: #a9a9b3;
 	--volt-usage-plate: var(--volt-agent-window-bg-base, var(--vscode-editor-background));
 	/* Token types and speeds (agentUsageShareBar.ts). Hues no agent uses; validated for this surface. */
 	--volt-usage-type-input: #199e70;
@@ -51,6 +53,8 @@
 	--volt-usage-claude: #c8623f;
 	--volt-usage-codex: #3b3f47;
 	--volt-usage-cursor: #4f74e8;
+	--volt-usage-opencode: #5e6b45;
+	--volt-usage-grok: #4b4b55;
 	--volt-usage-panel: color-mix(in srgb, #000 4%, transparent);
 	--volt-usage-type-input: #1baf7a;
 	--volt-usage-type-cache-read: #4a3aa7;
@@ -1057,6 +1061,8 @@
 .volt-usage-limit-group[data-provider="claude"] { --volt-usage-tint: var(--volt-usage-claude); }
 .volt-usage-limit-group[data-provider="codex"] { --volt-usage-tint: var(--volt-usage-codex); }
 .volt-usage-limit-group[data-provider="cursor"] { --volt-usage-tint: var(--volt-usage-cursor); }
+.volt-usage-limit-group[data-provider="opencode"] { --volt-usage-tint: var(--volt-usage-opencode); }
+.volt-usage-limit-group[data-provider="grok"] { --volt-usage-tint: var(--volt-usage-grok); }
 
 .volt-usage-limit-title {
 	display: flex;
@@ -1083,6 +1089,16 @@
 	font-size: 10.5px;
 	font-weight: 600;
 	letter-spacing: 0.02em;
+}
+
+.volt-usage-limit-title .account,
+.volt-usage-limit-title .accounts {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-usage-muted);
+	font-size: 12px;
 }
 
 .volt-usage-limit-title .stale {
@@ -1193,10 +1209,225 @@
 
 .volt-usage-limit-credit {
 	display: inline-flex;
+	flex-wrap: wrap;
 	align-items: center;
 	gap: 7px;
 	color: var(--volt-usage-muted);
 	font-size: 12.5px;
+}
+
+.volt-usage-limit-credit .volt-usage-more.redeem {
+	margin: 0 0 0 4px;
+	height: 24px;
+}
+
+.volt-usage-more:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+/* Accounts under a pooled provider, and the machines list: hairline rows under the panel. */
+
+.volt-usage-accounts,
+.volt-usage-machine-list {
+	display: flex;
+	flex-direction: column;
+	margin-top: 8px;
+	border-radius: 14px;
+	background: var(--volt-usage-panel);
+}
+
+.volt-usage-account,
+.volt-usage-machine {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 18px;
+	padding: 12px 22px;
+}
+
+.volt-usage-account + .volt-usage-account,
+.volt-usage-machine + .volt-usage-machine {
+	border-top: 1px solid var(--volt-usage-line);
+}
+
+.volt-usage-account .who,
+.volt-usage-machine .who {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 180px;
+	flex: 1 1 180px;
+}
+
+.volt-usage-account .who .label,
+.volt-usage-machine .who .label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-weight: 500;
+}
+
+.volt-usage-account .who .detail,
+.volt-usage-machine .who .detail {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+}
+
+.volt-usage-account .windows {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 14px;
+	color: var(--volt-usage-muted);
+	font-size: 12.5px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-usage-account .windows .high {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-usage-account .windows .full {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-usage-machine .status {
+	flex: none;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--vscode-testing-iconPassed, #3fb950);
+}
+
+.volt-usage-machine[data-state="offline"] .status {
+	background: var(--volt-usage-faint);
+}
+
+.volt-usage-machine[data-state="unauthorized"] .status,
+.volt-usage-machine[data-state="error"] .status {
+	background: var(--vscode-editorWarning-foreground);
+}
+
+.volt-usage-machine-empty {
+	padding: 14px 22px;
+	color: var(--volt-usage-muted);
+	font-size: 12.5px;
+	line-height: 1.5;
+}
+
+.volt-usage-machine-actions {
+	display: flex;
+	gap: 6px;
+	margin-left: 8px;
+}
+
+.volt-usage-icon-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--volt-usage-muted);
+	cursor: pointer;
+}
+
+.volt-usage-icon-button:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-usage-message.compact {
+	padding: 40px 24px;
+}
+
+.volt-usage-row .num.custom-price {
+	text-decoration: underline dotted color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
+	text-underline-offset: 3px;
+}
+
+/* A model's price in the model dialog: the summary line, or the form to set one. */
+
+.volt-usage-price {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	color: var(--volt-usage-muted);
+	font-size: 12.5px;
+}
+
+.volt-usage-price .summary {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 6px;
+}
+
+.volt-usage-price .summary .text {
+	margin-right: 4px;
+}
+
+.volt-usage-price .volt-usage-more {
+	margin: 0;
+}
+
+.volt-usage-price .fields {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 10px;
+}
+
+.volt-usage-price .field {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+}
+
+.volt-usage-price input {
+	box-sizing: border-box;
+	width: 100%;
+	height: 28px;
+	padding: 0 8px;
+	border: 1px solid var(--vscode-input-border, var(--volt-usage-line));
+	border-radius: 6px;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	font: inherit;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-usage-price input:focus {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-usage-price .error {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-usage-price .error:empty {
+	display: none;
+}
+
+.volt-usage-price .actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 6px;
+}
+
+.volt-usage-price .volt-usage-more.primary {
+	background: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+}
+
+.volt-usage-price .volt-usage-more.primary:hover {
+	background: var(--vscode-button-hoverBackground);
 }
 
 /* Part-to-whole bars: cost by type and speed, tokens by type. One alone takes the full row. */

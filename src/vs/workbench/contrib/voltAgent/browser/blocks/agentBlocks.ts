@@ -238,7 +238,32 @@ export type AgentSegment =
 	 * Provider or harness status. `supervision` marks a run supervisor's finding (a loop, a stall,
 	 * a budget stop): the transcript draws it as a tray with actions instead of a plain line.
 	 */
-	| { kind: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; supervision?: SupervisionKind };
+	| { kind: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; supervision?: SupervisionKind }
+	/** The agent compacted the conversation here: a divider while it summarizes, then what it kept. */
+	| { kind: 'compaction'; compaction: IAgentCompaction };
+
+/** A context compaction in a reply (`/compact`, or the agent's own when the window filled up). */
+export interface IAgentCompaction {
+	id: string;
+	status: 'running' | 'completed' | 'failed' | 'cancelled';
+	trigger?: 'manual' | 'auto';
+	/** The context before, as the agent counted it. */
+	preTokens?: number;
+	/** The context after, as the agent counted it (Claude: the kept summary alone). */
+	postTokens?: number;
+	durationMs?: number;
+	/** The summary the conversation continues from, when the agent shares it. */
+	summary?: string;
+	error?: string;
+	startedAt?: number;
+	/** Drawn when a `/compact` turn started, before the agent reported its own compaction. */
+	provisional?: boolean;
+}
+
+/** `/compact`, alone or with instructions for the summary. */
+export function isCompactCommand(text: string | undefined): boolean {
+	return /^\/compact(?:\s|$)/.test(text?.trim() ?? '');
+}
 
 /** What a run supervisor reported: the agent repeats itself, went quiet, or hit a step/time/token budget. */
 export type SupervisionKind = 'loop' | 'stall' | 'budget';

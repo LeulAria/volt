@@ -80,7 +80,8 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 			});
 		case 'turn.dispatched':
 			return updateThread(state, event.threadId, thread => {
-				const { pause: _pause, wakeups: _wakeups, ...rest } = thread;
+				// A new turn (the resume, or anything the user sent) ends the limit stop.
+				const { pause: _pause, wakeups: _wakeups, limit: _limit, ...rest } = thread;
 				const automatic = event.turn.kind === 'notification';
 				const wakeups = automatic ? (thread.wakeups ?? 0) + 1 : event.turn.kind === 'external' ? thread.wakeups : 0;
 				return { ...rest, active: event.turn, turns: thread.turns + 1, ...(wakeups ? { wakeups } : {}) };
@@ -106,6 +107,16 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 					inputs: [],
 					last: { turnId: active.id, kind: active.kind, outcome: event.outcome, at: event.at, ...(event.error ? { error: event.error } : {}) },
 				};
+			});
+		case 'limit.reached':
+			return updateThread(state, event.threadId, thread => ({ ...thread, limit: event.limit }));
+		case 'limit.configured':
+			return updateThread(state, event.threadId, thread => {
+				if (thread.limit?.turnId !== event.turnId) {
+					return thread;
+				}
+				const { autoResume: _autoResume, snooze: _snooze, ...rest } = thread.limit;
+				return { ...thread, limit: { ...rest, ...(event.autoResume ? { autoResume: true } : {}), ...(event.snooze ? { snooze: true } : {}) } };
 			});
 		case 'input.opened':
 			return updateThread(state, event.threadId, thread => thread.inputs.some(input => input.id === event.input.id)

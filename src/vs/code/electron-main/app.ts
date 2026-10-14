@@ -123,6 +123,8 @@ import { IWebContentExtractorService } from '../../platform/webContentExtractor/
 import { NativeWebContentExtractorService } from '../../platform/webContentExtractor/electron-main/webContentExtractorService.js';
 import { IVoltStdioService, VOLT_STDIO_CHANNEL_NAME } from '../../platform/voltStdio/common/voltStdio.js';
 import { createVoltStdioChannel, VoltStdioMainService } from '../../platform/voltStdio/electron-main/voltStdioMainService.js';
+import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME } from '../../platform/voltAgentServer/common/agentServerService.js';
+import { VoltAgentServerMainService } from '../../platform/voltAgentServer/electron-main/agentServerMainService.js';
 import { IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME } from '../../platform/voltHostMcp/common/voltHostMcp.js';
 import { VoltHostMcpMainService } from '../../platform/voltHostMcp/electron-main/voltHostMcpMainService.js';
 import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../platform/voltGit/common/voltGit.js';
@@ -1073,6 +1075,9 @@ export class CodeApplication extends Disposable {
 		// Volt in-app browser (session data, color scheme emulation)
 		services.set(IVoltBrowserService, new SyncDescriptor(VoltBrowserMainService, undefined, false /* proxied to other processes */));
 
+		// Volt agent server (keeps the profile's agent runtime running outside the windows)
+		services.set(IVoltAgentServerMainService, new SyncDescriptor(VoltAgentServerMainService, undefined, true));
+
 		// Webview Manager
 		services.set(IWebviewManagerService, new SyncDescriptor(WebviewMainService));
 
@@ -1254,6 +1259,10 @@ export class CodeApplication extends Disposable {
 		// Volt in-app browser
 		const voltBrowserChannel = ProxyChannel.fromService(accessor.get(IVoltBrowserService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_BROWSER_CHANNEL_NAME, voltBrowserChannel);
+
+		// Volt agent server
+		const voltAgentServerChannel = ProxyChannel.fromService(accessor.get(IVoltAgentServerMainService), disposables);
+		mainProcessElectronServer.registerChannel(VOLT_AGENT_SERVER_CHANNEL_NAME, voltAgentServerChannel);
 
 		// Workspaces
 		const workspacesChannel = ProxyChannel.fromService(accessor.get(IWorkspacesService), disposables);

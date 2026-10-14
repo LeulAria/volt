@@ -274,6 +274,24 @@ export class BrowserAgentDock extends Disposable {
 		this.sync();
 	}
 
+	/** Over a light page the collapsed bar darkens, over a dark one it lightens; undefined follows the theme. */
+	setBackdropTone(tone: 'light' | 'dark' | undefined): void {
+		this.element.classList.toggle('backdrop-light', tone === 'light');
+		this.element.classList.toggle('backdrop-dark', tone === 'dark');
+	}
+
+	/** The middle of the collapsed bar in window coordinates, while it is on screen. */
+	backdropPoint(): { x: number; y: number } | undefined {
+		if (this.mode === 'expanded' || this.element.classList.contains('blocked')) {
+			return undefined;
+		}
+		const rect = this.shellEl.getBoundingClientRect();
+		if (!rect.width || !rect.height) {
+			return undefined;
+		}
+		return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+	}
+
 	layout(): void {
 		if (this.expanded) {
 			if (this.mode === 'expanded') {
@@ -558,6 +576,7 @@ export class BrowserAgentDock extends Disposable {
 			return;
 		}
 		const state = this.dockState();
+		this.composerQueue.setTasks(this.agentEditor?.getTasksCard());
 		const hasTurns = !!state?.turns.length;
 		const streaming = !!state?.streaming;
 		if (streaming) {
@@ -647,7 +666,7 @@ export class BrowserAgentDock extends Disposable {
 					? 0
 					: Math.min(650, Math.round(available * 0.9));
 		const toHeight = mode === 'idle'
-			? 10
+			? 8
 			: mode === 'activity'
 				? 34
 				: mode === 'hover'

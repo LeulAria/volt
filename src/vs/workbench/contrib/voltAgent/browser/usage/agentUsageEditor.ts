@@ -16,14 +16,18 @@ import { Schemas } from '../../../../../base/common/network.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextMenuService } from '../../../../../platform/contextview/browser/contextView.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
-import { IVoltUsageLimitGroup, IVoltUsageLimitWindow, IVoltUsageService, IVoltUsageSnapshot, VOLT_USAGE_PROVIDERS, VoltUsageProvider } from '../../../../../platform/voltUsage/common/voltUsage.js';
+import { IVoltUsageLimitGroup, IVoltUsageLimitWindow, IVoltUsageMachineStatus, IVoltUsageModelPrice, IVoltUsageService, IVoltUsageSnapshot, VOLT_USAGE_PROVIDERS, VOLT_USAGE_SHARE_MACHINE_COMMAND_ID, VoltResetCreditOutcome, VoltUsageProvider } from '../../../../../platform/voltUsage/common/voltUsage.js';
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { getLayoutMode, onDidChangeLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { IEditorOpenContext, IEditorSerializer, IUntypedEditorInput } from '../../../../common/editor.js';
@@ -41,7 +45,7 @@ import { copyUsagePage } from './agentUsagePageMirror.js';
 import { costTypeSegments, hasFasterSpeeds, renderShareBar, speedCostSegments, tokenTypeSegments } from './agentUsageShareBar.js';
 import { formatCost, formatDay, formatDuration, formatPercent, formatResetTime, formatShare, formatSlot, formatTokens } from './agentUsageFormat.js';
 import { createPaceIcon, createRefreshSpinner, createResetIcon, createTicketIcon } from './agentUsageIcons.js';
-import { IUsageModelRow, IUsageSummary, IUsageTotals, limitPace, metricValue, placeholderLimits, placeholderUsage, summarizeUsage, UsageMetric, UsageRange, UsageView } from './agentUsageModel.js';
+import { ILimitPool, IUsageModelRow, IUsageSummary, IUsageTotals, limitPace, metricValue, placeholderLimits, placeholderUsage, poolLimits, summarizeUsage, UsageMetric, UsageRange, UsageView } from './agentUsageModel.js';
 
 export const AGENT_USAGE_EDITOR_ID = 'workbench.editor.voltUsage';
 export const AGENT_USAGE_INPUT_ID = 'workbench.input.voltUsage';
@@ -116,12 +120,16 @@ const PROVIDER_LABELS: Record<VoltUsageProvider, { agent: string; account: strin
 	claude: { agent: 'Claude Code', account: 'Claude' },
 	codex: { agent: 'Codex', account: 'Codex' },
 	cursor: { agent: 'Cursor', account: 'Cursor' },
+	opencode: { agent: 'OpenCode', account: 'OpenCode Go' },
+	grok: { agent: 'Grok', account: 'Grok' },
 };
 
 const PROVIDER_COLORS: Record<VoltUsageProvider, string> = {
 	claude: 'var(--volt-usage-claude)',
 	codex: 'var(--volt-usage-codex)',
 	cursor: 'var(--volt-usage-cursor)',
+	opencode: 'var(--volt-usage-opencode)',
+	grok: 'var(--volt-usage-grok)',
 };
 
 type Breakdown = 'model' | 'day';
@@ -171,6 +179,10 @@ export class AgentUsageEditor extends EditorPane {
 
 	private snapshot: IVoltUsageSnapshot | undefined;
 	private limits: readonly IVoltUsageLimitGroup[] | undefined;
+	private machines: readonly IVoltUsageMachineStatus[] = [];
+	private prices: Record<string, IVoltUsageModelPrice> = {};
+	/** Accounts with a redemption in flight, by `provider|account`. */
+	private readonly redeeming = new Set<string>();
 	private usageError = false;
 	private limitsError = false;
 	private loadingUsage = false;
@@ -194,6 +206,10 @@ export class AgentUsageEditor extends EditorPane {
 		@IVoltUsageService private readonly usageService: IVoltUsageService,
 		@IContextMenuService private readonly contextMenuService: IContextMenuService,
 		@IWorkbenchLayoutService private readonly workbenchLayoutService: IWorkbenchLayoutService,
+		@IDialogService private readonly dialogService: IDialogService,
+		@INotificationService private readonly notificationService: INotificationService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(AgentUsageEditor.ID, group, telemetryService, themeService, storage);
 		this._register(onDidChangeLayoutMode(() => this.syncWindowClass()));
@@ -463,8 +479,17 @@ export class AgentUsageEditor extends EditorPane {
 				}
 			}
 		});
-		await Promise.allSettled([usage, limits]);
+		const extras = Promise.all([this.usageService.getMachines(), this.usageService.getModelPrices()]).then(([machines, prices]) => {
+			if (version === this.loadVersion) {
+				this.machines = machines;
+				this.prices = prices;
+			}
+		}, () => undefined);
+		await Promise.allSettled([usage, limits, extras]);
 		if (version === this.loadVersion) {
+			if (this.view === 'limits') {
+				this.render();
+			}
 			this.refreshButton.classList.remove('spinning');
 			this.refreshButton.removeAttribute('aria-busy');
 		}
@@ -651,7 +676,20 @@ export class AgentUsageEditor extends EditorPane {
 			agentLabel: PROVIDER_LABELS[model.provider].agent,
 			style: { label: PROVIDER_LABELS[model.provider].agent, color: PROVIDER_COLORS[model.provider] },
 			page: this.content,
+			price: this.customPrice(model.model),
+			setPrice: async price => {
+				await this.usageService.setModelPrice(model.model, price);
+				this.dialog.clear();
+				await this.load(true);
+			},
 		});
+	}
+
+	/** The price the user set for a model, matched the way the service matches it. */
+	private customPrice(model: string): IVoltUsageModelPrice | undefined {
+		const key = model.trim().toLowerCase().replace(/\[.*$/, '');
+		const entry = Object.entries(this.prices).find(([id]) => id.trim().toLowerCase().replace(/\[.*$/, '') === key);
+		return entry?.[1];
 	}
 
 	private renderBreakdown(summary: IUsageSummary, metric: UsageMetric): void {
@@ -745,6 +783,10 @@ export class AgentUsageEditor extends EditorPane {
 			const cost = append(row, $('span.num'));
 			cost.textContent = unpriced ? localize('voltUsage.unpriced', "Unpriced") : formatCost(item.cost);
 			cost.classList.toggle('muted', unpriced);
+			if ('model' in item && this.customPrice(item.model)) {
+				cost.classList.add('custom-price');
+				setAgentTooltip(cost, localize('voltUsage.customPriceTip', "Priced at the rates you set"));
+			}
 		});
 		this.renderPager(section, rows.length, pages);
 	}
@@ -801,7 +843,15 @@ export class AgentUsageEditor extends EditorPane {
 		const updated = Date.now() - this.snapshot.generatedAt < 60_000
 			? localize('voltUsage.justNow', "just now")
 			: fromNow(this.snapshot.generatedAt, true);
-		note.textContent = localize('voltUsage.footnote', "From Claude Code and Codex transcripts on this computer and your Cursor account. Each model response is counted once, as it is billed; Claude Code's /stats adds every transcript line, and a response spans several, so its token totals read about twice as high. Prices: {0}. Updated {1}.", this.snapshot.pricingSource, updated);
+		const machines = (this.snapshot.machines ?? []).filter(machine => machine.state === 'ok').map(machine => machine.name);
+		const source = machines.length
+			? localize('voltUsage.footnoteSourceMachines', "From Claude Code and Codex transcripts on this computer and on {0}, and your Cursor account.", machines.join(', '))
+			: localize('voltUsage.footnoteSource', "From Claude Code and Codex transcripts on this computer and your Cursor account.");
+		const custom = Object.keys(this.prices).length;
+		const prices = custom
+			? localize('voltUsage.footnotePricesCustom', "Prices: {0}, and {1} you set.", this.snapshot.pricingSource, custom === 1 ? localize('voltUsage.oneModel', "1 model") : localize('voltUsage.models', "{0} models", custom))
+			: localize('voltUsage.footnotePrices', "Prices: {0}.", this.snapshot.pricingSource);
+		note.textContent = localize('voltUsage.footnote2', "{0} Each model response is counted once, as it is billed; Claude Code's /stats adds every transcript line, and a response spans several, so its token totals read about twice as high. {1} Updated {2}.", source, prices, updated);
 	}
 
 	/** Eases the headline from the last value shown to the new one. */
@@ -877,51 +927,215 @@ export class AgentUsageEditor extends EditorPane {
 			return;
 		}
 		const placeholder = !this.limits;
-		const groups = [...this.limits ?? placeholderLimits()].sort((a, b) => VOLT_USAGE_PROVIDERS.indexOf(a.provider) - VOLT_USAGE_PROVIDERS.indexOf(b.provider));
-		if (!groups.length) {
-			this.renderMessage(localize('voltUsage.noLimits', "Sign in to Claude Code, Codex or Cursor to see your limits here."), false);
-			return;
-		}
+		const pools = poolLimits(this.limits ?? placeholderLimits());
 		const root = append(this.content, $('.volt-usage-limits'));
+		if (!pools.length) {
+			append(root, $('.volt-usage-message.compact')).textContent = localize('voltUsage.noLimits2', "Sign in to Claude Code, Codex, Cursor, OpenCode Go or Grok to see your limits here.");
+		}
 		const now = Date.now();
-		for (const group of groups) {
-			const section = append(root, $('.volt-usage-limit-group'));
-			section.dataset.provider = group.provider;
-			const title = append(section, $('.volt-usage-limit-title'));
-			title.appendChild(createBrandIcon(group.provider, 16));
-			append(title, $('span.name')).textContent = PROVIDER_LABELS[group.provider].account;
-			if (group.plan) {
-				append(title, $('span.plan')).textContent = group.plan;
-			}
-			// A sample from a transcript is as old as the last Codex turn; say so.
-			if (now - group.checkedAt > 5 * 60_000) {
-				append(title, $('span.stale')).textContent = localize('voltUsage.asOf', "as of {0}", fromNow(group.checkedAt, true));
-			}
-			const panel = append(section, $('.volt-usage-limit-panel'));
-			if (group.error || !group.windows.length) {
-				const row = append(panel, $('.volt-usage-limit.error'));
-				row.appendChild(renderIcon(Codicon.info));
-				append(row, $('span')).textContent = group.error ?? localize('voltUsage.noWindows', "No limits reported for this account.");
-				continue;
-			}
-			for (const window of group.windows) {
-				this.renderLimitWindow(panel, group, window, now);
-			}
-			if (group.resetCredits) {
-				const credit = append(panel, $('.volt-usage-limit-credit'));
-				credit.appendChild(createTicketIcon());
-				append(credit, $('span')).textContent = group.resetCredits === 1
-					? localize('voltUsage.oneCredit', "1 free limit reset available in Codex")
-					: localize('voltUsage.credits', "{0} free limit resets available in Codex", group.resetCredits);
-			}
+		for (const pool of pools) {
+			this.renderLimitPool(root, pool, now);
 		}
 		if (placeholder) {
 			this.fadePlaceholder();
+		} else {
+			this.renderMachines(root);
 		}
 	}
 
+	/**
+	 * One provider: its windows (pooled when several accounts are signed in), then the accounts
+	 * themselves when there is more than one, or when one has reset credits to spend.
+	 */
+	private renderLimitPool(root: HTMLElement, pool: ILimitPool, now: number): void {
+		const section = append(root, $('.volt-usage-limit-group'));
+		section.dataset.provider = pool.provider;
+		const single = pool.accounts.length === 1 ? pool.accounts[0] : undefined;
+		const title = append(section, $('.volt-usage-limit-title'));
+		title.appendChild(createBrandIcon(pool.provider, 16));
+		append(title, $('span.name')).textContent = PROVIDER_LABELS[pool.provider].account;
+		const plans = new Set(pool.accounts.map(account => account.plan).filter(Boolean));
+		if (plans.size === 1) {
+			append(title, $('span.plan')).textContent = [...plans][0]!;
+		}
+		if (!single) {
+			append(title, $('span.accounts')).textContent = localize('voltUsage.accountCount', "{0} accounts", pool.accounts.length);
+		} else if (single.account?.label || single.machines?.length) {
+			append(title, $('span.account')).textContent = [single.account?.label, single.machines?.join(', ')].filter(Boolean).join(' · ');
+		}
+		// A sample from a transcript is as old as the last Codex turn; say so.
+		if (now - pool.checkedAt > 5 * 60_000) {
+			append(title, $('span.stale')).textContent = localize('voltUsage.asOf', "as of {0}", fromNow(pool.checkedAt, true));
+		}
+		const panel = append(section, $('.volt-usage-limit-panel'));
+		if (!pool.windows.length) {
+			const row = append(panel, $('.volt-usage-limit.error'));
+			row.appendChild(renderIcon(Codicon.info));
+			append(row, $('span')).textContent = pool.accounts.find(account => account.error)?.error ?? localize('voltUsage.noWindows', "No limits reported for this account.");
+		}
+		for (const window of pool.windows) {
+			this.renderLimitWindow(panel, pool.provider, window, now, single ? undefined : window.accounts);
+		}
+		if (single) {
+			if (single.resetCredits && pool.windows.length) {
+				this.renderCredit(panel, single);
+			}
+			return;
+		}
+		const list = append(section, $('.volt-usage-accounts'));
+		for (const account of pool.accounts) {
+			this.renderAccountRow(list, account, now);
+		}
+	}
+
+	/** One account of several: who it is, where it's signed in, its windows in short, and its reset credits. */
+	private renderAccountRow(parent: HTMLElement, group: IVoltUsageLimitGroup, now: number): void {
+		const row = append(parent, $('.volt-usage-account'));
+		const who = append(row, $('.who'));
+		append(who, $('span.label')).textContent = group.account?.label ?? localize('voltUsage.unnamedAccount', "Account");
+		const detail = [group.plan, group.machines?.join(', ')].filter(Boolean).join(' · ');
+		if (detail) {
+			append(who, $('span.detail')).textContent = detail;
+		}
+		const windows = append(row, $('.windows'));
+		if (group.error || !group.windows.length) {
+			append(windows, $('span.error')).textContent = group.error ?? localize('voltUsage.noWindows', "No limits reported for this account.");
+		}
+		for (const window of group.windows) {
+			const item = append(windows, $('span.window'));
+			const used = Math.min(100, Math.max(0, window.usedPercent));
+			item.classList.toggle('high', used >= 80);
+			item.classList.toggle('full', used >= 100);
+			item.textContent = `${window.scope && window.scope !== 'All models' ? `${window.label} (${window.scope})` : window.label} ${formatPercent(used)}`;
+			if (window.resetsAt && window.resetsAt > now) {
+				setAgentTooltip(item, localize('voltUsage.resetsIn', "Resets in {0} · {1}", formatDuration(window.resetsAt - now), formatResetTime(window.resetsAt)));
+			}
+		}
+		if (group.resetCredits && group.account) {
+			this.renderCredit(row, group);
+		}
+	}
+
+	/** The ticket: how many resets are banked, and the button that spends one. */
+	private renderCredit(parent: HTMLElement, group: IVoltUsageLimitGroup): void {
+		const credit = append(parent, $('.volt-usage-limit-credit'));
+		credit.appendChild(createTicketIcon());
+		const count = group.resetCredits ?? 0;
+		const text = count === 1 ? localize('voltUsage.oneReset', "1 limit reset available") : localize('voltUsage.resets', "{0} limit resets available", count);
+		const expires = group.resetCreditsExpireAt ? localize('voltUsage.resetExpires', " · next expires {0}", formatResetTime(group.resetCreditsExpireAt)) : '';
+		append(credit, $('span')).textContent = text + expires;
+		if (!group.account) {
+			return;
+		}
+		const key = `${group.provider}|${group.account.id}`;
+		const button = append(credit, $('button.volt-usage-more.redeem')) as HTMLButtonElement;
+		button.type = 'button';
+		button.textContent = this.redeeming.has(key) ? localize('voltUsage.redeeming', "Using reset…") : localize('voltUsage.useReset', "Use reset");
+		button.disabled = this.redeeming.has(key);
+		this.renderStore.add(addDisposableListener(button, EventType.CLICK, () => void this.redeem(group)));
+	}
+
+	private async redeem(group: IVoltUsageLimitGroup): Promise<void> {
+		const account = group.account;
+		if (!account) {
+			return;
+		}
+		const name = PROVIDER_LABELS[group.provider].account;
+		const { confirmed } = await this.dialogService.confirm({
+			message: localize('voltUsage.redeemConfirm', "Use a {0} limit reset now?", name),
+			detail: localize('voltUsage.redeemDetail', "This spends one of {0}'s banked resets and clears its current limits{1}. It can't be undone.", account.label ?? name, group.machines?.length ? localize('voltUsage.redeemEverywhere', " on every machine") : ''),
+			primaryButton: localize({ key: 'voltUsage.redeemButton', comment: ['&& denotes a mnemonic'] }, "&&Use Reset"),
+		});
+		if (!confirmed) {
+			return;
+		}
+		const key = `${group.provider}|${account.id}`;
+		this.redeeming.add(key);
+		this.render();
+		try {
+			const outcome = await this.usageService.redeemResetCredit(group.provider, account.id);
+			const messages: Record<VoltResetCreditOutcome, string> = {
+				reset: localize('voltUsage.redeemDone', "{0} limits were reset.", name),
+				nothingToReset: localize('voltUsage.redeemNothing', "{0} has nothing to reset right now, so no reset was used.", name),
+				noCredit: localize('voltUsage.redeemNoCredit', "{0} has no resets left to use.", name),
+				alreadyRedeemed: localize('voltUsage.redeemAlready', "That reset was already used; your limits are reset."),
+			};
+			this.notificationService.notify({ severity: outcome === 'noCredit' ? Severity.Warning : Severity.Info, message: messages[outcome] });
+		} catch (error) {
+			this.notificationService.notify({ severity: Severity.Error, message: error instanceof Error ? error.message : String(error) });
+		} finally {
+			this.redeeming.delete(key);
+			await this.load(true);
+		}
+	}
+
+	/** Other machines whose usage is added in, and the way to add one. */
+	private renderMachines(root: HTMLElement): void {
+		const section = append(root, $('.volt-usage-limit-group.volt-usage-machines'));
+		const title = append(section, $('.volt-usage-limit-title'));
+		title.appendChild(renderIcon(Codicon.vm));
+		append(title, $('span.name')).textContent = localize('voltUsage.machines', "Machines");
+		const panel = append(section, $('.volt-usage-machine-list'));
+		if (!this.machines.length) {
+			append(panel, $('.volt-usage-machine-empty')).textContent = localize('voltUsage.machinesEmpty', "Add your other computers to pool their limits and usage here. On the other computer, open Usage and choose Share This Machine, then paste its address here.");
+		}
+		const states: Record<IVoltUsageMachineStatus['state'], string> = {
+			ok: localize('voltUsage.machineOk', "Connected"),
+			offline: localize('voltUsage.machineOffline', "Can't be reached"),
+			unauthorized: localize('voltUsage.machineUnauthorized', "Token refused; add it again"),
+			error: localize('voltUsage.machineError', "Didn't answer with usage; update Volt there"),
+		};
+		for (const machine of this.machines) {
+			const row = append(panel, $('.volt-usage-machine'));
+			row.dataset.state = machine.state;
+			append(row, $('span.status'));
+			const who = append(row, $('.who'));
+			append(who, $('span.label')).textContent = machine.name;
+			append(who, $('span.detail')).textContent = `${machine.url} · ${states[machine.state]}`;
+			const remove = append(row, $('button.volt-usage-icon-button')) as HTMLButtonElement;
+			remove.type = 'button';
+			remove.appendChild(renderIcon(Codicon.close));
+			const removeLabel = localize('voltUsage.removeMachine', "Remove {0}", machine.name);
+			remove.setAttribute('aria-label', removeLabel);
+			setAgentTooltip(remove, removeLabel);
+			this.renderStore.add(addDisposableListener(remove, EventType.CLICK, async () => {
+				await this.usageService.removeMachine(machine.id);
+				await this.load(false);
+			}));
+		}
+		const actions = append(section, $('.volt-usage-machine-actions'));
+		const add = append(actions, $('button.volt-usage-more')) as HTMLButtonElement;
+		add.type = 'button';
+		add.textContent = localize('voltUsage.addMachine', "Add Machine…");
+		this.renderStore.add(addDisposableListener(add, EventType.CLICK, () => void this.addMachine()));
+		const share = append(actions, $('button.volt-usage-more')) as HTMLButtonElement;
+		share.type = 'button';
+		share.textContent = localize('voltUsage.shareMachine', "Share This Machine…");
+		this.renderStore.add(addDisposableListener(share, EventType.CLICK, () => void this.commandService.executeCommand(VOLT_USAGE_SHARE_MACHINE_COMMAND_ID)));
+	}
+
+	private async addMachine(): Promise<void> {
+		const address = await this.quickInputService.input({
+			title: localize('voltUsage.addMachineTitle', "Add Machine"),
+			prompt: localize('voltUsage.addMachinePrompt', "Paste the address the other computer shows under Share This Machine."),
+			placeHolder: 'http://192.168.1.20:7791/#token=…',
+			ignoreFocusLost: true,
+			validateInput: async value => value.trim() && !/#token=|[?&]token=/.test(value) ? localize('voltUsage.addMachineNoToken', "The address needs its #token=… part.") : undefined,
+		});
+		if (!address?.trim()) {
+			return;
+		}
+		try {
+			const machine = await this.usageService.addMachine(address.trim());
+			this.notificationService.info(localize('voltUsage.machineAdded', "{0} was added. Its usage and limits now count here.", machine.name));
+		} catch (error) {
+			this.notificationService.error(error instanceof Error ? error.message : String(error));
+		}
+		await this.load(true);
+	}
+
 	/** One window, laid out like Cursor's usage page: title and share used, the meter, then when it resets. */
-	private renderLimitWindow(parent: HTMLElement, group: IVoltUsageLimitGroup, window: IVoltUsageLimitWindow, now: number): void {
+	private renderLimitWindow(parent: HTMLElement, provider: VoltUsageProvider, window: IVoltUsageLimitWindow, now: number, pooledAccounts?: number): void {
 		const used = Math.min(100, Math.max(0, window.usedPercent));
 		const row = append(parent, $('.volt-usage-limit'));
 		row.classList.toggle('high', used >= 80);
@@ -933,20 +1147,28 @@ export class AgentUsageEditor extends EditorPane {
 		if (window.scope) {
 			append(name, $('span.scope')).textContent = ` \u00b7 ${window.scope}`;
 		}
+		if (pooledAccounts) {
+			append(name, $('span.scope')).textContent = pooledAccounts === 1
+				? localize('voltUsage.pooledOne', " \u00b7 1 account")
+				: localize('voltUsage.pooledMany', " \u00b7 average of {0} accounts", pooledAccounts);
+		}
 		append(top, $('span.used')).textContent = localize('voltUsage.usedShort', "{0} used", formatPercent(used));
 
-		const dots = new DotMatrixMeter(row, used / 100, `${group.provider}:${window.id}`, this.animateNext);
+		const dots = new DotMatrixMeter(row, used / 100, `${provider}:${window.id}`, this.animateNext);
 		this.renderStore.add(dots);
 
 		const meta = append(row, $('.volt-usage-limit-meta'));
 		if (window.resetsAt && window.resetsAt > now) {
 			const reset = append(meta, $('span.part'));
 			reset.appendChild(createResetIcon());
-			append(reset, $('span')).textContent = localize('voltUsage.resetsInAt', "Resets in {0} \u00b7 {1}", formatDuration(window.resetsAt - now), formatResetTime(window.resetsAt));
+			append(reset, $('span')).textContent = pooledAccounts && pooledAccounts > 1
+				? localize('voltUsage.nextResetInAt', "Next reset in {0} \u00b7 {1}", formatDuration(window.resetsAt - now), formatResetTime(window.resetsAt))
+				: localize('voltUsage.resetsInAt', "Resets in {0} \u00b7 {1}", formatDuration(window.resetsAt - now), formatResetTime(window.resetsAt));
 		} else if (used === 0) {
 			append(meta, $('span.part')).textContent = localize('voltUsage.notStarted', "Starts with your next message");
 		}
-		const pace = used > 0 && used < 100 ? limitPace(window, now) : undefined;
+		// An average over accounts has no single pace.
+		const pace = used > 0 && used < 100 && !(pooledAccounts && pooledAccounts > 1) ? limitPace(window, now) : undefined;
 		if (used >= 100) {
 			append(meta, $('span.part.pace.full')).textContent = localize('voltUsage.limitReached', "Limit reached");
 		} else if (pace) {

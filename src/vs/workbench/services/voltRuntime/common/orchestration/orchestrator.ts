@@ -110,6 +110,27 @@ export interface IOrchHandoff {
 	readonly by: 'agent' | 'user';
 }
 
+/**
+ * The chat's last turn stopped at the provider's usage limit. The chat can resume itself when the
+ * limit resets and be snoozed until then (see limitRecovery.ts). Any new turn clears it.
+ */
+export interface IOrchLimitStop {
+	/** The turn the limit stopped. */
+	readonly turnId: string;
+	readonly at: number;
+	/** When the provider says the limit resets; unknown for some providers and messages. */
+	readonly resetAt?: number;
+	/** The provider's sentence ("You've hit your session limit · resets 4:10am"). */
+	readonly message?: string;
+	/** The limited turn's mode and model, which the resume uses. */
+	readonly mode?: string;
+	readonly modelRef?: string;
+	/** Send "Continue where you left off." when the limit resets. */
+	readonly autoResume?: boolean;
+	/** The chat is snoozed until the reset (its history entry carries the snooze). */
+	readonly snooze?: boolean;
+}
+
 export interface IOrchThread {
 	readonly id: string;
 	/** The chat that delegated to this one (subagent chats only). */
@@ -137,6 +158,7 @@ export interface IOrchThread {
 	/** A model switch waiting for the active turn to end. */
 	readonly pendingHandoff?: IOrchHandoff;
 	readonly handoffs: readonly IOrchHandoff[];
+	readonly limit?: IOrchLimitStop;
 }
 
 export type OrchTaskSource = 'volt' | 'harness';
@@ -275,7 +297,9 @@ export type OrchCommandBody =
 	| { readonly type: 'turn.resume'; readonly threadId: string; readonly turnId: string; readonly prompt: IOrchPrompt }
 	/** The runtime started the run for a turn (or one Volt did not dispatch). */
 	| { readonly type: 'run.started'; readonly threadId: string; readonly runId: string; readonly turnId?: string; readonly steerable?: boolean }
-	| { readonly type: 'run.settled'; readonly threadId: string; readonly runId?: string; readonly turnId?: string; readonly outcome: OrchOutcome; readonly error?: string; readonly reply?: string }
+	| { readonly type: 'run.settled'; readonly threadId: string; readonly runId?: string; readonly turnId?: string; readonly outcome: OrchOutcome; readonly error?: string; readonly reply?: string; readonly limit?: { readonly resetAt?: number } }
+	/** Resume at reset and snooze until reset for a limited turn. Omitted choices keep their value. */
+	| { readonly type: 'limit.configure'; readonly threadId: string; readonly turnId: string; readonly autoResume?: boolean; readonly snooze?: boolean }
 	/** A steer could not be delivered (the run ended first): reports go back to pending, a prompt back to the queue's head. */
 	| { readonly type: 'steer.failed'; readonly threadId: string; readonly steerId: string; readonly prompt: IOrchPrompt; readonly taskIds?: readonly string[] }
 	/** The effect that starts a turn failed before the runtime took it. */
@@ -327,6 +351,8 @@ export type OrchEvent =
 	| { readonly type: 'turn.bound'; readonly threadId: string; readonly turnId: string; readonly runId: string; readonly steerable?: boolean }
 	| { readonly type: 'turn.cancelling'; readonly threadId: string; readonly turnId: string }
 	| { readonly type: 'turn.settled'; readonly threadId: string; readonly turnId: string; readonly outcome: OrchOutcome; readonly at: number; readonly error?: string }
+	| { readonly type: 'limit.reached'; readonly threadId: string; readonly limit: IOrchLimitStop }
+	| { readonly type: 'limit.configured'; readonly threadId: string; readonly turnId: string; readonly autoResume: boolean; readonly snooze: boolean }
 	| { readonly type: 'input.opened'; readonly threadId: string; readonly input: IOrchInput }
 	| { readonly type: 'input.closed'; readonly threadId: string; readonly inputId: string }
 	| { readonly type: 'task.created'; readonly task: IOrchTask }
@@ -455,6 +481,11 @@ export interface IAgentOrchestratorService {
 	/** Wakes the chat with a notification turn (see `thread.notify`). A retried `turnId` is not sent twice. */
 	notify(threadId: string, prompt: IOrchPrompt, turnId: string): Promise<IOrchSubmitResult>;
 	cancel(threadId: string, options?: { readonly cascade?: 'turn' | 'all' }): Promise<void>;
+	/**
+	 * Resume at reset / snooze until reset for the chat's limited turn. Resolves with why it was
+	 * refused (the limit changed, the reset passed), or undefined when applied.
+	 */
+	setLimitRecovery(threadId: string, turnId: string, choice: { readonly autoResume?: boolean; readonly snooze?: boolean }): Promise<string | undefined>;
 	/** The turn is the chat's active one and is not being stopped. */
 	isTurnCurrent(threadId: string, turnId: string): boolean;
 	/** Load a chat's persisted orchestration (its root) when it is opened. */

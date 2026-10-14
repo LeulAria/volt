@@ -190,7 +190,9 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 			return { events: [{ type: 'queue.added', threadId: thread.id, item: { id: command.steerId, prompt: command.prompt, at: command.at }, head: true }] };
 		}
 		case 'run.settled':
-			return decideRunSettled(state, command.threadId, { runId: command.runId, turnId: command.turnId }, command.outcome, command.at, command.error, command.reply);
+			return decideRunSettled(state, command.threadId, { runId: command.runId, turnId: command.turnId }, command.outcome, command.at, command.error, command.reply, false, command.limit);
+		case 'limit.configure':
+			return decideLimitConfigure(state, command);
 		case 'dispatch.failed': {
 			const thread = state.threads[command.threadId];
 			if (!thread?.active || thread.active.id !== command.turnId) {
@@ -633,7 +635,7 @@ export function externalTurnId(runId: string): string {
 	return `x-${runId}`;
 }
 
-function decideRunSettled(state: IOrchState, threadId: string, match: { readonly runId?: string; readonly turnId?: string }, outcome: OrchOutcome, at: number, error: string | undefined, reply: string | undefined, superseded = false): IOrchDecision {
+function decideRunSettled(state: IOrchState, threadId: string, match: { readonly runId?: string; readonly turnId?: string }, outcome: OrchOutcome, at: number, error: string | undefined, reply: string | undefined, superseded = false, limit?: { readonly resetAt?: number }): IOrchDecision {
 	const thread = state.threads[threadId];
 	const active = thread?.active;
 	if (!thread || !active) {
@@ -649,6 +651,22 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 	if (outcome === 'failed' && !superseded) {
 		// The queue waits for the user instead of resending into a failing provider.
 		events.push({ type: 'queue.paused', threadId: thread.id, reason: 'failed' });
+		if (limit) {
+			// A reset time at or before the stop is stale: resuming at it would only hit the limit again.
+			const resetAt = limit.resetAt !== undefined && limit.resetAt > at ? limit.resetAt : undefined;
+			events.push({
+				type: 'limit.reached',
+				threadId: thread.id,
+				limit: {
+					turnId: active.id,
+					at,
+					...(resetAt !== undefined ? { resetAt } : {}),
+					...(error ? { message: error } : {}),
+					...(active.prompt.mode ? { mode: active.prompt.mode } : {}),
+					...(active.prompt.modelRef ? { modelRef: active.prompt.modelRef } : {}),
+				},
+			});
+		}
 	}
 	// Harness subagents live inside the turn: whatever did not report an end ends with it.
 	for (const task of Object.values(state.tasks)) {
@@ -688,6 +706,27 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 		}
 	}
 	return { events };
+}
+
+/** Resume at reset and snooze until reset apply only to the limit that is still the chat's last stop. */
+function decideLimitConfigure(state: IOrchState, command: Extract<OrchCommand, { type: 'limit.configure' }>): IOrchDecision {
+	const thread = state.threads[command.threadId];
+	const limit = thread?.limit;
+	if (!thread || !limit || limit.turnId !== command.turnId || thread.active) {
+		return { events: [], rejected: 'The usage limit changed before this could be applied.' };
+	}
+	if (limit.resetAt === undefined) {
+		return { events: [], rejected: 'The provider did not say when the limit resets. Retry the chat manually.' };
+	}
+	const autoResume = command.autoResume ?? !!limit.autoResume;
+	const snooze = command.snooze ?? !!limit.snooze;
+	if (command.snooze && !limit.snooze && limit.resetAt <= command.at) {
+		return { events: [], rejected: 'The reset time has passed. Retry the chat manually.' };
+	}
+	if (autoResume === !!limit.autoResume && snooze === !!limit.snooze) {
+		return { events: [] };
+	}
+	return { events: [{ type: 'limit.configured', threadId: thread.id, turnId: limit.turnId, autoResume, snooze }] };
 }
 
 function harnessEndState(outcome: OrchOutcome): Extract<OrchTaskState, 'completed' | 'failed' | 'cancelled' | 'interrupted'> {

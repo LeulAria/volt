@@ -243,7 +243,7 @@ export function summarizeUsage(snapshot: IVoltUsageSnapshot, range: UsageRange, 
 
 //#region Placeholder
 
-const PLACEHOLDER_MODELS: Record<VoltUsageProvider, { model: string; scale: number; phase: number; tokensPerUsd: number }> = {
+const PLACEHOLDER_MODELS: Partial<Record<VoltUsageProvider, { model: string; scale: number; phase: number; tokensPerUsd: number }>> = {
 	claude: { model: 'claude-opus', scale: 9, phase: 0, tokensPerUsd: 3_000_000 },
 	cursor: { model: 'composer', scale: 6, phase: 2.1, tokensPerUsd: 1_000_000 },
 	codex: { model: 'gpt-codex', scale: 1.2, phase: 4.4, tokensPerUsd: 500_000 },
@@ -266,7 +266,11 @@ export function placeholderUsage(now = Date.now()): IVoltUsageSnapshot {
 	for (let hour = first; hour <= now; hour += step) {
 		const days = (hour - first) / DAY_MS;
 		for (const provider of VOLT_USAGE_PROVIDERS) {
-			const { model, scale, phase, tokensPerUsd } = PLACEHOLDER_MODELS[provider];
+			const sample = PLACEHOLDER_MODELS[provider];
+			if (!sample) {
+				continue;
+			}
+			const { model, scale, phase, tokensPerUsd } = sample;
 			const cost = scale * placeholderWave(days, phase);
 			const tokens = cost * tokensPerUsd;
 			buckets.push({
@@ -296,6 +300,70 @@ export function placeholderLimits(now = Date.now()): IVoltUsageLimitGroup[] {
 //#endregion
 
 //#region Limits
+
+/** One provider's subscriptions on the Limits page: every account, and their windows pooled. */
+export interface ILimitPool {
+	readonly provider: VoltUsageProvider;
+	/** Accounts in the order they were read; failed reads included. */
+	readonly accounts: readonly IVoltUsageLimitGroup[];
+	/**
+	 * Each window once, averaged over the accounts that report it: two accounts at 20% and 60%
+	 * of their session leave the pool 60% of the combined allowance. Resets are the soonest.
+	 */
+	readonly windows: readonly IPooledLimitWindow[];
+	/** Reset credits across the accounts. */
+	readonly resetCredits: number;
+	/** Oldest reading among the accounts with numbers. */
+	readonly checkedAt: number;
+}
+
+export interface IPooledLimitWindow extends IVoltUsageLimitWindow {
+	/** Accounts that report this window. */
+	readonly accounts: number;
+}
+
+export function poolLimits(groups: readonly IVoltUsageLimitGroup[]): ILimitPool[] {
+	const byProvider = new Map<VoltUsageProvider, IVoltUsageLimitGroup[]>();
+	for (const group of groups) {
+		const list = byProvider.get(group.provider) ?? [];
+		list.push(group);
+		byProvider.set(group.provider, list);
+	}
+	const pools: ILimitPool[] = [];
+	for (const provider of VOLT_USAGE_PROVIDERS) {
+		const accounts = byProvider.get(provider);
+		if (!accounts) {
+			continue;
+		}
+		const windows = new Map<string, { first: IVoltUsageLimitWindow; used: number; count: number; resetsAt?: number }>();
+		for (const account of accounts) {
+			for (const window of account.windows) {
+				const held = windows.get(window.id);
+				if (!held) {
+					windows.set(window.id, { first: window, used: window.usedPercent, count: 1, resetsAt: window.resetsAt });
+				} else {
+					held.used += window.usedPercent;
+					held.count++;
+					if (window.resetsAt && (!held.resetsAt || window.resetsAt < held.resetsAt)) {
+						held.resetsAt = window.resetsAt;
+					}
+				}
+			}
+		}
+		const reading = accounts.filter(account => !account.error && account.windows.length);
+		pools.push({
+			provider,
+			accounts,
+			windows: [...windows.values()].map(({ first, used, count, resetsAt }) => {
+				const { resetsAt: _ignored, ...rest } = first;
+				return { ...rest, usedPercent: used / count, accounts: count, ...(resetsAt ? { resetsAt } : {}) };
+			}),
+			resetCredits: accounts.reduce((sum, account) => sum + (account.resetCredits ?? 0), 0),
+			checkedAt: Math.min(...(reading.length ? reading : accounts).map(account => account.checkedAt)),
+		});
+	}
+	return pools;
+}
 
 export interface ILimitPace {
 	/** Using the window faster than it refills. */

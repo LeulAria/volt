@@ -29,22 +29,21 @@ import { IAgentPullRequestService } from '../pullRequests/agentPullRequestServic
 import { CREATE_PULL_REQUEST_COMMAND_ID, OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { currentLink, IAgentPrLink, isOpenState, isTrunkBranch } from '../../common/agentPullRequests.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
+import { createThinkingDots, paintThinkingDots, SCROLL_END_SLACK_PX, shouldOfferScrollToBottom, THINKING_DOTS_SPEED } from './agentThinkingDots.js';
 
-const DOT_RING = [0, 1, 2, 5, 8, 7, 6, 3];
-const DOT_TRAIL = 2;
-const DOT_SPEED = 90;
-/** A reader this close to the last line is at the end, so the arrow stays hidden. */
-export const SCROLL_END_SLACK_PX = 96;
-
-/** Empty chats and a thread already at the end do not offer the scroll-down arrow. */
-export function shouldOfferScrollToBottom(hasMessages: boolean, distanceFromBottom: number): boolean {
-	return hasMessages && distanceFromBottom > SCROLL_END_SLACK_PX;
-}
+export { createThinkingDots, paintThinkingDots, SCROLL_END_SLACK_PX, shouldOfferScrollToBottom, THINKING_DOTS_SPEED };
 
 export interface IAgentComposerChipStatus {
 	label: string;
 	working: boolean;
 }
+
+/**
+ * The Compact context chip: hidden, offered (the window is nearly full), running (the dots stand in
+ * for its icon until the agent is done), or done (a check for a moment before it goes).
+ */
+export type AgentCompactChipState = 'hidden' | 'offered' | 'running' | 'done';
+
 
 export interface IAgentComposerChipsOptions {
 	onStatusClick?: () => void;
@@ -62,34 +61,6 @@ interface IGitShortStat {
 	insertions: number;
 	deletions: number;
 }
-
-export function createThinkingDots(): { root: HTMLElement; cells: HTMLElement[] } {
-	const root = $('span.volt-browser-dock-dots');
-	root.setAttribute('aria-hidden', 'true');
-	const cells: HTMLElement[] = [];
-	for (let i = 0; i < 9; i++) {
-		cells.push(append(root, $('span.volt-browser-dock-dot')));
-	}
-	return { root, cells };
-}
-
-/** One frame of the dots' spin: a short bright trail runs around the ring of the 3x3 grid. */
-export function paintThinkingDots(cells: readonly HTMLElement[], step: number): void {
-	for (const [index, cell] of cells.entries()) {
-		let opacity = index === 4 ? 0.16 : 0.1;
-		const ring = DOT_RING.indexOf(index);
-		if (ring >= 0) {
-			const distance = (ring - (step % DOT_RING.length) + DOT_RING.length) % DOT_RING.length;
-			if (distance <= DOT_TRAIL) {
-				opacity = 1 - distance / (DOT_TRAIL + 1);
-			}
-		}
-		cell.style.opacity = String(opacity);
-	}
-}
-
-/** How often the dots step, in ms. */
-export const THINKING_DOTS_SPEED = DOT_SPEED;
 
 export class AgentComposerChips extends Disposable {
 
@@ -115,7 +86,9 @@ export class AgentComposerChips extends Disposable {
 	private pr: { readonly kind: 'link'; readonly link: IAgentPrLink } | { readonly kind: 'create' } | undefined;
 	private prGen = 0;
 	private readonly compactChip: HTMLButtonElement;
-	private offerCompact = false;
+	private readonly compactLabelEl: HTMLElement;
+	private readonly compactDots: HTMLElement[];
+	private compactState: AgentCompactChipState = 'hidden';
 	private readonly scrollChip: HTMLButtonElement;
 	private scrolledUp = false;
 	private readonly scrollExit = this._register(new MutableDisposable());
@@ -158,9 +131,14 @@ export class AgentComposerChips extends Disposable {
 
 		this.compactChip = append(this.element, $('button.volt-agent-composer-chip.compact.volt-browser-dock-chip.hidden')) as HTMLButtonElement;
 		this.compactChip.type = 'button';
+		const compactDots = createThinkingDots();
+		this.compactDots = compactDots.cells;
+		append(this.compactChip, compactDots.root);
 		this.compactChip.appendChild(createCompactIcon(this.compactChip.ownerDocument));
-		append(this.compactChip, $('span.volt-agent-composer-chip-label')).textContent = localize('voltAgent.compactContext', "Compact context");
-		setAgentTooltip(this.compactChip, localize('voltAgent.compactContextNearlyFull', "The context window is nearly full. Compact it to keep going."));
+		append(this.compactChip, $('span.volt-agent-composer-chip-done')).appendChild(renderIcon(Codicon.check));
+		this.compactLabelEl = append(this.compactChip, $('span.volt-agent-composer-chip-label'));
+		this.compactLabelEl.textContent = localize('voltAgent.compactContext', "Compact context");
+		this.renderCompactChip();
 
 		this.changesChip = append(this.element, $('button.volt-agent-composer-chip.changes.volt-browser-dock-chip')) as HTMLButtonElement;
 		this.changesChip.type = 'button';
@@ -228,7 +206,9 @@ export class AgentComposerChips extends Disposable {
 		this._register(addDisposableListener(this.compactChip, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
-			this.options.onCompactClick?.();
+			if (this.compactState === 'offered') {
+				this.options.onCompactClick?.();
+			}
 		}));
 		this._register(addDisposableListener(this.commitChip, 'click', e => {
 			e.preventDefault();
@@ -312,18 +292,37 @@ export class AgentComposerChips extends Disposable {
 		this.render();
 	}
 
-	/** Shows or hides the Compact context chip. */
-	setCompactOffered(offer: boolean): void {
-		const next = offer && !!this.options.onCompactClick;
-		if (this.offerCompact === next) {
+	/** Shows the Compact context chip as an offer, while the agent compacts, or just after; or hides it. */
+	setCompactState(state: AgentCompactChipState): void {
+		const next = this.options.onCompactClick ? state : 'hidden';
+		if (this.compactState === next) {
 			return;
 		}
-		this.offerCompact = next;
+		this.compactState = next;
+		this.renderCompactChip();
 		this.render();
 	}
 
+	private renderCompactChip(): void {
+		const state = this.compactState;
+		this.compactChip.classList.toggle('working', state === 'running');
+		this.compactChip.classList.toggle('done', state === 'done');
+		this.compactChip.setAttribute('aria-disabled', String(state !== 'offered'));
+		this.compactLabelEl.textContent = state === 'running'
+			? localize('voltAgent.compaction.running', "Compacting context")
+			: state === 'done'
+				? localize('voltAgent.compaction.done', "Context compacted")
+				: localize('voltAgent.compactContext', "Compact context");
+		setAgentTooltip(this.compactChip, state === 'running'
+			? localize('voltAgent.compactingTooltip', "The agent is summarizing the conversation so far. The summary replaces it in the context window.")
+			: state === 'done'
+				? localize('voltAgent.compactedTooltip', "The conversation was summarized; the agent continues from the summary.")
+				: localize('voltAgent.compactContextNearlyFull', "The context window is nearly full. Compact it to keep going."));
+	}
+
+
 	hasVisibleChips(): boolean {
-		return this.hostOpen && (this.hasStatus() || this.hasChanges || this.runningTerminals > 0 || this.offerCompact || !!this.pr);
+		return this.hostOpen && (this.hasStatus() || this.hasChanges || this.runningTerminals > 0 || this.compactState !== 'hidden' || !!this.pr);
 	}
 
 	private hasStatus(): boolean {
@@ -482,7 +481,9 @@ export class AgentComposerChips extends Disposable {
 
 	private render(): void {
 		const showPr = this.renderPullRequestChip();
-		const showStatus = this.hasStatus();
+		// While it compacts, the Compact chip carries the run's status: no second "Compacting context" beside it.
+		const showStatus = this.hasStatus() && this.compactState !== 'running';
+		const showCompact = this.compactState !== 'hidden';
 		const showChanges = this.hasChanges && !(this.sessionId && isAgentChangesShown(this.sessionId));
 		const showTerminals = this.runningTerminals > 0;
 		const showCommit = this.hasChanges && !(this.sessionId && isAgentScmShown(this.sessionId));
@@ -492,19 +493,19 @@ export class AgentComposerChips extends Disposable {
 		this.toggleChip(this.changesChip, showChanges, this.changesExit);
 		this.toggleChip(this.commitChip, showCommit, this.commitExit);
 		this.toggleChip(this.prChip, showPr, this.prExit);
-		const visible = this.hostOpen && (showStatus || this.offerCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
+		const visible = this.hostOpen && (showStatus || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
 		this.element.classList.toggle('is-visible', visible);
 
 		this.statusChip.classList.toggle('hidden', !showStatus);
 		this.statusChip.classList.toggle('working', this.status.working);
 		this.chipLabelEl.textContent = this.status.label;
-		if (this.status.working) {
+		if (this.status.working || this.compactState === 'running') {
 			this.startDots();
 		} else {
 			this.stopDots();
 		}
 
-		this.compactChip.classList.toggle('hidden', !this.offerCompact);
+		this.compactChip.classList.toggle('hidden', !showCompact);
 
 		this.changesAddEl.textContent = this.insertions > 0 ? `+${this.insertions}` : '';
 		this.changesDelEl.textContent = this.deletions > 0 ? `-${this.deletions}` : '';
@@ -519,7 +520,7 @@ export class AgentComposerChips extends Disposable {
 
 	/** No status, changes, or terminal chip sits beside the arrow. */
 	private scrollChipIsAlone(): boolean {
-		return !this.hasStatus() && !this.hasChanges && this.runningTerminals <= 0 && !this.offerCompact && !this.pr;
+		return !this.hasStatus() && !this.hasChanges && this.runningTerminals <= 0 && this.compactState === 'hidden' && !this.pr;
 	}
 
 	private updateScrollChip(show: boolean): void {
@@ -601,7 +602,7 @@ export class AgentComposerChips extends Disposable {
 		this.dotsTimer = getWindow(this.element).setInterval(() => {
 			this.dotsStep++;
 			this.paintDots();
-		}, DOT_SPEED);
+		}, THINKING_DOTS_SPEED);
 	}
 
 	private stopDots(): void {
@@ -614,6 +615,7 @@ export class AgentComposerChips extends Disposable {
 
 	private paintDots(): void {
 		paintThinkingDots(this.chipDots, this.dotsStep);
+		paintThinkingDots(this.compactDots, this.dotsStep);
 	}
 
 	override dispose(): void {

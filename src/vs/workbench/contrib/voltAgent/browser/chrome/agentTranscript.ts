@@ -8,7 +8,7 @@ import { DELEGATE_TASK_TOOL_NAME } from '../../../../services/voltRuntime/common
 import { basename } from '../../../../../base/common/path.js';
 import { localize } from '../../../../../nls.js';
 import { isSnapshotActivity } from '../preview/browserSnapshot.js';
-import { AgentBlock, AgentSegment, createPlanBlock, humanTerminalTitle, IAgentActivityItem, IFileChangeBlock, ITerminalBlock, IToolBlock, isExploreTool, isPlanTool, parsePlanToolInput, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
+import { AgentBlock, AgentSegment, createPlanBlock, humanTerminalTitle, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, ITerminalBlock, IToolBlock, isExploreTool, isPlanTool, parsePlanToolInput, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
 import { computeChangeStats } from '../review/fileChangePreviewModel.js';
 import { isSignInNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { fileChangeSource, partitionAssistantText } from './agentTimeline.js';
@@ -53,7 +53,9 @@ export type TranscriptRow =
 	| { readonly kind: 'subagents'; readonly id: string; readonly items: readonly { readonly id: string; readonly tool: IToolBlock; readonly live: boolean }[]; readonly live: boolean }
 	| { readonly kind: 'notice'; readonly id: string; readonly severity: 'info' | 'warning' | 'error'; readonly title: string; readonly description?: string; readonly supervision?: SupervisionKind }
 	/** A message the user sent into the running turn ("Steer"); the agent read it between steps. */
-	| { readonly kind: 'steer'; readonly id: string; readonly text: string };
+	| { readonly kind: 'steer'; readonly id: string; readonly text: string }
+	/** "Compacting context" while the agent summarizes the chat, then "Context compacted". */
+	| { readonly kind: 'compaction'; readonly id: string; readonly compaction: IAgentCompaction };
 
 /** A steering message recorded on a reply: `at` is how many segments the reply had when it was sent. */
 export interface ITranscriptSteer {
@@ -147,6 +149,11 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 				pending.push(activityStep(nextStepId(), segment.item));
 				break;
 			}
+			case 'compaction':
+				flushReply();
+				flushSteps();
+				rows.push({ kind: 'compaction', id: `compaction-${segment.compaction.id}`, compaction: segment.compaction });
+				break;
 			case 'notice':
 				flushReply();
 				flushSteps();

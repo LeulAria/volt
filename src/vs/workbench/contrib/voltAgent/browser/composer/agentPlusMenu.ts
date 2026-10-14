@@ -21,6 +21,8 @@ export type AgentPlusMenuAction = 'files' | 'image' | 'video' | 'openFile' | 'te
 export interface IAgentPlusMenuOptions {
 	/** The composer box: the menu spans it and opens above it, like the @ panel. */
 	readonly anchor: HTMLElement;
+	/** Shown on top of the anchor (the chips); the menu opens above it. */
+	readonly above?: () => HTMLElement | undefined;
 	readonly modes: readonly IAgentPlusMenuMode[];
 	readonly currentMode: string;
 	readonly actions: readonly AgentPlusMenuAction[];
@@ -54,6 +56,7 @@ export function showAgentPlusMenu(contextViewService: IContextViewService, optio
 	];
 	return showVoltMenu<PlusPick>(contextViewService, {
 		anchor: options.anchor,
+		above: options.above,
 		position: 'above',
 		gap: ANCHOR_GAP,
 		width: options.anchor.getBoundingClientRect().width,

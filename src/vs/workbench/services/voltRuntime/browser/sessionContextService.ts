@@ -9,7 +9,6 @@ import { URI } from '../../../../base/common/uri.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService, WorkbenchState } from '../../../../platform/workspace/common/workspace.js';
-import { IAgentSessionWorkspace } from '../common/history/agentHistory.js';
 import {
 	canonicalProjectRoot,
 	IVoltProjectRecord,
@@ -87,13 +86,7 @@ export function reviveBindings(raw: unknown, projects: ReadonlyMap<string, IVolt
 	return bindings;
 }
 
-export function workspaceForProject(project: IVoltProjectRecord): IAgentSessionWorkspace {
-	return {
-		id: project.id,
-		label: project.displayName,
-		folders: [project.root.fsPath],
-	};
-}
+export { workspaceForProject } from '../common/sessionContext.js';
 
 export class VoltSessionContextService extends Disposable implements IVoltSessionContextService {
 
@@ -136,6 +129,11 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 	 * folder, so a new chat never runs in a project the window was not opened for.
 	 * Empty windows start on the project used last anywhere.
 	 */
+	/** Every chat's project, by chat id (the agent server mirrors it to its clients). */
+	exportBindings(): Record<string, string> {
+		return Object.fromEntries(this.bindings);
+	}
+
 	private initialActiveProject(workspaceContextService: IWorkspaceContextService): string | undefined {
 		const own = this.storageService.get(ACTIVE_KEY, StorageScope.WORKSPACE, '');
 		if (own && this.projectMap.has(own)) {

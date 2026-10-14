@@ -1,0 +1,13 @@
+{
+  "name": "volt-agents",
+  "productName": "Volt Agents",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone window onto the Volt agent server",
+  "main": "out/main.js",
+  "scripts": {
+    "build": "node ../../build/volt/buildAgentDesktop.mjs",
+    "watch": "node ../../build/volt/buildAgentDesktop.mjs --watch",
+    "start": "npm run build && ../../node_modules/.bin/electron ."
+  }
+}

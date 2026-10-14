@@ -4,9 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { execFile, spawn } from 'child_process';
+import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import { dirname, join } from '../../../base/common/path.js';
-import { IVoltUsageLimitGroup, IVoltUsageLimitWindow } from '../common/voltUsage.js';
+import { IVoltUsageAccount, IVoltUsageLimitGroup, IVoltUsageLimitWindow, VoltResetCreditOutcome } from '../common/voltUsage.js';
 import { ICodexRateLimitSample, IUsageRecord } from './usageTranscripts.js';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -57,6 +58,46 @@ async function readJson(path: string): Promise<Record<string, unknown> | undefin
 
 //#region Claude
 
+/** One Claude Code login: the default `~/.claude`, or a `CLAUDE_CONFIG_DIR`. */
+export interface IClaudeHome {
+	readonly configDir: string;
+	/** Claude Code's own default directory; its keychain item and account file have no suffix. */
+	readonly isDefault: boolean;
+}
+
+/** The default login plus every extra config directory, each once. */
+export function claudeHomes(home: string, extraDirs: readonly string[]): IClaudeHome[] {
+	const defaultDir = join(home, '.claude');
+	const homes: IClaudeHome[] = [{ configDir: defaultDir, isDefault: true }];
+	const seen = new Set([defaultDir]);
+	for (const raw of extraDirs) {
+		const dir = expandHome(raw.trim(), home);
+		if (dir && !seen.has(dir)) {
+			seen.add(dir);
+			homes.push({ configDir: dir, isDefault: false });
+		}
+	}
+	return homes;
+}
+
+export function expandHome(path: string, home: string): string {
+	return path === '~' ? home : path.startsWith('~/') ? join(home, path.slice(2)) : path;
+}
+
+function sha256(value: string): string {
+	return createHash('sha256').update(value).digest('hex');
+}
+
+/** Claude Code names a non-default directory's keychain item after a hash of the directory. */
+export function claudeKeychainService(claudeHome: IClaudeHome): string {
+	return claudeHome.isDefault ? 'Claude Code-credentials' : `Claude Code-credentials-${sha256(claudeHome.configDir).slice(0, 8)}`;
+}
+
+/** The account record Claude Code keeps beside its settings, or in the home directory by default. */
+function claudeAccountPath(home: string, claudeHome: IClaudeHome): string {
+	return claudeHome.isDefault ? join(home, '.claude.json') : join(claudeHome.configDir, '.claude.json');
+}
+
 interface IClaudeCredentials {
 	readonly accessToken: string;
 	readonly expiresAt?: number;
@@ -64,8 +105,8 @@ interface IClaudeCredentials {
 	readonly rateLimitTier?: string;
 }
 
-async function readClaudeCredentials(home: string): Promise<IClaudeCredentials | undefined> {
-	const fromKeychain = await readKeychain('Claude Code-credentials');
+async function readClaudeCredentials(claudeHome: IClaudeHome): Promise<IClaudeCredentials | undefined> {
+	const fromKeychain = await readKeychain(claudeKeychainService(claudeHome));
 	let parsed: Record<string, unknown> | undefined;
 	if (fromKeychain) {
 		try {
@@ -74,7 +115,7 @@ async function readClaudeCredentials(home: string): Promise<IClaudeCredentials |
 			parsed = undefined;
 		}
 	}
-	parsed ??= await readJson(join(home, '.claude', '.credentials.json'));
+	parsed ??= await readJson(join(claudeHome.configDir, '.credentials.json'));
 	const oauth = record(parsed?.claudeAiOauth);
 	const accessToken = typeof oauth?.accessToken === 'string' ? oauth.accessToken : undefined;
 	if (!accessToken) {
@@ -88,6 +129,23 @@ async function readClaudeCredentials(home: string): Promise<IClaudeCredentials |
 	};
 }
 
+interface IClaudeAccountRecord {
+	readonly account: IVoltUsageAccount;
+	readonly organizationUuid?: string;
+}
+
+async function readClaudeAccount(home: string, claudeHome: IClaudeHome): Promise<IClaudeAccountRecord> {
+	const oauth = record((await readJson(claudeAccountPath(home, claudeHome)))?.oauthAccount);
+	const uuid = typeof oauth?.accountUuid === 'string' && oauth.accountUuid ? oauth.accountUuid : undefined;
+	const email = typeof oauth?.emailAddress === 'string' && oauth.emailAddress ? oauth.emailAddress : undefined;
+	const organizationUuid = typeof oauth?.organizationUuid === 'string' && oauth.organizationUuid.trim() ? oauth.organizationUuid.trim() : undefined;
+	return {
+		// Without an account id the login can't be matched across machines; it counts per directory.
+		account: { id: uuid ? `claude:${uuid}` : `claude:dir:${sha256(claudeHome.configDir).slice(0, 16)}`, ...(email ? { label: email } : {}) },
+		...(organizationUuid ? { organizationUuid } : {}),
+	};
+}
+
 /** "default_claude_max_5x" → "Max 5x"; falls back to the subscription type. */
 function claudePlan(credentials: IClaudeCredentials): string | undefined {
 	const tier = credentials.rateLimitTier?.match(/(max|pro|team|enterprise)_?(\d+x)?$/i);
@@ -98,31 +156,93 @@ function claudePlan(credentials: IClaudeCredentials): string | undefined {
 	return type ? type[0].toUpperCase() + type.slice(1) : undefined;
 }
 
+/** Sent as Claude Code's user agent when its version can't be read. */
+const CLAUDE_FALLBACK_VERSION = '2.1.289';
+let claudeVersion: Promise<string> | undefined;
+
+/**
+ * The installed Claude Code's version. Its banked resets are offered only to Claude Code, so
+ * these calls go out under its user agent.
+ */
+export function claudeCliVersion(env: NodeJS.ProcessEnv): Promise<string> {
+	claudeVersion ??= new Promise(resolve => {
+		execFile('claude', ['--version'], { env, timeout: 5_000 }, (error, stdout) => {
+			const version = !error && typeof stdout === 'string' ? stdout.match(/\d+\.\d+\.\d+/)?.[0] : undefined;
+			resolve(version ?? CLAUDE_FALLBACK_VERSION);
+		});
+	});
+	return claudeVersion;
+}
+
+function claudeHeaders(token: string, version: string): Record<string, string> {
+	return {
+		'Authorization': `Bearer ${token}`,
+		'anthropic-beta': 'oauth-2025-04-20',
+		'Content-Type': 'application/json',
+		'User-Agent': `claude-cli/${version} (external, cli)`,
+	};
+}
+
+/** Claude's banked resets (its `cedar_ember` program): how many are left and the grant to spend next. */
+export interface IClaudeResetCredits {
+	readonly count: number;
+	readonly nextGrantId?: string;
+	readonly expiresAt?: number;
+}
+
+const CLAUDE_GRANT_ID = /^[a-z0-9_-]{1,64}$/i;
+
+/** Grants that are paused, past `ends_at` or not usable now cannot be claimed and do not count. */
+export function claudeResetCredits(block: unknown, now = Date.now()): IClaudeResetCredits | undefined {
+	const data = record(block);
+	if (!data || data.eligible !== true) {
+		return undefined;
+	}
+	const live = (Array.isArray(data.grants) ? data.grants : []).map(record).filter((grant): grant is Record<string, unknown> => {
+		if (!grant || typeof grant.id !== 'string' || !CLAUDE_GRANT_ID.test(grant.id) || grant.paused === true || grant.usable_now !== true) {
+			return false;
+		}
+		const left = finite(grant.resets_left);
+		const endsAt = isoMs(grant.ends_at);
+		return left !== undefined && left > 0 && (grant.ends_at === null || grant.ends_at === undefined || (endsAt !== undefined && endsAt > now));
+	});
+	const next = live.find(grant => grant.id === data.next_grant_id) ?? live[0];
+	if (!next) {
+		return { count: 0 };
+	}
+	const expiresAt = isoMs(next.ends_at);
+	return {
+		count: live.reduce((sum, grant) => sum + Math.trunc(finite(grant.resets_left) ?? 0), 0),
+		nextGrantId: String(next.id),
+		...(expiresAt ? { expiresAt } : {}),
+	};
+}
+
 interface IClaudeFetch {
 	readonly group?: IVoltUsageLimitGroup;
+	readonly credits?: IClaudeResetCredits;
 	/** The endpoint said 429; wait this long before asking again. */
 	readonly retryAfterMs?: number;
 	/** A network or server failure worth papering over with the last good reading. */
 	readonly transient?: boolean;
 }
 
-async function fetchClaudeLimits(home: string): Promise<IClaudeFetch> {
+async function fetchClaudeLimits(home: string, claudeHome: IClaudeHome, env: NodeJS.ProcessEnv): Promise<IClaudeFetch> {
 	const checkedAt = Date.now();
-	const credentials = await readClaudeCredentials(home);
+	const credentials = await readClaudeCredentials(claudeHome);
 	if (!credentials) {
 		return {};
 	}
+	const { account } = await readClaudeAccount(home, claudeHome);
 	const plan = claudePlan(credentials);
+	const failed = (error: string): IVoltUsageLimitGroup => ({ provider: 'claude', account, plan, windows: [], checkedAt, error });
 	if (credentials.expiresAt && credentials.expiresAt < checkedAt) {
-		return { group: { provider: 'claude', plan, windows: [], checkedAt, error: 'Claude Code\u2019s sign-in has expired. Send any Claude message to renew it, then refresh.' } };
+		return { group: failed('Claude Code’s sign-in has expired. Send any Claude message to renew it, then refresh.') };
 	}
 	try {
-		const response = await fetch('https://api.anthropic.com/api/oauth/usage', {
-			headers: {
-				'Authorization': `Bearer ${credentials.accessToken}`,
-				'anthropic-beta': 'oauth-2025-04-20',
-				'Content-Type': 'application/json',
-			},
+		// One call answers both the windows and the banked resets.
+		const response = await fetch('https://api.anthropic.com/api/oauth/usage?cedar_ember=1', {
+			headers: claudeHeaders(credentials.accessToken, await claudeCliVersion(env)),
 			signal: AbortSignal.timeout(10_000),
 		});
 		if (response.status === 429) {
@@ -130,14 +250,23 @@ async function fetchClaudeLimits(home: string): Promise<IClaudeFetch> {
 			return { retryAfterMs: Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0, transient: true };
 		}
 		if (response.status === 401 || response.status === 403) {
-			return { group: { provider: 'claude', plan, windows: [], checkedAt, error: 'Sign in to Claude Code again to read your limits.' } };
+			return { group: failed('Sign in to Claude Code again to read your limits.') };
 		}
 		if (!response.ok) {
-			return { group: { provider: 'claude', plan, windows: [], checkedAt, error: 'Claude limits could not be read. Refresh to try again.' }, transient: true };
+			return { group: failed('Claude limits could not be read. Refresh to try again.'), transient: true };
 		}
-		return { group: { provider: 'claude', plan, windows: claudeWindows(await response.json()), checkedAt } };
+		const body = record(await response.json());
+		const credits = claudeResetCredits(body?.cedar_ember);
+		return {
+			group: {
+				provider: 'claude', account, plan, windows: claudeWindows(body), checkedAt,
+				...(credits?.count ? { resetCredits: credits.count } : {}),
+				...(credits?.count && credits.expiresAt ? { resetCreditsExpireAt: credits.expiresAt } : {}),
+			},
+			credits,
+		};
 	} catch {
-		return { group: { provider: 'claude', plan, windows: [], checkedAt, error: 'Claude limits could not be read. Check your connection and refresh.' }, transient: true };
+		return { group: failed('Claude limits could not be read. Check your connection and refresh.'), transient: true };
 	}
 }
 
@@ -147,20 +276,33 @@ const CLAUDE_MIN_INTERVAL_MS = 60_000;
 const CLAUDE_BACKOFF_MS = 3 * 60_000;
 
 /**
- * Reads Claude's limits without tripping its rate limit. Claude Code, T3 Code and Volt all poll
- * the same endpoint with the same sign-in, and it answers 429 when they add up. The last good
- * reading is kept (on disk too, so a restart has numbers at once) and shown with its age while
- * the endpoint cools down, instead of an error.
+ * Reads one Claude login's limits without tripping its rate limit. Claude Code, T3 Code and Volt
+ * all poll the same endpoint with the same sign-in, and it answers 429 when they add up. The last
+ * good reading is kept (on disk too, so a restart has numbers at once) and shown with its age
+ * while the endpoint cools down, instead of an error.
  */
 export class ClaudeLimitsReader {
 
 	private last: IVoltUsageLimitGroup | undefined;
+	private credits: IClaudeResetCredits | undefined;
 	private backoffUntil = 0;
 	private loaded = false;
 
-	constructor(private readonly home: string, private readonly cachePath: string) { }
+	constructor(private readonly home: string, readonly claudeHome: IClaudeHome, private readonly cachePath: string) { }
 
-	async read(): Promise<IVoltUsageLimitGroup | undefined> {
+	/** The grant a redemption spends: from the last reading, so it is the one the user saw. */
+	get nextGrantId(): string | undefined {
+		return this.credits?.nextGrantId;
+	}
+
+	/** Forgets the reading, so the next read asks the endpoint (after a redemption). */
+	invalidate(): void {
+		if (this.last) {
+			this.last = { ...this.last, checkedAt: 0 };
+		}
+	}
+
+	async read(env: NodeJS.ProcessEnv): Promise<IVoltUsageLimitGroup | undefined> {
 		await this.load();
 		const now = Date.now();
 		if (this.last && (now < this.backoffUntil || now - this.last.checkedAt < CLAUDE_MIN_INTERVAL_MS)) {
@@ -169,13 +311,14 @@ export class ClaudeLimitsReader {
 		if (now < this.backoffUntil) {
 			return this.coolingDown(now);
 		}
-		const result = await fetchClaudeLimits(this.home);
+		const result = await fetchClaudeLimits(this.home, this.claudeHome, env);
 		if (result.retryAfterMs !== undefined) {
 			this.backoffUntil = now + Math.max(result.retryAfterMs, CLAUDE_BACKOFF_MS);
 			return this.last ?? this.coolingDown(now);
 		}
 		if (result.group && !result.group.error) {
 			this.last = result.group;
+			this.credits = result.credits;
 			void this.save(result.group);
 			return result.group;
 		}
@@ -193,6 +336,7 @@ export class ClaudeLimitsReader {
 		this.loaded = true;
 		const cached = await readJson(this.cachePath);
 		if (cached?.provider === 'claude' && Array.isArray(cached.windows) && typeof cached.checkedAt === 'number') {
+			// The grant id isn't cached, so a warm start shows the count but redeems after the next read.
 			this.last = cached as unknown as IVoltUsageLimitGroup;
 		}
 	}
@@ -205,6 +349,11 @@ export class ClaudeLimitsReader {
 			// Only a warm start is lost.
 		}
 	}
+}
+
+/** Where a Claude login's last reading is kept between runs. */
+export function claudeCachePath(cacheDir: string, claudeHome: IClaudeHome): string {
+	return join(cacheDir, claudeHome.isDefault ? 'claude-limits.json' : `claude-limits-${sha256(claudeHome.configDir).slice(0, 8)}.json`);
 }
 
 /** Prefers the `limits` list (session, weekly, per-model weekly); older payloads only had the named windows. */
@@ -250,6 +399,64 @@ export function claudeWindows(body: unknown): IVoltUsageLimitWindow[] {
 	return windows;
 }
 
+const CLAUDE_REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** Thrown when a redemption failed. `settled`: Claude answered, so a retry is a new attempt. */
+export class ResetCreditError extends Error {
+	constructor(message: string, readonly settled: boolean) {
+		super(message);
+		this.name = 'ResetCreditError';
+	}
+}
+
+/**
+ * Claims one of Claude's banked resets for the organization, as Claude Code does. `requestId` is
+ * the idempotency key: a retry with the same id is the same claim.
+ */
+export async function redeemClaudeResetCredit(home: string, claudeHome: IClaudeHome, env: NodeJS.ProcessEnv, grantId: string, requestId: string): Promise<VoltResetCreditOutcome> {
+	if (!CLAUDE_GRANT_ID.test(grantId) || !CLAUDE_REQUEST_ID.test(requestId)) {
+		throw new ResetCreditError('Claude returned a malformed reset credit.', true);
+	}
+	const credentials = await readClaudeCredentials(claudeHome);
+	const { organizationUuid } = await readClaudeAccount(home, claudeHome);
+	if (!credentials || !organizationUuid) {
+		throw new ResetCreditError('Sign in to Claude Code again to redeem resets.', true);
+	}
+	let response: Response;
+	try {
+		response = await fetch(`https://api.anthropic.com/api/organizations/${encodeURIComponent(organizationUuid)}/reset_rate_limits`, {
+			method: 'POST',
+			headers: claudeHeaders(credentials.accessToken, await claudeCliVersion(env)),
+			body: JSON.stringify({ program: 'cedar_ember', grant_id: grantId, request_id: requestId }),
+			signal: AbortSignal.timeout(25_000),
+		});
+	} catch {
+		throw new ResetCreditError('Claude could not redeem the reset. Check your connection and try again.', false);
+	}
+	if (response.status === 429) {
+		throw new ResetCreditError('Claude is rate limiting resets. Try again soon.', true);
+	}
+	if (response.status === 401 || response.status === 403) {
+		throw new ResetCreditError('Sign in to Claude Code again to redeem resets.', true);
+	}
+	let result: unknown;
+	try {
+		result = response.ok ? record(await response.json())?.result : undefined;
+	} catch {
+		result = undefined;
+	}
+	switch (result) {
+		case 'reset': return 'reset';
+		case 'not_limited': return 'nothingToReset';
+		case 'already_used': return 'alreadyRedeemed';
+		case 'ineligible': return 'noCredit';
+		case 'cooldown': throw new ResetCreditError('Claude resets are cooling down. Try again later.', true);
+		// Claude could not say whether the claim landed; the retry asks about the same claim.
+		case 'unavailable': throw new ResetCreditError('Claude could not confirm the reset. If you are still limited in a moment, try again.', false);
+		default: throw new ResetCreditError('Claude could not redeem the reset.', false);
+	}
+}
+
 //#endregion
 
 //#region Codex
@@ -260,6 +467,40 @@ const CODEX_COMMANDS = (home: string) => [
 	'/Applications/Conductor.app/Contents/Resources/bin/codex',
 	'codex',
 ];
+
+/** The default Codex home (`CODEX_HOME` or `~/.codex`) plus every extra one, each once. */
+export function codexHomes(home: string, env: NodeJS.ProcessEnv, extraDirs: readonly string[]): string[] {
+	const homes = [env.CODEX_HOME?.trim() ? expandHome(env.CODEX_HOME.trim(), home) : join(home, '.codex')];
+	for (const raw of extraDirs) {
+		const dir = expandHome(raw.trim(), home);
+		if (dir && !homes.includes(dir)) {
+			homes.push(dir);
+		}
+	}
+	return homes;
+}
+
+function jwtPayload(token: unknown): Record<string, unknown> | undefined {
+	if (typeof token !== 'string') {
+		return undefined;
+	}
+	try {
+		return record(JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8')));
+	} catch {
+		return undefined;
+	}
+}
+
+/** The ChatGPT account a Codex home is signed in to, from its `auth.json`. */
+export async function readCodexAccount(codexHome: string): Promise<IVoltUsageAccount | undefined> {
+	const tokens = record((await readJson(join(codexHome, 'auth.json')))?.tokens);
+	const accountId = typeof tokens?.account_id === 'string' && tokens.account_id ? tokens.account_id : undefined;
+	if (!accountId) {
+		return undefined;
+	}
+	const email = jwtPayload(tokens?.id_token)?.email;
+	return { id: `codex:${accountId}`, ...(typeof email === 'string' && email ? { label: email } : {}) };
+}
 
 /** Codex's /status wording: "5h limit", "Weekly limit". */
 function codexWindowLabel(minutes: number | undefined): string {
@@ -277,7 +518,7 @@ function codexPlan(value: unknown): string | undefined {
 }
 
 /** Normalizes both the app-server (camelCase) and rollout (snake_case) shapes. */
-export function codexGroup(raw: Record<string, unknown>, checkedAt: number, resetCredits?: number): IVoltUsageLimitGroup {
+export function codexGroup(raw: Record<string, unknown>, checkedAt: number, resetCredits?: number, resetCreditsExpireAt?: number): IVoltUsageLimitGroup {
 	const windows: IVoltUsageLimitWindow[] = [];
 	for (const key of ['primary', 'secondary']) {
 		const window = record(raw[key]);
@@ -304,11 +545,26 @@ export function codexGroup(raw: Record<string, unknown>, checkedAt: number, rese
 		windows,
 		checkedAt,
 		...(resetCredits ? { resetCredits } : {}),
+		...(resetCredits && resetCreditsExpireAt ? { resetCreditsExpireAt } : {}),
 	};
 }
 
-/** Asks `codex app-server` for the live numbers; it reads them from the account, not from a transcript. */
-async function readCodexAppServer(home: string, env: NodeJS.ProcessEnv): Promise<IVoltUsageLimitGroup | undefined> {
+/** Soonest expiry among the credits still available, epoch ms. */
+export function codexCreditsExpireAt(summary: unknown): number | undefined {
+	const credits = record(summary)?.credits;
+	const expiries = (Array.isArray(credits) ? credits : [])
+		.map(record)
+		.filter(credit => credit?.status === 'available')
+		.map(credit => finite(credit?.expiresAt))
+		.filter((value): value is number => value !== undefined && value > 0);
+	return expiries.length ? Math.min(...expiries) * 1000 : undefined;
+}
+
+/**
+ * Sends one request to `codex app-server` for the login in `codexHome`; the answer comes from the
+ * account, not from a transcript. Undefined when no Codex binary answered.
+ */
+async function codexAppServerRequest(home: string, codexHome: string, env: NodeJS.ProcessEnv, method: string, params: object, timeoutMs: number): Promise<{ result?: Record<string, unknown>; error?: string } | undefined> {
 	for (const command of CODEX_COMMANDS(home)) {
 		if (command.startsWith('/')) {
 			try {
@@ -317,11 +573,11 @@ async function readCodexAppServer(home: string, env: NodeJS.ProcessEnv): Promise
 				continue;
 			}
 		}
-		const result = await new Promise<Record<string, unknown> | undefined>(resolve => {
+		const answer = await new Promise<{ result?: Record<string, unknown>; error?: string } | undefined>(resolve => {
 			let settled = false;
 			let buffer = '';
-			const child = spawn(command, ['app-server', '--stdio'], { env, stdio: ['pipe', 'pipe', 'ignore'] });
-			const finish = (value: Record<string, unknown> | undefined) => {
+			const child = spawn(command, ['app-server', '--stdio'], { env: { ...env, CODEX_HOME: codexHome }, stdio: ['pipe', 'pipe', 'ignore'] });
+			const finish = (value: { result?: Record<string, unknown>; error?: string } | undefined) => {
 				if (settled) {
 					return;
 				}
@@ -330,7 +586,7 @@ async function readCodexAppServer(home: string, env: NodeJS.ProcessEnv): Promise
 				child.kill();
 				resolve(value);
 			};
-			const timer = setTimeout(() => finish(undefined), 12_000);
+			const timer = setTimeout(() => finish(undefined), timeoutMs);
 			child.on('error', () => finish(undefined));
 			child.on('exit', () => finish(undefined));
 			child.stdout.setEncoding('utf8');
@@ -343,7 +599,8 @@ async function readCodexAppServer(home: string, env: NodeJS.ProcessEnv): Promise
 					try {
 						const message = record(JSON.parse(line));
 						if (message?.id === 2) {
-							finish(record(message.result));
+							const error = record(message.error);
+							finish(error ? { error: typeof error.message === 'string' ? error.message : 'Codex refused the request.' } : { result: record(message.result) });
 						} else if (message?.id !== undefined && message.method) {
 							// The server can ask us things (approvals); answer with nothing.
 							child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {} }) + '\n');
@@ -355,25 +612,47 @@ async function readCodexAppServer(home: string, env: NodeJS.ProcessEnv): Promise
 			});
 			child.stdin.on('error', () => finish(undefined));
 			child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { clientInfo: { name: 'volt', title: 'Volt', version: '0.1.0' } } }) + '\n');
-			child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'account/rateLimits/read', params: {} }) + '\n');
+			child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method, params }) + '\n');
 		});
-		const limits = record(result?.rateLimits);
-		if (limits) {
-			const credits = finite(record(result?.rateLimitResetCredits)?.availableCount);
-			return codexGroup(limits, Date.now(), credits);
+		if (answer) {
+			return answer;
 		}
 	}
 	return undefined;
 }
 
 /** `fallback` supplies the newest sample from the rollouts, used only when app-server cannot be reached. */
-export async function readCodexLimits(home: string, env: NodeJS.ProcessEnv, fallback: () => Promise<ICodexRateLimitSample | undefined>): Promise<IVoltUsageLimitGroup | undefined> {
-	const live = await readCodexAppServer(home, env);
-	if (live) {
-		return live;
+export async function readCodexLimits(home: string, codexHome: string, env: NodeJS.ProcessEnv, fallback?: () => Promise<ICodexRateLimitSample | undefined>): Promise<IVoltUsageLimitGroup | undefined> {
+	const account = await readCodexAccount(codexHome);
+	const live = await codexAppServerRequest(home, codexHome, env, 'account/rateLimits/read', {}, 12_000);
+	const limits = record(live?.result?.rateLimits);
+	if (limits) {
+		const summary = live?.result?.rateLimitResetCredits;
+		const group = codexGroup(limits, Date.now(), finite(record(summary)?.availableCount), codexCreditsExpireAt(summary));
+		return account ? { ...group, account } : group;
 	}
-	const sample = await fallback();
-	return sample ? codexGroup(sample.raw, sample.timestampMs) : undefined;
+	const sample = await fallback?.();
+	if (!sample) {
+		return undefined;
+	}
+	const group = codexGroup(sample.raw, sample.timestampMs);
+	return account ? { ...group, account } : group;
+}
+
+/** Spends one of the Codex account's reset credits. `idempotencyKey` names the attempt; a retry reuses it. */
+export async function redeemCodexResetCredit(home: string, codexHome: string, env: NodeJS.ProcessEnv, idempotencyKey: string): Promise<VoltResetCreditOutcome> {
+	const answer = await codexAppServerRequest(home, codexHome, env, 'account/rateLimitResetCredit/consume', { idempotencyKey }, 20_000);
+	if (!answer) {
+		throw new ResetCreditError('Codex could not be reached to redeem the reset. Try again.', false);
+	}
+	if (answer.error) {
+		throw new ResetCreditError(answer.error, true);
+	}
+	const outcome = answer.result?.outcome;
+	if (outcome === 'reset' || outcome === 'nothingToReset' || outcome === 'noCredit' || outcome === 'alreadyRedeemed') {
+		return outcome;
+	}
+	throw new ResetCreditError('Codex could not redeem the reset.', false);
 }
 
 //#endregion
@@ -395,13 +674,15 @@ async function readCursorToken(home: string): Promise<string | undefined> {
 
 /** The user id in the token's `sub` (`auth0|user_…`), needed for the dashboard cookie. */
 function cursorUserId(token: string): string | undefined {
-	try {
-		const payload = record(JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8')));
-		const subject = typeof payload?.sub === 'string' ? payload.sub : undefined;
-		return subject?.split('|').at(-1) || undefined;
-	} catch {
-		return undefined;
-	}
+	const subject = jwtPayload(token)?.sub;
+	return typeof subject === 'string' ? subject.split('|').at(-1) || undefined : undefined;
+}
+
+/** The Cursor account this machine is signed in to, so its account-wide usage counts once across machines. */
+export async function readCursorAccountId(home: string): Promise<string | undefined> {
+	const token = await readCursorToken(home);
+	const userId = token && cursorUserId(token);
+	return userId ? `cursor:${userId}` : undefined;
 }
 
 export async function readCursorLimits(home: string): Promise<IVoltUsageLimitGroup | undefined> {
@@ -410,6 +691,9 @@ export async function readCursorLimits(home: string): Promise<IVoltUsageLimitGro
 	if (!token) {
 		return undefined;
 	}
+	const userId = cursorUserId(token);
+	const email = jwtPayload(token)?.email;
+	const account: IVoltUsageAccount | undefined = userId ? { id: `cursor:${userId}`, ...(typeof email === 'string' && email ? { label: email } : {}) } : undefined;
 	try {
 		const response = await fetch('https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage', {
 			method: 'POST',
@@ -423,14 +707,14 @@ export async function readCursorLimits(home: string): Promise<IVoltUsageLimitGro
 			signal: AbortSignal.timeout(10_000),
 		});
 		if (response.status === 401 || response.status === 403) {
-			return { provider: 'cursor', windows: [], checkedAt, error: 'Sign in to Cursor again to read your limits.' };
+			return { provider: 'cursor', account, windows: [], checkedAt, error: 'Sign in to Cursor again to read your limits.' };
 		}
 		if (!response.ok) {
 			throw new Error(`HTTP ${response.status}`);
 		}
-		return { provider: 'cursor', windows: cursorWindows(await response.json()), checkedAt };
+		return { provider: 'cursor', account, windows: cursorWindows(await response.json()), checkedAt };
 	} catch {
-		return { provider: 'cursor', windows: [], checkedAt, error: 'Cursor limits could not be read. Check your connection and refresh.' };
+		return { provider: 'cursor', account, windows: [], checkedAt, error: 'Cursor limits could not be read. Check your connection and refresh.' };
 	}
 }
 

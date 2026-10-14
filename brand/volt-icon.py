@@ -1,8 +1,10 @@
 import math, random, sys
 
 # `python3 volt-icon.py` writes the release icon; `--beta` writes the early-access
-# galaxy variant (same bolt and gravity-well grid, deep-space background).
+# galaxy variant (same bolt and gravity-well grid, deep-space background). `--ios` writes the
+# full-bleed square the iOS and Android app icons start from (the OS masks the corners).
 BETA = "--beta" in sys.argv
+IOS = "--ios" in sys.argv
 def squircle(cx, cy, r, n=5.0, steps=720):
     pts=[]
     for i in range(steps):
@@ -38,7 +40,7 @@ def rounded(V,R):
     for s in segs[1:]+segs[:1]: d+=f" L{f(s[0])} C{f(s[1])} {f(s[2])} {f(s[3])}"
     return d+" Z"
 glyph=rounded(V,R)+f" M{512+hr:.1f},512 A{hr:.1f},{hr:.1f} 0 1 0 {512-hr:.1f},512 A{hr:.1f},{hr:.1f} 0 1 0 {512+hr:.1f},512 Z"
-body=squircle(512,512,412)
+body="M0,0 L1024,0 L1024,1024 L0,1024 Z" if IOS else squircle(512,512,412)
 
 # Gravity-well grid: straight blueprint lines bent inward toward the bolt's core,
 # like spacetime around a mass. r' = r * (1 - pull * e^(-(r/reach)^2)).
@@ -178,15 +180,15 @@ svg=f'''<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewB
   <radialGradient id="starHalo"><stop offset="0" stop-color="#CFE0FF" stop-opacity="0.7"/><stop offset="1" stop-color="#CFE0FF" stop-opacity="0"/></radialGradient>
   <clipPath id="bodyClip"><path d="{body}"/></clipPath>
 </defs>
-<path d="{body}" fill="#000" filter="url(#iconShadow)"/>
+{"" if IOS else f'<path d="{body}" fill="#000" filter="url(#iconShadow)"/>'}
 <g clip-path="url(#bodyClip)">
   {background}
   <path d="{body}" fill="url(#glow)"/>
-  {rim_shade}
-  <path d="{body}" fill="none" stroke="url(#rim)" stroke-width="6"/>
+  {"" if IOS else rim_shade}
+  {"" if IOS else f'<path d="{body}" fill="none" stroke="url(#rim)" stroke-width="6"/>'}
   <path d="{glyph}" fill-rule="evenodd" fill="#000" filter="url(#glyphShadow)"/>
 </g>
 <path d="{glyph}" fill-rule="evenodd" fill="url(#glyphFill)" filter="url(#glyphBevel)"/>
 </svg>'''
-open("volt-icon-beta.svg" if BETA else "volt-icon.svg","w").write(svg)
+open("volt-icon-ios.svg" if IOS else "volt-icon-beta.svg" if BETA else "volt-icon.svg","w").write(svg)
 print("C",C,"k",k)

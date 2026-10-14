@@ -92,7 +92,7 @@ import { IAgentPullRequestService } from '../pullRequests/agentPullRequestServic
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { IAgentPrBadge, prBadge, sessionPrFilterTag, visibleLinks } from '../../common/agentPullRequests.js';
 
-const ROW_HEIGHT = 28;
+export const ROW_HEIGHT = 28;
 /** An agent tab with a second line (branch, pull request, model). */
 const TWO_LINE_ROW_HEIGHT = 46;
 /** How often ages, "Working 2m" and snooze countdowns are redrawn. */
@@ -100,7 +100,7 @@ const CLOCK_TICK_MS = 30_000;
 /** How long the pointer rests on an agent tab before its details card opens. */
 const SESSION_HOVER_DELAY_MS = 500;
 
-const identityProvider: IIdentityProvider<AgentHomeElement> = {
+export const agentHomeIdentityProvider: IIdentityProvider<AgentHomeElement> = {
 	getId(element) {
 		switch (element.type) {
 			case 'newChat': return 'newChat';
@@ -153,7 +153,7 @@ const ROW_STATE_CLASSES = [
 	'actions-cover-name', 'active-chat', 'shelf-active', 'shelf-settled', 'shelf-snooze', 'group-settled', 'group-snooze', 'two-line',
 ];
 
-class AgentHomeDelegate implements IListVirtualDelegate<AgentHomeElement> {
+export class AgentHomeDelegate implements IListVirtualDelegate<AgentHomeElement> {
 	constructor(private readonly host: { readonly twoLine: boolean }) { }
 
 	getHeight(element: AgentHomeElement): number {
@@ -165,12 +165,17 @@ class AgentHomeDelegate implements IListVirtualDelegate<AgentHomeElement> {
 	}
 }
 
-class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTemplate> {
+/** What a home row reads and does; the sidebar pane, or the web app's sidebar. */
+export type IAgentHomeRendererHost = Pick<AgentHomePane,
+	'view' | 'twoLine' | 'modelLabel' | 'prBadge' | 'openPullRequest' | 'projectStatus' | 'togglePin' | 'toggleArchive' | 'settle' | 'openSnoozeMenu'
+	| 'wake' | 'openFilterMenu' | 'openNewChatMenu' | 'openWorkspaceMenu' | 'isActiveChat' | 'sessionContext' | 'bindSessionHover' | 'addProject' | 'startChat'>;
+
+export class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTemplate> {
 	static readonly ID = 'agentHome';
 	readonly templateId = AgentHomeRenderer.ID;
 
 	constructor(
-		private readonly host: AgentHomePane,
+		private readonly host: IAgentHomeRendererHost,
 		private readonly keybindingService: IKeybindingService,
 	) { }
 
@@ -568,7 +573,7 @@ function rowLevel(element: AgentHomeElement): number {
 	}
 }
 
-function elementLabel(element: AgentHomeElement): string {
+export function agentHomeElementLabel(element: AgentHomeElement): string {
 	switch (element.type) {
 		case 'newChat': return localize('voltAgent.home.newChat', "New Chat");
 		case 'action': return actionSpec(element.id).label;
@@ -593,13 +598,13 @@ function elementLabel(element: AgentHomeElement): string {
 	}
 }
 
-class AgentHomeAccessibilityProvider implements IListAccessibilityProvider<AgentHomeElement> {
+export class AgentHomeAccessibilityProvider implements IListAccessibilityProvider<AgentHomeElement> {
 	getWidgetAriaLabel(): string {
 		return localize('voltAgent.home.list', "Agent Home");
 	}
 
 	getAriaLabel(element: AgentHomeElement): string {
-		return elementLabel(element);
+		return agentHomeElementLabel(element);
 	}
 }
 
@@ -704,9 +709,9 @@ export class AgentHomePane extends Disposable {
 			{
 				accessibilityProvider: new AgentHomeAccessibilityProvider(),
 				keyboardNavigationLabelProvider: {
-					getKeyboardNavigationLabel: (element: AgentHomeElement) => elementLabel(element),
+					getKeyboardNavigationLabel: (element: AgentHomeElement) => agentHomeElementLabel(element),
 				},
-				identityProvider,
+				identityProvider: agentHomeIdentityProvider,
 				multipleSelectionSupport: false,
 				hideTwistiesOfChildlessElements: false,
 				renderIndentGuides: RenderIndentGuides.None,
@@ -1528,7 +1533,7 @@ export class AgentHomePane extends Disposable {
 	}
 }
 
-function toTreeElement(node: IAgentHomeNode): IObjectTreeElement<AgentHomeElement> {
+export function toTreeElement(node: IAgentHomeNode): IObjectTreeElement<AgentHomeElement> {
 	const children = node.children?.map(toTreeElement);
 	const hasChildren = !!children?.length;
 	let collapsible = false;

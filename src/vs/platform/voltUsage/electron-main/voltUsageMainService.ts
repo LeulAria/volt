@@ -8,7 +8,8 @@ import { IConfigurationService } from '../../configuration/common/configuration.
 import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
 import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
-import { VoltUsageService } from '../node/voltUsageService.js';
+import { VOLT_USAGE_ACCOUNT_DIRS_SETTING } from '../common/voltUsage.js';
+import { usageAccountDirs, VoltUsageService } from '../node/voltUsageService.js';
 
 /** Usage runs in the main process: it reads hundreds of MB of transcripts and talks to the provider APIs. */
 export class VoltUsageMainService extends VoltUsageService {
@@ -22,6 +23,7 @@ export class VoltUsageMainService extends VoltUsageService {
 			.then(resolved => ({ ...process.env, ...resolved }))
 			.catch(() => process.env),
 			logService,
-			join(environmentMainService.userDataPath, 'volt-usage'));
+			join(environmentMainService.userDataPath, 'volt-usage'),
+			() => usageAccountDirs(configurationService.getValue(VOLT_USAGE_ACCOUNT_DIRS_SETTING)));
 	}
 }

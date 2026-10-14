@@ -9,6 +9,7 @@ import { localize } from '../../../../../nls.js';
 import { createCodeCardShell, ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js';
 import { markupToFragment } from './agentMarkupDom.js';
 import type * as BeautifulMermaid from './vendor/beautifulMermaid.js';
+import { VOLT_FONT_FAMILY } from '../../common/agentTypography.js';
 
 interface MermaidNode {
 	id: string;
@@ -42,7 +43,7 @@ const MERMAID_THEME: BeautifulMermaid.RenderOptions = {
 	muted: 'var(--volt-md-mermaid-muted)',
 	surface: 'var(--volt-md-mermaid-surface)',
 	border: 'var(--volt-md-mermaid-line)',
-	font: '-apple-system, BlinkMacSystemFont, \'Segoe UI\', sans-serif',
+	font: VOLT_FONT_FAMILY,
 	transparent: true,
 };
 

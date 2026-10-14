@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { alwaysAllowPattern } from '../../../../services/voltRuntime/common/access/wildcard.js';
@@ -14,9 +14,9 @@ import { runStatusLine } from '../../../../services/voltRuntime/common/harness/w
 import { AgentSessionAttention, AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
-import { appendProviderNotice, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IFileChangeBlock, IPlanBlock, isExploreTool, isFileChangeTool, isPlanTool, isShellTool, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments } from '../blocks/agentBlocks.js';
+import { appendProviderNotice, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, IPlanBlock, isCompactCommand, isExploreTool, isFileChangeTool, isPlanTool, isShellTool, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments } from '../blocks/agentBlocks.js';
 import { sameHostToolArgs } from '../blocks/agentHostToolActivity.js';
-import { classifySupervisionNotice } from '../chrome/agentTimeline.js';
+import { classifySupervisionNotice, stampTodoSteps } from '../chrome/agentTimeline.js';
 import { agentMessagePlainText } from '../context/agentContextUsage.js';
 import { extractToolImage } from '../preview/browserSnapshot.js';
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
@@ -39,6 +39,32 @@ export interface IAgentSessionHost {
 	recordAssistant(message: IAgentAssistantMessage, final: boolean, status: AgentSessionStatus, plainText: string): void;
 	recordUser?(message: IAgentUserMessage): void;
 	recordMode?(mode: string): void;
+	recordTruncate?(message: IAgentMessage | undefined): void;
+}
+
+/**
+ * What views and the turn host use of a chat's session controller. In the desktop window running
+ * against the agent server the controller is a mirror of the server's (same messages, same change
+ * kinds); in-process and on the server it is {@link AgentSessionController}.
+ */
+export interface IAgentSessionControl extends IDisposable {
+	readonly onDidChange: Event<IAgentSessionChange>;
+	readonly onDidBecomeIdle: Event<void>;
+	readonly isRunning: boolean;
+	setHost(host: IAgentSessionHost): void;
+	skipCurrentRun(): void;
+	beginTurn(spec: IAgentTurnSpec): IAgentAssistantMessage;
+	endUnstartedTurn(turnId: string, failure: string | undefined): void;
+	recordSteer(text: string): boolean;
+	/** The user stopped the turn: closes the live reply as stopped. False when nothing was streaming. */
+	stopReply(): boolean;
+	/** The transcript was cut before `removed` (an edited or retried prompt) and keeps `userTurns` prompts. */
+	truncate(removed: IAgentMessage | undefined, userTurns: number): void;
+	/**
+	 * Where the transcript comes from when it isn't this window's history (the agent server): the
+	 * input loads it through this, into its own messages, instead of reading the log.
+	 */
+	loadTranscript?(): Promise<{ readonly messages: IAgentMessage[]; readonly contextUsed?: number; readonly contextWindow?: number }>;
 }
 
 /** One turn the orchestrator starts: what the transcript shows and what the model reads. */
@@ -75,10 +101,74 @@ export function completeStreamingBlocks(message: IAgentAssistantMessage, stopped
 	}
 }
 
+/** Marks a streaming reply as stopped by the user. Returns false when it wasn't streaming. */
+export function markReplyStopped(reply: IAgentMessage | undefined, now = Date.now()): reply is IAgentAssistantMessage {
+	if (reply?.kind !== 'agent' || !reply.activity?.streaming) {
+		return false;
+	}
+	reply.cancelled = true;
+	reply.outcome = 'stopped';
+	reply.activity.streaming = false;
+	reply.activity.expanded = false;
+	reply.activity.status = localize('voltAgent.cancelled', "Cancelled");
+	reply.endedAt = now;
+	reply.startedAt ??= reply.endedAt;
+	reply.durationMs = Math.max(0, reply.endedAt - reply.startedAt);
+	completeStreamingBlocks(reply, true);
+	return true;
+}
+
 /** An approval card is still waiting on the user's decision. */
 export function hasPendingApproval(message: IAgentAssistantMessage): boolean {
 	return (message.segments ?? []).some(segment =>
 		segment.kind === 'block' && segment.block.type === 'approval' && !segment.block.blocked && !segment.block.decision && segment.block.status === 'streaming');
+}
+
+function applyCompactionUpdate(compaction: IAgentCompaction, event: Extract<IVoltEvent, { type: 'context.compaction' }>): void {
+	if (event.status) {
+		compaction.status = event.status;
+	}
+	if (event.trigger) {
+		compaction.trigger = event.trigger;
+	}
+	if (event.preTokens !== undefined) {
+		compaction.preTokens = event.preTokens;
+	}
+	if (event.postTokens !== undefined) {
+		compaction.postTokens = event.postTokens;
+	}
+	if (event.durationMs !== undefined) {
+		compaction.durationMs = event.durationMs;
+	}
+	if (event.summary !== undefined) {
+		compaction.summary = event.summary || undefined;
+	}
+	if (event.summaryDelta) {
+		compaction.summary = (compaction.summary ?? '') + event.summaryDelta;
+	}
+	if (event.error) {
+		compaction.error = event.error;
+	}
+}
+
+/**
+ * When a turn ends, a compaction it left running ends the way the turn did. A `/compact` turn the
+ * agent never reported a compaction for, and that answered in words instead, loses its placeholder.
+ */
+function settleCompactions(reply: IAgentAssistantMessage, outcome: IAgentCompaction['status']): void {
+	const answered = reply.segments.some(segment => segment.kind === 'text' && segment.text.trim());
+	for (let i = reply.segments.length - 1; i >= 0; i--) {
+		const segment = reply.segments[i];
+		if (segment.kind !== 'compaction' || segment.compaction.status !== 'running') {
+			continue;
+		}
+		if (segment.compaction.provisional && outcome === 'completed' && answered) {
+			reply.segments.splice(i, 1);
+			continue;
+		}
+		segment.compaction.status = outcome;
+		delete segment.compaction.provisional;
+	}
 }
 
 export function hasVisibleReply(message: IAgentAssistantMessage): boolean {
@@ -86,7 +176,7 @@ export function hasVisibleReply(message: IAgentAssistantMessage): boolean {
 		return true;
 	}
 	return (message.segments ?? []).some(segment =>
-		(segment.kind === 'text' && segment.text.trim()) || (segment.kind === 'notice' && segment.title.trim()));
+		(segment.kind === 'text' && segment.text.trim()) || (segment.kind === 'notice' && segment.title.trim()) || segment.kind === 'compaction');
 }
 
 /**
@@ -95,7 +185,7 @@ export function hasVisibleReply(message: IAgentAssistantMessage): boolean {
  * so switching chats or closing a busy panel never drops tool cards, approvals,
  * or the final reply. A panel only listens to redraw.
  */
-export class AgentSessionController extends Disposable {
+export class AgentSessionController extends Disposable implements IAgentSessionControl {
 
 	private readonly _onDidChange = this._register(new Emitter<IAgentSessionChange>());
 	readonly onDidChange: Event<IAgentSessionChange> = this._onDidChange.event;
@@ -123,6 +213,11 @@ export class AgentSessionController extends Disposable {
 	private lastTextId: string | undefined;
 	/** The run reported real context occupancy (`used`); its end-of-turn totals are not occupancy. */
 	private runReportedUsed = false;
+	/**
+	 * The kept-summary size of the run's last compaction. Claude reports exactly that as `used` right
+	 * after compacting, without the system prompt and tools that still come first.
+	 */
+	private compactedTo: number | undefined;
 
 	constructor(
 		private host: IAgentSessionHost,
@@ -205,6 +300,13 @@ export class AgentSessionController extends Disposable {
 				items: [],
 			},
 		};
+		if (isCompactCommand(spec.text) && reply.activity) {
+			// "Compacting context" from the first frame: the agent reports its compaction only once the
+			// prompt reaches it, and the checkpoint before a turn can take a couple of seconds.
+			reply.segments.push({ kind: 'compaction', compaction: { id: `pending-${spec.turnId}`, status: 'running', trigger: 'manual', startedAt: Date.now(), provisional: true } });
+			reply.activity.status = localize('voltAgent.compaction.running', "Compacting context");
+			reply.activity.statusPinned = true;
+		}
 		this.host.messages.push(user, reply);
 		// The prompt is durable before the model is asked.
 		this.host.recordUser?.(user);
@@ -234,6 +336,21 @@ export class AgentSessionController extends Disposable {
 		this.host.recordAssistant(reply, true, failure ? 'error' : 'cancelled', agentMessagePlainText(reply));
 		this.fire({ kind: 'runEnd', aborted: !failure, failed: !!failure });
 		this._onDidBecomeIdle.fire();
+	}
+
+	stopReply(): boolean {
+		const last = this.host.messages.at(-1);
+		if (!markReplyStopped(last)) {
+			return false;
+		}
+		this.host.recordAssistant(last, true, 'cancelled', agentMessagePlainText(last));
+		this.fire({ kind: 'render' });
+		return true;
+	}
+
+	truncate(removed: IAgentMessage | undefined, userTurns: number): void {
+		this.host.recordTruncate?.(removed);
+		this.runtime.truncateSession(this.host.sessionId, userTurns);
 	}
 
 	/** A message steered into the running turn: the reply shows where it landed. False when nothing runs. */
@@ -337,6 +454,16 @@ export class AgentSessionController extends Disposable {
 			this.host.contextUsed = measured;
 			if (last) {
 				last.tokensUsed = measured;
+				// The context meter adds the system prompt and tools back onto Claude's post-compaction figure.
+				if (reported && this.compactedTo !== undefined && event.used === this.compactedTo) {
+					last.usageExcludesPrompt = true;
+				} else if (last.usageExcludesPrompt) {
+					last.usageExcludesPrompt = undefined;
+				}
+				// The chat's first prompt-side figure: system prompt, tools and the first message, the floor every later turn sits on.
+				if (reported && last.tokensBase === undefined && this.host.messages.find(message => message.kind === 'agent') === last) {
+					last.tokensBase = event.used;
+				}
 			}
 		}
 		if (event.size !== undefined && Number.isFinite(event.size) && event.size > 0) {
@@ -357,6 +484,40 @@ export class AgentSessionController extends Disposable {
 		if (event.cache !== undefined && Number.isFinite(event.cache) && event.cache >= 0) {
 			last.tokensCache = event.cache;
 		}
+	}
+
+	/**
+	 * A compaction the agent reported: one row per id, patched as its updates arrive. A `/compact`
+	 * turn's provisional row becomes the agent's first one.
+	 */
+	private applyCompaction(last: IAgentAssistantMessage, activity: IAgentActivity, event: Extract<IVoltEvent, { type: 'context.compaction' }>): void {
+		const rows = last.segments.flatMap(segment => segment.kind === 'compaction' ? [segment.compaction] : []);
+		let compaction = rows.find(row => row.id === event.id);
+		if (!compaction) {
+			compaction = rows.find(row => row.provisional && row.status === 'running');
+			if (compaction) {
+				compaction.id = event.id;
+				delete compaction.provisional;
+			} else {
+				compaction = { id: event.id, status: 'running', startedAt: Date.now() };
+				last.segments.push({ kind: 'compaction', compaction });
+			}
+			// The agent may not say how big the context was: the meter's last reading is.
+			compaction.preTokens ??= this.host.contextUsed;
+		}
+		applyCompactionUpdate(compaction, event);
+		if (compaction.status === 'running') {
+			activity.status = compaction.trigger === 'auto'
+				? localize('voltAgent.compaction.autoRunning', "Auto-compacting context")
+				: localize('voltAgent.compaction.running', "Compacting context");
+			activity.statusPinned = true;
+			return;
+		}
+		if (compaction.status === 'completed' && compaction.postTokens !== undefined) {
+			this.compactedTo = compaction.postTokens;
+		}
+		activity.statusPinned = false;
+		activity.status = localize('voltAgent.thinking', "Thinking");
 	}
 
 	/** DeepSeek `presentCall`. Card wins over the tool-name heuristics used for ACP. */
@@ -525,6 +686,7 @@ export class AgentSessionController extends Disposable {
 				this.runningCalls.clear();
 				this.lastTextId = undefined;
 				this.runReportedUsed = false;
+				this.compactedTo = undefined;
 				last.runId = envelope.runId;
 				last.outcome = undefined;
 				last.failure = undefined;
@@ -806,12 +968,13 @@ export class AgentSessionController extends Disposable {
 				break;
 			}
 			case 'plan': {
-				const previous = last.steps;
+				// A turn's first update continues the chat's list: Claude's task tools and Cursor's to-dos outlive a turn.
+				const previous = last.steps.length ? last.steps : this.host.messages.findLast((message): message is IAgentAssistantMessage => message !== last && message.kind === 'agent' && message.steps.length > 0)?.steps ?? [];
 				last.title = localize('voltAgent.planTitle', "Plan");
-				last.steps = event.entries.map(entry => ({
+				last.steps = stampTodoSteps(previous, event.entries.map(entry => ({
 					label: entry.content,
 					state: entry.status === 'completed' ? 'done' : entry.status === 'in_progress' ? 'current' : 'pending',
-				}));
+				})), Date.now());
 				// Cursor writes to-do changes into the timeline: "Added 4 to-dos", "Completed 2 of 6 Fix the bug".
 				const todo = describeTodoUpdate(previous, last.steps);
 				if (todo) {
@@ -969,6 +1132,9 @@ export class AgentSessionController extends Disposable {
 				}
 				break;
 			}
+			case 'context.compaction':
+				this.applyCompaction(last, activity, event);
+				break;
 			case 'notice':
 				this.showProviderNotice(last, activity, event.severity, event.title, event.description);
 				break;
@@ -989,6 +1155,7 @@ export class AgentSessionController extends Disposable {
 				last.endedAt = Date.now();
 				last.startedAt ??= last.endedAt;
 				last.durationMs = Math.max(0, last.endedAt - last.startedAt);
+				settleCompactions(last, last.cancelled ? 'cancelled' : event.reason === 'fail' ? 'failed' : 'completed');
 				if (!last.cancelled && event.reason !== 'fail' && !hasVisibleReply(last)) {
 					const empty = localize('voltAgent.emptyReply', "Stopped before a reply.");
 					last.text = empty;

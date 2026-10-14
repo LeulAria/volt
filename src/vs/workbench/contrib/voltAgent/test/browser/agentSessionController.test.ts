@@ -250,6 +250,21 @@ suite('Agent session controller', () => {
 		assert.deepStrictEqual(notices.map(notice => notice.kind === 'notice' ? notice.supervision : 'x'), ['loop', undefined]);
 	});
 
+	test('a new turn continues the chat\'s to-do list', () => {
+		const { runtime, host, controller } = setup();
+		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent' });
+		runtime.emit({ type: 'plan', entries: [{ content: 'Lint', status: 'in_progress' }] });
+		runtime.emit({ type: 'plan', entries: [{ content: 'Lint', status: 'completed' }] });
+		const first = (host.messages.at(-1) as IAgentAssistantMessage).steps[0];
+		runtime.emit({ type: 'run.end', runId: 'run-1', reason: 'done' });
+		const reply = controller.beginTurn({ turnId: 'turn-2', text: 'Format too', mode: 'Agent' });
+		runtime.emit({ type: 'run.start', runId: 'run-2', mode: 'agent' }, 'run-2');
+		runtime.emit({ type: 'plan', entries: [{ content: 'Lint', status: 'completed' }, { content: 'Format', status: 'pending' }] }, 'run-2');
+		assert.deepStrictEqual(reply.steps[0], first, 'the finished to-do keeps its times');
+		const notes = reply.segments.flatMap(segment => segment.kind === 'activity' && segment.item.kind === 'note' ? [segment.item.label] : []);
+		assert.deepStrictEqual(notes, ['Added 1 to-do']);
+	});
+
 	test('the native plan tool streams into a plan card', () => {
 		const { runtime, host } = setup();
 		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'plan' });

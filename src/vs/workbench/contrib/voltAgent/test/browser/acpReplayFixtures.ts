@@ -721,3 +721,34 @@ export const CURSOR_EDIT_TURN: readonly Record<string, unknown>[] = [
 		},
 	},
 ];
+
+/**
+ * The `/compact` turn claude-agent-acp 0.81.2 (Haiku 4.5) sent after a turn that read three
+ * 29 KB files, with Volt advertising `session.compaction`: the compaction as its own entity,
+ * then `used` set to the kept summary alone. Recorded 2026-10-06; the summary is trimmed.
+ */
+export const CLAUDE_COMPACT_TURN: readonly Record<string, unknown>[] = [
+	{ sessionUpdate: 'compaction_update', compactionId: 'bf443240-8698-47cb-9402-444c11428453', status: 'in_progress', _meta: { contextCompaction: { version: 1 } } },
+	{
+		sessionUpdate: 'compaction_update',
+		compactionId: 'bf443240-8698-47cb-9402-444c11428453',
+		status: 'completed',
+		summary: [{ type: 'text', text: '1. Primary Request and Intent:\n   The user requested that I read three text files (notes1.txt, notes2.txt, and notes3.txt) in full using the Read tool, and then provide a one-line response per file stating the line count for each file.\n\n2.\n…' }],
+		_meta: { contextCompaction: { version: 1 } },
+	},
+	{ sessionUpdate: 'compaction_update', compactionId: 'bf443240-8698-47cb-9402-444c11428453', status: 'completed', _meta: { contextCompaction: { version: 1, trigger: 'manual', preTokens: 51787, postTokens: 2244, durationMs: 14734 } } },
+	{ sessionUpdate: 'usage_update', used: 2244, size: 200000 },
+];
+
+/** The same turn without `session.compaction`: a "Compact conversation" tool call marked by `_meta.contextCompaction`. */
+export const CLAUDE_COMPACT_TURN_LEGACY: readonly Record<string, unknown>[] = [
+	{ sessionUpdate: 'tool_call', toolCallId: '900e1d46-90fd-4fdf-9fec-08be32e628ff', title: 'Compact conversation', kind: 'think', status: 'in_progress', _meta: { contextCompaction: { version: 1 }, claudeCode: { toolName: 'compact' } } },
+	{ sessionUpdate: 'tool_call_update', toolCallId: '900e1d46-90fd-4fdf-9fec-08be32e628ff', status: 'completed', _meta: { contextCompaction: { version: 1 }, claudeCode: { toolName: 'compact' } } },
+	{
+		sessionUpdate: 'tool_call_update',
+		toolCallId: '900e1d46-90fd-4fdf-9fec-08be32e628ff',
+		rawOutput: { trigger: 'manual', preTokens: 49437, postTokens: 2075, durationMs: 12513 },
+		_meta: { contextCompaction: { version: 1, trigger: 'manual', preTokens: 49437, postTokens: 2075, durationMs: 12513 }, claudeCode: { toolName: 'compact' } },
+	},
+	{ sessionUpdate: 'usage_update', used: 2075, size: 200000 },
+];

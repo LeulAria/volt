@@ -15,7 +15,7 @@
 	align-items: center;
 	gap: 6px;
 	height: 26px;
-	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif;
+	font-family: var(--volt-font);
 	font-size: 12px;
 	line-height: 18px;
 	color: var(--vscode-foreground);

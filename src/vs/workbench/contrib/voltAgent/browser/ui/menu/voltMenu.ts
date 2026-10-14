@@ -109,6 +109,8 @@ export interface IVoltMenuOptions<T> extends IVoltSubmenu<T> {
 	readonly align?: 'left' | 'right';
 	/** Space between the menu and the anchor, on whichever side the menu lands. */
 	readonly gap?: number;
+	/** Something stacked on top of the anchor that the menu should not cover (the composer's chips). */
+	readonly above?: () => HTMLElement | undefined;
 	readonly className?: string;
 	readonly ariaLabel: string;
 	readonly onPick: (item: IVoltMenuItem<T>) => void | Promise<void>;
@@ -158,12 +160,16 @@ export function showVoltMenu<T>(contextViewService: IContextViewService, options
 	};
 	contextViewService.showContextView({
 		getAnchor: () => {
-			if (options.gap === undefined) {
+			const covered = options.above?.();
+			if (options.gap === undefined && !covered) {
 				return options.anchor;
 			}
-			// Grow the anchor by the gap so the menu keeps its distance whichever side it lands on.
+			// Grow the anchor by the gap so the menu keeps its distance whichever side it lands on,
+			// and up over whatever sits on top of it so the menu opens above that too.
+			const gap = options.gap ?? 0;
 			const page = getDomNodePagePosition(options.anchor);
-			return { x: page.left, y: page.top - options.gap, width: page.width, height: page.height + options.gap * 2 };
+			const top = covered ? Math.min(page.top, getDomNodePagePosition(covered).top) : page.top;
+			return { x: page.left, y: top - gap, width: page.width, height: page.top + page.height - top + gap * 2 };
 		},
 		anchorAlignment: options.align === 'right' ? AnchorAlignment.RIGHT : AnchorAlignment.LEFT,
 		anchorPosition: options.position === 'above' ? AnchorPosition.ABOVE : AnchorPosition.BELOW,

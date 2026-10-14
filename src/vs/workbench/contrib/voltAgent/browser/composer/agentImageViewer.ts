@@ -18,6 +18,7 @@ import { INotificationService } from '../../../../../platform/notification/commo
 import { createStrokeIcon } from '../chrome/agentModeIcons.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { closeMediaDialog, decodeImage, imageExtension, trackMediaDialog } from './agentImageAttachments.js';
+import { VOLT_FONT_FAMILY } from '../../common/agentTypography.js';
 
 export interface IAgentImageViewerImage {
 	/** The file name (`image.png`). */
@@ -1339,7 +1340,7 @@ function mapShape(shape: Shape, map: (p: IPoint) => IPoint): Shape {
 }
 
 function textFont(size: number, weight: number): string {
-	return `${weight} ${size}px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
+	return `${weight} ${size}px ${VOLT_FONT_FAMILY}`;
 }
 
 function textLines(shape: Shape & { kind: 'text' }): string[] {

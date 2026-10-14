@@ -8,6 +8,7 @@ import { basename } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { Event } from '../../../../base/common/event.js';
+import type { IAgentSessionWorkspace } from './history/agentHistory.js';
 
 /**
  * A registered project. The id is derived from the canonical root so the same
@@ -99,4 +100,12 @@ export function sessionBelongsToProject(
 		return true;
 	}
 	return !folder && session.workspaceLabel === project.displayName;
+}
+
+export function workspaceForProject(project: IVoltProjectRecord): IAgentSessionWorkspace {
+	return {
+		id: project.id,
+		label: project.displayName,
+		folders: [project.root.fsPath],
+	};
 }

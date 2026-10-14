@@ -289,7 +289,7 @@
 	margin: 0;
 }
 
-/* Tables: an 8px-radius bordered frame, 6/10 cell padding, 600-weight header. */
+/* Tables: a 12px-radius bordered frame, 6/10 cell padding, 600-weight header (Cursor). */
 
 .volt-agent-markdown .volt-agent-table-shell {
 	position: relative;
@@ -299,7 +299,7 @@
 .volt-agent-markdown .volt-agent-table-wrap {
 	margin: 12px 0;
 	border: 1px solid var(--volt-md-stroke);
-	border-radius: 8px;
+	border-radius: 12px;
 	overflow-x: auto;
 	overflow-y: hidden;
 }
@@ -350,6 +350,11 @@
 
 .volt-agent-markdown .volt-agent-table-wrap code {
 	white-space: normal;
+}
+
+/* A short column (an id, a status, `setup ok`) stays on one line, code included. */
+.volt-agent-markdown .volt-agent-table-wrap td.fit code {
+	white-space: nowrap;
 }
 
 /* Copy Table sits under the table at its right edge, shown on hover. Its row keeps its height so nothing moves. */

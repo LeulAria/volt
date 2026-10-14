@@ -189,6 +189,8 @@ import './contrib/voltAgent/browser/pullRequests/agentPullRequests.contribution.
 import './services/voltRuntime/electron-browser/voltGit.contribution.js';
 import './services/voltRuntime/electron-browser/voltUsage.contribution.js';
 import './contrib/voltProjects/electron-browser/voltProjects.contribution.js';
+// Volt agent server client (after the agent services it can replace)
+import './contrib/voltAgent/electron-browser/agentServerClient.contribution.js';
 
 // Volt dev hot reload (VSCODE_DEV only)
 import './contrib/voltAgent/electron-browser/voltDevReload.contribution.js';
