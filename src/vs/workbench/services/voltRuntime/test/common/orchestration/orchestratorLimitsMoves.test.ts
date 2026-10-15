@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import { LIMIT_MAX_PROBES, LIMIT_PROBE_BACKOFF_MS, LIMIT_RESET_GRACE_MS, LIMIT_RESUME_TEXT, LIMIT_STAGGER_MS, limitDueAt } from '../../../common/orchestration/limitRecovery.js';
-import { emptyOrchState, IOrchMove } from '../../../common/orchestration/orchestrator.js';
+import { emptyOrchState, IOrchMove, ORCH_HOLD_ARCHIVED } from '../../../common/orchestration/orchestrator.js';
 import { extractRoot, isRootLive, mergeRoot, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
 import { scheduleOrch } from '../../../common/orchestration/orchestratorDecider.js';
 import { threadStatus } from '../../../common/orchestration/orchestratorViews.js';
@@ -66,6 +66,24 @@ suite('Volt orchestrator: usage-limit recovery', () => {
 		assert.strictEqual(sim.thread('a').active?.id, queued.turnId);
 		// A retried tick does not send it twice.
 		assert.deepStrictEqual(tickAt(sim, resetAt + LIMIT_RESET_GRACE_MS + 1).events, []);
+	});
+
+	test('Stop on a parked chat, or moving it to Settled or Archive, keeps it from resuming at the reset', () => {
+		const sim = new OrchSim();
+		sim.submit('stopped', 'go');
+		sim.submit('held', 'go');
+		const resetAt = sim.now + 30 * 60_000;
+		hitLimit(sim, 'stopped', resetAt);
+		hitLimit(sim, 'held', resetAt);
+		sim.run({ type: 'turn.cancel', threadId: 'stopped' });
+		assert.strictEqual(sim.thread('stopped').limit?.auto, false, 'the stop disarms the resume');
+		sim.run({ type: 'thread.block', threadId: 'held', reason: ORCH_HOLD_ARCHIVED });
+		tickAt(sim, resetAt + LIMIT_RESET_GRACE_MS);
+		assert.strictEqual(sim.thread('stopped').active, undefined);
+		assert.strictEqual(sim.thread('held').active, undefined);
+		assert.ok(sim.run({ type: 'limit.resume', threadId: 'held' }).rejected, 'a held chat waits for the user to bring it back');
+		// The user resumes by hand: that still goes.
+		assert.strictEqual(sim.run({ type: 'limit.resume', threadId: 'stopped' }).outcome, 'started');
 	});
 
 	test('an unknown reset is probed with a back-off; a probe that hits the limit again parks with the next delay; probing ends', () => {

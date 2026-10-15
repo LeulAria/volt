@@ -750,14 +750,17 @@ function decideCancel(state: IOrchState, threadId: string, cascade: 'turn' | 'al
 	if (active && active.phase !== 'cancelling') {
 		events.push({ type: 'turn.cancelling', threadId: thread.id, turnId: active.id });
 	}
-	// Stopping a chat stops Volt from restarting it too.
+	// Stopping a chat stops Volt from restarting it too, and from resuming it at a usage limit's reset.
 	if (thread.rescue) {
 		events.push({ type: 'rescue.cleared', threadId: thread.id, reason: 'stopped' });
 	}
+	if (thread.limit && !active && thread.limit.auto !== false) {
+		events.push({ type: 'limit.configured', threadId: thread.id, auto: false });
+	}
+	let next = applyOrchEvents(state, events);
 	if (cascade) {
 		// Stopping a turn stops the subagents it started (as a harness's own subagents stop with it);
 		// subagents from earlier turns keep working unless the user stops them all.
-		let next = applyOrchEvents(state, events);
 		for (const task of liveChildren(state, thread.id)) {
 			if (task.source !== 'volt' || (cascade === 'turn' && (!active || task.parentTurnId !== active.id))) {
 				continue;
@@ -766,6 +769,11 @@ function decideCancel(state: IOrchState, threadId: string, cascade: 'turn' | 'al
 			events.push(...decision.events);
 			next = applyOrchEvents(next, decision.events);
 		}
+	}
+	// A stopped chat stays stopped: queued prompts, and reports from subagents still working, wait
+	// for the user instead of starting the next turn the moment this one ends.
+	if (!thread.pause && !thread.taskId && (thread.queue.length || liveChildren(next, thread.id).some(task => task.source === 'volt') || hasPendingReports(next, thread.id))) {
+		events.push({ type: 'queue.paused', threadId: thread.id, reason: 'stopped' });
 	}
 	return { events };
 }

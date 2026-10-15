@@ -11,12 +11,26 @@ import { IContextKey, IContextKeyService, RawContextKey } from '../../../../../p
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IAgentHistoryService, IAgentSessionMeta, sessionLifecycle } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { IAgentOrchestratorService, isOrchHold } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { AgentLifecycleAction, AgentLifecycleUndoStack, IAgentLifecycleUndoEntry } from '../../common/agentLifecycleUndo.js';
 
 /** True while the sidebar shows an Undo notice; Cmd+Z runs it then. */
 export const AgentLifecycleUndoContext = new RawContextKey<boolean>('voltAgentLifecycleUndo', false, localize('voltAgent.lifecycleUndoContext', "Whether the agent sidebar offers to undo the last settle, snooze, archive or pin."));
 
 export const AGENT_LIFECYCLE_UNDO_COMMAND_ID = 'volt.agent.undoLifecycle';
+
+/**
+ * Lets a held chat run again. What queued up while it was held (pull request news, messages from
+ * other chats) waits for the user, as after a stop. Applied at once when the chat is loaded.
+ */
+export function liftAgentHold(orchestrator: IAgentOrchestratorService, threadId: string): Promise<unknown> | undefined {
+	const thread = orchestrator.getThread(threadId);
+	if (!thread || !isOrchHold(thread.blocked)) {
+		return undefined;
+	}
+	const paused = thread.queue.length && !thread.pause ? orchestrator.dispatch({ type: 'queue.pause', threadId, reason: 'stopped' }) : undefined;
+	return Promise.all([paused, orchestrator.dispatch({ type: 'thread.block', threadId, reason: undefined })]);
+}
 
 export const IAgentThreadLifecycleService = createDecorator<IAgentThreadLifecycleService>('agentThreadLifecycleService');
 
@@ -36,6 +50,11 @@ export interface IAgentThreadLifecycleService {
 	setSnoozed(sessionId: string, snoozed: boolean, until?: number): Promise<void>;
 	setArchived(sessionId: string, archived: boolean): Promise<void>;
 	setPinned(sessionId: string, pinned: boolean): Promise<void>;
+	/**
+	 * The user works in the chat again (sends, resumes its queue or a usage-limit park): it leaves
+	 * Settled and Archive, and the orchestrator lets it run. The hold lifts before this returns.
+	 */
+	bringBack(sessionId: string): Promise<void>;
 	/** Undoes the notice's actions. False when nothing was on offer. */
 	undo(): Promise<boolean>;
 	dismiss(): void;
@@ -54,6 +73,7 @@ export class AgentThreadLifecycleService extends Disposable implements IAgentThr
 
 	constructor(
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
 		@IContextKeyService contextKeyService: IContextKeyService,
 	) {
 		super();
@@ -78,6 +98,17 @@ export class AgentThreadLifecycleService extends Disposable implements IAgentThr
 
 	setPinned(sessionId: string, pinned: boolean): Promise<void> {
 		return this.run(sessionId, pinned ? 'pin' : 'unpin', meta => !!meta.pinned !== pinned, () => this.history.setPinned(sessionId, pinned));
+	}
+
+	bringBack(sessionId: string): Promise<void> {
+		// Lifted first: a prompt submitted right after must not queue behind the hold.
+		const unblocked = liftAgentHold(this.orchestrator, sessionId);
+		const meta = this.history.get(sessionId);
+		return Promise.all([
+			unblocked,
+			meta?.settled ? this.history.setSettled(sessionId, false, { byUser: true }) : undefined,
+			meta?.archived ? this.history.setArchived(sessionId, false) : undefined,
+		]).then(() => undefined);
 	}
 
 	async undo(): Promise<boolean> {

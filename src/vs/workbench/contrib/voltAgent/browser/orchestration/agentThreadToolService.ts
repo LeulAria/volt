@@ -5,7 +5,7 @@
 
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { hash } from '../../../../../base/common/hash.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableMap } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -69,6 +69,8 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 
 	/** Starts and sends per caller turn (`<chat>:<turn>`), for the per-turn limits. */
 	private readonly perTurn = new Map<string, { starts: number; sends: number }>();
+	/** Chats that settle themselves: settled chats do not run, so the move waits for the turn that asked to end. */
+	private readonly settleAfterTurn = this._register(new DisposableMap<string>());
 
 	constructor(
 		@IVoltHostToolService hostTools: IVoltHostToolService,
@@ -1006,6 +1008,15 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 
 	//#region Update and configure
 
+	private settleWhenIdle(id: string): void {
+		this.settleAfterTurn.set(id, this.orchestrator.onDidChange(change => {
+			if (change.threads.includes(id) && !this.orchestrator.getThread(id)?.active) {
+				this.settleAfterTurn.deleteAndDispose(id);
+				void this.history.setSettled(id, true);
+			}
+		}));
+	}
+
 	private async update(caller: ICaller, args: Record<string, unknown>): Promise<IVoltHostToolResult> {
 		const id = await this.target(caller, args.thread_id, { allowSelf: true });
 		const action = stringArg(args.action, 40);
@@ -1033,6 +1044,14 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 				return { text: `${action === 'archive' ? 'Archived' : 'Unarchived'} ${link()}.` };
 			case 'settle':
 			case 'unsettle':
+				if (action === 'settle' && threadStatus(this.orchestrator.getState(), id).busy) {
+					if (id !== caller.id || caller.external) {
+						return { error: 'That chat is working, and settled chats do not run; stop it (thread_interrupt) before settling it.' };
+					}
+					this.settleWhenIdle(id);
+					return { text: `${link()} moves to Settled when this turn ends.` };
+				}
+				this.settleAfterTurn.deleteAndDispose(id);
 				await this.history.setSettled(id, action === 'settle');
 				return { text: `${action === 'settle' ? 'Settled' : 'Unsettled'} ${link()}.` };
 			case 'snooze': {

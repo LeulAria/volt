@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { DEFAULT_ORCH_LIMITS, emptyOrchState } from '../../../common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, emptyOrchState, ORCH_HOLD_SETTLED } from '../../../common/orchestration/orchestrator.js';
 import { extractRoot, isRootLive, mergeRoot, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
 import { harnessTaskId, RESTART_RESUME_TEXT, scheduleOrch } from '../../../common/orchestration/orchestratorDecider.js';
 import { applyOrchEvents } from '../../../common/orchestration/orchestratorProjector.js';
@@ -368,6 +368,54 @@ suite('Volt orchestrator: subagents', () => {
 		sim.settle(childThread, 'cancelled');
 		sim.settle('parent', 'cancelled');
 		assert.strictEqual(sim.state.threads.parent.active, undefined);
+	});
+
+	test('Stop holds the queue: the next prompt waits for the user instead of starting', () => {
+		const sim = new OrchSim();
+		sim.submit('a', 'one');
+		sim.start('a');
+		const queued = sim.submit('a', 'two');
+		sim.run({ type: 'turn.cancel', threadId: 'a', cascade: 'turn' });
+		sim.settle('a', 'cancelled');
+		assert.strictEqual(sim.thread('a').active, undefined, 'the queued prompt does not start after a stop');
+		assert.strictEqual(sim.thread('a').pause, 'stopped');
+		assert.deepStrictEqual(sim.thread('a').queue.map(item => item.id), [queued.turnId]);
+		sim.run({ type: 'queue.resume', threadId: 'a' });
+		assert.strictEqual(sim.thread('a').active?.id, queued.turnId);
+	});
+
+	test('a stopped chat is not woken by a subagent from an earlier turn finishing', () => {
+		const sim = new OrchSim();
+		sim.submit('parent', 'go');
+		sim.start('parent');
+		const child = sim.spawn('parent', 'long job').taskId!;
+		sim.start(sim.childOf(child));
+		sim.settle('parent', 'done');
+		sim.submit('parent', 'next');
+		sim.start('parent');
+		sim.run({ type: 'turn.cancel', threadId: 'parent', cascade: 'turn' });
+		sim.settle('parent', 'cancelled');
+		assert.strictEqual(sim.state.tasks[child].state, 'running', 'subagents from earlier turns keep working');
+		sim.complete(sim.childOf(child));
+		assert.strictEqual(sim.thread('parent').active, undefined, 'its report waits for the user');
+		assert.strictEqual(sim.state.tasks[child].delivery, 'pending');
+		// The user's next prompt runs, and the report goes after it.
+		sim.submit('parent', 'carry on');
+		assert.strictEqual(sim.thread('parent').active?.kind, 'prompt');
+	});
+
+	test('a settled or archived chat (held) does not start: news and prompts from elsewhere wait', () => {
+		const sim = new OrchSim();
+		sim.submit('a', 'one');
+		sim.complete('a');
+		sim.run({ type: 'thread.block', threadId: 'a', reason: ORCH_HOLD_SETTLED });
+		assert.strictEqual(sim.run({ type: 'thread.notify', threadId: 'a', turnId: 'n1', prompt: prompt('pull request news') }).outcome, 'queued');
+		assert.strictEqual(sim.submit('a', 'from another chat').decision.outcome, 'queued');
+		assert.strictEqual(sim.thread('a').active, undefined);
+		sim.run({ type: 'queue.pause', threadId: 'a', reason: 'stopped' });
+		sim.run({ type: 'thread.block', threadId: 'a', reason: undefined });
+		assert.strictEqual(sim.thread('a').active, undefined, 'brought back, it still waits for the user');
+		assert.strictEqual(sim.thread('a').queue.length, 2);
 	});
 
 	test('a retried or repeated delegation returns the task already working on it', () => {
