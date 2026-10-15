@@ -52,6 +52,8 @@ export interface IVoltGrepQuery {
 	/** Matching lines to collect before stopping; `limitHit` says more exist. */
 	readonly maxMatches: number;
 	readonly maxLineChars?: number;
+	/** Only what the index answers: nothing (with the reason as `fallback`) rather than a ripgrep scan. */
+	readonly indexOnly?: boolean;
 }
 
 export interface IVoltGrepFile {
@@ -163,9 +165,10 @@ export class VoltSearch extends Disposable {
 		return this.index && root?.scheme === Schemas.file && folder.scheme === Schemas.file && this.index.enabled() ? this.index : undefined;
 	}
 
-	private async cached<T extends IVoltSearchMeta>(key: string, run: () => Promise<T>, folder?: URI): Promise<T> {
+	private async cached<T extends IVoltSearchMeta>(key: string, run: () => Promise<T>, folder?: URI, indexOnly?: boolean): Promise<T> {
 		// node_modules is outside the workspace watcher: a change there would never reach the cache.
-		if (folder?.path.includes('/node_modules')) {
+		// An index-only answer may be "not now": it never stands in for a full search, and the index is fast.
+		if (folder?.path.includes('/node_modules') || indexOnly) {
 			return run();
 		}
 		const hit = this.cache.get(key) as T | undefined;
@@ -180,7 +183,7 @@ export class VoltSearch extends Disposable {
 
 	grep(query: IVoltGrepQuery, token: CancellationToken): Promise<IVoltGrepResult> {
 		const key = JSON.stringify(['grep', query.root?.toString(), query.folder.toString(), query.pattern, !!query.literal, !!query.caseSensitive, !!query.multiline, !!query.wholeWord, query.context ?? 0, query.includes ?? [], query.maxMatches]);
-		return this.cached(key, () => this.doGrep(query, token), query.folder);
+		return this.cached(key, () => this.doGrep(query, token), query.folder, query.indexOnly);
 	}
 
 	private async doGrep(query: IVoltGrepQuery, token: CancellationToken): Promise<IVoltGrepResult> {
@@ -217,6 +220,9 @@ export class VoltSearch extends Disposable {
 				};
 			}
 			fallback = result.reason;
+		}
+		if (query.indexOnly) {
+			return { files: [], limitHit: false, engine: 'index', ms: Date.now() - started, fallback: fallback ?? 'no index' };
 		}
 		const includes = query.includes?.length ? Object.fromEntries(query.includes.map(glob => [glob, true])) : undefined;
 		const complete = await this.search.textSearch({
@@ -262,7 +268,7 @@ export class VoltSearch extends Disposable {
 	}
 
 	/** Files by glob over workspace-relative paths, sorted. */
-	glob(query: { readonly root: URI | undefined; readonly folder: URI; readonly pattern: string; readonly limit: number }, token: CancellationToken): Promise<IVoltPathsResult> {
+	glob(query: { readonly root: URI | undefined; readonly folder: URI; readonly pattern: string; readonly limit: number; readonly indexOnly?: boolean }, token: CancellationToken): Promise<IVoltPathsResult> {
 		const key = JSON.stringify(['glob', query.root?.toString(), query.folder.toString(), query.pattern, query.limit]);
 		return this.cached(key, async () => {
 			const started = Date.now();
@@ -276,6 +282,9 @@ export class VoltSearch extends Disposable {
 				}
 				fallback = result.reason;
 			}
+			if (query.indexOnly) {
+				return { paths: [], limitHit: false, engine: 'index', ms: Date.now() - started, fallback: fallback ?? 'no index' };
+			}
 			const complete = await this.search.fileSearch({
 				type: QueryType.File,
 				filePattern: query.pattern,
@@ -286,11 +295,11 @@ export class VoltSearch extends Disposable {
 			}, token);
 			const all = complete.results.map(file => displayPath(root, file.resource)).sort();
 			return { paths: all.slice(0, query.limit), limitHit: !!complete.limitHit || all.length > query.limit, engine: 'ripgrep', ms: Date.now() - started, ...(fallback ? { fallback } : {}) };
-		}, query.folder);
+		}, query.folder, query.indexOnly);
 	}
 
 	/** Files by fuzzy name or path (typos allowed), best first. */
-	findFiles(query: { readonly root: URI | undefined; readonly folder?: URI; readonly query: string; readonly limit: number }, token: CancellationToken): Promise<IVoltPathsResult> {
+	findFiles(query: { readonly root: URI | undefined; readonly folder?: URI; readonly query: string; readonly limit: number; readonly indexOnly?: boolean }, token: CancellationToken): Promise<IVoltPathsResult> {
 		const folder = query.folder ?? query.root;
 		if (!folder) {
 			return Promise.resolve({ paths: [], limitHit: false, engine: 'index', ms: 0, fallback: 'no workspace' });
@@ -302,7 +311,7 @@ export class VoltSearch extends Disposable {
 			const fallbacks: string[] = [];
 			const indexed = this.indexFor(root, folder);
 			if (indexed && root) {
-				const fff = indexed.fff?.() ?? { mode: 'auto' as const };
+				const fff = indexed.fff?.() ?? { mode: 'off' as const };
 				const result = await this.bounded(indexed.service.findFiles({
 					root: root.fsPath,
 					...(query.folder ? { folder: query.folder.fsPath } : {}),
@@ -323,6 +332,9 @@ export class VoltSearch extends Disposable {
 				}
 				fallbacks.push(result.reason);
 			}
+			if (query.indexOnly) {
+				return { paths: [], limitHit: false, engine: 'index', ms: Date.now() - started, fallback: fallbacks.join('; ') || 'no index' };
+			}
 			// The search service's own fuzzy matching (Quick Open's scorer), ranked by score.
 			const complete = await this.search.fileSearch({
 				type: QueryType.File,
@@ -334,11 +346,11 @@ export class VoltSearch extends Disposable {
 			}, token);
 			const paths = complete.results.map(file => displayPath(root, file.resource));
 			return { paths: paths.slice(0, query.limit), limitHit: !!complete.limitHit || paths.length > query.limit, engine: 'ripgrep', ms: Date.now() - started, ...(fallbacks.length ? { fallback: fallbacks.join('; ') } : {}) };
-		}, folder);
+		}, folder, query.indexOnly);
 	}
 
 	/** Where symbols are declared, by name. */
-	symbols(query: { readonly root: URI; readonly folder?: URI; readonly name: string; readonly match: 'exact' | 'prefix' | 'fuzzy'; readonly kind?: VoltCodeSymbolKind; readonly limit: number }, token: CancellationToken): Promise<IVoltSymbolsResult> {
+	symbols(query: { readonly root: URI; readonly folder?: URI; readonly name: string; readonly match: 'exact' | 'prefix' | 'fuzzy'; readonly kind?: VoltCodeSymbolKind; readonly limit: number; readonly indexOnly?: boolean }, token: CancellationToken): Promise<IVoltSymbolsResult> {
 		const key = JSON.stringify(['symbols', query.root.toString(), query.folder?.toString(), query.name, query.match, query.kind, query.limit]);
 		return this.cached(key, async () => {
 			const started = Date.now();
@@ -359,6 +371,9 @@ export class VoltSearch extends Disposable {
 					return { symbols: result.symbols, limitHit: result.limitHit, engine: 'index', ms: Date.now() - started };
 				}
 				fallback = result.reason;
+			}
+			if (query.indexOnly) {
+				return { symbols: [], limitHit: false, engine: 'index', ms: Date.now() - started, fallback: fallback ?? 'no index' };
 			}
 			const escaped = query.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 			const tail = query.match === 'exact' ? '\\b' : '\\w*';
@@ -381,7 +396,7 @@ export class VoltSearch extends Disposable {
 				}
 			}
 			return { symbols, limitHit: found.limitHit, engine: 'ripgrep', ms: Date.now() - started, ...(fallback ? { fallback } : {}) };
-		});
+		}, undefined, query.indexOnly);
 	}
 }
 

@@ -40,6 +40,11 @@ export interface IRetrieveOptions {
 	readonly seen?: ReadonlySet<string>;
 	/** Workspace-relative paths the work tree has changed (they rank up). */
 	readonly changed?: () => Promise<ReadonlySet<string>>;
+	/**
+	 * Only what the code index answers. Set while other chats run: a ripgrep scan per word of every
+	 * starting turn kept all cores busy, for context the agent can look up itself.
+	 */
+	readonly indexOnly?: boolean;
 	readonly token: CancellationToken;
 }
 
@@ -81,6 +86,7 @@ export class ContextRetriever {
 			cts.cancel();
 		}, options.deadlineMs);
 		const token = cts.token;
+		const indexOnly = options.indexOnly;
 		// Started now, used after the searches: it only re-ranks what they find.
 		const changedRead = options.changed?.().catch(() => undefined);
 		const files = plan.terms.length ? this.search.fileCount(root).catch(() => undefined) : Promise.resolve(undefined);
@@ -104,7 +110,7 @@ export class ContextRetriever {
 			const lineOf = new Map(plan.locations.map(location => [location.path, location.line]));
 			await settle(Promise.all([
 				...plan.identifiers.map(name => attempt(async () => {
-					const found = await this.search.symbols({ root, name, match: 'exact', limit: 5 }, token);
+					const found = await this.search.symbols({ root, name, match: 'exact', limit: 5, indexOnly }, token);
 					for (const symbol of found.symbols) {
 						evidence.push({ path: symbol.path, kind: 'declaration', line: symbol.line, term: name, text: symbol.text });
 						declared.add(name);
@@ -115,12 +121,12 @@ export class ContextRetriever {
 					const name = path.split('/').pop()!;
 					const parts = path.replace(/^(\.\.\/)+/, '').split('/');
 					// An absolute path (a stack trace) holds folders above the project: try its tail too.
-					let found = parts.length > 1 ? await this.search.glob({ root, folder: root, pattern: `**/${parts.join('/')}`, limit: 3 }, token) : undefined;
+					let found = parts.length > 1 ? await this.search.glob({ root, folder: root, pattern: `**/${parts.join('/')}`, limit: 3, indexOnly }, token) : undefined;
 					if (!found?.paths.length && parts.length > 2) {
-						found = await this.search.glob({ root, folder: root, pattern: `**/${parts.slice(-2).join('/')}`, limit: 3 }, token);
+						found = await this.search.glob({ root, folder: root, pattern: `**/${parts.slice(-2).join('/')}`, limit: 3, indexOnly }, token);
 					}
 					if (!found?.paths.length) {
-						found = await this.search.findFiles({ root, query: name, limit: 5 }, token);
+						found = await this.search.findFiles({ root, query: name, limit: 5, indexOnly }, token);
 					}
 					// A named file is that file: fuzzy neighbours are not evidence.
 					for (const hit of found.paths.filter(hit => hit === path || hit.endsWith(`/${path}`) || hit.split('/').pop() === name).slice(0, 3)) {
@@ -130,8 +136,8 @@ export class ContextRetriever {
 				// BM25 over the plain words: contents (match counts as term frequency) and paths (double).
 				...plan.terms.map(term => attempt(async () => {
 					const [content, names, total] = await Promise.all([
-						this.search.grep({ root, folder: root, pattern: term, literal: true, maxMatches: TERM_MATCHES }, token),
-						this.search.findFiles({ root, query: term, limit: 30 }, token),
+						this.search.grep({ root, folder: root, pattern: term, literal: true, maxMatches: TERM_MATCHES, indexOnly }, token),
+						this.search.findFiles({ root, query: term, limit: 30, indexOnly }, token),
 						files,
 					]);
 					const inPath = names.paths.filter(path => path.toLowerCase().includes(term));
@@ -154,7 +160,7 @@ export class ContextRetriever {
 					}
 				})),
 				...plan.phrases.map(phrase => attempt(async () => {
-					const found = await this.search.grep({ root, folder: root, pattern: phrase, literal: true, maxMatches: 10 }, token);
+					const found = await this.search.grep({ root, folder: root, pattern: phrase, literal: true, maxMatches: 10, indexOnly }, token);
 					for (const file of found.files) {
 						for (const [line, hit] of [...file.lines].filter(([, hit]) => hit.match).slice(0, 2)) {
 							evidence.push({ path: file.path, kind: 'phrase', line, term: phrase, text: hit.text, spread: found.files.length });
@@ -170,7 +176,7 @@ export class ContextRetriever {
 			const broad = [...undeclared, ...(firstDeclared ? [firstDeclared] : [])];
 			if (broad.length && !token.isCancellationRequested) {
 				await settle(Promise.all(broad.map(name => attempt(async () => {
-					const found = await this.search.grep({ root, folder: root, pattern: name, literal: true, wholeWord: true, caseSensitive: true, maxMatches: 40 }, token);
+					const found = await this.search.grep({ root, folder: root, pattern: name, literal: true, wholeWord: true, caseSensitive: true, maxMatches: 40, indexOnly }, token);
 					const spread = found.limitHit ? Math.max(found.files.length, 40) : found.files.length;
 					for (const file of found.files.slice(0, 8)) {
 						for (const [line, hit] of [...file.lines].filter(([, hit]) => hit.match).slice(0, 2)) {
