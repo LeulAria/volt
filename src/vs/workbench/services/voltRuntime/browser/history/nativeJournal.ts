@@ -10,6 +10,7 @@ import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
+import { dropBoundReasoning } from '../../common/harness/nativeCompaction.js';
 import { INativeLoopMessage } from '../../common/harness/nativeLoop.js';
 
 /**
@@ -27,6 +28,8 @@ export interface INativeJournalEntry {
 	readonly synced: number;
 	readonly effort?: string;
 	readonly todo?: string;
+	/** System prompt and tools the reasoning in `messages` was produced under. */
+	readonly prefix?: string;
 	readonly savedAt: number;
 }
 
@@ -107,9 +110,9 @@ export class NativeJournal extends Disposable {
 		}
 		try {
 			const entry = snapshot();
-			let text = JSON.stringify({ ...entry, messages: entry.messages.map(withoutImages) });
+			let text = JSON.stringify({ ...entry, messages: replayable(entry.messages, entry.messages.map(withoutImages)) });
 			if (text.length > MAX_BYTES) {
-				text = JSON.stringify({ ...entry, messages: shrink(entry.messages) });
+				text = JSON.stringify({ ...entry, messages: replayable(entry.messages, shrink(entry.messages)) });
 			}
 			await this.fileService.writeFile(this.file(sessionId), VSBuffer.fromString(text), { atomic: { postfix: '.vsctmp' } });
 		} catch (err) {
@@ -128,6 +131,18 @@ export class NativeJournal extends Disposable {
 	private file(sessionId: string): URI {
 		return joinPath(this.root, `${sessionId.replace(/[^\w.-]/g, '_')}.json`);
 	}
+}
+
+/**
+ * The saved copy differs from what the model saw wherever images were left out or results cut,
+ * so Claude's reasoning after the first such message would be rejected when the chat resumes.
+ */
+function replayable(original: readonly INativeLoopMessage[], saved: INativeLoopMessage[]): INativeLoopMessage[] {
+	const first = saved.findIndex((message, index) => message !== original[index]);
+	if (first >= 0) {
+		dropBoundReasoning(saved, first);
+	}
+	return saved;
 }
 
 function withoutImages(message: INativeLoopMessage): INativeLoopMessage {

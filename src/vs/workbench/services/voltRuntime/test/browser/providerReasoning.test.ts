@@ -22,7 +22,8 @@ import { IProviderProfile } from '../../common/profiles.js';
 interface IRoute {
 	readonly match: (url: string) => boolean;
 	readonly status?: number;
-	readonly body: string;
+	/** A function answers from the request (for example, per model). */
+	readonly body: string | ((options: IRequestOptions) => string);
 }
 
 /** The request body fields these tests read. */
@@ -31,6 +32,7 @@ interface ISentBody {
 	readonly reasoning_effort?: unknown;
 	readonly think?: unknown;
 	readonly generationConfig?: unknown;
+	readonly options?: { readonly num_ctx?: number; readonly num_predict?: number };
 }
 
 /** Answers each request from the first matching route and keeps what was sent. */
@@ -41,9 +43,10 @@ function fakeRequests(routes: readonly IRoute[]): { service: IRequestService; se
 		async request(options: IRequestOptions): Promise<IRequestContext> {
 			sent.push(options);
 			const route = routes.find(candidate => candidate.match(options.url ?? ''));
+			const body = typeof route?.body === 'function' ? route.body(options) : route?.body;
 			return {
 				res: { statusCode: route?.status ?? (route ? 200 : 404), headers: {} },
-				stream: bufferToStream(VSBuffer.fromString(route?.body ?? '')),
+				stream: bufferToStream(VSBuffer.fromString(body ?? '')),
 			};
 		},
 		resolveProxy: async () => undefined,
@@ -201,6 +204,34 @@ suite('Volt provider reasoning', () => {
 		await collect(new OllamaProvider(service), { modelId: 'llama3' });
 		const chat = sent.find(options => options.url?.endsWith('/api/chat'));
 		assert.strictEqual('think' in JSON.parse(String(chat?.data)), false);
+	});
+
+	test('Ollama gets the window Volt plans with as num_ctx on every request', async () => {
+		// Ollama's default is 4K below 24 GiB of VRAM and a longer prompt is cut silently.
+		const shows: Record<string, object> = {
+			'llama3.1': { capabilities: ['completion', 'tools'], model_info: { 'general.architecture': 'llama', 'llama.context_length': 131_072 } },
+			'tiny': { capabilities: ['completion', 'tools'], model_info: { 'general.architecture': 'phi', 'phi.context_length': 8_192 } },
+			'pinned': { capabilities: ['completion', 'tools', 'vision'], parameters: 'stop                           "<|eot|>"\nnum_ctx                        65536', model_info: { 'qwen2.context_length': 131_072 } },
+		};
+		const { service, sent } = fakeRequests([
+			{ match: url => url.endsWith('/api/tags'), body: JSON.stringify({ models: Object.keys(shows).map(name => ({ name })) }) },
+			{ match: url => url.endsWith('/api/show'), body: options => JSON.stringify(shows[(JSON.parse(String(options.data)) as { model: string }).model]) },
+			{ match: url => url.endsWith('/api/chat'), body: JSON.stringify({ message: { content: 'hi' }, done: true }) + '\n' },
+		]);
+		const provider = new OllamaProvider(service);
+		const listed = await provider.listModels(profile('ollama'));
+		assert.deepStrictEqual(listed.map(model => [model.id, model.capabilities.contextWindow, model.capabilities.vision]), [
+			['llama3.1', 32_768, false],
+			['tiny', 8_192, false],
+			['pinned', 65_536, true],
+		]);
+		await collect(provider, { modelId: 'llama3.1' });
+		// A title call asks for little output; a different num_ctx would make Ollama reload the model.
+		await collect(provider, { modelId: 'llama3.1', maxOutputTokens: 400 });
+		await collect(provider, { modelId: 'tiny' });
+		const chats = sent.filter(options => options.url?.endsWith('/api/chat')).map(options => JSON.parse(String(options.data)) as ISentBody);
+		assert.deepStrictEqual(chats.map(body => body.options?.num_ctx), [32_768, 32_768, 8_192]);
+		assert.strictEqual(sent.filter(options => options.url?.endsWith('/api/show')).length, 3);
 	});
 
 	test('Gemini requests thoughts only from thinking models and streams them', async () => {

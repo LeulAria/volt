@@ -40,7 +40,7 @@ import { IVoltModelOptions, MODEL_OPTION_REASONING, pickGenerationParams, resolv
 import { modePolicy, VoltMode } from '../common/modes.js';
 import { isCatalogModelEnabled, setCatalogModelEnabled } from '../common/models/modelVisibility.js';
 import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_DISABLED_MODELS_STORAGE_KEY, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
-import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
+import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IModelRequest, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { cheapestReasoningLevel, resolveTabModel } from '../common/models/modelAccess.js';
 import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltTaskModels } from '../common/runtime.js';
@@ -75,19 +75,19 @@ import { classifyIntent, IIntent, mergeGrantedGroups } from '../common/harness/i
 import { buildAcpLead, IContextPackInput, IEnvironmentFacts } from '../common/harness/contextPack.js';
 import { INativeLoopMessage } from '../common/harness/nativeLoop.js';
 import { nativeToModelMessages } from '../common/harness/providerMessages.js';
-import { runToolBatch } from '../common/harness/toolRuntime.js';
+import { PathLocks, runToolBatch } from '../common/harness/toolRuntime.js';
 import { estimateTokens, totalTokens } from '../common/harness/contextEngine.js';
 import { FileLedger } from '../common/harness/fileLedger.js';
 import { alwaysRules, findInstruction, instructionsIndex, ISubagentDoc, rulesForPath } from '../common/harness/instructions.js';
 import { IVoltHookRunContext, IVoltHooksService } from '../common/hooks/voltHooks.js';
 import './hooks/voltHooksService.js';
-import { applyCompaction, clearOldToolResults, COMPACTION_SYSTEM, compactionBoundary, compactionRequest, DEFAULT_COMPACTION, effectiveWindow, mechanicalSummary, pruneImages, serializeForSummary, shouldCompact } from '../common/harness/nativeCompaction.js';
+import { applyCompaction, clearOldToolResults, COMPACTION_SYSTEM, compactionBoundary, compactionRequest, DEFAULT_COMPACTION, dropBoundReasoning, effectiveWindow, ICarryForward, inContextCompactionRequest, mechanicalSummary, MIN_IN_CONTEXT_SUMMARY_CHARS, promptPrefixKey, pruneImages, serializeForSummary, shouldCompact } from '../common/harness/nativeCompaction.js';
 import { chooseEffort, EffortLevel, higherEffort } from '../common/deepseek/effort.js';
 import { IToolDocuments } from './tools/fileTools.js';
 import { ISubagentRequest, NATIVE_ASK_QUESTION_TOOL_NAME } from './tools/metaTools.js';
 import { CodeIntelHost } from './host/codeIntelHost.js';
 import { McpHost } from './host/mcpHost.js';
-import { NativeJournal } from './history/nativeJournal.js';
+import { INativeJournalEntry, NativeJournal } from './history/nativeJournal.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
 import { affectsInstructions, IInstructionsSnapshot, loadInstructions } from './prompt/instructionsLoader.js';
 import { ResourceMap } from '../../../../base/common/map.js';
@@ -302,6 +302,14 @@ interface INativeState {
 	effort?: EffortLevel;
 	todo?: string;
 	instructions?: IInstructionsSnapshot;
+	/** System prompt and tools the transcript's reasoning was produced under (`promptPrefixKey`). */
+	prefix?: string;
+	/** File locks shared by this chat's runs and subagents, so their edits never interleave. */
+	locks: PathLocks;
+}
+
+function journalEntry(state: INativeState): INativeJournalEntry {
+	return { version: 1, messages: state.messages, synced: state.synced, effort: state.effort, todo: state.todo, prefix: state.prefix, savedAt: Date.now() };
 }
 
 /** Languages whose editor services report diagnostics worth waiting for. */
@@ -426,8 +434,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly slowChecks = new Set<string>();
 	/** The test run started after a chat's last run ended (exec id), by chat. */
 	private readonly postRunChecks = new Map<string, string>();
-	/** CLI title generation waiting for the chat's first reply text (see send). */
-	private readonly deferredTitles = new Map<string, () => void>();
+	/** Title generation waiting for the chat's first reply text, or for the end of its run (see send). */
+	private readonly deferredTitles = new Map<string, { readonly start: () => void; readonly until: 'reply' | 'end' }>();
 
 	private readonly _onDidChangeCatalog = this._register(new Emitter<void>());
 	readonly onDidChangeCatalog: Event<void> = this._onDidChangeCatalog.event;
@@ -672,6 +680,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			state.synced = Math.min(entry.synced, seeded);
 			state.effort = entry.effort as EffortLevel | undefined;
 			state.todo = entry.todo;
+			state.prefix = entry.prefix;
 		}, () => undefined));
 	}
 
@@ -784,12 +793,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			session.titleState = 'pending';
 			const pinned = this.taskModels.title ? this.catalog.find(item => item.ref === this.taskModels.title && item.enabled) : undefined;
 			const titleItem = pinned ?? catalogItem;
+			const start = () => void this.generateTitle(session, request, titleItem, !!pinned);
 			if (titleItem?.kind === 'agent') {
 				// A CLI title is a process start (`claude -p`, `codex exec`): it waits for the first reply
 				// text, or the end of the run, so it does not compete with the turn's own startup.
-				this.deferredTitles.set(session.sessionId, () => void this.generateTitle(session, request, titleItem, !!pinned));
+				this.deferredTitles.set(session.sessionId, { start, until: 'reply' });
+			} else if (titleItem && titleItem.profileId === catalogItem?.profileId && servedLocally(this.profiles.find(p => p.id === titleItem.profileId))) {
+				// One local server runs one request at a time: sent first, the title would hold up the
+				// run's first step, and between steps it would evict the run's cached prompt.
+				this.deferredTitles.set(session.sessionId, { start, until: 'end' });
 			} else {
-				void this.generateTitle(session, request, titleItem, !!pinned);
+				start();
 			}
 		}
 		const engine = catalogItem?.kind === 'agent' ? 'agent' : 'native';
@@ -1106,7 +1120,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			}
 			state.inbox.splice(0);
 			state.ledger.invalidateReferences();
-			void this.journal.schedule(sessionId, () => ({ version: 1, messages: state.messages, synced: state.synced, effort: state.effort, todo: state.todo, savedAt: Date.now() }), true);
+			void this.journal.schedule(sessionId, () => journalEntry(state), true);
 		}
 		// An ACP agent cannot forget turns; the next message starts a fresh agent with a recap.
 		if (session.agentHandle && (session.agentSynced ?? 0) > session.messages.length) {
@@ -2428,7 +2442,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		state.messages = transcript;
 		run.transcript = transcript;
 		state.cwd = cwd;
-		const journal = () => ({ version: 1 as const, messages: state.messages, synced: state.synced, effort: state.effort, todo: state.todo, savedAt: Date.now() });
+		const journal = () => journalEntry(state);
 		state.changed.clear();
 		state.ledger.resumeReferences();
 		const images = this.modelImages(request.images);
@@ -2487,6 +2501,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const contextWindow = item.capabilities.contextWindow || DEFAULT_MODEL_CAPABILITIES.contextWindow;
 		const serverClearsToolResults = profile.providerId === 'anthropic' && (!profile.endpoint?.baseURL || /^https:\/\/api\.anthropic\.com\/?$/.test(profile.endpoint.baseURL));
 		const system: INativeLoopMessage = { role: 'system', content: turn.prompt };
+		// Claude signs its reasoning over the system prompt and tools. When either changed since the
+		// last run (mode, date, rules, memory, MCP tools), replaying the old blocks would be rejected.
+		const prefix = promptPrefixKey(turn.prompt, schemas);
+		if (state.prefix !== prefix) {
+			if (dropBoundReasoning(transcript)) {
+				this.logService.info(`[volt] system prompt or tools changed in ${session.sessionId}; dropped earlier Claude reasoning`);
+			}
+			state.prefix = prefix;
+		}
 		const emit = (event: IVoltEvent) => {
 			if (event.type === 'usage' && this.isCurrent(session, run)) {
 				state.promptTokens = event.used ?? event.input + (event.cache ?? 0) + (event.cacheWrite ?? 0);
@@ -2494,7 +2517,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.emitEngine(session, run, event);
 		};
 		const compact = (messages: INativeLoopMessage[], aggressive: boolean) => this.compactNative(session, run, state, messages, {
-			provider, profile, apiKey, item, system: turn.prompt, contextWindow, aggressive, token: cancel,
+			provider, profile, apiKey, item, system: turn.prompt, contextWindow, aggressive, token: cancel, cached: { tools: schemas, options },
 		});
 		run.metrics.mark('prompt');
 		try {
@@ -2514,7 +2537,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					sessionId: session.sessionId,
 					mode: request.mode,
 					emit: event => this.onToolEvent(session, run, state, event),
-				}, { authorize: async () => ({ allow: true }), onResult }),
+				}, { authorize: async () => ({ allow: true }), onResult, locks: state.locks }),
 				authorize: call => this.authorizeDeepseek(session, run.runId, profile, call, registry.get(call.name)),
 				preauthorize: call => this.preauthorizeDeepseek(session, run.runId, profile, call, registry.get(call.name)),
 				emit,
@@ -2621,6 +2644,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			logRoots: [],
 			changed: new ResourceMap(),
 			promptTokens: 0,
+			locks: new PathLocks(),
 		};
 		return session.deepseek;
 	}
@@ -2785,7 +2809,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (compacted) {
 			state.messages = messages;
 			state.synced = session.messages.length;
-			this.journal.schedule(session.sessionId, () => ({ version: 1 as const, messages: state.messages, synced: state.synced, effort: state.effort, todo: state.todo, savedAt: Date.now() }));
+			this.journal.schedule(session.sessionId, () => journalEntry(state));
 		}
 		const id = generateUuid();
 		const text = compacted ? 'Compacted the conversation: earlier turns are now a summary the model continues from.' : 'Nothing to compact yet: the conversation is already short.';
@@ -2806,6 +2830,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		readonly token: CancellationToken;
 		/** Tokens of recent turns to keep verbatim; `/compact` keeps only the latest exchange. */
 		readonly keepTokens?: number;
+		/** The run's own tools and options: the summary is then asked for on top of its cached prompt. */
+		readonly cached?: { readonly tools: IModelRequest['tools']; readonly options: IVoltModelOptions };
 	}): Promise<boolean> {
 		const window = effectiveWindow({ window: input.contextWindow, ...DEFAULT_COMPACTION });
 		const boundary = compactionBoundary(messages, input.keepTokens ?? Math.floor(window * (input.aggressive ? 0.1 : 0.25)));
@@ -2821,27 +2847,30 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		void this.hooks.run('preCompact', { sessionId: session.sessionId, runId: run.runId, root: this.executionRoot(session)?.fsPath, cwd: state.cwd, model: input.item.id, mode: session.mode }, protocol => protocol === 'claude'
 			? { trigger: input.keepTokens !== undefined ? 'manual' : 'auto', custom_instructions: '' }
 			: { trigger: input.keepTokens !== undefined ? 'manual' : 'auto', context_tokens: preTokens });
-		let summary: string | undefined;
-		try {
-			let text = '';
-			for await (const event of input.provider.stream({
-				modelId: input.item.id,
-				messages: [
-					{ role: 'system', content: COMPACTION_SYSTEM },
-					{ role: 'user', content: compactionRequest(serializeForSummary(older), carry) },
-				],
-				profile: input.profile,
-				apiKey: input.apiKey,
-				options: { ...this.resolvedOptions(input.item, undefined), [MODEL_OPTION_REASONING]: 'low' },
-				maxOutputTokens: 8_000,
-			}, input.token)) {
-				if (event.type === 'text.delta' && event.delta) {
-					text += event.delta;
+		// An overflowing prompt cannot carry the request on top of itself; that goes to the summarizer.
+		let summary = input.cached && !input.aggressive ? await this.inContextSummary(messages, carry, { ...input, cached: input.cached }) : undefined;
+		if (!summary && !input.token.isCancellationRequested) {
+			try {
+				let text = '';
+				for await (const event of input.provider.stream({
+					modelId: input.item.id,
+					messages: [
+						{ role: 'system', content: COMPACTION_SYSTEM },
+						{ role: 'user', content: compactionRequest(serializeForSummary(older), carry) },
+					],
+					profile: input.profile,
+					apiKey: input.apiKey,
+					options: { ...this.resolvedOptions(input.item, undefined), [MODEL_OPTION_REASONING]: 'low' },
+					maxOutputTokens: 8_000,
+				}, input.token)) {
+					if (event.type === 'text.delta' && event.delta) {
+						text += event.delta;
+					}
 				}
+				summary = text.trim() || undefined;
+			} catch (err) {
+				this.logService.warn('[volt] compaction summary failed; using a mechanical summary', err);
 			}
-			summary = text.trim() || undefined;
-		} catch (err) {
-			this.logService.warn('[volt] compaction summary failed; using a mechanical summary', err);
 		}
 		const next = applyCompaction(messages, boundary, summary ?? mechanicalSummary(older, carry));
 		messages.splice(0, messages.length, ...next);
@@ -2856,6 +2885,56 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			...(summary ? { summary } : {}),
 		});
 		return true;
+	}
+
+	/**
+	 * The handoff summary as the next user turn of the run's own request: same system prompt, tools,
+	 * options, and history, so the provider reads the whole conversation from its prompt cache (a
+	 * cache read costs a tenth of fresh input on most providers) and the summarizer sees every tool
+	 * result unclipped. `undefined` when the model did not return a usable summary.
+	 */
+	private async inContextSummary(messages: readonly INativeLoopMessage[], carry: ICarryForward, input: {
+		readonly provider: IModelProvider;
+		readonly profile: IProviderProfile;
+		readonly apiKey: string | undefined;
+		readonly item: IVoltCatalogItem;
+		readonly system: string;
+		readonly token: CancellationToken;
+		readonly cached: { readonly tools: IModelRequest['tools']; readonly options: IVoltModelOptions };
+	}): Promise<string | undefined> {
+		let text = '';
+		let cut = false;
+		try {
+			for await (const event of input.provider.stream({
+				modelId: input.item.id,
+				messages: nativeToModelMessages([{ role: 'system', content: input.system }, ...messages, { role: 'user', content: inContextCompactionRequest(carry) }]),
+				profile: input.profile,
+				apiKey: input.apiKey,
+				options: input.cached.options,
+				tools: input.cached.tools,
+				// The output limit is outside the cached prefix; thinking at the run's effort counts toward it.
+				maxOutputTokens: IN_CONTEXT_SUMMARY_OUTPUT_TOKENS,
+			}, input.token)) {
+				if (event.type === 'text.delta' && event.delta) {
+					text += event.delta;
+				} else if (event.type === 'finish' && event.reason === 'length') {
+					cut = true;
+				}
+			}
+		} catch (err) {
+			this.logService.warn('[volt] in-context compaction failed; using the separate summarizer', err);
+			return undefined;
+		}
+		if (cut) {
+			this.logService.info('[volt] in-context compaction hit its output limit; using the separate summarizer');
+			return undefined;
+		}
+		const summary = text.trim();
+		if (summary.length < MIN_IN_CONTEXT_SUMMARY_CHARS) {
+			this.logService.info(`[volt] in-context compaction returned ${summary.length} characters; using the separate summarizer`);
+			return undefined;
+		}
+		return summary;
 	}
 
 	/**
@@ -2940,7 +3019,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						mode: writes ? session.mode : 'ask',
 						// Its edits count as the chat's changes (review, diagnostics), without drawing its tool cards.
 						...(writes ? { emit: (event: { type: string;[key: string]: unknown }) => { if (event.type === 'file.change') { this.onToolEvent(session, run, parent, event); } } } : {}),
-					}, { authorize: async () => ({ allow: true }), onResult }),
+					}, { authorize: async () => ({ allow: true }), onResult, locks: parent.locks }),
 					// A subagent that edits asks for approval like the main agent; a read-only one never needs to.
 					authorize: async call => writes
 						? this.authorizeDeepseek(session, runId, profile, call, registry.get(call.name))
@@ -3841,10 +3920,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		this._onDidEmit.fire(envelope);
 		if (this.deferredTitles.size && (event.type === 'text.delta' || event.type === 'run.end')) {
-			const startTitle = this.deferredTitles.get(session.sessionId);
-			if (startTitle) {
+			const deferred = this.deferredTitles.get(session.sessionId);
+			if (deferred && (event.type === 'run.end' || deferred.until === 'reply')) {
 				this.deferredTitles.delete(session.sessionId);
-				startTitle();
+				deferred.start();
 			}
 		}
 		const baselines = this.editBaselines.observe(session.sessionId, event);
@@ -4661,6 +4740,28 @@ function abortSignalFrom(token: CancellationToken): AbortSignal {
 }
 
 const TITLE_TIMEOUT_MS = 30_000;
+/**
+ * Room for the handoff summary plus the thinking before it; a summary cut off at this limit is not
+ * used. High enough that a Claude thinking budget (derived from it, up to 24K) stays the run's own:
+ * a different budget would miss the cached messages.
+ */
+const IN_CONTEXT_SUMMARY_OUTPUT_TOKENS = 32_000;
+
+/** Ollama, or a server on this machine (LM Studio, llama.cpp): one GPU, usually one request at a time. */
+function servedLocally(profile: IProviderProfile | undefined): boolean {
+	if (!profile) {
+		return false;
+	}
+	if (profile.providerId === 'ollama') {
+		return true;
+	}
+	try {
+		const host = profile.endpoint?.baseURL ? new URL(profile.endpoint.baseURL).hostname : '';
+		return host === 'localhost' || host === '0.0.0.0' || host === '[::1]' || host.startsWith('127.');
+	} catch {
+		return false;
+	}
+}
 /** Commit messages and pull request descriptions read a diff, so they get longer than a title. */
 const GENERATED_TEXT_TIMEOUT_MS = 90_000;
 

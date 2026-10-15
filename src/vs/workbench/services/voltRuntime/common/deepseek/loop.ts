@@ -6,6 +6,7 @@
 import { localize } from '../../../../../nls.js';
 import { IVoltEvent } from '../events.js';
 import { ILoopDetectorOptions, LoopDetector, LoopSignal, LoopVerdict } from '../harness/doomLoop.js';
+import { dropBoundReasoning } from '../harness/nativeCompaction.js';
 import { INativeLoopMessage } from '../harness/nativeLoop.js';
 import { toLoopStep } from '../harness/progress.js';
 import { createLoopDetector } from '../harness/recovery.js';
@@ -265,6 +266,13 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 		if (streamed.kind === 'error') {
 			await eager.settle();
 			const error = streamed.error;
+			// Rejected before any output, so nothing ran; without Claude's earlier thinking the same
+			// step goes through. Once that thinking is gone, the same refusal is a real failure.
+			if (error instanceof ProviderError && error.thinkingRejected && !streamed.visible && dropBoundReasoning(messages) > 0) {
+				host.emit({ type: 'retry', attempt: streamRetries + 1, delayMs: 0, message: localize('volt.loop.thinkingRejected', "The provider would not take the model's earlier reasoning back. Retrying without it.") });
+				modelCalls--;
+				continue;
+			}
 			if (error instanceof ProviderError && error.overflow && !overflowRecovered && host.recoverOverflow && await host.recoverOverflow(messages)) {
 				overflowRecovered = true;
 				modelCalls--;

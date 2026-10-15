@@ -9,6 +9,7 @@ import {
 	nativeToModelMessages,
 	toAnthropicMessages,
 	toGeminiContents,
+	toOllamaMessages,
 	toOpenAiMessages,
 	toOpenAiTools,
 } from '../../../common/harness/providerMessages.js';
@@ -70,5 +71,20 @@ suite('Volt provider message transforms', () => {
 		assert.deepStrictEqual(toOpenAiMessages(messages, { vision: true }), [{ role: 'user', content: [{ type: 'text', text: 'match this' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }] }]);
 		assert.deepStrictEqual(toOpenAiMessages(messages), [{ role: 'user', content: 'match this' }]);
 		assert.deepStrictEqual(toGeminiContents(messages), [{ role: 'user', parts: [{ text: 'match this' }, { inlineData: { mimeType: 'image/png', data: 'AAAA' } }] }]);
+	});
+
+	test('Ollama gets tool-call arguments as an object, results by tool name, and images only for vision models', () => {
+		const shot: INativeLoopMessage[] = [
+			...turn,
+			{ role: 'assistant', content: '', toolCalls: [{ id: 'c2', name: 'browser_screenshot', args: {} }] },
+			{ role: 'tool', content: 'screenshot', callId: 'c2', name: 'browser_screenshot', images: [{ mediaType: 'image/png', data: 'AAAA' }] },
+		];
+		const messages = toOllamaMessages(nativeToModelMessages(shot), { vision: true }) as { role: string; content: string; tool_calls?: { function: { name: string; arguments: unknown } }[]; tool_name?: string; images?: string[] }[];
+		assert.deepStrictEqual(messages.map(message => message.role), ['system', 'user', 'assistant', 'tool', 'assistant', 'tool', 'user']);
+		assert.deepStrictEqual(messages[2].tool_calls, [{ function: { name: 'read_file', arguments: { path: 'a.ts' } } }]);
+		assert.strictEqual(messages[3].tool_name, 'read_file');
+		assert.deepStrictEqual(messages[6].images, ['AAAA'], 'raw base64, after the results');
+		const blind = toOllamaMessages(nativeToModelMessages(shot)) as { images?: string[] }[];
+		assert.ok(blind.every(message => !message.images), 'a model without vision gets no images');
 	});
 });

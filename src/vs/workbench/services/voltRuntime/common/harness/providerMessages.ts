@@ -368,6 +368,45 @@ function objectArgs(value: unknown): object {
 	return value && typeof value === 'object' && !Array.isArray(value) ? value : { value };
 }
 
+// --- Ollama ----------------------------------------------------------------------------------
+
+/**
+ * Ollama's native `/api/chat`. Unlike OpenAI's format, a tool call's `arguments` is an object (a
+ * JSON string is rejected, so every request after the first tool call failed), a result names
+ * its tool, and images are raw base64 in an `images` field. Tool images follow the results as a
+ * user message, as for OpenAI, and go only to models that can see.
+ */
+export function toOllamaMessages(messages: readonly IModelMessage[], options: { readonly vision?: boolean } = {}): object[] {
+	const out: object[] = [];
+	const images: string[] = [];
+	const flushImages = () => {
+		if (images.length) {
+			out.push({ role: 'user', content: 'Images returned by the tool calls above:', images: images.splice(0) });
+		}
+	};
+	for (const message of messages) {
+		if (message.role === 'tool') {
+			out.push({ role: 'tool', content: message.content, ...(message.name ? { tool_name: message.name } : {}) });
+			if (options.vision) {
+				images.push(...(message.images ?? []).map(image => image.data));
+			}
+			continue;
+		}
+		flushImages();
+		if (message.role === 'assistant') {
+			out.push({
+				role: 'assistant',
+				content: message.content,
+				...(message.toolCalls?.length ? { tool_calls: message.toolCalls.map(call => ({ function: { name: call.name, arguments: objectArgs(parseToolArgs(call.arguments)) } })) } : {}),
+			});
+			continue;
+		}
+		out.push({ role: message.role, content: message.content, ...(options.vision && message.images?.length ? { images: message.images.map(image => image.data) } : {}) });
+	}
+	flushImages();
+	return out;
+}
+
 // --- Gemini ----------------------------------------------------------------------------------
 
 export function toGeminiTools(tools: readonly IToolSchema[]): object[] {
