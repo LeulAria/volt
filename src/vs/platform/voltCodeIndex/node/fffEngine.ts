@@ -24,6 +24,12 @@ const FIRST_CALL_TIMEOUT_MS = 3_000;
 const RETRY_AFTER_MS = 60_000;
 /** FFF exits on its own after this much idle time (and when Volt's index process exits). */
 const IDLE_TIMEOUT_SECS = 20 * 60;
+/**
+ * FFF processes alive at once, least recently used stopped first. Each holds its folder's file
+ * list and a watcher, and chats in their own worktrees each have a folder: without a cap, parallel
+ * chats left one process per worktree running.
+ */
+const MAX_PROCESSES = 2;
 const VERSION_TTL_MS = 60_000;
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 
@@ -292,10 +298,21 @@ export class FffEngine {
 				return { kind: 'skipped', reason: status.state === 'error' ? `FFF unusable: ${status.error}` : 'FFF not installed' };
 			}
 			process?.dispose();
+			this.processes.delete(base);
+			for (const [folder, older] of this.processes) {
+				if (this.processes.size < MAX_PROCESSES) {
+					break;
+				}
+				older.dispose();
+				this.processes.delete(folder);
+				this.log(`[fff] stopped ${folder} (at most ${MAX_PROCESSES} at once)`);
+			}
 			process = new FffProcess(status.path, base, this.fffDir, this.log, this.timeouts);
-			this.processes.set(base, process);
 			this.log(`[fff] started ${status.path} (${status.version}) for ${base}`);
 		}
+		// Most recently used last: the first entries are the ones stopped for a new folder.
+		this.processes.delete(base);
+		this.processes.set(base, process);
 		const scoped = relative(base, root).split(sep).join('/');
 		try {
 			// A path prefix narrows FFF to the project when the git root is above it.
