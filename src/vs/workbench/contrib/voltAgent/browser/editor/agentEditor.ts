@@ -5,7 +5,7 @@
 
 import '../media/agentEditor.css';
 import '../media/agentComposerInput.css';
-import { $, addDisposableListener, append, Dimension, DragAndDropObserver, getWindow, isHTMLElement, isSVGElement, runAtThisOrScheduleAtNextAnimationFrame, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, Dimension, DragAndDropObserver, getWindow, isHTMLElement, isSVGElement, runAtThisOrScheduleAtNextAnimationFrame, runWhenWindowIdle, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import type { IMouseWheelEvent } from '../../../../../base/browser/mouseEvent.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/contextview/contextview.js';
@@ -153,6 +153,7 @@ import { AgentLandingChrome } from '../home/agentLandingChrome.js';
 import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
 import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitation, revealCitationInChats } from './agentCitationSource.js';
 import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
+import { deferredHeadStart } from './agentThreadWindow.js';
 import { AgentTurnNav, IAgentTurnNavTurn, turnNavPreview } from './agentTurnNav.js';
 import { IAgentSessionChangesService } from '../review/agentSessionChangesService.js';
 import { messageFileChangesSignature } from '../review/agentSessionChanges.js';
@@ -270,6 +271,15 @@ function isUnmodifiedEnter(e: IKeyboardEvent): boolean {
 const USER_EDIT_MAX_HEIGHT = 220;
 /** Rendered threads kept for chats you switched away from, so switching back skips the rebuild. */
 const MAX_STASHED_THREADS = 8;
+/**
+ * A chat shown by a switch draws its last few exchanges at once and the ones above them while the
+ * window is idle, so the switch costs the same in a long chat as in a short one.
+ */
+const HEAD_KEEP_EXCHANGES = 6;
+/** Fewer exchanges than this above the kept ones are drawn at once: deferring them saves nothing. */
+const HEAD_DEFER_MIN_EXCHANGES = 4;
+/** The longest an older exchange waits for an idle moment. */
+const HEAD_FILL_TIMEOUT_MS = 400;
 /** Shows the pane even if the first chat's history never finishes loading. */
 const RESTORE_REVEAL_TIMEOUT_MS = 1500;
 
@@ -872,6 +882,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private tailExchange: HTMLElement | undefined;
 	private tailFrom = -1;
 	private renderedCount = 0;
+	/**
+	 * Messages before this index are not drawn yet (see HEAD_KEEP_EXCHANGES); 0 when the whole thread
+	 * is. DOM ordinals of exchanges and user turns skip the `headExchanges` and `headUsers` above it.
+	 */
+	private headEnd = 0;
+	private headExchanges = 0;
+	private headUsers = 0;
+	private headGeneration = 0;
+	private readonly headFill = this._register(new MutableDisposable());
+	private readonly headScrollDraw = this._register(new MutableDisposable());
 	/** The messages drawn above the live exchange, so a new turn can tell they are unchanged and keep their DOM. */
 	private settledMessages: readonly IAgentMessage[] = [];
 	private readonly thinkingStore = this._register(new DisposableStore());
@@ -1038,6 +1058,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const threadFollow = this.threadFollow = new ThreadFollow(this.threadScroll, this.threadEl, () => this.stickToBottom && !this.threadScrollFrozen && this.editingUserIndex === undefined);
 		this._register(toDisposable(() => threadFollow.cancel()));
 		this.turnNav = this._register(new AgentTurnNav(this.threadView));
+		this.turnNav.setUndrawn({ count: () => this.headUsers, draw: () => this.flushDeferredHead() });
 		this._register(new AgentThreadSelectionActions(this.threadEl, {
 			isVisible: () => this.isVisible(),
 			onAddToChat: (text, source) => this.addChatSelection(text, this.sessionKey, source),
@@ -1108,6 +1129,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				// takes its real height, so the scroll height is read again once this frame settles.
 				if (e.scrollTopChanged && this.editingUserIndex === undefined && !following) {
 					this.scheduleScrollSync();
+				}
+				// A reader heading up into exchanges not drawn yet gets them before reaching the top.
+				if (e.scrollTopChanged && this.headEnd > 0 && !this.stickToBottom && e.scrollTop < e.height * 2) {
+					this.drawHeadSoon();
 				}
 			}
 			// The sticky pass itself runs once per frame (AgentThreadView listens to the same scroll).
@@ -1938,7 +1963,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.syncComposerPlacement();
 		const stashed = this.adoptStashedThread(input);
 		if (!stashed || (stashed.stale && !this.canRenderTail() && !this.canAppendThread())) {
-			this.renderThread(followTail);
+			// Following the end: the older exchanges are off screen and can wait for an idle moment.
+			this.renderThread(followTail, followTail);
 		} else {
 			if (stashed.stale) {
 				this.renderThreadTail(followTail);
@@ -2675,7 +2701,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.renderThreadTail(this.stickToBottom);
 			return;
 		}
-		let ordinal = 0;
+		if (start < this.headEnd) {
+			return; // not drawn yet: it is drawn from the message as it is now
+		}
+		let ordinal = -this.headExchanges;
 		for (let i = 1; i <= start; i++) {
 			if (startsExchange(this.messages[i])) {
 				ordinal++;
@@ -2727,7 +2756,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.renderThread(this.stickToBottom);
 	}
 
-	private renderThread(scrollToEnd = false): void {
+	/** `deferHead`: a switch to this chat; a long thread draws its last exchanges now and the rest when idle. */
+	private renderThread(scrollToEnd = false, deferHead = false): void {
 		// An open edit survives the redraw: its composer moves into the new slot, keeps its place on
 		// screen (applyEditAnchor, from syncThreadScroll) and keeps the caret.
 		const editing = this.editingUserIndex !== undefined ? this.threadInner.querySelector<HTMLElement>('.volt-agent-turn.user.editing') : null;
@@ -2735,13 +2765,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (editing) {
 			this.captureEditAnchor(editing);
 		}
-		this.renderThreadNow(scrollToEnd);
+		this.renderThreadNow(scrollToEnd, deferHead && !editing);
 		if (editHadFocus && this.editingUserIndex !== undefined) {
 			this.focusEditEditor();
 		}
 	}
 
-	private renderThreadNow(scrollToEnd: boolean): void {
+	private renderThreadNow(scrollToEnd: boolean, deferHead = false): void {
+		this.resetDeferredHead();
 		this.fullRenderAfterStream = false;
 		this.settledListeners.clear();
 		this.tailListeners.clear();
@@ -2774,9 +2805,24 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		const tailFrom = this.lastExchangeStart();
 		this.settledMessages = this.messages.slice(0, Math.max(0, tailFrom));
+		const headEnd = deferHead ? deferredHeadStart(this.messages.length, index => startsExchange(this.messages[index]), HEAD_KEEP_EXCHANGES, HEAD_DEFER_MIN_EXCHANGES) : 0;
+		if (headEnd > 0) {
+			this.headEnd = headEnd;
+			for (let index = 0; index < headEnd; index++) {
+				if (index > 0 && startsExchange(this.messages[index])) {
+					this.headExchanges++;
+				}
+				if (this.messages[index].kind === 'user') {
+					this.headUsers++;
+				}
+			}
+			// The exchange that starts at index 0 is one too.
+			this.headExchanges++;
+		}
 		let exchange: HTMLElement | undefined;
 		try {
-			for (const [index, message] of this.messages.entries()) {
+			for (let index = headEnd; index < this.messages.length; index++) {
+				const message = this.messages[index];
 				if (startsExchange(message) || !exchange) {
 					if (index === tailFrom) {
 						this.renderingTail = true;
@@ -2802,7 +2848,119 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		adoptVisualFrames(this.threadInner);
 		this.observeTailExchange();
+		if (this.headEnd > 0) {
+			// What is drawn now fills the view (and some): older exchanges landing above it later must not move it.
+			const viewport = this.threadScroll?.getDomNode().clientHeight ?? 0;
+			while (this.headEnd > 0 && this.measureThreadContentHeight() < viewport * 2) {
+				this.drawHead(() => false);
+			}
+		}
 		this.finishThreadRender(scrollToEnd);
+		if (this.headEnd > 0) {
+			this.scheduleHeadFill();
+		}
+	}
+
+	private resetDeferredHead(): void {
+		this.headGeneration++;
+		this.headFill.clear();
+		this.headScrollDraw.clear();
+		this.headEnd = 0;
+		this.headExchanges = 0;
+		this.headUsers = 0;
+	}
+
+	/** Draws the older exchanges a little at a time while the window is idle, nearest first. */
+	private scheduleHeadFill(): void {
+		const generation = this.headGeneration;
+		const window = getWindow(this.threadInner);
+		const fill = (deadline: IdleDeadline) => {
+			if (generation !== this.headGeneration || this.headEnd <= 0) {
+				return;
+			}
+			this.drawHead(() => deadline.timeRemaining() > 4);
+			if (generation === this.headGeneration && this.headEnd > 0) {
+				this.headFill.value = runWhenWindowIdle(window, fill, HEAD_FILL_TIMEOUT_MS);
+			}
+		};
+		this.headFill.value = runWhenWindowIdle(window, fill, HEAD_FILL_TIMEOUT_MS);
+	}
+
+	/** Draws a frame's worth of the waiting exchanges, next frame (not inside the scroll that asked). */
+	private drawHeadSoon(): void {
+		if (this.headScrollDraw.value) {
+			return;
+		}
+		const generation = this.headGeneration;
+		this.headScrollDraw.value = scheduleAtNextAnimationFrame(getWindow(this.threadInner), () => {
+			this.headScrollDraw.value = undefined;
+			if (generation === this.headGeneration && this.headEnd > 0) {
+				const until = Date.now() + 12;
+				this.drawHead(() => Date.now() < until);
+			}
+		});
+	}
+
+	/** Draws every exchange still waiting above the drawn ones, now: for find, an edit, a jump to a turn. */
+	private flushDeferredHead(): void {
+		if (this.headEnd > 0) {
+			this.drawHead(() => true);
+		}
+	}
+
+	/**
+	 * Draws the exchanges just above the drawn ones, at least one, while `more` says so. Content
+	 * added above the viewport keeps what is on screen in place.
+	 */
+	private drawHead(more: () => boolean): void {
+		const anchored = !this.stickToBottom && !!this.threadScroll;
+		const heightBefore = anchored ? this.measureThreadContentHeight() : 0;
+		const scrollTop = anchored ? this.threadScroll.getScrollPosition().scrollTop : 0;
+		let anchor = this.threadInner.firstElementChild;
+		do {
+			let start = this.headEnd - 1;
+			while (start > 0 && !startsExchange(this.messages[start])) {
+				start--;
+			}
+			const exchange = $('.volt-agent-exchange');
+			this.threadInner.insertBefore(exchange, anchor);
+			const store = this.settledListeners.add(new DisposableStore());
+			this.exchangeStores.set(exchange, store);
+			this.exchangeListeners = store;
+			try {
+				for (let index = start; index < this.headEnd; index++) {
+					if (index === 0) {
+						this.renderForkOrigin(exchange);
+					}
+					this.renderThreadMessage(exchange, this.messages[index], index);
+					if (this.messages[index].kind === 'user') {
+						this.headUsers--;
+					}
+				}
+			} finally {
+				this.exchangeListeners = undefined;
+			}
+			adoptVisualFrames(exchange);
+			this.headEnd = start;
+			this.headExchanges--;
+			anchor = exchange;
+		} while (this.headEnd > 0 && more());
+		if (this.headEnd === 0) {
+			this.headFill.clear();
+		}
+		if (anchored) {
+			const grown = this.measureThreadContentHeight() - heightBefore;
+			this.syncThreadScroll();
+			if (grown > 0) {
+				this.threadScroll.setScrollPosition({ scrollTop: scrollTop + grown });
+				this.writeBackThreadScrollTop();
+			}
+		} else {
+			this.scheduleScrollSync();
+		}
+		if (this.headEnd === 0 && this.findWidget?.isVisible()) {
+			this.applyFindHighlights(false);
+		}
 	}
 
 	/** The resize observer follows the live exchange (see createEditor). */
@@ -3229,7 +3387,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private stashThread(): void {
 		const input = this.threadInput;
 		this.threadInput = undefined;
-		if (!input || input.isDisposed() || this.editingUserIndex !== undefined || !this.threadInner.firstChild || this.renderedCount !== this.messages.length) {
+		// A thread whose older exchanges are still being drawn is not parked: coming back draws its end first again.
+		const filling = this.headEnd > 0;
+		this.resetDeferredHead();
+		if (!input || input.isDisposed() || filling || this.editingUserIndex !== undefined || !this.threadInner.firstChild || this.renderedCount !== this.messages.length) {
 			return;
 		}
 		this.dropStashedThread(input.sessionId);
@@ -3685,10 +3846,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private indexOfUserTurn(turn: Element): number | undefined {
-		const ordinal = Array.from(this.threadInner.querySelectorAll('.volt-agent-turn.user')).indexOf(turn);
-		if (ordinal < 0) {
+		const drawn = Array.from(this.threadInner.querySelectorAll('.volt-agent-turn.user')).indexOf(turn);
+		if (drawn < 0) {
 			return undefined;
 		}
+		const ordinal = drawn + this.headUsers;
 		let userOrdinal = -1;
 		for (const [index, item] of this.messages.entries()) {
 			if (item.kind !== 'user') {
@@ -3785,7 +3947,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		const other = e.target.closest('.volt-agent-turn.user');
 		if (other && this.threadInner.contains(other)) {
-			const ordinal = Array.from(this.threadInner.querySelectorAll('.volt-agent-turn.user')).indexOf(other);
+			const ordinal = Array.from(this.threadInner.querySelectorAll('.volt-agent-turn.user')).indexOf(other) + this.headUsers;
 			let userOrdinal = -1;
 			for (const [index, item] of this.messages.entries()) {
 				if (item.kind !== 'user') {
@@ -4081,7 +4243,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private userTurnAt(index: number): HTMLElement | undefined {
-		let ordinal = -1;
+		if (index >= 0 && index < this.headEnd) {
+			this.flushDeferredHead();
+		}
+		let ordinal = -1 - this.headUsers;
 		for (const [i, item] of this.messages.entries()) {
 			if (item.kind !== 'user') {
 				continue;
@@ -7649,6 +7814,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!query) {
 			return false;
 		}
+		this.flushDeferredHead();
 
 		const regex = this.buildFindRegex(query);
 		if (!regex) {

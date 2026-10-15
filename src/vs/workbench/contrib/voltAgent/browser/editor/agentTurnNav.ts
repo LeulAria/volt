@@ -65,6 +65,8 @@ export class AgentTurnNav extends Disposable {
 	private hovered: number | undefined;
 	/** Once a card has shown a reply, the next ones do at once until the pointer leaves the rail. */
 	private warm = false;
+	/** Sent messages above the drawn exchanges (a long chat draws its older ones when idle), and how to draw them now. */
+	private undrawn: { readonly count: () => number; readonly draw: () => void } | undefined;
 	private replyTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(private readonly thread: AgentThreadView) {
@@ -155,7 +157,12 @@ export class AgentTurnNav extends Disposable {
 		return tick;
 	}
 
-	/** Exchanges, one per sent message: the turn and everything answering it. */
+	/** A chat that draws its older exchanges later says how many sent messages are not drawn yet. */
+	setUndrawn(undrawn: { readonly count: () => number; readonly draw: () => void }): void {
+		this.undrawn = undrawn;
+	}
+
+	/** Exchanges drawn so far, one per sent message: the turn and everything answering it. Tick `i` is exchange `i - skipped`. */
 	private exchanges(): HTMLElement[] {
 		return Array.from(this.thread.inner.querySelectorAll<HTMLElement>('.volt-agent-turn.user'), turn => turn.parentElement ?? turn);
 	}
@@ -173,11 +180,12 @@ export class AgentTurnNav extends Disposable {
 	private sync(): void {
 		const viewport = this.thread.scroll.getDomNode().getBoundingClientRect();
 		const landing = viewport.top + LANDING_OFFSET;
-		let above = false;
+		const skipped = this.undrawn?.count() ?? 0;
+		let above = skipped > 0;
 		let below = false;
 		this.exchanges().forEach((exchange, index) => {
 			const rect = exchange.getBoundingClientRect();
-			this.ticks[index]?.classList.toggle('in-view', rect.bottom > viewport.top + 1 && rect.top < viewport.bottom - 1);
+			this.ticks[index + skipped]?.classList.toggle('in-view', rect.bottom > viewport.top + 1 && rect.top < viewport.bottom - 1);
 			above ||= rect.top < landing - 2;
 			below ||= rect.top > landing + 2;
 		});
@@ -199,16 +207,25 @@ export class AgentTurnNav extends Disposable {
 		const landing = viewportTop + LANDING_OFFSET + ahead;
 		const tops = this.exchanges().map(exchange => exchange.getBoundingClientRect().top);
 		const target = stepTurnIndex(tops, landing, direction);
+		const skipped = this.undrawn?.count() ?? 0;
 		if (target < 0) {
+			if (direction < 0 && skipped > 0) {
+				// The message above is not drawn yet: it is the last undrawn one.
+				this.reveal(skipped - 1);
+				return true;
+			}
 			return false;
 		}
-		this.reveal(target);
+		this.reveal(target + skipped);
 		return true;
 	}
 
 	/** Glides the message to the top of the view. */
 	private reveal(index: number): void {
-		const exchange = this.exchanges()[index];
+		if (index < (this.undrawn?.count() ?? 0)) {
+			this.undrawn?.draw();
+		}
+		const exchange = this.exchanges()[index - (this.undrawn?.count() ?? 0)];
 		if (!exchange) {
 			return;
 		}
