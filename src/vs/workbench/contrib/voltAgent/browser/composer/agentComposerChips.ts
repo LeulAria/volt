@@ -92,6 +92,8 @@ export interface IAgentComposerChipsOptions {
 	onScrollToBottom?: () => void;
 	/** The chat's terminals ("2 terminals running" with its menu), after the agents chip. The dock has none. */
 	terminalRuns?: IAgentComposerTerminalRuns;
+	/** The chat's usage-limit park ("Claude limit · resets 5 PM" with Resume when Claude is back), first in the row. */
+	limitRun?: IAgentComposerTerminalRuns;
 	dock?: boolean;
 }
 
@@ -205,6 +207,13 @@ export class AgentComposerChips extends Disposable {
 		super();
 		this.element = $(options.dock ? '.volt-agent-composer-chips.volt-browser-dock-chips' : '.volt-agent-composer-chips');
 
+		// A chat stopped at its usage limit says so before anything else.
+		const limitRun = options.limitRun;
+		if (limitRun) {
+			this.element.appendChild(limitRun.element);
+			this._register(limitRun.onDidChange(() => this.render()));
+		}
+
 		this.statusChip = append(this.element, $('button.volt-agent-composer-chip.status.volt-browser-dock-chip')) as HTMLButtonElement;
 		this.statusChip.type = 'button';
 		append(this.statusChip, createThinkingDots());
@@ -304,7 +313,8 @@ export class AgentComposerChips extends Disposable {
 		this.moreChip.setAttribute('aria-expanded', 'false');
 		setAgentTooltip(this.moreChip, localize('voltAgent.moreChips', "More"));
 		this.moreChip.appendChild(renderIcon(Codicon.ellipsis));
-		this.overflowPanel = append(this.element, $('.volt-agent-composer-chips-overflow.hidden'));
+		// `closed`, not `hidden`: the browser's dock hides `.hidden` outright, and the closed panel must stay laid out to be measured.
+		this.overflowPanel = append(this.element, $('.volt-agent-composer-chips-overflow.closed'));
 		this._register(addDisposableListener(this.moreChip, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
@@ -517,7 +527,7 @@ export class AgentComposerChips extends Disposable {
 	}
 
 	hasVisibleChips(): boolean {
-		return this.hostOpen && (this.hasStatus() || this.hasChanges || this.showsGit() || this.runningTerminals > 0 || this.hasTerminalRuns() || this.compactState !== 'hidden' || !!this.pr || !!this.agents);
+		return this.hostOpen && (this.hasStatus() || this.hasChanges || this.showsGit() || this.runningTerminals > 0 || this.hasTerminalRuns() || !!this.options.limitRun?.visible || this.compactState !== 'hidden' || !!this.pr || !!this.agents);
 	}
 
 	private showsGit(): boolean {
@@ -599,7 +609,7 @@ export class AgentComposerChips extends Disposable {
 		let deletions = 0;
 		if (hasChanges) {
 			try {
-				const stat = await this.commandService.executeCommand<IGitShortStat>('git.api.getWorkingTreeShortStat');
+				const stat = await this.commandService.executeCommand<IGitShortStat>('git.api.getWorkingTreeShortStat', this.workspaceContextService.getWorkspace().folders.map(folder => folder.uri));
 				if (gen !== this.refreshGen) {
 					return;
 				}
@@ -687,15 +697,17 @@ export class AgentComposerChips extends Disposable {
 		const showTerminals = this.runningTerminals > 0 && !showRuns;
 		const showAgents = !!this.agents;
 		const showComments = this.pendingComments > 0;
-		// Steps aside while Source Control shows this chat's changes in the right panel.
-		const showCommit = this.gitVisible && !this.newChat && !(this.sessionId && isAgentScmShown(this.sessionId));
+		// Steps aside while Source Control shows this chat's changes in the right panel, and while the
+		// Changes chip is up: one git chip at a time, Changes first.
+		const showCommit = !showChanges && this.gitVisible && !this.newChat && !(this.sessionId && isAgentScmShown(this.sessionId));
 		const showScroll = this.scrolledUp && !!this.options.onScrollToBottom;
 		this.updateScrollChip(showScroll);
 		// Before the row's visibility: a chip starting its exit keeps the row up until it is gone.
 		this.toggleChip(this.changesChip, showChanges, this.changesExit);
 		this.toggleChip(this.gitControl.element, showCommit, this.commitExit);
 		this.toggleChip(this.prChip, showPr, this.prExit);
-		const visible = this.hostOpen && (showStatus || showComments || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
+		const showLimit = !!this.options.limitRun?.visible;
+		const visible = this.hostOpen && (showLimit || showStatus || showComments || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
 		this.element.classList.toggle('is-visible', visible);
 		// A chat hosted in another chat's tools hides the row but keeps its terminals (agentEditor.css).
 		this.element.classList.toggle('has-terminal-runs', showRuns);
@@ -737,7 +749,8 @@ export class AgentComposerChips extends Disposable {
 	/** The chips that fold into "..." when the row runs out of room, in row order. The arrow never does. */
 	private overflowableChips(): HTMLElement[] {
 		const runs = this.options.terminalRuns?.element;
-		return [this.statusChip, this.agentsChip, ...(runs ? [runs] : []), this.commentsChip, this.compactChip, this.changesChip, this.terminalsChip, this.gitControl.element, this.prChip];
+		const limit = this.options.limitRun?.element;
+		return [...(limit ? [limit] : []), this.statusChip, this.agentsChip, ...(runs ? [runs] : []), this.commentsChip, this.compactChip, this.changesChip, this.terminalsChip, this.gitControl.element, this.prChip];
 	}
 
 	private scheduleLayout(): void {
@@ -821,7 +834,7 @@ export class AgentComposerChips extends Disposable {
 		this.overflowOpen = open;
 		this.moreChip.setAttribute('aria-expanded', String(open));
 		this.moreChip.classList.toggle('open', open);
-		this.overflowPanel.classList.toggle('hidden', !open);
+		this.overflowPanel.classList.toggle('closed', !open);
 		if (open) {
 			this.positionOverflowPanel();
 		}

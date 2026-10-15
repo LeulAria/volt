@@ -40,6 +40,7 @@ import { IAgentHistoryService, IAgentSessionMeta } from '../../../../services/vo
 import { IAgentCloudTasksService } from '../../../../services/voltRuntime/browser/cloud/agentCloudTasksService.js';
 import { cloudTaskStatusText, cloudTaskTone, ICloudTask } from '../../../../services/voltRuntime/common/cloud/cloudTasks.js';
 import { AgentCloudTaskMenu } from '../cloud/agentCloudTaskMenu.js';
+import { isLiveTaskState } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { limitBadgeLabel, limitParkedClock } from '../../../../services/voltRuntime/common/orchestration/limitRecovery.js';
 import { IAgentRuntimeService, VOLT_PROJECT_SETTINGS_COMMAND_ID } from '../../../../services/voltRuntime/common/runtime.js';
@@ -1277,7 +1278,15 @@ export class AgentHomePane extends Disposable {
 	/** Right-click on an agent tab: pin, settle, snooze, Auto-settle, archive. */
 	showSessionMenu(session: IAgentSessionMeta, anchor: HTMLElement | { x: number; y: number }): void {
 		this.hover.hide();
+		const thread = this.orchestrator.getThread(session.id);
+		// Work in the background (the chat need not be open): its turn, subagents, a restart or resume Volt has lined up.
+		const working = session.status === 'running' || !!thread?.active || !!thread?.rescue || (!!thread?.limit && thread.limit.auto !== false)
+			|| this.orchestrator.tasksOf(session.id).some(task => task.source === 'volt' && isLiveTaskState(task.state));
 		const actions: IAction[] = [
+			...(working ? [
+				new Action('volt.home.stop', localize('voltAgent.home.stop', "Stop"), undefined, true, () => this.orchestrator.cancel(session.id, { cascade: 'all' })),
+				new Separator(),
+			] : []),
 			new Action('volt.home.pin', session.pinned ? localize('voltAgent.home.unpin', "Unpin") : localize('voltAgent.home.pin', "Pin"), undefined, !session.archived, () => this.lifecycle.setPinned(session.id, !session.pinned)),
 			new Separator(),
 			new Action('volt.home.settle', session.settled ? localize('voltAgent.home.unsettle', "Move Out of Settled") : localize('voltAgent.home.settle', "Move to Settled"), undefined, true, () => this.lifecycle.setSettled(session.id, !session.settled)),

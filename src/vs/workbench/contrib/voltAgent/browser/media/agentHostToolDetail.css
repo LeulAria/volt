@@ -33,7 +33,7 @@
 	background: #1b1b1b;
 	color: rgba(240, 240, 241, 0.96);
 	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 20px 50px rgba(0, 0, 0, 0.45);
-	font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+	font-family: var(--volt-font);
 	font-size: 13px;
 	overflow: hidden;
 }

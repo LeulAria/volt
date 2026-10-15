@@ -108,8 +108,10 @@
 	border-color: rgba(0, 0, 0, 0.08);
 }
 
-.volt-paste-preview-btn .codicon {
+/* The button's own color: `.monaco-workbench .codicon` paints icons with icon.foreground, grey on the blue Paste as Text. */
+.volt-paste-preview .volt-paste-preview-btn .codicon {
 	font-size: 13px;
+	color: inherit;
 }
 
 /*

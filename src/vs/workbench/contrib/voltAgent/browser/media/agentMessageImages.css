@@ -1,0 +1,105 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* A sent prompt's images on one row (agentMessageImageRow.ts): tiles past the width hide, the last shows "+N". */
+.volt-agent-image-strip.one-row {
+	flex-wrap: nowrap;
+	overflow: hidden;
+}
+
+.volt-agent-image-strip.one-row > .volt-agent-image-tile.overflow {
+	display: none;
+}
+
+.volt-agent-image-tile.more {
+	cursor: pointer;
+}
+
+.volt-agent-image-tile.more .volt-agent-image-tile-img {
+	opacity: 0.35;
+}
+
+.volt-agent-image-tile.more > .volt-agent-image-tile-badge {
+	display: none;
+}
+
+.volt-agent-image-tile-more {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: rgba(0, 0, 0, 0.45);
+	color: #ffffff;
+	font-size: 14px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	pointer-events: none;
+}
+
+.volt-agent-image-tile.more:hover .volt-agent-image-tile-more {
+	background: rgba(0, 0, 0, 0.3);
+}
+
+/* "+N" opens every attachment in a grid: the image dialog's frame, sized to the grid. Opaque and its own paint layer, as it scrolls. */
+.volt-agent-image-viewer.volt-agent-image-gallery {
+	width: min(880px, 100%);
+	height: auto;
+	max-height: 100%;
+	isolation: isolate;
+	contain: paint;
+}
+
+.volt-agent-image-gallery-grid {
+	flex: 1 1 auto;
+	min-height: 0;
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+	/* Square tiles clip (overflow: hidden), so auto rows would squeeze them inside the dialog's height. */
+	grid-auto-rows: max-content;
+	align-content: start;
+	gap: 10px;
+	padding: 14px;
+	overflow-y: auto;
+}
+
+.volt-agent-image-gallery-tile {
+	position: relative;
+	aspect-ratio: 1;
+	width: 100%;
+	padding: 0;
+	margin: 0;
+	border: 1px solid var(--volt-image-viewer-line);
+	border-radius: 10px;
+	background: var(--volt-image-viewer-hover);
+	overflow: hidden;
+	cursor: zoom-in;
+	transition: border-color 120ms ease;
+}
+
+.volt-agent-image-gallery-tile:hover {
+	border-color: var(--volt-image-viewer-muted);
+}
+
+.volt-agent-image-gallery-tile:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.volt-agent-image-gallery-tile > img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	pointer-events: none;
+}
+
+.volt-agent-image-gallery-tile > img:not([src]) {
+	visibility: hidden;
+}
+
+.volt-agent-image-gallery-tile.video {
+	background: #111111;
+}

@@ -15,6 +15,8 @@ import { VoltHostMcpBridge } from '../common/voltHostMcpBridge.js';
 // The device, window capture and desktop host tools (and their UI) are served on this window's MCP server too.
 import './voltDevices.contribution.js';
 import './voltDesktop.contribution.js';
+// Playground pages (temp sites the agent drafts and tests) too.
+import './agentPlayground.contribution.js';
 
 registerMainProcessRemoteService(IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME);
 // The in-app browser's session and DevTools protocol live in the main process too.

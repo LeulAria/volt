@@ -3,11 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, isHTMLElement } from '../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, isHTMLElement, isHTMLInputElement } from '../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IListRenderer, IListVirtualDelegate } from '../../../../base/browser/ui/list/list.js';
 import { IInputBoxStyles, InputBox, MessageType } from '../../../../base/browser/ui/inputbox/inputBox.js';
-import { ISelectBoxStyles, ISelectOptionItem, SelectBox } from '../../../../base/browser/ui/selectBox/selectBox.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { fromNow } from '../../../../base/common/date.js';
 import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
@@ -37,7 +36,10 @@ import { AGENT_DEFAULT_MODEL_SETTING } from '../../voltAgent/common/agentCompose
 import { AgentSetupService, IAgentSetupState } from '../../voltSetup/browser/agentSetupService.js';
 import { agentSetupInfo } from '../../voltSetup/common/agentSetup.js';
 import { IVoltQuery, IVoltQueryCache, IVoltQueryHandle } from '../../../services/voltRuntime/browser/queryCache.js';
-import { voltButtonClasses } from '../../voltAgent/browser/chrome/voltButton.js';
+import { createVoltButton, VoltButtonKind } from '../../voltAgent/browser/chrome/voltButton.js';
+import { createVoltDropdown, IVoltDropdownOption } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
+import { createMessageCopyIcon } from '../../voltAgent/browser/blocks/agentCodeBlock.js';
+import './media/providersPage.css';
 
 /** How long a background install may run before it is called failed. */
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
@@ -104,6 +106,33 @@ function listRowId(row: ListRow): string {
 	}
 }
 
+/** Group titles and the no-match line: in the list for layout, never focused or picked. */
+function isStaticRow(row: ListRow | undefined): boolean {
+	return row?.kind === 'group' || row?.kind === 'none';
+}
+
+/** An email address, up to an apostrophe ("x@y.com's Organization") or a separator. */
+const EMAIL_PATTERN = /[^\s\u00b7@()]+@[^\s\u00b7@()'\u2019]+\.[^\s\u00b7@()'\u2019]+/g;
+
+/**
+ * Writes `text` with every email address in a span the CSS blurs until hovered, so a shared screen
+ * does not show which accounts are signed in.
+ */
+function appendPrivateText(parent: HTMLElement, text: string): void {
+	let last = 0;
+	for (const match of text.matchAll(EMAIL_PATTERN)) {
+		const at = match.index ?? 0;
+		if (at > last) {
+			parent.append(text.slice(last, at));
+		}
+		append(parent, $('span.volt-pm-private')).textContent = match[0];
+		last = at + match[0].length;
+	}
+	if (last < text.length) {
+		parent.append(text.slice(last));
+	}
+}
+
 function listRowLabel(row: ListRow): string {
 	switch (row.kind) {
 		case 'overview': return localize('voltSettings.overview', "Overview");
@@ -134,6 +163,113 @@ class ProviderRowRenderer implements IListRenderer<ListRow, HTMLElement> {
 	disposeTemplate(): void { }
 }
 
+/** A row of a provider's model list: a model, the title over the hidden ones, or the no-match line. */
+type ModelListRow =
+	| { readonly kind: 'model'; readonly model: IVoltCatalogItem }
+	| { readonly kind: 'hidden' }
+	| { readonly kind: 'none' };
+
+/** Every model row is one height, so the list sizes itself from its row count. */
+const MODEL_ROW_HEIGHT = 32;
+const MODEL_NOTE_HEIGHT = 30;
+/** The model list grows with its rows up to this, then scrolls inside the card. */
+const MODEL_LIST_MAX_HEIGHT = 12 * MODEL_ROW_HEIGHT;
+
+class ModelRowDelegate implements IListVirtualDelegate<ModelListRow> {
+	getHeight(row: ModelListRow): number {
+		return row.kind === 'model' ? MODEL_ROW_HEIGHT : MODEL_NOTE_HEIGHT;
+	}
+	getTemplateId(row: ModelListRow): string {
+		return row.kind === 'model' ? 'model' : 'note';
+	}
+}
+
+interface IModelRowTemplate {
+	readonly row: HTMLElement;
+	readonly label: HTMLElement;
+	readonly qualifier: HTMLElement;
+	readonly slug: HTMLElement;
+	readonly traits: HTMLElement;
+	readonly toggle: HTMLButtonElement;
+	readonly disposables: DisposableStore;
+	model?: IVoltCatalogItem;
+}
+
+/** One model: name, qualifier, id and traits on a line, a switch for the picker and a chevron. */
+class ModelRowRenderer implements IListRenderer<ModelListRow, IModelRowTemplate> {
+	readonly templateId = 'model';
+	constructor(
+		private readonly providerLabel: string,
+		private readonly traits: (model: IVoltCatalogItem) => string[],
+		private readonly onToggle: (model: IVoltCatalogItem) => void,
+	) { }
+	renderTemplate(container: HTMLElement): IModelRowTemplate {
+		const row = append(container, $('.volt-settings-model-row'));
+		const name = append(row, $('.name'));
+		const label = append(name, $('span.label'));
+		const qualifier = append(name, $('span.qualifier'));
+		const slug = append(name, $('code.slug'));
+		const traits = append(row, $('span.traits'));
+		const toggle = append(row, $('button.volt-settings-toggle.small')) as HTMLButtonElement;
+		toggle.type = 'button';
+		toggle.tabIndex = -1;
+		toggle.setAttribute('role', 'switch');
+		append(row, $('span.volt-pm-row-chevron')).appendChild(renderIcon(Codicon.chevronRight));
+		const disposables = new DisposableStore();
+		const template: IModelRowTemplate = { row, label, qualifier, slug, traits, toggle, disposables };
+		// The switch flips visibility; the click stops here so the list does not open the model.
+		disposables.add(addDisposableListener(toggle, 'click', e => {
+			e.stopPropagation();
+			if (template.model) {
+				this.onToggle(template.model);
+			}
+		}));
+		return template;
+	}
+	renderElement(row: ModelListRow, _index: number, template: IModelRowTemplate): void {
+		if (row.kind !== 'model') {
+			return;
+		}
+		const model = row.model;
+		template.model = model;
+		template.row.classList.toggle('off', !model.enabled);
+		template.label.textContent = model.label;
+		const qualifier = model.qualifier && model.qualifier.toLowerCase() !== this.providerLabel.toLowerCase() ? model.qualifier : '';
+		template.qualifier.textContent = qualifier;
+		template.qualifier.hidden = !qualifier;
+		const slug = model.id && model.id.toLowerCase() !== model.label.toLowerCase() ? model.id : '';
+		template.slug.textContent = slug;
+		template.slug.hidden = !slug;
+		template.traits.textContent = this.traits(model).join(' · ');
+		template.toggle.classList.toggle('on', model.enabled);
+		template.toggle.setAttribute('aria-checked', String(model.enabled));
+		template.toggle.setAttribute('aria-label', localize('voltSettings.showInPicker', "Show {0} in the model picker", model.label));
+	}
+	disposeElement(_row: ModelListRow, _index: number, template: IModelRowTemplate): void {
+		template.model = undefined;
+	}
+	disposeTemplate(template: IModelRowTemplate): void {
+		template.disposables.dispose();
+	}
+}
+
+/** The title over the models hidden from the picker, and the no-match line. */
+class ModelNoteRenderer implements IListRenderer<ModelListRow, HTMLElement> {
+	readonly templateId = 'note';
+	renderTemplate(container: HTMLElement): HTMLElement {
+		return append(container, $('.volt-settings-models-note'));
+	}
+	renderElement(row: ModelListRow, _index: number, element: HTMLElement): void {
+		// Not an item: the row paints no hover, focus or selection.
+		element.parentElement?.classList.add('volt-pm-row-static');
+		element.classList.toggle('none', row.kind === 'none');
+		element.textContent = row.kind === 'none'
+			? localize('voltSettings.noModelMatch', "No models match.")
+			: localize('voltSettings.hiddenModels', "Hidden from picker");
+	}
+	disposeTemplate(): void { }
+}
+
 export interface IProvidersPageHost {
 	/** Where the page goes (the body of the page's titled block). */
 	target(): HTMLElement;
@@ -144,7 +280,6 @@ export interface IProvidersPageHost {
 	revealWorkbench(): void;
 	switch(parent: HTMLElement, on: boolean, label: string, onClick: () => void): HTMLButtonElement;
 	inputBoxStyles(): IInputBoxStyles;
-	selectBoxStyles(): ISelectBoxStyles;
 }
 
 function apiStyle(providerId: string): VoltApiStyle | undefined {
@@ -214,6 +349,8 @@ export class ProvidersPage {
 
 	private selection: Selection = { kind: 'overview' };
 	private listFilter = '';
+	/** The model the models list had focus on, given back after a re-render. */
+	private modelsFocusRef: string | undefined;
 	/** Both panes scroll on their own; a re-render puts them back where they were. */
 	private listScrollTop = 0;
 	private detailScrollTop = 0;
@@ -387,7 +524,8 @@ export class ProvidersPage {
 		this.selection = selection;
 		this.detailScrollTop = 0;
 		this.drafts.clear();
-		this.focusKey = undefined;
+		// A pick from the keyboard keeps the list focused, so arrows go on walking it.
+		this.focusKey = this.focusKey === 'list' ? 'list' : undefined;
 		this.host.rerender();
 	}
 
@@ -426,7 +564,9 @@ export class ProvidersPage {
 	 * the rows in place (by provider or model name), so typing never loses focus to a re-render.
 	 */
 	private renderList(pane: HTMLElement, statuses: IVoltProviderStatus[]): void {
-		const filter = this.host.store.add(new InputBox(append(pane, $('.volt-pm-filter')), this.contextViewService, {
+		const filterHost = append(pane, $('.volt-pm-filter'));
+		append(filterHost, $('span.volt-pm-filter-icon')).appendChild(renderIcon(Codicon.search));
+		const filter = this.host.store.add(new InputBox(filterHost, this.contextViewService, {
 			placeholder: localize('voltSettings.filterProviders', "Filter providers and models"),
 			ariaLabel: localize('voltSettings.filterProviders', "Filter providers and models"),
 			inputBoxStyles: this.host.inputBoxStyles(),
@@ -471,34 +611,55 @@ export class ProvidersPage {
 			identityProvider: { getId: row => listRowId(row) },
 			accessibilityProvider: {
 				getWidgetAriaLabel: () => localize('voltSettings.providersAndModels', "Providers and models"),
-				getRole: row => row.kind === 'group' || row.kind === 'none' ? 'presentation' : 'listitem',
+				getRole: row => isStaticRow(row) ? 'presentation' : 'listitem',
 				getAriaLabel: row => listRowLabel(row),
 			},
-			// Rows paint their own rounded hover and selection; the list's full-width ones stay off.
-			overrideStyles: {
-				listBackground: 'transparent',
-				listFocusBackground: 'transparent',
-				listInactiveFocusBackground: 'transparent',
-				listActiveSelectionBackground: 'transparent',
-				listInactiveSelectionBackground: 'transparent',
-				listHoverBackground: 'transparent',
-				listActiveSelectionForeground: 'inherit',
-				listInactiveSelectionForeground: 'inherit',
-				listFocusForeground: 'inherit',
-				listFocusOutline: 'transparent',
-				listInactiveFocusOutline: 'transparent',
-				listFocusAndSelectionOutline: 'transparent',
-				listSelectionOutline: 'transparent',
-			},
+			// Hover, focus and selection come from the theme's list colours (the workbench defaults).
 		}));
+		// The list keeps keyboard focus across the re-render that opening a row causes.
+		this.trackFocus(list.getHTMLElement(), 'list');
 		let rows = rowsFor(this.listFilter);
+		const selectedIndex = () => rows.findIndex(row => this.isSelectedRow(row));
 		const show = (next: ListRow[]) => {
 			rows = next;
 			list.splice(0, list.length, rows);
-			const selected = rows.findIndex(row => this.isSelectedRow(row));
+			const selected = selectedIndex();
 			list.setSelection(selected >= 0 ? [selected] : []);
+			list.setFocus(selected >= 0 ? [selected] : []);
 		};
 		show(rows);
+		// Group titles are skipped: focus walks on in the direction it was going, and a click on one
+		// leaves the selection where it was.
+		let lastFocus = selectedIndex();
+		this.host.store.add(list.onDidChangeFocus(e => {
+			const index = e.indexes[0];
+			if (index === undefined) {
+				return;
+			}
+			if (!isStaticRow(rows[index])) {
+				lastFocus = index;
+				return;
+			}
+			const step = index >= lastFocus ? 1 : -1;
+			const walk = (from: number, by: number) => {
+				let next = from + by;
+				while (next >= 0 && next < rows.length && isStaticRow(rows[next])) {
+					next += by;
+				}
+				return next >= 0 && next < rows.length ? next : -1;
+			};
+			const next = walk(index, step) >= 0 ? walk(index, step) : walk(index, -step);
+			list.setFocus(next >= 0 ? [next] : []);
+			if (next >= 0) {
+				list.reveal(next);
+			}
+		}));
+		this.host.store.add(list.onDidChangeSelection(e => {
+			if (e.elements.some(isStaticRow)) {
+				const selected = selectedIndex();
+				list.setSelection(selected >= 0 ? [selected] : []);
+			}
+		}));
 		this.host.store.add(list.onDidOpen(e => {
 			const row = e.element;
 			if (row?.kind === 'overview') {
@@ -549,6 +710,8 @@ export class ProvidersPage {
 	renderListRow(element: HTMLElement, row: ListRow): void {
 		element.replaceChildren();
 		element.className = `volt-pm-item ${row.kind}`;
+		// Rows are reused across kinds; the row itself says whether it paints hover and focus.
+		element.parentElement?.classList.toggle('volt-pm-row-static', isStaticRow(row));
 		switch (row.kind) {
 			case 'overview': {
 				append(element, $('span.volt-pm-glyph')).appendChild(renderIcon(Codicon.dashboard));
@@ -665,7 +828,7 @@ export class ProvidersPage {
 		if (status) {
 			const line = append(copy, $('.volt-pm-head-status'));
 			append(line, $(`span.volt-settings-dot.${status.tone}`));
-			append(line, $('span.text')).textContent = status.label;
+			appendPrivateText(append(line, $('span.text')), status.label);
 		}
 		return append(head, $('.volt-pm-actions.volt-pm-head-actions'));
 	}
@@ -689,76 +852,90 @@ export class ProvidersPage {
 		return append(row, $('.volt-settings-row-control'));
 	}
 
-	/** A read-only value, monospaced for paths and ids, with a copy button for the ones worth pasting. */
+	/**
+	 * A read-only value, monospaced for paths and ids, with a copy button for the ones worth pasting.
+	 * Email addresses in it are blurred until hovered.
+	 */
 	private valueRow(group: HTMLElement, title: string, value: string | undefined, options?: { mono?: boolean; copy?: boolean }): void {
 		if (!value) {
 			return;
 		}
 		const control = this.row(group, title);
 		const text = append(control, $(options?.mono ? 'code.volt-pm-value' : 'span.volt-pm-value'));
-		text.textContent = value;
+		appendPrivateText(text, value);
 		setAgentTooltip(text, value);
 		if (options?.copy) {
-			const copy = append(control, $('button.volt-settings-icon-btn.volt-pm-copy')) as HTMLButtonElement;
-			copy.type = 'button';
-			copy.appendChild(renderIcon(Codicon.copy));
-			copy.setAttribute('aria-label', localize('voltSettings.copyValue', "Copy {0}", title));
-			setAgentTooltip(copy, localize('voltSettings.copy', "Copy"));
-			this.host.store.add(addDisposableListener(copy, 'click', () => {
-				void this.clipboard.writeText(value);
-				copy.replaceChildren(renderIcon(Codicon.check));
-				mainWindow.setTimeout(() => {
-					if (copy.isConnected) {
-						copy.replaceChildren(renderIcon(Codicon.copy));
-					}
-				}, 1200);
-			}));
+			this.copyButton(control, title, value);
 		}
 	}
 
-	private renderOverview(parent: HTMLElement, all: IVoltProviderStatus[]): void {
-		this.detailHead(parent, renderIcon(Codicon.dashboard), localize('voltSettings.overview', "Overview"), undefined, {
-			tone: all.some(status => this.needsAction(status)) ? 'disabled' : 'authenticated',
-			label: localize('voltSettings.overviewLead', "Pick a provider or a model on the left to set it up."),
-		});
+	/** The chat's copy button: its glyph, and the same green check for a moment once copied. */
+	private copyButton(parent: HTMLElement, title: string, value: string): void {
+		const copyLabel = localize('voltSettings.copy', "Copy");
+		const copiedLabel = localize('voltSettings.copied', "Copied");
+		const copy = append(parent, $('button.volt-pm-copy')) as HTMLButtonElement;
+		copy.type = 'button';
+		copy.appendChild(createMessageCopyIcon());
+		copy.setAttribute('aria-label', localize('voltSettings.copyValue', "Copy {0}", title));
+		setAgentTooltip(copy, copyLabel);
+		let timer: number | undefined;
+		this.host.store.add(toDisposable(() => mainWindow.clearTimeout(timer)));
+		this.host.store.add(addDisposableListener(copy, 'click', () => {
+			void this.clipboard.writeText(value).then(() => {
+				copy.replaceChildren(renderIcon(Codicon.check));
+				copy.classList.add('copied');
+				setAgentTooltip(copy, copiedLabel);
+				mainWindow.clearTimeout(timer);
+				timer = mainWindow.setTimeout(() => {
+					copy.replaceChildren(createMessageCopyIcon());
+					copy.classList.remove('copied');
+					setAgentTooltip(copy, copyLabel);
+				}, 1500);
+			});
+		}));
+	}
 
+	/**
+	 * One summary line under the title, then the providers that need a step (each with that one
+	 * step; the row opens the provider), then the background check interval.
+	 */
+	private renderOverview(parent: HTMLElement, all: IVoltProviderStatus[]): void {
 		const ready = all.filter(status => status.enabled && (status.state === 'authenticated' || status.state === 'available')).length;
 		const attention = all.filter(status => this.needsAction(status));
 		const enabledModels = all.reduce((sum, status) => sum + status.models.filter(model => model.enabled).length, 0);
 		const totalModels = all.reduce((sum, status) => sum + status.models.length, 0);
-		const strip = append(parent, $('.volt-settings-stats'));
-		const stat = (value: string, label: string, tone?: string) => {
-			const cell = append(strip, $('.volt-settings-stat'));
-			if (tone) {
-				cell.classList.add(tone);
-			}
-			append(cell, $('.value')).textContent = value;
-			append(cell, $('.label')).textContent = label;
-		};
-		stat(String(ready), localize('voltSettings.statReady', "Ready"), ready ? 'good' : undefined);
-		stat(String(attention.length), localize('voltSettings.statAttention', "Need setup"), attention.length ? 'warn' : undefined);
-		stat(`${enabledModels}/${totalModels}`, localize('voltSettings.statModels', "Models in picker"));
+		const summary = [
+			localize('voltSettings.summaryReady', "{0} ready", ready),
+			attention.length ? localize('voltSettings.summaryAttention', "{0} need setup", attention.length) : undefined,
+			localize('voltSettings.summaryModels', "{0} of {1} models in the picker", enabledModels, totalModels),
+		].filter(Boolean).join(' · ');
+		this.detailHead(parent, renderIcon(Codicon.dashboard), localize('voltSettings.overview', "Overview"), undefined, {
+			tone: attention.length ? 'disabled' : 'authenticated',
+			label: summary,
+		});
+		append(parent, $('.volt-pm-desc')).textContent = localize('voltSettings.overviewLead', "Pick a provider or a model on the left to set it up.");
 
-		if (attention.length) {
-			this.sectionTitle(parent, localize('voltSettings.needsSetup', "Needs setup"));
-			const list = append(parent, $('.volt-settings-group'));
+		this.sectionTitle(parent, localize('voltSettings.needsSetup', "Needs setup"));
+		if (!attention.length) {
+			append(parent, $('.volt-settings-empty')).textContent = localize('voltSettings.allSetUp', "Every provider is set up.");
+		} else {
+			const list = append(parent, $('.volt-settings-group.volt-pm-setup-list'));
 			for (const status of this.sorted(attention)) {
 				const setup = status.kind === 'agent' ? this.setupStates.get(status.providerId) : undefined;
 				const running = this.running.get(status.profileId);
 				const row = append(list, $('.volt-pm-setup-row'));
-				append(row, $('span.volt-pm-icon')).appendChild(createBrandIcon(status.providerId, 14));
+				row.tabIndex = 0;
+				row.setAttribute('role', 'button');
+				row.setAttribute('aria-label', localize('voltSettings.openProvider', "Open {0}", status.label));
+				append(row, $('span.volt-pm-icon')).appendChild(createBrandIcon(status.providerId, 16));
 				const copy = append(row, $('.copy'));
 				append(copy, $('.name')).textContent = status.label;
 				const { tone, label } = this.statusLine(status, setup, running);
 				const line = append(copy, $('.detail'));
 				append(line, $(`span.volt-settings-dot.${tone}`));
-				append(line, $('span')).textContent = label;
-				this.renderActions(append(row, $('.volt-pm-actions')), status, setup, running);
-				this.host.store.add(addDisposableListener(row, 'click', e => {
-					if (!(e.target as HTMLElement).closest('button')) {
-						this.select({ kind: 'provider', profileId: status.profileId });
-					}
-				}));
+				appendPrivateText(append(line, $('span.text')), label);
+				this.renderActions(append(row, $('.volt-pm-actions')), status, setup, running, 'secondary');
+				this.onActivate(row, () => this.select({ kind: 'provider', profileId: status.profileId }));
 			}
 		}
 
@@ -766,11 +943,17 @@ export class ProvidersPage {
 		const group = append(parent, $('.volt-settings-group'));
 		const control = this.row(group, localize('voltSettings.healthInterval', "Health check interval"), localize('voltSettings.healthIntervalDesc2', "How often Volt re-checks versions, sign-in and model lists in the background."));
 		const choices = [0, 60, 300, 900, 3600];
-		const select = this.host.store.add(new SelectBox(choices.map(seconds => ({ text: seconds === 0 ? localize('voltSettings.manual', "Manual only") : seconds < 3600 ? localize('voltSettings.everyMin', "Every {0} min", seconds / 60) : localize('voltSettings.everyHour', "Every hour") })), 0, this.contextViewService, this.host.selectBoxStyles(), { useCustomDrawn: true, ariaLabel: localize('voltSettings.healthInterval', "Health check interval") }));
 		const current = this.runtime.getHealthCheckInterval();
-		select.select(choices.reduce((best, value, index) => Math.abs(value - current) < Math.abs(choices[best] - current) ? index : best, 0));
-		select.render(append(control, $('.volt-settings-select')));
-		this.host.store.add(select.onDidSelect(e => void this.runtime.setHealthCheckInterval(choices[e.index])));
+		const nearest = choices.reduce((best, value) => Math.abs(value - current) < Math.abs(best - current) ? value : best, choices[0]);
+		this.dropdown(control, localize('voltSettings.healthInterval', "Health check interval"), String(nearest), choices.map(seconds => ({
+			id: String(seconds),
+			label: seconds === 0 ? localize('voltSettings.manual', "Manual only") : seconds < 3600 ? localize('voltSettings.everyMin', "Every {0} min", seconds / 60) : localize('voltSettings.everyHour', "Every hour"),
+		})), value => void this.runtime.setHealthCheckInterval(Number(value)));
+	}
+
+	/** A Volt dropdown (the composer's pill and menu) in a row's control. */
+	private dropdown(parent: HTMLElement, ariaLabel: string, value: string, options: readonly IVoltDropdownOption<string>[], onChange: (value: string) => void, align: 'left' | 'right' = 'right'): void {
+		createVoltDropdown(parent, this.contextViewService, { options, value, ariaLabel, onChange, align }, this.host.store);
 	}
 
 	/** Not installed, signed out, or an API provider missing its key. */
@@ -820,8 +1003,12 @@ export class ProvidersPage {
 		}
 	}
 
-	/** The next step for a provider: Install, Sign In, Download or Add Key. All share one width. */
-	private renderActions(actions: HTMLElement, status: IVoltProviderStatus, setup: IAgentSetupState | undefined, running: RunningAction | undefined): void {
+	/**
+	 * The next step for a provider, one button: Install, Sign In, Download or Add Key. All share one
+	 * width. `kind` is the button's look (the overview's list keeps them quiet). The docs are a link
+	 * at the foot of the provider's page.
+	 */
+	private renderActions(actions: HTMLElement, status: IVoltProviderStatus, setup: IAgentSetupState | undefined, running: RunningAction | undefined, kind: VoltButtonKind = 'primary'): void {
 		if (running && running.action !== 'failed') {
 			append(actions, $('span.volt-settings-spinner')).appendChild(renderIcon(ThemeIcon.modify(Codicon.loading, 'spin')));
 			return;
@@ -837,16 +1024,12 @@ export class ProvidersPage {
 				};
 				if (!install) {
 					if (docs) {
-						this.button(actions, localize('voltSettings.installGuide', "Install Guide"), true, localize('voltSettings.docs', "Open {0}", docs), openDocs);
+						this.button(actions, localize('voltSettings.installGuide', "Install Guide"), kind, localize('voltSettings.docs', "Open {0}", docs), openDocs);
 					}
 					return;
 				}
-				// The docs icon goes first, so the text buttons share one right edge down a list.
-				if (docs) {
-					this.button(actions, '', false, localize('voltSettings.docs', "Open {0}", docs), openDocs, Codicon.linkExternal);
-				}
 				const failed = running?.action === 'failed';
-				this.button(actions, failed ? localize('voltSettings.retryInstall', "Retry Install") : localize('voltSettings.install', "Install"), true,
+				this.button(actions, failed ? localize('voltSettings.retryInstall', "Retry Install") : localize('voltSettings.install', "Install"), kind,
 					failed ? localize('voltSettings.retryInstallHint', "Runs {0} in a terminal", install) : localize('voltSettings.installHint', "Runs {0}", install),
 					() => failed ? void this.signInOrInstallInTerminal(status, setup, 'install') : void this.install(status, setup));
 				return;
@@ -856,19 +1039,19 @@ export class ProvidersPage {
 				const hint = setup.info?.loginHint
 					? localize('voltSettings.signInHintType', "Opens {0} in a terminal; type {1} there", login, setup.info.loginHint)
 					: localize('voltSettings.signInHint', "Runs {0} in a terminal", login);
-				this.button(actions, localize('voltSettings.signIn', "Sign In"), setup.signIn.kind === 'signedOut', hint, () => void this.signInOrInstallInTerminal(status, setup, 'login'));
+				this.button(actions, localize('voltSettings.signIn', "Sign In"), setup.signIn.kind === 'signedOut' ? kind : 'secondary', hint, () => void this.signInOrInstallInTerminal(status, setup, 'login'));
 			}
 			return;
 		}
 		if (status.kind === 'model') {
 			const download = LOCAL_DOWNLOADS[status.providerId];
 			if (download && status.state === 'missing') {
-				this.button(actions, localize('voltSettings.download', "Download"), true, download, () => void this.opener.open(URI.parse(download), { openExternal: true }));
+				this.button(actions, localize('voltSettings.download', "Download"), kind, download, () => void this.opener.open(URI.parse(download), { openExternal: true }));
 				return;
 			}
 			const profile = this.profile(status.profileId);
 			if (profile?.authKind === 'apikey' && (!profile.hasSecret || status.state === 'missing')) {
-				this.button(actions, profile.hasSecret ? localize('voltSettings.replaceKey', "Replace Key") : localize('voltSettings.addKey', "Add Key"), true, localize('voltSettings.addKeyHint', "Saved in the OS keychain"), () => this.openKeyEditor(status.profileId));
+				this.button(actions, profile.hasSecret ? localize('voltSettings.replaceKey', "Replace Key") : localize('voltSettings.addKey', "Add Key"), kind, localize('voltSettings.addKeyHint', "Saved in the OS keychain"), () => this.openKeyEditor(status.profileId));
 			}
 		}
 	}
@@ -882,28 +1065,19 @@ export class ProvidersPage {
 		this.host.rerender();
 	}
 
-	private button(parent: HTMLElement, label: string, primary: boolean, tooltip: string, run: () => void, icon?: ThemeIcon): HTMLButtonElement {
-		const button = append(parent, $('button.volt-settings-action')) as HTMLButtonElement;
-		button.type = 'button';
-		button.classList.toggle('primary', primary);
-		button.classList.toggle('icon-only', !label);
-		if (label) {
-			button.classList.add(...voltButtonClasses(primary ? 'primary' : 'secondary'), 'volt-button-small');
-		}
-		if (icon) {
-			button.appendChild(renderIcon(icon));
-		}
-		if (label) {
-			append(button, $('span')).textContent = label;
-		} else {
-			button.setAttribute('aria-label', tooltip);
-		}
-		setAgentTooltip(button, tooltip);
-		this.host.store.add(addDisposableListener(button, 'click', e => {
+	/** A small Volt button; without a label, a square ghost button around `icon`. */
+	private button(parent: HTMLElement, label: string, kind: VoltButtonKind, tooltip: string, run: () => void, icon?: ThemeIcon): HTMLElement {
+		const button = this.host.store.add(createVoltButton(parent, label ? kind : 'ghost', { supportIcons: !!icon, ariaLabel: label ? undefined : tooltip }));
+		button.element.classList.add('volt-button-small');
+		button.element.classList.toggle('volt-pm-icon-button', !label);
+		button.label = icon ? `$(${icon.id})${label ? ` ${label}` : ''}` : label;
+		setAgentTooltip(button.element, tooltip);
+		this.host.store.add(button.onDidClick(e => {
+			// A button inside a clickable row (the overview's) does not open the row too.
 			e.stopPropagation();
 			run();
 		}));
-		return button;
+		return button.element;
 	}
 
 	private profile(profileId: string): IProviderProfile | undefined {
@@ -982,7 +1156,7 @@ export class ProvidersPage {
 			const args = this.draftInput(this.row(group, argsTitle, localize('voltSettings.argsDesc', "Separated by spaces. Most agents start their ACP server with `acp`.")), 'agent-args', (profile.args ?? []).join(' '), 'acp', argsTitle);
 			const cwd = this.draftInput(this.row(group, cwdTitle, localize('voltSettings.cwdDesc', "Where the agent starts. Empty: the chat's project.")), 'agent-cwd', profile.cwd ?? '', localize('voltSettings.cwd.placeholder', "Optional"), cwdTitle);
 			const footer = append(group, $('.volt-pm-form-actions.volt-pm-actions'));
-			this.button(footer, localize('voltSettings.save', "Save"), true, localize('voltSettings.saveAgentHint', "Restarts the agent with these settings on its next chat"), () => {
+			this.button(footer, localize('voltSettings.save', "Save"), 'primary', localize('voltSettings.saveAgentHint', "Restarts the agent with these settings on its next chat"), () => {
 				if (!command.value.trim()) {
 					command.focus();
 					return;
@@ -1015,7 +1189,7 @@ export class ProvidersPage {
 		const name = this.draftInput(this.row(group, nameTitle, localize('voltSettings.nameDesc', "How the provider shows in the list and the model picker.")), 'api-name', profile.label, meta?.label ?? '', nameTitle);
 		const baseUrl = this.draftInput(this.row(group, urlTitle, localize('voltSettings.baseUrlDesc', "Point at a proxy, a gateway or another port. Empty: the provider's default.")), 'api-url', profile.endpoint?.baseURL ?? '', meta?.baseUrl ?? localize('voltSettings.defaultEndpoint', "Default"), urlTitle);
 		const footer = append(group, $('.volt-pm-form-actions.volt-pm-actions'));
-		this.button(footer, localize('voltSettings.save', "Save"), true, localize('voltSettings.saveProviderHint', "Saves and reloads the model list"), () => {
+		this.button(footer, localize('voltSettings.save', "Save"), 'primary', localize('voltSettings.saveProviderHint', "Saves and reloads the model list"), () => {
 			const url = baseUrl.value.trim();
 			this.drafts.clear();
 			void this.runtime.upsertProfile({
@@ -1029,7 +1203,7 @@ export class ProvidersPage {
 		if (profile.authKind === 'apikey') {
 			const control = this.row(facts, localize('voltSettings.apiKey', "API key"), profile.hasSecret ? localize('voltSettings.keySaved', "Saved in the OS keychain") : localize('voltSettings.keyMissing', "Not set"));
 			const actions = append(control, $('.volt-pm-actions'));
-			this.button(actions, profile.hasSecret ? localize('voltSettings.replaceKey', "Replace Key") : localize('voltSettings.addKey', "Add Key"), !profile.hasSecret, localize('voltSettings.addKeyHint', "Saved in the OS keychain"), () => this.openKeyEditor(profile.id));
+			this.button(actions, profile.hasSecret ? localize('voltSettings.replaceKey', "Replace Key") : localize('voltSettings.addKey', "Add Key"), profile.hasSecret ? 'secondary' : 'primary', localize('voltSettings.addKeyHint', "Saved in the OS keychain"), () => this.openKeyEditor(profile.id));
 		}
 		this.valueRow(facts, localize('voltSettings.factApiStyle', "API"), profile.apiStyle ? API_STYLE_LABELS[profile.apiStyle] : undefined);
 		this.valueRow(facts, localize('voltSettings.factAccount', "Account"), status.account);
@@ -1065,14 +1239,14 @@ export class ProvidersPage {
 			void this.runtime.upsertProfile({ ...this.draftOf(profile), enabled: true }, key).then(() => this.runtime.refreshProviders());
 		};
 		const actions = append(editor, $('.volt-pm-actions'));
-		this.button(actions, localize('voltSettings.save', "Save"), true, localize('voltSettings.addKeyHint', "Saved in the OS keychain"), save);
-		this.button(actions, localize('voltSettings.cancel', "Cancel"), false, localize('voltSettings.cancel', "Cancel"), () => {
+		this.button(actions, localize('voltSettings.save', "Save"), 'primary', localize('voltSettings.addKeyHint', "Saved in the OS keychain"), save);
+		this.button(actions, localize('voltSettings.cancel', "Cancel"), 'secondary', localize('voltSettings.cancel', "Cancel"), () => {
 			this.keyEditor.delete(status.profileId);
 			this.host.rerender();
 		});
 		if (meta?.docs) {
 			const docs = meta.docs;
-			this.button(actions, '', false, localize('voltSettings.getKey', "Get a key: {0}", docs), () => void this.opener.open(URI.parse(docs), { openExternal: true }), Codicon.linkExternal);
+			this.button(actions, '', 'ghost', localize('voltSettings.getKey', "Get a key: {0}", docs), () => void this.opener.open(URI.parse(docs), { openExternal: true }), Codicon.linkExternal);
 		}
 		this.host.store.add(addDisposableListener(input.inputElement, 'keydown', e => {
 			if (e.key === 'Enter') {
@@ -1136,40 +1310,126 @@ export class ProvidersPage {
 			? localize('voltSettings.modelCountHidden', "{0} models · {1} hidden", models.length, hidden)
 			: localize('voltSettings.modelCountAll', "{0} models", models.length);
 
-		const list = append(group, $('.volt-settings-models'));
-		const rows: { row: HTMLElement; text: string }[] = [];
-		let hiddenHead: HTMLElement | undefined;
-		for (const model of models) {
-			if (!model.enabled && !hiddenHead) {
-				hiddenHead = append(list, $('.volt-settings-models-group'));
-				hiddenHead.textContent = localize('voltSettings.hiddenModels', "Hidden from picker");
-			}
-			rows.push({ row: this.modelRow(list, model, status.label), text: `${model.label} ${model.id} ${model.qualifier ?? ''}`.toLowerCase() });
-		}
-		const empty = append(list, $('.volt-settings-models-none'));
-		empty.textContent = localize('voltSettings.noModelMatch', "No models match.");
-		empty.hidden = true;
-		const apply = (value: string) => {
+		// A workbench list: the theme's hover, focus and selection, arrow keys, and only the rows in view
+		// are drawn. It is as tall as its rows, up to a cap, and scrolls inside the card past that.
+		const listHost = append(append(group, $('.volt-settings-models')), $('.volt-settings-models-list'));
+		const searchText = (model: IVoltCatalogItem) => `${model.label} ${model.id} ${model.qualifier ?? ''}`.toLowerCase();
+		const rowsFor = (value: string): ModelListRow[] => {
 			const needle = value.trim().toLowerCase();
-			let shown = 0;
-			for (const { row, text } of rows) {
-				row.hidden = !!needle && !text.includes(needle);
-				shown += row.hidden ? 0 : 1;
+			const shown: ModelListRow[] = [];
+			let hiddenHead = false;
+			for (const model of models) {
+				if (needle && !searchText(model).includes(needle)) {
+					continue;
+				}
+				if (!needle && !model.enabled && !hiddenHead) {
+					hiddenHead = true;
+					shown.push({ kind: 'hidden' });
+				}
+				shown.push({ kind: 'model', model });
 			}
-			if (hiddenHead) {
-				hiddenHead.hidden = !!needle;
+			if (!shown.length) {
+				shown.push({ kind: 'none' });
 			}
-			empty.hidden = shown > 0;
+			return shown;
 		};
-		const draft = this.drafts.get('models-filter');
-		if (draft) {
-			filter.value = draft;
-			apply(draft);
-		}
+		const delegate = new ModelRowDelegate();
+		const renderer = new ModelRowRenderer(status.label, model => this.modelTraits(model), model => void this.runtime.setModelEnabled(model.ref, !model.enabled));
+		const list = this.host.store.add(this.instantiationService.createInstance(WorkbenchList<ModelListRow>, 'VoltProviderModelsList', listHost, delegate, [renderer, new ModelNoteRenderer()], {
+			multipleSelectionSupport: false,
+			horizontalScrolling: false,
+			// Short lists hand the wheel on to the page.
+			alwaysConsumeMouseWheel: false,
+			identityProvider: { getId: row => row.kind === 'model' ? `model:${row.model.ref}` : row.kind },
+			accessibilityProvider: {
+				getWidgetAriaLabel: () => localize('voltSettings.modelsOf', "{0} models", status.label),
+				getRole: row => row.kind === 'model' ? 'listitem' : 'presentation',
+				getAriaLabel: row => row.kind === 'model'
+					? [row.model.label, row.model.enabled ? undefined : localize('voltSettings.hiddenFromPicker', "Hidden from the model picker")].filter(Boolean).join(', ')
+					: row.kind === 'none' ? localize('voltSettings.noModelMatch', "No models match.") : localize('voltSettings.hiddenModels', "Hidden from picker"),
+			},
+		}));
+		this.trackFocus(list.getHTMLElement(), 'models-list');
+		let rows: ModelListRow[] = [];
+		let height = 0;
+		const layout = () => list.layout(height, listHost.clientWidth);
+		const show = (next: ModelListRow[]) => {
+			rows = next;
+			list.splice(0, list.length, rows);
+			height = Math.min(MODEL_LIST_MAX_HEIGHT, rows.reduce((sum, row) => sum + delegate.getHeight(row), 0));
+			listHost.style.height = `${height}px`;
+			layout();
+			// Toggling a model redraws the page; focus comes back to the row it was on.
+			const focused = rows.findIndex(row => row.kind === 'model' && row.model.ref === this.modelsFocusRef);
+			if (focused >= 0) {
+				list.setFocus([focused]);
+				list.reveal(focused);
+			}
+		};
+		const draft = this.drafts.get('models-filter') ?? '';
+		filter.value = draft;
+		show(rowsFor(draft));
+		// The hidden-models title and the no-match line are skipped: focus walks on the way it was going.
+		this.host.store.add(list.onDidChangeFocus(e => {
+			const index = e.indexes[0];
+			const row = index === undefined ? undefined : rows[index];
+			if (row?.kind === 'model') {
+				this.modelsFocusRef = row.model.ref;
+				return;
+			}
+			if (index === undefined) {
+				return;
+			}
+			const last = rows.findIndex(r => r.kind === 'model' && r.model.ref === this.modelsFocusRef);
+			const step = index >= last ? 1 : -1;
+			const walk = (by: number) => {
+				let next = index + by;
+				while (next >= 0 && next < rows.length && rows[next].kind !== 'model') {
+					next += by;
+				}
+				return next >= 0 && next < rows.length ? next : -1;
+			};
+			const next = walk(step) >= 0 ? walk(step) : walk(-step);
+			list.setFocus(next >= 0 ? [next] : []);
+		}));
+		this.host.store.add(list.onDidChangeSelection(e => {
+			if (e.elements.some(row => row.kind !== 'model')) {
+				list.setSelection([]);
+			}
+		}));
+		this.host.store.add(list.onDidOpen(e => {
+			const target = e.browserEvent?.target;
+			if (e.element?.kind === 'model' && !(isHTMLElement(target) && target.closest('.volt-settings-toggle'))) {
+				this.select({ kind: 'model', ref: e.element.model.ref });
+			}
+		}));
+		// Space flips the focused model's switch; Enter opens it.
+		this.host.store.add(addDisposableListener(list.getHTMLElement(), 'keydown', e => {
+			if (e.key !== ' ') {
+				return;
+			}
+			const row = list.getFocusedElements()[0];
+			if (row?.kind === 'model') {
+				e.preventDefault();
+				e.stopPropagation();
+				void this.runtime.setModelEnabled(row.model.ref, !row.model.enabled);
+			}
+		}));
 		this.host.store.add(filter.onDidChange(value => {
 			this.drafts.set('models-filter', value);
-			apply(value);
+			show(rowsFor(value));
 		}));
+		// Arrow Down from the filter walks the list.
+		this.host.store.add(addDisposableListener(filter.inputElement, 'keydown', e => {
+			if (e.key === 'ArrowDown' && rows.some(row => row.kind === 'model')) {
+				e.preventDefault();
+				list.domFocus();
+				list.setFocus([rows.findIndex(row => row.kind === 'model')]);
+			}
+		}));
+		const resize = new ResizeObserver(layout);
+		resize.observe(listHost);
+		this.host.store.add(toDisposable(() => resize.disconnect()));
 	}
 
 	/** What the model can do, as short text: context, effort range, fast mode, images, tools. */
@@ -1202,28 +1462,6 @@ export class ProvidersPage {
 		return traits;
 	}
 
-	private modelRow(list: HTMLElement, model: IVoltCatalogItem, providerLabel: string): HTMLElement {
-		const row = append(list, $('.volt-settings-model-row'));
-		row.classList.toggle('off', !model.enabled);
-		row.tabIndex = 0;
-		const name = append(row, $('.name'));
-		append(name, $('span.label')).textContent = model.label;
-		if (model.qualifier && model.qualifier.toLowerCase() !== providerLabel.toLowerCase()) {
-			append(name, $('span.qualifier')).textContent = model.qualifier;
-		}
-		if (model.id && model.id.toLowerCase() !== model.label.toLowerCase()) {
-			append(name, $('code.slug')).textContent = model.id;
-		}
-		append(row, $('span.traits')).textContent = this.modelTraits(model).join(' · ');
-		const toggle = this.host.switch(row, model.enabled, localize('voltSettings.showInPicker', "Show {0} in the model picker", model.label), () => void this.runtime.setModelEnabled(model.ref, !model.enabled));
-		toggle.classList.add('small');
-		// The switch flips visibility; it does not open the model.
-		this.host.store.add(addDisposableListener(toggle, 'click', e => e.stopPropagation()));
-		append(row, $('span.volt-pm-row-chevron')).appendChild(renderIcon(Codicon.chevronRight));
-		this.onActivate(row, () => this.select({ kind: 'model', ref: model.ref }));
-		return row;
-	}
-
 	private renderModel(parent: HTMLElement, model: IVoltCatalogItem, status: IVoltProviderStatus): void {
 		const actions = this.detailHead(parent, createBrandIcon(status.providerId, 22), model.label, title => {
 			if (model.qualifier && model.qualifier.toLowerCase() !== status.label.toLowerCase()) {
@@ -1233,9 +1471,7 @@ export class ProvidersPage {
 			tone: model.enabled ? 'authenticated' : 'off',
 			label: [status.label, model.enabled ? localize('voltSettings.inPicker', "In the model picker") : localize('voltSettings.hiddenFromPicker', "Hidden from the model picker")].join(' · '),
 		});
-		const back = this.button(actions, localize('voltSettings.providerShort', "Provider"), false, localize('voltSettings.openProvider', "Open {0}", status.label), () => this.select({ kind: 'provider', profileId: status.profileId }), Codicon.arrowLeft);
-		back.classList.add('ghost');
-		back.classList.replace('volt-button-secondary', 'volt-button-ghost');
+		this.button(actions, localize('voltSettings.providerShort', "Provider"), 'ghost', localize('voltSettings.openProvider', "Open {0}", status.label), () => this.select({ kind: 'provider', profileId: status.profileId }), Codicon.arrowLeft);
 		this.host.switch(actions, model.enabled, localize('voltSettings.showInPicker', "Show {0} in the model picker", model.label), () => void this.runtime.setModelEnabled(model.ref, !model.enabled));
 
 		if (model.description || model.detail) {
@@ -1303,10 +1539,10 @@ export class ProvidersPage {
 			return;
 		}
 		const choices = descriptor.options ?? [];
-		const items: ISelectOptionItem[] = choices.map(choice => ({ text: choice.isDefault ? localize('voltSettings.choiceDefault', "{0} (default)", choice.label) : choice.label }));
-		const select = this.host.store.add(new SelectBox(items, Math.max(0, choices.findIndex(choice => choice.value === value)), this.contextViewService, this.host.selectBoxStyles(), { useCustomDrawn: true, ariaLabel: descriptor.label }));
-		select.render(append(host, $('.volt-settings-select')));
-		this.host.store.add(select.onDidSelect(e => write(choices[e.index].value)));
+		this.dropdown(host, descriptor.label, String(Math.max(0, choices.findIndex(choice => choice.value === value))), choices.map((choice, index) => ({
+			id: String(index),
+			label: choice.isDefault ? localize('voltSettings.choiceDefault', "{0} (default)", choice.label) : choice.label,
+		})), index => write(choices[Number(index)].value));
 	}
 
 	/** Temperature, top P and the output cap, sent with every request to this API model when set. */
@@ -1519,7 +1755,7 @@ export class ProvidersPage {
 		append(row, $('span.volt-pm-account-avatar')).textContent = (account.displayName ?? account.email).trim().charAt(0).toUpperCase() || '?';
 		const copy = append(row, $('.volt-pm-account-copy'));
 		const name = append(copy, $('.name'));
-		append(name, $('span.email')).textContent = account.email;
+		append(name, $('span.email.volt-pm-private')).textContent = account.email;
 		if (account.active) {
 			append(name, $('span.volt-pm-account-badge')).textContent = localize('voltSettings.claudeAccountActive', "In use");
 		}
@@ -1528,7 +1764,7 @@ export class ProvidersPage {
 			detail.classList.add('warn');
 			detail.textContent = localize('voltSettings.claudeAccountExpired', "The saved sign-in expired. Sign in to this account again.");
 		} else {
-			detail.textContent = [account.plan ? localize('voltSettings.claudePlanName', "Claude {0}", account.plan) : undefined, account.organizationName].filter(Boolean).join(' · ');
+			appendPrivateText(detail, [account.plan ? localize('voltSettings.claudePlanName', "Claude {0}", account.plan) : undefined, account.organizationName].filter(Boolean).join(' · '));
 		}
 		this.accountLimits(append(row, $('.volt-pm-account-limits')), account);
 
@@ -1538,12 +1774,12 @@ export class ProvidersPage {
 			return;
 		}
 		if (account.needsSignIn) {
-			this.button(actions, localize('voltSettings.signIn', "Sign In"), true, localize('voltSettings.claudeSignInAgainHint', "Signs in to {0} again in a terminal", account.email), () => void this.addClaudeAccount(account.email));
+			this.button(actions, localize('voltSettings.signIn', "Sign In"), 'primary', localize('voltSettings.claudeSignInAgainHint', "Signs in to {0} again in a terminal", account.email), () => void this.addClaudeAccount(account.email));
 		} else if (!account.active) {
-			this.button(actions, localize('voltSettings.claudeSwitch', "Switch"), false, localize('voltSettings.claudeSwitchHint', "Make {0} Claude Code's account", account.email), () => void this.switchClaudeAccount(account));
+			this.button(actions, localize('voltSettings.claudeSwitch', "Switch"), 'ghost', localize('voltSettings.claudeSwitchHint', "Make {0} Claude Code's account", account.email), () => void this.switchClaudeAccount(account));
 		}
 		if (!account.active) {
-			const remove = this.button(actions, '', false, localize('voltSettings.claudeRemoveAccount', "Forget {0}", account.email), () => void this.removeClaudeAccount(account), Codicon.trash);
+			const remove = this.button(actions, '', 'ghost', localize('voltSettings.claudeRemoveAccount', "Forget {0}", account.email), () => void this.removeClaudeAccount(account), Codicon.trash);
 			remove.classList.add('volt-pm-account-remove');
 		}
 	}
@@ -1597,10 +1833,11 @@ export class ProvidersPage {
 		if (auto) {
 			const control = this.row(group, localize('voltSettings.claudeSwitchAt', "Switch at"), localize('voltSettings.claudeSwitchAtDesc', "How full the session or weekly limit gets before Volt moves on. Volt checks every 2 minutes."));
 			const choices = [70, 80, 85, 90, 95];
-			const select = this.host.store.add(new SelectBox(choices.map(value => ({ text: localize('voltSettings.percentUsed', "{0}% used", value) })), 0, this.contextViewService, this.host.selectBoxStyles(), { useCustomDrawn: true, ariaLabel: localize('voltSettings.claudeSwitchAt', "Switch at") }));
-			select.select(choices.reduce((best, value, index) => Math.abs(value - state.threshold) < Math.abs(choices[best] - state.threshold) ? index : best, 0));
-			select.render(append(control, $('.volt-settings-select')));
-			this.host.store.add(select.onDidSelect(e => void this.configurationService.updateValue(CLAUDE_AUTO_SWITCH_THRESHOLD_SETTING, choices[e.index]).then(() => this.loadAccounts(false))));
+			const nearest = choices.reduce((best, value) => Math.abs(value - state.threshold) < Math.abs(best - state.threshold) ? value : best, choices[0]);
+			this.dropdown(control, localize('voltSettings.claudeSwitchAt', "Switch at"), String(nearest), choices.map(value => ({
+				id: String(value),
+				label: localize('voltSettings.percentUsed', "{0}% used", value),
+			})), value => void this.configurationService.updateValue(CLAUDE_AUTO_SWITCH_THRESHOLD_SETTING, Number(value)).then(() => this.loadAccounts(false)));
 		}
 		const last = state.lastSwitch;
 		if (last) {
@@ -1764,11 +2001,13 @@ export class ProvidersPage {
 		if (!this.focusKey) {
 			return;
 		}
-		const field = root.querySelector<HTMLInputElement>(`[data-focus-key="${this.focusKey}"]`);
+		const field = root.querySelector<HTMLElement>(`[data-focus-key="${this.focusKey}"]`);
 		if (field && field.ownerDocument.activeElement !== field) {
 			field.focus();
-			const end = field.value.length;
-			field.setSelectionRange?.(end, end);
+			if (isHTMLInputElement(field)) {
+				const end = field.value.length;
+				field.setSelectionRange(end, end);
+			}
 		}
 	}
 
@@ -1886,22 +2125,23 @@ export class ProvidersPage {
 		const form = append(parent, $('.volt-settings-form'));
 		let provider = API_PROVIDERS[0];
 		const grid = append(form, $('.volt-settings-form-grid'));
-		const providerBox = this.field(grid, localize('voltSettings.provider', "Provider"), host => {
-			const box = this.host.store.add(new SelectBox(API_PROVIDERS.map(item => ({ text: item.label }) satisfies ISelectOptionItem), 0, this.contextViewService, this.host.selectBoxStyles(), { useCustomDrawn: true, ariaLabel: localize('voltSettings.provider', "Provider") }));
-			box.render(host);
-			return box;
-		});
+		let onProvider = (_id: string) => { };
+		this.field(grid, localize('voltSettings.provider', "Provider"), host => this.dropdown(host, localize('voltSettings.provider', "Provider"), provider.id, API_PROVIDERS.map(item => ({
+			id: item.id,
+			label: item.label,
+			icon: () => createBrandIcon(item.id, 14),
+		})), id => onProvider(id), 'left'));
 		const name = this.input(grid, localize('voltSettings.label', "Name"), localize('voltSettings.label.placeholder', "Display name (optional)"));
 		const key = this.input(grid, localize('voltSettings.apiKey', "API key"), provider.keyHint ?? '', 'password');
 		const baseUrl = this.input(grid, localize('voltSettings.baseUrl', "Base URL"), provider.baseUrl ?? localize('voltSettings.baseUrl.placeholder', "Optional"));
 		const model = this.input(grid, localize('voltSettings.modelIdField', "Model id"), localize('voltSettings.modelId.placeholder', "Optional, e.g. gpt-4.1"));
-		this.host.store.add(providerBox.onDidSelect(e => {
-			provider = API_PROVIDERS[e.index];
+		onProvider = id => {
+			provider = API_PROVIDERS.find(item => item.id === id) ?? API_PROVIDERS[0];
 			key.setPlaceHolder(authKind(provider.id) === 'none' ? localize('voltSettings.noKeyNeeded', "Not needed") : provider.keyHint ?? '');
 			baseUrl.setPlaceHolder(provider.baseUrl ?? localize('voltSettings.baseUrl.placeholder', "Optional"));
-		}));
+		};
 		const actions = append(form, $('.volt-settings-actions.volt-pm-actions'));
-		this.button(actions, localize('voltSettings.connect', "Connect"), true, localize('voltSettings.connectHint', "Adds the provider and lists its models"), () => {
+		this.button(actions, localize('voltSettings.connect', "Connect"), 'primary', localize('voltSettings.connectHint', "Adds the provider and lists its models"), () => {
 			const draft: IProviderProfileDraft = {
 				label: name.value.trim() || provider.label,
 				kind: 'model',
@@ -1921,7 +2161,7 @@ export class ProvidersPage {
 				return this.runtime.refreshProviders();
 			});
 		});
-		this.button(actions, localize('voltSettings.cancel', "Cancel"), false, localize('voltSettings.cancel', "Cancel"), () => this.select({ kind: 'overview' }));
+		this.button(actions, localize('voltSettings.cancel', "Cancel"), 'secondary', localize('voltSettings.cancel', "Cancel"), () => this.select({ kind: 'overview' }));
 	}
 
 	private renderAddAgent(parent: HTMLElement): void {
@@ -1936,7 +2176,7 @@ export class ProvidersPage {
 		const args = this.input(grid, localize('voltSettings.args', "Args"), 'acp');
 		const cwd = this.input(grid, localize('voltSettings.cwd', "Working directory"), localize('voltSettings.cwd.placeholder', "Optional"));
 		const actions = append(form, $('.volt-settings-actions.volt-pm-actions'));
-		this.button(actions, localize('voltSettings.connect', "Connect"), true, localize('voltSettings.connectAgentHint', "Adds the agent to the composer"), () => {
+		this.button(actions, localize('voltSettings.connect', "Connect"), 'primary', localize('voltSettings.connectAgentHint', "Adds the agent to the composer"), () => {
 			if (!command.value.trim()) {
 				command.focus();
 				return;
@@ -1956,7 +2196,7 @@ export class ProvidersPage {
 				return this.runtime.refreshProviders();
 			});
 		});
-		this.button(actions, localize('voltSettings.cancel', "Cancel"), false, localize('voltSettings.cancel', "Cancel"), () => this.select({ kind: 'overview' }));
+		this.button(actions, localize('voltSettings.cancel', "Cancel"), 'secondary', localize('voltSettings.cancel', "Cancel"), () => this.select({ kind: 'overview' }));
 	}
 
 	private field<T>(parent: HTMLElement, title: string, render: (host: HTMLElement) => T): T {

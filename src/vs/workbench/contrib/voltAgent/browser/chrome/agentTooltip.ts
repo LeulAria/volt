@@ -89,6 +89,14 @@ export class AgentTooltip extends Disposable {
 
 	private showHandle: number | undefined;
 	private showWindow: Window | undefined;
+	/**
+	 * The pending hide after the pointer left an anchor (room to reach a clickable card). One for
+	 * every anchor: moving onto the next row of a list cancels it, so the card stays up and moves.
+	 */
+	private hideHandle: number | undefined;
+	private hideWindow: Window | undefined;
+	/** The anchor the tooltip is shown for, or waits to show for. */
+	private anchor: HTMLElement | undefined;
 	/** What a click on the shown tooltip runs ({@link IAgentTooltipShowOptions.onClick}). */
 	private click: (() => void) | undefined;
 
@@ -108,6 +116,13 @@ export class AgentTooltip extends Disposable {
 		}));
 	}
 
+	private cancelScheduledHide(): void {
+		if (this.hideHandle !== undefined) {
+			this.hideWindow?.clearTimeout(this.hideHandle);
+			this.hideHandle = undefined;
+		}
+	}
+
 	private cancelScheduledShow(): void {
 		if (this.showHandle !== undefined) {
 			this.showWindow?.clearTimeout(this.showHandle);
@@ -116,6 +131,7 @@ export class AgentTooltip extends Disposable {
 	}
 
 	show(anchor: HTMLElement, rows: readonly IAgentTooltipRow[], options?: IAgentTooltipShowOptions): void {
+		this.anchor = anchor;
 		this.domNode.replaceChildren();
 		this.domNode.classList.toggle('pill', options?.variant === 'pill');
 		this.domNode.classList.toggle('files', options?.variant === 'files');
@@ -209,26 +225,22 @@ export class AgentTooltip extends Disposable {
 
 	hide(): void {
 		this.cancelScheduledShow();
+		this.anchor = undefined;
 		this.domNode.classList.add('hidden');
 	}
 
 	bind(anchor: HTMLElement, getRows: () => readonly IAgentTooltipRow[], options?: IAgentTooltipShowOptions): IDisposable {
 		const store = new DisposableStore();
 		const win = getWindow(anchor);
-		let hideTimer: number | undefined;
-		const clearTimer = () => {
-			if (hideTimer !== undefined) {
-				win.clearTimeout(hideTimer);
-				hideTimer = undefined;
-			}
-		};
+		const clearTimer = () => this.cancelScheduledHide();
 		const hide = () => {
 			clearTimer();
 			this.cancelScheduledShow();
 			// Room to cross the gap to a tooltip the pointer can use (a file list, a clickable card).
 			if (options?.variant === 'files' || options?.onClick) {
-				hideTimer = win.setTimeout(() => {
-					hideTimer = undefined;
+				this.hideWindow = win;
+				this.hideHandle = win.setTimeout(() => {
+					this.hideHandle = undefined;
 					this.hide();
 				}, 160);
 				return;
@@ -243,6 +255,7 @@ export class AgentTooltip extends Disposable {
 				this.show(anchor, getRows(), options);
 				return;
 			}
+			this.anchor = anchor;
 			this.showWindow = win;
 			this.showHandle = win.setTimeout(() => {
 				this.showHandle = undefined;
@@ -253,6 +266,11 @@ export class AgentTooltip extends Disposable {
 		store.add(addDisposableListener(this.domNode, 'mouseenter', clearTimer));
 		store.add(addDisposableListener(this.domNode, 'mouseleave', hide));
 		store.add(toDisposable(() => {
+			// Another anchor's tooltip stays. So does this one's while the pointer is still on it:
+			// a list rendering the row again binds it anew.
+			if (this.anchor !== anchor || (anchor.isConnected && anchor.matches(':hover'))) {
+				return;
+			}
 			clearTimer();
 			this.hide();
 		}));

@@ -26,6 +26,10 @@ const ICONS: Record<string, SvgNode[]> = {
 	git: [['g', { 'fill': 'none', 'stroke': 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '1.5' }, [['circle', { 'cx': '6', 'cy': '5.5', 'r': '2.5' }], ['circle', { 'cx': '6', 'cy': '18.5', 'r': '2.5' }], ['circle', { 'cx': '18', 'cy': '18.5', 'r': '2.5' }], ['path', { 'd': 'M6 8v8m12 0v-5a4 4 0 0 0-4-4h-3.5m0 0L13 4.5M10.5 7L13 9.5' }]]]],
 	worktrees: [['g', { 'fill': 'none', 'stroke': 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '1.5' }, [['circle', { 'cx': '6', 'cy': '5.5', 'r': '2.5' }], ['circle', { 'cx': '18', 'cy': '5.5', 'r': '2.5' }], ['circle', { 'cx': '12', 'cy': '18.5', 'r': '2.5' }], ['path', { 'd': 'M6 8v1a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V8m-6 4v4' }]]]],
 	storage: [['g', { 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.5' }, [['path', { 'd': 'M3 12c0-4.243 0-6.364 1.318-7.682S7.758 3 12 3s6.364 0 7.682 1.318S21 7.758 21 12s0 6.364-1.318 7.682S16.242 21 12 21s-6.364 0-7.682-1.318S3 16.242 3 12Z' }], ['path', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'd': 'M3 12h18M11 7.5h6m-9.875 0H7m.25 0a.25.25 0 1 1-.5 0a.25.25 0 0 1 .5 0m3.75 9h6m-9.875 0H7m.25 0a.25.25 0 1 1-.5 0a.25.25 0 0 1 .5 0' }]]]],
+	// Appearance > Mode: System, Light, Dark.
+	'appearance-system': [['path', { 'fill': 'none', 'stroke': 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '1.5', 'd': 'M14 21h2m-2 0a1.5 1.5 0 0 1-1.5-1.5V17H12m2 4h-4m0 0H8m2 0a1.5 1.5 0 0 0 1.5-1.5V17h.5m0 0v4m4-18H8c-2.828 0-4.243 0-5.121.879C2 4.757 2 6.172 2 9v2c0 2.828 0 4.243.879 5.121C3.757 17 5.172 17 8 17h8c2.828 0 4.243 0 5.121-.879C22 15.243 22 13.828 22 11V9c0-2.828 0-4.243-.879-5.121C20.243 3 18.828 3 16 3' }]],
+	'appearance-light': [['g', { 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.5' }, [['path', { 'd': 'M17 12a5 5 0 1 1-10 0a5 5 0 0 1 10 0Z' }], ['path', { 'stroke-linecap': 'round', 'd': 'M12 2v1.5m0 17V22m7.07-2.929l-1.06-1.06M5.99 5.989L4.928 4.93M22 12h-1.5m-17 0H2m17.071-7.071l-1.06 1.06M5.99 18.011l-1.06 1.06' }]]]],
+	'appearance-dark': [['path', { 'fill': 'none', 'stroke': 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '1.5', 'd': 'M21.5 14.078A8.557 8.557 0 0 1 9.922 2.5C5.668 3.497 2.5 7.315 2.5 11.873a9.627 9.627 0 0 0 9.627 9.627c4.558 0 8.376-3.168 9.373-7.422' }]],
 	// The search box's glyph, in the same family as the nav icons.
 	search: [['path', { 'fill': 'none', 'stroke': 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '1.5', 'd': 'm17 17l4 4m-2-10a8 8 0 1 0-16 0a8 8 0 0 0 16 0' }]],
 };
@@ -45,7 +49,7 @@ function build(parent: Element, nodes: readonly SvgNode[]): void {
 	}
 }
 
-/** The nav icon for a settings section, or undefined when it has none. */
+/** The nav icon for a settings section (or another glyph keyed above), or undefined when there is none. */
 export function createSettingsIcon(section: string): SVGElement | undefined {
 	const nodes = ICONS[section];
 	if (!nodes) {

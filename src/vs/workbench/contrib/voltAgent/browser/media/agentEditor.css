@@ -6,6 +6,17 @@
 @import './agentTooltip.css';
 @import './fileChangePreview.css';
 
+/*
+ * Volt's UI typeface: the system font, or the interface font set in Settings > Appearance
+ * (voltAppearance.contribution.ts sets --volt-ui-font-family). Only code uses the monospace font.
+ * Keep the fallback in sync with VOLT_FONT_FAMILY (agentTypography.ts). Layers outside the
+ * workbench (on the document root) get the system font.
+ */
+:root,
+.monaco-workbench {
+	--volt-font: var(--volt-ui-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif);
+}
+
 .volt-agent-editor {
 	--volt-agent-chat-bg: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
 	--volt-mode-fg: var(--vscode-foreground);
@@ -120,6 +131,18 @@
 .volt-agent-editor.has-turns .volt-agent-thread > .monaco-scrollable-element {
 	-webkit-mask-image: linear-gradient(to top, rgb(0 0 0 / 0.1) 0px, rgb(0 0 0 / 0.1) 12px, rgb(0 0 0 / 0.415) 35px, #000 64px);
 	mask-image: linear-gradient(to top, rgb(0 0 0 / 0.1) 0px, rgb(0 0 0 / 0.1) 12px, rgb(0 0 0 / 0.415) 35px, #000 64px);
+}
+
+/* The toolbar beside the transcript sits in the same scroller: its column stays out of the bottom fade. */
+.volt-agent-editor.has-turns.quick-open-expanded .volt-agent-thread > .monaco-scrollable-element {
+	-webkit-mask-image: linear-gradient(to top, rgb(0 0 0 / 0.1) 0px, rgb(0 0 0 / 0.1) 12px, rgb(0 0 0 / 0.415) 35px, #000 64px), linear-gradient(#000, #000);
+	mask-image: linear-gradient(to top, rgb(0 0 0 / 0.1) 0px, rgb(0 0 0 / 0.1) 12px, rgb(0 0 0 / 0.415) 35px, #000 64px), linear-gradient(#000, #000);
+	-webkit-mask-size: calc(100% - 243px) 100%, 243px 100%;
+	mask-size: calc(100% - 243px) 100%, 243px 100%;
+	-webkit-mask-position: left top, right top;
+	mask-position: left top, right top;
+	-webkit-mask-repeat: no-repeat;
+	mask-repeat: no-repeat;
 }
 
 /* A Context or Session Usage card is its own surface: no fade band around it on the transcript. */
@@ -492,7 +515,7 @@
 	gap: 6px;
 }
 
-/* Stop on the running prompt: only while the message is hovered, in its bottom-right corner (Cursor). */
+/* Stop on the running prompt, in its bottom-right corner, for as long as the run streams. */
 .volt-agent-user-stop {
 	position: absolute;
 	right: 5px;
@@ -512,8 +535,7 @@
 	transition: background-color 200ms ease, color 200ms ease;
 }
 
-.volt-agent-turn.user.running:hover .volt-agent-user-stop,
-.volt-agent-turn.user.running .volt-agent-user-stop:focus-visible {
+.volt-agent-turn.user.running .volt-agent-user-stop {
 	display: inline-flex;
 }
 
@@ -873,29 +895,44 @@
 	align-items: flex-start;
 }
 
-/* A long prompt shows its first three lines, cut with an ellipsis, then Read more. */
+/* A long prompt shows its first two lines; Read more sits in the bottom-right corner of the
+	last one, which fades out under it (a mask, so the translucent card stays see-through). */
+.volt-agent-turn.user .volt-agent-bubble.clamped .volt-agent-user-clip {
+	position: relative;
+}
+
 .volt-agent-turn.user .volt-agent-bubble.clamped .volt-agent-text {
 	display: -webkit-box;
 	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 3;
-	line-clamp: 3;
+	-webkit-line-clamp: 2;
+	line-clamp: 2;
 	overflow: hidden;
+	-webkit-mask:
+		linear-gradient(#000, #000) top / 100% calc(100% - 22px) no-repeat,
+		linear-gradient(to left, transparent 92px, #000 124px) bottom / 100% 22px no-repeat;
+	mask:
+		linear-gradient(#000, #000) top / 100% calc(100% - 22px) no-repeat,
+		linear-gradient(to left, transparent 92px, #000 124px) bottom / 100% 22px no-repeat;
 }
 
 .volt-agent-user-read-more {
 	display: none;
+	position: absolute;
+	right: 0;
+	bottom: 0;
+	height: 22px;
 	align-items: center;
-	gap: 8px;
-	margin: 8px 0 2px;
+	gap: 5px;
+	margin: 0;
 	padding: 0;
 	border: 0;
 	background: none;
 	color: var(--vscode-editor-foreground);
 	font: inherit;
-	font-size: 13px;
+	font-size: 12px;
 	font-weight: 500;
-	line-height: 18px;
-	opacity: 0.85;
+	line-height: 22px;
+	opacity: 0.7;
 	cursor: pointer;
 }
 
@@ -913,12 +950,26 @@
 }
 
 .volt-agent-user-read-more .volt-agent-svg-icon.read-more svg {
-	width: 15px;
-	height: 15px;
+	width: 13px;
+	height: 13px;
 }
 
 .volt-agent-turn.user .volt-agent-bubble.clamped .volt-agent-user-read-more {
 	display: inline-flex;
+}
+
+/* Stop holds the corner while the prompt runs, so Read more (and its fade) moves left of it. */
+.volt-agent-turn.user.running .volt-agent-bubble.clamped .volt-agent-user-read-more {
+	right: 24px;
+}
+
+.volt-agent-turn.user.running .volt-agent-bubble.clamped .volt-agent-text {
+	-webkit-mask:
+		linear-gradient(#000, #000) top / 100% calc(100% - 22px) no-repeat,
+		linear-gradient(to left, transparent 116px, #000 148px) bottom / 100% 22px no-repeat;
+	mask:
+		linear-gradient(#000, #000) top / 100% calc(100% - 22px) no-repeat,
+		linear-gradient(to left, transparent 116px, #000 148px) bottom / 100% 22px no-repeat;
 }
 
 .volt-agent-turn.user .volt-agent-text > .volt-agent-searchable {
@@ -2887,7 +2938,7 @@ pre.volt-agent-searchable {
 }
 
 /* Laid out while closed, so agentComposerChips.ts can measure the chips inside. */
-.volt-agent-composer-chips-overflow.hidden {
+.volt-agent-composer-chips-overflow.closed {
 	visibility: hidden;
 	pointer-events: none;
 }
@@ -2908,7 +2959,8 @@ pre.volt-agent-searchable {
 /* Float the controls over the transcript so its content shows through the fade. */
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer-chips.is-visible {
 	position: relative;
-	z-index: 5;
+	/* Over the Tasks, subagents and Context Usage cards (6): the "..." panel opens up across them. */
+	z-index: 7;
 	margin-top: -40px;
 	background: transparent;
 	pointer-events: none;
@@ -3737,7 +3789,7 @@ pre.volt-agent-searchable {
 	box-sizing: border-box;
 	padding: 8px 10px 8px;
 	border-radius: 12px;
-	background: #222222;
+	background: transparent;
 	border: 1px solid rgba(255, 255, 255, 0.1);
 	color: var(--vscode-foreground);
 }
@@ -3746,7 +3798,7 @@ pre.volt-agent-searchable {
 .monaco-workbench.hc-light .volt-agent-running-card,
 .monaco-workbench.vs .volt-agent-queue-card,
 .monaco-workbench.hc-light .volt-agent-queue-card {
-	background: #ececec;
+	background: transparent;
 	border: 1px solid rgba(0, 0, 0, 0.1);
 }
 
@@ -3769,7 +3821,8 @@ pre.volt-agent-searchable {
 	margin: 0 auto 8px;
 	box-sizing: border-box;
 	border-radius: 12px;
-	background: var(--vscode-editor-background, #1e1e1e);
+	/* No fill: the card is its edge and its rows, so the window shows through. */
+	background: transparent;
 	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
 	color: var(--vscode-foreground);
 	font-size: 13px;
@@ -3778,7 +3831,7 @@ pre.volt-agent-searchable {
 
 .monaco-workbench.vs .volt-agent-tasks-card,
 .monaco-workbench.hc-light .volt-agent-tasks-card {
-	background: var(--vscode-editor-background, #ffffff);
+	background: transparent;
 	border-color: var(--vscode-widget-border, rgba(0, 0, 0, 0.1));
 }
 
@@ -4238,7 +4291,7 @@ pre.volt-agent-searchable {
 	left: 10px;
 	right: 10px;
 	z-index: 1;
-	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif;
+	font-family: var(--volt-font);
 	font-size: 14px;
 	font-weight: 300;
 	line-height: 22px;
@@ -5358,11 +5411,6 @@ pre.volt-agent-searchable {
 	opacity: 0.55;
 }
 
-/* Full access runs everything unasked: its shield reads as a warning. */
-.volt-agent-status-access[data-mode="full-access"] .icon {
-	color: var(--vscode-editorWarning-foreground);
-}
-
 .volt-agent-access-menu .volt-agent-svg-icon,
 .volt-agent-access-menu .volt-agent-svg-icon svg {
 	display: block;
@@ -5372,7 +5420,6 @@ pre.volt-agent-searchable {
 
 .volt-agent-status-branch .codicon {
 	font-size: 13px;
-	opacity: 0.82;
 }
 
 .volt-agent-status-branch .chevron {
@@ -6735,9 +6782,14 @@ pre.volt-agent-searchable {
 	overflow: auto;
 }
 
-/* Chips float up over the transcript. With the card open, or queued prompts above them, they stay in flow. */
+/* Chips float up over the transcript. Under anything else on the composer (the Context Usage card,
+	queued prompts, questions, a worktree's setup) they stay in flow. */
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-context-panel ~ .volt-agent-composer-chips.is-visible,
-.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-composer-stack.has-stack + .volt-agent-composer-chips.is-visible {
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-composer-stack.has-stack ~ .volt-agent-composer-chips.is-visible,
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-question-tray:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-clone-banner:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-subagent-bar:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-worktree-setup:not(.hidden) ~ .volt-agent-composer-chips.is-visible {
 	margin-top: 0;
 }
 
@@ -8849,7 +8901,8 @@ pre.volt-agent-searchable {
 	text-overflow: ellipsis;
 }
 
-.volt-agent-tools-area.fullscreen .editor-group-container.volt-tools-leading-group > .title {
+/* The tab row only: the lead is one row tall, and the breadcrumbs under it start at the left edge. */
+.volt-agent-tools-area.fullscreen .editor-group-container.volt-tools-leading-group > .title > .tabs-and-actions-container {
 	padding-left: var(--volt-tools-lead, 0px);
 	box-sizing: border-box;
 }
@@ -9537,20 +9590,61 @@ pre.volt-agent-searchable {
 	white-space: nowrap;
 }
 
+/* Review: a pill with an arrow after the label. Pressed or focused, it shows an outline in its own shape (no square focus box). */
 .volt-agent-turn-files-review {
-	padding: 0 2px;
-	border: 0;
-	background: transparent;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: 22px;
+	padding: 0 7px 0 10px;
+	border: 1px solid transparent;
+	border-radius: 999px;
+	box-sizing: border-box;
+	background: rgba(240, 240, 241, 0.05);
 	color: var(--vscode-descriptionForeground);
 	opacity: 0.85;
 	font: inherit;
-	line-height: 18px;
+	font-size: 12px;
+	line-height: 20px;
 	cursor: pointer;
+	outline: none;
+}
+
+.volt-agent-turn-files-review .codicon {
+	font-size: 12px;
 }
 
 .volt-agent-turn-files-review:hover {
 	opacity: 1;
 	color: var(--vscode-foreground);
+	background: rgba(240, 240, 241, 0.09);
+}
+
+.monaco-workbench .volt-agent-turn-files-review:focus,
+.monaco-workbench .volt-agent-turn-files-review:active {
+	outline: none !important;
+	opacity: 1;
+	color: var(--vscode-foreground);
+	border-color: rgba(240, 240, 241, 0.28);
+}
+
+.monaco-workbench .volt-agent-turn-files-review:focus-visible {
+	border-color: var(--vscode-focusBorder);
+}
+
+.monaco-workbench.vs .volt-agent-turn-files-review,
+.monaco-workbench.hc-light .volt-agent-turn-files-review {
+	background: rgba(0, 0, 0, 0.04);
+}
+
+.monaco-workbench.vs .volt-agent-turn-files-review:hover,
+.monaco-workbench.hc-light .volt-agent-turn-files-review:hover {
+	background: rgba(0, 0, 0, 0.07);
+}
+
+.monaco-workbench.vs .volt-agent-turn-files-review:is(:focus:not(:focus-visible), :active),
+.monaco-workbench.hc-light .volt-agent-turn-files-review:is(:focus:not(:focus-visible), :active) {
+	border-color: rgba(0, 0, 0, 0.25);
 }
 
 /* List / tree toggle, left of Review. */

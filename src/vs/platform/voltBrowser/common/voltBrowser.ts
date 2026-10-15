@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { createDecorator } from '../../instantiation/common/instantiation.js';
+import { IVoltDevServer, IVoltEmulation, IVoltLocalServer, IVoltMockHit, IVoltMockRoute, IVoltPlayground, IVoltPlaygroundRequest, IVoltPlaygroundUpdate } from './browserAgent.js';
 import { IVoltCookieImportRequest, IVoltCookieImportResult, IVoltCookieSource } from './browserCookies.js';
 
 export const IVoltBrowserService = createDecorator<IVoltBrowserService>('voltBrowserService');
@@ -72,4 +73,39 @@ export interface IVoltBrowserService {
 	 * window's focus stays elsewhere, e.g. in the chat composer while an agent types into the page.
 	 */
 	setFocusEmulation(webContentsId: number, enabled: boolean): Promise<boolean>;
+
+	/**
+	 * Answers the page's matching requests with fake responses (DevTools `Fetch` interception), so
+	 * an agent can test loading, error and empty states without a backend. An empty list stops it.
+	 */
+	setNetworkMocks(webContentsId: number, routes: readonly IVoltMockRoute[]): Promise<boolean>;
+
+	/** Requests the mocks saw since they were set (most recent last, at most 200). */
+	getMockHits(webContentsId: number): Promise<IVoltMockHit[]>;
+
+	/** Emulates conditions on one page; fields left out keep their current value. `reset` clears all. */
+	emulate(webContentsId: number, emulation: IVoltEmulation, reset?: boolean): Promise<IVoltEmulation | undefined>;
+
+	/** A PNG of the whole page, beyond the viewport (data URL), or undefined. */
+	captureFullPage(webContentsId: number, maxHeight?: number): Promise<{ dataUrl: string; width: number; height: number; clipped: boolean } | undefined>;
+
+	/** Processes listening on TCP ports here (dev servers), without Volt's own. */
+	listLocalServers(): Promise<IVoltLocalServer[]>;
+
+	/** A throwaway site served on its own loopback origin from a folder outside every workspace. */
+	createPlayground(request: IVoltPlaygroundRequest): Promise<IVoltPlayground>;
+	updatePlayground(update: IVoltPlaygroundUpdate): Promise<IVoltPlayground>;
+	listPlaygrounds(sessionId?: string): Promise<IVoltPlayground[]>;
+	/** Stops the servers and deletes the folders: one id, or every playground of a chat. */
+	deletePlaygrounds(selector: { readonly id?: string; readonly sessionId?: string }): Promise<IVoltPlayground[]>;
+
+	/**
+	 * Starts a project's dev server (its own command, in its folder, with the user's shell
+	 * environment) unless Volt already runs that command there, and waits up to `waitMs` for it to
+	 * listen. Volt stops it when it quits.
+	 */
+	startDevServer(cwd: string, command: string, waitMs: number): Promise<IVoltDevServer>;
+	/** Dev servers Volt started: running ones and ones that ended, with their recent output. */
+	listDevServers(): Promise<IVoltDevServer[]>;
+	stopDevServer(pid: number): Promise<boolean>;
 }

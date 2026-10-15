@@ -365,7 +365,6 @@ export class AgentModelPicker extends Disposable {
 			const chip = append(button, $('span.volt-agent-model-effort'));
 			chip.textContent = effort.full;
 			chip.setAttribute('aria-label', effort.full);
-			chip.title = effort.full;
 		}
 	}
 
@@ -389,7 +388,9 @@ export class AgentModelPicker extends Disposable {
 			void this.runtime.refreshCatalog();
 		}
 		const selected = this.catalog.find(option => option.ref === this.currentModel);
-		this.pickerProviderId = selected?.family ?? this.pickerProviderId ?? this.providerGroups()[0]?.family;
+		// A bound picker on Auto opens on Favorites: the Auto row (and its check) lives only there.
+		const autoTab = this.host.binding && this.modelAuto ? PICKER_FAVORITES_TAB : undefined;
+		this.pickerProviderId = selected?.family ?? autoTab ?? this.pickerProviderId ?? this.providerGroups()[0]?.family;
 		this.pickerDetail = undefined;
 		this.pickerDetailAnchor = undefined;
 
@@ -741,7 +742,7 @@ export class AgentModelPicker extends Disposable {
 					};
 					addTab(PICKER_FAVORITES_TAB, localize('voltAgent.favorites', "Favorites"), renderIcon(Codicon.star));
 					for (const group of groups) {
-						addTab(group.family, group.label, createBrandIcon(group.family, 16));
+						addTab(group.family, group.label, group.icon?.() ?? createBrandIcon(group.family, 16));
 					}
 					updateTabScroll();
 				};
@@ -882,11 +883,15 @@ export class AgentModelPicker extends Disposable {
 					activeIndex = 0;
 					renderList();
 				}));
-				store.add(this.runtime.onDidChangeCatalog(() => {
-					this.syncCatalog();
-					this.host.onDidChange?.();
-					renderAll();
-				}));
+				// A host-supplied list (the voice models) does not come from the catalog; redrawing it on
+				// a catalog change would only rebuild the tab strip under the pointer.
+				if (!this.host.models) {
+					store.add(this.runtime.onDidChangeCatalog(() => {
+						this.syncCatalog();
+						this.host.onDidChange?.();
+						renderAll();
+					}));
+				}
 				store.add(addDisposableListener(getWindow(menu), 'keydown', e => {
 					const event = new StandardKeyboardEvent(e);
 					if (event.keyCode === KeyCode.Escape) {

@@ -83,7 +83,8 @@ MenuRegistry.appendMenuItem(MenuId.OpenEditorsContextShare, {
 
 MenuRegistry.appendMenuItem(MenuId.ExplorerContext, {
 	group: 'navigation',
-	order: 20,
+	// Volt: 25, so Open in Browser (22) sits between Open With and Reveal in Finder.
+	order: 25,
 	command: revealInOsCommand,
 	when: REVEAL_IN_OS_WHEN_CONTEXT
 });

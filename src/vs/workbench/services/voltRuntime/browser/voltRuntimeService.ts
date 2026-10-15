@@ -5,7 +5,7 @@
 
 import { inlineResourceContext } from '../common/fileAttachments.js';
 import { getActiveDocument } from '../../../../base/browser/dom.js';
-import { DeferredPromise, IntervalTimer, RunOnceScheduler } from '../../../../base/common/async.js';
+import { DeferredPromise, IntervalTimer, raceTimeout, RunOnceScheduler } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
@@ -54,6 +54,7 @@ import { ISearchIndex, VoltSearch } from './search/voltSearch.js';
 import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
 import { agentCompactionPrompt, compactedHistory, compactInstructions, isCompactCommand } from '../common/compaction.js';
 import { buildContextHandoff, compactionBudget, handoffBudget, HANDOFF_BUDGET_PERCENT_SETTING, HANDOFF_MAX_TOKENS_SETTING, handoffPath, handoffToolCall, HandoffReason, IContextHandoff, IHandoffActivity, IHandoffFile, IHandoffToolCall } from '../common/contextHandoff.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import './git/agentWorktreeSetupService.js';
 import { withPlanModeInstruction } from '../common/plans.js';
@@ -73,6 +74,8 @@ import { NullVoltStdioService } from './host/nullStdioService.js';
 import { loadProjectCheckFiles, loadWorkspaceRunPlan } from './host/workspaceRunPlan.js';
 import { classifyIntent, IIntent, mergeGrantedGroups } from '../common/harness/intent.js';
 import { buildAcpLead, IContextPackInput, IEnvironmentFacts } from '../common/harness/contextPack.js';
+import { formatPrimerFiles, IPreflightPlan, IPrimerEntry, preflightPlan, PRIMER_SKIP_DIRS, primerCandidate, rankPrimerFiles, selectPrimerFiles } from '../common/harness/preflight.js';
+import { formatWorkspaceContext, IWorkspaceSnapshot, WORKSPACE_SNAPSHOT_COMMAND_ID, workspaceContextKey } from '../common/harness/workspaceContext.js';
 import { INativeLoopMessage } from '../common/harness/nativeLoop.js';
 import { nativeToModelMessages } from '../common/harness/providerMessages.js';
 import { PathLocks, runToolBatch } from '../common/harness/toolRuntime.js';
@@ -283,6 +286,8 @@ interface ISessionState extends IVoltSession {
 	parkedAgents?: IParkedAgent[];
 	/** The chat was forked from another: its first agent is briefed as a fork. */
 	forkedFrom?: string;
+	/** What the agent last heard about the window around the chat (see workspaceLead). */
+	workspaceSent?: { readonly handle: IAgentSessionHandle; readonly key: string };
 }
 
 /** Native-model conversation state that outlives a single run. */
@@ -483,6 +488,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IVoltHooksService private readonly hooks: IVoltHooksService,
 		@IVoltCodeIndexService codeIndexService: IVoltCodeIndexService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super();
 		this.codeIntel = this._register(new CodeIntelHost(markerService, textModelService, languageFeaturesService, fileService));
@@ -856,6 +862,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * for Codex, the native model at its lowest reasoning). Failures keep the first-line title.
 	 */
 	private async generateTitle(session: ISessionState, request: IVoltSendRequest, item: IVoltCatalogItem | undefined, pinned: boolean): Promise<void> {
+		// cursor-agent has no light print mode: a title call carries its whole ~16k-token agent prompt
+		// (5 cents on Grok 4.7, measured 2026-10-09). Without a pinned title model the first line stays the title.
+		if (!pinned && this.profiles.find(p => p.id === item?.profileId)?.providerId === 'cursor-acp') {
+			session.titleState = undefined;
+			return;
+		}
 		const prompt = buildTitlePrompt(request.text, attachmentNames(request));
 		let raw: string | undefined;
 		try {
@@ -2021,6 +2033,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			...(call.result.error ? { error: call.result.error } : {}),
 			...(call.result.visual ? { visual: call.result.visual } : {}),
 		});
+		// browser_run `edits`: the agent changed files through Volt, so they join the chat's change set.
+		for (const change of call.result.changes ?? []) {
+			this.emit(session, session.activeRun?.runId || session.sessionId, { type: 'file.change', uri: change.uri, kind: change.kind, ...(change.before !== undefined ? { before: change.before } : {}), existed: change.existed });
+		}
 	}
 
 	listPendingAccessRequests(sessionId?: string): IAccessRequest[] {
@@ -3388,6 +3404,100 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return mergeGrantedGroups(intent.groups, session.extraGroups ?? [], session.mode);
 	}
 
+	/**
+	 * The turn primer (common/harness/preflight.ts) on a chat's first turn with an ACP agent: the
+	 * relevant project files and, for UI work, the app serving in the chat's browser with the audits
+	 * the request names. Bounded in time; whatever fails or runs late is left out.
+	 */
+	private async turnPrimer(session: ISessionState, run: IRunState, request: IVoltSendRequest, intent: IIntent): Promise<string | undefined> {
+		if (session.messages.some(message => message.role === 'assistant')) {
+			return undefined;
+		}
+		const plan = preflightPlan(request.text, intent);
+		const root = this.executionRoot(session);
+		if (!plan || !root || root.scheme !== Schemas.file) {
+			return undefined;
+		}
+		const started = Date.now();
+		const browserTools = this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'browser_run');
+		const [files, browser] = await Promise.all([
+			plan.files ? raceTimeout(this.primerFiles(root, request.text, !!intent.uiWork).catch(() => undefined), 5000) : undefined,
+			plan.browser && browserTools ? raceTimeout(this.browserPreflight(session, run, request.mode, root, plan).catch(err => {
+				this.logService.warn('[volt] browser preflight failed', err);
+				return undefined;
+			}), 25_000) : undefined,
+		]);
+		if (!this.isCurrent(session, run)) {
+			return undefined;
+		}
+		this.logService.info(`[volt] primer for run ${run.runId}: ${files ? `${files.length} chars of files` : 'no files'}, ${browser ? `browser ${browser.length} lines` : 'no browser'} in ${Date.now() - started} ms`);
+		return [files, browser?.join('\n')].filter(Boolean).join('\n\n') || undefined;
+	}
+
+	private async browserPreflight(session: ISessionState, run: IRunState, mode: VoltMode, root: URI, plan: IPreflightPlan): Promise<readonly string[] | undefined> {
+		const start = (await this.workspaceRunPlan(root)).start;
+		const allowStart = !!start && modePolicy(mode).allowTerminal && this.policyAllows(session, run, start);
+		const result = await this.hostTools.preflightBrowser(session.sessionId, { cwd: root.fsPath, start, allowStart, a11y: plan.a11y, widths: plan.widths, perf: plan.perf }, run.cancel.token);
+		return result.lines.length ? result.lines : undefined;
+	}
+
+	/** The project's files an agent most likely needs for `request`, as primer text (see selectPrimerFiles). */
+	private async primerFiles(root: URI, request: string, uiWork: boolean): Promise<string | undefined> {
+		const entries: IPrimerEntry[] = [];
+		const walk = async (dir: URI, rel: string, depth: number): Promise<void> => {
+			if (depth > 6 || entries.length >= 3000) {
+				return;
+			}
+			const stat = await this.fileService.resolve(dir, { resolveMetadata: true }).catch(() => undefined);
+			const folders: Promise<void>[] = [];
+			for (const child of stat?.children ?? []) {
+				const path = rel ? `${rel}/${child.name}` : child.name;
+				if (child.isDirectory) {
+					if (!PRIMER_SKIP_DIRS.has(child.name) && !child.name.startsWith('.')) {
+						folders.push(walk(child.resource, path, depth + 1));
+					}
+				} else if (!child.name.startsWith('.') || child.name === '.env.example') {
+					entries.push({ path, size: child.size ?? 0 });
+				}
+			}
+			await Promise.all(folders);
+		};
+		await walk(root, '', 0);
+		const candidates = entries.filter(primerCandidate);
+		if (!candidates.length) {
+			return undefined;
+		}
+		const small = candidates.length <= 60 && candidates.reduce((sum, entry) => sum + entry.size, 0) <= 96 * 1024;
+		const toRead = small ? candidates : rankPrimerFiles(candidates, request, new Map(), uiWork).slice(0, 30);
+		const contents = new Map<string, string>();
+		await Promise.all(toRead.map(async entry => {
+			const text = await this.fileService.readFile(joinPath(root, entry.path)).then(content => content.value.toString(), () => undefined);
+			if (text !== undefined && !text.includes('\u0000')) {
+				contents.set(entry.path, text);
+			}
+		}));
+		return formatPrimerFiles(selectPrimerFiles(rankPrimerFiles(candidates, request, contents, uiWork), contents));
+	}
+
+	/**
+	 * What the user has open beside the chat (right-panel tabs, the device and its app, terminals,
+	 * git), for agents that cannot see Volt's window. Sent when this agent session has not heard it
+	 * or it changed, so an unchanged window costs nothing; workspace_status has the details. The
+	 * window answers within a bounded time or the turn goes without.
+	 */
+	private async workspaceLead(session: ISessionState, handle: IAgentSessionHandle): Promise<string | undefined> {
+		const snapshot = await this.commandService.executeCommand<IWorkspaceSnapshot | undefined>(WORKSPACE_SNAPSHOT_COMMAND_ID, session.sessionId).catch(() => undefined);
+		if (!snapshot) {
+			return undefined;
+		}
+		const key = workspaceContextKey(snapshot);
+		if (session.workspaceSent?.handle === handle && session.workspaceSent.key === key) {
+			return undefined;
+		}
+		session.workspaceSent = { handle, key };
+		return formatWorkspaceContext(snapshot);
+	}
+
 	/** What `buildAcpLead` reads, and nothing else: the lead is built on every turn's critical path. */
 	private async contextPackInput(session: ISessionState, mode: VoltMode, intent: IIntent, withMemory: boolean): Promise<IContextPackInput> {
 		const root = this.executionRoot(session);
@@ -3401,6 +3511,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			...(mode === 'multitask' ? { taskModels: [...new Set(this.listCatalog().filter(item => item.enabled).map(item => item.label))] } : {}),
 			visuals: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.group === 'visuals'),
 			...(withMemory && await this.largeIndexedProject(root) ? { codeIndexed: true } : {}),
+			browserTools: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'browser_run'),
 		};
 	}
 
@@ -3534,7 +3645,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					}
 					// After a move: the conversation so far happened in the old folder.
 					const moved = session.moved?.model;
-					const lead = [handoff?.text, moved, buildAcpLead(await this.contextPackInput(session, request.mode, intent, !reusedAgent && !reused)), (await retrieval)?.text].filter(Boolean).join('\n\n') || undefined;
+					// The turn primer (first turn only): the relevant files and the app open in the chat's browser.
+					const primer = attempt === 0 ? await this.turnPrimer(session, run, request, intent) : undefined;
+					const [pack, workspace] = await Promise.all([this.contextPackInput(session, request.mode, intent, !reusedAgent && !reused), this.workspaceLead(session, handle)]);
+					const lead = [handoff?.text, moved, buildAcpLead(pack), (await retrieval)?.text, primer, workspace].filter(Boolean).join('\n\n') || undefined;
 					if (moved && session.moved?.model === moved) {
 						session.moved = undefined;
 					}

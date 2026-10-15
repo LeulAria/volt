@@ -424,7 +424,7 @@ webview.volt-browser-frame {
 	border-radius: 0 50% 50% 50%;
 	background: var(--vscode-editor-background, #1e1e1e);
 	color: var(--vscode-foreground, #cccccc);
-	font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif;
+	font: 600 12px/1 var(--volt-font);
 	letter-spacing: -0.02em;
 	cursor: pointer;
 	user-select: none;
@@ -573,6 +573,7 @@ webview.volt-browser-frame {
 
 .volt-browser-agent-composer:not(.dock).empty:not(.has-content) .volt-agent-model,
 .volt-browser-agent-composer:not(.dock).empty:not(.has-content) .volt-browser-composer-mic,
+.volt-browser-agent-composer:not(.dock).empty:not(.has-content) .volt-browser-composer-attach,
 .volt-browser-agent-composer:not(.dock).empty:not(.has-content) .volt-browser-composer-comment {
 	display: none !important;
 }
@@ -618,6 +619,32 @@ webview.volt-browser-frame {
 	align-items: flex-start;
 	align-self: stretch;
 	flex: none;
+	/* Up to five lines (the composer caps the editor), then it scrolls; a long wrapped line is not `.multiline`. */
+	max-height: none !important;
+}
+
+/* Attached images: small thumbnails above the text. */
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).has-content.has-media {
+	grid-template-areas:
+		"media media"
+		"input input"
+		"model actions";
+}
+
+.volt-browser-agent-composer:not(.dock) > .volt-agent-image-strip {
+	grid-area: media;
+	gap: 6px;
+	padding: 0 4px 2px;
+}
+
+.volt-browser-agent-composer:not(.dock).empty:not(.has-content) > .volt-agent-image-strip {
+	display: none;
+}
+
+.volt-browser-agent-composer:not(.dock) > .volt-agent-image-strip .volt-agent-image-tile {
+	width: 40px;
+	height: 40px;
+	border-radius: 8px;
 }
 
 .volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-monaco .monaco-editor,
@@ -665,7 +692,7 @@ webview.volt-browser-frame {
 	border-radius: 999px;
 	background: transparent;
 	color: #c8c8c8;
-	font: 300 13px/1 -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif;
+	font: 300 13px/1 var(--volt-font);
 	white-space: nowrap;
 	cursor: pointer;
 	flex-shrink: 0;
@@ -688,7 +715,8 @@ webview.volt-browser-frame {
 	background: rgba(0, 0, 0, 0.06);
 }
 
-.volt-browser-composer-mic {
+.volt-browser-composer-mic,
+.volt-browser-composer-attach {
 	width: 24px;
 	height: 24px;
 	padding: 0;
@@ -703,8 +731,13 @@ webview.volt-browser-frame {
 	flex-shrink: 0;
 }
 
-.volt-browser-composer-mic:hover {
+.volt-browser-composer-mic:hover,
+.volt-browser-composer-attach:hover {
 	color: #e6e6e6;
+}
+
+.volt-browser-composer-attach .codicon {
+	font-size: 14px;
 }
 
 .volt-browser-agent-composer .volt-agent-send {
@@ -1128,8 +1161,8 @@ the background paints a solid square) and keep the glyph in the accent. */
 	padding: 0 12px 0 10px;
 	border: 1px solid rgba(255, 255, 255, 0.12);
 	border-radius: 999px;
-	/* 85% opaque, so the page under the dock doesn't read through the chip text. */
-	background: rgba(34, 34, 34, 0.85);
+	/* Solid: the page under the dock never reads through the chip text. */
+	background: #222222;
 	color: #ffffff;
 	font: inherit;
 	font-size: 13px;
@@ -1144,7 +1177,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 
 .monaco-workbench.vs .volt-browser-dock .volt-browser-dock-chip,
 .monaco-workbench.hc-light .volt-browser-dock .volt-browser-dock-chip {
-	background: rgba(236, 236, 236, 0.85);
+	background: #ececec;
 	color: #1f1f1f;
 	border: 1px solid rgba(0, 0, 0, 0.12);
 	box-shadow: none;
@@ -1862,7 +1895,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 	border-radius: 9999px;
 	background: rgb(244, 244, 245);
 	color: rgb(36, 36, 36);
-	font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+	font-family: var(--volt-font);
 	font-size: 13px;
 	line-height: 18px;
 	white-space: nowrap;

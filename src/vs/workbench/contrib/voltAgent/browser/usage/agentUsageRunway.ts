@@ -3,10 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, isHTMLElement } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
 import { IVoltUsageLimitGroup, IVoltUsageLimitWindow, VoltUsageProvider } from '../../../../../platform/voltUsage/common/voltUsage.js';
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
@@ -20,8 +20,8 @@ const DAY_MS = 24 * HOUR_MS;
 /** How far right of "now" the timeline reaches. Resets further out get an arrow at the edge. */
 const HORIZON_MS = 7 * DAY_MS;
 
-/** A reset sooner than this share of the horizon sits too close to NOW for its label beside "Limit reached". */
-const MERGED_RESET_FRACTION = 0.3;
+/** Least room, in px, between two labels on a lane's label line. */
+const LABEL_GAP = 8;
 
 export interface IRunwayStyle {
 	label(provider: VoltUsageProvider): string;
@@ -31,6 +31,60 @@ export interface IRunwayStyle {
 interface IRunwayLane {
 	readonly group: IVoltUsageLimitGroup;
 	readonly window?: IVoltUsageLimitWindow;
+}
+
+/** The labels that share a lane's label line, laid out against each other once the lane has a width. */
+interface ILaneLabels {
+	readonly row: HTMLElement;
+	readonly track: HTMLElement;
+	readonly nowRule: HTMLElement;
+	/**
+	 * "empty in …" or "Limit reached", with the reset time folded in after it when the two collide.
+	 * `yields`: when even the folded label has no room, this one gives way to the reset label
+	 * ("Limit reached" repeats the red "100% used"), else the reset time is dropped.
+	 */
+	readonly lead?: { readonly text: HTMLElement; readonly reset: HTMLElement; readonly yields: boolean };
+	readonly reset?: HTMLElement;
+	/**
+	 * The reset label sits right of its ring; when that runs off the track it ends at the ring instead,
+	 * or at the track's end if that would cross NOW. The edge label (reset past the horizon) never moves.
+	 */
+	readonly flips: boolean;
+}
+
+/**
+ * Keeps a lane's labels apart at the current width: the reset label goes left of its ring when it
+ * would run off the track, and when it still collides with the lead label it folds into that label
+ * ("empty in 14m · resets 6:30 AM"). If even that runs off the track, one of the two is dropped
+ * (see `yields`); the ring's tooltip still has the reset time.
+ */
+function layoutLaneLabels(lane: ILaneLabels): void {
+	const { row, track, nowRule, lead, reset } = lane;
+	row.classList.remove('merged', 'tight', 'yield');
+	reset?.classList.remove('before', 'end');
+	const bounds = track.getBoundingClientRect();
+	if (!reset || !bounds.width) {
+		return;
+	}
+	if (lane.flips && reset.getBoundingClientRect().right > bounds.right) {
+		reset.classList.add('before');
+		if (reset.getBoundingClientRect().left < nowRule.getBoundingClientRect().right + LABEL_GAP) {
+			reset.classList.replace('before', 'end');
+		}
+	}
+	if (!lead) {
+		return;
+	}
+	const a = lead.text.getBoundingClientRect();
+	const b = reset.getBoundingClientRect();
+	if (a.right + LABEL_GAP <= b.left || b.right + LABEL_GAP <= a.left) {
+		return;
+	}
+	row.classList.add('merged');
+	if (lead.reset.getBoundingClientRect().right > bounds.right) {
+		row.classList.remove('merged');
+		row.classList.add(lead.yields ? 'yield' : 'tight');
+	}
 }
 
 /** What the stats row calls out: the soonest reset and the limit closest to running dry. */
@@ -189,13 +243,23 @@ export function renderRunway(parent: HTMLElement, summary: IUsageSummary, groups
 			lanes.push({ group, window });
 		}
 	}
+	const laneLabels: ILaneLabels[] = [];
 	for (const lane of lanes) {
-		renderLane(runway, lane, style, now, animate, store);
+		const laid = renderLane(runway, lane, style, now, animate, store);
+		if (laid) {
+			laneLabels.push(laid);
+		}
+	}
+	// Label widths only settle with layout, so they are placed after it, and again on every resize.
+	if (laneLabels.length) {
+		const observer = new (getWindow(runway).ResizeObserver)(() => laneLabels.forEach(layoutLaneLabels));
+		observer.observe(runway);
+		store.add(toDisposable(() => observer.disconnect()));
 	}
 	return runway;
 }
 
-function renderLane(parent: HTMLElement, lane: IRunwayLane, style: IRunwayStyle, now: number, animate: boolean, store: DisposableStore): void {
+function renderLane(parent: HTMLElement, lane: IRunwayLane, style: IRunwayStyle, now: number, animate: boolean, store: DisposableStore): ILaneLabels | undefined {
 	const { group, window } = lane;
 	const color = style.color(group.provider);
 	const row = append(parent, $('.volt-usage-runway-row.lane'));
@@ -207,19 +271,22 @@ function renderLane(parent: HTMLElement, lane: IRunwayLane, style: IRunwayStyle,
 	// The icon names the provider, so the lane leads with the window; the plan or scope goes under it.
 	append(text, $('.label')).textContent = window?.label ?? style.label(group.provider);
 	const sub = append(text, $('.sub'));
-	sub.textContent = window?.scope ?? (group.plan ? `${style.label(group.provider)} ${group.plan}` : style.label(group.provider));
+	const plan = group.plan ? `${style.label(group.provider)} ${group.plan}` : style.label(group.provider);
+	// Several accounts of one provider (other logins, other machines) each get lanes: say whose.
+	const owner = [group.account?.label, group.machines?.join(', ')].filter(Boolean).join(' \u00b7 ');
+	sub.textContent = [window?.scope ?? plan, owner].filter(Boolean).join(' \u00b7 ');
 	setAgentTooltip(name, window ? `${style.label(group.provider)} \u00b7 ${window.label}` : style.label(group.provider));
 	if (window?.note) {
 		setAgentTooltip(row, window.note);
 	}
 
 	const track = append(row, $('.volt-usage-runway-track'));
-	append(track, $('span.now-rule'));
+	const nowRule = append(track, $('span.now-rule'));
 	if (!window) {
 		const message = append(track, $('.volt-usage-runway-message'));
 		message.appendChild(renderIcon(Codicon.info));
 		append(message, $('span')).textContent = group.error ?? localize('voltUsage.noWindows', "No limits reported for this account.");
-		return;
+		return undefined;
 	}
 
 	const used = Math.min(100, Math.max(0, window.usedPercent));
@@ -228,7 +295,7 @@ function renderLane(parent: HTMLElement, lane: IRunwayLane, style: IRunwayStyle,
 
 	// The meter ends at now: how much of the window is gone, with a tick where even use would be.
 	const gauge = append(track, $('.volt-usage-runway-gauge'));
-	store.add(new DotMatrixMeter(gauge, used / 100, `${group.provider}:${window.id}`, animate));
+	store.add(new DotMatrixMeter(gauge, used / 100, `${group.provider}:${group.account?.id ?? ''}:${window.id}`, animate));
 	if (window.resetsAt && window.windowMs && used > 0 && !full) {
 		const elapsed = 1 - (window.resetsAt - now) / window.windowMs;
 		if (elapsed > 0 && elapsed < 1) {
@@ -247,7 +314,7 @@ function renderLane(parent: HTMLElement, lane: IRunwayLane, style: IRunwayStyle,
 		append(track, $('.volt-usage-runway-message.quiet')).textContent = used === 0
 			? localize('voltUsage.notStarted', "Starts with your next message")
 			: localize('voltUsage.noReset', "No reset time reported");
-		return;
+		return undefined;
 	}
 
 	const resetIn = window.resetsAt - now;
@@ -259,39 +326,44 @@ function renderLane(parent: HTMLElement, lane: IRunwayLane, style: IRunwayStyle,
 		burn.classList.toggle('full', full);
 		atFuture(burn, emptyIn !== undefined ? emptyIn / HORIZON_MS : resetAt);
 	}
-	// A reset right after NOW would land its label on top of "Limit reached": one label says both.
-	const mergedReset = full && resetAt < MERGED_RESET_FRACTION && resetIn <= HORIZON_MS;
+	const inHorizon = resetIn <= HORIZON_MS;
+	const resetWhen = inHorizon ? shortReset(window.resetsAt, now) : localize('voltUsage.resetsLater', "in {0}", formatDuration(resetIn));
+	// "Limit reached" or "empty in …", with the reset time after it for when the reset label has no room.
+	const addLead = (label: HTMLElement, text: string, yields: boolean): ILaneLabels['lead'] => {
+		const textSpan = append(label, $('span.text'));
+		textSpan.textContent = text;
+		const resetSpan = append(label, $('span.merged-reset'));
+		resetSpan.textContent = localize('voltUsage.mergedReset', "\u00b7 resets {0}", resetWhen);
+		return { text: textSpan, reset: resetSpan, yields };
+	};
+	let lead: ILaneLabels['lead'];
 	if (full) {
-		const blocked = append(track, $('span.blocked'));
-		blocked.textContent = mergedReset
-			? localize('voltUsage.limitReachedResets', "Limit reached \u00b7 resets {0}", shortReset(window.resetsAt, now))
-			: localize('voltUsage.limitReached', "Limit reached");
+		lead = addLead(append(track, $('span.blocked')), localize('voltUsage.limitReached', "Limit reached"), true);
 	} else if (emptyIn !== undefined) {
 		const dry = append(track, $('span.dry'));
 		atFuture(dry, emptyIn / HORIZON_MS);
 		const dryLabel = append(track, $('span.dry-label'));
 		atFuture(dryLabel, emptyIn / HORIZON_MS);
-		dryLabel.textContent = localize('voltUsage.emptyIn', "empty in {0}", formatDuration(emptyIn));
+		lead = addLead(dryLabel, localize('voltUsage.emptyIn', "empty in {0}", formatDuration(emptyIn)), false);
 		const starved = append(track, $('span.starved'));
 		starved.style.setProperty('--volt-usage-from', String(emptyIn / HORIZON_MS));
 		atFuture(starved, resetAt);
 	}
 
-	if (resetIn <= HORIZON_MS) {
+	let label: HTMLElement;
+	if (inHorizon) {
 		const ring = append(track, $('span.reset'));
 		atFuture(ring, resetAt);
-		if (mergedReset) {
-			return;
-		}
-		const label = append(track, $('span.reset-label'));
+		setAgentTooltip(ring, localize('voltUsage.resetsAt', "Resets {0}", resetWhen));
+		label = append(track, $('span.reset-label'));
 		atFuture(label, resetAt);
-		label.classList.toggle('before', resetAt > 0.8);
 		label.appendChild(renderIcon(Codicon.refresh));
-		append(label, $('span')).textContent = shortReset(window.resetsAt, now);
+		append(label, $('span')).textContent = resetWhen;
 	} else {
-		const label = append(track, $('span.reset-label.edge'));
+		label = append(track, $('span.reset-label.edge'));
 		label.appendChild(renderIcon(Codicon.refresh));
-		append(label, $('span')).textContent = localize('voltUsage.resetsLater', "in {0}", formatDuration(resetIn));
+		append(label, $('span')).textContent = resetWhen;
 		label.appendChild(renderIcon(Codicon.arrowRight));
 	}
+	return { row, track, nowRule, lead, reset: label, flips: inHorizon };
 }

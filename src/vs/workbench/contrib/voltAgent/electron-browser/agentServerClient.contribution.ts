@@ -24,6 +24,7 @@ import { INotificationService, Severity } from '../../../../platform/notificatio
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
 import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME } from '../../../../platform/voltAgentServer/common/agentServerService.js';
+import { VOLT_USAGE_SHARE_MACHINE_COMMAND_ID } from '../../../../platform/voltUsage/common/voltUsage.js';
 import { IWebSocketLike } from '../../../../platform/voltAgentServer/common/connection.js';
 import { DEFAULT_TOPICS } from '../../../../platform/voltAgentServer/common/protocol.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
@@ -399,6 +400,45 @@ registerAction2(class extends Action2 {
 			notifications.info(localize('voltAgentServer.networkOff', "Volt is reachable only from this computer now. Paired devices reconnect when you share it again."));
 		} catch (err) {
 			notifications.error(localize('voltAgentServer.networkOffFailed', "Could not stop sharing: {0}", err instanceof Error ? err.message : String(err)));
+		}
+	}
+});
+
+/**
+ * Lets Volt on the user's other computers read this one's usage and limits (Settings > Usage >
+ * Machines). They pair like a phone: the agent server listens on the local network, and the
+ * Devices page makes a one-time code whose link the other computer adds. The agent server runs
+ * for this whether or not chats run in it.
+ */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({ id: VOLT_USAGE_SHARE_MACHINE_COMMAND_ID, title: localize2('voltUsage.shareMachineCommand', "Share This Machine's Usage"), category: localize2('volt', "Volt"), f1: true });
+	}
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		const mainService = accessor.get(IVoltAgentServerMainService);
+		const dialogs = accessor.get(IDialogService);
+		const nativeHost = accessor.get(INativeHostService);
+		const notifications = accessor.get(INotificationService);
+		try {
+			let endpoint = await mainService.ensureRunning();
+			if (!endpoint.network) {
+				const { confirmed } = await dialogs.confirm({
+					message: localize('voltUsage.shareConfirm', "Let your other computers read this machine's usage?"),
+					detail: localize('voltUsage.shareDetail', "The Volt agent server will listen on your local network and restart; running turns stop and show as interrupted. Each computer you add pairs with a one-time code and gets its own key, which you can remove on the Devices page."),
+					primaryButton: localize({ key: 'voltUsage.shareButton', comment: ['&& denotes a mnemonic'] }, "&&Share"),
+				});
+				if (!confirmed) {
+					return;
+				}
+				endpoint = await mainService.setNetworkAccess(true);
+			}
+			await nativeHost.openExternal(localWebUrl(endpoint.port, '/devices'));
+			notifications.notify({
+				severity: Severity.Info,
+				message: localize('voltUsage.shareNext', "Make a pairing code on the Devices page and copy its link. On your other computer, open Settings > Usage, choose Add Machine and paste it."),
+			});
+		} catch (err) {
+			notifications.error(localize('voltUsage.shareFailed', "Could not share this machine: {0}", err instanceof Error ? err.message : String(err)));
 		}
 	}
 });

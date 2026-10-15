@@ -1983,8 +1983,15 @@ html.volt-layout-agent-window body {
 	color: var(--vscode-charts-blue, #3794ff);
 }
 
-.volt-agent-home-row > .status-badge.kind-working .status-icon svg {
+.volt-agent-home-row > .status-badge.kind-working .status-icon svg,
+.volt-agent-tooltip-card-icon.volt-agent-svg-icon.status-working svg {
 	animation: volt-agent-home-spin 2.4s linear infinite;
+}
+
+/* The same working ring in a subagent hover card ("Running 1m 28s"): the badge's blue, full strength. */
+.volt-agent-tooltip-card-icon.volt-agent-svg-icon.status-working {
+	color: var(--vscode-charts-blue, #3794ff);
+	opacity: 1;
 }
 
 @keyframes volt-agent-home-spin {

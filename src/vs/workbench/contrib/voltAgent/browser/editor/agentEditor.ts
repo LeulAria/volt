@@ -6,6 +6,7 @@
 import '../media/agentEditor.css';
 import '../media/agentComposerInput.css';
 import { $, addDisposableListener, append, Dimension, DragAndDropObserver, getWindow, isHTMLElement, isSVGElement, runAtThisOrScheduleAtNextAnimationFrame, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
+import { isWeb } from '../../../../../base/common/platform.js';
 import type { IMouseWheelEvent } from '../../../../../base/browser/mouseEvent.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/contextview/contextview.js';
@@ -89,7 +90,7 @@ import { createAccessIcon } from '../chrome/accessIcons.js';
 import { AgentAccessPicker } from '../context/agentAccessPicker.js';
 import { AgentTerminalChips } from '../terminals/agentTerminalChips.js';
 import { IAgentTerminalsService } from '../terminals/agentTerminals.js';
-import { mountAgentQuickOpenActions, SHOW_AGENTS_IN_SIDE_TOOLBAR_COMMAND_ID } from '../chrome/agentViewSidebars.js';
+import { mountAgentQuickOpenActions } from '../chrome/agentViewSidebars.js';
 import { agentMessagePlainText, formatContextTokens, IContextUsageInput, resolveModelContextWindow } from '../context/agentContextUsage.js';
 import { AgentContextUsageView, type IAgentCompactState, type IAgentStatusBranch } from '../context/agentContextUsageView.js';
 import { AgentModelPicker, type IModelOption } from '../picker/agentModelPicker.js';
@@ -148,8 +149,9 @@ import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING, shouldComp
 import type { IVoltEvent } from '../../../../services/voltRuntime/common/events.js';
 import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
 import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
-import { createHomeAutomationsIcon } from '../home/agentHomeIcons.js';
+import { createHomeAutomationsIcon, createHomeNewChatIcon } from '../home/agentHomeIcons.js';
 import { AgentLandingChrome } from '../home/agentLandingChrome.js';
+import { IAgentThreadLifecycleService } from '../home/agentThreadLifecycle.js';
 import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
 import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitation, revealCitationInChats } from './agentCitationSource.js';
 import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
@@ -187,8 +189,10 @@ import { OPEN_CANVAS_COMMAND_ID } from '../visuals/canvas/canvasCard.js';
 import { AgentSegment, IAgentActivityItem, IAgentCompaction, IPlanBlock, isCompactCommand, SupervisionKind } from '../blocks/agentBlocks.js';
 import { composerTasks, createdPlanPrompt, IAgentTodoStep, IRunEndTray, ITasksCard, ITurnFileChange, PLANNING_PHRASE, runEndTray, STATUS_ROTATE_MS, STATUS_SWAP_MS, streamingActivityLines, SupervisionAction, supervisionActions, supervisionTitle, todoChecklist, turnFileChanges } from '../chrome/agentTimeline.js';
 import { AgentTurnFilesTree } from './agentTurnFilesTree.js';
+import { fitImageStripToOneRow } from './agentMessageImageRow.js';
 import { DEFAULT_LABELS_CONTAINER, ResourceLabels } from '../../../../browser/labels.js';
 import { chooseFileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
+import { VOLT_FONT_FAMILY } from '../../common/agentTypography.js';
 
 /**
  * The Compact first chip shows from this fill on (setting `volt.agent.compactChipThreshold`), when
@@ -696,6 +700,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private turnNav!: AgentTurnNav;
 	private threadEl!: HTMLElement;
 	private threadInner!: HTMLElement;
+	/** The latest prompt's turn, whose Stop shows while its run streams. */
+	private latestUserTurn: HTMLElement | undefined;
 	private threadScroll!: DomScrollableElement;
 	private composerEl!: HTMLElement;
 	private inputBox!: HTMLElement;
@@ -774,6 +780,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private harnessParentLoaded: string | undefined;
 	/** The agent handoff the composer's model already followed. */
 	private followedHandoffAt: number | undefined;
+	/** The follow-up draft (and composer width) whose text last wrapped out of the one-line pill. */
+	private wrappedPillDraft: { value: string; width: number } | undefined;
 	/** The chat and the stored model last followed by the composer. */
 	private followedThreadModel: string | undefined;
 	private displayCodec: AgentHistoryCodec | undefined;
@@ -803,6 +811,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private get currentModel(): string { return this.modelPicker.currentModel; }
 	private get modelAuto(): boolean { return this.modelPicker.modelAuto; }
 	private get catalog(): IModelOption[] { return this.modelPicker.catalog; }
+	/** The model the composer sends on next; undefined on Auto. */
+	composerModelRef(): string | undefined { return this.modelAuto ? undefined : (this.currentModel || undefined); }
 	private plusMenu: IVoltMenuHandle | undefined;
 	private eventDisposable: IDisposable | undefined;
 	/** A redraw waiting for the next animation frame. */
@@ -948,6 +958,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentCloudTasksService private readonly cloudTasks: IAgentCloudTasksService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IAgentThreadLifecycleService private readonly threadLifecycle: IAgentThreadLifecycleService,
 		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
 		@IVoltProjectsService private readonly voltProjects: IVoltProjectsService,
 		@IDialogService private readonly dialogService: IDialogService,
@@ -1021,6 +1032,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}));
 		this.bindAttachDrop();
 		this.threadView = this._register(new AgentThreadView());
+		// The transcript's scroller is not native: on a touch screen (the workbench in a phone or
+		// tablet browser) it scrolls only if touches drive it.
+		if (isWeb && getWindow(this.threadView.element).navigator.maxTouchPoints > 0) {
+			this._register(this.threadView.enableTouchScrolling());
+		}
 		this.threadEl = this.threadView.element;
 		this.threadInner = this.threadView.inner;
 		this._register(settleFreshText(this.threadInner));
@@ -1047,11 +1063,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.editorMainEl = append(this.container, $('.volt-agent-editor-main'));
 		this.runGroupBar = append(this.editorMainEl, $('.volt-agent-group-bar.hidden'));
 		// A chat stopped at the provider's usage limit: when it resumes, or one click to resume it when the provider is back.
+		// The first chip of the row above the composer (placed by AgentComposerChips).
 		this.limitChip = this._register(this.instantiationService.createInstance(AgentLimitChip, {
 			chatId: () => this.input instanceof AgentEditorInput ? this.input.sessionId : undefined,
 			switchModel: anchor => this.modelPicker.show(anchor),
 		}));
-		append(this.editorMainEl, this.limitChip.element);
 		// The chat's terminals: a chip in the row above the composer (placed by AgentComposerChips).
 		this.terminalChips = this._register(this.instantiationService.createInstance(AgentTerminalChips, { chatId: () => this.runtime.chatFor(this.sessionKey) }));
 		this.surfaceHost = this._register(this.instantiationService.createInstance(AgentSurfaceHost, this.container, this.editorMainEl));
@@ -1212,14 +1228,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onStatusClick: () => this.scrollThreadToEnd(),
 			onAgentsClick: anchor => this.showAgentsMenu(anchor),
 			terminalRuns: this.terminalChips,
+			limitRun: this.limitChip,
 		}));
-		// Over the chips, two cards of one look: the agent's to-dos, then its subagents.
+		// Two cards of one look: the agent's to-dos, then its subagents.
 		this.tasksCard = this._register(new AgentTasksCard(() => this.layoutInputEditor(), target => target.kind === 'file'
 			? void this.openWorkspaceFile(target.path)
 			: void this.commandService.executeCommand(OPEN_CANVAS_COMMAND_ID, target.id)));
 		append(this.composerEl, this.tasksCard.element);
 		append(this.composerEl, this.composerQueue.agentsElement);
-		append(this.composerEl, this.composerChips.element);
 		// The same run status chip the browser's dock shows ("Waiting for approval", "Worked 2m").
 		this._register(this.onDidChangeDock(() => this.syncStatusChip()));
 		this.pendingChanges = this._register(this.instantiationService.createInstance(AgentPendingChanges, {
@@ -1272,8 +1288,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onDidChangeHeight: () => this.layoutInputEditor(),
 		}));
 		append(this.composerEl, this.worktreeSetupCard.element);
-		// Queued prompts sit right on top of the text area, under the chips (Cursor).
 		append(this.composerEl, this.composerQueue.element);
+		// The chips (run status, terminals, Changes) always sit last, right on top of the text area.
+		append(this.composerEl, this.composerChips.element);
 		this.voiceDictation = this._register(this.instantiationService.createInstance(AgentVoiceDictation));
 		this.voiceDictation.textBefore = () => this.textBeforeDictation();
 		this._register(this.voiceDictation.onDidChange(() => this.syncDictation()));
@@ -1819,7 +1836,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		return {
 			...editorConfiguration,
-			fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif',
+			fontFamily: VOLT_FONT_FAMILY,
 			fontSize: 14,
 			fontWeight: '300',
 			lineHeight: 22,
@@ -1951,10 +1968,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.threadScroll.setScrollPosition({ scrollTop: chat.scrollTop });
 		}
 		this.restoringChat = false;
-		if (this.inputModel && this.inputModel.getValue() !== input.draft) {
-			this.inputModel.setValue(input.draft);
+		// Taken first: setValue fires the content listener, which saves the composer's chips (the
+		// last chat's, or none) over this chat's own, and its images were lost on the way back.
+		const draft = input.draft;
+		const draftMentions = input.draftMentions;
+		this.mentionController?.clear();
+		if (this.inputModel && this.inputModel.getValue() !== draft) {
+			this.inputModel.setValue(draft);
 		}
-		this.mentionController?.restoreMentions(input.draftMentions);
+		this.mentionController?.restoreMentions(draftMentions);
+		input.draft = draft;
+		input.draftMentions = this.mentionController?.displayMentions() ?? draftMentions;
 		this.setComposerZoomed(input.composerZoomed);
 		this.migrateDraftQueue(input);
 		this.syncQueueStack();
@@ -2022,10 +2046,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private renderModelButton(button: HTMLButtonElement, animate: boolean): void {
+		// Catalog and profile events fire for more than the picked model (and while typing): only a
+		// chip whose content really changed is rebuilt, so its hover and width transitions never restart.
+		const next = button.ownerDocument.createElement('button');
+		next.className = button.className;
+		this.modelPicker.renderTrigger(next);
+		next.appendChild(createChevronIcon());
+		if (button.childElementCount && next.innerHTML === button.innerHTML && next.className === button.className) {
+			return;
+		}
 		const fromWidth = animate ? button.offsetWidth : 0;
-		button.replaceChildren();
-		this.modelPicker.renderTrigger(button);
-		button.appendChild(createChevronIcon());
+		button.className = next.className;
+		button.replaceChildren(...next.childNodes);
 		if (animate) {
 			this.animateChipWidth(button, fromWidth);
 		}
@@ -3084,7 +3116,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	 */
 	private canRenderTail(): boolean {
 		const exchange = this.tailExchange;
-		return !!exchange && exchange.isConnected && this.renderedCount === this.messages.length && this.editingUserIndex === undefined && this.tailFrom === this.lastExchangeStart() && this.tailFrom >= 0;
+		return !!exchange && exchange.isConnected && this.renderedCount === this.messages.length && this.editAboveTail() && this.tailFrom === this.lastExchangeStart() && this.tailFrom >= 0;
+	}
+
+	/**
+	 * No prompt is open for editing, or the one open sits above the live exchange: a reply streaming
+	 * below then patches only its own exchange, so the edit and the thread around it hold still.
+	 */
+	private editAboveTail(): boolean {
+		return this.editingUserIndex === undefined || (this.tailFrom >= 0 && this.editingUserIndex < this.tailFrom);
 	}
 
 	private renderThreadTail(scrollToEnd: boolean): void {
@@ -3126,7 +3166,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private canAppendThread(): boolean {
 		const exchange = this.tailExchange;
 		const from = this.tailFrom;
-		return !!exchange && exchange.parentNode === this.threadInner && !exchange.nextSibling && this.editingUserIndex === undefined
+		return !!exchange && exchange.parentNode === this.threadInner && !exchange.nextSibling && this.editAboveTail()
 			&& from >= 0 && from < this.messages.length && (from === 0 || startsExchange(this.messages[from]))
 			&& this.settledMessages.length === from && this.settledMessages.every((message, index) => this.messages[index] === message);
 	}
@@ -3366,7 +3406,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		if (message.promptExpanded) {
 			bubble.classList.add('prompt-expanded');
-		} else if (message.text.split('\n').length > 4 || message.text.length > 160) {
+		} else if (message.text.split('\n').length > 2 || message.text.length > 160) {
 			bubble.classList.add('clamped');
 		}
 		const clip = append(bubble, $('.volt-agent-user-clip'));
@@ -3375,13 +3415,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (media.length) {
 			const strip = this.threadListeners.add(new AgentImageStrip({ onOpen: i => this.openMessageMedia(message, i) }, 'in-message'));
 			main.appendChild(strip.element);
-			strip.update(media.map((mention, i): IAgentImageStripItem => mention.video
+			const stripItems = media.map((mention, i): IAgentImageStripItem => mention.video
 				? { key: `${i}`, name: mention.label, bytes: mention.video.poster, mime: 'image/jpeg', size: mention.video.size, video: { duration: mention.video.duration } }
-				: { key: `${i}`, name: mention.label, bytes: mention.image!.bytes, mime: mention.image!.mime, size: mention.image!.bytes.byteLength }));
+				: { key: `${i}`, name: mention.label, bytes: mention.image!.bytes, mime: mention.image!.mime, size: mention.image!.bytes.byteLength });
+			strip.update(stripItems);
+			// One row; "+N" on the last tile opens them all.
+			this.threadListeners.add(fitImageStripToOneRow(strip, stripItems, i => this.openMessageMedia(message, i)));
 		}
 		const text = append(main, $('.volt-agent-text'));
 		this.renderUserMessageText(text, message);
-		// Under the first lines of a long prompt; CSS shows it only while the bubble is clamped.
+		// Bottom-right of the first lines of a long prompt; CSS shows it only while the bubble is clamped.
 		const readMore = append(clip, $('button.volt-agent-user-read-more')) as HTMLButtonElement;
 		readMore.type = 'button';
 		readMore.appendChild(createStrokeIcon('read-more', ['M4 6h16', 'M4 10h16', 'M4 14h16', 'M4 18h10']));
@@ -3409,7 +3452,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			bubble.classList.remove('clamped');
 			const height = text.scrollHeight;
 			bubble.classList.toggle('clamped', wasClamped);
-			const measured = { width: this.layoutWidth, text: message.text, multiline: height > 28, clamped: height > 22 * 4 + 1 };
+			const measured = { width: this.layoutWidth, text: message.text, multiline: height > 28, clamped: height > 22 * 2 + 1 };
 			this.promptClamps.set(message, measured);
 			applyClamp(measured.multiline, measured.clamped);
 		};
@@ -3429,8 +3472,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		// A read-only subagent chat: its brief takes no stop-and-edit and no checkpoint restore.
 		const readOnly = this.isReadOnlyTaskChat();
-		if (!readOnly && this.isStreaming() && this.isLatestUser(index)) {
-			turn.classList.add('running');
+		// The latest prompt always carries Stop: it may be drawn before its run starts streaming, and a
+		// settled message is not redrawn, so syncStreamingClass shows and hides it (the `running` class).
+		const latest = !readOnly && this.isLatestUser(index);
+		if (latest) {
+			this.latestUserTurn = turn;
+			turn.classList.toggle('running', this.isStreaming());
 			const stop = append(bubble, $('button.volt-agent-user-stop')) as HTMLButtonElement;
 			stop.type = 'button';
 			stop.setAttribute('aria-label', localize('voltAgent.stop', "Stop"));
@@ -3441,7 +3488,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				e.stopPropagation();
 				this.stopAndEditPrompt();
 			}));
-		} else if (!readOnly && message.id && hasCommand(CHECKPOINT_RESTORE_COMMAND)) {
+		}
+		if (!readOnly && message.id && hasCommand(CHECKPOINT_RESTORE_COMMAND)) {
 			// Drawn even while a run streams (hidden then, see syncStreamingClass): a settled message is not redrawn when the run ends.
 			const turnId = message.id;
 			const restore = append(bubble, $('button.volt-agent-user-restore')) as HTMLButtonElement;
@@ -3710,8 +3758,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		return /cancel|abort|stopp/.test(status);
 	}
 
+	/** The latest prompt the user sent: Volt's own rows after it (a restart, a plan continuation, subagent reports) do not take its Stop. */
 	private isLatestUser(index: number): boolean {
-		return !this.messages.slice(index + 1).some(item => item.kind === 'user');
+		return !this.messages.slice(index + 1).some(startsExchange);
 	}
 
 	private canEditUser(index: number): boolean {
@@ -4865,7 +4914,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		viewToggle.type = 'button';
 		const review = append(header, $('button.volt-agent-turn-files-review')) as HTMLButtonElement;
 		review.type = 'button';
-		review.textContent = localize('voltAgent.review', "Review");
+		// A pill: the label, then an arrow to the changes it opens in the right panel.
+		append(review, $('span.volt-agent-turn-files-review-label')).textContent = localize('voltAgent.review', "Review");
+		review.appendChild(renderIcon(Codicon.arrowRight));
 		this.threadListeners.add(addDisposableListener(review, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
@@ -5222,7 +5273,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!wasStreaming) {
 			return;
 		}
-		const index = this.messages.findLastIndex(message => message.kind === 'user');
+		const index = this.messages.findLastIndex(startsExchange);
 		if (index >= 0) {
 			getWindow(this.container).requestAnimationFrame(() => this.startUserEdit(index));
 		}
@@ -6235,6 +6286,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const threadId = this.sessionKey;
 		input?.recordMode(normalizeVoltMode(this.currentMode));
 		stashTurnDisplay(turnId, display);
+		// Sending to a settled or archived chat brings it back; until then it does not run.
+		const broughtBack = this.threadLifecycle.bringBack(threadId);
 		const request = this.sendRequest(value, display, mode);
 		const host: IAgentPromptHostOptions = {
 			...(request.runOn ? { runOn: request.runOn } : {}),
@@ -6243,6 +6296,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const frozen = this.freezeDisplay(display);
 		const pending = delivery !== 'queue' ? this.showPendingTurn(input, threadId, turnId, value, display, mode) : undefined;
 		const submitted = this.submitChain.then(async () => {
+			await broughtBack;
 			const prompt: IOrchPrompt = {
 				text: value,
 				...(display ? { display: await frozen } : {}),
@@ -6533,7 +6587,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	/** The agents chip's list: this chat's multitask agents and subagents; a pick opens one beside the chat. */
 	private showAgentsMenu(anchor: HTMLElement): void {
-		type AgentPick = { readonly kind: 'open'; readonly key: string } | { readonly kind: 'stopAll' } | { readonly kind: 'toolbar' };
+		type AgentPick = { readonly kind: 'open'; readonly key: string } | { readonly kind: 'stopAll' };
 		const now = Date.now();
 		const views = dockModel(this.orchestrator.getState(), this.sessionKey).agents.map(row => subagentView(row, ref => this.providerOf(ref)));
 		const item = (view: ISubagentView): IVoltMenuItem<AgentPick> => ({
@@ -6541,8 +6595,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			label: view.title,
 			detail: [view.modelLabel ?? view.kindLabel, view.startedAt !== undefined ? formatOrchElapsed((view.endedAt ?? now) - view.startedAt) : undefined].filter(Boolean).join(' \u00b7 '),
 			...(view.state === 'running' ? {} : { badge: view.stateLabel }),
-			icon: subagentStateIcon(view.state),
-			busy: view.state === 'running',
+			// Working or waiting to start: the New Chat plane, still (no spinner).
+			icon: view.state === 'running' || view.state === 'queued' ? createHomeNewChatIcon : subagentStateIcon(view.state),
 			disabled: !view.openable,
 			...(view.openable ? { trailingIcon: view.readOnly ? Codicon.eye : Codicon.commentDiscussion } : {}),
 			tooltip: view.openable
@@ -6560,12 +6614,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			sections.push({ id: 'subagents', title: localize('voltAgent.agentsMenu.subagents', "Subagents"), items: subagents.map(item) });
 		}
 		const stoppable = views.filter(view => isLiveSubagentState(view.state) && (view.cancellable || view.stopsTurn)).length;
-		const footer: IVoltMenuItem<AgentPick>[] = [{
-			id: 'toolbar',
-			label: localize('voltAgent.agentsMenu.toolbar', "Show in Side Toolbar"),
-			icon: Codicon.layoutSidebarRight,
-			data: { kind: 'toolbar' },
-		}];
+		const footer: IVoltMenuItem<AgentPick>[] = [];
 		if (stoppable) {
 			footer.push({ id: 'stopAll', label: localize('voltAgent.agentsMenu.stopAll', "Stop All Agents"), icon: Codicon.debugStop, badge: String(stoppable), data: { kind: 'stopAll' } });
 		}
@@ -6583,8 +6632,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				const data = picked.data;
 				if (data.kind === 'open') {
 					this.openSubagent(data.key);
-				} else if (data.kind === 'toolbar') {
-					void this.commandService.executeCommand(SHOW_AGENTS_IN_SIDE_TOOLBAR_COMMAND_ID);
 				} else {
 					this.stopAllSubagents();
 				}
@@ -6719,7 +6766,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	 */
 	private drainPromptQueue(): void {
 		if (this.orchestrator.getThread(this.sessionKey)?.pause) {
-			void this.orchestrator.dispatch({ type: 'queue.resume', threadId: this.sessionKey });
+			const threadId = this.sessionKey;
+			void this.threadLifecycle.bringBack(threadId).then(() => this.orchestrator.dispatch({ type: 'queue.resume', threadId }));
 		}
 		this.syncQueueStack();
 		this.updateSendButton();
@@ -6758,7 +6806,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!this.queuedItems.some(item => item.id === id) || this.queueEdit?.id === id) {
 			return;
 		}
-		void this.orchestrator.dispatch({ type: 'queue.sendNow', threadId: this.sessionKey, itemId: id, canSteer: this.canSteer() });
+		const threadId = this.sessionKey;
+		const canSteer = this.canSteer();
+		void this.threadLifecycle.bringBack(threadId).then(() => this.orchestrator.dispatch({ type: 'queue.sendNow', threadId, itemId: id, canSteer }));
 	}
 
 	/** Cursor's "Edit queued message": the prompt moves into the composer; Enter puts it back changed. */
@@ -7111,7 +7161,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	/** A turn is live: its reply streams, or the orchestrator is starting one for this chat. */
 	/** Checkpoint restore and rewind are off while a run streams; one class hides them on every message. */
 	private syncStreamingClass(): void {
-		this.threadInner.classList.toggle('streaming', this.isStreaming());
+		const streaming = this.isStreaming();
+		this.threadInner.classList.toggle('streaming', streaming);
+		// A thread taken back from the stash still holds its own latest prompt.
+		if (!this.latestUserTurn || !this.threadInner.contains(this.latestUserTurn)) {
+			this.latestUserTurn = [...this.threadInner.querySelectorAll<HTMLElement>('.volt-agent-turn.user')].reverse().find(turn => !!turn.querySelector('.volt-agent-user-stop'));
+		}
+		this.latestUserTurn?.classList.toggle('running', streaming);
 	}
 
 	private isStreaming(): boolean {
@@ -7405,13 +7461,22 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		// the decision stable: text that wraps there grows into the full composer,
 		// and deleting back to one line returns to the pill.
 		// Images sit above the text, so they need the full composer.
-		if (!hasNewline && !this.mentionController?.hasMedia) {
+		// Text that already wrapped out of the pill keeps wrapping as it grows at the same width, so
+		// it skips the pill measure: that pass moves the model chip out and back on every keystroke.
+		const width = this.inputBox.clientWidth;
+		const wrapped = this.wrappedPillDraft;
+		const stillWrapped = !!wrapped && wrapped.width === width && value.startsWith(wrapped.value) && this.inputBox.classList.contains('multiline');
+		if (!hasNewline && !this.mentionController?.hasMedia && !stillWrapped) {
 			this.syncFollowUpComposer(false);
 			const compact = measure();
 			if (compact.rawHeight <= lineHeight * 1.5) {
+				this.wrappedPillDraft = undefined;
 				apply(compact, lineHeight);
 				return;
 			}
+			this.wrappedPillDraft = { value, width };
+		} else if (!stillWrapped) {
+			this.wrappedPillDraft = undefined;
 		}
 		this.syncFollowUpComposer(true);
 		apply(measure(), 180);

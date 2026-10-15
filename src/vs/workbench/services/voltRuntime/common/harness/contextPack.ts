@@ -49,6 +49,8 @@ export interface IContextPackInput {
 	readonly visuals?: boolean;
 	/** A large project with a ready code index, and instant_grep on the volt MCP server. */
 	readonly codeIndexed?: boolean;
+	/** The agent gets Volt's browser test tools (browser_run, browser_mock, playgrounds…) through the volt MCP server. */
+	readonly browserTools?: boolean;
 }
 
 export interface IEnvironmentFacts {
@@ -212,7 +214,11 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	if (input.intent.mentionsTests && allowWrites) {
 		parts.push(`[Volt] ${TEST_INTEGRITY}`);
 	}
-	if (input.visuals && input.intent.lane !== 'fast') {
+	if (input.intent.uiWork && input.browserTools && input.intent.lane !== 'chat') {
+		parts.push(`[Volt] ${BROWSER_TESTING}`);
+	}
+	// A fix checked in the browser is answered in a few lines; a chart of it is one more model call.
+	if (input.visuals && input.intent.lane !== 'fast' && !(input.intent.uiWork && input.browserTools)) {
 		parts.push(`[Volt] ${VISUAL_REPLIES}`);
 	}
 	if (input.intent.wantsServices && modePolicy(input.mode).allowTerminal) {
@@ -248,6 +254,15 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
  * and comparing; this says so up front.
  */
 export const DESIGN_LOOP = 'Building from a reference image: read it with image_inspect (exact sizes, colours, blocks, text bands; crops for small text) instead of decoding it with scripts, then write the page early. Check it with browser_compare_image on the reference (it renders the page at the image\'s size and lists the regions that differ and why); fix the largest differences first. Two or three compare rounds are usually enough.';
+
+/**
+ * Benchmarks (2026-10-08): agents drove the browser one click per tool call, each turn re-reading
+ * the whole context, or wrote throwaway Playwright / headless-Chrome scripts and preview files
+ * into the repo and left `http.server` processes running. This points UI work at the tools that
+ * do a whole check in one call and clean up after themselves. 2026-10-09: with the turn primer
+ * handing over the files and the running app, editing and checking in one call is what is left.
+ */
+export const BROWSER_TESTING = 'Check UI work in Volt\'s in-app browser with the volt MCP tools, not ad-hoc Playwright/headless-Chrome scripts. Fix and verify in ONE browser_run call: put the file changes in its `edits` (exact old → new text, applied before the steps; the page reloads), then the steps and waiting assertions (elements by role, label or text; no snapshot needed). Its shape, no need to look the schema up: {"edits":[{"path":"src/app.js","old":"exact text","new":"replacement"}],"steps":[{"action":"fill","target":{"label":"Email"},"text":"a@b.co"},{"action":"click","target":{"role":"button","name":"Save"}},{"action":"assert","target":{"text":"Saved"},"expect":"visible"}]}. Steps can also mock API responses ({"action":"mock","routes":[{"url":"/api/x","status":500}],"reload":true}), emulate ({"action":"emulate","network":"offline"}), resize ({"action":"resize","width":375}) and audit ({"action":"audit","checks":["a11y"]}). For a throwaway draft or mock UI call playground_create with {"html":"…","steps":[…],"keep":false}: built, checked and deleted in one call, nothing written to the project. When the checks pass, stop and answer briefly.';
 
 /** A "make it production ready" run quietly started rejecting requests without a JSON content type. */
 export const CALLER_VISIBLE_CHANGES = 'This is an open-ended change. When you alter behaviour existing callers rely on (status codes, required headers or fields, response shapes, defaults), name each such change in your summary.';

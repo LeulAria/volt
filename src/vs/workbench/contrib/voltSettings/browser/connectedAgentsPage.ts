@@ -4,19 +4,21 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../../voltAgent/browser/media/externalMcp.css';
+import '../../voltAgent/browser/media/agentMarkdown.css';
 import { $, addDisposableListener, append } from '../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IInputBoxStyles, InputBox, MessageType } from '../../../../base/browser/ui/inputbox/inputBox.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { disposableTimeout } from '../../../../base/common/async.js';
 import { fromNow } from '../../../../base/common/date.js';
 import { localize } from '../../../../nls.js';
+import { ILanguageService } from '../../../../editor/common/languages/language.js';
 import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
-import { connectSnippets } from '../../../../platform/voltExternalMcp/common/externalMcpConnect.js';
 import { describeRedirect, normalizePublicUrl } from '../../../../platform/voltExternalMcp/common/externalMcpOAuth.js';
 import {
 	DEFAULT_EXTERNAL_MCP_PORT, EXTERNAL_MCP_ENABLED_SETTING, EXTERNAL_MCP_PORT_SETTING, EXTERNAL_MCP_PUBLIC_URL_SETTING, IExternalMcpGrantView, IExternalMcpStatus, IVoltExternalMcpService,
@@ -24,6 +26,8 @@ import {
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { scopeCopy } from '../../voltAgent/browser/externalMcp/externalMcpScopes.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
+import { createMessageCopyIcon, renderCodeCard } from '../../voltAgent/browser/blocks/agentCodeBlock.js';
+import { connectSnippets, IConnectSnippet } from '../../../../platform/voltExternalMcp/common/externalMcpConnect.js';
 
 export interface IConnectedAgentsPageHost {
 	readonly store: DisposableStore;
@@ -49,8 +53,9 @@ export class ConnectedAgentsPage {
 	private readonly clipboard: IClipboardService;
 	private readonly dialogs: IDialogService;
 	private readonly contextView: IContextViewService;
+	private readonly languages: ILanguageService;
 
-	constructor(instantiationService: IInstantiationService, private readonly host: IConnectedAgentsPageHost) {
+	constructor(private readonly instantiationService: IInstantiationService, private readonly host: IConnectedAgentsPageHost) {
 		const services = instantiationService.invokeFunction(accessor => {
 			let mcp: IVoltExternalMcpService | undefined;
 			try {
@@ -58,13 +63,14 @@ export class ConnectedAgentsPage {
 			} catch {
 				mcp = undefined; // web: no main process
 			}
-			return { mcp, configuration: accessor.get(IConfigurationService), clipboard: accessor.get(IClipboardService), contextView: accessor.get(IContextViewService), dialogs: accessor.get(IDialogService) };
+			return { mcp, configuration: accessor.get(IConfigurationService), clipboard: accessor.get(IClipboardService), contextView: accessor.get(IContextViewService), dialogs: accessor.get(IDialogService), languages: accessor.get(ILanguageService) };
 		});
 		this.mcp = services.mcp;
 		this.configuration = services.configuration;
 		this.clipboard = services.clipboard;
 		this.dialogs = services.dialogs;
 		this.contextView = services.contextView;
+		this.languages = services.languages;
 	}
 
 	/** Grants and server state changed: the editor re-renders this page while it shows. */
@@ -207,17 +213,45 @@ export class ConnectedAgentsPage {
 			append(host.target(), $('.volt-external-mcp-snippet-title')).textContent = snippet.title;
 			const row = append(host.target(), $('.volt-external-mcp-snippet'));
 			row.dataset.snippet = snippet.id;
-			append(row, $('code.volt-external-mcp-code')).textContent = snippet.code;
-			const copyButton = append(row, $('button.volt-external-mcp-copy')) as HTMLButtonElement;
-			copyButton.type = 'button';
-			copyButton.appendChild(renderIcon(Codicon.copy));
-			copyButton.setAttribute('aria-label', localize('connectedAgents.copy', "Copy"));
-			setAgentTooltip(copyButton, localize('connectedAgents.copy', "Copy"));
-			host.store.add(addDisposableListener(copyButton, 'click', () => {
-				void this.clipboard.writeText(snippet.code);
-				copyButton.replaceChildren(renderIcon(Codicon.check));
-			}));
+			// The chat's code card, so the commands and the JSON are highlighted like code in a reply.
+			renderCodeCard(row, snippetLanguage(snippet), snippet.code, { store: host.store, languageService: this.languages, instantiationService: this.instantiationService });
+			this.copyButton(row, snippet.code);
 			append(host.target(), $('.volt-settings-section-hint')).textContent = snippet.note;
 		}
+	}
+
+	/** The copy button at the end of a chat message: the same glyph, and a check for a moment after a copy. */
+	private copyButton(parent: HTMLElement, text: string): void {
+		const { store } = this.host;
+		const copyLabel = localize('connectedAgents.copy', "Copy");
+		const copiedLabel = localize('connectedAgents.copied', "Copied");
+		const button = append(parent, $('button.volt-external-mcp-copy')) as HTMLButtonElement;
+		button.type = 'button';
+		button.setAttribute('aria-label', copyLabel);
+		setAgentTooltip(button, copyLabel);
+		button.appendChild(createMessageCopyIcon());
+		const flash = store.add(new DisposableStore());
+		store.add(addDisposableListener(button, 'click', () => {
+			void this.clipboard.writeText(text).then(() => {
+				flash.clear();
+				button.replaceChildren(renderIcon(Codicon.check));
+				button.classList.add('copied');
+				setAgentTooltip(button, copiedLabel);
+				flash.add(disposableTimeout(() => {
+					button.replaceChildren(createMessageCopyIcon());
+					button.classList.remove('copied');
+					setAgentTooltip(button, copyLabel);
+				}, 1500));
+			});
+		}));
+	}
+}
+
+/** The highlighter's language for a setup snippet: shell commands, Cursor's mcp.json, or a bare URL. */
+function snippetLanguage(snippet: IConnectSnippet): string | undefined {
+	switch (snippet.id) {
+		case 'cursor': return 'json';
+		case 'connector': return undefined;
+		default: return 'bash';
 	}
 }

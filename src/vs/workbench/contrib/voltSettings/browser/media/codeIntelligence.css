@@ -65,10 +65,11 @@
 
 .volt-code-index-tag {
 	font-size: 11px;
-	font-weight: 400;
+	font-weight: 500;
 	padding: 1px 6px;
 	border-radius: 4px;
-	color: var(--vscode-descriptionForeground);
+	/* Dark text on the badge fill (light blue in Volt's themes), never the muted description color. */
+	color: var(--vscode-badge-foreground, #141414);
 	background: var(--vscode-badge-background, rgba(128, 128, 128, 0.18));
 }
 

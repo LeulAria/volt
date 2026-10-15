@@ -1,0 +1,12 @@
+{
+  "name": "volt-device-viewer",
+  "private": true,
+  "description": "Builds src/vs/workbench/contrib/voltAgent/browser/devices/vendor/voltDeviceViewer.js: the iOS simulator stream client and the iPhone Duo 3D viewer, ported from T3 Code (MIT).",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@types/three": "0.180.0",
+    "three": "0.180.0"
+  }
+}

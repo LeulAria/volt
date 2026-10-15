@@ -128,8 +128,8 @@ class LineageRenderer implements IListRenderer<ILineageRow, ILineageTemplate> {
 				this.onStop(view);
 			}));
 		}
-		// A click on the card opens the agent, like the row.
-		template.store.add(this.tooltip.bind(template.row, () => subagentHoverRows(view, Date.now()), { placement: 'start', variant: 'card', delay: 400, onClick: () => this.onOpen(element) }));
+		// A click on the card opens the agent, like the row. Shown at once, and it follows the pointer from row to row.
+		template.store.add(this.tooltip.bind(template.row, () => subagentHoverRows(view, Date.now()), { placement: 'start', variant: 'card', onClick: () => this.onOpen(element) }));
 	}
 
 	disposeTemplate(template: ILineageTemplate): void {
@@ -137,7 +137,10 @@ class LineageRenderer implements IListRenderer<ILineageRow, ILineageTemplate> {
 	}
 }
 
-/** One group of the dock: an optional heading (a label, or a pane header that folds), a list, and "Show N more". */
+/**
+ * One group of the dock: an optional heading (a label, a label that folds, or a pane header that
+ * folds), a list, and "Show N more".
+ */
 class LineageGroup extends Disposable {
 
 	readonly head: HTMLElement | undefined;
@@ -152,7 +155,7 @@ class LineageGroup extends Disposable {
 		private readonly options: {
 			readonly id: string;
 			readonly ariaLabel: string;
-			readonly head: 'heading' | 'divider' | 'none';
+			readonly head: 'heading' | 'fold' | 'divider' | 'none';
 			readonly open: boolean;
 			readonly visible: number;
 			readonly className?: string;
@@ -166,6 +169,15 @@ class LineageGroup extends Disposable {
 		this.open = options.open;
 		if (options.head === 'heading') {
 			this.head = append(parent, $('.volt-agent-dock-heading.volt-agent-lineage-head'));
+		} else if (options.head === 'fold') {
+			// The heading itself folds the group ("Subagents · 2 running + chevron").
+			const fold = append(parent, $('button.volt-agent-dock-heading.volt-agent-lineage-head.volt-agent-dock-fold')) as HTMLButtonElement;
+			fold.type = 'button';
+			this._register(addDisposableListener(fold, 'click', () => {
+				this.open = !this.open;
+				this.options.onChange();
+			}));
+			this.head = fold;
 		} else if (options.head === 'divider') {
 			const divider = append(parent, $('button.volt-agent-lineage-divider')) as HTMLButtonElement;
 			divider.type = 'button';
@@ -215,7 +227,7 @@ class LineageGroup extends Disposable {
 	}
 
 	isOpen(): boolean {
-		return this.options.head !== 'divider' || this.open;
+		return this.options.head === 'heading' || this.options.head === 'none' || this.open;
 	}
 
 	/** What the user toggled (folded, "Show N more"): part of the dock's redraw signature. */
@@ -238,6 +250,10 @@ class LineageGroup extends Disposable {
 				// A VS Code pane header: chevron, then the title.
 				this.head.appendChild(renderIcon(this.open ? Codicon.chevronDown : Codicon.chevronRight));
 				append(this.head, $('span.label')).textContent = title ?? '';
+			} else if (this.options.head === 'fold') {
+				this.head.setAttribute('aria-expanded', String(this.open));
+				append(this.head, $('span.label')).textContent = title ?? '';
+				this.head.appendChild(renderIcon(this.open ? Codicon.chevronDown : Codicon.chevronRight));
 			} else {
 				append(this.head, $('span')).textContent = title ?? '';
 			}
@@ -304,7 +320,7 @@ export class AgentLineageDock extends Disposable {
 		this.previousElement.setAttribute('role', 'region');
 		this.previousElement.setAttribute('aria-label', localize('voltAgent.lineage.previousRegion', "Previous agents"));
 		const renderer = new LineageRenderer(this.tooltip, view => this.stop(view), row => this.open(row));
-		const group = (id: string, ariaLabel: string, head: 'heading' | 'divider' | 'none', open: boolean, visible: number, className?: string, parent = this.element) => this._register(new LineageGroup(parent, {
+		const group = (id: string, ariaLabel: string, head: 'heading' | 'fold' | 'divider' | 'none', open: boolean, visible: number, className?: string, parent = this.element) => this._register(new LineageGroup(parent, {
 			id,
 			ariaLabel,
 			head,
@@ -315,8 +331,8 @@ export class AgentLineageDock extends Disposable {
 			onChange: () => this.render(true),
 		}, renderer, instantiationService));
 		this.parentGroup = group('VoltAgentLineageParent', localize('voltAgent.lineage.parentList', "Parent chat"), 'none', true, 1, 'parent');
-		this.multitaskGroup = group('VoltAgentLineageMultitasks', localize('voltAgent.lineage.multitasks', "Multitask agents"), 'heading', true, RUNNING_VISIBLE, 'multitasks');
-		this.subagentGroup = group('VoltAgentLineageRunning', localize('voltAgent.lineage.running', "Running subagents"), 'heading', true, RUNNING_VISIBLE, 'subagents');
+		this.multitaskGroup = group('VoltAgentLineageMultitasks', localize('voltAgent.lineage.multitasks', "Multitask agents"), 'fold', true, RUNNING_VISIBLE, 'multitasks');
+		this.subagentGroup = group('VoltAgentLineageRunning', localize('voltAgent.lineage.running', "Running subagents"), 'fold', true, RUNNING_VISIBLE, 'subagents');
 		this.attentionGroup = group('VoltAgentLineageAttention', localize('voltAgent.lineage.attention', "Agents that need attention"), 'divider', true, RUNNING_VISIBLE, 'attention');
 		this.previousGroup = group('VoltAgentLineagePrevious', localize('voltAgent.lineage.previous', "Previous agents"), 'divider', false, PREVIOUS_VISIBLE, 'previous', this.previousElement);
 		this._register(orchestrator.onDidChange(change => {

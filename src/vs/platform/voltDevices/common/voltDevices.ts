@@ -93,6 +93,8 @@ export interface IVoltDeviceUi {
 	readonly format: 'uiautomator' | 'axe' | 'idb';
 	readonly data: string;
 }
+/** A 3D body for the live preview, converted offline to glTF; see `readDeviceModel`. */
+export type VoltDeviceModelId = 'iphone-duo';
 
 export interface IVoltDevicePostures {
 	readonly supported: readonly VoltDevicePosture[];
@@ -126,4 +128,17 @@ export interface IVoltDevicesService {
 	getAppearance(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<VoltDeviceAppearance | undefined>;
 	/** Switches the system to light or dark mode (simctl ui appearance, cmd uimode night); apps that follow it redraw. */
 	setAppearance(host: IVoltDeviceHost, device: IVoltDeviceRef, appearance: VoltDeviceAppearance): Promise<void>;
+	/**
+	 * Streams a booted iOS simulator on this machine through Expo's device hub, installed and
+	 * started on first use. Resolves with the hub's loopback origin (`http://127.0.0.1:<port>`);
+	 * the window reads video and sends touches there itself.
+	 */
+	attachStream(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<string>;
+	/** A 3D model's glTF binary as base64, or undefined when it is not on this machine. */
+	readDeviceModel(id: VoltDeviceModelId): Promise<string | undefined>;
+	/**
+	 * The app in front: a bundle id (iOS, "com.apple.springboard" on the home screen) or package
+	 * (Android). Undefined when it cannot be told cheaply (an iOS simulator Volt has not streamed).
+	 */
+	foregroundApp(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<string | undefined>;
 }

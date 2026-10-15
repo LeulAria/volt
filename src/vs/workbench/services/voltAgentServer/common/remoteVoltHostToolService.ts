@@ -7,7 +7,7 @@ import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Emitter } from '../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
-import { IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../voltRuntime/common/hostTools.js';
+import { IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../voltRuntime/common/hostTools.js';
 import { VoltMode } from '../../voltRuntime/common/modes.js';
 import { IAgentServerClientService } from './agentServerClient.js';
 
@@ -105,6 +105,11 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 		}
 		const record = args && typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : {};
 		return provider.invoke(name, record, call ? { ...call, mode: call.mode as VoltMode | undefined, token: CancellationToken.None } : undefined);
+	}
+
+	/** The turn primer runs with the agents, in the server; a window has nothing to add to it. */
+	async preflightBrowser(_sessionId: string, _request: IVoltBrowserPreflightRequest, _token: CancellationToken): Promise<IVoltBrowserPreflightResult> {
+		return { lines: [] };
 	}
 
 	invokeTool(name: string, input?: unknown, call?: IVoltHostToolCall): Promise<IVoltHostToolResult> {

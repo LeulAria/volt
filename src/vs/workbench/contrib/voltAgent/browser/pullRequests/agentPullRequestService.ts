@@ -1016,8 +1016,9 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 	/** Wakes the chat's agent. A chat that already woke too often keeps the watch quiet and tells the user. */
 	private async wake(sessionId: string, link: IAgentPrLink, text: string, summary: string): Promise<void> {
 		const turnId = `pr-${link.number}-${Date.now().toString(36)}`;
-		// News for a parked chat brings it back to the inbox, where the user sees it working.
-		await this.unpark(sessionId);
+		// News for a snoozed chat brings it back to the inbox, where the user sees it working. A settled
+		// or archived chat does not run: the news waits in its queue until the user brings it back.
+		await this.unpark(sessionId, { settled: false });
 		const current = this.links(sessionId).find(candidate => candidate.key === link.key);
 		if (current) {
 			this.replaceLink(sessionId, { ...current, notifiedAt: Date.now() });
@@ -1038,9 +1039,9 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 	}
 
 	/** Takes a chat off the Settled or Snoozed shelf (it has new pull request work). */
-	private async unpark(sessionId: string): Promise<void> {
+	private async unpark(sessionId: string, options?: { readonly settled?: boolean }): Promise<void> {
 		const meta = this.history.get(sessionId);
-		if (meta?.settled) {
+		if (meta?.settled && options?.settled !== false) {
 			await this.history.setSettled(sessionId, false);
 		}
 		if (meta?.snoozed) {

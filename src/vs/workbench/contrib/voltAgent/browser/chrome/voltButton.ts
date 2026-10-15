@@ -8,7 +8,7 @@ import { Button, IButtonOptions, IButtonStyles } from '../../../../../base/brows
 
 /**
  * Volt's one button: Settings, Projects, setup and the dialogs all use it, so every action reads
- * alike. `primary` is the one thing a surface wants you to do (a near-white fill in dark themes),
+ * alike. `primary` is the one thing a surface wants you to do (the theme's button colour),
  * `secondary` everything else, `ghost` quiet actions beside others, `danger` removes something.
  */
 export type VoltButtonKind = 'primary' | 'secondary' | 'ghost' | 'danger';

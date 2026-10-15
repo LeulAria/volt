@@ -4,15 +4,16 @@
  *--------------------------------------------------------------------------------------------*/
 
 /*
- * The device preview tab. It can sit in the transparent agent window, so every layer here is
- * opaque and nothing uses backdrop-filter (see the volt-transparent-window rules).
+ * The device preview tab. Only the phone paints: the tab shows the panel behind it, which is a
+ * solid layer in the agent window's tools area (see the volt-transparent-window rules). It holds
+ * canvases, never a webview, and nothing here uses backdrop-filter.
  */
 .volt-device-preview {
 	position: absolute;
 	inset: 0;
 	display: flex;
 	flex-direction: column;
-	background: var(--vscode-editor-background);
+	background: transparent;
 	color: var(--vscode-foreground);
 	font-family: inherit;
 	font-size: 12px;
@@ -28,7 +29,7 @@
 	height: 36px;
 	padding: 0 8px;
 	border-bottom: 1px solid var(--vscode-editorGroupHeader-tabsBorder, var(--vscode-widget-border, transparent));
-	background: var(--vscode-editor-background);
+	background: transparent;
 	overflow: hidden;
 }
 
@@ -99,6 +100,7 @@
 	50% { opacity: 0.3; }
 }
 
+/* Boot / Shut Down: an outline button, no fill. */
 .volt-device-power {
 	height: 24px;
 	padding: 0 10px;
@@ -212,9 +214,16 @@
 	min-height: 0;
 	overflow: hidden;
 	outline: none;
-	background: var(--vscode-editor-background);
+	background: transparent;
 	touch-action: none;
 	user-select: none;
+}
+
+/* Clicking the phone focuses the stage for typing; no focus box around the whole stage. */
+.monaco-workbench .volt-device-preview .volt-device-stage:focus,
+.monaco-workbench .volt-device-preview .volt-device-stage:focus-visible {
+	outline: none;
+	box-shadow: none;
 }
 
 .volt-device-scene {
@@ -381,4 +390,27 @@
 	.volt-device-touch {
 		animation: none;
 	}
+}
+
+/* Live stream: the decoded simulator screen in the frame. */
+.volt-device-live-canvas {
+	touch-action: none;
+}
+
+/* The 3D iPhone Duo (WebGL) fills the stage in place of the CSS frame. */
+.volt-device-duo {
+	position: absolute;
+	inset: 0;
+}
+
+.volt-device-duo.hidden {
+	display: none;
+}
+
+.volt-duo-canvas {
+	display: block;
+	width: 100%;
+	height: 100%;
+	touch-action: none;
+	cursor: grab;
 }

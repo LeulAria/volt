@@ -7,7 +7,6 @@ import './media/voltSettings.css';
 import '../../voltAgent/browser/media/agentEditor.css';
 import { $, addDisposableListener, append, Dimension, getWindow, scheduleAtNextAnimationFrame } from '../../../../base/browser/dom.js';
 import { InputBox } from '../../../../base/browser/ui/inputbox/inputBox.js';
-import { ISelectOptionItem, SelectBox } from '../../../../base/browser/ui/selectBox/selectBox.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { DomScrollableElement } from '../../../../base/browser/ui/scrollbar/scrollableElement.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
@@ -29,7 +28,7 @@ import { AWAKE_LID_CLOSED_MODE_SETTING, AWAKE_WHILE_AGENTS_WORK_SETTING, IAwakeS
 import { DisablementReason, IUpdateService, State as UpdateState, StateType } from '../../../../platform/update/common/update.js';
 import { VOLT_RELEASE_CHANNEL_SETTING } from '../../../../platform/update/common/voltUpdateFeed.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
-import { getInputBoxStyle, getSelectBoxStyles } from '../../../../platform/theme/browser/defaultStyles.js';
+import { getInputBoxStyle } from '../../../../platform/theme/browser/defaultStyles.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../common/editor.js';
@@ -37,8 +36,8 @@ import { IEditorGroup } from '../../../services/editor/common/editorGroupsServic
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { Orientation, Sash } from '../../../../base/browser/ui/sash/sash.js';
 import { getLayoutMode } from '../../../browser/parts/titlebar/layoutModeSwitch.js';
-import { settingsSelectBackground, settingsSelectBorder, settingsSelectForeground, settingsSelectListBorder, settingsTextInputBackground, settingsTextInputBorder, settingsTextInputForeground } from '../../preferences/common/settingsEditorColorRegistry.js';
-import { ACCESS_MODE_OPTIONS, accessModeOption, VoltAccessMode } from '../../../services/voltRuntime/common/access/accessModes.js';
+import { settingsTextInputBackground, settingsTextInputBorder, settingsTextInputForeground } from '../../preferences/common/settingsEditorColorRegistry.js';
+import { ACCESS_MODE_OPTIONS, accessModeOption } from '../../../services/voltRuntime/common/access/accessModes.js';
 import { IPermissionRule } from '../../../services/voltRuntime/common/access/accessTypes.js';
 import { VOLT_MODES, VoltMode, modePolicy } from '../../../services/voltRuntime/common/modes.js';
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
@@ -67,13 +66,16 @@ import { ConnectedAgentsPage } from './connectedAgentsPage.js';
 import { createSettingsIcon } from './settingsIcons.js';
 import { AgentUsagePage } from '../../voltAgent/browser/usage/agentUsagePage.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
+import { createAccessIcon } from '../../voltAgent/browser/chrome/accessIcons.js';
+import { createVoltDropdown, IVoltDropdownOption } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
 import { createAgentHeaderSeparatorIcon } from '../../voltAgent/browser/chrome/agentTitlebarHeader.js';
 import { AgentFooterAction, appendAgentFooterActions } from '../../voltAgent/browser/home/agentHomeFooterActions.js';
+import { AgentCustomizeEditor, AgentCustomizeEditorInput } from '../../voltAgent/browser/customize/agentCustomizeEditor.js';
 
 /** The Tab page's on/off settings. */
 type TabToggle = 'enabled' | 'partialAccepts' | 'inComments' | 'whitespaceOnly' | 'autoImport' | 'autoImportPython';
 
-type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'beta' | 'security' | 'connected' | 'projects' | 'git' | 'worktrees' | 'storage';
+type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'beta' | 'security' | 'connected' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize';
 
 /** The Modes nav glyph (a small robot face), drawn in currentColor like the codicons beside it. */
 /** The nav, in groups separated by a gap. Icons come from settingsIcons.ts; the codicon is the fallback. */
@@ -163,6 +165,12 @@ export class VoltSettingsEditor extends EditorPane {
 	private connectedAgents!: ConnectedAgentsPage;
 	/** Made on first visit and kept, so its data and range survive leaving the page. */
 	private usage: AgentUsagePage | undefined;
+	/**
+	 * Skills & Plugins: the agent's Customize page, hosted in place of the settings pages so the
+	 * nav stays. Made on first visit and kept, like Usage.
+	 */
+	private customizeHost!: HTMLElement;
+	private customizePane: AgentCustomizeEditor | undefined;
 	private sidebar!: HTMLElement;
 	private crumb!: HTMLElement;
 	private footerActions!: Record<AgentFooterAction, HTMLButtonElement>;
@@ -284,20 +292,30 @@ export class VoltSettingsEditor extends EditorPane {
 			}
 			this._register(addDisposableListener(item, 'click', () => this.setSection(section.id)));
 		}
-		// Skills, subagents, rules, MCP servers and plugins are managed on the agent's Customize page.
+		// Skills, subagents, rules, MCP servers and plugins: the agent's Customize page, shown here with
+		// the nav beside it. Same glyph as the Customize button in the agent list's footer.
 		append(this.toc, $('.volt-settings-toc-gap'));
 		const customize = append(this.toc, $('button.volt-settings-toc-item')) as HTMLButtonElement;
 		customize.type = 'button';
-		append(customize, $('span.volt-settings-toc-icon')).appendChild(renderIcon(Codicon.zap));
+		customize.dataset.section = 'customize';
+		append(customize, $('span.volt-settings-toc-icon')).appendChild(renderIcon(Codicon.extensions));
 		append(customize, $('span.volt-settings-toc-text')).textContent = localize('voltSettings.skillsPlugins', "Skills & Plugins");
-		this._register(addDisposableListener(customize, 'click', () => {
-			this.close();
-			void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand('workbench.action.voltAgent.customize'));
-		}));
+		if (this.section === 'customize') {
+			customize.classList.add('active');
+		}
+		this._register(addDisposableListener(customize, 'click', () => this.setSection('customize')));
 
 		// The agent list's footer row, so Usage, Automations and Customize are a click away here too.
 		const footer = append(sidebar, $('.volt-settings-footer'));
 		this.footerActions = appendAgentFooterActions(footer, commandService, this._store);
+		// Customize opens Skills & Plugins here instead of leaving Settings. A capture listener runs
+		// before the footer's own click handler on the button, and stops it.
+		this._register(addDisposableListener(this.footerActions.customize, 'click', e => {
+			e.preventDefault();
+			e.stopImmediatePropagation();
+			this.footerActions.customize.blur();
+			this.setSection('customize');
+		}, true));
 
 		// Where the page is, as the title bar puts it over a chat ("Settings / Usage"); the overlay covers that bar.
 		const main = append(this.container, $('.volt-settings-main'));
@@ -315,6 +333,10 @@ export class VoltSettingsEditor extends EditorPane {
 			useShadows: false,
 		}));
 		append(main, this.contentScroll.getDomNode());
+		this.customizeHost = append(main, $('.volt-settings-customize'));
+		const customizeResize = new (getWindow(parent).ResizeObserver)(() => this.layoutCustomize());
+		customizeResize.observe(this.customizeHost);
+		this._register(toDisposable(() => customizeResize.disconnect()));
 		this.createSidebarSash();
 		this._register(this.layoutService.onDidLayoutMainContainer(() => this.syncSidebarWidth()));
 		this.stickyHeads = this._register(new SettingsStickyHeads(scroll, this.content));
@@ -332,7 +354,6 @@ export class VoltSettingsEditor extends EditorPane {
 			revealWorkbench: () => this.close(),
 			switch: (parent, on, label, onClick) => this.switch(parent, on, label, onClick),
 			inputBoxStyles: () => this.inputBoxStyles(),
-			selectBoxStyles: () => this.selectBoxStyles(),
 		});
 		this._register(toDisposable(() => this.providers.dispose()));
 		this.appearance = new AppearancePage(this.instantiationService, this.renderStore, () => this.section === 'appearance');
@@ -373,10 +394,14 @@ export class VoltSettingsEditor extends EditorPane {
 			this.layoutService.mainContainer.appendChild(this.container);
 			this.syncSidebarWidth();
 			this.usage?.setVisible(this.section === 'usage');
+			if (this.section === 'customize') {
+				this.showCustomize();
+			}
 			this.scheduleScrollSync();
 			return;
 		}
 		this.usage?.setVisible(false);
+		this.customizePane?.setVisible(false);
 		this.container.classList.remove('volt-settings-overlay');
 		this.layoutService.mainContainer.classList.remove('volt-settings-open');
 		this.container.remove();
@@ -432,6 +457,10 @@ export class VoltSettingsEditor extends EditorPane {
 	/** Opens a page by id, e.g. `storage` from Volt: Manage Storage. */
 	showSection(section: string): void {
 		const id = SECTION_ALIASES[section] ?? section;
+		if (id === 'customize') {
+			this.setSection('customize');
+			return;
+		}
 		const known = SECTIONS.find(candidate => candidate.id === id);
 		if (known) {
 			this.setSection(known.id);
@@ -440,9 +469,12 @@ export class VoltSettingsEditor extends EditorPane {
 
 	/** The top bar's section name, and which footer icon is lit (Usage on Usage, else Settings). */
 	private syncCrumb(): void {
-		this.crumb.textContent = SECTIONS.find(entry => entry.id === this.section)?.label ?? '';
-		this.footerActions.settings.classList.toggle('active', this.section !== 'usage');
+		this.crumb.textContent = this.section === 'customize'
+			? localize('voltSettings.skillsPlugins', "Skills & Plugins")
+			: SECTIONS.find(entry => entry.id === this.section)?.label ?? '';
+		this.footerActions.settings.classList.toggle('active', this.section !== 'usage' && this.section !== 'customize');
 		this.footerActions.usage.classList.toggle('active', this.section === 'usage');
+		this.footerActions.customize.classList.toggle('active', this.section === 'customize');
 	}
 
 	private setSection(section: SettingsSection): void {
@@ -474,8 +506,10 @@ export class VoltSettingsEditor extends EditorPane {
 		this.renderedSection = this.section;
 		this.renderStore.clear();
 		this.content.replaceChildren();
-		// Providers & Models is two panes side by side; it takes the room the other pages leave.
+		// Providers & Models is two panes side by side and Usage draws wide charts; they take the room
+		// the other pages leave. Every other page is one centered column.
 		this.content.classList.toggle('volt-settings-content-wide', this.section === 'providers');
+		this.content.classList.toggle('volt-settings-content-narrow', this.section !== 'providers' && this.section !== 'usage');
 		this.block = undefined;
 		this.renderGeneration++;
 		const generation = this.renderGeneration;
@@ -483,7 +517,15 @@ export class VoltSettingsEditor extends EditorPane {
 		if (this.section !== 'usage') {
 			this.usage?.setVisible(false);
 		}
+		// Skills & Plugins has its own search, header and scrolling: it takes the page area itself.
+		this.container.classList.toggle('volt-settings-customize-open', this.section === 'customize');
+		if (this.section !== 'customize') {
+			this.customizePane?.setVisible(false);
+		}
 		switch (this.section) {
+			case 'customize':
+				this.showCustomize();
+				break;
 			case 'general':
 				this.renderGeneral();
 				break;
@@ -584,6 +626,31 @@ export class VoltSettingsEditor extends EditorPane {
 		this.usage ??= this._register(this.instantiationService.createInstance(AgentUsagePage, () => this.container));
 		this.target.appendChild(this.usage.element);
 		this.usage.setVisible(this.isVisible());
+	}
+
+	/** Shows the hosted Customize page, making it on first visit. */
+	private showCustomize(): void {
+		if (!this.isVisible()) {
+			return;
+		}
+		let pane = this.customizePane;
+		if (!pane) {
+			pane = this.customizePane = this._register(this.instantiationService.createInstance(AgentCustomizeEditor, this.group));
+			pane.create(this.customizeHost);
+			pane.setVisible(true);
+			const input = this._register(new AgentCustomizeEditorInput());
+			void pane.setInput(input, undefined, {}, CancellationToken.None).then(() => this.layoutCustomize());
+		} else {
+			pane.setVisible(true);
+		}
+		this.layoutCustomize();
+	}
+
+	private layoutCustomize(): void {
+		const host = this.customizeHost;
+		if (this.customizePane && this.section === 'customize' && host.isConnected && host.clientWidth && host.clientHeight) {
+			this.customizePane.layout(new Dimension(host.clientWidth, host.clientHeight));
+		}
 	}
 
 	private get target(): HTMLElement {
@@ -752,30 +819,15 @@ export class VoltSettingsEditor extends EditorPane {
 		);
 	}
 
-	/** Supervised · Accept edits · Auto · Full access, as one segmented control. */
+	/** Full access · Auto · Accept edits · Supervised, picked like the composer's access menu. */
 	private accessModeControl(host: HTMLElement): void {
-		host.classList.add('wide');
-		const control = append(host, $('.volt-settings-segmented'));
-		control.setAttribute('role', 'radiogroup');
-		control.setAttribute('aria-label', localize('voltSettings.accessMode', "Default access"));
-		const current = this.runtime.getAccessMode();
-		const short: Record<VoltAccessMode, string> = {
-			'supervised': localize('voltSettings.access.supervised', "Supervised"),
-			'auto-accept-edits': localize('voltSettings.access.edits', "Accept edits"),
-			'auto': localize('voltSettings.access.auto', "Auto"),
-			'full-access': localize('voltSettings.access.full', "Full access"),
-		};
-		for (const option of ACCESS_MODE_OPTIONS) {
-			const button = append(control, $('button.volt-settings-segment')) as HTMLButtonElement;
-			button.type = 'button';
-			button.setAttribute('role', 'radio');
-			button.setAttribute('aria-checked', String(option.id === current));
-			button.classList.toggle('active', option.id === current);
-			button.classList.toggle('danger', option.id === 'full-access');
-			append(button, $('span')).textContent = short[option.id];
-			setAgentTooltip(button, option.description);
-			this.renderStore.add(addDisposableListener(button, 'click', () => void this.runtime.setAccessMode(option.id)));
-		}
+		this.dropdown(host, ACCESS_MODE_OPTIONS.map(option => ({
+			id: option.id,
+			label: option.label,
+			description: option.description,
+			icon: () => createAccessIcon(option.id),
+			danger: option.id === 'full-access',
+		})), this.runtime.getAccessMode(), localize('voltSettings.accessMode', "Default access"), mode => void this.runtime.setAccessMode(mode), 340);
 	}
 
 	/** Resolves once the theme gallery (drawn after the themes load their colors) is in. */
@@ -812,15 +864,14 @@ export class VoltSettingsEditor extends EditorPane {
 			localize('voltSettings.fileIcons', "File icons"),
 			localize('voltSettings.fileIconsDesc', "Icons next to files in the explorer, changes and tabs."),
 			host => {
-				const select = append(host, $('.volt-settings-select'));
 				void this.workbenchThemeService.getFileIconThemes().then(themes => {
 					if (generation !== this.renderGeneration) {
 						return;
 					}
+					// '' is None: setFileIconTheme takes undefined for it.
 					const options = [{ id: '', label: localize('voltSettings.noFileIcons', "None") }, ...themes.map(theme => ({ id: theme.settingsId ?? '', label: theme.label }))];
 					const current = this.workbenchThemeService.getFileIconTheme().settingsId ?? '';
-					const box = this.selectBox(select, options.map(option => ({ text: option.label })), Math.max(0, options.findIndex(option => option.id === current)), localize('voltSettings.fileIcons', "File icons"));
-					this.renderStore.add(box.onDidSelect(e => void this.workbenchThemeService.setFileIconTheme(options[e.index].id || undefined, 'auto')));
+					this.dropdown(host, options, current, localize('voltSettings.fileIcons', "File icons"), id => void this.workbenchThemeService.setFileIconTheme(id || undefined, 'auto'));
 				});
 			},
 		);
@@ -834,7 +885,6 @@ export class VoltSettingsEditor extends EditorPane {
 			settingsGroup: () => this.settingsGroup(),
 			settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
 			stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
-			selectBox: (host, options, selected, ariaLabel) => this.selectBox(host, options, selected, ariaLabel),
 		};
 	}
 
@@ -871,10 +921,10 @@ export class VoltSettingsEditor extends EditorPane {
 		this.pageHead(localize('voltSettings.betaPage', "Beta"));
 		const group = this.settingsGroup();
 		const channels = [
-			{ id: 'default', text: localize('voltSettings.channelDefault', "Default") },
-			{ id: 'stable', text: localize('voltSettings.channelStable', "Stable") },
-			{ id: 'beta', text: localize('voltSettings.channelBeta', "Beta") },
-			{ id: 'nightly', text: localize('voltSettings.channelNightly', "Nightly") },
+			{ id: 'default', label: localize('voltSettings.channelDefault', "Default") },
+			{ id: 'stable', label: localize('voltSettings.channelStable', "Stable") },
+			{ id: 'beta', label: localize('voltSettings.channelBeta', "Beta") },
+			{ id: 'nightly', label: localize('voltSettings.channelNightly', "Nightly") },
 		];
 		this.settingRow(
 			group,
@@ -882,9 +932,8 @@ export class VoltSettingsEditor extends EditorPane {
 			localize('voltSettings.updateAccessDesc2', "By default, this app keeps itself up to date. Another channel installs from the update button as its own app beside this one, with its own settings, and updates itself. Beta and Nightly are pre-release builds that may be unstable for production work."),
 			host => {
 				const current = this.configurationService.getValue<string>(VOLT_RELEASE_CHANNEL_SETTING);
-				const selected = Math.max(0, channels.findIndex(c => c.id === current));
-				const box = this.selectBox(append(host, $('.volt-settings-select')), channels.map(c => ({ text: c.text })), selected, localize('voltSettings.updateAccess', "Update Access"));
-				this.renderStore.add(box.onDidSelect(e => void this.configurationService.updateValue(VOLT_RELEASE_CHANNEL_SETTING, channels[e.index].id)));
+				const value = channels.find(c => c.id === current)?.id ?? channels[0].id;
+				this.dropdown(host, channels, value, localize('voltSettings.updateAccess', "Update Access"), id => void this.configurationService.updateValue(VOLT_RELEASE_CHANNEL_SETTING, id));
 			},
 		);
 	}
@@ -921,11 +970,11 @@ export class VoltSettingsEditor extends EditorPane {
 					const engine: AgentVoiceEngine = !ref ? 'auto' : ref.startsWith('openai:') ? 'openai' : ref as AgentVoiceEngine;
 					void this.configurationService.updateValue(AGENT_VOICE_ENGINE_SETTING, engine);
 				},
-			}, label, localize('voltSettings.voiceAuto', "Auto"), localize('voltSettings.voiceAutoDesc', "OpenAI when an OpenAI key is set, otherwise the Mac's recognizer"), () => this.voiceModelGroups()),
+			}, label, localize('voltSettings.voiceAuto', "Auto"), localize('voltSettings.voiceAutoDesc2', "OpenAI with a key, else the Mac"), () => this.voiceModelGroups()),
 		);
 	}
 
-	/** The voice picker's tabs: OpenAI realtime models, the Mac's recognizer, a custom endpoint. */
+	/** The voice picker's tabs: OpenAI realtime models, the Mac's recognizer, a custom endpoint. Auto sits under Favorites. */
 	private voiceModelGroups(): IProviderGroup[] {
 		const realtime = this.configurationService.getValue<string>(AGENT_VOICE_REALTIME_MODEL_SETTING) || AGENT_VOICE_DEFAULT_REALTIME_MODEL;
 		const endpointModel = this.configurationService.getValue<string>(AGENT_VOICE_MODEL_SETTING) || 'whisper-1';
@@ -946,8 +995,9 @@ export class VoltSettingsEditor extends EditorPane {
 					localize('voltSettings.voiceSystemDesc', "Apple's on-device speech recognition. No key needed."))],
 			},
 			{
-				family: 'generic', label: endpoint, models: [option('endpoint', endpointModel, 'generic', endpoint,
-					localize('voltSettings.voiceEndpointOptionDesc', "The OpenAI-compatible speech-to-text server set below."))],
+				// A server glyph: the generic brand's sparkle reads as Auto.
+				family: 'generic', label: endpoint, icon: () => renderIcon(Codicon.server), models: [option('endpoint', endpointModel, 'generic', endpoint,
+					localize('voltSettings.voiceEndpointOptionDesc2', "The OpenAI-compatible speech-to-text server set under Tab & Prediction > Voice, such as a local Whisper."))],
 			},
 		];
 	}
@@ -1048,10 +1098,10 @@ export class VoltSettingsEditor extends EditorPane {
 			localize('voltSettings.keepWorking', "Keep working until done"),
 			localize('voltSettings.keepWorkingDesc', "When a chat's work stops part way (an error, a crashed or silent agent, Volt restarting), Volt restarts it on its own, waiting longer each time (at most 30 minutes), for as long as it takes. A turn that ends with its plan unfinished keeps going. Stop the chat to end it."),
 		);
-		const resumeOptions: ISelectOptionItem[] = [
-			{ text: localize('voltSettings.resumeSubagents', "Delegated tasks"), detail: 'subagents' },
-			{ text: localize('voltSettings.resumeAll', "Every chat"), detail: 'all' },
-			{ text: localize('voltSettings.resumeOff', "Nothing"), detail: 'off' },
+		const resumeOptions: IVoltDropdownOption<string>[] = [
+			{ id: 'subagents', label: localize('voltSettings.resumeSubagents', "Delegated tasks"), description: localize('voltSettings.resumeSubagentsDesc', "Only subagents and delegated tasks"), icon: Codicon.typeHierarchySub },
+			{ id: 'all', label: localize('voltSettings.resumeAll', "Every chat"), description: localize('voltSettings.resumeAllDesc', "Every interrupted run carries on"), icon: Codicon.commentDiscussion },
+			{ id: 'off', label: localize('voltSettings.resumeOff', "Nothing"), description: localize('voltSettings.resumeOffDesc', "Every interrupted run waits for Resume"), icon: Codicon.circleSlash },
 		];
 		const resume = this.configurationService.getValue<string>(AGENT_RESUME_AFTER_RESTART_SETTING);
 		this.settingRow(
@@ -1059,8 +1109,7 @@ export class VoltSettingsEditor extends EditorPane {
 			localize('voltSettings.resumeAfterRestart', "Continue after a restart"),
 			localize('voltSettings.resumeAfterRestartDesc', "What keeps working on its own when Volt restarts in the middle of a run. Everything else shows Resume."),
 			host => {
-				const box = this.selectBox(append(host, $('.volt-settings-select')), resumeOptions, Math.max(0, resumeOptions.findIndex(option => option.detail === resume)), localize('voltSettings.resumeAfterRestart', "Continue after a restart"));
-				this.renderStore.add(box.onDidSelect(e => void this.configurationService.updateValue(AGENT_RESUME_AFTER_RESTART_SETTING, resumeOptions[e.index].detail)));
+				this.dropdown(host, resumeOptions, resume, localize('voltSettings.resumeAfterRestart', "Continue after a restart"), id => void this.configurationService.updateValue(AGENT_RESUME_AFTER_RESTART_SETTING, id), 280);
 			},
 		);
 		this.settingSwitch(
@@ -1081,9 +1130,9 @@ export class VoltSettingsEditor extends EditorPane {
 			localize('voltSettings.workingSection', "Working section"),
 			localize('voltSettings.workingSectionDesc', "Chats that are busy fold into a Working section in the sidebar and come back when they finish or need you."),
 		);
-		const settleOptions: ISelectOptionItem[] = [0, 1, 3, 7, 14].map(days => ({
-			text: days === 0 ? localize('voltSettings.settleNever', "Never") : days === 1 ? localize('voltSettings.settleDay', "After 1 day") : localize('voltSettings.settleDays', "After {0} days", days),
-			detail: String(days),
+		const settleOptions: IVoltDropdownOption<string>[] = [0, 1, 3, 7, 14].map(days => ({
+			id: String(days),
+			label: days === 0 ? localize('voltSettings.settleNever', "Never") : days === 1 ? localize('voltSettings.settleDay', "After 1 day") : localize('voltSettings.settleDays', "After {0} days", days),
 		}));
 		const settleDays = String(this.configurationService.getValue<number>(AGENT_HOME_AUTO_SETTLE_DAYS_SETTING) ?? 3);
 		this.settingRow(
@@ -1091,8 +1140,7 @@ export class VoltSettingsEditor extends EditorPane {
 			localize('voltSettings.autoSettle', "Settle idle chats"),
 			localize('voltSettings.autoSettleDesc', "Move a chat to Settled after it goes this long without a message from you. Each chat's Auto-settle switch can keep it out."),
 			host => {
-				const box = this.selectBox(append(host, $('.volt-settings-select')), settleOptions, Math.max(0, settleOptions.findIndex(option => option.detail === settleDays)), localize('voltSettings.autoSettle', "Settle idle chats"));
-				this.renderStore.add(box.onDidSelect(e => void this.configurationService.updateValue(AGENT_HOME_AUTO_SETTLE_DAYS_SETTING, Number(settleOptions[e.index].detail))));
+				this.dropdown(host, settleOptions, settleDays, localize('voltSettings.autoSettle', "Settle idle chats"), days => void this.configurationService.updateValue(AGENT_HOME_AUTO_SETTLE_DAYS_SETTING, Number(days)));
 			},
 		);
 	}
@@ -1137,8 +1185,8 @@ export class VoltSettingsEditor extends EditorPane {
 			toggle: (parent, on, label, onClick) => void this.switch(parent, on, label, onClick),
 			stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
 			select: (parent, options, selected, label, onSelect) => {
-				const box = this.selectBox(append(parent, $('.volt-settings-select')), options.map(text => ({ text })), Math.max(0, selected), label);
-				this.renderStore.add(box.onDidSelect(e => onSelect(e.index)));
+				const choices = options.map((text, index) => ({ id: String(index), label: text }));
+				this.dropdown(parent, choices, String(Math.max(0, selected)), label, id => onSelect(Number(id)));
 			},
 			input: (parent, value, placeholder, label, onCommit) => {
 				const box = this.renderStore.add(new InputBox(append(parent, $('.volt-settings-input')), this.contextViewService, {
@@ -1215,20 +1263,15 @@ export class VoltSettingsEditor extends EditorPane {
 		this.sectionLabel(localize('voltSettings.editorPrediction', "Editors"));
 		const editors = this.settingsGroup();
 		this.predictionModelRow(editors);
-		const modeOptions: ISelectOptionItem[] = [
-			{ text: localize('voltSettings.tabEager', "Eager"), detail: 'eager' },
-			{ text: localize('voltSettings.tabSubtle', "Subtle"), detail: 'subtle' },
+		const modeOptions: IVoltDropdownOption<'eager' | 'subtle'>[] = [
+			{ id: 'eager', label: localize('voltSettings.tabEager', "Eager") },
+			{ id: 'subtle', label: localize('voltSettings.tabSubtle', "Subtle") },
 		];
 		this.settingRow(
 			editors,
 			localize('voltSettings.tabMode', "Prediction mode"),
 			localize('voltSettings.tabModeDesc', "Eager predicts while you type. Subtle only predicts on the explicit trigger (Alt+\\)."),
-			host => {
-				const modeBox = this.selectBox(append(host, $('.volt-settings-select')), modeOptions, settings.mode === 'subtle' ? 1 : 0, localize('voltSettings.tabMode', "Prediction mode"));
-				this.renderStore.add(modeBox.onDidSelect(e => {
-					this.prediction.updateSettings({ mode: modeOptions[e.index].detail as 'eager' | 'subtle' });
-				}));
-			},
+			host => this.dropdown(host, modeOptions, settings.mode === 'subtle' ? 'subtle' : 'eager', localize('voltSettings.tabMode', "Prediction mode"), mode => this.prediction.updateSettings({ mode })),
 		);
 		this.settingRow(
 			editors,
@@ -1404,14 +1447,11 @@ export class VoltSettingsEditor extends EditorPane {
 		const effectHost = append(form, $('.volt-settings-field'));
 		append(effectHost, $('label')).textContent = localize('voltSettings.ruleEffect', "Effect");
 		let effect: IPermissionRule['effect'] = 'deny';
-		const box = this.selectBox(append(effectHost, $('.volt-settings-control')), [
-			{ text: 'deny' },
-			{ text: 'ask' },
-			{ text: 'allow' },
-		], 0, localize('voltSettings.ruleEffect', "Effect"));
-		this.renderStore.add(box.onDidSelect(e => {
-			effect = (['deny', 'ask', 'allow'][e.index] ?? 'deny') as IPermissionRule['effect'];
-		}));
+		this.dropdown(append(effectHost, $('.volt-settings-control')), [
+			{ id: 'deny', label: localize('voltSettings.ruleDeny', "Deny"), icon: Codicon.circleSlash },
+			{ id: 'ask', label: localize('voltSettings.ruleAsk', "Ask"), icon: Codicon.question },
+			{ id: 'allow', label: localize('voltSettings.ruleAllow', "Allow"), icon: Codicon.check },
+		], effect, localize('voltSettings.ruleEffect', "Effect"), next => { effect = next; });
 		const actions = append(form, $('.volt-settings-actions'));
 		const add = this.renderStore.add(createVoltButton(actions, 'primary'));
 		add.label = localize('voltSettings.addRule', "Add rule");
@@ -1464,13 +1504,9 @@ export class VoltSettingsEditor extends EditorPane {
 		return box;
 	}
 
-	private selectBox(host: HTMLElement, options: ISelectOptionItem[], selected: number, ariaLabel: string): SelectBox {
-		const box = this.renderStore.add(new SelectBox(options, selected, this.contextViewService, this.selectBoxStyles(), {
-			ariaLabel,
-			useCustomDrawn: true,
-		}));
-		box.render(host);
-		return box;
+	/** Volt's dropdown pill, bound to the page: it goes away with the next render. */
+	private dropdown<T extends string>(host: HTMLElement, options: readonly IVoltDropdownOption<T>[], value: T, ariaLabel: string, onChange: (value: T) => void, width?: number): void {
+		createVoltDropdown(host, this.contextViewService, { options, value, ariaLabel, onChange, width }, this.renderStore);
 	}
 
 	private inputBoxStyles() {
@@ -1481,15 +1517,6 @@ export class VoltSettingsEditor extends EditorPane {
 		});
 	}
 
-	private selectBoxStyles() {
-		return getSelectBoxStyles({
-			selectBackground: settingsSelectBackground,
-			selectForeground: settingsSelectForeground,
-			selectBorder: settingsSelectBorder,
-			selectListBorder: settingsSelectListBorder,
-		});
-	}
-
 	override async setInput(input: VoltSettingsEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
 		this.renderContent();
@@ -1497,6 +1524,7 @@ export class VoltSettingsEditor extends EditorPane {
 
 	override layout(_dimension: Dimension): void {
 		this.scheduleScrollSync();
+		this.layoutCustomize();
 	}
 }
 

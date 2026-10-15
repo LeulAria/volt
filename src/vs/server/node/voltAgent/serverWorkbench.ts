@@ -66,6 +66,8 @@ export interface IServerWorkbenchOptions {
 	readonly codeIndex?: IVoltCodeIndexService;
 	/** Serves a file with the agent server's caching and compression. Resolves false when it is missing. */
 	readonly sendFile: (req: http.IncomingMessage, res: http.ServerResponse, file: string, immutable: boolean) => Promise<boolean>;
+	/** The machine's usage reader, shared with the agent server's `/api/usage` (other machines read it there). */
+	readonly usage?: VoltUsageService;
 }
 
 /**
@@ -331,7 +333,7 @@ export class ServerWorkbench extends Disposable {
 			hostSettings: () => this.configurationService.getValue(VOLT_SOURCE_CONTROL_HOSTS_SETTING),
 		}));
 		socketServer.registerChannel(VOLT_PULL_REQUEST_CHANNEL_NAME, ProxyChannel.fromService(pullRequests, store));
-		socketServer.registerChannel(VOLT_USAGE_CHANNEL_NAME, ProxyChannel.fromService(new VoltUsageService(resolveEnv, this.logService, join(userDataDir, 'volt-usage')), store));
+		socketServer.registerChannel(VOLT_USAGE_CHANNEL_NAME, ProxyChannel.fromService(this.options.usage ?? new VoltUsageService(resolveEnv, this.logService, join(userDataDir, 'volt-usage')), store));
 	}
 
 	/**

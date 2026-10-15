@@ -7,6 +7,7 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { MockContextKeyService } from '../../../../../platform/keybinding/test/common/mockKeybindingService.js';
 import { IAgentHistoryService, IAgentSessionLifecycle, IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { IAgentOrchestratorService, IOrchThread, ORCH_HOLD_SETTLED, OrchCommandBody } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { AgentLifecycleUndoContext, AgentThreadLifecycleService } from '../../browser/home/agentThreadLifecycle.js';
 
 /** Just enough history: the setters change the stored meta the way the real service does. */
@@ -28,6 +29,20 @@ function fakeHistory(metas: IAgentSessionMeta[]): IAgentHistoryService {
 	} as unknown as IAgentHistoryService;
 }
 
+/** The chats the orchestrator has, and the commands it was sent. */
+function fakeOrchestrator(threads: Partial<IOrchThread>[] = []): IAgentOrchestratorService & { readonly sent: OrchCommandBody[] } {
+	const sent: OrchCommandBody[] = [];
+	const byId = new Map(threads.map(thread => [thread.id!, { queue: [], ...thread } as unknown as IOrchThread]));
+	return {
+		sent,
+		getThread: (id: string) => byId.get(id),
+		dispatch: async (command: OrchCommandBody) => {
+			sent.push(command);
+			return [];
+		},
+	} as unknown as IAgentOrchestratorService & { readonly sent: OrchCommandBody[] };
+}
+
 function chat(id: string, extra: Partial<IAgentSessionMeta> = {}): IAgentSessionMeta {
 	return { id, title: id, createdAt: 0, updatedAt: 0, workspaceId: 'w', workspaceLabel: 'volt', turnCount: 1, preview: id, status: 'done', ...extra };
 }
@@ -39,7 +54,7 @@ suite('Agent thread lifecycle undo', () => {
 	test('undo puts settled chats back, pin and snooze included, and ends the offer', async () => {
 		const history = fakeHistory([chat('a', { pinned: true }), chat('b', { snoozed: true, snoozedUntil: 50 })]);
 		const contextKeys = store.add(new MockContextKeyService());
-		const service = store.add(new AgentThreadLifecycleService(history, contextKeys));
+		const service = store.add(new AgentThreadLifecycleService(history, fakeOrchestrator(), contextKeys));
 		let changes = 0;
 		store.add(service.onDidChangeNotice(() => changes++));
 
@@ -63,7 +78,7 @@ suite('Agent thread lifecycle undo', () => {
 
 	test('an action that changes nothing offers no undo; archive and pin are undoable', async () => {
 		const history = fakeHistory([chat('a'), chat('b', { pinned: true })]);
-		const service = store.add(new AgentThreadLifecycleService(history, store.add(new MockContextKeyService())));
+		const service = store.add(new AgentThreadLifecycleService(history, fakeOrchestrator(), store.add(new MockContextKeyService())));
 		// Read through a function: assert narrows a property it saw as undefined.
 		const notice = () => service.notice;
 		await service.setSettled('a', false);
@@ -79,5 +94,17 @@ suite('Agent thread lifecycle undo', () => {
 		assert.strictEqual(notice()?.action, 'pin');
 		service.dismiss();
 		assert.strictEqual(notice(), undefined);
+	});
+
+	test('bringing a chat back takes it out of Settled and Archive and lifts the hold, pausing what queued meanwhile', async () => {
+		const history = fakeHistory([chat('a', { settled: true, archived: true })]);
+		const orchestrator = fakeOrchestrator([{ id: 'a', blocked: ORCH_HOLD_SETTLED, queue: [{ id: 'n1', prompt: { text: 'news' }, at: 0 }] }]);
+		const service = store.add(new AgentThreadLifecycleService(history, orchestrator, store.add(new MockContextKeyService())));
+		const pending = service.bringBack('a');
+		assert.deepStrictEqual(orchestrator.sent.map(command => command.type), ['queue.pause', 'thread.block'], 'lifted before it returns');
+		await pending;
+		assert.strictEqual(history.get('a')?.settled, undefined);
+		assert.strictEqual(history.get('a')?.archived, false);
+		assert.strictEqual(service.notice, undefined, 'not an undoable lifecycle move');
 	});
 });

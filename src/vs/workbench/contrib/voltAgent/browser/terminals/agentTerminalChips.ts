@@ -17,6 +17,7 @@ import { IOpenerService } from '../../../../../platform/opener/common/opener.js'
 import { URI } from '../../../../../base/common/uri.js';
 import { AgentTerminalStatus, isTerminalLive } from '../../../../services/voltRuntime/common/terminalTools.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { createThinkingDots } from '../composer/agentComposerChips.js';
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { IAgentTerminalInfo, IAgentTerminalsService } from './agentTerminals.js';
 
@@ -45,9 +46,9 @@ const STATUS_WEIGHT: Record<AgentTerminalStatus, number> = {
 };
 
 /**
- * The chat's managed terminals as one chip in the composer's chip row (agentComposerChips.ts): the
- * terminal itself, or "2 terminals running" for several, with a chevron for the menu. A spinner
- * only while a terminal is genuinely starting; a running server shows a steady dot. Clicking opens
+ * The chat's managed terminals as one chip in the composer's chip row (agentComposerChips.ts):
+ * "1 terminal" or "2 terminals" (the running count), with a chevron for the menu. A live
+ * terminal leads with the row's dot loader; a spinner only while it stops. Clicking opens
  * the terminal in the chat's tools on the right; starting a terminal never opens them by itself.
  */
 export class AgentTerminalChips extends Disposable {
@@ -114,7 +115,7 @@ export class AgentTerminalChips extends Disposable {
 		const main = append(chip, $('button.volt-agent-terminal-runs-main')) as HTMLButtonElement;
 		main.type = 'button';
 		main.appendChild(statusIndicator(info.status));
-		append(main, $('span.volt-agent-composer-chip-label.volt-agent-terminal-runs-label')).textContent = info.label;
+		append(main, $('span.volt-agent-composer-chip-label.volt-agent-terminal-runs-label')).textContent = terminalCountLabel(1);
 		const detail = chipDetail(info);
 		if (detail) {
 			append(main, $('span.volt-agent-terminal-runs-detail')).textContent = detail;
@@ -151,12 +152,12 @@ export class AgentTerminalChips extends Disposable {
 		const main = append(chip, $('button.volt-agent-terminal-runs-main')) as HTMLButtonElement;
 		main.type = 'button';
 		main.appendChild(statusIndicator(top.status));
-		const label = live.length
-			? failed.length
-				? localize('voltAgent.terminal.summaryFailed', "{0} terminals running \u00b7 {1} failed", live.length, failed.length)
-				: localize('voltAgent.terminal.summary', "{0} terminals running", live.length)
-			: localize('voltAgent.terminal.summaryDone', "{0} terminals", list.length);
+		// Just the count (running ones while any run); names, ports and failures are in the tooltip and menu.
+		const label = terminalCountLabel(live.length || list.length);
 		append(main, $('span.volt-agent-composer-chip-label.volt-agent-terminal-runs-label')).textContent = label;
+		main.setAttribute('aria-label', failed.length
+			? localize('voltAgent.terminal.summaryAriaFailed', "{0}, {1} failed", label, failed.length)
+			: label);
 		const dots = append(main, $('span.volt-agent-terminal-runs-dots'));
 		for (const info of list.slice(0, 5)) {
 			append(dots, $(`span.dot.${info.status}`));
@@ -285,7 +286,6 @@ function menuItems(info: IAgentTerminalInfo, grouped: boolean): IVoltMenuItem<IC
 function statusIndicator(status: AgentTerminalStatus): HTMLElement {
 	const el = $(`span.volt-agent-terminal-status.${status}`);
 	switch (status) {
-		case 'starting':
 		case 'stopping':
 			el.appendChild(renderIcon(ThemeIcon.modify(Codicon.loading, 'spin')));
 			break;
@@ -299,8 +299,8 @@ function statusIndicator(status: AgentTerminalStatus): HTMLElement {
 			el.appendChild(renderIcon(Codicon.debugStop));
 			break;
 		default:
-			// Running, ready, needs input: a steady dot, so a server that runs for hours never looks stuck.
-			append(el, $('span.dot'));
+			// Starting, running, ready, needs input: the row's loader, like "2 subagents running".
+			el.appendChild(createThinkingDots());
 	}
 	return el;
 }
@@ -320,14 +320,17 @@ function statusLabel(info: IAgentTerminalInfo): string {
 	}
 }
 
-/** The muted text after a chip's label: where it serves, or why it failed. */
+/** "1 terminal" / "3 terminals": the chip names no terminal, port or address. */
+function terminalCountLabel(count: number): string {
+	return count === 1
+		? localize('voltAgent.terminal.countOne', "1 terminal")
+		: localize('voltAgent.terminal.count', "{0} terminals", count);
+}
+
+/** The muted text after a chip's label: why it failed or waits (where it serves is in the tooltip). */
 function chipDetail(info: IAgentTerminalInfo): string | undefined {
 	if (info.status === 'failed') {
 		return info.exitCode !== undefined ? localize('voltAgent.terminal.exitShort', "exit {0}", info.exitCode) : statusLabel(info);
-	}
-	const url = info.urls[0];
-	if (url && isTerminalLive(info.status)) {
-		return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
 	}
 	return info.status === 'attention' ? statusLabel(info) : undefined;
 }

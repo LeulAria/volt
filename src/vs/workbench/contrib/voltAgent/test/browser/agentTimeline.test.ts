@@ -370,6 +370,7 @@ suite('Agent run state', () => {
 		assert.strictEqual(failureTitle('The agent stopped responding after 9 minutes'), 'Agent stopped responding');
 		assert.strictEqual(failureTitle('Doom loop: identical tool batch repeated'), 'Agent looping detected');
 		assert.strictEqual(failureTitle('Provider returned 400'), 'Something went wrong');
+		assert.strictEqual(failureTitle('You\'ve hit your session limit \u00b7 resets 12:40am (Asia/Dubai)'), 'Usage limit reached');
 	});
 
 	test('to-dos read as a checklist, then as Cursor\'s completed summary', () => {

@@ -9,7 +9,7 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
-import { AgentTooltip, setAgentTooltip } from '../chrome/agentTooltip.js';
+import { AgentTooltip, bindTruncatedHoverTooltip, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { groupSummary, isLiveSubagentState, ISubagentView, renderCursorCardRow, tickSubagentClocks } from '../chrome/agentSubagents.js';
 import { ITasksCard } from '../chrome/agentTimeline.js';
 import { AgentTasksCard } from './agentTasksCard.js';
@@ -419,7 +419,7 @@ export class AgentComposerQueue extends Disposable {
 			const text = append(row, $('span.volt-agent-queue-text'));
 			const preview = (item.preview ?? item.text).trim().replace(/\s+/g, ' ');
 			text.textContent = preview;
-			setAgentTooltip(text, preview);
+			this.listeners.add(bindTruncatedHoverTooltip(text, preview));
 			const onEdit = this.options.onEdit;
 			const onSendNow = this.options.onSendNow;
 			if (!isEditing && onEdit) {

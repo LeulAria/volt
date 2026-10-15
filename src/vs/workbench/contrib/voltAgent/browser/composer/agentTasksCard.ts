@@ -10,7 +10,7 @@ import { Disposable, DisposableStore } from '../../../../../base/common/lifecycl
 import { basename } from '../../../../../base/common/path.js';
 import { localize } from '../../../../../nls.js';
 import { ITasksCard, ITasksCardItem, ITodoOutcome } from '../chrome/agentTimeline.js';
-import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { bindTruncatedHoverTooltip, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { formatChangeStats } from '../review/fileChangePreviewModel.js';
 
 /** The one thing a finished to-do produced, opened beside the chat when its outcome is clicked. */
@@ -119,7 +119,7 @@ export class AgentTasksCard extends Disposable {
 		const working = card.live && card.items.some(item => item.state === 'current' && item.label === card.current);
 		current.classList.toggle('shimmer', working);
 		if (card.current) {
-			setAgentTooltip(current, card.current);
+			this.listeners.add(bindTruncatedHoverTooltip(current, card.current));
 		}
 		append(head, $('span.volt-agent-tasks-count')).textContent = `${card.done}/${card.total}`;
 		const bar = append(head, $('span.volt-agent-tasks-bar'));
@@ -144,7 +144,7 @@ export class AgentTasksCard extends Disposable {
 			const label = append(row, $('span.volt-agent-tasks-label'));
 			label.textContent = item.label;
 			label.classList.toggle('shimmer', card.live && item.state === 'current');
-			setAgentTooltip(label, item.label);
+			this.listeners.add(bindTruncatedHoverTooltip(label, item.label));
 			if (item.outcome) {
 				this.renderOutcome(row, item.outcome);
 			}
@@ -169,7 +169,11 @@ export class AgentTasksCard extends Disposable {
 			const link = append(el, $('button.volt-agent-tasks-outcome-link')) as HTMLButtonElement;
 			link.type = 'button';
 			link.textContent = text;
-			setAgentTooltip(link, tooltip ?? text);
+			if (tooltip) {
+				setAgentTooltip(link, tooltip);
+			} else {
+				this.listeners.add(bindTruncatedHoverTooltip(link, text));
+			}
 			this.listeners.add(addDisposableListener(link, 'click', e => {
 				e.preventDefault();
 				e.stopPropagation();

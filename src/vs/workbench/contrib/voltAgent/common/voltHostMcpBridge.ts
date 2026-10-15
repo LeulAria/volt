@@ -9,6 +9,7 @@ import { generateUuid } from '../../../../base/common/uuid.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IVoltHostMcpResult, IVoltHostMcpService } from '../../../../platform/voltHostMcp/common/voltHostMcp.js';
 import { IVoltHostToolResult, IVoltHostToolService, LEGACY_TOOL_NAMES } from '../../../services/voltRuntime/common/hostTools.js';
+import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
 
 /**
  * Serves Volt's host tools to the agents this process launches over the host MCP server: a
@@ -24,6 +25,7 @@ export class VoltHostMcpBridge extends Disposable {
 		@IVoltHostMcpService private readonly mcp: IVoltHostMcpService,
 		@IVoltHostToolService private readonly hostTools: IVoltHostToolService,
 		@ILogService private readonly logService: ILogService,
+		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 	) {
 		super();
 		this._register(this.mcp.onDidCall(call => {
@@ -60,7 +62,10 @@ export class VoltHostMcpBridge extends Disposable {
 		this.calls.set(id, cancel);
 		let result: IVoltHostToolResult;
 		try {
-			result = await this.hostTools.invokeTool(name, args, { sessionId, token: cancel.token, source: 'mcp' });
+			// A warm spare agent was started under a pool alias before any chat adopted it, and its
+			// MCP URL still carries that alias: name the chat, or the browser, questions and mode
+			// gates act for a chat that does not exist.
+			result = await this.hostTools.invokeTool(name, args, { sessionId: sessionId ? this.runtime.chatFor(sessionId) : undefined, token: cancel.token, source: 'mcp' });
 		} catch (err) {
 			result = { error: err instanceof Error ? err.message : String(err) };
 		}

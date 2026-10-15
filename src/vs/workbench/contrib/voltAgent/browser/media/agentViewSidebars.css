@@ -309,6 +309,21 @@
 	-webkit-backdrop-filter: none;
 }
 
+/* A tall card (many agents, tabs, pull requests) stays inside the transcript's height and scrolls in itself
+ * instead of running out of view under the composer. */
+.monaco-workbench.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element > .volt-agent-quick-open-actions.expanded {
+	max-height: calc(100% - 16px);
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element > .volt-agent-quick-open-actions.expanded > .volt-agent-quick-open-body {
+	flex: 0 1 auto;
+	min-height: 0;
+	overflow-x: hidden;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-width: thin;
+}
+
 .monaco-workbench.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element > .volt-agent-quick-open-actions.collapsed {
 	flex: 0 0 auto;
 	width: auto;
@@ -397,6 +412,43 @@
 	font-weight: 300;
 	line-height: 16px;
 	color: var(--vscode-descriptionForeground);
+}
+
+/* A heading that folds its group ("On volt", "Subagents · 2 running"): the title, then a small chevron. */
+.volt-agent-dock-heading.volt-agent-dock-fold {
+	display: flex;
+	align-items: center;
+	justify-content: flex-start;
+	gap: 4px;
+	box-sizing: border-box;
+	width: 100%;
+	border: 0;
+	background: transparent;
+	font-family: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-agent-dock-heading.volt-agent-dock-fold > .label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-dock-heading.volt-agent-dock-fold > .codicon {
+	flex: none;
+	font-size: 12px;
+	opacity: 0.7;
+}
+
+.volt-agent-dock-heading.volt-agent-dock-fold:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-dock-heading.volt-agent-dock-fold:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
 }
 
 .volt-agent-dock-section.hidden {

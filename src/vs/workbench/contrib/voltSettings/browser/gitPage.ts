@@ -238,7 +238,7 @@ export class GitPage {
 			} else if (!connected) {
 				// gh signs in in a terminal; nothing tells Volt when it is done, so the button asks again.
 				let started = false;
-				button(localize('voltGitPage.signIn', "Sign In"), 'primary', b => {
+				button(localize('voltGitPage.signIn', "Sign In"), 'secondary', b => {
 					if (started) {
 						b.enabled = false;
 						void this.pullRequests.api.refreshAccounts().finally(refresh);
@@ -251,7 +251,7 @@ export class GitPage {
 			}
 			return;
 		}
-		button(accounts.length ? localize('voltGitPage.addServer', "Add Server") : localize('voltGitPage.connect', "Connect"), accounts.length ? 'secondary' : 'primary', b => {
+		button(accounts.length ? localize('voltGitPage.addServer', "Add Server") : localize('voltGitPage.connect', "Connect"), 'secondary', b => {
 			b.enabled = false;
 			void this.commandService.executeCommand<boolean>(SIGN_IN_HOST_COMMAND_ID, provider).finally(() => {
 				b.enabled = true;

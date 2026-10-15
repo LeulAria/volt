@@ -77,6 +77,8 @@ interface IAcpSession {
 	turn?: AcpPromptTurn;
 	/** Settles once the last `session/prompt` has been answered or abandoned. The next prompt waits for it. */
 	settling?: Promise<void>;
+	/** The to-do list as it changed between turns (a background subagent's TaskUpdate): the next turn starts from it. */
+	pendingPlan?: Extract<IVoltEvent, { type: 'plan' }>;
 	/** Pool key of the setup this session was started with (spares are matched on it). */
 	setupKey?: string;
 	/** The host MCP servers `session/new` connected (JSON), and what they were derived from. */
@@ -1079,6 +1081,11 @@ export class AcpAgentProvider implements IAgentProvider {
 		turn.watchdog = new IdleWatchdog(info => this.onIdle(live, turn, info), this.supervision.idle ?? ACP_IDLE_TIMINGS, clock);
 		turn.supervisor = new RunSupervisor({ budget: ACP_RUN_BUDGET, ...this.supervision.supervisor, startedAt: clock.now() });
 		live.turn = turn;
+		const pendingPlan = live.pendingPlan;
+		live.pendingPlan = undefined;
+		if (pendingPlan) {
+			this.pushActivity(live, turn, pendingPlan);
+		}
 		const cancel = token.onCancellationRequested(() => this.cancelTurn(live, turn, 'user'));
 		// Not awaited at the end: once `run.end` is out, a cancelled prompt may still be settling.
 		void this.runTurn(live, turn, msg, token)
@@ -1129,6 +1136,9 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		const turn = live.turn;
 		if (!turn || turn.ended) {
+			if (isChatPlanUpdate(params, live.handle.providerSessionId ?? live.handle.id)) {
+				live.pendingPlan = this.mapUpdate(params).find((event): event is Extract<IVoltEvent, { type: 'plan' }> => event.type === 'plan');
+			}
 			return;
 		}
 		if (this.routeSubagentUpdate(live, turn, params)) {
@@ -1249,9 +1259,14 @@ export class AcpAgentProvider implements IAgentProvider {
 			// A child's own update: keep it out of the parent's steps and its loop/stall supervision.
 			const child = children.get(sessionId);
 			turn.watchdog.activity();
+			// Claude keeps one task list per session: a subagent's TaskUpdate sends the whole chat's list, so the parent's Tasks card takes it too.
+			const sharedPlan = isChatPlanUpdate(params, root);
 			for (const event of this.mapUpdate(params)) {
 				if (event.type === 'text.delta' && event.delta && child) {
 					child.text += event.delta;
+				}
+				if (event.type === 'plan' && sharedPlan) {
+					this.pushActivity(live, turn, event);
 				}
 				if (event.type === 'tool.start') {
 					turn.push({ type: 'subagent.update', childId: sessionId, activity: event.title || event.name });
@@ -2069,6 +2084,19 @@ function configOptionsUpdate(params: unknown, rootSessionId: string): IAcpConfig
 		return undefined;
 	}
 	return (update.configOptions as unknown[]).filter((option): option is IAcpConfigOption => !!option && typeof (option as { id?: unknown }).id === 'string');
+}
+
+/**
+ * A `plan` update that arrived with no turn running and still belongs to the chat: the session's own,
+ * or a Claude subagent's (Claude keeps one task list per session). Another agent's child plan stays its own.
+ */
+function isChatPlanUpdate(params: unknown, root: string): boolean {
+	const body = params as { sessionId?: unknown; update?: Record<string, unknown> } | undefined;
+	const update = body?.update;
+	if (update?.sessionUpdate !== 'plan') {
+		return false;
+	}
+	return typeof body?.sessionId !== 'string' || body.sessionId === root || !!(update._meta as { claudeCode?: unknown } | undefined)?.claudeCode;
 }
 
 /** `cursor/update_todos` params as a Volt plan event. */

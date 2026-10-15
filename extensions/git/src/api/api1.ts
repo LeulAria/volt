@@ -522,16 +522,21 @@ export function registerAPICommands(extension: GitExtensionImpl): Disposable {
 		return commands.executeCommand('git-base.api.getRemoteSources', opts);
 	}));
 
-	disposables.push(commands.registerCommand('git.api.getWorkingTreeShortStat', async () => {
+	// `roots` limits the sum to the repositories holding those folders; without it every open
+	// repository counts, including unrelated worktrees the scan picked up.
+	disposables.push(commands.registerCommand('git.api.getWorkingTreeShortStat', async (roots?: Uri[]) => {
 		const model = extension.model;
 		if (!model) {
 			return { files: 0, insertions: 0, deletions: 0 };
 		}
 
+		const repositories = roots
+			? [...new Set(roots.map(root => model.getRepository(root)).filter(repository => !!repository))]
+			: model.repositories;
 		let files = 0;
 		let insertions = 0;
 		let deletions = 0;
-		for (const repository of model.repositories) {
+		for (const repository of repositories) {
 			try {
 				const stat = await repository.diffHEADShortStat();
 				files += stat.files;

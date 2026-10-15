@@ -25,7 +25,7 @@ import { retryDelay, RUN_START_RETRY } from '../../common/jobs/retryPolicy.js';
 import { normalizeVoltMode } from '../../common/modes.js';
 import { agentTaskTools, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, DELEGATE_TASK_TOOL_NAME, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeTaskRole, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
-import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimits, IOrchMove, IOrchTurn, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_KEEP_WORKING_SETTING, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, readOrchLimits } from '../../common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimits, IOrchMove, IOrchTurn, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_KEEP_WORKING_SETTING, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, orchHoldReason, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, readOrchLimits } from '../../common/orchestration/orchestrator.js';
 import { ILimitSignal, isClaudeProvider, isRealAnswer, LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING, limitAutoResumes, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
 import { extractRoot, IOrchIndex, IOrchRootSnapshot, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
 import { isRescueTurnId, rescueDueAt, rescueWaits } from '../../common/orchestration/rescue.js';
@@ -36,6 +36,7 @@ import { DeadlineTimer } from '../jobs/deadlineTimer.js';
 import { DurableClaims } from '../jobs/durableClaims.js';
 import { BEACON_TTL_MS, WorkbenchBeacons } from '../jobs/workbenchBeacons.js';
 import { OrchestratorStore } from './orchestratorStore.js';
+import { orchIsTurnCurrent, orchTaskForToolCall, orchTasksOf } from '../../common/orchestration/orchestratorQueries.js';
 
 /** Models one delegate_task call may run the same brief on. */
 const MAX_FAN_OUT = 4;
@@ -235,12 +236,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	tasksOf(threadId: string): readonly IOrchTask[] {
-		return Object.values(this.state.tasks).filter(task => task.parentId === threadId).sort((a, b) => a.createdAt - b.createdAt);
+		return orchTasksOf(this.state, threadId);
 	}
 
 	taskForToolCall(threadId: string, toolCallId: string): IOrchTask | undefined {
-		return this.state.tasks[harnessTaskId(toolCallId)]
-			?? Object.values(this.state.tasks).find(task => task.parentId === threadId && task.toolCallId === toolCallId);
+		return orchTaskForToolCall(this.state, threadId, toolCallId);
 	}
 
 	async dispatch(command: OrchCommandBody & { readonly id?: string }): Promise<readonly OrchEvent[]> {
@@ -311,12 +311,16 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			await loading;
 		}
 		this.apply({ type: 'turn.cancel', threadId, ...(options?.cascade ? { cascade: options.cascade } : {}) });
+		// A run the orchestrator does not know as this chat's turn (it lost track, or never had it)
+		// would ignore the stop above: the runtime stops whatever still runs there.
+		if (!this.state.threads[threadId]?.active) {
+			void this.runtime.cancel(threadId).catch(err => this.logService.warn('[volt orchestrator] cancel failed', err));
+		}
 		this._onDidStop.fire(threadId);
 	}
 
 	isTurnCurrent(threadId: string, turnId: string): boolean {
-		const active = this.state.threads[threadId]?.active;
-		return active?.id === turnId && active.phase !== 'cancelling';
+		return orchIsTurnCurrent(this.state, threadId, turnId);
 	}
 
 	setWorkspaceMover(mover: IOrchWorkspaceMover): IDisposable {
@@ -657,6 +661,20 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		await this.store.flush();
 	}
 
+	/**
+	 * Settled and archived chats do not run: their trees are held the moment they are in memory, before
+	 * a restart or a wake-up could start them (the guard in the agent window keeps the hold in step after).
+	 */
+	private holdSettled(threadIds: readonly string[]): void {
+		for (const id of threadIds) {
+			const thread = this.state.threads[id];
+			const hold = thread && !thread.taskId && !thread.blocked ? orchHoldReason(this.history.get(id)) : undefined;
+			if (hold) {
+				this.apply({ type: 'thread.block', threadId: id, reason: hold });
+			}
+		}
+	}
+
 	/** Loads the roots a restart must reconcile, then marks everything that was running as interrupted. */
 	private async restore(): Promise<void> {
 		try {
@@ -690,6 +708,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				// Write the rebuilt index now, not with the next change.
 				this.schedulePersist();
 			}
+			this.holdSettled(Object.keys(this.state.threads));
 			const step = this.apply({ type: 'recover', resume: this.restartResume() }, `recover:${generateUuid()}`);
 			if (step.envelopes.length) {
 				const continued = step.envelopes.filter(envelope => envelope.event.type === 'turn.dispatched').length;
@@ -761,6 +780,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 					this.state = mergeRoot(this.state, snapshot);
 					this.rootEvents.set(rootId, [...snapshot.events]);
 					this._onDidChange.fire({ threads: snapshot.threads.map(thread => thread.id), tasks: snapshot.tasks.map(task => task.id) });
+					this.holdSettled(snapshot.threads.map(thread => thread.id));
 					if (isRootLive(this.state, rootId)) {
 						// The index missed this tree, so the restart never reconciled it: whatever it was running
 						// died with an earlier window. Settle that now (nothing resumes on its own) instead of
@@ -818,6 +838,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				this.state = mergeRoot(this.state, snapshot);
 				this.rootEvents.set(rootId, [...snapshot.events]);
 				this._onDidChange.fire({ threads: snapshot.threads.map(thread => thread.id), tasks: snapshot.tasks.map(task => task.id) });
+				this.holdSettled(snapshot.threads.map(thread => thread.id));
 				const step = this.apply({ type: 'recover', resume: this.restartResume(), rootId }, `recover:${rootId}:${generateUuid()}`);
 				this.logService.info(`[volt orchestrator] took over ${rootId} from a Volt window that is gone: ${step.envelopes.length} change(s)`);
 			}

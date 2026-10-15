@@ -472,6 +472,44 @@ suite('ACP provider supervision', () => {
 		await finish(env, handle);
 	});
 
+	test('native subagents: a Claude child\'s task list update is the chat\'s list, so the parent takes it too', async () => {
+		const env = setup();
+		const { handle, turn } = await startTurn(env, 'build it with two helpers');
+		const notify = (sessionId: string, update: Json) => env.agent.send('p1', { jsonrpc: '2.0', method: 'session/update', params: { sessionId, update } });
+		notify('acp-p1', { sessionUpdate: 'subagent_spawned', subagentSessionId: 'af4e', name: 'Web app', task: 'Build the web app', capabilities: {} });
+		const entries = [{ content: 'Scaffold', status: 'completed', priority: 'medium' }, { content: 'Web app', status: 'completed', priority: 'medium' }];
+		notify('af4e', { sessionUpdate: 'plan', entries, _meta: { claudeCode: { parentToolUseId: 'toolu_agent' } } });
+		// Another agent's child (no Claude meta) keeps its own plan.
+		notify('af4e', { sessionUpdate: 'plan', entries: [{ content: 'Child only', status: 'pending' }] });
+		await settle();
+		assert.deepStrictEqual(kinds(turn.events), ['subagent.spawned', 'plan', 'subagent.event', 'subagent.event']);
+		const plan = turn.events[1] as Extract<IVoltEvent, { type: 'plan' }>;
+		assert.deepStrictEqual(plan.entries.map(entry => `${entry.content}:${entry.status}`), ['Scaffold:completed', 'Web app:completed']);
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await turn.done;
+		await finish(env, handle);
+	});
+
+	test('a task list that changed between turns opens the next turn, so the Tasks card is not left on the old one', async () => {
+		const env = setup();
+		const first = await startTurn(env, 'first');
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await first.turn.done;
+		const notify = (sessionId: string, update: Json) => env.agent.send('p1', { jsonrpc: '2.0', method: 'session/update', params: { sessionId, update } });
+		notify('acp-p1', { sessionUpdate: 'plan', entries: [{ content: 'Old', status: 'in_progress' }] });
+		notify('af4e', { sessionUpdate: 'plan', entries: [{ content: 'Old', status: 'completed' }], _meta: { claudeCode: { parentToolUseId: 'toolu_agent' } } });
+		await settle();
+		const cts = store.add(new CancellationTokenSource());
+		const second = collect(env.provider.send(first.handle, { text: 'second', mode: 'agent' }, PROFILE, cts.token));
+		await settle();
+		env.agent.answerPrompt(1, { stopReason: 'end_turn' });
+		await second.done;
+		assert.deepStrictEqual(kinds(second.events), ['plan', 'run.end:done']);
+		const plan = second.events[0] as Extract<IVoltEvent, { type: 'plan' }>;
+		assert.deepStrictEqual(plan.entries.map(entry => `${entry.content}:${entry.status}`), ['Old:completed'], 'the latest list wins');
+		await finish(env, first.handle);
+	});
+
 	test('Cursor: a Task that failed says so, and cursor/task is answered with the model it ran on', async () => {
 		const env = setup();
 		const { handle, turn } = await startTurn(env);

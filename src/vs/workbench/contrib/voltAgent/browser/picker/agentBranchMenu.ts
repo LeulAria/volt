@@ -6,6 +6,7 @@
 import '../media/agentBranchMenu.css';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { fromNow } from '../../../../../base/common/date.js';
+import { toErrorMessage } from '../../../../../base/common/errorMessage.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -162,6 +163,11 @@ export function showAgentBranchMenu(accessor: ServicesAccessor, options: IAgentB
 		sections: async () => {
 			const branches = await loadBranches(gitService, repoRoot, repository);
 			if (!branches || (!branches.head && !branches.detached && !branches.local.length)) {
+				// Git that cannot run is not a folder without a repository: say so instead of offering git init.
+				const gitError = repoRoot ? await gitService.resolveRepo(repoRoot).then(() => undefined, (error: unknown) => toErrorMessage(error)) : undefined;
+				if (gitError) {
+					return [{ id: 'none', items: [{ id: 'gitFailed', label: localize('voltAgent.gitFailed', "Git could not run"), icon: Codicon.warning, tooltip: gitError, disabled: true, data: NO_PICK }] }];
+				}
 				return repoRoot
 					? [{ id: 'none', items: [{ id: 'init', label: localize('voltAgent.initRepository', "Initialize Repository"), icon: Codicon.repo, tooltip: localize('voltAgent.noRepository', "No git repository"), data: { kind: 'init' } }] }]
 					: [];

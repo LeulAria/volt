@@ -10,11 +10,12 @@ import { homedir, tmpdir } from 'os';
 import { basename, delimiter, join } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
-import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidShell, androidTextChunks, avdLabel, fitWithin, gzipFrom, ICommand, IAdbDevice, IRawFrame, iosInputCommand, IosInputTool, isAlreadyBooted, isAlreadyShutdown, isXcodeLicenseError, jpegSize, looksFoldable, parseAdbDevices, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseNightMode, parseRawFrame, parseSimctlAppearance, parseSimctlDevices, parseSimctlScreen, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, SYSTEM_SIMCTL, sshCommand, stateForPosture } from '../common/deviceCommands.js';
+import { DeviceHub } from './deviceHub.js';
+import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidShell, androidTextChunks, avdLabel, fitWithin, gzipFrom, ICommand, IAdbDevice, IRawFrame, iosInputCommand, IosInputTool, isAlreadyBooted, isAlreadyShutdown, isXcodeLicenseError, jpegSize, looksFoldable, parseAdbDevices, parseAndroidFocus, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseNightMode, parseRawFrame, parseSimctlAppearance, parseSimctlDevices, parseSimctlScreen, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, SYSTEM_SIMCTL, sshCommand, stateForPosture } from '../common/deviceCommands.js';
 import { FileAccess } from '../../../base/common/network.js';
 import { ANDROID_KEY_NUMBERS, ANDROID_UI_SERVER_COMMAND, ANDROID_UI_SERVER_JAR, AndroidUiServer } from './androidUiServer.js';
 import { downscale, encodePng } from './frameEncoding.js';
-import { IVoltDevice, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDeviceRef, IVoltDeviceScreen, IVoltDevicesService, IVoltDeviceUi, VoltDeviceAppearance, VoltDeviceInput, VoltDevicePosture, VoltDeviceState } from '../common/voltDevices.js';
+import { IVoltDevice, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDeviceRef, IVoltDeviceScreen, IVoltDevicesService, IVoltDeviceUi, VoltDeviceAppearance, VoltDeviceInput, VoltDeviceModelId, VoltDevicePosture, VoltDeviceState } from '../common/voltDevices.js';
 
 interface IRunResult {
 	readonly stdout: Buffer;
@@ -81,6 +82,8 @@ export class VoltDevicesService implements IVoltDevicesService {
 	private readonly uiServers = new Map<string, AndroidUiServer>();
 	private readonly uiServerFailures = new Map<string, number>();
 
+	private readonly hub: DeviceHub | undefined;
+
 	/**
 	 * `encodeJpeg` turns RGBA pixels into a JPEG of the given size (the main process has a native
 	 * one); without it, previews fall back to a shrunk PNG made here.
@@ -89,7 +92,33 @@ export class VoltDevicesService implements IVoltDevicesService {
 		private readonly env: () => Promise<NodeJS.ProcessEnv>,
 		protected readonly logService: ILogService,
 		private readonly encodeJpeg?: (frame: IRawFrame, width: number, height: number) => Buffer | undefined,
-	) { }
+		/** Where tools Volt installs (Expo's device hub) live; no live streaming without it. */
+		toolsDir?: string,
+	) {
+		this.hub = toolsDir ? new DeviceHub(toolsDir, env, name => this.which(name), logService) : undefined;
+	}
+
+	//#region Live stream
+
+	async attachStream(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<string> {
+		if (!this.hub) {
+			throw new Error('Live streaming is not available here.');
+		}
+		if (host.ssh || device.platform !== 'ios' || process.platform !== 'darwin') {
+			throw new Error('Live streaming works for iOS simulators on this Mac.');
+		}
+		return this.hub.attach(device.id);
+	}
+
+	async readDeviceModel(id: VoltDeviceModelId): Promise<string | undefined> {
+		// Apple's models carry no redistribution license, so Volt does not ship them: they are
+		// read from the user's machine (see https://github.com/pingdotgg/t3code for the conversion).
+		const file = join(homedir(), '.volt', 'device-models', `${id}.glb`);
+		const data = await fs.readFile(file).catch(() => undefined);
+		return data?.toString('base64');
+	}
+
+	//#endregion
 
 	//#region Running commands
 
@@ -268,7 +297,17 @@ export class VoltDevicesService implements IVoltDevicesService {
 			throw new ToolMissingError('xcrun not found');
 		}
 		const result = await this.simctlRun(host, ['list', 'devices', '--json'], { timeout: LIST_TIMEOUT });
-		return parseSimctlDevices(text(result), host.id);
+		const devices = parseSimctlDevices(text(result), host.id);
+		if (!host.ssh && this.hub) {
+			// Shut down outside Volt (Xcode, simctl): drop its stream helper, or it would keep
+			// showing the old screen after the next boot.
+			for (const device of devices) {
+				if (device.state === 'shutdown' && this.hub.streams(device.id)) {
+					void this.hub.shutdown(device.id);
+				}
+			}
+		}
+		return devices;
 	}
 
 	private async listAndroid(host: IVoltDeviceHost): Promise<IVoltDevice[]> {
@@ -495,6 +534,10 @@ export class VoltDevicesService implements IVoltDevicesService {
 
 	async shutdown(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<void> {
 		if (device.platform === 'ios') {
+			// A streamed simulator shuts down through the hub, which stops its helper first.
+			if (!host.ssh) {
+				await this.hub?.shutdown(device.id);
+			}
 			const result = await this.simctlRun(host, ['shutdown', device.id], { allowFail: true });
 			if (result.code !== 0 && !isAlreadyShutdown(result.stderr)) {
 				throw new Error(firstLine(result.stderr) || `Could not shut down ${device.id}`);
@@ -830,6 +873,18 @@ export class VoltDevicesService implements IVoltDevicesService {
 	}
 
 	//#endregion
+
+	async foregroundApp(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<string | undefined> {
+		if (device.platform === 'ios') {
+			return !host.ssh && this.hub ? this.hub.foreground(device.id) : undefined;
+		}
+		const serial = await this.serial(host, device).catch(() => undefined);
+		if (!serial) {
+			return undefined;
+		}
+		const result = await this.run(host, ['adb', '-s', serial, 'shell', 'dumpsys window | grep -E "mCurrentFocus|mFocusedApp"'], { allowFail: true, timeout: 4000 }).catch(() => undefined);
+		return result ? parseAndroidFocus(text(result)) : undefined;
+	}
 
 	//#region Foldables
 

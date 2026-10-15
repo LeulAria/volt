@@ -10,9 +10,17 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { fromNow } from '../../../../../base/common/date.js';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
+import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
-import { IVoltUsageLimitGroup, IVoltUsageService, IVoltUsageSnapshot, VOLT_USAGE_PROVIDERS, VoltUsageProvider } from '../../../../../platform/voltUsage/common/voltUsage.js';
+import {
+	IVoltUsageLimitGroup, IVoltUsageMachineStatus, IVoltUsageModelPrice, IVoltUsageService, IVoltUsageSnapshot, VOLT_USAGE_PROVIDERS, VOLT_USAGE_SHARE_MACHINE_COMMAND_ID,
+	VoltResetCreditOutcome, VoltUsageProvider
+} from '../../../../../platform/voltUsage/common/voltUsage.js';
+import { createVoltButton } from '../chrome/voltButton.js';
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { IVoltQueryCache, IVoltQueryHandle, IVoltQueryState } from '../../../../services/voltRuntime/browser/queryCache.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
@@ -25,8 +33,8 @@ import { showUsageModelDialog } from './agentUsageModelDialog.js';
 import { renderUsageCalendar, usageCalendar } from './agentUsageCalendar.js';
 import { IRunwayStyle, renderRunway, runwayHighlights } from './agentUsageRunway.js';
 import { costTypeSegments, hasFasterSpeeds, renderShareBar, speedCostSegments } from './agentUsageShareBar.js';
-import { formatCost, formatDay, formatDuration, formatShare, formatSlot, formatTokens } from './agentUsageFormat.js';
-import { createRefreshSpinner, setRefreshSpinnerRunning } from './agentUsageIcons.js';
+import { formatCost, formatDay, formatDuration, formatResetTime, formatShare, formatSlot, formatTokens } from './agentUsageFormat.js';
+import { createRefreshSpinner, createTicketIcon, setRefreshSpinnerRunning } from './agentUsageIcons.js';
 import { IUsageModelRow, IUsageSummary, IUsageTotals, limitsQuery, metricValue, placeholderLimits, placeholderUsage, summarizeUsage, usageQuery, UsageMetric, UsageRange } from './agentUsageModel.js';
 
 const STORAGE_RANGE = 'volt.usage.range';
@@ -51,12 +59,16 @@ const PROVIDER_LABELS: Record<VoltUsageProvider, { agent: string; account: strin
 	claude: { agent: 'Claude Code', account: 'Claude' },
 	codex: { agent: 'Codex', account: 'Codex' },
 	cursor: { agent: 'Cursor', account: 'Cursor' },
+	opencode: { agent: 'OpenCode', account: 'OpenCode Go' },
+	grok: { agent: 'Grok', account: 'Grok' },
 };
 
 const PROVIDER_COLORS: Record<VoltUsageProvider, string> = {
 	claude: 'var(--volt-usage-claude)',
 	codex: 'var(--volt-usage-codex)',
 	cursor: 'var(--volt-usage-cursor)',
+	opencode: 'var(--volt-usage-opencode)',
+	grok: 'var(--volt-usage-grok)',
 };
 
 const RUNWAY_STYLE: IRunwayStyle = {
@@ -103,6 +115,11 @@ export class AgentUsagePage extends Disposable {
 
 	private snapshot: IVoltUsageSnapshot | undefined;
 	private limits: readonly IVoltUsageLimitGroup[] | undefined;
+	/** Other computers whose usage counts here, and the prices the user set. */
+	private machines: readonly IVoltUsageMachineStatus[] = [];
+	private prices: Record<string, IVoltUsageModelPrice> = {};
+	/** Accounts with a reset being redeemed, by `provider|account`. */
+	private readonly redeeming = new Set<string>();
 	private usageError = false;
 	private limitsError = false;
 	private loadingUsage = false;
@@ -132,12 +149,16 @@ export class AgentUsagePage extends Disposable {
 		@IVoltUsageService private readonly usageService: IVoltUsageService,
 		@IVoltQueryCache private readonly cache: IVoltQueryCache,
 		@IContextViewService private readonly contextViewService: IContextViewService,
+		@IDialogService private readonly dialogService: IDialogService,
+		@INotificationService private readonly notificationService: INotificationService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super();
 		this.range = this.readStored(STORAGE_RANGE, RANGES.map(range => range.id), '30d');
 		this.breakdown = this.readStored(STORAGE_BREAKDOWN, ['model', 'day'], 'model');
 		const pageSize = Number(this.storage.get(STORAGE_PAGE_SIZE, StorageScope.PROFILE));
-		this.pageSize = (PAGE_SIZES as readonly number[]).includes(pageSize) ? pageSize : 25;
+		this.pageSize = (PAGE_SIZES as readonly number[]).includes(pageSize) ? pageSize : 10;
 		this.element = $('.volt-usage');
 		this.content = append(this.element, $('.volt-usage-content'));
 		this.render();
@@ -188,6 +209,7 @@ export class AgentUsagePage extends Disposable {
 			this.handles = undefined;
 		}));
 		sync();
+		void this.loadExtras();
 	}
 
 	focus(): void {
@@ -239,7 +261,23 @@ export class AgentUsagePage extends Disposable {
 		if (!this.handles) {
 			return;
 		}
-		await Promise.all([this.handles.usage.refetch(force), this.handles.limits.refetch(force)]);
+		await Promise.all([this.handles.usage.refetch(force), this.handles.limits.refetch(force), this.loadExtras()]);
+	}
+
+	/** The machines list and the user's prices; redraws when either changed. */
+	private async loadExtras(): Promise<void> {
+		try {
+			const [machines, prices] = await Promise.all([this.usageService.getMachines(), this.usageService.getModelPrices()]);
+			if (JSON.stringify(machines) !== JSON.stringify(this.machines) || JSON.stringify(prices) !== JSON.stringify(this.prices)) {
+				this.machines = machines;
+				this.prices = prices;
+				if (this.visible) {
+					this.render();
+				}
+			}
+		} catch {
+			// An older service (another machine's browser workbench) without machines or prices.
+		}
 	}
 
 	private syncRefresh(): void {
@@ -317,10 +355,13 @@ export class AgentUsagePage extends Disposable {
 			append(empty, $('span'));
 			append(empty, $('.volt-usage-runway-message.quiet')).textContent = this.limitsError
 				? localize('voltUsage.limitsFailed', "Limits could not be read.")
-				: localize('voltUsage.noLimits', "Sign in to Claude Code, Codex or Cursor to see your limits here.");
+				: localize('voltUsage.noLimits2', "Sign in to Claude Code, Codex, Cursor, OpenCode Go or Grok to see your limits here.");
 		}
 		if (usagePending || limitsPending) {
 			this.fadePlaceholder(runway);
+		} else {
+			this.renderResets(groups);
+			this.renderMachines();
 		}
 
 		// Below the runway, in steps: on opening, the top shows at once and the rest follows over the
@@ -574,8 +615,156 @@ export class AgentUsagePage extends Disposable {
 			agentLabel: PROVIDER_LABELS[model.provider].agent,
 			style: { label: PROVIDER_LABELS[model.provider].agent, color: PROVIDER_COLORS[model.provider] },
 			page: this.content,
+			price: this.customPrice(model.model),
+			setPrice: async price => {
+				await this.usageService.setModelPrice(model.model, price);
+				this.dialog.clear();
+				await this.loadExtras();
+				await this.load(true);
+			},
 		});
 	}
+
+	/** The price the user set for a model, matched the way the service matches it. */
+	private customPrice(model: string): IVoltUsageModelPrice | undefined {
+		const key = (id: string) => id.trim().toLowerCase().replace(/\[.*$/, '');
+		const bare = (id: string) => key(id).slice(key(id).lastIndexOf('/') + 1);
+		const entries = Object.entries(this.prices);
+		return entries.find(([id]) => key(id) === key(model))?.[1] ?? entries.find(([id]) => key(id) === bare(model))?.[1];
+	}
+
+	//#region Resets and machines
+
+	/** Banked limit resets (Claude, Codex), each with the button that spends one. */
+	private renderResets(groups: readonly IVoltUsageLimitGroup[]): void {
+		const withCredits = groups.filter(group => group.resetCredits && group.account);
+		if (!withCredits.length) {
+			return;
+		}
+		const section = append(this.content, $('.volt-usage-section.volt-usage-resets'));
+		sectionHead(section, localize('voltUsage.resetsTitle', "Limit Resets"));
+		const list = append(section, $('.volt-usage-card.volt-usage-list'));
+		for (const group of withCredits) {
+			const row = append(list, $('.volt-usage-list-row'));
+			row.appendChild(createTicketIcon());
+			const who = append(row, $('.who'));
+			append(who, $('span.label')).textContent = PROVIDER_LABELS[group.provider].account;
+			const count = group.resetCredits ?? 0;
+			const detail = [
+				group.account?.label,
+				count === 1 ? localize('voltUsage.oneReset', "1 reset available") : localize('voltUsage.resets', "{0} resets available", count),
+				group.resetCreditsExpireAt ? localize('voltUsage.resetExpires', "next expires {0}", formatResetTime(group.resetCreditsExpireAt)) : undefined,
+				group.machines?.join(', '),
+			].filter(Boolean).join(' \u00b7 ');
+			append(who, $('span.detail')).textContent = detail;
+			const key = `${group.provider}|${group.account!.id}`;
+			const button = this.renderStore.add(createVoltButton(row, 'secondary'));
+			button.label = this.redeeming.has(key) ? localize('voltUsage.redeeming', "Using Reset") : localize('voltUsage.useReset', "Use Reset");
+			button.enabled = !this.redeeming.has(key);
+			this.renderStore.add(button.onDidClick(() => void this.redeem(group)));
+		}
+	}
+
+	private async redeem(group: IVoltUsageLimitGroup): Promise<void> {
+		const account = group.account;
+		if (!account) {
+			return;
+		}
+		const name = PROVIDER_LABELS[group.provider].account;
+		const { confirmed } = await this.dialogService.confirm({
+			message: localize('voltUsage.redeemConfirm', "Use a {0} limit reset now?", name),
+			detail: group.machines?.length
+				? localize('voltUsage.redeemDetailEverywhere', "This spends one of {0}'s banked resets and clears its current limits on every machine. It can't be undone.", account.label ?? name)
+				: localize('voltUsage.redeemDetail', "This spends one of {0}'s banked resets and clears its current limits. It can't be undone.", account.label ?? name),
+			primaryButton: localize({ key: 'voltUsage.redeemButton', comment: ['&& denotes a mnemonic'] }, "&&Use Reset"),
+		});
+		if (!confirmed) {
+			return;
+		}
+		const key = `${group.provider}|${account.id}`;
+		this.redeeming.add(key);
+		this.render();
+		try {
+			const outcome = await this.usageService.redeemResetCredit(group.provider, account.id);
+			const messages: Record<VoltResetCreditOutcome, string> = {
+				reset: localize('voltUsage.redeemDone', "{0} limits were reset.", name),
+				nothingToReset: localize('voltUsage.redeemNothing', "{0} has nothing to reset right now, so no reset was used.", name),
+				noCredit: localize('voltUsage.redeemNoCredit', "{0} has no resets left to use.", name),
+				alreadyRedeemed: localize('voltUsage.redeemAlready', "That reset was already used; your limits are reset."),
+			};
+			this.notificationService.notify({ severity: outcome === 'noCredit' ? Severity.Warning : Severity.Info, message: messages[outcome] });
+		} catch (error) {
+			this.notificationService.notify({ severity: Severity.Error, message: error instanceof Error ? error.message : String(error) });
+		} finally {
+			this.redeeming.delete(key);
+			this.render();
+			await this.load(true);
+		}
+	}
+
+	/** Other computers whose usage and limits count here, and the way to add one. */
+	private renderMachines(): void {
+		const section = append(this.content, $('.volt-usage-section.volt-usage-machines'));
+		sectionHead(section, localize('voltUsage.machines', "Machines"));
+		const list = append(section, $('.volt-usage-card.volt-usage-list'));
+		if (!this.machines.length) {
+			append(list, $('.volt-usage-list-empty')).textContent = localize('voltUsage.machinesEmpty', "Add your other computers to count their usage and limits here. On the other computer, choose Share This Machine and copy the pairing link it makes, then add it here.");
+		}
+		const states: Record<IVoltUsageMachineStatus['state'], string> = {
+			ok: localize('voltUsage.machineOk', "Connected"),
+			offline: localize('voltUsage.machineOffline', "Can't be reached"),
+			unauthorized: localize('voltUsage.machineUnauthorized', "Key removed there; add it again"),
+			error: localize('voltUsage.machineError', "Didn't answer with usage; update Volt there"),
+		};
+		for (const machine of this.machines) {
+			const row = append(list, $('.volt-usage-list-row'));
+			row.dataset.state = machine.state;
+			append(row, $('span.status'));
+			const who = append(row, $('.who'));
+			append(who, $('span.label')).textContent = machine.name;
+			append(who, $('span.detail')).textContent = `${machine.url} \u00b7 ${states[machine.state]}`;
+			const remove = this.renderStore.add(createVoltButton(row, 'ghost', { ariaLabel: localize('voltUsage.removeMachine', "Remove {0}", machine.name) }));
+			remove.label = localize('voltUsage.remove', "Remove");
+			this.renderStore.add(remove.onDidClick(async () => {
+				await this.usageService.removeMachine(machine.id);
+				await this.loadExtras();
+				await this.load(false);
+			}));
+		}
+		const actions = append(section, $('.volt-usage-list-actions'));
+		const add = this.renderStore.add(createVoltButton(actions, 'secondary'));
+		add.label = localize('voltUsage.addMachine', "Add Machine");
+		this.renderStore.add(add.onDidClick(() => void this.addMachine()));
+		// Sharing runs this machine's agent server on the network: the desktop app only.
+		if (CommandsRegistry.getCommand(VOLT_USAGE_SHARE_MACHINE_COMMAND_ID)) {
+			const share = this.renderStore.add(createVoltButton(actions, 'ghost'));
+			share.label = localize('voltUsage.shareMachine', "Share This Machine");
+			this.renderStore.add(share.onDidClick(() => void this.commandService.executeCommand(VOLT_USAGE_SHARE_MACHINE_COMMAND_ID)));
+		}
+	}
+
+	private async addMachine(): Promise<void> {
+		const address = await this.quickInputService.input({
+			title: localize('voltUsage.addMachineTitle', "Add Machine"),
+			prompt: localize('voltUsage.addMachinePrompt', "Paste the pairing link the other computer made under Share This Machine."),
+			placeHolder: 'http://192.168.1.20:7791/pair#code=ABCD-EFGH',
+			ignoreFocusLost: true,
+			validateInput: async value => value.trim() && !/[#?&](code|token)=/.test(value) ? localize('voltUsage.addMachineNoCode', "The link needs its #code= part.") : undefined,
+		});
+		if (!address?.trim()) {
+			return;
+		}
+		try {
+			const machine = await this.usageService.addMachine(address.trim());
+			this.notificationService.info(localize('voltUsage.machineAdded', "{0} was added. Its usage and limits now count here.", machine.name));
+		} catch (error) {
+			this.notificationService.error(error instanceof Error ? error.message : String(error));
+		}
+		await this.loadExtras();
+		await this.load(true);
+	}
+
+	//#endregion
 
 	private renderBreakdown(summary: IUsageSummary, metric: UsageMetric): void {
 		const section = append(this.content, $('.volt-usage-section'));
@@ -668,6 +857,10 @@ export class AgentUsagePage extends Disposable {
 			const cost = append(row, $('span.num'));
 			cost.textContent = unpriced ? localize('voltUsage.unpriced', "Unpriced") : formatCost(item.cost);
 			cost.classList.toggle('muted', unpriced);
+			if ('model' in item && this.customPrice(item.model)) {
+				cost.classList.add('custom-price');
+				setAgentTooltip(cost, localize('voltUsage.customPriceTip', "Priced at the rates you set"));
+			}
 		});
 		this.renderPager(section, rows.length, pages);
 	}
@@ -726,7 +919,15 @@ export class AgentUsagePage extends Disposable {
 		const updated = Date.now() - this.snapshot.generatedAt < 60_000
 			? localize('voltUsage.justNow', "just now")
 			: fromNow(this.snapshot.generatedAt, true);
-		note.textContent = localize('voltUsage.footnote', "From Claude Code and Codex transcripts on this computer and your Cursor account. Each model response is counted once, as it is billed; Claude Code's /stats adds every transcript line, and a response spans several, so its token totals read about twice as high. Prices: {0}. Updated {1}.", this.snapshot.pricingSource, updated);
+		const machines = (this.snapshot.machines ?? []).filter(machine => machine.state === 'ok').map(machine => machine.name);
+		const source = machines.length
+			? localize('voltUsage.footnoteSourceMachines', "From Claude Code and Codex transcripts on this computer and on {0}, and your Cursor account.", machines.join(', '))
+			: localize('voltUsage.footnoteSource', "From Claude Code and Codex transcripts on this computer and your Cursor account.");
+		const custom = Object.keys(this.prices).length;
+		const prices = custom
+			? localize('voltUsage.footnotePricesCustom', "Prices: {0}, and {1} you set.", this.snapshot.pricingSource, custom === 1 ? localize('voltUsage.oneModel', "1 model") : localize('voltUsage.models', "{0} models", custom))
+			: localize('voltUsage.footnotePrices', "Prices: {0}.", this.snapshot.pricingSource);
+		note.textContent = localize('voltUsage.footnote2', "{0} Each model response is counted once, as it is billed; Claude Code's /stats adds every transcript line, and a response spans several, so its token totals read about twice as high. {1} Updated {2}.", source, prices, updated);
 	}
 
 	/** Eases the headline from the last value shown to the new one. */

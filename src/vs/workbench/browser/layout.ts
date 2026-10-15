@@ -826,8 +826,10 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		// The rail has one width; the list's own width stays saved for when it opens again.
 		const rail = this.storageService.getBoolean(AGENT_SIDEBAR_RAIL_KEY, StorageScope.PROFILE, false);
 		this.mainContainer.classList.toggle(AGENT_SIDEBAR_RAIL_CLASS, rail);
+		// 400 is the stock secondary side bar default nobody chose: the agent list opens narrower.
+		const storedWidth = this.stateModel.getInitializationValue(LayoutStateKeys.AUXILIARYBAR_SIZE);
 		const openWidth = rail ? AGENT_SIDEBAR_RAIL_WIDTH : agentStartupSidebarWidth(
-			this.stateModel.getInitializationValue(LayoutStateKeys.AUXILIARYBAR_SIZE),
+			storedWidth === 400 ? AuxiliaryBarPart.AGENT_OPEN_WIDTH : storedWidth,
 			false,
 			{
 				min: AuxiliaryBarPart.AGENT_MIN_WIDTH,

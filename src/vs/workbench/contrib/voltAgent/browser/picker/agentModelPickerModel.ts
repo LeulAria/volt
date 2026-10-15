@@ -27,6 +27,8 @@ export interface IProviderGroup {
 	family: string;
 	label: string;
 	models: IModelOption[];
+	/** The tab's glyph when the family's brand icon would mislead (a host-supplied list). */
+	icon?: () => HTMLElement;
 }
 
 /** Provider tabs lead with these families, in this order; the rest follow as they arrive. */

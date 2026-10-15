@@ -16,7 +16,7 @@ import { URI, UriComponents } from '../../../../../base/common/uri.js';
 import { localize, localize2 } from '../../../../../nls.js';
 import { Action2, MenuId, registerAction2 } from '../../../../../platform/actions/common/actions.js';
 import { CommandsRegistry } from '../../../../../platform/commands/common/commands.js';
-import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
+import { ContextKeyExpr, IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { CodeDataTransfers, containsDragType, extractEditorsDropData, LocalSelectionTransfer } from '../../../../../platform/dnd/browser/dnd.js';
@@ -34,6 +34,8 @@ import { AGENT_TOOLS_VISIBILITY_EVENT } from '../../../../browser/parts/titlebar
 import { createPrimarySidebarToggleIcon } from '../../../../browser/parts/titlebar/sidebarToggleIcon.js';
 import { formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IEditorPane } from '../../../../common/editor.js';
+import { ResourceContextKey } from '../../../../common/contextkeys.js';
+import { ExplorerFolderContext } from '../../../files/common/files.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
@@ -382,6 +384,29 @@ export function agentSessionBrowser(sessionId: string): { input: VoltBrowserEdit
 	return borrowedBrowser?.(sessionId);
 }
 
+/**
+ * Every tab in a chat's right panel, the one in front first, and whether the panel is open on
+ * screen. Undefined when the chat has no live tools area.
+ */
+export function agentSessionToolTabs(sessionId: string): { readonly open: boolean; readonly tabs: readonly { readonly input: EditorInput; readonly focused: boolean }[] } | undefined {
+	const entry = toolParts.get(sessionId);
+	if (!entry) {
+		return undefined;
+	}
+	const front = entry.part.activeGroup.activeEditor;
+	const tabs: { input: EditorInput; focused: boolean }[] = front ? [{ input: front, focused: true }] : [];
+	const seen = new Set<EditorInput>(front ? [front] : []);
+	for (const group of [entry.part.activeGroup, ...entry.part.groups.filter(group => group !== entry.part.activeGroup)]) {
+		for (const editor of group.editors) {
+			if (!seen.has(editor)) {
+				seen.add(editor);
+				tabs.push({ input: editor, focused: false });
+			}
+		}
+	}
+	return { open: [...hosts].some(host => host.showsToolsFor(sessionId)), tabs };
+}
+
 /** The host whose tools currently run up into the primary title bar. */
 let titlebarOwner: AgentSurfaceHost | undefined;
 let partClock = 0;
@@ -544,6 +569,11 @@ export class AgentSurfaceHost extends Disposable {
 			return undefined;
 		}
 		return (toolParts.get(sessionId) ?? this.createPart(sessionId)).part;
+	}
+
+	/** Its right panel is open on `sessionId`'s tabs. */
+	showsToolsFor(sessionId: string): boolean {
+		return this.shown?.sessionId === sessionId && this.announcedOpen;
 	}
 
 	/** The chat on screen that owns this tools area. */
@@ -2438,6 +2468,47 @@ CommandsRegistry.registerCommand(EDIT_IN_AGENT_TOOLS_COMMAND_ID, async (accessor
 		await Event.toPromise(input.onWillDispose);
 	}
 	return true;
+});
+
+/**
+ * The Explorer's Open in Browser for an .html file: a browser tab in the tools of the chat on screen
+ * in the agent layout, the system browser everywhere else.
+ */
+registerAction2(class OpenHtmlInBrowserAction extends Action2 {
+	constructor() {
+		super({
+			id: 'volt.explorer.openInBrowser',
+			title: localize2('voltAgent.openInBrowser', "Open in Browser"),
+			menu: {
+				id: MenuId.ExplorerContext,
+				group: 'navigation',
+				// After Open With (20), before Reveal in Finder (25).
+				order: 22,
+				when: ContextKeyExpr.and(
+					ExplorerFolderContext.negate(),
+					ResourceContextKey.Scheme.isEqualTo(Schemas.file),
+					ContextKeyExpr.or(ResourceContextKey.Extension.isEqualTo('.html'), ResourceContextKey.Extension.isEqualTo('.htm')),
+				),
+			},
+		});
+	}
+
+	override run(accessor: ServicesAccessor, resource?: URI): void {
+		if (!URI.isUri(resource)) {
+			return;
+		}
+		const url = resource.toString(true);
+		if (getLayoutMode(accessor.get(IWorkbenchLayoutService)) === 'agent') {
+			const active = accessor.get(IAgentWorkspaceService).active?.sessionId;
+			const candidates = [...hosts].filter(host => host.canOpenTools());
+			const host = candidates.find(candidate => !!active && candidate.showsSession(active)) ?? candidates[0];
+			if (host) {
+				host.openBrowser(url, basename(resource), true);
+				return;
+			}
+		}
+		void accessor.get(IOpenerService).open(resource, { openExternal: true });
+	}
 });
 
 const SVG_NS = 'http://www.w3.org/2000/svg';

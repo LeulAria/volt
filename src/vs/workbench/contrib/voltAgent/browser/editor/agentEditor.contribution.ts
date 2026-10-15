@@ -48,6 +48,7 @@ import '../chrome/agentNav.contribution.js';
 import './agentChatNavigation.contribution.js';
 import '../workspace/agentTerminalCwd.js';
 import '../workspace/agentIdeWorkspace.js';
+import '../workspace/agentMarkdownToggle.js';
 import '../workspace/agentTerminalScope.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import { AgentChangesEditor, AgentChangesEditorInput, AgentChangesEditorInputSerializer, AgentReviewDiffLookContribution, AGENT_CHANGES_EDITOR_ID, OPEN_AGENT_CHANGES_COMMAND_ID, openAgentChanges } from '../review/agentChangesEditor.js';

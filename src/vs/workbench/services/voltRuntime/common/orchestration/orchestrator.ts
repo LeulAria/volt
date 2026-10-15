@@ -96,6 +96,21 @@ export interface IOrchQueueItem {
  */
 export type OrchPause = 'failed' | 'stopped' | 'interrupted' | 'wakeups' | 'limit';
 
+/**
+ * Settled and archived chats do not run: the orchestrator holds them (`blocked` with one of these
+ * reasons), so nothing Volt does on its own starts them. The user sending or resuming brings them back.
+ */
+export const ORCH_HOLD_SETTLED = 'settled';
+export const ORCH_HOLD_ARCHIVED = 'archived';
+
+export function orchHoldReason(meta: { readonly settled?: boolean; readonly archived?: boolean } | undefined): string | undefined {
+	return meta?.archived ? ORCH_HOLD_ARCHIVED : meta?.settled ? ORCH_HOLD_SETTLED : undefined;
+}
+
+export function isOrchHold(blocked: string | undefined): boolean {
+	return blocked === ORCH_HOLD_SETTLED || blocked === ORCH_HOLD_ARCHIVED;
+}
+
 export type OrchOutcome = 'done' | 'failed' | 'cancelled' | 'interrupted';
 
 /** The agent is blocked on the user. */
