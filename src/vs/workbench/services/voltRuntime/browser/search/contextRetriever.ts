@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
+import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -94,7 +95,8 @@ export class ContextRetriever {
 			await fn().catch(() => undefined);
 		});
 		// Stops waiting at the deadline; searches still running are cancelled and their results dropped.
-		const settle = (work: Promise<unknown>) => Promise.race([work, new Promise<void>(resolve => token.onCancellationRequested(() => resolve()))]);
+		const listeners = new DisposableStore();
+		const settle = (work: Promise<unknown>) => Promise.race([work, new Promise<void>(resolve => listeners.add(token.onCancellationRequested(() => resolve())))]);
 
 		try {
 			// Narrow: what the message names exactly.
@@ -213,6 +215,7 @@ export class ContextRetriever {
 			};
 		} finally {
 			clearTimeout(deadline);
+			listeners.dispose();
 			cts.dispose(true);
 		}
 	}
