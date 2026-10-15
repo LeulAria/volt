@@ -14,6 +14,7 @@ import * as errors from '../../../../base/common/errors.js';
 import { Event } from '../../../../base/common/event.js';
 import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
 import { Disposable, DisposableStore, IDisposable } from '../../../../base/common/lifecycle.js';
+import { isEqualOrParent } from '../../../../base/common/resources.js';
 import * as strings from '../../../../base/common/strings.js';
 import { URI } from '../../../../base/common/uri.js';
 import * as network from '../../../../base/common/network.js';
@@ -270,6 +271,7 @@ export class SearchView extends ViewPane {
 		this._register(this.fileService.onDidFilesChange(e => this.onFilesChanged(e)));
 		this._register(this.textFileService.untitled.onWillDispose(model => this.onUntitledDidDispose(model.resource)));
 		this._register(this.contextService.onDidChangeWorkbenchState(() => this.onDidChangeWorkbenchState()));
+		this._register(this.searchViewModelWorkbenchService.onDidChangeScopedFolder(() => this.onDidChangeScopedFolder()));
 		this._register(this.searchHistoryService.onDidClearHistory(() => this.clearHistory()));
 		this._register(this.configurationService.onDidChangeConfiguration(e => this.onConfigurationUpdated(e)));
 
@@ -368,8 +370,21 @@ export class SearchView extends ViewPane {
 	}
 
 	private onDidChangeWorkbenchState(): void {
-		if (this.contextService.getWorkbenchState() !== WorkbenchState.EMPTY && this.searchWithoutFolderMessageElement) {
+		if (this.hasSearchFolder() && this.searchWithoutFolderMessageElement) {
 			dom.hide(this.searchWithoutFolderMessageElement);
+		}
+	}
+
+	/** A workspace folder or a scoped folder (a chat's project) to search. */
+	private hasSearchFolder(): boolean {
+		return !!this.searchViewModelWorkbenchService.scopedFolder || this.contextService.getWorkbenchState() !== WorkbenchState.EMPTY;
+	}
+
+	/** The view now searches another folder: the results on screen were for the last one. */
+	private onDidChangeScopedFolder(): void {
+		this.onDidChangeWorkbenchState();
+		if (this.searchWidget?.searchInput?.getValue()) {
+			this.triggerQueryChange({ preserveFocus: true });
 		}
 	}
 
@@ -527,7 +542,7 @@ export class SearchView extends ViewPane {
 		this._register(this.inputPatternExcludes.onSubmit(onFilePatternSubmit));
 
 		this.messagesElement = dom.append(this.container, $('.messages.text-search-provider-messages'));
-		if (this.contextService.getWorkbenchState() === WorkbenchState.EMPTY) {
+		if (!this.hasSearchFolder()) {
 			this.showSearchWithoutFolderMessage();
 		}
 
@@ -1338,7 +1353,7 @@ export class SearchView extends ViewPane {
 	clearSearchResults(clearInput = true): void {
 		this.viewModel.searchResult.clear();
 		this.showEmptyStage(true);
-		if (this.contextService.getWorkbenchState() === WorkbenchState.EMPTY) {
+		if (!this.hasSearchFolder()) {
 			this.showSearchWithoutFolderMessage();
 		}
 		if (clearInput) {
@@ -1583,9 +1598,13 @@ export class SearchView extends ViewPane {
 		// https://github.com/microsoft/vscode/issues/58374
 		const charsPerLine = content.isRegExp ? 10000 : 1000;
 
+		// A chat's project need not be a workspace folder: the agent layout scopes the view to it in place.
+		// Then every open editor is outside the workspace; only the ones in that folder are searched too.
+		const scopedFolder = this.searchViewModelWorkbenchService.scopedFolder;
+		const outOfWorkspaceEditors = this.instantiationService.invokeFunction(getOutOfWorkspaceEditorResources);
 		const options: ITextQueryBuilderOptions = {
 			_reason: 'searchView',
-			extraFileResources: this.instantiationService.invokeFunction(getOutOfWorkspaceEditorResources),
+			extraFileResources: scopedFolder ? outOfWorkspaceEditors.filter(resource => isEqualOrParent(resource, scopedFolder)) : outOfWorkspaceEditors,
 			maxResults: this.searchConfig.maxResults ?? undefined,
 			disregardIgnoreFiles: !useExcludesAndIgnoreFiles || undefined,
 			disregardExcludeSettings: !useExcludesAndIgnoreFiles || undefined,
@@ -1599,7 +1618,7 @@ export class SearchView extends ViewPane {
 			isSmartCase: this.searchConfig.smartCase,
 			expandPatterns: true
 		};
-		const folderResources = this.contextService.getWorkspace().folders;
+		const folderResources = scopedFolder ? [scopedFolder] : this.contextService.getWorkspace().folders.map(folder => folder.uri);
 
 		const onQueryValidationError = (err: Error) => {
 			this.searchWidget.searchInput?.showMessage({ content: err.message, type: MessageType.ERROR });
@@ -1608,7 +1627,7 @@ export class SearchView extends ViewPane {
 
 		let query: ITextQuery;
 		try {
-			query = this.queryBuilder.text(content, folderResources.map(folder => folder.uri), options);
+			query = this.queryBuilder.text(content, folderResources, options);
 		} catch (err) {
 			onQueryValidationError(err);
 			return;
@@ -1810,7 +1829,7 @@ export class SearchView extends ViewPane {
 				dom.append(messageEl, learnMoreButton.element);
 			}
 
-			if (this.contextService.getWorkbenchState() === WorkbenchState.EMPTY) {
+			if (!this.hasSearchFolder()) {
 				this.showSearchWithoutFolderMessage();
 			}
 			this.reLayout();

@@ -4,19 +4,17 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { $, addDisposableListener, append } from '../../../../../base/browser/dom.js';
-import { RunOnceScheduler, Sequencer } from '../../../../../base/common/async.js';
+import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { ILogService } from '../../../../../platform/log/common/log.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
-import { IWorkspaceContextService, WorkbenchState } from '../../../../../platform/workspace/common/workspace.js';
 import { IViewDescriptorService } from '../../../../common/views.js';
 import { getLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
@@ -26,9 +24,9 @@ import { VIEWLET_ID as SEARCH_VIEWLET_ID } from '../../../../services/search/com
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
-import { IWorkspaceEditingService } from '../../../../services/workspaces/common/workspaceEditing.js';
 import { VIEWLET_ID as EXPLORER_VIEWLET_ID } from '../../../files/common/files.js';
 import { IExplorerService } from '../../../files/browser/files.js';
+import { ISearchViewModelWorkbenchService } from '../../../search/browser/searchTreeModel/searchViewModelWorkbenchService.js';
 import { VIEWLET_ID as SCM_VIEWLET_ID } from '../../../scm/common/scm.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { INIT_TIMEOUT_MS, runGit } from '../home/agentHomeWorkspaceActions.js';
@@ -128,6 +126,8 @@ export class AgentFilesSidebar extends Disposable {
 	private readonly initRepositoryButton: HTMLButtonElement;
 	private readonly explorerScope = this._register(new MutableDisposable());
 	private explorerFolder: URI | undefined;
+	private readonly searchScope = this._register(new MutableDisposable());
+	private searchFolder: URI | undefined;
 	private readonly sash: HTMLElement;
 	private readonly buttons = new Map<AgentFilesSidebarView, HTMLButtonElement>();
 	private readonly lent = this._register(new MutableDisposable<ILentPaneCompositePart>());
@@ -142,10 +142,6 @@ export class AgentFilesSidebar extends Disposable {
 	/** No tab beside it: it is the whole tools area. */
 	private fills = false;
 	private sessionId: string | undefined;
-	/** The chat whose folder the window was last moved to; cleared when the sidebar stops showing. */
-	private folderSession: string | undefined;
-	/** Folder moves run one after another: each stops and restarts the extension host. */
-	private readonly folderSequencer = new Sequencer();
 	private size: { width: number; height: number } | undefined;
 
 	/** The sidebar opened, closed, switched view, or was resized: the tools lay out again. */
@@ -162,14 +158,12 @@ export class AgentFilesSidebar extends Disposable {
 		@IViewDescriptorService private readonly viewDescriptorService: IViewDescriptorService,
 		@IPaneCompositePartService private readonly paneCompositeService: IPaneCompositePartService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
-		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
-		@IWorkspaceEditingService private readonly workspaceEditingService: IWorkspaceEditingService,
 		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
-		@ILogService private readonly logService: ILogService,
 		@IExplorerService private readonly explorerService: IExplorerService,
+		@ISearchViewModelWorkbenchService private readonly searchViewModel: ISearchViewModelWorkbenchService,
 		@IVoltStdioService private readonly stdio: IVoltStdioService,
 		@INotificationService private readonly notificationService: INotificationService,
 	) {
@@ -352,23 +346,23 @@ export class AgentFilesSidebar extends Disposable {
 				this.borrow(want);
 			}
 		}
-		// Source Control opens the repository directly. Explorer borrows a cached folder tree.
-		// Neither needs to move the whole workspace and restart its extension host.
-		const explorerFolder = want === 'explorer' && this.sessionId && getLayoutMode(this.layoutService) === 'agent'
-			? this.folderOf(this.sessionId) : undefined;
+		// Source Control opens the repository directly. Explorer borrows a cached folder tree and
+		// Search looks in the chat's folder. None of them moves the whole workspace: that stops and
+		// restarts the extension host, seconds on every switch to another project.
+		const agentLayout = !!this.sessionId && getLayoutMode(this.layoutService) === 'agent';
+		const explorerFolder = want === 'explorer' && agentLayout ? this.folderOf(this.sessionId!) : undefined;
 		if (!this.uriIdentityService.extUri.isEqual(explorerFolder, this.explorerFolder)) {
 			this.explorerFolder = explorerFolder;
 			this.explorerScope.value = explorerFolder ? this.explorerService.scopeToFolder(explorerFolder) : undefined;
 		}
+		// One Search view: the sidebar holding it scopes it.
+		const searchFolder = want === 'search' && agentLayout && this.lent.value ? this.folderOf(this.sessionId!) : undefined;
+		if (!this.uriIdentityService.extUri.isEqual(searchFolder, this.searchFolder)) {
+			this.searchFolder = searchFolder;
+			this.searchScope.value = searchFolder ? this.searchViewModel.scopeToFolder(searchFolder) : undefined;
+		}
 		if (want === 'pullRequests' && this.lent.value) {
 			setPullRequestsViewSession(this.sessionId);
-		}
-		const folderSession = want === 'search' ? this.sessionId : undefined;
-		if (folderSession !== this.folderSession) {
-			this.folderSession = folderSession;
-			if (folderSession) {
-				this.followChatFolder(folderSession);
-			}
 		}
 		const scmSession = want === 'scm' && this.lent.value ? this.sessionId : undefined;
 		const scmFolder = scmSession ? this.folderOf(scmSession) : undefined;
@@ -435,31 +429,6 @@ export class AgentFilesSidebar extends Disposable {
 		}
 	}
 
-	/**
-	 * Search shows the window's folder, so it becomes this chat's: its worktree, else its
-	 * project. In place, as the IDE layout does (agentIdeWorkspace.ts): no reload, running agents
-	 * carry on, the extension host restarts. Once per chat shown, so two sidebars cannot trade it back and forth.
-	 */
-	private followChatFolder(sessionId: string): void {
-		if (getLayoutMode(this.layoutService) !== 'agent') {
-			return;
-		}
-		const folder = this.folderOf(sessionId);
-		if (!folder) {
-			return;
-		}
-		void this.folderSequencer.queue(async () => {
-			if (this.folderSession !== sessionId || this.isWindowFolder(folder)) {
-				return;
-			}
-			try {
-				await this.workspaceEditingService.enterFolder?.(folder);
-			} catch (error) {
-				this.logService.error('[voltAgent] could not open the chat\'s folder', error);
-			}
-		});
-	}
-
 	/** Where a chat runs: its worktree, else its project. Matches agentIdeWorkspace.ts. */
 	private folderOf(sessionId: string): URI | undefined {
 		const meta = this.history.get(sessionId);
@@ -468,13 +437,6 @@ export class AgentFilesSidebar extends Disposable {
 			return URI.file(worktree);
 		}
 		return this.sessionContext.rootFor(sessionId) ?? (meta?.workspaceFolder ? uriFromStoredRoot(meta.workspaceFolder) : undefined);
-	}
-
-	/** Compared the way the disk does: a project's root can differ from the window's in case alone on macOS. */
-	private isWindowFolder(folder: URI): boolean {
-		const folders = this.workspaceContextService.getWorkspace().folders;
-		return this.workspaceContextService.getWorkbenchState() === WorkbenchState.FOLDER
-			&& folders.length === 1 && this.uriIdentityService.extUri.isEqual(folders[0].uri, folder);
 	}
 
 	private borrow(view: AgentFilesSidebarView): void {
@@ -502,6 +464,8 @@ export class AgentFilesSidebar extends Disposable {
 	private giveBack(): void {
 		this.explorerScope.clear();
 		this.explorerFolder = undefined;
+		this.searchScope.clear();
+		this.searchFolder = undefined;
 		this.body.classList.remove('repository-pending');
 		if (this.scmSession) {
 			this.scmSession = undefined;
