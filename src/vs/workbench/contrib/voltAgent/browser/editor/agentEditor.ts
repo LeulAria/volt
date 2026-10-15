@@ -153,6 +153,7 @@ import { AgentLandingChrome } from '../home/agentLandingChrome.js';
 import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
 import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitation, revealCitationInChats } from './agentCitationSource.js';
 import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
+import { formatAgentSwitch, takeAgentSwitchStart } from './agentSwitchTiming.js';
 import { deferredHeadStart } from './agentThreadWindow.js';
 import { AgentTurnNav, IAgentTurnNavTurn, turnNavPreview } from './agentTurnNav.js';
 import { IAgentSessionChangesService } from '../review/agentSessionChangesService.js';
@@ -579,8 +580,11 @@ const CHECKPOINT_RESTORE_COMMAND = 'voltAgent.checkpoint.restore';
 const CHECKPOINT_HAS_CHANGES_COMMAND = 'voltAgent.checkpoint.hasChangesSince';
 const CHECKPOINT_REDO_COMMAND = 'voltAgent.checkpoint.redo';
 
-/** A chat that stays open this long gets its agent started, so the first send skips the cold start. */
-const PREWARM_ON_OPEN_MS = 400;
+/**
+ * A chat that stays open this long gets its agent started, so the first send skips the cold start.
+ * Clicking through chats and projects faster than this starts (and stops) no agent process.
+ */
+const PREWARM_ON_OPEN_MS = 1500;
 
 export type IAgentMessage = IAgentUserMessage | IAgentAssistantMessage;
 
@@ -890,6 +894,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private headExchanges = 0;
 	private headUsers = 0;
 	private headGeneration = 0;
+	/** setInput is focusing the composer of the chat it shows: not a sign a message is coming. */
+	private focusingForSwitch = false;
+	/** How the last shown chat's thread came back, for the switch timing line. */
+	private threadRestore: 'stashed' | 'stale tail' | 'tail first' | 'full' = 'full';
 	private readonly headFill = this._register(new MutableDisposable());
 	private readonly headScrollDraw = this._register(new MutableDisposable());
 	/** The messages drawn above the live exchange, so a new turn can tell they are unchanged and keep their DOM. */
@@ -1965,7 +1973,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!stashed || (stashed.stale && !this.canRenderTail() && !this.canAppendThread())) {
 			// Following the end: the older exchanges are off screen and can wait for an idle moment.
 			this.renderThread(followTail, followTail);
+			this.threadRestore = this.headEnd > 0 ? 'tail first' : 'full';
 		} else {
+			this.threadRestore = stashed.stale ? 'stale tail' : 'stashed';
 			if (stashed.stale) {
 				this.renderThreadTail(followTail);
 			}
@@ -5554,7 +5564,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.editorDisposables.add(this.inputEditor.onDidFocusEditorText(() => {
 			this.inputBox.classList.add('focused');
 			// Focus means a message is coming: start a CLI agent now so the first send skips its cold start.
-			this.prewarmAgent();
+			// A switch focuses the composer too; then the open timer decides (see schedulePrewarm).
+			if (!this.focusingForSwitch) {
+				this.prewarmAgent();
+			}
 		}));
 		this.editorDisposables.add(this.inputEditor.onDidBlurEditorText(() => this.inputBox.classList.remove('focused')));
 		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(() => {
@@ -7599,6 +7612,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	override async setInput(input: AgentEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
+		const started = performance.now();
+		const clickedAt = takeAgentSwitchStart(started);
 		this.clearTeardownPending = false;
 		// The dock beside the chat finds the chat it sits in by this.
 		this.container.dataset.sessionId = input.sessionId;
@@ -7623,8 +7638,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (token.isCancellationRequested || this.input !== input) {
 			return;
 		}
+		const loaded = performance.now();
 		this.ensureInputEditor();
 		this.restoreInputState(input);
+		const drawn = performance.now();
 		this.followThreadModel();
 		this.container.classList.remove('restoring');
 		this.composerChips.setSessionId(this.sessionKey);
@@ -7640,10 +7657,28 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.updateSendButton();
 		this.layoutInputEditor();
 		if (!options?.preserveFocus) {
-			this.inputEditor?.focus();
+			this.focusingForSwitch = true;
+			try {
+				this.inputEditor?.focus();
+			} finally {
+				this.focusingForSwitch = false;
+			}
 		}
 		this.schedulePrewarm();
 		this.revealRequestedTurn(input.sessionId);
+		this.logSwitchTiming(input, clickedAt ?? started, clickedAt !== undefined, started, loaded, drawn);
+	}
+
+	/** One line per chat shown: where the time went, to the frame after it was drawn. */
+	private logSwitchTiming(input: AgentEditorInput, origin: number, fromClick: boolean, started: number, loaded: number, drawn: number): void {
+		const how = this.threadRestore;
+		const window = getWindow(this.container);
+		scheduleAtNextAnimationFrame(window, () => scheduleAtNextAnimationFrame(window, () => {
+			if (this.input !== input) {
+				return;
+			}
+			this.logService.info(`[volt switch] ${input.sessionId}: ${formatAgentSwitch({ load: loaded - started, draw: drawn - loaded, how, onScreen: performance.now() - origin, fromClick })}`);
+		}));
 	}
 
 	/** Lands on the message Search Chats picked, its matched words highlighted by the find widget. */
