@@ -1138,7 +1138,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				this.plans.set(envelope.runId, event.entries);
 				return;
 			case 'run.end':
-				this.settleRun(threadId, envelope.runId, event.reason);
+				this.settleRun(threadId, envelope.runId, event.reason, undefined, event.incomplete === 'steps');
 				return;
 			case 'question.ask':
 				this.apply({ type: 'input.opened', threadId, inputId: event.request.id, kind: 'question' });
@@ -1291,7 +1291,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	/** A run ended (its `run.end`, or the watchdog saw the runtime finish it): settle its turn. */
-	private settleRun(threadId: string, runId: string, reason: 'done' | 'abort' | 'fail', fallbackError?: string): void {
+	private settleRun(threadId: string, runId: string, reason: 'done' | 'abort' | 'fail', fallbackError?: string, stepLimit = false): void {
 		this.pulses.delete(runId);
 		// The watchdog stopped it for going silent: that stop is a failure to recover from, unless the user stopped it too.
 		if (this.silentRuns.delete(runId) && this.state.threads[threadId]?.active?.phase !== 'cancelling') {
@@ -1332,6 +1332,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			...(limit && outcome === 'failed' ? { limit: { ...limit, ...(stop ? { stop: true } : {}) } } : {}),
 			...(account ? { account } : {}),
 			...(openPlan?.length ? { openPlan } : {}),
+			...(stepLimit && outcome === 'done' ? { stepLimit: true } : {}),
 		});
 		this.clearCancelWatch(threadId);
 		if (stop) {

@@ -398,7 +398,7 @@ export type OrchCommandBody =
 	 * unless the user already asked this chat to resume. `account`: the provider account the run used
 	 * (see `IOrchLimitPark.provider`), for a park or a resume that could not reach it.
 	 */
-	| { readonly type: 'run.settled'; readonly threadId: string; readonly runId?: string; readonly turnId?: string; readonly outcome: OrchOutcome; readonly error?: string; readonly reply?: string; readonly limit?: { readonly resetAt?: number; readonly message: string; readonly stop?: boolean }; readonly account?: IOrchLimitAccount; readonly openPlan?: readonly string[] }
+	| { readonly type: 'run.settled'; readonly threadId: string; readonly runId?: string; readonly turnId?: string; readonly outcome: OrchOutcome; readonly error?: string; readonly reply?: string; readonly limit?: { readonly resetAt?: number; readonly message: string; readonly stop?: boolean }; readonly account?: IOrchLimitAccount; readonly openPlan?: readonly string[]; readonly stepLimit?: boolean }
 	/** A steer could not be delivered (the run ended first): reports go back to pending, a prompt back to the queue's head. */
 	| { readonly type: 'steer.failed'; readonly threadId: string; readonly steerId: string; readonly prompt: IOrchPrompt; readonly taskIds?: readonly string[] }
 	/** The effect that starts a turn failed before the runtime took it. */

@@ -431,7 +431,8 @@ function checkInvariants(state: IOrchState, limits: IOrchLimits, context: string
 		if (thread.parentId && !state.threads[thread.parentId]) {
 			fail(`thread ${thread.id} lost its parent ${thread.parentId}`);
 		}
-		if (thread.limit && thread.active) {
+		// The park holds while its own resume is out (until the provider answers); nothing else runs.
+		if (thread.limit && thread.active && (thread.active.limitProbe === undefined || thread.active.kind !== 'resume')) {
 			fail(`thread ${thread.id} is parked at a usage limit and runs a turn`);
 		}
 		if (thread.moving && thread.active && thread.active.kind !== 'external') {

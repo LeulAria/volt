@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { Sequencer } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -18,6 +19,9 @@ import { IPageView, observePage, renderPage } from '../../../../services/voltRun
 import { fileFlowStore, resolveActInput } from '../actFlows.js';
 import { DeviceActRunner, IDeviceDriver } from '../devices/deviceAct.js';
 import { formatActRun, formatFlowRuns, IFlowRun, unsafeToSave } from '../preview/browserAct.js';
+
+/** A granted Accessibility permission is trusted this long before the helper is asked again. */
+const TRUST_TTL_MS = 15_000;
 
 const KEY_FOR_BUTTON: Partial<Record<VoltDeviceButton, string>> = { enter: 'enter', delete: 'delete', back: 'escape', home: 'cmd+h' };
 
@@ -43,6 +47,13 @@ export class AgentDesktopTools extends Disposable {
 	/** Chats the user allowed to control the desktop. */
 	private readonly allowed = new Set<string>();
 	private prompted = false;
+	/** When the permission was last seen granted. */
+	private trustedAt = 0;
+	/**
+	 * Reads and steps run one at a time: every tree read replaces the helper's element handles, so a
+	 * read from another chat between this run's read and its press would make the press miss.
+	 */
+	private readonly queue = new Sequencer();
 
 	constructor(
 		@IVoltDesktopService private readonly desktop: IVoltDesktopService,
@@ -74,6 +85,9 @@ export class AgentDesktopTools extends Disposable {
 
 	/** The permission check every call makes; the first refusal asks macOS to show its prompt. */
 	private async ready(): Promise<string | undefined> {
+		if (Date.now() - this.trustedAt < TRUST_TTL_MS) {
+			return undefined;
+		}
 		const status = await this.desktop.status(false);
 		if (!status.supported) {
 			return status.error ?? 'Desktop control works on macOS for now.';
@@ -88,6 +102,7 @@ export class AgentDesktopTools extends Disposable {
 			}
 			return 'Volt needs the Accessibility permission to read and control other apps. Ask the user to turn Volt on in System Settings > Privacy & Security > Accessibility (macOS has just shown its prompt), then try again.';
 		}
+		this.trustedAt = Date.now();
 		return undefined;
 	}
 
@@ -139,6 +154,10 @@ export class AgentDesktopTools extends Disposable {
 				].join('\n'),
 			};
 		}
+		return this.queue.queue(() => this.control(name, args, call));
+	}
+
+	private async control(name: VoltDesktopToolName, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
 		const blocked = await this.ready();
 		if (blocked) {
 			return { error: blocked };

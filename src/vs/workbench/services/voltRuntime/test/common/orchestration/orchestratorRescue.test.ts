@@ -126,4 +126,31 @@ suite('Volt orchestrator: keep working until done', () => {
 		sim.run({ type: 'run.settled', threadId: 'p', runId: sim.thread('p').active!.runId, turnId: 'plan-1', outcome: 'done', openPlan: ['everything'] });
 		assert.strictEqual(sim.thread('p').active, undefined, 'plan mode stops at its plan');
 	});
+
+	test('a run that used up its step budget goes on in a fresh run, up to the continuation cap', () => {
+		const sim = new OrchSim(KEEP_WORKING);
+		const { turnId } = sim.submit('a', 'port the whole app');
+		const ranOut = () => {
+			const active = sim.thread('a').active!;
+			sim.run({ type: 'run.settled', threadId: 'a', runId: active.runId, turnId: active.id, outcome: 'done', stepLimit: true });
+		};
+		sim.start('a');
+		ranOut();
+		assert.strictEqual(sim.thread('a').active?.id, `${turnId}~c1`);
+		assert.ok(sim.thread('a').active?.prompt.text.includes('step limit'));
+		for (let round = 2; round <= 24; round++) {
+			sim.start('a');
+			ranOut();
+		}
+		assert.strictEqual(sim.thread('a').active?.id, `${turnId}~c24`);
+		sim.start('a');
+		ranOut();
+		assert.strictEqual(sim.thread('a').active, undefined, 'the cap hands the chat back to the user');
+
+		const off = new OrchSim(DEFAULT_ORCH_LIMITS);
+		off.submit('b', 'port it');
+		off.start('b');
+		off.run({ type: 'run.settled', threadId: 'b', runId: off.thread('b').active!.runId, turnId: off.thread('b').active!.id, outcome: 'done', stepLimit: true });
+		assert.strictEqual(off.thread('b').active, undefined, 'without Keep working the chat waits');
+	});
 });

@@ -1193,13 +1193,16 @@ export class VoltBrowserView extends Disposable {
 
 	private async waitForGuestIdle(timeoutMs = 8000): Promise<void> {
 		const started = Date.now();
+		let waited = false;
 		while (!this.guestIdle || !this.guestReady) {
 			if (Date.now() - started >= timeoutMs) {
 				break;
 			}
+			waited = true;
 			await timeout(80);
 		}
-		await timeout(350);
+		// A page that just finished loading still paints for a moment; an idle one needs a frame.
+		await timeout(waited ? 350 : 50);
 	}
 
 	private async tryCaptureSnapshot(): Promise<string | undefined> {

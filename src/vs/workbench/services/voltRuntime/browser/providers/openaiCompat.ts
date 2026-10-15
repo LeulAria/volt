@@ -92,6 +92,7 @@ export class OpenAICompatProvider implements IModelProvider {
 			...(sampling && params.temperature !== undefined ? { temperature: params.temperature } : {}),
 			...(sampling && params.topP !== undefined ? { top_p: params.topP } : {}),
 			...(params.maxOutputTokens !== undefined ? { [this.maxTokensField]: Math.min(params.maxOutputTokens, req.maxOutputTokens ?? params.maxOutputTokens) } : {}),
+			...this.extraRequest(req.modelId),
 		});
 		const textId = `text-${Date.now()}`;
 		const assembler = new OpenAiToolAssembler();
@@ -181,6 +182,11 @@ export class OpenAICompatProvider implements IModelProvider {
 	protected readonly maxTokensField: string = 'max_tokens';
 
 	/** Whether the model takes temperature and top_p; a server that rejects them never gets them. */
+	/** Request fields this endpoint adds for `modelId` (prompt caching and the like). */
+	protected extraRequest(_modelId: string): Record<string, unknown> {
+		return {};
+	}
+
 	protected acceptsSampling(_modelId: string): boolean {
 		return true;
 	}
@@ -257,6 +263,14 @@ export function createOpenRouterProvider(requestService: IRequestService): OpenA
 		 */
 		protected override reasoningRequest(effort: string): Record<string, unknown> {
 			return { reasoning: { effort } };
+		}
+		/**
+		 * Claude caches nothing unless asked. OpenRouter's top-level `cache_control` puts the
+		 * breakpoint on the last cacheable block, so every step of a run reads the prefix the step
+		 * before wrote (other providers there cache prefixes on their own).
+		 */
+		protected override extraRequest(modelId: string): Record<string, unknown> {
+			return /(?:^|[/~])anthropic\/|claude/i.test(modelId) ? { cache_control: { type: 'ephemeral' } } : {};
 		}
 		protected override fallbackModels(): IModelInfo[] {
 			return [

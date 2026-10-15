@@ -51,8 +51,16 @@ const SETTLE_MS = 350;
 const SETTLE_FIRST_MS = 120;
 const SETTLE_STEP_MS = 90;
 const SETTLE_MAX_MS = 2000;
-/** How long a screen that has not changed at all after input gets before that counts as no effect. */
+/**
+ * How long a screen that has not changed at all after input gets before that counts as no effect.
+ * Desktop accessibility trees update as the app redraws; device trees lag behind the screen.
+ */
 const NO_CHANGE_MS = 900;
+const DESKTOP_NO_CHANGE_MS = 450;
+/** A fast reader waits this long between reads while it looks for an element, so polling does not hog the app. */
+const FIND_GAP_MS = 80;
+/** A slow reader (an emulator) gets this long after an app launch before the screen is read. */
+const LAUNCH_SETTLE_MS = 700;
 /** Reads slower than this come from `uiautomator dump`: settle with one read after a fixed pause. */
 const FAST_READ_MS = 400;
 const LOCATE_TIMEOUT_MS = 5000;
@@ -73,6 +81,11 @@ function cancelled(token: CancellationToken): void {
 
 function label(element: IDeviceElement): string {
 	return `${element.role} ${JSON.stringify(element.name ?? '')}${element.ref ? ` [ref=${element.ref}]` : ''}`;
+}
+
+/** The helper's answer for a handle from an earlier read. */
+function isGoneError(err: unknown): boolean {
+	return /element is gone/i.test(err instanceof Error ? err.message : String(err));
 }
 
 function center(element: IDeviceElement): { x: number; y: number } {
@@ -166,6 +179,7 @@ export class DeviceActRunner {
 			await timeout(SETTLE_MS);
 			return this.read();
 		}
+		const noChangeMs = this.driver.platform === 'desktop' ? DESKTOP_NO_CHANGE_MS : NO_CHANGE_MS;
 		const started = Date.now();
 		await timeout(SETTLE_FIRST_MS);
 		let previous = signature(await this.read());
@@ -173,7 +187,7 @@ export class DeviceActRunner {
 			await timeout(SETTLE_STEP_MS);
 			const next = signature(await this.read());
 			const unchanged = next === before;
-			if (next === previous && (!unchanged || Date.now() - started >= NO_CHANGE_MS)) {
+			if (next === previous && (!unchanged || Date.now() - started >= noChangeMs)) {
 				break;
 			}
 			previous = next;
@@ -191,6 +205,9 @@ export class DeviceActRunner {
 			}
 			if (result.error === 'ambiguous' || result.error === 'within-ambiguous' || result.error === 'stale' || Date.now() - started >= timeoutMs) {
 				throw failure(locator, result, Date.now() - started);
+			}
+			if (this.readMs < FIND_GAP_MS) {
+				await timeout(FIND_GAP_MS - this.readMs);
 			}
 			screen = await this.read();
 		}
@@ -214,11 +231,42 @@ export class DeviceActRunner {
 			throw new StepError('DISABLED', `${label(element)} is disabled`);
 		}
 		const before = await this.current();
-		if (!element.handle || !this.driver.activate || !await this.driver.activate(element).catch(() => false)) {
+		if (!element.handle || !await this.press(element)) {
 			const at = center(element);
 			await this.driver.tap(at.x, at.y);
 		}
 		return describeScreenChange(before, await this.afterInput());
+	}
+
+	/**
+	 * Presses through accessibility. False when the app refuses the press, so the caller clicks
+	 * instead. A handle that went stale (something else read the window in between) is found again
+	 * and pressed once more; it never turns into a click at coordinates that may be out of date.
+	 */
+	private async press(element: IDeviceElement): Promise<boolean> {
+		if (!this.driver.activate) {
+			return false;
+		}
+		try {
+			return await this.driver.activate(element);
+		} catch (err) {
+			if (!isGoneError(err)) {
+				return false;
+			}
+		}
+		const screen = await this.read();
+		const again = element.ref ? locateOnDevice(screen.elements, { ref: element.ref }) : { error: 'stale' as const };
+		if ('error' in again || !again.element.handle) {
+			throw new StepError('STALE_REF', `${label(element)} changed while Volt was pressing it; read the window again`);
+		}
+		try {
+			return await this.driver.activate(again.element);
+		} catch (err) {
+			if (isGoneError(err)) {
+				throw new StepError('STALE_REF', `${label(element)} keeps changing; read the window again`);
+			}
+			return false;
+		}
 	}
 
 	private async step(step: IActStep): Promise<string> {
@@ -227,8 +275,11 @@ export class DeviceActRunner {
 			case 'navigate': {
 				const before = await this.current();
 				await this.driver.launch(step.url!);
-				await timeout(700);
-				return `launched ${step.url} · ${describeScreenChange(before, await this.read())}`;
+				// The desktop helper returns once the app has a window: settle on the tree, not a fixed pause.
+				if (this.readMs > FAST_READ_MS) {
+					await timeout(LAUNCH_SETTLE_MS);
+				}
+				return `launched ${step.url} · ${describeScreenChange(before, this.readMs > FAST_READ_MS ? await this.read() : await this.afterInput())}`;
 			}
 			case 'back':
 			case 'reload': {

@@ -241,3 +241,68 @@ export function pruneImages(messages: INativeLoopMessage[], policy: IImagePolicy
 	}
 	return removed;
 }
+
+// --- old tool results --------------------------------------------------------------------------
+
+export interface IToolClearPolicy {
+	/** Start once the prompt reaches this fraction of the effective window (compaction starts at 0.8). */
+	readonly triggerFraction: number;
+	readonly minTrigger: number;
+	/** Newest tool results that always stay whole. */
+	readonly keep: number;
+	/** A pass runs only when it frees this much, so the cached prefix is rewritten rarely. */
+	readonly clearAtLeast: number;
+	/** Results smaller than this are not worth a stub. */
+	readonly minResultTokens: number;
+}
+
+export const DEFAULT_TOOL_CLEAR: IToolClearPolicy = { triggerFraction: 0.55, minTrigger: 48_000, keep: 6, clearAtLeast: 30_000, minResultTokens: 400 };
+
+const CLEARED_PREFIX = '[Old tool result cleared to save context';
+
+export function toolClearTrigger(window: number, policy: IToolClearPolicy = DEFAULT_TOOL_CLEAR): number {
+	return Math.max(policy.minTrigger, Math.round(effectiveWindow({ window, ...DEFAULT_COMPACTION }) * policy.triggerFraction));
+}
+
+/**
+ * The client-side twin of Anthropic's server-side `clear_tool_uses`, for every other provider: once
+ * the prompt passes the trigger, large tool results older than the newest `keep` become a one-line
+ * stub naming the call, in one batch. That defers full compaction (a summary call and a lost cache)
+ * on long runs, and each later step resends far fewer tokens. Returns the tokens freed.
+ */
+export function clearOldToolResults(messages: INativeLoopMessage[], promptTokens: number, window: number, policy: IToolClearPolicy = DEFAULT_TOOL_CLEAR): number {
+	if (promptTokens < toolClearTrigger(window, policy)) {
+		return 0;
+	}
+	const tools: number[] = [];
+	for (let i = 0; i < messages.length; i++) {
+		if (messages[i].role === 'tool') {
+			tools.push(i);
+		}
+	}
+	const candidates = tools.slice(0, Math.max(0, tools.length - policy.keep)).filter(i => {
+		const message = messages[i];
+		return !message.content.startsWith(CLEARED_PREFIX) && messageTokens(message) >= policy.minResultTokens;
+	});
+	const freeable = candidates.reduce((total, i) => total + messageTokens(messages[i]), 0);
+	if (freeable < policy.clearAtLeast) {
+		return 0;
+	}
+	const calls = new Map<string, { readonly name: string; readonly args: unknown }>();
+	for (const message of messages) {
+		for (const call of message.toolCalls ?? []) {
+			calls.set(call.id, call);
+		}
+	}
+	let freed = 0;
+	for (const i of candidates) {
+		const message = messages[i];
+		const call = message.callId ? calls.get(message.callId) : undefined;
+		const what = call ? `${call.name} ${clip(safeJson(call.args), 160)}` : message.name ?? 'tool';
+		const stub = `${CLEARED_PREFIX}: ${what}. It was ${message.isError ? 'an error' : `${message.content.length} characters`}; run the tool again if you need it.]`;
+		freed += messageTokens(message);
+		messages[i] = { ...message, content: stub };
+		freed -= messageTokens(messages[i]);
+	}
+	return freed;
+}

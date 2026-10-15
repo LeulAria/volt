@@ -55,7 +55,9 @@ suite('Volt task intelligence', () => {
 		const evidence = intel.successCriteria.map(criterion => criterion.evidence);
 		assert.ok(evidence.includes('test'), `expected a test criterion, got ${evidence.join(',')}`);
 		assert.ok(evidence.includes('typecheck'), `expected a typecheck criterion, got ${evidence.join(',')}`);
-		assert.ok(intel.successCriteria.every(criterion => criterion.explicit));
+		// Only the "still builds" floor is implicit.
+		assert.ok(intel.successCriteria.every(criterion => criterion.explicit || criterion.evidence === 'diff'));
+		assert.ok(intel.successCriteria.filter(criterion => criterion.evidence !== 'diff').every(criterion => criterion.explicit));
 	});
 
 	test('falls back to one implicit criterion when the user states none', () => {

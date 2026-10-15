@@ -413,8 +413,16 @@ suite('Volt orchestrator: subagents', () => {
 		sim.start('parent');
 		const task = sim.spawn('parent', 'deploy').taskId!;
 		sim.settle('parent', 'done');
-		sim.start(sim.childOf(task));
-		sim.settle(sim.childOf(task), 'failed', undefined, 'Provider error: 529 overloaded');
+		const child = sim.childOf(task);
+		// An overloaded provider is a passing error: the child goes on by itself a few times first.
+		for (let attempt = 1; attempt <= 3; attempt++) {
+			sim.start(child);
+			sim.settle(child, 'failed', undefined, 'Provider error: 529 overloaded');
+			assert.strictEqual(sim.state.tasks[task].state, 'running', `retry ${attempt} keeps the task running`);
+			assert.ok(sim.state.threads[child].active?.id.endsWith(`~f${attempt}`));
+		}
+		sim.start(child);
+		sim.settle(child, 'failed', undefined, 'Provider error: 529 overloaded');
 		assert.strictEqual(sim.state.tasks[task].state, 'failed');
 		const note = sim.state.threads.parent.active;
 		assert.strictEqual(note?.kind, 'notification');

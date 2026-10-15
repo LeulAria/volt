@@ -29,7 +29,7 @@ suite('Volt capability groups', () => {
 
 	test('fast lane sees edit but not shell', () => {
 		const intent = classifyIntent('fix the typo in README.md', 'agent');
-		assert.deepStrictEqual(visibleTools(tools, intent.groups).map(tool => tool.name), ['read_file', 'edit_file', 'finish']);
+		assert.deepStrictEqual(visibleTools(tools, intent.groups).map(tool => tool.name), ['read_file', 'edit_file', 'web_search', 'finish']);
 	});
 
 	test('ask mode strips writes even if the text looks like an edit', () => {

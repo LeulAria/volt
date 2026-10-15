@@ -93,13 +93,22 @@ export async function runToolBatch(
 	const deps = batchDependencies(prepared, tools, ctx.cwd);
 	const done = new Map<number, Promise<void>>();
 	const shared = new Map<string, Promise<IToolResult>>();
+	// Identical reads share one execution only between the same writes: `read a, edit a, read a`
+	// must read twice, or the second read reports the file as it was before the edit.
+	const epochs: number[] = [];
+	for (let i = 0, epoch = 0; i < prepared.length; i++) {
+		epochs.push(epoch);
+		if (!tools.get(prepared[i].name)?.parallelSafe) {
+			epoch++;
+		}
+	}
 	const slots = new Semaphore(Math.max(1, options.maxParallel ?? 8));
 
 	const runIndexed = async (i: number): Promise<void> => {
 		await Promise.all(deps[i].map(dep => done.get(dep)).filter((wait): wait is Promise<void> => !!wait));
 		const call = prepared[i];
 		const tool = tools.get(call.name)!;
-		const key = tool.parallelSafe ? toolCallKey(call) : undefined;
+		const key = tool.parallelSafe ? `${epochs[i]}:${toolCallKey(call)}` : undefined;
 		const existing = key ? shared.get(key) : undefined;
 		if (existing) {
 			const result = await existing;

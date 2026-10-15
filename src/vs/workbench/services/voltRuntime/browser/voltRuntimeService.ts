@@ -81,7 +81,7 @@ import { FileLedger } from '../common/harness/fileLedger.js';
 import { alwaysRules, findInstruction, instructionsIndex, ISubagentDoc, rulesForPath } from '../common/harness/instructions.js';
 import { IVoltHookRunContext, IVoltHooksService } from '../common/hooks/voltHooks.js';
 import './hooks/voltHooksService.js';
-import { applyCompaction, COMPACTION_SYSTEM, compactionBoundary, compactionRequest, DEFAULT_COMPACTION, effectiveWindow, mechanicalSummary, pruneImages, serializeForSummary, shouldCompact } from '../common/harness/nativeCompaction.js';
+import { applyCompaction, clearOldToolResults, COMPACTION_SYSTEM, compactionBoundary, compactionRequest, DEFAULT_COMPACTION, effectiveWindow, mechanicalSummary, pruneImages, serializeForSummary, shouldCompact } from '../common/harness/nativeCompaction.js';
 import { chooseEffort, EffortLevel, higherEffort } from '../common/deepseek/effort.js';
 import { IToolDocuments } from './tools/fileTools.js';
 import { ISubagentRequest, NATIVE_ASK_QUESTION_TOOL_NAME } from './tools/metaTools.js';
@@ -2485,6 +2485,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const options = this.runOptions(item, request, state);
 		const schemas = toolSchemas(selected);
 		const contextWindow = item.capabilities.contextWindow || DEFAULT_MODEL_CAPABILITIES.contextWindow;
+		const serverClearsToolResults = profile.providerId === 'anthropic' && (!profile.endpoint?.baseURL || /^https:\/\/api\.anthropic\.com\/?$/.test(profile.endpoint.baseURL));
 		const system: INativeLoopMessage = { role: 'system', content: turn.prompt };
 		const emit = (event: IVoltEvent) => {
 			if (event.type === 'usage' && this.isCurrent(session, run)) {
@@ -2531,7 +2532,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					pruneImages(messages);
 					this.journal.schedule(session.sessionId, journal);
 					if (step > 1 || messages.length > 2) {
-						const estimate = Math.max(state.promptTokens, estimateTokens(turn.prompt) + totalTokens(messages));
+						let estimate = Math.max(state.promptTokens, estimateTokens(turn.prompt) + totalTokens(messages));
+						// Anthropic's own API clears old tool results server-side; everyone else gets the same here.
+						if (!serverClearsToolResults) {
+							const freed = clearOldToolResults(messages, estimate, contextWindow);
+							if (freed) {
+								estimate = Math.max(state.promptTokens - freed, estimateTokens(turn.prompt) + totalTokens(messages));
+								this.logService.info(`[volt] cleared ${freed} tokens of old tool results in ${session.sessionId}`);
+							}
+						}
 						if (shouldCompact(estimate, { window: contextWindow, ...DEFAULT_COMPACTION })) {
 							await compact(messages, false);
 						}
@@ -2570,14 +2579,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				this.emit(session, run.runId, { type: 'notice', severity: 'warning', title: LOOP_NOTICE_TITLE, description: result.stopped.reason });
 			}
 			if (result.outcome === 'budget') {
-				this.emit(session, run.runId, { type: 'notice', severity: 'warning', title: 'Paused at the step limit for one run.', description: 'Send "continue" to keep going from here.' });
+				this.emit(session, run.runId, { type: 'notice', severity: 'info', title: 'Reached the step limit for one run.', description: 'With Keep working on, Volt continues it in a fresh run; otherwise send "continue".' });
 			}
 			const aborted = result.outcome === 'abort' || cancel.isCancellationRequested;
 			if (aborted || result.outcome !== 'done') {
 				// Completed runs already went through the stop hooks before the loop let them end.
 				void this.hooks.run('stop', hookContext(), protocol => protocol === 'claude' ? { stop_hook_active: false } : { status: aborted ? 'aborted' : 'error', loop_count: this.hookFollowups.get(session.sessionId) ?? 0 });
 			}
-			this.finish(session, run, aborted ? 'abort' : result.outcome === 'fail' ? 'fail' : 'done');
+			this.finish(session, run, aborted ? 'abort' : result.outcome === 'fail' ? 'fail' : 'done', !aborted && result.outcome === 'budget' ? 'steps' : undefined);
 		} catch (err) {
 			if (this.isCurrent(session, run)) {
 				this.emit(session, run.runId, { type: 'error', message: err instanceof Error ? err.message : String(err), retryable: true });
@@ -3740,7 +3749,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		run.metrics.setAgentSource(restart ? 'restart' : parked ? 'pool' : 'cold');
 	}
 
-	private finish(session: ISessionState, run: IRunState, reason: 'done' | 'abort' | 'fail'): void {
+	private finish(session: ISessionState, run: IRunState, reason: 'done' | 'abort' | 'fail', incomplete?: 'steps'): void {
 		if (!this.isCurrent(session, run)) {
 			return;
 		}
@@ -3769,7 +3778,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.agentReaper.schedule();
 		}
 		this.emit(session, run.runId, { type: 'lifecycle', phase: reason === 'done' ? 'completed' : reason === 'abort' ? 'cancelled' : 'failed' });
-		this.emit(session, run.runId, { type: 'run.end', runId: run.runId, reason });
+		this.emit(session, run.runId, { type: 'run.end', runId: run.runId, reason, ...(incomplete && reason === 'done' ? { incomplete } : {}) });
 		void run.settled.p.then(() => run.cancel.dispose());
 		this.recordRun(session, run);
 		this.afterRun(run);

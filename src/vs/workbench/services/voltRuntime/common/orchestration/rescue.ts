@@ -87,6 +87,13 @@ export function planContinueText(open: readonly string[]): string {
 	return `[Volt] You ended your turn, but your plan still has ${open.length} open item${open.length === 1 ? '' : 's'}:\n${items.join('\n')}${more}\n\nKeep working until they are done: check what is already done first, then finish the rest and mark each item as you complete it. Change only what the task needs. If an item is already done, mark it; if it cannot be done, or needs a decision only the user can make, say why plainly and stop.`;
 }
 
+/** The model-facing text that continues a turn that ran out of steps for one run. */
+export function stepLimitContinueText(open: readonly string[]): string {
+	const items = open.slice(0, 12).map(item => `- ${item.replace(/\s+/g, ' ').trim().slice(0, 160)}`);
+	const plan = items.length ? `\n\nOpen plan items:\n${items.join('\n')}${open.length > items.length ? `\n- …and ${open.length - items.length} more` : ''}` : '';
+	return `[Volt] Your previous run reached its step limit for one run (a safety stop, not an error) before the task was done.${plan}\n\nContinue where you left off: do not redo what is already done, then finish the work. If you were going in circles, step back and try a different approach. If the task is actually done, or needs a decision only the user can make, say so plainly and stop.`;
+}
+
 export interface IRescueChipView {
 	readonly label: string;
 	/** The countdown ("4m"), while the restart is ahead. */

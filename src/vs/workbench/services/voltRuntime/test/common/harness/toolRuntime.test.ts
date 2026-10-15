@@ -113,6 +113,29 @@ suite('Volt tool runtime', () => {
 		assert.deepStrictEqual(results.map(result => result.name), ['read_file', 'edit_file']);
 		assert.ok(order.includes('read') && order.includes('edit'));
 	});
+
+	test('a read after an edit in the same batch sees the edit', async () => {
+		let content = 'before';
+		let reads = 0;
+		const tools = new Map<string, IVoltTool>([
+			['read_file', stub('read_file', 'read', true, async () => {
+				reads++;
+				return { callId: '', name: 'read_file', kind: 'read', text: content };
+			})],
+			['edit_file', stub('edit_file', 'edit', false, async () => {
+				content = 'after';
+				return { callId: '', name: 'edit_file', kind: 'edit', text: 'edited' };
+			})],
+		]);
+		const results = await runToolBatch(tools, [
+			{ id: '1', name: 'read_file', args: { path: 'a.ts' } },
+			{ id: '2', name: 'read_file', args: { path: 'a.ts' } },
+			{ id: '3', name: 'edit_file', args: { path: 'a.ts' } },
+			{ id: '4', name: 'read_file', args: { path: 'a.ts' } },
+		], ctx);
+		assert.deepStrictEqual(results.map(result => result.text), ['before', 'before', 'edited', 'after']);
+		assert.strictEqual(reads, 2, 'identical reads before the edit still share one execution');
+	});
 });
 
 function stub(name: string, kind: IVoltTool['kind'], parallelSafe: boolean, execute: IVoltTool['execute']): IVoltTool {

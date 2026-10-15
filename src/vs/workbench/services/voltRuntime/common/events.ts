@@ -145,7 +145,8 @@ export type IVoltEvent =
 	/** Provider stream is being retried. Live-only in spirit; persisted so the trace shows the stall. */
 	| { type: 'retry'; attempt: number; delayMs: number; message: string }
 	| { type: 'finish'; reason: 'stop' | 'tool_calls' | 'length' | 'error' | 'abort' }
-	| { type: 'run.end'; runId: string; reason: 'done' | 'abort' | 'fail' }
+	/** `incomplete`: the run ended at its step budget, not because the model finished. */
+	| { type: 'run.end'; runId: string; reason: 'done' | 'abort' | 'fail'; incomplete?: 'steps' }
 	| { type: 'envelope'; id: string; mode: VoltMode; permissions: readonly string[] }
 	| { type: 'ooda'; phase: 'observe' | 'orient' | 'reason' | 'decide' | 'act' | 'reflect' | 'learn'; cycle: number }
 	| { type: 'checkpoint'; id: string; label: string; kind: 'memory' | 'git' }
