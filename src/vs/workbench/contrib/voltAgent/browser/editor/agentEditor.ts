@@ -3116,7 +3116,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	 */
 	private canRenderTail(): boolean {
 		const exchange = this.tailExchange;
-		return !!exchange && exchange.isConnected && this.renderedCount === this.messages.length && this.editingUserIndex === undefined && this.tailFrom === this.lastExchangeStart() && this.tailFrom >= 0;
+		return !!exchange && exchange.isConnected && this.renderedCount === this.messages.length && this.editAboveTail() && this.tailFrom === this.lastExchangeStart() && this.tailFrom >= 0;
+	}
+
+	/**
+	 * No prompt is open for editing, or the one open sits above the live exchange: a reply streaming
+	 * below then patches only its own exchange, so the edit and the thread around it hold still.
+	 */
+	private editAboveTail(): boolean {
+		return this.editingUserIndex === undefined || (this.tailFrom >= 0 && this.editingUserIndex < this.tailFrom);
 	}
 
 	private renderThreadTail(scrollToEnd: boolean): void {
@@ -3158,7 +3166,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private canAppendThread(): boolean {
 		const exchange = this.tailExchange;
 		const from = this.tailFrom;
-		return !!exchange && exchange.parentNode === this.threadInner && !exchange.nextSibling && this.editingUserIndex === undefined
+		return !!exchange && exchange.parentNode === this.threadInner && !exchange.nextSibling && this.editAboveTail()
 			&& from >= 0 && from < this.messages.length && (from === 0 || startsExchange(this.messages[from]))
 			&& this.settledMessages.length === from && this.settledMessages.every((message, index) => this.messages[index] === message);
 	}

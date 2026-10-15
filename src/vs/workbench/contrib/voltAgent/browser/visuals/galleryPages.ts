@@ -157,7 +157,7 @@ const BASE_CSS = `
 .vg{display:flex;flex-direction:column;gap:12px;font-family:var(--font-sans);font-size:13px;line-height:1.45;color:var(--foreground);-webkit-user-select:none;user-select:none}
 .vg *,.vg *::before,.vg *::after{box-sizing:border-box}
 .vg [hidden]{display:none!important}
-.vg-head{display:flex;align-items:flex-end;justify-content:space-between;gap:8px 16px;flex-wrap:wrap}
+.vg-head{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap}
 .vg-heading{min-width:0;flex:1 1 240px}
 .vg-title{margin:0;font-size:14.5px;font-weight:600;letter-spacing:-.01em;line-height:1.3}
 .vg-sub{margin:3px 0 0;color:var(--muted-foreground);font-size:12.5px}
@@ -270,6 +270,7 @@ const SCREENS_CSS = `
 .sc-detail-view .sc-shot{cursor:default}
 .sc-detail-view .sc-shot[data-kind="phone"]{max-width:380px}
 .sc-detail-view .sc-shot[data-kind="tablet"]{max-width:560px}
+.sc-actions{margin-left:auto;flex-wrap:nowrap}
 .sc-variant-label{margin-top:6px;text-align:center;font-size:11px;color:var(--muted-foreground)}
 `;
 
@@ -1084,7 +1085,7 @@ export function screensRuntime(win: Window & typeof globalThis): void {
 		const node = el('section', 'sc-detail-view');
 		node.tabIndex = -1;
 		node.setAttribute('aria-label', screen.name);
-		// Moving between screens on top; what to look at and what to do with it below.
+		// One row: moving between screens on the left, what to do with this one on the right.
 		const bar = el('div', 'vg-bar');
 		const title = el('div', 'vg-bar-title');
 		title.append(el('span', 'sc-num', String(index + 1)), el('span', 'vg-text', screen.name), el('span', 'vg-count', `${index + 1} / ${screens.length}`));
@@ -1096,11 +1097,7 @@ export function screensRuntime(win: Window & typeof globalThis): void {
 		const shown = shots.length ? shots : screen.shots.slice(0, 1);
 		const labels = shown.map(shot => variantOf(shot.variant)?.label ?? '').filter(Boolean).join(', ');
 		const path = shown.find(shot => shot.path)?.path;
-		if (path) {
-			bar.append(button(S.openFile, '', 'file', () => volt?.open(`volt://file/${encodeURI(path)}`), true));
-		}
-		bar.append(button(S.fullscreen, '', 'expand', () => volt?.fullscreen(true), true));
-		const actions = el('div', 'vg-bar');
+		const actions = el('div', 'vg-bar sc-actions');
 		const available = variants.filter(variant => screen.shots.some(shot => shot.variant === variant.id));
 		if (available.length > 1) {
 			actions.append(segmented([...available.map(variant => ({ id: variant.id, label: variant.label, icon: variantIcon(variant) })), { id: 'all', label: S.sideBySide, icon: 'both' }], () => state.detailVariant, id => {
@@ -1108,9 +1105,12 @@ export function screensRuntime(win: Window & typeof globalThis): void {
 				openDetail(state.detail, id);
 			}));
 		}
-		const ask = button(S.ask, '', 'ask', () => volt?.prompt(fmt(S.askPrompt, screen.name, labels)));
-		ask.style.marginLeft = 'auto';
-		actions.append(ask);
+		actions.append(button(S.ask, '', 'ask', () => volt?.prompt(fmt(S.askPrompt, screen.name, labels))));
+		if (path) {
+			actions.append(button(S.openFile, '', 'file', () => volt?.open(`volt://file/${encodeURI(path)}`), true));
+		}
+		actions.append(button(S.fullscreen, '', 'expand', () => volt?.fullscreen(true), true));
+		bar.append(actions);
 		const stage = el('div', 'sc-stage');
 		const row = el('div', 'sc-shots');
 		for (const shot of shown) {
@@ -1129,7 +1129,7 @@ export function screensRuntime(win: Window & typeof globalThis): void {
 			row.append(figure);
 		}
 		stage.append(row);
-		node.append(bar, actions, stage);
+		node.append(bar, stage);
 		const detailLine = screen.detail && data.kind !== 'desktop' ? el('div', 'sc-detail', screen.detail) : undefined;
 		if (detailLine) {
 			node.append(detailLine);
@@ -1149,6 +1149,7 @@ export function screensRuntime(win: Window & typeof globalThis): void {
 			state.detailVariant = variant;
 		}
 		grid.hidden = true;
+		tools.hidden = true;
 		if (failures) {
 			failures.hidden = true;
 		}
@@ -1163,6 +1164,7 @@ export function screensRuntime(win: Window & typeof globalThis): void {
 		detail?.remove();
 		detail = undefined;
 		grid.hidden = false;
+		tools.hidden = false;
 		if (failures) {
 			failures.hidden = false;
 		}
