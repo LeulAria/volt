@@ -92,6 +92,20 @@ suite('Volt search: routing, fallbacks and cache', () => {
 		assert.strictEqual(search.cacheStats().hits, 1);
 	});
 
+	test('index-only: a declining index gives nothing, no ripgrep scan, and nothing is cached for a full search', async () => {
+		const changes = store.add(new Emitter<void>());
+		const ripgrep = { count: 0 };
+		const index = new FakeIndex(() => Promise.reject(new Error('indexing')));
+		const search = store.add(engine(index, fakeRipgrep(ripgrep), changes));
+		const declined = await search.grep({ ...QUERY, indexOnly: true }, CancellationToken.None);
+		assert.deepStrictEqual(declined.files, []);
+		assert.strictEqual(declined.fallback, 'indexing');
+		assert.strictEqual(ripgrep.count, 0);
+		const full = await search.grep(QUERY, CancellationToken.None);
+		assert.strictEqual(full.engine, 'ripgrep');
+		assert.strictEqual(ripgrep.count, 1);
+	});
+
 	test('node_modules (outside the watcher) is never cached', async () => {
 		const changes = store.add(new Emitter<void>());
 		const index = new FakeIndex(async () => ({ kind: 'results', files: [], limitHit: false, stats: { candidates: 0, scanned: 0, indexedFiles: 10, ms: 1, engine: 'index' } }));

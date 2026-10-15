@@ -20,7 +20,7 @@ export const LSP_MAX_REMOTE_SETTING = 'volt.codeIntelligence.lsp.maxRemoteWorksp
 export const RTK_ENABLED_SETTING = 'volt.codeIntelligence.rtk.enabled';
 /** Commands (by their first words, e.g. `git log`) RTK never rewrites. */
 export const RTK_EXCLUDE_SETTING = 'volt.codeIntelligence.rtk.exclude';
-/** FFF (github.com/dmtrKovalenko/fff) for fuzzy file search: `auto` uses it when installed. */
+/** FFF (github.com/dmtrKovalenko/fff) for fuzzy file search: `auto` uses it when installed. Off by default. */
 export const FFF_MODE_SETTING = 'volt.codeIntelligence.fff.mode';
 /** A specific `fff-mcp` binary, instead of Volt's install or the one on PATH. */
 export const FFF_PATH_SETTING = 'volt.codeIntelligence.fff.path';
@@ -73,7 +73,7 @@ export function readRtkExclusions(configuration: IConfigurationService): string[
 
 export function readFffSettings(configuration: IConfigurationService): { readonly mode: VoltFffMode; readonly path?: string } {
 	const path = configuration.getValue<string>(FFF_PATH_SETTING)?.trim();
-	return { mode: configuration.getValue<string>(FFF_MODE_SETTING) === 'off' ? 'off' : 'auto', ...(path ? { path } : {}) };
+	return { mode: configuration.getValue<string>(FFF_MODE_SETTING) === 'auto' ? 'auto' : 'off', ...(path ? { path } : {}) };
 }
 
 export function retrievalEnabled(configuration: IConfigurationService): boolean {

@@ -22,6 +22,7 @@ import { IVoltProjectRecord, IVoltSessionContextService } from '../../../../serv
 import { getLayoutMode, onDidChangeLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { isNewEmptyWindow } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
+import { markAgentSwitch } from '../editor/agentSwitchTiming.js';
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
 import { AutomationsEditorInput } from '../automations/automationsEditor.js';
 import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js';
@@ -55,6 +56,7 @@ export async function openAgentPanel(
 	sessionId: string | undefined,
 	options?: { preserveFocus?: boolean },
 ): Promise<AgentEditorInput> {
+	markAgentSwitch();
 	const part = editorGroupsService.mainPart;
 	const preserveFocus = options?.preserveFocus === true;
 	if (sessionId) {
@@ -244,6 +246,7 @@ export async function activateAgentProject(
 	root: URI,
 	name: string,
 ): Promise<void> {
+	markAgentSwitch();
 	const project = sessionContext.registerProject(root, name);
 	sessionContext.selectProject(project.id);
 	const latest = latestSessionForFolder(

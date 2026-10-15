@@ -8,12 +8,13 @@ import { CancellationToken, CancellationTokenSource } from '../../../../../base/
 import * as errors from '../../../../../base/common/errors.js';
 import { Emitter, Event, PauseableEmitter } from '../../../../../base/common/event.js';
 import { Lazy } from '../../../../../base/common/lazy.js';
-import { Disposable, IDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
+import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { INotebookSearchService } from '../../common/notebookSearch.js';
 import { ReplacePattern } from '../../../../services/search/common/replace.js';
@@ -412,8 +413,37 @@ export class SearchViewModelWorkbenchService implements ISearchViewModelWorkbenc
 
 	declare readonly _serviceBrand: undefined;
 	private _searchModel: SearchModelImpl | null = null;
+	private _scopedFolder: URI | undefined;
+	private folderScope: object | undefined;
+	private readonly _onDidChangeScopedFolder = new Emitter<void>();
+	readonly onDidChangeScopedFolder = this._onDidChangeScopedFolder.event;
 
-	constructor(@IInstantiationService private readonly instantiationService: IInstantiationService) {
+	constructor(
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService,
+	) {
+	}
+
+	get scopedFolder(): URI | undefined {
+		return this._scopedFolder;
+	}
+
+	scopeToFolder(folder: URI): IDisposable {
+		const owner = this.folderScope = {};
+		this.setScopedFolder(folder);
+		return toDisposable(() => {
+			if (this.folderScope === owner) {
+				this.folderScope = undefined;
+				this.setScopedFolder(undefined);
+			}
+		});
+	}
+
+	private setScopedFolder(folder: URI | undefined): void {
+		if (!this.uriIdentityService.extUri.isEqual(folder, this._scopedFolder)) {
+			this._scopedFolder = folder;
+			this._onDidChangeScopedFolder.fire();
+		}
 	}
 
 	get searchModel(): SearchModelImpl {

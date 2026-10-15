@@ -67,7 +67,8 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 				localize('voltCodeIntelligence.fffAuto', "Use FFF for fuzzy file search when it is installed; Volt's index otherwise."),
 				localize('voltCodeIntelligence.fffOff', "Always use Volt's index for fuzzy file search."),
 			],
-			default: 'auto',
+			// Off unless chosen: one more process per project folder, for ranking the index already does in milliseconds.
+			default: 'off',
 			scope: ConfigurationScope.APPLICATION,
 			markdownDescription: localize('voltCodeIntelligence.fff', "Fuzzy file search (the agent's `find_files`) with [FFF](https://github.com/dmtrKovalenko/fff): typo-tolerant, ranked by how recently files changed and were used. It runs as its own process; without it Volt's index answers."),
 		},

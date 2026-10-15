@@ -3532,6 +3532,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				snippets: !forAgent,
 				...(session.retrievalSeen ? { seen: session.retrievalSeen } : {}),
 				changed: () => this.workingTreeChanges(root),
+				indexOnly: this.otherRunsActive(session),
 				token: run.cancel.token,
 			});
 			if (result && this.isCurrent(session, run)) {
@@ -3547,6 +3548,16 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.logService.trace('[volt] retrieval failed', err);
 			return undefined;
 		}
+	}
+
+	/** Another chat's run is going: background work for this one should not compete with it for every core. */
+	private otherRunsActive(session: ISessionState): boolean {
+		for (const other of this.sessions.values()) {
+			if (other !== session && isRunActive(other)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** Files the work tree has changed, relative to the repository root (cached for a few seconds). */
