@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import { FileTracker } from '../../../common/harness/fileTracker.js';
-import { runToolBatch } from '../../../common/harness/toolRuntime.js';
+import { PathLocks, runToolBatch } from '../../../common/harness/toolRuntime.js';
 import { ToolPipeline } from '../../../common/harness/waterfall.js';
 import { IToolContext, IVoltTool } from '../../../common/tools/tool.js';
 
@@ -135,6 +135,57 @@ suite('Volt tool runtime', () => {
 		], ctx);
 		assert.deepStrictEqual(results.map(result => result.text), ['before', 'before', 'edited', 'after']);
 		assert.strictEqual(reads, 2, 'identical reads before the edit still share one execution');
+	});
+
+	suite('file locks across batches', () => {
+		const at: IToolContext = { ...ctx, cwd: '/work' };
+		const logged = (log: string[], wait: (tag: string) => Promise<void>) => new Map<string, IVoltTool>([['edit_file', stub('edit_file', 'edit', false, async args => {
+			const tag = (args as { tag: string }).tag;
+			log.push(`start ${tag}`);
+			await wait(tag);
+			log.push(`end ${tag}`);
+			return { callId: '', name: 'edit_file', kind: 'edit', text: 'ok' };
+		})]]);
+
+		test('an agent and its subagent never edit one file at the same time', async () => {
+			const locks = new PathLocks();
+			const log: string[] = [];
+			const tools = logged(log, () => delay(15));
+			await Promise.all([
+				runToolBatch(tools, [{ id: '1', name: 'edit_file', args: { path: 'src/a.ts', tag: 'agent' } }], at, { locks }),
+				runToolBatch(tools, [{ id: '2', name: 'edit_file', args: { path: './src/../src/a.ts', tag: 'subagent' } }], at, { locks }),
+			]);
+			assert.deepStrictEqual(log, ['start agent', 'end agent', 'start subagent', 'end subagent']);
+			assert.strictEqual(locks.size, 0, 'nothing stays locked');
+		});
+
+		test('different files are still edited in parallel', async () => {
+			const locks = new PathLocks();
+			const log: string[] = [];
+			const tools = logged(log, () => delay(15));
+			await Promise.all([
+				runToolBatch(tools, [{ id: '1', name: 'edit_file', args: { path: 'a.ts', tag: 'a' } }], at, { locks }),
+				runToolBatch(tools, [{ id: '2', name: 'edit_file', args: { path: 'b.ts', tag: 'b' } }], at, { locks }),
+			]);
+			assert.deepStrictEqual(log.slice(0, 2), ['start a', 'start b']);
+		});
+
+		test('a timed-out edit that ignores its abort keeps the file locked until it really stops', async () => {
+			const locks = new PathLocks();
+			const log: string[] = [];
+			let finish!: () => void;
+			const stuck = new Promise<void>(resolve => finish = resolve);
+			const tools = logged(log, tag => tag === 'stuck' ? stuck : Promise.resolve());
+			tools.set('edit_file', { ...tools.get('edit_file')!, timeoutMs: 10 });
+			const first = await runToolBatch(tools, [{ id: '1', name: 'edit_file', args: { path: 'a.ts', tag: 'stuck' } }], at, { locks });
+			assert.ok(first[0].isError && /timed out/.test(first[0].text));
+			const next = runToolBatch(tools, [{ id: '2', name: 'edit_file', args: { path: 'a.ts', tag: 'next' } }], at, { locks });
+			await delay(30);
+			assert.deepStrictEqual(log, ['start stuck'], 'the next edit waits for the stuck one');
+			finish();
+			await next;
+			assert.deepStrictEqual(log, ['start stuck', 'end stuck', 'start next', 'end next']);
+		});
 	});
 });
 

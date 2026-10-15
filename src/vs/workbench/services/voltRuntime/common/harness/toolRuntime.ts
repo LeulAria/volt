@@ -7,7 +7,7 @@ import { IToolCall, IToolContext, IToolResult, IVoltTool } from '../tools/tool.j
 import { IntelligentCache, cacheKey } from './cache.js';
 import { toolCallKey } from './doomLoop.js';
 import { FileTracker, staleEditHook } from './fileTracker.js';
-import { batchDependencies } from './resources.js';
+import { batchDependencies, resourceKeys } from './resources.js';
 import { dryRunPreview, normalizeArgs, validateArgs } from './toolPolicy.js';
 import { defaultToolPipeline, ToolPipeline } from './waterfall.js';
 
@@ -35,9 +35,49 @@ export interface IToolRuntimeOptions {
 	readonly onResult?: (result: IToolResult) => void;
 	/** Default per-call ceiling when the tool declares none. */
 	readonly timeoutMs?: number;
+	/** File locks shared by every batch of a chat, so edits from different batches never interleave. */
+	readonly locks?: PathLocks;
 }
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
+/** How long a timed-out edit that ignored its abort signal keeps its file locked before the lock is let go. */
+const TIMED_OUT_HOLD_MS = 60_000;
+
+/**
+ * Per-file locks across tool batches. A batch already orders its own calls; this orders an edit
+ * against edits from other batches of the same chat: a subagent's (a background one keeps editing
+ * while the agent carries on), or a cancelled run's that is still finishing. A read-modify-write
+ * edit that interleaves with another loses one of them.
+ */
+export class PathLocks {
+
+	private readonly tails = new Map<string, Promise<void>>();
+
+	/** Waits for earlier holders of `key`; the returned function lets it go (safe to call twice). */
+	async acquire(key: string): Promise<() => void> {
+		const previous = this.tails.get(key) ?? Promise.resolve();
+		let release!: () => void;
+		const held = new Promise<void>(resolve => release = resolve);
+		const tail = previous.then(() => held);
+		this.tails.set(key, tail);
+		await previous;
+		let released = false;
+		return () => {
+			if (released) {
+				return;
+			}
+			released = true;
+			release();
+			if (this.tails.get(key) === tail) {
+				this.tails.delete(key);
+			}
+		};
+	}
+
+	get size(): number {
+		return this.tails.size;
+	}
+}
 
 export async function runToolBatch(
 	tools: ReadonlyMap<string, IVoltTool>,
@@ -115,11 +155,22 @@ export async function runToolBatch(
 			deliver(i, { ...result, callId: call.id });
 			return;
 		}
-		const execution = slots.run(() => runOne(tool, call, ctx, options, pipeline));
+		const lock = options.locks && tool.group === 'edit' && !tool.parallelSafe ? resourceKeys(tool, call.args, ctx.cwd).writes[0] : undefined;
+		const release = lock ? await options.locks!.acquire(lock) : undefined;
+		let body: Promise<unknown> | undefined;
+		const execution = slots.run(() => runOne(tool, call, ctx, options, pipeline, running => body = running));
 		if (key) {
 			shared.set(key, execution);
 		}
-		const result = await execution;
+		let result: IToolResult;
+		try {
+			result = await execution;
+		} finally {
+			if (release) {
+				// A timed-out edit may still be writing: the file stays locked until it really stops.
+				releaseWhenSettled(body, release);
+			}
+		}
 		deliver(i, result);
 		if (options.cache && !result.isError && tool.parallelSafe) {
 			options.cache.set('tool', cacheKey(call.name, JSON.stringify(call.args)), result);
@@ -136,6 +187,18 @@ export async function runToolBatch(
 	return results;
 }
 
+function releaseWhenSettled(body: Promise<unknown> | undefined, release: () => void): void {
+	if (!body) {
+		release();
+		return;
+	}
+	const cap = setTimeout(release, TIMED_OUT_HOLD_MS);
+	void body.finally(() => {
+		clearTimeout(cap);
+		release();
+	});
+}
+
 function filePath(call: IToolCall): string | undefined {
 	const args = call.args && typeof call.args === 'object' ? call.args as Record<string, unknown> : {};
 	const value = args.path ?? args.file ?? args.file_path;
@@ -148,6 +211,8 @@ async function runOne(
 	ctx: IToolContext,
 	options: IToolRuntimeOptions,
 	pipeline: ToolPipeline,
+	/** Gets the tool's own work, which may outlive a timeout. */
+	onBody?: (body: Promise<unknown>) => void,
 ): Promise<IToolResult> {
 	if (options.authorize) {
 		const decision = await options.authorize(call, tool);
@@ -196,6 +261,7 @@ async function runOne(
 					isError: true,
 					durationMs: Date.now() - started,
 				}));
+			onBody?.(body);
 			return await Promise.race([body, timedOut]);
 		} finally {
 			if (timer) {
