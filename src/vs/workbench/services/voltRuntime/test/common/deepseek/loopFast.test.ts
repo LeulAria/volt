@@ -9,7 +9,7 @@ import { IDeepseekHost, runDeepseekLoop } from '../../../common/deepseek/loop.js
 import { StreamChunk } from '../../../common/deepseek/protocol.js';
 import { IVoltEvent } from '../../../common/events.js';
 import { INativeLoopMessage } from '../../../common/harness/nativeLoop.js';
-import { ProviderError } from '../../../common/providerError.js';
+import { ProviderError, providerErrorFromResponse } from '../../../common/providerError.js';
 import { IToolCall, IToolResult, IVoltTool } from '../../../common/tools/tool.js';
 
 suite('DeepSeek loop: speed and reliability', () => {
@@ -155,6 +155,51 @@ suite('DeepSeek loop: speed and reliability', () => {
 		}), { messages: [{ role: 'user', content: 'go' }], token });
 		assert.strictEqual(result.outcome, 'done');
 		assert.strictEqual(compacted, 1);
+	});
+
+	test('Claude refusing its earlier thinking drops that thinking once and the step runs again', async () => {
+		const rejected = () => providerErrorFromResponse(400, JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation. Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to "drop_block".' } }));
+		assert.strictEqual(rejected().thinkingRejected, true);
+		assert.strictEqual(rejected().retryable, false);
+		assert.strictEqual(rejected().overflow, false);
+		const claude = { type: 'reasoning' as const, block: { provider: 'anthropic', model: 'claude-opus-5-5', text: 't', opaque: { type: 'thinking', thinking: 't', signature: 's' } } };
+		const deepseek = { type: 'reasoning' as const, block: { provider: 'deepseek', model: 'deepseek-chat', text: 'r', opaque: { reasoning_content: 'r' } } };
+		const messages: INativeLoopMessage[] = [
+			{ role: 'user', content: 'go', turn: true },
+			{ role: 'assistant', content: 'a', parts: [claude, { type: 'text', text: 'a' }] },
+			{ role: 'assistant', content: 'b', parts: [deepseek, { type: 'text', text: 'b' }] },
+			{ role: 'user', content: 'next', turn: true },
+		];
+		const sent: INativeLoopMessage[][] = [];
+		const events: IVoltEvent[] = [];
+		const result = await runDeepseekLoop(host({
+			stream: async function* (history) {
+				sent.push(history.slice());
+				if (sent.length === 1) {
+					throw rejected();
+				}
+				yield { type: 'text-delta', index: 0, text: 'done' };
+				yield { type: 'finish', reason: 'stop' };
+			},
+			emit: event => events.push(event),
+		}), { messages, token });
+		assert.strictEqual(result.outcome, 'done');
+		assert.strictEqual(sent.length, 2);
+		assert.deepStrictEqual(sent[1][1].parts?.map(part => part.type), ['text']);
+		assert.deepStrictEqual(sent[1][2].parts?.map(part => part.type), ['reasoning', 'text']);
+		assert.ok(events.some(event => event.type === 'retry'));
+		assert.ok(!events.some(event => event.type === 'error'));
+
+		// Nothing left to drop: the same refusal is a real failure, not a retry loop.
+		let attempts = 0;
+		const again = await runDeepseekLoop(host({
+			stream: async function* () {
+				attempts++;
+				throw rejected();
+			},
+		}), { messages, token });
+		assert.strictEqual(again.outcome, 'fail');
+		assert.strictEqual(attempts, 1);
 	});
 
 	test('the completion review sends the model back once, then accepts', async () => {

@@ -132,6 +132,11 @@ interface IRuntimeInternals {
 const BEFORE = '✔ mean (0.3ms)\n✖ median sorts numerically (0.3ms)\nℹ pass 1\nℹ fail 1';
 const REGRESSED = '✖ mean (0.3ms)\n✖ median sorts numerically (0.3ms)\nℹ pass 0\nℹ fail 2';
 
+/** Skips the chat title call, so scripted turns go to the run itself. */
+function untitled(service: AgentRuntimeService): void {
+	(service.getOrCreateSession('chat') as { titleState?: string }).titleState = 'done';
+}
+
 async function waitFor(predicate: () => boolean, what: string): Promise<void> {
 	for (let i = 0; i < 400; i++) {
 		if (predicate()) {
@@ -146,7 +151,7 @@ suite('Agent runtime orchestration', () => {
 
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
-	async function setup(kind: 'model' | 'agent', files: Record<string, string> = {}) {
+	async function setup(kind: 'model' | 'agent', files: Record<string, string> = {}, baseURL?: string) {
 		const disposables = store.add(new DisposableStore());
 		const fileService = disposables.add(new FileService(new NullLogService()));
 		disposables.add(fileService.registerProvider('file', disposables.add(new InMemoryFileSystemProvider())));
@@ -160,7 +165,7 @@ suite('Agent runtime orchestration', () => {
 		const stub = <T>(value: object) => value as unknown as T;
 		const service = disposables.add(new AgentRuntimeService(
 			disposables.add(new InMemoryStorageService()),
-			stub({ get: async () => undefined, set: async () => { }, delete: async () => { } }),
+			stub({ get: async () => undefined, set: async () => { }, delete: async () => { }, onDidChangeSecret: Event.None }),
 			stub({ request: async () => { throw new Error('offline'); } }),
 			stub({ getWorkspace: () => ({ folders: [{ uri: ROOT }] }), isInsideWorkspace: (uri: URI) => isEqualOrParent(uri, ROOT) }),
 			fileService as IFileService,
@@ -191,7 +196,7 @@ suite('Agent runtime orchestration', () => {
 		internals.agentProviders.set(agent.id, agent);
 		internals.profiles = [];
 		const profile = await service.upsertProfile(kind === 'model'
-			? { kind: 'model', label: 'Fake', providerId: model.id, transport: 'http', authKind: 'none' }
+			? { kind: 'model', label: 'Fake', providerId: model.id, transport: 'http', authKind: 'none', ...(baseURL ? { endpoint: { baseURL } } : {}) }
 			: { kind: 'agent', label: 'Fake', providerId: agent.id, transport: 'stdio', authKind: 'cli' });
 		await service.refreshCatalog();
 		const ref = kind === 'model' ? `model:${profile.id}:fm` : `agent:${profile.id}:m1`;
@@ -215,6 +220,16 @@ suite('Agent runtime orchestration', () => {
 		assert.strictEqual(metrics.engine, 'native');
 		assert.strictEqual(metrics.outcome, 'done');
 		assert.ok(metrics.firstTextMs !== undefined && metrics.totalMs !== undefined && metrics.firstTextMs <= metrics.totalMs);
+	});
+
+	test('a model on this machine names the chat after the run, so the title call waits behind no step', async () => {
+		const { service, model, ref, waitEnd } = await setup('model', {}, 'http://127.0.0.1:1234/v1');
+		const runId = await service.send('chat', { text: 'rename the helper', mode: 'agent', providerRef: ref });
+		assert.strictEqual((await waitEnd(runId)).reason, 'done');
+		await waitFor(() => model.requests.length === 2, 'the title call');
+		const [run, title] = model.requests;
+		assert.ok(run.tools?.length, 'the run went first');
+		assert.ok(!title.tools?.length && title.messages.length === 1, 'then the title call');
 	});
 
 	test('cancel then immediate resend (native): the cancelled loop cannot write into the new run', async () => {
@@ -537,5 +552,70 @@ suite('Agent runtime orchestration', () => {
 		assert.deepStrictEqual(session.messages.map(message => `${message.content}${message.steer ? ' (steer)' : ''}`), ['one', 'also this (steer)', 'ok', 'two', 'ok']);
 		service.truncateSession('chat', 1);
 		assert.deepStrictEqual(session.messages.map(message => message.content), ['one', 'also this', 'ok']);
+	});
+	test('Claude reasoning is replayed while the system prompt and tools stay the same, and dropped once they change', async () => {
+		const { service, model, ref, waitEnd } = await setup('model');
+		untitled(service);
+		model.turns.push(async function* () {
+			yield { type: 'reasoning.block', provider: 'anthropic', model: 'claude-test', text: 't', opaque: { type: 'thinking', thinking: 't', signature: 's' } };
+			yield { type: 'text.delta', id: 't', delta: 'one' };
+			yield { type: 'finish', reason: 'stop' };
+		});
+		const replayed = (index: number) => model.requests[index].messages.some(message => message.parts?.some(part => part.type === 'reasoning'));
+		await waitEnd(await service.send('chat', { text: 'first', mode: 'agent', providerRef: ref }));
+		await waitEnd(await service.send('chat', { text: 'second', mode: 'agent', providerRef: ref }));
+		assert.strictEqual(replayed(1), true, 'same prompt and tools: the signed block goes back');
+		await waitEnd(await service.send('chat', { text: 'third', mode: 'ask', providerRef: ref }));
+		assert.strictEqual(replayed(2), false, 'Ask mode changed the prompt and tools: the block would be rejected');
+	});
+
+	test('compaction asks for the summary on top of the run\'s own request, so the prompt cache serves the history', async () => {
+		const { service, model, ref, waitEnd } = await setup('model');
+		untitled(service);
+		model.turns.push(async function* () {
+			// Long and never repeating (a repeated run would be cut as a runaway reply).
+			yield { type: 'text.delta', id: 't', delta: Array.from({ length: 45_000 }, (_, i) => `word${i}`).join(' ') };
+			yield { type: 'finish', reason: 'stop' };
+		});
+		await waitEnd(await service.send('chat', { text: 'one', mode: 'agent', providerRef: ref }));
+		const summary = `Task: one. ${'Done so far: details. '.repeat(30)}`;
+		model.turns.push(async function* () {
+			yield { type: 'text.delta', id: 's', delta: summary };
+			yield { type: 'finish', reason: 'stop' };
+		});
+		await waitEnd(await service.send('chat', { text: 'two', mode: 'agent', providerRef: ref }));
+		const [first, compaction, next] = model.requests;
+		assert.strictEqual(model.requests.length, 3, 'one summary call, no separate summarizer');
+		assert.ok(compaction.messages.at(-1)!.content.includes('<compaction_request>'));
+		assert.deepStrictEqual(compaction.tools, first.tools, 'same tools');
+		assert.deepStrictEqual(compaction.options, first.options, 'same options');
+		assert.strictEqual(compaction.messages[0].content, first.messages[0].content, 'same system prompt');
+		assert.deepStrictEqual(compaction.messages.slice(0, 2), first.messages, 'the earlier request is an exact prefix');
+		assert.ok(next.messages[1].content.includes('<conversation_summary>') && next.messages[1].content.includes('Done so far') && next.messages[1].content.includes('two'));
+		assert.ok(next.messages.every(message => message.content.length < 100_000), 'the long answer is gone');
+	});
+
+	test('a cache-reusing summary cut off at its output limit is not used; the separate summarizer writes it', async () => {
+		const { service, model, ref, waitEnd } = await setup('model');
+		untitled(service);
+		model.turns.push(async function* () {
+			yield { type: 'text.delta', id: 't', delta: Array.from({ length: 45_000 }, (_, i) => `word${i}`).join(' ') };
+			yield { type: 'finish', reason: 'stop' };
+		});
+		await waitEnd(await service.send('chat', { text: 'one', mode: 'agent', providerRef: ref }));
+		model.turns.push(async function* () {
+			yield { type: 'text.delta', id: 's', delta: `Task: one. ${'Cut off mid-sentence. '.repeat(30)}` };
+			yield { type: 'finish', reason: 'length' };
+		}, async function* () {
+			yield { type: 'text.delta', id: 's', delta: `Task: one. ${'Separate summary. '.repeat(30)}` };
+			yield { type: 'finish', reason: 'stop' };
+		});
+		await waitEnd(await service.send('chat', { text: 'two', mode: 'agent', providerRef: ref }));
+		const [, cut, separate, next] = model.requests;
+		assert.strictEqual(model.requests.length, 4);
+		assert.ok(cut.messages.at(-1)!.content.includes('<compaction_request>'));
+		assert.ok(cut.maxOutputTokens && cut.maxOutputTokens >= 24_000, 'capped, but above any Claude thinking budget');
+		assert.ok(!separate.tools?.length, 'then the separate summarizer');
+		assert.ok(next.messages[1].content.includes('Separate summary') && !next.messages[1].content.includes('Cut off'));
 	});
 });

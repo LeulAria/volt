@@ -12,6 +12,11 @@ export class ProviderError extends Error {
 	readonly retryable: boolean;
 	/** The prompt no longer fits the model's window; compaction, not a retry, is the fix. */
 	readonly overflow: boolean;
+	/**
+	 * Claude refused a replayed thinking block: the history before it changed, or the block is not
+	 * valid for this account. The same body fails again; dropping Claude's earlier thinking is the fix.
+	 */
+	readonly thinkingRejected: boolean;
 
 	constructor(
 		message: string,
@@ -22,6 +27,7 @@ export class ProviderError extends Error {
 		super(message);
 		this.name = 'ProviderError';
 		this.overflow = isOverflow(status, errorType, message);
+		this.thinkingRejected = THINKING_REJECTED.test(message);
 		this.retryable = !this.overflow && isRetryable(status, errorType, message);
 	}
 }
@@ -30,6 +36,7 @@ const RETRY_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 
 const RETRY_TYPES = /^(?:overloaded_error|rate_limit_error|api_error|timeout_error|server_error|internal_server_error|service_unavailable)$/i;
 const RETRY_TEXT = /overloaded|rate.?limit|try again|temporar(?:y|ily)|timed? ?out|econnreset|etimedout|socket hang up|eai_again|network|unavailable/i;
 const OVERFLOW_TEXT = /prompt is too long|context.?(?:length|window)|maximum context|too many tokens|input is too long|exceeds? the (?:context|token)/i;
+const THINKING_REJECTED = /invalid `?signature`? in `?(?:redacted_)?thinking`? block|bound to a different conversation/i;
 
 function isRetryable(status: number | undefined, errorType: string | undefined, message: string): boolean {
 	if (status !== undefined && RETRY_STATUS.has(status)) {
