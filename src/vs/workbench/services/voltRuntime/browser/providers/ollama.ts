@@ -12,9 +12,35 @@ import { generationParams } from '../../common/models/modelOptions.js';
 import { IProviderProfile } from '../../common/profiles.js';
 import { IDetectResult, IModelInfo, IModelProvider, IModelRequest } from '../../common/providers.js';
 import { OpenAiToolAssembler } from '../../common/harness/openaiToolStream.js';
-import { stringifyToolArgs, toOpenAiMessages, toOpenAiTools } from '../../common/harness/providerMessages.js';
+import { stringifyToolArgs, toOllamaMessages, toOpenAiTools } from '../../common/harness/providerMessages.js';
 import { ProviderReasoning } from '../../common/harness/reasoningStream.js';
 import { requestSseStream, requestText } from '../host/httpStream.js';
+
+/**
+ * The window Volt plans a local model's prompts around. Ollama's own default is 4K tokens below
+ * 24 GiB of VRAM, smaller than Volt's system prompt and tools, and a longer prompt is cut down
+ * silently; 32K leaves room for a working history while keeping the KV cache within most machines.
+ */
+const OLLAMA_CONTEXT_WINDOW = 32_768;
+
+interface IOllamaModelDetails {
+	readonly capabilities: readonly string[];
+	/** Sent as `num_ctx` on every request (a different value would reload the model) and planned with. */
+	readonly contextWindow: number;
+}
+
+const UNKNOWN_MODEL: IOllamaModelDetails = { capabilities: [], contextWindow: OLLAMA_CONTEXT_WINDOW };
+
+/** A `num_ctx` set in the model's Modelfile wins; otherwise Volt's window, capped at what the model was trained on. */
+export function ollamaContextWindow(show: { readonly parameters?: unknown; readonly model_info?: unknown }): number {
+	const pinned = typeof show.parameters === 'string' ? /^\s*num_ctx\s+(\d+)/m.exec(show.parameters) : null;
+	if (pinned && Number(pinned[1]) > 0) {
+		return Number(pinned[1]);
+	}
+	const info = show.model_info && typeof show.model_info === 'object' ? show.model_info as Record<string, unknown> : {};
+	const trained = Object.entries(info).find(([key, value]) => key.endsWith('.context_length') && typeof value === 'number' && value > 0)?.[1] as number | undefined;
+	return trained ? Math.min(trained, OLLAMA_CONTEXT_WINDOW) : OLLAMA_CONTEXT_WINDOW;
+}
 
 export class OllamaProvider implements IModelProvider {
 	readonly id = 'ollama';
@@ -47,35 +73,38 @@ export class OllamaProvider implements IModelProvider {
 					details?: { family?: string; parameter_size?: string; quantization_level?: string };
 				}[];
 			};
-			return (parsed.models ?? []).flatMap(model => {
+			const baseURL = this.baseURL(profile);
+			const listed = await Promise.all((parsed.models ?? []).map(async model => {
 				const id = pickText(model.name);
 				if (!id) {
-					return [];
+					return undefined;
 				}
+				const details = await this.details(baseURL, id, CancellationToken.None);
 				const description = pickText([
 					model.details?.parameter_size,
 					model.details?.quantization_level,
 					model.details?.family,
 				].filter(Boolean).join(' - '));
-				return [{
+				return {
 					id,
 					label: id,
-					capabilities: { ...DEFAULT_MODEL_CAPABILITIES, contextWindow: 32_768 },
+					capabilities: { ...DEFAULT_MODEL_CAPABILITIES, vision: details.capabilities.includes('vision'), contextWindow: details.contextWindow },
 					...(description ? { description } : {}),
-				}];
-			});
+				};
+			}));
+			return listed.filter(model => model !== undefined);
 		} catch {
 			return [];
 		}
 	}
 
 	/**
-	 * Whether the model can think, from `/api/show` (asked once per model). Ollama rejects
-	 * `think` for a model without the capability, so only these get it.
+	 * What the model can do and its window, from `/api/show` (asked once per model). Ollama rejects
+	 * `think` for a model that cannot think, and only a vision model is sent images.
 	 */
-	private thinks(baseURL: string, model: string, token: CancellationToken): Promise<boolean> {
+	private details(baseURL: string, model: string, token: CancellationToken): Promise<IOllamaModelDetails> {
 		const key = `${baseURL}|${model}`;
-		let known = this.thinking.get(key);
+		let known = this.known.get(key);
 		if (!known) {
 			known = requestText(this.requestService, `${baseURL}/api/show`, {
 				type: 'POST',
@@ -83,21 +112,22 @@ export class OllamaProvider implements IModelProvider {
 				data: JSON.stringify({ model }),
 			}, token).then(({ status, text }) => {
 				if (status !== 200) {
-					this.thinking.delete(key);
-					return false;
+					this.known.delete(key);
+					return UNKNOWN_MODEL;
 				}
-				const capabilities = (JSON.parse(text) as { capabilities?: unknown }).capabilities;
-				return Array.isArray(capabilities) && capabilities.includes('thinking');
-			}, () => {
-				this.thinking.delete(key);
-				return false;
+				const show = JSON.parse(text) as { capabilities?: unknown; parameters?: unknown; model_info?: unknown };
+				const capabilities = Array.isArray(show.capabilities) ? show.capabilities.filter((item): item is string => typeof item === 'string') : [];
+				return { capabilities, contextWindow: ollamaContextWindow(show) };
+			}).catch(() => {
+				this.known.delete(key);
+				return UNKNOWN_MODEL;
 			});
-			this.thinking.set(key, known);
+			this.known.set(key, known);
 		}
 		return known;
 	}
 
-	private readonly thinking = new Map<string, Promise<boolean>>();
+	private readonly known = new Map<string, Promise<IOllamaModelDetails>>();
 
 	async *stream(req: IModelRequest, token: CancellationToken): AsyncIterable<IVoltEvent> {
 		const baseURL = this.baseURL(req.profile);
@@ -107,10 +137,12 @@ export class OllamaProvider implements IModelProvider {
 		const assembler = new OpenAiToolAssembler();
 		// Ollama never takes thinking back, so the block is for the Thought row only.
 		const reasoning = new ProviderReasoning(`${textId}-think`, this.id, req.modelId, 'none');
-		const think = await this.thinks(baseURL, req.modelId, token);
+		const { capabilities, contextWindow } = await this.details(baseURL, req.modelId, token);
+		const think = capabilities.includes('thinking');
 		const callPrefix = `ollama_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 		const params = generationParams(req.options);
 		const options = {
+			num_ctx: contextWindow,
 			...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
 			...(params.topP !== undefined ? { top_p: params.topP } : {}),
 			...(params.maxOutputTokens !== undefined ? { num_predict: params.maxOutputTokens } : {}),
@@ -122,11 +154,11 @@ export class OllamaProvider implements IModelProvider {
 			data: JSON.stringify({
 				model: req.modelId,
 				stream: true,
-				messages: toOpenAiMessages(req.messages),
+				messages: toOllamaMessages(req.messages, { vision: capabilities.includes('vision') }),
 				...(tools ? { tools } : {}),
 				// Thinking in its own field, not inline <think> tags in the reply.
 				...(think ? { think: true } : {}),
-				...(Object.keys(options).length ? { options } : {}),
+				options,
 			}),
 		}, token)) {
 			if (typeof line !== 'string') {
