@@ -219,12 +219,10 @@ class AgentIdeWorkspaceContribution extends Disposable {
 		}
 		const key = this.keyOf(front.sessionId);
 		const folder = this.folderOf(front.sessionId);
-		if (folder) {
-			await this.showFolder(folder);
-		}
-		if (!this.isIde()) {
-			return;
-		}
+		// Moving the window's folder restarts the extension host (a second or more). The tabs move at
+		// once and the folder follows behind them; this switch still ends only once it has, so the
+		// next one never starts a second folder move on top of this one.
+		const moving = folder ? this.showFolder(folder) : Promise.resolve();
 
 		const main = this.editorGroupsService.mainPart;
 		const members = new Set<string>([front.sessionId]);
@@ -256,11 +254,9 @@ class AgentIdeWorkspaceContribution extends Disposable {
 				await group.closeEditor(editor, { preserveFocus: true });
 			}
 		}
-		for (const id of fromAside) {
-			if (!this.chatsIn(side).some(({ editor }) => editor.sessionId === id)) {
-				await sideGroup.openEditor(this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.uriForSession(id)), { inactive: true, preserveFocus: true, pinned: true });
-			}
-		}
+		const inSide = new Set(this.chatsIn(side).map(({ editor }) => editor.sessionId));
+		await Promise.all(fromAside.filter(id => !inSide.has(id))
+			.map(id => sideGroup.openEditor(this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.uriForSession(id)), { inactive: true, preserveFocus: true, pinned: true })));
 		this.rememberSetAside([...closed.filter(id => !members.has(id) && this.isKept(id)), ...this.setAside.filter(id => !members.has(id))]);
 		const frontGroup = side.groups.find(group => group.editors.includes(front)) ?? sideGroup;
 		await frontGroup.openEditor(front, { pinned: true });
@@ -270,7 +266,8 @@ class AgentIdeWorkspaceContribution extends Disposable {
 			this.sessionContext.selectProject(project);
 		}
 		setScope({ key: key ?? `chat:${front.sessionId}`, folder: folder ?? URI.file('/'), members, front: front.sessionId });
-		if (folder) {
+		await moving;
+		if (folder && this.isIde()) {
 			this.showRepository(folder);
 		}
 	}
@@ -398,9 +395,9 @@ class AgentIdeWorkspaceContribution extends Disposable {
 			}
 			const open = new Set(this.chatsIn(this.editorGroupsService.mainPart).map(({ editor }) => editor.sessionId));
 			const room = Math.max(0, MAX_BACKGROUND_AGENT_PANELS + 1 - open.size);
-			for (const id of this.setAside.filter(id => !open.has(id) && this.isKept(id)).slice(0, room)) {
-				await target.openEditor(this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.uriForSession(id)), { inactive: true, preserveFocus: true, pinned: true });
-			}
+			// Opened in one pass (each joins the group in call order), not one after another.
+			await Promise.all(this.setAside.filter(id => !open.has(id) && this.isKept(id)).slice(0, room)
+				.map(id => target.openEditor(this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.uriForSession(id)), { inactive: true, preserveFocus: true, pinned: true })));
 			this.rememberSetAside([]);
 			if (front) {
 				await target.openEditor(front, { pinned: true });
