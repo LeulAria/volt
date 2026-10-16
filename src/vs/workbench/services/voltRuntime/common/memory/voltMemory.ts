@@ -61,7 +61,7 @@ const INDEX_ENTRIES = 60;
 const INDEX_CHARS = 4_000;
 const HOOK_CHARS = 140;
 
-export const MEMORY_TOOL_NAMES = ['memory_list', 'memory_read', 'memory_write', 'memory_delete'] as const;
+export const MEMORY_TOOL_NAMES = ['memory_list', 'memory_read', 'memory_write', 'skill_write', 'memory_delete'] as const;
 
 export function isMemoryToolName(name: string | undefined): boolean {
 	return !!name && (MEMORY_TOOL_NAMES as readonly string[]).includes(name);
@@ -103,6 +103,23 @@ export const VOLT_MEMORY_TOOLS: readonly IVoltHostToolInfo[] = [
 		approvalInReadOnlyModes: 'saves a note that later chats will read',
 	},
 	{
+		name: 'skill_write',
+		title: 'Saved skill',
+		group: 'memory',
+		description: 'Save a procedure that worked as a skill, so later chats (any provider) load it when a task matches: after you finish something that took a non-obvious sequence of steps (a build, release or setup recipe, a debugging approach, a project workflow), or to fix a skill that turned out wrong (same name overwrites). Write the steps, commands and pitfalls, not this task\'s state. Facts and preferences go to memory_write instead.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				name: { type: 'string', description: 'Lower-case words with dashes, e.g. "release-desktop-build".' },
+				description: { type: 'string', description: 'When to use it, in one or two sentences: later chats see only this until they load the skill.' },
+				body: { type: 'string', description: 'The procedure in markdown: steps, exact commands, checks, pitfalls.' },
+				scope: { type: 'string', enum: ['user', 'project'], description: 'user (default): every project on this machine (~/.volt/skills). project: this project only (.volt/skills).' },
+			},
+			required: ['name', 'description', 'body'],
+		},
+		approvalInReadOnlyModes: 'saves a skill that later chats will load',
+	},
+	{
 		name: 'memory_delete',
 		title: 'Deleted memory',
 		group: 'memory',
@@ -111,6 +128,23 @@ export const VOLT_MEMORY_TOOLS: readonly IVoltHostToolInfo[] = [
 		approvalInReadOnlyModes: 'deletes a saved note',
 	},
 ];
+
+const SKILL_DESCRIPTION_CHARS = 1_024;
+const SKILL_BODY_CHARS = 40_000;
+
+/** A skill's folder name: lower-case words with dashes. Undefined when nothing usable is left. */
+export function skillSlug(name: string): string | undefined {
+	const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+	return slug || undefined;
+}
+
+/** `SKILL.md` for a skill the agent saves: the frontmatter every skill loader reads, then the procedure. */
+export function serializeSkill(name: string, description: string, body: string): string {
+	const oneLine = description.replace(/\s+/g, ' ').trim().slice(0, SKILL_DESCRIPTION_CHARS);
+	// A body that starts with its own frontmatter would end up with two.
+	const procedure = body.replace(/^---\n[\s\S]*?\n---\n?/, '').trim().slice(0, SKILL_BODY_CHARS);
+	return `---\nname: ${name}\ndescription: ${JSON.stringify(oneLine)}\n---\n\n${procedure}\n`;
+}
 
 /** Lower-case words joined with dashes: the file name and the lookup key for a note. */
 export function memorySlug(name: string): string {

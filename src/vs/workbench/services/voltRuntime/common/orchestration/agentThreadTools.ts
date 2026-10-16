@@ -85,7 +85,7 @@ export const THREAD_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: 'thread_search',
 		title: 'Searched chats',
 		group: 'threads',
-		description: 'Search chats by title, first prompt and latest summary (this project by default, "all" for every project). Returns the same lines as thread_list. Use thread_read to read a match.',
+		description: 'Search what earlier chats said (every prompt and reply), then their titles and summaries (this project by default, "all" for every project). Use it to recall how a past chat solved something, a decision, or an error seen before, instead of redoing the work. Content matches name the turn: read it with thread_read {thread_id, turn}.',
 		inputSchema: {
 			type: 'object',
 			properties: {

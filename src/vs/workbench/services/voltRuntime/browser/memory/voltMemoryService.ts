@@ -13,8 +13,10 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
-import { IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
-import { importedMemoryDraft, IVoltMemory, IVoltMemoryDraft, IVoltMemoryService, memoryFileName, memorySlug, MEMORY_TYPES, parseMemoryFile, renderMemoryContext, renderMemoryForTool, renderMemoryIndex, serializeMemory, validateMemoryDraft, VOLT_MEMORY_TOOLS, VoltMemoryImport, VoltMemoryScope, VoltMemoryType } from '../../common/memory/voltMemory.js';
+import { IPathService } from '../../../path/common/pathService.js';
+import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
+import { IVoltSessionContextService } from '../../common/sessionContext.js';
+import { importedMemoryDraft, IVoltMemory, IVoltMemoryDraft, IVoltMemoryService, memoryFileName, memorySlug, MEMORY_TYPES, parseMemoryFile, renderMemoryContext, renderMemoryForTool, renderMemoryIndex, serializeMemory, serializeSkill, skillSlug, validateMemoryDraft, VOLT_MEMORY_TOOLS, VoltMemoryImport, VoltMemoryScope, VoltMemoryType } from '../../common/memory/voltMemory.js';
 
 const MAX_NOTE_BYTES = 64 * 1024;
 const MAX_NOTES_PER_SCOPE = 500;
@@ -63,12 +65,14 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 		@IWorkspaceContextService private readonly workspace: IWorkspaceContextService,
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 		@ILogService private readonly logService: ILogService,
+		@IPathService private readonly pathService: IPathService,
+		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 	) {
 		super();
 		this.userDir = joinPath(environmentService.userRoamingDataHome, 'voltMemory');
 		this._register(hostTools.registerToolProvider({
 			tools: VOLT_MEMORY_TOOLS,
-			invoke: (name, args) => this.invokeTool(name, args),
+			invoke: (name, args, call) => this.invokeTool(name, args, call),
 		}));
 		this._register(fileService.onDidFilesChange(e => {
 			for (const [scope, entry] of [...this.cache]) {
@@ -193,7 +197,32 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 		return notes.filter((note): note is INote => !!note);
 	}
 
-	private async invokeTool(name: string, args: Record<string, unknown>): Promise<IVoltHostToolResult> {
+	/**
+	 * Writes `<scope root>/.volt/skills/<name>/SKILL.md`: personal skills under the home folder,
+	 * project ones in the chat's folder (its worktree, else its project). Skills are listed in every
+	 * later chat by description and loaded on demand, so a procedure learned once is reused.
+	 */
+	private async writeSkill(args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
+		const name = skillSlug(text(args.name));
+		const description = text(args.description).trim();
+		const body = text(args.body).trim();
+		if (!name || description.length < 12 || body.length < 40) {
+			return { error: 'Pass a `name`, a `description` that says when to use the skill, and the procedure as `body`.' };
+		}
+		const project = args.scope === 'project';
+		const root = project
+			? (call?.cwd ? URI.file(call.cwd) : undefined) ?? (call?.sessionId ? this.sessionContext.rootFor(call.sessionId) : undefined) ?? this.workspace.getWorkspace().folders[0]?.uri
+			: await this.pathService.userHome();
+		if (!root) {
+			return { error: 'No project folder for this chat: save it with scope "user".' };
+		}
+		const file = joinPath(root, '.volt', 'skills', name, 'SKILL.md');
+		const existed = await this.fileService.exists(file);
+		await this.fileService.writeFile(file, VSBuffer.fromString(serializeSkill(name, description, body)));
+		return { text: `${existed ? 'Updated' : 'Saved'} skill "${name}" (${project ? 'this project' : 'personal'}): ${file.fsPath}. Chats that start from now on list it and load it when a task matches.` };
+	}
+
+	private async invokeTool(name: string, args: Record<string, unknown>, call?: IVoltHostToolCall): Promise<IVoltHostToolResult> {
 		const noteName = text(args.name).trim();
 		const scope = scopeArg(args.scope);
 		const onlyScope = scope === 'all' ? undefined : scope;
@@ -220,6 +249,8 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 					});
 					return { text: `Saved "${memory.name}" to the ${memory.scope} notes. It is in the index of chats that start from now on.` };
 				}
+				case 'skill_write':
+					return await this.writeSkill(args, call);
 				case 'memory_delete': {
 					if (!noteName) {
 						return { error: 'Pass the note `name`, as listed by memory_list.' };

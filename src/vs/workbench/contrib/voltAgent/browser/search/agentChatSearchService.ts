@@ -35,6 +35,8 @@ export interface IAgentChatSearchService {
 	readonly progress: IAgentChatSearchProgress;
 	/** Brings the index up to date and keeps it so while the returned disposable lives. */
 	watch(): IDisposable;
+	/** Brings the index up to date once, for a search outside the Search Chats view (an agent's thread_search). */
+	whenCurrent(): Promise<void>;
 	search(query: string, limit: number): IChatContentHit[];
 	/** Reads chats whose hits came back without a snippet; {@link onDidChange} fires once they are in. */
 	loadTexts(ids: readonly string[]): void;
@@ -104,6 +106,15 @@ export class AgentChatSearchService extends Disposable implements IAgentChatSear
 				this.watchers--;
 			}
 		});
+	}
+
+	async whenCurrent(): Promise<void> {
+		const watcher = this.watch();
+		try {
+			await this.building;
+		} finally {
+			watcher.dispose();
+		}
 	}
 
 	search(query: string, limit: number): IChatContentHit[] {

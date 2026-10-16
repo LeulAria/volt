@@ -98,6 +98,7 @@ export function describeHostToolActivity(name: string | undefined, title: string
 			case 'memory_list': return { tool, label: 'Checked memories' };
 			case 'memory_read': return { tool, label: 'Recalled memory', detail: text(args.name, 80) };
 			case 'memory_write': return { tool, label: 'Saved memory', detail: text(args.name, 80) };
+			case 'skill_write': return { tool, label: 'Saved skill', detail: text(args.name, 80) };
 			default: return { tool, label: 'Deleted memory', detail: text(args.name, 80) };
 		}
 	}

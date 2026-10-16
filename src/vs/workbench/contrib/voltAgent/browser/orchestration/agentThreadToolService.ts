@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { timeout } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { hash } from '../../../../../base/common/hash.js';
 import { Disposable, DisposableMap } from '../../../../../base/common/lifecycle.js';
@@ -16,6 +17,7 @@ import { providerFamily } from '../../../../services/voltRuntime/browser/provide
 import { AgentWorktreeTarget, IAgentWorktreeService } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
 import { AgentSessionStatus, IAgentHistoryService, IAgentSessionMeta, IAgentSessionTurn } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { matchesHistoryListOptions } from '../../../../services/voltRuntime/common/history/agentHistoryLog.js';
 import { IVoltExternalCaller, IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentOrchestratorService, IOrchPrompt, IOrchThread, readOrchLimits } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
@@ -32,6 +34,7 @@ import { IAgentRunGroupService } from '../../../../services/voltRuntime/common/r
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { canonicalProjectRoot, IVoltProjectRecord, IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
+import { IAgentChatSearchService } from '../search/agentChatSearchService.js';
 import { AGENT_DEFAULT_MODEL_SETTING } from '../../common/agentComposerSettings.js';
 import { AGENT_BRANCH_PREFIX_SETTING, readBranchPrefix } from '../../common/agentGitSettings.js';
 import { externalCallerId, externalSpendWindow } from './agentExternalCaller.js';
@@ -42,6 +45,8 @@ import { IAgentThreadSourceHost, modeLabel, threadSourceOf } from './agentTurnHo
 
 /** Chats an agent may start (launch or fork) in one of its turns: a runaway loop stops here. */
 const MAX_STARTS_PER_TURN = 8;
+/** thread_search waits this long for the chat index to catch up before searching what it has. */
+const SEARCH_INDEX_WAIT_MS = 8_000;
 /** Messages an agent may send to other chats in one of its turns. */
 const MAX_SENDS_PER_TURN = 24;
 const CHILD_ID_PREFIX = 'agent-';
@@ -85,6 +90,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		@ICommandService private readonly commandService: ICommandService,
 		@ILogService private readonly logService: ILogService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IAgentChatSearchService private readonly chatSearch: IAgentChatSearchService,
 	) {
 		super();
 		this._register(hostTools.registerToolProvider({
@@ -109,7 +115,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			switch (name) {
 				case 'orchestrator_capabilities': return this.capabilities(caller);
 				case 'thread_list': return this.list(caller, args);
-				case 'thread_search': return this.search(caller, args);
+				case 'thread_search': return await this.search(caller, args);
 				case 'thread_read': return await this.read(caller, args);
 				case 'thread_send': return await this.send(caller, args, token);
 				case 'thread_wait': return await this.waitTool(caller, args, token);
@@ -380,24 +386,53 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		};
 	}
 
-	private search(caller: ICaller, args: Record<string, unknown>): IVoltHostToolResult {
+	/**
+	 * What chats said (every prompt and reply, through the Search Chats index), then titles and
+	 * summaries. A content match names its turn, so thread_read can open exactly that exchange:
+	 * an agent recalls how an earlier chat solved something without reading whole transcripts.
+	 */
+	private async search(caller: ICaller, args: Record<string, unknown>): Promise<IVoltHostToolResult> {
 		const query = stringArg(args.query, 200);
 		if (!query) {
 			return { error: 'Pass a `query`.' };
 		}
 		const project = this.projectArg(caller, args.project);
+		const options = project && project !== 'all' ? { workspaceId: project.id } : {};
 		const limit = numberArg(args.limit, 1, 50) ?? 20;
-		const matches = this.history.search(query, { ...(project && project !== 'all' ? { workspaceId: project.id } : {}), limit: limit * 2 })
-			.filter(meta => !meta.subagent)
-			.slice(0, limit);
 		const now = Date.now();
-		if (!matches.length) {
-			return { text: `No chats match "${query}".` };
+		const indexed = await Promise.race([this.chatSearch.whenCurrent().then(() => true, () => false), timeout(SEARCH_INDEX_WAIT_MS).then(() => false)]);
+		const lines: string[] = [];
+		const seen = new Set<string>();
+		for (const hit of this.chatSearch.search(query, limit * 3)) {
+			const meta = this.history.get(hit.id);
+			if (!meta || meta.subagent || seen.has(hit.id) || !matchesHistoryListOptions(meta, { includeArchived: true, ...options })) {
+				continue;
+			}
+			seen.add(hit.id);
+			const where = `turn ${hit.turnIndex + 1}${hit.snippet ? ` (${hit.snippet.role === 'user' ? 'prompt' : 'reply'})` : ''}`;
+			lines.push(`${describeThreadLine(this.lineInfo(meta.id, caller, meta), now)}\n  ${where}${hit.snippet?.text ? `: ${clip(hit.snippet.text.replace(/\s+/g, ' ').trim(), 240)}` : ''}`);
+			if (seen.size >= limit) {
+				break;
+			}
+		}
+		for (const meta of this.history.search(query, { ...options, limit: limit * 2 })) {
+			if (seen.size >= limit) {
+				break;
+			}
+			if (meta.subagent || seen.has(meta.id)) {
+				continue;
+			}
+			seen.add(meta.id);
+			lines.push(`${describeThreadLine(this.lineInfo(meta.id, caller, meta), now)}${meta.summary ? `\n  ${clip(meta.summary, 200)}` : meta.preview ? `\n  first prompt: ${clip(meta.preview, 200)}` : ''}`);
+		}
+		const partial = indexed ? '' : ` (still indexing: ${this.chatSearch.progress.indexed} of ${this.chatSearch.progress.total} chats searched by content so far)`;
+		if (!lines.length) {
+			return { text: `No chats match "${query}"${partial}.` };
 		}
 		return {
 			text: [
-				`${matches.length} match${matches.length === 1 ? '' : 'es'}:`,
-				...matches.map(meta => `${describeThreadLine(this.lineInfo(meta.id, caller, meta), now)}${meta.summary ? `\n  ${clip(meta.summary, 200)}` : meta.preview ? `\n  first prompt: ${clip(meta.preview, 200)}` : ''}`),
+				`${seen.size} match${seen.size === 1 ? '' : 'es'}${partial}. Read a turn with thread_read {thread_id, turn}:`,
+				...lines,
 			].join('\n'),
 		};
 	}

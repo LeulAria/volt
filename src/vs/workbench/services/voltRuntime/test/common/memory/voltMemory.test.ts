@@ -5,7 +5,8 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { importedMemoryDraft, IVoltMemory, isMemoryToolName, memoryDescriptionFromReply, memoryFileName, memorySlug, neutralizeMemoryText, parseMemoryFile, renderMemoryContext, renderMemoryForTool, renderMemoryIndex, serializeMemory, validateMemoryDraft, VOLT_MEMORY_TOOLS } from '../../../common/memory/voltMemory.js';
+import { importedMemoryDraft, IVoltMemory, isMemoryToolName, memoryDescriptionFromReply, memoryFileName, memorySlug, neutralizeMemoryText, parseMemoryFile, renderMemoryContext, renderMemoryForTool, renderMemoryIndex, serializeMemory, serializeSkill, skillSlug, validateMemoryDraft, VOLT_MEMORY_TOOLS } from '../../../common/memory/voltMemory.js';
+import { parseFrontmatter } from '../../../common/harness/instructions.js';
 import { buildAcpLead, IContextPackInput } from '../../../common/harness/contextPack.js';
 import { classifyIntent } from '../../../common/harness/intent.js';
 import { buildDeepseekSystemPrompt } from '../../../common/deepseek/prompt.js';
@@ -119,12 +120,22 @@ suite('Volt memory', () => {
 	});
 
 	test('memory tools are recognised by name, and writes and deletes ask in read-only modes', () => {
-		assert.deepStrictEqual(VOLT_MEMORY_TOOLS.map(tool => tool.name), ['memory_list', 'memory_read', 'memory_write', 'memory_delete']);
+		assert.deepStrictEqual(VOLT_MEMORY_TOOLS.map(tool => tool.name), ['memory_list', 'memory_read', 'memory_write', 'skill_write', 'memory_delete']);
 		assert.ok(VOLT_MEMORY_TOOLS.every(tool => tool.group === 'memory'));
 		const approvals = Object.fromEntries(VOLT_MEMORY_TOOLS.map(tool => [tool.name, !!tool.approvalInReadOnlyModes]));
-		assert.deepStrictEqual(approvals, { memory_list: false, memory_read: false, memory_write: true, memory_delete: true });
+		assert.deepStrictEqual(approvals, { memory_list: false, memory_read: false, memory_write: true, skill_write: true, memory_delete: true });
 		assert.ok(isMemoryToolName('memory_read'));
+		assert.ok(isMemoryToolName('skill_write'));
 		assert.ok(!isMemoryToolName('memory_drop'));
+	});
+
+	test('a saved skill is a SKILL.md with one frontmatter block, under a dashed folder name', () => {
+		assert.strictEqual(skillSlug('Release Desktop Build!'), 'release-desktop-build');
+		assert.strictEqual(skillSlug('  ***  '), undefined);
+		const file = serializeSkill('release-desktop-build', 'Use when\nshipping the desktop app.', '---\nname: x\n---\n1. Run `npm run release`.');
+		assert.strictEqual(file, '---\nname: release-desktop-build\ndescription: "Use when shipping the desktop app."\n---\n\n1. Run `npm run release`.\n');
+		const parsed = parseFrontmatter(file);
+		assert.deepStrictEqual([parsed.fields.name, parsed.fields.description, parsed.body], ['release-desktop-build', 'Use when shipping the desktop app.', '1. Run `npm run release`.']);
 	});
 
 	test('a CLAUDE.md or AGENTS.md import is named after its file and described by its first line', () => {

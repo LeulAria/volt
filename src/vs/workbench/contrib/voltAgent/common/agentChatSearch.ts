@@ -250,6 +250,8 @@ export interface IChatContentHit {
 	readonly score: number;
 	/** The turn where the query's words meet. */
 	readonly turnId: string;
+	/** Its position in the chat, 0-based (thread_read's `turn` is this plus one). */
+	readonly turnIndex: number;
 	/** Absent when the hit is in a reply and the chat's text was not passed in. */
 	readonly snippet?: IChatSnippet;
 }
@@ -505,7 +507,7 @@ export class ChatSearchIndex {
 				? [{ role: 'user' as const, text: text.user }, { role: 'agent' as const, text: text.agent }]
 				: [{ role: 'user' as const, text: doc.heads[turn.index] ?? '' }];
 			const snippet = buildSnippet(fields, hitTerms, phrase) ?? (text ? { role: 'user' as const, text: text.user.slice(0, SNIPPET_CHARS), highlights: [], find: '' } : undefined);
-			refined.push({ id: doc.id, score: final, turnId: doc.turnIds[turn.index], ...(snippet ? { snippet } : {}) });
+			refined.push({ id: doc.id, score: final, turnId: doc.turnIds[turn.index], turnIndex: turn.index, ...(snippet ? { snippet } : {}) });
 		}
 		refined.sort((a, b) => b.score - a.score);
 		return refined.slice(0, options.limit);
