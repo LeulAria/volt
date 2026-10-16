@@ -6,7 +6,8 @@
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { hashAsync } from '../../../../../base/common/hash.js';
-import { Disposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { runWhenGlobalIdle } from '../../../../../base/common/async.js';
+import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
@@ -77,6 +78,8 @@ const ATOMIC = { atomic: { postfix: '.tmp' } } as const;
 
 /** Batching window for write-behind appends. Later appends join without resetting it. */
 const APPEND_WINDOW_MS = 200;
+/** Longest a prompt or a finished reply waits for an idle moment before it is written. */
+const FLUSH_SOON_MS = 250;
 const INDEX_WINDOW_MS = 400;
 const DRAFT_WINDOW_MS = 600;
 /** Longest single wait for a snooze to end; setTimeout cannot count past ~24.8 days. */
@@ -140,6 +143,7 @@ class SessionHandle implements IAgentSessionHandle {
 	private damaged = false;
 	private materialized = false;
 	private appendTimer: ReturnType<typeof setTimeout> | undefined;
+	private flushIdle: IDisposable | undefined;
 	private draftTimer: ReturnType<typeof setTimeout> | undefined;
 	private pendingDraft: IAgentSessionDraft | null | undefined;
 	private readonly queue = new WriteQueue();
@@ -256,7 +260,7 @@ class SessionHandle implements IAgentSessionHandle {
 
 	appendUser(turn: string, text: string, message: unknown): void {
 		this.append({ type: 'user', turn, at: Date.now(), text, message });
-		void this.flush();
+		this.flushSoon();
 	}
 
 	appendAssistant(entry: IAgentSessionAppendAssistant): void {
@@ -266,7 +270,22 @@ class SessionHandle implements IAgentSessionHandle {
 		}
 		this.dropPartial();
 		this.append({ type: 'agent', at: Date.now(), ...entry });
-		void this.flush();
+		this.flushSoon();
+	}
+
+	/**
+	 * A prompt or a finished reply is written once the frame that shows it has painted (at most
+	 * {@link FLUSH_SOON_MS} later): writing a long chat's log builds megabytes of text on this thread,
+	 * which used to land between the send and the frame that draws it.
+	 */
+	private flushSoon(): void {
+		if (this.flushIdle || this.closed) {
+			return;
+		}
+		this.flushIdle = runWhenGlobalIdle(() => {
+			this.flushIdle = undefined;
+			void this.flush();
+		}, FLUSH_SOON_MS);
 	}
 
 	private recordPartial(entry: IAgentSessionAppendAssistant): void {
@@ -426,6 +445,8 @@ class SessionHandle implements IAgentSessionHandle {
 	}
 
 	async flush(): Promise<void> {
+		this.flushIdle?.dispose();
+		this.flushIdle = undefined;
 		if (this.appendTimer !== undefined) {
 			clearTimeout(this.appendTimer);
 			this.appendTimer = undefined;
