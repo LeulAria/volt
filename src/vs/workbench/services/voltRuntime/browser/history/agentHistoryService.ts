@@ -64,6 +64,10 @@ import {
 const ROOT_DIR = 'agentSessions';
 const SESSIONS_DIR = 'sessions';
 const ATTACHMENTS_DIR = 'attachments';
+/** How long a read-ahead chat log stays decoded when nothing opens it. */
+const PREFETCH_TTL_MS = 30_000;
+/** Read-ahead chat logs kept at once; the oldest goes first. */
+const MAX_PREFETCHED = 4;
 const INDEX_FILE = 'index.json';
 const LOG_EXT = '.jsonl';
 const DRAFT_EXT = '.draft.json';
@@ -553,6 +557,8 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 	private readonly pinnedParents = new Map<string, string>();
 	private readonly pinnedSubagents = new Set<string>();
 	private readonly closing = new Map<string, Promise<void>>();
+	/** Handles read ahead by {@link prefetch} that nothing has opened yet, oldest first, with their release timers. */
+	private readonly prefetched = new Map<string, ReturnType<typeof setTimeout>>();
 	private readonly indexQueue = new WriteQueue();
 	private indexTimer: ReturnType<typeof setTimeout> | undefined;
 	private indexDirty = false;
@@ -582,6 +588,12 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		this.currentWorkspace = describeWorkspace(workspaceContextService);
 		this.whenReady = this.loadIndex();
 		this._register(lifecycleService.onWillShutdown(e => e.join(this.flushAll(), { id: 'volt.agentHistory', label: 'Saving agent history' })));
+		this._register(toDisposable(() => {
+			for (const timer of this.prefetched.values()) {
+				clearTimeout(timer);
+			}
+			this.prefetched.clear();
+		}));
 		this._register(toDisposable(() => {
 			if (this.indexTimer !== undefined) {
 				clearTimeout(this.indexTimer);
@@ -840,12 +852,51 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		if (!safe) {
 			throw new Error(`Invalid agent session id: ${id}`);
 		}
+		// A read-ahead handle is the caller's from here on (it closes it as usual).
+		this.claimPrefetched(safe);
 		let handle = this.handles.get(safe);
 		if (!handle) {
 			handle = new SessionHandle(safe, this.logFileFor(safe), this.draftFileFor(safe), this.partialFileFor(safe), this, this.onDisk.has(safe), this.closing.get(safe));
 			this.handles.set(safe, handle);
 		}
 		return handle;
+	}
+
+	prefetch(id: string): void {
+		const safe = safeSessionId(id);
+		if (!safe || this.handles.has(safe) || !this.onDisk.has(safe) || this.closing.has(safe) || this._store.isDisposed) {
+			return;
+		}
+		const handle = new SessionHandle(safe, this.logFileFor(safe), this.draftFileFor(safe), this.partialFileFor(safe), this, true, undefined);
+		this.handles.set(safe, handle);
+		this.prefetched.set(safe, setTimeout(() => this.releasePrefetched(safe), PREFETCH_TTL_MS));
+		void handle.load().catch(() => undefined);
+		void handle.loadDraft().catch(() => undefined);
+		for (const oldest of this.prefetched.keys()) {
+			if (this.prefetched.size <= MAX_PREFETCHED) {
+				break;
+			}
+			this.releasePrefetched(oldest);
+		}
+	}
+
+	private claimPrefetched(safe: string): void {
+		const timer = this.prefetched.get(safe);
+		if (timer !== undefined) {
+			clearTimeout(timer);
+			this.prefetched.delete(safe);
+		}
+	}
+
+	/** Drops a read-ahead nothing opened: it never appended, so there is nothing to flush or compact. */
+	private releasePrefetched(safe: string): void {
+		const timer = this.prefetched.get(safe);
+		if (timer === undefined) {
+			return;
+		}
+		clearTimeout(timer);
+		this.prefetched.delete(safe);
+		this.handles.delete(safe);
 	}
 
 	async readTranscript(id: string): Promise<IAgentSessionTranscript | undefined> {

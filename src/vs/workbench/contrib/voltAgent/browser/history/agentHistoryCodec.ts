@@ -66,10 +66,17 @@ export class AgentHistoryCodec {
 	}
 
 	private async freezeActivityItem(item: IAgentActivityItem): Promise<IAgentActivityItem> {
-		if (!item.image || item.image.startsWith(ATTACHMENT_REF_PREFIX)) {
+		const image = item.image;
+		if (!image || image.startsWith(ATTACHMENT_REF_PREFIX)) {
 			return item;
 		}
-		return { ...item, image: await this.freezeDataUrl(item.image) };
+		const ref = await this.freezeDataUrl(image);
+		// Once on disk the reference stands in for the pixels in memory too: a long run's screenshots
+		// would otherwise stay base64 for the life of the chat. They are read back when shown (resolveActivityImage).
+		if (ref.startsWith(ATTACHMENT_REF_PREFIX) && item.image === image) {
+			item.image = ref;
+		}
+		return { ...item, image: ref };
 	}
 
 	private freezeImage(image: IAgentImagePayload): Promise<{ id: string; mime: string; ref: string; name?: string }> {
@@ -107,8 +114,16 @@ export class AgentHistoryCodec {
 		let ref = this.dataUrlRefs.get(dataUrl);
 		if (!ref) {
 			const parsed = parseDataUrl(dataUrl);
-			ref = parsed ? this.history.putAttachment(parsed.bytes, parsed.mime) : Promise.resolve(dataUrl);
-			this.dataUrlRefs.set(dataUrl, ref);
+			const pending = parsed ? this.history.putAttachment(parsed.bytes, parsed.mime) : Promise.resolve(dataUrl);
+			this.dataUrlRefs.set(dataUrl, pending);
+			// Kept only while the write is in flight: a settled key would hold every screenshot's base64.
+			const forget = () => {
+				if (this.dataUrlRefs.get(dataUrl) === pending) {
+					this.dataUrlRefs.delete(dataUrl);
+				}
+			};
+			pending.then(forget, forget);
+			ref = pending;
 		}
 		return ref;
 	}
@@ -160,16 +175,15 @@ export class AgentHistoryCodec {
 			return undefined;
 		}
 		const raw = stored as IAgentAssistantMessage;
-		const segments: AgentSegment[] = Array.isArray(raw.segments) ? raw.segments : [];
-		const thawedSegments = await Promise.all(segments.map(async segment => segment.kind === 'activity'
-			? { kind: 'activity' as const, item: await this.thawActivityItem(segment.item) }
-			: segment));
-		const items = Array.isArray(raw.activity?.items) ? await Promise.all(raw.activity!.items.map(item => this.thawActivityItem(item))) : [];
+		// Snapshots keep their attachment references: one is read from disk only when someone opens
+		// it (resolveActivityImage), so a chat full of screenshots opens without reading them all.
+		const segments: AgentSegment[] = Array.isArray(raw.segments) ? raw.segments.slice() : [];
+		const items: IAgentActivityItem[] = Array.isArray(raw.activity?.items) ? raw.activity!.items.slice() : [];
 		const message: IAgentAssistantMessage = {
 			...raw,
 			title: typeof raw.title === 'string' ? raw.title : '',
 			steps: Array.isArray(raw.steps) ? raw.steps : [],
-			segments: thawedSegments,
+			segments,
 			blockState: raw.blockState && typeof raw.blockState === 'object' ? raw.blockState : {},
 			activity: raw.activity ? { ...raw.activity, items } : undefined,
 		};
@@ -177,14 +191,6 @@ export class AgentHistoryCodec {
 			settleAssistant(message, at);
 		}
 		return message;
-	}
-
-	private async thawActivityItem(item: IAgentActivityItem): Promise<IAgentActivityItem> {
-		if (!item.image || !item.image.startsWith(ATTACHMENT_REF_PREFIX)) {
-			return item;
-		}
-		const attachment = await this.history.getAttachment(item.image);
-		return { ...item, image: attachment ? toDataUrl(attachment.bytes, attachment.mime) : undefined };
 	}
 
 	private async thawImage(image: { id: string; mime: string; ref?: string; name?: string; bytes?: unknown }): Promise<IAgentImagePayload | undefined> {
@@ -355,6 +361,18 @@ function parseDataUrl(dataUrl: string): { bytes: Uint8Array; mime: string } | un
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * An activity item's image as something an `<img>` can show: a data URL as is, a stored
+ * reference read from disk now. Undefined when the attachment is gone.
+ */
+export async function resolveActivityImage(image: string | undefined, history: IAgentHistoryService): Promise<string | undefined> {
+	if (!image?.startsWith(ATTACHMENT_REF_PREFIX)) {
+		return image;
+	}
+	const attachment = await history.getAttachment(image);
+	return attachment ? toDataUrl(attachment.bytes, attachment.mime) : undefined;
 }
 
 function toDataUrl(bytes: Uint8Array, mime: string): string {

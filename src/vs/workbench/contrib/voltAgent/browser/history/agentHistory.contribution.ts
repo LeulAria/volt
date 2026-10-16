@@ -227,18 +227,20 @@ registerAction2(class OpenAgentSessionAction extends Action2 {
 		});
 	}
 
-	override async run(accessor: ServicesAccessor, sessionId?: string): Promise<void> {
+	/** `options.preserveFocus`: the agent list keeps the keyboard (it was opened from there by Enter). */
+	override async run(accessor: ServicesAccessor, sessionId?: string, options?: { preserveFocus?: boolean }): Promise<void> {
 		if (typeof sessionId !== 'string' || !sessionId) {
 			return;
 		}
 		const history = accessor.get(IAgentHistoryService);
 		const workspace = accessor.get(IAgentWorkspaceService);
+		const open = { preserveFocus: options?.preserveFocus === true };
 		// A side chat lives in its chat's tools: open that chat and bring the side chat to the front there.
 		const parentId = agentSideChatParents().get(sessionId) ?? history.sessionParent(sessionId);
 		const parentExists = !!parentId && (!!liveAgentToolsPart(parentId) || history.has(parentId) || !!history.get(parentId));
 		const view = await showAgentSidePanel(accessor, false);
 		if (!parentId || !parentExists) {
-			await view?.openSession(sessionId);
+			await view?.openSession(sessionId, open);
 			return;
 		}
 		if (revealAgentSideChat(parentId, sessionId)) {
@@ -246,7 +248,31 @@ registerAction2(class OpenAgentSessionAction extends Action2 {
 		}
 		// The chat is not on screen: its tools open the recorded side chat when the chat is shown.
 		workspace.openSurface(parentId, { kind: 'chat', sessionId }, true);
-		await view?.openSession(parentId);
+		await view?.openSession(parentId, open);
+	}
+});
+
+/**
+ * Puts the keyboard in the agent list, on the open chat. Up and Down move through the chats; Enter
+ * shows one and keeps the list focused for the next; Enter on the chat shown goes to its composer.
+ */
+registerAction2(class FocusAgentListAction extends Action2 {
+	constructor() {
+		super({
+			id: 'voltAgent.focusAgentList',
+			title: localize2('voltAgent.focusAgentList', "Focus Agent List"),
+			f1: true,
+			precondition: ContextKeyExpr.equals(LAYOUT_MODE_CONTEXT_KEY, 'agent'),
+			keybinding: {
+				weight: KeybindingWeight.WorkbenchContrib + 50,
+				when: ContextKeyExpr.equals(LAYOUT_MODE_CONTEXT_KEY, 'agent'),
+				primary: KeyMod.CtrlCmd | KeyCode.Digit0,
+			},
+		});
+	}
+
+	override async run(accessor: ServicesAccessor): Promise<void> {
+		await showAgentSidePanel(accessor, true);
 	}
 });
 

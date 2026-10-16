@@ -93,6 +93,9 @@ export class RemoteAgentHistoryService extends Disposable implements IAgentHisto
 		return handle;
 	}
 
+	/** Reads ahead only where logs are local; the agent server answers opens itself. */
+	prefetch(_id: string): void { }
+
 	readTranscript(id: string): Promise<IAgentSessionTranscript | undefined> {
 		return this.client.call('history.readTranscript', id);
 	}

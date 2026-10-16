@@ -427,10 +427,12 @@ export class AgentSidePanel extends ViewPane {
 	}
 
 	/** Shows a stored session, reusing its tab when it is already open. In agent layout it becomes the main panel. */
-	async openSession(sessionId: string): Promise<void> {
+	/** `preserveFocus`: the chat shows without taking the keyboard (the agent list keeps it). */
+	async openSession(sessionId: string, options?: { preserveFocus?: boolean }): Promise<void> {
+		const preserveFocus = options?.preserveFocus === true;
 		if (this.isAgentLayout()) {
 			this.revealCenterEditors();
-			await openAgentPanel(this.editorGroupsService, this.instantiationService, sessionId);
+			await openAgentPanel(this.editorGroupsService, this.instantiationService, sessionId, { preserveFocus });
 			return;
 		}
 		if (!this.editorPart) {
@@ -440,15 +442,19 @@ export class AgentSidePanel extends ViewPane {
 		for (const group of this.editorPart.groups) {
 			const existing = group.editors.find((editor): editor is AgentEditorInput => editor instanceof AgentEditorInput && editor.sessionId === sessionId);
 			if (existing) {
-				await group.openEditor(existing, { pinned: true });
-				group.focus();
+				await group.openEditor(existing, { pinned: true, preserveFocus });
+				if (!preserveFocus) {
+					group.focus();
+				}
 				return;
 			}
 		}
 		const input = this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.uriForSession(sessionId));
-		await this.editorPart.activeGroup.openEditor(input, { pinned: true });
+		await this.editorPart.activeGroup.openEditor(input, { pinned: true, preserveFocus });
 		this.syncAgentLayout();
-		this.editorPart.activeGroup.focus();
+		if (!preserveFocus) {
+			this.editorPart.activeGroup.focus();
+		}
 	}
 
 	private updateAuxiliaryBarClass(visible: boolean): void {

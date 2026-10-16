@@ -297,6 +297,11 @@ export interface IAgentHistoryService {
 
 	/** Open (creating on first append) the handle for a session id. */
 	open(id: string): IAgentSessionHandle;
+	/**
+	 * Reads a stored chat's log ahead of a likely open (keyboard focus or a hover on its row), so the
+	 * open finds it decoded. Bounded and released after a while when nothing opened it; never writes.
+	 */
+	prefetch(id: string): void;
 	/** A chat's transcript without opening a handle: an open chat's current state, else its log as stored. */
 	readTranscript(id: string): Promise<IAgentSessionTranscript | undefined>;
 

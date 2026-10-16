@@ -5,7 +5,7 @@
 
 import '../media/agentHomePane.css';
 import '../media/agentPullRequests.css';
-import { $, addDisposableListener, append, getWindow, isHTMLElement, isMouseEvent, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, getWindow, isHTMLElement, isKeyboardEvent, isMouseEvent, runWhenWindowIdle, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IIdentityProvider, IListVirtualDelegate } from '../../../../../base/browser/ui/list/list.js';
 import { IListAccessibilityProvider } from '../../../../../base/browser/ui/list/listWidget.js';
@@ -54,7 +54,7 @@ import { appendAgentFooterActions } from './agentHomeFooterActions.js';
 import { SEARCH_AGENT_CHATS_COMMAND_ID } from '../search/agentChatSearchService.js';
 import { createHomeAutomationsIcon, createHomeFilterIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeNewChatIcon, createHomeOpenWorkspaceIcon, createHomeSearchIcon, createHomeStatusBadgeIcon } from './agentHomeIcons.js';
 import { showAgentSnoozeMenu } from './agentSnoozeMenu.js';
-import { activateAgentProject, startAgentChat } from '../workspace/agentPanels.js';
+import { activateAgentProject, findAgentPanelGroup, startAgentChat } from '../workspace/agentPanels.js';
 import { AgentChatStart } from '../workspace/agentShell.js';
 import { agentSideChatParents, onDidChangeAgentToolEditors } from '../workspace/agentSurfaceHost.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
@@ -119,6 +119,10 @@ const ROW_HEIGHT = 28;
 const TWO_LINE_ROW_HEIGHT = 46;
 /** How often ages, "Working 2m" and snooze countdowns are redrawn. */
 const CLOCK_TICK_MS = 30_000;
+/** Longest a list rebuild waits for an idle moment. */
+const REFRESH_IDLE_TIMEOUT_MS = 120;
+/** How long after a press-open the completing click is still the same open. */
+const PRESS_OPEN_WINDOW_MS = 1_500;
 /** How long the pointer rests on an agent tab before its details card opens. */
 const SESSION_HOVER_DELAY_MS = 500;
 
@@ -798,6 +802,10 @@ export class AgentHomePane extends Disposable {
 	private readonly repoRefresh = this._register(new RunOnceScheduler(() => void this.refresh(), 50));
 	/** Events that land in the same frame (a chat switch fires several) share one rebuild. */
 	private readonly refreshFrame = this._register(new MutableDisposable());
+	/** Redraws the rows on screen (the open chat's highlight) on the next frame, ahead of a full refresh. */
+	private readonly rowsFrame = this._register(new MutableDisposable());
+	/** A chat opened on the press; the click that completes the press does not open it again. */
+	private pressed: { readonly element: AgentHomeElement; readonly at: number } | undefined;
 	/** Recently opened folders, read once and again only when that list changes. */
 	private recents: Promise<readonly (IRecentFolder | IRecentWorkspace)[]> | undefined;
 	private refreshSeq = 0;
@@ -913,12 +921,27 @@ export class AgentHomePane extends Disposable {
 			this.treeContainer.classList.toggle('more-below', e.scrollTop + e.height < e.scrollHeight - ROW_HEIGHT);
 		}));
 
+		// A chat is read ahead of its open: the row under the pointer, and the one keyboard focus lands on.
+		this._register(this.tree.onMouseOver(e => this.prefetch(e.element)));
+		this._register(this.tree.onDidChangeFocus(e => this.prefetch(e.elements[0])));
+		// A chat opens on the press, not the release: the switch starts a whole click sooner.
+		this._register(this.tree.onMouseDown(e => this.openOnPress(e.element, e.browserEvent)));
+
 		this._register(this.tree.onDidOpen(e => {
 			const element = e.element;
 			if (!element) {
 				return;
 			}
 			if (this.isExpandToggleClick(element, e.browserEvent)) {
+				return;
+			}
+			const pressed = this.pressed;
+			this.pressed = undefined;
+			if (pressed?.element === element && isMouseEvent(e.browserEvent) && Date.now() - pressed.at < PRESS_OPEN_WINDOW_MS) {
+				return; // opened on the press already
+			}
+			if (element.type === 'session' && isKeyboardEvent(e.browserEvent)) {
+				this.openFromKeyboard(element.session.id);
 				return;
 			}
 			void this.activate(element).finally(() => {
@@ -957,10 +980,17 @@ export class AgentHomePane extends Disposable {
 		this.cloudAnchor = parent;
 		this.cloudMenu = instantiationService.createInstance(AgentCloudTaskMenu);
 		this._register(this.editorService.onDidEditorsChange(() => this.scheduleRefresh()));
-		this._register(this.editorService.onDidActiveEditorChange(() => this.scheduleRefresh()));
+		// A switch moves the highlight on the next frame; the rebuild waits for the chat to draw.
+		this._register(this.editorService.onDidActiveEditorChange(() => {
+			this.scheduleRowsRerender();
+			this.scheduleRefresh();
+		}));
 		this._register(onDidChangeAgentToolEditors(() => this.scheduleRefresh()));
 		this._register(this.voltSessionContext.onDidChangeProjects(() => this.scheduleRefresh()));
-		this._register(this.voltSessionContext.onDidChangeActiveProject(() => this.scheduleRefresh()));
+		this._register(this.voltSessionContext.onDidChangeActiveProject(() => {
+			this.scheduleRowsRerender();
+			this.scheduleRefresh();
+		}));
 
 		// Ages, "Working 2m" and snooze countdowns move with the clock, not with history events.
 		const clock = getWindow(this.element).setInterval(() => this.tree.rerender(), CLOCK_TICK_MS);
@@ -1150,8 +1180,18 @@ export class AgentHomePane extends Disposable {
 		void this.commandService.executeCommand(OPEN_PULL_REQUEST_COMMAND_ID, { host: badge.link.repo.host, owner: badge.link.repo.owner, name: badge.link.repo.name, number: badge.link.number }, sessionId);
 	}
 
+	/** Keyboard into the list, on the open chat's row when no row has focus yet, so the arrows start from it. */
 	focus(): void {
 		this.tree.domFocus();
+		if (this.tree.getFocus().length) {
+			return;
+		}
+		const active = this.editorGroupsService.mainPart.activeGroup?.activeEditor;
+		const node = active instanceof AgentEditorInput ? this.findSessionNode(active.sessionId) : undefined;
+		if (node?.element) {
+			this.tree.setFocus([node.element]);
+			this.tree.reveal(node.element);
+		}
 	}
 
 	/** Opens the Add Project menu (This PC, Git URL, GitHub) under `anchor`. Never a native dialog. */
@@ -1378,6 +1418,42 @@ export class AgentHomePane extends Disposable {
 	 * A single click anywhere on a collapsible folder/group/bucket toggles it.
 	 * Switching into that folder stays on double-click and keyboard.
 	 */
+	private prefetch(element: AgentHomeElement | null | undefined): void {
+		if (element?.type === 'session' && !this.isActiveChat(element.session.id)) {
+			this.history.prefetch(element.session.id);
+		}
+	}
+
+	/** A plain left press on a chat row (not one of its buttons) opens it at once. */
+	private openOnPress(element: AgentHomeElement | null, event: MouseEvent): void {
+		if (element?.type !== 'session' || event.button !== 0 || event.detail > 1 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+			return;
+		}
+		const target = event.target as Element | null;
+		if (typeof target?.closest !== 'function' || target.closest('button, a, input, .actions, .line-pr, .sub-pr')) {
+			return;
+		}
+		if (this.isActiveChat(element.session.id)) {
+			return; // its click focuses the composer, as before
+		}
+		// No focus move or text selection from the press: the open puts the keyboard in the chat.
+		event.preventDefault();
+		this.pressed = { element, at: Date.now() };
+		void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, element.session.id);
+	}
+
+	/**
+	 * Enter on a chat shows it and leaves the keyboard in the list, so the arrows go on to the next
+	 * one. Enter on the chat already shown moves the keyboard into its composer.
+	 */
+	private openFromKeyboard(sessionId: string): void {
+		if (this.isActiveChat(sessionId)) {
+			findAgentPanelGroup(this.editorGroupsService.mainPart).focus();
+			return;
+		}
+		void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, sessionId, { preserveFocus: true });
+	}
+
 	private isExpandToggleClick(element: AgentHomeElement, browserEvent: UIEvent | undefined): boolean {
 		if (!isMouseEvent(browserEvent) || browserEvent.detail === 2) {
 			return false;
@@ -1496,13 +1572,28 @@ export class AgentHomePane extends Disposable {
 		);
 	}
 
+	/**
+	 * Rebuilds the list once the window is idle (at most {@link REFRESH_IDLE_TIMEOUT_MS} later). A
+	 * switch fires several changes at once; the rebuild runs once, after the chat has drawn, not in
+	 * the frame that draws it.
+	 */
 	private scheduleRefresh(): void {
 		if (this.refreshFrame.value || this._store.isDisposed) {
 			return;
 		}
-		this.refreshFrame.value = scheduleAtNextAnimationFrame(getWindow(this.element), () => {
+		this.refreshFrame.value = runWhenWindowIdle(getWindow(this.element), () => {
 			this.refreshFrame.clear();
 			void this.refresh();
+		}, REFRESH_IDLE_TIMEOUT_MS);
+	}
+
+	private scheduleRowsRerender(): void {
+		if (this.rowsFrame.value || this._store.isDisposed) {
+			return;
+		}
+		this.rowsFrame.value = scheduleAtNextAnimationFrame(getWindow(this.element), () => {
+			this.rowsFrame.clear();
+			this.tree.rerender();
 		});
 	}
 

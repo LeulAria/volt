@@ -5,7 +5,7 @@
 
 import '../media/agentEditor.css';
 import '../media/agentComposerInput.css';
-import { $, addDisposableListener, append, Dimension, DragAndDropObserver, getWindow, isHTMLElement, isSVGElement, runAtThisOrScheduleAtNextAnimationFrame, runWhenWindowIdle, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, Dimension, DragAndDropObserver, getWindow, isHTMLElement, isSVGElement, runAtThisOrScheduleAtNextAnimationFrame, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { isWeb } from '../../../../../base/common/platform.js';
 import type { IMouseWheelEvent } from '../../../../../base/browser/mouseEvent.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
@@ -73,7 +73,7 @@ import { IAgentRuntimeService, type IVoltCompactionPlan } from '../../../../serv
 import { IAgentOrchestratorService, IOrchPrompt, IOrchQueueItem, OrchDelivery } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IAgentPromptHostOptions, stashTurnDisplay } from '../orchestration/agentTurnHost.js';
 import { IAgentSubagentChatService } from '../orchestration/agentSubagentChats.js';
-import { AgentHistoryCodec } from '../history/agentHistoryCodec.js';
+import { AgentHistoryCodec, resolveActivityImage } from '../history/agentHistoryCodec.js';
 import { agentRow, dockModel, formatElapsed as formatOrchElapsed, isMultitaskTask } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
 import { harnessSubagentChatId, harnessTaskOfChat, isHarnessSubagentChatId } from '../../../../services/voltRuntime/common/orchestration/harnessSubagents.js';
 import { createReportStackIcon, isLiveSubagentState, ISubagentView, renderCursorSubagentRow, renderSubagentAvatar, subagentCounts, subagentCountsLabel, subagentStateIcon, subagentView, tickSubagentClocks } from '../chrome/agentSubagents.js';
@@ -277,14 +277,22 @@ const USER_EDIT_MAX_HEIGHT = 220;
 /** Rendered threads kept for chats you switched away from, so switching back skips the rebuild. */
 const MAX_STASHED_THREADS = 8;
 /**
- * A chat shown by a switch draws its last few exchanges at once and the ones above them while the
- * window is idle, so the switch costs the same in a long chat as in a short one.
+ * A chat shown by a switch draws its last few exchanges at once. The ones above are drawn as the
+ * reader scrolls toward them (or for find, an edit, a turn jump), never all in the background, so a
+ * long chat costs the same to show, and to keep, as a short one.
  */
 const HEAD_KEEP_EXCHANGES = 6;
 /** Fewer exchanges than this above the kept ones are drawn at once: deferring them saves nothing. */
 const HEAD_DEFER_MIN_EXCHANGES = 4;
-/** The longest an older exchange waits for an idle moment. */
-const HEAD_FILL_TIMEOUT_MS = 400;
+/**
+ * A chat following its end keeps at most this many exchanges drawn; past it the oldest go back to
+ * the undrawn head (nodes and listeners freed), so a run that goes on for days stays a small DOM.
+ */
+const DRAWN_EXCHANGES_MAX = 40;
+/** What a trim leaves drawn; the gap to the max keeps a running chat from trimming on every turn. */
+const DRAWN_EXCHANGES_KEEP = 24;
+/** Exchanges a chat parked by a switch keeps drawn while it follows its end. */
+const STASHED_DRAWN_EXCHANGES = 12;
 /** Shows the pane even if the first chat's history never finishes loading. */
 const RESTORE_REVEAL_TIMEOUT_MS = 1500;
 
@@ -307,6 +315,10 @@ interface IStashedThread {
 	readonly tailFrom: number;
 	readonly renderedCount: number;
 	readonly settledMessages: readonly IAgentMessage[];
+	/** The undrawn head as parked (see `headEnd`): scrolling up draws it as for a fresh switch. */
+	readonly headEnd: number;
+	readonly headExchanges: number;
+	readonly headUsers: number;
 	/** Cached rows of the parked tail; their listeners live with them. */
 	readonly reuse: TranscriptReuse;
 	/** The chat changed while parked (a run kept going); its last exchange needs a redraw. */
@@ -908,7 +920,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private focusingForSwitch = false;
 	/** How the last shown chat's thread came back, for the switch timing line. */
 	private threadRestore: 'stashed' | 'stale tail' | 'tail first' | 'full' = 'full';
-	private readonly headFill = this._register(new MutableDisposable());
 	private readonly headScrollDraw = this._register(new MutableDisposable());
 	/** The messages drawn above the live exchange, so a new turn can tell they are unchanged and keep their DOM. */
 	private settledMessages: readonly IAgentMessage[] = [];
@@ -1996,6 +2007,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			if (stashed.stale) {
 				this.renderThreadTail(followTail);
 			}
+			if (followTail) {
+				this.fillDrawnViewport();
+			}
 			this.finishThreadRender(followTail);
 			this.tickMeta();
 		}
@@ -2890,42 +2904,75 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		adoptVisualFrames(this.threadInner);
 		this.observeTailExchange();
-		if (this.headEnd > 0) {
-			// What is drawn now fills the view (and some): older exchanges landing above it later must not move it.
-			const viewport = this.threadScroll?.getDomNode().clientHeight ?? 0;
-			while (this.headEnd > 0 && this.measureThreadContentHeight() < viewport * 2) {
-				this.drawHead(() => false);
-			}
-		}
+		this.fillDrawnViewport();
 		this.finishThreadRender(scrollToEnd);
-		if (this.headEnd > 0) {
-			this.scheduleHeadFill();
+	}
+
+	/** What is drawn fills the view twice over: older exchanges landing above it later must not move it. */
+	private fillDrawnViewport(): void {
+		if (this.headEnd <= 0) {
+			return;
+		}
+		const viewport = this.threadScroll?.getDomNode().clientHeight ?? 0;
+		while (this.headEnd > 0 && this.measureThreadContentHeight() < viewport * 2) {
+			this.drawHead(() => false);
+		}
+	}
+
+	/**
+	 * Puts drawn exchanges above the last `keep` back into the undrawn head: their nodes and listeners
+	 * go, live pages move to the parking lot, and scrolling up (or find, an edit, a turn jump) draws
+	 * them again from the messages. Never the live exchange, and not while an edit or find holds nodes.
+	 */
+	private undrawHead(keep: number): void {
+		const drawn = this.threadInner.children;
+		let drop = drawn.length - Math.max(1, keep);
+		if (drop <= 0 || this.editingUserIndex !== undefined || this.findWidget?.isVisible()) {
+			return;
+		}
+		let start = this.headEnd;
+		while (drop-- > 0) {
+			const exchange = drawn[0];
+			if (!isHTMLElement(exchange) || exchange === this.tailExchange || !exchange.classList.contains('volt-agent-exchange') || start >= this.messages.length) {
+				break;
+			}
+			let end = start + 1;
+			while (end < this.messages.length && !startsExchange(this.messages[end])) {
+				end++;
+			}
+			if (this.tailFrom >= 0 && end > this.tailFrom) {
+				break;
+			}
+			for (let index = start; index < end; index++) {
+				if (this.messages[index].kind === 'user') {
+					this.headUsers++;
+				}
+			}
+			this.headExchanges++;
+			parkVisualFrames(exchange, this.visualParking);
+			const store = this.exchangeStores.get(exchange);
+			if (store) {
+				this.settledListeners.delete(store);
+			}
+			exchange.remove();
+			start = end;
+		}
+		this.headEnd = start;
+	}
+
+	/** A chat following its end that drew past {@link DRAWN_EXCHANGES_MAX} drops back to {@link DRAWN_EXCHANGES_KEEP}. */
+	private trimDrawnThread(): void {
+		if (this.stickToBottom && this.threadInner.childElementCount > DRAWN_EXCHANGES_MAX) {
+			this.undrawHead(DRAWN_EXCHANGES_KEEP);
 		}
 	}
 
 	private resetDeferredHead(): void {
 		this.headGeneration++;
-		this.headFill.clear();
 		this.headScrollDraw.clear();
 		this.headEnd = 0;
 		this.headExchanges = 0;
 		this.headUsers = 0;
-	}
-
-	/** Draws the older exchanges a little at a time while the window is idle, nearest first. */
-	private scheduleHeadFill(): void {
-		const generation = this.headGeneration;
-		const window = getWindow(this.threadInner);
-		const fill = (deadline: IdleDeadline) => {
-			if (generation !== this.headGeneration || this.headEnd <= 0) {
-				return;
-			}
-			this.drawHead(() => deadline.timeRemaining() > 4);
-			if (generation === this.headGeneration && this.headEnd > 0) {
-				this.headFill.value = runWhenWindowIdle(window, fill, HEAD_FILL_TIMEOUT_MS);
-			}
-		};
-		this.headFill.value = runWhenWindowIdle(window, fill, HEAD_FILL_TIMEOUT_MS);
 	}
 
 	/** Draws a frame's worth of the waiting exchanges, next frame (not inside the scroll that asked). */
@@ -2987,9 +3034,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.headExchanges--;
 			anchor = exchange;
 		} while (this.headEnd > 0 && more());
-		if (this.headEnd === 0) {
-			this.headFill.clear();
-		}
 		if (anchored) {
 			const grown = this.measureThreadContentHeight() - heightBefore;
 			this.syncThreadScroll();
@@ -3300,6 +3344,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!exchange || !this.canRenderTail()) {
 			if (this.canAppendThread()) {
 				this.appendThread();
+				this.trimDrawnThread();
 				this.finishThreadRender(scrollToEnd);
 			} else {
 				this.renderThread(scrollToEnd);
@@ -3437,12 +3482,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private stashThread(): void {
 		const input = this.threadInput;
 		this.threadInput = undefined;
-		// A thread whose older exchanges are still being drawn is not parked: coming back draws its end first again.
-		const filling = this.headEnd > 0;
-		this.resetDeferredHead();
-		if (!input || input.isDisposed() || filling || this.editingUserIndex !== undefined || !this.threadInner.firstChild || this.renderedCount !== this.messages.length) {
+		if (!input || input.isDisposed() || this.editingUserIndex !== undefined || !this.threadInner.firstChild || this.renderedCount !== this.messages.length) {
+			this.resetDeferredHead();
 			return;
 		}
+		// A chat following its end parks only its last exchanges: the rest are drawn again when scrolled to.
+		if (this.stickToBottom) {
+			this.undrawHead(STASHED_DRAWN_EXCHANGES);
+		}
+		const head = { headEnd: this.headEnd, headExchanges: this.headExchanges, headUsers: this.headUsers };
+		this.resetDeferredHead();
 		this.dropStashedThread(input.sessionId);
 		parkVisualFrames(this.threadInner, this.visualParking);
 		const nodes = this.threadInner.ownerDocument.createDocumentFragment();
@@ -3462,6 +3511,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			tailFrom: this.tailFrom,
 			renderedCount: this.renderedCount,
 			settledMessages: this.settledMessages,
+			...head,
 			reuse: this.reuse,
 			// A redraw still queued means the nodes are behind the messages.
 			stale: this.renderHandle !== undefined,
@@ -3515,6 +3565,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.tailFrom = entry.tailFrom;
 		this.renderedCount = entry.renderedCount;
 		this.settledMessages = entry.settledMessages;
+		this.headEnd = entry.headEnd;
+		this.headExchanges = entry.headExchanges;
+		this.headUsers = entry.headUsers;
 		this.observeTailExchange();
 		return { stale: entry.stale };
 	}
@@ -4616,9 +4669,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			openFile: (path, startLine, endLine) => void this.openWorkspaceFile(path, startLine, endLine),
 			openStepItem: item => {
 				if (item.browserTool) {
-					showHostToolDetail(this.container, item, ctx, url => this.surfaceHost.openBrowser(url, undefined, true));
+					void this.withActivityImage(item).then(shown => shown && showHostToolDetail(this.container, shown, ctx, url => this.surfaceHost.openBrowser(url, undefined, true)));
 				} else if (item.image) {
-					this.showSnapshotPreview(item);
+					void this.withActivityImage(item).then(shown => shown && this.showSnapshotPreview(shown));
 				} else if (item.path) {
 					void this.openWorkspaceFile(item.path, item.startLine, item.endLine);
 				}
@@ -5000,6 +5053,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		this.runtime.truncateSession(this.sessionKey, this.messages.filter(message => message.kind === 'user').length);
 		this.dispatchPrompt(value, display, user.mode ?? this.currentMode);
+	}
+
+	/** The item with its snapshot readable by an `<img>` (stored ones are read from disk now). Undefined once the pane is gone. */
+	private async withActivityImage(item: IAgentActivityItem): Promise<IAgentActivityItem | undefined> {
+		const image = await resolveActivityImage(item.image, this.history).catch(() => undefined);
+		if (this._store.isDisposed) {
+			return undefined;
+		}
+		return image === item.image ? item : { ...item, image };
 	}
 
 	private showSnapshotPreview(item: IAgentActivityItem): void {
@@ -5555,8 +5617,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private readonly citationTarget: ICitationTarget = {
 		sessionId: () => this.sessionKey,
 		reveal: citation => {
-			if (!this.isVisible() || !revealCitation(this.threadInner, citation)) {
+			if (!this.isVisible()) {
 				return false;
+			}
+			if (!revealCitation(this.threadInner, citation)) {
+				// The quoted reply may sit above the drawn exchanges.
+				if (this.headEnd <= 0) {
+					return false;
+				}
+				this.flushDeferredHead();
+				if (!revealCitation(this.threadInner, citation)) {
+					return false;
+				}
 			}
 			this.scheduleScrollSync();
 			return true;
