@@ -143,6 +143,10 @@ const MAX_IDLE_AGENTS = 3;
 /** An idle chat agent older than this is stopped even within the cap. */
 const IDLE_AGENT_TTL_MS = 15 * 60_000;
 const IDLE_AGENT_CHECK_MS = 60_000;
+/** Files whose change cannot fail the project's tests: the post-run check skips runs that touched only these. */
+const NO_TEST_IMPACT = /\.(?:md|mdx|markdown|txt|rst|css|scss|sass|less|styl|svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|otf)$/i;
+/** Appended to a native fast-lane request: a small change is edited, checked and answered without a test run or browser. */
+const FAST_LANE_NOTE = '[Volt] Small, well-scoped change: make the edit, check the files you changed for errors, and answer in a line or two. No test runs, builds, servers or browser unless the user asked for them.';
 /** Native model transcripts kept in memory between runs (the most recently run chats). */
 const MAX_WARM_NATIVE = 4;
 /** A native transcript idle this long goes to disk only; its chat's next run reads it back. */
@@ -205,6 +209,8 @@ interface IRunState {
 	/** Engine event count at the last workspace change (0: none yet), and at the last passing run of the exact test command. */
 	lastMutation: number;
 	lastTestPass: number;
+	/** A shell command that may have changed files ran: the changed-file list alone does not show what it touched. */
+	shellMutated?: boolean;
 	events: number;
 	/** Tool calls in flight: what is known about each so far (ACP agents fill it in over several updates). */
 	readonly calls: Map<string, { kind?: string; input: string; title?: string; classified?: boolean; test?: boolean }>;
@@ -2571,7 +2577,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!this.isCurrent(session, run)) {
 			return;
 		}
-		const promptText = [request.text, pasted, hookNotes.length ? `<hook_context>\n${hookNotes.join('\n\n')}\n</hook_context>` : undefined, retrieved?.text].filter(Boolean).join('\n\n');
+		// A small request says so in the message (the system prompt stays cached): edit, check, answer.
+		const laneNote = run.lane === 'fast' && modePolicy(request.mode).allowWrites ? FAST_LANE_NOTE : undefined;
+		const promptText = [request.text, pasted, hookNotes.length ? `<hook_context>\n${hookNotes.join('\n\n')}\n</hook_context>` : undefined, retrieved?.text, laneNote].filter(Boolean).join('\n\n');
 		this.syncNativeTranscript(session, state, promptText, images);
 
 		// The root can only differ from the early read if the chat moved while the previous run settled.
@@ -4293,6 +4301,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		if (mayMutateWorkspace(command)) {
+			run.shellMutated = true;
 			this.noteMutation(session, run);
 		}
 	}
@@ -4374,6 +4383,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const quality = run.quality;
 		// `session.run` moved on when the chat already sent again: that run's changes are under way.
 		if (!quality || session.run !== run || !modePolicy(run.mode).allowWrites || !run.lastMutation || run.lastTestPass >= run.lastMutation || this.slowChecks.has(quality.rootKey)) {
+			return;
+		}
+		// Styles, docs and images cannot break a test suite: no background run (and no fans) for them.
+		const changed = run.engine === 'native' ? [...(session.deepseek?.changed.keys() ?? [])] : [...(run.changedFiles?.values() ?? [])].map(file => file.uri);
+		if (!run.shellMutated && changed.length && changed.every(uri => NO_TEST_IMPACT.test(uri.path))) {
 			return;
 		}
 		const id = `volt-check-${generateUuid()}`;
