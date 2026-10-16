@@ -554,6 +554,23 @@ suite('Agent runtime orchestration', () => {
 		service.truncateSession('chat', 1);
 		assert.deepStrictEqual(session.messages.map(message => message.content), ['one', 'also this', 'ok']);
 	});
+	test('a native transcript let go to disk comes back for the next run, with an edit made meanwhile applied', async () => {
+		const { service, internals, model, ref, waitEnd } = await setup('model');
+		await waitEnd(await service.send('chat', { text: 'one', mode: 'agent', providerRef: ref }));
+		await waitEnd(await service.send('chat', { text: 'two', mode: 'agent', providerRef: ref }));
+		// The run's end writes the journal; give the write a moment to land.
+		await new Promise(resolve => setTimeout(resolve, 50));
+		service.releaseSession('chat');
+		assert.strictEqual(internals.sessions.get('chat')?.deepseek, undefined, 'the idle transcript left memory');
+		// Edit the second prompt away while the transcript is on disk only, then send.
+		service.truncateSession('chat', 1);
+		await waitEnd(await service.send('chat', { text: 'three', mode: 'agent', providerRef: ref }));
+		const users = model.requests.at(-1)!.messages.filter(message => message.role === 'user').map(message => typeof message.content === 'string' ? message.content : JSON.stringify(message.content));
+		assert.ok(users.some(text => text.includes('one')), 'the first turn came back from the journal');
+		assert.ok(!users.some(text => text.includes('two')), 'the edited-away turn stayed gone');
+		assert.ok(users.at(-1)!.includes('three'));
+	});
+
 	test('Claude reasoning is replayed while the system prompt and tools stay the same, and dropped once they change', async () => {
 		const { service, model, ref, waitEnd } = await setup('model');
 		untitled(service);

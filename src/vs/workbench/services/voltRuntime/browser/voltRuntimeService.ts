@@ -143,6 +143,10 @@ const MAX_IDLE_AGENTS = 3;
 /** An idle chat agent older than this is stopped even within the cap. */
 const IDLE_AGENT_TTL_MS = 15 * 60_000;
 const IDLE_AGENT_CHECK_MS = 60_000;
+/** Native model transcripts kept in memory between runs (the most recently run chats). */
+const MAX_WARM_NATIVE = 4;
+/** A native transcript idle this long goes to disk only; its chat's next run reads it back. */
+const NATIVE_IDLE_TTL_MS = 15 * 60_000;
 /** Warm spare agents for new chats (see AgentPool), across all models and folders. */
 const MAX_SPARE_AGENTS = 2;
 const SPARE_AGENT_TTL_MS = 10 * 60_000;
@@ -276,6 +280,8 @@ interface ISessionState extends IVoltSession {
 	agentSandboxKey?: string;
 	/** Last time the live agent started or finished a run; idle agents are let go oldest first. */
 	agentUsedAt?: number;
+	/** Last time a native run ended (or its transcript was read back); idle transcripts go to disk oldest first. */
+	nativeUsedAt?: number;
 	/** One notice after a checkout is created or restored. */
 	announceWorktree?: boolean;
 	/** The chat moved to another checkout: the next turn opens with this note and notice. */
@@ -424,8 +430,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly mcpHost: McpHost;
 	private readonly journal: NativeJournal;
 	private readonly nativeRestores = new Map<string, Promise<void>>();
-	/** Chats whose native transcript was let go (releaseSession); it is read back from the journal before their next run. */
-	private readonly releasedNative = new Set<string>();
+	/**
+	 * Chats whose native transcript is on disk only, with how many text messages it covered: never
+	 * loaded since the chat was opened (seedSession), or let go when idle or forgotten. It is read
+	 * back from the journal when the composer is about to send (prewarm) or at the run's start.
+	 */
+	private readonly releasedNative = new Map<string, number>();
+	/** Edits made while a chat's native transcript was on disk only: applied once it is read back. */
+	private readonly nativeCuts = new Map<string, { readonly userTurns: number; readonly synced: number }>();
 	private readonly evalLedger = new EvalLedger();
 	private readonly traces: RunTraceJournal;
 	private readonly agentPool: AgentPool;
@@ -556,6 +568,21 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 
 	private releaseIdleAgents(): void {
 		const now = Date.now();
+		// Native transcripts: the few most recently run stay in memory; the rest wait on disk.
+		const warm = [...this.sessions.values()]
+			.filter(session => session.deepseek && !isRunActive(session) && !(session.run && !session.run.ended))
+			.sort((a, b) => (b.nativeUsedAt ?? 0) - (a.nativeUsedAt ?? 0));
+		let warmKept = 0;
+		for (const session of warm) {
+			if (warmKept < MAX_WARM_NATIVE && now - (session.nativeUsedAt ?? 0) < NATIVE_IDLE_TTL_MS) {
+				warmKept++;
+				continue;
+			}
+			this.releaseNative(session);
+		}
+		if (warmKept) {
+			this.agentReaper.schedule();
+		}
 		// Sessions parked by a model switch: kept while fresh, at most MAX_IDLE_AGENTS over all chats.
 		const parked = [...this.sessions.values()].flatMap(session => (session.parkedAgents ?? []).map(agent => ({ session, agent })))
 			.sort((a, b) => b.agent.parkedAt - a.agent.parkedAt);
@@ -677,45 +704,52 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			...(message.activity ? { activity: message.activity } : {}),
 			...(message.compacted ? { compacted: true } : {}),
 		}));
-		// The saved native transcript carries tool calls and results the text history does not.
-		const seeded = session.messages.length;
-		this.nativeRestores.set(key, this.journal.load(key).then(entry => {
-			if (!entry || session.deepseek?.messages.length) {
-				return;
-			}
-			const state = this.nativeState(session);
-			state.messages.push(...entry.messages);
-			state.synced = Math.min(entry.synced, seeded);
-			state.effort = entry.effort as EffortLevel | undefined;
-			state.todo = entry.todo;
-			state.prefix = entry.prefix;
-		}, () => undefined));
+		// The saved native transcript carries tool calls and results the text history does not. It is
+		// read when this chat is about to run, not when it is opened: browsing chats keeps none in memory.
+		if (!session.deepseek) {
+			this.releasedNative.set(key, session.messages.length);
+		}
 	}
 
 	releaseSession(key: string): void {
 		const session = this.sessions.get(key);
-		if (!session || session.activeRun || (session.run && !session.run.ended)) {
+		// `activeRun` stays set (completed, failed) after a run: only one still going keeps the chat.
+		if (!session || isRunActive(session) || (session.run && !session.run.ended)) {
 			return;
 		}
 		this.disposeSessionAgent(session);
 		this.releaseParked(session);
-		if (session.deepseek) {
-			// The journal reads the state as it writes, so the pending save goes out before it is dropped.
-			void this.journal.release(key);
-			session.deepseek = undefined;
-			this.releasedNative.add(key);
-		}
+		this.releaseNative(session);
 		session.retrievalSeen = undefined;
-		this.nativeRestores.delete(key);
 	}
 
-	/** A released chat that runs again gets its native transcript back from the journal first. */
-	private restoreReleasedNative(session: ISessionState): void {
-		if (!this.releasedNative.delete(session.sessionId) || session.deepseek?.messages.length) {
+	/** Moves an idle chat's native transcript to disk only; the journal brings it back before its next run. */
+	private releaseNative(session: ISessionState): void {
+		if (!session.deepseek || isRunActive(session) || (session.run && !session.run.ended)) {
 			return;
 		}
-		const seeded = session.messages.length;
+		// The journal reads the state as it writes, so the pending save goes out before it is dropped.
+		void this.journal.release(session.sessionId);
+		session.deepseek = undefined;
+		session.nativeUsedAt = undefined;
+		this.releasedNative.set(session.sessionId, session.messages.length);
+		this.nativeRestores.delete(session.sessionId);
+	}
+
+	/** A chat whose native transcript is on disk only gets it back from the journal (prewarm, or a run's start). */
+	private restoreReleasedNative(session: ISessionState): void {
+		const seeded = this.releasedNative.get(session.sessionId);
+		if (seeded === undefined) {
+			return;
+		}
+		this.releasedNative.delete(session.sessionId);
+		if (session.deepseek?.messages.length) {
+			this.nativeCuts.delete(session.sessionId);
+			return;
+		}
 		this.nativeRestores.set(session.sessionId, this.journal.load(session.sessionId).then(entry => {
+			const cut = this.nativeCuts.get(session.sessionId);
+			this.nativeCuts.delete(session.sessionId);
 			if (!entry || session.deepseek?.messages.length) {
 				return;
 			}
@@ -725,7 +759,28 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			state.effort = entry.effort as EffortLevel | undefined;
 			state.todo = entry.todo;
 			state.prefix = entry.prefix;
+			session.nativeUsedAt = Date.now();
+			if (cut) {
+				this.cutNative(session.sessionId, state, cut.userTurns, cut.synced);
+			}
 		}, () => undefined));
+	}
+
+	/** Drops native turns from user turn `userTurns` on (an edit and resend, a restored checkpoint). */
+	private cutNative(sessionId: string, state: INativeState, userTurns: number, synced: number): void {
+		let turns = 0;
+		const nativeCut = state.messages.findIndex(message => message.role === 'user' && message.turn && turns++ === userTurns);
+		if (nativeCut >= 0) {
+			state.messages.splice(nativeCut);
+			state.synced = synced;
+		} else {
+			// Compaction merged the turns; start the model transcript over from the text history.
+			state.messages.splice(0);
+			state.synced = 0;
+		}
+		state.inbox.splice(0);
+		state.ledger.invalidateReferences();
+		void this.journal.schedule(sessionId, () => journalEntry(state), true);
 	}
 
 	rememberWorktree(sessionId: string, path: string | undefined, branch: string | undefined): void {
@@ -1049,6 +1104,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * send finds them cached. Every part is cached and shared, so calling this on each focus is cheap.
 	 */
 	private prewarmNative(session: ISessionState, profile: IProviderProfile, mode: VoltMode): void {
+		// The composer is about to send: read the chat's native transcript now, not on the send.
+		this.restoreReleasedNative(session);
 		const root = this.executionRoot(session);
 		void this.nativeTurnInputs(root, modePolicy(mode).allowMcp);
 		void this.hooks.definitions(root?.fsPath).catch(() => undefined);
@@ -1158,19 +1215,13 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.messages = session.messages.slice(0, cut);
 		const state = session.deepseek;
 		if (state) {
-			let turns = 0;
-			const nativeCut = state.messages.findIndex(message => message.role === 'user' && message.turn && turns++ === userTurns);
-			if (nativeCut >= 0) {
-				state.messages.splice(nativeCut);
-				state.synced = session.messages.length;
-			} else {
-				// Compaction merged the turns; start the model transcript over from the text history.
-				state.messages.splice(0);
-				state.synced = 0;
+			this.cutNative(sessionId, state, userTurns, session.messages.length);
+		} else if (this.releasedNative.has(sessionId) || this.nativeRestores.has(sessionId)) {
+			// The transcript is on disk only (or still being read): the cut waits for it. The earliest cut wins.
+			const previous = this.nativeCuts.get(sessionId);
+			if (!previous || userTurns < previous.userTurns) {
+				this.nativeCuts.set(sessionId, { userTurns, synced: session.messages.length });
 			}
-			state.inbox.splice(0);
-			state.ledger.invalidateReferences();
-			void this.journal.schedule(sessionId, () => journalEntry(state), true);
 		}
 		// An ACP agent cannot forget turns; the next message starts a fresh agent with a recap.
 		if (session.agentHandle && (session.agentSynced ?? 0) > session.messages.length) {
@@ -4023,6 +4074,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		if (session.agentHandle) {
 			session.agentUsedAt = Date.now();
+			this.agentReaper.schedule();
+		}
+		if (run.engine === 'native' && session.deepseek) {
+			session.nativeUsedAt = Date.now();
 			this.agentReaper.schedule();
 		}
 		this.emit(session, run.runId, { type: 'lifecycle', phase: reason === 'done' ? 'completed' : reason === 'abort' ? 'cancelled' : 'failed' });
