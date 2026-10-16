@@ -97,6 +97,18 @@ export class NativeJournal extends Disposable {
 		this.idle.delete(sessionId);
 	}
 
+	/**
+	 * Writes the session's pending snapshot now, if one waits, and forgets its snapshot source:
+	 * that closure holds the whole native state in memory for as long as it is kept.
+	 */
+	release(sessionId: string): Promise<void> {
+		const pending = this.timers.has(sessionId) || this.idle.has(sessionId);
+		this.cancel(sessionId);
+		const written = pending ? this.write(sessionId) : Promise.resolve();
+		this.latest.delete(sessionId);
+		return written;
+	}
+
 	async delete(sessionId: string): Promise<void> {
 		this.cancel(sessionId);
 		this.latest.delete(sessionId);

@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { localize } from '../../../../../nls.js';
 import { IVoltEvent } from '../events.js';
 import { ILoopDetectorOptions, LoopDetector, LoopSignal, LoopVerdict } from '../harness/doomLoop.js';
@@ -817,6 +818,45 @@ async function readChunks(
  * when a read needs an earlier one than the armed timer, e.g. the first chunk's long allowance
  * giving way to the idle limit).
  */
+/** Side requests (compaction summaries): their first chunk within this, then no silence longer than this. */
+export const SIDE_STREAM_TIMEOUTS = { firstChunkMs: 180_000, idleMs: 120_000 } as const;
+
+/**
+ * Reads `open`'s stream under the reply's stall rule: no first chunk within `firstChunkMs`, or no
+ * chunk for `idleMs` once data flows, cancels the request and throws. For side requests (compaction
+ * summaries) that would otherwise wait on a silent connection until the orchestrator restarts the agent.
+ */
+export async function* watchedStream<T>(
+	open: (token: CancellationToken) => AsyncIterable<T>,
+	token: CancellationToken,
+	timeouts: { readonly firstChunkMs: number; readonly idleMs: number } = SIDE_STREAM_TIMEOUTS,
+): AsyncGenerator<T> {
+	const source = new CancellationTokenSource(token);
+	const iterator = open(source.token)[Symbol.asyncIterator]();
+	const watchdog = new StreamWatchdog();
+	let received = false;
+	let finished = false;
+	try {
+		while (true) {
+			const limit = received ? timeouts.idleMs : timeouts.firstChunkMs;
+			const next = await watchdog.next(iterator, limit);
+			if (next === STALLED) {
+				throw new ProviderError(`The model sent no data for ${Math.round(limit / 1000)}s; the stream timed out.`);
+			}
+			if (next.done) {
+				finished = true;
+				return;
+			}
+			received = true;
+			yield next.value;
+		}
+	} finally {
+		watchdog.dispose();
+		// Stalled, failed, or left early by the reader: the request is torn down, not left open.
+		source.dispose(!finished);
+	}
+}
+
 class StreamWatchdog {
 
 	private deadline = 0;

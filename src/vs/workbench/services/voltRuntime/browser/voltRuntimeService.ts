@@ -64,7 +64,7 @@ import { AgentQuestionDraft, answeredQuestions, IAgentQuestionRequest, IAgentQue
 import { AcpAgentProvider, IAcpBackgroundTask, IAcpFileWrite, IAcpSupervisionOptions } from './agents/acpProvider.js';
 import { AcpLoopDetector } from '../common/harness/acpLoopDetector.js';
 import { LOOP_NOTICE_TITLE } from '../common/harness/supervisor.js';
-import { DeepseekDirective, IDeepseekStep, runDeepseekLoop } from '../common/deepseek/loop.js';
+import { DeepseekDirective, IDeepseekStep, runDeepseekLoop, watchedStream } from '../common/deepseek/loop.js';
 import { EditBaselineTracker } from './editBaselines.js';
 import './host/hostToolService.js';
 import './memory/voltMemoryService.js';
@@ -424,6 +424,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly mcpHost: McpHost;
 	private readonly journal: NativeJournal;
 	private readonly nativeRestores = new Map<string, Promise<void>>();
+	/** Chats whose native transcript was let go (releaseSession); it is read back from the journal before their next run. */
+	private readonly releasedNative = new Set<string>();
 	private readonly evalLedger = new EvalLedger();
 	private readonly traces: RunTraceJournal;
 	private readonly agentPool: AgentPool;
@@ -678,6 +680,42 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		// The saved native transcript carries tool calls and results the text history does not.
 		const seeded = session.messages.length;
 		this.nativeRestores.set(key, this.journal.load(key).then(entry => {
+			if (!entry || session.deepseek?.messages.length) {
+				return;
+			}
+			const state = this.nativeState(session);
+			state.messages.push(...entry.messages);
+			state.synced = Math.min(entry.synced, seeded);
+			state.effort = entry.effort as EffortLevel | undefined;
+			state.todo = entry.todo;
+			state.prefix = entry.prefix;
+		}, () => undefined));
+	}
+
+	releaseSession(key: string): void {
+		const session = this.sessions.get(key);
+		if (!session || session.activeRun || (session.run && !session.run.ended)) {
+			return;
+		}
+		this.disposeSessionAgent(session);
+		this.releaseParked(session);
+		if (session.deepseek) {
+			// The journal reads the state as it writes, so the pending save goes out before it is dropped.
+			void this.journal.release(key);
+			session.deepseek = undefined;
+			this.releasedNative.add(key);
+		}
+		session.retrievalSeen = undefined;
+		this.nativeRestores.delete(key);
+	}
+
+	/** A released chat that runs again gets its native transcript back from the journal first. */
+	private restoreReleasedNative(session: ISessionState): void {
+		if (!this.releasedNative.delete(session.sessionId) || session.deepseek?.messages.length) {
+			return;
+		}
+		const seeded = session.messages.length;
+		this.nativeRestores.set(session.sessionId, this.journal.load(session.sessionId).then(entry => {
 			if (!entry || session.deepseek?.messages.length) {
 				return;
 			}
@@ -2442,6 +2480,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const apiKey = await apiKeyRead;
 		const root = this.executionRoot(session);
 		const cwd = root?.fsPath;
+		this.restoreReleasedNative(session);
 		await this.nativeRestores.get(session.sessionId);
 		this.nativeRestores.delete(session.sessionId);
 		if (!this.isCurrent(session, run)) {
@@ -2868,7 +2907,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!summary && !input.token.isCancellationRequested) {
 			try {
 				let text = '';
-				for await (const event of input.provider.stream({
+				for await (const event of watchedStream(token => input.provider.stream({
 					modelId: input.item.id,
 					messages: [
 						{ role: 'system', content: COMPACTION_SYSTEM },
@@ -2878,7 +2917,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					apiKey: input.apiKey,
 					options: { ...this.resolvedOptions(input.item, undefined), [MODEL_OPTION_REASONING]: 'low' },
 					maxOutputTokens: 8_000,
-				}, input.token)) {
+				}, token), input.token)) {
 					if (event.type === 'text.delta' && event.delta) {
 						text += event.delta;
 					}
@@ -2921,7 +2960,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		let text = '';
 		let cut = false;
 		try {
-			for await (const event of input.provider.stream({
+			for await (const event of watchedStream(token => input.provider.stream({
 				modelId: input.item.id,
 				messages: nativeToModelMessages([{ role: 'system', content: input.system }, ...messages, { role: 'user', content: inContextCompactionRequest(carry) }]),
 				profile: input.profile,
@@ -2930,7 +2969,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				tools: input.cached.tools,
 				// The output limit is outside the cached prefix; thinking at the run's effort counts toward it.
 				maxOutputTokens: IN_CONTEXT_SUMMARY_OUTPUT_TOKENS,
-			}, input.token)) {
+			}, token), input.token)) {
 				if (event.type === 'text.delta' && event.delta) {
 					text += event.delta;
 				} else if (event.type === 'finish' && event.reason === 'length') {
@@ -3976,6 +4015,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		if (run.quality?.baselineExecId) {
 			void this.stdio.cancelExec(run.quality.baselineExecId).catch(() => undefined);
+		}
+		if (reason === 'fail') {
+			// The agent that asked is gone: its open question or approval can never reach it, and a
+			// tray left open would keep the next run "waiting", out of the silent-run watchdog's sight.
+			this.denyPending(session.sessionId);
 		}
 		if (session.agentHandle) {
 			session.agentUsedAt = Date.now();

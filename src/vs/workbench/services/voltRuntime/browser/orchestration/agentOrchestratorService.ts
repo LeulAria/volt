@@ -26,10 +26,10 @@ import { normalizeVoltMode } from '../../common/modes.js';
 import { agentTaskTools, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, DELEGATE_TASK_TOOL_NAME, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeTaskRole, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
 import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimits, IOrchMove, IOrchTurn, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, ORCH_KEEP_WORKING_SETTING, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, orchHoldReason, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, readOrchLimits } from '../../common/orchestration/orchestrator.js';
-import { ILimitSignal, isClaudeProvider, isRealAnswer, LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING, limitAutoResumes, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
+import { ILimitSignal, isClaudeProvider, isRealAnswer, LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
 import { extractRoot, IOrchIndex, IOrchRootSnapshot, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
 import { isRescueTurnId, rescueDueAt, rescueWaits } from '../../common/orchestration/rescue.js';
-import { failureRetryCount, harnessTaskId, IOrchStep, isFailureRetryTurn, runOrchCommand } from '../../common/orchestration/orchestratorDecider.js';
+import { failureRetryCount, harnessTaskId, IOrchStep, isFailureRetryTurn, limitTickWaits, runOrchCommand } from '../../common/orchestration/orchestratorDecider.js';
 import { IAgentRuntimeService } from '../../common/runtime.js';
 import { IVoltSessionContextService } from '../../common/sessionContext.js';
 import { DeadlineTimer } from '../jobs/deadlineTimer.js';
@@ -63,6 +63,12 @@ const SLEEP_GAP_MS = WATCHDOG_MS * 3;
 const STEER_TIMEOUT_MS = 60_000;
 /** Failed writes are tried again after 1 s, doubling up to this. */
 const PERSIST_RETRY_MAX_MS = 30_000;
+/** How soon a change to a chat tree is written. */
+const PERSIST_MS = 250;
+/** How soon a change that is only subagent progress (activity text, step counts) is written. */
+const PROGRESS_PERSIST_MS = 5_000;
+/** A usage-limit tick that resumed nothing looks again after this, at the soonest. */
+const LIMIT_TICK_RECHECK_MS = 30_000;
 
 export class AgentOrchestratorService extends Disposable implements IAgentOrchestratorService {
 
@@ -77,6 +83,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	private readonly rootEvents = new Map<string, IOrchEventEnvelope[]>();
 	private readonly dirtyRoots = new Set<string>();
 	private persistTimer: ReturnType<typeof setTimeout> | undefined;
+	/** When the waiting write fires. */
+	private persistDue = 0;
 	private persisting: Promise<void> = Promise.resolve();
 	private persistRetry: ReturnType<typeof setTimeout> | undefined;
 	private persistFailures = 0;
@@ -344,15 +352,16 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	 * decider resumes what is due (and staggers the rest), and the next change re-arms it. The
 	 * timer reads the wall clock, so a reset that passed while the machine slept is not missed.
 	 */
-	private scheduleLimitTick(): void {
+	/** `notBefore`: a tick that found nothing due looks again no sooner than this (never a spin). */
+	private scheduleLimitTick(notBefore = 0): void {
 		const auto = this.autoResumeDefault();
 		let next = Number.POSITIVE_INFINITY;
 		for (const thread of Object.values(this.state.threads)) {
-			if (thread.limit && !thread.active && limitAutoResumes(thread.limit, auto)) {
-				next = Math.min(next, limitDueAt(thread.limit));
+			if (limitTickWaits(thread, auto)) {
+				next = Math.min(next, limitDueAt(thread.limit!));
 			}
 		}
-		this.limitTimer.schedule(Number.isFinite(next) ? next : undefined);
+		this.limitTimer.schedule(Number.isFinite(next) ? Math.max(next, notBefore) : undefined);
 	}
 
 	private limitTick(): void {
@@ -361,9 +370,10 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		if (resumed.length) {
 			this.logService.info(`[volt orchestrator] usage limit: resuming ${resumed.join(', ')}`);
 		}
-		// Nothing changed (a stagger slot not reached yet): look again.
+		// Nothing changed (a stagger slot not reached yet): look again, but not in a loop. A change
+		// in the meantime (a move ends, a block clears) re-arms through onDidChange.
 		if (!step.envelopes.length) {
-			this.scheduleLimitTick();
+			this.scheduleLimitTick(Date.now() + LIMIT_TICK_RECHECK_MS);
 		}
 	}
 
@@ -372,7 +382,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	/** Arms one timer for the earliest chat waiting to be restarted; it reads the wall clock, so sleep does not lose it. */
-	private scheduleRescueTick(): void {
+	/** `notBefore`: as for {@link scheduleLimitTick}, a tick that restarted nothing never loops. */
+	private scheduleRescueTick(notBefore = 0): void {
 		let next = Number.POSITIVE_INFINITY;
 		if (this.limits.supervise) {
 			for (const thread of Object.values(this.state.threads)) {
@@ -381,7 +392,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				}
 			}
 		}
-		this.rescueTimer.schedule(Number.isFinite(next) ? next : undefined);
+		this.rescueTimer.schedule(Number.isFinite(next) ? Math.max(next, notBefore) : undefined);
 	}
 
 	private rescueTick(): void {
@@ -393,7 +404,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			}
 		}
 		if (!step.envelopes.length) {
-			this.scheduleRescueTick();
+			this.scheduleRescueTick(Date.now() + LIMIT_TICK_RECHECK_MS);
 		}
 	}
 
@@ -432,6 +443,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		this.knownRoots.add(rootId);
 		this.logService.info(`[volt orchestrator] ${threadId}: ${why}; this window lets go of its chat tree`);
 		this._onDidChange.fire({ threads: gone, tasks: goneTasks });
+		// If that window goes away before the work is done, this one takes the tree back (its beacon goes stale).
+		this.adoptLater([rootId]);
 	}
 
 	setTurnHost(host: IOrchTurnHost): IDisposable {
@@ -516,6 +529,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				}
 			}
 			this._onDidChange.fire({ threads: [...threads], tasks: [...tasks] });
+			// A forgotten chat (a finished subagent pruned from its tree) frees its runtime state: over a
+			// days-long run thousands of them would otherwise keep their transcripts in memory.
+			for (const envelope of step.envelopes) {
+				if (envelope.event.type === 'thread.forgotten') {
+					this.runtime.releaseSession(envelope.event.threadId);
+				}
+			}
 		}
 		if (step.effects.length) {
 			for (const effect of step.effects) {
@@ -536,7 +556,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				}
 			});
 		} else if (step.envelopes.length) {
-			this.schedulePersist();
+			// A subagent's progress line (activity, step count) is cosmetic: batch those writes.
+			this.schedulePersist(step.envelopes.every(envelope => envelope.event.type === 'task.updated') ? PROGRESS_PERSIST_MS : PERSIST_MS);
 		}
 		return step;
 	}
@@ -566,14 +587,20 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 
 	//#region Persistence and recovery
 
-	private schedulePersist(): void {
+	/** Writes the changed roots within `delay`; a sooner request pulls a waiting write forward. */
+	private schedulePersist(delay = PERSIST_MS): void {
+		const due = Date.now() + delay;
 		if (this.persistTimer !== undefined) {
-			return;
+			if (this.persistDue <= due) {
+				return;
+			}
+			clearTimeout(this.persistTimer);
 		}
+		this.persistDue = due;
 		this.persistTimer = setTimeout(() => {
 			this.persistTimer = undefined;
 			void this.persistNow();
-		}, 250);
+		}, delay);
 	}
 
 	/**

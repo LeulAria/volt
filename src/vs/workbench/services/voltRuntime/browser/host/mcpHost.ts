@@ -141,6 +141,8 @@ export class McpHost extends Disposable {
 				if (Date.now() - cached.started < RETRY_FAILED_AFTER_MS) {
 					return undefined;
 				}
+				// A dead connection still holds its client and listeners (and maybe a process): drop them first.
+				connection?.dispose();
 				this.connections.delete(key);
 				this.settled.delete(key);
 				return this.connection(config, root);
@@ -176,13 +178,28 @@ export class McpHost extends Disposable {
 			void this.stdio.kill(processId);
 		};
 		try {
-			await client.request('initialize', { protocolVersion: PROTOCOL_VERSION, capabilities: { roots: {} }, clientInfo: { name: 'Volt', version: '1.0.0' } });
+			// Timed here, not only by the caller's race: a server waiting on a prompt (npx without -y)
+			// would otherwise keep its process after the race gave up, and the next try spawns another.
+			await client.request('initialize', { protocolVersion: PROTOCOL_VERSION, capabilities: { roots: {} }, clientInfo: { name: 'Volt', version: '1.0.0' } }, CONNECT_TIMEOUT_MS);
 			await client.notify('notifications/initialized');
-			const tools = await listTools(cursor => client.request('tools/list', cursor ? { cursor } : {}));
+			const tools = await listTools(cursor => client.request('tools/list', cursor ? { cursor } : {}, CONNECT_TIMEOUT_MS));
 			return {
 				tools,
 				get alive() { return !client.isDead; },
-				call: (name, args, signal) => withAbort(client.request('tools/call', { name, arguments: args ?? {} }), signal),
+				call: (name, args, signal) => {
+					if (signal.aborted) {
+						return Promise.reject(new Error('Cancelled.'));
+					}
+					// An abandoned call lets go of its pending request instead of waiting on the server forever.
+					const cts = new CancellationTokenSource();
+					const onAbort = () => cts.cancel();
+					signal.addEventListener('abort', onAbort, { once: true });
+					return withAbort(client.request('tools/call', { name, arguments: args ?? {} }, { token: cts.token }), signal)
+						.finally(() => {
+							signal.removeEventListener('abort', onAbort);
+							cts.dispose();
+						});
+				},
 				dispose,
 			};
 		} catch (err) {

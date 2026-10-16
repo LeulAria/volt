@@ -169,6 +169,9 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 		}
 	}
 
+	/** The agent server's runtime frees its own sessions. */
+	releaseSession(_key: string): void { }
+
 	seedSession(key: string, messages: readonly IVoltSeedMessage[], options?: { readonly forkedFrom?: string }): void {
 		// The server's own copy of a chat seeds its model transcript when it loads the chat; a fork
 		// made here (with a transcript the server has not loaded yet) is seeded there too.

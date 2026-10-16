@@ -282,6 +282,12 @@ const STALL_RESUME_TEXT = 'Your previous response stopped making progress and wa
 const ACP_INITIALIZE_TIMEOUT_MS = 45_000;
 /** `session/new` connects the session's MCP servers (cursor-agent waits up to 60s for each). */
 const ACP_SESSION_NEW_TIMEOUT_MS = 120_000;
+/**
+ * `session/set_mode` and `session/set_config_option`: a quick write on the agent's side. One that
+ * never answers fails like a rejected option (the session keeps the agent's own default) instead of
+ * holding the chat on "Thinking" before the prompt's watchdog even exists.
+ */
+const ACP_CONFIG_TIMEOUT_MS = 30_000;
 
 /** Past this much text Cursor's reply is no plan-wall banner (that is one short line); it stops being re-checked per chunk. */
 const CURSOR_WALL_SCAN_CHARS = 2048;
@@ -440,7 +446,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			return true;
 		}
 		try {
-			await live.client.request('session/set_mode', { sessionId, modeId });
+			await live.client.request('session/set_mode', { sessionId, modeId }, ACP_CONFIG_TIMEOUT_MS);
 			live.currentModeId = modeId;
 			return true;
 		} catch (err) {
@@ -726,6 +732,12 @@ export class AcpAgentProvider implements IAgentProvider {
 					this.sessions.delete(id);
 				}
 			}
+			// Its listeners filter every stdout chunk of every process: a dead client lets go of them,
+			// after the other death handlers (a spare's) have run.
+			queueMicrotask(() => {
+				client.dispose();
+				void this.stdio.kill(processId).catch(() => undefined);
+			});
 		});
 
 		// Setup that never answers would leave the chat on "Thinking" with nothing to show for it:
@@ -958,7 +970,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			? { sessionId, configId, type: 'boolean', value }
 			: { sessionId, configId, value };
 		try {
-			const response = await session.client.request<{ configOptions?: IAcpConfigOption[] }>('session/set_config_option', params);
+			const response = await session.client.request<{ configOptions?: IAcpConfigOption[] }>('session/set_config_option', params, ACP_CONFIG_TIMEOUT_MS);
 			if (response?.configOptions) {
 				session.configOptions = response.configOptions;
 			} else {
@@ -1174,7 +1186,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (!live || live.client.isDead) {
 			return;
 		}
-		await live.client.request('_session/async_task/stop', { sessionId: providerSessionId, asyncTaskId: taskId });
+		await live.client.request('_session/async_task/stop', { sessionId: providerSessionId, asyncTaskId: taskId }, ACP_CONFIG_TIMEOUT_MS);
 	}
 
 	getBackgroundTasks(session: IAgentSessionHandle): readonly IAcpBackgroundTask[] {

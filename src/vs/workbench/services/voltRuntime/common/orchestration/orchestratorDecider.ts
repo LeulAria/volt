@@ -527,6 +527,14 @@ function decideMove(state: IOrchState, command: Extract<OrchCommand, { type: 'th
 }
 
 /**
+ * A parked chat the limit tick resumes once it is due. The service arms its timer from the same
+ * test: a chat the timer counted but the tick skipped (moving, blocked) re-armed it in the past forever.
+ */
+export function limitTickWaits(thread: IOrchThread, autoDefault: boolean): boolean {
+	return !!thread.limit && !thread.active && !thread.moving && !thread.blocked && !thread.pendingMove && limitAutoResumes(thread.limit, autoDefault);
+}
+
+/**
  * Parked chats whose reset (or next probe) has come continue, one per tick: the first due goes
  * now, the others get slots `LIMIT_STAGGER_MS` apart, so twenty chats parked on the same account
  * do not hit the provider in the same second (and the limit again). Chats on one account wait for
@@ -535,8 +543,7 @@ function decideMove(state: IOrchState, command: Extract<OrchCommand, { type: 'th
 function decideLimitTick(state: IOrchState, at: number, autoDefault: boolean): IOrchDecision {
 	const threads = sortedThreads(state);
 	const due = threads
-		.filter(thread => thread.limit && !thread.active && !thread.moving && !thread.blocked && !thread.pendingMove
-			&& limitAutoResumes(thread.limit, autoDefault) && limitDueAt(thread.limit) <= at)
+		.filter(thread => limitTickWaits(thread, autoDefault) && limitDueAt(thread.limit!) <= at)
 		.sort((a, b) => limitDueAt(a.limit!) - limitDueAt(b.limit!) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 	if (!due.length) {
 		return { events: [] };

@@ -98,6 +98,12 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	 */
 	seedSession(key: string, messages: readonly IVoltSeedMessage[], options?: { readonly forkedFrom?: string }): void;
 	/**
+	 * Lets go of an idle chat's heavy state (its model transcript, file ledger, agent processes),
+	 * for a chat the orchestrator forgot. Its text history stays; if it runs again, the transcript
+	 * comes back from its journal on disk. Nothing happens while it runs.
+	 */
+	releaseSession(key: string): void;
+	/**
 	 * How `/compact` would run in this chat on `providerRef` now: the agent's own (`native`: Claude
 	 * Code's `/compact`, Codex's, or Volt's summarizer for native models), or Volt's handoff summary
 	 * and a fresh session (`handoff`, with its estimated size). Undefined when there is nothing to compact.
