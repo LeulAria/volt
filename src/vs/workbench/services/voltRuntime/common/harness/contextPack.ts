@@ -214,8 +214,10 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	if (input.intent.mentionsTests && allowWrites) {
 		parts.push(`[Volt] ${TEST_INTEGRITY}`);
 	}
-	if (input.intent.uiWork && input.browserTools && input.intent.lane !== 'chat') {
-		parts.push(`[Volt] ${BROWSER_TESTING}`);
+	// A browser check costs minutes: asked for, it gets the full recipe; otherwise only bigger UI
+	// work hears how to do one, and that small, clear changes skip it.
+	if (input.intent.uiWork && input.browserTools && input.intent.lane !== 'chat' && (input.intent.wantsPreview || input.intent.lane !== 'fast')) {
+		parts.push(`[Volt] ${input.intent.wantsPreview ? BROWSER_TESTING : BROWSER_TESTING_WHEN_NEEDED}`);
 	}
 	// A fix checked in the browser is answered in a few lines; a chart of it is one more model call.
 	if (input.visuals && input.intent.lane !== 'fast' && !(input.intent.uiWork && input.browserTools)) {
@@ -266,6 +268,9 @@ export const BROWSER_TESTING = 'Check UI work in Volt\'s in-app browser with the
 
 /** A "make it production ready" run quietly started rejecting requests without a JSON content type. */
 export const CALLER_VISIBLE_CHANGES = 'This is an open-ended change. When you alter behaviour existing callers rely on (status codes, required headers or fields, response shapes, defaults), name each such change in your summary.';
+
+/** {@link BROWSER_TESTING} for UI work the user did not ask to see: only when a check is worth its time. */
+export const BROWSER_TESTING_WHEN_NEEDED = `Small, clear UI changes (styles, copy, spacing, a single handler) need no browser check: make them and say so; the user will look. When a change does need one, ${BROWSER_TESTING.charAt(0).toLowerCase()}${BROWSER_TESTING.slice(1)}`;
 
 /**
  * Benchmark: given two contradictory tests, Cursor's agent and Volt's both made `isEven` inspect its
@@ -360,7 +365,7 @@ function judgement(): string {
 		'- "rename foo to bar in utils.ts" -> read, edit, done. No plan, no summary of unrelated code.',
 		'- "add this using the official docs" -> look the docs up, then edit. Do not invent an API.',
 		'- "run the app" -> start it in the background and report the URL.',
-		'When you do change code, verify it the way the project verifies itself (its tests, type-checker, linter) before you say it is done.',
+		'When you change code, verify in proportion to the risk: a small, clear edit needs only a look at the errors in the files you touched; changes other code depends on get the project\'s own checks (tests, type-checker, linter). Use the browser only when the user asked to see the result or only the UI can show it.',
 	].join('\n');
 }
 

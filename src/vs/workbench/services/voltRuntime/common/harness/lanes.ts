@@ -75,7 +75,7 @@ const LANES: Record<VoltLane, ILaneDefinition> = {
 		checkpoints: true,
 		verify: false,
 		synthesize: true,
-		framing: 'This is a small, well-scoped change. Inspect only what you need, make the edit, and review the result. Keep verification proportional to the change and honor checks required by the user or project instructions. No plans, no summaries of unrelated code. If it turns out to be larger than it looks, call request_capabilities.',
+		framing: 'This is a small, well-scoped change. Inspect only what you need, make the edit, check the files you changed for errors, and answer in a line or two. No test runs, builds, servers or browser unless the user or project instructions ask for them. No plans, no summaries of unrelated code. If it turns out to be larger than it looks, call request_capabilities.',
 	},
 	agent: {
 		lane: 'agent',
@@ -85,7 +85,7 @@ const LANES: Record<VoltLane, ILaneDefinition> = {
 		checkpoints: true,
 		verify: true,
 		synthesize: true,
-		framing: 'Work the task end to end. Verify with the project\'s own checks before you finish.',
+		framing: 'Work the task end to end. Verify in proportion to the risk: the project\'s own checks (tests, type-check, build) for changes other code depends on or that you are unsure of; a small, clear edit needs only a look at the errors in the files you touched. Open a browser only when the user asked to see the result or only the UI can show it.',
 	},
 	mission: {
 		lane: 'mission',

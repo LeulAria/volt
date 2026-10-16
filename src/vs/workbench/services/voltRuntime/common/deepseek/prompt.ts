@@ -88,7 +88,10 @@ export function buildDeepseekSystemPrompt(input: IDeepseekPromptInput): string {
 		'- Make the smallest complete change that does the job. No unrequested features, refactors, or comments.',
 	];
 	if (policy.allowWrites) {
-		work.push(`- After editing, check your work${has('diagnostics') ? ': run diagnostics on the files you changed' : ''}${policy.allowTerminal ? ', and run the relevant tests, type-check, or build when the project has them' : ''}. Fix what you broke before you finish.`);
+		// The user often wants a quick loop: a small fix proven by a test run, a build and a browser
+		// session took minutes for a change they could see in seconds.
+		work.push(`- Match the effort to the task. A small, clear change you understand (copy, styles, a value, a fix in one place) is: make the edit${has('diagnostics') ? ', run diagnostics on the files you changed' : ''}, and finish. It needs no test run, build, server or browser.`);
+		work.push(`- Verify more when it is worth it: ${policy.allowTerminal ? 'run the relevant tests, type-check or build' : 'check the code paths you touched'} when you changed logic other code depends on, when you are not sure the change works, or when the user or project instructions ask for it. Open the app or a browser only when the user asked to see the result or the behavior can only be checked there. Fix what you broke before you finish.`);
 	}
 	if (has('todo')) {
 		work.push('- For work with three or more steps, keep a todo list and update it as you go.');
