@@ -75,10 +75,19 @@ function releaseNotesHeader() {
 		} catch {
 			// shallow clone
 		}
-	} else {
+	}
+	// docs/release-notes/<version>.md is this release's hand-written notes, kept in the repo so they are reviewed with the code.
+	const notes = path.join(import.meta.dirname, '..', '..', '..', 'docs', 'release-notes', `${version}.md`);
+	const hasNotes = channel !== 'nightly' && fs.existsSync(notes);
+	if (hasNotes) {
+		lines.push(fs.readFileSync(notes, 'utf8').trim());
+	} else if (channel !== 'nightly') {
 		lines.push(channel === 'beta' ? 'Beta builds install next to Volt.' : 'Download for your platform at https://volt.leularia.com/download.');
 	}
 	lines.push('', '**Downloads:** https://volt.leularia.com/download');
+	if (!hasNotes) {
+		lines.push('', `Mac builds are not signed with an Apple Developer ID: read the [macOS install guide](https://github.com/${repo}/blob/${tag}/docs/install/macos.md) before you open the app.`);
+	}
 	return lines.join('\n') + '\n';
 }
 
