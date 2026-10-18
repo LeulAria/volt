@@ -330,6 +330,13 @@ export function ClosingCta() {
             Or install from a terminal
           </div>
           <InstallCommand />
+          <Link
+            to="/docs/$"
+            params={{ _splat: "install" }}
+            className="mt-4 inline-block text-[13px] text-white/50 underline underline-offset-4 transition-colors hover:text-white"
+          >
+            Step-by-step install guide
+          </Link>
         </div>
       </div>
     </section>
@@ -360,10 +367,10 @@ export function SiteFooter() {
         <nav className="flex flex-wrap gap-x-6 gap-y-2 md:ml-8">
           <Link
             to="/docs/$"
-            params={{ _splat: "" }}
+            params={{ _splat: "install" }}
             className="transition-colors hover:text-white"
           >
-            Docs
+            Install guide
           </Link>
           <Link to="/download" className="transition-colors hover:text-white">
             Download
