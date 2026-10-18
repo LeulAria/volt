@@ -75,6 +75,9 @@ import { VoltBrowserAccessService } from '../../../workbench/services/voltRuntim
 import { VoltMemoryService } from '../../../workbench/services/voltRuntime/browser/memory/voltMemoryService.js';
 import { IVoltBrowserAccessService } from '../../../workbench/services/voltRuntime/common/browserAccess.js';
 import { IVoltMemoryService } from '../../../workbench/services/voltRuntime/common/memory/voltMemory.js';
+import { VoltHooksService } from '../../../workbench/services/voltRuntime/browser/hooks/voltHooksService.js';
+import { IVoltHooksService } from '../../../workbench/services/voltRuntime/common/hooks/voltHooks.js';
+import { IWorkspaceTrustManagementService } from '../../../platform/workspace/common/workspaceTrust.js';
 import { IAgentWorktreeSetupService } from '../../../workbench/services/voltRuntime/common/git/worktreeSetupPlan.js';
 import { AgentHistoryService } from '../../../workbench/services/voltRuntime/browser/history/agentHistoryService.js';
 import { VoltHostToolService } from '../../../workbench/services/voltRuntime/browser/host/hostToolService.js';
@@ -92,7 +95,7 @@ import { AgentServerApi, createCollections } from './serverApi.js';
 import { ServerAgentWorkspaceService } from './serverAgentWorkspace.js';
 import { IAgentServerClients } from './serverClients.js';
 import { ServerEditsJournal } from './serverEditsJournal.js';
-import { importDesktopStorage, ServerCommandService, ServerConsoleLogger, ServerLifecycleService, ServerNotificationService, ServerPathService, ServerSearchService, ServerSecretStorageService, ServerStorageService, ServerTextModelService, serverTextFileService, ServerWorkspaceContextService } from './serverPlatformServices.js';
+import { importDesktopStorage, ServerCommandService, ServerConsoleLogger, ServerLifecycleService, ServerNotificationService, ServerPathService, ServerSearchService, ServerSecretStorageService, ServerStorageService, ServerTextModelService, serverTextFileService, ServerWorkspaceContextService, ServerWorkspaceTrustService } from './serverPlatformServices.js';
 import { ServerSessionHost } from './serverSessionHost.js';
 import { IPairingHttpContext, machineLabel, ServerPairing } from './serverPairing.js';
 import { ServerWorkbench } from './serverWorkbench.js';
@@ -247,6 +250,8 @@ export async function main(argv: string[]): Promise<void> {
 	services.set(IAgentWorktreeSetupService, new SyncDescriptor(AgentWorktreeSetupService));
 	services.set(IVoltBrowserAccessService, new SyncDescriptor(VoltBrowserAccessService));
 	services.set(IVoltMemoryService, new SyncDescriptor(VoltMemoryService));
+	services.set(IWorkspaceTrustManagementService, new SyncDescriptor(ServerWorkspaceTrustService));
+	services.set(IVoltHooksService, new SyncDescriptor(VoltHooksService));
 
 	const instantiationService = disposables.add(new InstantiationService(services, true));
 	services.set(IInstantiationService, instantiationService);
