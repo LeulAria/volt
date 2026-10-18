@@ -44,7 +44,7 @@ If you act in good faith, we won't pursue or support legal action against you fo
 
 ## Supported versions
 
-Volt is a public beta and moves quickly. Security fixes go into the latest commit on `main` and, once packaged installers are published, the most recent release. Older builds are not patched; update to the newest one.
+Volt is a public beta and moves quickly. Security fixes go into the latest commit on `main` and the most recent release. Older builds are not patched; update to the newest one.
 
 | Version | Supported |
 | --- | --- |
@@ -112,7 +112,7 @@ Use *Supervised* mode, read what an agent proposes before approving it, and keep
 | **Git checkpoints** | Snapshots are built with a private index and stored under hidden refs (`refs/volt/*`). They never alter your index, working tree, or branches. Oversized files and dependency directories such as `node_modules` are skipped. |
 | **Project import** | Git URLs are validated to reject option injection and the `ext::` transport. GitHub tokens are handed to Git per process, not written to config. |
 | **Child processes** | Agent and shell processes are owned by the window that started them and are terminated when the window reloads or closes. |
-| **Telemetry** | Volt ships with no telemetry endpoint and no update server configured. |
+| **Telemetry and updates** | Volt ships with no telemetry endpoint. Release builds check a static update feed on GitHub (`raw.githubusercontent.com/LeulAria/VOLT`) for newer versions (a plain request for a JSON file, with no account or machine identifier); development builds never check. The feed only names a download, and on macOS the app is not signed with a Developer ID, so Volt opens the download page instead of installing an update itself. |
 
 ### What leaves your machine
 
@@ -120,7 +120,7 @@ Volt itself doesn't phone home. Data goes where you send it:
 
 - **Prompts, file contents, tool results, and browser snapshots** go to the model provider or agent CLI you select for that chat. Local models (Ollama, LM Studio) keep it on your machine.
 - **Tab prediction** is on by default. It sends the code around your cursor, imports, diagnostics, recent edits, and a truncated clipboard to the model you chose for prediction. Files such as `.env*`, lockfiles, and `secrets*` are excluded by default, and you can turn the feature off in **Volt Settings**.
-- **Other requests**: GitHub's API when you add a project from GitHub, [Open VSX](https://open-vsx.org) for extensions, the usage endpoints of agents you've signed into, and a public price list used to estimate token costs.
+- **Other requests**: GitHub's API when you add a project from GitHub, the update feed on GitHub in release builds, [Open VSX](https://open-vsx.org) for extensions, the usage endpoints of agents you've signed into, and a public price list used to estimate token costs.
 - **Extension marketplace.** Extensions come from Open VSX and run in the extension host with your user's privileges, as in any VS Code. Install only what you trust.
 
 ### Supply chain
