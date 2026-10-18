@@ -14,12 +14,15 @@ import { ActivityIndicator, Alert, Platform, StyleSheet, View } from 'react-nati
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import Animated, { FadeInDown, FadeOutDown, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Composer } from '../../src/chat/Composer';
+import { CHAT_TABS_HEIGHT, ChatSwitcher, ChatTabs } from '../../src/chat/ChatTabs';
+import { Composer, type IComposerSendExtra } from '../../src/chat/Composer';
+import { touchRecentChat, useRecentChats } from '../../src/chat/recentChats';
+import { SubagentsTray, useChatTasks } from '../../src/chat/Subagents';
 import { ChatContext, type IChatContext, type UserRowData } from '../../src/chat/context';
 import { copyWithHaptic } from '../../src/chat/Markdown';
 import { Transcript } from '../../src/chat/Transcript';
 import { ApprovalCard, LimitBanner, PausedBanner, QuestionCard, QueueChip } from '../../src/chat/Trays';
-import { useCheckpoints, useClient, useCollections, useOptionalClient, useTranscript } from '../../src/state/client';
+import { useCheckpoints, useClient, useCollections, useOptionalClient, useStatus, useTranscript } from '../../src/state/client';
 import { useTheme } from '../../src/theme/theme';
 import { haptic, Icon, IconButton, LiveTimer, T, Tap } from '../../src/ui/core';
 import { ActionSheet, type ISheetAction } from '../../src/ui/sheets';
@@ -43,6 +46,7 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 	const client = useClient();
 	const cols = useCollections(CHAT_COLLECTIONS);
 	const transcript = useTranscript(chatId);
+	const live = useStatus().live;
 	const meta = historyOf(cols)[chatId];
 	const thread = threadsOf(cols)[chatId];
 	const session = sessionsOf(cols)[chatId];
@@ -194,8 +198,8 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 		return actions;
 	};
 
-	const send = (text: string, delivery: 'auto' | 'queue' | 'now', attachments: readonly IPromptAttachment[]): boolean => {
-		const options = { mode, ...(effectiveModel ? { modelRef: effectiveModel } : {}), ...(attachments.length ? { attachments } : {}) };
+	const send = (text: string, delivery: 'auto' | 'queue' | 'now', attachments: readonly IPromptAttachment[], extra?: IComposerSendExtra): boolean => {
+		const options = { mode, ...(effectiveModel ? { modelRef: effectiveModel } : {}), ...(attachments.length ? { attachments } : {}), ...(extra ? { mentions: extra.mentions, displayText: extra.displayText } : {}) };
 		if (!editing) {
 			client.send({ threadId: chatId, text, delivery, ...options });
 			return true;
@@ -220,14 +224,25 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 
 	useFocusEffect(useCallback(() => {
 		client.markRead(chatId);
+		touchRecentChat(chatId);
 	}, [client, chatId]));
+	const [switcher, setSwitcher] = useState(false);
+	const tasks = useChatTasks(chatId);
+	const tabCount = useRecentChats().length;
+	useEffect(() => {
+		// A chat's orchestrator tree (its subagents, queue) loads on demand, as a desktop window opening it asks.
+		if (client.getStatus().live) {
+			client.connection.call('orchestrator.ensureThreadLoaded', [chatId]).catch(() => undefined);
+		}
+	}, [client, chatId, live]);
 	useEffect(() => {
 		if (meta?.unread) {
 			client.markRead(chatId);
 		}
 	}, [client, chatId, meta?.unread]);
 
-	const top = insets.top + HEADER_HEIGHT;
+	const tabsShown = tabCount > 1;
+	const top = insets.top + HEADER_HEIGHT + (tabsShown ? CHAT_TABS_HEIGHT : 0);
 	const subtitle = [project?.displayName ?? meta?.workspaceLabel, session?.worktreeBranch ?? meta?.worktreeBranch].filter(Boolean).join(' · ');
 	const tone = status.status === 'idle' ? undefined : statusColor(status.status, p);
 
@@ -237,8 +252,9 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 				<KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
 					<Transcript chatId={chatId} topInset={top} />
 					<Animated.View layout={LinearTransition.duration(220)} style={{ paddingBottom: Math.max(insets.bottom, 8), paddingTop: 6, gap: 8 }}>
-						{approvals.length || questions.length || thread?.limit || (thread?.queue.length ?? 0) > 0 ? (
+						{approvals.length || questions.length || thread?.limit || (thread?.queue.length ?? 0) > 0 || tasks.length ? (
 							<View style={{ paddingHorizontal: 16, gap: 8 }}>
+								<SubagentsTray chatId={chatId} />
 								{approvals.map(request => <ApprovalCard key={request.id} request={request} />)}
 								{questions[0] ? <QuestionCard key={questions[0].id} request={questions[0]} /> : null}
 								{thread?.limit ? <LimitBanner chatId={chatId} thread={thread} /> : null}
@@ -248,6 +264,8 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 						) : null}
 						<Composer
 							draftKey={chatId}
+							chatId={chatId}
+							folder={folder}
 							running={running}
 							mode={mode}
 							onModeChange={setMode}
@@ -278,11 +296,14 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 			<View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: top, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint, overflow: 'hidden' }}>
 				{Platform.OS === 'ios'
 					? <BlurView intensity={80} tint={p.scheme === 'dark' ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'} style={StyleSheet.absoluteFill} />
-					: <View style={[StyleSheet.absoluteFill, { backgroundColor: p.canvas, opacity: 0.97 }]} />}
-				<View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: HEADER_HEIGHT, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, gap: 2 }}>
+					: <View style={[StyleSheet.absoluteFill, { backgroundColor: p.canvas, opacity: Platform.OS === 'web' ? 1 : 0.97 }]} />}
+				<View style={{ position: 'absolute', left: 0, right: 0, bottom: tabsShown ? CHAT_TABS_HEIGHT : 0, height: HEADER_HEIGHT, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, gap: 2 }}>
 					<IconButton icon="chevronLeft" label="Back" size={24} color={p.fg} onPress={() => router.back()} />
-					<Tap onPress={() => router.push({ pathname: '/details/[id]', params: { id: chatId } })} style={{ flex: 1, minWidth: 0, paddingHorizontal: 4 }} accessibilityLabel="Chat details">
-						<T variant="callout" weight="700" numberOfLines={1} style={{ letterSpacing: -0.2 }}>{meta?.title || 'New chat'}</T>
+					<Tap haptics="selection" onPress={() => setSwitcher(true)} style={{ flex: 1, minWidth: 0, paddingHorizontal: 4 }} accessibilityLabel="Switch chat">
+						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+							<T variant="callout" weight="700" numberOfLines={1} style={{ letterSpacing: -0.2, flexShrink: 1 }}>{meta?.title || 'New chat'}</T>
+							<Icon name="chevronDown" size={13} color={p.fgTertiary} />
+						</View>
 						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
 							{tone ? <T variant="footnote" weight="600" color={tone}>{status.label}</T> : null}
 							{tone && subtitle ? <T variant="footnote" color={p.fgQuaternary}>{'·'}</T> : null}
@@ -298,7 +319,9 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 					<IconButton icon="fileDiff" label="Changes" color={p.fg} onPress={() => router.push({ pathname: '/changes/[id]', params: { id: chatId } })} />
 					<IconButton icon="settings" label="Chat details" color={p.fg} onPress={() => router.push({ pathname: '/details/[id]', params: { id: chatId } })} />
 				</View>
+				{tabsShown ? <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}><ChatTabs chatId={chatId} /></View> : null}
 			</View>
+			<ChatSwitcher visible={switcher} onClose={() => setSwitcher(false)} chatId={chatId} />
 			<ActionSheet visible={!!menuRow} onClose={() => setMenuRow(undefined)} title="Message" subtitle={menuRow ? firstWords(menuRow.text) : undefined} actions={menuRow ? messageActions(menuRow) : []} />
 			{!meta && !messages.length && transcript?.status !== 'loading' && !client.getPending(chatId).length ? (
 				<View style={{ position: 'absolute', top: top + 40, left: 24, right: 24, alignItems: 'center', gap: 6 }}>
