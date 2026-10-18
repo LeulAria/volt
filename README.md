@@ -12,17 +12,13 @@
 **An open-source workspace for working with coding agents.**<br />
 Chats, code, Git, a browser and a terminal in one window, on top of the real VS Code core.
 
-[![Latest release](https://img.shields.io/github/v/release/LeulAria/volt?display_name=tag&sort=semver&color=ff8a5a)](https://github.com/LeulAria/volt/releases/latest)
+[![Download](https://img.shields.io/badge/download-latest%20release-ff8a5a.svg)](https://github.com/LeulAria/volt/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.txt)
 [![macOS, Windows, Linux](https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-555.svg)](docs/install/README.md)
 [![Built on VS Code](https://img.shields.io/badge/built%20on-VS%20Code%201.105-007acc.svg)](https://github.com/microsoft/vscode)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-3ecf8e.svg)](CONTRIBUTING.md)
 
 [**Download**](https://github.com/LeulAria/volt/releases/latest) · [Website](https://volt.leularia.com) · [Docs](https://volt.leularia.com/docs) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
-
-<br />
-
-<img src="apps/docs/public/hero-ide.png" alt="Volt's IDE layout: the file explorer on the left, a rendered document in the middle, and Source Control with Branches, Worktrees and Contributors on the right" width="880" />
 
 </div>
 
