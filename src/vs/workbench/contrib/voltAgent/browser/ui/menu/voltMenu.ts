@@ -48,6 +48,8 @@ export interface IVoltMenuItem<T> {
 	readonly badge?: string;
 	/** Right-aligned glyph, e.g. an arrow for items that leave the menu. */
 	readonly trailingIcon?: ThemeIcon;
+	/** A small button at the row's end with an action of its own (Resume on a stopped agent); clicking it picks `data`. */
+	readonly action?: { readonly icon: ThemeIcon; readonly tooltip: string; readonly data: T; readonly keepOpen?: boolean };
 	readonly tooltip?: string;
 	/** Also searched, never shown. */
 	readonly keywords?: string;
@@ -102,8 +104,15 @@ export interface IVoltMenuSearch {
 }
 
 /** The content of a flyout. Picks go to the root menu's `onPick`. */
+/** A line above the list ("2 edits" · Clear All): a title and an optional text button. */
+export interface IVoltMenuHeading {
+	readonly title: string | (() => string);
+	readonly action?: { readonly label: string; readonly run: () => void };
+}
+
 export interface IVoltSubmenu<T> {
 	readonly search?: IVoltMenuSearch;
+	readonly heading?: IVoltMenuHeading;
 	readonly sections: VoltMenuSections<T>;
 	readonly footer?: readonly IVoltMenuItem<T>[];
 	readonly width?: number;
@@ -267,6 +276,7 @@ class VoltMenuWidget<T> extends Disposable {
 	private loadTimer: ReturnType<typeof setTimeout> | undefined;
 	private busy = false;
 	private prompting: { readonly prompt: IVoltMenuPrompt; error?: string; submitting: boolean } | undefined;
+	private syncHeading: (() => void) | undefined;
 
 	constructor(
 		private readonly host: HTMLElement,
@@ -320,6 +330,27 @@ class VoltMenuWidget<T> extends Disposable {
 					this.render();
 				}
 			}));
+		}
+
+		if (options.heading) {
+			const heading = options.heading;
+			const row = append(this.root, $('.volt-menu-heading'));
+			const title = append(row, $('span.title'));
+			this.syncHeading = () => title.textContent = typeof heading.title === 'function' ? heading.title() : heading.title;
+			this.syncHeading();
+			if (heading.action) {
+				const action = heading.action;
+				const button = append(row, $('button.action')) as HTMLButtonElement;
+				button.type = 'button';
+				button.textContent = action.label;
+				this._register(addDisposableListener(button, 'mousedown', e => e.preventDefault()));
+				this._register(addDisposableListener(button, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					this.context.hide();
+					action.run();
+				}));
+			}
 		}
 
 		this.listHost = append(this.root, $('.volt-menu-list'));
@@ -379,6 +410,12 @@ class VoltMenuWidget<T> extends Disposable {
 			if (row?.kind === 'header' && row.collapsible) {
 				this.toggleSection(row.id);
 			} else if (row?.kind === 'item') {
+				const target = e.browserEvent.target;
+				const action = row.item.action;
+				if (action && isHTMLElement(target) && target.closest('.volt-menu-action')) {
+					void this.pick({ ...row.item, submenu: undefined, prompt: undefined, data: action.data, keepOpen: action.keepOpen ?? row.item.keepOpen });
+					return;
+				}
 				void this.pick(row.item);
 			}
 		}));
@@ -405,6 +442,7 @@ class VoltMenuWidget<T> extends Disposable {
 	}
 
 	refresh(): void {
+		this.syncHeading?.();
 		this.load(true);
 		this.flyoutWidget?.refresh();
 	}
@@ -1029,6 +1067,14 @@ function renderItem<T>(host: HTMLElement, item: IVoltMenuItem<T>, matches: IMatc
 	}
 	if (item.badge) {
 		append(host, $('span.volt-menu-badge')).textContent = item.badge;
+	}
+	if (item.action) {
+		// A span, not a button: the row is the list's, and its click handler tells the two apart.
+		const action = append(host, $('span.volt-menu-action'));
+		action.setAttribute('role', 'button');
+		action.setAttribute('aria-label', item.action.tooltip);
+		action.title = item.action.tooltip;
+		action.appendChild(renderIcon(item.action.icon));
 	}
 	const trailing = item.submenu ? Codicon.chevronRight : item.checked ? Codicon.check : item.trailingIcon;
 	if (trailing) {

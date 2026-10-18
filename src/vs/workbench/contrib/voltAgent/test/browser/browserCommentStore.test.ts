@@ -35,7 +35,7 @@ suite('Browser comment store', () => {
 		assert.strictEqual(comments.pending({ sessionId: 'chat-1' }).length, 3);
 	});
 
-	test('takes only the ticked comments, as one message, and keeps them as sent', () => {
+	test('takes only the ticked comments, as one message, and drops them from the batch', () => {
 		const comments = store.add(new VoltBrowserComments());
 		const first = comments.add(init('tighter padding'));
 		const second = comments.add(init('bigger title'));
@@ -46,24 +46,21 @@ suite('Browser comment store', () => {
 		assert.ok(message.agentText.includes('Comment 1:'));
 		assert.ok(message.agentText.includes('tighter padding'));
 		assert.ok(!message.agentText.includes('bigger title'));
-		assert.strictEqual(message.displayText, 'Comment 1: button tighter padding');
-		assert.strictEqual(comments.get(first.id)?.status, 'sent');
-		assert.strictEqual(comments.list({ viewId: 'tab-1' }).length, 2);
-		assert.deepStrictEqual(comments.pending({ viewId: 'tab-1' }), []);
+		// One annotation reads as itself.
+		assert.strictEqual(message.displayText, 'button tighter padding');
+		assert.strictEqual(comments.get(first.id), undefined);
+		assert.deepStrictEqual(comments.list({ viewId: 'tab-1' }).map(comment => comment.id), [second.id]);
 	});
 
-	test('reopening ticks a comment again; archiving drops resolved ones from the list', () => {
+	test('a batch reads as a numbered list, and numbering starts over once it is sent', () => {
 		const comments = store.add(new VoltBrowserComments());
-		const first = comments.add(init('tighter padding'));
-		const second = comments.add(init('bigger title'));
-		comments.take({ viewId: 'tab-1' });
-		comments.update(first.id, { status: 'resolved' });
-		comments.update(second.id, { status: 'open' });
-		assert.deepStrictEqual(comments.pending({ viewId: 'tab-1' }).map(comment => comment.id), [second.id]);
-		comments.archiveResolved({ viewId: 'tab-1' });
-		assert.deepStrictEqual(comments.list({ viewId: 'tab-1' }).map(comment => comment.id), [second.id]);
-		// The archived one keeps its number taken.
-		assert.strictEqual(comments.add(init('third')).number, 3);
+		comments.add(init('tighter padding'));
+		comments.add(init('bigger title'));
+		const message = comments.take({ viewId: 'tab-1' });
+		assert.strictEqual(message?.displayText, '1. button tighter padding\n2. button bigger title');
+		assert.strictEqual(message?.mentions.length, 2);
+		assert.deepStrictEqual(comments.list({ viewId: 'tab-1' }), []);
+		assert.strictEqual(comments.add(init('third')).number, 1);
 	});
 
 	test('canvas: archiving marks resolved comments and leaves the rest', () => {

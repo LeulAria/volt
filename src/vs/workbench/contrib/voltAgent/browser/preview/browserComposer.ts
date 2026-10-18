@@ -9,13 +9,17 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
 import { CONTEXT_IN_AGENT_INPUT } from '../editor/agentFindWidget.js';
 import { OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { URI } from '../../../../../base/common/uri.js';
+import { EditorExtensionsRegistry } from '../../../../../editor/browser/editorExtensions.js';
 import { CodeEditorWidget } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
+import { DropIntoEditorController } from '../../../../../editor/contrib/dropOrPasteInto/browser/dropIntoEditorController.js';
+import { getSimpleCodeEditorWidgetOptions } from '../../../codeEditor/browser/simpleEditorOptions.js';
 import { IEditorOptions as ICodeEditorOptions } from '../../../../../editor/common/config/editorOptions.js';
 import { ITextModel } from '../../../../../editor/common/model.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
@@ -24,7 +28,11 @@ import { localize } from '../../../../../nls.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { AgentComposerLists } from '../composer/agentComposerLists.js';
 import { AgentMentionController, IAgentDisplayMention, IAgentMention } from '../composer/agentMentions.js';
-import { showAgentPlusMenu } from '../composer/agentPlusMenu.js';
+import { AgentPlusMenuAction, showAgentPlusMenu } from '../composer/agentPlusMenu.js';
+import { AgentVoiceDictation } from '../composer/agentVoiceDictation.js';
+import { AgentVoiceVisuals } from '../composer/agentVoiceVisuals.js';
+import { AgentDictationText } from '../composer/agentDictationText.js';
+import { VIDEO_EXTENSIONS } from '../composer/agentVideoAttachments.js';
 import { IVoltMenuHandle } from '../ui/menu/voltMenu.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
@@ -53,7 +61,12 @@ export interface IBrowserComposerCallbacks {
 	 * this draft, which then stays local to the prompt (it does not change the chat's or the app's model).
 	 */
 	chatModel?(): string | undefined;
-	/** Images can be attached: thumbnails above the text and an attach button by the mic. */
+	/**
+	 * The design prompt's "Batch edits" switch: on, Send adds the annotation to the batch (sent later
+	 * from the toolbar); off, it goes to the chat at once.
+	 */
+	batch?: { get(): boolean; set(on: boolean): void };
+	/** Images and videos can be attached (+ menu, paste, drop): thumbnails above the text. On unless false. */
 	images?: boolean;
 }
 
@@ -118,6 +131,27 @@ function createComposerSendIcon(): HTMLElement {
 	return el;
 }
 
+/** Send while "Batch edits" is on: the annotation is added to the batch, not sent. Same weight as the arrow. */
+function createComposerAddIcon(): HTMLElement {
+	const el = $('span.volt-agent-svg-icon.send.add');
+	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('width', '24');
+	svg.setAttribute('height', '24');
+	svg.setAttribute('fill', 'none');
+	svg.setAttribute('aria-hidden', 'true');
+	const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+	path.setAttribute('d', 'M11.25 4h1.5v7.25H20v1.5h-7.25V20h-1.5v-7.25H4v-1.5h7.25z');
+	path.setAttribute('fill', 'currentColor');
+	path.setAttribute('stroke', 'currentColor');
+	path.setAttribute('stroke-width', '1.3');
+	path.setAttribute('stroke-linecap', 'round');
+	path.setAttribute('stroke-linejoin', 'round');
+	svg.appendChild(path);
+	el.appendChild(svg);
+	return el;
+}
+
 function createComposerStopIcon(): HTMLElement {
 	const el = $('span.volt-agent-svg-icon.stop');
 	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -169,7 +203,7 @@ export class BrowserAgentComposer extends Disposable {
 
 	private readonly monacoHost: HTMLElement;
 	private readonly placeholderEl: HTMLElement;
-	private readonly plusButton: HTMLButtonElement | undefined;
+	private readonly plusButton: HTMLButtonElement;
 	private readonly modeChip: HTMLButtonElement | undefined;
 	private readonly modelButton: HTMLButtonElement;
 	private placeholderText = '';
@@ -180,7 +214,8 @@ export class BrowserAgentComposer extends Disposable {
 	private mentionController: AgentMentionController | undefined;
 	private composerLists: AgentComposerLists | undefined;
 	private readonly modelPicker: AgentModelPicker;
-	private sendKind: 'mic' | 'send' | 'stop' = 'mic';
+	private sendKind: 'mic' | 'send' | 'stop' | undefined = 'mic';
+	private syncBatch: (() => void) | undefined;
 	private working = false;
 	/** Something rides along without text (the browser tab's comments): Send works on an empty box. */
 	private extraContent = false;
@@ -188,6 +223,9 @@ export class BrowserAgentComposer extends Disposable {
 	private plusMenu: IVoltMenuHandle | undefined;
 	/** The model picked in this draft's chip; undefined follows the chat's model. */
 	private pickedRef: string | undefined;
+	/** Voice, as in the chat's composer: the transcript is written where the cursor was. */
+	private readonly dictation: AgentVoiceDictation;
+	private readonly dictatedText = new AgentDictationText(() => this.editor);
 
 	constructor(
 		private readonly callbacks: IBrowserComposerCallbacks,
@@ -197,25 +235,27 @@ export class BrowserAgentComposer extends Disposable {
 		@ICommandService private readonly commandService: ICommandService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@IFileDialogService private readonly fileDialogService: IFileDialogService,
+		@INotificationService notificationService: INotificationService,
 	) {
 		super();
 		this.element = $('.volt-agent-input-box.follow-up.volt-browser-agent-composer.empty');
+		// "+" before the model, as in the chat's composer: modes (the dock), files, images, videos.
+		this.plusButton = append(this.element, $('button.volt-agent-plus.volt-browser-composer-plus')) as HTMLButtonElement;
+		this.plusButton.type = 'button';
+		setAgentTooltip(this.plusButton, localize('voltAgent.add', "Add"));
+		this.plusButton.appendChild(createComposerPlusIcon());
+		this._register(addDisposableListener(this.plusButton, 'pointerdown', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.ensureEditor();
+			if (this.callbacks.onPlus) {
+				this.callbacks.onPlus();
+				return;
+			}
+			this.showPlusMenu();
+		}));
 		if (callbacks.dock) {
 			this.element.classList.add('dock');
-			this.plusButton = append(this.element, $('button.volt-agent-plus.volt-browser-composer-plus')) as HTMLButtonElement;
-			this.plusButton.type = 'button';
-			setAgentTooltip(this.plusButton, localize('voltAgent.add', "Add"));
-			this.plusButton.appendChild(createComposerPlusIcon());
-			this._register(addDisposableListener(this.plusButton, 'pointerdown', e => {
-				e.preventDefault();
-				e.stopPropagation();
-				this.ensureEditor();
-				if (this.callbacks.onPlus) {
-					this.callbacks.onPlus();
-					return;
-				}
-				this.showPlusMenu();
-			}));
 			this.modeChip = append(this.element, $('button.volt-agent-mode.chip.hidden')) as HTMLButtonElement;
 			this.modeChip.type = 'button';
 			this._register(addDisposableListener(this.modeChip, 'click', e => {
@@ -259,35 +299,49 @@ export class BrowserAgentComposer extends Disposable {
 		}));
 
 		const actions = append(this.element, $('.volt-browser-composer-actions'));
-		this.micButton = append(actions, $('button.volt-agent-icon-btn.volt-browser-composer-mic')) as HTMLButtonElement;
+		this.micButton = append(actions, $('button.volt-agent-icon-btn.volt-agent-mic-btn.volt-browser-composer-mic')) as HTMLButtonElement;
 		this.micButton.type = 'button';
 		setAgentTooltip(this.micButton, localize('voltBrowser.voice', "Voice"));
 		this.micButton.appendChild(createComposerMicIcon());
-		if (callbacks.images) {
-			const attachButton = append(actions, $('button.volt-agent-icon-btn.volt-browser-composer-attach')) as HTMLButtonElement;
-			attachButton.type = 'button';
-			setAgentTooltip(attachButton, localize('voltBrowser.attachImages', "Attach Images"));
-			attachButton.appendChild(renderIcon(Codicon.fileMedia));
-			actions.insertBefore(attachButton, this.micButton);
-			this._register(addDisposableListener(attachButton, 'mousedown', e => e.preventDefault()));
-			this._register(addDisposableListener(attachButton, 'click', e => {
-				e.preventDefault();
-				e.stopPropagation();
-				void this.pickImages();
-			}));
-		}
+		this._register(addDisposableListener(this.micButton, 'mousedown', e => e.preventDefault()));
+		this._register(addDisposableListener(this.micButton, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.toggleDictation();
+		}));
+		this.dictation = this._register(this.instantiationService.createInstance(AgentVoiceDictation));
+		this.dictation.textBefore = () => this.dictatedText.textBefore();
+		this._register(this.dictation.onDidChange(() => this.syncDictation()));
+		this._register(this.dictation.onDidCommit(text => {
+			this.dictatedText.end(text);
+			this.syncDictation();
+		}));
+		this._register(this.dictation.onDidFail(message => notificationService.warn(message)));
+		this._register(new AgentVoiceVisuals(this.element, this.micButton, this.dictation));
 
-		if (!callbacks.dock && callbacks.onComment) {
-			const commentButton = append(actions, $('button.volt-browser-composer-comment')) as HTMLButtonElement;
-			commentButton.type = 'button';
-			commentButton.textContent = localize('voltBrowser.comment', "Comment");
-			this._register(addDisposableListener(commentButton, 'mousedown', e => {
-				e.preventDefault();
-			}));
-			this._register(addDisposableListener(commentButton, 'click', e => {
+		if (!callbacks.dock && callbacks.batch) {
+			const batch = callbacks.batch;
+			const toggle = append(this.element, $('button.volt-browser-composer-batch')) as HTMLButtonElement;
+			toggle.type = 'button';
+			toggle.setAttribute('role', 'switch');
+			append(toggle, $('span.label')).textContent = localize('voltBrowser.batchEdits', "Batch edits");
+			append(toggle, $('span.switch')).appendChild($('span.thumb'));
+			setAgentTooltip(toggle, localize('voltBrowser.batchEditsHint', "Collect annotations and send them together from the toolbar"));
+			const sync = () => {
+				const on = batch.get();
+				toggle.classList.toggle('on', on);
+				toggle.setAttribute('aria-checked', String(on));
+				this.element.classList.toggle('batching', on);
+				this.sendKind = undefined;
+				this.syncSend();
+			};
+			this.syncBatch = sync;
+			this._register(addDisposableListener(toggle, 'mousedown', e => e.preventDefault()));
+			this._register(addDisposableListener(toggle, 'click', e => {
 				e.preventDefault();
 				e.stopPropagation();
-				this.callbacks.onComment?.();
+				batch.set(!batch.get());
+				sync();
 			}));
 		}
 
@@ -298,6 +352,10 @@ export class BrowserAgentComposer extends Disposable {
 		this._register(addDisposableListener(this.sendButton, 'click', () => {
 			if (this.working) {
 				this.callbacks.onStop?.();
+				return;
+			}
+			if (this.sendKind === 'mic') {
+				this.toggleDictation();
 				return;
 			}
 			if (this.value.trim() || this.extraContent) {
@@ -315,6 +373,7 @@ export class BrowserAgentComposer extends Disposable {
 
 		this.updateModelButton();
 		this.syncSend();
+		this.syncBatch?.();
 	}
 
 	get value(): string {
@@ -329,6 +388,15 @@ export class BrowserAgentComposer extends Disposable {
 		this.layout();
 		this.editor?.focus();
 		return mention;
+	}
+
+	/** A saved draft's images, videos and files, back in the box. */
+	addMedia(mentions: readonly IAgentDisplayMention[]): void {
+		this.ensureEditor();
+		this.mentionController?.addMediaMentions(mentions);
+		this.syncPlaceholder();
+		this.syncSend();
+		this.layout();
 	}
 
 	private hasContent(): boolean {
@@ -421,15 +489,22 @@ export class BrowserAgentComposer extends Disposable {
 		this.updateModelButton();
 	}
 
-	private async pickImages(): Promise<void> {
+	/** "+" > Image / Video / File...: pick files from disk and attach them at the cursor, as the chat's composer does. */
+	private async pickMedia(kind: 'image' | 'video' | 'attachFile'): Promise<void> {
 		const resources = await this.fileDialogService.showOpenDialog({
-			title: localize('voltAgent.pickImagesTitle', "Attach Images"),
+			title: kind === 'video' ? localize('voltAgent.pickVideosTitle', "Attach Videos")
+				: kind === 'image' ? localize('voltAgent.pickImagesTitle', "Attach Images")
+					: localize('voltAgent.pickFilesTitle', "Attach Files"),
 			canSelectFiles: true,
 			canSelectFolders: false,
 			canSelectMany: true,
 			defaultUri: await this.fileDialogService.defaultFilePath(),
-			// HEIC photos are converted to JPEG on the way in.
-			filters: [{ name: localize('voltAgent.imageFilter', "Images"), extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif'] }],
+			filters: kind === 'video'
+				? [{ name: localize('voltAgent.videoFilter', "Videos"), extensions: [...VIDEO_EXTENSIONS] }]
+				: kind === 'image'
+					// HEIC photos are converted to JPEG on the way in.
+					? [{ name: localize('voltAgent.imageFilter', "Images"), extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif'] }]
+					: undefined,
 		});
 		if (!resources?.length) {
 			return;
@@ -547,7 +622,8 @@ export class BrowserAgentComposer extends Disposable {
 			if (!this.editor) {
 				return;
 			}
-			const multiline = (this.model?.getLineCount() ?? 1) > 1;
+			// The dock's one-line bar opens into rows when images ride along (thumbnails above the text).
+			const multiline = (this.model?.getLineCount() ?? 1) > 1 || (!!this.callbacks.dock && !!this.mentionController?.hasMedia);
 			this.element.classList.toggle('multiline', multiline);
 			// The design prompt grows to five lines, then scrolls inside itself.
 			const contentHeight = this.callbacks.dock && !multiline
@@ -575,11 +651,13 @@ export class BrowserAgentComposer extends Disposable {
 		}
 		this.callbacks.onKeepExpanded?.();
 		const selected = this.modelPicker.selectedModel();
+		const actions: AgentPlusMenuAction[] = this.callbacks.images === false ? ['files', 'model', 'mcp'] : ['files', 'attachFile', 'image', 'video', 'model', 'mcp'];
 		const handle: IVoltMenuHandle = showAgentPlusMenu(this.contextViewService, {
 			anchor: this.element,
-			modes: PLUS_MODES,
+			// A comment's prompt has no modes: it is a note for the agent, not a run.
+			modes: this.callbacks.dock ? PLUS_MODES : [],
 			currentMode: this.currentMode,
-			actions: ['files', 'model', 'mcp'],
+			actions,
 			modelName: this.modelPicker.modelAuto ? localize('voltAgent.auto', "Auto") : selected?.name,
 			onMode: id => {
 				this.setComposerMode(id);
@@ -589,6 +667,8 @@ export class BrowserAgentComposer extends Disposable {
 				if (action === 'files') {
 					this.mentionController?.openFilePicker();
 					this.editor?.focus();
+				} else if (action === 'image' || action === 'video' || action === 'attachFile') {
+					void this.pickMedia(action);
 				} else if (action === 'model') {
 					scheduleAtNextAnimationFrame(getWindow(this.modelButton), () => this.modelPicker.show(this.modelButton, () => this.editor?.focus()));
 				} else {
@@ -619,11 +699,18 @@ export class BrowserAgentComposer extends Disposable {
 		}
 		const modelUri = URI.from({ scheme: 'volt-agent-input', path: `browser-${generateUuid()}` });
 		this.model = this._register(this.modelService.createModel('', null, modelUri, true));
+		// The chat composer's editor: Monaco's own paste and drop handlers would type an image's name.
+		const widgetOptions = getSimpleCodeEditorWidgetOptions();
+		widgetOptions.contextKeyValues = { [CONTEXT_IN_AGENT_INPUT.key]: true };
+		widgetOptions.contributions = [
+			...(widgetOptions.contributions ?? []),
+			...EditorExtensionsRegistry.getSomeEditorContributions([DropIntoEditorController.ID]),
+		];
 		this.editor = this._register(this.instantiationService.createInstance(
 			CodeEditorWidget,
 			this.monacoHost,
 			this.getEditorOptions(),
-			{ contextKeyValues: { [CONTEXT_IN_AGENT_INPUT.key]: true } }
+			widgetOptions
 		));
 		this.editor.setModel(this.model);
 		this.mentionController = this._register(this.instantiationService.createInstance(AgentMentionController, this.editor));
@@ -632,7 +719,7 @@ export class BrowserAgentComposer extends Disposable {
 		this.mentionController.onDidRemoveMention = mention => this.callbacks.onRemoveMention?.(mention);
 		this.mentionController.bindDropTarget(this.element);
 		this.mentionController.setHost({ anchor: this.element });
-		if (this.callbacks.images) {
+		if (this.callbacks.images !== false) {
 			this.mentionController.bindImageStrip(this.element, this.monacoHost);
 			this._register(this.mentionController.onDidChangeMedia(() => {
 				this.element.classList.toggle('has-media', !!this.mentionController?.hasMedia);
@@ -656,9 +743,26 @@ export class BrowserAgentComposer extends Disposable {
 				this.layout();
 			}
 		}));
+		this._register(this.editor.onKeyUp(e => {
+			if (e.keyCode === KeyCode.Space || e.keyCode === KeyCode.Meta || e.keyCode === KeyCode.Ctrl || e.keyCode === KeyCode.Shift) {
+				this.dictation.endHold();
+			}
+		}));
 		this._register(this.editor.onKeyDown(e => {
 			// The @ panel already used this key.
 			if (e.browserEvent.defaultPrevented) {
+				return;
+			}
+			if (e.keyCode === KeyCode.Escape && this.dictation.active) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.dictation.cancel();
+				return;
+			}
+			if (e.keyCode === KeyCode.Space && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.dictation.beginHold();
 				return;
 			}
 			if (e.keyCode === KeyCode.Enter && e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && this.composerLists?.tryHandleEnter()) {
@@ -689,13 +793,36 @@ export class BrowserAgentComposer extends Disposable {
 		this.syncSend();
 	}
 
+	private toggleDictation(): void {
+		this.ensureEditor();
+		this.editor?.focus();
+		this.dictation.toggle();
+	}
+
+	private syncDictation(): void {
+		const active = this.dictation.active;
+		if (active) {
+			this.dictatedText.write(this.dictation.partial);
+		} else if (this.dictatedText.writing) {
+			// Cancelled or failed: take the partial transcript back out.
+			this.dictatedText.end('');
+		}
+		if (this.micButton.classList.contains('recording') !== active) {
+			this.micButton.classList.toggle('recording', active);
+			setAgentTooltip(this.micButton, active ? localize('voltAgent.voiceStop', "Stop dictation") : localize('voltBrowser.voice', "Voice"));
+			this.syncPlaceholder();
+			this.syncSend();
+			this.layout();
+		}
+	}
+
 	private syncPlaceholder(): void {
 		this.placeholderEl.classList.toggle('hidden', this.hasContent());
 	}
 
 	/** Empty composer stays a single-line pill; a mention or typed text reveals model + send. */
 	private syncSend(): void {
-		const hasContent = this.hasContent() || this.extraContent;
+		const hasContent = this.hasContent() || this.extraContent || this.dictation?.active || !!this.mentionController?.hasMedia;
 		this.element.classList.toggle('empty', !hasContent && !this.working);
 		this.element.classList.toggle('has-content', hasContent || this.working);
 		const kind: 'mic' | 'send' | 'stop' = this.working ? 'stop' : hasContent ? 'send' : 'mic';
@@ -708,12 +835,12 @@ export class BrowserAgentComposer extends Disposable {
 		setAgentTooltip(this.sendButton, kind === 'stop'
 			? localize('voltBrowser.stop', "Stop")
 			: kind === 'send'
-				? localize('voltBrowser.send', "Send to chat")
+				? (this.callbacks.batch?.get() ? localize('voltBrowser.addToBatch', "Add to batch") : localize('voltBrowser.send', "Send to chat"))
 				: localize('voltBrowser.voice', "Voice"));
 		this.sendButton.appendChild(kind === 'stop'
 			? createComposerStopIcon()
 			: kind === 'send'
-				? createComposerSendIcon()
+				? (this.callbacks.batch?.get() ? createComposerAddIcon() : createComposerSendIcon())
 				: createComposerMicIcon());
 	}
 

@@ -6,7 +6,6 @@
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
-import { localize } from '../../../../../nls.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import type { IAgentDisplayMention } from '../composer/agentMentions.js';
@@ -24,6 +23,10 @@ export interface IBrowserCommentRef {
 	readonly label: string;
 	readonly payload: string;
 	readonly bounds: IBrowserCommentBounds;
+	/** The element's text, shortened: the message quotes it after the chip. */
+	readonly snippet?: string;
+	/** What it looked like when picked (its outline included), sent with the message. Filled in once captured. */
+	image?: { readonly bytes: Uint8Array; readonly mime: string };
 }
 
 /**
@@ -85,7 +88,7 @@ export interface IVoltBrowserComments {
 	archiveResolved(scope: IBrowserCommentScope): void;
 	/** The tab now belongs to chat `sessionId` (or none): its comments follow. */
 	setSession(viewId: string, sessionId: string | undefined): void;
-	/** `ids` (or every pending comment) as one message, marked sent. Undefined when none are open. */
+	/** `ids` (or every pending comment) as one message; they leave the batch (and the page). Undefined when none are open. */
 	take(scope: IBrowserCommentScope, ids?: readonly string[]): IBrowserCommentMessage | undefined;
 	show(scope: IBrowserCommentScope): void;
 }
@@ -105,11 +108,12 @@ export function formatBrowserComments(comments: readonly IBrowserComment[]): IBr
 		: `The user left ${comments.length} comments on pages in the browser. Address each one:`];
 	const display: string[] = [];
 	const mentions: IAgentDisplayMention[] = [];
-	for (const comment of comments) {
+	comments.forEach((comment, index) => {
 		lines.push('', `Comment ${comment.number}${pages.size > 1 ? ` (${comment.url})` : ''}:`, comment.prompt);
-		display.push(localize('voltBrowser.commentLine', "Comment {0}: {1}", comment.number, comment.displayText.trim()));
+		// One annotation reads as itself; a batch is a numbered list.
+		display.push(comments.length === 1 ? comment.displayText.trim() : `${index + 1}. ${comment.displayText.trim()}`);
 		mentions.push(...comment.mentions);
-	}
+	});
 	return { agentText: lines.join('\n'), displayText: display.join('\n'), mentions, ids: comments.map(comment => comment.id) };
 }
 
@@ -196,11 +200,10 @@ export class VoltBrowserComments extends Disposable implements IVoltBrowserComme
 			return undefined;
 		}
 		const message = formatBrowserComments(comments);
-		this.comments.forEach((comment, index) => {
-			if (comments.includes(comment)) {
-				this.comments[index] = { ...comment, status: 'sent' };
-			}
-		});
+		// Sent: the annotations leave the batch and their pins leave the page.
+		for (const comment of comments) {
+			this.comments.splice(this.comments.indexOf(comment), 1);
+		}
 		this._onDidChange.fire();
 		return message;
 	}

@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/browserEditor.css';
-import { $, addDisposableListener, append, Dimension, disposableWindowInterval, getWindow, isHTMLElement, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, Dimension, disposableWindowInterval, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
 import { isWeb } from '../../../../../base/common/platform.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
@@ -27,7 +27,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { createDecorator, IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
-import { IStorageService } from '../../../../../platform/storage/common/storage.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IVoltBrowserService, IVoltSiteData, VOLT_BROWSER_PARTITION, VoltSiteDataKind } from '../../../../../platform/voltBrowser/common/voltBrowser.js';
@@ -35,12 +35,12 @@ import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IHostService } from '../../../../services/host/browser/host.js';
-import { IAgentMention, browserMentionColor, cloneDisplayMentions } from '../composer/agentMentions.js';
+import { IAgentDisplayMention, IAgentMention, browserMentionColor, cloneDisplayMentions } from '../composer/agentMentions.js';
 import { BrowserCommentCard } from './browserCommentCard.js';
-import { IBrowserComment, IBrowserCommentMessage, IBrowserCommentRef, IVoltBrowserComments } from './browserCommentStore.js';
+import { IBrowserComment, IBrowserCommentInit, IBrowserCommentMessage, IBrowserCommentRef, IVoltBrowserComments } from './browserCommentStore.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { buildTaskPrompt, newTaskId, titleFromBrief } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
-import { IVoltCommentItem, VoltCommentsPane } from '../chrome/voltCommentsPane.js';
+import { BATCH_EDITS_STORAGE_KEY, IVoltAnnotationItem, VoltAnnotationsSendButton } from '../chrome/voltAnnotations.js';
 import { BrowserAgentComposer } from './browserComposer.js';
 import { OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
@@ -67,10 +67,40 @@ interface IPinnedBrowserComment {
 const PROBE_SCRIPT = `(() => {
 	const x = __X__;
 	const y = __Y__;
-	const el = document.elementFromPoint(x, y);
+	const up = __UP__;
+	let el = document.elementFromPoint(x, y);
 	if (!el || el === document.documentElement || el === document.body) {
 		return undefined;
 	}
+	// Up/Down in design mode: the element's parents, one step at a time.
+	let depth = 0;
+	while (depth < up && el.parentElement && el.parentElement !== document.body && el.parentElement !== document.documentElement) {
+		el = el.parentElement;
+		depth++;
+	}
+	// The name the page's code knows it by: the nearest React or Vue component around it.
+	const componentName = (node) => {
+		const fiberKey = Object.keys(node).find(key => key.startsWith('__reactFiber$') || key.startsWith('__reactInternalInstance$'));
+		for (let fiber = fiberKey ? node[fiberKey] : undefined, hops = 0; fiber && hops < 60; fiber = fiber.return, hops++) {
+			const type = fiber.type;
+			if (!type || typeof type === 'string') {
+				continue;
+			}
+			const inner = type.render || type.type || type;
+			const name = type.displayName || inner.displayName || inner.name;
+			if (typeof name === 'string' && name.length > 2 && !/^(Fragment|Provider|Consumer|Context|Suspense|Router|Routes|Route|Outlet)$/.test(name)) {
+				return name;
+			}
+		}
+		for (let n = node; n; n = n.parentElement) {
+			const vue = n.__vueParentComponent;
+			const name = vue && vue.type && (vue.type.name || vue.type.__name);
+			if (name) {
+				return name;
+			}
+		}
+		return '';
+	};
 	const token = (node) => {
 		const tag = node.tagName.toLowerCase();
 		if (node.id) {
@@ -107,6 +137,8 @@ const PROBE_SCRIPT = `(() => {
 		attributes,
 		html: (el.outerHTML || '').slice(0, 6000),
 		text: (el.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 240),
+		component: componentName(el),
+		depth,
 		x: r.x,
 		y: r.y,
 		w: r.width,
@@ -241,10 +273,17 @@ interface IBrowserHit {
 	attributes: Record<string, string>;
 	html: string;
 	text: string;
+	/** The React or Vue component it belongs to, when the page has one. */
+	component?: string;
+	/** How many parents up from the element under the pointer (Up/Down). */
+	depth?: number;
+	/** Where it sits on the design layer (stage pixels). */
 	x: number;
 	y: number;
 	w: number;
 	h: number;
+	/** Where it sits on the page, in its CSS pixels. */
+	page?: { x: number; y: number; w: number; h: number };
 }
 
 /** A row under the address bar: a page from history, or a web search for what was typed. */
@@ -259,6 +298,8 @@ interface IBrowserSuggestion {
 interface IBrowserSelection {
 	kind: 'element' | 'region';
 	bounds: { x: number; y: number; w: number; h: number };
+	/** `bounds` in the page's CSS pixels (device scale and zoom taken out). */
+	pageBounds?: { x: number; y: number; w: number; h: number };
 	tag?: string;
 	domPath?: string;
 	className?: string;
@@ -266,6 +307,7 @@ interface IBrowserSelection {
 	selector?: string;
 	html?: string;
 	text?: string;
+	component?: string;
 }
 
 /** The URL as shown in the address bar: a bare root path drops its trailing slash (`https://google.com`). */
@@ -398,11 +440,10 @@ export class VoltBrowserView extends Disposable {
 	private readonly pins = new Map<string, IPinnedBrowserComment>();
 	/** The draft's chips: each element or region clicked while it is open. */
 	private readonly draftRefs = new Map<string, IBrowserCommentRef>();
-	private commentsPanel!: HTMLElement;
-	private commentsPane!: VoltCommentsPane;
-	private commentsButton!: HTMLButtonElement;
-	private commentsOpen = false;
-	private readonly commentsLayout = this._register(new MutableDisposable());
+	private readonly captures = new Set<Promise<void>>();
+	/** Area pictures already shown in their composer as an image: the message sends that one, not a second copy. */
+	private readonly picturesInComposer = new WeakSet<IBrowserCommentRef>();
+	private annotationsButton!: VoltAnnotationsSendButton;
 	private composer: BrowserAgentComposer | undefined;
 	private dock: BrowserAgentDock | undefined;
 	private errorEl!: HTMLElement;
@@ -418,7 +459,18 @@ export class VoltBrowserView extends Disposable {
 	private readonly loadRetry = this._register(new MutableDisposable());
 	private loadRetries = 0;
 	private designMode = false;
+	/** Fn held in design mode: the pointer is the page's again (clicks and hovers go to it), not a picker. */
+	private pagePointer = false;
+	private fnHeld = false;
+	/** A pass-through click that started with Fn held: its release goes to the page too. */
+	private pagePress: { button: 'left' | 'right' | 'middle' } | undefined;
+	private lastPagePress: { time: number; x: number; y: number; count: number } | undefined;
 	private hoverHit: IBrowserHit | undefined;
+	/** Up/Down: how many parents above the element under the pointer the highlight sits. */
+	private hoverDepth = 0;
+	private hoverPoint: { x: number; y: number } | undefined;
+	/** The "Batch edits" switch: annotations wait for the toolbar's Send instead of going at once. */
+	private batchEdits: boolean;
 	private selection: IBrowserSelection | undefined;
 	/** The first element of the open draft: the draft box stays beside it while more are added. */
 	private draftAnchor: IBrowserSelection | undefined;
@@ -446,8 +498,10 @@ export class VoltBrowserView extends Disposable {
 		@IVoltBrowserHistory private readonly history: IVoltBrowserHistory,
 		@IVoltBrowserComments private readonly commentStore: IVoltBrowserComments,
 		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
+		@IStorageService private readonly storageService: IStorageService,
 	) {
 		super();
+		this.batchEdits = storageService.getBoolean(BATCH_EDITS_STORAGE_KEY, StorageScope.PROFILE, false);
 		this.element = $('.volt-browser-view.parked');
 		this._register(addDisposableListener(this.element, 'pointerdown', () => this._onDidFocus.fire(), true));
 		this._register(addDisposableListener(this.element, 'focusin', () => this._onDidFocus.fire()));
@@ -594,10 +648,37 @@ export class VoltBrowserView extends Disposable {
 		this.urlDisplay = append(this.urlWrap, $('.volt-browser-url-display'));
 		this.urlDisplay.setAttribute('aria-hidden', 'true');
 
+		// Design mode: a blue bar in place of the address, with how to pick and the way out.
+		const designBar = append(toolbar, $('.volt-browser-design-bar'));
+		const exitDesign = append(designBar, $('button.volt-browser-design-exit')) as HTMLButtonElement;
+		exitDesign.type = 'button';
+		exitDesign.appendChild(renderIcon(Codicon.close));
+		setAgentTooltip(exitDesign, localize('voltBrowser.exitDesign', "Exit Design Mode"), formatAgentTooltipShortcut({ key: 'Escape' }));
+		this._register(addDisposableListener(exitDesign, 'click', e => {
+			e.preventDefault();
+			this.setDesignMode(false);
+		}));
+		const designText = append(designBar, $('span.volt-browser-design-text'));
+		append(designText, $('b')).textContent = localize('voltBrowser.designClick', "Click");
+		designText.append(` ${localize('voltBrowser.designToSelect', "to select or")} `);
+		append(designText, $('b')).textContent = localize('voltBrowser.designDrag', "drag");
+		designText.append(` ${localize('voltBrowser.designToArea', "to create an area")} \u00b7 \u2191\u2193 ${localize('voltBrowser.designAdjust', "to adjust")} \u00b7 `);
+		append(designText, $('b')).textContent = localize('voltBrowser.designFn', "Fn");
+		designText.append(` ${localize('voltBrowser.designToUse', "to use the page")}`);
+
 		const actions = append(toolbar, $('.volt-browser-actions'));
-		this.commentsButton = this.actionButton(actions, 'comments', localize('voltBrowser.comments', "Comments"), () => this.setCommentsOpen(!this.commentsOpen));
-		this.commentsButton.appendChild(renderIcon(Codicon.comment));
-		append(this.commentsButton, $('span.volt-browser-comments-count'));
+		// The batched annotations: "(2) Send | v". The arrow lists them in a Volt menu.
+		this.annotationsButton = this._register(this.instantiationService.createInstance(VoltAnnotationsSendButton, actions, {
+			items: () => this.annotationItems(),
+			onSend: () => void this.waitForCaptures().then(() => this.sendComments(this.annotationItems().map(item => item.id))),
+			onOpen: id => this.revealComment(id),
+			onRemove: id => this.commentStore.remove(id),
+			onClear: () => {
+				for (const item of this.annotationItems()) {
+					this.commentStore.remove(item.id);
+				}
+			},
+		}));
 		this.designButton = this.actionButton(actions, 'design', localize('voltBrowser.design', "Design"), () => this.setDesignMode(!this.designMode));
 		setAgentTooltip(this.designButton, localize('voltBrowser.designMode', "Design Mode"), formatAgentTooltipShortcut({ meta: true, shift: true, key: 'D' }));
 		this.responsiveButton = this.actionButton(actions, 'responsive', localize('voltBrowser.responsive', "Responsive Design Mode"), () => this.toggleResponsive());
@@ -623,7 +704,8 @@ export class VoltBrowserView extends Disposable {
 		this.hintEl = append(this.overlay, $('.volt-browser-hint.hidden'));
 		this.hintPathEl = append(this.hintEl, $('span.volt-browser-hint-path.hidden'));
 		this.hintTextEl = append(this.hintEl, $('span.volt-browser-hint-text'));
-		this.hintTextEl.textContent = localize('voltBrowser.designHint', "Click to select, drag to draw");
+		// How to pick is on the design bar; the hint names what is under the pointer.
+		this.hintTextEl.classList.add('hidden');
 		this.promptEl = append(this.overlay, $('.volt-browser-prompt.hidden'));
 		this.buildPrompt();
 		this.buildStartPage();
@@ -635,7 +717,7 @@ export class VoltBrowserView extends Disposable {
 			setUserAgent: userAgent => this.applyUserAgent(userAgent),
 			onDidDisable: () => this.syncResponsiveButton(),
 		}));
-		this.buildCommentsPanel();
+		this.buildAnnotations();
 		this.dock = this._register(this.instantiationService.createInstance(BrowserAgentDock));
 		this.dock.setChatResolver(() => this.ownerSession());
 		this.dock.setCommentScope(this.viewId);
@@ -652,24 +734,63 @@ export class VoltBrowserView extends Disposable {
 		this._register(addDisposableListener(this.overlay, 'pointerup', e => this.onDesignPointerUp(e)));
 		this._register(addDisposableListener(this.overlay, 'pointerleave', () => this.clearHover()));
 		this._register(addDisposableListener(this.overlay, 'wheel', e => this.onDesignWheel(e), { passive: false }));
+		// Hold Fn to use the page (open a menu, switch a tab) without leaving design mode.
+		const win = getWindow(this.container);
+		const onFn = (e: KeyboardEvent, down: boolean) => {
+			if (e.key === 'Fn' || e.code === 'Fn') {
+				this.fnHeld = down;
+				this.syncPagePointer(down);
+			}
+		};
+		this._register(addDisposableListener(win, 'keydown', e => onFn(e, true), true));
+		this._register(addDisposableListener(win, 'keyup', e => onFn(e, false), true));
+		this._register(addDisposableListener(win, 'blur', () => {
+			this.fnHeld = false;
+			this.syncPagePointer(false);
+		}));
+		// Focus can fall to the body (a focused control hid, a click elsewhere landed on nothing); Escape still leaves design mode.
+		this._register(addDisposableListener(win, 'keydown', e => {
+			if (e.key === 'Escape' && this.designMode && !e.defaultPrevented && e.target === win.document.body && this.element.isConnected) {
+				e.preventDefault();
+				this.setDesignMode(false);
+			}
+		}));
 		this._register(addDisposableListener(this.container, 'keydown', e => {
 			const event = new StandardKeyboardEvent(e);
 			if (event.keyCode === KeyCode.Escape) {
+				// One press leaves design mode: an open comment folds back into its pin (it is saved) and a draft closes with it.
 				const openPin = this.openPin();
 				if (openPin) {
 					this.collapseComment(openPin);
 					e.preventDefault();
-					return;
-				}
-				if (this.selection || !this.promptEl.classList.contains('hidden')) {
-					this.closeDraft();
-					e.preventDefault();
-					return;
 				}
 				if (this.designMode) {
 					this.setDesignMode(false);
 					e.preventDefault();
+				} else if (this.selection || !this.promptEl.classList.contains('hidden')) {
+					this.closeDraft();
+					e.preventDefault();
 				}
+				return;
+			}
+			// Up/Down: the highlight climbs to the element's parent, or back down toward the pointer.
+			if (this.designMode && (event.keyCode === KeyCode.UpArrow || event.keyCode === KeyCode.DownArrow) && !event.altKey && !event.metaKey && !event.ctrlKey && this.hoverPoint && !this.selection) {
+				const target = e.target as HTMLElement;
+				if (target === this.urlInput || target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable) {
+					return;
+				}
+				e.preventDefault();
+				const point = this.hoverPoint;
+				const depth = Math.max(0, this.hoverDepth + (event.keyCode === KeyCode.UpArrow ? 1 : -1));
+				void this.probe(point.x, point.y, depth).then(hit => {
+					if (!hit || !this.designMode || this.selection) {
+						return;
+					}
+					this.hoverDepth = hit.depth ?? depth;
+					this.hoverHit = hit;
+					this.placeBox(this.hoverBox, hitToRect(hit));
+					this.syncHint(hit);
+				});
 				return;
 			}
 			if (event.equals(KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyD)) {
@@ -985,7 +1106,13 @@ export class VoltBrowserView extends Disposable {
 		this.composer = this._register(this.instantiationService.createInstance(BrowserAgentComposer, {
 			onSubmit: text => void this.sendSelectionToAgent(true, text),
 			onPrefill: text => void this.sendSelectionToAgent(false, text),
-			onComment: () => this.pinPromptAsComment(),
+			batch: {
+				get: () => this.batchEdits,
+				set: on => {
+					this.batchEdits = on;
+					this.storageService.store(BATCH_EDITS_STORAGE_KEY, on, StorageScope.PROFILE, StorageTarget.USER);
+				},
+			},
 			onHoverMention: mention => this.glowMark(mention),
 			onRemoveMention: mention => this.removeMark(mention.id),
 			onLayout: () => this.positionPrompt(),
@@ -1145,7 +1272,14 @@ export class VoltBrowserView extends Disposable {
 			}
 		});
 
-		on('focus', () => this.dock?.dismissIfEmpty());
+		on('focus', () => {
+			this.dock?.dismissFromPage();
+			// Keys typed in the page never reach this editor, so Escape couldn't leave design mode. Unless
+			// Fn is using the page, the focus comes back here.
+			if (this.designMode && !this.pagePointer) {
+				this.container.focus();
+			}
+		});
 		this.stage.insertBefore(webview, this.overlay);
 		this.webview = webview;
 		return webview;
@@ -1375,6 +1509,7 @@ export class VoltBrowserView extends Disposable {
 
 	private setDesignMode(on: boolean): void {
 		this.designMode = on;
+		this.syncPagePointer(on && this.fnHeld);
 		if (!on) {
 			this.clearSelection(true);
 			this.clearHover();
@@ -1469,6 +1604,7 @@ export class VoltBrowserView extends Disposable {
 
 	private onViewportLayout(): void {
 		this.syncResponsiveButton();
+		this.clearHover();
 		if (this.selection) {
 			this.positionPrompt();
 		}
@@ -1631,6 +1767,8 @@ export class VoltBrowserView extends Disposable {
 
 	private setZoom(factor: number): void {
 		this.zoomFactor = factor;
+		// The hover box was placed at the old zoom.
+		this.clearHover();
 		this.callGuest(() => this.webview?.setZoomFactor?.(factor));
 	}
 
@@ -1770,6 +1908,10 @@ export class VoltBrowserView extends Disposable {
 		if (!this.designMode || this.eventOnPrompt(e)) {
 			return;
 		}
+		if (this.fnDown(e)) {
+			this.pagePointerInput('mouseDown', e);
+			return;
+		}
 		this.overlay.setPointerCapture?.(e.pointerId);
 		const point = this.stagePoint(e);
 		this.drawing = { startX: point.x, startY: point.y, currentX: point.x, currentY: point.y };
@@ -1778,6 +1920,10 @@ export class VoltBrowserView extends Disposable {
 
 	private onDesignPointerMove(e: PointerEvent): void {
 		if (!this.designMode || this.eventOnPrompt(e)) {
+			return;
+		}
+		if (this.fnDown(e) || this.pagePress) {
+			this.pagePointerInput('mouseMove', e);
 			return;
 		}
 		const point = this.stagePoint(e);
@@ -1795,6 +1941,10 @@ export class VoltBrowserView extends Disposable {
 	}
 
 	private async onDesignPointerUp(e: PointerEvent): Promise<void> {
+		if (this.pagePress) {
+			this.pagePointerInput('mouseUp', e);
+			return;
+		}
 		if (!this.designMode || this.eventOnPrompt(e) || !this.drawing) {
 			this.drawing = undefined;
 			return;
@@ -1813,6 +1963,62 @@ export class VoltBrowserView extends Disposable {
 		}
 	}
 
+	/** Fn is down: the key events say so, and so do the pointer's modifiers (when the key events went elsewhere). */
+	private fnDown(e: PointerEvent): boolean {
+		const down = this.fnHeld || e.getModifierState('Fn');
+		this.syncPagePointer(down);
+		return this.pagePointer;
+	}
+
+	private syncPagePointer(on: boolean): void {
+		on = on && this.designMode;
+		if (this.pagePointer === on) {
+			return;
+		}
+		this.pagePointer = on;
+		this.overlay?.classList.toggle('page-pointer', on);
+		if (on) {
+			this.drawing = undefined;
+			this.drawBox?.classList.add('hidden');
+			this.clearHover();
+		}
+	}
+
+	/** A pointer event on the design layer, given to the page as trusted input (as the wheel is). */
+	private pagePointerInput(type: 'mouseDown' | 'mouseUp' | 'mouseMove', e: PointerEvent): void {
+		e.preventDefault();
+		if (!this.canSendInput()) {
+			this.pagePress = undefined;
+			return;
+		}
+		const point = this.stagePoint(e);
+		const view = this.pageView();
+		const x = Math.round(view ? (point.x - view.left) / view.deviceScale : point.x);
+		const y = Math.round(view ? (point.y - view.top) / view.deviceScale : point.y);
+		if (type === 'mouseMove') {
+			this.sendInput({ type, x, y, ...(this.pagePress ? { button: this.pagePress.button } : {}) });
+			return;
+		}
+		if (type === 'mouseDown') {
+			const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
+			// Pointer events carry no click count: a quick second press in the same spot is a double click.
+			const last = this.lastPagePress;
+			const now = Date.now();
+			const count = last && now - last.time < 500 && Math.abs(last.x - x) < 5 && Math.abs(last.y - y) < 5 ? last.count + 1 : 1;
+			this.lastPagePress = { time: now, x, y, count };
+			this.pagePress = { button };
+			this.overlay.setPointerCapture?.(e.pointerId);
+			this.sendInput({ type: 'mouseMove', x, y });
+			this.sendInput({ type, x, y, button, clickCount: count });
+			return;
+		}
+		const press = this.pagePress;
+		this.pagePress = undefined;
+		if (press) {
+			this.sendInput({ type, x, y, button: press.button, clickCount: this.lastPagePress?.count ?? 1 });
+		}
+	}
+
 	/** The design layer covers the page, so trackpad and wheel scrolling are passed through to it. */
 	private onDesignWheel(e: WheelEvent): void {
 		if (!this.designMode || this.eventOnPrompt(e) || !this.canSendInput()) {
@@ -1820,10 +2026,12 @@ export class VoltBrowserView extends Disposable {
 		}
 		e.preventDefault();
 		const point = this.stagePoint(e);
-		const scale = this.deviceMode.scale || 1;
+		const view = this.pageView();
 		const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? this.stage.clientHeight : 1;
-		// Electron's wheel deltas point the other way from the DOM's.
-		this.sendInput({ type: 'mouseWheel', x: Math.round(point.x / scale), y: Math.round(point.y / scale), deltaX: -e.deltaX * unit, deltaY: -e.deltaY * unit, canScroll: true });
+		// Input events take the page's view pixels: device scale out, zoom kept. Electron's wheel deltas point the other way from the DOM's.
+		const x = view ? (point.x - view.left) / view.deviceScale : point.x;
+		const y = view ? (point.y - view.top) / view.deviceScale : point.y;
+		this.sendInput({ type: 'mouseWheel', x: Math.round(x), y: Math.round(y), deltaX: -e.deltaX * unit, deltaY: -e.deltaY * unit, canScroll: true });
 		this.clearHover();
 		this.scheduleProbe(point.x, point.y);
 	}
@@ -1834,12 +2042,15 @@ export class VoltBrowserView extends Disposable {
 			return;
 		}
 		this.lastProbe = key;
+		// A new spot starts at the element under the pointer again.
+		this.hoverDepth = 0;
+		this.hoverPoint = { x, y };
 		if (this.probeHandle !== undefined) {
 			return;
 		}
 		this.probeHandle = getWindow(this.overlay).requestAnimationFrame(() => {
 			this.probeHandle = undefined;
-			void this.probe(x, y).then(hit => {
+			void this.probe(x, y, this.hoverDepth).then(hit => {
 				this.hoverHit = hit;
 				if (hit && !this.drawing) {
 					this.placeBox(this.hoverBox, hitToRect(hit));
@@ -1852,22 +2063,63 @@ export class VoltBrowserView extends Disposable {
 		});
 	}
 
-	private async probe(x: number, y: number): Promise<IBrowserHit | undefined> {
-		const frame = this.webview?.getBoundingClientRect();
-		if (!frame) {
+	/** Design-layer point `x`,`y` (stage pixels) probed in the page, which may be offset and scaled (device mode) and zoomed. */
+	private async probe(x: number, y: number, up = 0): Promise<IBrowserHit | undefined> {
+		const view = this.pageView();
+		if (!view) {
 			return undefined;
 		}
-		const result = await this.runGuest<IBrowserHit>(PROBE_SCRIPT.replace('__X__', String(x)).replace('__Y__', String(y)));
+		const pageX = (x - view.left) / view.scale;
+		const pageY = (y - view.top) / view.scale;
+		if (pageX < 0 || pageY < 0 || pageX > view.width / view.scale || pageY > view.height / view.scale) {
+			return undefined;
+		}
+		const result = await this.runGuest<IBrowserHit>(PROBE_SCRIPT.replace('__X__', String(pageX)).replace('__Y__', String(pageY)).replace('__UP__', String(Math.max(0, Math.round(up)))));
 		if (!result || !result.w || !result.h) {
 			return undefined;
 		}
-		return result;
+		// The layout may have moved while the page answered: place the box with the view as it is now.
+		const page = { x: result.x, y: result.y, w: result.w, h: result.h };
+		return { ...result, ...this.pageRectToStage(page, this.pageView() ?? view), page };
+	}
+
+	/**
+	 * The page's box on the design layer (stage pixels), and how many stage pixels one page CSS
+	 * pixel takes: `deviceScale` is responsive mode's fit, `scale` adds the page zoom to it.
+	 */
+	private pageView(): { left: number; top: number; width: number; height: number; deviceScale: number; scale: number } | undefined {
+		const webview = this.webview;
+		if (!webview || !this.stage) {
+			return undefined;
+		}
+		const frame = webview.getBoundingClientRect();
+		const stage = this.stage.getBoundingClientRect();
+		if (!frame.width || !frame.height) {
+			return undefined;
+		}
+		const deviceScale = webview.offsetWidth ? frame.width / webview.offsetWidth : (this.deviceMode.scale || 1);
+		return { left: frame.left - stage.left, top: frame.top - stage.top, width: frame.width, height: frame.height, deviceScale, scale: deviceScale * (this.zoomFactor || 1) };
+	}
+
+	private pageRectToStage(rect: { x: number; y: number; w: number; h: number }, view = this.pageView()): { x: number; y: number; w: number; h: number } {
+		if (!view) {
+			return { ...rect };
+		}
+		return { x: view.left + rect.x * view.scale, y: view.top + rect.y * view.scale, w: rect.w * view.scale, h: rect.h * view.scale };
+	}
+
+	private stageRectToPage(rect: { x: number; y: number; w: number; h: number }, view = this.pageView()): { x: number; y: number; w: number; h: number } {
+		if (!view) {
+			return { ...rect };
+		}
+		return { x: (rect.x - view.left) / view.scale, y: (rect.y - view.top) / view.scale, w: rect.w / view.scale, h: rect.h / view.scale };
 	}
 
 	private async selectHit(hit: IBrowserHit): Promise<void> {
 		this.selection = {
 			kind: 'element',
 			bounds: hitToRect(hit),
+			pageBounds: hit.page ? { ...hit.page } : this.stageRectToPage(hitToRect(hit)),
 			tag: hit.tag,
 			domPath: hit.domPath,
 			className: hit.className,
@@ -1875,12 +2127,13 @@ export class VoltBrowserView extends Disposable {
 			selector: hit.selector,
 			html: hit.html,
 			text: hit.text,
+			component: hit.component,
 		};
 		this.finishSelection();
 	}
 
 	private async selectRegion(bounds: { x: number; y: number; w: number; h: number }): Promise<void> {
-		this.selection = { kind: 'region', tag: 'region', bounds };
+		this.selection = { kind: 'region', tag: 'region', bounds, pageBounds: this.stageRectToPage(bounds) };
 		this.finishSelection();
 	}
 
@@ -1900,6 +2153,13 @@ export class VoltBrowserView extends Disposable {
 			if (mention) {
 				openPin.refs.set(mention.id, ref);
 				this.savePin(openPin);
+				this.captureRef(ref, selection.kind === 'region' ? () => {
+					const input = openPin.card.input;
+					if (input && this.pins.get(openPin.commentId) === openPin && openPin.refs.has(mention.id)) {
+						this.attachAreaPicture(input, ref);
+						this.savePin(openPin);
+					}
+				} : undefined);
 			}
 			this.selection = undefined;
 			this.syncHint();
@@ -1918,6 +2178,13 @@ export class VoltBrowserView extends Disposable {
 		if (mention) {
 			this.draftRefs.set(mention.id, ref);
 			this.addMark(mention, ref.bounds);
+			// A drawn area is only its picture: it lands in the prompt as an image, as a pasted one would.
+			const composer = this.composer;
+			this.captureRef(ref, selection.kind === 'region' && composer ? () => {
+				if (this.draftRefs.get(mention.id) === ref && !this.promptEl.classList.contains('hidden')) {
+					this.attachAreaPicture(composer, ref);
+				}
+			} : undefined);
 		}
 		this.composer?.layout();
 		this.positionPrompt();
@@ -1925,12 +2192,80 @@ export class VoltBrowserView extends Disposable {
 		getWindow(this.promptEl).requestAnimationFrame(() => this.positionPrompt());
 	}
 
+	/** The chip's name: the page's component (SignUpForm, Styled(div)), else its id or a meaningful class, else the tag. */
 	private selectionChipLabel(selection = this.selection): string {
-		return selection?.tag || (selection?.kind === 'region' ? 'region' : 'node');
+		if (selection?.kind === 'region') {
+			return 'region';
+		}
+		const id = selection?.attributes?.id;
+		const cls = (selection?.className ?? '').split(/\s+/).find(name => name.length > 2 && !/^(css|sc|jsx|tw|svelte|emotion)-|\d{3,}|^[a-z]{1,2}-?[a-zA-Z0-9]{5,}$/.test(name));
+		const label = selection?.component || (id ? `#${id}` : cls) || selection?.tag || 'node';
+		return label.length > 28 ? `${label.slice(0, 27)}\u2026` : label;
 	}
 
 	private selectionRef(selection: IBrowserSelection): IBrowserCommentRef {
-		return { label: this.selectionChipLabel(selection), payload: this.formatBrowserElement(selection), bounds: { ...selection.bounds } };
+		const text = selection.kind === 'element' ? (selection.text ?? '').trim() : '';
+		const snippet = text.length > 64 ? `${text.slice(0, 63).trimEnd()}\u2026` : text;
+		return { label: this.selectionChipLabel(selection), payload: this.formatBrowserElement(selection), bounds: { ...selection.bounds }, ...(snippet ? { snippet } : {}) };
+	}
+
+	/**
+	 * A picture of what was picked, its outline included, for the message: the window's pixels
+	 * around the element once its mark is painted. Saved on the ref; a pinned annotation is updated.
+	 */
+	private captureRef(ref: IBrowserCommentRef, onPicture?: () => void): void {
+		const win = getWindow(this.stage);
+		const capture = new Promise<void>(resolve => win.requestAnimationFrame(() => win.requestAnimationFrame(() => void this.captureRefNow(ref, onPicture).finally(resolve))));
+		this.captures.add(capture);
+		void capture.finally(() => this.captures.delete(capture));
+	}
+
+	private async captureRefNow(ref: IBrowserCommentRef, onPicture?: () => void): Promise<void> {
+		{
+			const stage = this.stage.getBoundingClientRect();
+			const pad = 12;
+			const left = Math.max(stage.left, stage.left + ref.bounds.x - pad);
+			const top = Math.max(stage.top, stage.top + ref.bounds.y - pad);
+			const right = Math.min(stage.right, stage.left + ref.bounds.x + ref.bounds.w + pad);
+			const bottom = Math.min(stage.bottom, stage.top + ref.bounds.y + ref.bounds.h + pad);
+			if (right - left < 8 || bottom - top < 8) {
+				return;
+			}
+			try {
+				const shot = await this.hostService.getScreenshot({ x: Math.round(left), y: Math.round(top), width: Math.round(right - left), height: Math.round(bottom - top) });
+				if (!shot?.byteLength) {
+					return;
+				}
+				ref.image = { bytes: shot.buffer, mime: 'image/png' };
+				onPicture?.();
+				// Already an annotation (it was pinned before the picture came): it gets the picture too.
+				for (const comment of this.commentStore.list({ viewId: this.viewId })) {
+					if (comment.refs.includes(ref) && !this.picturesInComposer.has(ref)) {
+						const picture: IAgentDisplayMention = { kind: 'image', label: `${ref.label}.png`, image: { id: generateUuid(), mime: 'image/png', bytes: ref.image.bytes, name: `${ref.label}.png` } };
+						this.commentStore.update(comment.id, { mentions: [picture, ...comment.mentions] });
+					}
+				}
+			} catch {
+				// No screenshot here (a browser tab): the annotation goes without a picture.
+			}
+		}
+	}
+
+	/** The area's picture as an image in `composer` (a thumbnail above the words). */
+	private attachAreaPicture(composer: BrowserAgentComposer, ref: IBrowserCommentRef): void {
+		if (!ref.image || this.picturesInComposer.has(ref)) {
+			return;
+		}
+		const name = `${ref.label}.png`;
+		composer.addMedia([{ kind: 'image', label: name, image: { id: generateUuid(), mime: ref.image.mime, bytes: ref.image.bytes, name } }]);
+		this.picturesInComposer.add(ref);
+	}
+
+	/** Pictures still being taken: a send waits for them (briefly) so they go along. */
+	private async waitForCaptures(): Promise<void> {
+		if (this.captures.size) {
+			await Promise.race([Promise.all([...this.captures]), timeout(1200)]);
+		}
 	}
 
 	private clearSelection(exitPrompt = false): void {
@@ -2002,6 +2337,9 @@ export class VoltBrowserView extends Disposable {
 	}
 
 	private hintPath(hit: IBrowserHit): string {
+		if (hit.component) {
+			return hit.component;
+		}
 		const id = hit.attributes?.id;
 		if (id) {
 			return `${id}#`;
@@ -2021,22 +2359,21 @@ export class VoltBrowserView extends Disposable {
 			this.hintEl.classList.add('hidden');
 			return;
 		}
-		const path = hit ? this.hintPath(hit) : '';
+		if (!hit) {
+			// The design bar in the toolbar says how to pick; the hint only names what is under the pointer.
+			this.hintEl.classList.add('hidden');
+			return;
+		}
+		const path = this.hintPath(hit);
 		this.hintPathEl.textContent = path;
 		this.hintPathEl.classList.toggle('hidden', !path);
 		this.hintEl.classList.remove('hidden');
-		if (hit) {
-			const rect = hitToRect(hit);
-			const width = Math.max(this.hintEl.offsetWidth, 220);
-			const left = rect.x + rect.w / 2 - width / 2;
-			this.hintEl.style.left = `${Math.max(8, left)}px`;
-			this.hintEl.style.top = `${rect.y + rect.h + 10}px`;
-			this.hintEl.style.right = 'auto';
-			return;
-		}
-		this.hintEl.style.top = '18px';
-		this.hintEl.style.right = '18px';
-		this.hintEl.style.left = 'auto';
+		const rect = hitToRect(hit);
+		const width = this.hintEl.offsetWidth;
+		const left = rect.x + rect.w / 2 - width / 2;
+		this.hintEl.style.left = `${Math.max(8, left)}px`;
+		this.hintEl.style.top = `${rect.y + rect.h + 8}px`;
+		this.hintEl.style.right = 'auto';
 	}
 
 	private positionPrompt(): void {
@@ -2045,7 +2382,7 @@ export class VoltBrowserView extends Disposable {
 		}
 		const stage = this.stage.getBoundingClientRect();
 		const pad = 8;
-		const width = Math.min(350, Math.max(160, stage.width - pad * 2));
+		const width = Math.min(390, Math.max(160, stage.width - pad * 2));
 		const nextWidth = `${width}px`;
 		if (this.promptEl.style.width !== nextWidth) {
 			this.promptEl.style.width = nextWidth;
@@ -2088,13 +2425,30 @@ export class VoltBrowserView extends Disposable {
 			sessionId: this.ownerSession(),
 			url: this.browserInput()?.url ?? '',
 			refs,
-			text: this.commentWords(composer),
-			prompt: composer.getSubmitText(),
-			displayText: composer.getDisplayText(),
-			mentions: cloneDisplayMentions(composer.getDisplayMentions()),
+			...this.annotationContent(composer, refs),
 		});
 		this.closeDraft();
 		return comment;
+	}
+
+	/**
+	 * What an annotation says: the agent reads the composer's blocks and words; the chat shows
+	 * `SignUpForm "FRONT DESK": the words`, with each element's picture above.
+	 */
+	private annotationContent(composer: BrowserAgentComposer, refs: readonly IBrowserCommentRef[]): Pick<IBrowserCommentInit, 'text' | 'prompt' | 'displayText' | 'mentions'> {
+		const text = this.commentWords(composer);
+		const own = cloneDisplayMentions(composer.getDisplayMentions()).filter(mention => mention.kind !== 'browser');
+		const chips: IAgentDisplayMention[] = refs.map((ref, index) => ({ kind: 'browser', label: ref.label, value: ref.payload, accent: index % 6 }));
+		const pictures: IAgentDisplayMention[] = refs.flatMap(ref => ref.image && !this.picturesInComposer.has(ref)
+			? [{ kind: 'image' as const, label: `${ref.label}.png`, image: { id: generateUuid(), mime: ref.image.mime, bytes: ref.image.bytes, name: `${ref.label}.png` } }]
+			: []);
+		const subject = refs.map(ref => ref.snippet ? `${ref.label} \u2014 \u201c${ref.snippet}\u201d` : ref.label).join(' + ');
+		return {
+			text,
+			prompt: composer.getSubmitText(),
+			displayText: subject ? (text ? `${subject}: ${text}` : subject) : composer.getDisplayText(),
+			mentions: [...pictures, ...chips, ...own],
+		};
 	}
 
 	/** The words of a comment, without its chips. */
@@ -2106,87 +2460,32 @@ export class VoltBrowserView extends Disposable {
 		return text.replace(/\s+/g, ' ').trim();
 	}
 
-	private buildCommentsPanel(): void {
-		this.commentsPanel = append(this.stage, $('.volt-browser-comments-panel.hidden'));
-		this.commentsPane = this._register(this.instantiationService.createInstance(VoltCommentsPane, this.commentsPanel, {
-			listId: 'VoltBrowserComments',
-			onClose: () => this.setCommentsOpen(false),
-			onOpen: id => this.revealComment(id),
-			onSend: ids => void this.sendComments(ids),
-			onSetStatus: (id, status) => this.commentStore.update(id, { status }),
-			onDelete: id => this.commentStore.remove(id),
-			onArchiveResolved: () => this.commentStore.archiveResolved({ viewId: this.viewId }),
-			onShowResolved: () => this.syncPins(),
-			onPick: (id, picked) => this.commentStore.update(id, { picked }),
-		}));
-		this._register(this.commentsPane.onDidChangeHeight(() => this.layoutCommentsPanel()));
-		// The list renders only what its last layout showed: when the drawer was laid out at another size
-		// (the tab parked, the stage resizing), a new comment would not show until the drawer reopened.
-		const panelObserver = new (getWindow(this.commentsPanel).ResizeObserver)(() => this.layoutCommentsPanel());
-		panelObserver.observe(this.commentsPanel);
-		this._register({ dispose: () => panelObserver.disconnect() });
-		this._register(addDisposableListener(this.commentsPanel, 'pointerdown', e => e.stopPropagation()));
+	/** The batch: annotations waiting for the toolbar's Send. Their pins stay on the page until then. */
+	private buildAnnotations(): void {
 		this._register(this.commentStore.onDidChange(() => this.renderComments()));
 		this._register(this.commentStore.onDidRequestShow(scope => {
 			if ('viewId' in scope ? scope.viewId === this.viewId : scope.sessionId === this.ownerSession()) {
-				this.setCommentsOpen(true);
+				this.annotationsButton.showMenu();
 			}
 		}));
 		this.renderComments();
 	}
 
-	private setCommentsOpen(open: boolean): void {
-		this.commentsOpen = open;
-		this.commentsPanel.classList.toggle('hidden', !open);
-		this.container.classList.toggle('comments-open', open);
-		this.commentsButton.classList.toggle('active', open);
-		if (open) {
-			this.layoutCommentsPanel();
-		}
-		this.dock?.layout();
-	}
-
-	private layoutCommentsPanel(): void {
-		// Not laid out at zero while the tab is parked: the list would keep rendering nothing.
-		if (!this.commentsOpen || !this.commentsPanel.clientHeight) {
-			return;
-		}
-		this.commentsPane.fill(this.commentsPanel.clientHeight, this.commentsPanel.clientWidth);
+	private annotationItems(): IVoltAnnotationItem[] {
+		return this.commentStore.list({ viewId: this.viewId })
+			.filter(comment => comment.status === 'open')
+			.map(comment => ({ id: comment.id, number: comment.number, text: comment.text || comment.refs.map(ref => ref.label).join(', ') }));
 	}
 
 	private renderComments(): void {
-		const comments = this.commentStore.list({ viewId: this.viewId });
-		const page = this.commentPage(this.browserInput()?.url);
-		const items: IVoltCommentItem[] = comments.map(comment => ({
-			id: comment.id,
-			number: comment.number,
-			where: [this.commentPage(comment.url) === page ? '' : shortBrowserUrl(comment.url), comment.refs.map(ref => ref.label).join(', ')].filter(Boolean).join(' \u203A '),
-			text: comment.text || comment.refs.map(ref => ref.label).join(', '),
-			status: comment.status,
-			picked: comment.picked,
-		}));
-		this.commentsPane.setItems(items);
-		const open = comments.filter(comment => comment.status !== 'resolved').length;
-		this.commentsButton.classList.toggle('hidden', !comments.length && !this.commentsOpen);
-		const count = this.commentsButton.querySelector('.volt-browser-comments-count');
-		if (count) {
-			count.textContent = open ? String(open) : '';
-		}
+		this.annotationsButton.setCount(this.annotationItems().length);
 		this.syncPins();
-		this.layoutCommentsPanel();
-		if (this.commentsOpen) {
-			this.commentsLayout.value = scheduleAtNextAnimationFrame(getWindow(this.commentsPanel), () => this.layoutCommentsPanel());
-		}
 	}
 
-	/** Pins for this page's comments: sent ones stay until resolved; resolved ones show with the Resolved toggle. */
+	/** Pins for this page's batched annotations; sending them takes them off the page. */
 	private syncPins(): void {
-		if (!this.commentsPane) {
-			return;
-		}
 		const page = this.commentPage(this.browserInput()?.url);
-		const showResolved = this.commentsPane.showResolved;
-		const shown = this.commentStore.list({ viewId: this.viewId }).filter(comment => this.commentPage(comment.url) === page && (showResolved || comment.status !== 'resolved'));
+		const shown = this.commentStore.list({ viewId: this.viewId }).filter(comment => this.commentPage(comment.url) === page && comment.status === 'open');
 		for (const [id, pin] of this.pins) {
 			if (!shown.some(comment => comment.id === id)) {
 				this.disposePin(pin);
@@ -2236,6 +2535,7 @@ export class VoltBrowserView extends Disposable {
 					}
 				}
 				next.appendPlainText(current?.text ?? '');
+				next.addMedia(current?.mentions ?? []);
 			},
 		});
 		pin = { commentId: comment.id, card, refs: new Map(), markIds: [], bounds: { ...comment.refs[0]?.bounds ?? { x: 8, y: 8, w: 0, h: 0 } } };
@@ -2272,13 +2572,8 @@ export class VoltBrowserView extends Disposable {
 		if (!composer) {
 			return;
 		}
-		this.commentStore.update(pin.commentId, {
-			refs: [...pin.refs.values()],
-			text: this.commentWords(composer),
-			prompt: composer.getSubmitText(),
-			displayText: composer.getDisplayText(),
-			mentions: cloneDisplayMentions(composer.getDisplayMentions()),
-		});
+		const refs = [...pin.refs.values()];
+		this.commentStore.update(pin.commentId, { refs, ...this.annotationContent(composer, refs) });
 	}
 
 	/** A row in the list was clicked: its page's pin opens (other pages' comments just stay listed). */
@@ -2298,7 +2593,6 @@ export class VoltBrowserView extends Disposable {
 		}
 		pin.card.expand();
 		this.placeComment(pin);
-		this.commentsPane.reveal(pin.commentId);
 		this.syncDockBlocked();
 	}
 
@@ -2319,15 +2613,10 @@ export class VoltBrowserView extends Disposable {
 		}
 	}
 
-	/** The send arrow on an open comment: saves it and sends it, with every other comment ticked to go. */
+	/** The send arrow on an open annotation: saves it and sends just it. */
 	private async sendPinned(pin: IPinnedBrowserComment): Promise<void> {
 		this.collapseComment(pin);
-		this.setCommentsOpen(false);
-		const ids = [...this.commentStore.pending({ viewId: this.viewId }).map(comment => comment.id)];
-		if (!ids.includes(pin.commentId)) {
-			ids.push(pin.commentId);
-		}
-		await this.sendComments(ids);
+		await this.sendComments([pin.commentId]);
 	}
 
 	/**
@@ -2397,7 +2686,7 @@ export class VoltBrowserView extends Disposable {
 		const pad = 8;
 		const sel = pin.bounds;
 		if (pin.card.expanded) {
-			const width = Math.min(350, Math.max(160, stage.width - pad * 2));
+			const width = Math.min(390, Math.max(160, stage.width - pad * 2));
 			const nextWidth = `${width}px`;
 			if (el.style.width !== nextWidth) {
 				el.style.width = nextWidth;
@@ -2475,10 +2764,16 @@ export class VoltBrowserView extends Disposable {
 		if (submit) {
 			// Another model picked in the prompt: the request goes to a subagent on it, not into the chat.
 			const model = this.composer?.pickedModel();
-			// Send: the draft joins the comments (pinned until resolved) and goes with every one ticked.
-			if (this.pinPromptAsComment()) {
-				this.setCommentsOpen(false);
-				await this.sendComments(undefined, model);
+			// Now, before the composer clears itself: the draft becomes an annotation.
+			const comment = this.pinPromptAsComment();
+			if (!comment) {
+				return;
+			}
+			// Batch edits: it waits on the page, numbered, for the toolbar's Send. Otherwise it goes now,
+			// with its pictures (they land on the annotation as they are taken).
+			if (!this.batchEdits) {
+				await this.waitForCaptures();
+				await this.sendComments([comment.id], model);
 			}
 			return;
 		}
@@ -2489,7 +2784,7 @@ export class VoltBrowserView extends Disposable {
 	}
 
 	private formatBrowserElement(selection: IBrowserSelection | undefined): string {
-		const bounds = selection?.bounds;
+		const bounds = selection?.pageBounds ?? selection?.bounds;
 		const top = Math.round(bounds?.y ?? 0);
 		const left = Math.round(bounds?.x ?? 0);
 		const width = Math.round(bounds?.w ?? 0);
@@ -2565,9 +2860,10 @@ export class VoltBrowserView extends Disposable {
 		}
 	}
 
+	/** The event's spot on the design layer, which covers the whole stage (stage pixels). */
 	private stagePoint(e: MouseEvent): { x: number; y: number } {
-		const frame = (this.webview ?? this.stage).getBoundingClientRect();
-		return { x: e.clientX - frame.left, y: e.clientY - frame.top };
+		const stage = this.stage.getBoundingClientRect();
+		return { x: e.clientX - stage.left, y: e.clientY - stage.top };
 	}
 
 	private eventOnPrompt(e: Event): boolean {
@@ -2577,7 +2873,6 @@ export class VoltBrowserView extends Disposable {
 		}
 		return this.promptEl.contains(target)
 			|| [...this.pins.values()].some(pin => pin.card.element.contains(target))
-			|| this.commentsPanel.contains(target)
 			|| !!this.dock?.element.contains(target);
 	}
 
@@ -2836,7 +3131,6 @@ export class VoltBrowserView extends Disposable {
 		for (const pin of this.pins.values()) {
 			this.placeComment(pin);
 		}
-		this.layoutCommentsPanel();
 		this.dock?.layout();
 	}
 
@@ -2855,6 +3149,11 @@ export class VoltBrowserView extends Disposable {
 		const open = this.openPin();
 		if (open) {
 			open.card.focus();
+			return;
+		}
+		// The design bar hides the address, and focusing a hidden input drops focus to the body, out of reach of Escape.
+		if (this.designMode) {
+			this.container.focus();
 			return;
 		}
 		this.urlInput.focus();

@@ -137,7 +137,7 @@ export class BrowserAgentDock extends Disposable {
 			onBlur: () => {
 				const win = getWindow(this.element);
 				win.setTimeout(() => {
-					if (this.shouldStayExpanded() || this.agentEditor?.isEditingUser()) {
+					if (this.agentEditor?.isEditingUser()) {
 						return;
 					}
 					const active = win.document.activeElement;
@@ -380,8 +380,9 @@ export class BrowserAgentDock extends Disposable {
 		this.sync();
 	}
 
-	dismissIfEmpty(): void {
-		if (this.floatOpen || this.expanded || this.agentEditor?.isEditingUser() || this.composer.isPlusMenuOpen()) {
+	/** A click on the page (the webview took focus): the island folds away, its draft and queue kept. */
+	dismissFromPage(): void {
+		if (this.agentEditor?.isEditingUser() || this.composer.isPlusMenuOpen()) {
 			return;
 		}
 		this.dismissToIdle();
@@ -424,12 +425,6 @@ export class BrowserAgentDock extends Disposable {
 		if (this.agentEditor?.isEditingUser() || this.isDockSurface(e.target)) {
 			return;
 		}
-		if (this.shouldStayExpanded()) {
-			this.composer.hidePlusMenu();
-			this.setFloatOpen(false);
-			this.setExpanded(true);
-			return;
-		}
 		this.dismissToIdle();
 	}
 
@@ -439,23 +434,11 @@ export class BrowserAgentDock extends Disposable {
 			this.setExpanded(true);
 			return;
 		}
-		if (this.shouldStayExpanded()) {
-			this.setFloatOpen(false);
-			this.setExpanded(true);
-			return;
-		}
+		// A draft or a queue no longer holds it open: a click outside folds it away, both kept for next time.
 		this.hovered = false;
 		this.composer.hidePlusMenu();
 		this.setFloatOpen(false);
 		this.setExpanded(false);
-	}
-
-	private hasQueued(): boolean {
-		return (this.agentEditor?.getPromptQueue().length ?? 0) > 0;
-	}
-
-	private shouldStayExpanded(): boolean {
-		return this.composer.hasDraft() || this.hasQueued();
 	}
 
 	private stopRun(): void {
@@ -661,9 +644,6 @@ export class BrowserAgentDock extends Disposable {
 		}
 		const working = streaming || this.pendingWork;
 		const chipLabel = state?.status || (working ? localize('voltAgent.planningMoves', "Planning next moves") : '');
-		if (this.shouldStayExpanded()) {
-			this.expanded = true;
-		}
 		// Unfocused it collapses, as Cursor's does: the live step while the agent works, else a glass bar.
 		const mode: DockMode = this.expanded
 			? 'expanded'

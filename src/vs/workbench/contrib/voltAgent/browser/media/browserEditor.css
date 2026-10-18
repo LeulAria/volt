@@ -304,6 +304,11 @@ webview.volt-browser-frame {
 	cursor: crosshair;
 }
 
+/* Fn held: the page is used as a page (its clicks go through), so the picker's crosshair goes. */
+.volt-browser-overlay.active.page-pointer {
+	cursor: pointer;
+}
+
 .volt-browser-box {
 	position: absolute;
 	box-sizing: border-box;
@@ -343,15 +348,20 @@ webview.volt-browser-frame {
 	flex-direction: column;
 	align-items: center;
 	gap: 2px;
-	padding: 10px 22px;
-	border: 0;
-	border-radius: 18px;
-	background: #93c5fd;
+	padding: 7px 14px;
+	/*
+	 * Dashed like the drawn area, the old light blue at 40%. No blur behind it: backdrop-filter over the
+	 * page turns the see-through window's sidebar black. The text shadow keeps the words readable instead.
+	 */
+	border: 1px dashed rgba(191, 219, 254, 0.8);
+	border-radius: 7px;
+	background: rgba(147, 197, 253, 0.4);
 	color: #fff;
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
 	font-size: 15px;
 	line-height: 1.25;
 	pointer-events: none;
-	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
 	white-space: nowrap;
 }
 
@@ -572,9 +582,9 @@ webview.volt-browser-frame {
 }
 
 .volt-browser-agent-composer:not(.dock).empty:not(.has-content) .volt-agent-model,
+.volt-browser-agent-composer:not(.dock).empty:not(.has-content) .volt-browser-composer-plus,
 .volt-browser-agent-composer:not(.dock).empty:not(.has-content) .volt-browser-composer-mic,
-.volt-browser-agent-composer:not(.dock).empty:not(.has-content) .volt-browser-composer-attach,
-.volt-browser-agent-composer:not(.dock).empty:not(.has-content) .volt-browser-composer-comment {
+.volt-browser-agent-composer:not(.dock).empty:not(.has-content) .volt-browser-composer-batch {
 	display: none !important;
 }
 
@@ -590,12 +600,13 @@ webview.volt-browser-frame {
 .volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty).multiline,
 .volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).has-content.multiline {
 	display: grid !important;
-	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-columns: auto minmax(0, 1fr) auto auto;
 	grid-template-areas:
-		"input input"
-		"model actions";
+		"input input input input"
+		"plus model batch actions";
 	align-items: center;
 	row-gap: 4px;
+	column-gap: 2px;
 	height: auto !important;
 	min-height: 0;
 	max-height: none !important;
@@ -626,9 +637,18 @@ webview.volt-browser-frame {
 /* Attached images: small thumbnails above the text. */
 .volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).has-content.has-media {
 	grid-template-areas:
-		"media media"
-		"input input"
-		"model actions";
+		"media media media media"
+		"input input input input"
+		"plus model batch actions";
+}
+
+/* "+" before the model, as in the chat's composer. */
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-browser-composer-plus,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).has-content .volt-browser-composer-plus {
+	display: inline-flex !important;
+	grid-area: plus;
+	width: 24px;
+	height: 24px;
 }
 
 .volt-browser-agent-composer:not(.dock) > .volt-agent-image-strip {
@@ -677,46 +697,67 @@ webview.volt-browser-frame {
 
 .volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-send,
 .volt-browser-agent-composer:not(.dock).has-content .volt-agent-send,
-.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-browser-composer-comment,
-.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).has-content .volt-browser-composer-comment {
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-browser-composer-batch,
+.volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).has-content .volt-browser-composer-batch {
 	display: inline-flex !important;
+	grid-area: batch;
 }
 
-.volt-browser-composer-comment {
-	display: inline-flex;
+/* "Batch edits" and its switch: on, Send collects the annotation for the toolbar's Send. */
+.volt-browser-composer-batch {
+	display: none;
 	align-items: center;
+	gap: 7px;
 	height: 26px;
-	padding: 0 10px;
-	/* Text only; hover fills like the model picker. */
+	padding: 0 6px 0 8px;
 	border: 0;
 	border-radius: 999px;
 	background: transparent;
-	color: #c8c8c8;
-	font: 300 13px/1 var(--volt-font);
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+	font: 400 12.5px/1 var(--volt-font);
 	white-space: nowrap;
 	cursor: pointer;
 	flex-shrink: 0;
 }
 
-.volt-browser-composer-comment:hover {
-	color: #c8c8c8;
-	background: rgba(255, 255, 255, 0.08);
+.volt-browser-composer-batch:hover {
+	color: var(--vscode-foreground);
 }
 
-.monaco-workbench.vs .volt-browser-composer-comment,
-.monaco-workbench.hc-light .volt-browser-composer-comment {
-	color: rgba(0, 0, 0, 0.72);
-	background: transparent;
+.volt-browser-composer-batch > .switch {
+	position: relative;
+	width: 28px;
+	height: 16px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+	transition: background-color 160ms ease;
 }
 
-.monaco-workbench.vs .volt-browser-composer-comment:hover,
-.monaco-workbench.hc-light .volt-browser-composer-comment:hover {
-	color: rgba(0, 0, 0, 0.72);
-	background: rgba(0, 0, 0, 0.06);
+.volt-browser-composer-batch > .switch > .thumb {
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	background: #fff;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+	transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.volt-browser-composer-mic,
-.volt-browser-composer-attach {
+.volt-browser-composer-batch.on {
+	color: var(--vscode-foreground);
+}
+
+.volt-browser-composer-batch.on > .switch {
+	background: var(--vscode-button-background, #3b82f6);
+}
+
+.volt-browser-composer-batch.on > .switch > .thumb {
+	transform: translateX(12px);
+}
+
+.volt-browser-composer-mic {
 	width: 24px;
 	height: 24px;
 	padding: 0;
@@ -731,13 +772,21 @@ webview.volt-browser-frame {
 	flex-shrink: 0;
 }
 
-.volt-browser-composer-mic:hover,
-.volt-browser-composer-attach:hover {
+.volt-browser-composer-mic:hover {
 	color: #e6e6e6;
 }
 
-.volt-browser-composer-attach .codicon {
-	font-size: 14px;
+/* Dictating: the mic is the waveform pill with its stop square, as in the chat's composer. */
+.volt-browser-composer-mic.recording {
+	width: auto;
+	gap: 7px;
+	padding: 0 9px;
+	border-radius: 13px;
+	color: var(--vscode-foreground);
+}
+
+.volt-browser-agent-composer:not(.dock).voice-active .volt-browser-composer-mic {
+	display: inline-flex !important;
 }
 
 .volt-browser-agent-composer .volt-agent-send {
@@ -950,7 +999,11 @@ the background paints a solid square) and keep the glyph in the accent. */
 	border: 1px solid var(--volt-dock-bar-border);
 	border-radius: 999px;
 	background: var(--volt-dock-bar-bg);
-	overflow: hidden;
+	/*
+	 * Clip, not hidden: a hidden box still scrolls, and focusing the wider composer inside the
+	 * narrow bar scrolled it sideways, so "Message Volt" showed as "Volt" with ⌘L mid-bar.
+	 */
+	overflow: clip;
 	cursor: pointer;
 	transform-origin: bottom center;
 	box-shadow: var(--volt-dock-bar-shadow);
@@ -1362,12 +1415,17 @@ the background paints a solid square) and keep the glyph in the accent. */
 	pointer-events: auto;
 }
 
+/* Solid, as the chips: over the page a see-through card loses its text (white page, light text). */
 .volt-browser-dock-hit > .volt-agent-composer-stack .volt-agent-queue-card {
+	background: #222222;
+	border-color: rgba(255, 255, 255, 0.12);
 	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
 }
 
 .monaco-workbench.vs .volt-browser-dock-hit > .volt-agent-composer-stack .volt-agent-queue-card,
 .monaco-workbench.hc-light .volt-browser-dock-hit > .volt-agent-composer-stack .volt-agent-queue-card {
+	background: #ececec;
+	border-color: rgba(0, 0, 0, 0.12);
 	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.1);
 }
 
@@ -1816,10 +1874,11 @@ the background paints a solid square) and keep the glyph in the accent. */
 .volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline,
 .volt-agent-input-box.follow-up.volt-browser-agent-composer.dock:not(.empty).multiline {
 	display: grid !important;
-	grid-template-columns: auto auto 1fr auto;
+	/* The mode chip has its own column: auto-placed into the 1fr gap it stretched across the row. */
+	grid-template-columns: auto auto auto 1fr auto;
 	grid-template-areas:
-		"input input input input"
-		"plus model . actions";
+		"input input input input input"
+		"plus model mode . actions";
 	align-items: center;
 	row-gap: 6px;
 	height: auto !important;
@@ -1827,6 +1886,29 @@ the background paints a solid square) and keep the glyph in the accent. */
 	max-height: none !important;
 	border-radius: 18px;
 	padding: 8px 10px;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline.has-media {
+	grid-template-areas:
+		"media media media media media"
+		"input input input input input"
+		"plus model mode . actions";
+}
+
+.volt-browser-agent-composer.dock > .volt-agent-image-strip {
+	grid-area: media;
+	gap: 6px;
+	padding: 0 2px 2px;
+}
+
+.volt-browser-agent-composer.dock:not(.has-media) > .volt-agent-image-strip {
+	display: none;
+}
+
+.volt-browser-agent-composer.dock > .volt-agent-image-strip .volt-agent-image-tile {
+	width: 40px;
+	height: 40px;
+	border-radius: 8px;
 }
 
 .volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline .volt-agent-monaco {
@@ -1846,6 +1928,13 @@ the background paints a solid square) and keep the glyph in the accent. */
 	order: unset;
 	justify-self: start;
 	margin-left: 2px;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline .volt-agent-mode {
+	grid-area: mode;
+	order: unset;
+	justify-self: start;
+	margin-left: 4px;
 }
 
 .volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline .volt-browser-composer-actions {
@@ -1891,7 +1980,8 @@ the background paints a solid square) and keep the glyph in the accent. */
 	height: 36px;
 	padding: 8px 14px;
 	box-sizing: border-box;
-	border: 0;
+	/* A thin dark ring so the pill still reads over a light page. */
+	border: 1px solid rgba(0, 0, 0, 0.25);
 	border-radius: 9999px;
 	background: rgb(244, 244, 245);
 	color: rgb(36, 36, 36);
@@ -1899,7 +1989,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 	font-size: 13px;
 	line-height: 18px;
 	white-space: nowrap;
-	box-shadow: 0 3px 8px rgba(0, 0, 0, 0.14), 0 14px 32px rgba(0, 0, 0, 0.18);
+	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1), 0 8px 20px rgba(0, 0, 0, 0.1);
 	cursor: pointer;
 }
 
@@ -3187,66 +3277,6 @@ the background paints a solid square) and keep the glyph in the accent. */
 	background: transparent;
 }
 
-/* Comments: the toolbar button (with the open count) and the list over the page's right side. */
-.volt-browser-actions .volt-browser-action.comments {
-	position: relative;
-}
-
-.volt-browser-actions .volt-browser-action.comments.active {
-	background: rgba(59, 130, 246, 0.16);
-	color: #60a5fa;
-}
-
-.volt-browser-actions .volt-browser-action.comments .codicon {
-	font-size: 15px;
-}
-
-.volt-browser-comments-count {
-	position: absolute;
-	top: -3px;
-	right: -4px;
-	min-width: 13px;
-	height: 13px;
-	padding: 0 3px;
-	box-sizing: border-box;
-	border-radius: 7px;
-	background: var(--vscode-textLink-foreground, #3b82f6);
-	color: var(--vscode-editor-background, #1e1e1e);
-	font-size: 9px;
-	font-weight: 700;
-	line-height: 13px;
-	text-align: center;
-	pointer-events: none;
-}
-
-.volt-browser-comments-count:empty {
-	display: none;
-}
-
-/* Solid, so nothing scrolls or paints through it (transparent-window rule 3). */
-.volt-browser-comments-panel {
-	position: absolute;
-	top: 0;
-	right: 0;
-	bottom: 0;
-	z-index: 10;
-	display: flex;
-	flex-direction: column;
-	width: 300px;
-	max-width: 80%;
-	background: var(--vscode-editor-background);
-	border-left: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
-	box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
-}
-
-.volt-browser-comments-panel > .volt-comments-pane {
-	flex: 1;
-}
-
-.volt-browser-editor.comments-open .volt-browser-dock {
-	padding-right: calc(16px + min(300px, 80%));
-}
-
 /* The comments chip: with the composer open the row shows for it even when no other chip does. */
 .volt-browser-dock.mode-expanded .volt-browser-dock-hit > .volt-browser-dock-chips.has-comments {
 	display: flex;
@@ -3298,4 +3328,191 @@ the background paints a solid square) and keep the glyph in the accent. */
 
 .volt-browser-dock-comments-line .codicon {
 	font-size: 13px;
+}
+
+/*
+ * Design mode: a blue frame around the whole browser that glows in, a tinted toolbar, and the
+ * design bar ("Click to select or drag to create an area") in place of the address.
+ */
+.volt-browser-editor {
+	--volt-design-accent: #60a5fa;
+	/* The drawing line's bright head. */
+	--volt-design-head: #e0e7ff;
+}
+
+.monaco-workbench.vs .volt-browser-editor,
+.monaco-workbench.hc-light .volt-browser-editor {
+	--volt-design-accent: #2563eb;
+	--volt-design-head: #7c3aed;
+}
+
+.volt-browser-editor::before,
+.volt-browser-editor::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	z-index: 40;
+	border-radius: 8px;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 180ms ease;
+}
+
+/*
+ * The line, drawn on entering: a bright head races from the top's middle out to the corners and down
+ * both sides to the bottom, in shifting blue and violet that settle into the plain accent.
+ * A gradient border (padding + mask) so the stroke can carry the colors; the sweep mask draws it.
+ */
+@property --volt-design-sweep {
+	syntax: '<angle>';
+	inherits: false;
+	initial-value: 180deg;
+}
+
+@property --volt-design-mix {
+	syntax: '<percentage>';
+	inherits: false;
+	initial-value: 0%;
+}
+
+.volt-browser-editor::before {
+	--volt-design-sweep: 180deg;
+	--volt-design-mix: 0%;
+	--volt-design-a: color-mix(in oklab, var(--volt-design-accent), #a78bfa var(--volt-design-mix));
+	--volt-design-b: color-mix(in oklab, var(--volt-design-accent), #22d3ee var(--volt-design-mix));
+	--volt-design-tip: color-mix(in oklab, var(--volt-design-accent), var(--volt-design-head) var(--volt-design-mix));
+	box-sizing: border-box;
+	padding: 1.5px;
+	background: conic-gradient(from 0deg,
+		var(--volt-design-b) 0deg,
+		var(--volt-design-a) calc(var(--volt-design-sweep) - 40deg),
+		var(--volt-design-tip) var(--volt-design-sweep),
+		var(--volt-design-tip) calc(360deg - var(--volt-design-sweep)),
+		var(--volt-design-a) calc(400deg - var(--volt-design-sweep)),
+		var(--volt-design-b) 360deg);
+	mask-image:
+		conic-gradient(from 0deg, #000 var(--volt-design-sweep), transparent var(--volt-design-sweep) calc(360deg - var(--volt-design-sweep)), #000 calc(360deg - var(--volt-design-sweep))),
+		linear-gradient(#000 0 0),
+		linear-gradient(#000 0 0);
+	mask-clip: border-box, content-box, border-box;
+	mask-composite: intersect, exclude, add;
+}
+
+/* The glow inside the line: it blooms as the line closes, then settles. */
+.volt-browser-editor::after {
+	box-shadow: inset 0 0 18px color-mix(in srgb, var(--volt-design-accent) 22%, transparent);
+}
+
+.volt-browser-editor.design-mode::before {
+	opacity: 1;
+	animation:
+		volt-design-frame-draw 560ms cubic-bezier(0.45, 0, 0.15, 1),
+		volt-design-frame-tint 1050ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.volt-browser-editor.design-mode::after {
+	opacity: 1;
+	animation: volt-design-frame-glow 900ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes volt-design-frame-draw {
+	from { --volt-design-sweep: 0deg; }
+	to { --volt-design-sweep: 180deg; }
+}
+
+/* Thicker and brighter while it draws, then the plain 1.5px line. */
+@keyframes volt-design-frame-tint {
+	0%, 50% { --volt-design-mix: 90%; padding: 2.5px; }
+	100% { --volt-design-mix: 0%; padding: 1.5px; }
+}
+
+@keyframes volt-design-frame-glow {
+	0%, 15% { opacity: 0; box-shadow: inset 0 0 0 color-mix(in srgb, #a78bfa 0%, transparent); }
+	50% { opacity: 1; box-shadow: inset 0 0 52px color-mix(in srgb, #8b9cfa 45%, transparent); }
+	100% { opacity: 1; box-shadow: inset 0 0 18px color-mix(in srgb, var(--volt-design-accent) 22%, transparent); }
+}
+
+.volt-browser-editor.design-mode > .volt-browser-toolbar {
+	background: color-mix(in srgb, var(--volt-design-accent) 9%, var(--vscode-editor-background));
+	border-bottom-color: color-mix(in srgb, var(--volt-design-accent) 26%, transparent);
+}
+
+.volt-browser-design-bar {
+	display: none;
+	flex: 1;
+	min-width: 0;
+	align-items: center;
+	gap: 6px;
+	height: 26px;
+	color: var(--volt-design-accent);
+	font-size: 13px;
+	white-space: nowrap;
+	overflow: hidden;
+	animation: volt-design-bar-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.volt-browser-editor.design-mode .volt-browser-design-bar {
+	display: flex;
+}
+
+.volt-browser-editor.design-mode .volt-browser-toolbar > .volt-browser-nav,
+.volt-browser-editor.design-mode .volt-browser-toolbar > .volt-browser-url-wrap {
+	display: none;
+}
+
+.volt-browser-design-exit {
+	display: inline-grid;
+	place-items: center;
+	flex: none;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+}
+
+.volt-browser-design-exit:hover {
+	background: color-mix(in srgb, var(--volt-design-accent) 16%, transparent);
+}
+
+.volt-browser-design-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: color-mix(in srgb, var(--volt-design-accent) 82%, var(--vscode-foreground));
+}
+
+.volt-browser-design-text > b {
+	font-weight: 600;
+	color: var(--volt-design-accent);
+}
+
+@keyframes volt-design-bar-in {
+	from { opacity: 0; transform: translateY(-4px); }
+	to { opacity: 1; transform: none; }
+}
+
+.volt-browser-hint-text.hidden {
+	display: none;
+}
+
+/* The batch's Send button sits first among the toolbar's actions. */
+.volt-browser-actions > .volt-annotations-send {
+	margin-right: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-browser-editor.design-mode::before,
+	.volt-browser-editor.design-mode::after,
+	.volt-browser-design-bar {
+		animation: none;
+	}
+}
+
+/* The design bar has the way out: the toolbar's Design chip steps aside for the batch's Send. */
+.volt-browser-editor.design-mode .volt-browser-actions .volt-browser-action.design {
+	display: none;
 }

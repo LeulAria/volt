@@ -313,6 +313,27 @@
 	font-size: 14px;
 }
 
+.volt-menu-action {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 22px;
+	height: 22px;
+	border-radius: 5px;
+	opacity: 0.75;
+	cursor: pointer;
+}
+
+.volt-menu-action:hover {
+	opacity: 1;
+	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.volt-menu-action .codicon {
+	font-size: 13px;
+}
+
 .volt-menu-header {
 	display: flex;
 	align-items: flex-end;
@@ -367,4 +388,32 @@
 
 .volt-menu .codicon-modifier-spin {
 	animation: codicon-spin 1.25s steps(30) infinite;
+}
+
+/* A line above the list: "2 edits" and a text action (Clear All). */
+.volt-menu-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	height: 30px;
+	padding: 0 6px 0 10px;
+	font-size: 12.5px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-menu-heading > .action {
+	height: 22px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	font: inherit;
+	cursor: pointer;
+}
+
+.volt-menu-heading > .action:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	color: var(--vscode-foreground);
 }

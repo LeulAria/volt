@@ -1,0 +1,122 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Batched design annotations: "(2) Send | v" in a toolbar, and the list under its arrow. */
+.volt-annotations-send {
+	--volt-annotations-bg: var(--vscode-button-background, #3b82f6);
+	--volt-annotations-fg: #fff;
+	display: inline-flex;
+	align-items: stretch;
+	flex: none;
+	height: 26px;
+	border-radius: 999px;
+	background: var(--volt-annotations-bg);
+	color: var(--volt-annotations-fg);
+	overflow: hidden;
+	animation: volt-annotations-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.volt-annotations-send.hidden {
+	display: none;
+}
+
+.volt-annotations-send > button {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: 500 12.5px/1 var(--volt-font, inherit);
+	cursor: pointer;
+}
+
+.volt-annotations-send > button:hover {
+	background: color-mix(in srgb, #fff 12%, transparent);
+}
+
+.volt-annotations-send > .send {
+	padding: 0 10px 0 4px;
+}
+
+.volt-annotations-send > .more {
+	padding: 0 7px 0 6px;
+	border-left: 1px solid color-mix(in srgb, var(--volt-annotations-fg) 28%, transparent);
+}
+
+.volt-annotations-send > .more .codicon {
+	font-size: 13px;
+}
+
+.volt-annotations-send .count {
+	display: inline-grid;
+	place-items: center;
+	min-width: 18px;
+	height: 18px;
+	padding: 0 4px;
+	box-sizing: border-box;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--volt-annotations-fg) 26%, transparent);
+	font-size: 11px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+/* One more joined the batch: the count rolls up and pops, the pill flashes a ring. */
+.volt-annotations-send.bump {
+	animation: volt-annotations-ring 520ms ease-out;
+}
+
+.volt-annotations-send.bump .count {
+	animation: volt-annotations-count 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes volt-annotations-in {
+	from { opacity: 0; transform: scale(0.85); }
+	to { opacity: 1; transform: none; }
+}
+
+@keyframes volt-annotations-count {
+	0% { transform: translateY(70%) scale(0.6); opacity: 0; }
+	60% { transform: translateY(-8%) scale(1.25); opacity: 1; }
+	100% { transform: none; }
+}
+
+@keyframes volt-annotations-ring {
+	0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--volt-annotations-bg) 60%, transparent); }
+	100% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--volt-annotations-bg) 0%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-annotations-send,
+	.volt-annotations-send.bump,
+	.volt-annotations-send.bump .count {
+		animation: none;
+	}
+}
+
+.volt-annotation-number {
+	display: inline-grid;
+	place-items: center;
+	min-width: 18px;
+	height: 18px;
+	padding: 0 4px;
+	box-sizing: border-box;
+	border-radius: 999px;
+	background: var(--vscode-button-background, #3b82f6);
+	color: #fff;
+	font-size: 11px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-annotations-menu .volt-menu-action {
+	opacity: 0.7;
+}
+
+.volt-annotations-menu .volt-menu-action:hover {
+	opacity: 1;
+}

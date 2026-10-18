@@ -181,8 +181,15 @@
 	box-shadow: inset 0 0 0 1.5px var(--vscode-textLink-foreground);
 }
 
+/* A green check on a green tint: a light mark on the solid green read as washed out. */
 .volt-comments-pin.resolved {
-	background: var(--vscode-testing-iconPassed, #3fb950);
+	background: color-mix(in srgb, var(--vscode-testing-iconPassed, #3fb950) 16%, transparent);
+	color: var(--vscode-testing-iconPassed, #3fb950);
+	box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--vscode-testing-iconPassed, #3fb950) 70%, transparent);
+}
+
+.volt-comments-pin.resolved .codicon {
+	font-weight: 700;
 }
 
 .volt-comments-pin.agent {
