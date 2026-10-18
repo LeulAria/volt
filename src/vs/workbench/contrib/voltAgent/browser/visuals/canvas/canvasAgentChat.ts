@@ -29,11 +29,14 @@ export async function createCanvasAgentChat(instantiationService: IInstantiation
 	] as const);
 	if (parentChat) {
 		history.pinSessionParent(sessionId, parentChat);
-		const parent = workspace.get(parentChat);
-		const project = (parent?.projectId ? sessionContext.getProject(parent.projectId) : undefined) ?? sessionContext.activeProject;
-		if (project && !workspace.get(sessionId)?.projectId) {
-			attachSessionToProject(sessionContext, workspace, history, sessionId, project);
-		}
+	}
+	// The agent runs in a folder: the parent chat's project, else the one open. Without one its turns
+	// failed at once ("`cwd` must be an absolute path") and nothing showed in the canvas.
+	const parent = parentChat ? workspace.get(parentChat) : undefined;
+	const project = (parent?.projectId ? sessionContext.getProject(parent.projectId) : undefined) ?? sessionContext.activeProject;
+	const own = workspace.get(sessionId)?.projectId;
+	if (project && (!own || !sessionContext.getProject(own))) {
+		attachSessionToProject(sessionContext, workspace, history, sessionId, project);
 	}
 	const element = $('.volt-canvas-agent-chat');
 	const input = instantiationService.createInstance(AgentEditorInput, AgentEditorInput.uriForSession(sessionId));

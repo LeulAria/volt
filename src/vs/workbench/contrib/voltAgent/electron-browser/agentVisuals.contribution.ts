@@ -26,7 +26,10 @@ import { setCanvasAgentChatFactory } from '../browser/visuals/canvas/canvasAgent
 import { createCanvasAgentChat } from '../browser/visuals/canvas/canvasAgentChat.js';
 import { OPEN_CANVAS_COMMAND_ID } from '../browser/visuals/canvas/canvasCard.js';
 import { CANVAS_EDITOR_ID, CanvasEditor, CanvasEditorInput, CanvasEditorInputSerializer } from '../browser/visuals/canvas/canvasEditor.js';
-import { IVoltCanvasService, VoltCanvasService } from '../browser/visuals/canvas/canvasService.js';
+import { IVoltCanvasService, setCanvasChatPrompter, VoltCanvasService } from '../browser/visuals/canvas/canvasService.js';
+import { AgentEditor } from '../browser/editor/agentEditor.js';
+import { openAgentPanel } from '../browser/workspace/agentPanels.js';
+import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
 import { AgentCanvasToolProvider } from '../browser/visuals/canvas/canvasTools.js';
 import { agentToolsSessionOnScreen, openInAgentTools } from '../browser/workspace/agentSurfaceHost.js';
 
@@ -46,6 +49,8 @@ class AgentVisualsContribution extends Disposable implements IWorkbenchContribut
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 		@IInstantiationService instantiationService: IInstantiationService,
 		@INativeWorkbenchEnvironmentService environmentService: INativeWorkbenchEnvironmentService,
+		@IEditorService editorService: IEditorService,
+		@IEditorGroupsService editorGroupsService: IEditorGroupsService,
 	) {
 		super();
 		const provider = this._register(instantiationService.createInstance(AgentVisualToolProvider));
@@ -55,6 +60,35 @@ class AgentVisualsContribution extends Disposable implements IWorkbenchContribut
 		const canvases = this._register(instantiationService.createInstance(AgentCanvasToolProvider));
 		this._register(hostTools.registerToolProvider(canvases));
 		this._register(disposeLiveVisuals());
+		// A canvas's comments and requests go to its chat: the one it belongs to, else the one on screen.
+		this._register(setCanvasChatPrompter(async (chat, text, send) => {
+			const sessionId = chat ?? agentToolsSessionOnScreen();
+			if (!sessionId) {
+				return false;
+			}
+			const find = (): AgentEditor | undefined => {
+				for (const pane of editorService.visibleEditorPanes) {
+					if (pane instanceof AgentEditor && pane.sessionId === sessionId) {
+						return pane;
+					}
+				}
+				return undefined;
+			};
+			let editor = find();
+			if (!editor) {
+				await openAgentPanel(editorGroupsService, instantiationService, sessionId, { preserveFocus: true });
+				editor = find();
+			}
+			if (!editor) {
+				return false;
+			}
+			if (send) {
+				editor.submitPrompt(text);
+			} else {
+				editor.prefillDraft(text);
+			}
+			return true;
+		}));
 	}
 }
 

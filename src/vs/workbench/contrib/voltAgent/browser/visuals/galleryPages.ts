@@ -157,15 +157,18 @@ const BASE_CSS = `
 .vg{display:flex;flex-direction:column;gap:12px;font-family:var(--font-sans);font-size:13px;line-height:1.45;color:var(--foreground);-webkit-user-select:none;user-select:none}
 .vg *,.vg *::before,.vg *::after{box-sizing:border-box}
 .vg [hidden]{display:none!important}
-.vg-head{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap}
+.vg-head{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap;padding:2px 14px 0}
+.mk-detail>.vg-bar{padding:0 14px}
 .vg-heading{min-width:0;flex:1 1 240px}
 .vg-title{margin:0;font-size:14.5px;font-weight:600;letter-spacing:-.01em;line-height:1.3}
 .vg-sub{margin:3px 0 0;color:var(--muted-foreground);font-size:12.5px}
 .vg-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.vg-seg{display:inline-flex;gap:1px;padding:2px;border-radius:8px;background:var(--muted);border:1px solid var(--border)}
-.vg-seg button{appearance:none;border:0;margin:0;background:transparent;color:var(--muted-foreground);font:inherit;font-size:12px;line-height:18px;padding:2px 9px;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;transition:background .12s,color .12s}
+.vg-seg{display:inline-flex;align-items:center;gap:1px;height:26px;padding:2px;border-radius:999px;background:var(--muted);border:1px solid var(--border)}
+.vg-seg button{appearance:none;border:0;margin:0;background:transparent;color:var(--muted-foreground);font:inherit;font-size:11.5px;font-weight:500;line-height:16px;height:20px;padding:0 9px;border-radius:999px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;transition:background .12s,color .12s}
+.vg-seg button .vg-i,.vg-seg button .vg-i svg{width:12px;height:12px}
 .vg-seg button:hover{color:var(--foreground)}
 .vg-seg button[aria-pressed="true"]{background:var(--background);color:var(--foreground);box-shadow:0 0 0 1px var(--border),0 1px 2px rgba(0,0,0,.14)}
+.vg-head .vg-btn{height:26px;padding:0 11px;border-radius:999px;font-size:11.5px}
 .vg button:focus-visible,.vg input:focus-visible,.vg [tabindex]:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
 .vg-btn{appearance:none;margin:0;border:1px solid var(--border);background:transparent;color:var(--foreground);font:inherit;font-size:12px;font-weight:500;line-height:18px;padding:3px 10px;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;transition:background .12s,filter .12s,opacity .12s}
 .vg-btn:hover{background:var(--muted)}

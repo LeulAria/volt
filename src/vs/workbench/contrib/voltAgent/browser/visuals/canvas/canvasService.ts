@@ -98,6 +98,24 @@ interface ICanvasPayload {
 
 const MAX_MEMORY = 24;
 
+/**
+ * Sends (or drafts) `text` in chat `chat` (the canvas's, or the one on screen when undefined), opening
+ * it if needed; false when there is no chat to take it. Set by the chat editor's contribution
+ * (it imports the visuals, so the visuals cannot import it).
+ */
+export type CanvasChatPrompter = (chat: string | undefined, text: string, send: boolean) => Promise<boolean>;
+
+let chatPrompter: CanvasChatPrompter | undefined;
+
+export function setCanvasChatPrompter(prompter: CanvasChatPrompter): IDisposable {
+	chatPrompter = prompter;
+	return toDisposable(() => {
+		if (chatPrompter === prompter) {
+			chatPrompter = undefined;
+		}
+	});
+}
+
 export function canvasStrings(): ICanvasStrings {
 	return {
 		move: localize('voltCanvas.move', "Move"),
@@ -126,6 +144,12 @@ export function canvasStrings(): ICanvasStrings {
 		add: localize('voltCanvas.add', "Add"),
 		sendNow: localize('voltCanvas.sendNow', "Send"),
 		sendAll: localize('voltCanvas.sendAll', "Send {0} to Agent"),
+		batchEdits: localize('voltCanvas.batchEdits', "Batch edits"),
+		batchEditsHint: localize('voltCanvas.batchEditsHint', "Collect annotations and send them together from the toolbar"),
+		sendBatch: localize('voltCanvas.sendBatch', "Send"),
+		sendBatchHint: localize('voltCanvas.sendBatchHint', "Send design annotations to agent"),
+		showBatch: localize('voltCanvas.showBatch', "Show Annotations"),
+		addToBatch: localize('voltCanvas.addToBatch', "Add to batch"),
 		cancel: localize('voltCanvas.cancel', "Cancel"),
 		resolve: localize('voltCanvas.resolve', "Resolve"),
 		reopen: localize('voltCanvas.reopen', "Reopen"),
@@ -657,7 +681,20 @@ export class VoltCanvasService extends Disposable implements IVoltCanvasService 
 	 * tab asks the chat view it was opened from. Without one, the text goes to the clipboard.
 	 */
 	private prompt(port: IPageChannelPort, doc: ICanvasDoc, text: string, send: boolean): void {
-		// The canvas's own agent takes it, in the canvas's sidebar: the tab opens if it is not open yet.
+		// In a chat, that chat takes it. On the board's tab, the chat the canvas belongs to (opened if needed).
+		if (port.prompt) {
+			port.prompt(text, send);
+			return;
+		}
+		const prompter = chatPrompter;
+		if (prompter) {
+			void prompter(doc.chat, text, send).then(done => {
+				if (!done) {
+					this.promptChat(port, doc, text, send);
+				}
+			});
+			return;
+		}
 		const agent = this.agents.get(doc.id);
 		if (agent) {
 			agent.prompt(text, send);
@@ -696,7 +733,8 @@ export class VoltCanvasService extends Disposable implements IVoltCanvasService 
 			this.notificationService.warn(localize('voltCanvas.importFailed', "Could not open these mockups on a canvas: {0}", input.error));
 			return;
 		}
-		const doc = await this.create(input, undefined);
+		// The chat the gallery is in owns the canvas: its agent works in that chat's project.
+		const doc = await this.create(input, port.sessionId);
 		if (port.prompt && port.sessionId) {
 			this.chatPorts.set(doc.id, port);
 		}

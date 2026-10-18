@@ -459,7 +459,9 @@
 }
 
 .volt-canvas-comment-pin.resolved {
-	background: var(--vscode-testing-iconPassed, #3fb950);
+	background: color-mix(in srgb, var(--vscode-testing-iconPassed, #3fb950) 16%, transparent);
+	color: var(--vscode-testing-iconPassed, #3fb950);
+	box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--vscode-testing-iconPassed, #3fb950) 70%, transparent);
 }
 
 .volt-canvas-comment-pin.agent {
@@ -581,4 +583,10 @@
 	place-items: center;
 	color: var(--vscode-descriptionForeground);
 	font-size: 13px;
+}
+
+/* Where the board's batch menu hangs: over the page's Send button (canvasView.showBatchMenu). */
+.volt-canvas-menu-anchor {
+	position: absolute;
+	pointer-events: none;
 }

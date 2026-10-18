@@ -615,6 +615,10 @@ function handlePageRequest(frame: ILiveFrame, request: PageRequest, win: CodeWin
 			if (frame.port) {
 				dispatchPageChannel(frame.port, request.channel, request.payload);
 			}
+			// "Open on Canvas" from a full-screen gallery: the canvas opens beside the chat, so the overlay steps aside.
+			if (request.channel === 'canvas' && isCanvasImport(request.payload)) {
+				setFrameFullscreen(frame, false, win);
+			}
 			return;
 		case 'send': {
 			const focused = frame.element.contains(win.document.activeElement);
@@ -630,6 +634,10 @@ function handlePageRequest(frame: ILiveFrame, request: PageRequest, win: CodeWin
 			return;
 		}
 	}
+}
+
+function isCanvasImport(payload: unknown): boolean {
+	return typeof payload === 'object' && !!payload && (payload as { op?: unknown }).op === 'import';
 }
 
 /**

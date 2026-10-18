@@ -62,6 +62,13 @@ export interface ICanvasStrings {
 	readonly sendNow: string;
 	/** "Send {0} to agent" */
 	readonly sendAll: string;
+	readonly batchEdits: string;
+	readonly batchEditsHint: string;
+	/** The toolbar's Send for batched annotations. */
+	readonly sendBatch: string;
+	readonly sendBatchHint: string;
+	readonly showBatch: string;
+	readonly addToBatch: string;
 	readonly cancel: string;
 	readonly resolve: string;
 	readonly reopen: string;
@@ -253,7 +260,7 @@ html,body{margin:0;padding:0;overflow:hidden;background:transparent}
 .cv-pin:hover,.cv-pin.open{scale:1.12}
 .cv-pin.agent{background:var(--cv-agent);color:#fff}
 .cv-pin.sent{background:var(--background);color:var(--cv-accent);box-shadow:0 0 0 2px var(--cv-accent),0 6px 16px -4px rgb(0 0 0/.45)}
-.cv-pin.resolved{background:var(--success);color:var(--background);opacity:.85}
+.cv-pin.resolved{background:color-mix(in srgb,var(--success) 16%,var(--background));color:var(--success);box-shadow:inset 0 0 0 1.5px var(--success)}
 .cv-pin.outdated{opacity:.55;border:1.5px dashed currentColor}
 .cv-pin.pending{background:var(--background);color:var(--cv-accent);box-shadow:0 0 0 2px var(--cv-accent)}
 .cv-pin svg{width:12px;height:12px}
@@ -288,10 +295,27 @@ html,body{margin:0;padding:0;overflow:hidden;background:transparent}
 .cv-mini-frame{position:absolute;left:0;top:0;border-radius:1.5px;background:color-mix(in srgb,var(--foreground) 32%,transparent)}
 .cv-mini-frame.sel{background:var(--cv-accent)}
 .cv-mini-view{position:absolute;left:0;top:0;border:1.5px solid color-mix(in srgb,var(--foreground) 45%,transparent);border-radius:3px;background:color-mix(in srgb,var(--foreground) 5%,transparent)}
-.cv-tray{position:absolute;left:50%;bottom:60px;transform:translateX(-50%);z-index:21;display:flex;align-items:center;gap:10px;height:34px;padding:0 4px 0 14px;border-radius:999px;white-space:nowrap;animation:cv-rise .25s cubic-bezier(.2,.8,.2,1)}
+.cv-send{display:flex;align-items:stretch;height:26px;border-radius:999px;background:var(--primary);color:#fff;overflow:hidden;pointer-events:auto;animation:cv-send-in .22s cubic-bezier(.22,1,.36,1)}
+.cv-send[hidden]{display:none}
+.cv-send button{appearance:none;margin:0;border:0;display:inline-flex;align-items:center;gap:6px;background:transparent;color:inherit;font:500 12.5px/1 var(--font-sans);cursor:pointer}
+.cv-send button:hover{background:color-mix(in srgb,#fff 12%,transparent)}
+.cv-send .cv-send-go{padding:0 10px 0 4px}
+.cv-send .cv-send-more{padding:0 7px 0 6px;border-left:1px solid color-mix(in srgb,#fff 28%,transparent)}
+.cv-send .cv-send-more[hidden]{display:none}
+.cv-send .cv-send-more svg{width:13px;height:13px}
+.cv-send-count{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 4px;box-sizing:border-box;border-radius:999px;background:color-mix(in srgb,#fff 26%,transparent);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}
+.cv-send.bump{animation:cv-send-ring .52s ease-out}
+.cv-send.bump .cv-send-count{animation:cv-send-count .42s cubic-bezier(.34,1.56,.64,1)}
+@keyframes cv-send-in{from{opacity:0;transform:scale(.85)}}
+@keyframes cv-send-count{0%{transform:translateY(70%) scale(.6);opacity:0}60%{transform:translateY(-8%) scale(1.25);opacity:1}100%{transform:none}}
+@keyframes cv-send-ring{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--primary) 60%,transparent)}100%{box-shadow:0 0 0 8px color-mix(in srgb,var(--primary) 0%,transparent)}}
+.cv-batch{appearance:none;margin:0;border:0;display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 6px;border-radius:999px;background:transparent;color:var(--muted-foreground);font:400 12.5px/1 var(--font-sans);cursor:pointer;white-space:nowrap}
+.cv-batch:hover,.cv-batch.on{color:var(--foreground)}
+.cv-batch i{position:relative;width:28px;height:16px;border-radius:999px;background:color-mix(in srgb,var(--foreground) 22%,transparent);transition:background .16s}
+.cv-batch i::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgb(0 0 0/.3);transition:transform .18s cubic-bezier(.22,1,.36,1)}
+.cv-batch.on i{background:var(--primary)}
+.cv-batch.on i::after{transform:translateX(12px)}
 @keyframes cv-rise{from{opacity:0;translate:0 8px}}
-.cv-tray-count{display:flex;align-items:center;gap:7px;font-weight:500}
-.cv-tray-dot{width:8px;height:8px;border-radius:50%;background:var(--cv-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--cv-accent) 25%,transparent)}
 .cv-toast{position:absolute;left:50%;top:52px;transform:translateX(-50%);z-index:25;display:flex;align-items:center;gap:8px;max-width:80%;padding:6px 12px;border-radius:99px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:cv-rise .25s cubic-bezier(.2,.8,.2,1);pointer-events:none}
 .cv-toast svg{width:14px;height:14px;flex:none;color:var(--cv-agent)}
 .cv-selbar{position:absolute;left:0;top:0;z-index:18;display:flex;align-items:center;gap:2px;height:34px;padding:0 4px;border-radius:999px;transform:translate(-50%,-100%);white-space:nowrap}
@@ -452,6 +476,8 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		up: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M4 7l4-4 4 4"/></svg>',
 		back: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8H3.4M7.4 4 3.4 8l4 4"/></svg>',
 		style: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2.5 4.5h7M12.5 4.5h1M2.5 11.5h2M7.5 11.5h6"/><circle cx="11" cy="4.5" r="1.5"/><circle cx="6" cy="11.5" r="1.5"/></svg>',
+		arrowUp: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3.5M3.8 7.6 8 3.4l4.2 4.2"/></svg>',
+		chevron: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="m4 6 4 4 4-4"/></svg>',
 		undo: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3 2.5 6l3 3"/><path d="M2.5 6h7a4 4 0 0 1 0 8H7"/></svg>',
 	};
 	const STATUS_ICONS = '<svg width="17" height="11" viewBox="0 0 17 11"><rect y="7" width="3" height="4" rx="1"/><rect x="4.6" y="5" width="3" height="6" rx="1"/><rect x="9.2" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.8" width="3" height="11" rx="1"/></svg>'
@@ -597,7 +623,8 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		flows: true,
 		minimap: true,
 		layers: !inline,
-		commentsOpen: !inline,
+		/** "Batch edits": a new comment waits for the toolbar's Send instead of going at once. */
+		batch: false,
 		showResolved: false,
 		engaged: !inline,
 		space: false,
@@ -1291,7 +1318,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	function fitAll(animate = true): void {
 		const all = union(ordered().map(boxOf));
 		if (all) {
-			const target = fitCamera(all, inline ? 28 : 64, 1);
+			const target = fitCamera(all, inline ? 28 : 36, 1);
 			if (animate) {
 				flyTo(target);
 			} else {
@@ -1862,7 +1889,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 
 	function onHover(event: PointerEvent): void {
 		// Over a pin, a popover or a label the highlight would sit under what the pointer is on.
-		const over = (event.target as Element | null)?.closest?.('.cv-pin, .cv-pop, .cv-label, .cv-top, .cv-toolbar, .cv-minimap, .cv-selbar, .cv-tray');
+		const over = (event.target as Element | null)?.closest?.('.cv-pin, .cv-pop, .cv-label, .cv-top, .cv-toolbar, .cv-minimap, .cv-selbar');
 		lastPointer = over ? undefined : { x: event.clientX, y: event.clientY };
 		const hit = over ? undefined : hitFrame(toWorld(event.clientX, event.clientY));
 		const id = hit?.frame.id;
@@ -2229,7 +2256,8 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	}
 
 	function visibleComments(): ICanvasComment[] {
-		return model.comments.filter(comment => !comment.archived && views.has(comment.anchor.frame) && (state.showResolved || comment.status !== 'resolved'));
+		// Sent annotations leave the board with the message; resolved ones show on request.
+		return model.comments.filter(comment => !comment.archived && views.has(comment.anchor.frame) && comment.status !== 'sent' && (state.showResolved || comment.status !== 'resolved'));
 	}
 	function commentNumber(id: string): number {
 		return model.comments.findIndex(comment => comment.id === id) + 1;
@@ -2381,6 +2409,51 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		return `${v?.frame.name ?? anchor.frame} \u203a ${anchorChip(anchor)}`;
 	}
 
+	/** "Batch edits" and its switch, shared by every comment popover and kept with the host's setting. */
+	const batchSwitches = new Set<HTMLButtonElement>();
+	function batchSwitch(): HTMLButtonElement {
+		const node = el('button', 'cv-batch');
+		node.type = 'button';
+		node.setAttribute('role', 'switch');
+		node.title = S.batchEditsHint;
+		node.append(el('span', undefined, S.batchEdits), el('i'));
+		node.addEventListener('pointerdown', event => event.stopPropagation());
+		node.addEventListener('click', event => {
+			event.preventDefault();
+			event.stopPropagation();
+			setBatch(!state.batch, true);
+		});
+		batchSwitches.add(node);
+		syncBatchSwitch(node);
+		return node;
+	}
+	function syncBatchSwitch(node: HTMLButtonElement): void {
+		node.classList.toggle('on', state.batch);
+		node.setAttribute('aria-checked', String(state.batch));
+	}
+	function setBatch(on: boolean, fromUser: boolean): void {
+		state.batch = on;
+		for (const node of batchSwitches) {
+			if (!node.isConnected) {
+				batchSwitches.delete(node);
+			} else {
+				syncBatchSwitch(node);
+			}
+		}
+		for (const arrow of sendArrows) {
+			arrow.title = on ? S.addToBatch : S.sendNow;
+		}
+		if (fromUser) {
+			post('batch', { on });
+		}
+	}
+	const sendArrows = new Set<HTMLButtonElement>();
+	function sendArrow(run: () => void): HTMLButtonElement {
+		const node = button(state.batch ? S.addToBatch : S.sendNow, 'arrowUp', run, 'primary cv-arrow');
+		sendArrows.add(node);
+		return node;
+	}
+
 	function autoGrow(area: HTMLTextAreaElement): void {
 		area.style.height = 'auto';
 		area.style.height = `${Math.min(220, area.scrollHeight + 2)}px`;
@@ -2487,8 +2560,8 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 			}),
 			styleToggle,
 			el('span', 'cv-grow'),
-			button(S.add, undefined, () => save(false), '', true),
-			button(S.sendNow, 'send', () => save(true), 'primary', true),
+			batchSwitch(),
+			sendArrow(() => save(!state.batch)),
 		);
 		area.addEventListener('keydown', event => {
 			if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
@@ -2496,7 +2569,8 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 				save(true);
 			} else if (event.key === 'Enter' && !event.shiftKey) {
 				event.preventDefault();
-				save(false);
+				// Batch edits on: it joins the batch; off: it goes to the chat now.
+				save(!state.batch);
 			} else if (event.key === 'Escape') {
 				event.preventDefault();
 				revertTweaks();
@@ -2738,6 +2812,35 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	const changeText = el('span', 'cv-change');
 	titleBox.append(backButton, titleText, versionChip, changeText);
 	const actions = el('div', 'cv-actions');
+	// Batched annotations: "(2) Send | v". Send takes them to the chat; the arrow lists them (the host's menu).
+	const sendBatch = el('div', 'cv-send');
+	sendBatch.hidden = true;
+	const sendGo = el('button', 'cv-send-go');
+	sendGo.type = 'button';
+	sendGo.title = S.sendBatchHint;
+	const sendCount = el('span', 'cv-send-count');
+	sendGo.append(sendCount, el('span', undefined, S.sendBatch));
+	const sendMore = el('button', 'cv-send-more');
+	sendMore.type = 'button';
+	sendMore.title = S.showBatch;
+	sendMore.append(icon('chevron'));
+	// Only the tab and Expand have a host to draw the list; in the chat the batch just sends.
+	sendMore.hidden = inline;
+	for (const node of [sendGo, sendMore]) {
+		node.addEventListener('pointerdown', event => event.stopPropagation());
+	}
+	sendGo.addEventListener('click', event => {
+		event.preventDefault();
+		sendAll();
+	});
+	sendMore.addEventListener('click', event => {
+		event.preventDefault();
+		const r = sendBatch.getBoundingClientRect();
+		post('batch-menu', { rect: { x: r.left, y: r.top, w: r.width, h: r.height } });
+	});
+	sendBatch.append(sendGo, sendMore);
+	actions.append(sendBatch);
+	let sentCount = 0;
 	const lookGroup = el('div', 'cv-group cv-glass');
 	const lookButtons = (['light', 'dark'] as const).map(kind => {
 		const node = button(kind === 'light' ? S.light : S.dark, kind === 'light' ? 'sun' : 'moon', () => setLook(kind));
@@ -2786,28 +2889,22 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	if (!inline) {
 		// The frame list and the comments are workbench panes beside the page (canvasView.ts).
 		const paneGroup = el('div', 'cv-group cv-glass');
-		setPanes = (layers, comments) => {
+		setPanes = layers => {
 			state.layers = layers;
-			state.commentsOpen = comments;
 			syncPanes();
 		};
+		// Comments are batched annotations now (the Send button), not a pane.
 		const syncPanes = () => {
 			layersButton.setAttribute('aria-pressed', String(state.layers));
-			commentsButton.setAttribute('aria-pressed', String(state.commentsOpen));
-			post('panes', { layers: state.layers, comments: state.commentsOpen });
+			post('panes', { layers: state.layers, comments: false });
 			syncComments();
 		};
 		const layersButton = button(S.layers, 'layers', () => {
 			state.layers = !state.layers;
 			syncPanes();
 		});
-		const commentsButton = button(S.comments, 'comment', () => {
-			state.commentsOpen = !state.commentsOpen;
-			syncPanes();
-		});
 		layersButton.setAttribute('aria-pressed', String(state.layers));
-		commentsButton.setAttribute('aria-pressed', String(state.commentsOpen));
-		paneGroup.append(layersButton, commentsButton);
+		paneGroup.append(layersButton);
 		actions.append(paneGroup);
 	} else if (hosted) {
 		const open = button(S.openPanel, 'panel', () => post('open', { frame: [...state.selected][0] }), 'chip', true);
@@ -2974,20 +3071,6 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	});
 	minimap.addEventListener('wheel', event => event.stopPropagation());
 
-	// The comment tray: comments waiting to go to the agent.
-	const tray = el('div', 'cv-tray cv-glass');
-	const trayCount = el('span', 'cv-tray-count');
-	tray.append(trayCount, button(S.clear, undefined, () => {
-		for (const comment of model.comments.filter(c => c.status === 'open' && c.author === 'user')) {
-			post('comment-delete', { comment: comment.id });
-		}
-		model = { ...model, comments: model.comments.filter(c => !(c.status === 'open' && c.author === 'user')) };
-		syncComments();
-	}, '', true), button(S.sendAll, 'send', () => sendAll(), 'primary', true));
-	tray.hidden = true;
-	stage.append(tray);
-	const trayButton = tray.lastElementChild as HTMLButtonElement;
-
 	// The selection bar: size presets and quick actions for one frame.
 	const selbar = el('div', 'cv-selbar cv-glass');
 	selbar.hidden = true;
@@ -3056,9 +3139,15 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 
 	function syncComments(): void {
 		const ready = model.comments.filter(c => c.status === 'open' && c.author === 'user').length;
-		tray.hidden = !ready || (!inline && state.commentsOpen);
-		trayCount.replaceChildren(el('span', 'cv-tray-dot'), doc.createTextNode(fmt(S.ready, ready)));
-		trayButton.lastChild!.textContent = fmt(S.sendAll, ready);
+		sendBatch.hidden = !ready;
+		sendCount.textContent = String(ready);
+		if (ready > sentCount) {
+			// One more joined the batch: the count rolls up and the pill flashes.
+			sendBatch.classList.remove('bump');
+			void sendBatch.offsetWidth;
+			sendBatch.classList.add('bump');
+		}
+		sentCount = ready;
 		for (const v of views.values()) {
 			v.rects.clear();
 		}
@@ -3121,7 +3210,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	}
 
 	win.addEventListener('message', event => {
-		const data = event.data as { type?: unknown; op?: unknown; id?: unknown; doc?: ICanvasDoc; origin?: string; frame?: string; comment?: unknown; show?: unknown; layers?: unknown; comments?: ICanvasComment[] | boolean; frames?: ICanvasLayout[] } | null;
+		const data = event.data as { type?: unknown; op?: unknown; id?: unknown; doc?: ICanvasDoc; origin?: string; frame?: string; comment?: unknown; show?: unknown; on?: unknown; layers?: unknown; comments?: ICanvasComment[] | boolean; frames?: ICanvasLayout[] } | null;
 		if (!data || data.type !== 'volt-canvas' || (data.id !== undefined && data.id !== model.id)) {
 			return;
 		}
@@ -3172,7 +3261,10 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 				syncComments();
 				return;
 			case 'panes':
-				setPanes?.(data.layers !== false, data.comments !== false);
+				setPanes?.(data.layers !== false, false);
+				return;
+			case 'batch':
+				setBatch(!!data.on, false);
 				return;
 		}
 	});
