@@ -140,11 +140,14 @@ const DAMAGED_FIX = "xattr -dr com.apple.quarantine /Applications/Volt.app";
 function CopyLine({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="flex min-w-0 items-center gap-2 rounded-[6px] border border-white/12 bg-white/[0.03] py-1.5 pr-1.5 pl-3">
-      <span aria-hidden className="shrink-0 font-mono text-emerald-400/90">
+    <div className="flex min-w-0 items-start gap-2 rounded-[6px] border border-white/12 bg-white/[0.03] py-2 pr-2 pl-3">
+      <span
+        aria-hidden
+        className="shrink-0 font-mono text-[12px] leading-[1.55] text-emerald-400/90"
+      >
         &gt;_
       </span>
-      <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-[12px] text-white/80 [scrollbar-width:none]">
+      <code className="min-w-0 flex-1 break-all font-mono text-[12px] leading-[1.55] text-white/80">
         {text}
       </code>
       <button
