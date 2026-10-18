@@ -1,13 +1,17 @@
 import { Link } from "@tanstack/react-router";
 import { cn } from "@/lib/cn";
 import { gitConfig } from "@/lib/shared";
-import { latestVersion, useReleases } from "@/lib/useReleases";
+import {
+  GITHUB_RELEASES_URL,
+  latestVersion,
+  useReleases,
+} from "@/lib/useReleases";
 import { focusRing, GithubMarkIcon } from "./install";
 
 const PILL =
   "inline-flex h-6 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] px-2.5 leading-none text-[10px] font-medium uppercase tracking-[0.16em] text-white/70 backdrop-blur-xl transition-colors duration-150 hover:border-white/25 hover:bg-white/10 hover:text-white";
 
-/** Logo, beta badge with the current version, and the Download / Docs / GitHub pills. */
+/** Logo, the beta badge with the current version (a link to the GitHub releases), and the Download / GitHub pills. */
 export function SiteHeader({
   animate = false,
   className,
@@ -39,9 +43,18 @@ export function SiteHeader({
           className="size-7"
         />
       </Link>
-      <div
+      <a
         {...hero}
-        className="inline-flex h-6 min-w-0 items-center justify-center gap-1.5 rounded-full border border-white/15 bg-white/[0.06] px-2 text-center text-[10px] font-medium tracking-[0.08em] text-white/75 backdrop-blur-xl sm:gap-2 sm:px-2.5 sm:tracking-[0.16em]"
+        href={GITHUB_RELEASES_URL}
+        target="_blank"
+        rel="noreferrer"
+        title="Volt releases on GitHub"
+        aria-label={
+          version
+            ? `Public beta, version ${version}: releases on GitHub`
+            : "Public beta: releases on GitHub"
+        }
+        className={`inline-flex h-6 min-w-0 items-center justify-center gap-1.5 rounded-full border border-white/15 bg-white/[0.06] px-2 text-center text-[10px] font-medium tracking-[0.08em] text-white/75 backdrop-blur-xl transition-colors duration-150 hover:border-white/25 hover:bg-white/10 hover:text-white sm:gap-2 sm:px-2.5 sm:tracking-[0.16em] ${focusRing}`}
       >
         <span className="inline-flex items-center pt-px pl-[0.16em] uppercase leading-none">
           Public beta
@@ -57,21 +70,13 @@ export function SiteHeader({
             </span>
           </>
         ) : null}
-      </div>
+      </a>
       <Link
         {...hero}
         to="/download"
         className={`${PILL} max-sm:hidden ${focusRing}`}
       >
         Download
-      </Link>
-      <Link
-        {...hero}
-        to="/docs/$"
-        params={{ _splat: "" }}
-        className={`${PILL} ${focusRing}`}
-      >
-        Docs
       </Link>
       <a
         {...hero}
