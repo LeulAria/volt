@@ -130,6 +130,260 @@
         "icon": "$(trash)"
       },
       {
+        "command": "git.volt.refreshBranches",
+        "title": "%command.volt.refresh%",
+        "category": "Git",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "git.volt.refreshRemotes",
+        "title": "%command.volt.refresh%",
+        "category": "Git",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "git.volt.refreshTags",
+        "title": "%command.volt.refresh%",
+        "category": "Git",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "git.volt.refreshWorktrees",
+        "title": "%command.volt.refresh%",
+        "category": "Git",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "git.volt.createBranch",
+        "title": "%command.branch%",
+        "category": "Git",
+        "icon": "$(add)"
+      },
+      {
+        "command": "git.volt.createBranchFrom",
+        "title": "%command.branchFrom%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.renameCurrentBranch",
+        "title": "%command.renameBranch%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.fetch",
+        "title": "%command.fetch%",
+        "category": "Git",
+        "icon": "$(repo-fetch)"
+      },
+      {
+        "command": "git.volt.fetchPrune",
+        "title": "%command.fetchPrune%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.fetchAll",
+        "title": "%command.fetchAll%",
+        "category": "Git",
+        "icon": "$(repo-fetch)"
+      },
+      {
+        "command": "git.volt.pull",
+        "title": "%command.pull%",
+        "category": "Git",
+        "icon": "$(repo-pull)"
+      },
+      {
+        "command": "git.volt.push",
+        "title": "%command.push%",
+        "category": "Git",
+        "icon": "$(repo-push)"
+      },
+      {
+        "command": "git.volt.sync",
+        "title": "%command.sync%",
+        "category": "Git",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "git.volt.publish",
+        "title": "%command.publish%",
+        "category": "Git",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "git.volt.addRemote",
+        "title": "%command.addRemote%",
+        "category": "Git",
+        "icon": "$(add)"
+      },
+      {
+        "command": "git.volt.stash",
+        "title": "%command.stash%",
+        "category": "Git",
+        "icon": "$(add)"
+      },
+      {
+        "command": "git.volt.stashIncludeUntracked",
+        "title": "%command.stashIncludeUntracked%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.stashStaged",
+        "title": "%command.stashStaged%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.stashApplyLatest",
+        "title": "%command.stashApplyLatest%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.stashPopLatest",
+        "title": "%command.stashPopLatest%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.stashDropAll",
+        "title": "%command.stashDropAll%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.createTag",
+        "title": "%command.createTag%",
+        "category": "Git",
+        "icon": "$(add)"
+      },
+      {
+        "command": "git.volt.pushTags",
+        "title": "%command.pushTags%",
+        "category": "Git",
+        "icon": "$(repo-push)"
+      },
+      {
+        "command": "git.volt.createWorktree",
+        "title": "%command.createWorktree%",
+        "category": "Git",
+        "icon": "$(add)"
+      },
+      {
+        "command": "git.volt.checkoutCommit",
+        "title": "%command.volt.checkoutDetached%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.branchFromCommit",
+        "title": "%command.volt.createBranchHere%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.tagCommit",
+        "title": "%command.volt.createTagHere%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.cherryPickCommit",
+        "title": "%command.volt.cherryPick%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.checkoutBranch",
+        "title": "%command.volt.checkout%",
+        "category": "Git",
+        "icon": "$(check)"
+      },
+      {
+        "command": "git.volt.mergeBranch",
+        "title": "%command.volt.mergeIntoCurrent%",
+        "category": "Git",
+        "icon": "$(git-merge)"
+      },
+      {
+        "command": "git.volt.rebaseOntoBranch",
+        "title": "%command.volt.rebaseCurrentOnto%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.deleteBranch",
+        "title": "%command.volt.deleteBranch%",
+        "category": "Git",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "git.volt.copyBranchName",
+        "title": "%command.volt.copyName%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.fetchRemote",
+        "title": "%command.volt.fetchRemote%",
+        "category": "Git",
+        "icon": "$(repo-fetch)"
+      },
+      {
+        "command": "git.volt.removeRemote",
+        "title": "%command.volt.removeRemote%",
+        "category": "Git",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "git.volt.copyRemoteUrl",
+        "title": "%command.volt.copyRemoteUrl%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.checkoutRemoteBranch",
+        "title": "%command.volt.checkout%",
+        "category": "Git",
+        "icon": "$(check)"
+      },
+      {
+        "command": "git.volt.deleteRemoteBranch",
+        "title": "%command.volt.deleteRemoteBranch%",
+        "category": "Git",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "git.volt.checkoutTag",
+        "title": "%command.volt.checkout%",
+        "category": "Git",
+        "icon": "$(check)"
+      },
+      {
+        "command": "git.volt.pushTag",
+        "title": "%command.volt.pushTag%",
+        "category": "Git",
+        "icon": "$(repo-push)"
+      },
+      {
+        "command": "git.volt.deleteTag",
+        "title": "%command.volt.deleteTag%",
+        "category": "Git",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "git.volt.openWorktree",
+        "title": "%command.volt.openWorktree%",
+        "category": "Git",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "git.volt.openWorktreeInNewWindow",
+        "title": "%command.volt.openWorktreeInNewWindow%",
+        "category": "Git",
+        "icon": "$(empty-window)"
+      },
+      {
+        "command": "git.volt.revealWorktree",
+        "title": "%command.volt.revealWorktree%",
+        "category": "Git"
+      },
+      {
+        "command": "git.volt.deleteWorktree",
+        "title": "%command.volt.deleteWorktree%",
+        "category": "Git",
+        "icon": "$(trash)"
+      },
+      {
         "command": "git.continueInLocalClone",
         "title": "%command.continueInLocalClone%",
         "category": "Git",
@@ -1104,6 +1358,126 @@
           "command": "git.volt.refreshStashes",
           "when": "view == git.volt.stashes",
           "group": "navigation"
+        },
+        {
+          "command": "git.volt.createBranch",
+          "when": "view == git.volt.branches",
+          "group": "navigation@1"
+        },
+        {
+          "command": "git.volt.refreshBranches",
+          "when": "view == git.volt.branches",
+          "group": "navigation@9"
+        },
+        {
+          "command": "git.volt.createBranchFrom",
+          "when": "view == git.volt.branches",
+          "group": "1_branch@1"
+        },
+        {
+          "command": "git.volt.renameCurrentBranch",
+          "when": "view == git.volt.branches",
+          "group": "1_branch@2"
+        },
+        {
+          "command": "git.volt.publish",
+          "when": "view == git.volt.branches",
+          "group": "1_branch@3"
+        },
+        {
+          "command": "git.volt.pull",
+          "when": "view == git.volt.branches",
+          "group": "2_sync@1"
+        },
+        {
+          "command": "git.volt.push",
+          "when": "view == git.volt.branches",
+          "group": "2_sync@2"
+        },
+        {
+          "command": "git.volt.sync",
+          "when": "view == git.volt.branches",
+          "group": "2_sync@3"
+        },
+        {
+          "command": "git.volt.fetch",
+          "when": "view == git.volt.branches",
+          "group": "2_sync@4"
+        },
+        {
+          "command": "git.volt.fetchPrune",
+          "when": "view == git.volt.branches",
+          "group": "2_sync@5"
+        },
+        {
+          "command": "git.volt.addRemote",
+          "when": "view == git.volt.remotes",
+          "group": "navigation@1"
+        },
+        {
+          "command": "git.volt.fetchAll",
+          "when": "view == git.volt.remotes",
+          "group": "navigation@2"
+        },
+        {
+          "command": "git.volt.refreshRemotes",
+          "when": "view == git.volt.remotes",
+          "group": "navigation@9"
+        },
+        {
+          "command": "git.volt.stash",
+          "when": "view == git.volt.stashes",
+          "group": "navigation@1"
+        },
+        {
+          "command": "git.volt.stashIncludeUntracked",
+          "when": "view == git.volt.stashes",
+          "group": "1_stash@1"
+        },
+        {
+          "command": "git.volt.stashStaged",
+          "when": "view == git.volt.stashes",
+          "group": "1_stash@2"
+        },
+        {
+          "command": "git.volt.stashApplyLatest",
+          "when": "view == git.volt.stashes",
+          "group": "2_latest@1"
+        },
+        {
+          "command": "git.volt.stashPopLatest",
+          "when": "view == git.volt.stashes",
+          "group": "2_latest@2"
+        },
+        {
+          "command": "git.volt.stashDropAll",
+          "when": "view == git.volt.stashes",
+          "group": "3_drop@1"
+        },
+        {
+          "command": "git.volt.createTag",
+          "when": "view == git.volt.tags",
+          "group": "navigation@1"
+        },
+        {
+          "command": "git.volt.refreshTags",
+          "when": "view == git.volt.tags",
+          "group": "navigation@9"
+        },
+        {
+          "command": "git.volt.pushTags",
+          "when": "view == git.volt.tags",
+          "group": "1_tags@1"
+        },
+        {
+          "command": "git.volt.createWorktree",
+          "when": "view == git.volt.worktrees",
+          "group": "navigation@1"
+        },
+        {
+          "command": "git.volt.refreshWorktrees",
+          "when": "view == git.volt.worktrees",
+          "group": "navigation@9"
         }
       ],
       "view/item/context": [
@@ -1166,6 +1540,176 @@
           "command": "git.volt.openFileChange",
           "when": "viewItem == voltGitFile",
           "group": "inline"
+        },
+        {
+          "command": "git.volt.checkoutCommit",
+          "when": "view == git.volt.commits && viewItem == voltGitCommit",
+          "group": "2_checkout@1"
+        },
+        {
+          "command": "git.volt.branchFromCommit",
+          "when": "view == git.volt.commits && viewItem == voltGitCommit",
+          "group": "3_create@1"
+        },
+        {
+          "command": "git.volt.tagCommit",
+          "when": "view == git.volt.commits && viewItem == voltGitCommit",
+          "group": "3_create@2"
+        },
+        {
+          "command": "git.volt.cherryPickCommit",
+          "when": "view == git.volt.commits && viewItem == voltGitCommit",
+          "group": "4_apply@1"
+        },
+        {
+          "command": "git.volt.checkoutBranch",
+          "when": "view == git.volt.branches && viewItem == voltGitBranch",
+          "group": "inline@1"
+        },
+        {
+          "command": "git.volt.checkoutBranch",
+          "when": "view == git.volt.branches && viewItem == voltGitBranch",
+          "group": "1_checkout@1"
+        },
+        {
+          "command": "git.volt.mergeBranch",
+          "when": "view == git.volt.branches && viewItem == voltGitBranch",
+          "group": "2_integrate@1"
+        },
+        {
+          "command": "git.volt.rebaseOntoBranch",
+          "when": "view == git.volt.branches && viewItem == voltGitBranch",
+          "group": "2_integrate@2"
+        },
+        {
+          "command": "git.volt.renameCurrentBranch",
+          "when": "view == git.volt.branches && viewItem == voltGitBranchCurrent",
+          "group": "3_edit@1"
+        },
+        {
+          "command": "git.volt.publish",
+          "when": "view == git.volt.branches && viewItem == voltGitBranchCurrent",
+          "group": "3_edit@2"
+        },
+        {
+          "command": "git.volt.copyBranchName",
+          "when": "view == git.volt.branches && viewItem =~ /^(voltGitBranch|voltGitBranchCurrent)$/",
+          "group": "8_copy@1"
+        },
+        {
+          "command": "git.volt.deleteBranch",
+          "when": "view == git.volt.branches && viewItem == voltGitBranch",
+          "group": "9_delete@1"
+        },
+        {
+          "command": "git.volt.pull",
+          "when": "view == git.volt.branches && viewItem == voltGitBranchCurrent",
+          "group": "inline@1"
+        },
+        {
+          "command": "git.volt.push",
+          "when": "view == git.volt.branches && viewItem == voltGitBranchCurrent",
+          "group": "inline@2"
+        },
+        {
+          "command": "git.volt.fetchRemote",
+          "when": "view == git.volt.remotes && viewItem =~ /^(voltGitRemote|voltGitRemoteReadOnly)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "git.volt.fetchRemote",
+          "when": "view == git.volt.remotes && viewItem =~ /^(voltGitRemote|voltGitRemoteReadOnly)$/",
+          "group": "1_fetch@1"
+        },
+        {
+          "command": "git.volt.copyRemoteUrl",
+          "when": "view == git.volt.remotes && viewItem =~ /^(voltGitRemote|voltGitRemoteReadOnly)$/",
+          "group": "8_copy@1"
+        },
+        {
+          "command": "git.volt.removeRemote",
+          "when": "view == git.volt.remotes && viewItem =~ /^(voltGitRemote|voltGitRemoteReadOnly)$/",
+          "group": "9_delete@1"
+        },
+        {
+          "command": "git.volt.checkoutRemoteBranch",
+          "when": "view == git.volt.remotes && viewItem == voltGitRemoteBranch",
+          "group": "inline@1"
+        },
+        {
+          "command": "git.volt.checkoutRemoteBranch",
+          "when": "view == git.volt.remotes && viewItem == voltGitRemoteBranch",
+          "group": "1_checkout@1"
+        },
+        {
+          "command": "git.volt.mergeBranch",
+          "when": "view == git.volt.remotes && viewItem == voltGitRemoteBranch",
+          "group": "2_integrate@1"
+        },
+        {
+          "command": "git.volt.rebaseOntoBranch",
+          "when": "view == git.volt.remotes && viewItem == voltGitRemoteBranch",
+          "group": "2_integrate@2"
+        },
+        {
+          "command": "git.volt.copyBranchName",
+          "when": "view == git.volt.remotes && viewItem == voltGitRemoteBranch",
+          "group": "8_copy@1"
+        },
+        {
+          "command": "git.volt.deleteRemoteBranch",
+          "when": "view == git.volt.remotes && viewItem == voltGitRemoteBranch",
+          "group": "9_delete@1"
+        },
+        {
+          "command": "git.volt.checkoutTag",
+          "when": "view == git.volt.tags && viewItem == voltGitTag",
+          "group": "inline@1"
+        },
+        {
+          "command": "git.volt.checkoutTag",
+          "when": "view == git.volt.tags && viewItem == voltGitTag",
+          "group": "1_checkout@1"
+        },
+        {
+          "command": "git.volt.pushTag",
+          "when": "view == git.volt.tags && viewItem == voltGitTag",
+          "group": "2_push@1"
+        },
+        {
+          "command": "git.volt.copyBranchName",
+          "when": "view == git.volt.tags && viewItem == voltGitTag",
+          "group": "8_copy@1"
+        },
+        {
+          "command": "git.volt.deleteTag",
+          "when": "view == git.volt.tags && viewItem == voltGitTag",
+          "group": "9_delete@1"
+        },
+        {
+          "command": "git.volt.openWorktreeInNewWindow",
+          "when": "view == git.volt.worktrees && viewItem =~ /^(voltGitWorktree|voltGitWorktreeMain)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "git.volt.openWorktree",
+          "when": "view == git.volt.worktrees && viewItem =~ /^(voltGitWorktree|voltGitWorktreeMain)$/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "git.volt.openWorktreeInNewWindow",
+          "when": "view == git.volt.worktrees && viewItem =~ /^(voltGitWorktree|voltGitWorktreeMain)$/",
+          "group": "1_open@2"
+        },
+        {
+          "command": "git.volt.revealWorktree",
+          "when": "view == git.volt.worktrees && viewItem =~ /^(voltGitWorktree|voltGitWorktreeMain)$/",
+          "group": "2_reveal@1"
+        },
+        {
+          "command": "git.volt.deleteWorktree",
+          "when": "view == git.volt.worktrees && viewItem == voltGitWorktree",
+          "group": "9_delete@1"
         }
       ],
       "commandPalette": [
@@ -1211,6 +1755,186 @@
         },
         {
           "command": "git.volt.stashDrop",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.refreshBranches",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.refreshRemotes",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.refreshTags",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.refreshWorktrees",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.createBranch",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.createBranchFrom",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.renameCurrentBranch",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.fetch",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.fetchPrune",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.fetchAll",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.pull",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.push",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.sync",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.publish",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.addRemote",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.stash",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.stashIncludeUntracked",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.stashStaged",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.stashApplyLatest",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.stashPopLatest",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.stashDropAll",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.createTag",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.pushTags",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.createWorktree",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.checkoutCommit",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.branchFromCommit",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.tagCommit",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.cherryPickCommit",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.checkoutBranch",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.mergeBranch",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.rebaseOntoBranch",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.deleteBranch",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.copyBranchName",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.fetchRemote",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.removeRemote",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.copyRemoteUrl",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.checkoutRemoteBranch",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.deleteRemoteBranch",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.checkoutTag",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.pushTag",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.deleteTag",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.openWorktree",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.openWorktreeInNewWindow",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.revealWorktree",
+          "when": "false"
+        },
+        {
+          "command": "git.volt.deleteWorktree",
           "when": "false"
         },
         {
@@ -3817,8 +4541,32 @@
           "when": "config.git.enabled && !git.missing && gitOpenRepositoryCount != 0"
         },
         {
+          "id": "git.volt.branches",
+          "name": "%view.volt.branches%",
+          "visibility": "collapsed",
+          "when": "config.git.enabled && !git.missing && gitOpenRepositoryCount != 0"
+        },
+        {
+          "id": "git.volt.remotes",
+          "name": "%view.volt.remotes%",
+          "visibility": "collapsed",
+          "when": "config.git.enabled && !git.missing && gitOpenRepositoryCount != 0"
+        },
+        {
           "id": "git.volt.stashes",
           "name": "%view.volt.stashes%",
+          "visibility": "collapsed",
+          "when": "config.git.enabled && !git.missing && gitOpenRepositoryCount != 0"
+        },
+        {
+          "id": "git.volt.tags",
+          "name": "%view.volt.tags%",
+          "visibility": "collapsed",
+          "when": "config.git.enabled && !git.missing && gitOpenRepositoryCount != 0"
+        },
+        {
+          "id": "git.volt.worktrees",
+          "name": "%view.volt.worktrees%",
           "visibility": "collapsed",
           "when": "config.git.enabled && !git.missing && gitOpenRepositoryCount != 0"
         }

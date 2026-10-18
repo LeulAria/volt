@@ -477,5 +477,28 @@
 			"Please make sure there is no space between the right bracket and left parenthesis:  ]( this is an internal syntax for links"
 		]
 	},
-	"view.workbench.learnMore": "To learn more about how to use Git and source control in VS Code [read our docs](https://aka.ms/vscode-scm)."
+	"view.workbench.learnMore": "To learn more about how to use Git and source control in VS Code [read our docs](https://aka.ms/vscode-scm).",
+	"command.volt.checkout": "Checkout",
+	"command.volt.checkoutDetached": "Checkout (Detached)",
+	"command.volt.createBranchHere": "Create Branch...",
+	"command.volt.createTagHere": "Create Tag...",
+	"command.volt.cherryPick": "Cherry Pick",
+	"command.volt.mergeIntoCurrent": "Merge into Current Branch",
+	"command.volt.rebaseCurrentOnto": "Rebase Current Branch onto This",
+	"command.volt.deleteBranch": "Delete Branch...",
+	"command.volt.copyName": "Copy Name",
+	"command.volt.fetchRemote": "Fetch",
+	"command.volt.removeRemote": "Remove Remote...",
+	"command.volt.copyRemoteUrl": "Copy Remote URL",
+	"command.volt.deleteRemoteBranch": "Delete Remote Branch...",
+	"command.volt.pushTag": "Push Tag",
+	"command.volt.deleteTag": "Delete Tag...",
+	"command.volt.openWorktree": "Open Worktree in Current Window",
+	"command.volt.openWorktreeInNewWindow": "Open Worktree in New Window",
+	"command.volt.revealWorktree": "Reveal in Finder",
+	"command.volt.deleteWorktree": "Delete Worktree...",
+	"view.volt.branches": "Branches",
+	"view.volt.remotes": "Remotes",
+	"view.volt.tags": "Tags",
+	"view.volt.worktrees": "Worktrees"
 }

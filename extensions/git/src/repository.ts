@@ -1750,6 +1750,11 @@ export class Repository implements Disposable {
 		return await this.run(Operation.GetWorktrees, () => this.repository.getWorktrees());
 	}
 
+	/** Volt: `git worktree list --porcelain`, the main worktree too (getWorktrees reads only linked ones, behind git.detectWorktrees). */
+	async listWorktreesPorcelain(): Promise<string> {
+		return (await this.repository.exec(['worktree', 'list', '--porcelain'])).stdout;
+	}
+
 	async getRemoteRefs(remote: string, opts?: { heads?: boolean; tags?: boolean }): Promise<Ref[]> {
 		return await this.run(Operation.GetRemoteRefs, () => this.repository.getRemoteRefs(remote, opts));
 	}

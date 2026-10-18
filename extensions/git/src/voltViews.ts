@@ -5,8 +5,8 @@
 
 import * as path from 'path';
 import { commands, env, Event, EventEmitter, FileDecoration, FileDecorationProvider, l10n, MarkdownString, ThemeIcon, TreeDataProvider, TreeItem, TreeItemCollapsibleState, Uri, window, workspace } from 'vscode';
-import { Change } from './api/git';
-import { Commit, Stash } from './git';
+import { Branch, Change, GitErrorCodes, Ref, RefType, Remote } from './api/git';
+import { Commit, GitError, Stash } from './git';
 import { Model } from './model';
 import { OperationKind } from './operation';
 import { Repository, Resource } from './repository';
@@ -22,7 +22,71 @@ interface StashNode { readonly kind: 'stash'; readonly repository: Repository; r
 interface FileNode { readonly kind: 'file'; readonly repository: Repository; readonly change: Change; readonly originalRef: string; readonly modifiedRef: string }
 interface FolderNode { readonly kind: 'folder'; readonly repository: Repository; readonly uri: Uri; readonly label: string; readonly children: readonly (FolderNode | FileNode)[] }
 interface MoreNode { readonly kind: 'more'; readonly repository: Repository }
-type Node = RepositoryNode | CommitNode | StashNode | FolderNode | FileNode | MoreNode;
+interface BranchNode { readonly kind: 'branch'; readonly repository: Repository; readonly branch: Branch; readonly current: boolean }
+interface RemoteNode { readonly kind: 'remote'; readonly repository: Repository; readonly remote: Remote }
+/** `origin/main`: `ref.name` carries the remote's name first, `ref.remote` the remote. */
+interface RemoteBranchNode { readonly kind: 'remoteBranch'; readonly repository: Repository; readonly ref: Ref }
+interface TagNode { readonly kind: 'tag'; readonly repository: Repository; readonly ref: Ref }
+interface WorktreeNode { readonly kind: 'worktree'; readonly repository: Repository; readonly worktree: IWorktreeEntry }
+type Node = RepositoryNode | CommitNode | StashNode | FolderNode | FileNode | MoreNode | BranchNode | RemoteNode | RemoteBranchNode | TagNode | WorktreeNode;
+
+/** One entry of `git worktree list --porcelain`. */
+interface IWorktreeEntry {
+	readonly path: string;
+	readonly head?: string;
+	readonly branch?: string;
+	readonly detached: boolean;
+	readonly locked: boolean;
+	readonly prunable: boolean;
+	/** The first entry: the repository's own checkout. */
+	readonly main: boolean;
+}
+
+export function parseWorktreeList(output: string): IWorktreeEntry[] {
+	const entries: IWorktreeEntry[] = [];
+	for (const block of output.split(/\n\n+/)) {
+		const lines = block.split('\n').filter(Boolean);
+		const worktreeLine = lines.find(line => line.startsWith('worktree '));
+		if (!worktreeLine || lines.includes('bare')) {
+			continue;
+		}
+		const value = (key: string) => lines.find(line => line.startsWith(`${key} `))?.slice(key.length + 1);
+		entries.push({
+			path: worktreeLine.slice('worktree '.length),
+			head: value('HEAD'),
+			branch: value('branch')?.replace(/^refs\/heads\//, ''),
+			detached: lines.includes('detached'),
+			locked: lines.some(line => line === 'locked' || line.startsWith('locked ')),
+			prunable: lines.some(line => line === 'prunable' || line.startsWith('prunable ')),
+			main: entries.length === 0,
+		});
+	}
+	return entries;
+}
+
+/** Git's own words for a failed command: its last stderr lines, else the message. */
+function gitErrorText(err: unknown): string {
+	const error = err as Partial<GitError> | undefined;
+	return error?.stderr?.trim() || error?.message || String(err);
+}
+
+async function runGit(task: () => Promise<unknown>): Promise<void> {
+	try {
+		await task();
+	} catch (err) {
+		void window.showErrorMessage(gitErrorText(err));
+	}
+}
+
+async function confirm(message: string, action: string): Promise<boolean> {
+	return await window.showWarningMessage(message, { modal: true }, action) === action;
+}
+
+/** "↑2 ↓1": how far a branch is ahead of and behind its upstream. */
+function trackLabel(branch: Branch): string | undefined {
+	const parts = [branch.ahead ? `\u2191${branch.ahead}` : '', branch.behind ? `\u2193${branch.behind}` : ''].filter(Boolean);
+	return parts.length ? parts.join(' ') : undefined;
+}
 
 interface IFolderEntries { readonly folders: Map<string, IFolderEntries>; readonly files: FileNode[] }
 
@@ -321,22 +385,245 @@ class StashesTree extends RepositoryTree {
 	}
 }
 
-/** Volt's Commits and Stashes views in Source Control, beside Changes and Graph. */
+/** What a branch, remote or tag list shows changed: its refs, remotes or HEAD. Status runs refresh it. */
+abstract class RefsTree extends RepositoryTree {
+
+	private readonly signatures = new Map<Repository, string>();
+
+	protected abstract signature(repository: Repository): string;
+
+	protected watchRepository(repository: Repository): IDisposable[] {
+		return [repository.onDidRunGitStatus(() => {
+			const signature = this.signature(repository);
+			if (this.signatures.get(repository) !== signature) {
+				this.signatures.set(repository, signature);
+				this.refresh();
+			}
+		})];
+	}
+
+	protected refsSignature(repository: Repository, type: RefType): string {
+		return repository.refs.filter(ref => ref.type === type).map(ref => `${ref.name}@${ref.commit}`).join(',');
+	}
+
+	protected async getItemChildren(_node: Node): Promise<Node[]> {
+		return [];
+	}
+}
+
+/** Local branches, the checked-out one first: check out, merge, rebase, rename, delete, publish. */
+class BranchesTree extends RefsTree {
+
+	protected signature(repository: Repository): string {
+		const head = repository.HEAD;
+		return `${head?.name}@${head?.commit}:${head?.ahead}/${head?.behind}|${this.refsSignature(repository, RefType.Head)}`;
+	}
+
+	protected async getRepositoryChildren(repository: Repository): Promise<Node[]> {
+		const refs = await repository.getRefs({ pattern: 'refs/heads', includeCommitDetails: true }).catch(() => []);
+		const head = repository.HEAD?.name;
+		const nodes = refs.filter(ref => ref.type === RefType.Head && ref.name).map((ref): BranchNode => ({ kind: 'branch', repository, branch: ref as Branch, current: ref.name === head }));
+		return [...nodes.filter(node => node.current), ...nodes.filter(node => !node.current)];
+	}
+
+	protected getItem(node: Node): TreeItem {
+		if (node.kind !== 'branch') {
+			throw new Error(`Unexpected node: ${node.kind}`);
+		}
+		const { repository, branch, current } = node;
+		const name = branch.name!;
+		const item = new TreeItem(name, TreeItemCollapsibleState.None);
+		item.id = `${repository.root}#branch#${name}`;
+		item.iconPath = new ThemeIcon(current ? 'check' : 'git-branch');
+		const upstream = current ? repository.HEAD?.upstream : undefined;
+		const date = branch.commitDetails?.commitDate;
+		item.description = [
+			trackLabel(current && repository.HEAD ? repository.HEAD : branch),
+			upstream ? `${upstream.remote}/${upstream.name}` : undefined,
+			date ? fromNow(date, true, true) : undefined,
+		].filter(Boolean).join(' \u00b7 ');
+		const tooltip = new MarkdownString('', true);
+		tooltip.appendMarkdown(`$(git-branch) **${name}**${current ? ` (${l10n.t('current')})` : ''}`);
+		if (branch.commit) {
+			tooltip.appendMarkdown(`\n\n$(git-commit) \`${shortHash(repository, branch.commit)}\``);
+		}
+		if (branch.commitDetails?.message) {
+			tooltip.appendMarkdown(' ');
+			tooltip.appendText(subject(branch.commitDetails.message));
+		}
+		item.tooltip = tooltip;
+		item.contextValue = current ? 'voltGitBranchCurrent' : 'voltGitBranch';
+		return item;
+	}
+}
+
+/** The remotes, each opening to its branches: fetch, remove; check out or merge a remote branch. */
+class RemotesTree extends RefsTree {
+
+	protected signature(repository: Repository): string {
+		return `${repository.remotes.map(remote => `${remote.name}=${remote.fetchUrl}`).join(',')}|${this.refsSignature(repository, RefType.RemoteHead)}`;
+	}
+
+	protected async getRepositoryChildren(repository: Repository): Promise<Node[]> {
+		return [...repository.remotes].sort((a, b) => a.name.localeCompare(b.name)).map((remote): RemoteNode => ({ kind: 'remote', repository, remote }));
+	}
+
+	protected override async getItemChildren(node: Node): Promise<Node[]> {
+		if (node.kind !== 'remote') {
+			return [];
+		}
+		const { repository, remote } = node;
+		const refs = await repository.getRefs({ pattern: `refs/remotes/${remote.name}/`, includeCommitDetails: true }).catch(() => []);
+		return refs.filter(ref => ref.type === RefType.RemoteHead && ref.name && ref.name !== `${remote.name}/HEAD`)
+			.map((ref): RemoteBranchNode => ({ kind: 'remoteBranch', repository, ref }));
+	}
+
+	protected getItem(node: Node): TreeItem {
+		if (node.kind === 'remote') {
+			const { repository, remote } = node;
+			const item = new TreeItem(remote.name, TreeItemCollapsibleState.Collapsed);
+			item.id = `${repository.root}#remote#${remote.name}`;
+			item.iconPath = new ThemeIcon('cloud');
+			item.description = remote.fetchUrl;
+			item.tooltip = [remote.fetchUrl && `${l10n.t('Fetch')}: ${remote.fetchUrl}`, remote.pushUrl && `${l10n.t('Push')}: ${remote.pushUrl}`].filter(Boolean).join('\n') || remote.name;
+			item.contextValue = remote.isReadOnly ? 'voltGitRemoteReadOnly' : 'voltGitRemote';
+			return item;
+		}
+		if (node.kind !== 'remoteBranch') {
+			throw new Error(`Unexpected node: ${node.kind}`);
+		}
+		const { repository, ref } = node;
+		const prefix = `${ref.remote}/`;
+		const name = ref.name!.startsWith(prefix) ? ref.name!.slice(prefix.length) : ref.name!;
+		const item = new TreeItem(name, TreeItemCollapsibleState.None);
+		item.id = `${repository.root}#remoteBranch#${ref.name}`;
+		item.iconPath = new ThemeIcon('git-branch');
+		const date = ref.commitDetails?.commitDate;
+		item.description = date ? fromNow(date, true, true) : undefined;
+		item.tooltip = ref.commitDetails?.message ? `${ref.name}\n${subject(ref.commitDetails.message)}` : ref.name;
+		item.contextValue = 'voltGitRemoteBranch';
+		return item;
+	}
+}
+
+/** The repository's tags, newest first: check out, push, delete. */
+class TagsTree extends RefsTree {
+
+	protected signature(repository: Repository): string {
+		return this.refsSignature(repository, RefType.Tag);
+	}
+
+	protected async getRepositoryChildren(repository: Repository): Promise<Node[]> {
+		const refs = await repository.getRefs({ pattern: 'refs/tags', sort: 'committerdate', includeCommitDetails: true }).catch(() => []);
+		return refs.filter(ref => ref.type === RefType.Tag && ref.name).map((ref): TagNode => ({ kind: 'tag', repository, ref }));
+	}
+
+	protected getItem(node: Node): TreeItem {
+		if (node.kind !== 'tag') {
+			throw new Error(`Unexpected node: ${node.kind}`);
+		}
+		const { repository, ref } = node;
+		const item = new TreeItem(ref.name!, TreeItemCollapsibleState.None);
+		item.id = `${repository.root}#tag#${ref.name}`;
+		item.iconPath = new ThemeIcon('tag');
+		const date = ref.commitDetails?.commitDate;
+		item.description = [ref.commit ? shortHash(repository, ref.commit) : undefined, date ? fromNow(date, true, true) : undefined].filter(Boolean).join(' \u00b7 ');
+		item.tooltip = ref.commitDetails?.message ? `${ref.name}\n${subject(ref.commitDetails.message)}` : ref.name;
+		item.contextValue = 'voltGitTag';
+		return item;
+	}
+}
+
+/** Every worktree of the repository, its own checkout first: open, open in a new window, delete. */
+class WorktreesTree extends RefsTree {
+
+	protected signature(repository: Repository): string {
+		return `${repository.worktrees.map(worktree => `${worktree.path}@${worktree.ref}`).join(',')}|${this.refsSignature(repository, RefType.Head)}`;
+	}
+
+	protected async getRepositoryChildren(repository: Repository): Promise<Node[]> {
+		const output = await repository.listWorktreesPorcelain().catch(() => '');
+		return parseWorktreeList(output).map((worktree): WorktreeNode => ({ kind: 'worktree', repository, worktree }));
+	}
+
+	protected getItem(node: Node): TreeItem {
+		if (node.kind !== 'worktree') {
+			throw new Error(`Unexpected node: ${node.kind}`);
+		}
+		const { repository, worktree } = node;
+		const open = workspace.workspaceFolders?.some(folder => path.relative(folder.uri.fsPath, worktree.path) === '') ?? false;
+		const item = new TreeItem(path.basename(worktree.path), TreeItemCollapsibleState.None);
+		item.id = `${repository.root}#worktree#${worktree.path}`;
+		item.iconPath = new ThemeIcon(open ? 'check' : worktree.main ? 'repo' : 'worktree');
+		item.description = [
+			worktree.branch ?? (worktree.head ? shortHash(repository, worktree.head) : undefined),
+			worktree.main ? l10n.t('main') : undefined,
+			worktree.locked ? l10n.t('locked') : undefined,
+			worktree.prunable ? l10n.t('prunable') : undefined,
+		].filter(Boolean).join(' \u00b7 ');
+		item.tooltip = worktree.path;
+		item.contextValue = worktree.main ? 'voltGitWorktreeMain' : 'voltGitWorktree';
+		return item;
+	}
+}
+
+/** Volt's Commits, Branches, Remotes, Stashes, Tags and Worktrees views in Source Control, beside Changes and Graph. */
 export class VoltGitViews implements IDisposable {
 
 	private readonly disposables: IDisposable[] = [];
 
-	constructor(model: Model) {
+	constructor(private readonly model: Model) {
 		const decorations = new ChangeDecorations();
 		const commitsTree = new CommitsTree(model, decorations);
 		const stashesTree = new StashesTree(model, decorations);
-		this.disposables.push(decorations, commitsTree, stashesTree);
+		const branchesTree = new BranchesTree(model, decorations);
+		const remotesTree = new RemotesTree(model, decorations);
+		const tagsTree = new TagsTree(model, decorations);
+		const worktreesTree = new WorktreesTree(model, decorations);
+		this.disposables.push(decorations, commitsTree, stashesTree, branchesTree, remotesTree, tagsTree, worktreesTree);
 
 		const commitsView = window.createTreeView('git.volt.commits', { treeDataProvider: commitsTree, showCollapseAll: true });
 		const stashesView = window.createTreeView('git.volt.stashes', { treeDataProvider: stashesTree, showCollapseAll: true });
-		this.disposables.push(commitsView, stashesView);
+		const branchesView = window.createTreeView('git.volt.branches', { treeDataProvider: branchesTree });
+		const remotesView = window.createTreeView('git.volt.remotes', { treeDataProvider: remotesTree, showCollapseAll: true });
+		const tagsView = window.createTreeView('git.volt.tags', { treeDataProvider: tagsTree });
+		const worktreesView = window.createTreeView('git.volt.worktrees', { treeDataProvider: worktreesTree });
+		this.disposables.push(commitsView, stashesView, branchesView, remotesView, tagsView, worktreesView);
 		// Stashes change outside a stash operation too (another tool, the terminal): look again when shown.
 		this.disposables.push(stashesView.onDidChangeVisibility(e => e.visible && stashesTree.refresh()));
+		this.disposables.push(worktreesView.onDidChangeVisibility(e => e.visible && worktreesTree.refresh()));
+
+		// The views' title actions run Git's own commands on the repository the views list, so the
+		// agent window's chat repository is used without asking which one.
+		const onRepository = (gitCommand: string) => () => {
+			const repository = this.repository();
+			return repository ? commands.executeCommand(gitCommand, repository.sourceControl) : commands.executeCommand(gitCommand);
+		};
+		const titleCommands: [string, string][] = [
+			['git.volt.createBranch', 'git.branch'],
+			['git.volt.createBranchFrom', 'git.branchFrom'],
+			['git.volt.renameCurrentBranch', 'git.renameBranch'],
+			['git.volt.fetch', 'git.fetch'],
+			['git.volt.fetchPrune', 'git.fetchPrune'],
+			['git.volt.fetchAll', 'git.fetchAll'],
+			['git.volt.pull', 'git.pull'],
+			['git.volt.push', 'git.push'],
+			['git.volt.sync', 'git.sync'],
+			['git.volt.publish', 'git.publish'],
+			['git.volt.addRemote', 'git.addRemote'],
+			['git.volt.stash', 'git.stash'],
+			['git.volt.stashIncludeUntracked', 'git.stashIncludeUntracked'],
+			['git.volt.stashStaged', 'git.stashStaged'],
+			['git.volt.stashApplyLatest', 'git.stashApplyLatest'],
+			['git.volt.stashPopLatest', 'git.stashPopLatest'],
+			['git.volt.stashDropAll', 'git.stashDropAll'],
+			['git.volt.createTag', 'git.createTag'],
+			['git.volt.pushTags', 'git.pushTags'],
+			['git.volt.createWorktree', 'git.createWorktree'],
+		];
+		for (const [id, gitCommand] of titleCommands) {
+			this.disposables.push(commands.registerCommand(id, onRepository(gitCommand)));
+		}
 
 		this.disposables.push(
 			commands.registerCommand('git.volt.refreshCommits', () => commitsTree.refresh()),
@@ -351,7 +638,128 @@ export class VoltGitViews implements IDisposable {
 			commands.registerCommand('git.volt.stashApply', (node: StashNode) => node.repository.applyStash(node.stash.index)),
 			commands.registerCommand('git.volt.stashPop', (node: StashNode) => node.repository.popStash(node.stash.index)),
 			commands.registerCommand('git.volt.stashDrop', (node: StashNode) => this.dropStash(node)),
+			// A commit: the same actions as the Graph's.
+			commands.registerCommand('git.volt.checkoutCommit', (node: CommitNode) =>
+				commands.executeCommand('git.graph.checkoutDetached', node.repository.sourceControl, { id: node.commit.hash })),
+			commands.registerCommand('git.volt.branchFromCommit', (node: CommitNode) =>
+				commands.executeCommand('git.branch', node.repository.sourceControl, { id: node.commit.hash })),
+			commands.registerCommand('git.volt.tagCommit', (node: CommitNode) =>
+				commands.executeCommand('git.createTag', node.repository.sourceControl, { id: node.commit.hash })),
+			commands.registerCommand('git.volt.cherryPickCommit', (node: CommitNode) =>
+				commands.executeCommand('git.graph.cherryPick', node.repository.sourceControl, { id: node.commit.hash })),
+			commands.registerCommand('git.volt.refreshBranches', () => branchesTree.refresh()),
+			commands.registerCommand('git.volt.refreshRemotes', () => remotesTree.refresh()),
+			commands.registerCommand('git.volt.refreshTags', () => tagsTree.refresh()),
+			commands.registerCommand('git.volt.refreshWorktrees', () => worktreesTree.refresh()),
+			// A branch.
+			commands.registerCommand('git.volt.checkoutBranch', (node: BranchNode) => runGit(() => node.repository.checkout(node.branch.name!))),
+			commands.registerCommand('git.volt.mergeBranch', (node: BranchNode | RemoteBranchNode) =>
+				runGit(() => node.repository.merge(node.kind === 'branch' ? node.branch.name! : node.ref.name!))),
+			commands.registerCommand('git.volt.rebaseOntoBranch', (node: BranchNode | RemoteBranchNode) =>
+				runGit(() => node.repository.rebase(node.kind === 'branch' ? node.branch.name! : node.ref.name!))),
+			commands.registerCommand('git.volt.deleteBranch', (node: BranchNode) => this.deleteBranch(node)),
+			commands.registerCommand('git.volt.copyBranchName', (node: BranchNode | RemoteBranchNode | TagNode) =>
+				env.clipboard.writeText(node.kind === 'branch' ? node.branch.name! : node.ref.name!)),
+			// A remote and its branches.
+			commands.registerCommand('git.volt.fetchRemote', (node: RemoteNode) => runGit(() => node.repository.fetch({ remote: node.remote.name }))),
+			commands.registerCommand('git.volt.removeRemote', (node: RemoteNode) => this.removeRemote(node)),
+			commands.registerCommand('git.volt.copyRemoteUrl', (node: RemoteNode) => env.clipboard.writeText(node.remote.fetchUrl ?? node.remote.pushUrl ?? '')),
+			commands.registerCommand('git.volt.checkoutRemoteBranch', (node: RemoteBranchNode) => this.checkoutRemoteBranch(node)),
+			commands.registerCommand('git.volt.deleteRemoteBranch', (node: RemoteBranchNode) => this.deleteRemoteBranch(node)),
+			// A tag.
+			commands.registerCommand('git.volt.checkoutTag', (node: TagNode) => runGit(() => node.repository.checkout(node.ref.name!, { detached: true }))),
+			commands.registerCommand('git.volt.pushTag', (node: TagNode) => this.pushTag(node)),
+			commands.registerCommand('git.volt.deleteTag', (node: TagNode) => this.deleteTag(node)),
+			// A worktree.
+			commands.registerCommand('git.volt.openWorktree', (node: WorktreeNode) =>
+				commands.executeCommand('vscode.openFolder', Uri.file(node.worktree.path), { forceReuseWindow: true })),
+			commands.registerCommand('git.volt.openWorktreeInNewWindow', (node: WorktreeNode) =>
+				commands.executeCommand('vscode.openFolder', Uri.file(node.worktree.path), { forceNewWindow: true })),
+			commands.registerCommand('git.volt.revealWorktree', (node: WorktreeNode) => commands.executeCommand('revealFileInOS', Uri.file(node.worktree.path))),
+			commands.registerCommand('git.volt.deleteWorktree', (node: WorktreeNode) => this.deleteWorktree(node)),
 		);
+	}
+
+	/** The repository the views list: the one selected in Source Control, else the first. */
+	private repository(): Repository | undefined {
+		return this.model.repositories.find(repository => repository.sourceControl.selected) ?? this.model.repositories[0];
+	}
+
+	private async deleteBranch(node: BranchNode): Promise<void> {
+		const name = node.branch.name!;
+		if (!await confirm(l10n.t('Are you sure you want to delete the branch "{0}"?', name), l10n.t('Delete Branch'))) {
+			return;
+		}
+		try {
+			await node.repository.deleteBranch(name, false);
+		} catch (err) {
+			if ((err as GitError).gitErrorCode !== GitErrorCodes.BranchNotFullyMerged) {
+				void window.showErrorMessage(gitErrorText(err));
+				return;
+			}
+			if (await confirm(l10n.t('The branch "{0}" is not fully merged. Delete anyway?', name), l10n.t('Delete Branch'))) {
+				await runGit(() => node.repository.deleteBranch(name, true));
+			}
+		}
+	}
+
+	/** `origin/feature` checks out a local `feature` tracking it, or the existing local one. */
+	private async checkoutRemoteBranch(node: RemoteBranchNode): Promise<void> {
+		const { repository, ref } = node;
+		const local = ref.name!.slice(`${ref.remote}/`.length);
+		const exists = repository.refs.some(candidate => candidate.type === RefType.Head && candidate.name === local);
+		await runGit(() => exists ? repository.checkout(local) : repository.checkoutTracking(ref.name!));
+	}
+
+	private async deleteRemoteBranch(node: RemoteBranchNode): Promise<void> {
+		const { repository, ref } = node;
+		const name = ref.name!.slice(`${ref.remote}/`.length);
+		if (await confirm(l10n.t('Are you sure you want to delete the branch "{0}" on the remote "{1}"?', name, ref.remote!), l10n.t('Delete Remote Branch'))) {
+			await runGit(() => repository.deleteRemoteRef(ref.remote!, name));
+		}
+	}
+
+	private async removeRemote(node: RemoteNode): Promise<void> {
+		if (await confirm(l10n.t('Are you sure you want to remove the remote "{0}"?', node.remote.name), l10n.t('Remove Remote'))) {
+			await runGit(() => node.repository.removeRemote(node.remote.name));
+		}
+	}
+
+	private async pushTag(node: TagNode): Promise<void> {
+		const { repository, ref } = node;
+		const remotes = repository.remotes.filter(remote => !remote.isReadOnly);
+		if (!remotes.length) {
+			void window.showErrorMessage(l10n.t('Your repository has no remotes configured to push to.'));
+			return;
+		}
+		const remote = remotes.length === 1 ? remotes[0].name : (await window.showQuickPick(remotes.map(candidate => candidate.name), { placeHolder: l10n.t('Pick a remote to push the tag "{0}" to:', ref.name!) }));
+		if (remote) {
+			await runGit(() => repository.pushTo(remote, `refs/tags/${ref.name}`));
+		}
+	}
+
+	private async deleteTag(node: TagNode): Promise<void> {
+		if (await confirm(l10n.t('Are you sure you want to delete the tag "{0}"?', node.ref.name!), l10n.t('Delete Tag'))) {
+			await runGit(() => node.repository.deleteTag(node.ref.name!));
+		}
+	}
+
+	private async deleteWorktree(node: WorktreeNode): Promise<void> {
+		const { repository, worktree } = node;
+		if (!await confirm(l10n.t('Are you sure you want to delete the worktree at "{0}"?', worktree.path), l10n.t('Delete Worktree'))) {
+			return;
+		}
+		try {
+			await repository.deleteWorktree(worktree.path);
+		} catch (err) {
+			if ((err as GitError).gitErrorCode !== GitErrorCodes.WorktreeContainsChanges) {
+				void window.showErrorMessage(gitErrorText(err));
+				return;
+			}
+			if (await confirm(l10n.t('The worktree at "{0}" has changes. Delete it anyway?', worktree.path), l10n.t('Delete Worktree'))) {
+				await runGit(() => repository.deleteWorktree(worktree.path, { force: true }));
+			}
+		}
 	}
 
 	private async openFileChange(node: FileNode): Promise<void> {
