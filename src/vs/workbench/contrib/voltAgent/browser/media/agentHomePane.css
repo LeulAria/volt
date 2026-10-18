@@ -166,15 +166,41 @@
 	initial-value: 0px;
 }
 
-.volt-agent-home-tree > .monaco-list > .monaco-scrollable-element {
+.volt-agent-home-pane-list > .monaco-list > .monaco-scrollable-element {
 	--volt-home-bottom-fade: 0px;
 	-webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--volt-home-bottom-fade)), transparent);
 	mask-image: linear-gradient(to bottom, #000 calc(100% - var(--volt-home-bottom-fade)), transparent);
 	transition: --volt-home-bottom-fade 180ms ease;
 }
 
-.volt-agent-home-tree.more-below > .monaco-list > .monaco-scrollable-element {
+.volt-agent-home-pane-list.more-below > .monaco-list > .monaco-scrollable-element {
 	--volt-home-bottom-fade: 36px;
+}
+
+/* Each group is a VS Code pane (Source Control's views) with its own list. */
+.volt-agent-home-pane-list {
+	position: relative;
+	height: 100%;
+}
+
+/* Group headers: pane headers in the group-row look, lined up with the rows (7px inset plus the 8px twistie). */
+.volt-agent-home-tree .monaco-pane-view .pane > .pane-header.volt-agent-home-pane-header {
+	padding-left: 15px;
+	background: none;
+	outline-offset: -1px;
+}
+
+.volt-agent-home-tree .monaco-pane-view .pane > .pane-header.volt-agent-home-pane-header:focus:not(:focus-visible) {
+	outline: none;
+}
+
+.volt-agent-home-pane-header > .volt-agent-home-row {
+	flex: 1;
+}
+
+.volt-agent-home-pane-header .volt-agent-home-row.is-group > .add:not(.hidden):hover {
+	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+	opacity: 1;
 }
 
 .volt-agent-home-footer {
@@ -270,20 +296,34 @@
 	display: none;
 }
 
-/* Undo notice after a settle, snooze, archive or pin: the footer's free space, for five seconds. */
+/* Undo notice after a settle, snooze, archive or pin: a toast just above the footer's buttons, for five seconds. */
+.volt-agent-home-footer {
+	position: relative;
+}
+
 .volt-agent-home-undo {
-	flex: 1;
+	position: absolute;
+	left: 10px;
+	right: 10px;
+	bottom: calc(100% + 2px);
+	z-index: 2;
 	min-width: 0;
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	height: 28px;
-	margin-left: 6px;
+	height: 30px;
 	padding: 0 4px 0 10px;
-	border-radius: 6px;
-	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	border: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
+	border-radius: 8px;
+	background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
 	font-size: 12px;
-	animation: volt-agent-home-back-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+	animation: volt-agent-home-undo-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes volt-agent-home-undo-in {
+	from { opacity: 0; transform: translateY(4px); }
+	to { opacity: 1; transform: none; }
 }
 
 .volt-agent-home-undo.hidden,
@@ -1515,7 +1555,7 @@ html.volt-layout-agent-window body {
 
 .monaco-workbench.volt-layout-agent {
 	/* Room for "VOLT" after the bolt; the sidebar toggle shifts by the same amount. */
-	--volt-agent-brand-wordmark-width: 30px;
+	--volt-agent-brand-wordmark-width: 26px;
 }
 
 .monaco-workbench.volt-layout-agent:not(.volt-primary-sidebar-toggle-in-titlebar):not(.noauxiliarybar):not(.volt-agent-left-collapsed) .part.auxiliarybar > .volt-agent-brand-logo {
@@ -1525,11 +1565,11 @@ html.volt-layout-agent-window body {
 	z-index: 20;
 	display: inline-flex;
 	align-items: center;
-	justify-content: center;
+	justify-content: flex-start;
 	box-sizing: border-box;
 	width: calc(20px + var(--volt-agent-brand-wordmark-width));
 	height: 20px;
-	padding-left: 20px;
+	padding-left: 16px;
 	background: var(--volt-agent-brand-logo) 3px center / auto 14px no-repeat;
 	pointer-events: none;
 }
@@ -1552,13 +1592,13 @@ html.volt-layout-agent-window body {
 .monaco-workbench.volt-layout-agent.volt-agent-left-collapsed .titlebar-left > .volt-agent-brand-logo.in-titlebar {
 	display: inline-flex;
 	align-items: center;
-	justify-content: center;
+	justify-content: flex-start;
 	flex: 0 0 auto;
 	box-sizing: border-box;
 	width: calc(20px + var(--volt-agent-brand-wordmark-width));
 	height: var(--volt-agent-titlebar-height, 35px);
 	margin-right: 2px;
-	padding-left: 20px;
+	padding-left: 16px;
 	background: var(--volt-agent-brand-logo) 3px center / auto 14px no-repeat;
 	pointer-events: none;
 }
@@ -1688,7 +1728,8 @@ html.volt-layout-agent-window body {
 	content: '';
 	position: absolute;
 	top: 0;
-	left: 108px;
+	/* Start after the sidebar toggle (it sits after the bolt and wordmark), or this box swallows its clicks. */
+	left: calc(122px + var(--volt-agent-brand-wordmark-width));
 	/* Stop before the history arrows. This drag box swallows clicks on controls over it, even no-drag.
 	 * 58px matches agentSidebarNavDragClearance() until that contribution sets the variable. */
 	right: var(--volt-agent-nav-drag-clearance, 58px);
@@ -1698,7 +1739,7 @@ html.volt-layout-agent-window body {
 }
 
 .monaco-workbench.volt-layout-agent.mac:not(.web).fullscreen .part.auxiliarybar::after {
-	left: 38px;
+	left: calc(57px + var(--volt-agent-brand-wordmark-width));
 }
 
 .monaco-workbench.volt-layout-agent.mac:not(.web).noauxiliarybar .part.auxiliarybar::after,
@@ -1732,7 +1773,7 @@ html.volt-layout-agent-window body {
 }
 
 .monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) > .title,
-.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .pane-header {
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .pane-header:not(.volt-agent-home-tree *) {
 	display: none !important;
 	height: 0 !important;
 	min-height: 0 !important;
@@ -1740,10 +1781,10 @@ html.volt-layout-agent-window body {
 }
 
 .monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) > .content,
-.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .monaco-pane-view,
-.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .split-view-view,
-.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .pane,
-.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .pane-body {
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .monaco-pane-view:not(.volt-agent-home-tree *),
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .split-view-view:not(.volt-agent-home-tree *),
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .pane:not(.volt-agent-home-tree *),
+.monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) .pane-body:not(.volt-agent-home-tree *) {
 	height: 100% !important;
 }
 
@@ -1784,14 +1825,14 @@ html.volt-layout-agent-window body {
 	background: transparent !important;
 }
 
-.monaco-workbench .part.auxiliarybar.volt-agent-home .monaco-pane-view,
-.monaco-workbench .part.auxiliarybar.volt-agent-home .split-view-view,
-.monaco-workbench .part.auxiliarybar.volt-agent-home .pane,
-.monaco-workbench .part.auxiliarybar.volt-agent-home .pane-body {
+.monaco-workbench .part.auxiliarybar.volt-agent-home .monaco-pane-view:not(.volt-agent-home-tree *),
+.monaco-workbench .part.auxiliarybar.volt-agent-home .split-view-view:not(.volt-agent-home-tree *),
+.monaco-workbench .part.auxiliarybar.volt-agent-home .pane:not(.volt-agent-home-tree *),
+.monaco-workbench .part.auxiliarybar.volt-agent-home .pane-body:not(.volt-agent-home-tree *) {
 	height: 100% !important;
 }
 
-.monaco-workbench .part.auxiliarybar.volt-agent-home .pane-header {
+.monaco-workbench .part.auxiliarybar.volt-agent-home .pane-header:not(.volt-agent-home-tree *) {
 	display: none !important;
 }
 

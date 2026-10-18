@@ -9,6 +9,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { defaultAgentHomeViewState, IAgentHomeViewState } from '../../browser/home/agentHomeFilter.js';
 import {
+	fairPaneShares,
 	AGENT_HOME_GROUP_EXPAND_ALL,
 	AGENT_HOME_GROUP_LIMIT,
 	AGENT_HOME_WEEK_LIMIT,
@@ -607,7 +608,7 @@ suite('Agent home list model', () => {
 
 		// Status grouping keeps its headers: Working moves below Done, folded, with its count.
 		const status = buildAgentHomeTree(folders, [...sessions, session('parked', { status: 'done', settled: true })], view({ grouping: 'status' }), options);
-		assert.deepStrictEqual(headers(status), ['pinned', 'needsAttention', 'done', 'working', 'settled']);
+		assert.deepStrictEqual(headers(status), ['pinned', 'needsAttention', 'working', 'done', 'settled']);
 		const working = status.find(node => node.element.type === 'bucket' && node.element.id === 'working')!;
 		assert.ok(working.element.type === 'bucket' && working.element.count === 3 && working.collapsed);
 
@@ -670,5 +671,14 @@ suite('Agent home list model', () => {
 		assert.strictEqual(agentSnoozeAt(morning, today, 9 * 60), undefined, 'the past is not a snooze');
 		assert.strictEqual(agentSnoozeAt(morning, Number.NaN, 600), undefined);
 		assert.strictEqual(agentSnoozeAt(morning, today, 24 * 60), undefined);
+	});
+
+	test('open groups get their rows up to a fair share of the height', () => {
+		// Everything fits: each group its rows, the rest left over.
+		assert.deepStrictEqual(fairPaneShares([56, 280], 600), { sizes: [56, 280], left: 264 });
+		// A short group keeps its rows; the long ones split the rest.
+		assert.deepStrictEqual(fairPaneShares([56, 1000, 1000], 456), { sizes: [56, 200, 200], left: 0 });
+		assert.deepStrictEqual(fairPaneShares([1000, 1000], 301), { sizes: [150, 151], left: 0 });
+		assert.deepStrictEqual(fairPaneShares([100], -10), { sizes: [0], left: 0 });
 	});
 });

@@ -10,7 +10,7 @@
  */
 
 .volt-agent-home-workspace-menu {
-	width: 340px;
+	width: 336px;
 	border-radius: 12px;
 	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32), 0 2px 6px rgba(0, 0, 0, 0.2);
 }
@@ -20,7 +20,7 @@
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	padding: 0 0 0 12px;
+	padding: 0 0 0 14px;
 	border-bottom: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-menu-border, rgba(128, 128, 128, 0.35)));
 }
 
@@ -33,124 +33,29 @@
 .volt-agent-home-workspace-searchbox > .volt-agent-home-workspace-search {
 	flex: 1;
 	min-width: 0;
-	height: 40px;
+	height: 46px;
 	padding-left: 0;
 	border-bottom: 0;
 }
 
-/* Recents, the ways to start and the clone grid scroll together; the hints stay put. */
+/* Recent projects scroll on their own; the ways to start below stay put. No headings. */
 .volt-agent-home-workspace-body {
-	max-height: min(480px, calc(100vh - 160px));
+	max-height: min(224px, calc(100vh - 380px));
 	overflow-y: auto;
 	overscroll-behavior: contain;
-	padding: 4px 6px 8px;
+	padding: 5px;
 }
 
-.volt-agent-home-workspace-body > .volt-agent-home-filter-heading {
-	padding: 10px 8px 4px;
-	font-size: 11.5px;
-	font-weight: 500;
+.volt-agent-home-workspace-actions {
+	padding: 6px 5px 5px;
 }
 
-.volt-agent-home-workspace-body .volt-agent-home-workspace-row {
-	border-radius: 7px;
-	padding: 0 8px;
-	min-height: 28px;
-}
-
-/* A way to start: icon tile, then title over what it does. */
-.volt-agent-home-workspace-row.action {
-	gap: 10px;
-	min-height: 44px;
-	padding: 6px 8px;
-}
-
-.volt-agent-home-workspace-row.action > .leading,
-.volt-agent-home-workspace-row.tile > .leading {
-	width: 28px;
-	height: 28px;
-	border-radius: 7px;
-	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
-	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
-	opacity: 1;
-}
-
-.volt-agent-home-workspace-row > .text {
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-	flex: 1;
-	min-width: 0;
-}
-
-.volt-agent-home-workspace-row > .text > .label {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font-weight: 400;
-}
-
-.volt-agent-home-workspace-row > .text > .description {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font-size: 11.5px;
-	opacity: 0.55;
-}
-
-/* Clone hosts: a 2x2 grid of compact cells. */
-.volt-agent-home-workspace-grid {
-	display: grid;
-	grid-template-columns: 1fr 1fr;
-	gap: 4px;
-	margin-top: 2px;
-}
-
-.volt-agent-home-workspace-row.tile {
+.volt-agent-home-workspace-body .volt-agent-home-workspace-row,
+.volt-agent-home-workspace-actions .volt-agent-home-workspace-row {
 	gap: 8px;
-	min-height: 40px;
-	padding: 5px 8px;
-	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
-}
-
-.volt-agent-home-workspace-row.tile > .leading {
-	width: 24px;
-	height: 24px;
-	border-radius: 6px;
-}
-
-/* Keyboard hints along the foot, as in a command palette. */
-.volt-agent-home-workspace-hints {
-	display: flex;
-	align-items: center;
-	gap: 14px;
-	padding: 7px 12px;
-	border-top: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-menu-border, rgba(128, 128, 128, 0.35)));
-	background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
-	font-size: 11.5px;
-	white-space: nowrap;
-}
-
-.volt-agent-home-workspace-hints > .hint {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	opacity: 0.6;
-}
-
-.volt-agent-home-workspace-hints kbd {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	min-width: 16px;
-	height: 16px;
-	padding: 0 4px;
-	border-radius: 4px;
-	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
-	font-family: inherit;
-	font-size: 10.5px;
-	line-height: 1;
-	box-sizing: border-box;
+	border-radius: 8px;
+	padding: 0 8px;
+	min-height: 30px;
 }
 
 .volt-agent-home-workspace-flyout {
@@ -235,7 +140,7 @@
 }
 
 /* A recent project: its name, then its path dimmed. */
-.volt-agent-home-workspace-body > .volt-agent-home-workspace-row.has-description > .label {
+.volt-agent-home-workspace-body .volt-agent-home-workspace-row.has-description > .label {
 	max-width: 50%;
 }
 

@@ -9,12 +9,13 @@ import { $, addDisposableListener, append, getWindow, isHTMLElement, isKeyboardE
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IIdentityProvider, IListVirtualDelegate } from '../../../../../base/browser/ui/list/list.js';
 import { IListAccessibilityProvider } from '../../../../../base/browser/ui/list/listWidget.js';
+import { Pane, PaneView } from '../../../../../base/browser/ui/splitview/paneview.js';
 import { RenderIndentGuides } from '../../../../../base/browser/ui/tree/abstractTree.js';
 import { IObjectTreeElement, ITreeNode, ITreeRenderer, ObjectTreeElementCollapseState } from '../../../../../base/browser/ui/tree/tree.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Action, IAction, Separator, SubmenuAction, toAction } from '../../../../../base/common/actions.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { Disposable, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, dispose, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { basename } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
@@ -84,6 +85,7 @@ import {
 	agentHomeSectionLabel,
 	buildAgentHomeTree,
 	buildCloudHomeNodes,
+	fairPaneShares,
 	folderPath,
 	IAgentHomeFolder,
 	IAgentHomeNode,
@@ -786,13 +788,198 @@ function sameRepo(a: IAgentRepoInfo | undefined, b: IAgentRepoInfo | undefined):
 	return a?.id === b?.id && a?.name === b?.name && a?.owner === b?.owner && a?.branch === b?.branch && a?.root.toString() === b?.root.toString();
 }
 
+/** The VS Code pane header's height (paneview.ts). */
+const PANE_HEADER_HEIGHT = 22;
+/** Smallest an open group can be dragged to, while it has that many rows. */
+const PANE_MIN_BODY = 2 * ROW_HEIGHT;
+/** Which groups are open, by pane id; a group without an entry starts as the list model says. */
+const AGENT_HOME_PANES_STORAGE_KEY = 'volt.agent.home.panes';
+
+/** Every group folded: this headerless pane takes the space above them, so their headers sit at the bottom. */
+class AgentHomeSpacerPane extends Pane {
+	constructor() {
+		super({ title: '', expanded: true, minimumBodySize: 0, maximumBodySize: 0 });
+		this.element.classList.add('volt-agent-home-pane-spacer');
+		this.render();
+		this.headerVisible = false;
+		this.collapsible = false;
+	}
+
+	/** Takes the free space (no group open), or none. */
+	fill(on: boolean): void {
+		const max = on ? Number.POSITIVE_INFINITY : 0;
+		if (this.maximumBodySize !== max) {
+			this.maximumBodySize = max;
+		}
+	}
+
+	protected renderHeader(): void { }
+	protected renderBody(): void { }
+	protected layoutBody(): void { }
+}
+
+/**
+ * One top-level group of the list (Pinned, Today, Working, Done, Settled, a project section, Cloud):
+ * a VS Code pane like Source Control's, with its own list. The header folds it; open groups share
+ * the height, and folded ones keep only their header.
+ */
+class AgentHomeSectionPane extends Pane {
+	tree: WorkbenchObjectTree<AgentHomeElement> | undefined;
+	private readonly treeStore = this._register(new DisposableStore());
+	private readonly headerStore = this._register(new DisposableStore());
+	private headerRow: HTMLElement | undefined;
+	private twist: HTMLElement | undefined;
+	private label: HTMLElement | undefined;
+	private count: HTMLElement | undefined;
+	private add: HTMLButtonElement | undefined;
+
+	constructor(
+		readonly id: string,
+		private groupElement: AgentHomeElement,
+		private nodes: readonly IAgentHomeNode[],
+		expanded: boolean,
+		private readonly host: AgentHomePane,
+	) {
+		super({ title: elementLabel(groupElement), expanded, minimumBodySize: 0 });
+		this.element.classList.add('volt-agent-home-pane');
+		this.render();
+		this._register(this.onDidChangeExpansionState(open => host.onPaneExpansion(this, open)));
+	}
+
+	/** The group's own element: the header row of the single list this replaced. */
+	get group(): AgentHomeElement {
+		return this.groupElement;
+	}
+
+	/** Rows in the open list; a folded group has none drawn. */
+	get contentHeight(): number {
+		return this.tree?.contentHeight ?? 0;
+	}
+
+	update(group: AgentHomeElement, nodes: readonly IAgentHomeNode[], reinsert: boolean): void {
+		this.groupElement = group;
+		this.nodes = nodes;
+		this.renderHeaderContent();
+		if (!this.tree) {
+			return;
+		}
+		// Row heights are measured when rows are inserted: switching one and two lines inserts them again.
+		if (reinsert) {
+			this.tree.setChildren(null, []);
+		}
+		this.tree.setChildren(null, nodes.map(toTreeElement));
+		this.tree.rerender();
+	}
+
+	/** Sets the body's height range, widening before narrowing so the range is never empty. */
+	bound(min: number, max: number): void {
+		if (min > this.maximumBodySize) {
+			this.maximumBodySize = max;
+			this.minimumBodySize = min;
+			return;
+		}
+		if (this.minimumBodySize !== min) {
+			this.minimumBodySize = min;
+		}
+		if (this.maximumBodySize !== max) {
+			this.maximumBodySize = max;
+		}
+	}
+
+	/** The chat's row in this group, drawn or not. */
+	findSession(id: string): AgentHomeElement | undefined {
+		const walk = (nodes: readonly IAgentHomeNode[]): AgentHomeElement | undefined => {
+			for (const node of nodes) {
+				if (node.element.type === 'session' && node.element.session.id === id) {
+					return node.element;
+				}
+				const nested = node.children && walk(node.children);
+				if (nested) {
+					return nested;
+				}
+			}
+			return undefined;
+		};
+		return walk(this.nodes);
+	}
+
+	protected renderHeader(container: HTMLElement): void {
+		container.classList.add('volt-agent-home-pane-header');
+		const row = append(container, $('.volt-agent-home-row.is-group.is-collapsible'));
+		this.twist = append(append(row, $('span.icon')), $('span.twist'));
+		this.label = append(row, $('span.name'));
+		this.count = append(row, $('span.meta'));
+		const add = append(row, $('button.add.hidden')) as HTMLButtonElement;
+		add.type = 'button';
+		add.tabIndex = -1;
+		add.appendChild(renderIcon(Codicon.add));
+		this.add = add;
+		this.headerRow = row;
+		this.renderHeaderContent();
+	}
+
+	protected override updateHeader(): void {
+		super.updateHeader();
+		this.twist?.replaceChildren(renderIcon(this.isExpanded() ? Codicon.chevronDown : Codicon.chevronRight));
+	}
+
+	private renderHeaderContent(): void {
+		const row = this.headerRow;
+		const add = this.add;
+		if (!row || !add || !this.label || !this.count) {
+			return;
+		}
+		this.headerStore.clear();
+		const group = this.groupElement;
+		row.classList.remove('group-working', 'group-settled', 'group-snooze');
+		if (group.type === 'group') {
+			row.classList.add(`group-${group.id}`);
+		}
+		this.label.textContent = elementLabel(group);
+		const count = group.type === 'bucket' || group.type === 'group' || group.type === 'cloudHeader' ? group.count : undefined;
+		this.count.textContent = count === undefined ? '' : String(count);
+		// The header's +: only the projects section has one (it adds a project); chat groups (Pinned, Done, Settled) have none.
+		const addsProject = group.type === 'section' && !!group.add;
+		add.classList.toggle('hidden', !addsProject);
+		if (!addsProject) {
+			return;
+		}
+		setAgentTooltip(add, localize('voltAgent.home.newProject', "New Project"));
+		// Handled here, not as a click on the header: the default is prevented so the group does not fold.
+		this.headerStore.add(addDisposableListener(add, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			void this.host.addProject(add);
+		}));
+	}
+
+	protected renderBody(container: HTMLElement): void {
+		const list = append(container, $('.volt-agent-home-pane-list'));
+		this.tree = this.host.createPaneTree(list, this.treeStore);
+		this.tree.setChildren(null, this.nodes.map(toTreeElement));
+		this.treeStore.add(this.tree.onDidChangeContentHeight(() => this.host.scheduleBalance()));
+	}
+
+	protected layoutBody(height: number, width: number): void {
+		this.tree?.layout(height, width);
+	}
+}
+
 export class AgentHomePane extends Disposable {
 
 	readonly element: HTMLElement;
 	private readonly nav: HTMLElement;
 	private navFilter: HTMLButtonElement | undefined;
 	private readonly treeContainer: HTMLElement;
-	private readonly tree: WorkbenchObjectTree<AgentHomeElement>;
+	/** The groups, as Source Control's views: folded headers stack, open groups share the height. */
+	private readonly paneView: PaneView;
+	private readonly spacer: AgentHomeSpacerPane;
+	private panes: AgentHomeSectionPane[] = [];
+	/** Groups the user opened or folded, by pane id. */
+	private readonly paneExpanded: Map<string, boolean>;
+	/** What the open groups were last sized for; sizes are set again only when it changes. */
+	private balanceKey = '';
+	private balanceQueued = false;
 	private readonly hover = this._register(new AgentTooltip());
 	private readonly repoResolver: AgentRepoResolver;
 	/** Repository facts by folder path; filled in the background and applied on the next refresh. */
@@ -806,6 +993,8 @@ export class AgentHomePane extends Disposable {
 	private readonly rowsFrame = this._register(new MutableDisposable());
 	/** A chat opened on the press; the click that completes the press does not open it again. */
 	private pressed: { readonly element: AgentHomeElement; readonly at: number } | undefined;
+	/** The arrows' chat: one opens at a time, and a held arrow opens only where it stops. */
+	private browsing: { pending: string | undefined; opening: boolean } = { pending: undefined, opening: false };
 	/** Recently opened folders, read once and again only when that list changes. */
 	private recents: Promise<readonly (IRecentFolder | IRecentWorkspace)[]> | undefined;
 	private refreshSeq = 0;
@@ -831,7 +1020,7 @@ export class AgentHomePane extends Disposable {
 		@IContextMenuService private readonly contextMenuService: IContextMenuService,
 		@IFileService fileService: IFileService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
-		@IKeybindingService keybindingService: IKeybindingService,
+		@IKeybindingService private readonly keybindingService: IKeybindingService,
 		@ILabelService private readonly labelService: ILabelService,
 		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
 		@IWorkspacesService private readonly workspacesService: IWorkspacesService,
@@ -889,85 +1078,13 @@ export class AgentHomePane extends Disposable {
 		this.treeContainer = append(this.element, $('.volt-agent-home-tree'));
 		this.installSettingsButton(keybindingService);
 
-		this.tree = this._register(this.instantiationService.createInstance(
-			WorkbenchObjectTree<AgentHomeElement>,
-			'AgentHome',
-			this.treeContainer,
-			new AgentHomeDelegate(this),
-			[new AgentHomeRenderer(this, keybindingService)],
-			{
-				accessibilityProvider: new AgentHomeAccessibilityProvider(),
-				keyboardNavigationLabelProvider: {
-					getKeyboardNavigationLabel: (element: AgentHomeElement) => elementLabel(element),
-				},
-				identityProvider,
-				multipleSelectionSupport: false,
-				hideTwistiesOfChildlessElements: false,
-				renderIndentGuides: RenderIndentGuides.None,
-				// A run group's row opens its compare view; its chevron folds the runs out.
-				expandOnlyOnTwistieClick: (element: AgentHomeElement) => element.type === 'runGroup',
-				// Every node carries its own default collapse state; see toTreeElement.
-				paddingBottom: ROW_HEIGHT,
-				setRowLineHeight: false,
-				horizontalScrolling: false,
-				transformOptimization: false,
-				// Sticky group headers cover the rows underneath with the sidebar plate.
-				stickyScrollBackdrop: true,
-			}
-		));
-
-		// Rows still below the fold dissolve into the footer; the fade lifts at the end of the list.
-		this._register(this.tree.onDidScroll(e => {
-			this.treeContainer.classList.toggle('more-below', e.scrollTop + e.height < e.scrollHeight - ROW_HEIGHT);
-		}));
-
-		// A chat is read ahead of its open: the row under the pointer, and the one keyboard focus lands on.
-		this._register(this.tree.onMouseOver(e => this.prefetch(e.element)));
-		this._register(this.tree.onDidChangeFocus(e => this.prefetch(e.elements[0])));
-		// A chat opens on the press, not the release: the switch starts a whole click sooner.
-		this._register(this.tree.onMouseDown(e => this.openOnPress(e.element, e.browserEvent)));
-
-		this._register(this.tree.onDidOpen(e => {
-			const element = e.element;
-			if (!element) {
-				return;
-			}
-			if (this.isExpandToggleClick(element, e.browserEvent)) {
-				return;
-			}
-			const pressed = this.pressed;
-			this.pressed = undefined;
-			if (pressed?.element === element && isMouseEvent(e.browserEvent) && Date.now() - pressed.at < PRESS_OPEN_WINDOW_MS) {
-				return; // opened on the press already
-			}
-			if (element.type === 'session' && isKeyboardEvent(e.browserEvent)) {
-				this.openFromKeyboard(element.session.id);
-				return;
-			}
-			void this.activate(element).finally(() => {
-				if (element.type === 'newChat' || element.type === 'action' || element.type === 'more' || element.type === 'empty') {
-					this.tree.setSelection([]);
-					this.tree.setFocus([]);
-				}
-			});
-		}));
-
-		// Header chevrons and the row's `collapsed` class are drawn in renderElement; a fold alone does not re-render the row.
-		this._register(this.tree.onDidChangeCollapseState(e => {
-			const element = e.node.element;
-			if (element && this.tree.hasElement(element)) {
-				this.tree.rerender(element);
-			}
-		}));
-
-		this._register(this.tree.onContextMenu(e => {
-			if (e.element?.type !== 'session') {
-				return;
-			}
-			e.browserEvent.preventDefault();
-			e.browserEvent.stopPropagation();
-			this.showSessionMenu(e.element.session, isHTMLElement(e.anchor) ? e.anchor : { x: e.anchor.posx, y: e.anchor.posy });
-		}));
+		this.paneExpanded = this.readPaneState();
+		this.paneView = this._register(new PaneView(this.treeContainer));
+		this.spacer = this._register(new AgentHomeSpacerPane());
+		this.paneView.addPane(this.spacer, 0);
+		this._register(toDisposable(() => dispose(this.panes)));
+		// Typing after a click goes to the chat's composer, as it did when the click moved the keyboard there.
+		this._register(addDisposableListener(this.treeContainer, 'keydown', e => this.typeIntoComposer(e), true));
 
 		this._register(this.workspacesService.onDidChangeRecentlyOpened(() => {
 			this.recents = undefined;
@@ -993,13 +1110,102 @@ export class AgentHomePane extends Disposable {
 		}));
 
 		// Ages, "Working 2m" and snooze countdowns move with the clock, not with history events.
-		const clock = getWindow(this.element).setInterval(() => this.tree.rerender(), CLOCK_TICK_MS);
+		const clock = getWindow(this.element).setInterval(() => this.rerenderRows(), CLOCK_TICK_MS);
 		this._register(toDisposable(() => getWindow(this.element).clearInterval(clock)));
 
 		const observer = new ResizeObserver(() => this.layout());
 		observer.observe(this.treeContainer);
 		this._register(toDisposable(() => observer.disconnect()));
 		void this.refresh();
+	}
+
+	/** A group's list: the same rows, clicks, keys and menus in every group. */
+	createPaneTree(container: HTMLElement, store: DisposableStore): WorkbenchObjectTree<AgentHomeElement> {
+		const tree = store.add(this.instantiationService.createInstance(
+			WorkbenchObjectTree<AgentHomeElement>,
+			'AgentHome',
+			container,
+			new AgentHomeDelegate(this),
+			[new AgentHomeRenderer(this, this.keybindingService)],
+			{
+				accessibilityProvider: new AgentHomeAccessibilityProvider(),
+				keyboardNavigationLabelProvider: {
+					getKeyboardNavigationLabel: (element: AgentHomeElement) => elementLabel(element),
+				},
+				identityProvider,
+				multipleSelectionSupport: false,
+				hideTwistiesOfChildlessElements: false,
+				renderIndentGuides: RenderIndentGuides.None,
+				// A run group's row opens its compare view; its chevron folds the runs out.
+				expandOnlyOnTwistieClick: (element: AgentHomeElement) => element.type === 'runGroup',
+				setRowLineHeight: false,
+				horizontalScrolling: false,
+				transformOptimization: false,
+				// Sticky group headers cover the rows underneath with the sidebar plate.
+				stickyScrollBackdrop: true,
+			}
+		));
+
+		// Rows still below the fold dissolve into the footer; the fade lifts at the end of the list.
+		store.add(tree.onDidScroll(e => {
+			container.classList.toggle('more-below', e.scrollTop + e.height < e.scrollHeight - ROW_HEIGHT);
+		}));
+
+		// A chat is read ahead of its open: the row under the pointer, and the one keyboard focus lands on.
+		store.add(tree.onMouseOver(e => this.prefetch(e.element)));
+		store.add(tree.onDidChangeFocus(e => this.prefetch(e.elements[0])));
+		// The arrows walk the chats: each one they land on shows, and the keyboard stays in the list.
+		store.add(tree.onDidChangeFocus(e => {
+			const element = e.elements[0];
+			if (element?.type === 'session' && isKeyboardEvent(e.browserEvent) && !this.isActiveChat(element.session.id)) {
+				this.showWhileBrowsing(element.session.id);
+			}
+		}));
+		// A chat opens on the press, not the release: the switch starts a whole click sooner.
+		store.add(tree.onMouseDown(e => this.openOnPress(e.element, e.browserEvent)));
+
+		store.add(tree.onDidOpen(e => {
+			const element = e.element;
+			if (!element) {
+				return;
+			}
+			if (this.isExpandToggleClick(tree, element, e.browserEvent)) {
+				return;
+			}
+			const pressed = this.pressed;
+			this.pressed = undefined;
+			if (pressed?.element === element && isMouseEvent(e.browserEvent) && Date.now() - pressed.at < PRESS_OPEN_WINDOW_MS) {
+				return; // opened on the press already
+			}
+			if (element.type === 'session' && isKeyboardEvent(e.browserEvent)) {
+				this.openFromKeyboard(element.session.id);
+				return;
+			}
+			void this.activate(element).finally(() => {
+				if (element.type === 'newChat' || element.type === 'action' || element.type === 'more' || element.type === 'empty') {
+					tree.setSelection([]);
+					tree.setFocus([]);
+				}
+			});
+		}));
+
+		// Header chevrons and the row's `collapsed` class are drawn in renderElement; a fold alone does not re-render the row.
+		store.add(tree.onDidChangeCollapseState(e => {
+			const element = e.node.element;
+			if (element && tree.hasElement(element)) {
+				tree.rerender(element);
+			}
+		}));
+
+		store.add(tree.onContextMenu(e => {
+			if (e.element?.type !== 'session') {
+				return;
+			}
+			e.browserEvent.preventDefault();
+			e.browserEvent.stopPropagation();
+			this.showSessionMenu(e.element.session, isHTMLElement(e.anchor) ? e.anchor : { x: e.anchor.posx, y: e.anchor.posy });
+		}));
+		return tree;
 	}
 
 	/**
@@ -1041,8 +1247,8 @@ export class AgentHomePane extends Disposable {
 	}
 
 	/**
-	 * "Settled 'Fix login'  Undo Cmd+Z" in the footer for a few seconds after a settle, snooze,
-	 * archive or pin. It sits in the footer's free space, so the list above never moves.
+	 * "Settled 'Fix login'  Undo Cmd+Z" for a few seconds after a settle, snooze, archive or pin:
+	 * a toast just above the footer's buttons, over the list, so neither moves.
 	 */
 	private installUndoNotice(footer: HTMLElement, keybindingService: IKeybindingService): void {
 		const notice = append(footer, $('.volt-agent-home-undo.hidden'));
@@ -1182,15 +1388,20 @@ export class AgentHomePane extends Disposable {
 
 	/** Keyboard into the list, on the open chat's row when no row has focus yet, so the arrows start from it. */
 	focus(): void {
-		this.tree.domFocus();
-		if (this.tree.getFocus().length) {
+		const active = this.editorGroupsService.mainPart.activeGroup?.activeEditor;
+		const found = active instanceof AgentEditorInput ? this.findSession(active.sessionId) : undefined;
+		// The open chat's group when it is open, else the first open group.
+		const tree = (found?.pane.isExpanded() ? found.pane.tree : undefined) ?? this.panes.find(pane => pane.isExpanded() && pane.tree)?.tree;
+		if (!tree) {
 			return;
 		}
-		const active = this.editorGroupsService.mainPart.activeGroup?.activeEditor;
-		const node = active instanceof AgentEditorInput ? this.findSessionNode(active.sessionId) : undefined;
-		if (node?.element) {
-			this.tree.setFocus([node.element]);
-			this.tree.reveal(node.element);
+		tree.domFocus();
+		if (tree.getFocus().length) {
+			return;
+		}
+		if (found && tree.hasElement(found.element)) {
+			tree.setFocus([found.element]);
+			tree.reveal(found.element);
 		}
 	}
 
@@ -1239,14 +1450,17 @@ export class AgentHomePane extends Disposable {
 
 	/** Folds every group; the Repositories / Workspaces header stays open so its rows remain. */
 	collapseAll(): void {
-		for (const node of this.tree.getNode(null).children) {
-			if (node.element?.type === 'section') {
-				for (const child of node.children) {
-					this.collapseRecursive(child);
-				}
+		for (const pane of this.panes) {
+			if (pane.group.type !== 'section') {
+				pane.setExpanded(false);
 				continue;
 			}
-			this.collapseRecursive(node);
+			const tree = pane.tree;
+			if (tree) {
+				for (const node of tree.getNode(null).children) {
+					this.collapseRecursive(tree, node);
+				}
+			}
 		}
 	}
 
@@ -1434,12 +1648,49 @@ export class AgentHomePane extends Disposable {
 			return;
 		}
 		if (this.isActiveChat(element.session.id)) {
-			return; // its click focuses the composer, as before
+			return;
 		}
-		// No focus move or text selection from the press: the open puts the keyboard in the chat.
+		// No text selection from the press. The list keeps the keyboard, so the arrows go on from here.
 		event.preventDefault();
 		this.pressed = { element, at: Date.now() };
-		void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, element.session.id);
+		void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, element.session.id, { preserveFocus: true });
+	}
+
+	/** Shows the chat the arrows reached; while one opens, the latest reached waits its turn. */
+	private showWhileBrowsing(sessionId: string): void {
+		this.browsing.pending = sessionId;
+		if (this.browsing.opening) {
+			return;
+		}
+		const next = () => {
+			const id = this.browsing.pending;
+			this.browsing.pending = undefined;
+			if (!id || this.isActiveChat(id)) {
+				this.browsing.opening = false;
+				return;
+			}
+			this.browsing.opening = true;
+			void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, id, { preserveFocus: true }).finally(next);
+		};
+		next();
+	}
+
+	/** A character typed in the list moves the keyboard into the shown chat's composer, which takes it. */
+	private typeIntoComposer(e: KeyboardEvent): void {
+		if (e.key.length !== 1 || e.key === ' ' || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) {
+			return;
+		}
+		// The list's own fields (find, a rename) keep their typing.
+		if (isHTMLElement(e.target) && e.target.closest('input, textarea, [contenteditable="true"]')) {
+			return;
+		}
+		const group = findAgentPanelGroup(this.editorGroupsService.mainPart);
+		if (!(group.activeEditor instanceof AgentEditorInput)) {
+			return;
+		}
+		// Not the list's type-to-find: the character lands in the composer focused here.
+		e.stopPropagation();
+		group.focus();
 	}
 
 	/**
@@ -1454,7 +1705,7 @@ export class AgentHomePane extends Disposable {
 		void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, sessionId, { preserveFocus: true });
 	}
 
-	private isExpandToggleClick(element: AgentHomeElement, browserEvent: UIEvent | undefined): boolean {
+	private isExpandToggleClick(tree: WorkbenchObjectTree<AgentHomeElement>, element: AgentHomeElement, browserEvent: UIEvent | undefined): boolean {
 		if (!isMouseEvent(browserEvent) || browserEvent.detail === 2) {
 			return false;
 		}
@@ -1464,7 +1715,7 @@ export class AgentHomePane extends Disposable {
 			case 'group':
 			case 'section':
 			case 'cloudHeader':
-				return this.tree.getNode(element).collapsible;
+				return tree.getNode(element).collapsible;
 			case 'newChat':
 			case 'action':
 			case 'session':
@@ -1501,7 +1752,8 @@ export class AgentHomePane extends Disposable {
 				await this.openProject(element);
 				return;
 			case 'session':
-				await this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, element.session.id);
+				// A click keeps the keyboard in the list too; typing moves it to the composer (typeIntoComposer).
+				await this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, element.session.id, { preserveFocus: true });
 				return;
 			case 'runGroup':
 				await this.commandService.executeCommand(OPEN_RUN_GROUP_COMMAND_ID, element.group.id);
@@ -1523,7 +1775,7 @@ export class AgentHomePane extends Disposable {
 			await this.openFolder(folder);
 			return;
 		}
-		const first = this.tree.getNode(element).children[0]?.element;
+		const first = this.treeOf(element)?.getNode(element).children[0]?.element;
 		if (first?.type === 'session') {
 			await this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, first.session.id);
 		}
@@ -1593,8 +1845,14 @@ export class AgentHomePane extends Disposable {
 		}
 		this.rowsFrame.value = scheduleAtNextAnimationFrame(getWindow(this.element), () => {
 			this.rowsFrame.clear();
-			this.tree.rerender();
+			this.rerenderRows();
 		});
+	}
+
+	private rerenderRows(): void {
+		for (const pane of this.panes) {
+			pane.tree?.rerender();
+		}
 	}
 
 	private recentlyOpened(): Promise<readonly (IRecentFolder | IRecentWorkspace)[]> {
@@ -1721,14 +1979,9 @@ export class AgentHomePane extends Disposable {
 		const runGroups = this.homeRunGroups(sessions);
 		this.live = agentHomeLiveWork(this.orchestrator.getState());
 		const tree = [...buildCloudHomeNodes(this.cloud.tasks), ...buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, prTags, runGroups, workingShelf: this.workingSection, live: this.live })];
-		// Row heights are measured when rows are inserted: switching one and two lines inserts them again.
-		if (this.builtTwoLine !== undefined && this.builtTwoLine !== this.twoLine) {
-			this.tree.setChildren(null, []);
-		}
+		const reinsert = this.builtTwoLine !== undefined && this.builtTwoLine !== this.twoLine;
 		this.builtTwoLine = this.twoLine;
-		this.tree.setChildren(null, tree.map(toTreeElement));
-		this.tree.rerender();
-		this.expandHomeSections();
+		this.setPanes(tree, reinsert);
 		this.revealActiveNewChat();
 		this.syncFilterButton();
 		this.layout();
@@ -1823,13 +2076,14 @@ export class AgentHomePane extends Disposable {
 	}
 
 	toggleRunGroup(element: AgentHomeElement): void {
-		if (!this.tree.hasElement(element)) {
+		const tree = this.treeOf(element);
+		if (!tree) {
 			return;
 		}
-		if (this.tree.isCollapsed(element)) {
-			this.tree.expand(element);
+		if (tree.isCollapsed(element)) {
+			tree.expand(element);
 		} else {
-			this.tree.collapse(element);
+			tree.collapse(element);
 		}
 	}
 
@@ -1881,18 +2135,9 @@ export class AgentHomePane extends Disposable {
 		}
 	}
 
-	private expandHomeSections(): void {
-		for (const node of this.tree.getNode(null).children) {
-			// Keep the project section open; folder expand/collapse is left to the user and preserved across refresh.
-			if (node.element?.type === 'section' && node.collapsible) {
-				this.tree.expand(node.element);
-			}
-		}
-	}
-
 	/**
-	 * A new chat is filed under its project. If that project is folded, the row
-	 * the user just started is invisible, so open the folders above it.
+	 * A new chat is filed under its group and project. If either is folded, the row the user just
+	 * started is invisible, so open them.
 	 */
 	private revealActiveNewChat(): void {
 		const active = this.editorGroupsService.mainPart.activeGroup?.activeEditor;
@@ -1903,46 +2148,153 @@ export class AgentHomePane extends Disposable {
 		if (meta && meta.turnCount > 0) {
 			return;
 		}
-		const node = this.findSessionNode(active.sessionId);
-		if (!node?.element) {
+		const found = this.findSession(active.sessionId);
+		if (!found) {
+			return;
+		}
+		found.pane.setExpanded(true);
+		const tree = found.pane.tree;
+		if (!tree?.hasElement(found.element)) {
 			return;
 		}
 		const folded: AgentHomeElement[] = [];
-		let parent = this.tree.getParentElement(node.element);
+		let parent = tree.getParentElement(found.element);
 		while (parent) {
-			if (this.tree.isCollapsed(parent)) {
+			if (tree.isCollapsed(parent)) {
 				folded.push(parent);
 			}
-			parent = this.tree.getParentElement(parent);
+			parent = tree.getParentElement(parent);
 		}
 		for (const element of folded.reverse()) {
-			this.tree.expand(element);
+			tree.expand(element);
 		}
 	}
 
-	private findSessionNode(id: string): ITreeNode<AgentHomeElement | null, void> | undefined {
-		const walk = (node: ITreeNode<AgentHomeElement | null, void>): ITreeNode<AgentHomeElement | null, void> | undefined => {
-			for (const child of node.children) {
-				if (child.element?.type === 'session' && child.element.session.id === id) {
-					return child;
-				}
-				const nested = walk(child);
-				if (nested) {
-					return nested;
-				}
+	private findSession(id: string): { readonly pane: AgentHomeSectionPane; readonly element: AgentHomeElement } | undefined {
+		for (const pane of this.panes) {
+			const element = pane.findSession(id);
+			if (element) {
+				return { pane, element };
 			}
-			return undefined;
-		};
-		return walk(this.tree.getNode(null));
+		}
+		return undefined;
 	}
 
-	private collapseRecursive(node: ITreeNode<AgentHomeElement | null, void>): void {
+	/** The open group whose list holds `element`. */
+	private treeOf(element: AgentHomeElement): WorkbenchObjectTree<AgentHomeElement> | undefined {
+		return this.panes.find(pane => pane.tree?.hasElement(element))?.tree;
+	}
+
+	private collapseRecursive(tree: WorkbenchObjectTree<AgentHomeElement>, node: ITreeNode<AgentHomeElement | null, void>): void {
 		if (node.element && node.collapsible) {
-			this.tree.collapse(node.element);
+			tree.collapse(node.element);
 		}
 		for (const child of node.children) {
-			this.collapseRecursive(child);
+			this.collapseRecursive(tree, child);
 		}
+	}
+
+	/**
+	 * One pane per top-level group, in the list's order. A group keeps its pane (and its list's
+	 * scroll and folds) across rebuilds; groups that empty out lose theirs.
+	 */
+	private setPanes(nodes: readonly IAgentHomeNode[], reinsert: boolean): void {
+		const existing = new Map(this.panes.map(pane => [pane.id, pane]));
+		const next = nodes.map(node => {
+			const id = String(identityProvider.getId(node.element));
+			const pane = existing.get(id);
+			if (pane) {
+				existing.delete(id);
+				pane.update(node.element, node.children ?? [], reinsert);
+				return pane;
+			}
+			const expanded = this.paneExpanded.get(id) ?? !node.collapsed;
+			return new AgentHomeSectionPane(id, node.element, node.children ?? [], expanded, this);
+		});
+		for (const stale of existing.values()) {
+			this.paneView.removePane(stale);
+			stale.dispose();
+		}
+		// The spacer stays first, so pane i sits at index i + 1.
+		const order = this.panes.filter(pane => !existing.has(pane.id));
+		next.forEach((pane, index) => {
+			const at = order.indexOf(pane);
+			if (at === -1) {
+				this.paneView.addPane(pane, pane.minimumSize, index + 1);
+				order.splice(index, 0, pane);
+			} else if (at !== index) {
+				this.paneView.movePane(pane, order[index]);
+				order.splice(at, 1);
+				order.splice(index, 0, pane);
+			}
+		});
+		this.panes = next;
+	}
+
+	onPaneExpansion(pane: AgentHomeSectionPane, open: boolean): void {
+		this.paneExpanded.set(pane.id, open);
+		this.storageService.store(AGENT_HOME_PANES_STORAGE_KEY, JSON.stringify(Object.fromEntries(this.paneExpanded)), StorageScope.PROFILE, StorageTarget.USER);
+		// After the pane has given the split view its own size for the fold.
+		this.scheduleBalance();
+	}
+
+	scheduleBalance(): void {
+		if (this.balanceQueued) {
+			return;
+		}
+		this.balanceQueued = true;
+		queueMicrotask(() => {
+			this.balanceQueued = false;
+			if (!this._store.isDisposed) {
+				this.balancePanes();
+			}
+		});
+	}
+
+	/**
+	 * Sizes the open groups to their rows, each up to a fair share of the height; the last open
+	 * group takes what is left. With every group folded, the spacer takes it and the headers sit at
+	 * the bottom. Runs when the groups, their rows or the height change, so a dragged sash holds
+	 * until then.
+	 */
+	private balancePanes(): void {
+		const height = this.treeContainer.clientHeight;
+		if (height <= 0) {
+			return;
+		}
+		const open = this.panes.filter(pane => pane.isExpanded());
+		const content = open.map(pane => pane.contentHeight);
+		const key = `${height}|${this.panes.map(pane => `${pane.id}:${pane.isExpanded() ? 1 : 0}`).join(',')}|${content.join(',')}`;
+		if (key === this.balanceKey) {
+			return;
+		}
+		this.balanceKey = key;
+		this.spacer.fill(!open.length);
+		if (!open.length) {
+			return;
+		}
+		const { sizes, left } = fairPaneShares(content, height - this.panes.length * PANE_HEADER_HEIGHT);
+		const last = open.length - 1;
+		sizes[last] += left;
+		// Pinned at their sizes first, then loosened to their real range: the split view keeps the sizes.
+		open.forEach((pane, index) => pane.bound(sizes[index], sizes[index]));
+		open.forEach((pane, index) => pane.bound(
+			Math.min(content[index], sizes[index], PANE_MIN_BODY),
+			index === last ? Number.POSITIVE_INFINITY : Math.max(content[index], sizes[index]),
+		));
+	}
+
+	private readPaneState(): Map<string, boolean> {
+		try {
+			const raw = this.storageService.get(AGENT_HOME_PANES_STORAGE_KEY, StorageScope.PROFILE);
+			const parsed: unknown = raw ? JSON.parse(raw) : undefined;
+			if (parsed && typeof parsed === 'object') {
+				return new Map(Object.entries(parsed).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'));
+			}
+		} catch {
+			// A damaged entry starts every group as the list model says.
+		}
+		return new Map();
 	}
 
 	private syncFilterButton(): void {
@@ -1994,7 +2346,8 @@ export class AgentHomePane extends Disposable {
 		if (height <= 0 || width <= 0) {
 			return;
 		}
-		this.tree.layout(height, width);
+		this.paneView.layout(height, width);
+		this.balancePanes();
 	}
 }
 

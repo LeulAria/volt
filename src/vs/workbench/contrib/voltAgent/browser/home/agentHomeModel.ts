@@ -394,6 +394,21 @@ export function uniqueHomeFolders(folders: readonly IAgentHomeFolder[]): IAgentH
 	return [...byKey.values()];
 }
 
+/**
+ * Heights for the open groups: each gets its rows if they fit its fair share of `space`; the rest
+ * split what is left evenly. What no group needs is returned as `left`.
+ */
+export function fairPaneShares(content: readonly number[], space: number): { readonly sizes: number[]; readonly left: number } {
+	const sizes = content.map(() => 0);
+	const order = content.map((_, index) => index).sort((a, b) => content[a] - content[b]);
+	let left = Math.max(0, space);
+	order.forEach((index, n) => {
+		sizes[index] = Math.min(content[index], Math.floor(left / (order.length - n)));
+		left -= sizes[index];
+	});
+	return { sizes, left };
+}
+
 /** Section title for the project groupings. */
 export function agentHomeSectionLabel(key: AgentHomeSectionKey): string {
 	switch (key) {
@@ -500,11 +515,15 @@ function buildHomeTree(
 	// Status grouping lists Settled and Snooze as status headers after Done; elsewhere they fold at the bottom.
 	const shelvesAsBuckets = view.grouping === 'status';
 	if (flat) {
-		body.push(...flatBucketNodes(view.grouping, sortSessionsForHome(unpinned, view.chatOrder), now, options.limits));
+		const buckets = flatBucketNodes(view.grouping, sortSessionsForHome(unpinned, view.chatOrder), now, options.limits);
+		// Status order: Pinned, Draft, Working, Done, then Settled and Snooze.
+		const done = shelvesAsBuckets ? buckets.filter(node => node.element.type === 'bucket' && node.element.id === 'done') : [];
+		body.push(...buckets.filter(node => !done.includes(node)));
 		if (shelvesAsBuckets) {
 			if (working.length) {
 				body.push(bucketNode('working', statusBucketLabel('working'), working, options.limits, { add: true, collapsed: true, count: working.length }));
 			}
+			body.push(...done);
 			for (const shelf of AGENT_HOME_SHELVES) {
 				const members = shelved(shelf);
 				if (members.length) {
