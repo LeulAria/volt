@@ -164,7 +164,7 @@ import { formatAgentSwitch, takeAgentSwitchStart } from './agentSwitchTiming.js'
 import { deferredHeadStart } from './agentThreadWindow.js';
 import { AgentTurnNav, IAgentTurnNavTurn, turnNavPreview } from './agentTurnNav.js';
 import { IAgentSessionChangesService } from '../review/agentSessionChangesService.js';
-import { messageFileChangesSignature } from '../review/agentSessionChanges.js';
+import { agentTurnScope, messageFileChangesSignature } from '../review/agentSessionChanges.js';
 import { adoptProjectForUnstartedSession, agentSessionNeedsScratch, attachSessionToProject } from '../workspace/agentShell.js';
 import { AgentScratchFolders } from '../workspace/agentScratchProject.js';
 import { isAgentPaletteKey } from './agentCommandPalette.js';
@@ -4857,7 +4857,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.renderAgentFooter(turn, message);
 			}
 			if (changedFiles.length) {
-				this.renderTurnFilesCard(turn, changedFiles);
+				this.renderTurnFilesCard(turn, changedFiles, message);
 			}
 		}
 	}
@@ -5467,7 +5467,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		line.querySelector('.volt-agent-token-chip')?.remove();
 	}
 
-	private renderTurnFilesCard(parent: HTMLElement, files: readonly ITurnFileChange[]): void {
+	private renderTurnFilesCard(parent: HTMLElement, files: readonly ITurnFileChange[], message: IAgentAssistantMessage): void {
 		// show-file-icons: the file icon theme only draws inside it.
 		const card = append(parent, $('.volt-agent-turn-files.show-file-icons'));
 		const header = append(card, $('.volt-agent-turn-files-header'));
@@ -5501,8 +5501,44 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			viewToggle.setAttribute('aria-label', label);
 			viewToggle.setAttribute('aria-pressed', String(tree));
 			setAgentTooltip(viewToggle, label);
-			rows.setFiles(files, tree);
+			rows.setFiles(shown, tree);
 		};
+		// The tool calls' counts are a guess (a replace-all edit reports one occurrence); the turn's
+		// snapshots have the real ones. Read once the card is on screen: an old chat has many cards.
+		let shown = files;
+		const turnId = this.userTurnIdBefore(message);
+		if (turnId) {
+			const sessionId = this.sessionKey;
+			const scope = agentTurnScope(turnId);
+			let uris: Promise<(URI | undefined)[]> | undefined;
+			const refine = async () => {
+				uris ??= Promise.all(files.map(file => this.resolveWorkspaceFile(file.path)));
+				const resolved = await uris;
+				const next = files.map((file, index) => {
+					const uri = resolved[index];
+					const stats = uri && this.sessionChanges.getFileStats(sessionId, scope, uri);
+					return stats && (stats.additions || stats.deletions) ? { ...file, additions: stats.additions, deletions: stats.deletions } : file;
+				});
+				if (next.some((file, index) => file.additions !== shown[index].additions || file.deletions !== shown[index].deletions)) {
+					shown = next;
+					render();
+				}
+			};
+			const win = getWindow(card);
+			const observer = new win.IntersectionObserver(entries => {
+				if (entries.some(entry => entry.isIntersecting)) {
+					observer.disconnect();
+					void refine();
+					this.threadListeners.add(this.sessionChanges.onDidChange(changed => {
+						if (changed === sessionId) {
+							void refine();
+						}
+					}));
+				}
+			});
+			observer.observe(card);
+			this.threadListeners.add(toDisposable(() => observer.disconnect()));
+		}
 		// Every card follows the same choice, so a toggle redraws the others too.
 		this.turnFilesCards.add(render);
 		this.threadListeners.add(toDisposable(() => this.turnFilesCards.delete(render)));
@@ -7398,6 +7434,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	/** The 0-based position of a user message among the user messages: the checkpoint fallback key. */
+	/** The id of the user message `message` answers: its turn's checkpoint key. */
+	private userTurnIdBefore(message: IAgentAssistantMessage): string | undefined {
+		const index = this.messages.indexOf(message);
+		for (let i = index - 1; i >= 0; i--) {
+			const candidate = this.messages[i];
+			if (candidate.kind === 'user') {
+				return candidate.id;
+			}
+		}
+		return undefined;
+	}
+
 	private userTurnOf(turnId: string): number | undefined {
 		let ordinal = 0;
 		for (const message of this.messages) {

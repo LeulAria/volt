@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { LcsDiff } from '../../../../../base/common/diff/diff.js';
 import { AgentSegment, FileChangeVerb, IFileChangeBlock, isPhantomFileBlock } from '../blocks/agentBlocks.js';
 import { computeChangeStats, netFileEdit } from './fileChangePreviewModel.js';
 
@@ -105,6 +106,41 @@ export function sumAgentChangeStats(changes: readonly IAgentSessionFileChange[])
 		deletions += change.deletions;
 	}
 	return { files: changes.length, additions, deletions };
+}
+
+/** Lines added and removed going from `original` to `modified`; undefined is no file. */
+export function countLineChanges(original: string | undefined, modified: string | undefined): { additions: number; deletions: number } {
+	const lines = (text: string | undefined) => text ? text.split(/\r?\n/).filter((line, index, all) => index < all.length - 1 || line !== '') : [];
+	const before = lines(original);
+	const after = lines(modified);
+	let additions = 0;
+	let deletions = 0;
+	for (const change of new LcsDiff({ getElements: () => before }, { getElements: () => after }).ComputeDiff(false).changes) {
+		additions += change.modifiedLength;
+		deletions += change.originalLength;
+	}
+	return { additions, deletions };
+}
+
+/**
+ * Line counts read from the files as they are now (after the user undid some of the agent's
+ * hunks, say), over the counts the transcript and snapshots recorded, by path. A file back to
+ * where it started is no change and leaves the list.
+ */
+export function applyLiveChangeStats(files: readonly IAgentSessionFileChange[], live: ReadonlyMap<string, { additions: number; deletions: number }>): IAgentSessionFileChange[] {
+	if (!live.size) {
+		return [...files];
+	}
+	const out: IAgentSessionFileChange[] = [];
+	for (const file of files) {
+		const counts = live.get(file.path);
+		if (!counts) {
+			out.push(file);
+		} else if (counts.additions || counts.deletions) {
+			out.push({ ...file, additions: counts.additions, deletions: counts.deletions });
+		}
+	}
+	return out;
 }
 
 /**

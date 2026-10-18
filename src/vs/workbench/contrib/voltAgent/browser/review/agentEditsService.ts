@@ -11,7 +11,8 @@ import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, IReference, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ResourceMap } from '../../../../../base/common/map.js';
 import { Schemas } from '../../../../../base/common/network.js';
-import { basename } from '../../../../../base/common/resources.js';
+import { basename, isEqualOrParent, joinPath, relativePath } from '../../../../../base/common/resources.js';
+import { isMacintosh } from '../../../../../base/common/platform.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { EditOperation, ISingleEditOperation } from '../../../../../editor/common/core/editOperation.js';
 import { Position } from '../../../../../editor/common/core/position.js';
@@ -38,6 +39,8 @@ import { agentServerEnabled } from '../../../../services/voltAgentServer/common/
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { AgentEditsJournalEntry } from '../../common/agentEditsJournal.js';
 import { ITextFileService } from '../../../../services/textfile/common/textfiles.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 
 export const IAgentEditsService = createDecorator<IAgentEditsService>('voltAgentEdits');
 
@@ -94,6 +97,8 @@ export interface IAgentEditsService {
 	/** The chat's entry for `uri`; without a chat, the newest entry (the one whose diff runs against the live file). */
 	getPendingFile(uri: URI, sessionId?: string): IAgentPendingFile | undefined;
 	getBaselineModel(uri: URI): ITextModel | undefined;
+	/** `uri` in its project folder's own form: /private/tmp/app/a.ts is /tmp/app/a.ts when the project was opened as /tmp/app. */
+	canonicalUri(uri: URI): URI;
 	/**
 	 * Start tracking `uri` for `sessionId` with the text it had before the agent's edit
 	 * (undefined when the agent created it). Ignored while the chat already has pending edits in
@@ -454,12 +459,54 @@ class BinaryEntry extends Disposable implements IEntry {
 	}
 }
 
+/**
+ * The other names a project folder's files go by. A folder opened as /tmp/app is /private/tmp/app
+ * on macOS, and git (snapshots) or an agent may report that form: both name one file, so one
+ * pending entry. {@link canonical} maps any alias onto the folder's own form, the one editors open.
+ */
+export class AgentFolderAliases {
+
+	/** Alias root to folder, longest alias first. */
+	private aliases: { readonly alias: URI; readonly folder: URI }[] = [];
+
+	/** `realpaths`: each folder's resolved path, where it differs from the folder's own. */
+	set(folders: readonly URI[], realpaths: ReadonlyMap<string, URI> = new Map()): void {
+		const aliases: { alias: URI; folder: URI }[] = [];
+		const add = (alias: URI | undefined, folder: URI) => {
+			if (alias && alias.toString() !== folder.toString() && !aliases.some(other => other.alias.toString() === alias.toString())) {
+				aliases.push({ alias, folder });
+			}
+		};
+		for (const folder of folders) {
+			add(realpaths.get(folder.toString()), folder);
+			// macOS's /tmp, /var and /etc are links into /private: known without asking the disk.
+			if (isMacintosh && folder.scheme === Schemas.file) {
+				const match = /^\/private(\/(?:tmp|var|etc)(?:\/.*)?)$/.exec(folder.path);
+				add(match ? folder.with({ path: match[1] }) : /^\/(?:tmp|var|etc)(?:\/|$)/.test(folder.path) ? folder.with({ path: `/private${folder.path}` }) : undefined, folder);
+			}
+		}
+		this.aliases = aliases.sort((a, b) => b.alias.path.length - a.alias.path.length);
+	}
+
+	canonical(uri: URI): URI {
+		for (const { alias, folder } of this.aliases) {
+			if (uri.scheme === alias.scheme && uri.authority === alias.authority && isEqualOrParent(uri, alias) && !isEqualOrParent(uri, folder)) {
+				const rest = relativePath(alias, uri);
+				return rest ? joinPath(folder, rest) : folder;
+			}
+		}
+		return uri;
+	}
+}
+
 export class AgentEditsService extends Disposable implements IAgentEditsService {
 
 	declare readonly _serviceBrand: undefined;
 
-	/** Per file, one entry per chat, oldest first. Only the newest follows the live file. */
-	private readonly entries = new ResourceMap<IEntry[]>();
+	private readonly aliases = new AgentFolderAliases();
+	private aliasGeneration = 0;
+	/** Per file, one entry per chat, oldest first. Only the newest follows the live file. Any alias of a file finds its stack. */
+	private readonly entries = new ResourceMap<IEntry[]>(uri => this.aliases.canonical(uri).toString());
 	private readonly _onDidChange = this._register(new Emitter<URI>());
 	readonly onDidChange = this._onDidChange.event;
 	private readonly _onDidResolve = this._register(new Emitter<IAgentEditResolution>());
@@ -481,8 +528,13 @@ export class AgentEditsService extends Disposable implements IAgentEditsService 
 		@INotificationService private readonly notificationService: INotificationService,
 		@IVoltGitService private readonly gitService: IVoltGitService,
 		@IConfigurationService configurationService: IConfigurationService,
+		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
+		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 	) {
 		super();
+		this.updateAliases();
+		this._register(this.workspaceContextService.onDidChangeWorkspaceFolders(() => this.updateAliases()));
+		this._register(this.sessionContext.onDidChangeProjects(() => this.updateAliases()));
 		// With the agent server the runs happen there, and it journals these same events for the
 		// window (see applyJournalEntry), including the ones from while no window was open.
 		if (!agentServerEnabled(configurationService)) {
@@ -526,6 +578,25 @@ export class AgentEditsService extends Disposable implements IAgentEditsService 
 		this.restore();
 	}
 
+	/** The folders files are tracked under, and the other paths they go by. */
+	private updateAliases(): void {
+		const generation = ++this.aliasGeneration;
+		const folders = new ResourceMap<URI>();
+		for (const folder of this.workspaceContextService.getWorkspace().folders) {
+			folders.set(folder.uri, folder.uri);
+		}
+		for (const project of this.sessionContext.projects) {
+			folders.set(project.root, project.root);
+		}
+		const roots = [...folders.values()];
+		this.aliases.set(roots);
+		void Promise.all(roots.map(async root => [root, root.scheme === Schemas.file ? await this.fileService.realpath(root).catch(() => undefined) : undefined] as const)).then(resolved => {
+			if (generation === this.aliasGeneration) {
+				this.aliases.set(roots, new Map(resolved.filter(([, real]) => !!real).map(([root, real]) => [root.toString(), real!])));
+			}
+		});
+	}
+
 	getPendingFiles(sessionId?: string): readonly IAgentPendingFile[] {
 		const out: IAgentPendingFile[] = [];
 		for (const stack of this.entries.values()) {
@@ -546,6 +617,10 @@ export class AgentEditsService extends Disposable implements IAgentEditsService 
 		return this.find(uri, sessionId)?.toPendingFile();
 	}
 
+	canonicalUri(uri: URI): URI {
+		return this.aliases.canonical(uri);
+	}
+
 	getBaselineModel(uri: URI): ITextModel | undefined {
 		const file = fileUriFromBaseline(uri) ?? uri;
 		const entry = this.find(file, sessionFromBaseline(uri) || undefined);
@@ -556,10 +631,12 @@ export class AgentEditsService extends Disposable implements IAgentEditsService 
 	}
 
 	recordBaseline(sessionId: string, uri: URI, before: string | undefined, options?: IAgentBaselineOptions): void {
+		uri = this.aliases.canonical(uri);
+		const renamedFrom = options?.renamedFrom && this.aliases.canonical(options.renamedFrom);
 		if (!this.coverPrevious(sessionId, uri, before)) {
 			return;
 		}
-		const entry = this.createEntry(sessionId, uri, before, options?.renamedFrom);
+		const entry = this.createEntry(sessionId, uri, before, renamedFrom);
 		if (options?.agentText !== undefined) {
 			entry.agentText = options.agentText;
 		}
@@ -568,10 +645,11 @@ export class AgentEditsService extends Disposable implements IAgentEditsService 
 	}
 
 	recordBinaryBaseline(sessionId: string, uri: URI, baseline: IAgentBinaryBaseline | undefined, options?: { readonly renamedFrom?: URI }): void {
+		uri = this.aliases.canonical(uri);
 		if (!this.coverPrevious(sessionId, uri, undefined)) {
 			return;
 		}
-		const entry = new BinaryEntry(sessionId, uri, baseline, options?.renamedFrom);
+		const entry = new BinaryEntry(sessionId, uri, baseline, options?.renamedFrom && this.aliases.canonical(options.renamedFrom));
 		this.push(entry);
 		void this.fileService.exists(uri).then(exists => {
 			entry.deleted = !exists;
@@ -1019,8 +1097,8 @@ export class AgentEditsService extends Disposable implements IAgentEditsService 
 			if (typeof item?.sessionId !== 'string' || typeof item.uri !== 'string') {
 				continue;
 			}
-			const uri = URI.parse(item.uri);
-			const renamedFrom = typeof item.renamedFrom === 'string' ? URI.parse(item.renamedFrom) : undefined;
+			const uri = this.aliases.canonical(URI.parse(item.uri));
+			const renamedFrom = typeof item.renamedFrom === 'string' ? this.aliases.canonical(URI.parse(item.renamedFrom)) : undefined;
 			if (item.binary !== undefined) {
 				if (!this.entries.get(uri)?.some(entry => entry.sessionId === item.sessionId)) {
 					this.push(new BinaryEntry(item.sessionId, uri, item.binary ?? undefined, renamedFrom));
