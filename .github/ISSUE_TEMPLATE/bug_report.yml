@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in Volt does not work the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. Please [search existing issues](https://github.com/LeulAria/volt/issues) first.
+        **Do not report security problems here.** Follow [SECURITY.md](https://github.com/LeulAria/volt/blob/main/SECURITY.md) instead.
+        Redact secrets, tokens and other people's data from anything you paste.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of steps that shows it. A screen recording or screenshot helps.
+      placeholder: |
+        1. Open a project
+        2. Start a chat with ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Volt version
+      description: "From the menu: Volt > About Volt. For a build from source, give the commit."
+      placeholder: "0.0.2 (stable)"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple silicon)
+        - macOS (Intel)
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: "macOS 26.0"
+  - type: input
+    id: agent
+    attributes:
+      label: Agent or model in use
+      description: For example Claude Code, Codex, OpenCode, an API model, or a local model. Leave blank if it is not related to an agent.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and screenshots
+      description: "Open the command palette and run **Developer: Open Logs Folder**, or paste the error from **Help > Toggle Developer Tools**. Redact anything private."
+      render: shell

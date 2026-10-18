@@ -1,8 +1,11 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Question
-    url: https://stackoverflow.com/questions/tagged/visual-studio-code
-    about: Please ask and answer questions here.
-  - name: Extension Development
-    url: https://github.com/microsoft/vscode-discussions/discussions
-    about: Please use this for extension development questions and ideas.
+  - name: Report a security vulnerability
+    url: https://github.com/LeulAria/volt/security/advisories/new
+    about: Please report vulnerabilities privately. Do not open a public issue.
+  - name: Installing Volt on a Mac
+    url: https://github.com/LeulAria/volt/blob/main/docs/install/macos.md
+    about: macOS blocks the first launch because the build is not signed with an Apple Developer ID. The guide shows how to open it.
+  - name: Documentation
+    url: https://volt.leularia.com/docs
+    about: Guides and reference for using Volt.
