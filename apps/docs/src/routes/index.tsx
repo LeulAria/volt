@@ -7,6 +7,7 @@ import { Capabilities } from "@/components/landing/capabilities";
 import { ClosingCta, SiteFooter } from "@/components/landing/closing";
 import { FeatureBento } from "@/components/landing/featureBento";
 import { Guides, SectionRule } from "@/components/landing/geometry";
+import { HeroGeometry } from "@/components/landing/heroGeometry";
 import { DownloadButtons, InstallCommand } from "@/components/landing/install";
 import { Manifesto } from "@/components/landing/manifesto";
 import { Models } from "@/components/landing/models";
@@ -91,7 +92,8 @@ function Home() {
           <div className="relative z-0 flex min-h-0 flex-1 flex-col md:min-h-0 md:flex-1">
             <div className="relative z-0 flex flex-1 items-center justify-center px-4 py-2 sm:px-5 sm:py-6 md:flex-none md:px-4 md:py-1">
               <div className="relative">
-                {/* square slot that keeps the hero's height (the wave field shows through) */}
+                <HeroGeometry />
+                {/* square slot the construction drawing scales into */}
                 <div className="relative mx-auto aspect-square size-[min(76vw,320px)] sm:size-[min(46vw,300px)] md:mx-0 md:size-auto md:h-[min(60vh,680px)] md:max-h-[min(92vw,680px)] md:w-auto md:max-w-[min(92vw,680px)] md:shrink-0" />
               </div>
             </div>

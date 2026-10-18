@@ -201,7 +201,8 @@ html:has(body[data-scroll-locked]) {
 
 /* Hero copy starts hidden and is revealed by the GSAP intro. If scripts never run,
    the fallback animation shows it after 3s; reduced motion shows it immediately. */
-[data-hero] {
+[data-hero],
+[data-hero-geometry] {
   visibility: hidden;
   animation: hero-fallback 0s 3s forwards;
 }
@@ -213,7 +214,8 @@ html:has(body[data-scroll-locked]) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-hero] {
+  [data-hero],
+  [data-hero-geometry] {
     visibility: visible;
     animation: none;
   }
