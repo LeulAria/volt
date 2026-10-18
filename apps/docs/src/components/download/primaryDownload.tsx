@@ -36,6 +36,7 @@ export function PrimaryDownload({
   arch,
   onArch,
   installGuide = false,
+  toDownloadPage = false,
   className,
 }: {
   state: ReleasesState;
@@ -46,6 +47,8 @@ export function PrimaryDownload({
   onArch?: (arch: Arch) => void;
   /** macOS: a "How to install on Mac" button beside the download that opens the step-by-step drawer. */
   installGuide?: boolean;
+  /** The button opens /download for this platform instead of downloading (the landing page's). */
+  toDownloadPage?: boolean;
   className?: string;
 }) {
   const platform = platformOf(os);
@@ -67,21 +70,8 @@ export function PrimaryDownload({
     );
     meta = <span>Asking GitHub for the newest {info.label} release.</span>;
   } else if (asset) {
-    button = (
-      <a
-        href={asset.url}
-        onClick={(e) => {
-          // A dialog first: which build, its size, and what the first launch asks.
-          e.preventDefault();
-          setConfirming(true);
-        }}
-        aria-haspopup="dialog"
-        className={cn(
-          BUTTON,
-          "bg-white text-black hover:opacity-90",
-          focusRing,
-        )}
-      >
+    const label = (
+      <>
         <OsIcon
           os={os}
           className={cn(
@@ -90,7 +80,30 @@ export function PrimaryDownload({
           )}
         />
         <span className="truncate">{title}</span>
-        <ArrowDownToLine className="size-4 shrink-0 opacity-60" />
+        {toDownloadPage ? (
+          <ArrowUpRight className="size-4 shrink-0 opacity-60" />
+        ) : (
+          <ArrowDownToLine className="size-4 shrink-0 opacity-60" />
+        )}
+      </>
+    );
+    const look = cn(BUTTON, "bg-white text-black hover:opacity-90", focusRing);
+    button = toDownloadPage ? (
+      <Link to="/download" search={{ os }} className={look}>
+        {label}
+      </Link>
+    ) : (
+      <a
+        href={asset.url}
+        onClick={(e) => {
+          // A dialog first: which build, its size, and what the first launch asks.
+          e.preventDefault();
+          setConfirming(true);
+        }}
+        aria-haspopup="dialog"
+        className={look}
+      >
+        {label}
       </a>
     );
     meta = (
@@ -160,7 +173,7 @@ export function PrimaryDownload({
       {onArch && os === "darwin" ? (
         <MacArchSwitch arch={arch} onArch={onArch} />
       ) : null}
-      {asset ? (
+      {asset && !toDownloadPage ? (
         <DownloadDialog
           asset={asset}
           open={confirming}
@@ -249,6 +262,7 @@ export function LandingDownload({
         channel={channel}
         os={os}
         arch={arch}
+        toDownloadPage
         className="items-center text-center [&>p]:justify-center"
       />
       <Link
