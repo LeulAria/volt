@@ -12,8 +12,6 @@ import { gitConfig } from "./shared";
 
 export const RELEASES_API = `https://api.github.com/repos/${gitConfig.user}/${gitConfig.repo}/releases?per_page=100`;
 export const GITHUB_RELEASES_URL = `https://github.com/${gitConfig.user}/${gitConfig.repo}/releases`;
-/** Shown until (or unless) GitHub reports a newer stable or beta. */
-export const VOLT_VERSION = "0.0.2";
 
 const CACHE_KEY = "volt:releases:v1";
 const CACHE_MS = 10 * 60 * 1000;
@@ -86,14 +84,10 @@ export function useReleases(): ReleasesState {
   return state;
 }
 
-/** Newest stable (else beta) version, falling back to the version this site ships with. */
-export function latestVersion(state: ReleasesState): string {
-  if (state.status !== "ready") return VOLT_VERSION;
-  return (
-    state.releases.stable?.version ??
-    state.releases.beta?.version ??
-    VOLT_VERSION
-  );
+/** Newest stable (else beta) version GitHub reports, or undefined until it answers (never a guess). */
+export function latestVersion(state: ReleasesState): string | undefined {
+  if (state.status !== "ready") return undefined;
+  return state.releases.stable?.version ?? state.releases.beta?.version;
 }
 
 interface UaDataLike {

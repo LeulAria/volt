@@ -46,13 +46,17 @@ export function SiteHeader({
         <span className="inline-flex items-center pt-px pl-[0.16em] uppercase leading-none">
           Public beta
         </span>
-        <span
-          className="inline-block h-2.5 w-px shrink-0 self-center bg-white/20"
-          aria-hidden
-        />
-        <span className="inline-flex items-center pt-px font-mono text-[10px] font-semibold leading-none tracking-normal text-white/55">
-          v{version}
-        </span>
+        {version ? (
+          <>
+            <span
+              className="inline-block h-2.5 w-px shrink-0 self-center bg-white/20"
+              aria-hidden
+            />
+            <span className="inline-flex items-center pt-px font-mono text-[10px] font-semibold leading-none tracking-normal text-white/55">
+              v{version}
+            </span>
+          </>
+        ) : null}
       </div>
       <Link
         {...hero}
