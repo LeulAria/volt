@@ -1,11 +1,5 @@
 # Install guide screenshots
 
-Screenshots used by [macos.md](../macos.md) and the release notes. They are captured on macOS with a quarantined build, so they show exactly what a downloaded copy shows.
-
-| File | Shows |
-| --- | --- |
-| `01-blocked.png` | The first-launch dialog: Volt could not be verified (click **Done**) |
-| `02-open-anyway.png` | System Settings > Privacy & Security > Security, with **Open Anyway** next to Volt |
-| `03-confirm.png` | The final confirmation dialog with **Open Anyway** and the password or Touch ID prompt |
-| `04-install-command.png` | The command palette with **Shell Command: Install 'volt' command in PATH** |
-| `05-terminal.png` | `volt .` run from a terminal, with Volt open |
+The numbered images used by [macos.md](../macos.md) and the release notes. They were captured on macOS 26 (Tahoe) while installing the real
+`0.0.2` build from a quarantined disk image, then cropped and annotated (an orange box marks what to click; the Finder column in
+`01-download.jpg` is blurred). The step number in each file name matches the step in the guide.
