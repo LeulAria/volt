@@ -17,6 +17,19 @@ see [Run from source](../../README.md#run-from-source).
 
 **Macs need one extra step**, so read the [macOS install guide](macos.md) before you open the app.
 
+The same guide, with screenshots, is on the website at [volt.leularia.com/docs/install](https://volt.leularia.com/docs/install).
+
+## Install from the Terminal
+
+On macOS and Linux one command downloads the right build for your computer, checks its SHA-256 against the release and installs it, with no `sudo`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LeulAria/VOLT/main/install.sh | bash
+```
+
+On a Mac it puts `Volt.app` in `/Applications` (or `~/Applications`). On Linux it unpacks into `~/.local/share/volt` and links `~/.local/bin/volt`.
+`VOLT_VERSION=0.0.2` picks a version and `VOLT_INSTALL_DIR` the folder. Read [`install.sh`](../../install.sh) first; it is short.
+
 ## Windows
 
 1. Download the `user-setup.exe` for your processor (x64 for most PCs, arm64 for Windows on Arm).
