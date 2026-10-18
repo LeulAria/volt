@@ -7,7 +7,7 @@ import { $, addDisposableListener, append, getWindow } from '../../../../../base
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { disposableTimeout } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
@@ -362,6 +362,7 @@ export class AgentContextUsageView extends Disposable {
 		this.panelEl = panel;
 		const { parent, before } = this.host.getPanelAnchor();
 		parent.insertBefore(panel, before);
+		this.panelStore.add(floatAboveComposer(panel, parent));
 
 		const header = append(panel, $('.volt-agent-context-header'));
 		append(header, $('span.title')).textContent = localize('voltAgent.contextUsageTitle', "Context Usage");
@@ -524,6 +525,7 @@ export class AgentContextUsageView extends Disposable {
 		const panelEl = $('.volt-agent-context-panel');
 		const { parent, before } = this.host.getPanelAnchor();
 		parent.insertBefore(panelEl, before);
+		this.sessionStore.add(floatAboveComposer(panelEl, parent));
 		const panel = this.sessionStore.add(new AgentSessionUsagePanel(panelEl, {
 			close: () => this.hideSessionPanel(),
 			revealTurn: turnId => this.host.revealTurn?.(turnId),
@@ -678,4 +680,45 @@ interface IContextPopupRefs {
 	compact: HTMLButtonElement;
 	compactLabel: HTMLElement;
 	compactNote: HTMLElement;
+}
+
+/**
+ * The Context and Session Usage cards hover over the transcript, just above the composer's topmost
+ * item (a card, queued prompts, the floating chips), so opening one doesn't push the chat up.
+ */
+function floatAboveComposer(panel: HTMLElement, composer: HTMLElement): IDisposable {
+	panel.classList.add('floating');
+	const win = getWindow(panel);
+	const place = () => {
+		const box = composer.getBoundingClientRect();
+		let top = box.top;
+		for (const child of composer.children) {
+			if (child === panel) {
+				continue;
+			}
+			const rect = child.getBoundingClientRect();
+			if (rect.height > 0) {
+				top = Math.min(top, rect.top);
+			}
+		}
+		panel.style.bottom = `${Math.round(box.bottom - top + 8)}px`;
+	};
+	place();
+	const resizes = new win.ResizeObserver(place);
+	resizes.observe(composer);
+	for (const child of composer.children) {
+		resizes.observe(child);
+	}
+	// Cards and chips come and go while the card is open.
+	const mutations = new win.MutationObserver(() => {
+		for (const child of composer.children) {
+			resizes.observe(child);
+		}
+		place();
+	});
+	mutations.observe(composer, { childList: true });
+	return toDisposable(() => {
+		resizes.disconnect();
+		mutations.disconnect();
+	});
 }

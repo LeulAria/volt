@@ -10,6 +10,11 @@ import { ScrollbarVisibility } from '../../../../../base/common/scrollable.js';
 
 /** Runs after the frame's redraw and scroll sync, so the sticky pass reads a settled layout once. */
 const STUCK_SYNC_PRIORITY = -2000;
+/** Drag-select autoscroll starts this far inside the top edge, and inside the bottom one, where the composer's chips and the fade cover the rows. */
+const SELECT_SCROLL_EDGE_TOP = 24;
+const SELECT_SCROLL_EDGE_BOTTOM = 56;
+/** Px per frame at most. */
+const SELECT_SCROLL_MAX_SPEED = 40;
 
 /**
  * Shared agent transcript surface. The sidebar editor and the browser dock
@@ -67,6 +72,83 @@ export class AgentThreadView extends Disposable {
 				}
 			}
 		}));
+		this._register(this.autoScrollSelection());
+	}
+
+	/**
+	 * Scrolls while a drag-select holds the pointer near an edge or past it. Chromium only
+	 * autoscrolls a user-scrollable box, and the inner element is `overflow: hidden` under the
+	 * custom scrollbar; the composer's chips and the bottom fade also cover the last rows, so the
+	 * pointer reaches the composer before it ever leaves the transcript.
+	 */
+	private autoScrollSelection(): IDisposable {
+		const targetWindow = getWindow(this.inner);
+		const doc = this.inner.ownerDocument;
+		let pointer: { x: number; y: number } | undefined;
+		let frame: number | undefined;
+		const stop = () => {
+			pointer = undefined;
+			if (frame !== undefined) {
+				targetWindow.cancelAnimationFrame(frame);
+				frame = undefined;
+			}
+		};
+		const step = () => {
+			frame = undefined;
+			const selection = targetWindow.getSelection();
+			if (!pointer || !selection || selection.isCollapsed || !selection.focusNode || !this.inner.contains(selection.focusNode)) {
+				return;
+			}
+			const rect = this.element.getBoundingClientRect();
+			const top = rect.top + SELECT_SCROLL_EDGE_TOP;
+			const bottom = rect.bottom - SELECT_SCROLL_EDGE_BOTTOM;
+			const depth = pointer.y < top ? pointer.y - top : pointer.y > bottom ? pointer.y - bottom : 0;
+			if (depth === 0) {
+				return;
+			}
+			const before = this.scroll.getScrollPosition().scrollTop;
+			const speed = Math.sign(depth) * Math.min(SELECT_SCROLL_MAX_SPEED, 2 + Math.abs(depth) * 0.4);
+			this.scroll.setScrollPosition({ scrollTop: before + speed });
+			if (this.scroll.getScrollPosition().scrollTop === before) {
+				return;
+			}
+			// The pointer is still, so the browser will not move the selection's end with the content.
+			const x = Math.min(Math.max(pointer.x, rect.left + 1), rect.right - 1);
+			const y = Math.min(Math.max(pointer.y, top), bottom);
+			const caret = doc.caretRangeFromPoint(x, y);
+			if (caret && this.inner.contains(caret.startContainer)) {
+				selection.extend(caret.startContainer, caret.startOffset);
+			}
+			frame = targetWindow.requestAnimationFrame(step);
+		};
+		const listeners = [
+			addDisposableListener(this.inner, 'pointerdown', (e: PointerEvent) => {
+				stop();
+				const target = e.target as Element | null;
+				if (e.button === 0 && !target?.closest?.('.monaco-editor, textarea, input, [contenteditable="true"]')) {
+					pointer = { x: e.clientX, y: e.clientY };
+				}
+			}),
+			addDisposableListener(targetWindow, 'pointermove', (e: PointerEvent) => {
+				if (!pointer) {
+					return;
+				}
+				if (!(e.buttons & 1)) {
+					stop();
+					return;
+				}
+				pointer = { x: e.clientX, y: e.clientY };
+				if (frame === undefined) {
+					frame = targetWindow.requestAnimationFrame(step);
+				}
+			}, true),
+			addDisposableListener(targetWindow, 'pointerup', stop, true),
+			addDisposableListener(targetWindow, 'blur', stop),
+		];
+		return toDisposable(() => {
+			stop();
+			listeners.forEach(listener => listener.dispose());
+		});
 	}
 
 	/**

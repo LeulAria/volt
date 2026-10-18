@@ -958,12 +958,14 @@
 	display: inline-flex;
 }
 
-/* Stop holds the corner while the prompt runs, so Read more (and its fade) moves left of it. */
-.volt-agent-turn.user.running .volt-agent-bubble.clamped .volt-agent-user-read-more {
+/* Stop (while the prompt runs) or Rewind holds the corner, so Read more (and its fade) sits left of it. */
+.volt-agent-turn.user.running .volt-agent-bubble.clamped .volt-agent-user-read-more,
+.volt-agent-turn.user.has-rewind .volt-agent-bubble.clamped .volt-agent-user-read-more {
 	right: 24px;
 }
 
-.volt-agent-turn.user.running .volt-agent-bubble.clamped .volt-agent-text {
+.volt-agent-turn.user.running .volt-agent-bubble.clamped .volt-agent-text,
+.volt-agent-turn.user.has-rewind .volt-agent-bubble.clamped .volt-agent-text {
 	-webkit-mask:
 		linear-gradient(#000, #000) top / 100% calc(100% - 22px) no-repeat,
 		linear-gradient(to left, transparent 116px, #000 148px) bottom / 100% 22px no-repeat;
@@ -1251,6 +1253,18 @@ pre.volt-agent-searchable {
 .volt-agent-footer-btn .volt-agent-svg-icon.fork path {
 	/* 1.5 in the 24 grid scales like the codicon bookmark beside them (0.75px at 12px). */
 	stroke-width: 1.5;
+}
+
+/* Every copy codicon in the agent window (menus, toolbars, the branch chip) draws Copy Message's glyph: two overlapping
+ * rounded squares. The glyph's font character is swapped for the same SVG as a mask, so it keeps the icon's color. */
+.monaco-workbench.volt-layout-agent .codicon.codicon-copy::before {
+	content: '';
+	display: block;
+	width: 1em;
+	height: 1em;
+	background-color: currentColor;
+	-webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 32 32' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='8' y='8' width='14' height='14' rx='2'/%3E%3Cpath d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
+	mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 32 32' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='8' y='8' width='14' height='14' rx='2'/%3E%3Cpath d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
 }
 
 .volt-agent-turn.user .volt-agent-bubble.has-edit {
@@ -3190,8 +3204,25 @@ pre.volt-agent-searchable {
 	font-weight: 400;
 }
 
+/* "| 20 Files" after the counts, once the run is done. */
+.volt-agent-composer-chip-files {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: inherit;
+	font-weight: 300;
+}
+
+.volt-agent-composer-chip-files::before {
+	content: '';
+	width: 1px;
+	height: 12px;
+	background: rgba(255, 255, 255, 0.16);
+}
+
 .volt-agent-composer-chip-add.hidden,
-.volt-agent-composer-chip-del.hidden {
+.volt-agent-composer-chip-del.hidden,
+.volt-agent-composer-chip-files.hidden {
 	display: none;
 }
 
@@ -3820,19 +3851,62 @@ pre.volt-agent-searchable {
 	max-width: 720px;
 	margin: 0 auto 8px;
 	box-sizing: border-box;
-	border-radius: 12px;
-	/* No fill: the card is its edge and its rows, so the window shows through. */
-	background: transparent;
-	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
 	color: var(--vscode-foreground);
 	font-size: 13px;
+}
+
+/* The card's surface. No fill while closed: the card is its edge and its rows, so the window shows through. */
+.volt-agent-tasks-panel {
+	box-sizing: border-box;
+	border-radius: 12px;
+	background: transparent;
+	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
 	overflow: hidden;
 }
 
-.monaco-workbench.vs .volt-agent-tasks-card,
-.monaco-workbench.hc-light .volt-agent-tasks-card {
-	background: transparent;
+.monaco-workbench.vs .volt-agent-tasks-panel,
+.monaco-workbench.hc-light .volt-agent-tasks-panel {
 	border-color: var(--vscode-widget-border, rgba(0, 0, 0, 0.1));
+}
+
+/*
+ * Above the composer the Tasks and subagents cards hold only their header line in the layout; the
+ * panel sits on that line and opens upward over the chat like a popover, so opening one never
+ * pushes the transcript. Open, it is opaque (it covers chat text, and see-through layers over the
+ * window are a paint risk) and sits over the other card.
+ */
+.volt-agent-composer > .volt-agent-tasks-card {
+	height: 42px;
+}
+
+.volt-agent-composer > .volt-agent-agents-card {
+	height: 40px;
+}
+
+.volt-agent-composer > :is(.volt-agent-tasks-card, .volt-agent-agents-card).expanded {
+	z-index: 7;
+}
+
+.volt-agent-composer > .volt-agent-tasks-card > .volt-agent-tasks-panel,
+.volt-agent-composer > .volt-agent-agents-card > .volt-agent-work-section {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.volt-agent-composer > .volt-agent-tasks-card.expanded > .volt-agent-tasks-panel,
+.volt-agent-composer > .volt-agent-agents-card.expanded > .volt-agent-work-section {
+	/* The menus' fill: the window colours are see-through in the agent window (vibrancy). */
+	background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #1f1f1f));
+	box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.monaco-workbench.vs .volt-agent-composer > .volt-agent-tasks-card.expanded > .volt-agent-tasks-panel,
+.monaco-workbench.vs .volt-agent-composer > .volt-agent-agents-card.expanded > .volt-agent-work-section,
+.monaco-workbench.hc-light .volt-agent-composer > .volt-agent-tasks-card.expanded > .volt-agent-tasks-panel,
+.monaco-workbench.hc-light .volt-agent-composer > .volt-agent-agents-card.expanded > .volt-agent-work-section {
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
 .volt-agent-tasks-card.hidden {
@@ -6782,13 +6856,21 @@ pre.volt-agent-searchable {
 	overflow: auto;
 }
 
-/* Chips float up over the transcript. Under anything else on the composer (the Context Usage card,
-	queued prompts, questions, a worktree's setup) they stay in flow. */
-.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-context-panel ~ .volt-agent-composer-chips.is-visible,
+/* Hovering over the transcript above the composer's topmost item (agentContextUsageView.ts sets bottom). */
+.volt-agent-composer > .volt-agent-context-panel.floating {
+	position: absolute;
+	left: 20px;
+	right: 20px;
+	width: auto;
+	margin: 0 auto;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+/* Chips float up over the transcript. Under anything else on the composer (queued prompts,
+	questions, a worktree's setup) they stay in flow. */
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-composer-stack.has-stack ~ .volt-agent-composer-chips.is-visible,
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-question-tray:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-clone-banner:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
-.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-subagent-bar:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-worktree-setup:not(.hidden) ~ .volt-agent-composer-chips.is-visible {
 	margin-top: 0;
 }
@@ -9790,7 +9872,7 @@ pre.volt-agent-searchable {
 	opacity: 1;
 }
 
-/* Restore Checkpoint on a sent message: hidden until the bubble is hovered, in its bottom-right corner (Cursor). */
+/* Rewind to Here on a sent message: hidden until the bubble is hovered, in its bottom-right corner (Cursor). */
 
 .volt-agent-user-restore {
 	width: 20px;
@@ -9816,8 +9898,9 @@ pre.volt-agent-searchable {
 	visibility: visible;
 }
 
-/* Not while a run streams. */
-.volt-agent-thread-inner.streaming .volt-agent-user-restore {
+/* Not while a run streams, nor where Stop holds the corner (subagents still at work). */
+.volt-agent-thread-inner.streaming .volt-agent-user-restore,
+.volt-agent-turn.user.running .volt-agent-user-restore {
 	display: none;
 }
 
@@ -9830,29 +9913,6 @@ pre.volt-agent-searchable {
 .volt-agent-turn.user .volt-agent-user-restore .codicon {
 	font-size: 14px;
 	color: inherit;
-}
-
-/* Both buttons sit in the bottom-right corner; Rewind to Here goes left of Restore Checkpoint. */
-.volt-agent-user-restore + .volt-agent-user-rewind {
-	right: 27px;
-}
-
-/* "Redo checkpoint" under a message whose checkpoint was restored. */
-
-.volt-agent-redo-checkpoint {
-	display: block;
-	margin: 6px 4px 0 auto;
-	padding: 0;
-	border: 0;
-	background: transparent;
-	color: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
-	cursor: pointer;
-	font: inherit;
-	font-size: 13px;
-}
-
-.volt-agent-redo-checkpoint:hover {
-	color: var(--vscode-foreground);
 }
 
 /* Compare models: the toggle beside Settings, checkbox rows and a count footer (agentModelPicker.ts). */

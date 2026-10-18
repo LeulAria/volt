@@ -947,6 +947,17 @@ export class AgentMentionController extends Disposable {
 		this.notifyImages();
 	}
 
+	/** Images, videos and files from a saved draft, added again at the cursor (a reopened comment). */
+	addMediaMentions(mentions: readonly IAgentDisplayMention[]): void {
+		for (const item of mentions) {
+			if (!item.image && !item.video && !item.file) {
+				continue;
+			}
+			this.insertMention({ id: `${item.kind}:${generateUuid()}`, kind: item.kind, label: item.label, image: item.image, video: item.video, file: item.file }, this.cursorRangeAfterSpacer() ?? this.cursorRange());
+		}
+		this.notifyImages();
+	}
+
 	addBrowserMention(label: string, value?: string): IAgentMention | undefined {
 		this.insertingMention = true;
 		try {

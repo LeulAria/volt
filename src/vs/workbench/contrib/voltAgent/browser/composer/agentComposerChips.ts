@@ -94,6 +94,8 @@ export interface IAgentComposerChipsOptions {
 	terminalRuns?: IAgentComposerTerminalRuns;
 	/** The chat's usage-limit park ("Claude limit · resets 5 PM" with Resume when Claude is back), first in the row. */
 	limitRun?: IAgentComposerTerminalRuns;
+	/** In a multitask agent's or subagent's chat: whose it is and how it runs ("Multitask · Running 50s", Stop), right after the limit. */
+	agentRun?: IAgentComposerTerminalRuns;
 	dock?: boolean;
 }
 
@@ -137,6 +139,8 @@ export class AgentComposerChips extends Disposable {
 	private readonly changesLabelEl: HTMLElement;
 	private readonly changesAddEl: HTMLElement;
 	private readonly changesDelEl: HTMLElement;
+	/** "| 20 Files", once the run is done: the count would flicker while the agent edits. */
+	private readonly changesFilesEl: HTMLElement;
 	private readonly terminalsChip: HTMLButtonElement;
 	private readonly terminalsLabelEl: HTMLElement;
 	/** The chat's live multitask agents and subagents, counted. */
@@ -186,6 +190,7 @@ export class AgentComposerChips extends Disposable {
 	private status: IAgentComposerChipStatus = { label: '', working: false };
 	private insertions = 0;
 	private deletions = 0;
+	private changedFiles = 0;
 	private hasChanges = false;
 	private runningTerminals = 0;
 	private refreshHandle: number | undefined;
@@ -212,6 +217,11 @@ export class AgentComposerChips extends Disposable {
 		if (limitRun) {
 			this.element.appendChild(limitRun.element);
 			this._register(limitRun.onDidChange(() => this.render()));
+		}
+		const agentRun = options.agentRun;
+		if (agentRun) {
+			this.element.appendChild(agentRun.element);
+			this._register(agentRun.onDidChange(() => this.render()));
 		}
 
 		this.statusChip = append(this.element, $('button.volt-agent-composer-chip.status.volt-browser-dock-chip')) as HTMLButtonElement;
@@ -267,6 +277,7 @@ export class AgentComposerChips extends Disposable {
 		this.changesLabelEl.textContent = localize('voltAgent.changes', "Changes");
 		this.changesAddEl = append(this.changesChip, $('span.volt-agent-composer-chip-add'));
 		this.changesDelEl = append(this.changesChip, $('span.volt-agent-composer-chip-del'));
+		this.changesFilesEl = append(this.changesChip, $('span.volt-agent-composer-chip-files'));
 
 		this.terminalsChip = append(this.element, $('button.volt-agent-composer-chip.terminals.volt-browser-dock-chip')) as HTMLButtonElement;
 		this.terminalsChip.type = 'button';
@@ -451,7 +462,7 @@ export class AgentComposerChips extends Disposable {
 		}
 	}
 
-	/** Hides Commit, Push & PR while the chat has no messages yet. */
+	/** A chat with no messages yet shows no chip row at all: the window's terminals, git and the rest belong to a chat underway. */
 	setNewChat(newChat: boolean): void {
 		if (this.newChat === newChat) {
 			return;
@@ -527,7 +538,7 @@ export class AgentComposerChips extends Disposable {
 	}
 
 	hasVisibleChips(): boolean {
-		return this.hostOpen && (this.hasStatus() || this.hasChanges || this.showsGit() || this.runningTerminals > 0 || this.hasTerminalRuns() || !!this.options.limitRun?.visible || this.compactState !== 'hidden' || !!this.pr || !!this.agents);
+		return this.hostOpen && !this.newChat && (this.hasStatus() || !!this.options.agentRun?.visible || this.hasChanges || this.showsGit() || this.runningTerminals > 0 || this.hasTerminalRuns() || !!this.options.limitRun?.visible || this.compactState !== 'hidden' || !!this.pr || !!this.agents);
 	}
 
 	private showsGit(): boolean {
@@ -600,6 +611,7 @@ export class AgentComposerChips extends Disposable {
 			this.hasChanges = stats.additions > 0 || stats.deletions > 0;
 			this.insertions = stats.additions;
 			this.deletions = stats.deletions;
+			this.changedFiles = stats.files;
 			this.runningTerminals = runningTerminals;
 			this.render();
 			return;
@@ -607,6 +619,7 @@ export class AgentComposerChips extends Disposable {
 		const hasChanges = this.scmHasChanges();
 		let insertions = 0;
 		let deletions = 0;
+		let files = 0;
 		if (hasChanges) {
 			try {
 				const stat = await this.commandService.executeCommand<IGitShortStat>('git.api.getWorkingTreeShortStat', this.workspaceContextService.getWorkspace().folders.map(folder => folder.uri));
@@ -616,10 +629,12 @@ export class AgentComposerChips extends Disposable {
 				if (stat) {
 					insertions = stat.insertions;
 					deletions = stat.deletions;
+					files = stat.files;
 				}
 			} catch {
 				insertions = this.insertions;
 				deletions = this.deletions;
+				files = this.changedFiles;
 			}
 		}
 		if (gen !== this.refreshGen) {
@@ -628,6 +643,7 @@ export class AgentComposerChips extends Disposable {
 		this.hasChanges = insertions > 0 || deletions > 0;
 		this.insertions = insertions;
 		this.deletions = deletions;
+		this.changedFiles = files;
 		this.runningTerminals = runningTerminals;
 		this.render();
 	}
@@ -707,7 +723,8 @@ export class AgentComposerChips extends Disposable {
 		this.toggleChip(this.gitControl.element, showCommit, this.commitExit);
 		this.toggleChip(this.prChip, showPr, this.prExit);
 		const showLimit = !!this.options.limitRun?.visible;
-		const visible = this.hostOpen && (showLimit || showStatus || showComments || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
+		const showAgentRun = !!this.options.agentRun?.visible;
+		const visible = this.hostOpen && !this.newChat && (showLimit || showAgentRun || showStatus || showComments || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
 		this.element.classList.toggle('is-visible', visible);
 		// A chat hosted in another chat's tools hides the row but keeps its terminals (agentEditor.css).
 		this.element.classList.toggle('has-terminal-runs', showRuns);
@@ -738,6 +755,11 @@ export class AgentComposerChips extends Disposable {
 		this.changesDelEl.textContent = this.deletions > 0 ? `-${this.deletions}` : '';
 		this.changesAddEl.classList.toggle('hidden', this.insertions <= 0);
 		this.changesDelEl.classList.toggle('hidden', this.deletions <= 0);
+		const showFiles = this.changedFiles > 0 && !this.status.working;
+		this.changesFilesEl.textContent = !showFiles ? '' : this.changedFiles === 1
+			? localize('voltAgent.changes.oneFile', "1 File")
+			: localize('voltAgent.changes.manyFiles', "{0} Files", this.changedFiles);
+		this.changesFilesEl.classList.toggle('hidden', !showFiles);
 
 		this.terminalsChip.classList.toggle('hidden', !showTerminals);
 		this.terminalsLabelEl.textContent = this.runningTerminals === 1
@@ -750,7 +772,8 @@ export class AgentComposerChips extends Disposable {
 	private overflowableChips(): HTMLElement[] {
 		const runs = this.options.terminalRuns?.element;
 		const limit = this.options.limitRun?.element;
-		return [...(limit ? [limit] : []), this.statusChip, this.agentsChip, ...(runs ? [runs] : []), this.commentsChip, this.compactChip, this.changesChip, this.terminalsChip, this.gitControl.element, this.prChip];
+		const agentRun = this.options.agentRun?.element;
+		return [...(limit ? [limit] : []), ...(agentRun ? [agentRun] : []), this.statusChip, this.agentsChip, ...(runs ? [runs] : []), this.commentsChip, this.compactChip, this.changesChip, this.terminalsChip, this.gitControl.element, this.prChip];
 	}
 
 	private scheduleLayout(): void {

@@ -210,6 +210,9 @@
 	gap: 6px;
 	min-width: 220px;
 	max-width: min(300px, calc(100vw - 16px));
+	/* A long command (a heredoc) scrolls inside instead of running down the window. */
+	max-height: 450px;
+	overflow-y: auto;
 	padding: 10px 12px;
 	border-radius: 10px;
 	white-space: normal;

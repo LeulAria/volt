@@ -41,9 +41,7 @@ import { DropIntoEditorController } from '../../../../../editor/contrib/dropOrPa
 import { InlineCompletionsController } from '../../../../../editor/contrib/inlineCompletions/browser/controller/inlineCompletionsController.js';
 import { IComposerPredictionContext, registerComposerContext } from '../../../../services/voltRuntime/common/prediction/composerContext.js';
 import { EDITOR_FONT_DEFAULTS, IEditorOptions as ICodeEditorOptions } from '../../../../../editor/common/config/editorOptions.js';
-import { IRange } from '../../../../../editor/common/core/range.js';
-import { IEditorDecorationsCollection } from '../../../../../editor/common/editorCommon.js';
-import { ITextModel, TrackedRangeStickiness } from '../../../../../editor/common/model.js';
+import { ITextModel } from '../../../../../editor/common/model.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
 import { ITextResourceConfigurationService } from '../../../../../editor/common/services/textResourceConfiguration.js';
@@ -70,13 +68,14 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { ACCESS_MODE_OPTIONS } from '../../../../services/voltRuntime/common/access/accessModes.js';
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentRuntimeService, type IVoltCompactionPlan } from '../../../../services/voltRuntime/common/runtime.js';
+import { isLiveTaskState } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import { IAgentOrchestratorService, IOrchPrompt, IOrchQueueItem, OrchDelivery } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IAgentPromptHostOptions, stashTurnDisplay } from '../orchestration/agentTurnHost.js';
 import { IAgentSubagentChatService } from '../orchestration/agentSubagentChats.js';
 import { AgentHistoryCodec, resolveActivityImage } from '../history/agentHistoryCodec.js';
 import { agentRow, dockModel, formatElapsed as formatOrchElapsed, isMultitaskTask } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
 import { harnessSubagentChatId, harnessTaskOfChat, isHarnessSubagentChatId } from '../../../../services/voltRuntime/common/orchestration/harnessSubagents.js';
-import { createReportStackIcon, isLiveSubagentState, ISubagentView, renderCursorSubagentRow, renderSubagentAvatar, subagentCounts, subagentCountsLabel, subagentStateIcon, subagentView, tickSubagentClocks } from '../chrome/agentSubagents.js';
+import { createReportStackIcon, isLiveSubagentState, isResumableSubagent, isRetryableSubagentState, ISubagentView, renderCursorSubagentRow, resumeSubagentTask, retryHarnessSubagent, subagentCounts, subagentCountsLabel, subagentStateIcon, subagentView } from '../chrome/agentSubagents.js';
 import type { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
 import { type IAgentQuestionResponse, questionResponseText } from '../../../../services/voltRuntime/common/questions.js';
 import { AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
@@ -142,6 +141,7 @@ import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
 import { AgentLimitChip } from '../composer/agentLimitChip.js';
 import { AgentVoiceDictation } from '../composer/agentVoiceDictation.js';
+import { AgentDictationText } from '../composer/agentDictationText.js';
 import { PLANS_FOLDER, planDocument, planFileName } from '../../../../services/voltRuntime/common/plans.js';
 import { AgentVoiceVisuals } from '../composer/agentVoiceVisuals.js';
 import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
@@ -585,8 +585,6 @@ interface IQueuedAgentPrompt {
 	mode?: string;
 }
 
-/** Cursor's checkpoint dialogs remember "Don't ask again" per kind. */
-const RESTORE_CHECKPOINT_NO_CONFIRM_KEY = 'voltAgent.checkpoint.restoreNoConfirm';
 /** The end-of-turn "N Files Changed" card lists files as a tree instead of flat. */
 const TURN_FILES_TREE_KEY = 'voltAgent.turnFiles.tree';
 const REVERT_ON_EDIT_ALWAYS_KEY = 'voltAgent.checkpoint.revertOnEditAlways';
@@ -594,7 +592,6 @@ const REVERT_ON_EDIT_ALWAYS_KEY = 'voltAgent.checkpoint.revertOnEditAlways';
 /** Checkpoint commands registered by the checkpoint service; the UI hides itself while they are missing. */
 const CHECKPOINT_RESTORE_COMMAND = 'voltAgent.checkpoint.restore';
 const CHECKPOINT_HAS_CHANGES_COMMAND = 'voltAgent.checkpoint.hasChangesSince';
-const CHECKPOINT_REDO_COMMAND = 'voltAgent.checkpoint.redo';
 
 /**
  * A chat that stays open this long gets its agent started, so the first send skips the cold start.
@@ -756,9 +753,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private voiceDictation!: AgentVoiceDictation;
 
 	/** The live transcript in the composer while dictating: each partial replaces it, the final text settles it. */
-	private dictatedText: IEditorDecorationsCollection | undefined;
-	private dictatedShown = '';
-	private dictatedSeparator = '';
+	private readonly dictatedText = new AgentDictationText(() => this.inputEditor);
 	private suggestEl!: HTMLElement;
 	private composerQueue!: AgentComposerQueue;
 	/** The agent's to-dos, above the chips like the Context Usage card. */
@@ -801,6 +796,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private submitChain: Promise<unknown> = Promise.resolve();
 	private subagentBar!: HTMLElement;
 	private readonly subagentBarStore = this._register(new DisposableStore());
+	private readonly onDidChangeSubagentChip = this._register(new Emitter<void>());
 	private subagentBarKey = '';
 	/** The harness subagent chat whose parent's agents were asked to load (once per chat). */
 	private harnessParentLoaded: string | undefined;
@@ -815,8 +811,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private queueEdit: { readonly id: string; readonly stash: { readonly text: string; readonly mentions: IAgentDisplayMention[] } } | undefined;
 	/** Arrow Up/Down through earlier prompts. */
 	private readonly promptHistory = new AgentPromptHistoryNavigator();
-	/** The checkpoint the user just restored; its message offers "Redo checkpoint" until the next send. */
-	private restoredCheckpoint: { readonly turnId: string } | undefined;
 	private prewarmTimer: IDisposable | undefined;
 	/** An edited prompt is waiting on the "Revert files to this message?" dialog. */
 	private committingEdit = false;
@@ -937,6 +931,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private editingUserIndex: number | undefined;
 	private suppressEditDismiss = false;
 	private suppressStartEdit = false;
+	/** The prompt Read more opened; a press anywhere outside it folds it back. */
+	private expandedPrompt: { readonly message: IAgentUserMessage; readonly bubble: HTMLElement } | undefined;
 	private threadScrollFrozen = false;
 	private applyingEditPin = false;
 	private editAnchorTop: number | undefined;
@@ -1203,6 +1199,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		threadResizeObserver.observe(this.threadInner);
 		this._register(toDisposable(() => threadResizeObserver.disconnect()));
 		this._register(addDisposableListener(getWindow(this.container), 'pointerdown', e => this.onEditPointerDown(e), true));
+		this._register(addDisposableListener(getWindow(this.container), 'pointerdown', e => this.foldExpandedPromptOutside(e), true));
 		this._register(addDisposableListener(this.threadInner, 'click', e => this.onUserMessageClick(e)));
 		this._register(addDisposableListener(getWindow(this.container), 'keydown', e => {
 			if (e.key === 'Escape' && this.editingUserIndex !== undefined) {
@@ -1231,6 +1228,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onCancelEdit: () => this.cancelQueueEdit(),
 			onOpenAgent: view => this.openSubagent(view.key),
 			onStopAgent: view => this.stopSubagentNow(view),
+			onResumeAgent: view => this.resumeSubagent(view.key),
 			onStopAllAgents: () => this.stopAllSubagents(),
 		}));
 		// The dock beside a follow-up chat lists its finished agents while it is open; the card above
@@ -1245,6 +1243,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this._register(toDisposable(() => dockObserver.disconnect()));
 		syncAgentsInDock();
 		this._register(this.orchestrator.onDidChange(change => {
+			// The prompt's Stop follows the turn and this chat's subagents, not only the stream.
+			if (change.threads.includes(this.sessionKey) || change.tasks.some(taskId => this.orchestrator.getTask(taskId)?.parentId === this.sessionKey)) {
+				this.syncStreamingClass();
+			}
 			if (change.threads.includes(this.sessionKey)) {
 				this.followAgentHandoff();
 				this.followThreadModel();
@@ -1259,12 +1261,21 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			} else if (change.tasks.some(taskId => harnessSubagentChatId(taskId) === this.sessionKey)) {
 				// A harness subagent's chat has no thread: its bar follows its task.
 				this.renderSubagentBar();
+				// Its error card offers Retry once the task has settled, which can land after the card drew.
+				const last = this.messages.at(-1);
+				if (last?.kind === 'agent' && (last.outcome === 'failed' || last.outcome === 'stopped' || last.cancelled)) {
+					this.scheduleThreadRender();
+				}
 			}
 		}));
 		// "Open parent" shows only while the parent chat has no tab.
 		this._register(this.editorService.onDidEditorsChange(() => this.renderSubagentBar()));
 		this._register(this.browserComments().onDidChange(() => this.updateSendButton()));
+		// A subagent's chat says whose it is and how it is doing: a chip at the start of the row above the composer.
+		const subagentChip = this.subagentBar = $('button.volt-agent-composer-chip.volt-agent-subagent-bar.hidden');
+		(subagentChip as HTMLButtonElement).type = 'button';
 		this.composerChips = this._register(this.instantiationService.createInstance(AgentComposerChips, {
+			agentRun: { element: subagentChip, get visible() { return !subagentChip.classList.contains('hidden'); }, onDidChange: this.onDidChangeSubagentChip.event },
 			onChangesClick: () => void this.openSessionChanges(),
 			onTerminalClick: () => this.surfaceHost.openTerminal(),
 			onScrollToBottom: () => this.scrollThreadToEnd(),
@@ -1324,8 +1335,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.cloneBanner = append(this.composerEl, $('.volt-agent-clone-banner.hidden'));
 		this.cloneBanner.setAttribute('role', 'status');
 		this.renderCloneBanner();
-		// A subagent's chat says whose it is and how it is doing, above everything else on the composer.
-		this.subagentBar = append(this.composerEl, $('.volt-agent-subagent-bar.hidden'));
 		// A new worktree's setup steps (submodules, install scripts) with Cancel and Retry.
 		this.worktreeSetupCard = this._register(this.instantiationService.createInstance(AgentWorktreeSetupCard, {
 			onRetry: chatId => this.retryWorktreeSetup(chatId),
@@ -1336,7 +1345,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		// The chips (run status, terminals, Changes) always sit last, right on top of the text area.
 		append(this.composerEl, this.composerChips.element);
 		this.voiceDictation = this._register(this.instantiationService.createInstance(AgentVoiceDictation));
-		this.voiceDictation.textBefore = () => this.textBeforeDictation();
+		this.voiceDictation.textBefore = () => this.dictatedText.textBefore();
 		this._register(this.voiceDictation.onDidChange(() => this.syncDictation()));
 		this._register(this.voiceDictation.onDidCommit(text => this.endDictatedText(text)));
 		this._register(this.voiceDictation.onDidFail(message => this.notificationService.warn(message)));
@@ -1981,7 +1990,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.editingUserIndex = undefined;
 		this.queueEdit = undefined;
 		this.promptHistory.reset();
-		this.restoredCheckpoint = undefined;
 		this.clearEditComposer();
 		const chat = this.surfaceHost.chatView(input.sessionId);
 		const followTail = chat.followTail !== false;
@@ -3096,7 +3104,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (message.kind === 'user') {
 			if (this.editingUserIndex === index) {
 				turn.classList.add('editing');
-				this.renderRedoCheckpoint(append(turn, $('.volt-agent-edit-slot')), message);
+				append(turn, $('.volt-agent-edit-slot'));
 			} else if (message.origin === 'notification') {
 				renderHandoffDivider(turn, message, this.threadListeners);
 				this.renderNotificationTurn(turn, message);
@@ -3659,7 +3667,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			}
 			bubble.classList.toggle('clamped', clamped);
 			// Only while part of the prompt is hidden; a prompt shown whole has nothing more to show.
-			setAgentTooltip(bubble, clamped && !editable ? localize('voltAgent.showFullPrompt', "Show full prompt") : undefined);
+			setAgentTooltip(bubble, clamped ? localize('voltAgent.showFullPrompt', "Show full prompt") : undefined);
 		};
 		const syncUserPromptClamp = () => {
 			if (message.promptExpanded) {
@@ -3713,27 +3721,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.stopAndEditPrompt();
 			}));
 		}
-		if (!readOnly && message.id && hasCommand(CHECKPOINT_RESTORE_COMMAND)) {
-			// Drawn even while a run streams (hidden then, see syncStreamingClass): a settled message is not redrawn when the run ends.
+		if (!readOnly && message.id) {
+			// One corner button (Cursor's restore glyph): the chat goes back to before this message, and
+			// the files too if the user picks Rewind and Revert Files. Drawn even while a run streams
+			// (hidden then, see syncStreamingClass): a settled message is not redrawn when the run ends.
 			const turnId = message.id;
-			const restore = append(bubble, $('button.volt-agent-user-restore')) as HTMLButtonElement;
-			restore.type = 'button';
-			restore.setAttribute('aria-label', localize('voltAgent.restoreCheckpoint', "Restore Checkpoint"));
-			setAgentTooltip(restore, localize('voltAgent.restoreCheckpoint', "Restore Checkpoint"));
-			restore.appendChild(renderIcon(Codicon.discard));
-			this.threadListeners.add(addDisposableListener(restore, 'click', e => {
-				e.preventDefault();
-				e.stopPropagation();
-				void this.restoreCheckpoint(turnId);
-			}));
-		}
-		if (message.id && !this.isReadOnlyTaskChat()) {
-			const turnId = message.id;
-			const rewind = append(bubble, $('button.volt-agent-user-restore.volt-agent-user-rewind')) as HTMLButtonElement;
+			turn.classList.add('has-rewind');
+			const rewind = append(bubble, $('button.volt-agent-user-restore')) as HTMLButtonElement;
 			rewind.type = 'button';
 			rewind.setAttribute('aria-label', localize('voltAgent.rewind', "Rewind to Here"));
-			setAgentTooltip(rewind, localize('voltAgent.rewind.hint', "Rewind the chat to before this message, keeping file changes"));
-			rewind.appendChild(renderIcon(Codicon.history));
+			setAgentTooltip(rewind, localize('voltAgent.rewind.hintFiles', "Rewind the chat to before this message, and its file changes if you choose"));
+			rewind.appendChild(renderIcon(Codicon.discard));
 			this.threadListeners.add(addDisposableListener(rewind, 'click', e => {
 				e.preventDefault();
 				e.stopPropagation();
@@ -3798,72 +3796,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	/**
-	 * Cursor's restore icon on a sent message: after "Discard all changes up to this checkpoint?"
-	 * the files go back to how they were before that message, and the message opens for editing.
-	 * "Redo checkpoint" under it undoes the restore until the next send.
-	 */
-	private async restoreCheckpoint(turnId: string): Promise<void> {
-		if (this.isStreaming()) {
-			return;
-		}
-		if (!this.storageService.getBoolean(RESTORE_CHECKPOINT_NO_CONFIRM_KEY, StorageScope.APPLICATION, false)) {
-			const { confirmed, checkboxChecked } = await this.dialogService.confirm({
-				message: localize('voltAgent.restoreCheckpoint.title', "Discard all changes up to this checkpoint?"),
-				detail: localize('voltAgent.restoreCheckpoint.detail', "You can always undo this later."),
-				primaryButton: localize({ key: 'voltAgent.restoreCheckpoint.continue', comment: ['&& denotes a mnemonic'] }, "&&Continue"),
-				checkbox: { label: localize('voltAgent.dontAskAgain', "Don't ask again") },
-			});
-			if (!confirmed) {
-				return;
-			}
-			if (checkboxChecked) {
-				this.storageService.store(RESTORE_CHECKPOINT_NO_CONFIRM_KEY, true, StorageScope.APPLICATION, StorageTarget.USER);
-			}
-		}
-		const sessionId = this.sessionKey;
-		const restored = await this.commandService.executeCommand<boolean>(CHECKPOINT_RESTORE_COMMAND, { sessionId, turnId, userTurn: this.userTurnOf(turnId) }).catch(err => {
-			this.logService.warn('[volt agent] restore checkpoint failed', err);
-			return false;
-		});
-		if (restored === false || this.sessionKey !== sessionId) {
-			return;
-		}
-		this.restoredCheckpoint = { turnId };
-		const index = this.messages.findIndex(message => message.kind === 'user' && message.id === turnId);
-		if (index >= 0) {
-			this.startUserEdit(index);
-		}
-	}
-
-	/** "Redo checkpoint" under a message whose checkpoint was just restored. */
-	private renderRedoCheckpoint(slot: HTMLElement, message: IAgentUserMessage): void {
-		if (!message.id || this.restoredCheckpoint?.turnId !== message.id || !hasCommand(CHECKPOINT_REDO_COMMAND)) {
-			return;
-		}
-		const redo = append(slot, $('button.volt-agent-redo-checkpoint')) as HTMLButtonElement;
-		redo.type = 'button';
-		redo.textContent = localize('voltAgent.redoCheckpoint', "Redo checkpoint");
-		setAgentTooltip(redo, localize('voltAgent.redoCheckpoint.hint', "Restore edits to the latest checkpoint"));
-		this.threadListeners.add(addDisposableListener(redo, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			const sessionId = this.sessionKey;
-			void this.commandService.executeCommand<boolean>(CHECKPOINT_REDO_COMMAND, { sessionId }).then(done => {
-				if (done !== false && this.sessionKey === sessionId) {
-					this.restoredCheckpoint = undefined;
-					this.cancelUserEdit();
-				}
-			}, err => this.logService.warn('[volt agent] redo checkpoint failed', err));
-		}));
-	}
-
-	/**
 	 * Cursor's "Revert files to this message?" before an earlier prompt is resubmitted: later turns
 	 * are removed, and their file changes can be reverted to match or kept. Asked only when the
 	 * checkpoint service says the files differ. Resolves false when the user cancels.
 	 */
 	private async confirmRevertForEdit(turnId: string | undefined): Promise<boolean> {
-		if (!turnId || this.restoredCheckpoint?.turnId === turnId || !hasCommand(CHECKPOINT_RESTORE_COMMAND) || !hasCommand(CHECKPOINT_HAS_CHANGES_COMMAND)) {
+		if (!turnId || !hasCommand(CHECKPOINT_RESTORE_COMMAND) || !hasCommand(CHECKPOINT_HAS_CHANGES_COMMAND)) {
 			return true;
 		}
 		const sessionId = this.sessionKey;
@@ -3937,11 +3875,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!message || message.kind !== 'user') {
 			return;
 		}
+		// A clamped prompt opens first, as Read more does; the next click edits it.
+		const bubble = turn.querySelector('.volt-agent-bubble');
+		if (isHTMLElement(bubble) && bubble.classList.contains('clamped')) {
+			e.preventDefault();
+			e.stopPropagation();
+			this.expandUserPrompt(message, bubble);
+			return;
+		}
 		if (!this.canEditUser(index)) {
-			const bubble = turn.querySelector('.volt-agent-bubble');
-			if (isHTMLElement(bubble) && bubble.classList.contains('clamped')) {
-				this.expandUserPrompt(message, bubble);
-			}
 			return;
 		}
 		e.preventDefault();
@@ -3950,10 +3892,54 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private expandUserPrompt(message: IAgentUserMessage, bubble: HTMLElement): void {
+		if (this.expandedPrompt && this.expandedPrompt.message !== message) {
+			this.foldExpandedPrompt();
+		}
 		message.promptExpanded = true;
 		bubble.classList.remove('clamped');
 		bubble.classList.add('prompt-expanded');
 		setAgentTooltip(bubble, undefined);
+		this.expandedPrompt = { message, bubble };
+	}
+
+	/** A press outside the opened prompt folds it to its first lines again; a press on it goes on to edit it. */
+	private foldExpandedPromptOutside(e: PointerEvent): void {
+		const open = this.expandedPrompt;
+		if (!open || (isHTMLElement(e.target) && this.bubbleOf(open)?.contains(e.target))) {
+			return;
+		}
+		this.foldExpandedPrompt();
+	}
+
+	private foldExpandedPrompt(): void {
+		const open = this.expandedPrompt;
+		this.expandedPrompt = undefined;
+		if (!open) {
+			return;
+		}
+		open.message.promptExpanded = false;
+		const bubble = this.bubbleOf(open);
+		if (!bubble) {
+			return; // redrawn since: the next draw reads the flag
+		}
+		bubble.classList.remove('prompt-expanded');
+		bubble.classList.toggle('clamped', this.promptClamps.get(open.message)?.clamped ?? true);
+		setAgentTooltip(bubble, localize('voltAgent.showFullPrompt', "Show full prompt"));
+	}
+
+	/** The opened prompt's bubble on screen now: the live exchange may have drawn it again. */
+	private bubbleOf(open: { readonly message: IAgentUserMessage; readonly bubble: HTMLElement }): HTMLElement | undefined {
+		if (open.bubble.isConnected) {
+			return open.bubble;
+		}
+		for (const turn of this.threadInner.querySelectorAll('.volt-agent-turn.user')) {
+			const index = this.indexOfUserTurn(turn);
+			const bubble = turn.querySelector('.volt-agent-bubble');
+			if (index !== undefined && this.messages[index] === open.message && isHTMLElement(bubble)) {
+				return bubble;
+			}
+		}
+		return undefined;
 	}
 
 	private indexOfUserTurn(turn: Element): number | undefined {
@@ -4004,6 +3990,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 		const message = this.messages[index];
+		// The edit box shows the whole prompt; once the edit ends the message is back to its first lines.
+		if (this.expandedPrompt?.message === message && message?.kind === 'user') {
+			this.expandedPrompt = undefined;
+			message.promptExpanded = false;
+		}
 		if (!message || message.kind !== 'user' || !this.canEditUser(index)) {
 			return;
 		}
@@ -4034,7 +4025,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		turn.replaceChildren();
 		turn.classList.add('editing');
 		turn.classList.remove('editable', 'cancelled', 'running');
-		this.renderRedoCheckpoint(append(turn, $('.volt-agent-edit-slot')), message);
+		append(turn, $('.volt-agent-edit-slot'));
 		this.syncComposerPlacement();
 		this.layoutEditEditor();
 		this.applyEditAnchor(turn);
@@ -4697,6 +4688,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			},
 			openSubagent: view => this.openSubagent(view.key),
 			stopSubagent: view => this.stopSubagentNow(view),
+			resumeSubagent: view => this.resumeSubagent(view.key),
 			subagentTooltip: this.tooltip,
 		};
 	}
@@ -4932,6 +4924,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	 * interrupted: a quiet marker with the same two actions.
 	 */
 	private renderRunEndTray(parent: HTMLElement, message: IAgentAssistantMessage, tray: IRunEndTray): void {
+		const retrySubagent = this.subagentRetry(message);
 		if (tray.kind !== 'failed') {
 			const marker = append(parent, $(`.volt-agent-run-marker.${tray.kind}`));
 			const icon = append(marker, $('span.volt-agent-run-marker-icon'));
@@ -4942,6 +4935,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			}
 			if (tray.canRetry) {
 				this.appendTrayButton(marker, localize('voltAgent.tryAgain', "Try again"), localize('voltAgent.tryAgain.hint', "Send this prompt again"), 'text', () => this.retryLastTurn());
+			}
+			if (retrySubagent) {
+				this.appendTrayButton(marker, retrySubagent.label, retrySubagent.tooltip, 'text', retrySubagent.run);
 			}
 			return;
 		}
@@ -4982,6 +4978,42 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		} else if (tray.canResume) {
 			this.appendTrayButton(row, localize('voltAgent.resume', "Resume"), localize('voltAgent.resume.hint', "Continue from what this turn already did"), 'primary', () => this.continueTurn(this.resumePrompt(message), localize('voltAgent.resume.display', "Resume")));
 		}
+		if (retrySubagent) {
+			this.appendTrayButton(row, retrySubagent.label, retrySubagent.tooltip, 'primary', retrySubagent.run);
+		}
+	}
+
+	/**
+	 * Retry at the end of a read-only subagent chat whose task ended before finishing. A Volt
+	 * subagent resumes in this chat; a harness's own (Claude's Task) cannot run again, so its brief
+	 * goes to a new Volt subagent of the same parent, whose chat opens.
+	 */
+	private subagentRetry(message: IAgentAssistantMessage): { readonly label: string; readonly tooltip: string; readonly run: () => void } | undefined {
+		if (!this.isReadOnlyTaskChat() || message !== this.messages.at(-1)) {
+			return undefined;
+		}
+		const task = this.ownTask();
+		if (!task || !isRetryableSubagentState(task.state)) {
+			return undefined;
+		}
+		const label = localize('voltAgent.subagent.retry', "Retry");
+		if (task.source === 'volt') {
+			return { label, tooltip: localize('voltAgent.subagent.retryVoltHint', "Run it again: it continues where it stopped and reports to its parent"), run: () => this.resumeSubagent(task.id) };
+		}
+		if (!task.brief.trim()) {
+			return undefined;
+		}
+		return {
+			label,
+			tooltip: localize('voltAgent.subagent.retryHarnessHint', "Run this task again as a new subagent; its report goes to the parent"),
+			run: () => void retryHarnessSubagent(this.orchestrator, task.id).catch(() => undefined).then(retryId => {
+				if (!retryId) {
+					this.notificationService.warn(localize('voltAgent.subagent.retryFailed', "That subagent could not be run again."));
+					return;
+				}
+				void this.instantiationService.invokeFunction(accessor => accessor.get(IAgentSubagentChatService)).open(task.parentId, retryId);
+			}),
+		};
 	}
 
 	private appendTrayButton(parent: HTMLElement, label: string, tooltip: string, variant: 'primary' | 'secondary' | 'text', run: () => void): HTMLButtonElement {
@@ -6340,7 +6372,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	 */
 	private dispatchPrompt(value: string, display?: IAgentPromptDisplay, mode = this.currentMode): void {
 		this.thinkingStore.clear();
-		this.restoredCheckpoint = undefined;
 		this.clearComposer();
 		this.updateSendButton();
 		this.stickToBottom = true;
@@ -6518,7 +6549,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.syncCompactChip();
 		this.refreshContextUsage();
 		this.thinkingStore.clear();
-		this.restoredCheckpoint = undefined;
 		this.stickToBottom = true;
 		void this.submitToOrchestrator('/compact', undefined, this.currentMode, 'auto').then(accepted => {
 			if (!accepted) {
@@ -6692,56 +6722,98 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 		this.subagentBarKey = key;
 		this.subagentBarStore.clear();
-		this.subagentBar.classList.toggle('hidden', !task);
-		this.subagentBar.replaceChildren();
+		const bar = this.subagentBar;
+		const wasShown = !bar.classList.contains('hidden');
+		bar.replaceChildren();
+		bar.classList.toggle('hidden', !task || !parentId);
+		if (wasShown !== !bar.classList.contains('hidden')) {
+			this.onDidChangeSubagentChip.fire();
+		}
 		if (!task || !parentId) {
 			return;
 		}
 		const view = subagentView(agentRow(task), ref => this.providerOf(ref));
-		renderSubagentAvatar(this.subagentBar, view, 22);
-		const kind = append(this.subagentBar, $(`span.kind${multitask ? '.multitask' : ''}`));
-		kind.textContent = multitask ? localize('voltAgent.subagentBar.multitask', "Multitask") : localize('voltAgent.subagentBar.subagent', "Subagent");
-		append(this.subagentBar, $('span.model')).textContent = view.modelLabel ?? '';
-		const state = append(this.subagentBar, $(`span.state.state-${view.state}`));
-		state.textContent = view.stateLabel;
-		const clock = append(this.subagentBar, $('span.volt-subagent-clock'));
-		if (view.startedAt !== undefined) {
-			clock.dataset.startedAt = String(view.startedAt);
-			if (view.endedAt !== undefined) {
-				clock.dataset.endedAt = String(view.endedAt);
-			}
-			clock.textContent = formatOrchElapsed((view.endedAt ?? Date.now()) - view.startedAt);
-		}
-		append(this.subagentBar, $('span.spacer'));
 		const live = isLiveSubagentState(view.state);
-		append(this.subagentBar, $('span.note')).textContent = multitask
+		// The model it runs on ("Multitasking" before it, in blue, for a multitask chat; "Subagent" only
+		// when no model is known). State and clock are in the tooltip; Stop, Resume, Restart and Open
+		// parent are in the menu a click opens.
+		// A harness's subagent (Claude's Task) runs on its parent's model unless the call named one,
+		// and names it only when it returns: until then, the parent's.
+		const parentModel = !view.modelLabel && task.source === 'harness' ? this.orchestrator.getThread(parentId)?.modelRef : undefined;
+		const parentItem = parentModel ? this.runtime.listCatalog().find(item => item.ref === parentModel) : undefined;
+		const modelLabel = view.modelLabel ?? parentItem?.label;
+		const providerId = view.modelLabel ? view.providerId : parentItem?.providerId;
+		if (multitask || !modelLabel) {
+			append(bar, $('span.label')).textContent = multitask
+				? (live ? localize('voltAgent.subagentBar.multitasking', "Multitasking") : localize('voltAgent.subagentBar.multitask', "Multitask"))
+				: localize('voltAgent.subagentBar.subagent', "Subagent");
+		}
+		if (modelLabel) {
+			const model = append(bar, $('span.model'));
+			if (providerId) {
+				model.appendChild(createBrandIcon(providerId, 12));
+			}
+			append(model, $('span.model-name')).textContent = modelLabel;
+		}
+		const note = multitask
 			? (live ? localize('voltAgent.subagentBar.followUps', "Send follow-ups here") : localize('voltAgent.subagentBar.continue', "Reported · a message continues it"))
 			: (live ? localize('voltAgent.subagentBar.readOnlyLive', "Read only · runs on its own") : localize('voltAgent.subagentBar.readOnlyDone', "Read only · reported to its parent"));
-		if (live) {
-			// Stops now: its run is cancelled and the task ends, whatever the agent is doing.
-			const stop = append(this.subagentBar, $('button.stop-agent')) as HTMLButtonElement;
-			stop.type = 'button';
-			stop.appendChild(renderIcon(Codicon.debugStop));
-			append(stop, $('span')).textContent = localize('voltAgent.subagentBar.stop', "Stop");
-			const harness = task.source === 'harness';
-			setAgentTooltip(stop, harness
-				? localize('voltAgent.subagentBar.stopTurnHint', "Stop the agent turn that runs it")
-				: localize('voltAgent.subagentBar.stopHint', "Stop this agent now"));
-			const taskId = task.id;
-			// A harness's own subagent ends with the turn that runs it.
-			this.subagentBarStore.add(addDisposableListener(stop, 'click', () => void (harness
-				? this.orchestrator.cancel(parentId, { cascade: 'turn' })
-				: this.orchestrator.dispatch({ type: 'task.cancel', taskId, reason: 'The user stopped it.' }))));
+		const elapsed = view.startedAt !== undefined ? formatOrchElapsed((view.endedAt ?? Date.now()) - view.startedAt) : undefined;
+		setAgentTooltip(bar, [view.modelLabel, [view.stateLabel, elapsed].filter(Boolean).join(' '), note].filter(Boolean).join(' · '));
+
+		type BarAction = 'stop' | 'resume' | 'restart' | 'parent';
+		const items: IVoltMenuItem<BarAction>[] = [];
+		const harness = task.source === 'harness';
+		if (live && (view.cancellable || harness)) {
+			items.push({ id: 'stop', label: localize('voltAgent.subagentBar.stop', "Stop"), icon: Codicon.debugStop, tooltip: harness ? localize('voltAgent.subagentBar.stopTurnHint', "Stop the agent turn that runs it") : localize('voltAgent.subagentBar.stopHint', "Stop this agent now"), data: 'stop' });
+		}
+		if (isResumableSubagent(view)) {
+			items.push({ id: 'resume', label: localize('voltAgent.subagentBar.resume', "Resume"), icon: Codicon.play, tooltip: localize('voltAgent.subagentBar.resumeHint', "Resume: it continues where it stopped"), data: 'resume' });
+		}
+		if (multitask && (view.state === 'failed' || view.state === 'cancelled' || view.state === 'interrupted')) {
+			// Runs its last round again (a limit hit, a crash, a stop); the new report goes to the parent.
+			items.push({ id: 'restart', label: localize('voltAgent.subagentBar.restart', "Restart"), icon: Codicon.debugRestart, tooltip: localize('voltAgent.subagentBar.restartHint', "Run its last message again"), data: 'restart' });
 		}
 		// Nested in the parent's right panel, or the parent has a tab already: nothing to open.
 		if (!parentOpen) {
-			const open = append(this.subagentBar, $('button.open-parent')) as HTMLButtonElement;
-			open.type = 'button';
-			open.appendChild(renderIcon(Codicon.arrowUp));
-			append(open, $('span')).textContent = localize('voltAgent.subagentBar.openParent', "Open parent");
-			this.subagentBarStore.add(addDisposableListener(open, 'click', () => void openAgentPanel(this.editorGroupsService, this.instantiationService, parentId)));
+			items.push({ id: 'parent', label: localize('voltAgent.subagentBar.openParent', "Open parent"), icon: Codicon.arrowUp, data: 'parent' });
 		}
-		tickSubagentClocks(this.subagentBar, this.subagentBarStore);
+		bar.classList.toggle('has-menu', items.length > 0);
+		const taskId = task.id;
+		this.subagentBarStore.add(addDisposableListener(bar, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			if (!items.length) {
+				return;
+			}
+			showVoltMenu<BarAction>(this.contextViewService, {
+				anchor: bar,
+				position: 'above',
+				align: 'left',
+				width: 200,
+				ariaLabel: multitask ? localize('voltAgent.subagentBar.multitaskMenu', "Multitask") : localize('voltAgent.subagentBar.subagentMenu', "Subagent"),
+				sections: [{ id: 'actions', items }],
+				onPick: picked => {
+					switch (picked.data) {
+						case 'stop':
+							// Stops now: its run is cancelled and the task ends. A harness's own subagent ends with the turn that runs it.
+							void (harness
+								? this.orchestrator.cancel(parentId, { cascade: 'turn' })
+								: this.orchestrator.dispatch({ type: 'task.cancel', taskId, reason: 'The user stopped it.' }));
+							return;
+						case 'resume':
+							this.resumeSubagent(taskId);
+							return;
+						case 'restart':
+							this.retryLastTurn();
+							return;
+						case 'parent':
+							void openAgentPanel(this.editorGroupsService, this.instantiationService, parentId);
+							return;
+					}
+				},
+			});
+		}));
 	}
 
 	/** A chat with a tab in the main panel, or the chat whose right panel holds this one. */
@@ -6810,6 +6882,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	/** Stops an agent at once: a Volt agent's run is cancelled; a harness's own stops with the turn that runs it. */
+	/** Resume on a failed or stopped agent: another round of its task, briefed to continue; says so when it cannot. */
+	private resumeSubagent(taskId: string): void {
+		void resumeSubagentTask(this.orchestrator, taskId).then(ok => ok, () => false).then(ok => {
+			if (!ok) {
+				this.notificationService.warn(localize('voltAgent.subagent.resumeFailed', "That agent could not be resumed. Open its chat and send it a message to continue."));
+			}
+		});
+	}
+
 	private stopSubagentNow(view: ISubagentView): void {
 		const task = this.orchestrator.getTask(view.key);
 		if (!task) {
@@ -6837,7 +6918,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	/** The agents chip's list: this chat's multitask agents and subagents; a pick opens one beside the chat. */
 	private showAgentsMenu(anchor: HTMLElement): void {
-		type AgentPick = { readonly kind: 'open'; readonly key: string } | { readonly kind: 'stopAll' };
+		type AgentPick = { readonly kind: 'open'; readonly key: string } | { readonly kind: 'resume'; readonly key: string } | { readonly kind: 'stopAll' };
 		const now = Date.now();
 		const views = dockModel(this.orchestrator.getState(), this.sessionKey).agents.map(row => subagentView(row, ref => this.providerOf(ref)));
 		const item = (view: ISubagentView): IVoltMenuItem<AgentPick> => ({
@@ -6853,6 +6934,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				? (view.readOnly ? localize('voltAgent.agentsMenu.watch', "Watch its chat (read only)") : localize('voltAgent.agentsMenu.open', "Open its chat to send follow-ups"))
 				: localize('voltAgent.agentsMenu.harness', "Runs inside the agent's turn"),
 			data: { kind: 'open', key: view.key },
+			...(isResumableSubagent(view) ? { action: { icon: Codicon.play, tooltip: localize('voltAgent.agentsMenu.resume', "Resume: it continues where it stopped"), data: { kind: 'resume', key: view.key } } } : {}),
 		});
 		const multitasks = views.filter(view => view.multitask);
 		const subagents = views.filter(view => !view.multitask);
@@ -6882,6 +6964,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				const data = picked.data;
 				if (data.kind === 'open') {
 					this.openSubagent(data.key);
+				} else if (data.kind === 'resume') {
+					this.resumeSubagent(data.key);
 				} else {
 					this.stopAllSubagents();
 				}
@@ -7007,7 +7091,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.recordReply(last, true, 'cancelled');
 		}
 		// Stopping a turn stops the subagents it started, as a harness's own subagents stop with it.
-		void this.orchestrator.cancel(this.sessionKey, { cascade: 'turn' });
+		// With no turn running, Stop is for the subagents still at work.
+		const idle = !this.orchestrator.getThread(this.sessionKey)?.active;
+		void this.orchestrator.cancel(this.sessionKey, { cascade: idle ? 'all' : 'turn' });
 	}
 
 	/**
@@ -7154,7 +7240,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const active = this.voiceDictation.active;
 		if (active) {
 			this.writeDictatedText(this.voiceDictation.partial);
-		} else if (this.dictatedText) {
+		} else if (this.dictatedText.writing) {
 			// Cancelled or failed: take the partial transcript back out.
 			this.endDictatedText('');
 		}
@@ -7165,56 +7251,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 	}
 
-	/** Writes `text` where dictation started, over what the last partial wrote. Empty removes it. */
 	private writeDictatedText(text: string): void {
-		if (text === this.dictatedShown) {
-			return;
-		}
 		this.ensureInputEditor();
-		const editor = this.inputEditor;
-		const model = this.inputModel;
-		if (!editor || !model || model.isDisposed()) {
-			return;
-		}
-		let range: IRange | undefined = this.dictatedText?.getRange(0) ?? undefined;
-		if (!range) {
-			const pos = editor.getPosition() ?? model.getFullModelRange().getEndPosition();
-			range = { startLineNumber: pos.lineNumber, startColumn: pos.column, endLineNumber: pos.lineNumber, endColumn: pos.column };
-			const before = model.getValueInRange({ ...range, startColumn: Math.max(1, pos.column - 1) });
-			this.dictatedSeparator = before && !/\s/.test(before) ? ' ' : '';
-			// One undo step for the whole dictation.
-			editor.pushUndoStop();
-			this.dictatedText = editor.createDecorationsCollection();
-		}
-		const insert = text ? this.dictatedSeparator + text : '';
-		editor.executeEdits('volt-dictation', [{ range, text: insert }]);
-		const start = { lineNumber: range.startLineNumber, column: range.startColumn };
-		const end = model.getPositionAt(model.getOffsetAt(start) + insert.length);
-		this.dictatedText!.set([{
-			range: { startLineNumber: start.lineNumber, startColumn: start.column, endLineNumber: end.lineNumber, endColumn: end.column },
-			options: { description: 'volt-dictation', stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges },
-		}]);
-		editor.setPosition(end);
-		this.dictatedShown = text;
-	}
-
-	/** The draft before where dictation writes: the sentence it continues and the names around it. */
-	private textBeforeDictation(): string {
-		const model = this.inputModel;
-		const start = this.dictatedText?.getRange(0)?.getStartPosition() ?? this.inputEditor?.getPosition();
-		return model && !model.isDisposed() && start ? model.getValueInRange({ startLineNumber: 1, startColumn: 1, endLineNumber: start.lineNumber, endColumn: start.column }) : '';
+		this.dictatedText.write(text);
 	}
 
 	/** Settles dictation with its final text, or removes the partial when `text` is empty. */
 	private endDictatedText(text: string): void {
-		this.writeDictatedText(text);
-		this.dictatedText?.clear();
-		this.dictatedText = undefined;
-		this.dictatedShown = '';
-		this.inputEditor?.pushUndoStop();
-		if (text) {
-			this.inputEditor?.focus();
-		}
+		this.dictatedText.end(text);
 	}
 
 	private updateSendButton(): void {
@@ -7417,7 +7461,23 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!this.latestUserTurn || !this.threadInner.contains(this.latestUserTurn)) {
 			this.latestUserTurn = [...this.threadInner.querySelectorAll<HTMLElement>('.volt-agent-turn.user')].reverse().find(turn => !!turn.querySelector('.volt-agent-user-stop'));
 		}
-		this.latestUserTurn?.classList.toggle('running', streaming);
+		this.latestUserTurn?.classList.toggle('running', this.hasStoppableWork());
+	}
+
+	/**
+	 * What the prompt's Stop can end, as the sidebar sees it working: a reply streaming, a turn the
+	 * orchestrator has under way (a restart or a wake-up the panel has not drawn yet), or Volt
+	 * subagents this chat started that are still at work.
+	 */
+	private hasStoppableWork(): boolean {
+		if (this.isStreaming()) {
+			return true;
+		}
+		const active = this.orchestrator.getThread(this.sessionKey)?.active;
+		if (active) {
+			return active.phase !== 'cancelling';
+		}
+		return this.orchestrator.tasksOf(this.sessionKey).some(task => task.source === 'volt' && isLiveTaskState(task.state));
 	}
 
 	private isStreaming(): boolean {
@@ -7494,13 +7554,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					break;
 			}
 		});
+		// Already loaded: the thread on screen was drawn with it, so a switch keeps its stashed or tail-first draw.
+		const wasLoaded = !!this.orchestrator.getThread(input.sessionId);
 		void this.orchestrator.ensureThreadLoaded(input.sessionId).then(() => {
 			if (this.input === input) {
 				this.syncHostedChrome();
 				this.syncQueueStack();
 				this.updateSendButton();
 				// Rows of finished turns read their subagents from the chat's loaded orchestration.
-				if (this.orchestrator.tasksOf(input.sessionId).length || this.orchestrator.getThread(input.sessionId)?.parentId) {
+				if (!wasLoaded && (this.orchestrator.tasksOf(input.sessionId).length || this.orchestrator.getThread(input.sessionId)?.parentId)) {
 					this.renderThreadUnlessStreaming();
 				}
 			}

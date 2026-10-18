@@ -6,7 +6,7 @@
 import { $, addDisposableListener, append } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, IDisposable } from '../../../../../base/common/lifecycle.js';
 import { basename } from '../../../../../base/common/path.js';
 import { localize } from '../../../../../nls.js';
 import { ITasksCard, ITasksCardItem, ITodoOutcome } from '../chrome/agentTimeline.js';
@@ -57,6 +57,23 @@ function createTaskMark(doc: Document, state: ITasksCardItem['state']): SVGSVGEl
 	return svg;
 }
 
+/** An open card closes like a popover: a press outside it or Escape. */
+export function closeOnOutsideClick(element: HTMLElement, close: () => void): IDisposable {
+	const store = new DisposableStore();
+	const doc = element.ownerDocument;
+	store.add(addDisposableListener(doc, 'pointerdown', e => {
+		if (!(e.target instanceof Node) || !element.contains(e.target)) {
+			close();
+		}
+	}, true));
+	store.add(addDisposableListener(doc, 'keydown', e => {
+		if (e.key === 'Escape' && !e.defaultPrevented) {
+			close();
+		}
+	}));
+	return store;
+}
+
 /**
  * The agent's to-dos above the composer's chips, a card like Context Usage: one line
  * ("Tasks <current> 1/4 ====") that opens into the whole list with each to-do's state and time.
@@ -104,7 +121,9 @@ export class AgentTasksCard extends Disposable {
 		}
 		this.element.classList.toggle('expanded', this.expanded);
 		this.element.classList.toggle('live', card.live);
-		const head = append(this.element, $('button.volt-agent-tasks-head')) as HTMLButtonElement;
+		// The card keeps its header line in the composer; the panel opens up over the chat as a popover.
+		const panel = append(this.element, $('.volt-agent-tasks-panel'));
+		const head = append(panel, $('button.volt-agent-tasks-head')) as HTMLButtonElement;
 		head.type = 'button';
 		head.setAttribute('aria-expanded', String(this.expanded));
 		const progress = localize('voltAgent.tasks.progress', "{0} of {1} tasks done", card.done, card.total);
@@ -137,7 +156,11 @@ export class AgentTasksCard extends Disposable {
 		if (!this.expanded) {
 			return;
 		}
-		const list = append(this.element, $('ul.volt-agent-tasks-list'));
+		this.listeners.add(closeOnOutsideClick(this.element, () => {
+			this.expanded = false;
+			this.render();
+		}));
+		const list = append(panel, $('ul.volt-agent-tasks-list'));
 		for (const item of card.items) {
 			const row = append(list, $(`li.volt-agent-tasks-item.${item.state}`));
 			append(row, $('span.volt-agent-tasks-mark')).appendChild(createTaskMark(row.ownerDocument, item.state));
