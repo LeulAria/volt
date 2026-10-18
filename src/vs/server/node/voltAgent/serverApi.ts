@@ -27,6 +27,10 @@ import { ServerEditsJournal } from './serverEditsJournal.js';
 import { ServerSessionHost } from './serverSessionHost.js';
 import { ServerClientTools } from './serverClientTools.js';
 import { IServerFileRoot, ServerFiles } from './serverFiles.js';
+import { ServerComposer } from './serverComposer.js';
+import { ServerGit } from './serverGit.js';
+import { IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
+import { IVoltPullRequestService } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { basename } from '../../../base/common/path.js';
 
 /** Replicated collections the server publishes. Clients' mirrors answer synchronous getters from them. */
@@ -105,12 +109,17 @@ export class AgentServerApi extends Disposable {
 		@IAgentCheckpointService private readonly checkpoints: IAgentCheckpointService,
 		@ILogService private readonly logService: ILogService,
 		@IFileService private readonly fileService: IFileService,
+		@IVoltPullRequestService pullRequests: IVoltPullRequestService,
+		@IInstantiationService instantiationService: IInstantiationService,
 	) {
 		super();
 		this.runtimeRefresh = this._register(new RunOnceScheduler(() => this.publishRuntime(), 20));
 		this.historyRefresh = this._register(new RunOnceScheduler(() => this.publishHistory(), 50));
 		this.clientTools = this._register(new ServerClientTools(protocol, hostTools));
-		this._register(new ServerFiles(protocol, () => this.fileRoots(), logService));
+		const files = this._register(new ServerFiles(protocol, () => this.fileRoots(), logService));
+		const allowed = (path: string) => files.allowed(path);
+		this._register(new ServerGit(protocol, allowed, pullRequests, logService));
+		this._register(new ServerComposer(protocol, allowed, instantiationService));
 		this.registerMethods();
 		this.observe();
 		this.publishRuntime();

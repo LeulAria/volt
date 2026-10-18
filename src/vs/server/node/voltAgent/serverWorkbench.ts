@@ -26,7 +26,7 @@ import { VoltFsBrowseService } from '../../../platform/voltFsBrowse/node/voltFsB
 import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../../platform/voltGit/common/voltGit.js';
 import { IVoltCodeIndexService, VOLT_CODE_INDEX_CHANNEL_NAME } from '../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
-import { VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
+import { IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { VoltPullRequestService } from '../../../platform/voltPullRequests/node/voltPullRequestService.js';
 import { IVoltExecRequest, IVoltStdioSpawnOptions, VOLT_STDIO_CHANNEL_NAME } from '../../../platform/voltStdio/common/voltStdio.js';
 import { VoltStdioService } from '../../../platform/voltStdio/node/voltStdioService.js';
@@ -68,6 +68,8 @@ export interface IServerWorkbenchOptions {
 	readonly sendFile: (req: http.IncomingMessage, res: http.ServerResponse, file: string, immutable: boolean) => Promise<boolean>;
 	/** The machine's usage reader, shared with the agent server's `/api/usage` (other machines read it there). */
 	readonly usage?: VoltUsageService;
+	/** The agent server's pull request service, shared with paired phones' git screens. */
+	readonly pullRequests?: IVoltPullRequestService;
 }
 
 /**
@@ -329,7 +331,7 @@ export class ServerWorkbench extends Disposable {
 			socketServer.registerChannel(VOLT_CODE_INDEX_CHANNEL_NAME, ProxyChannel.fromService(codeIndex, store));
 		}
 		socketServer.registerChannel(VOLT_FS_BROWSE_CHANNEL_NAME, ProxyChannel.fromService(store.add(new VoltFsBrowseService()), store));
-		const pullRequests = store.add(new VoltPullRequestService(resolveEnv, this.logService, 'gh', {
+		const pullRequests = this.options.pullRequests ?? store.add(new VoltPullRequestService(resolveEnv, this.logService, 'gh', {
 			hostSettings: () => this.configurationService.getValue(VOLT_SOURCE_CONTROL_HOSTS_SETTING),
 		}));
 		socketServer.registerChannel(VOLT_PULL_REQUEST_CHANNEL_NAME, ProxyChannel.fromService(pullRequests, store));

@@ -99,6 +99,9 @@ import { importDesktopStorage, ServerCommandService, ServerConsoleLogger, Server
 import { ServerSessionHost } from './serverSessionHost.js';
 import { IPairingHttpContext, machineLabel, ServerPairing } from './serverPairing.js';
 import { ServerWorkbench } from './serverWorkbench.js';
+import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
+import { IVoltPullRequestService } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
+import { VoltPullRequestService } from '../../../platform/voltPullRequests/node/voltPullRequestService.js';
 
 /** Settings keys the server takes over from the desktop's storage the first time it starts. */
 const IMPORTED_STORAGE_PREFIXES = ['volt.runtime.', 'volt.agent.', 'volt.pullRequests.', 'volt.access.'];
@@ -197,6 +200,11 @@ export async function main(argv: string[]): Promise<void> {
 	services.set(IVoltStdioService, stdioService);
 	services.set(IVoltGitService, disposables.add(new VoltGitService(resolveEnv, logService, { shadowRoot: join(args.userDataDir, 'volt-checkpoints') })));
 	services.set(IVoltHostMcpService, disposables.add(new VoltHostMcpService(logService)));
+	// The phone's git and pull request screens (ServerGit), and the browser workbench's own channel, share one.
+	const pullRequests = disposables.add(new VoltPullRequestService(resolveEnv, logService, 'gh', {
+		hostSettings: () => configurationService.getValue(VOLT_SOURCE_CONTROL_HOSTS_SETTING),
+	}));
+	services.set(IVoltPullRequestService, pullRequests);
 	// Its own index folder: the desktop's index process may be writing to the desktop one.
 	const codeIndex = disposables.add(new VoltCodeIndexService(join(args.userDataDir, 'volt-index-server'), logService));
 	services.set(IVoltCodeIndexService, codeIndex);
@@ -348,6 +356,7 @@ export async function main(argv: string[]): Promise<void> {
 		codeIndex,
 		sendFile,
 		usage,
+		pullRequests,
 	}));
 	httpContext = { ...httpContext, workbench: workbench.available };
 	const server = http.createServer((req, res) => void serveHttp(req, res, webRoot, token, epoch, pairing, workbench, httpContext, usage, logService));
