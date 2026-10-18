@@ -148,6 +148,8 @@ type Row<T> =
 
 const ROW_HEIGHT = 30;
 const TWO_LINE_ROW_HEIGHT = 46;
+/** What a row grows by under a finger (a touch screen has no pointer precision); see voltMenu.css `.coarse`. */
+const COARSE_ROW_EXTRA = 10;
 const HEADER_HEIGHT = 22;
 const SEPARATOR_HEIGHT = 1;
 const MAX_LIST_HEIGHT = 360;
@@ -286,6 +288,7 @@ class VoltMenuWidget<T> extends Disposable {
 		super();
 		this.idle = !!context.idle;
 		this.root = append(host, $('.volt-menu'));
+		this.root.classList.toggle('coarse', coarsePointer());
 		if (context.className) {
 			this.root.classList.add(...context.className.split(' '));
 		}
@@ -969,12 +972,20 @@ class VoltMenuWidget<T> extends Disposable {
 	}
 }
 
+let coarse: boolean | undefined;
+
+/** Whether the primary pointer is a finger (read once: a window does not trade its screen). */
+function coarsePointer(): boolean {
+	return coarse ??= !!globalThis.matchMedia?.('(pointer: coarse)').matches;
+}
+
 function rowHeight<T>(row: Row<T>): number {
+	const extra = coarsePointer() ? COARSE_ROW_EXTRA : 0;
 	switch (row.kind) {
 		case 'header': return HEADER_HEIGHT;
 		case 'separator': return SEPARATOR_HEIGHT;
-		case 'item': return row.item.subtitle ? TWO_LINE_ROW_HEIGHT : ROW_HEIGHT;
-		default: return ROW_HEIGHT;
+		case 'item': return (row.item.subtitle ? TWO_LINE_ROW_HEIGHT : ROW_HEIGHT) + extra;
+		default: return ROW_HEIGHT + extra;
 	}
 }
 

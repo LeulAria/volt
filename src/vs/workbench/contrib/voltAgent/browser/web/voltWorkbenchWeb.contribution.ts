@@ -11,6 +11,8 @@
 
 import './media/voltWorkbenchWeb.css';
 import './voltWebFolders.js';
+import './voltWebTouch.js';
+import { WebSpeechService } from './voltWebSpeech.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
@@ -198,7 +200,8 @@ function registerDesktopOnly<T>(id: ServiceIdentifier<T>, what: string, answers:
 }
 
 registerDesktopOnly(IVoltAwakeService, localize('volt.web.awake', "Lid-Closed Mode"));
-registerDesktopOnly(IVoltSpeechService, localize('volt.web.speech', "Dictation"));
+// Dictation listens through the browser's own speech recognition.
+registerSingleton(IVoltSpeechService, WebSpeechService, InstantiationType.Delayed);
 registerDesktopOnly(IVoltBrowserService, localize('volt.web.browser', "The in-app browser"));
 registerDesktopOnly(IVoltAccountsService, localize('volt.web.accounts', "Signing in to Claude accounts"));
 registerDesktopOnly(IVoltExternalMcpService, localize('volt.web.externalMcp', "Connecting other agents"));

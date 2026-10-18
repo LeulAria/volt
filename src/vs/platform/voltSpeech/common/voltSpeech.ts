@@ -12,7 +12,8 @@ export const VOLT_SPEECH_CHANNEL_NAME = 'voltSpeech';
 /** The audio the renderer sends: mono 16-bit little-endian PCM at this rate. */
 export const VOLT_SPEECH_SAMPLE_RATE = 16000;
 
-export type VoltSpeechEngine = 'apple-on-device' | 'apple' | 'endpoint';
+/** `browser`: the Web Speech API, for Volt's workbench in a browser tab. */
+export type VoltSpeechEngine = 'apple-on-device' | 'apple' | 'endpoint' | 'browser';
 
 export interface IVoltSpeechEndpoint {
 	/** An OpenAI-compatible base URL, such as `http://localhost:8000/v1`. `/audio/transcriptions` is appended. */
@@ -36,6 +37,8 @@ export type IVoltSpeechEvent = { readonly sessionId: string } & (
 export interface IVoltSpeechService {
 	readonly _serviceBrand: undefined;
 	readonly onDidEvent: Event<IVoltSpeechEvent>;
+	/** False where no engine can listen at all (a browser without speech recognition); missing means it can try. */
+	isAvailable?(): boolean;
 	/** Resolves once the engine is running; `pushAudio` may follow. Rejects when no engine can take the audio. */
 	start(options: IVoltSpeechStartOptions): Promise<VoltSpeechEngine>;
 	/** `pcmBase64`: 16 kHz mono 16-bit little-endian samples. */
