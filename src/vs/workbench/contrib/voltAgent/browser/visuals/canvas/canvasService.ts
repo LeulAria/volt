@@ -19,7 +19,7 @@ import { ILogService } from '../../../../../../platform/log/common/log.js';
 import { INotificationService } from '../../../../../../platform/notification/common/notification.js';
 import { IThemeService } from '../../../../../../platform/theme/common/themeService.js';
 import { IPageChannelPort, registerPageChannel, setPageContext } from '../agentVisualBridge.js';
-import { themeKind } from '../agentVisuals.js';
+import { themeKind } from '../visualTheme.js';
 import { OPEN_CANVAS_COMMAND_ID } from './canvasCard.js';
 import { applyCanvasLayout, applyCanvasUpdate, CANVAS_SIZE_PRESETS, canvasFromMockups, CanvasCommentStatus, formatCanvasChoice, formatCanvasFeedback, ICanvasAnchor, ICanvasCreate, ICanvasDoc, ICanvasLayout, ICanvasTweak, ICanvasUpdateResult, archiveResolvedCanvasComments, removeCanvasComment, upsertCanvasComment } from './canvasModel.js';
 import { ICanvasPageData, ICanvasStrings } from './canvasPage.js';

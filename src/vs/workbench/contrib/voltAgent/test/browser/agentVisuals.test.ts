@@ -14,7 +14,7 @@ import { AgentSegment } from '../../browser/blocks/agentBlocks.js';
 import { describeHostToolActivity } from '../../browser/blocks/agentHostToolActivity.js';
 import { buildTranscriptRows, splitWorkedRows } from '../../browser/chrome/agentTranscript.js';
 import { buildVisualPage, inlineLocalImages, localImagePaths } from '../../browser/visuals/agentVisualPage.js';
-import { chartPaletteVariables } from '../../browser/visuals/agentVisuals.js';
+import { chartPaletteVariables } from '../../browser/visuals/visualTheme.js';
 import { xychartToChartSpec } from '../../browser/blocks/agentMermaid.js';
 import { fenceChartSpec } from '../../browser/blocks/agentMarkdown.js';
 import { IVoltChartsHandle, voltChartsRuntime } from '../../browser/visuals/voltChartsRuntime.js';

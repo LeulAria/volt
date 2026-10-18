@@ -23,7 +23,7 @@ import { IWebviewElement, IWebviewService, WebviewContentPurpose } from '../../.
 import { BATCH_EDITS_STORAGE_KEY, IVoltAnnotationItem, showVoltAnnotationsMenu } from '../../chrome/voltAnnotations.js';
 import { dispatchPageChannel, IPageChannelPort, parsePageRequest } from '../agentVisualBridge.js';
 import { buildVisualPage } from '../agentVisualPage.js';
-import { themeKind, visualThemeCss } from '../agentVisuals.js';
+import { themeKind, visualThemeCss } from '../visualTheme.js';
 import type { CanvasFrameKind, ICanvasAnchor, ICanvasDoc, ICanvasFrame } from './canvasModel.js';
 import { buildCanvasPage } from './canvasPage.js';
 import { canvasStrings, IVoltCanvasService } from './canvasService.js';

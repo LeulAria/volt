@@ -15,7 +15,7 @@ import { IVoltVisualRef } from '../../../../services/voltRuntime/common/hostTool
 import { WebviewThemeDataProvider } from '../../../webview/browser/themeing.js';
 import { PAGE_MEASURE_WIDTHS } from './agentVisualBridge.js';
 import { buildVisualPage, VISUAL_COLUMN_WIDTH, VISUAL_MAX_HEIGHT, VISUAL_MIN_HEIGHT } from './agentVisualPage.js';
-import { themeKind, visualThemeCss } from './agentVisuals.js';
+import { themeKind, visualThemeCss } from './visualTheme.js';
 
 export interface IPublishedPage {
 	readonly visual: IVoltVisualRef;
