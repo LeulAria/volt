@@ -110,7 +110,7 @@ You can also start Volt without installing the command:
 ```bash
 open -a Volt                 # launch Volt
 open -a Volt ~/code/my-app   # open a folder in Volt
-/Applications/Volt.app/Contents/Resources/app/bin/volt --version
+/Applications/Volt.app/Contents/Resources/app/bin/code --version
 ```
 
 To remove the command, run **Shell Command: Uninstall 'volt' command from PATH** from the same palette.
