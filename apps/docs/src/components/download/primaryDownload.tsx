@@ -17,6 +17,7 @@ import {
   primaryAsset,
   recommendedPkg,
 } from "@/lib/releases";
+import { gitConfig } from "@/lib/shared";
 import { GITHUB_RELEASES_URL, type ReleasesState } from "@/lib/useReleases";
 
 const BUTTON =
@@ -190,6 +191,19 @@ function MacArchSwitch({
         Apple menu, About This Mac: a chip named Apple M-something means Apple
         Silicon.
       </span>
+      <p className="basis-full text-pretty">
+        Mac builds are not signed with an Apple Developer ID yet, so macOS asks
+        you to confirm the first launch.{" "}
+        <a
+          href={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/docs/install/macos.md`}
+          target="_blank"
+          rel="noreferrer"
+          className="text-white/70 underline underline-offset-4 transition-colors hover:text-white"
+        >
+          Step-by-step guide with screenshots
+        </a>
+        .
+      </p>
     </div>
   );
 }

@@ -76,8 +76,21 @@ export function rootHeadMeta(): Array<
 }
 
 /** Reserved for global link tags; canonical URLs are set per-route (home, docs) so `/docs/*` is not wrong. */
-export function rootHeadLinks(): Array<{ rel: string; href: string }> {
-  return [];
+export function rootHeadLinks(): Array<{
+  rel: string;
+  href: string;
+  type?: string;
+  sizes?: string;
+}> {
+  return [
+    { rel: "icon", type: "image/png", sizes: "32x32", href: "/favicon-32.png" },
+    { rel: "icon", type: "image/png", sizes: "64x64", href: "/favicon-64.png" },
+    {
+      rel: "apple-touch-icon",
+      sizes: "180x180",
+      href: "/apple-touch-icon.png",
+    },
+  ];
 }
 
 /** JSON-LD: WebSite (root). */

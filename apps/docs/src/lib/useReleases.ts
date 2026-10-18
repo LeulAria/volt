@@ -13,7 +13,7 @@ import { gitConfig } from "./shared";
 export const RELEASES_API = `https://api.github.com/repos/${gitConfig.user}/${gitConfig.repo}/releases?per_page=100`;
 export const GITHUB_RELEASES_URL = `https://github.com/${gitConfig.user}/${gitConfig.repo}/releases`;
 /** Shown until (or unless) GitHub reports a newer stable or beta. */
-export const VOLT_VERSION = "0.0.1";
+export const VOLT_VERSION = "0.0.2";
 
 const CACHE_KEY = "volt:releases:v1";
 const CACHE_MS = 10 * 60 * 1000;
