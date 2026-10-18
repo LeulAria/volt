@@ -156,7 +156,12 @@ jobs:
       - name: Compile and minify
         run: |
           set -e
-          npm run gulp compile-build-with-mangling
+          # Mangling renames private members to shrink the bundle, but its extra type-check pass grows past
+          # the 16 GB of a hosted runner (measured at 17 GB and climbing), and the runner is shut down mid-compile.
+          # Release builds compile without it. The memory line every 30 s shows what a failure was using.
+          ( while true; do echo "memory: $(free -m | awk 'NR==2 {print "used " $3 " MB, available " $7 " MB"}')"; sleep 30; done ) &
+          trap "kill $! 2>/dev/null || true" EXIT
+          npm run gulp compile-build-without-mangling
           npm run gulp minify-vscode
           npm run gulp extensions-ci
         env:
