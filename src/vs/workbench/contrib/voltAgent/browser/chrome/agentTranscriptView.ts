@@ -9,6 +9,11 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { extname } from '../../../../../base/common/path.js';
+import { URI } from '../../../../../base/common/uri.js';
+import { ILanguageService } from '../../../../../editor/common/languages/language.js';
+import { getIconClasses } from '../../../../../editor/common/services/getIconClasses.js';
+import { IModelService } from '../../../../../editor/common/services/model.js';
+import { FileKind } from '../../../../../platform/files/common/files.js';
 import { localize } from '../../../../../nls.js';
 import { AgentBlock, IAgentActivityItem, IToolBlock } from '../blocks/agentBlocks.js';
 import { formatContextTokens } from '../context/agentContextUsage.js';
@@ -49,6 +54,7 @@ export interface ITranscriptHost {
 	subagentViews?(tool: IToolBlock, live: boolean): readonly ISubagentView[] | undefined;
 	openSubagent?(view: ISubagentView): void;
 	stopSubagent?(view: ISubagentView): void;
+	resumeSubagent?(view: ISubagentView): void;
 	readonly subagentTooltip?: AgentTooltip;
 	/** The same host with every listener (and the block context's store) going to `store`: a cached row owns its listeners. */
 	withStore?(store: DisposableStore): ITranscriptHost;
@@ -752,6 +758,10 @@ export function formatWorkedTime(ms: number): string {
 }
 
 function renderStepsGroup(parent: HTMLElement, row: Extract<TranscriptRow, { kind: 'steps' }>, host: ITranscriptHost): void {
+	if (row.display === 'edit') {
+		renderEditCard(parent, row, host);
+		return;
+	}
 	if (row.display === 'lines' || row.display === 'cards') {
 		// Standard density: a line per call. Detailed: edits and calls with output as open cards.
 		const list = append(parent, $(`.volt-tr-step-list.${row.display}`));
@@ -923,9 +933,42 @@ export function renderTerminalCard(parent: HTMLElement, command: string, output:
 }
 
 /** Cursor's edit diff: line numbers, +/- markers, a striped 4px strip, tinted rows, 3 lines of context. */
-function renderInlineDiff(parent: HTMLElement, step: ITranscriptStep, host: ITranscriptHost): void {
+/**
+ * One edit between the other steps: file icon, name and +a -b over the first few lines of its
+ * diff, fading out. The header or the peek opens the whole diff; the header folds it again.
+ */
+function renderEditCard(parent: HTMLElement, row: Extract<TranscriptRow, { kind: 'steps' }>, host: ITranscriptHost): void {
+	const step = row.steps[0];
 	const file = step.file!;
-	const preview = computeFileChangePreview(fileChangeSource(file), { contextLines: 3, maxLines: 4000 });
+	const open = host.isExpanded(row.id) ?? false;
+	const card = append(parent, $('.volt-tr-edit-card'));
+	const header = collapsibleHeader(card, open, true);
+	header.classList.add('show-file-icons');
+	header.title = `${step.live ? liveVerb(step) : step.action} ${file.path}`;
+	const icon = append(header, $('span.volt-tr-edit-icon'));
+	icon.classList.add(...host.ctx.instantiationService.invokeFunction(accessor => getIconClasses(accessor.get(IModelService), accessor.get(ILanguageService), URI.file(file.path), FileKind.FILE)));
+	const name = append(header, $('span.volt-tr-edit-name'));
+	host.setSearchableText(name, step.detail ?? file.path);
+	name.classList.toggle('shimmer', !!step.live);
+	appendStats(header, step.additions ?? 0, step.deletions ?? 0);
+	appendChevron(header);
+	const toggle = (next: boolean) => (e: MouseEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		host.setExpanded(row.id, next);
+	};
+	host.store.add(addDisposableListener(header, 'click', toggle(!open)));
+	const body = append(card, $('.volt-tr-edit-body'));
+	renderInlineDiff(body, step, host, !open);
+	if (!open) {
+		host.store.add(addDisposableListener(body, 'click', toggle(true)));
+	}
+}
+
+/** `peek` is the closed edit card's few lines: one line of context and a short cut of the diff. */
+function renderInlineDiff(parent: HTMLElement, step: ITranscriptStep, host: ITranscriptHost, peek = false): void {
+	const file = step.file!;
+	const preview = computeFileChangePreview(fileChangeSource(file), peek ? { contextLines: 1, maxLines: 8 } : { contextLines: 3, maxLines: 4000 });
 	const card = append(parent, $('.volt-tr-diff'));
 	if (!preview.lines.length) {
 		append(card, $('.volt-tr-diff-empty')).textContent = file.status === 'streaming'
@@ -1063,6 +1106,7 @@ function subagentOptions(host: ITranscriptHost): ISubagentRowOptions {
 		tooltip: host.subagentTooltip,
 		onOpen: host.openSubagent,
 		onStop: host.stopSubagent,
+		onResume: host.resumeSubagent,
 		setText: (el, text) => host.setSearchableText(el, text),
 	};
 }

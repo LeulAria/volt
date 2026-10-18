@@ -5,6 +5,7 @@
 
 import { isMemoryToolName } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
 import { describeLocator, parseLocator } from '../../../../services/voltRuntime/common/tools/browserRun.js';
+import { TERMINAL_START_TOOL_NAME, TERMINAL_TOOLS, TERMINAL_SEND_TOOL_NAME, APP_OPEN_TOOL_NAME } from '../../../../services/voltRuntime/common/terminalTools.js';
 import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, CANVAS_READ_TOOL_NAME, CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, MOCKUPS_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME, THREAD_TOOL_NAMES, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 
 /** How one of Volt's own MCP tools reads in the activity trail, the way Cursor words its browser actions. */
@@ -51,6 +52,50 @@ export function hostToolCall(name: string | undefined, title: string | undefined
 	}
 	const args = wrapped && rec.args && typeof rec.args === 'object' ? rec.args as Record<string, unknown> : (rec && !wrapped ? rec : {});
 	return { tool, args };
+}
+
+const MCP_TOOL_RE = /^mcp__(.+?)__(.+)$/;
+
+/** Volt's own tool behind a raw name (`mcp__volt__terminal_start`, `volt: terminal_start`, `terminal_start`), if it is one. */
+function terminalToolName(raw: string | undefined): string | undefined {
+	const value = (raw ?? '').trim();
+	const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
+	const id = tail.replace(/^mcp__volt__/i, '').toLowerCase();
+	return TERMINAL_TOOLS.some(tool => tool.name === id) ? id : undefined;
+}
+
+/**
+ * A tool's raw MCP name in words, so the transcript never shows `mcp__volt__terminal_start`:
+ * Volt's tools read as their own title ("Started terminal"), others as their name spelled out
+ * ("mcp__aws-docs__search_docs" → "Search docs").
+ */
+export function friendlyToolTitle(raw: string | undefined): string | undefined {
+	const terminal = terminalToolName(raw);
+	if (terminal) {
+		return TERMINAL_TOOLS.find(tool => tool.name === terminal)?.title;
+	}
+	const mcp = MCP_TOOL_RE.exec((raw ?? '').trim());
+	if (!mcp) {
+		return undefined;
+	}
+	const words = mcp[2].replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim().toLowerCase();
+	return words ? words.charAt(0).toUpperCase() + words.slice(1) : undefined;
+}
+
+/** The managed terminal tools as rows: what started, what was typed, which app opened. */
+export function describeTerminalToolActivity(name: string | undefined, title: string | undefined, input: string | undefined): { label: string; detail?: string } | undefined {
+	const tool = terminalToolName(name) ?? terminalToolName(title);
+	const label = tool && TERMINAL_TOOLS.find(info => info.name === tool)?.title;
+	if (!tool || !label) {
+		return undefined;
+	}
+	const args = parseRecord(input) ?? {};
+	switch (tool) {
+		case TERMINAL_START_TOOL_NAME: return { label, detail: text(args.command, 80) };
+		case TERMINAL_SEND_TOOL_NAME: return { label, detail: text(args.text, 60) };
+		case APP_OPEN_TOOL_NAME: return { label, detail: text(args.target, 80) };
+		default: return { label };
+	}
 }
 
 export function describeHostToolActivity(name: string | undefined, title: string | undefined, input: string | undefined): IHostToolActivity | undefined {

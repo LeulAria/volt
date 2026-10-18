@@ -17,6 +17,7 @@ import { fileChangeSource, partitionAssistantText } from './agentTimeline.js';
 import { CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, RENDER_CHART_TOOL_NAME, SILENT_VISUAL_TOOL_NAMES, VISUAL_TOOL_NAMES } from '../../../../services/voltRuntime/common/hostTools.js';
 import { peekCanvasInput } from '../visuals/canvas/canvasModel.js';
 import { chartLoaderShape } from '../visuals/agentDotLoader.js';
+import { friendlyToolTitle } from '../blocks/agentHostToolActivity.js';
 
 /**
  * Cursor's transcript model. Between two pieces of assistant text, every tool call and
@@ -52,9 +53,10 @@ export interface ITranscriptStep {
 
 /**
  * How a steps row is drawn (the tool call density): folded behind its group line (the default),
- * as one line per call, or with each edit and call that has output as an open card.
+ * as one line per call, or with each edit and call that has output as an open card. `edit` is
+ * one file edit between the other steps: its own card with a few lines of its diff.
  */
-export type StepsDisplay = 'group' | 'lines' | 'cards';
+export type StepsDisplay = 'group' | 'lines' | 'cards' | 'edit';
 
 export type TranscriptRow =
 	| { readonly kind: 'steps'; readonly id: string; readonly steps: readonly ITranscriptStep[]; readonly live: boolean; readonly display?: StepsDisplay }
@@ -211,8 +213,15 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 					rows.push({ kind: 'block', block: createPlanBlock({ id: block.id, callId: block.callId, input: block.input, name: plan.name, markdown: plan.plan ?? '', status: block.status }) });
 				} else if (block.type === 'file') {
 					// Older chats recorded Cursor's to-do tool as an edit to a file named "Update TODOs".
-					if (!/(^|[\\/])update todos\b/i.test(block.path) && !isPhantomFileBlock(block)) {
+					if (/(^|[\\/])update todos\b/i.test(block.path) || isPhantomFileBlock(block)) {
+						break;
+					}
+					if (display === 'cards') {
 						pending.push(editStep(block));
+					} else {
+						// Each edit is its own card with a peek of its diff, between the explore and run lines.
+						flushSteps();
+						rows.push({ kind: 'steps', id: `edit-${block.id}`, steps: [editStep(block)], live: false, display: 'edit' });
 					}
 				} else if (block.type === 'tool') {
 					if (isExploreTool(block.name, block.title)) {
@@ -492,6 +501,10 @@ function terminalStep(block: ITerminalBlock): ITranscriptStep {
 
 function toolStep(block: IToolBlock): ITranscriptStep {
 	const label = (block.title || block.name).trim();
+	const friendly = friendlyToolTitle(label);
+	if (friendly) {
+		return { id: block.id, kind: 'tool', action: friendly, detail: '', tool: block };
+	}
 	const mcp = /^(?:mcp[:_\s]+)?([\w.-]+)[:_\s-]+(\w+)$/i.exec(label);
 	return {
 		id: block.id,

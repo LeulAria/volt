@@ -123,26 +123,6 @@
 	font-size: 12px;
 }
 
-/* Several terminals: one dot per terminal after the label. */
-.volt-agent-terminal-runs-dots {
-	display: inline-flex;
-	gap: 3px;
-	margin-left: 2px;
-}
-
-.volt-agent-terminal-runs-dots .dot {
-	width: 5px;
-	height: 5px;
-	border-radius: 50%;
-	background: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
-}
-
-.volt-agent-terminal-runs-dots .dot.running { background: var(--vscode-charts-blue, #3794ff); }
-.volt-agent-terminal-runs-dots .dot.ready,
-.volt-agent-terminal-runs-dots .dot.completed { background: var(--vscode-testing-iconPassed, #3fb950); }
-.volt-agent-terminal-runs-dots .dot.attention { background: var(--vscode-editorWarning-foreground, #cca700); }
-.volt-agent-terminal-runs-dots .dot.failed { background: var(--vscode-errorForeground, #f14c4c); }
-
 /*
  * A chat's Terminals tab (agentTerminalsEditor.ts): the terminal in front fills the tab, and from two
  * terminals on, a list on the right switches between them, as the terminal panel's tabs list does.

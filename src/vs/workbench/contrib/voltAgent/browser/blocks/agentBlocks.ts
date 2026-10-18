@@ -10,7 +10,7 @@ import { planProposalFromArgs, PROPOSE_PLAN_TOOL_NAME } from '../../../../servic
 import type { IVoltRateLimitReading, IVoltToolView } from '../../../../services/voltRuntime/common/events.js';
 import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/sandboxDenials.js';
 import { presentOutput, type OutputView } from '../../../../services/voltRuntime/common/harness/adaptiveOutput.js';
-import { describeHostToolActivity, hostToolCall } from './agentHostToolActivity.js';
+import { describeHostToolActivity, describeTerminalToolActivity, friendlyToolTitle, hostToolCall } from './agentHostToolActivity.js';
 import type { IWorkCounts, ToolKind } from '../../../../services/voltRuntime/common/harness/workLog.js';
 
 export type AgentBlockStatus = 'streaming' | 'complete' | 'error';
@@ -1410,7 +1410,8 @@ export function isHiddenExploreToolBlock(block: AgentBlock): boolean {
 }
 
 export function splitActivityLabel(name: string, title?: string, target?: IAgentFileTarget): { label: string; detail?: string } {
-	const raw = (title || name).trim();
+	const given = (title || name).trim();
+	const raw = friendlyToolTitle(given) ?? given;
 	if (target) {
 		const kind = classifyToolActivity(name, title);
 		const file = target.path.split(/[\\/]/).pop() || target.path;
@@ -1474,6 +1475,10 @@ export function describeExploreActivity(name: string, title: string | undefined,
 			hostArgs: hostToolCall(name, title, input)?.args,
 			hidden: host.hidden,
 		};
+	}
+	const terminal = describeTerminalToolActivity(name, title, input);
+	if (terminal) {
+		return terminal;
 	}
 	const kind = classifyToolActivity(name, title);
 	const args = parseExploreArgs(input);

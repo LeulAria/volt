@@ -146,7 +146,8 @@ export class AgentTerminalChips extends Disposable {
 	private renderSummary(list: readonly IAgentTerminalInfo[]): void {
 		const live = list.filter(info => isTerminalLive(info.status));
 		const failed = list.filter(info => info.status === 'failed');
-		const top = [...list].sort((a, b) => STATUS_WEIGHT[b.status] - STATUS_WEIGHT[a.status])[0];
+		// While any terminal works, the chip leads with the loader; failures wait in the tooltip and menu.
+		const top = [...(live.length ? live : list)].sort((a, b) => STATUS_WEIGHT[b.status] - STATUS_WEIGHT[a.status])[0];
 		const chip = this.element;
 		this.setTone(top.status, true);
 		const main = append(chip, $('button.volt-agent-terminal-runs-main')) as HTMLButtonElement;
@@ -158,10 +159,6 @@ export class AgentTerminalChips extends Disposable {
 		main.setAttribute('aria-label', failed.length
 			? localize('voltAgent.terminal.summaryAriaFailed', "{0}, {1} failed", label, failed.length)
 			: label);
-		const dots = append(main, $('span.volt-agent-terminal-runs-dots'));
-		for (const info of list.slice(0, 5)) {
-			append(dots, $(`span.dot.${info.status}`));
-		}
 		setAgentTooltip(main, list.map(info => `${info.label}: ${statusLabel(info)}${info.urls[0] ? ` \u00b7 ${info.urls[0]}` : ''}`).join('\n'));
 		this.renderStore.add(addDisposableListener(main, 'click', e => {
 			EventHelper.stop(e, true);

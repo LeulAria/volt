@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { describeExploreActivity, IAgentActivityItem, applyExploreInputToActivity } from '../../browser/blocks/agentBlocks.js';
-import { describeHostToolActivity, sameHostToolArgs } from '../../browser/blocks/agentHostToolActivity.js';
+import { describeHostToolActivity, friendlyToolTitle, sameHostToolArgs } from '../../browser/blocks/agentHostToolActivity.js';
 import { buildThreadParts, mergeFileBlocks, turnFileChanges } from '../../browser/chrome/agentTimeline.js';
 import { isAgentTransportError } from '../../../../services/voltRuntime/browser/agents/acpProvider.js';
 import { isVoltHostTool, PULL_REQUEST_TOOL_NAMES } from '../../../../services/voltRuntime/common/hostTools.js';
@@ -104,5 +104,12 @@ suite('Agent host tool activity', () => {
 		assert.deepStrictEqual(describeHostToolActivity('memory_read', undefined, '{"name":"pnpm and small diffs"}'), { tool: 'memory_read', label: 'Recalled memory', detail: 'pnpm and small diffs' });
 		assert.deepStrictEqual(describeHostToolActivity('memory_write', undefined, '{"name":"Prefers small diffs"}'), { tool: 'memory_write', label: 'Saved memory', detail: 'Prefers small diffs' });
 		assert.deepStrictEqual(describeHostToolActivity('memory_list', undefined, '{}'), { tool: 'memory_list', label: 'Checked memories' });
+	});
+
+	test('never shows a raw MCP tool name', () => {
+		assert.strictEqual(friendlyToolTitle('mcp__volt__terminal_start'), 'Started terminal');
+		assert.strictEqual(friendlyToolTitle('mcp__aws-docs__search_docs'), 'Search docs');
+		assert.strictEqual(friendlyToolTitle('Read file'), undefined);
+		assert.deepStrictEqual(describeExploreActivity('mcp__volt__terminal_start', 'mcp__volt__terminal_start', '{"command":"npm run dev"}'), { label: 'Started terminal', detail: 'npm run dev' });
 	});
 });

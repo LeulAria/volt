@@ -127,11 +127,13 @@ button.volt-tr-header:hover .volt-tr-details,
 }
 
 button.volt-tr-header:hover .volt-tr-chevron,
-.volt-tr-group.open > .volt-tr-header .volt-tr-chevron {
+.volt-tr-group.open > .volt-tr-header .volt-tr-chevron,
+.volt-tr-edit-card.open > .volt-tr-header .volt-tr-chevron {
 	opacity: 1;
 }
 
-.volt-tr-group.open > .volt-tr-header .volt-tr-chevron {
+.volt-tr-group.open > .volt-tr-header .volt-tr-chevron,
+.volt-tr-edit-card.open > .volt-tr-header .volt-tr-chevron {
 	transform: none;
 }
 
@@ -146,6 +148,7 @@ button.volt-tr-header:hover .volt-tr-chevron,
 /* Live verbs shimmer like the status line. */
 .volt-tr-action.shimmer,
 .volt-tr-subagent-status.shimmer,
+.volt-tr-edit-name.shimmer,
 .volt-tr-compaction-label.shimmer {
 	background: linear-gradient(90deg,
 		var(--volt-md-fg-quaternary) 0%,
@@ -166,6 +169,7 @@ button.volt-tr-header:hover .volt-tr-chevron,
 
 .volt-tr-action.shimmer,
 .volt-tr-subagent-status.shimmer,
+.volt-tr-edit-name.shimmer,
 .volt-tr-compaction-label.shimmer {
 	background-size: 200% 100%;
 }
@@ -173,6 +177,7 @@ button.volt-tr-header:hover .volt-tr-chevron,
 @media (prefers-reduced-motion: reduce) {
 	.volt-tr-action.shimmer,
 	.volt-tr-subagent-status.shimmer,
+	.volt-tr-edit-name.shimmer,
 	.volt-tr-compaction-label.shimmer {
 		animation: none;
 		color: var(--volt-md-fg-tertiary);
@@ -408,6 +413,80 @@ button.volt-tr-header:hover .volt-tr-chevron,
 	padding: 6px 10px;
 	color: var(--volt-md-fg-quaternary);
 	font-family: inherit;
+}
+
+/* An edit between the other steps: its own card, closed on a fading peek of its diff. */
+
+.volt-tr-edit-card {
+	margin: 2px 0;
+	border: 1px solid var(--volt-md-stroke);
+	border-radius: 8px;
+	background: var(--volt-md-card-bg);
+	overflow: hidden;
+}
+
+.volt-tr-edit-card > .volt-tr-header {
+	height: 30px;
+	padding: 0 10px;
+	gap: 6px;
+	line-height: 30px;
+	cursor: pointer;
+}
+
+.volt-tr-edit-icon {
+	position: relative;
+	flex: 0 0 16px;
+	width: 16px;
+	height: 16px;
+	overflow: hidden;
+}
+
+.volt-tr-edit-card > .volt-tr-header.show-file-icons .volt-tr-edit-icon::before {
+	position: absolute;
+	inset: 0;
+	display: block;
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	padding: 0;
+	background-size: 16px 16px;
+	background-repeat: no-repeat;
+	background-position: center;
+	font-size: 16px;
+	line-height: 16px;
+}
+
+.volt-tr-edit-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-md-fg-secondary);
+}
+
+.volt-tr-edit-card > .volt-tr-header .volt-tr-chevron {
+	margin-left: auto;
+}
+
+.volt-tr-edit-card > .volt-tr-edit-body {
+	border-top: 1px solid var(--volt-md-stroke-faint);
+}
+
+.volt-tr-edit-card > .volt-tr-edit-body > .volt-tr-diff {
+	border: 0;
+	border-radius: 0;
+}
+
+/* Closed: four lines, fading into the card. */
+.volt-tr-edit-card:not(.open) > .volt-tr-edit-body {
+	cursor: pointer;
+}
+
+.volt-tr-edit-card:not(.open) > .volt-tr-edit-body > .volt-tr-diff {
+	max-height: 80px;
+	overflow: hidden;
+	-webkit-mask-image: linear-gradient(to bottom, #000 45%, transparent);
+	mask-image: linear-gradient(to bottom, #000 45%, transparent);
 }
 
 /* Subagents */

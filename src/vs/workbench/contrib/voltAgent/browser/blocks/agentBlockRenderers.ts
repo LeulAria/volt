@@ -56,6 +56,7 @@ import { FileChangePreview } from '../review/fileChangePreview.js';
 import { chooseFileChangeDiffStyle, formatChangeStats, type FileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
 import { fileChangeGroupTitle, fileChangeSource, ThreadPart } from '../chrome/agentTimeline.js';
 import { splitMarkdownChunks } from '../chrome/agentTranscriptReuse.js';
+import { friendlyToolTitle } from './agentHostToolActivity.js';
 
 export interface IBlockRenderContext {
 	readonly markdownRenderer: MarkdownRenderer;
@@ -161,9 +162,38 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
  */
 function renderPlanBlock(parent: HTMLElement, block: IPlanBlock, ctx: IBlockRenderContext): void {
 	const wrap = append(parent, $('.volt-agent-block.approval.question.plan'));
-	append(wrap, $('.volt-agent-approval-title')).textContent = block.name
+	const titleText = block.name
 		? localize('voltAgent.plan.named', "Plan: {0}", block.name)
 		: localize('voltAgent.plan.title', "Plan");
+	const head = append(wrap, $('.volt-agent-plan-head'));
+	append(head, $('.volt-agent-approval-title')).textContent = titleText;
+	// The card scrolls past a few screens; Open shows the whole plan, before and after it is approved.
+	if (ctx.onExpandVisual) {
+		const open = append(head, $('button.volt-agent-plan-open')) as HTMLButtonElement;
+		open.type = 'button';
+		open.appendChild(renderIcon(Codicon.screenFull));
+		append(open, $('span')).textContent = localize('voltAgent.plan.open', "Open");
+		open.setAttribute('aria-label', localize('voltAgent.plan.openHint', "Open the whole plan"));
+		ctx.store.add(addDisposableListener(open, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			if (!block.markdown) {
+				return;
+			}
+			const store = new DisposableStore();
+			const content = $('.volt-agent-plan-expanded');
+			renderMarkdownInto(content, block.markdown, { ...ctx, store });
+			if (block.openQuestions?.length) {
+				const questions = append(content, $('.volt-agent-plan-questions'));
+				append(questions, $('.volt-agent-plan-questions-title')).textContent = localize('voltAgent.plan.openQuestions', "Open questions");
+				const list = append(questions, $('ul'));
+				for (const question of block.openQuestions) {
+					append(list, $('li')).textContent = question;
+				}
+			}
+			ctx.onExpandVisual?.(titleText, content, store);
+		}));
+	}
 	const body = append(wrap, $('.volt-agent-approval-plan'));
 	const savedLine = append(wrap, $('.volt-agent-plan-saved.hidden'));
 	const actions = append(wrap, $('.volt-agent-approval-actions'));
@@ -800,7 +830,7 @@ function renderToolBlock(parent: HTMLElement, block: IToolBlock, ctx: IBlockRend
 	const chevron = append(header, $('span.volt-agent-term-chevron'));
 	chevron.appendChild(renderIcon(expanded ? Codicon.chevronDown : Codicon.chevronRight));
 	const title = append(header, $('span.volt-agent-term-title.volt-agent-searchable'));
-	title.textContent = block.title || block.name;
+	title.textContent = friendlyToolTitle(block.title || block.name) ?? (block.title || block.name);
 	bindPathOpen(title, parseFileTarget(block.input, block.title, block.name), ctx);
 	ctx.store.add(addDisposableListener(header, 'click', e => {
 		e.preventDefault();
@@ -1202,7 +1232,8 @@ function cellCopyText(cell: HTMLTableCellElement): string {
 	return (content?.textContent ?? cell.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
 
-const TABLE_COPY_ICON_PATH = 'M16 5L16.0001 2L2 2L2 16.0001L5 16M8 8L22 8L22 22L8 22L8 8Z';
+/** Two overlapping rounded squares: the same copy glyph as Copy Message and code cards. */
+const TABLE_COPY_ICON_PATH = 'M10 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2ZM4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2';
 const TABLE_CHECK_ICON_PATH = 'M20 6 9 17l-5-5';
 
 export function createTableCopyIcon(width = 10, height = 12, extraClass = 'copy-table'): HTMLElement {
@@ -1217,7 +1248,8 @@ export function createTableCopyIcon(width = 10, height = 12, extraClass = 'copy-
 	path.setAttribute('d', TABLE_COPY_ICON_PATH);
 	path.setAttribute('fill', 'none');
 	path.setAttribute('stroke', 'currentColor');
-	path.setAttribute('stroke-width', '1');
+	path.setAttribute('stroke-width', '1.5');
+	path.setAttribute('stroke-linecap', 'round');
 	path.setAttribute('stroke-linejoin', 'round');
 	svg.appendChild(path);
 	el.appendChild(svg);
@@ -1493,7 +1525,9 @@ export function guessInlineCodeLanguage(text: string): string | undefined {
 	if (/^(\{[\s\S]*\}|\[[\s\S]*\])$/.test(code) && /["\d:]/.test(code)) {
 		return 'json';
 	}
-	if (/^[.#]?[\w-]+(\s*[>+~]?\s*[.#]?[\w-]+)*\s*\{[^{}]*\}$/.test(code) || /^[a-z-]+:\s*[^;]+;$/.test(code)) {
+	// Each selector part starts at a space, a combinator, `.` or `#`, so a run of words splits one way
+	// only: with every separator optional, `git rev-parse --abbrev-ref HEAD && …` took seconds to fail.
+	if (/^[.#]?[\w-]+(?:(?:\s+|\s*[>+~]\s*)[.#]?[\w-]+|[.#][\w-]+)*\s*\{[^{}]*\}$/.test(code) || /^[a-z-]+:\s*[^;]+;$/.test(code)) {
 		return 'css';
 	}
 	if (/^(npm|npx|pnpm|yarn|bun|git|cd|ls|cat|echo|mkdir|rm|cp|mv|curl|node|python3?|pip3?|brew|make|sleep|grep|chmod|export|sudo)\s/.test(code)) {

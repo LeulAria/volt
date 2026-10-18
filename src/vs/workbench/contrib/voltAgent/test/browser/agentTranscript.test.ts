@@ -68,20 +68,25 @@ suite('Agent transcript (Cursor rows)', () => {
 		assert.strictEqual(stepsGroupTitle(group.steps, true).action, 'Exploring');
 	});
 
-	test('edits lead the title, then exploration, with summed stats; commands are their own cards', () => {
+	test('each edit is its own card between the explore steps; commands are their own cards', () => {
 		const rows = buildTranscriptRows([
 			run('t1', 'npm test', 'Test suite to see failure'),
 			read('README.md'),
 			{ kind: 'block', block: edit('/repo/src/stats.js', 'a\nsort()\nc\n', 'a\nsort((a, b) => a - b)\nc\n') },
+			read('stats.test.js'),
 			run('t2', 'npm test', 'Re-run tests after median fix'),
 		], undefined, false);
-		assert.deepStrictEqual(kinds(rows), ['block', 'steps', 'block']);
-		const group = rows[1] as Extract<TranscriptRow, { kind: 'steps' }>;
-		assert.deepStrictEqual(stepsGroupTitle(group.steps, false), { action: 'Edited', detail: 'stats.js, explored 1 file', additions: 1, deletions: 1 });
-		assert.deepStrictEqual(group.steps.map(step => `${step.action} ${step.detail}`), [
-			'Read README.md L1-20',
-			'Edited stats.js',
-		]);
+		assert.deepStrictEqual(kinds(rows), ['block', 'steps', 'steps', 'steps', 'block']);
+		const [explored, edited] = [rows[1], rows[2]] as Extract<TranscriptRow, { kind: 'steps' }>[];
+		assert.deepStrictEqual(stepsGroupTitle(explored.steps, false), { action: 'Explored', detail: '1 file', additions: 0, deletions: 0 });
+		assert.strictEqual(edited.display, 'edit');
+		assert.deepStrictEqual(edited.steps.map(step => [step.action, step.detail, step.additions, step.deletions]), [['Edited', 'stats.js', 1, 1]]);
+	});
+
+	test('detailed density keeps edits inside the step list as open cards', () => {
+		const rows = buildTranscriptRows([read('README.md'), { kind: 'block', block: edit('/repo/a.js', 'a\n', 'b\n') }], undefined, false, [], 'detailed');
+		assert.deepStrictEqual(kinds(rows), ['steps']);
+		assert.deepStrictEqual((rows[0] as Extract<TranscriptRow, { kind: 'steps' }>).steps.map(step => step.kind), ['read', 'edit']);
 	});
 
 	test('commands are cards, not a "Ran N commands" fold; web lookups count as searches', () => {
