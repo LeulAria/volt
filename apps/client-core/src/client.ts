@@ -16,8 +16,9 @@ import type { Collections } from './selectors';
 import { threadsOf } from './selectors';
 import type {
 	AccessMode, AgentMessage, ComposerMode, IAgentChange, ICheckpointState, IFileContent, IFileEntry, IFileRoot, IGitStatus, IGrepMatch, IGrepOptions, IOrchPrompt, IProjectRecord,
-	IPromptAttachment, IQuestionResponse, IRestorePreview, IUserMessage
+	IMcpServerStatus, IPromptAttachment, IPromptFile, IPromptMention, IQuestionResponse, IRestorePreview, IUserMessage
 } from './types';
+import type { IGitCommitResult, IGitRepoStatus, IPullRequestCreate, IPullRequestDetail, IPullRequestFilePatch, IPullRequestMerge, IPullRequestSummary, ISlashCommand } from './git';
 
 /** Async key-value storage (localStorage on the web, AsyncStorage on phones). */
 export interface IStorage {
@@ -67,6 +68,10 @@ export interface ISendRequest {
 	readonly delivery?: Delivery;
 	/** Images uploaded with {@link VoltClient.uploadAttachment}. */
 	readonly attachments?: readonly IPromptAttachment[];
+	/** Files and `/` commands, shown as chips in the transcript (images go in `attachments`). */
+	readonly mentions?: readonly IPromptMention[];
+	/** What the transcript shows when it differs from what the model reads (`text`). */
+	readonly displayText?: string;
 }
 
 /** A picked or pasted image before it is uploaded: base64 without a `data:` prefix. */
@@ -494,7 +499,7 @@ export class VoltClient {
 			delivery: request.delivery ?? 'auto',
 			createdAt: Date.now(),
 			state: 'unsent',
-		}, request.text);
+		}, request.displayText ?? request.text);
 		return turnId;
 	}
 
@@ -630,7 +635,7 @@ export class VoltClient {
 			projectId: request.projectId,
 			...(request.accessMode ? { accessMode: request.accessMode } : {}),
 			state: 'unsent',
-		}, request.text);
+		}, request.displayText ?? request.text);
 		return threadId;
 	}
 
@@ -893,6 +898,118 @@ export class VoltClient {
 
 	searchHistory(query: string): Promise<unknown> {
 		return this.run('history.search', [query]);
+	}
+
+	//#endregion
+
+	//#region Composer: attached files, MCP servers, commands
+
+	/**
+	 * Puts a file from the device in the server's attachment store, where the desktop keeps files
+	 * dropped on the composer; the prompt names the saved path so the agent's tools can open it.
+	 */
+	async uploadFile(source: IAttachmentSource & { readonly size?: number }): Promise<IPromptFile> {
+		const mime = source.mime || 'application/octet-stream';
+		const ref = await this.connection.call<string>('history.putAttachment', [{ $u8: source.base64 }, mime], { requireOpen: true, timeoutMs: 180_000 });
+		const resource = await this.connection.call<{ fsPath?: string; path?: string } | undefined>('history.attachmentResource', [ref], { requireOpen: true }).catch(() => undefined);
+		const path = resource?.fsPath ?? resource?.path;
+		return { id: uuid(), name: source.name || 'file', mime, size: source.size ?? Math.floor(source.base64.length * 0.75), ref, ...(path ? { path } : {}) };
+	}
+
+	/** The MCP servers a project's agents get (project and user scope), with their state. */
+	async listMcpServers(folder: string | undefined): Promise<readonly IMcpServerStatus[]> {
+		return await this.connection.call<readonly IMcpServerStatus[]>('runtime.listMcpServers', [folder ? fileUri(folder) : undefined], { timeoutMs: 30_000 }) ?? [];
+	}
+
+	/** The agent's own `/` commands for a chat (what its CLI advertised), from the session summary. */
+	sessionCommands(chatId: string): readonly string[] {
+		const session = this.cols['sessions']?.[chatId] as { commands?: unknown } | undefined;
+		return Array.isArray(session?.commands) ? session.commands.filter((c): c is string => typeof c === 'string') : [];
+	}
+
+	//#endregion
+
+	//#region Git and pull requests (serverGit.ts: a project's or chat worktree's folder; throw RemoteError)
+
+	/** Branch, upstream, ahead/behind, uncommitted files and the pull request host of `root`. */
+	gitRepoStatus(root: string): Promise<IGitRepoStatus> {
+		return this.connection.call<IGitRepoStatus>('git.status', [root], { timeoutMs: 30_000 });
+	}
+
+	/** Stages everything (or `paths`) and commits, optionally on a new branch. */
+	gitCommitChanges(root: string, message: string, options: { readonly paths?: readonly string[]; readonly newBranch?: string } = {}): Promise<IGitCommitResult> {
+		return this.connection.call<IGitCommitResult>('git.commit', [root, message, options], { requireOpen: true, timeoutMs: 60_000 });
+	}
+
+	/** Pushes the checked out branch, setting its upstream on the first push. */
+	gitPush(root: string): Promise<{ readonly branch: string; readonly remote: string; readonly setUpstream: boolean }> {
+		return this.connection.call('git.push', [root], { requireOpen: true, timeoutMs: 120_000 });
+	}
+
+	/** Fast-forwards the branch to its upstream. */
+	gitPull(root: string): Promise<{ readonly updated: boolean; readonly branch: string; readonly upstream: string }> {
+		return this.connection.call('git.pull', [root], { requireOpen: true, timeoutMs: 120_000 });
+	}
+
+	/** Creates `name` at HEAD and checks it out; uncommitted changes come along. */
+	gitCreateBranch(root: string, name: string): Promise<{ readonly branch: string }> {
+		return this.connection.call('git.createBranch', [root, name], { requireOpen: true, timeoutMs: 30_000 });
+	}
+
+	/** The pull request of the branch (the checked out one by default): the open one, else the newest. */
+	pullRequestForBranch(root: string, branch?: string): Promise<IPullRequestSummary | undefined> {
+		return this.connection.call<IPullRequestSummary | undefined>('pullRequests.forBranch', [root, branch], { timeoutMs: 60_000 });
+	}
+
+	listPullRequests(root: string, options: { readonly state?: 'open' | 'closed' | 'all'; readonly limit?: number } = {}): Promise<readonly IPullRequestSummary[]> {
+		return this.connection.call<readonly IPullRequestSummary[]>('pullRequests.list', [root, options], { timeoutMs: 60_000 });
+	}
+
+	getPullRequest(root: string, number: number): Promise<IPullRequestDetail> {
+		return this.connection.call<IPullRequestDetail>('pullRequests.get', [root, number], { timeoutMs: 60_000 });
+	}
+
+	pullRequestFiles(root: string, number: number): Promise<readonly IPullRequestFilePatch[]> {
+		return this.connection.call<readonly IPullRequestFilePatch[]>('pullRequests.files', [root, number], { timeoutMs: 60_000 });
+	}
+
+	/** Opens a pull request for the checked out branch (pushed first when it needs to be). */
+	createPullRequest(root: string, request: IPullRequestCreate): Promise<IPullRequestSummary> {
+		return this.connection.call<IPullRequestSummary>('pullRequests.create', [root, request], { requireOpen: true, timeoutMs: 120_000 });
+	}
+
+	mergePullRequest(root: string, number: number, options: IPullRequestMerge): Promise<void> {
+		return this.connection.call<void>('pullRequests.merge', [root, number, options], { requireOpen: true, timeoutMs: 120_000 });
+	}
+
+	markPullRequestReady(root: string, number: number): Promise<void> {
+		return this.connection.call<void>('pullRequests.markReady', [root, number], { requireOpen: true, timeoutMs: 60_000 });
+	}
+
+	commentOnPullRequest(root: string, number: number, body: string): Promise<void> {
+		return this.connection.call<void>('pullRequests.comment', [root, number, body], { requireOpen: true, timeoutMs: 60_000 });
+	}
+
+	/** Re-runs the failed jobs of the head commit; resolves how many runs restarted. */
+	rerunFailedChecks(root: string, number: number): Promise<number> {
+		return this.connection.call<number>('pullRequests.rerunFailedChecks', [root, number], { requireOpen: true, timeoutMs: 60_000 });
+	}
+
+	//#endregion
+
+	//#region Slash menu (serverComposer.ts)
+
+	/** The `/` menu a desktop window on the project shows: built-in commands and skills, and the skills, commands, subagents and rules on disk. */
+	slashCommands(root: string): Promise<readonly ISlashCommand[]> {
+		return this.connection.call<readonly ISlashCommand[]>('composer.slashCommands', [root], { timeoutMs: 30_000 });
+	}
+
+	/**
+	 * The text to send for a message naming `/` entries: each known `/name` becomes its tag and the
+	 * entries' instructions follow, as the desktop composer sends them. Built-in commands are left as typed.
+	 */
+	expandSlash(root: string, text: string): Promise<{ readonly text: string; readonly used: readonly string[] }> {
+		return this.connection.call('composer.expandSlash', [root, text], { timeoutMs: 30_000 });
 	}
 
 	//#endregion
@@ -1185,11 +1302,13 @@ const EMPTY_PENDING: readonly IPendingSend[] = [];
  * The prompt the orchestrator takes. Images ride as the desktop composer's image mentions (frozen:
  * an attachment ref instead of bytes): the server's turn host thaws them and sends the pixels.
  */
-function promptOf(request: Pick<ISendRequest, 'text' | 'mode' | 'modelRef' | 'options' | 'attachments'>): IOrchPrompt {
-	const mentions = (request.attachments ?? []).map(a => ({ label: a.name, kind: 'image', image: { id: a.id, mime: a.mime, ref: a.ref, name: a.name } }));
+function promptOf(request: Pick<ISendRequest, 'text' | 'mode' | 'modelRef' | 'options' | 'attachments' | 'mentions' | 'displayText'>): IOrchPrompt {
+	const mentions: unknown[] = (request.attachments ?? []).map(a => ({ label: a.name, kind: 'image', image: { id: a.id, mime: a.mime, ref: a.ref, name: a.name } }));
+	mentions.push(...(request.mentions ?? []));
+	const shown = request.displayText ?? request.text;
 	return {
 		text: request.text,
-		display: mentions.length ? { text: request.text, mentions } : { text: request.text },
+		display: mentions.length ? { text: shown, mentions } : { text: shown },
 		mode: request.mode ?? 'Agent',
 		...(request.modelRef ? { modelRef: request.modelRef } : {}),
 		...(request.options && Object.keys(request.options).length ? { options: request.options } : {}),

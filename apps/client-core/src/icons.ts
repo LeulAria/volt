@@ -117,6 +117,9 @@ export const ICONS = {
 	queue: { paths: ['M3 5h12', 'M3 10h12', 'M3 15h8', 'm16 15 3 3 3-3', 'M19 9v9'] },
 	snooze: { paths: [circle(12, 13, 8), 'M12 9v4l2 2', 'M5 3 2 6', 'm22 6-3-3'] },
 	wand: { paths: ['m21.6 2.4-1.2-1.2a1.2 1.2 0 0 0-1.7 0L1.2 18.7a1.2 1.2 0 0 0 0 1.7l1.2 1.2a1.2 1.2 0 0 0 1.7 0L21.6 4.1a1.2 1.2 0 0 0 0-1.7Z', 'm14 7 3 3', 'M5 6v4', 'M19 14v4', 'M10 2v2', 'M7 8H3', 'M21 16h-4', 'M11 3H9'] },
+	home: { paths: ['M3 10.5 12 3l9 7.5', 'M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5'] },
+	palette: { paths: ['M12 2.5a9.5 9.5 0 0 0 0 19c1.2 0 1.8-.9 1.8-1.8 0-.5-.2-.9-.5-1.2-.3-.4-.5-.8-.5-1.3 0-1 .8-1.8 1.8-1.8h2.1a4.8 4.8 0 0 0 4.8-4.8c0-4.6-4.3-8.1-9.5-8.1Z', circle(7.5, 11, 1.2), circle(10.5, 7, 1.2), circle(15, 7.5, 1.2)] },
+	plug: { paths: ['M12 22v-5', 'M9 8V2', 'M15 8V2', 'M18 8v5a6 6 0 0 1-12 0V8Z'] },
 } as const satisfies Record<string, IIconDef>;
 
 export type IconName = keyof typeof ICONS;

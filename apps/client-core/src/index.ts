@@ -9,6 +9,7 @@ export * from './connection';
 export * from './environments';
 export * from './client';
 export * from './types';
+export * from './git';
 export * from './selectors';
 export * from './rows';
 export * from './format';
