@@ -12,6 +12,7 @@ import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { derived, IObservable, observableFromEvent } from '../../../../../base/common/observable.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
+import { isEqual } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IDiffEditorOptions, IEditorOptions as ICodeEditorOptions } from '../../../../../editor/common/config/editorOptions.js';
 import { EditorZoom } from '../../../../../editor/common/config/editorZoom.js';
@@ -236,6 +237,17 @@ export async function openAgentChangesDiff(
 		multiDiffSource: getAgentChangesSourceUri(sessionId, scope),
 		label: agentChangesScopeLabel(scope),
 	}, instantiationService);
+	// One Changes tab per chat: the scope (or commit) it shows now gives way to this one, in place.
+	const existing = group.editors.find(editor => isAgentChangesDiffFor(editor, sessionId));
+	if (existing) {
+		if (isEqual(existing.resource, input.resource)) {
+			input.dispose();
+			await group.openEditor(existing, { pinned: true, preserveFocus });
+			return;
+		}
+		await group.replaceEditors([{ editor: existing, replacement: input, options: { pinned: true, preserveFocus } }]);
+		return;
+	}
 	await group.openEditor(input, { pinned: true, preserveFocus });
 }
 

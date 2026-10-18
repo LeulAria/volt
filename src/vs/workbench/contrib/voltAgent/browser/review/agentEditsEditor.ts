@@ -35,6 +35,7 @@ import { ServicesAccessor } from '../../../../../platform/instantiation/common/i
 import { registerColor } from '../../../../../platform/theme/common/colorUtils.js';
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
+import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { ACTIVE_GROUP, IEditorService } from '../../../../services/editor/common/editorService.js';
 import { minimapGutterAddedBackground, minimapGutterDeletedBackground, minimapGutterModifiedBackground, overviewRulerAddedForeground, overviewRulerDeletedForeground, overviewRulerModifiedForeground } from '../../../scm/common/quickDiff.js';
 import { IAgentEditsService, IAgentPendingFile } from './agentEditsService.js';
@@ -62,7 +63,8 @@ const hunkRangeDecoration = ModelDecorationOptions.register({
 /**
  * Draws an agent's pending edits inside the normal editor, the way a reviewer reads them:
  * added lines tinted, removed lines shown above them, and Undo / Keep on the hunk under the
- * cursor or mouse. A bar in the top right walks hunks and files and settles the whole file.
+ * cursor or mouse. A bar at the bottom centre (Cursor's place: never over a hunk at the top of
+ * the file) walks hunks and files and settles the whole file.
  */
 export class AgentEditsEditorController extends Disposable implements IEditorContribution {
 
@@ -269,10 +271,26 @@ export class AgentEditsEditorController extends Disposable implements IEditorCon
 		const file = this.edits.getPendingFile(uri);
 		const first = file?.changes[0];
 		const line = first ? Math.max(1, first.modified.startLineNumber) : 1;
-		await this.editorService.openEditor({
-			resource: uri,
-			options: { selection: { startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 1 }, pinned: true },
-		}, ACTIVE_GROUP);
+		const options = { selection: { startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 1 }, pinned: true };
+		// Walking the review reuses one tab: the file this bar opened gives way to the next, so
+		// ten files are not ten tabs. A file the user opened, or one with unsaved edits, stays.
+		const pane = this.editorService.activeEditorPane;
+		const group = pane?.getControl() === this.editor ? pane.group : undefined;
+		const current = group ? pane?.input : undefined;
+		const existing = group?.editors.find(editor => isEqual(editor.resource, uri));
+		if (group && existing) {
+			await group.openEditor(existing, options);
+			return;
+		}
+		if (group && current && navigatedInputs.has(current) && !current.isDirty()) {
+			await this.editorService.replaceEditors([{ editor: current, replacement: { resource: uri, options } }], group);
+		} else {
+			await this.editorService.openEditor({ resource: uri, options }, group ?? ACTIVE_GROUP);
+		}
+		const opened = this.editorService.activeEditor;
+		if (opened && isEqual(opened.resource, uri)) {
+			navigatedInputs.add(opened);
+		}
 	}
 
 	private revealAfterSettle(index: number): void {
@@ -465,8 +483,18 @@ export class AgentEditsEditorController extends Disposable implements IEditorCon
 		const top = (this.changeAt(index)?.modified.startLineNumber ?? 0) > lineCount
 			? this.editor.getBottomForLineNumber(lineCount)
 			: this.editor.getTopForLineNumber(range.startLineNumber) - (this.zoneHeights[index] ?? 0) * lineHeight;
-		widget.show(index, this.hunkCount(), top - this.editor.getScrollTop());
+		widget.show(index, this.hunkCount(), top - this.editor.getScrollTop(), this.fileBar?.bounds());
 	}
+}
+
+/** Tabs the file bar opened while walking a review: the next file replaces them. */
+const navigatedInputs = new WeakSet<EditorInput>();
+
+interface IWidgetBounds {
+	readonly top: number;
+	readonly left: number;
+	readonly width: number;
+	readonly height: number;
 }
 
 class HunkWidget extends Disposable implements IOverlayWidget {
@@ -535,13 +563,20 @@ class HunkWidget extends Disposable implements IOverlayWidget {
 		return this.position;
 	}
 
-	show(index: number, total: number, top: number): void {
+	/** Above the hunk's first line, right-aligned; moved off the file bar when the two would meet. */
+	show(index: number, total: number, top: number, avoid?: IWidgetBounds): void {
 		this.countEl.textContent = localize('voltAgent.edits.hunkCount', "{0} of {1}", index + 1, total);
 		this.domNode.classList.add('visible');
 		const { contentLeft, contentWidth, verticalScrollbarWidth } = this.editor.getLayoutInfo();
-		const height = this.editor.getOption(EditorOption.lineHeight);
-		const left = contentLeft + contentWidth - verticalScrollbarWidth - getTotalWidth(this.domNode) - 12;
-		this.position = { preference: { top: Math.max(0, top - height - 4), left: Math.max(contentLeft, left) }, stackOridinal: 1 };
+		const lineHeight = this.editor.getOption(EditorOption.lineHeight);
+		const width = getTotalWidth(this.domNode);
+		const height = this.domNode.offsetHeight || lineHeight;
+		const left = Math.max(contentLeft, contentLeft + contentWidth - verticalScrollbarWidth - width - 12);
+		let y = Math.max(0, top - lineHeight - 4);
+		if (avoid && left < avoid.left + avoid.width && left + width > avoid.left && y < avoid.top + avoid.height + 4 && y + height > avoid.top - 4) {
+			y = Math.max(0, avoid.top - height - 6);
+		}
+		this.position = { preference: { top: y, left }, stackOridinal: 1 };
 		this.editor.layoutOverlayWidget(this);
 	}
 
@@ -634,11 +669,23 @@ class FileBarWidget extends Disposable implements IOverlayWidget {
 		this.layout();
 	}
 
+	/** Bottom centre of the text, above the horizontal scrollbar. */
 	layout(): void {
-		const { contentLeft, contentWidth, verticalScrollbarWidth } = this.editor.getLayoutInfo();
-		const left = contentLeft + contentWidth - verticalScrollbarWidth - getTotalWidth(this.domNode) - 12;
-		this.position = { preference: { top: 6, left: Math.max(contentLeft, left) }, stackOridinal: 2 };
+		const { contentLeft, contentWidth, verticalScrollbarWidth, height, horizontalScrollbarHeight } = this.editor.getLayoutInfo();
+		const width = getTotalWidth(this.domNode);
+		const barHeight = this.domNode.offsetHeight || 32;
+		const left = contentLeft + Math.max(0, (contentWidth - verticalScrollbarWidth - width) / 2);
+		const top = Math.max(0, height - horizontalScrollbarHeight - barHeight - 16);
+		this.position = { preference: { top, left }, stackOridinal: 2 };
 		this.editor.layoutOverlayWidget(this);
+	}
+
+	bounds(): IWidgetBounds | undefined {
+		const preference = this.position?.preference;
+		if (!preference || typeof preference !== 'object') {
+			return undefined;
+		}
+		return { top: preference.top, left: preference.left, width: getTotalWidth(this.domNode), height: this.domNode.offsetHeight || 32 };
 	}
 }
 
@@ -658,6 +705,11 @@ function controllerFor(accessor: ServicesAccessor): AgentEditsEditorController |
 }
 
 const WHEN_PENDING = ContextKeyExpr.and(CTX_AGENT_EDITS_PENDING, EditorContextKeys.focus);
+/**
+ * Over the agent window's Cmd+N for New Agent (WorkbenchContrib + 60): in an editor with pending
+ * edits, the hunk's Undo Cmd+N undoes the hunk, as its label says, instead of leaving the chat.
+ */
+const PENDING_WEIGHT = KeybindingWeight.WorkbenchContrib + 61;
 
 registerAction2(class extends Action2 {
 	constructor() {
@@ -666,7 +718,7 @@ registerAction2(class extends Action2 {
 			title: localize2('voltAgent.edits.keepHunk', "Keep Agent Change"),
 			f1: true,
 			precondition: CTX_AGENT_EDITS_PENDING,
-			keybinding: { when: WHEN_PENDING, weight: KeybindingWeight.WorkbenchContrib + 2, primary: KeyMod.CtrlCmd | KeyCode.KeyY },
+			keybinding: { when: WHEN_PENDING, weight: PENDING_WEIGHT, primary: KeyMod.CtrlCmd | KeyCode.KeyY },
 		});
 	}
 	override run(accessor: ServicesAccessor): Promise<void> | void {
@@ -681,7 +733,7 @@ registerAction2(class extends Action2 {
 			title: localize2('voltAgent.edits.undoHunk', "Undo Agent Change"),
 			f1: true,
 			precondition: CTX_AGENT_EDITS_PENDING,
-			keybinding: { when: WHEN_PENDING, weight: KeybindingWeight.WorkbenchContrib + 2, primary: KeyMod.CtrlCmd | KeyCode.KeyN },
+			keybinding: { when: WHEN_PENDING, weight: PENDING_WEIGHT, primary: KeyMod.CtrlCmd | KeyCode.KeyN },
 		});
 	}
 	override run(accessor: ServicesAccessor): Promise<void> | void {
@@ -696,7 +748,7 @@ registerAction2(class extends Action2 {
 			title: localize2('voltAgent.edits.keepFileTitle', "Keep Agent Changes in File"),
 			f1: true,
 			precondition: CTX_AGENT_EDITS_PENDING,
-			keybinding: { when: WHEN_PENDING, weight: KeybindingWeight.WorkbenchContrib + 2, primary: KeyMod.CtrlCmd | KeyCode.Enter },
+			keybinding: { when: WHEN_PENDING, weight: PENDING_WEIGHT, primary: KeyMod.CtrlCmd | KeyCode.Enter },
 		});
 	}
 	override run(accessor: ServicesAccessor): Promise<void> | void {

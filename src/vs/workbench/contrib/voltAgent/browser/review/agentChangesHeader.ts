@@ -8,12 +8,15 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { autorun } from '../../../../../base/common/observable.js';
-import { isEqual } from '../../../../../base/common/resources.js';
+import { isEqual, relativePath } from '../../../../../base/common/resources.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
@@ -32,6 +35,8 @@ import { AgentChangesScope, IAgentChangesTurn, agentScopeTurnId } from './agentS
 import { getAgentChangesSourceUri, IAgentSessionChangesService } from './agentSessionChangesService.js';
 import { findAgentScmRepository } from './agentScmRepository.js';
 import { IAgentEditsService } from './agentEditsService.js';
+import { AgentGitActionsControl } from '../pullRequests/agentGitActionsControl.js';
+import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 
 const HEADER_HEIGHT = 40;
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -88,6 +93,54 @@ function scopeIcon(scope: AgentChangesScope): ThemeIcon {
 	}
 }
 
+/** What Find Issues reviews: the chat's changes in a scope, one commit, or the branch against its base. */
+export type AgentFindIssuesTarget =
+	| { readonly kind: 'changes'; readonly scope: AgentChangesScope; readonly files: readonly string[] }
+	| { readonly kind: 'commit'; readonly id: string; readonly subject: string }
+	| { readonly kind: 'base'; readonly base: string };
+
+/**
+ * The review prompt Find Issues sends to the chat (in Ask mode, so it reports and does not edit):
+ * Cursor's Find Issues, done by the chat's own agent, which already knows why it made the changes.
+ */
+export function findIssuesPrompt(target: AgentFindIssuesTarget, instructions?: string): string {
+	const lines: string[] = [];
+	switch (target.kind) {
+		case 'changes': {
+			const what = target.scope === 'pending' ? 'the changes still waiting for Keep or Undo'
+				: target.scope === 'lastTurn' ? 'the changes from your last turn'
+					: target.scope === 'staged' ? 'the staged changes (`git diff --cached`)'
+						: target.scope === 'unstaged' ? 'the unstaged changes (`git diff`)'
+							: 'the uncommitted changes in this chat';
+			lines.push(`Find issues in ${what}.`);
+			if (target.files.length) {
+				lines.push('', 'Files:', ...target.files.slice(0, 50).map(file => `- ${file}`));
+				if (target.files.length > 50) {
+					lines.push(`- and ${target.files.length - 50} more (see \`git status\`)`);
+				}
+			}
+			break;
+		}
+		case 'commit':
+			lines.push(`Find issues in commit ${target.id.slice(0, 12)} ("${target.subject}"); read it with \`git show ${target.id}\`.`);
+			break;
+		case 'base':
+			lines.push(`Find issues in this branch's changes against ${target.base}; read them with \`git diff ${target.base}...HEAD\` plus any uncommitted changes.`);
+			break;
+	}
+	lines.push(
+		'',
+		'Read the full diff and enough of the surrounding code to judge it. Look for bugs, regressions, unhandled edge cases, broken callers, security problems, and missing or wrong tests. Do not edit any files.',
+		'',
+		'Report each issue as: severity (high, medium, low), `file:line`, what goes wrong and when, and the fix in one line. Most severe first. If you find nothing worth fixing, say "No issues found." and stop.',
+	);
+	const extra = instructions?.trim();
+	if (extra) {
+		lines.push('', `Also: ${extra}`);
+	}
+	return lines.join('\n');
+}
+
 function hasStats(stats: { additions: number; deletions: number }): boolean {
 	return stats.additions > 0 || stats.deletions > 0;
 }
@@ -95,7 +148,8 @@ function hasStats(stats: { additions: number; deletions: number }): boolean {
 /**
  * The bar above a chat's changes in the tools, as Cursor draws it: the scope (with its line
  * counts) and a menu of the others and recent commits, the branch, Undo All and Keep All while
- * the agent's edits wait for review, and Commit & Push, which opens Source Control.
+ * the agent's edits wait for review, and the chat's git action (Commit & Push and the rest under
+ * its chevron), or Commit & Push to Source Control where git actions are not available.
  */
 export class AgentChangesHeader extends Disposable implements IMultiDiffEditorHeader {
 
@@ -110,6 +164,8 @@ export class AgentChangesHeader extends Disposable implements IMultiDiffEditorHe
 	private readonly branchLabel: HTMLElement;
 	private repository: ISCMRepository | undefined;
 	private readonly branchWatch = this._register(new MutableDisposable());
+	private readonly findIssuesButton: HTMLButtonElement;
+	private readonly findIssuesChevron: HTMLButtonElement;
 	private readonly undoAllButton: HTMLButtonElement;
 	private readonly keepAllButton: HTMLButtonElement;
 	private resolving = false;
@@ -127,6 +183,9 @@ export class AgentChangesHeader extends Disposable implements IMultiDiffEditorHe
 		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
+		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
+		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super();
 		this.element = $('.volt-agent-changes-header');
@@ -150,6 +209,34 @@ export class AgentChangesHeader extends Disposable implements IMultiDiffEditorHe
 		this.undoAllButton = this.resolveButton(localize('voltAgent.changes.undoAll', "Undo All"), () => this.edits.undoAll(target.sessionId));
 		this.keepAllButton = this.resolveButton(localize('voltAgent.changes.keepAll', "Keep All"), () => this.edits.keepAll(target.sessionId));
 
+		// Find Issues: the chat's agent reviews what this tab shows; the chevron picks another target.
+		const find = append(this.element, $('.volt-agent-changes-find'));
+		this.findIssuesButton = append(find, $('button.volt-agent-changes-find-main')) as HTMLButtonElement;
+		this.findIssuesButton.type = 'button';
+		this.findIssuesButton.textContent = localize('voltAgent.changes.findIssues', "Find Issues");
+		this.findIssuesButton.title = localize('voltAgent.changes.findIssuesTitle', "Have the chat's agent review these changes for bugs, without editing");
+		this.findIssuesChevron = append(find, $('button.volt-agent-changes-find-chevron')) as HTMLButtonElement;
+		this.findIssuesChevron.type = 'button';
+		this.findIssuesChevron.setAttribute('aria-label', localize('voltAgent.changes.findIssuesOptions', "Find Issues Options"));
+		this.findIssuesChevron.appendChild(renderIcon(Codicon.chevronDown));
+		this._register(addDisposableListener(this.findIssuesButton, 'click', e => {
+			EventHelper.stop(e, true);
+			void this.findIssues(this.shownTarget());
+		}));
+		this._register(addDisposableListener(this.findIssuesChevron, 'click', e => {
+			EventHelper.stop(e, true);
+			this.showFindIssuesMenu();
+		}));
+
+		// The composer's Commit chip, as a split button: it runs the next step, its chevron the others.
+		const git = this._register(instantiationService.createInstance(AgentGitActionsControl, this.element, {
+			look: 'header',
+			target: () => {
+				const folder = (sessionContext.rootFor(target.sessionId) ?? workspaceContextService.getWorkspace().folders[0]?.uri)?.fsPath;
+				return { sessionId: target.sessionId, ...(folder ? { folder } : {}) };
+			},
+			onDidChangeVisibility: visible => commit.classList.toggle('hidden', visible),
+		}));
 		const commit = append(this.element, $('button.volt-agent-changes-commit')) as HTMLButtonElement;
 		commit.type = 'button';
 		commit.appendChild(createGitBranchIcon(commit.ownerDocument));
@@ -173,14 +260,100 @@ export class AgentChangesHeader extends Disposable implements IMultiDiffEditorHe
 		this._register(changesService.onDidChange(sessionId => {
 			if (sessionId === target.sessionId) {
 				this.renderScope();
+				void git.refresh();
 			}
 		}));
+		void git.refresh();
 		this._register(this.edits.onDidChange(() => this.renderResolve()));
 		this._register(scmService.onDidAddRepository(() => this.trackRepository()));
 		this._register(scmService.onDidRemoveRepository(() => this.trackRepository()));
 		this.renderScope();
 		this.renderResolve();
 		this.trackRepository();
+	}
+
+	/** What this tab shows, as a Find Issues target. */
+	private shownTarget(): AgentFindIssuesTarget {
+		const target = this.target;
+		if (target.kind === 'commit') {
+			return { kind: 'commit', id: target.commit.id, subject: target.commit.subject };
+		}
+		const files = target.scope === 'pending'
+			? this.edits.getPendingFiles(target.sessionId).map(file => this.workspaceRelative(file.uri))
+			: target.scope === 'lastTurn' || target.scope === 'uncommitted'
+				? this.changesService.getFiles(target.sessionId, target.scope).map(file => file.path)
+				: [];
+		return { kind: 'changes', scope: target.scope, files };
+	}
+
+	private workspaceRelative(uri: URI): string {
+		const root = this.sessionContext.rootFor(this.target.sessionId) ?? this.workspaceContextService.getWorkspace().folders[0]?.uri;
+		return (root && relativePath(root, uri)) ?? uri.fsPath;
+	}
+
+	private showFindIssuesMenu(): void {
+		type Pick = { readonly kind: 'run'; readonly target: AgentFindIssuesTarget } | { readonly kind: 'instructions' };
+		const shown = this.shownTarget();
+		const items: IVoltMenuItem<Pick>[] = [{
+			id: 'shown',
+			label: shown.kind === 'commit'
+				? localize('voltAgent.changes.findInCommit', "This Commit")
+				: this.scopeName(shown.kind === 'changes' ? shown.scope : 'uncommitted'),
+			icon: shown.kind === 'commit' ? Codicon.gitCommit : scopeIcon(shown.kind === 'changes' ? shown.scope : 'uncommitted'),
+			data: { kind: 'run', target: shown },
+		}];
+		const base = this.repository?.provider.historyProvider.get()?.historyItemBaseRef.get()?.name;
+		if (base) {
+			items.push({
+				id: 'base',
+				label: localize('voltAgent.changes.findAgainstBase', "Diff Against {0}", base),
+				icon: Codicon.gitCompare,
+				data: { kind: 'run', target: { kind: 'base', base } },
+			});
+		}
+		showVoltMenu<Pick>(this.contextViewService, {
+			anchor: this.findIssuesChevron,
+			align: 'right',
+			ariaLabel: localize('voltAgent.changes.findIssuesOptions', "Find Issues Options"),
+			width: 260,
+			sections: [
+				{ id: 'targets', title: localize('voltAgent.changes.findIssuesIn', "Find Issues In"), items },
+				{ id: 'more', items: [{ id: 'instructions', label: localize('voltAgent.changes.findWithInstructions', "With Instructions"), icon: Codicon.edit, data: { kind: 'instructions' } }] },
+			],
+			onPick: item => {
+				const pick = item.data;
+				if (pick.kind === 'run') {
+					void this.findIssues(pick.target);
+					return;
+				}
+				void this.quickInputService.input({
+					prompt: localize('voltAgent.changes.findInstructionsPrompt', "What should the review focus on?"),
+					placeHolder: localize('voltAgent.changes.findInstructionsPlaceholder', "e.g. Check the error handling and the new API's callers"),
+				}).then(instructions => {
+					if (instructions !== undefined) {
+						void this.findIssues(shown, instructions);
+					}
+				});
+			},
+		});
+	}
+
+	/** Sends the review to the chat in Ask mode: queued behind a running turn, at once otherwise. */
+	private async findIssues(target: AgentFindIssuesTarget, instructions?: string): Promise<void> {
+		const text = findIssuesPrompt(target, instructions);
+		const display = localize('voltAgent.changes.findIssuesDisplay', "Find issues in these changes");
+		try {
+			const result = await this.orchestrator.submit(this.target.sessionId, {
+				text,
+				display: { text: instructions?.trim() ? `${display}: ${instructions.trim()}` : display },
+				mode: 'Ask',
+			}, 'auto');
+			if (result.outcome === 'rejected') {
+				this.notificationService.warn(localize('voltAgent.changes.findIssuesRejected', "The chat did not take the review: {0}", result.reason ?? ''));
+			}
+		} catch (err) {
+			this.notificationService.warn(localize('voltAgent.changes.findIssuesFailed', "Could not start Find Issues: {0}", err instanceof Error ? err.message : String(err)));
+		}
 	}
 
 	private resolveButton(label: string, run: () => Promise<void>): HTMLButtonElement {
@@ -264,7 +437,9 @@ export class AgentChangesHeader extends Disposable implements IMultiDiffEditorHe
 	private showScopeMenu(): void {
 		const { sessionId } = this.target;
 		const current = this.target.kind === 'scope' ? this.target.scope : undefined;
-		const scopes = current && !MENU_SCOPES.includes(current) ? [current, ...MENU_SCOPES] : MENU_SCOPES;
+		// Pending Changes leads while the agent's edits wait for Keep or Undo (Cursor's "N Pending Changes").
+		const base = this.edits.getPendingFiles(sessionId).length > 0 ? ['pending' as AgentChangesScope, ...MENU_SCOPES] : MENU_SCOPES;
+		const scopes = current && !base.includes(current) ? [current, ...base] : base;
 		const items: IVoltMenuItem<ScopePick>[] = scopes.map(scope => ({
 			id: scope,
 			label: this.scopeName(scope),

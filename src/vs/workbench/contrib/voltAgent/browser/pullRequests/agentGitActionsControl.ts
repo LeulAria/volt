@@ -20,8 +20,11 @@ import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { IAgentGitActionsService, IAgentGitControlState } from './agentGitActionsService.js';
 
 export interface IAgentGitActionsControlOptions {
-	/** `dock`: a full-width row in the chat side toolbar. `chip`: a pill above the composer. */
-	readonly look: 'dock' | 'chip';
+	/**
+	 * `dock`: a full-width row in the chat side toolbar. `chip`: a pill above the composer.
+	 * `header`: the white split button at the end of the Changes tab's bar.
+	 */
+	readonly look: 'dock' | 'chip' | 'header';
 	/** The chat and the folder its agent works in, read when the control refreshes or runs. */
 	readonly target: () => { readonly sessionId?: string; readonly folder?: string };
 	/** Called when the control appears or disappears (a clean branch with nothing to do hides the chip). */
@@ -58,11 +61,12 @@ export class AgentGitActionsControl extends Disposable {
 		super();
 		this.service = instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentGitActionsService));
 		const chip = options.look === 'chip';
-		this.element = append(parent, $(chip ? '.volt-git-control.chip.volt-agent-composer-chip.volt-browser-dock-chip' : '.volt-git-control.dock'));
-		this.main = append(this.element, $(chip ? 'button.volt-git-control-main' : 'button.volt-git-control-main.volt-agent-dock-row')) as HTMLButtonElement;
+		const header = options.look === 'header';
+		this.element = append(parent, $(chip ? '.volt-git-control.chip.volt-agent-composer-chip.volt-browser-dock-chip' : header ? '.volt-git-control.header' : '.volt-git-control.dock'));
+		this.main = append(this.element, $(chip || header ? 'button.volt-git-control-main' : 'button.volt-git-control-main.volt-agent-dock-row')) as HTMLButtonElement;
 		this.main.type = 'button';
 		this.icon = append(this.main, $('span.volt-git-control-icon'));
-		this.label = append(this.main, $(chip ? 'span.volt-agent-composer-chip-label' : 'span.volt-agent-dock-row-label'));
+		this.label = append(this.main, $(chip ? 'span.volt-agent-composer-chip-label' : header ? 'span.volt-git-control-label' : 'span.volt-agent-dock-row-label'));
 		this.elapsed = append(this.main, $('span.volt-git-control-elapsed'));
 		this.chevron = append(this.element, $('button.volt-git-control-chevron')) as HTMLButtonElement;
 		this.chevron.type = 'button';
@@ -109,8 +113,8 @@ export class AgentGitActionsControl extends Disposable {
 		const quick = state?.quick;
 		const progress = state?.progress;
 		// Nothing to show without a repository; the chip also steps aside when there is nothing to do.
-		const visible = !!quick && !!state?.context.status && (this.options.look === 'dock' || !quick.disabled || !!progress);
-		if (this.options.look === 'dock') {
+		const visible = !!quick && !!state?.context.status && (this.options.look !== 'chip' || !quick.disabled || !!progress);
+		if (this.options.look !== 'chip') {
 			// The chip's owner animates it in and out (onDidChangeVisibility).
 			this.element.classList.toggle('hidden', !visible);
 		}

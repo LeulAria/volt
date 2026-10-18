@@ -581,12 +581,13 @@ export class AgentSurfaceHost extends Disposable {
 		return this.canOpenTools() && this.sessionId === sessionId;
 	}
 
-	/** Its right panel is open on `sessionId` with Source Control, or a tab of the chat's changes. */
+	/** Its right panel is open on `sessionId` with Source Control, or a tab of the chat's changes in front. */
 	showsChangesFor(sessionId: string): boolean {
 		const entry = this.shown;
 		return !!entry && entry.sessionId === sessionId && this.announcedOpen
+			// The tab in front, not any open tab: a file opened over the Changes tab brings the chip back.
 			&& (this.filesSidebar.showsScmFor(sessionId) || entry.part.groups.some(group => group.activeEditor instanceof AgentChangesEditorInput
-				|| group.editors.some(editor => isAgentChangesDiffFor(editor, sessionId))));
+				|| isAgentChangesDiffFor(group.activeEditor ?? undefined, sessionId)));
 	}
 
 	/** Its right panel is open on `sessionId` with Source Control: in the files sidebar, or the Changes tab in front. */
