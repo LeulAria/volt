@@ -65,6 +65,7 @@ suite('Volt Claude accounts', () => {
 		let accounts: ClaudeAccounts;
 		let limits: Map<string, IVoltUsageLimitGroup>;
 		let refreshed: string[];
+		let shared: IVoltUsageLimitGroup[];
 
 		const oauth = (email: string, uuid: string) => ({ accountUuid: uuid, emailAddress: email, organizationUuid: `org-${uuid}`, organizationName: `${email} org` });
 		const credentials = (token: string, extra: JsonObject = {}) => ({ claudeAiOauth: { accessToken: token, refreshToken: `r-${token}`, expiresAt: Date.now() + 8 * HOUR, rateLimitTier: 'default_claude_max_20x' }, ...extra });
@@ -88,6 +89,7 @@ suite('Volt Claude accounts', () => {
 			home = join(root, 'home');
 			limits = new Map();
 			refreshed = [];
+			shared = [];
 			await signIn(join(home, '.claude'), 'a@x.com', 'ua', 'token-a', { mcpOAuth: { keep: true } });
 			await writeFile(join(home, '.claude.json'), JSON.stringify({ oauthAccount: oauth('a@x.com', 'ua'), projects: { '/p': {} } }));
 			accounts = new ClaudeAccounts({
@@ -99,6 +101,7 @@ suite('Volt Claude accounts', () => {
 				platform: 'linux',
 				location: env => claudeLiveLocation(home, env, 'linux'),
 				readLimits: async credential => ({ group: limits.get(String(credential.accessToken)) }),
+				sharedLimits: async () => shared,
 				refresh: async blob => {
 					const current = blob.claudeAiOauth as JsonObject;
 					refreshed.push(String(current.accessToken));
@@ -183,6 +186,28 @@ suite('Volt Claude accounts', () => {
 			assert.strictEqual(events.length, 1, 'no second switch inside the cooldown');
 			listener.dispose();
 			assert.strictEqual((await accounts.getState()).accounts.find(account => account.id === b)?.active, true);
+		});
+
+		test('a manual switch onto a full account does not hold automatic switching back', async () => {
+			const b = await addSecondAccount();
+			accounts.configure('auto', 90);
+			limits.set('token-a', group(10, 20));
+			limits.set('token-b', group(100, 54));
+			await accounts.switchTo(b);
+			// The pass queued by the manual switch, and a timer pass, both move off the full account.
+			await accounts.autoSwitchTick();
+			assert.strictEqual(await liveToken(), 'token-a');
+		});
+
+		test('the account in use shows the Usage page\u2019s newer reading; others read their own', async () => {
+			await addSecondAccount();
+			limits.set('token-a', group(98, 50));
+			limits.set('token-b', group(30, 40));
+			await accounts.getState(true);
+			shared = [{ ...group(0, 83), account: { id: 'claude:ua', label: 'a@x.com' }, checkedAt: Date.now() + 1 }];
+			const state = await accounts.getState(true);
+			const session = (email: string) => state.accounts.find(account => account.email === email)?.limits?.windows[0].usedPercent;
+			assert.deepStrictEqual([session('a@x.com'), session('b@x.com')], [0, 30]);
 		});
 
 		test('manual switching never moves on its own, and the account in use cannot be forgotten', async () => {

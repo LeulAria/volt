@@ -23,7 +23,10 @@ const IDLE_LIMITS_MS = 10 * 60_000;
 const LIMITS_BACKOFF_MS = 5 * 60_000;
 /** A stored access token this close to expiry is refreshed before use. */
 const EXPIRY_MARGIN_MS = 5 * 60_000;
-/** Automatic switching waits this long after any switch, so two accounts near the line never ping-pong. */
+/**
+ * Automatic switching waits this long after its own last switch, so two accounts near the line never
+ * ping-pong. A manual switch does not hold it back: picking a full account is moved off it at once.
+ */
 export const AUTO_SWITCH_COOLDOWN_MS = 5 * 60_000;
 /** A switch target must be this many points under the threshold. */
 export const AUTO_SWITCH_MARGIN = 5;
@@ -64,6 +67,8 @@ export interface IClaudeAccountsOptions {
 	/** Overrides the live location (tests). */
 	readonly location?: (env: NodeJS.ProcessEnv) => IClaudeLiveLocation;
 	readonly readLimits?: (oauth: JsonObject) => Promise<{ group?: IVoltUsageLimitGroup; retryAfterMs?: number }>;
+	/** The Usage page's limits, which already read the live login: the account in use takes its numbers from there. */
+	readonly sharedLimits?: (force: boolean) => Promise<readonly IVoltUsageLimitGroup[]>;
 	readonly refresh?: typeof refreshAccountCredentials;
 }
 
@@ -158,6 +163,8 @@ export class ClaudeAccounts extends Disposable {
 	private switching: VoltAccountSwitching = 'manual';
 	private threshold = CLAUDE_AUTO_SWITCH_DEFAULT_THRESHOLD;
 	private lastError: string | undefined;
+	/** The saved account Claude Code was last seen on, to notice logins changed outside Volt. */
+	private lastLiveId: string | undefined;
 
 	constructor(private readonly options: IClaudeAccountsOptions) {
 		super();
@@ -217,6 +224,8 @@ export class ClaudeAccounts extends Disposable {
 			const live = await this.syncLive();
 			if (refreshLimits) {
 				await this.readStaleLimits(live?.id);
+				// Fresh limits may show the account in use is full: move now, not at the next timer pass.
+				void this.autoSwitchTick();
 			}
 			return this.snapshot(live?.id, live === undefined && !this.lastError);
 		});
@@ -269,6 +278,11 @@ export class ClaudeAccounts extends Disposable {
 			account.plan = planOf(credentials, live.oauthAccount) ?? account.plan;
 			account.needsSignIn = undefined;
 		}
+		if (this.lastLiveId && this.lastLiveId !== account.id) {
+			// A `claude /login`, or a running Claude writing back the login it started with.
+			this.options.logService.info(`[volt-accounts] Claude Code's login changed outside Volt to ${asString(live.oauthAccount.emailAddress)}`);
+		}
+		this.lastLiveId = account.id;
 		const stored = await this.secret(account.id);
 		if (JSON.stringify(stored) !== JSON.stringify(credentials)) {
 			await this.setSecret(account.id, credentials);
@@ -295,6 +309,16 @@ export class ClaudeAccounts extends Disposable {
 		const now = Date.now();
 		let changed = false;
 		await Promise.all(store.accounts.map(async account => {
+			// One reading for the login in use: the Usage page and this list show the same number, and the
+			// endpoint (which answers 429 when asked too often) is not asked twice for it.
+			const shared = account.id === activeId && !account.needsSignIn ? await this.sharedLimits(account, force) : undefined;
+			if (shared) {
+				if (!account.limits || shared.checkedAt > account.limits.checkedAt) {
+					account.limits = shared;
+					changed = true;
+				}
+				return;
+			}
 			const interval = account.id === activeId ? ACTIVE_LIMITS_MS : IDLE_LIMITS_MS;
 			if (account.needsSignIn || (account.limitsBackoffUntil ?? 0) > now || (!force && account.limits && now - account.limits.checkedAt < interval)) {
 				return;
@@ -316,6 +340,14 @@ export class ClaudeAccounts extends Disposable {
 			await this.save();
 			this._onDidChange.fire();
 		}
+	}
+
+	private async sharedLimits(account: IStoredAccount, force: boolean): Promise<IVoltUsageLimitGroup | undefined> {
+		const groups = await this.options.sharedLimits?.(force).catch(() => undefined);
+		const uuid = asString(account.oauthAccount.accountUuid);
+		const email = asString(account.oauthAccount.emailAddress)?.toLowerCase();
+		return groups?.find(group => group.provider === 'claude' && !group.error && group.windows.length > 0
+			&& ((!!uuid && group.account?.id === `claude:${uuid}`) || (!!email && group.account?.label?.toLowerCase() === email)));
 	}
 
 	/**
@@ -359,6 +391,10 @@ export class ClaudeAccounts extends Disposable {
 				this._onDidAutoSwitch.fire(event);
 			}
 			this._onDidChange.fire();
+			if (event && reason === 'manual') {
+				// The account picked may already be at its limit.
+				void this.autoSwitchTick();
+			}
 			return state;
 		});
 	}
@@ -397,6 +433,7 @@ export class ClaudeAccounts extends Disposable {
 			await writeLiveCredentials(location, live.source, spliceCredentials(live.credentials, credentials));
 			await writeLiveOauthAccount(location, target.oauthAccount);
 		});
+		this.lastLiveId = target.id;
 		const now = Date.now();
 		target.activatedAt = now;
 		target.limitsBackoffUntil = undefined;
@@ -428,7 +465,7 @@ export class ClaudeAccounts extends Disposable {
 				return;
 			}
 			await this.readStaleLimits(active.id);
-			if (store.lastSwitch && Date.now() - store.lastSwitch.at < AUTO_SWITCH_COOLDOWN_MS) {
+			if (store.lastSwitch?.reason === 'auto' && Date.now() - store.lastSwitch.at < AUTO_SWITCH_COOLDOWN_MS) {
 				return;
 			}
 			const candidate = (account: IStoredAccount): IAutoSwitchCandidate => ({ id: account.id, pressure: limitPressure(account.limits), usable: !account.needsSignIn });

@@ -10,6 +10,7 @@ import { IConfigurationService } from '../../configuration/common/configuration.
 import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
 import { CLAUDE_ACCOUNT_SWITCHING_SETTING, CLAUDE_AUTO_SWITCH_DEFAULT_THRESHOLD, CLAUDE_AUTO_SWITCH_THRESHOLD_SETTING, IVoltAccountsService, IVoltClaudeAccountsState, IVoltClaudeLogin, VoltClaudeLoginResult } from '../common/voltAccounts.js';
+import { IVoltUsageService } from '../../voltUsage/common/voltUsage.js';
 import { ClaudeAccounts } from '../node/claudeAccounts.js';
 import { FileAccountSecrets, KeychainAccountSecrets } from '../node/claudeLogin.js';
 
@@ -35,6 +36,7 @@ export class VoltAccountsMainService extends Disposable implements IVoltAccounts
 	constructor(
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@ILogService logService: ILogService,
+		@IVoltUsageService usageService: IVoltUsageService,
 	) {
 		super();
 		const home = homedir();
@@ -49,6 +51,7 @@ export class VoltAccountsMainService extends Disposable implements IVoltAccounts
 				.then(resolved => ({ ...process.env, ...resolved }))
 				.catch(() => process.env),
 			logService,
+			sharedLimits: force => usageService.getLimits(force),
 		}));
 		this.onDidChangeClaudeAccounts = this.claude.onDidChange;
 		this.onDidAutoSwitchClaudeAccount = this.claude.onDidAutoSwitch;

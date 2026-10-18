@@ -1704,12 +1704,16 @@ export class ProvidersPage {
 	private renderClaudeAccounts(parent: HTMLElement): void {
 		const state = this.accountsState;
 		// Limits are read behind what is shown (the answer redraws the page), at most once a minute:
-		// the main process keeps each account to its own interval anyway.
-		const stale = !state || state.accounts.some(account => !account.needsSignIn && (!account.limits || Date.now() - account.limits.checkedAt > 5 * 60_000));
+		// the main process keeps each account to its own interval anyway. The one in use moves while
+		// Claude works, so it counts as stale after a minute (it shares the Usage page's reading).
+		const stale = !state || state.accounts.some(account => !account.needsSignIn && (!account.limits || Date.now() - account.limits.checkedAt > (account.active ? 60_000 : 5 * 60_000)));
 		if (stale && Date.now() - this.limitsRequestedAt > 60_000) {
 			this.limitsRequestedAt = Date.now();
 			mainWindow.setTimeout(() => void this.loadAccounts(true));
 		}
+		// A page left open keeps up too; every redraw starts this again.
+		const recheck = mainWindow.setTimeout(() => void this.loadAccounts(true), 60_000);
+		this.host.store.add(toDisposable(() => mainWindow.clearTimeout(recheck)));
 		const heading = this.sectionTitle(parent, localize('voltSettings.claudeAccounts', "Accounts"), localize('voltSettings.claudeAccountsHint', "Sign in to each Claude account once. Switching changes the account Claude Code uses on this computer, in Volt and in the terminal; running chats pick it up within about 30 seconds."));
 		const adding = !!this.accountLogin;
 		const add = this.link(heading, adding ? localize('voltSettings.claudeAddingAccount', "Waiting for sign-in") : localize('voltSettings.claudeAddAccount', "Add account"), adding ? ThemeIcon.modify(Codicon.loading, 'spin') : Codicon.add, () => {
