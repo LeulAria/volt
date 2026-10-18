@@ -114,7 +114,7 @@ function delegateTaskTool(maxPerCall: number): IAgentTaskToolInfo {
 		title: 'Delegated task',
 		description: [
 			'Run one task on a Volt subagent: a separate chat, on any model from list_models, that starts with only your brief (it does not see this conversation). Use it to work in parallel (several independent tasks at once), to get a second opinion from a different model (review, research), or to give a self-contained piece of work to a model better suited to it.',
-			'Write the brief like a hand-off to a capable colleague who knows nothing: the goal, the relevant files and facts you already found, constraints, and what the report should contain. Do not delegate work that depends on finishing something else first, and do not delegate trivial lookups you can do faster yourself.',
+			'Write the brief like a hand-off to a capable colleague who knows nothing: the goal, the relevant files and facts you already found, constraints, and what the report should contain. For work that edits code, name the files to change and what to change in each (paths, symbols, line numbers you saw), so the subagent can start editing at once instead of exploring again. Do not delegate work that depends on finishing something else first, and do not delegate trivial lookups you can do faster yourself.',
 			'To run several independent parts at once, start them all in ONE call with `tasks` (one entry per part, each with its own complete brief) instead of one call per part.',
 			'Returns a task_id at once (wait=false, the default). Several tasks run in parallel. When a task finishes its report is delivered to this chat as a new message, so after starting tasks you may end your turn instead of polling; call wait_tasks only when you need the results before you can continue in this turn. task_status reads progress.',
 			'Review rounds: for each new round of a review (or any work you send back after changes), call delegate_task again with previous_task_id set to the last round and a fresh client_request_id (keep that id when you retry the same round). Do not use message_task for a new round: a fresh subagent reviews the current code without the previous reviewer\'s assumptions. Tasks and their reports survive a Volt restart.',
@@ -242,11 +242,21 @@ export function agentTaskTools(maxPerCall: number): readonly IAgentTaskToolInfo[
 const ROLE_GUIDANCE: Readonly<Record<AgentTaskRole, string>> = {
 	general: 'Do what the brief asks. Change files only if the brief asks for changes.',
 	research: 'Research only: read, search and run read-only commands. Do not change files. Report what you found with file paths and line numbers.',
-	implementation: 'Implement the change, run the relevant checks (build, tests, lint) and fix what they find.',
+	implementation: 'Implement the change and check the files you changed for errors. Run tests, a type-check or a build only when other code depends on the change, you are unsure it works, or the brief asks; fix what they find.',
 	review: 'Review only: do not change files. Report concrete problems in order of severity, each with file, line, why it is wrong and a suggested fix. Say plainly when you find nothing.',
 	test: 'Write or run tests as the brief asks. Make tests pass by fixing code only when the brief says so; never weaken assertions.',
 	design: 'Work on the UI or design the brief describes, and check the result visually when you can.',
 };
+
+/** Roles whose subagent may change files: these are told to start editing early. */
+const EDITING_ROLES: ReadonlySet<AgentTaskRole> = new Set(['general', 'implementation', 'test', 'design']);
+
+/**
+ * A subagent that edits starts editing early. Without this, some models spent most of a task
+ * (20+ minutes) re-exploring and reasoning before their first edit, though the brief already had
+ * the facts.
+ */
+const EDIT_FAST = '[Volt subagent] Move fast. The brief already has what the other agent found: trust it. Read only the files you will change, all in one parallel batch, then start editing within your first few steps. Do not re-explore the codebase, write a long plan, or reason through every case before the first edit: make the change, check it, and adjust. Keep your thinking between tool calls short; if you notice you have been thinking for a while without a tool call, make the next edit.';
 
 /** Read-only roles run in Ask mode so agents with a read-only mode are held to it. */
 export function modeForTaskRole(role: AgentTaskRole, requested: VoltMode | undefined): VoltMode {
@@ -278,6 +288,7 @@ export function buildTaskPrompt(brief: string, context: ITaskBriefContext): stri
 	const lines = [
 		`[Volt subagent] Another agent delegated this task to you${context.parentTitle ? ` from the chat "${context.parentTitle}"` : ''}. You do not see that conversation: the brief below is everything you get, so read the code you need instead of assuming.`,
 		`[Volt subagent] ${ROLE_GUIDANCE[context.role]}`,
+		...(EDITING_ROLES.has(context.role) ? [EDIT_FAST] : []),
 		'[Volt subagent] Work on your own; ask the user only if you are blocked. Stay within the task. Your final message is returned to the other agent as your report: start with the outcome in one or two sentences, then what you did or found (with file paths), the files you changed, how you checked it, and anything left undone or uncertain.',
 	];
 	if (context.isolation === 'worktree') {

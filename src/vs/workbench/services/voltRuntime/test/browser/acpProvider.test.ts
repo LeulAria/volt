@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { claudeWorkRulesMeta } from '../../common/harness/claudeWorkRules.js';
 import { CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Emitter } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
@@ -155,10 +156,10 @@ suite('ACP provider supervision', () => {
 
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
-	function setup(hostTools?: IVoltHostToolService) {
+	function setup(hostTools?: IVoltHostToolService, id = 'cursor-acp') {
 		const agent = new FakeAgentStdio(store);
 		const clock = new FakeWatchdogClock();
-		const provider = new AcpAgentProvider('cursor-acp', 'Cursor', 'cursor-agent', ['acp'], agent.asService(),
+		const provider = new AcpAgentProvider(id, 'Cursor', 'cursor-agent', ['acp'], agent.asService(),
 			{ getWorkspace: () => ({ folders: [] }) } as unknown as IWorkspaceContextService,
 			undefined as unknown as IFileService, new NullLogService(), hostTools);
 		provider.setSupervisionOptions({ clock, idle: ACP_IDLE_TIMINGS });
@@ -217,6 +218,16 @@ suite('ACP provider supervision', () => {
 		const handle = await env.provider.start(request({ sessionId: 's1' }));
 		const created = env.agent.written.find(entry => entry.msg.method === 'session/new')!;
 		assert.deepStrictEqual(created.msg.params?.mcpServers, []);
+		// Claude Code's work rules and subagent hook go only to Claude Code.
+		assert.strictEqual(created.msg.params?._meta, undefined);
+		await finish(env, handle);
+	});
+
+	test('Claude Code sessions carry Volt\'s work rules and the subagent hook', async () => {
+		const env = setup(undefined, 'claude-code');
+		const handle = await env.provider.start(request({ sessionId: 's1' }));
+		const created = env.agent.written.find(entry => entry.msg.method === 'session/new')!;
+		assert.deepStrictEqual(created.msg.params?._meta, claudeWorkRulesMeta());
 		await finish(env, handle);
 	});
 
@@ -467,6 +478,25 @@ suite('ACP provider supervision', () => {
 		assert.deepStrictEqual([linked.parentToolCallId, linked.model], ['toolu_agent', 'claude-haiku-4-5-20251001']);
 		const done = turn.events.at(-1) as Extract<IVoltEvent, { type: 'subagent.completed' }>;
 		assert.deepStrictEqual([done.status, done.result], ['completed', 'Done! Added the footer.']);
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await turn.done;
+		await finish(env, handle);
+	});
+
+	test('native subagents: a running subagent pauses the parent\'s watchdog until it ends', async () => {
+		const env = setup();
+		const { handle, turn } = await startTurn(env, 'run the testers');
+		const notify = (sessionId: string, update: Json) => env.agent.send('p1', { jsonrpc: '2.0', method: 'session/update', params: { sessionId, update } });
+		notify('acp-p1', { sessionUpdate: 'subagent_spawned', subagentSessionId: 'af4e', name: 'e2e tester', task: 'Run the Playwright suite', capabilities: {} });
+		await settle();
+		env.clock.advance(30 * MINUTE);
+		await settle();
+		assert.deepStrictEqual(kinds(turn.events), ['subagent.spawned'], 'no stall while a subagent runs');
+		notify('acp-p1', { sessionUpdate: 'subagent_state_update', subagentSessionId: 'af4e', state: 'completed' });
+		await settle();
+		env.clock.advance(2 * MINUTE);
+		await settle();
+		assert.deepStrictEqual(kinds(turn.events), ['subagent.spawned', 'subagent.completed', 'notice:Taking longer than expected']);
 		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
 		await turn.done;
 		await finish(env, handle);

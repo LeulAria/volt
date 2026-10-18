@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { claudeWorkRulesMeta } from '../../common/harness/claudeWorkRules.js';
 import { bareTaskToolName } from '../../common/orchestration/agentTasks.js';
 import { timeout } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
@@ -132,6 +133,8 @@ interface IAcpChild {
 	/** The child's own messages; the last one is its report. */
 	text: string;
 	ended?: boolean;
+	/** Pauses the current turn's quiet clock while the child runs: a subagent in a long command prints nothing for minutes. */
+	hold?: { dispose(): void };
 }
 
 /** A session started ahead of time that no chat owns yet. */
@@ -717,6 +720,18 @@ export class AcpAgentProvider implements IAgentProvider {
 		};
 	}
 
+	/**
+	 * `_meta` for `session/new` and `session/resume`: a text-only session's prompt, or for every
+	 * other Claude Code session Volt's working rules (batched steps, file tools, no polling) for
+	 * the main agent and, through a SubagentStart hook, for each subagent it starts.
+	 */
+	private sessionMeta(req: IAgentStartRequest): Record<string, unknown> | undefined {
+		if (req.textOnly) {
+			return this.textOnlyMeta(req);
+		}
+		return this.takesSystemPrompt() ? claudeWorkRulesMeta() : undefined;
+	}
+
 	/** Spawns the agent and opens a session; with `resume`, continues that session (in `req.cwd`) instead of a new one. */
 	private async createSession(req: IAgentStartRequest, resume?: string): Promise<IAcpSession> {
 		const { command, args } = await this.launchFor(req.profile, this.startArgs(req));
@@ -767,10 +782,11 @@ export class AcpAgentProvider implements IAgentProvider {
 				if (!initialized.agentCapabilities?.sessionCapabilities?.resume) {
 					throw new Error('the agent cannot resume sessions');
 				}
-				const resumed = await client.request<Partial<ISessionNewResponse>>('session/resume', { sessionId: resume, cwd: cwd ?? '', mcpServers }, ACP_SESSION_NEW_TIMEOUT_MS);
+				const meta = this.sessionMeta(req);
+				const resumed = await client.request<Partial<ISessionNewResponse>>('session/resume', { sessionId: resume, cwd: cwd ?? '', mcpServers, ...(meta ? { _meta: meta } : {}) }, ACP_SESSION_NEW_TIMEOUT_MS);
 				created = { ...resumed, sessionId: resumed?.sessionId ?? resume };
 			} else {
-				const meta = this.textOnlyMeta(req);
+				const meta = this.sessionMeta(req);
 				created = await client.request<ISessionNewResponse>('session/new', { cwd: cwd ?? '', mcpServers, ...(meta ? { _meta: meta } : {}) }, ACP_SESSION_NEW_TIMEOUT_MS);
 			}
 		} catch (err) {
@@ -1093,6 +1109,13 @@ export class AcpAgentProvider implements IAgentProvider {
 		turn.watchdog = new IdleWatchdog(info => this.onIdle(live, turn, info), this.supervision.idle ?? ACP_IDLE_TIMINGS, clock);
 		turn.supervisor = new RunSupervisor({ budget: ACP_RUN_BUDGET, ...this.supervision.supervisor, startedAt: clock.now() });
 		live.turn = turn;
+		for (const child of live.children?.values() ?? []) {
+			if (!child.ended) {
+				// A subagent from an earlier turn still runs: this turn waits on it too.
+				child.hold?.dispose();
+				child.hold = turn.watchdog.pause();
+			}
+		}
 		const pendingPlan = live.pendingPlan;
 		live.pendingPlan = undefined;
 		if (pendingPlan) {
@@ -1148,6 +1171,16 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		const turn = live.turn;
 		if (!turn || turn.ended) {
+			// A subagent can end between turns; the next turn must not wait on it.
+			const ended = (params as { update?: { sessionUpdate?: unknown; subagentSessionId?: unknown } } | undefined)?.update;
+			if (ended?.sessionUpdate === 'subagent_state_update' && typeof ended.subagentSessionId === 'string') {
+				const child = live.children?.get(ended.subagentSessionId);
+				if (child) {
+					child.ended = true;
+					child.hold?.dispose();
+					child.hold = undefined;
+				}
+			}
 			if (isChatPlanUpdate(params, live.handle.providerSessionId ?? live.handle.id)) {
 				live.pendingPlan = this.mapUpdate(params).find((event): event is Extract<IVoltEvent, { type: 'plan' }> => event.type === 'plan');
 			}
@@ -1239,8 +1272,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			const childId = update.subagentSessionId;
 			const title = typeof update.name === 'string' && update.name.trim() ? update.name.trim() : 'Subagent';
 			if (!children.has(childId)) {
-				children.set(childId, { title, text: '' });
-				turn.watchdog.activity();
+				children.set(childId, { title, text: '', hold: turn.watchdog.pause() });
 				this.pushActivity(live, turn, {
 					type: 'subagent.spawned',
 					childId,
@@ -1255,6 +1287,8 @@ export class AcpAgentProvider implements IAgentProvider {
 			const child = children.get(update.subagentSessionId);
 			if (child && !child.ended) {
 				child.ended = true;
+				child.hold?.dispose();
+				child.hold = undefined;
 				const state = String(update.state ?? 'completed');
 				const status = state === 'failed' ? 'failed' : state === 'cancelled' || state === 'disconnected' ? 'cancelled' : 'completed';
 				this.pushActivity(live, turn, {
@@ -1283,7 +1317,9 @@ export class AcpAgentProvider implements IAgentProvider {
 				if (event.type === 'tool.start') {
 					turn.push({ type: 'subagent.update', childId: sessionId, activity: event.title || event.name });
 				}
-				if (event.type !== 'notice' && event.type !== 'usage') {
+				// Usage goes to the subagent's own chat (its Session Usage card); the parent ignores
+				// subagent events, and its own billed total already covers the child.
+				if (event.type !== 'notice') {
 					turn.push({ type: 'subagent.event', childId: sessionId, event });
 				}
 			}

@@ -478,6 +478,36 @@ suite('Volt orchestrator: subagents', () => {
 		assert.strictEqual(dockModel(sim.state, 'parent').failed, 1);
 	});
 
+	test('Resume on a failed or stopped subagent runs it again, and it reports again', () => {
+		const sim = new OrchSim();
+		sim.submit('parent', 'go');
+		sim.start('parent');
+		const failed = sim.spawn('parent', 'deploy').taskId!;
+		const stopped = sim.spawn('parent', 'migrate').taskId!;
+		sim.settle('parent', 'done');
+		const child = sim.childOf(failed);
+		// Passing errors continue by themselves a few times; then the task fails.
+		for (let attempt = 0; attempt < 5 && sim.state.tasks[failed].state !== 'failed'; attempt++) {
+			sim.start(child);
+			sim.settle(child, 'failed', undefined, 'Provider error: 529 overloaded');
+		}
+		assert.strictEqual(sim.state.tasks[failed].state, 'failed');
+		sim.run({ type: 'task.cancel', taskId: stopped });
+		assert.strictEqual(sim.state.tasks[stopped].state, 'cancelled');
+
+		for (const task of [failed, stopped]) {
+			const result = sim.run({ type: 'task.message', taskId: task, turnId: `resume-${task}`, prompt: prompt('[Volt] The user resumed you.') });
+			assert.strictEqual(result.rejected, undefined);
+			assert.ok(result.events.some(event => event.type === 'task.resumed'));
+			const thread = sim.state.threads[sim.childOf(task)];
+			assert.ok(thread.active?.id === `resume-${task}` || thread.queue.some(item => item.id === `resume-${task}`), 'the resume round is running or next');
+			assert.strictEqual(thread.pause, undefined, 'its chat is not left paused');
+		}
+		sim.complete(child, 'done', 'deployed');
+		assert.strictEqual(sim.state.tasks[failed].state, 'completed');
+		assert.strictEqual(sim.state.tasks[failed].result, 'deployed');
+	});
+
 	test('harness subagents are tracked by their own Task call, and end with the parent turn', () => {
 		const sim = new OrchSim();
 		sim.submit('a', 'go');
