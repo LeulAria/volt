@@ -459,7 +459,7 @@ export function androidLaunchArgv(target: string): string[] {
 }
 
 /** Where the Android SDK usually is, in order: env, then the platform's default install folder. */
-export function androidSdkCandidates(platform: NodeJS.Platform | string, env: Record<string, string | undefined>, home: string): string[] {
+export function androidSdkCandidates(platform: string, env: Record<string, string | undefined>, home: string): string[] {
 	const candidates = [env.ANDROID_HOME, env.ANDROID_SDK_ROOT];
 	if (platform === 'darwin') {
 		candidates.push(`${home}/Library/Android/sdk`);
