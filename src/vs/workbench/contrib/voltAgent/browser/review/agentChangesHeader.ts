@@ -26,10 +26,12 @@ import { ISCMHistoryItem } from '../../../scm/common/history.js';
 import { ISCMRepository, ISCMService } from '../../../scm/common/scm.js';
 import { showAgentBranchMenu } from '../picker/agentBranchMenu.js';
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
+import { voltButtonClasses } from '../chrome/voltButton.js';
 import { SHOW_AGENT_SCM_COMMAND_ID } from '../../common/agentGitActions.js';
 import { AgentChangesScope, IAgentChangesTurn, agentScopeTurnId } from './agentSessionChanges.js';
 import { getAgentChangesSourceUri, IAgentSessionChangesService } from './agentSessionChangesService.js';
 import { findAgentScmRepository } from './agentScmRepository.js';
+import { IAgentEditsService } from './agentEditsService.js';
 
 const HEADER_HEIGHT = 40;
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -92,8 +94,8 @@ function hasStats(stats: { additions: number; deletions: number }): boolean {
 
 /**
  * The bar above a chat's changes in the tools, as Cursor draws it: the scope (with its line
- * counts) and a menu of the others and recent commits, the branch, and Commit & Push, which
- * opens Source Control.
+ * counts) and a menu of the others and recent commits, the branch, Undo All and Keep All while
+ * the agent's edits wait for review, and Commit & Push, which opens Source Control.
  */
 export class AgentChangesHeader extends Disposable implements IMultiDiffEditorHeader {
 
@@ -108,12 +110,16 @@ export class AgentChangesHeader extends Disposable implements IMultiDiffEditorHe
 	private readonly branchLabel: HTMLElement;
 	private repository: ISCMRepository | undefined;
 	private readonly branchWatch = this._register(new MutableDisposable());
+	private readonly undoAllButton: HTMLButtonElement;
+	private readonly keepAllButton: HTMLButtonElement;
+	private resolving = false;
 
 	constructor(
 		private readonly input: MultiDiffEditorInput,
 		private readonly group: IEditorGroup,
 		private readonly target: AgentChangesHeaderTarget,
 		@IAgentSessionChangesService private readonly changesService: IAgentSessionChangesService,
+		@IAgentEditsService private readonly edits: IAgentEditsService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@ICommandService private readonly commandService: ICommandService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
@@ -140,6 +146,10 @@ export class AgentChangesHeader extends Disposable implements IMultiDiffEditorHe
 
 		append(this.element, $('.volt-agent-changes-header-spacer'));
 
+		// The composer's Undo All / Keep All, here too: the whole review without going back to the chat.
+		this.undoAllButton = this.resolveButton(localize('voltAgent.changes.undoAll', "Undo All"), () => this.edits.undoAll(target.sessionId));
+		this.keepAllButton = this.resolveButton(localize('voltAgent.changes.keepAll', "Keep All"), () => this.edits.keepAll(target.sessionId));
+
 		const commit = append(this.element, $('button.volt-agent-changes-commit')) as HTMLButtonElement;
 		commit.type = 'button';
 		commit.appendChild(createGitBranchIcon(commit.ownerDocument));
@@ -165,10 +175,43 @@ export class AgentChangesHeader extends Disposable implements IMultiDiffEditorHe
 				this.renderScope();
 			}
 		}));
+		this._register(this.edits.onDidChange(() => this.renderResolve()));
 		this._register(scmService.onDidAddRepository(() => this.trackRepository()));
 		this._register(scmService.onDidRemoveRepository(() => this.trackRepository()));
 		this.renderScope();
+		this.renderResolve();
 		this.trackRepository();
+	}
+
+	private resolveButton(label: string, run: () => Promise<void>): HTMLButtonElement {
+		const button = append(this.element, $('button.volt-agent-changes-resolve')) as HTMLButtonElement;
+		button.classList.add(...voltButtonClasses('ghost'));
+		button.type = 'button';
+		button.textContent = label;
+		this._register(addDisposableListener(button, 'click', async e => {
+			EventHelper.stop(e, true);
+			if (this.resolving) {
+				return;
+			}
+			this.resolving = true;
+			this.renderResolve();
+			try {
+				await run();
+			} finally {
+				this.resolving = false;
+				this.renderResolve();
+			}
+		}));
+		return button;
+	}
+
+	/** Undo All and Keep All while the chat has edits waiting for Keep or Undo. */
+	private renderResolve(): void {
+		const pending = this.edits.getPendingFiles(this.target.sessionId).length > 0;
+		for (const button of [this.undoAllButton, this.keepAllButton]) {
+			button.classList.toggle('hidden', !pending);
+			button.disabled = this.resolving;
+		}
 	}
 
 	private trackRepository(): void {
