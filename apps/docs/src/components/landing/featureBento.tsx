@@ -1,8 +1,13 @@
 import {
+  Asterisk,
+  Atom,
   Check,
   ChevronDown,
   ChevronRight,
   Clock3,
+  FileDiff,
+  FlaskConical,
+  Folder,
   GitBranch,
   Plus,
   Search,
@@ -37,6 +42,13 @@ const FEATURES: {
   /** Widest the art may grow on the stage. */
   width: string;
 }[] = [
+  {
+    id: "turns",
+    title: "Every turn, accounted for.",
+    body: "Each turn and each subagent lists the files it changed, with the lines it added and removed. Open one to review just its work.",
+    Art: TurnsArt,
+    width: "max-w-[460px]",
+  },
   {
     id: "models",
     title: "Every frontier model, one picker.",
@@ -242,6 +254,205 @@ export function FeatureBento() {
         </div>
       </Reveal>
     </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Agent turns                                                         */
+/* ------------------------------------------------------------------ */
+
+type TurnIcon = "agent" | "turn" | "ts" | "react" | "test" | "folder";
+
+type TurnRow = {
+  depth: number;
+  icon: TurnIcon;
+  label: string;
+  meta?: string;
+  add?: number;
+  del?: number;
+  /** Opens with the selected subagent. */
+  child?: boolean;
+  selected?: boolean;
+  open?: boolean;
+  folderTone?: string;
+};
+
+/** The Changes sidebar's Agent turns tree, as Volt draws it after a multi-agent turn. */
+const TURN_ROWS: TurnRow[] = [
+  {
+    depth: 0,
+    icon: "agent",
+    label: "Cut web type errors",
+    meta: "Sonnet 5.5",
+    add: 5,
+    del: 1,
+    open: true,
+  },
+  { depth: 1, icon: "ts", label: "index.ts", add: 3 },
+  { depth: 1, icon: "ts", label: "tenant.ts", add: 2, del: 1 },
+  {
+    depth: 0,
+    icon: "turn",
+    label: "run the failed agents",
+    meta: "Turn 3",
+    add: 8712,
+    del: 1677,
+    open: true,
+  },
+  {
+    depth: 1,
+    icon: "agent",
+    label: "Resume T-E2E-fixes",
+    meta: "claude-opus-5.5",
+    add: 19,
+    del: 8,
+    selected: true,
+  },
+  {
+    depth: 2,
+    icon: "react",
+    label: "CheckInPanel.tsx",
+    add: 6,
+    del: 1,
+    child: true,
+  },
+  {
+    depth: 2,
+    icon: "test",
+    label: "prepareBookingFormData.test.ts",
+    child: true,
+  },
+  {
+    depth: 2,
+    icon: "ts",
+    label: "prepareBookingFormData.ts",
+    add: 13,
+    del: 7,
+    child: true,
+  },
+  {
+    depth: 1,
+    icon: "agent",
+    label: "Resume T-PRICE model",
+    meta: "claude-opus-5.5",
+    add: 65,
+    del: 9,
+  },
+  {
+    depth: 1,
+    icon: "agent",
+    label: "Resume T-BILL deposits",
+    meta: "claude-opus-5.5",
+    add: 20,
+    del: 2,
+  },
+  { depth: 1, icon: "folder", label: "apps/web", folderTone: "#4C8DF6" },
+  { depth: 1, icon: "folder", label: "packages", folderTone: "#4C8DF6" },
+  { depth: 0, icon: "turn", label: "Turn 2", add: 11 },
+];
+
+const TURN_CHILDREN = TURN_ROWS.filter((row) => row.child);
+
+function TurnGlyph({ icon, tone }: { icon: TurnIcon; tone?: string }) {
+  switch (icon) {
+    case "agent":
+      return <Asterisk className="size-4 text-[#D97757]" strokeWidth={2.25} />;
+    case "turn":
+      return <GitBranch className="size-3.5 text-white/60" />;
+    case "react":
+      return <Atom className="size-3.5 text-[#61DAFB]" />;
+    case "test":
+      return <FlaskConical className="size-3.5 text-[#61DAFB]" />;
+    case "folder":
+      return (
+        <Folder
+          className="size-3.5"
+          style={{ color: tone }}
+          fill={tone}
+          fillOpacity={0.35}
+        />
+      );
+    case "ts":
+      return (
+        <span className="grid size-3.5 place-items-center rounded-[2px] bg-[#3178C6] font-sans text-[7px] font-bold leading-none text-white">
+          TS
+        </span>
+      );
+  }
+}
+
+/**
+ * The tree fills in turn by turn, then the subagent row is picked and opens on the files it
+ * changed (each file slides in with its +/- count).
+ */
+function TurnsArt() {
+  const { ref, t } = useLoopClock(7000, 5200);
+  const select = t >= 2300;
+  const open = t >= 2700;
+  let shown = 0;
+  return (
+    <div
+      ref={ref}
+      className="w-full rounded-[14px] border border-white/10 bg-[#161616] py-2.5 text-[12.5px] shadow-[0_20px_40px_rgba(0,0,0,0.4)]"
+    >
+      <div className="mb-1.5 flex items-center gap-1.5 px-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-white/40">
+        <ChevronDown className="size-3.5" />
+        Agent turns
+      </div>
+      {TURN_ROWS.map((row) => {
+        // the selected row's files wait for it to open; everything else fills in top to bottom
+        const visible = row.child
+          ? t >= 2700 + TURN_CHILDREN.indexOf(row) * 170
+          : t >= 150 + shown++ * 140;
+        if (row.child && !open) return null;
+        const selected = row.selected && select;
+        const chevron =
+          row.icon === "agent" || row.icon === "turn" || row.icon === "folder";
+        const expanded = row.selected ? open : row.open;
+        return (
+          <div
+            key={row.label}
+            className={cn(
+              "relative flex h-7 items-center gap-1.5 pr-3 transition-[opacity,transform,background-color] duration-300 ease-out",
+              visible ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0",
+              selected ? "bg-white/[0.07] ring-1 ring-inset ring-white/15" : "",
+            )}
+            style={{ paddingLeft: 10 + row.depth * 16 }}
+          >
+            <span className="grid w-3.5 shrink-0 place-items-center text-white/45">
+              {chevron ? (
+                <ChevronRight
+                  className={cn(
+                    "size-3.5 transition-transform duration-300",
+                    expanded ? "rotate-90" : "",
+                  )}
+                />
+              ) : null}
+            </span>
+            <span className="grid w-4 shrink-0 place-items-center">
+              <TurnGlyph icon={row.icon} tone={row.folderTone} />
+            </span>
+            <span className="min-w-0 truncate text-white/85">{row.label}</span>
+            {row.meta ? (
+              <span className="min-w-0 shrink truncate text-[11.5px] text-white/35">
+                {row.meta}
+              </span>
+            ) : null}
+            <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2 font-mono text-[11px]">
+              {selected ? (
+                <FileDiff className="size-3.5 text-white/55" />
+              ) : null}
+              {row.add ? (
+                <span className="text-[#3ecf8e]">+{row.add}</span>
+              ) : null}
+              {row.del ? (
+                <span className="text-[#f87171]">-{row.del}</span>
+              ) : null}
+            </span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

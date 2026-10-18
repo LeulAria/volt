@@ -1,4 +1,10 @@
-import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+import {
+  createRootRoute,
+  HeadContent,
+  Outlet,
+  Scripts,
+} from "@tanstack/react-router";
+import { Analytics } from "@vercel/analytics/react";
 import { RootProvider } from "fumadocs-ui/provider/tanstack";
 import SearchDialog from "@/components/search";
 import { rootHeadLinks, rootHeadMeta } from "@/lib/seo";
@@ -35,6 +41,8 @@ function RootComponent() {
         <RootProvider search={{ SearchDialog }}>
           <Outlet />
         </RootProvider>
+        {/* Vercel Web Analytics (the React entry: this is TanStack Start, not Next.js) */}
+        <Analytics />
         <Scripts />
       </body>
     </html>

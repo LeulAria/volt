@@ -186,9 +186,9 @@ function Home() {
         <SectionRule className="mt-0" />
         <AgentIde />
         <SectionRule className="mt-24 md:mt-32" />
-        <PoweredBy />
-        <SectionRule className="mt-24 md:mt-32" />
         <FeatureBento />
+        <SectionRule className="mt-24 md:mt-32" />
+        <PoweredBy />
         <SectionRule className="mt-24 md:mt-32" />
         <Capabilities />
         <SectionRule className="-mt-px" />
