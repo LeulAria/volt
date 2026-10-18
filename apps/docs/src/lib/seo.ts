@@ -1,10 +1,10 @@
 import { appName, docsRoute } from "./shared";
 
-/** Canonical site origin. Set `VITE_SITE_URL` in production (e.g. https://voltleularia.com). */
+/** Canonical site origin (og:image, canonical links, sitemap). `VITE_SITE_URL` overrides it. */
 export const siteUrl =
   (typeof import.meta !== "undefined" &&
     import.meta.env?.VITE_SITE_URL?.replace(/\/$/, "")) ||
-  "https://volt.leularia.com";
+  "https://getvolt.dev";
 
 export const seo = {
   /** Primary brand + positioning (≤60 chars ideal for titles) */
