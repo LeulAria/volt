@@ -4,11 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { darkPalette, type IVoltPalette, lightPalette, MODE_COLORS, type ComposerMode } from '@volt/client-core';
+import { darkPalette, type IVoltPalette, lightPalette, MODE_COLORS, type ComposerMode, voltTheme, type VoltThemeId } from '@volt/client-core';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Platform, useColorScheme } from 'react-native';
 
-export type ThemePreference = 'system' | 'light' | 'dark';
+/** `system` follows the phone (Volt Dark / Volt Light); otherwise one of the desktop's Volt themes. */
+export type ThemePreference = 'system' | VoltThemeId;
 
 const KEY = 'volt.theme';
 
@@ -31,8 +32,8 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }) {
 	const [preference, setPref] = useState<ThemePreference>('system');
 	useEffect(() => {
 		void AsyncStorage.getItem(KEY).then(value => {
-			if (value === 'light' || value === 'dark') {
-				setPref(value);
+			if (voltTheme(value)) {
+				setPref(value as VoltThemeId);
 			}
 		});
 	}, []);
@@ -40,9 +41,9 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }) {
 		setPref(next);
 		void AsyncStorage.setItem(KEY, next);
 	}, []);
-	const dark = preference === 'system' ? system !== 'light' : preference === 'dark';
+	const p = preference === 'system' ? (system === 'light' ? lightPalette : darkPalette) : voltTheme(preference)?.palette ?? darkPalette;
+	const dark = p.scheme === 'dark';
 	const value = useMemo<ITheme>(() => {
-		const p = dark ? darkPalette : lightPalette;
 		return {
 			p,
 			dark,
@@ -55,7 +56,7 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }) {
 					: { fg: c.fg, bg: dark ? c.bg : c.bgLight, send: c.send, onSend: c.onSend };
 			},
 		};
-	}, [dark, preference, setPreference]);
+	}, [p, dark, preference, setPreference]);
 	return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
