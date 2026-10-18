@@ -51,7 +51,7 @@ There is also a **Beta** and a **Nightly** channel, each its own app that instal
 
 ## Why Volt
 
-| | |
+| Principle | What it means |
 | --- | --- |
 | **Bring your own agent** | Volt doesn't sell tokens. Use the Claude Code, Codex, OpenCode, Cursor, Grok, Antigravity or Kimi sign-in you already have, or point Volt at an API (OpenAI, Anthropic, Gemini, OpenRouter) or a local model (Ollama, LM Studio). You keep your plan and your keys. |
 | **You set the leash** | Four access presets, from *Supervised* to *Full access*, decide what an agent may read, edit, run, fetch or connect to. Risky commands are flagged before they run, and a hard-deny list for destructive commands and secret files holds even under Full access. |
