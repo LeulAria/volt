@@ -102,6 +102,7 @@ function DownloadPage() {
               os={os}
               arch={arch}
               onArch={setArchChoice}
+              installGuide
               className="mt-10"
             />
           </div>

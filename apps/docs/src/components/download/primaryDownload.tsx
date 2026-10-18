@@ -18,6 +18,7 @@ import {
   recommendedPkg,
 } from "@/lib/releases";
 import { GITHUB_RELEASES_URL, type ReleasesState } from "@/lib/useReleases";
+import { MacInstallGuide } from "./macInstallGuide";
 
 const BUTTON =
   "inline-flex h-12 min-w-0 items-center justify-center gap-2.5 rounded-[6px] px-5 font-sans text-[14px] font-semibold transition-opacity duration-150 sm:h-14 sm:px-7 sm:text-[15px]";
@@ -33,6 +34,7 @@ export function PrimaryDownload({
   os,
   arch,
   onArch,
+  installGuide = false,
   className,
 }: {
   state: ReleasesState;
@@ -41,6 +43,8 @@ export function PrimaryDownload({
   arch: Arch;
   /** When set, macOS shows an Apple Silicon / Intel switch under the button. */
   onArch?: (arch: Arch) => void;
+  /** macOS: a "How to install on Mac" button beside the download that opens the step-by-step drawer. */
+  installGuide?: boolean;
   className?: string;
 }) {
   const platform = platformOf(os);
@@ -135,7 +139,10 @@ export function PrimaryDownload({
 
   return (
     <div className={cn("flex flex-col items-start", className)}>
-      {button}
+      <div className="flex flex-wrap items-center gap-3">
+        {button}
+        {installGuide && os === "darwin" ? <MacInstallGuide /> : null}
+      </div>
       <p
         aria-live="polite"
         className="mt-4 flex min-h-5 flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-white/45"
@@ -198,7 +205,7 @@ function MacArchSwitch({
           params={{ _splat: "install" }}
           className="text-white/70 underline underline-offset-4 transition-colors hover:text-white"
         >
-          Install guide with screenshots
+          Full install guide
         </Link>
         .
       </p>
