@@ -175,7 +175,7 @@ function CopyLine({ text, label }: { text: string; label: string }) {
 function StepCard({ step, number }: { step: Step; number: number }) {
   const src = `/install/${step.image}.jpg`;
   return (
-    <li className="relative pb-9 pl-11 last:pb-0">
+    <li className="relative pb-9 pl-11 before:absolute before:top-9 before:bottom-1.5 before:left-[13px] before:w-px before:bg-white/10 last:pb-0 last:before:hidden">
       <span
         aria-hidden
         className="absolute top-0 left-0 grid size-7 place-items-center rounded-full border border-white/20 bg-[#101514] font-mono text-[12px] font-semibold text-white"
