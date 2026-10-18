@@ -1,30 +1,59 @@
 <div align="center">
 
-<img src="apps/docs/public/volt-icon-256.png" alt="Volt" width="112" height="112" />
+<img src="docs/assets/readme/volt-hero.png" alt="Volt on a tablet: an agent chat beside a toolbar with Files, Terminal, Browser, the branch, Commit and push, Changes and previous agents" width="520" />
+
+<br />
+<br />
+
+<img src="apps/docs/public/volt-icon-256.png" alt="" width="72" height="72" />
 
 # Volt
 
-Volt is an Agentic Development Kit (ADK) that uses VS Code as its base, for developers to run, inspect, benchmark, and orchestrate coding agents.
+**An open-source workspace for working with coding agents.**<br />
+Chats, code, Git, a browser and a terminal in one window, on top of the real VS Code core.
 
+[![Latest release](https://img.shields.io/github/v/release/LeulAria/volt?display_name=tag&sort=semver&color=ff8a5a)](https://github.com/LeulAria/volt/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.txt)
-[![Status: public beta](https://img.shields.io/badge/status-public%20beta-ff8a5a.svg)](#status)
+[![Platforms](https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-555.svg)](docs/install/README.md)
 [![Built on VS Code](https://img.shields.io/badge/built%20on-VS%20Code%201.105-007acc.svg)](https://github.com/microsoft/vscode)
-[![Node 22](https://img.shields.io/badge/node-22.19-339933.svg)](.nvmrc)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-3ecf8e.svg)](CONTRIBUTING.md)
 
-[Website](https://volt.leularia.com) · [Documentation](https://volt.leularia.com/docs) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+[Download](https://github.com/LeulAria/volt/releases/latest) · [Website](https://volt.leularia.com) · [Documentation](https://volt.leularia.com/docs) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
 <br />
 
-<img src="apps/docs/public/volt-ide.jpg" alt="Volt: the file explorer on the left, an agent chat on the right" width="880" />
+<img src="apps/docs/public/hero-ide.png" alt="Volt's IDE layout: the file explorer on the left, a rendered document in the middle, and Source Control with Branches, Worktrees and Contributors on the right" width="880" />
 
 </div>
 
 <br />
 
-Agents do the typing. You keep the judgment. Volt is an open-source workspace for working *with* coding agents instead of next to them. Chats, code, Git, a browser, and a terminal share one window, so nothing you need is a tab away.
+Agents do the typing. You keep the judgment. Volt is a workspace for working *with* coding agents instead of next to them. Chats, code, Git, a browser, and a terminal share one window, so nothing you need is a tab away.
 
 It is built on the real VS Code core, not a lookalike. Your extensions, themes, keybindings, language servers, and debuggers come along. What Volt adds is the layer that makes agents a first-class part of the editor: a runtime that talks to any model or agent CLI, a permission system you control, and review tools that let you accept or undo exactly what an agent changed.
+
+> **Status: public beta.** Volt moves fast and the version is below 1.0, so expect rough edges and changes between releases. See the [changelog](CHANGELOG.md) for what changed.
+
+## Download
+
+Get the latest build from **[Releases](https://github.com/LeulAria/volt/releases/latest)**.
+
+| Platform | Download |
+| --- | --- |
+| macOS, Apple silicon | `volt-stable-<version>-darwin-arm64.dmg` |
+| macOS, Intel | `volt-stable-<version>-darwin-x64.dmg` |
+| Windows | `volt-stable-<version>-win32-<x64 or arm64>-user-setup.exe` |
+| Linux | `volt-stable-<version>-linux-<x64, arm64 or armhf>` as `.deb`, `.rpm` or `.tar.gz` |
+
+**The builds are not code-signed**, because Volt is an independent project without a signing certificate yet. Your system warns you the first time you open one:
+
+- **macOS:** open **System Settings > Privacy & Security** and click **Open Anyway**, or install from the Terminal and skip the dialogs entirely. The [macOS install guide](docs/install/macos.md) has the steps with screenshots, and how to use Volt from the command line (`volt .`).
+- **Windows:** when SmartScreen says *Windows protected your PC*, click **More info**, then **Run anyway**.
+- **Linux:** `sudo apt install ./volt-stable-<version>-linux-x64.deb` or `sudo dnf install ./volt-stable-<version>-linux-x64.rpm`.
+
+More detail for every platform is in [docs/install](docs/install/README.md). To follow development, there is also a **Nightly** channel (an app of its own) and a **Beta** channel; see [Releasing Volt](docs/releasing.md).
+
+macOS is the platform Volt is developed and tested on. Windows and Linux builds come from the same pipeline but have had little testing.
 
 ## Why Volt
 
@@ -124,17 +153,13 @@ Everything else is the VS Code core, kept as close to upstream as we can so that
 
 ## Getting started
 
-### Status
-
-Volt is in **public beta** and moves fast. macOS is the platform we develop and test on. Windows and Linux inherit VS Code's cross-platform build but are not yet validated for Volt's agent window. Packaged installers for this VS Code-based build are not published yet, so for now you run Volt from source.
-
 ### Run from source
 
 You need **Node.js 22.19** (the version in [`.nvmrc`](.nvmrc); 22.15.1 is the minimum), npm, Git, Python 3, and a C/C++ toolchain for native modules. On macOS that's the Xcode Command Line Tools. [CONTRIBUTING.md](CONTRIBUTING.md#set-up-your-machine) lists the Linux and Windows packages.
 
 ```bash
-git clone https://github.com/LeulAria/VOLT.git
-cd VOLT
+git clone https://github.com/LeulAria/volt.git
+cd volt
 
 nvm install                          # picks up Node from .nvmrc
 npm install                          # installs dependencies, builds native modules
@@ -158,7 +183,7 @@ Run **Volt Settings** from the command palette (<kbd>⇧</kbd><kbd>⌘</kbd><kbd
 
 Then press <kbd>⌘</kbd><kbd>N</kbd> for a new agent chat.
 
-### Package a macOS build
+### Package a build
 
 ```bash
 unset ELECTRON_RUN_AS_NODE
@@ -166,17 +191,20 @@ VOLT_BUILD_IGNORE_TYPE_ERRORS=1 \
   node --max-old-space-size=16384 ./node_modules/gulp/bin/gulp.js vscode-darwin-arm64-min
 ```
 
-The unsigned app lands in `../VSCode-darwin-arm64/VOLT.app`. `VOLT_BUILD_IGNORE_TYPE_ERRORS=1` reports type errors but still packages, because the tree has known TypeScript 6 diagnostics; see [CONTRIBUTING.md](CONTRIBUTING.md#checks-before-you-push).
+The unsigned app lands in `../VSCode-darwin-arm64/VOLT.app`. `VOLT_BUILD_IGNORE_TYPE_ERRORS=1` reports type errors but still packages, because the tree can carry known TypeScript diagnostics; see [CONTRIBUTING.md](CONTRIBUTING.md#checks-before-you-push). Release builds for all platforms are made by GitHub Actions, as described in [Releasing Volt](docs/releasing.md).
 
 ## Privacy and safety
 
-Volt ships with no telemetry endpoint and no update server configured. What leaves your machine is what you choose to send: prompts, file contents, and tool results go to whichever model or agent you select, and tab prediction (on by default) sends the code around your cursor to the model you picked for it. Volt also makes requests to GitHub (when you add a project from GitHub), Open VSX (extensions), and the usage endpoints of the agents you've signed into.
+Volt ships with no telemetry endpoint. What leaves your machine is what you choose to send: prompts, file contents, and tool results go to whichever model or agent you select, and tab prediction (on by default) sends the code around your cursor to the model you picked for it. Volt also makes requests to GitHub (when you add a project from GitHub, and, in release builds, to check a static update feed for new versions), Open VSX (extensions), and the usage endpoints of the agents you've signed into. Development builds never check for updates.
 
 Permissions are an approval policy, not a sandbox: an agent you allow to run shell commands runs them as you. Read [SECURITY.md](SECURITY.md) for the full trust model before you point Volt at code you don't trust.
 
 ## Documentation
 
 - [volt.leularia.com/docs](https://volt.leularia.com/docs): the documentation site (source in [`apps/docs`](apps/docs))
+- [docs/install](docs/install/README.md): installing on macOS, Windows and Linux, and using Volt from the command line
+- [CHANGELOG.md](CHANGELOG.md): what changed in each release
+- [docs/releasing.md](docs/releasing.md): channels, the release pipeline and the update feed
 - [CONTRIBUTING.md](CONTRIBUTING.md): set up, conventions, tests, and how to land a change
 - [SECURITY.md](SECURITY.md): supported versions, the trust model, and how to report a vulnerability
 - [VOLT-ARCHITECTURE-REVIEW.md](VOLT-ARCHITECTURE-REVIEW.md): engineering review of the runtime and UI
