@@ -65,6 +65,9 @@ export const QUICK_OPEN_NARROW_WINDOW_WIDTH = 1100;
 /** Below this chat column width the actions leave too little room for the conversation. */
 export const QUICK_OPEN_NARROW_CHAT_WIDTH = 900;
 
+/** Below this chat column width even the collapsed rail crowds the conversation: the toolbar opens from its title bar button. */
+export const QUICK_OPEN_POPUP_CHAT_WIDTH = 480;
+
 /** Same editor stays the same row when its title changes, so a click is not lost to a rebuild. */
 export function dockTabKey(editor: { readonly typeId: string; readonly resource?: { toString(): string }; getName(): string }): string {
 	const resource = editor.resource?.toString();
@@ -367,13 +370,20 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.agentsBadge = append(this.agentsRail, $('span.volt-agent-rail-badge'));
 		this._register(addDisposableListener(this.agentsRail, 'click', () => this.revealAgents()));
 		const body = this.body = append(this.quickOpen, $('.volt-agent-quick-open-body'));
+		// The toolbar sits inside the chat's scrollable, whose wheel listener scrolls the chat and cancels the
+		// event. A body taller than its room keeps the wheel so it scrolls itself.
+		this._register(addDisposableListener(body, 'wheel', e => {
+			if (!e.ctrlKey && body.scrollHeight > body.clientHeight + 1) {
+				e.stopPropagation();
+			}
+		}, { passive: true }));
 		this.popup = $('.volt-agent-quick-open-actions.expanded.volt-agent-quick-open-popup.hidden');
 		this.popup.setAttribute('aria-label', localize('voltAgent.chatSideToolbar', "Chat Side Toolbar"));
 		this._register(toDisposable(() => this.popup.remove()));
 		// A row ran its action: the popup has done its job. Group headers only fold their rows, so it stays.
 		this._register(addDisposableListener(this.popup, 'click', e => {
 			const target = e.target as HTMLElement | null;
-			if (target?.closest('button, [role="button"]') && !target.closest('.volt-agent-lineage-divider, .volt-agent-dock-fold')) {
+			if (target?.closest('button, [role="button"]') && !target.closest('.volt-agent-lineage-divider')) {
 				this.setPopupOpen(false);
 			}
 		}));
@@ -397,14 +407,14 @@ class AgentViewSidebarsContribution extends Disposable {
 		// Sections like Cursor's project menu: the project's tools, then git, then the agents.
 		const [changes, browser, terminal, files] = this.dockActions();
 		const workspaceSection = append(body, $('.volt-agent-dock-section.volt-agent-dock-workspace'));
-		this.workspaceHeading = append(workspaceSection, $('button.volt-agent-dock-heading.volt-agent-dock-fold')) as HTMLButtonElement;
+		// The same pane header as Pull requests and Previous agents: chevron, then the title.
+		this.workspaceHeading = append(workspaceSection, $('button.volt-agent-lineage-divider.volt-agent-dock-group-head')) as HTMLButtonElement;
 		this.workspaceHeading.type = 'button';
-		this.workspaceLabel = append(this.workspaceHeading, $('span.label'));
+		this.workspaceLabel = $('span.label');
 		const workspace = append(workspaceSection, $('.volt-agent-dock-actions.volt-agent-dock-group-body'));
 		const syncWorkspaceFold = () => {
 			this.workspaceHeading.setAttribute('aria-expanded', String(this.workspaceOpen));
-			this.workspaceHeading.querySelector('.codicon')?.remove();
-			this.workspaceHeading.appendChild(renderIcon(this.workspaceOpen ? Codicon.chevronDown : Codicon.chevronRight));
+			this.workspaceHeading.replaceChildren(renderIcon(this.workspaceOpen ? Codicon.chevronDown : Codicon.chevronRight), this.workspaceLabel);
 			workspace.classList.toggle('hidden', !this.workspaceOpen);
 		};
 		this._register(addDisposableListener(this.workspaceHeading, 'click', () => {
@@ -433,12 +443,13 @@ class AgentViewSidebarsContribution extends Disposable {
 			},
 		});
 		this.branchRow = this.branchLabel.parentElement!;
-		const changesLabel = this.createActionRow(git, changes);
-		this.changesAdd = append(changesLabel.parentElement!, $('span.volt-agent-dock-stat.add'));
-		this.changesDel = append(changesLabel.parentElement!, $('span.volt-agent-dock-stat.del'));
 		// Commit, Push & PR stays on the composer; the toolbar keeps the branch, the changes and the pull requests.
 		this.pullRequests = instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
 		this.pullRequestsGroup = this._register(new DockGroup(append(body, $('.volt-agent-dock-section.volt-agent-dock-pull-requests')), localize('voltAgent.dock.pullRequests', "Pull requests")));
+		// Changes lead the Pull requests group: what the next pull request would carry.
+		const changesLabel = this.createActionRow(append(this.pullRequestsGroup.body, $('.volt-agent-dock-actions')), changes);
+		this.changesAdd = append(changesLabel.parentElement!, $('span.volt-agent-dock-stat.add'));
+		this.changesDel = append(changesLabel.parentElement!, $('span.volt-agent-dock-stat.del'));
 		// The chat's pull request: its title opens the Pull Requests tab of the right sidebar, its list first.
 		this.pullRequestControl = this._register(instantiationService.createInstance(AgentPullRequestDockControl, this.pullRequestsGroup.body, this.pullRequests, {
 			openCommandId: SHOW_PULL_REQUESTS_COMMAND_ID,
@@ -613,6 +624,8 @@ class AgentViewSidebarsContribution extends Disposable {
 			const name = repository?.provider.historyProvider.read(reader)?.historyItemRef.read(reader)?.name;
 			this.branchLabel.textContent = name ?? '';
 			this.branchRow.style.display = name ? '' : 'none';
+			// The branch is the git section's only row: without it the section and its rule go.
+			this.branchRow.closest('.volt-agent-dock-section')?.classList.toggle('hidden', !name);
 		}));
 	}
 
@@ -734,11 +747,14 @@ class AgentViewSidebarsContribution extends Disposable {
 		}
 	}
 
-	/** Narrow window, or a chat column squeezed by the tools panel or a dragged split. */
+	/** Narrow window, a chat column squeezed by a dragged split, or tools open beside the chat (they shrink it to its rail). */
 	private isWindowNarrow(): boolean {
 		// A new chat's actions float over empty space beside the centered composer, so they stay expanded.
 		if (this.quickOpen.parentElement?.classList.contains('volt-agent-editor-main')) {
 			return false;
+		}
+		if (this.hasSurfaces()) {
+			return true;
 		}
 		return quickOpenNarrowForSpace(
 			this.layoutService.mainContainerDimension?.width ?? 0,
@@ -772,7 +788,6 @@ class AgentViewSidebarsContribution extends Disposable {
 			}
 			this.syncQuickOpenVisibility();
 		}
-		// The files sidebar or a tab opened beside a wide chat hides the toolbar there too (agentViewSidebars.css).
 		const popup = this.usesPopup();
 		if (popup !== this.popupMode) {
 			this.popupMode = popup;
@@ -803,12 +818,21 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.applyDock(collapsed);
 	}
 
+	/** Tools (the right panel or the files sidebar) are open beside the chat: the toolbar shrinks to its rail. */
+	private hasSurfaces(): boolean {
+		return !!this.quickOpenEditor?.classList.contains('has-surfaces');
+	}
+
 	/**
-	 * The title bar button opens the toolbar as a popup: the window is narrow, or the chat holding it
-	 * has tools open beside it, which hide the toolbar in the column however wide the chat is.
+	 * The title bar button opens the toolbar as a popup only when the chat column has no room even for the rail.
+	 * Tools open beside the chat always leave the rail: they shrink the toolbar, never hide it.
 	 */
 	private usesPopup(): boolean {
-		return this.windowNarrow || !!this.quickOpen.closest('.volt-agent-editor')?.classList.contains('has-surfaces');
+		if (this.hasSurfaces()) {
+			return false;
+		}
+		const chatWidth = this.observedChat?.clientWidth ?? 0;
+		return chatWidth > 0 && chatWidth <= QUICK_OPEN_POPUP_CHAT_WIDTH;
 	}
 
 	private get popupOpen(): boolean {
@@ -950,7 +974,7 @@ class AgentViewSidebarsContribution extends Disposable {
 			row.type = 'button';
 			if (editor instanceof AgentChangesEditorInput) {
 				// allow-any-unicode-next-line
-				// Same ± as the Changes row under "On this window".
+				// Same ± as the Changes row under "Pull requests".
 				const icon = createStrokeIcon(row, CHANGES_ICON_PATH, '0.5');
 				icon.classList.add('volt-agent-stroke-icon');
 				row.appendChild(icon);

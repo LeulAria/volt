@@ -41,10 +41,10 @@
 	height: auto !important;
 }
 
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .monaco-pane-view,
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .split-view-view,
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .pane,
-.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .pane-body {
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .monaco-pane-view:not(.volt-agent-home-tree *),
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .split-view-view:not(.volt-agent-home-tree *),
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .pane:not(.volt-agent-home-tree *),
+.monaco-workbench .part.auxiliarybar.volt-agent-editor-tabs .pane-body:not(.volt-agent-home-tree *) {
 	height: 100% !important;
 }
 

@@ -414,43 +414,6 @@
 	color: var(--vscode-descriptionForeground);
 }
 
-/* A heading that folds its group ("On volt", "Subagents · 2 running"): the title, then a small chevron. */
-.volt-agent-dock-heading.volt-agent-dock-fold {
-	display: flex;
-	align-items: center;
-	justify-content: flex-start;
-	gap: 4px;
-	box-sizing: border-box;
-	width: 100%;
-	border: 0;
-	background: transparent;
-	font-family: inherit;
-	text-align: left;
-	cursor: pointer;
-}
-
-.volt-agent-dock-heading.volt-agent-dock-fold > .label {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.volt-agent-dock-heading.volt-agent-dock-fold > .codicon {
-	flex: none;
-	font-size: 12px;
-	opacity: 0.7;
-}
-
-.volt-agent-dock-heading.volt-agent-dock-fold:hover {
-	color: var(--vscode-foreground);
-}
-
-.volt-agent-dock-heading.volt-agent-dock-fold:focus-visible {
-	outline: 1px solid var(--vscode-focusBorder);
-	outline-offset: -1px;
-}
-
 .volt-agent-dock-section.hidden {
 	display: none;
 }
@@ -622,17 +585,6 @@
 
 .monaco-workbench.volt-layout-agent .volt-agent-editor.browser-hosted .volt-agent-quick-open-actions {
 	display: none;
-}
-
-/* Tab bar + menu replaces the vertical Quick Open rail while tools are open. */
-.monaco-workbench.volt-layout-agent .volt-agent-editor.has-surfaces .volt-agent-quick-open-actions {
-	display: none;
-}
-
-/* The rail is hidden, so nothing is reserved. The two-class form outranks the expanded/collapsed reserve rules above. */
-.monaco-workbench.volt-layout-agent .volt-agent-editor.has-surfaces,
-.monaco-workbench.volt-layout-agent .volt-agent-editor.has-surfaces.has-quick-open {
-	--volt-agent-quick-open-reserve: 0px;
 }
 
 /* No room beside the chat: the toolbar opens under its title bar button (agentViewSidebars.ts setPopupOpen). Opaque, no
