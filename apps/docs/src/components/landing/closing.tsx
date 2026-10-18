@@ -6,7 +6,13 @@ import { gsap, REDUCED, useGSAP } from "@/lib/gsap";
 import { defaultArch } from "@/lib/releases";
 import { useDetectedPlatform, useReleases } from "@/lib/useReleases";
 import { COLUMN } from "./geometry";
-import { GithubMarkIcon, InstallCommand, REPO_URL } from "./install";
+import {
+  DISCORD_URL,
+  DiscordIcon,
+  GithubMarkIcon,
+  InstallCommand,
+  REPO_URL,
+} from "./install";
 
 /* ------------------------------------------------------------------ */
 /* Closing construction                                                */
@@ -381,6 +387,15 @@ export function SiteFooter() {
         </nav>
         <div className="flex items-center gap-4 md:ml-auto">
           <span>© {new Date().getFullYear()} Volt</span>
+          <a
+            href={DISCORD_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Volt on Discord"
+            className="transition-colors hover:text-white"
+          >
+            <DiscordIcon className="size-4" />
+          </a>
           <a
             href={REPO_URL}
             target="_blank"
