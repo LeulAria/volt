@@ -16,6 +16,7 @@ import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase 
 import { IAgentHistoryService, IAgentSessionMeta, IAgentSessionTranscript, IAgentSessionTruncation, IAgentSessionTurn } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { canonicalProjectRoot, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { isHarnessSubagentChatId } from '../../../../services/voltRuntime/common/orchestration/harnessSubagents.js';
 import { buildSessionUsage, ISessionUsageMessage, ISessionUsageModelRef, ISessionUsageOptions, sessionModelIds } from '../context/agentSessionUsage.js';
 
 /**
@@ -270,6 +271,10 @@ export class AgentProjectUsageService extends Disposable implements IAgentProjec
 	private async countChangedChats(): Promise<void> {
 		await this.history.whenReady;
 		const stale = this.history.list({ includeArchived: true }).filter(meta => {
+			// A harness's own subagent (Claude's Task) is billed in its parent's turn: its chat's usage would count twice.
+			if (isHarnessSubagentChatId(meta.id)) {
+				return false;
+			}
 			const record = this.records.get(meta.id);
 			return meta.turnCount > 0 && (!record || record.countedAt < meta.updatedAt);
 		});
@@ -309,6 +314,9 @@ export class AgentProjectUsageService extends Disposable implements IAgentProjec
 
 	/** Dropped turns stay counted: they were billed. A fork's copied turns were counted in their source. */
 	private async retire(truncation: IAgentSessionTruncation): Promise<void> {
+		if (isHarnessSubagentChatId(truncation.sessionId)) {
+			return;
+		}
 		const meta = this.history.get(truncation.sessionId);
 		const root = meta ? sessionUsageRoot(meta) : this.records.get(truncation.sessionId)?.root;
 		if (!root) {

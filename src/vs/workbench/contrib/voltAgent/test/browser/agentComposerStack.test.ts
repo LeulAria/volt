@@ -9,7 +9,8 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
-import { ISubagentView } from '../../browser/chrome/agentSubagents.js';
+import { IAgentOrchestratorService, IOrchTask, OrchCommandBody } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { ISubagentView, retryHarnessSubagent } from '../../browser/chrome/agentSubagents.js';
 import { AgentComposerQueue } from '../../browser/composer/agentComposerQueue.js';
 import { AgentTerminalChips } from '../../browser/terminals/agentTerminalChips.js';
 import { IAgentTerminalInfo, IAgentTerminalsService } from '../../browser/terminals/agentTerminals.js';
@@ -94,6 +95,62 @@ suite('Agent composer stack', () => {
 			list.length = 0;
 			change.fire('chat');
 			assert.strictEqual(view.visible, false);
+		});
+	});
+
+	suite('subagent retry', () => {
+		function harnessTask(overrides: Partial<IOrchTask> = {}): IOrchTask {
+			return {
+				id: 'call-1', source: 'harness', parentId: 'parent', rootId: 'parent', title: 'Cut web type errors', role: 'general', origin: 'agent',
+				brief: 'Fix the type errors in apps/web.', isolation: 'shared', depth: 1, createdAt: 0, state: 'failed', steps: 3, files: [], delivery: 'none', rounds: 1,
+				...overrides,
+			};
+		}
+
+		/** An orchestrator that keeps tasks and spawns what it is told to, reusing a client request id as the real one does. */
+		function fakeOrchestrator(tasks: IOrchTask[]): { readonly service: IAgentOrchestratorService; readonly spawns: OrchCommandBody[] } {
+			const byId = new Map(tasks.map(task => [task.id, task]));
+			const spawns: OrchCommandBody[] = [];
+			const service = {
+				getTask: (id: string) => byId.get(id),
+				getThread: (id: string) => id === 'parent' ? { id, title: 'Implement PMS audit gaps', depth: 0, modelRef: 'claude:opus', modelLabel: 'Opus 5.5' } : undefined,
+				getState: () => ({ tasks: Object.fromEntries(byId) }),
+				ensureThreadLoaded: async () => undefined,
+				dispatch: async (command: OrchCommandBody) => {
+					if (command.type !== 'task.spawn') {
+						return [];
+					}
+					spawns.push(command);
+					const spawn = command.spawn;
+					if ([...byId.values()].some(task => task.clientRequestId === spawn.clientRequestId)) {
+						return [];
+					}
+					const task = harnessTask({ id: spawn.taskId, source: 'volt', childId: spawn.childId, clientRequestId: spawn.clientRequestId, state: 'queued' });
+					byId.set(task.id, task);
+					return [{ type: 'task.created', task }];
+				},
+			} as unknown as IAgentOrchestratorService;
+			return { service, spawns };
+		}
+
+		test('a failed harness subagent runs again as a Volt subagent of the same parent, once', async () => {
+			const { service, spawns } = fakeOrchestrator([harnessTask()]);
+			const first = await retryHarnessSubagent(service, 'call-1');
+			assert.ok(first);
+			const spawn = spawns[0].type === 'task.spawn' ? spawns[0].spawn : undefined;
+			assert.strictEqual(spawn?.parentId, 'parent');
+			assert.strictEqual(spawn?.brief, 'Fix the type errors in apps/web.');
+			assert.strictEqual(spawn?.modelRef, 'claude:opus', 'the parent ran it, so it runs on the parent model');
+			assert.ok(spawn?.childPrompt.text.includes('This is a retry'));
+			assert.deepStrictEqual(spawn?.childPrompt.display, { text: 'Fix the type errors in apps/web.', brief: true });
+			// A second click opens the same retry instead of starting another.
+			assert.strictEqual(await retryHarnessSubagent(service, 'call-1'), first);
+		});
+
+		test('only harness subagents with a brief are retried this way', async () => {
+			assert.strictEqual(await retryHarnessSubagent(fakeOrchestrator([harnessTask({ source: 'volt' })]).service, 'call-1'), undefined);
+			assert.strictEqual(await retryHarnessSubagent(fakeOrchestrator([harnessTask({ brief: '  ' })]).service, 'call-1'), undefined);
+			assert.strictEqual(await retryHarnessSubagent(fakeOrchestrator([]).service, 'call-1'), undefined);
 		});
 	});
 });

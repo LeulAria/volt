@@ -287,19 +287,23 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 	width: 100%;
 	max-width: 720px;
 	margin: 0 auto 8px;
+	box-sizing: border-box;
+	color: var(--vscode-foreground);
+	font-size: 13px;
+}
+
+/* The card's surface; above the composer it opens upward over the chat (agentEditor.css, by .volt-agent-tasks-panel). */
+.volt-agent-agents-card > .volt-agent-work-section {
 	padding: 0 16px;
 	box-sizing: border-box;
 	border-radius: 12px;
 	background: transparent;
 	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
-	color: var(--vscode-foreground);
-	font-size: 13px;
 	overflow: hidden;
 }
 
-.monaco-workbench.vs .volt-agent-agents-card,
-.monaco-workbench.hc-light .volt-agent-agents-card {
-	background: transparent;
+.monaco-workbench.vs .volt-agent-agents-card > .volt-agent-work-section,
+.monaco-workbench.hc-light .volt-agent-agents-card > .volt-agent-work-section {
 	border-color: var(--vscode-widget-border, rgba(0, 0, 0, 0.1));
 }
 
@@ -367,6 +371,31 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 
 .volt-agent-work-toggle:hover { color: color-mix(in srgb, var(--vscode-foreground) 85%, transparent); }
 .volt-agent-work-toggle .codicon { font-size: 12px; }
+
+/* One line however narrow: the heading and the buttons keep their words, the summary between them ellipsizes. */
+.volt-agent-work-head,
+.volt-agent-queue-head { min-width: 0; }
+.volt-agent-work-head .volt-agent-work-toggle,
+.volt-agent-work-head .volt-agent-queue-paused,
+.volt-agent-work-head .volt-agent-queue-head-actions,
+.volt-agent-work-head .volt-agent-queue-text-btn,
+.volt-agent-queue-head .volt-agent-queue-paused,
+.volt-agent-queue-head .volt-agent-queue-head-actions,
+.volt-agent-queue-head .volt-agent-queue-text-btn,
+.volt-agent-queue-head .volt-agent-queue-multitask {
+	flex-shrink: 0;
+	white-space: nowrap;
+}
+
+.volt-agent-work-summary {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
+}
 
 .volt-agent-work-agents {
 	display: flex;
@@ -520,7 +549,7 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 	padding: 0;
 }
 
-/* Room under Changes, the git group's last row: padding in the row, so its hover fills it. */
+/* Room under the branch, the git group's last row: padding in the row, so its hover fills it. */
 .monaco-workbench.volt-layout-agent .volt-agent-quick-open-actions.expanded .volt-agent-dock-git .volt-agent-dock-row:last-child {
 	box-sizing: border-box;
 	height: 31px;
@@ -535,6 +564,11 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 /* Only between sections on screen: a hidden first section leaves no rule along the top. */
 .monaco-workbench.volt-layout-agent .volt-agent-quick-open-actions.expanded .volt-agent-quick-open-body > .volt-agent-dock-section:not(.hidden) ~ .volt-agent-dock-section:not(.hidden) {
 	border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+}
+
+/* The branch reads as the last row of "On this window": no rule between it and Browser. */
+.monaco-workbench.volt-layout-agent .volt-agent-quick-open-actions.expanded .volt-agent-quick-open-body > .volt-agent-dock-workspace:not(.hidden) + .volt-agent-dock-section.volt-agent-dock-git {
+	border-top: 0;
 }
 
 .volt-agent-lineage.hidden,
@@ -709,21 +743,44 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 .volt-agent-handoff-pill .from { color: color-mix(in srgb, var(--vscode-foreground) 72%, transparent); }
 .volt-agent-handoff-pill .to { color: color-mix(in srgb, var(--vscode-foreground) 82%, transparent); }
 
-/* A subagent's chat: model, status, clock, "Runs on its own · Open parent" above the composer. */
+/* A subagent's chat: "Multitasking" in blue, the first chip of the row above the composer. A click opens Stop / Resume / Restart / Open parent. */
 
-.volt-agent-subagent-bar {
-	display: flex;
+.volt-agent-composer-chip.volt-agent-subagent-bar {
+	flex-shrink: 0;
+	cursor: default;
+}
+
+/* On the label, so the light themes' chip colour does not win over it. */
+.volt-agent-subagent-bar > .label {
+	color: #4c8dff;
+	white-space: nowrap;
+}
+
+.volt-agent-composer-chip.volt-agent-subagent-bar.has-menu {
+	cursor: pointer;
+}
+
+/* The model it runs on, after the word: brand mark and name, in the chip's own muted color. */
+.volt-agent-subagent-bar > .model {
+	display: inline-flex;
 	align-items: center;
-	gap: 8px;
-	width: 100%;
-	max-width: 728px;
-	margin: 0 auto 6px;
-	padding: 6px 10px;
-	box-sizing: border-box;
-	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
-	border-radius: 12px;
-	background: color-mix(in srgb, var(--vscode-foreground) 3%, var(--volt-agent-window-bg-base, #161616));
-	font-size: 13px;
+	gap: 4px;
+	min-width: 0;
+}
+
+.volt-agent-subagent-bar > .label + .model {
+	margin-left: 6px;
+}
+
+.volt-agent-subagent-bar > .model > .model-name {
+	max-width: 180px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-subagent-bar.has-menu:hover > .label {
+	color: #6ea2ff;
 }
 
 .volt-agent-subagent-bar.hidden { display: none; }
@@ -743,7 +800,6 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 .volt-agent-subagent-bar .state { color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent); white-space: nowrap; }
 
 /* One line however narrow the panel: state, clock and buttons keep their size; the model and the note truncate. */
-.volt-agent-subagent-bar { min-width: 0; overflow: hidden; }
 .volt-agent-subagent-bar > * { flex-shrink: 0; }
 .volt-agent-subagent-bar .volt-subagent-clock { white-space: nowrap; }
 .volt-agent-subagent-bar .model,
@@ -763,10 +819,12 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 .volt-agent-subagent-bar .open-parent {
 	display: inline-flex;
 	align-items: center;
-	gap: 4px;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
 	border: 0;
-	padding: 2px 6px;
-	border-radius: 6px;
+	padding: 0;
+	border-radius: 999px;
 	background: transparent;
 	color: var(--vscode-foreground);
 	font: inherit;
@@ -779,8 +837,8 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 
 /* A multitask agent's chat takes follow-ups; a subagent's is read only. The bar says which, and offers Stop while it works. */
 .volt-agent-subagent-bar .kind {
-	padding: 1px 6px;
-	border-radius: 4px;
+	padding: 1px 7px;
+	border-radius: 999px;
 	font-size: 11px;
 	line-height: 16px;
 	white-space: nowrap;
@@ -795,13 +853,17 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 
 .volt-agent-subagent-bar .model:empty { display: none; }
 
-.volt-agent-subagent-bar .stop-agent {
+.volt-agent-subagent-bar .stop-agent,
+.volt-agent-subagent-bar .resume-agent,
+.volt-agent-subagent-bar .restart-agent {
 	display: inline-flex;
 	align-items: center;
-	gap: 4px;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
 	border: 0;
-	padding: 2px 6px;
-	border-radius: 6px;
+	padding: 0;
+	border-radius: 999px;
 	background: transparent;
 	color: var(--vscode-foreground);
 	font: inherit;
@@ -811,6 +873,10 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 
 .volt-agent-subagent-bar .stop-agent .codicon { font-size: 12px; color: #e5534b; }
 .volt-agent-subagent-bar .stop-agent:hover { background: color-mix(in srgb, #e5534b 14%, transparent); }
+.volt-agent-subagent-bar .restart-agent .codicon,
+.volt-agent-subagent-bar .resume-agent .codicon { font-size: 12px; }
+.volt-agent-subagent-bar .resume-agent:hover { background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent); }
+.volt-agent-subagent-bar .restart-agent:hover { background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent); }
 
 /* The side toolbar's agents: Stop takes the clock's place while the row is hovered. */
 .volt-agent-lineage-stop {
@@ -828,7 +894,10 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 .volt-agent-lineage-stop .codicon { font-size: 12px; }
 .volt-agent-lineage-row.stoppable:hover .volt-agent-lineage-stop { display: inline-flex; }
 .volt-agent-lineage-row.stoppable:hover .volt-subagent-clock { display: none; }
+.volt-agent-lineage-row.resumable:hover .volt-agent-lineage-resume { display: inline-flex; }
+.volt-agent-lineage-row.resumable:hover .volt-subagent-clock { display: none; }
 .volt-agent-lineage-stop:hover { color: #e5534b; background: color-mix(in srgb, #e5534b 14%, transparent); }
+.volt-agent-lineage-resume:hover { color: var(--vscode-foreground); background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent); }
 
 .volt-agent-lineage-state:empty { display: none; }
 
@@ -1021,6 +1090,22 @@ button.volt-agent-work-agent:hover .volt-agent-work-agent-title { color: var(--v
 .volt-agent-work-agent:hover .volt-agent-work-agent-stop { opacity: 1; }
 .volt-agent-work-agent-stop:hover { color: var(--vscode-foreground); background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent); }
 .volt-agent-work-agent-stop .codicon { font-size: 12px; }
+
+/* Resume on a failed, stopped or cut-off agent: always there, it is the next step. */
+.volt-agent-work-agent-resume {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	flex-shrink: 0;
+	padding: 1px 6px;
+	border-radius: 999px;
+	font-size: 11px;
+	color: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	cursor: pointer;
+}
+.volt-agent-work-agent-resume:hover { color: var(--vscode-foreground); background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent); }
+.volt-agent-work-agent-resume .codicon { font-size: 10px; }
 
 /* Queued messages: a circle, the drag grip on hover. */
 .volt-agent-queue-circle {
@@ -1252,6 +1337,11 @@ button.volt-agent-work-agent:hover .volt-agent-work-agent-title { color: var(--v
 
 .volt-tr-subagent-stop:hover {
 	background: color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+}
+
+/* Resume stays shown on a failed or stopped agent: it is the next step, not a hover extra. */
+.volt-tr-subagent-stop.volt-tr-subagent-resume {
+	display: inline-flex;
 }
 
 /* "Started by · Claude Code  external": a prompt an agent outside Volt sent over the OAuth MCP server. */

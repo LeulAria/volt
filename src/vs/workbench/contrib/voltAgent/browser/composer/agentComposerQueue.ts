@@ -12,7 +12,7 @@ import { localize } from '../../../../../nls.js';
 import { AgentTooltip, bindTruncatedHoverTooltip, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { groupSummary, isLiveSubagentState, ISubagentView, renderCursorCardRow, tickSubagentClocks } from '../chrome/agentSubagents.js';
 import { ITasksCard } from '../chrome/agentTimeline.js';
-import { AgentTasksCard } from './agentTasksCard.js';
+import { AgentTasksCard, closeOnOutsideClick } from './agentTasksCard.js';
 
 export interface IQueuedPrompt {
 	id: string;
@@ -35,6 +35,8 @@ export interface IAgentComposerQueueOptions {
 	/** A subagent row was clicked: open its chat beside this one. */
 	onOpenAgent?(view: ISubagentView): void;
 	onStopAgent?(view: ISubagentView): void;
+	/** Resume on a failed or stopped agent: it continues where it ended. */
+	onResumeAgent?(view: ISubagentView): void;
 	/** Stop every running subagent of this chat. */
 	onStopAllAgents?(): void;
 }
@@ -223,6 +225,7 @@ export class AgentComposerQueue extends Disposable {
 		const agents = this.shownAgents().length || (this.agentsInDock ? this.agents.conflicts.length : 0);
 		this.queueEl.classList.toggle('hidden', count === 0);
 		this.agentsElement.classList.toggle('hidden', agents === 0);
+		this.agentsElement.classList.toggle('expanded', !this.agentsCollapsed);
 		this.syncStackClass();
 		this.queueEl.classList.toggle('paused', false);
 		this.queueEl.classList.toggle('editing', false);
@@ -270,10 +273,9 @@ export class AgentComposerQueue extends Disposable {
 		append(toggle, $('span')).textContent = heading;
 		const finished = views.length - live.length;
 		if (finished && live.length) {
-			const summary = append(head, $('span.volt-agent-queue-paused'));
-			summary.style.color = 'inherit';
-			summary.style.opacity = '0.6';
+			const summary = append(head, $('span.volt-agent-work-summary'));
 			summary.textContent = groupSummary(views.filter(view => !isLiveSubagentState(view.state)));
+			setAgentTooltip(summary, summary.textContent);
 		}
 		this.listeners.add(addDisposableListener(toggle, 'click', e => {
 			e.preventDefault();
@@ -314,6 +316,10 @@ export class AgentComposerQueue extends Disposable {
 		if (this.agentsCollapsed) {
 			return;
 		}
+		this.listeners.add(closeOnOutsideClick(this.agentsElement, () => {
+			this.agentsCollapsed = true;
+			this.render();
+		}));
 		const list = append(section, $('.volt-agent-work-agents'));
 		const now = Date.now();
 		for (const view of views) {
@@ -323,6 +329,7 @@ export class AgentComposerQueue extends Disposable {
 				tooltip: this.agentTooltip,
 				onOpen: this.options.onOpenAgent,
 				onStop: this.options.onStopAgent,
+				onResume: this.options.onResumeAgent,
 			});
 		}
 		for (const conflict of this.agents.conflicts) {

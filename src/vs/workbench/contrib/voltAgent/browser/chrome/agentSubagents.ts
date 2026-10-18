@@ -8,8 +8,11 @@ import { $, addDisposableListener, append, getWindow, isHTMLButtonElement } from
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { buildTaskPrompt, modeForTaskRole, newTaskId } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
+import type { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { formatElapsed, IOrchAgentRow, OrchAgentRowState } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
 import { AGENT_HOME_NEW_CHAT_ICON_PATH, createHomeStatusBadgeIcon } from '../home/agentHomeIcons.js';
 import { AgentTooltip, IAgentTooltipRow } from './agentTooltip.js';
@@ -43,6 +46,84 @@ export interface ISubagentView {
 	/** Its chat is watched, not driven (a subagent): only the agent that delegated it sends its rounds. */
 	readonly readOnly?: boolean;
 	readonly source: 'volt' | 'harness';
+}
+
+/** A Volt agent that ended before finishing (failed, stopped, cut off): Resume continues its task. The harness's own cannot be. */
+export function isResumableSubagent(view: Pick<ISubagentView, 'source' | 'state'>): boolean {
+	return view.source === 'volt' && (view.state === 'failed' || view.state === 'cancelled' || view.state === 'interrupted');
+}
+
+const RESUME_PROMPT = '[Volt] The user resumed you. Your previous run ended before it finished (it failed, was stopped or was cut off). Continue where you left off: check what is already done (files, git status, command output) before redoing anything, then finish the work and end with your report as before.';
+
+/**
+ * Resume on a stopped agent: one more round of its task in its own chat, briefed to continue. The
+ * task runs again and its new report goes to the parent. False when the orchestrator refused it.
+ */
+export async function resumeSubagentTask(orchestrator: IAgentOrchestratorService, taskId: string): Promise<boolean> {
+	const task = orchestrator.getTask(taskId);
+	if (!task?.childId) {
+		return false;
+	}
+	await orchestrator.ensureThreadLoaded(task.childId);
+	const events = await orchestrator.dispatch({
+		type: 'task.message',
+		taskId,
+		turnId: generateUuid(),
+		prompt: { text: RESUME_PROMPT, display: { text: localize('voltAgent.subagent.resumeDisplay', "Resume") } },
+	});
+	return events.length > 0;
+}
+
+/** A subagent that ended before finishing: its chat offers Retry. */
+export function isRetryableSubagentState(state: string): boolean {
+	return state === 'failed' || state === 'cancelled' || state === 'interrupted';
+}
+
+const RETRY_NOTE = '[Volt] This is a retry. An earlier attempt at this task ended before it finished. Check what is already done (files, git status, command output) before redoing anything, then finish the work and end with your report.';
+
+/**
+ * Retry on a harness subagent (Claude's or Codex's own, Cursor's Task) that failed. The harness
+ * cannot run one again by itself, so the same brief goes to a new Volt subagent of the same parent,
+ * on the parent's model; its report wakes the parent as any subagent's does. Returns the new task's
+ * id (the earlier retry's, when this one was retried already), or undefined when it was refused.
+ */
+export async function retryHarnessSubagent(orchestrator: IAgentOrchestratorService, taskId: string): Promise<string | undefined> {
+	const task = orchestrator.getTask(taskId);
+	const brief = task?.brief.trim();
+	if (!task || task.source !== 'harness' || !brief) {
+		return undefined;
+	}
+	await orchestrator.ensureThreadLoaded(task.parentId);
+	const parent = orchestrator.getThread(task.parentId);
+	const mode = modeForTaskRole(task.role, undefined);
+	const clientRequestId = `retry:${task.id}`;
+	const retryId = newTaskId(id => !!orchestrator.getTask(id));
+	await orchestrator.dispatch({
+		type: 'task.spawn',
+		spawn: {
+			parentId: task.parentId,
+			brief,
+			title: task.title,
+			role: task.role,
+			origin: 'agent',
+			isolation: task.isolation,
+			taskId: retryId,
+			childId: `agent-${generateUuid()}`,
+			mode,
+			...(parent?.modelRef ? { modelRef: parent.modelRef, modelLabel: parent.modelLabel ?? parent.modelRef } : {}),
+			clientRequestId,
+			childPrompt: {
+				text: `${buildTaskPrompt(brief, { parentTitle: parent?.title, role: task.role, depth: (parent?.depth ?? 0) + 1, isolation: task.isolation })}\n\n${RETRY_NOTE}`,
+				display: { text: brief, brief: true },
+				mode,
+				...(parent?.modelRef ? { modelRef: parent.modelRef } : {}),
+			},
+		},
+	});
+	if (orchestrator.getTask(retryId)) {
+		return retryId;
+	}
+	return Object.values(orchestrator.getState().tasks).find(other => other.parentId === task.parentId && other.clientRequestId === clientRequestId)?.id;
 }
 
 /** How many agents of a list are live, by kind: the composer chip and the dock headings. */
@@ -162,6 +243,8 @@ export interface ISubagentRowOptions {
 	readonly tooltip?: AgentTooltip;
 	readonly onOpen?: (view: ISubagentView) => void;
 	readonly onStop?: (view: ISubagentView) => void;
+	/** Shown on a stopped Volt agent (see `isResumableSubagent`). */
+	readonly onResume?: (view: ISubagentView) => void;
 	/** Draws text that the chat's find widget can search. */
 	readonly setText?: (el: HTMLElement, text: string) => void;
 	/** Compact: one line (title and state), no step line. */
@@ -529,6 +612,25 @@ export function renderCursorSubagentRow(parent: HTMLElement, view: ISubagentView
 			}
 		}));
 	}
+	// "Resume" at the row's end once it failed or was stopped: it continues where it ended.
+	if (options.onResume && isResumableSubagent(view)) {
+		const resume = append(row, $('span.volt-tr-subagent-stop.volt-tr-subagent-resume'));
+		resume.setAttribute('role', 'button');
+		resume.setAttribute('tabindex', '0');
+		resume.textContent = localize('voltAgent.subagent.resume', "Resume");
+		resume.setAttribute('aria-label', localize('voltAgent.subagent.resumeHint', "Resume: it continues where it stopped"));
+		const run = (e: Event) => {
+			e.preventDefault();
+			e.stopPropagation();
+			options.onResume!(view);
+		};
+		options.store.add(addDisposableListener(resume, 'click', run));
+		options.store.add(addDisposableListener(resume, 'keydown', e => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				run(e);
+			}
+		}));
+	}
 	if (view.openable) {
 		options.store.add(addDisposableListener(row, 'click', e => {
 			e.preventDefault();
@@ -563,6 +665,18 @@ export function renderCursorCardRow(parent: HTMLElement, view: ISubagentView, op
 			e.preventDefault();
 			e.stopPropagation();
 			options.onStop!(view);
+		}));
+	}
+	if (options.onResume && isResumableSubagent(view)) {
+		const resume = append(row, $('span.volt-agent-work-agent-resume')) as HTMLElement;
+		resume.setAttribute('role', 'button');
+		resume.setAttribute('aria-label', localize('voltAgent.subagent.resumeHint', "Resume: it continues where it stopped"));
+		resume.appendChild(renderIcon(Codicon.play));
+		append(resume, $('span')).textContent = localize('voltAgent.subagent.resume', "Resume");
+		options.store.add(addDisposableListener(resume, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			options.onResume!(view);
 		}));
 	}
 	if (view.openable) {
