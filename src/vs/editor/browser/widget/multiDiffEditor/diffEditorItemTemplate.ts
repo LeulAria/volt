@@ -13,7 +13,7 @@ import { MenuId } from '../../../../platform/actions/common/actions.js';
 import { IContextKeyService, type IScopedContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ServiceCollection } from '../../../../platform/instantiation/common/serviceCollection.js';
-import { IDiffEditorOptions } from '../../../common/config/editorOptions.js';
+import { EditorOption, IDiffEditorOptions } from '../../../common/config/editorOptions.js';
 import { OffsetRange } from '../../../common/core/ranges/offsetRange.js';
 import { observableCodeEditor } from '../../observableCodeEditor.js';
 import { DiffEditorWidget } from '../diffEditor/diffEditorWidget.js';
@@ -151,9 +151,14 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 			this._originalWidth.set(width, undefined);
 		}));
 
+		// The trailing blank line depends on the diff, which can land after the last size change.
+		this._register(this.editor.onDidUpdateDiff(() => {
+			this._editorContentHeight.set(this.editor.getContentHeight() - this._trailingBlankLineHeight(), undefined);
+		}));
+
 		this._register(this.editor.onDidContentSizeChange(e => {
 			globalTransaction(tx => {
-				this._editorContentHeight.set(e.contentHeight, tx);
+				this._editorContentHeight.set(e.contentHeight - this._trailingBlankLineHeight(), tx);
 				this._modifiedContentWidth.set(this.editor.getModifiedEditor().getContentWidth(), tx);
 				this._originalContentWidth.set(this.editor.getOriginalEditor().getContentWidth(), tx);
 			});
@@ -200,6 +205,24 @@ export class DiffEditorItemTemplate extends Disposable implements IPooledObject<
 	}
 
 	private readonly _dataStore;
+
+	/**
+	 * A file that ends in a newline has an empty last line. Unchanged, it is only a blank row under the
+	 * last change, so the item stops above it (the editor is clipped to the item's height).
+	 */
+	private _trailingBlankLineHeight(): number {
+		const modified = this.editor.getModifiedEditor();
+		const model = modified.getModel();
+		const diff = this.editor.getDiffComputationResult();
+		if (!model || !diff) {
+			return 0;
+		}
+		const last = model.getLineCount();
+		if (last < 2 || model.getLineLength(last) !== 0 || diff.changes2.some(change => change.modified.endLineNumberExclusive > last)) {
+			return 0;
+		}
+		return modified.getOption(EditorOption.lineHeight);
+	}
 
 	private _data: TemplateData | undefined;
 
