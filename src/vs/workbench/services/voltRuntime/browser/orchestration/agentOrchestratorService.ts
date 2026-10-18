@@ -123,6 +123,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	private adoptTimer: ReturnType<typeof setTimeout> | undefined;
 	/** Each live run's latest plan (to-do list): a turn that ends with items open continues. */
 	private readonly plans = new Map<string, readonly { readonly content: string; readonly status: string }[]>();
+	/** Runs that changed files: a plan round that closed no item still got somewhere. */
+	private readonly changedRuns = new Set<string>();
 	/** Assistant text of resumes that have not heard back from the provider yet, by run. */
 	private readonly probeText = new Map<string, string>();
 	private mover: IOrchWorkspaceMover | undefined;
@@ -784,7 +786,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 
 	private restartResume(): OrchRestartResume {
 		const value = this.configurationService.getValue<string>(ORCH_RESUME_AFTER_RESTART_SETTING);
-		return value === 'off' || value === 'all' ? value : 'subagents';
+		return value === 'off' || value === 'subagents' ? value : 'all';
 	}
 
 	async ensureThreadLoaded(threadId: string): Promise<void> {
@@ -1256,6 +1258,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				return;
 			}
 			case 'file.change':
+				this.changedRuns.add(envelope.runId);
 				this.apply({ type: 'file.changed', threadId, path: event.uri.fsPath });
 				return;
 			case 'subagent.spawned':
@@ -1369,6 +1372,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		// The run ended "done" with to-dos still open: the decider continues it while it makes progress.
 		const plan = this.plans.get(runId);
 		this.plans.delete(runId);
+		const worked = this.changedRuns.delete(runId);
 		const openPlan = outcome === 'done' ? plan?.filter(entry => entry.status !== 'completed').map(entry => entry.content).filter(Boolean) : undefined;
 		this.apply({
 			type: 'run.settled',
@@ -1379,7 +1383,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			...(reply !== undefined ? { reply } : {}),
 			...(limit && outcome === 'failed' ? { limit: { ...limit, ...(stop ? { stop: true } : {}) } } : {}),
 			...(account ? { account } : {}),
-			...(openPlan?.length ? { openPlan } : {}),
+			...(openPlan?.length ? { openPlan, ...(worked ? { worked: true } : {}) } : {}),
 			...(stepLimit && outcome === 'done' ? { stepLimit: true } : {}),
 		});
 		this.clearCancelWatch(threadId);

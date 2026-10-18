@@ -5,7 +5,9 @@
 
 import { ALL_CAPABILITY_GROUPS, CapabilityGroup } from '../../common/harness/lanes.js';
 import { AgentQuestionDraft, IAgentQuestionResponse, parseQuestionDraft, questionResponseText } from '../../common/questions.js';
-import { asRecord, pickString } from '../../common/tools/args.js';
+import { STATE_READ_TOOL_NAME, STATE_UPDATE_TOOL_NAME } from '../../common/harness/appState.js';
+import { SEARCH_HISTORY_TOOL_NAME } from '../../common/harness/historySearch.js';
+import { asRecord, pickNumber, pickString } from '../../common/tools/args.js';
 import { IToolContext, IToolResult, IVoltTool } from '../../common/tools/tool.js';
 import { objectSchema } from './schema.js';
 
@@ -37,6 +39,12 @@ export interface IMetaToolHost {
 	subagents?(): readonly ISubagentDefinitionInfo[];
 	/** Shows the questions in the chat's question tray and resolves with the user's answers. */
 	askQuestion?(draft: AgentQuestionDraft, ctx: IToolContext): Promise<IAgentQuestionResponse>;
+	/** Searches what compaction and clearing took out of the chat's view (its archive). */
+	searchHistory?(query: string, limit: number | undefined): Promise<string>;
+	/** The project's shared app state at a path (`common/harness/appState.ts`). */
+	readState?(path: string): Promise<string>;
+	/** Applies path operations to the project's app state; `isError` when they were refused. */
+	updateState?(ops: unknown, expectRevision: number | undefined): Promise<{ readonly text: string; readonly isError?: boolean }>;
 }
 
 /** The plan tool. The editor draws a call to it as a plan card with Build (`isPlanTool`). */
@@ -134,6 +142,8 @@ export function createMetaTools(host: IMetaToolHost): IVoltTool[] {
 			group: 'meta',
 			kind: 'think',
 			parallelSafe: false,
+			// A question cut off by a restart is asked again: the answer is what the run waited for.
+			resumable: true,
 			snippet: 'ask_question - ask the user multiple-choice questions and wait for the answers',
 			description: [
 				'Ask the user one or more multiple-choice questions and wait for the answers. Use it when a decision only the user can make',
@@ -185,6 +195,55 @@ export function createMetaTools(host: IMetaToolHost): IVoltTool[] {
 			},
 		});
 	}
+	if (host.searchHistory) {
+		const search = host.searchHistory.bind(host);
+		tools.push({
+			name: SEARCH_HISTORY_TOOL_NAME,
+			group: 'meta',
+			kind: 'search',
+			parallelSafe: true,
+			idempotent: true,
+			snippet: `${SEARCH_HISTORY_TOOL_NAME} - search this chat's earlier history that was compacted or cleared`,
+			description: 'Search this chat\'s earlier history that is no longer in view (compacted into a summary, or old tool results cleared): the exact commands run, errors, tool output, and decisions. Use it before redoing work the summary only mentions. Query with words you expect in it: a file name, a command, part of an error.',
+			schema: objectSchema({
+				query: { type: 'string' },
+				limit: { type: 'integer', description: 'Most matches to return (default 8)' },
+			}, ['query']),
+			execute: async args => ({ callId: '', name: SEARCH_HISTORY_TOOL_NAME, kind: 'search', text: await search(pickString(args, 'query') ?? '', pickNumber(args, 'limit')) }),
+		});
+	}
+	if (host.readState && host.updateState) {
+		const read = host.readState.bind(host);
+		const update = host.updateState.bind(host);
+		tools.push({
+			name: STATE_READ_TOOL_NAME,
+			group: 'meta',
+			kind: 'read',
+			parallelSafe: true,
+			idempotent: true,
+			snippet: `${STATE_READ_TOOL_NAME} - read the project's shared app state`,
+			description: 'Read the project\'s shared app state: a JSON document every agent of this project (this chat, its subagents, other chats, automation runs) reads and changes, kept on disk across restarts and compaction. Holds what the work is, how far it got, and facts agents hand each other. `path` is dotted ("migration.done"); empty reads it all.',
+			schema: objectSchema({ path: { type: 'string', description: 'Dotted path; empty for the whole state' } }, []),
+			execute: async args => ({ callId: '', name: STATE_READ_TOOL_NAME, kind: 'read', text: await read(pickString(args, 'path') ?? '') }),
+		}, {
+			name: STATE_UPDATE_TOOL_NAME,
+			group: 'meta',
+			kind: 'edit',
+			parallelSafe: false,
+			// `increment` and `append` would count twice if a crash replayed it.
+			idempotent: false,
+			snippet: `${STATE_UPDATE_TOOL_NAME} - change the project's shared app state`,
+			description: 'Change the project\'s shared app state with path operations applied together: set (value), delete, increment (by, default 1), append (value, to a list). Other fields are untouched, so agents never overwrite each other. Use it for progress on long work ("migration.done": [...]), decisions, and facts another agent or a later chat needs; not for file contents or logs. Pass expect_revision (from state_read) to refuse the update if someone changed the state since.',
+			schema: objectSchema({
+				ops: { type: 'array', items: { type: 'object' }, description: '[{ "op": "set" | "delete" | "increment" | "append", "path": "a.b", "value"?: any, "by"?: number }]' },
+				expect_revision: { type: 'integer' },
+			}, ['ops']),
+			execute: async args => {
+				const result = await update(asRecord(args).ops, pickNumber(args, 'expect_revision'));
+				return { callId: '', name: STATE_UPDATE_TOOL_NAME, kind: 'edit', text: result.text, ...(result.isError ? { isError: true } : {}) };
+			},
+		});
+	}
 	if (host.runSubagent) {
 		const run = host.runSubagent.bind(host);
 		// Read once per run: the tool list is part of the cached prompt prefix.
@@ -199,6 +258,8 @@ export function createMetaTools(host: IMetaToolHost): IVoltTool[] {
 			group: 'meta',
 			kind: 'think',
 			parallelSafe: true,
+			// After a crash the same call finds its subagent's saved transcript and carries on.
+			resumable: true,
 			snippet: custom.length ? 'task - delegate work to a sub-agent (built-in or one of the project\'s subagents)' : 'task - delegate a read-only investigation to a sub-agent',
 			description: [
 				[

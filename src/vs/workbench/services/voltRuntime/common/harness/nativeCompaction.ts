@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { stringHash } from '../../../../../base/common/hash.js';
+import { SEARCH_HISTORY_TOOL_NAME } from './historySearch.js';
 import type { IModelAssistantPart } from '../providers.js';
 import type { IToolSchema } from '../tools/tool.js';
 import { messageTokens } from './contextEngine.js';
@@ -78,6 +79,20 @@ export function effectiveWindow(policy: ICompactionPolicy): number {
 
 export function shouldCompact(promptTokens: number, policy: ICompactionPolicy): boolean {
 	return promptTokens >= effectiveWindow(policy) * policy.threshold;
+}
+
+/** How far below the compaction point the summary starts in the background (pi-durable's `backgroundTokens`). */
+export const BACKGROUND_COMPACTION_TOKENS = 32_768;
+
+/**
+ * Background compaction, after pi-durable: this close to the compaction point the summary is
+ * written while the agent keeps working, and it is placed at the next step boundary once it is
+ * in. A step waits for it only when the prompt reaches the compaction point first, so a long run
+ * no longer stops for a summary each time its context fills up.
+ */
+export function shouldCompactEarly(promptTokens: number, policy: ICompactionPolicy): boolean {
+	const window = effectiveWindow(policy);
+	return promptTokens >= window * policy.threshold - Math.min(BACKGROUND_COMPACTION_TOKENS, window * 0.1);
 }
 
 /**
@@ -218,15 +233,18 @@ export function mechanicalSummary(older: readonly INativeLoopMessage[], carry: I
  * The compacted transcript: one summary message, then the kept tail with reasoning removed.
  * The summary is a user message so every provider accepts the order.
  */
-export function applyCompaction(messages: readonly INativeLoopMessage[], boundary: number, summary: string): INativeLoopMessage[] {
+export function applyCompaction(messages: readonly INativeLoopMessage[], boundary: number, summary: string, searchable = false): INativeLoopMessage[] {
 	const kept = messages.slice(boundary).map(stripBoundReasoning);
 	// The prefix restarts here anyway, so this is the free moment to drop old pixels too.
 	pruneImages(kept, { ...DEFAULT_IMAGE_POLICY, pruneAt: DEFAULT_IMAGE_POLICY.keep });
-	// Cut inside a long turn: the request it is working on stays word for word.
-	const request = kept.some(message => message.role === 'user' && message.turn) ? undefined : latestRequest(messages.slice(0, boundary));
+	// The request it is working on stays word for word, unless the kept part has one the user typed:
+	// Volt's own continuations ("[Volt] ... continue") are turns too, and hours of them would leave
+	// the model only a summary of a summary of what it was asked.
+	const request = kept.some(isTypedRequest) ? undefined : latestUserRequest(messages.slice(0, boundary));
 	const note = [
 		'<conversation_summary>',
 		'Earlier parts of this conversation were compacted. This summary replaces them; files and tool results from before it are no longer in view, so read files again if you need their current contents.',
+		...(searchable ? [`${SEARCH_HISTORY_TOOL_NAME} finds the exact details from before it (commands, errors, tool output, decisions): use it instead of redoing work the summary only mentions.`] : []),
 		'',
 		summary.trim(),
 		...(request ? ['', 'The user\'s latest request, verbatim:', clip(request, 6_000)] : []),
@@ -239,8 +257,53 @@ export function applyCompaction(messages: readonly INativeLoopMessage[], boundar
 	return [{ role: 'user', content: note }, ...kept];
 }
 
-/** The latest message the user typed; older transcripts did not mark turns, so the latest non-steering user message. */
-function latestRequest(messages: readonly INativeLoopMessage[]): string | undefined {
+/** A message Volt sent in the user's place: a continuation, a restart, a lane note. Never the task itself. */
+export function isVoltNote(text: string): boolean {
+	return text.startsWith('[Volt] ');
+}
+
+const SUMMARY_OPEN = '<conversation_summary>';
+const SUMMARY_CLOSE = '</conversation_summary>';
+const VERBATIM = 'The user\'s latest request, verbatim:\n';
+
+/**
+ * The user's own words in a turn message: without a compaction note in front of it, and with the
+ * request an earlier compaction carried when the turn itself is only one of Volt's notes.
+ */
+function typedText(content: string): string | undefined {
+	const own = withoutSummary(content);
+	return own && !isVoltNote(own) ? own : carriedRequest(content);
+}
+
+/** The request an earlier compaction's note carried word for word. */
+function carriedRequest(content: string): string | undefined {
+	const at = content.startsWith(SUMMARY_OPEN) ? content.indexOf(VERBATIM) : -1;
+	const end = content.indexOf(SUMMARY_CLOSE);
+	return at >= 0 ? content.slice(at + VERBATIM.length, end > at ? end : undefined).trim() || undefined : undefined;
+}
+
+/** A turn message without the compaction note an earlier compaction put in front of it. */
+function withoutSummary(content: string): string {
+	if (!content.startsWith(SUMMARY_OPEN)) {
+		return content.trim();
+	}
+	const end = content.indexOf(SUMMARY_CLOSE);
+	return end >= 0 ? content.slice(end + SUMMARY_CLOSE.length).trim() : '';
+}
+
+function isTypedRequest(message: INativeLoopMessage): boolean {
+	if (message.role !== 'user' || !message.turn) {
+		return false;
+	}
+	const own = withoutSummary(message.content);
+	return !!own && !isVoltNote(own);
+}
+
+/**
+ * The latest request the user typed, past Volt's own continuations; older transcripts did not
+ * mark turns, so the latest non-steering user message.
+ */
+export function latestUserRequest(messages: readonly INativeLoopMessage[]): string | undefined {
 	let fallback: string | undefined;
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const message = messages[i];
@@ -248,7 +311,17 @@ function latestRequest(messages: readonly INativeLoopMessage[]): string | undefi
 			continue;
 		}
 		if (message.turn) {
-			return message.content;
+			const typed = typedText(message.content);
+			if (typed) {
+				return typed;
+			}
+			fallback ??= message.content;
+			continue;
+		}
+		// A compaction note that opens the kept part is not a turn, but it carries the request.
+		const carried = carriedRequest(message.content);
+		if (carried) {
+			return carried;
 		}
 		if (fallback === undefined && !isSteering(messages, i)) {
 			fallback = message.content;
@@ -401,7 +474,7 @@ export function clearOldToolResults(messages: INativeLoopMessage[], promptTokens
 		if (message.role === 'tool' && !message.content.startsWith(CLEARED_PREFIX) && messageTokens(message) >= policy.minResultTokens) {
 			const call = message.callId ? calls.get(message.callId) : undefined;
 			const what = call ? `${call.name} ${clip(safeJson(call.args), 160)}` : message.name ?? 'tool';
-			edits.set(i, { ...message, content: `${CLEARED_PREFIX}: ${what}. It was ${message.isError ? 'an error' : `${message.content.length} characters`}; run the tool again if you need it.]` });
+			edits.set(i, { ...message, content: `${CLEARED_PREFIX}: ${what}. It was ${message.isError ? 'an error' : `${message.content.length} characters`}; ${SEARCH_HISTORY_TOOL_NAME} finds the full result, or run the tool again if you need it.]` });
 		} else if (message.role === 'assistant' && i < recentCall && message.toolCalls?.length) {
 			// Only inside an object: the arguments themselves must stay valid JSON.
 			const stubbed = { ...message, toolCalls: message.toolCalls.map(call => call.args && typeof call.args === 'object' ? { ...call, args: clearLongArgs(call.args) } : call) };
@@ -424,6 +497,11 @@ export function clearOldToolResults(messages: INativeLoopMessage[], promptTokens
 	}
 	dropBoundReasoning(messages, earliest);
 	return freeable;
+}
+
+/** A tool result {@link clearOldToolResults} already replaced with a stub (its original is archived). */
+export function isClearedToolResult(message: INativeLoopMessage): boolean {
+	return message.role === 'tool' && message.content.startsWith(CLEARED_PREFIX);
 }
 
 function clearLongArgs(value: unknown): unknown {

@@ -375,8 +375,9 @@ export interface IRunSupervisorOptions {
 }
 
 /**
- * ACP run ceilings. The native loop stops at 500 tool calls (`DEEPSEEK_BUDGET`); ACP gets the
- * same plus a wall clock that is past any sane single turn (Cursor's 40-minute runaway, loop-extremes 1d).
+ * ACP run ceilings (the native loop has `DEEPSEEK_BUDGET`): tool calls plus a wall clock that is
+ * past any sane single turn (Cursor's 40-minute runaway, loop-extremes 1d). Reaching one ends the
+ * run at its budget, not as a failure, so Keep working continues it in a fresh run at once.
  */
 export const ACP_RUN_BUDGET: Partial<IResourceBudget> = {
 	tools: 500,

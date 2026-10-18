@@ -8,6 +8,7 @@ import { getActiveDocument } from '../../../../base/browser/dom.js';
 import { DeferredPromise, IntervalTimer, raceTimeout, RunOnceScheduler } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
+import { stringHash } from '../../../../base/common/hash.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
@@ -84,13 +85,17 @@ import { FileLedger } from '../common/harness/fileLedger.js';
 import { alwaysRules, findInstruction, instructionsIndex, ISubagentDoc, rulesForPath } from '../common/harness/instructions.js';
 import { IVoltHookRunContext, IVoltHooksService } from '../common/hooks/voltHooks.js';
 import './hooks/voltHooksService.js';
-import { applyCompaction, clearOldToolResults, COMPACTION_SYSTEM, compactionBoundary, compactionRequest, DEFAULT_COMPACTION, dropBoundReasoning, effectiveWindow, ICarryForward, inContextCompactionRequest, mechanicalSummary, MIN_IN_CONTEXT_SUMMARY_CHARS, promptPrefixKey, pruneImages, serializeForSummary, shouldCompact } from '../common/harness/nativeCompaction.js';
+import { EXPERIENCE_SYSTEM, experienceRecord, experienceRequest, LEARN_FROM_RUNS_SETTING, lessonMemory, parseExperience, shouldReflect } from '../common/harness/experience.js';
+import { searchArchivedHistory } from '../common/harness/historySearch.js';
+import { parseStateOps, renderStateRead } from '../common/harness/appState.js';
+import { AgentAppStateStore } from './state/agentAppState.js';
+import { applyCompaction, clearOldToolResults, COMPACTION_SYSTEM, compactionBoundary, compactionRequest, DEFAULT_COMPACTION, dropBoundReasoning, effectiveWindow, ICarryForward, inContextCompactionRequest, isClearedToolResult, isVoltNote, mechanicalSummary, MIN_IN_CONTEXT_SUMMARY_CHARS, promptPrefixKey, pruneImages, serializeForSummary, shouldCompact, shouldCompactEarly } from '../common/harness/nativeCompaction.js';
 import { chooseEffort, EffortLevel, higherEffort } from '../common/deepseek/effort.js';
 import { IToolDocuments } from './tools/fileTools.js';
 import { ISubagentRequest, NATIVE_ASK_QUESTION_TOOL_NAME } from './tools/metaTools.js';
 import { CodeIntelHost } from './host/codeIntelHost.js';
 import { McpHost } from './host/mcpHost.js';
-import { INativeJournalEntry, NativeJournal } from './history/nativeJournal.js';
+import { INativeBackgroundAgent, INativeJournalEntry, NativeJournal } from './history/nativeJournal.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
 import { affectsInstructions, IInstructionsSnapshot, loadInstructions } from './prompt/instructionsLoader.js';
 import { ResourceMap } from '../../../../base/common/map.js';
@@ -113,11 +118,12 @@ import { AgentPool, ISpareRequest } from './agentPool.js';
 import { RunTraceJournal } from './history/runTraceJournal.js';
 import { isAcpTurnRestartable } from '../common/harness/sessionRetry.js';
 import { TaskLifecycle } from '../common/harness/lifecycle.js';
-import { IToolCall, IToolContext, IVoltTool, toolSchemas } from '../common/tools/tool.js';
+import { IToolCall, IToolContext, IToolResult, IVoltTool, toolSchemas } from '../common/tools/tool.js';
 import { deepseekKnobs, resolveApproval } from '../common/deepseek/approval.js';
 import { VoltLlmAdapter } from './deepseek/voltLlmAdapter.js';
 import { buildSubagentPrompt, customSubagentPrompt, nativeModelTurn } from '../common/deepseek/prompt.js';
 import { ApprovalOutcome } from '../common/deepseek/protocol.js';
+import { turnWriteGate } from '../common/turnWriteGate.js';
 import { createBuiltinTools } from './tools/registry.js';
 import { loadProjectInstructions } from './prompt/projectInstructions.js';
 import { IRunPlan } from '../common/runPlan.js';
@@ -238,7 +244,7 @@ interface IParkedAgent {
 }
 
 type AgentTurnResult =
-	| { readonly kind: 'end'; readonly reason: 'done' | 'abort' | 'fail'; readonly assistant: string }
+	| { readonly kind: 'end'; readonly reason: 'done' | 'abort' | 'fail'; readonly assistant: string; readonly incomplete?: 'steps' }
 	| { readonly kind: 'restart' }
 	| { readonly kind: 'stale' };
 
@@ -323,15 +329,128 @@ interface INativeState {
 	prefix?: string;
 	/** File locks shared by this chat's runs and subagents, so their edits never interleave. */
 	locks: PathLocks;
+	/** Tool calls a crash cut off (from the live log): the next run settles them first (`replayInterrupted`). */
+	interrupted?: readonly string[];
+	/** Tool calls that waited for approval when Volt went down: nothing of them ran, so they are asked about again. */
+	unapproved?: readonly string[];
+	/** Background subagents still working (saved): a crash restarts them from their own transcripts. */
+	background?: INativeBackgroundAgent[];
+	/** Background reports in `inbox` the agent has not read yet (saved, so each is delivered once). */
+	reports?: Set<string>;
+}
+
+/** Takes what waits in the chat's inbox; a background report taken is no longer owed. */
+function claimInbox(state: INativeState): string[] {
+	const claimed = state.inbox.splice(0, state.inbox.length);
+	for (const message of claimed) {
+		state.reports?.delete(message);
+	}
+	return claimed;
 }
 
 function journalEntry(state: INativeState): INativeJournalEntry {
-	return { version: 1, messages: state.messages, synced: state.synced, effort: state.effort, todo: state.todo, prefix: state.prefix, savedAt: Date.now() };
+	return {
+		version: 1,
+		messages: state.messages,
+		synced: state.synced,
+		effort: state.effort,
+		todo: state.todo,
+		prefix: state.prefix,
+		savedAt: Date.now(),
+		...(state.background?.length ? { background: state.background } : {}),
+		...(state.reports?.size ? { reports: [...state.reports] } : {}),
+	};
 }
+
+/**
+ * The transcript as the live log saves it while a tool batch runs: the results that are in so far
+ * follow the model's calls, and the calls still going are named, so a crash cuts off only them.
+ */
+function liveJournalEntry(state: INativeState, finished: ReadonlyMap<string, IToolResult>, dispatched: ReadonlySet<string>): INativeJournalEntry {
+	return withRunningCalls(journalEntry(state), finished, dispatched);
+}
+
+/**
+ * A saved transcript with the finished results of the batch still running after its calls, and
+ * the others named: `running` once dispatched, `pending` while they wait for approval.
+ */
+function withRunningCalls(entry: INativeJournalEntry, finished: ReadonlyMap<string, IToolResult>, dispatched: ReadonlySet<string>): INativeJournalEntry {
+	const open = entry.messages.at(-1);
+	const calls = open?.role === 'assistant' ? open.toolCalls ?? [] : [];
+	if (!calls.length) {
+		return entry;
+	}
+	const done = calls.flatMap(call => {
+		const result = finished.get(call.id);
+		return result ? [nativeToolMessage(result)] : [];
+	});
+	const unfinished = calls.filter(call => !finished.has(call.id));
+	const running = unfinished.filter(call => dispatched.has(call.id)).map(call => call.id);
+	const pending = unfinished.filter(call => !dispatched.has(call.id)).map(call => call.id);
+	return {
+		...entry,
+		messages: done.length ? [...entry.messages, ...done] : entry.messages,
+		...(running.length ? { running } : {}),
+		...(pending.length ? { pending } : {}),
+	};
+}
+
+/**
+ * A subagent's saved transcript, ready to go on: calls a crash cut off get the cut-off result,
+ * then the note that sends it back to work. `report` when it had already finished its report.
+ */
+function resumedSubagent(entry: INativeJournalEntry | undefined): { readonly messages?: INativeLoopMessage[]; readonly report?: string } {
+	const messages = entry?.messages.slice() ?? [];
+	if (!messages.length) {
+		return {};
+	}
+	const last = messages.at(-1)!;
+	if (last.role === 'assistant' && !last.toolCalls?.length && last.content.trim()) {
+		return { report: last.content.trim() };
+	}
+	const at = messages.findLastIndex(message => message.role === 'assistant' && !!message.toolCalls?.length);
+	if (at >= 0) {
+		const answered = new Set(messages.slice(at + 1).filter(message => message.role === 'tool').map(message => message.callId));
+		const cut = messages[at].toolCalls!.filter(call => !answered.has(call.id));
+		const unstarted = new Set(entry?.pending ?? []);
+		let end = at + 1;
+		while (end < messages.length && messages[end].role === 'tool') {
+			end++;
+		}
+		messages.splice(end, 0, ...cut.map(call => ({ role: 'tool' as const, content: unstarted.has(call.id) ? NOT_STARTED_BEFORE_RESTART : INTERRUPTED_BY_RESTART, callId: call.id, name: call.name, isError: true })));
+	}
+	messages.push({ role: 'user', content: SUBAGENT_RESUMED });
+	return { messages };
+}
+
+function nativeToolMessage(result: IToolResult): INativeLoopMessage {
+	return { role: 'tool', content: result.text, callId: result.callId, name: result.name, ...(result.isError ? { isError: true } : {}) };
+}
+
+/**
+ * pi-durable's replay policy: after a crash, a call that is safe to run twice (a read, a search, a
+ * diff) runs again; anything else is reported as cut off, never silently repeated.
+ */
+function isReplaySafe(tool: IVoltTool | undefined): boolean {
+	return !!tool && (!!tool.resumable || (tool.group !== 'meta' && (tool.idempotent ?? tool.parallelSafe)));
+}
+
+/** The journal key of a subagent's own transcript: one per call, so a re-run of that call finds it. */
+function subagentJournalId(sessionId: string, callId: string): string {
+	return `${sessionId}.sub-${(stringHash(callId, 0) >>> 0).toString(36)}`;
+}
+
+/** What a subagent is told when a crash cut it off and its call runs again. */
+const SUBAGENT_RESUMED = '[Volt] Volt restarted while you were working, so your previous run was cut off part way. Continue the task where you left off (do not redo what is already done), then give your report as asked.';
+
+/** Longest the calls replayed after a crash may take before the rest are reported as cut off. */
+const REPLAY_TIMEOUT_MS = 20_000;
+const INTERRUPTED_BY_RESTART = 'Volt restarted while this call was running, so it was cut off before it returned. It may have taken effect in part or in full: check its effect first (read the file, git status, list the output), then run it again only if it is still needed.';
+const NOT_STARTED_BEFORE_RESTART = 'Volt restarted before this call started, so it did not run. Make it again if it is still needed.';
 
 /** Languages whose editor services report diagnostics worth waiting for. */
 const DIAGNOSED_EXTENSIONS = /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|kts|cs|c|cc|cpp|h|hpp|php|rb|swift|dart|vue|svelte|css|scss|less|json)$/i;
-const SUBAGENT_TOOLS = ['read_file', 'list_dir', 'grep', 'glob', 'diagnostics', 'code_nav', 'git_status', 'git_diff', 'git_log', 'git_show', 'skill'];
+const SUBAGENT_TOOLS = ['read_file', 'list_dir', 'grep', 'glob', 'diagnostics', 'code_nav', 'git_status', 'git_diff', 'git_log', 'git_show', 'skill', 'state_read'];
 /** Claude Code tool names in a subagent's `tools:` list, as Volt's tools. */
 const SUBAGENT_TOOL_ALIASES: Record<string, readonly string[]> = {
 	read: ['read_file'],
@@ -436,6 +555,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly mcpHost: McpHost;
 	private readonly journal: NativeJournal;
 	private readonly nativeRestores = new Map<string, Promise<void>>();
+	/** Journal keys of the background subagents working in this window. */
+	private readonly liveBackground = new Set<string>();
+	/** Chats whose finished run is being reflected on (one at a time). */
+	private readonly reflecting = new Set<string>();
+	/** Each project's shared app state, on disk (`state_read` / `state_update`). */
+	private readonly appState: AgentAppStateStore;
 	/**
 	 * Chats whose native transcript is on disk only, with how many text messages it covered: never
 	 * loaded since the chat was opened (seedSession), or let go when idle or forgotten. It is read
@@ -525,6 +650,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.mcpHost = this._register(new McpHost(fileService, stdio, requestService, logService));
 		this.journal = this._register(new NativeJournal(joinPath(environmentService.userRoamingDataHome, 'voltNative'), fileService, logService));
 		this.traces = this._register(new RunTraceJournal(joinPath(environmentService.userRoamingDataHome, 'voltTraces'), fileService, logService));
+		this.appState = new AgentAppStateStore(joinPath(environmentService.userRoamingDataHome, 'voltState'), fileService, logService);
 		this.agentPool = this._register(new AgentPool({
 			maxSpares: MAX_SPARE_AGENTS,
 			ttlMs: SPARE_AGENT_TTL_MS,
@@ -765,6 +891,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			state.effort = entry.effort as EffortLevel | undefined;
 			state.todo = entry.todo;
 			state.prefix = entry.prefix;
+			state.interrupted = entry.running;
+			state.unapproved = entry.pending;
+			if (entry.background?.length) {
+				state.background = [...entry.background];
+			}
+			if (entry.reports?.length) {
+				state.reports = new Set(entry.reports);
+				state.inbox.push(...entry.reports);
+			}
 			session.nativeUsedAt = Date.now();
 			if (cut) {
 				this.cutNative(session.sessionId, state, cut.userTurns, cut.synced);
@@ -784,7 +919,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			state.messages.splice(0);
 			state.synced = 0;
 		}
-		state.inbox.splice(0);
+		// Steers go with the edited turns; background reports are still owed.
+		state.inbox.splice(0, state.inbox.length, ...state.reports ?? []);
 		state.ledger.invalidateReferences();
 		void this.journal.schedule(sessionId, () => journalEntry(state), true);
 	}
@@ -2472,7 +2608,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					runSubagent: (request, ctx) => this.runSubagent(session, state, request, ctx),
 					subagents: () => (state.instructions?.subagents ?? []).map(agent => ({ name: agent.name, description: agent.description, readonly: agent.readonly, background: agent.background })),
 					askQuestion: (draft, ctx) => this.askQuestionsUntil(session.sessionId, session.run?.runId, draft, ctx.signal),
+					searchHistory: async (query, limit) => searchArchivedHistory(await this.journal.readArchive(session.sessionId), query, limit),
 				} : {}),
+				readState: async path => renderStateRead(await this.appState.read(this.appStateKey(session)), path),
+				updateState: async (raw, expectRevision) => {
+					const parsed = parseStateOps(raw);
+					if ('error' in parsed) {
+						return { text: parsed.error, isError: true };
+					}
+					const result = await this.appState.update(this.appStateKey(session), parsed.ops, expectRevision);
+					return 'error' in result ? { text: result.error, isError: true } : { text: `Updated: the state is at revision ${result.file.revision}.` };
+				},
 			},
 			...(state ? {
 				ledger: () => state.ledger,
@@ -2529,7 +2675,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const allowMcp = modePolicy(request.mode).allowMcp;
 		const early = this.nativeTurnInputs(this.executionRoot(session), allowMcp);
 		// The code the message names, searched while the turn gets ready (snippets, ~1.5k tokens at most).
-		const retrieval = isCompactCommand(request.text) ? undefined : this.retrieveContext(session, run, request.text, false);
+		const retrieval = isCompactCommand(request.text) || isVoltNote(request.text) ? undefined : this.retrieveContext(session, run, request.text, false);
 		const apiKeyRead = this.apiKey(profile);
 		void apiKeyRead.catch(() => undefined);
 		// A cancelled run's tools may still be finishing; give them a moment before this one starts its own.
@@ -2555,6 +2701,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		run.transcript = transcript;
 		state.cwd = cwd;
 		const journal = () => journalEntry(state);
+		// Results of the batch that is running, until the loop adds them to the transcript.
+		const finished = new Map<string, IToolResult>();
+		// Calls of that batch that started; the rest wait for approval.
+		const dispatched = new Set<string>();
+		const checkpoint = () => {
+			if (this.isCurrent(session, run)) {
+				this.journal.log(session.sessionId, journal, () => liveJournalEntry(state, finished, dispatched));
+			}
+		};
 		state.changed.clear();
 		state.ledger.resumeReferences();
 		const images = this.modelImages(request.images);
@@ -2620,9 +2775,31 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const prefix = promptPrefixKey(turn.prompt, schemas);
 		if (state.prefix !== prefix) {
 			if (dropBoundReasoning(transcript)) {
+				this.journal.invalidate(session.sessionId);
 				this.logService.info(`[volt] system prompt or tools changed in ${session.sessionId}; dropped earlier Claude reasoning`);
 			}
 			state.prefix = prefix;
+		}
+		if (state.interrupted || state.unapproved) {
+			const interrupted = { running: state.interrupted ?? [], pending: state.unapproved ?? [] };
+			state.interrupted = state.unapproved = undefined;
+			// A call that waited for a person waits again, as it would have in the loop.
+			const approve = async (call: IToolCall): Promise<ApprovalOutcome> => {
+				const tool = registry.get(call.name);
+				if (!tool) {
+					return 'rejected';
+				}
+				return tool.group === 'meta' ? 'allowed-once' : this.preauthorizeDeepseek(session, run.runId, profile, call, tool) ?? await this.authorizeDeepseek(session, run.runId, profile, call, tool);
+			};
+			await this.replayInterrupted(session, run, state, interrupted, registry, { cwd, sessionId: session.sessionId, mode: request.mode }, approve);
+			if (!this.isCurrent(session, run)) {
+				return;
+			}
+		}
+		// Background subagents a crash cut off go on from their own transcripts; their reports arrive as before.
+		for (const agent of state.background?.filter(agent => !this.liveBackground.has(agent.id)) ?? []) {
+			this.logService.info(`[volt] restarting the background ${agent.label} subagent of ${session.sessionId}`);
+			void this.runSubagent(session, state, agent.request, { callId: agent.callId, signal: new AbortController().signal, cwd, sessionId: session.sessionId, mode: request.mode }, true);
 		}
 		const emit = (event: IVoltEvent) => {
 			if (event.type === 'usage' && this.isCurrent(session, run)) {
@@ -2630,9 +2807,69 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			}
 			this.emitEngine(session, run, event);
 		};
-		const compact = (messages: INativeLoopMessage[], aggressive: boolean) => this.compactNative(session, run, state, messages, {
-			provider, profile, apiKey, item, system: turn.prompt, contextWindow, aggressive, token: cancel, cached: { tools: schemas, options },
-		});
+		const cached = { tools: schemas, options };
+		const compactionPolicy = { window: contextWindow, ...DEFAULT_COMPACTION };
+		// Compactions so far: a background summary is placed only on the transcript it was written for.
+		let compactions = 0;
+		const compact = async (messages: INativeLoopMessage[], aggressive: boolean, prepared?: IPreparedCompaction) => {
+			const shrank = await this.compactNative(session, run, state, messages, {
+				provider, profile, apiKey, item, system: turn.prompt, contextWindow, aggressive, token: cancel, cached, ...(prepared ? { prepared } : {}),
+			});
+			if (shrank) {
+				compactions++;
+			}
+			return shrank;
+		};
+		const background: { job?: IBackgroundCompaction; failedAt?: number } = {};
+		/** The summary the next compaction will use, written while the agent works (pi-durable). */
+		const startBackgroundCompaction = (messages: readonly INativeLoopMessage[]) => {
+			const boundary = compactionBoundary(messages, Math.floor(effectiveWindow(compactionPolicy) * 0.25));
+			if (boundary <= 0) {
+				return;
+			}
+			const cts = new CancellationTokenSource(cancel);
+			const job: IBackgroundCompaction = {
+				boundary,
+				compactions,
+				cts,
+				done: false,
+				summary: this.inContextSummary(messages.slice(), { files: state.ledger.summary(), todo: state.todo }, { provider, profile, apiKey, item, system: turn.prompt, token: cts.token, cached }),
+			};
+			void job.summary.finally(() => {
+				job.done = true;
+			});
+			background.job = job;
+			this.logService.info(`[volt] started a background compaction summary in ${session.sessionId}`);
+		};
+		/** Near the context limit: place the background summary once it is in, or wait for it (or compact) at the limit. */
+		const compactIfDue = async (messages: INativeLoopMessage[], estimate: number): Promise<boolean> => {
+			let job = background.job;
+			if (job && job.compactions !== compactions) {
+				job.cts.dispose(true);
+				job = background.job = undefined;
+			}
+			const due = shouldCompact(estimate, compactionPolicy);
+			if (job && (job.done || due)) {
+				background.job = undefined;
+				const summary = await job.summary;
+				job.cts.dispose();
+				if (summary && job.compactions === compactions && job.boundary < messages.length && !cancel.isCancellationRequested) {
+					return compact(messages, false, { boundary: job.boundary, summary });
+				}
+				// It failed: the next attempt is the regular one, at the limit.
+				background.failedAt = compactions;
+				return due && !cancel.isCancellationRequested ? compact(messages, false) : false;
+			}
+			if (due) {
+				return compact(messages, false);
+			}
+			if (!job && background.failedAt !== compactions && shouldCompactEarly(estimate, compactionPolicy)) {
+				startBackgroundCompaction(messages);
+			}
+			return false;
+		};
+		// Where this run's own messages start, for the reflection after it.
+		const runFrom = transcript.length;
 		run.metrics.mark('prompt');
 		try {
 			const result = await runDeepseekLoop({
@@ -2645,13 +2882,28 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					tools: schemas,
 					...(streamOptions?.maxOutputTokens ? { maxOutputTokens: streamOptions.maxOutputTokens } : {}),
 				}, token)),
-				execute: (calls, onResult) => runToolBatch(registry, calls, {
-					cwd,
-					signal: abortSignalFrom(cancel),
-					sessionId: session.sessionId,
-					mode: request.mode,
-					emit: event => this.onToolEvent(session, run, state, event),
-				}, { authorize: async () => ({ allow: true }), onResult, locks: state.locks }),
+				execute: (calls, onResult) => {
+					// The model's calls are on disk before they run, and each result as it lands.
+					for (const call of calls) {
+						dispatched.add(call.id);
+					}
+					checkpoint();
+					return runToolBatch(registry, calls, {
+						cwd,
+						signal: abortSignalFrom(cancel),
+						sessionId: session.sessionId,
+						mode: request.mode,
+						emit: event => this.onToolEvent(session, run, state, event),
+					}, {
+						authorize: async () => ({ allow: true }),
+						onResult: result => {
+							finished.set(result.callId, result);
+							checkpoint();
+							onResult?.(result);
+						},
+						locks: state.locks,
+					});
+				},
 				authorize: call => this.authorizeDeepseek(session, run.runId, profile, call, registry.get(call.name)),
 				preauthorize: call => this.preauthorizeDeepseek(session, run.runId, profile, call, registry.get(call.name)),
 				emit,
@@ -2665,31 +2917,47 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						return;
 					}
 					state.ledger.nextStep();
+					// The last batch's results are in the transcript now.
+					finished.clear();
+					dispatched.clear();
 					// Old screenshots are pruned in batches, so the cached prompt prefix rarely changes.
-					pruneImages(messages);
-					this.journal.schedule(session.sessionId, journal);
+					let edited = pruneImages(messages) > 0;
 					if (step > 1 || messages.length > 2) {
 						let estimate = Math.max(state.promptTokens, estimateTokens(turn.prompt) + totalTokens(messages));
 						// Anthropic's own API clears old tool results server-side; everyone else gets the same here.
 						if (!serverClearsToolResults) {
+							const before = messages.slice();
 							const freed = clearOldToolResults(messages, estimate, contextWindow);
 							if (freed) {
+								edited = true;
+								// What was cleared stays in storage, where search_history finds it.
+								void this.journal.archive(session.sessionId, before.filter((message, i) => message !== messages[i]
+									&& ((message.role === 'tool' && message.content !== messages[i].content) || (message.role === 'assistant' && message.toolCalls !== messages[i].toolCalls))));
 								estimate = Math.max(state.promptTokens - freed, estimateTokens(turn.prompt) + totalTokens(messages));
 								this.logService.info(`[volt] cleared ${freed} tokens of old tool results in ${session.sessionId}`);
 							}
 						}
-						if (shouldCompact(estimate, { window: contextWindow, ...DEFAULT_COMPACTION })) {
-							await compact(messages, false);
-						}
+						edited = await compactIfDue(messages, estimate) || edited;
 					}
+					if (edited) {
+						this.journal.invalidate(session.sessionId);
+					}
+					checkpoint();
 				},
-				recoverOverflow: messages => compact(messages, true),
+				onResponse: () => checkpoint(),
+				recoverOverflow: async messages => {
+					const shrank = await compact(messages, true);
+					if (shrank) {
+						this.journal.invalidate(session.sessionId);
+					}
+					return shrank;
+				},
 				reviewCompletion: modePolicy(request.mode).allowWrites ? input => this.reviewNativeCompletion(session, run, state, input.attempt) : undefined,
 			}, {
 				messages: transcript,
 				token: cancel,
 				isPaused: () => !!session.paused,
-				claimInbox: () => this.isCurrent(session, run) ? state.inbox.splice(0, state.inbox.length) : [],
+				claimInbox: () => this.isCurrent(session, run) ? claimInbox(state) : [],
 				controller: {
 					afterStep: async step => {
 						const directive = await this.afterNativeStep(session, run, state, step);
@@ -2724,18 +2992,105 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				void this.hooks.run('stop', hookContext(), protocol => protocol === 'claude' ? { stop_hook_active: false } : { status: aborted ? 'aborted' : 'error', loop_count: this.hookFollowups.get(session.sessionId) ?? 0 });
 			}
 			this.finish(session, run, aborted ? 'abort' : result.outcome === 'fail' ? 'fail' : 'done', !aborted && result.outcome === 'budget' ? 'steps' : undefined);
+			if (!aborted) {
+				// A compaction moved the run's start: the kept transcript is then the record.
+				void this.reflectOnRun(session, transcript, compactions ? 0 : runFrom, { outcome: result.outcome, writes: modePolicy(request.mode).allowWrites }, { provider, profile, apiKey, item });
+			}
 		} catch (err) {
 			if (this.isCurrent(session, run)) {
 				this.emit(session, run.runId, { type: 'error', message: err instanceof Error ? err.message : String(err), retryable: true });
 				this.finish(session, run, cancel.isCancellationRequested ? 'abort' : 'fail');
 			}
 		} finally {
+			background.job?.cts.dispose(true);
 			if (session.run === run) {
 				state.synced = Math.max(state.synced, session.messages.length);
 			}
 			// Always the session's transcript, never this run's detached copy.
 			void this.journal.schedule(session.sessionId, journal, true);
 		}
+	}
+
+	/**
+	 * A crash cut the last run off while tools ran (the live log names them). Each call gets its
+	 * result before the model hears anything else, right after the call: the ones safe to run twice
+	 * run again now, saving the model a round trip, and the rest are reported as cut off, so it
+	 * checks their effect instead of repeating a write or a command blindly.
+	 */
+	private async replayInterrupted(session: ISessionState, run: IRunState, state: INativeState, interrupted: { readonly running: readonly string[]; readonly pending: readonly string[] }, registry: ReadonlyMap<string, IVoltTool>, context: Omit<IToolContext, 'signal'>, approve: (call: IToolCall) => Promise<ApprovalOutcome>): Promise<void> {
+		const messages = state.messages;
+		const unstarted = new Set(interrupted.pending);
+		const wanted = new Set([...interrupted.running, ...interrupted.pending]);
+		const at = messages.findLastIndex(message => message.role === 'assistant' && !!message.toolCalls?.some(call => wanted.has(call.id)));
+		if (at < 0) {
+			return;
+		}
+		let end = at + 1;
+		const answered = new Set<string>();
+		for (; end < messages.length && messages[end].role === 'tool'; end++) {
+			answered.add(messages[end].callId ?? '');
+		}
+		const open = messages[at].toolCalls!.filter(call => wanted.has(call.id) && !answered.has(call.id));
+		if (!open.length) {
+			return;
+		}
+		const cut = open.filter(call => !unstarted.has(call.id));
+		const safe = cut.filter(call => isReplaySafe(registry.get(call.name)));
+		const results = new Map<string, IToolResult>();
+		/** Why a call that waited for approval did not run, when it was not approved this time. */
+		const refused = new Map<string, string>();
+		// Quick calls get a time cap; a resumable one (a subagent) carries on its own work for as long as it takes.
+		const replay = async (calls: readonly IToolCall[], capMs: number | undefined) => {
+			if (!calls.length) {
+				return;
+			}
+			const controller = new AbortController();
+			const timer = capMs ? setTimeout(() => controller.abort(), capMs) : undefined;
+			const cancelled = run.cancel.token.onCancellationRequested(() => controller.abort());
+			try {
+				for (const result of await runToolBatch(registry, calls, { ...context, signal: controller.signal }, { authorize: async () => ({ allow: true }), locks: state.locks })) {
+					if (result && !controller.signal.aborted) {
+						results.set(result.callId, result);
+					}
+				}
+			} catch (err) {
+				this.logService.trace('[volt] replaying cut-off tool calls failed', err);
+			} finally {
+				clearTimeout(timer);
+				cancelled.dispose();
+			}
+		};
+		// Calls that waited for approval never ran: they are asked about again and run like any call.
+		const reapprove = async () => {
+			const calls = open.filter(call => unstarted.has(call.id));
+			const decisions = await Promise.all(calls.map(approve));
+			const allowed = calls.filter((call, i) => {
+				const decision = decisions[i];
+				if (decision !== 'allowed-once') {
+					refused.set(call.id, decision === 'cancelled' ? 'Cancelled.' : decision === 'unavailable' ? 'Approval was unavailable.' : 'Blocked by Volt access policy.');
+				}
+				return decision === 'allowed-once';
+			});
+			if (allowed.some(call => !registry.get(call.name)?.parallelSafe)) {
+				await turnWriteGate(session.sessionId);
+			}
+			await replay(allowed, undefined);
+		};
+		await Promise.all([
+			replay(safe.filter(call => !registry.get(call.name)?.resumable), REPLAY_TIMEOUT_MS),
+			replay(safe.filter(call => registry.get(call.name)?.resumable), undefined),
+			reapprove(),
+		]);
+		if (!this.isCurrent(session, run) || state.messages !== messages) {
+			return;
+		}
+		messages.splice(end, 0, ...open.map(call => {
+			const result = results.get(call.id);
+			const content = refused.get(call.id) ?? (unstarted.has(call.id) ? NOT_STARTED_BEFORE_RESTART : INTERRUPTED_BY_RESTART);
+			return result ? nativeToolMessage(result) : { role: 'tool' as const, content, callId: call.id, name: call.name, isError: true };
+		}));
+		this.journal.invalidate(session.sessionId);
+		this.logService.info(`[volt] resumed ${session.sessionId} after a crash: ${results.size} of ${open.length} cut-off call(s) run again (${unstarted.size} had waited for approval)`);
 	}
 
 	/**
@@ -2835,7 +3190,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!step.wantsToFinish || !this.isCurrent(session, run)) {
 			return { kind: 'continue' };
 		}
-		const steered = state.inbox.splice(0, state.inbox.length);
+		const steered = claimInbox(state);
 		const gate = await this.qualityContinuation(session, run);
 		const message = [...steered, ...(gate ? [gate] : [])].join('\n\n');
 		return message ? { kind: 'inject', message } : { kind: 'continue' };
@@ -2946,9 +3301,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		readonly keepTokens?: number;
 		/** The run's own tools and options: the summary is then asked for on top of its cached prompt. */
 		readonly cached?: { readonly tools: IModelRequest['tools']; readonly options: IVoltModelOptions };
+		/** A summary already written in the background, and where it cuts. */
+		readonly prepared?: IPreparedCompaction;
 	}): Promise<boolean> {
 		const window = effectiveWindow({ window: input.contextWindow, ...DEFAULT_COMPACTION });
-		const boundary = compactionBoundary(messages, input.keepTokens ?? Math.floor(window * (input.aggressive ? 0.1 : 0.25)));
+		const boundary = input.prepared?.boundary ?? compactionBoundary(messages, input.keepTokens ?? Math.floor(window * (input.aggressive ? 0.1 : 0.25)));
 		if (boundary <= 0) {
 			return false;
 		}
@@ -2962,7 +3319,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			? { trigger: input.keepTokens !== undefined ? 'manual' : 'auto', custom_instructions: '' }
 			: { trigger: input.keepTokens !== undefined ? 'manual' : 'auto', context_tokens: preTokens });
 		// An overflowing prompt cannot carry the request on top of itself; that goes to the summarizer.
-		let summary = input.cached && !input.aggressive ? await this.inContextSummary(messages, carry, { ...input, cached: input.cached }) : undefined;
+		let summary = input.prepared?.summary ?? (input.cached && !input.aggressive ? await this.inContextSummary(messages, carry, { ...input, cached: input.cached }) : undefined);
 		if (!summary && !input.token.isCancellationRequested) {
 			try {
 				let text = '';
@@ -2986,7 +3343,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				this.logService.warn('[volt] compaction summary failed; using a mechanical summary', err);
 			}
 		}
-		const next = applyCompaction(messages, boundary, summary ?? mechanicalSummary(older, carry));
+		// Out of view, not out of storage: search_history reads it back.
+		void this.journal.archive(session.sessionId, older.filter(message => !isClearedToolResult(message)));
+		const next = applyCompaction(messages, boundary, summary ?? mechanicalSummary(older, carry), true);
 		messages.splice(0, messages.length, ...next);
 		state.ledger.invalidateReferences();
 		state.promptTokens = estimateTokens(input.system) + totalTokens(messages);
@@ -3058,7 +3417,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * follows its own instructions with its own model, may edit when it is not `readonly`, keeps to
 	 * its `tools:` list, and with `is_background` reports back later while the parent carries on.
 	 */
-	private async runSubagent(session: ISessionState, parent: INativeState, request: ISubagentRequest, ctx: IToolContext): Promise<{ text: string; isError?: boolean }> {
+	private async runSubagent(session: ISessionState, parent: INativeState, request: ISubagentRequest, ctx: IToolContext, restarted = false): Promise<{ text: string; isError?: boolean }> {
 		const definition = request.agent ? parent.instructions?.subagents?.find(agent => agent.name.toLowerCase() === request.agent!.toLowerCase()) : undefined;
 		const parentItem = this.catalog.find(c => c.ref === session.providerRef && c.enabled) ?? this.catalog.find(c => c.enabled);
 		const item = definition ? this.subagentModel(definition.model, parentItem) : parentItem;
@@ -3085,7 +3444,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return { text: `A hook did not let the ${label} subagent start: ${started.blocked ?? started.stopRun}`, isError: true };
 		}
 		const apiKey = await this.apiKey(profile);
-		const background = !!definition?.background;
+		// A background one restarted after a crash stays in the background, whatever its file says now.
+		const background = restarted || !!definition?.background;
 		const allowed = this.subagentToolNames(request, definition, background);
 		const writes = !!definition && !definition.readonly;
 		const tools = this.workspaceTools(session, { ...parent, ledger: new FileLedger() })
@@ -3115,6 +3475,35 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				this.emit(session, runId, { type: 'tool.progress', callId: ctx.callId, status: `${request.description}: ${status}` });
 			}
 		};
+		// Its transcript is saved step by step under the call's id (pi-durable's owned child): after a
+		// crash the same call, re-run when the chat resumes, carries on from there instead of starting over.
+		const journalId = ctx.callId ? subagentJournalId(session.sessionId, ctx.callId) : undefined;
+		if (journalId && this.liveBackground.has(journalId)) {
+			return { text: `The ${label} subagent is already working in the background.` };
+		}
+		const resumed = journalId ? resumedSubagent(await this.journal.load(journalId)) : {};
+		if (journalId && resumed.report !== undefined) {
+			void this.journal.delete(journalId);
+			if (background) {
+				this.deliverBackgroundReport(session, run, parent, label, { text: resumed.report }, journalId);
+				return { text: `The ${label} subagent had already finished; its report is in.` };
+			}
+			return { text: resumed.report };
+		}
+		if (resumed.messages) {
+			progress('continuing after a restart');
+			this.logService.info(`[volt] resumed the ${label} subagent of ${session.sessionId} from its saved transcript (${resumed.messages.length} messages)`);
+		}
+		const transcript: INativeLoopMessage[] = resumed.messages ?? [{ role: 'user', content: request.prompt }];
+		const subagentWindow = item.capabilities.contextWindow || DEFAULT_MODEL_CAPABILITIES.contextWindow;
+		const childEntry = (): INativeJournalEntry => ({ version: 1, messages: transcript, synced: 0, savedAt: Date.now() });
+		const finishedCalls = new Map<string, IToolResult>();
+		const startedCalls = new Set<string>();
+		const save = () => {
+			if (journalId) {
+				this.journal.log(journalId, childEntry, () => withRunningCalls(childEntry(), finishedCalls, startedCalls));
+			}
+		};
 		const work = async (): Promise<{ text: string; isError?: boolean }> => {
 			try {
 				const result = await runDeepseekLoop({
@@ -3126,14 +3515,39 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						options,
 						tools: toolSchemas(tools),
 					}, source.token),
-					execute: (calls, onResult) => runToolBatch(registry, calls, {
-						cwd: root?.fsPath,
-						signal: abortSignalFrom(source.token),
-						sessionId: session.sessionId,
-						mode: writes ? session.mode : 'ask',
-						// Its edits count as the chat's changes (review, diagnostics), without drawing its tool cards.
-						...(writes ? { emit: (event: { type: string;[key: string]: unknown }) => { if (event.type === 'file.change') { this.onToolEvent(session, run, parent, event); } } } : {}),
-					}, { authorize: async () => ({ allow: true }), onResult, locks: parent.locks }),
+					execute: (calls, onResult) => {
+						for (const call of calls) {
+							startedCalls.add(call.id);
+						}
+						save();
+						return runToolBatch(registry, calls, {
+							cwd: root?.fsPath,
+							signal: abortSignalFrom(source.token),
+							sessionId: session.sessionId,
+							mode: writes ? session.mode : 'ask',
+							// Its edits count as the chat's changes (review, diagnostics), without drawing its tool cards.
+							...(writes ? { emit: (event: { type: string;[key: string]: unknown }) => { if (event.type === 'file.change') { this.onToolEvent(session, run, parent, event); } } } : {}),
+						}, {
+							authorize: async () => ({ allow: true }),
+							onResult: result => {
+								finishedCalls.set(result.callId, result);
+								save();
+								onResult?.(result);
+							},
+							locks: parent.locks,
+						});
+					},
+					prepareTurn: async messages => {
+						finishedCalls.clear();
+						startedCalls.clear();
+						// A long subagent compacts like the main agent, so it never runs out of context.
+						if (shouldCompact(estimateTokens(system.content) + totalTokens(messages), { window: subagentWindow, ...DEFAULT_COMPACTION })) {
+							await this.compactSubagent(messages, { provider, profile, apiKey, item, system: system.content, window: subagentWindow, token: source.token, cached: { tools: toolSchemas(tools), options } });
+						}
+						save();
+					},
+					recoverOverflow: messages => this.compactSubagent(messages, { provider, profile, apiKey, item, system: system.content, window: subagentWindow, token: source.token, aggressive: true }),
+					onResponse: () => save(),
 					// A subagent that edits asks for approval like the main agent; a read-only one never needs to.
 					authorize: async call => writes
 						? this.authorizeDeepseek(session, runId, profile, call, registry.get(call.name))
@@ -3148,10 +3562,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					cwd: root?.fsPath,
 					sessionId: session.sessionId,
 				}, {
-					messages: [{ role: 'user', content: request.prompt }],
+					messages: transcript,
 					token: source.token,
 					budget: writes ? { maxToolCalls: 200, maxModelCalls: 60 } : { maxToolCalls: 80, maxModelCalls: 30 },
 				});
+				// Its report goes into the parent's transcript now; a stop leaves the copy (the call is not re-run).
+				if (journalId && result.outcome !== 'abort') {
+					void this.journal.delete(journalId);
+				}
 				const text = result.assistant.trim();
 				let report: { text: string; isError?: boolean };
 				if (result.outcome === 'abort') {
@@ -3171,8 +3589,125 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!background) {
 			return work();
 		}
-		void work().then(report => this.deliverBackgroundReport(session, run, parent, label, report), err => this.deliverBackgroundReport(session, run, parent, label, { text: err instanceof Error ? err.message : String(err), isError: true }));
+		// It is on the chat's saved list until its report is in: a crash starts it again from its transcript.
+		if (journalId) {
+			this.liveBackground.add(journalId);
+			parent.background = [...(parent.background ?? []).filter(agent => agent.id !== journalId), { id: journalId, callId: ctx.callId!, label, request }];
+			void this.journal.schedule(session.sessionId, () => journalEntry(parent), true);
+		}
+		void work().then(report => this.deliverBackgroundReport(session, run, parent, label, report, journalId), err => this.deliverBackgroundReport(session, run, parent, label, { text: err instanceof Error ? err.message : String(err), isError: true }, journalId));
 		return { text: `Started the ${label} subagent in the background. Its report will arrive as a message when it finishes; carry on with other work meanwhile.` };
+	}
+
+	/**
+	 * A subagent's compaction: the summary on top of its own cached request (the separate summarizer
+	 * when that fails or the prompt overflowed), then its kept tail. Nothing is shown in the parent's
+	 * chat; the subagent just keeps going. Returns true when the transcript shrank.
+	 */
+	private async compactSubagent(messages: INativeLoopMessage[], input: {
+		readonly provider: IModelProvider;
+		readonly profile: IProviderProfile;
+		readonly apiKey: string | undefined;
+		readonly item: IVoltCatalogItem;
+		readonly system: string;
+		readonly window: number;
+		readonly token: CancellationToken;
+		readonly aggressive?: boolean;
+		readonly cached?: { readonly tools: IModelRequest['tools']; readonly options: IVoltModelOptions };
+	}): Promise<boolean> {
+		const window = effectiveWindow({ window: input.window, ...DEFAULT_COMPACTION });
+		const boundary = compactionBoundary(messages, Math.floor(window * (input.aggressive ? 0.1 : 0.25)));
+		if (boundary <= 0) {
+			return false;
+		}
+		const older = messages.slice(0, boundary);
+		const carry: ICarryForward = {};
+		let summary = input.cached && !input.aggressive ? await this.inContextSummary(messages, carry, { ...input, cached: input.cached }) : undefined;
+		if (!summary && !input.token.isCancellationRequested) {
+			try {
+				let text = '';
+				for await (const event of watchedStream(token => input.provider.stream({
+					modelId: input.item.id,
+					messages: [
+						{ role: 'system', content: COMPACTION_SYSTEM },
+						{ role: 'user', content: compactionRequest(serializeForSummary(older), carry) },
+					],
+					profile: input.profile,
+					apiKey: input.apiKey,
+					options: { ...this.resolvedOptions(input.item, undefined), [MODEL_OPTION_REASONING]: 'low' },
+					maxOutputTokens: 8_000,
+				}, token), input.token)) {
+					if (event.type === 'text.delta' && event.delta) {
+						text += event.delta;
+					}
+				}
+				summary = text.trim() || undefined;
+			} catch (err) {
+				this.logService.warn('[volt] subagent compaction summary failed; using a mechanical summary', err);
+			}
+		}
+		messages.splice(0, messages.length, ...applyCompaction(messages, boundary, summary ?? mechanicalSummary(older, carry)));
+		return true;
+	}
+
+	/**
+	 * The experience reflector (Harness2): after a substantial run, one cheap side request reads its
+	 * record and keeps at most one lesson with evidence as a project memory, or nothing. Off with
+	 * `volt.agent.learnFromRuns`.
+	 */
+	private async reflectOnRun(session: ISessionState, messages: readonly INativeLoopMessage[], from: number, run: { readonly outcome: 'done' | 'fail' | 'abort' | 'budget'; readonly writes: boolean }, input: {
+		readonly provider: IModelProvider;
+		readonly profile: IProviderProfile;
+		readonly apiKey: string | undefined;
+		readonly item: IVoltCatalogItem;
+	}): Promise<void> {
+		if (this.configurationService.getValue<boolean>(LEARN_FROM_RUNS_SETTING) === false || this.reflecting.has(session.sessionId)) {
+			return;
+		}
+		const own = messages.slice(from);
+		const toolCalls = own.reduce((count, message) => count + (message.toolCalls?.length ?? 0), 0);
+		const toolErrors = own.filter(message => message.role === 'tool' && message.isError).length;
+		if (!shouldReflect({ ...run, toolCalls, toolErrors })) {
+			return;
+		}
+		this.reflecting.add(session.sessionId);
+		try {
+			let text = '';
+			for await (const event of watchedStream(token => input.provider.stream({
+				modelId: input.item.id,
+				messages: [
+					{ role: 'system', content: EXPERIENCE_SYSTEM },
+					{ role: 'user', content: experienceRequest(experienceRecord(messages, from)) },
+				],
+				profile: input.profile,
+				apiKey: input.apiKey,
+				options: { ...this.resolvedOptions(input.item, undefined), [MODEL_OPTION_REASONING]: 'low' },
+				maxOutputTokens: 2_000,
+			}, token), CancellationToken.None)) {
+				if (event.type === 'text.delta' && event.delta) {
+					text += event.delta;
+				}
+			}
+			const experience = parseExperience(text);
+			if (!experience) {
+				this.logService.info(`[volt] reflection on ${session.sessionId}: nothing worth keeping`);
+				return;
+			}
+			const draft = lessonMemory(experience, await this.memory.list('project'));
+			if (draft) {
+				await this.memory.write(draft);
+				this.logService.info(`[volt] reflection on ${session.sessionId} kept a lesson: ${draft.description}`);
+			}
+		} catch (err) {
+			this.logService.trace('[volt] run reflection failed', err);
+		} finally {
+			this.reflecting.delete(session.sessionId);
+		}
+	}
+
+	/** Whose app state a chat shares: its project (the folder it works in), or this machine's when it has none. */
+	private appStateKey(session: ISessionState): string {
+		return this.executionRoot(session)?.toString() ?? 'no-folder';
 	}
 
 	/** The tools a subagent gets: built-ins read only; a defined one by its `tools:` list or its read/write setting. */
@@ -3194,7 +3729,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			names = readOnly;
 		} else {
 			// Everything the main agent has, except starting more subagents and asking the user mid-way in the background.
-			names = new Set(['read_file', 'list_dir', 'edit_file', 'write_file', 'delete_file', 'grep', 'glob', 'diagnostics', 'code_nav', 'shell', 'job_output', 'job_wait', 'job_stop', 'git_status', 'git_diff', 'git_log', 'git_show', 'web_search', 'web_fetch', 'skill', 'todo', ...(background ? [] : [NATIVE_ASK_QUESTION_TOOL_NAME])]);
+			names = new Set(['read_file', 'list_dir', 'edit_file', 'write_file', 'delete_file', 'grep', 'glob', 'diagnostics', 'code_nav', 'shell', 'job_output', 'job_wait', 'job_stop', 'git_status', 'git_diff', 'git_log', 'git_show', 'web_search', 'web_fetch', 'skill', 'todo', 'state_read', 'state_update', ...(background ? [] : [NATIVE_ASK_QUESTION_TOOL_NAME])]);
 		}
 		if (definition.readonly) {
 			names = new Set([...names].filter(name => readOnly.has(name)));
@@ -3218,8 +3753,16 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/** A background subagent's report goes to the chat's agent while it runs, else onto the chat as a notice. */
-	private deliverBackgroundReport(session: ISessionState, run: IRunState, parent: INativeState, label: string, report: { text: string; isError?: boolean }): void {
+	private deliverBackgroundReport(session: ISessionState, run: IRunState, parent: INativeState, label: string, report: { text: string; isError?: boolean }, id?: string): void {
 		const message = `<subagent_report name="${label}"${report.isError ? ' status="error"' : ''}>\n${report.text}\n</subagent_report>`;
+		if (id) {
+			// Off the list and owed to the agent, in one save: a crash now delivers it once, never twice or never.
+			this.liveBackground.delete(id);
+			void this.journal.delete(id);
+			parent.background = parent.background?.filter(agent => agent.id !== id);
+			(parent.reports ??= new Set()).add(message);
+			void this.journal.schedule(session.sessionId, () => journalEntry(parent), true);
+		}
 		if (this.isCurrent(session, run) && !run.ended) {
 			parent.inbox.push(message);
 			this.emit(session, run.runId, { type: 'inbox', claimed: 0 });
@@ -3689,7 +4232,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		const token = run.cancel.token;
 		// A short list of the files the message names, found while the agent starts.
-		const retrieval = isCompactCommand(request.text) ? undefined : this.retrieveContext(session, run, request.text, true);
+		const retrieval = isCompactCommand(request.text) || isVoltNote(request.text) ? undefined : this.retrieveContext(session, run, request.text, true);
 		// Another model from the same CLI is another agent session: restart it; the recap carries the thread over.
 		const hasLiveAgent = () => !!session.agentHandle && session.agentProviderId === provider.id && session.agentRef === item.ref
 			&& session.agentCwd === this.executionRoot(session)?.fsPath && session.agentSandboxKey === this.sandboxKey(session.sessionId) && (provider.isLive?.(session.agentHandle) ?? true);
@@ -3797,8 +4340,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					}
 					turns.push(first.assistant);
 					let reason = first.reason;
-					// The agent wants to stop. Volt's checks may send it back once per reason.
-					while (reason === 'done' && !voltCompaction) {
+					let incomplete = first.incomplete;
+					// The agent wants to stop. Volt's checks may send it back once per reason. A run cut at its
+					// budget is not finished: the orchestrator continues it in a fresh run instead.
+					while (reason === 'done' && !incomplete && !voltCompaction) {
 						const message = await this.qualityContinuation(session, run) ?? await this.agentErrorGate(session, run);
 						if (!message || !this.isCurrent(session, run)) {
 							break;
@@ -3813,6 +4358,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						}
 						turns.push(next.assistant);
 						reason = next.reason;
+						incomplete = next.incomplete;
 					}
 					if (!this.isCurrent(session, run)) {
 						return;
@@ -3832,7 +4378,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						this.emit(session, run.runId, { type: 'compaction', stages: ['handoff'], dropped });
 						this.emit(session, run.runId, { type: 'notice', severity: 'info', title: 'Conversation compacted', description: 'The next message starts a fresh agent session that sees only this summary.' });
 					}
-					this.finish(session, run, reason);
+					this.finish(session, run, reason, incomplete);
 					return;
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
@@ -3867,13 +4413,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		let textId: string | undefined;
 		let restart = false;
 		let reason: 'done' | 'abort' | 'fail' | undefined;
+		let incomplete: 'steps' | undefined;
 		run.metrics.mark('prompt');
 		for await (const event of provider.send(handle, message, profile, token)) {
 			if (!this.isCurrent(session, run)) {
 				continue;
 			}
 			if (event.type === 'run.end') {
-				reason ??= event.reason;
+				if (!reason) {
+					reason = event.reason;
+					incomplete = event.incomplete;
+				}
 				continue;
 			}
 			if (event.type === 'error' && mayRestart && !token.isCancellationRequested && isAcpTurnRestartable(event.message)) {
@@ -3903,7 +4453,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (restart && reason !== 'done') {
 			return { kind: 'restart' };
 		}
-		return { kind: 'end', reason: reason ?? 'done', assistant };
+		return { kind: 'end', reason: reason ?? 'done', assistant, ...(incomplete ? { incomplete } : {}) };
 	}
 
 	/** A warm spare when one fits (or is about to), otherwise a cold start bound to this chat. */
@@ -4984,6 +5534,22 @@ const TITLE_TIMEOUT_MS = 30_000;
  * a different budget would miss the cached messages.
  */
 const IN_CONTEXT_SUMMARY_OUTPUT_TOKENS = 32_000;
+
+/** A compaction summary written ahead of time, and the first message it keeps. */
+interface IPreparedCompaction {
+	readonly boundary: number;
+	readonly summary: string;
+}
+
+/** A background compaction summary in flight (see `shouldCompactEarly`). */
+interface IBackgroundCompaction {
+	readonly boundary: number;
+	/** The run's compaction count when it started: after another compaction its boundary means nothing. */
+	readonly compactions: number;
+	readonly cts: CancellationTokenSource;
+	readonly summary: Promise<string | undefined>;
+	done: boolean;
+}
 
 /** Ollama, or a server on this machine (LM Studio, llama.cpp): one GPU, usually one request at a time. */
 function servedLocally(profile: IProviderProfile | undefined): boolean {

@@ -58,6 +58,12 @@ export interface IVoltTool {
 	readonly snippet: string;
 	/** Safe to run twice. Only these are retried after a transient failure. Defaults to `parallelSafe`. */
 	readonly idempotent?: boolean;
+	/**
+	 * Run again with the same call id after a crash cut it off, it continues the same work instead
+	 * of starting over (a subagent picks up its own saved transcript), so a resumed chat re-runs it
+	 * with no time cap. pi-durable's `replay: "safe"` subagent tool.
+	 */
+	readonly resumable?: boolean;
 	/** Hard ceiling for one call. The call's signal is aborted when it passes. */
 	readonly timeoutMs?: number;
 	execute(args: unknown, ctx: IToolContext): Promise<IToolResult>;

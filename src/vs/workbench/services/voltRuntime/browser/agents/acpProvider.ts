@@ -32,7 +32,7 @@ import { isVoltHostTool, IVoltHostToolService, IVoltMcpServer } from '../../comm
 import { AgentQuestionDraft, cursorAskQuestionResult, elicitationResult, elicitationToQuestions, IAgentQuestionResponse, parseQuestionDraft } from '../../common/questions.js';
 import { mapAcpToolKind } from '../../common/harness/workLog.js';
 import { ACP_IDLE_TIMINGS, ACP_STALL_NOTICE_TITLE, declaredToolWaitMs, IdleWatchdog, IIdleStageInfo, IIdleWatchdogTimings, IWatchdogClock, realWatchdogClock } from '../../common/harness/acpStall.js';
-import { ACP_RUN_BUDGET, IRunSupervisorOptions, RunSupervisor, SupervisorDirective } from '../../common/harness/supervisor.js';
+import { ACP_RUN_BUDGET, BUDGET_NOTICE_TITLE, IRunSupervisorOptions, RunSupervisor, SupervisorDirective } from '../../common/harness/supervisor.js';
 import { acpResourceBlock, AcpResourcePromptBlock } from '../../common/fileAttachments.js';
 import { isCursorPlanWall, isCursorPlanWallPrefix, isCursorTransientError, nextCursorFallback, normalizeCursorModelId } from '../../common/harness/cursorQuota.js';
 import { turnWriteGate } from '../../common/turnWriteGate.js';
@@ -1399,6 +1399,13 @@ export class AcpAgentProvider implements IAgentProvider {
 					break;
 				case 'stop':
 					this.logService.info(`[ACP] stopping ${this.id}: ${directive.reason}`);
+					if (directive.reason === 'budget') {
+						// A safety stop, not a failure: the run ends at its budget and Volt continues it in a
+						// fresh one at once (Keep working), as it does a native run at its step limit.
+						turn.push({ type: 'notice', severity: 'info', title: BUDGET_NOTICE_TITLE, description: directive.message });
+						this.endTurn(live, turn, 'done', undefined, 'steps');
+						break;
+					}
 					this.endTurn(live, turn, 'fail', { message: directive.message, retryable: directive.retryable });
 					break;
 			}
@@ -1594,7 +1601,7 @@ export class AcpAgentProvider implements IAgentProvider {
 	}
 
 	/** Queues the turn's last events. A prompt still in flight is cancelled; the next turn waits for it to settle. */
-	private endTurn(live: IAcpSession, turn: AcpPromptTurn, reason: 'done' | 'abort' | 'fail', error?: { message: string; retryable: boolean }): void {
+	private endTurn(live: IAcpSession, turn: AcpPromptTurn, reason: 'done' | 'abort' | 'fail', error?: { message: string; retryable: boolean }, incomplete?: 'steps'): void {
 		if (turn.ended) {
 			return;
 		}
@@ -1602,7 +1609,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (error) {
 			turn.push({ type: 'error', message: error.message, retryable: error.retryable });
 		}
-		turn.push({ type: 'run.end', runId: turn.runId, reason });
+		turn.push({ type: 'run.end', runId: turn.runId, reason, ...(incomplete ? { incomplete } : {}) });
 		turn.watchdog.dispose();
 		if (turn.promptCts) {
 			this.cancelTurn(live, turn, 'end');

@@ -11,7 +11,7 @@ import { modePolicy, VoltMode } from '../modes.js';
  * It is high enough that a long task finishes unattended, and the doom-loop detector catches
  * spinning long before it is reached.
  */
-export const DEEPSEEK_BUDGET = { maxToolCalls: 500, maxModelCalls: 150 } as const;
+export const DEEPSEEK_BUDGET = { maxToolCalls: 1000, maxModelCalls: 300 } as const;
 
 export interface IDeepseekToolRef {
 	readonly name: string;

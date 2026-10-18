@@ -17,7 +17,7 @@ export interface IMcpToolInfo {
 	readonly name: string;
 	readonly description?: string;
 	readonly inputSchema?: object;
-	readonly annotations?: { readonly readOnlyHint?: boolean; readonly destructiveHint?: boolean; readonly title?: string };
+	readonly annotations?: { readonly readOnlyHint?: boolean; readonly destructiveHint?: boolean; readonly idempotentHint?: boolean; readonly title?: string };
 }
 
 export function parseMcpConfig(text: string, variables: Record<string, string>): McpServerConfig[] {

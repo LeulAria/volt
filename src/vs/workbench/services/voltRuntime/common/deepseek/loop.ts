@@ -7,7 +7,7 @@ import { CancellationToken, CancellationTokenSource } from '../../../../../base/
 import { localize } from '../../../../../nls.js';
 import { IVoltEvent } from '../events.js';
 import { ILoopDetectorOptions, LoopDetector, LoopSignal, LoopVerdict } from '../harness/doomLoop.js';
-import { dropBoundReasoning } from '../harness/nativeCompaction.js';
+import { dropBoundReasoning, latestUserRequest } from '../harness/nativeCompaction.js';
 import { INativeLoopMessage } from '../harness/nativeLoop.js';
 import { toLoopStep } from '../harness/progress.js';
 import { createLoopDetector } from '../harness/recovery.js';
@@ -63,6 +63,12 @@ export interface IDeepseekHost {
 	readonly streamTimeouts?: IDeepseekStreamTimeouts;
 	/** Before each model call. Compaction happens here, in place, at a single boundary. */
 	prepareTurn?(messages: INativeLoopMessage[], step: number): Promise<void>;
+	/**
+	 * The model's tool-calling answer is in the transcript, before any of its calls is approved or
+	 * run: the host saves it now (pi-durable commits the answer first), so a crash while a call
+	 * waits for a person loses neither the answer nor the wait.
+	 */
+	onResponse?(messages: readonly INativeLoopMessage[]): void;
 	/** The provider said the prompt no longer fits. Returns true when the transcript shrank. */
 	recoverOverflow?(messages: INativeLoopMessage[]): Promise<boolean>;
 	/**
@@ -141,6 +147,12 @@ const MAX_STREAM_RETRIES = 3;
 const MAX_LENGTH_RECOVERIES = 2;
 const MAX_STALL_RECOVERIES = 2;
 const MAX_COMPLETION_REVIEWS = 2;
+/**
+ * Tool steps after a send-back that make a new stretch of work: the completion checks are back
+ * then. Without it, an hours-long run spent its two in the first few minutes and every later
+ * "I'm done" went through unchecked.
+ */
+const REVIEW_RESET_STEPS = 3;
 const FALLBACK_MAX_OUTPUT = 128_000;
 /** Streamed text is checked for runaway repetition each time it grows by this much. */
 const TEXT_CHECK_CHARS = 1_024;
@@ -156,7 +168,7 @@ const CONTINUE: DeepseekDirective = { kind: 'continue' };
  * Fast paths: live chunks are emitted as they arrive; a read-only call whose arguments are
  * complete starts while the model is still writing; approvals are decided together; each card
  * completes when its own call does. Reliability: a failed stream is retried before anything was
- * shown, a stalled stream is abandoned and continued, an overflowing prompt is compacted once, and
+ * shown, a stalled stream is abandoned and continued, an overflowing prompt is compacted, and
  * a cut-off turn continues with a larger output limit. Supervision: the loop detector nudges a
  * looping model once per pattern and stops the run if it keeps going; a host controller sees every
  * step. The model decides when the turn is over; the host may send it back once or twice.
@@ -175,6 +187,8 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 	let overflowRecovered = false;
 	let reviews = 0;
 	let gateInjections = 0;
+	/** Tool steps since the model was last sent back to work. */
+	let workSinceSendBack = 0;
 
 	const stopped = (stop: IDeepseekStop, outcome: 'done' | 'fail'): IDeepseekLoopResult => ({ outcome, assistant: lastAssistant, messages, stopped: stop });
 
@@ -194,6 +208,7 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 		}
 		const back = [nudge, sendBack].filter((text): text is string => !!text);
 		if (back.length) {
+			workSinceSendBack = 0;
 			messages.push({ role: 'user', content: back.join('\n\n') });
 			return 'continue';
 		}
@@ -291,7 +306,11 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 			host.emit({ type: 'error', message: errorText(error), retryable });
 			return { outcome: 'fail', assistant: lastAssistant, messages };
 		}
+		// Recovery budgets are per streak: a long run meets a stall or an overflow every so often, and
+		// one that went through earns the next its full retries.
 		streamRetries = 0;
+		stallRecoveries = 0;
+		overflowRecovered = false;
 		lastAssistant = streamed.assistant || lastAssistant;
 		if (streamed.finish === 'error') {
 			await eager.settle();
@@ -326,8 +345,13 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 		}
 
 		messages.push({ role: 'assistant', content: streamed.assistant, toolCalls: calls, ...(streamed.parts.length ? { parts: streamed.parts } : {}) });
+		host.onResponse?.(messages);
 		const outcome = await runCalls(host, calls, eager);
 		toolCalls += outcome.executed;
+		if (outcome.executed && ++workSinceSendBack >= REVIEW_RESET_STEPS) {
+			reviews = 0;
+			gateInjections = 0;
+		}
 		const contexts: string[] = [];
 		for (const result of outcome.results) {
 			messages.push({
@@ -385,15 +409,9 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 	return { outcome: 'abort', assistant: lastAssistant, messages };
 }
 
-/** The user's latest typed turn: the loop detector lets repetition it asks for through. */
+/** The user's latest typed turn, past Volt's continuations: the loop detector lets repetition it asks for through. */
 function latestRequest(messages: readonly INativeLoopMessage[]): string {
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const message = messages[i];
-		if (message.role === 'user' && message.turn) {
-			return message.content;
-		}
-	}
-	return [...messages].reverse().find(message => message.role === 'user')?.content ?? '';
+	return latestUserRequest(messages) ?? '';
 }
 
 /** A controller that throws must not take the run down with it. */

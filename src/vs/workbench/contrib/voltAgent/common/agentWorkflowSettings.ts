@@ -10,6 +10,7 @@ import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING } from '../
 import { HANDOFF_BUDGET_PERCENT_SETTING, HANDOFF_DEFAULT_MAX_TOKENS, HANDOFF_DEFAULT_PERCENT, HANDOFF_MAX_TOKENS_SETTING, HANDOFF_MIN_TOKENS } from '../../../services/voltRuntime/common/contextHandoff.js';
 import { DEFAULT_ORCH_LIMITS, ORCH_KEEP_WORKING_SETTING, ORCH_LIMIT_MAX, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING } from '../../../services/voltRuntime/common/orchestration/limitRecovery.js';
+import { LEARN_FROM_RUNS_SETTING } from '../../../services/voltRuntime/common/harness/experience.js';
 
 export { ORCH_MAX_PARALLEL_SETTING as AGENT_MULTITASK_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING as AGENT_MULTITASK_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING as AGENT_MULTITASK_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING as AGENT_RESUME_AFTER_RESTART_SETTING, ORCH_KEEP_WORKING_SETTING as AGENT_KEEP_WORKING_SETTING, COMPACT_OLD_THREADS_SETTING as AGENT_COMPACT_OLD_THREADS_SETTING, LIMIT_AUTO_RESUME_SETTING as AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING };
 
@@ -23,15 +24,20 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			default: true,
 			description: localize('voltAgent.keepWorking', "Keep agents working until the task is done. When a chat's work stops part way (an error past the quick retries, an agent that crashed or stopped responding, Volt restarting or crashing, many automatic wake-ups in a row), Volt restarts it on its own: after 15 seconds, then waiting longer each time, at most 30 minutes apart, for as long as it takes. A turn that ends with its plan unfinished continues while it makes progress. Stopping a chat, or sending it something else, ends this. Usage limits are handled by their own settings."),
 		},
+		[LEARN_FROM_RUNS_SETTING]: {
+			type: 'boolean',
+			default: true,
+			description: localize('voltAgent.learnFromRuns', "Learn from finished work. After a long run, or one that got past errors, Volt reads what it did and keeps at most one lesson backed by what happened (a command this project really needs, the fix for an error that came back) as a project memory, so later chats do not pay to discover it again. Usually nothing is kept. Each reflection is one small request to the chat's model."),
+		},
 		[ORCH_RESUME_AFTER_RESTART_SETTING]: {
 			type: 'string',
 			enum: ['off', 'subagents', 'all'],
 			enumDescriptions: [
 				localize('voltAgent.resumeAfterRestart.off', "Nothing continues by itself. Interrupted chats and delegated tasks show Resume."),
 				localize('voltAgent.resumeAfterRestart.subagents', "Delegated tasks that were running continue, so the chat waiting for their reports gets them. Your own chats show Resume."),
-				localize('voltAgent.resumeAfterRestart.all', "Every chat and delegated task that was running continues."),
+				localize('voltAgent.resumeAfterRestart.all', "Every chat and delegated task that was running continues at once, from its last finished step."),
 			],
-			default: 'subagents',
+			default: 'all',
 			description: localize('voltAgent.resumeAfterRestart', "What continues on its own when Volt restarts while agents are working. A turn continues through at most two restarts in a row."),
 		},
 		[ORCH_MAX_PARALLEL_SETTING]: {

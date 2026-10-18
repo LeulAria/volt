@@ -57,6 +57,8 @@ export type VoltMemoryImport = 'imported' | 'exists' | 'empty';
 export const MEMORY_BODY_LIMIT = 8_000;
 const NAME_LIMIT = 80;
 const DESCRIPTION_LIMIT = 200;
+/** Names of the lessons the experience reflector writes (`common/harness/experience.ts`). */
+export const LEARNED_LESSON_PREFIX = 'lesson-';
 const INDEX_ENTRIES = 60;
 const INDEX_CHARS = 4_000;
 const HOOK_CHARS = 140;
@@ -290,7 +292,9 @@ export function memoryDescriptionFromReply(text: string): string {
 export function renderMemoryIndex(memories: readonly IVoltMemory[]): string[] {
 	const lines: string[] = [];
 	let chars = 0;
-	const sorted = [...memories].sort((a, b) => a.scope.localeCompare(b.scope) || a.name.localeCompare(b.name));
+	// Lessons Volt learned from runs come after the notes people saved, so they never crowd one out.
+	const learned = (memory: IVoltMemory) => memory.name.startsWith(LEARNED_LESSON_PREFIX) ? 1 : 0;
+	const sorted = [...memories].sort((a, b) => learned(a) - learned(b) || a.scope.localeCompare(b.scope) || a.name.localeCompare(b.name));
 	for (const memory of sorted) {
 		if (lines.length >= INDEX_ENTRIES) {
 			break;

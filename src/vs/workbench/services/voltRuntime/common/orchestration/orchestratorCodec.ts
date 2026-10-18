@@ -206,6 +206,7 @@ function parseTurn(value: unknown): IOrchTurn | undefined {
 		...(num(turn.limitProbe) !== undefined ? { limitProbe: turn.limitProbe as number } : {}),
 		...(typeof turn.limitAuto === 'boolean' ? { limitAuto: turn.limitAuto } : {}),
 		...(num(turn.planOpen) !== undefined ? { planOpen: turn.planOpen as number } : {}),
+		...(num(turn.planStale) !== undefined ? { planStale: turn.planStale as number } : {}),
 	};
 }
 

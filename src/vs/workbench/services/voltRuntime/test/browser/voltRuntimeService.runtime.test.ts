@@ -6,6 +6,7 @@
 import assert from 'assert';
 import { DeferredPromise, timeout } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
+import { stringHash } from '../../../../../base/common/hash.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Event } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
@@ -209,7 +210,7 @@ suite('Agent runtime orchestration', () => {
 			await waitFor(() => !!ended(runId), `run ${runId} to end`);
 			return ended(runId)!.event as Extract<IVoltEvent, { type: 'run.end' }>;
 		};
-		return { service, internals, model, agent, stdio, events, ref, waitEnd, ended };
+		return { service, internals, model, agent, stdio, events, ref, waitEnd, ended, fileService };
 	}
 
 	test('a native run streams, ends done, keeps the reply and records its timings', async () => {
@@ -635,5 +636,58 @@ suite('Agent runtime orchestration', () => {
 		assert.ok(cut.maxOutputTokens && cut.maxOutputTokens >= 24_000, 'capped, but above any Claude thinking budget');
 		assert.ok(!separate.tools?.length, 'then the separate summarizer');
 		assert.ok(next.messages[1].content.includes('Separate summary') && !next.messages[1].content.includes('Cut off'));
+	});
+
+	/** Volt went down mid-run: the snapshot it left, and the chat's text history as the next window restores it. */
+	async function crashedChat(service: AgentRuntimeService, fileService: IFileService, id: string, entry: object, text: string): Promise<void> {
+		await fileService.writeFile(URI.file(`/user/voltNative/${id}.json`), VSBuffer.fromString(JSON.stringify({ version: 1, synced: 1, savedAt: 1, ...entry })));
+		service.seedSession('chat', [{ role: 'user', content: text }]);
+		untitled(service);
+	}
+
+	test('a call that waited for approval when Volt went down is asked about again, then runs once', async () => {
+		const { service, model, stdio, ref, waitEnd, fileService } = await setup('model');
+		await service.setAccessMode('full-access');
+		await crashedChat(service, fileService, 'chat', {
+			messages: [
+				{ role: 'user', content: 'run the tests', turn: true },
+				{ role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'shell', args: { command: 'npm test' } }] },
+			],
+			pending: ['c1'],
+		}, 'run the tests');
+		await waitEnd(await service.send('chat', { text: '[Volt] Volt restarted while you were working. Continue where you left off.', mode: 'agent', providerRef: ref }));
+		// RTK may wrap it: the command then travels in the environment.
+		assert.strictEqual(stdio.execs.filter(exec => exec.command === 'npm test' || Object.values(exec.env ?? {}).includes('npm test')).length, 1, 'the approved call ran, once');
+		const first = JSON.stringify(model.requests[0].messages);
+		assert.ok(first.includes('$ npm test'), 'its result reached the model');
+		assert.ok(!first.includes('did not run') && !first.includes('cut off before it returned'));
+	});
+
+	test('a subagent cut off by a crash carries on from its saved transcript when its call runs again', async () => {
+		const { service, model, ref, waitEnd, fileService } = await setup('model');
+		await crashedChat(service, fileService, 'chat', {
+			messages: [
+				{ role: 'user', content: 'how is parsing done?', turn: true },
+				{ role: 'assistant', content: '', toolCalls: [{ id: 't1', name: 'task', args: { description: 'Find the parser', prompt: 'Find where parsing happens.' } }] },
+			],
+			running: ['t1'],
+		}, 'how is parsing done?');
+		await fileService.writeFile(URI.file(`/user/voltNative/chat.sub-${(stringHash('t1', 0) >>> 0).toString(36)}.json`), VSBuffer.fromString(JSON.stringify({
+			version: 1, synced: 0, savedAt: 1, messages: [
+				{ role: 'user', content: 'Find where parsing happens.' },
+				{ role: 'assistant', content: 'Looking.', toolCalls: [{ id: 'g1', name: 'grep', args: { pattern: 'parse' } }] },
+				{ role: 'tool', content: 'src/parser.ts:1: export function parse', callId: 'g1', name: 'grep' },
+			],
+		})));
+		model.turns.push(async function* () {
+			yield { type: 'text.delta', id: 'r', delta: 'Parsing is in src/parser.ts.' };
+			yield { type: 'finish', reason: 'stop' };
+		});
+		await waitEnd(await service.send('chat', { text: '[Volt] Volt restarted while you were working. Continue where you left off.', mode: 'agent', providerRef: ref }));
+		const [child, parent] = model.requests;
+		const resumed = JSON.stringify(child.messages);
+		assert.ok(resumed.includes('src/parser.ts:1') && resumed.includes('Volt restarted while you were working'), 'the subagent went on from its own transcript');
+		assert.ok(JSON.stringify(parent.messages).includes('Parsing is in src/parser.ts.'), 'its report is the cut-off call\'s result');
+		assert.strictEqual(await fileService.exists(URI.file(`/user/voltNative/chat.sub-${(stringHash('t1', 0) >>> 0).toString(36)}.json`)), false, 'its copy is gone once the report is in');
 	});
 });

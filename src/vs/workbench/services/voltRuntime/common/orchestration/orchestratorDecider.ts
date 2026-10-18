@@ -8,7 +8,7 @@ import { isRetryableFailure, isTransientFailure } from '../jobs/retryPolicy.js';
 import { LIMIT_CANARY_WAIT_MS, LIMIT_RESUME_TEXT, LIMIT_STAGGER_MS, limitAutoResumes, limitDueAt, limitResumeDisplay } from './limitRecovery.js';
 import { DEFAULT_ORCH_LIMITS, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimitPark, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchRescue, IOrchState, IOrchTask, IOrchTaskSpawn, IOrchThread, IOrchTurn, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
 import { applyOrchEvent, applyOrchEvents } from './orchestratorProjector.js';
-import { MAX_PLAN_CONTINUATIONS, planContinuationCount, planContinueText, planTurnId, stepLimitContinueText, RESCUE_STAGGER_MS, rescueDueAt, rescueLabel, rescueResumeText, rescueTurnId, rescueWaits } from './rescue.js';
+import { MAX_STALE_PLAN_ROUNDS, MAX_STEP_CONTINUATIONS, planContinuationCount, planContinueText, planTurnId, stepLimitContinueText, RESCUE_STAGGER_MS, rescueDueAt, rescueLabel, rescueResumeText, rescueTurnId, rescueWaits } from './rescue.js';
 import { normalizeVoltMode } from '../modes.js';
 
 /**
@@ -214,7 +214,7 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 			return { events: [{ type: 'queue.added', threadId: thread.id, item: { id: command.steerId, prompt: command.prompt, at: command.at }, head: true }] };
 		}
 		case 'run.settled':
-			return decideRunSettled(state, command.threadId, { runId: command.runId, turnId: command.turnId }, command.outcome, command.at, command.error, command.reply, false, command.limit, command.account, limits, command.openPlan, command.stepLimit);
+			return decideRunSettled(state, command.threadId, { runId: command.runId, turnId: command.turnId }, command.outcome, command.at, command.error, command.reply, false, command.limit, command.account, limits, { openPlan: command.openPlan, stepLimit: command.stepLimit, worked: command.worked });
 		case 'dispatch.failed': {
 			const thread = state.threads[command.threadId];
 			if (!thread?.active || thread.active.id !== command.turnId) {
@@ -850,7 +850,8 @@ export function externalTurnId(runId: string): string {
 	return `x-${runId}`;
 }
 
-function decideRunSettled(state: IOrchState, threadId: string, match: { readonly runId?: string; readonly turnId?: string }, outcome: OrchOutcome, at: number, error: string | undefined, reply: string | undefined, superseded = false, limit?: { readonly resetAt?: number; readonly message: string; readonly stop?: boolean }, account?: IOrchLimitAccount, limits: IOrchLimits = DEFAULT_ORCH_LIMITS, openPlan?: readonly string[], stepLimit = false): IOrchDecision {
+function decideRunSettled(state: IOrchState, threadId: string, match: { readonly runId?: string; readonly turnId?: string }, outcome: OrchOutcome, at: number, error: string | undefined, reply: string | undefined, superseded = false, limit?: { readonly resetAt?: number; readonly message: string; readonly stop?: boolean }, account?: IOrchLimitAccount, limits: IOrchLimits = DEFAULT_ORCH_LIMITS, progress: IRunProgress = {}): IOrchDecision {
+	const { openPlan, stepLimit, worked } = progress;
 	const thread = state.threads[threadId];
 	const active = thread?.active;
 	if (!thread || !active) {
@@ -875,12 +876,13 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 		const task = thread.taskId ? state.tasks[thread.taskId] : undefined;
 		return { events: restartTurn(state, thread, active, task, at, failureResume(active, error!)) };
 	}
-	// The agent ended its turn with its plan unfinished: it goes on while each round closes items.
-	if (outcome === 'done' && !superseded && !previous && openPlan?.length && continuesPlan(state, thread, active, openPlan.length, limits)) {
-		return { events: continuePlan(thread, active, at, openPlan) };
+	// The agent ended its turn with its plan unfinished: it goes on while the rounds get somewhere.
+	const planRound = outcome === 'done' && !superseded && !previous && openPlan?.length ? planProgress(state, thread, active, openPlan.length, !!worked, limits) : undefined;
+	if (planRound) {
+		return { events: continuePlan(thread, active, at, openPlan!, false, planRound.stale) };
 	}
 	// The run used up its step budget mid-task (a safety stop, not the model finishing): it goes on
-	// in a fresh run, within the same cap as plan continuations.
+	// in a fresh run.
 	if (outcome === 'done' && !superseded && !previous && stepLimit && mayContinue(state, thread, active, limits)) {
 		return { events: continuePlan(thread, active, at, openPlan ?? [], true) };
 	}
@@ -1465,14 +1467,31 @@ function decideRescueTick(state: IOrchState, at: number, limits: IOrchLimits): I
 	return { events };
 }
 
+/** What a run did toward its turn, as `run.settled` reports it. */
+interface IRunProgress {
+	readonly openPlan?: readonly string[];
+	readonly stepLimit?: boolean;
+	/** The run changed files. */
+	readonly worked?: boolean;
+}
+
 /**
  * A turn that ended with open plan items goes on when Volt keeps working, nothing else is in the
  * way (a queued prompt, a question, a move, a model switch, subagents still working for it, plan
- * or ask mode), and it is the first round or the last round closed items: an agent that cannot
- * finish says so and stops, instead of looping.
+ * or ask mode), and the round got somewhere: it is the first round, it closed items, or it changed
+ * files (one big item can take hours), at most {@link MAX_STALE_PLAN_ROUNDS} in a row without
+ * closing one. An agent that cannot finish says so and stops, instead of looping. Returns the
+ * next round's count of rounds without a closed item, or `undefined` when the chat waits.
  */
-function continuesPlan(state: IOrchState, thread: IOrchThread, active: IOrchTurn, open: number, limits: IOrchLimits): boolean {
-	return mayContinue(state, thread, active, limits) && (active.planOpen === undefined || open < active.planOpen);
+function planProgress(state: IOrchState, thread: IOrchThread, active: IOrchTurn, open: number, worked: boolean, limits: IOrchLimits): { readonly stale: number } | undefined {
+	if (!mayContinue(state, thread, active, limits)) {
+		return undefined;
+	}
+	if (active.planOpen === undefined || open < active.planOpen) {
+		return { stale: 0 };
+	}
+	const stale = (active.planStale ?? 0) + 1;
+	return worked && stale <= MAX_STALE_PLAN_ROUNDS ? { stale } : undefined;
 }
 
 /** Volt may send the chat on by itself: supervised, nothing waiting on the user, under the continuation cap. */
@@ -1484,10 +1503,10 @@ function mayContinue(state: IOrchState, thread: IOrchThread, active: IOrchTurn, 
 		&& !thread.blocked && !thread.moving && !thread.pendingMove && !thread.pendingHandoff && !thread.limit
 		&& !thread.pause && !thread.inputs.length && !nextQueued(thread)
 		&& !liveChildren(state, thread.id).some(task => task.source === 'volt')
-		&& planContinuationCount(active.id) < MAX_PLAN_CONTINUATIONS;
+		&& planContinuationCount(active.id) < MAX_STEP_CONTINUATIONS;
 }
 
-function continuePlan(thread: IOrchThread, active: IOrchTurn, at: number, open: readonly string[], stepLimit = false): OrchEvent[] {
+function continuePlan(thread: IOrchThread, active: IOrchTurn, at: number, open: readonly string[], stepLimit = false, stale = 0): OrchEvent[] {
 	const events: OrchEvent[] = [{ type: 'turn.settled', threadId: thread.id, turnId: active.id, outcome: 'done', at }];
 	if (thread.rescue && thread.rescue.reason !== 'wakeups') {
 		events.push({ type: 'rescue.cleared', threadId: thread.id, reason: 'done' });
@@ -1503,6 +1522,7 @@ function continuePlan(thread: IOrchThread, active: IOrchTurn, at: number, open: 
 		},
 		at,
 		...(open.length || !stepLimit ? { planOpen: open.length } : {}),
+		...(stale ? { planStale: stale } : {}),
 	}));
 	return events;
 }

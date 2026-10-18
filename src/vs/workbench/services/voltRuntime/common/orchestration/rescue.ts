@@ -17,7 +17,7 @@ import type { IOrchRescue, IOrchThread } from './orchestrator.js';
  * - Volt restarts (or crashes) mid-run: past what `volt.agent.resumeAfterRestart` continues at once.
  * - The wake-up guard pauses a chat its subagents' reports woke many times in a row (a long graph of
  *   delegated rounds): it goes on after the back-off, so a runaway loop slows down instead of spinning.
- * - A turn ends with its plan unfinished: it continues while each continuation closes items.
+ * - A turn ends with its plan unfinished: it continues while the rounds close items or change files.
  *
  * Pure: the decider and the views compute the same due times from the record.
  */
@@ -25,8 +25,18 @@ import type { IOrchRescue, IOrchThread } from './orchestrator.js';
 /** Chats due to restart at the same moment go this far apart, so a restart does not start them all at once. */
 export const RESCUE_STAGGER_MS = 5_000;
 
-/** Continuations of one unfinished plan before the chat waits for the user, even while it makes progress. */
-export const MAX_PLAN_CONTINUATIONS = 24;
+/**
+ * Continuations of one turn, plan rounds and step-limit runs together. A long task is hours of
+ * them, so this is no measure of progress: rounds that get nowhere end it long before
+ * ({@link MAX_STALE_PLAN_ROUNDS}, the loop detector), and this only bounds a chain that never ends.
+ */
+export const MAX_STEP_CONTINUATIONS = 200;
+
+/**
+ * Plan rounds in a row that closed no item but changed files (one big item takes several rounds)
+ * before the chat waits for the user. A round that closes nothing and changes nothing ends it at once.
+ */
+export const MAX_STALE_PLAN_ROUNDS = 3;
 
 /** When Volt restarts the chat: the back-off after `attempts` restarts, from `at`. */
 export function rescueDueAt(rescue: IOrchRescue, key: string): number {

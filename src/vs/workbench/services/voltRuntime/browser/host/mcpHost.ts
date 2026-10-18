@@ -269,6 +269,9 @@ export class McpHost extends Disposable {
 	private toTool(config: McpServerConfig, info: IMcpToolInfo, connection: IMcpConnection): IVoltTool {
 		const name = mcpToolName(config.name, info.name);
 		const readOnly = info.annotations?.readOnlyHint === true;
+		// Safe to run again (a retry, a crash replay) only when it says so: a send or a payment
+		// that declares nothing happens once, and a cut-off call is reported, never repeated.
+		const idempotent = readOnly || (info.annotations?.idempotentHint === true && info.annotations.destructiveHint !== true);
 		const description = `[MCP ${config.name}] ${(info.description ?? info.annotations?.title ?? info.name).trim()}`.slice(0, 1_024);
 		return {
 			name,
@@ -277,7 +280,7 @@ export class McpHost extends Disposable {
 			description,
 			schema: normalizeMcpSchema(info.inputSchema),
 			parallelSafe: readOnly,
-			idempotent: readOnly,
+			idempotent,
 			snippet: `${name} - ${description.slice(0, 80)}`,
 			timeoutMs: CALL_TIMEOUT_MS,
 			execute: async (args, ctx): Promise<IToolResult> => {
