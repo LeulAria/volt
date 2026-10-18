@@ -4,13 +4,14 @@
  *--------------------------------------------------------------------------------------------*/
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { type AccessMode, type ComposerMode, type IProjectItem, type IPromptAttachment, selectProjects, shortPath } from '@volt/client-core';
-import { router } from 'expo-router';
+import { type AccessMode, type ComposerMode, type IPromptAttachment, selectProjects, shortPath } from '@volt/client-core';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Composer } from '../src/chat/Composer';
+import { Composer, type IComposerSendExtra } from '../src/chat/Composer';
+import { expandHome } from '../src/home/paths';
 import { useChatItems, useClient, useCollections, useOptionalClient, useRuntime } from '../src/state/client';
 import { useTheme } from '../src/theme/theme';
 import { haptic, Icon, IconButton, Pill, StatusIcon, T, Tap } from '../src/ui/core';
@@ -30,16 +31,6 @@ export default function NewChatScreen() {
 	return client ? <NewChat /> : null;
 }
 
-/** `~/code/app` with the home folder known projects live under (the server has no shell to expand it). */
-function expandHome(path: string, projects: readonly IProjectItem[]): string {
-	const trimmed = path.trim();
-	if (!trimmed.startsWith('~')) {
-		return trimmed;
-	}
-	const home = projects.map(pr => /^(\/Users\/[^/]+|\/home\/[^/]+)/.exec(pr.path)?.[1]).find(Boolean);
-	return home ? `${home}${trimmed.slice(1)}` : trimmed;
-}
-
 function NewChat() {
 	const { p } = useTheme();
 	const insets = useSafeAreaInsets();
@@ -48,7 +39,8 @@ function NewChat() {
 	const items = useChatItems();
 	const cols = useCollections(['projects', 'history']);
 	const projects = useMemo(() => selectProjects(cols), [cols]);
-	const [projectId, setProjectId] = useState<string | undefined>();
+	const params = useLocalSearchParams<{ project?: string }>();
+	const [projectId, setProjectId] = useState<string | undefined>(params.project);
 	const [mode, setMode] = useState<ComposerMode>('Agent');
 	const [modelRef, setModelRef] = useState<string | undefined>();
 	const [modelTouched, setModelTouched] = useState(false);
@@ -73,13 +65,13 @@ function NewChat() {
 	const effectiveModel = modelTouched ? modelRef : runtime.activeCatalogRef;
 	const recent = items.filter(item => !item.archived && item.projectId === projectId).slice(0, 4);
 
-	const start = (text: string, attachments: readonly IPromptAttachment[] = []) => {
+	const start = (text: string, attachments: readonly IPromptAttachment[] = [], extra?: IComposerSendExtra) => {
 		if (!projectId) {
 			setAdding(true);
 			return false;
 		}
 		void AsyncStorage.setItem(LAST_PROJECT_KEY, projectId);
-		const id = client.startChat({ projectId, text, mode, ...(effectiveModel ? { modelRef: effectiveModel } : {}), ...(access ? { accessMode: access } : {}), ...(attachments.length ? { attachments } : {}) });
+		const id = client.startChat({ projectId, text, mode, ...(effectiveModel ? { modelRef: effectiveModel } : {}), ...(access ? { accessMode: access } : {}), ...(attachments.length ? { attachments } : {}), ...(extra?.mentions.length ? { mentions: extra.mentions } : {}), ...(extra?.displayText && extra.displayText !== text ? { displayText: extra.displayText } : {}) });
 		haptic.success();
 		router.dismiss();
 		router.push({ pathname: '/chat/[id]', params: { id } });
@@ -152,7 +144,8 @@ function NewChat() {
 						}}
 						accessMode={access ?? runtime.accessMode}
 						onAccessChange={setAccess}
-						onSend={(text, _delivery, attachments) => start(text, attachments)}
+						onSend={(text, _delivery, attachments, extra) => start(text, attachments, extra)}
+						folder={project?.path}
 						placeholder={project ? `What should Volt do in ${project.name}?` : 'Add a project to start'}
 						leading={project ? <Pill label={project.name} icon="folder" onPress={() => setPicking(true)} maxWidth={110} /> : undefined}
 					/>

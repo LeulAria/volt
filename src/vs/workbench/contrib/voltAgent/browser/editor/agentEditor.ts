@@ -7266,11 +7266,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const canSend = this.composerCanSend();
 		// While dictating, the mic button shows the waveform and the send button stays send.
 		const comments = this.browserComments().pending({ sessionId: this.sessionId }).length > 0;
-		const kind: 'mic' | 'send' = this.isFollowUpComposer() || this.hasDraft() || comments || this.voiceDictation?.active ? 'send' : 'mic';
+		// Without dictation (a browser that cannot listen) there is no mic: the button stays send.
+		const dictation = this.voiceDictation?.available ?? true;
+		const kind: 'mic' | 'send' = !dictation || this.isFollowUpComposer() || this.hasDraft() || comments || this.voiceDictation?.active ? 'send' : 'mic';
 		this.sendButton.disabled = !canSend;
 		this.sendButton.classList.toggle('disabled', !canSend);
 		const motion = this.sendKind !== kind && this.sendButton.childElementCount ? this.captureMicMotion() : undefined;
-		this.micButton.hidden = kind === 'mic';
+		this.micButton.hidden = kind === 'mic' || !dictation;
 		if (this.sendKind === kind && this.sendButton.childElementCount) {
 			this.sendButton.classList.remove('stop');
 			return;

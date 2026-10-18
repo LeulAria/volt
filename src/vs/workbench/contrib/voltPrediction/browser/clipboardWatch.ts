@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { isWeb } from '../../../../base/common/platform.js';
 import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
 
 const MAX_CLIPBOARD_CHARS = 2_000;
@@ -11,7 +12,8 @@ const READ_EVERY_MS = 400;
 /**
  * The clipboard and when it changed, as far as the predictions can tell (they read it on use, at
  * most every 400ms). What was on it when the window opened counts as old: a copy from yesterday
- * should not ride along in every prompt.
+ * should not ride along in every prompt. In a browser the page may read the clipboard only with a
+ * permission and a user gesture (a background read asks the user every time), so it never reads.
  */
 export class ClipboardWatch {
 
@@ -26,6 +28,9 @@ export class ClipboardWatch {
 
 	/** Reads the clipboard in the background; the next call sees what it found. */
 	refresh(): void {
+		if (isWeb) {
+			return;
+		}
 		const now = Date.now();
 		if (now - this.readAt < READ_EVERY_MS) {
 			return;

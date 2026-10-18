@@ -122,8 +122,8 @@ export class ServerFiles extends Disposable {
 		return real;
 	}
 
-	/** The path, checked to be inside a root (symlinks resolved; a new file by its folder). */
-	private async allowed(path: string): Promise<string> {
+	/** The path, checked to be inside a root (symlinks resolved; a new file by its folder). Git and the composer check with it too. */
+	async allowed(path: string): Promise<string> {
 		if (!path || !isAbsolute(path)) {
 			fail('BadPath', 'Give an absolute path.');
 		}

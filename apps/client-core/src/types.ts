@@ -509,3 +509,39 @@ export interface IGitStatus {
 }
 
 //#endregion
+
+//#region Composer extras: mentions, attached files, MCP servers
+
+/**
+ * A mention a prompt carries for the transcript (IAgentDisplayMention in the desktop's
+ * composer/agentMentions.ts): a project file (`resource`), a file attached from the device
+ * (`file`, saved in the server's attachment store) or a `/` command (`skill`). `label` appears
+ * in the prompt's display text, where the desktop draws it as a chip.
+ */
+export interface IPromptMention {
+	readonly label: string;
+	readonly kind: 'file' | 'folder' | 'skill' | 'mcp';
+	readonly value?: string;
+	readonly resource?: IUriLike;
+	readonly file?: { readonly id: string; readonly name: string; readonly mime: string; readonly size: number; readonly path?: string };
+}
+
+/** A file from the device in the server's attachment store (not an image: those are IPromptAttachment). */
+export interface IPromptFile {
+	readonly id: string;
+	readonly name: string;
+	readonly mime: string;
+	readonly size: number;
+	readonly ref: string;
+	/** The saved copy on the computer, which the agent's tools open. */
+	readonly path?: string;
+}
+
+/** An MCP server the agents of a project get (IVoltMcpServerStatus, voltRuntime/common/runtime.ts). */
+export interface IMcpServerStatus {
+	readonly name: string;
+	readonly scope: 'project' | 'user';
+	readonly state: 'idle' | 'connecting' | 'ready' | 'error';
+}
+
+//#endregion

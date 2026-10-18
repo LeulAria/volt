@@ -70,7 +70,15 @@ function Root() {
 					animation: Platform.OS === 'android' ? 'fade_from_bottom' : 'default',
 				}}
 			>
-				<Stack.Screen name="index" options={{ title: 'Volt' }} />
+				<Stack.Screen name="(tabs)" options={{ headerShown: false, title: 'Home' }} />
+				<Stack.Screen name="chats" options={{ title: 'Chats' }} />
+				<Stack.Screen name="project/[id]" options={{ title: '' }} />
+				<Stack.Screen name="scm" options={{ title: 'Source control' }} />
+				<Stack.Screen name="pulls" options={{ title: 'Pull requests' }} />
+				<Stack.Screen name="pull" options={{ title: 'Pull request' }} />
+				<Stack.Screen name="pull-new" options={{ title: 'Open a pull request', presentation: 'modal' }} />
+				<Stack.Screen name="settings/mcp" options={{ title: 'MCP servers' }} />
+				<Stack.Screen name="subagent/[id]" options={{ title: 'Subagent' }} />
 				<Stack.Screen name="chat/[id]" options={{ headerShown: false }} />
 				<Stack.Screen name="details/[id]" options={{ headerShown: false, ...sheet }} />
 				<Stack.Screen name="new" options={{ headerShown: false, presentation: 'modal', contentStyle: { backgroundColor: p.canvas } }} />

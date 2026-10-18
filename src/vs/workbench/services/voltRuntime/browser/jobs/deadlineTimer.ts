@@ -3,9 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { addDisposableListener } from '../../../../../base/browser/dom.js';
-import { mainWindow } from '../../../../../base/browser/window.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 
 /** The longest the timer sleeps before it reads the wall clock again. */
 const HEARTBEAT_MS = 30_000;
@@ -16,6 +14,7 @@ const HEARTBEAT_MS = 30_000;
  * hours after the lid opens. This timer never waits longer than a heartbeat before it reads
  * `Date.now()` again, and reads it at once when the machine comes back (the network returns, the
  * window is shown or focused). Late is fine; it never fires early, and it fires once per `schedule`.
+ * The agent server hosts this too: in Node there is no window, and the heartbeat alone wakes it.
  */
 export class DeadlineTimer extends Disposable {
 
@@ -29,9 +28,18 @@ export class DeadlineTimer extends Disposable {
 	) {
 		super();
 		const wake = () => this.check();
-		this._register(addDisposableListener(mainWindow, 'online', wake));
-		this._register(addDisposableListener(mainWindow, 'focus', wake));
-		this._register(addDisposableListener(mainWindow.document, 'visibilitychange', wake));
+		// Not base/browser/window: importing it throws where there is no `window` (the agent server).
+		const win = (globalThis as { window?: Window }).window;
+		if (win) {
+			win.addEventListener('online', wake);
+			win.addEventListener('focus', wake);
+			win.document.addEventListener('visibilitychange', wake);
+			this._register(toDisposable(() => {
+				win.removeEventListener('online', wake);
+				win.removeEventListener('focus', wake);
+				win.document.removeEventListener('visibilitychange', wake);
+			}));
+		}
 		this._register({ dispose: () => this.clear() });
 	}
 

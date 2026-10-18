@@ -75,7 +75,18 @@
 					"microphonePermission": false
 				}
 			],
-			"volt-mobile-widgets"
+			"volt-mobile-widgets",
+			[
+				"expo-speech-recognition",
+				{
+					"microphonePermission": "Volt listens while you dictate a message to your agents.",
+					"speechRecognitionPermission": "Volt turns what you dictate into the text of your message.",
+					"androidSpeechServicePackages": [
+						"com.google.android.googlequicksearchbox"
+					]
+				}
+			],
+			"expo-document-picker"
 		],
 		"experiments": {
 			"typedRoutes": true

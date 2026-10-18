@@ -27,6 +27,19 @@ once.
 
 ## What it does
 
+Laid out like the GitHub app, in Volt's themes: four tabs.
+
+- **Home**: My work (Needs you, Working, Unread, Pinned, All chats, Archived), your projects
+  and recent chats. **Inbox**: chats that need you, finished unread, failed or are working, with
+  filters and Mark all read. **Projects**: every project; a project page shows its branch, chats,
+  source control, pull requests, files and README. **You**: the computer, then settings.
+- **Source control**: a project's uncommitted changes with diffs against HEAD, Commit, Pull, Push
+  and a new branch. **Pull requests**: the branch's pull request (checks, Ready), every open or
+  closed one, and a pull request's conversation, checks and files, with Merge (squash, merge,
+  rebase), Ready for review, comments and re-running failed checks. Opening one for the branch
+  pushes it first. All of it goes through `gh` and git on the computer.
+- **Theme**: System, or any of the desktop's Volt themes (Dark, Dark Midnight, Dark High
+  Contrast, Light, Light Colorblind). **MCP servers**: yours and a project's, with their state.
 - Every chat live, with approvals, questions, the queue, usage-limit pauses and subagents.
 - New chats in any project (the **New chat** button), with mode, model and access.
 - Images: **+** in the composer picks photos or takes one; they are downscaled to 2048 px JPEG,
@@ -45,8 +58,13 @@ once.
 - `../client-core`: connection (resume from the last event, hole detection, heartbeat, jittered
   backoff), pairing, the state store, transcript rows, the incremental markdown parser and the
   syntax highlighter, design tokens and icons. Shared with the web app.
-- `app/`: screens (home list, chat, details sheet, new chat, changes, diff, files, file, connect,
-  settings).
+- `app/`: screens. `(tabs)/` holds Home, Inbox, Projects and You; the rest stack on top (chat,
+  chats, project, scm, pulls, pull, pull-new, details sheet, new chat, changes, diff, files, file,
+  connect, settings).
+- `src/git`: the branch and pull request control and pull request rows; `src/ui/rows.tsx`: the
+  GitHub-style list pieces (section titles, tiles, rows, chips, project avatars).
+- `npx expo start --web` runs a browser preview of the app (react-native-web; tokens kept in
+  AsyncStorage there, since a browser has no keychain).
 - `src/chat`: the transcript (inverted list, rows and cells memoized by message identity),
   native-text markdown (only the block being written re-renders while a reply streams), composer
   (images, edit mode) and trays, and `Diff.tsx` (diffs from `client-core/diff.ts`).

@@ -98,6 +98,11 @@ export class AgentVoiceDictation extends Disposable {
 		}));
 	}
 
+	/** Whether dictation can run here at all; without it the composer offers no mic. */
+	get available(): boolean {
+		return this.speech.isAvailable?.() ?? true;
+	}
+
 	get state(): AgentDictationState {
 		return this._state;
 	}
