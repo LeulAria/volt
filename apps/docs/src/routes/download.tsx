@@ -40,6 +40,8 @@ const OSES: readonly Os[] = ["darwin", "win32", "linux"];
 interface DownloadSearch {
   os?: Os;
   channel?: Channel;
+  /** `mac`: the Mac install guide drawer is open (a shareable link). */
+  install?: "mac";
 }
 
 export const Route = createFileRoute("/download")({
@@ -47,6 +49,7 @@ export const Route = createFileRoute("/download")({
   validateSearch: (search: Record<string, unknown>): DownloadSearch => ({
     os: OSES.find((o) => o === search.os),
     channel: CHANNELS.find((c) => c === search.channel),
+    install: search.install === "mac" ? "mac" : undefined,
   }),
   head: () => ({
     meta: downloadRouteMeta(),

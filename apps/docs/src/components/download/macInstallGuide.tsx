@@ -212,6 +212,35 @@ function StepCard({ step, number }: { step: Step; number: number }) {
   );
 }
 
+export const INSTALL_PARAM = "install";
+export const INSTALL_MAC = "mac";
+/** Asks a mounted install guide to open; the event is cancelled when one did. */
+export const OPEN_INSTALL_GUIDE_EVENT = "volt:open-install-guide";
+
+/** Writes (or clears) `?install=mac`, keeping the other search params and dropping the old hash. */
+function setInstallParam(on: boolean) {
+  const url = new URL(window.location.href);
+  if (on) url.searchParams.set(INSTALL_PARAM, INSTALL_MAC);
+  else url.searchParams.delete(INSTALL_PARAM);
+  if (url.hash === "#install-mac") url.hash = "";
+  if (url.href !== window.location.href)
+    history.replaceState(
+      history.state,
+      "",
+      url.pathname + url.search + url.hash,
+    );
+}
+
+/** Opens the install guide on this page when one is there; otherwise goes to the download page's. */
+export function openInstallGuide() {
+  const event = new Event(OPEN_INSTALL_GUIDE_EVENT, { cancelable: true });
+  if (window.dispatchEvent(event)) {
+    window.location.assign(
+      `/download?os=darwin&${INSTALL_PARAM}=${INSTALL_MAC}`,
+    );
+  }
+}
+
 /** "How to install on Mac": a button that opens a drawer with the first-launch steps and screenshots. */
 export function MacInstallGuide({ className }: { className?: string }) {
   const [mounted, setMounted] = useState(false);
@@ -226,6 +255,8 @@ export function MacInstallGuide({ className }: { className?: string }) {
     clearTimeout(closeTimer.current);
     setMounted(true);
     requestAnimationFrame(() => requestAnimationFrame(() => setShown(true)));
+    // The open drawer is in the URL, so the link can be shared and opens it again.
+    setInstallParam(true);
   }, []);
 
   const close = useCallback(() => {
@@ -235,19 +266,27 @@ export function MacInstallGuide({ className }: { className?: string }) {
       setMounted(false);
       opener.current?.focus();
     }, 220);
-    if (window.location.hash === "#install-mac") {
-      history.replaceState(
-        null,
-        "",
-        window.location.pathname + window.location.search,
-      );
-    }
+    setInstallParam(false);
   }, []);
 
-  // Deep link: /download#install-mac opens the drawer.
+  // Deep links: /download?install=mac (and the older /download#install-mac) open the drawer;
+  // so does a "How to install" link elsewhere on the page (the download dialog's).
   useEffect(() => {
-    if (window.location.hash === "#install-mac") open();
-    return () => clearTimeout(closeTimer.current);
+    if (
+      new URLSearchParams(window.location.search).get(INSTALL_PARAM) ===
+        INSTALL_MAC ||
+      window.location.hash === "#install-mac"
+    )
+      open();
+    const onRequest = (e: Event) => {
+      e.preventDefault();
+      open();
+    };
+    window.addEventListener(OPEN_INSTALL_GUIDE_EVENT, onRequest);
+    return () => {
+      window.removeEventListener(OPEN_INSTALL_GUIDE_EVENT, onRequest);
+      clearTimeout(closeTimer.current);
+    };
   }, [open]);
 
   // While open: Escape closes, the page behind does not scroll, Tab stays inside.

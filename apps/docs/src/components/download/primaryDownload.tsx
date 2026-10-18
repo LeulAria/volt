@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowDownToLine, ArrowUpRight } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { focusRing, OsIcon } from "@/components/landing/install";
 import { Spinner } from "@/components/landing/primitives";
 import { cn } from "@/lib/cn";
@@ -18,6 +18,7 @@ import {
   recommendedPkg,
 } from "@/lib/releases";
 import { GITHUB_RELEASES_URL, type ReleasesState } from "@/lib/useReleases";
+import { DownloadDialog } from "./downloadDialog";
 import { MacInstallGuide } from "./macInstallGuide";
 
 const BUTTON =
@@ -53,6 +54,7 @@ export function PrimaryDownload({
   const asset = primaryAsset(release, os, arch, recommendedPkg(os));
   const info = CHANNEL_INFO[channel];
   const title = `Download for ${platform.label}`;
+  const [confirming, setConfirming] = useState(false);
 
   let button: ReactNode;
   let meta: ReactNode;
@@ -68,6 +70,12 @@ export function PrimaryDownload({
     button = (
       <a
         href={asset.url}
+        onClick={(e) => {
+          // A dialog first: which build, its size, and what the first launch asks.
+          e.preventDefault();
+          setConfirming(true);
+        }}
+        aria-haspopup="dialog"
         className={cn(
           BUTTON,
           "bg-white text-black hover:opacity-90",
@@ -151,6 +159,13 @@ export function PrimaryDownload({
       </p>
       {onArch && os === "darwin" ? (
         <MacArchSwitch arch={arch} onArch={onArch} />
+      ) : null}
+      {asset ? (
+        <DownloadDialog
+          asset={asset}
+          open={confirming}
+          onClose={() => setConfirming(false)}
+        />
       ) : null}
     </div>
   );

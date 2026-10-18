@@ -1,10 +1,17 @@
 import { Link } from "@tanstack/react-router";
 import { Check } from "lucide-react";
 import { useState } from "react";
+import { DownloadDialog } from "@/components/download/downloadDialog";
 import { cn } from "@/lib/cn";
-import type { Os } from "@/lib/releases";
+import {
+  defaultArch,
+  defaultChannel,
+  type Os,
+  primaryAsset,
+  recommendedPkg,
+} from "@/lib/releases";
 import { gitConfig } from "@/lib/shared";
-import { useDetectedPlatform } from "@/lib/useReleases";
+import { useDetectedPlatform, useReleases } from "@/lib/useReleases";
 
 export const INSTALL_CURL =
   "curl -fsSL https://raw.githubusercontent.com/LeulAria/VOLT/main/install.sh | bash";
@@ -173,11 +180,24 @@ export function OsIcon({ os, className }: { os: Os; className?: string }) {
 }
 
 /**
- * Download for the visitor's OS, plus the other two platforms as icons. All of them open
- * /download, which resolves the actual file from GitHub Releases.
+ * Download for the visitor's OS, plus the other two platforms as icons. The main button asks
+ * first (a dialog with the build it will download) once GitHub Releases answered; until then,
+ * and for the icons, it opens /download, which resolves the file itself.
  */
 export function DownloadButtons({ className }: { className?: string }) {
-  const primary = useDetectedPlatform()?.os ?? "darwin";
+  const detected = useDetectedPlatform();
+  const primary = detected?.os ?? "darwin";
+  const releases = useReleases();
+  const [confirming, setConfirming] = useState(false);
+  const asset =
+    releases.status === "ready"
+      ? primaryAsset(
+          releases.releases[defaultChannel(releases.releases)],
+          primary,
+          detected?.os === primary ? detected.arch : defaultArch(primary),
+          recommendedPkg(primary),
+        )
+      : undefined;
   return (
     <div
       className={cn(
@@ -189,6 +209,11 @@ export function DownloadButtons({ className }: { className?: string }) {
         to="/download"
         search={{ os: primary }}
         title={`Download for ${OS_NAME[primary]}`}
+        onClick={(e) => {
+          if (!asset) return;
+          e.preventDefault();
+          setConfirming(true);
+        }}
         className={`inline-flex h-9 min-h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-[5px] bg-white px-2.5 font-sans text-xs font-semibold text-black transition-opacity duration-150 hover:opacity-90 sm:px-3 ${focusRing}`}
       >
         <span className="min-w-0 truncate sm:whitespace-nowrap">
@@ -221,6 +246,13 @@ export function DownloadButtons({ className }: { className?: string }) {
           />
         </Link>
       ))}
+      {asset ? (
+        <DownloadDialog
+          asset={asset}
+          open={confirming}
+          onClose={() => setConfirming(false)}
+        />
+      ) : null}
     </div>
   );
 }

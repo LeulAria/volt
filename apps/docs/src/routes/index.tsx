@@ -7,16 +7,15 @@ import { Capabilities } from "@/components/landing/capabilities";
 import { ClosingCta, SiteFooter } from "@/components/landing/closing";
 import { FeatureBento } from "@/components/landing/featureBento";
 import { Guides, SectionRule } from "@/components/landing/geometry";
-import { HeroGeometry } from "@/components/landing/heroGeometry";
 import { DownloadButtons, InstallCommand } from "@/components/landing/install";
 import { Manifesto } from "@/components/landing/manifesto";
 import { Models } from "@/components/landing/models";
 import { PoweredBy } from "@/components/landing/poweredBy";
-import { ScrollRuler } from "@/components/landing/scrollRuler";
 import { SiteHeader } from "@/components/landing/siteHeader";
 import { WaveField } from "@/components/waveField";
 import { gsap, REDUCED, SplitText, useGSAP } from "@/lib/gsap";
 import { homeRouteLinks, homeRouteMeta } from "@/lib/seo";
+import { latestVersion, useReleases } from "@/lib/useReleases";
 
 export const Route = createFileRoute("/")({
   component: Home,
@@ -31,6 +30,7 @@ export const Route = createFileRoute("/")({
 
 function Home() {
   const root = useRef<HTMLDivElement>(null);
+  const version = latestVersion(useReleases());
 
   // Opening sequence: chrome settles, the wordmark rises letter by letter, then the rest follows.
   useGSAP(
@@ -91,8 +91,7 @@ function Home() {
           <div className="relative z-0 flex min-h-0 flex-1 flex-col md:min-h-0 md:flex-1">
             <div className="relative z-0 flex flex-1 items-center justify-center px-4 py-2 sm:px-5 sm:py-6 md:flex-none md:px-4 md:py-1">
               <div className="relative">
-                <HeroGeometry />
-                {/* square slot the construction drawing scales into */}
+                {/* square slot that keeps the hero's height (the wave field shows through) */}
                 <div className="relative mx-auto aspect-square size-[min(76vw,320px)] sm:size-[min(46vw,300px)] md:mx-0 md:size-auto md:h-[min(60vh,680px)] md:max-h-[min(92vw,680px)] md:w-auto md:max-w-[min(92vw,680px)] md:shrink-0" />
               </div>
             </div>
@@ -167,7 +166,7 @@ function Home() {
                     <span className="absolute inset-0 animate-ping rounded-full bg-[#3ecf8e] opacity-60" />
                     <span className="relative size-1.5 rounded-full bg-[#3ecf8e]" />
                   </span>
-                  Already in public beta • 4.9k developers joined this week
+                  {version ? `Public beta • Volt v${version}` : "Public beta"}
                 </p>
               </div>
             </div>
@@ -175,7 +174,6 @@ function Home() {
         </div>
       </section>
 
-      <ScrollRuler />
       <main className="relative">
         <Guides />
         <SectionRule />
