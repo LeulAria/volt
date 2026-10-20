@@ -3,15 +3,12 @@ import { useRef } from "react";
 import { ComposerPrompt } from "@/components/composerPrompt";
 import { DynamicText } from "@/components/dynamicText";
 import { AgentIde } from "@/components/landing/agentIde";
-import { Capabilities } from "@/components/landing/capabilities";
+import { AgentShowcase } from "@/components/landing/agentShowcase";
 import { ClosingCta, SiteFooter } from "@/components/landing/closing";
-import { FeatureBento } from "@/components/landing/featureBento";
 import { Guides, SectionRule } from "@/components/landing/geometry";
 import { HeroGeometry } from "@/components/landing/heroGeometry";
 import { DownloadButtons, InstallCommand } from "@/components/landing/install";
-import { Manifesto } from "@/components/landing/manifesto";
 import { Models } from "@/components/landing/models";
-import { PoweredBy } from "@/components/landing/poweredBy";
 import { SiteHeader } from "@/components/landing/siteHeader";
 import { WaveField } from "@/components/waveField";
 import { gsap, REDUCED, SplitText, useGSAP } from "@/lib/gsap";
@@ -181,17 +178,8 @@ function Home() {
 
       <main className="relative">
         <Guides />
-        <SectionRule />
-        <Manifesto />
-        <SectionRule className="mt-0" />
+        <AgentShowcase />
         <AgentIde />
-        <SectionRule className="mt-24 md:mt-32" />
-        <FeatureBento />
-        <SectionRule className="mt-24 md:mt-32" />
-        <PoweredBy />
-        <SectionRule className="mt-24 md:mt-32" />
-        <Capabilities />
-        <SectionRule className="-mt-px" />
         <Models />
         <SectionRule className="-mt-px" />
         <ClosingCta />

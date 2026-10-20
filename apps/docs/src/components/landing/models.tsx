@@ -100,7 +100,8 @@ export function Models() {
   );
 
   return (
-    <section ref={ref} className="relative pt-24 md:pt-32">
+    // opaque so the column guides stop at this section
+    <section ref={ref} className="relative bg-[#0a0d0c] pt-24 md:pt-32">
       <div className={COLUMN}>
         <SectionHeading
           title={

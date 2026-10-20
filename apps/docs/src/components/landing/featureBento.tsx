@@ -10,9 +10,6 @@ import {
   Folder,
   GitBranch,
   Plus,
-  Search,
-  Settings,
-  Star,
 } from "lucide-react";
 import {
   AnimatePresence,
@@ -22,7 +19,6 @@ import {
 } from "motion/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
-import { BrandIcon, type BrandId, brandLabel } from "./brandIcons";
 import { COLUMN } from "./geometry";
 import {
   EASE_OUT,
@@ -54,7 +50,7 @@ const FEATURES: {
     title: "Every frontier model, one picker.",
     body: "Switch between Claude, GPT, Gemini, Grok, or a local model mid-conversation. Tune effort, context, and speed per chat.",
     Art: ModelPickerArt,
-    width: "max-w-[560px]",
+    width: "max-w-[480px]",
   },
   {
     id: "git",
@@ -75,7 +71,7 @@ const FEATURES: {
     title: "Agents in parallel.",
     body: "Each task gets its own worktree, so runs never step on each other.",
     Art: ParallelArt,
-    width: "max-w-[440px]",
+    width: "max-w-[520px]",
   },
   {
     id: "automations",
@@ -460,210 +456,19 @@ function TurnsArt() {
 /* Model picker                                                        */
 /* ------------------------------------------------------------------ */
 
-type PickerTab = {
-  id: BrandId;
-  models: string[];
-  /** Model the check sits on while this tab is showing. */
-  picked: number;
-};
-
-const PICKER_TABS: PickerTab[] = [
-  {
-    id: "claude",
-    picked: 0,
-    models: [
-      "Opus 5.5 Medium Fast",
-      "Sonnet 5 High",
-      "Fable 5.1 High",
-      "Haiku 4.5",
-      "Opus 5 High",
-      "Fable 5 High",
-      "Opus 4.8 High",
-      "Sonnet 4.6 High",
-    ],
-  },
-  {
-    id: "codex",
-    picked: 1,
-    models: [
-      "GPT 5.6 Sol High",
-      "GPT 5.6 Sol Medium",
-      "GPT 5.5 Codex High",
-      "GPT 5.5 Medium",
-      "GPT 5.5 Mini",
-    ],
-  },
-  {
-    id: "antigravity",
-    picked: 0,
-    models: [
-      "Gemini 3 Pro High",
-      "Gemini 3 Pro Medium",
-      "Gemini 3 Flash",
-      "Gemini 3 Flash Lite",
-    ],
-  },
-  {
-    id: "cursor",
-    picked: 0,
-    models: ["Composer 2.5 Fast", "Composer 2.5", "Auto"],
-  },
-  {
-    id: "grok",
-    picked: 0,
-    models: [
-      "Grok 4.6 Extra High Fast",
-      "Grok 4.6 High",
-      "Grok 4.5 High Fast",
-      "Grok Code Fast 2",
-    ],
-  },
-];
-const TAB_MS = 2600;
-const EFFORT = ["Low", "Medium", "High", "Extra High", "Max"];
-
+/** The composer's model picker on the Claude tab, as the agent window draws it. */
 function ModelPickerArt() {
-  const { ref, t } = useLoopClock(TAB_MS * PICKER_TABS.length, TAB_MS - 1);
-  const tabIndex = Math.floor(t / TAB_MS) % PICKER_TABS.length;
-  const tab = PICKER_TABS[tabIndex];
-  const local = t % TAB_MS;
-  // the pointer drifts down the list, then settles back on the picked model
-  const hover =
-    local < 700
-      ? tab.picked
-      : local < 1900
-        ? Math.min(
-            tab.models.length - 1,
-            Math.floor((local - 700) / 400) + tab.picked + 1,
-          )
-        : tab.picked;
-  const effort = [1, 2, 3, 1, 3][tabIndex];
-  const fast = tabIndex !== 1;
-
   return (
-    <div
-      ref={ref}
-      className="relative flex h-[380px] w-full justify-center gap-3"
-    >
-      <div className="mt-14 hidden w-[190px] shrink-0 self-start rounded-[12px] border border-white/10 bg-[#232323] py-1.5 text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:block">
-        <MenuLabel>Options</MenuLabel>
-        <div className="flex h-8 items-center px-3 text-white/90">
-          Fast
-          <span
-            className={cn(
-              "relative ml-auto h-[18px] w-[32px] rounded-full transition-colors duration-300",
-              fast ? "bg-[#3ecf8e]" : "bg-white/20",
-            )}
-          >
-            <span
-              className={cn(
-                "absolute top-[2px] size-[14px] rounded-full bg-white shadow transition-[left] duration-300",
-                fast ? "left-[16px]" : "left-[2px]",
-              )}
-            />
-          </span>
-        </div>
-        <Divider />
-        <MenuLabel>Context</MenuLabel>
-        <MenuItem checked>200K</MenuItem>
-        <MenuItem>1M</MenuItem>
-        <Divider />
-        <MenuLabel>Effort</MenuLabel>
-        {EFFORT.map((e, i) => (
-          <MenuItem key={e} checked={i === effort}>
-            {e}
-          </MenuItem>
-        ))}
-      </div>
-
-      <div className="h-full w-[300px] shrink-0 overflow-hidden rounded-[12px] border border-white/10 bg-[#232323] text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:w-[330px]">
-        <div className="flex h-11 items-center gap-2 border-b border-white/[0.07] px-3.5 text-white/35">
-          <Search className="size-3.5" />
-          Search models...
-        </div>
-        <div className="flex h-11 items-center gap-1 border-b border-white/[0.07] px-2 text-white/45">
-          <span className="grid size-8 place-items-center">
-            <Star className="size-4" />
-          </span>
-          {PICKER_TABS.map((p) => (
-            <span
-              key={p.id}
-              title={brandLabel(p.id)}
-              className={cn(
-                "relative grid size-8 place-items-center transition-opacity duration-300",
-                p.id === tab.id
-                  ? "text-white opacity-100"
-                  : "text-white/80 opacity-55",
-              )}
-            >
-              <BrandIcon id={p.id} size={16} />
-              {p.id === tab.id ? (
-                <motion.span
-                  layoutId="picker-tab"
-                  className="absolute -bottom-[7px] left-1/2 h-[2px] w-5 -translate-x-1/2 rounded-full bg-white/70"
-                  transition={{ type: "spring", stiffness: 420, damping: 36 }}
-                />
-              ) : null}
-            </span>
-          ))}
-          <Settings className="mr-1.5 ml-auto size-4" />
-        </div>
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={tab.id}
-            className="py-1"
-            initial={{ opacity: 0, x: 8 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -8 }}
-            transition={{ duration: 0.22, ease: "easeOut" }}
-          >
-            {tab.models.map((m, i) => (
-              <div
-                key={m}
-                className={cn(
-                  "mx-1 flex h-[34px] items-center rounded-md px-2.5 text-white/85 transition-colors duration-200",
-                  i === hover && "bg-white/[0.07]",
-                )}
-              >
-                {m}
-                <span className="ml-auto flex items-center gap-3">
-                  {i === tab.picked ? (
-                    <Check className="size-4 text-white" />
-                  ) : null}
-                  <Star className="size-3.5 text-white/25" />
-                </span>
-              </div>
-            ))}
-          </motion.div>
-        </AnimatePresence>
-      </div>
-    </div>
+    <img
+      src="/showcase/model-picker.png"
+      alt="Volt's model picker: provider tabs over a list of Claude models, with Sonnet 5.5 High checked, next to the context and effort menu"
+      width={946}
+      height={956}
+      loading="lazy"
+      decoding="async"
+      className="w-full rounded-[14px] border border-white/10 shadow-[0_20px_40px_rgba(0,0,0,0.4)]"
+    />
   );
-}
-
-function MenuLabel({ children }: { children: ReactNode }) {
-  return (
-    <div className="px-3 pt-1.5 pb-1 text-[12px] text-white/45">{children}</div>
-  );
-}
-
-function MenuItem({
-  children,
-  checked,
-}: {
-  children: ReactNode;
-  checked?: boolean;
-}) {
-  return (
-    <div className="flex h-8 items-center px-3 text-white/90">
-      {children}
-      {checked ? <Check className="ml-auto size-3.5 text-white/80" /> : null}
-    </div>
-  );
-}
-
-function Divider() {
-  return <div className="my-1 h-px bg-white/[0.07]" />;
 }
 
 /* ------------------------------------------------------------------ */
@@ -970,76 +775,18 @@ function HunkActions({ accepted }: { accepted: boolean }) {
 /* Parallel agents                                                     */
 /* ------------------------------------------------------------------ */
 
-const LANES = [
-  {
-    title: "Rate limit search API",
-    branch: "feat/rate-limit",
-    start: 0,
-    dur: 3800,
-    tone: "#ff6228",
-  },
-  {
-    title: "Migrate settings to zod",
-    branch: "chore/zod",
-    start: 600,
-    dur: 5200,
-    tone: "#7aa7ff",
-  },
-  {
-    title: "Fix flaky e2e on CI",
-    branch: "fix/e2e-retry",
-    start: 1200,
-    dur: 4300,
-    tone: "#c792ea",
-  },
-  {
-    title: "Write v0.0.1 changelog",
-    branch: "docs/changelog",
-    start: 300,
-    dur: 2600,
-    tone: "#3ecf8e",
-  },
-];
-
+/** The Previous agents list with one subagent's hover card, as the agent window draws it. */
 function ParallelArt() {
-  const { ref, t } = useLoopClock(8000, 7000);
   return (
-    <div ref={ref} className="flex w-full flex-col gap-2">
-      {LANES.map((lane) => {
-        const p = span(t, lane.start, lane.dur);
-        const finished = p >= 1;
-        return (
-          <div
-            key={lane.branch}
-            className="rounded-xl border border-white/10 bg-[#161616] px-3 py-2.5"
-          >
-            <div className="flex items-center gap-2 text-[12.5px]">
-              {finished ? (
-                <Check className="size-3.5 text-[#3ecf8e]" strokeWidth={2.5} />
-              ) : (
-                <Spinner className="size-3.5" />
-              )}
-              <span className="min-w-0 flex-1 truncate text-white/85">
-                {lane.title}
-              </span>
-              <span className="font-mono text-[10.5px] text-white/35">
-                {lane.branch}
-              </span>
-            </div>
-            <div className="mt-2 h-[3px] overflow-hidden rounded-full bg-white/[0.07]">
-              <div
-                className="h-full rounded-full"
-                style={{
-                  width: `${Math.max(4, p * 100)}%`,
-                  background: finished ? "#3ecf8e" : lane.tone,
-                  boxShadow: finished ? "none" : `0 0 10px ${lane.tone}`,
-                }}
-              />
-            </div>
-          </div>
-        );
-      })}
-    </div>
+    <img
+      src="/showcase/previous-agents.png"
+      alt="Volt's Previous agents list with a subagent's hover card: its model, that it failed after 37 minutes, and a link to watch its chat"
+      width={1006}
+      height={986}
+      loading="lazy"
+      decoding="async"
+      className="w-full rounded-[14px] border border-white/10 shadow-[0_20px_40px_rgba(0,0,0,0.4)]"
+    />
   );
 }
 

@@ -161,7 +161,11 @@ export function ClosingCta() {
   );
 
   return (
-    <section ref={ref} className={cn(COLUMN, "relative py-20 md:py-28")}>
+    // opaque so the column guides stop at this section
+    <section
+      ref={ref}
+      className={cn(COLUMN, "relative bg-[#0a0d0c] py-20 md:py-28")}
+    >
       <div className="relative flex flex-col items-center text-center">
         <div
           data-construct
@@ -366,7 +370,7 @@ function ClosingDownload() {
 export function SiteFooter() {
   return (
     <footer className={cn(COLUMN, "py-10")}>
-      <div className="flex flex-col gap-6 text-[13px] text-white/40 md:flex-row md:items-center">
+      <div className="flex flex-col gap-6 text-[13px] text-white/40 md:flex-row md:items-center lg:mx-5">
         <span className="font-mono text-[15px] font-semibold tracking-wide text-white/80">
           volt
         </span>
