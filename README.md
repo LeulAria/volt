@@ -1,53 +1,93 @@
 <div align="center">
 
-<img src="docs/assets/readme/volt-hero.png" alt="Volt on a tablet: an agent chat beside a toolbar with Files, Terminal, Browser, the branch, Commit and push, Changes and previous agents" width="100%" />
-
-<br />
-<br />
-
-<img src="apps/docs/public/volt-icon-256.png" alt="" width="64" height="64" />
+<img src="apps/docs/public/volt-icon-256.png" alt="" width="72" height="72" />
 
 # Volt
 
-**An open-source workspace for working with coding agents.**<br />
-Chats, code, Git, a browser and a terminal in one window, on top of the real VS Code core.
+### The open-source agentic editor, built on the VS Code core.
 
-[![Download](https://img.shields.io/badge/download-latest%20release-ff8a5a.svg)](https://github.com/LeulAria/volt/releases/latest)
+Drive **Claude Code**, **Codex** or **Grok** over ACP, or a **local model through Ollama**,<br />
+then review every change hunk by hunk before it lands. MIT licensed, in public beta.
+
+[![GitHub stars](https://img.shields.io/github/stars/LeulAria/volt?style=social)](https://github.com/LeulAria/volt/stargazers)
+[![Latest release](https://img.shields.io/github/v/release/LeulAria/volt?label=download&color=ff8a5a)](https://github.com/LeulAria/volt/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.txt)
-[![macOS, Windows, Linux](https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-555.svg)](docs/install/README.md)
-[![Built on VS Code](https://img.shields.io/badge/built%20on-VS%20Code%201.105-007acc.svg)](https://github.com/microsoft/vscode)
-[![PRs welcome](https://img.shields.io/badge/PRs-welcome-3ecf8e.svg)](CONTRIBUTING.md)
+[![macOS · Windows · Linux](https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-555.svg)](docs/install/README.md)
+[![Discord](https://img.shields.io/badge/chat-Discord-5865F2.svg)](https://discord.gg/SJ97jqDVN)
 
-[**Download**](https://github.com/LeulAria/volt/releases/latest) · [Website](https://volt.leularia.com) · [Docs](https://volt.leularia.com/docs) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+[**Download**](https://github.com/LeulAria/volt/releases/latest) · [Website](https://getvolt.dev) · [Install guide](https://getvolt.dev/docs/install) · [Changelog](CHANGELOG.md) · [Discord](https://discord.gg/SJ97jqDVN) · [Contributing](CONTRIBUTING.md)
+
+<br />
+
+<img src="docs/assets/readme/volt-hero.png" alt="Volt on a tablet: an agent chat beside a toolbar with Files, Terminal, Browser, the branch, Commit and push, Changes and previous agents" width="100%" />
+
+<br />
+
+**⭐ If Volt looks useful, star the repo.** It's an independent project, and stars are how other developers find it.
 
 </div>
 
 <br />
 
-Agents do the typing. You keep the judgment. Volt is a workspace for working *with* coding agents instead of next to them: the chat, the code, Git, a browser and a terminal share one window, so nothing you need is a tab away.
+Volt is highly inspired by Cursor, but open source all the way down. It is a workspace for working *with* coding agents: the chat, the code, Git, a browser and a terminal share one window. Because it is built on the real VS Code core, your extensions, themes, keybindings, language servers and debuggers come along.
 
-It is built on the real VS Code core, not a lookalike, so your extensions, themes, keybindings, language servers and debuggers come along. What Volt adds is the layer that makes agents a first-class part of the editor: a runtime that talks to any model or agent CLI, a permission system you control, and review tools that let you keep or undo exactly what an agent changed.
+> **Public beta.** Volt is below 1.0 and moves fast. Expect rough edges and changes between releases. The [changelog](CHANGELOG.md) lists what changed in each one.
 
-> **Public beta.** Volt is below 1.0 and moves fast, so expect rough edges and changes between releases. The [changelog](CHANGELOG.md) lists what changed in each one.
+## Quick start
 
-## Download
+**1. Install.** On macOS or Linux, one command downloads the right build, checks its SHA-256 against the release and installs it, with no `sudo`:
 
-Get the latest build from **[GitHub Releases](https://github.com/LeulAria/volt/releases/latest)**.
+```bash
+curl -fsSL https://raw.githubusercontent.com/LeulAria/volt/main/install.sh | bash
+```
 
-| Platform | File |
+Or download an installer from **[GitHub Releases](https://github.com/LeulAria/volt/releases/latest)**:
+
+| Your computer | File |
 | --- | --- |
-| macOS, Apple silicon | `volt-stable-<version>-darwin-arm64.dmg` |
-| macOS, Intel | `volt-stable-<version>-darwin-x64.dmg` |
+| Mac with Apple silicon | `volt-stable-<version>-darwin-arm64.dmg` |
+| Mac with an Intel chip | `volt-stable-<version>-darwin-x64.dmg` |
 | Windows | `volt-stable-<version>-win32-<x64 or arm64>-user-setup.exe` |
 | Linux | `volt-stable-<version>-linux-<x64, arm64 or armhf>` as `.deb`, `.rpm` or `.tar.gz` |
 
-**The builds are not code-signed yet**, because Volt is an independent project without a signing certificate. Your system warns you the first time you open one. That is expected:
+**2. Open it past the first-launch warning.** The builds are not code-signed yet, because Volt is an independent project without a signing certificate, so your system warns you the first time. That is expected:
 
-- **macOS:** open **System Settings > Privacy & Security** and click **Open Anyway**, or install from the Terminal and skip the dialogs. The [macOS install guide](docs/install/macos.md) walks through it with a screenshot for every step, and shows how to use Volt from the command line (`volt .`).
+- **macOS:** open **System Settings > Privacy & Security** and click **Open Anyway**. The [macOS install guide](docs/install/macos.md) has a screenshot for every step.
 - **Windows:** when SmartScreen says *Windows protected your PC*, click **More info**, then **Run anyway**.
 - **Linux:** `sudo apt install ./volt-stable-<version>-linux-x64.deb`, or `sudo dnf install ./volt-stable-<version>-linux-x64.rpm`.
 
-There is also a **Beta** and a **Nightly** channel, each its own app that installs next to Volt (see [Releasing Volt](docs/releasing.md)). macOS is the platform Volt is developed and tested on; Windows and Linux builds come from the same pipeline but have had little testing. Everything about installing is in [docs/install](docs/install/README.md).
+**3. Connect an agent.** Open **Volt Settings** from the command palette (<kbd>⇧</kbd><kbd>⌘</kbd><kbd>P</kbd>) and pick one:
+
+- an agent CLI you already use and are signed in to, such as **Claude Code**, **Codex** or **Grok** (early access), over the [Agent Client Protocol](https://agentclientprotocol.com). Volt leaves your plan and credentials with that tool;
+- a **local model** through Ollama (`127.0.0.1:11434` by default);
+- an API key.
+
+**4. Start.** Press <kbd>⌘</kbd><kbd>N</kbd> for a new agent chat, ask for a change, then keep or undo it hunk by hunk.
+
+macOS is the platform Volt is developed and tested on; Windows and Linux builds come from the same pipeline but have had little testing. There are also **Beta** and **Nightly** channels, each its own app that installs next to Volt (see [Releasing Volt](docs/releasing.md)). Everything about installing is in [docs/install](docs/install/README.md).
+
+## Highlights
+
+| | |
+| --- | --- |
+| **Bring your own agent** | Claude Code, Codex and Grok (early access) over ACP, or a local model via Ollama. Volt doesn't sell tokens. |
+| **Plan mode** | The agent proposes a plan card you approve, revise, edit or save before anything runs. |
+| **Subagents and parallel agents** | Delegate to subagents and steer them. Give each chat its own Git worktree so parallel agents don't trample each other. |
+| **Hunk-level review** | Every agent edit is pending until you keep or undo it, hunk by hunk. |
+| **Git checkpoints** | Each turn is checkpointed in Git, so you can preview, restore or redo any point in a conversation. |
+| **Built-in browser with an element picker** | The agent can drive the in-app browser. You pick an element or draw an area and say what to change. |
+| **MCP** | Connect MCP servers and agents call them like built-in tools, under the same permissions. |
+| **The VS Code core** | Extensions from Open VSX, your themes, keybindings, debuggers and language servers. |
+
+## How Volt compares
+
+| | Volt | Cursor | Zed | Void |
+| --- | --- | --- | --- | --- |
+| Source | Open source (MIT) | Closed source | Open source (GPL-3.0-or-later, some Apache-2.0) | Open source (Apache-2.0) |
+| Editor base | VS Code core | VS Code fork | Its own editor, written in Rust | VS Code fork |
+| Status | Public beta | Commercial product | Stable releases | Deprecated; repo archived |
+
+Volt is highly inspired by Cursor. The difference is that it is MIT-licensed, and it drives the agent CLIs you already pay for instead of selling tokens.
 
 ## Why Volt
 
@@ -161,7 +201,7 @@ Permissions are an approval policy, not a sandbox: an agent you allow to run she
 
 | | |
 | --- | --- |
-| [volt.leularia.com/docs](https://volt.leularia.com/docs) | The documentation site (source in [`apps/docs`](apps/docs)) |
+| [getvolt.dev/docs](https://getvolt.dev/docs) | The documentation site (source in [`apps/docs`](apps/docs)) |
 | [docs/install](docs/install/README.md) | Installing on macOS, Windows and Linux, and using Volt from the command line |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
 | [docs/releasing.md](docs/releasing.md) | Channels, the release pipeline and the update feed |
