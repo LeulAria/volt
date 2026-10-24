@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type { VoltMode } from '../modes.js';
-import type { IOrchTask, OrchTaskState } from './orchestrator.js';
+import type { IOrchSpend, IOrchTask, IOrchTaskUsage, OrchTaskState } from './orchestrator.js';
 
 /**
  * Delegated tasks. A chat's agent (or the user) hands one task to another model; the task runs in
@@ -59,6 +59,60 @@ export const MAX_TASK_DEPTH = 2;
 export const TASK_WAIT_MS = 45_000;
 /** A report longer than this is clipped in the parent's notification; the full text stays in the child chat. */
 export const TASK_RESULT_CHARS = 12_000;
+/** An upstream task's report as a dependent task receives it (`after`). */
+export const UPSTREAM_REPORT_CHARS = 6_000;
+
+/**
+ * What "done" means for a task, beyond its brief: the handoff contract. A child sees only what it
+ * is given, so the parent states the outcome, the rules, the files and the checks that prove the
+ * work (Roo's todos, zenith's task body, paseo's handoff brief). The files it owns are its `scope`.
+ */
+export interface ITaskContract {
+	/** The outcome wanted, in a sentence or two. */
+	readonly goal?: string;
+	/** Rules the work must keep (must / must not). */
+	readonly constraints?: readonly string[];
+	/** The checks that prove it is done: a test passing, a type-check, what the page shows. */
+	readonly doneWhen?: readonly string[];
+	/** Files to read before starting; owned files (that it may change) are the task's `scope`. */
+	readonly files?: readonly string[];
+}
+
+/**
+ * How much of the parent chat a child gets besides its brief: none, a short digest (the user's
+ * request, the parent's plan and latest reply, what sibling subagents do), or a longer one.
+ */
+export type TaskContextLevel = 'none' | 'brief' | 'full';
+
+export function normalizeContextLevel(value: unknown): TaskContextLevel {
+	return value === 'none' || value === 'full' ? value : 'brief';
+}
+
+/** A string list from tool input: one string, or an array of them; blanks dropped, each clipped. */
+export function stringListArg(value: unknown, max = 24, chars = 600): string[] {
+	const items = typeof value === 'string' ? [value] : Array.isArray(value) ? value : [];
+	return items
+		.filter((item): item is string => typeof item === 'string' && !!item.trim())
+		.map(item => item.trim().slice(0, chars))
+		.slice(0, max);
+}
+
+/** The contract from delegate_task's arguments (one task or one `tasks` entry); undefined when it names nothing. */
+export function contractFromArgs(args: Record<string, unknown>): ITaskContract | undefined {
+	const goal = typeof args.goal === 'string' && args.goal.trim() ? args.goal.trim().slice(0, 1_000) : undefined;
+	const constraints = stringListArg(args.constraints);
+	const doneWhen = stringListArg(args.done_when);
+	const files = stringListArg(args.files, 40, 300);
+	if (!goal && !constraints.length && !doneWhen.length && !files.length) {
+		return undefined;
+	}
+	return {
+		...(goal ? { goal } : {}),
+		...(constraints.length ? { constraints } : {}),
+		...(doneWhen.length ? { doneWhen } : {}),
+		...(files.length ? { files } : {}),
+	};
+}
 
 //#region Tool names and schemas
 
@@ -86,18 +140,30 @@ export function isAgentTaskTool(name: string | undefined): name is AgentTaskTool
 	return !!name && (AGENT_TASK_TOOL_NAMES as readonly string[]).includes(name);
 }
 
-/** Agents prefix MCP tool names with the server (`volt-delegate_task`, `mcp__volt__delegate_task`). */
+/** Agents prefix MCP tool names with the server (`volt-delegate_task`, `mcp__volt__delegate_task`, `volt__delegate_task`). */
 export function bareTaskToolName(name: string | undefined): AgentTaskToolName | undefined {
 	if (!name) {
 		return undefined;
 	}
-	const bare = name.replace(/^(?:mcp__volt__|volt[-_:.])/i, '').replace(/^.*?:\s*/, '');
+	const bare = name.trim().replace(/^(?:mcp__volt__|volt__|volt[-_:.])/i, '').replace(/^.*?:\s*/, '');
 	return isAgentTaskTool(bare) ? bare : undefined;
 }
 
 const MODEL_ARG = {
 	type: 'string',
-	description: 'Model to run it on: a `model` value from list_models (exact id or ref, or a label such as "Claude Opus 5.5"). Omit to use this chat\'s model.',
+	description: 'Model to run it on: a `model` value from list_models (exact id or ref, or a label such as "Claude Opus 5.5"), or "auto" for the model the user set for this role. Omit to use this chat\'s model.',
+};
+
+/** The handoff contract and run options, the same for one task and for each `tasks` entry. */
+const CONTRACT_ARGS = {
+	goal: { type: 'string', description: 'The outcome you want, in a sentence or two (what is true when the work is done).' },
+	constraints: { type: 'array', items: { type: 'string' }, description: 'Rules the work must keep: what must not change, APIs to keep, style to follow.' },
+	done_when: { type: 'array', items: { type: 'string' }, description: 'The checks that prove it is done (a test that passes, a type-check, what the page shows). The subagent checks each one and reports met or not met.' },
+	files: { type: 'array', items: { type: 'string' }, description: 'Files to read before starting (paths), so it does not explore to find them.' },
+	scope: { type: 'array', items: { type: 'string' }, description: 'Files or folders this task owns: the only ones it may change. Volt flags two tasks claiming the same paths.' },
+	context: { type: 'string', enum: ['brief', 'full', 'none'], description: 'How much of this chat the subagent gets besides your brief. brief (default): the user\'s request, your plan and latest reply, and what the other subagents are doing. full: more of the conversation. none: only your brief (an unbiased second opinion).' },
+	budget_usd: { type: 'number', description: 'Stop this task when it has spent this much (US dollars, at list price when the agent does not report a cost).' },
+	fallback_models: { type: 'array', items: { type: 'string' }, description: 'Models to retry on, in order, when the task fails on its model (provider error, usage limit). The retry gets the same brief.' },
 };
 
 export interface IAgentTaskToolInfo {
@@ -113,10 +179,10 @@ function delegateTaskTool(maxPerCall: number): IAgentTaskToolInfo {
 		name: DELEGATE_TASK_TOOL_NAME,
 		title: 'Delegated task',
 		description: [
-			'Run one task on a Volt subagent: a separate chat, on any model from list_models, that starts with only your brief (it does not see this conversation). Use it to work in parallel (several independent tasks at once), to get a second opinion from a different model (review, research), or to give a self-contained piece of work to a model better suited to it.',
-			'Write the brief like a hand-off to a capable colleague who knows nothing: the goal, the relevant files and facts you already found, constraints, and what the report should contain. For work that edits code, name the files to change and what to change in each (paths, symbols, line numbers you saw), so the subagent can start editing at once instead of exploring again. Do not delegate work that depends on finishing something else first, and do not delegate trivial lookups you can do faster yourself.',
-			'To run several independent parts at once, start them all in ONE call with `tasks` (one entry per part, each with its own complete brief) instead of one call per part.',
-			'Returns a task_id at once (wait=false, the default). Several tasks run in parallel. When a task finishes its report is delivered to this chat as a new message, so after starting tasks you may end your turn instead of polling; call wait_tasks only when you need the results before you can continue in this turn. task_status reads progress.',
+			'Run one task on a Volt subagent: a separate chat, on any model from list_models, that starts with your brief plus a short digest of this chat (the user\'s request, your plan, what other subagents do). Use it to work in parallel (several independent tasks at once), to get a second opinion from a different model (review, research), or to give a self-contained piece of work to a model better suited to it.',
+			'Write the brief like a hand-off to a capable colleague: the relevant files and facts you already found, and what to do with them. Fill the contract: `goal` (the outcome), `scope` (files it owns and may change), `files` (files to read first), `constraints`, and `done_when` (the checks that prove it is done; it reports each as met or not met). For work that edits code, name the files to change and what to change in each (paths, symbols, line numbers you saw), so the subagent can start editing at once instead of exploring again. Do not delegate trivial lookups you can do faster yourself.',
+			'To run several parts at once, start them all in ONE call with `tasks` (one entry per part, each with its own complete brief) instead of one call per part. A part that needs another part\'s result names it in `after` (that part\'s 1-based position in `tasks`, or a task_id): it starts once those finish, with their reports added to its brief.',
+			'Returns a task_id at once (wait=false, the default). Several tasks run in parallel. When a task finishes its report is delivered to this chat as a new message, so after starting tasks you may end your turn instead of polling; call wait_tasks only when you need the results before you can continue in this turn. task_status reads progress and spend. Subagent spend counts against the user\'s budget for this request; a task over its budget is stopped.',
 			'Review rounds: for each new round of a review (or any work you send back after changes), call delegate_task again with previous_task_id set to the last round and a fresh client_request_id (keep that id when you retry the same round). Do not use message_task for a new round: a fresh subagent reviews the current code without the previous reviewer\'s assumptions. Tasks and their reports survive a Volt restart.',
 		].join(' '),
 		inputSchema: {
@@ -126,7 +192,7 @@ function delegateTaskTool(maxPerCall: number): IAgentTaskToolInfo {
 				tasks: {
 					type: 'array',
 					maxItems: maxPerCall,
-					description: `Start up to ${maxPerCall} independent subagents in one call, one entry per part of the work. Each entry takes the same fields as a single task (task, title, model, role, isolation, scope); fields left out use this call's top-level values. Use instead of \`task\`.`,
+					description: `Start up to ${maxPerCall} subagents in one call, one entry per part of the work. Each entry takes the same fields as a single task (task, title, model, role, isolation, goal, scope, files, constraints, done_when, context, budget_usd, fallback_models) plus \`after\`; fields left out use this call's top-level values. Use instead of \`task\`.`,
 					items: {
 						type: 'object',
 						properties: {
@@ -135,11 +201,14 @@ function delegateTaskTool(maxPerCall: number): IAgentTaskToolInfo {
 							model: MODEL_ARG,
 							role: { type: 'string', enum: AGENT_TASK_ROLES },
 							isolation: { type: 'string', enum: ['shared', 'worktree'] },
-							scope: { type: 'array', items: { type: 'string' }, description: 'Paths (prefixes) this part owns, so Volt can flag two parts editing the same files.' },
+							...CONTRACT_ARGS,
+							after: { type: 'array', items: { type: 'string' }, description: 'Parts that must finish first: 1-based positions of earlier entries in `tasks` ("1", "2"), or task_ids. Their reports are added to this part\'s brief when it starts.' },
 						},
 						required: ['task'],
 					},
 				},
+				...CONTRACT_ARGS,
+				after: { type: 'array', items: { type: 'string' }, description: 'task_ids of this chat\'s tasks that must finish first; their reports are added to the brief when this one starts.' },
 				previous_task_id: {
 					type: 'string',
 					description: 'Start the next round of earlier work as a new task: the task_id of the previous round (e.g. a second review after you fixed what the first review found). Volt gives the new subagent that round\'s brief and report; your `task` should add what changed since, your responses to its findings, and the objections still open.',
@@ -179,7 +248,7 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 	{
 		name: TASK_STATUS_TOOL_NAME,
 		title: 'Checked task',
-		description: 'Read a delegated task: status (queued, running, completed, failed, cancelled, interrupted), what it is doing now, the files it changed and, once finished, its report. Without task_id, lists every task this chat started. Reading a finished report here means it is not delivered again as a message.',
+		description: 'Read a delegated task: status (queued, running, completed, failed, cancelled, interrupted), what it is doing now, the files it changed, what it spent and, once finished, its report. Without task_id, lists every task this chat started and the subagent spend of this request. Reading a finished report here means it is not delivered again as a message.',
 		inputSchema: { type: 'object', properties: { task_id: { type: 'string' } } },
 	},
 	{
@@ -278,19 +347,43 @@ export interface ITaskBriefContext {
 	readonly worktreeBranch?: string;
 	/** The round this task follows (`previous_task_id`): its brief and report go along. */
 	readonly previous?: { readonly id: string; readonly iteration: number; readonly brief: string; readonly result?: string; readonly state: OrchTaskState };
+	readonly contract?: ITaskContract;
+	/** Paths the task owns: the only ones it may change. */
+	readonly scope?: readonly string[];
+	/** The digest of the parent chat (see taskContext.ts), already formatted. */
+	readonly capsule?: string;
+	/** Spend the task may still use: this request's subagent budget left, and its own cap. */
+	readonly budget?: { readonly requestLeftUsd?: number; readonly taskUsd?: number };
+	/** The tasks it waits for (`after`); their reports are added when it starts. */
+	readonly after?: readonly string[];
 }
 
 /**
- * What the child model receives: Volt's subagent framing around the brief. The child chat shows
- * only the brief; this text is the model-facing prompt.
+ * What the child model receives: Volt's subagent framing around the brief and its contract. The
+ * child chat shows only the brief; this text is the model-facing prompt.
  */
 export function buildTaskPrompt(brief: string, context: ITaskBriefContext): string {
+	const readOnly = !EDITING_ROLES.has(context.role);
 	const lines = [
-		`[Volt subagent] Another agent delegated this task to you${context.parentTitle ? ` from the chat "${context.parentTitle}"` : ''}. You do not see that conversation: the brief below is everything you get, so read the code you need instead of assuming.`,
+		`[Volt subagent] Another agent delegated this task to you${context.parentTitle ? ` from the chat "${context.parentTitle}"` : ''}. You do not see that conversation: the brief${context.contract ? ', its contract' : ''}${context.capsule ? ' and the digest of that chat' : ''} below are everything you get, so read the code you need instead of assuming.`,
 		`[Volt subagent] ${ROLE_GUIDANCE[context.role]}`,
 		...(EDITING_ROLES.has(context.role) ? [EDIT_FAST] : []),
-		'[Volt subagent] Work on your own; ask the user only if you are blocked. Stay within the task. Your final message is returned to the other agent as your report: start with the outcome in one or two sentences, then what you did or found (with file paths), the files you changed, how you checked it, and anything left undone or uncertain.',
+		'[Volt subagent] Work on your own; ask the user only if you are blocked. Do only this task: the digest of the other chat is background, not more work for you.',
 	];
+	if (context.scope?.length && !readOnly) {
+		lines.push(`[Volt subagent] You own these paths and may change only them: ${context.scope.join(', ')}. Other subagents may be editing other files at the same time; if the task needs a change elsewhere, say so in your report instead of making it.`);
+	}
+	const budget = context.budget;
+	if (budget && (budget.requestLeftUsd !== undefined || budget.taskUsd !== undefined)) {
+		const caps = [
+			...(budget.taskUsd !== undefined ? [`this task may spend up to ${formatUsd(budget.taskUsd)}`] : []),
+			...(budget.requestLeftUsd !== undefined ? [`the subagents of this request have ${formatUsd(budget.requestLeftUsd)} left`] : []),
+		];
+		lines.push(`[Volt subagent] Budget: ${caps.join('; ')}. Volt stops the work at the limit, so work efficiently and report early if the task needs much more.`);
+	}
+	if (context.after?.length) {
+		lines.push(`[Volt subagent] This task waited for ${context.after.join(', ')}; their reports are at the end. Treat their claims as leads to check, not as facts.`);
+	}
 	if (context.isolation === 'worktree') {
 		lines.push(`[Volt subagent] You work in your own git worktree${context.worktreeBranch ? ` on branch ${context.worktreeBranch}` : ' (a separate checkout on its own branch)'}. Commit your changes there when done and name the branch in your report, so the other agent can merge it.`);
 	}
@@ -304,8 +397,102 @@ export function buildTaskPrompt(brief: string, context: ITaskBriefContext): stri
 		lines.push(`[Volt subagent] This is round ${previous.iteration + 1} of this work. Round ${previous.iteration} (task ${previous.id}) had the brief and report below; the code may have changed since. Check whether each earlier finding still applies instead of repeating it, and say which are resolved.`);
 		lines.push('', `<previous_round task_id="${previous.id}" status="${previous.state}">`, '<brief>', previous.brief.trim(), '</brief>', '<report>', previous.result?.trim() ? clip(previous.result, TASK_RESULT_CHARS) : '(no report)', '</report>', '</previous_round>');
 	}
+	if (context.capsule) {
+		lines.push('', context.capsule);
+	}
 	lines.push('', '<task>', brief.trim(), '</task>');
+	const contract = contractLines(context.contract, readOnly ? undefined : context.scope);
+	if (contract.length) {
+		lines.push('', '<contract>', ...contract, '</contract>');
+	}
+	lines.push('', reportFormat(context.role, !!context.contract?.doneWhen?.length));
 	return lines.join('\n');
+}
+
+function contractLines(contract: ITaskContract | undefined, scope: readonly string[] | undefined): string[] {
+	const lines: string[] = [];
+	const list = (tag: string, items: readonly string[] | undefined) => {
+		if (items?.length) {
+			lines.push(`<${tag}>`, ...items.map(item => `- ${item}`), `</${tag}>`);
+		}
+	};
+	if (contract?.goal) {
+		lines.push('<goal>', contract.goal, '</goal>');
+	}
+	list('owned_files', scope);
+	list('read_first', contract?.files);
+	list('constraints', contract?.constraints);
+	list('done_when', contract?.doneWhen);
+	return lines;
+}
+
+/**
+ * The report the parent gets back: fixed headings, so reports from different models merge
+ * without guessing (zenith's worker report, pi's scout format).
+ */
+function reportFormat(role: AgentTaskRole, checks: boolean): string {
+	const verification = checks
+		? '"## Verification" (each done_when check: met or not met, with the command you ran or what you saw)'
+		: '"## Verification" (how you checked your work: commands run and their result, or what you read)';
+	const middle = EDITING_ROLES.has(role)
+		? '"## Changes" (each file you changed and what changed; "None" if nothing)'
+		: '"## Findings" (what you found, with file paths and line numbers)';
+	return `[Volt subagent] Your final message is your report to the agent that delegated this task; nothing else you wrote reaches it. Use these headings: "## Outcome" (done, partly done or blocked, in one or two sentences), ${middle}, ${verification}, "## Open issues" (what is left, risks, anything you were unsure of; "None" if nothing).`;
+}
+
+/**
+ * What to tell the parent about a brief before the child starts on it. Advice, never a refusal:
+ * the brief may still be fine, but these are the gaps that most often send a child exploring for
+ * minutes or reporting "done" on the wrong thing.
+ */
+export function lintTaskBrief(brief: string, role: AgentTaskRole, contract: ITaskContract | undefined, scope: readonly string[] | undefined, context: TaskContextLevel): string[] {
+	const notes: string[] = [];
+	const words = brief.trim().split(/\s+/).filter(Boolean).length;
+	const editing = EDITING_ROLES.has(role) && role !== 'general';
+	const namesFiles = !!scope?.length || !!contract?.files?.length || /[\w-]+\/[\w./-]+|\b[\w-]+\.(?:ts|tsx|js|jsx|mjs|css|scss|html|json|md|py|go|rs|java|kt|swift|rb|php|cs|c|cc|cpp|h|vue|svelte|sql|yml|yaml|toml)\b/.test(brief);
+	if (editing && !contract?.doneWhen?.length) {
+		notes.push('no done_when: the subagent decides on its own when it is finished. Name the checks that prove the work (a test, a type-check, what the page shows).');
+	}
+	if (editing && !namesFiles) {
+		notes.push('no files named: it will spend its first minutes finding them. Give `scope` (files it may change) or `files` (files to read first).');
+	}
+	if (words < 25 && !contract && context === 'none') {
+		notes.push(`the brief is ${words} words and context is none, so that is all the subagent sees.`);
+	}
+	return notes;
+}
+
+/**
+ * A dependent task's brief once the tasks it waited for (`after`) are done: their reports go
+ * after its own prompt (pi's chain `{previous}`, cline's team `dependsOn`).
+ */
+export function withUpstreamReports(text: string, upstream: readonly IOrchTask[]): string {
+	if (!upstream.length) {
+		return text;
+	}
+	const parts = [text, '', '<upstream_reports>'];
+	for (const task of upstream) {
+		parts.push(`<report task_id="${task.id}" title="${task.title.replace(/"/g, '\'')}" status="${task.state}"${task.modelLabel ? ` model="${task.modelLabel.replace(/"/g, '\'')}"` : ''}>`, task.result?.trim() ? clip(task.result, UPSTREAM_REPORT_CHARS) : '(no report)', '</report>');
+	}
+	parts.push('</upstream_reports>');
+	return parts.join('\n');
+}
+
+export function formatUsd(value: number): string {
+	if (value > 0 && value < 0.01) {
+		return '<$0.01';
+	}
+	return `$${value.toFixed(value >= 100 ? 0 : 2)}`;
+}
+
+export function formatTokens(value: number): string {
+	if (value >= 1_000_000) {
+		return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
+	}
+	if (value >= 1_000) {
+		return `${Math.round(value / 1_000)}k`;
+	}
+	return String(Math.round(value));
 }
 
 /** A follow-up round in an existing child chat. */
@@ -371,6 +558,17 @@ export function describeTask(task: IOrchTask, now: number, options: { readonly i
 	if (isLiveTaskState(task.state) && task.activity) {
 		lines.push(`now: ${task.activity}`);
 	}
+	if (task.state === 'queued' && task.after?.length) {
+		lines.push(`waits for: ${task.after.join(', ')} (it starts once they finish, with their reports)`);
+	}
+	if (task.failedOn?.length) {
+		lines.push(`failed on: ${task.failedOn.join(', ')}; continued on ${task.modelLabel ?? task.modelRef ?? 'the next model'}`);
+	}
+	if (task.usage && (task.usage.tokens || task.usage.costUsd)) {
+		lines.push(`spent: ${describeUsage(task.usage)}${task.budgetUsd !== undefined ? ` (budget ${formatUsd(task.budgetUsd)})` : ''}`);
+	} else if (task.budgetUsd !== undefined) {
+		lines.push(`budget: ${formatUsd(task.budgetUsd)}`);
+	}
 	if (task.worktreeBranch) {
 		lines.push(`branch: ${task.worktreeBranch}${task.worktreePath ? ` (${task.worktreePath})` : ''}`);
 	}
@@ -386,11 +584,28 @@ export function describeTask(task: IOrchTask, now: number, options: { readonly i
 	return lines.join('\n');
 }
 
+/** Tokens and cost, as tools and notifications show them. */
+export function describeUsage(usage: IOrchTaskUsage): string {
+	const tokens = `${formatTokens(usage.tokens)} tokens${usage.cacheRead ? ` (+${formatTokens(usage.cacheRead)} cached)` : ''}`;
+	return usage.costUsd !== undefined ? `${tokens} · ${formatUsd(usage.costUsd)}${usage.priced === 'list' ? ' at list price' : ''}` : `${tokens} · no price known`;
+}
+
+/** This request's subagent spend against the budget, or undefined before anything was spent. */
+export function describeSpend(spend: IOrchSpend | undefined, limits: { readonly budgetUsd: number; readonly budgetTokens: number }): string | undefined {
+	if (!spend || (!spend.usd && !spend.tokens)) {
+		return undefined;
+	}
+	const usd = limits.budgetUsd > 0 ? `${formatUsd(spend.usd)} of ${formatUsd(limits.budgetUsd)}` : formatUsd(spend.usd);
+	const tokens = limits.budgetTokens > 0 ? `${formatTokens(spend.tokens)} of ${formatTokens(limits.budgetTokens)} tokens` : `${formatTokens(spend.tokens)} tokens`;
+	const head = `Subagent spend this request: ${usd} (${tokens}).`;
+	return spend.capped ? `${head} The budget ran out, so no more subagents start until the user's next message.` : head;
+}
+
 /**
  * The turn that wakes a parent once its tasks finish. Model-facing; the transcript shows a card.
  * `others` are tasks of the same parent still running, so the agent knows more will come.
  */
-export function buildTaskNotification(finished: readonly IOrchTask[], others: readonly IOrchTask[], now: number): string {
+export function buildTaskNotification(finished: readonly IOrchTask[], others: readonly IOrchTask[], now: number, spend?: string): string {
 	const head = finished.length === 1
 		? `[Volt] Delegated task "${finished[0].title}" ${statusWord(finished[0])}.`
 		: `[Volt] ${finished.length} delegated tasks finished.`;
@@ -404,6 +619,9 @@ export function buildTaskNotification(finished: readonly IOrchTask[], others: re
 	}
 	if (finished.some(task => task.isolation === 'worktree' && task.state === 'completed')) {
 		parts.push('Tasks that ran in a worktree left their changes on their branch (listed above); they are not in this checkout until you merge them (git merge <branch>) once you have checked them.');
+	}
+	if (spend) {
+		parts.push(spend);
 	}
 	parts.push('Continue the work using these results. Check a subagent\'s claims that matter before you rely on them. If a task failed, decide whether to retry it (delegate_task or message_task), do it yourself, or tell the user.');
 	return parts.join('\n');

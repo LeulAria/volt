@@ -185,6 +185,7 @@ suite('Run group service', () => {
 			stub({ getValue: () => undefined, onDidChangeConfiguration: () => toDisposable(() => undefined) }),
 			stub({ run: async () => undefined }),
 			stub({ onWillShutdown: () => toDisposable(() => undefined) }),
+			stub({ invokeFunction: () => undefined }),
 		));
 		await orchestrator.whenReady;
 		disposables.add(orchestrator.setTurnHost(new FakeHost(runtime)));

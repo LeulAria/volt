@@ -86,6 +86,10 @@ export class OrchSim {
 			...(extra.toolCallId ? { toolCallId: extra.toolCallId } : {}),
 			...(extra.scope ? { scope: extra.scope } : {}),
 			...(extra.previousTaskId ? { previousTaskId: extra.previousTaskId } : {}),
+			...(extra.contract ? { contract: extra.contract } : {}),
+			...(extra.after ? { after: extra.after } : {}),
+			...(extra.budgetUsd !== undefined ? { budgetUsd: extra.budgetUsd } : {}),
+			...(extra.fallbacks ? { fallbacks: extra.fallbacks } : {}),
 		};
 		return this.run({ type: 'task.spawn', spawn });
 	}

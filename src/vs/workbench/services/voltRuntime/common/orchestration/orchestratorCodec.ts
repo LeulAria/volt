@@ -3,8 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { isLiveTaskState } from './agentTasks.js';
-import { IOrchConflict, IOrchEventEnvelope, IOrchLimitPark, IOrchMove, IOrchMoveResult, IOrchQueueItem, IOrchRescue, IOrchState, IOrchTask, IOrchThread, IOrchTurn, ORCHESTRATOR_STATE_VERSION } from './orchestrator.js';
+import { isLiveTaskState, ITaskContract } from './agentTasks.js';
+import { IOrchConflict, IOrchEventEnvelope, IOrchLimitPark, IOrchModelChoice, IOrchMove, IOrchMoveResult, IOrchQueueItem, IOrchRescue, IOrchSpend, IOrchState, IOrchTask, IOrchTaskUsage, IOrchThread, IOrchTurn, ORCHESTRATOR_STATE_VERSION } from './orchestrator.js';
 
 /**
  * Orchestration is persisted per root chat: the chat, its subagents' chats and their tasks in one
@@ -332,7 +332,64 @@ function parseThread(value: unknown): IOrchThread | undefined {
 		...optional('pendingMove', parseMove(thread.pendingMove)),
 		...optional('moving', parseMove(thread.moving)),
 		...optional('lastMove', parseMoveResult(thread.lastMove)),
+		...optional('spend', parseSpend(thread.spend)),
 	};
+}
+
+function parseSpend(value: unknown): IOrchSpend | undefined {
+	const spend = value as Record<string, unknown> | undefined;
+	if (!spend || num(spend.usd) === undefined || num(spend.tokens) === undefined || num(spend.since) === undefined) {
+		return undefined;
+	}
+	const capped = spend.capped as Record<string, unknown> | undefined;
+	return {
+		usd: spend.usd as number,
+		tokens: spend.tokens as number,
+		since: spend.since as number,
+		...(capped && num(capped.at) !== undefined && typeof capped.reason === 'string' ? { capped: { at: capped.at as number, reason: capped.reason } } : {}),
+	};
+}
+
+function parseUsage(value: unknown): IOrchTaskUsage | undefined {
+	const usage = value as Record<string, unknown> | undefined;
+	if (!usage || num(usage.tokens) === undefined) {
+		return undefined;
+	}
+	return {
+		tokens: usage.tokens as number,
+		input: num(usage.input) ?? 0,
+		output: num(usage.output) ?? 0,
+		cacheRead: num(usage.cacheRead) ?? 0,
+		cacheWrite: num(usage.cacheWrite) ?? 0,
+		...(num(usage.costUsd) !== undefined ? { costUsd: usage.costUsd as number } : {}),
+		...(usage.priced === 'reported' || usage.priced === 'list' ? { priced: usage.priced } : {}),
+	};
+}
+
+function parseContract(value: unknown): ITaskContract | undefined {
+	const contract = value as Record<string, unknown> | undefined;
+	if (!contract || typeof contract !== 'object') {
+		return undefined;
+	}
+	const list = (items: unknown) => Array.isArray(items) ? items.filter((item): item is string => typeof item === 'string') : [];
+	const constraints = list(contract.constraints);
+	const doneWhen = list(contract.doneWhen);
+	const files = list(contract.files);
+	const goal = str(contract.goal);
+	if (!goal && !constraints.length && !doneWhen.length && !files.length) {
+		return undefined;
+	}
+	return {
+		...(goal ? { goal } : {}),
+		...(constraints.length ? { constraints } : {}),
+		...(doneWhen.length ? { doneWhen } : {}),
+		...(files.length ? { files } : {}),
+	};
+}
+
+function parseModelChoices(value: unknown): IOrchModelChoice[] | undefined {
+	const choices = Array.isArray(value) ? value.filter((item): item is IOrchModelChoice => !!item && typeof (item as IOrchModelChoice).ref === 'string' && typeof (item as IOrchModelChoice).label === 'string').map(item => ({ ref: item.ref, label: item.label })) : [];
+	return choices.length ? choices : undefined;
 }
 
 function optional<K extends string, V>(key: K, value: V | undefined): { [P in K]?: V } {
@@ -382,5 +439,11 @@ function parseTask(value: unknown): IOrchTask | undefined {
 		...(str(task.previousTaskId) ? { previousTaskId: task.previousTaskId as string } : {}),
 		...(num(task.iteration) !== undefined ? { iteration: task.iteration as number } : {}),
 		...(num(task.restarts) ? { restarts: task.restarts as number } : {}),
+		...optional('contract', parseContract(task.contract)),
+		...(Array.isArray(task.after) && task.after.length ? { after: task.after.filter((id): id is string => typeof id === 'string') } : {}),
+		...optional('usage', parseUsage(task.usage)),
+		...(num(task.budgetUsd) !== undefined ? { budgetUsd: task.budgetUsd as number } : {}),
+		...optional('fallbacks', parseModelChoices(task.fallbacks)),
+		...(Array.isArray(task.failedOn) && task.failedOn.length ? { failedOn: task.failedOn.filter((label): label is string => typeof label === 'string') } : {}),
 	};
 }
