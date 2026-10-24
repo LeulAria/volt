@@ -513,6 +513,13 @@ export class AgentSidePanel extends ViewPane {
 		this.syncAgentLayout();
 	}
 
+	/** The next or previous agent tab in the list; only the agent layout has the list. */
+	stepChat(direction: -1 | 1): void {
+		if (this.isAgentLayout()) {
+			this.home?.stepChat(direction);
+		}
+	}
+
 	getActiveAgentEditor(): AgentEditor | undefined {
 		if (this.isAgentLayout()) {
 			if (this.editorService.activeEditorPane instanceof AgentEditor) {

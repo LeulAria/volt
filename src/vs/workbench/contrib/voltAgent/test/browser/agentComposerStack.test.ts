@@ -82,19 +82,19 @@ suite('Agent composer stack', () => {
 			assert.strictEqual(view.visible, true);
 			assert.strictEqual(changes, 1);
 			assert.ok(el.classList.contains('running') && !el.classList.contains('summary'));
-			assert.strictEqual(el.querySelector('.volt-agent-terminal-runs-label')?.textContent, 'Serve test screenshots');
+			// The chip names no terminal, port or address: those are in its tooltip and menu.
+			assert.strictEqual(el.querySelector('.volt-agent-terminal-runs-label')?.textContent, '1 terminal');
 			assert.ok(el.querySelector('.volt-agent-terminal-runs-more'), 'chevron for the menu');
 
 			list.push(terminal('watch', 'Watch', 'running'));
 			change.fire('chat');
 			assert.ok(el.classList.contains('summary'));
-			assert.strictEqual(el.querySelector('.volt-agent-terminal-runs-label')?.textContent, '2 terminals running');
-			assert.strictEqual(el.querySelectorAll('.volt-agent-terminal-runs-dots .dot').length, 2);
+			assert.strictEqual(el.querySelector('.volt-agent-terminal-runs-label')?.textContent, '2 terminals');
 			assert.ok(el.querySelector('.volt-agent-terminal-status .volt-browser-dock-dots'), 'the row\'s dot loader leads a live chip');
 
 			list[1] = terminal('watch', 'Watch', 'completed');
 			change.fire('chat');
-			assert.strictEqual(el.querySelector('.volt-agent-terminal-runs-label')?.textContent, '1 terminal running');
+			assert.strictEqual(el.querySelector('.volt-agent-terminal-runs-label')?.textContent, '1 terminal', 'the running count while any runs');
 
 			change.fire('another chat');
 			assert.strictEqual(changes, 3, 'other chats do not redraw it');

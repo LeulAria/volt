@@ -339,6 +339,43 @@
 	backdrop-filter: none;
 }
 
+/* Expanded where the chat has no room for its column (agentViewSidebars.ts syncOverlay): the toolbar keeps the rail's
+ * place and its rows open as a card over the transcript, so the chat keeps its width. Opaque, no backdrop-filter: it
+ * sits over the transparent window. */
+.monaco-workbench.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element > .volt-agent-quick-open-actions.expanded.overlay {
+	flex: 0 0 28px;
+	width: 28px;
+	height: 28px;
+	max-height: none;
+	margin-top: 12px;
+	margin-right: 18px;
+	overflow: visible;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element > .volt-agent-quick-open-actions.expanded.overlay > .volt-agent-quick-open-body {
+	position: absolute;
+	top: -4px;
+	right: -6px;
+	z-index: 1;
+	width: 228px;
+	margin-top: 0;
+	box-sizing: border-box;
+	overflow-x: hidden;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-width: thin;
+	border-color: var(--vscode-menu-border, var(--vscode-widget-border, rgba(255, 255, 255, 0.1)));
+	border-radius: 10px;
+	background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
+}
+
+/* The collapse chevron stays on top of the card, at the corner where the rail's chevron was. */
+.monaco-workbench.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element > .volt-agent-quick-open-actions.expanded.overlay > .volt-agent-quick-open-toggle {
+	top: 0;
+	right: 0;
+}
+
 /* A new chat has no session yet, so there is nothing for the actions to act on: they appear beside the transcript
  * once the first prompt is sent (agentQuickOpenActionsHost moves them there). */
 .monaco-workbench.volt-layout-agent .volt-agent-editor-main > .volt-agent-quick-open-actions {
@@ -616,4 +653,9 @@
 
 .monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggle.popup-open {
 	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+}
+
+/* Settings > Canvas & Scratch turned Scratch off: no way into a chat's board either. */
+.volt-scratch-disabled .volt-agent-dock-section.volt-agent-dock-scratch {
+	display: none;
 }

@@ -138,6 +138,11 @@
 	font-size: 16px;
 }
 
+/* A line icon's wrapper is inline by default, which seats its SVG on the text baseline, a pixel high. */
+.volt-auto-icon-button .volt-agent-svg-icon {
+	display: flex;
+}
+
 .volt-auto-outline-button {
 	display: inline-flex;
 	align-items: center;

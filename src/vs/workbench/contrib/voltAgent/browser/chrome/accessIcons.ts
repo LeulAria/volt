@@ -74,29 +74,35 @@ function circle(cx: number, cy: number, r: number): string {
 // the Permissions menu shares one weight and one optical size.
 const LOCK_RECT: ISvgRect = { x: '3', y: '11', width: '18', height: '11', rx: '2', ry: '2' };
 
-export function createAccessIcon(mode: VoltAccessMode): HTMLElement {
+/** `strokeWidth`: the composer's access trigger draws its icon lighter than the menu rows. */
+export function createAccessIcon(mode: VoltAccessMode, strokeWidth?: string): HTMLElement {
 	switch (mode) {
 		case 'supervised':
 			// lucide:lock
-			return svgIcon([{ d: 'M7 11V7a5 5 0 0 1 10 0v4' }], [LOCK_RECT], 'access-lock');
+			return svgIcon([{ d: 'M7 11V7a5 5 0 0 1 10 0v4' }], [LOCK_RECT], 'access-lock', strokeWidth);
 		case 'auto-accept-edits':
 			// lucide:file-pen-line
 			return svgIcon([
 				{ d: 'm18.226 5.226-2.52-2.52A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-.351' },
 				{ d: 'M21.378 12.626a1 1 0 0 0-3.004-3.004l-4.01 4.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z' },
 				{ d: 'M8 18h1' },
-			], [], 'access-edit');
+			], [], 'access-edit', strokeWidth);
 		case 'auto':
 			// lucide:shield-check: routine actions approved, the rest still asks
 			return svgIcon([
 				{ d: 'M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z' },
 				{ d: 'm9 12 2 2 4-4' },
-			], [], 'access-auto');
+			], [], 'access-auto', strokeWidth);
 		case 'full-access':
 		default:
 			// lucide:lock-open
-			return svgIcon([{ d: 'M7 11V7a5 5 0 0 1 9.9-1' }], [LOCK_RECT], 'access-unlock');
+			return svgIcon([{ d: 'M7 11V7a5 5 0 0 1 9.9-1' }], [LOCK_RECT], 'access-unlock', strokeWidth);
 	}
+}
+
+/** This Mac on the new chat's machine picker, drawn at the access trigger's weight. */
+export function createThisMacIcon(): HTMLElement {
+	return svgIcon([{ d: 'M5 22H13M17 22H19M8.99999 12L6.00002 22M5 2L11.5 17.5' }], [], 'this-mac', '1.3');
 }
 
 export type SandboxIconId = 'off' | 'workspace-write' | 'read-only' | 'network';

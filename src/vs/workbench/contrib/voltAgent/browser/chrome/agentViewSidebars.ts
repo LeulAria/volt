@@ -35,7 +35,7 @@ import { AgentPullRequestDockControl } from '../pullRequests/agentPullRequestDoc
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
 import { setAgentTooltip } from './agentTooltip.js';
 import { closeAgentToolEditor, onDidChangeAgentToolEditors, openAgentToolsPanel, revealAgentToolEditor, SHOW_AGENT_FILES_COMMAND_ID, shownAgentToolEditors } from '../workspace/agentSurfaceHost.js';
-import { CHANGES_ICON_PATH, createSurfaceStrokeIcon, EXPLORER_ICON_SHAPES, type SvgIconShapes } from '../workspace/agentSurfaceMenu.js';
+import { CHANGES_ICON_PATH, createSurfaceStrokeIcon, EXPLORER_ICON_SHAPES, SCRATCH_ICON_SHAPES, type SvgIconShapes } from '../workspace/agentSurfaceMenu.js';
 import { AGENT_TOOLS_VISIBILITY_EVENT } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { AgentLineageDock } from './agentLineageDock.js';
@@ -47,6 +47,10 @@ import { ISCMRepository, ISCMService } from '../../../scm/common/scm.js';
 import { isEqual } from '../../../../../base/common/resources.js';
 import { OPEN_CANVAS_COMMAND_ID } from '../visuals/canvas/canvasCard.js';
 import { IVoltCanvasService } from '../visuals/canvas/canvasService.js';
+import { boardDisplayTitle } from '../../common/scratchBoard/scratchIndex.js';
+import { OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, OPEN_SCRATCH_BOARD_COMMAND_ID } from '../scratchBoard/scratchBoardInput.js';
+import { IScratchBoardService } from '../scratchBoard/scratchBoardService.js';
+import { IScratchSessionLinks } from '../scratchBoard/scratchSessionLinks.js';
 
 /** Chevrons point right. Collapsed state rotates this 180deg. */
 const CHEVRON_RIGHT_PATH = 'M6 7L11 12L6 17M13 7L18 12L13 17';
@@ -232,7 +236,7 @@ class AgentViewSidebarsContribution extends Disposable {
 	private readonly workspaceHeading: HTMLButtonElement;
 	private readonly workspaceLabel: HTMLElement;
 	private workspaceOpen = true;
-	/** The checked-out branch, first row of the git group. */
+	/** The checked-out branch, under Changes in the Pull requests group. */
 	private readonly branchLabel: HTMLElement;
 	private readonly branchRow: HTMLElement;
 	private readonly branchWatch = this._register(new DisposableStore());
@@ -262,6 +266,15 @@ class AgentViewSidebarsContribution extends Disposable {
 	private readonly designList: HTMLElement;
 	private readonly designListeners = this._register(new DisposableStore());
 	private readonly canvases: IVoltCanvasService | undefined;
+	/** The Scratch board the chat was started from (or drew on): a group like Designs, its row opens it beside the chat. */
+	private readonly scratchSection: HTMLElement;
+	private readonly scratchGroup: DockGroup;
+	private readonly scratchList: HTMLElement;
+	private readonly scratchRow: HTMLButtonElement;
+	private readonly scratchRowLabel: HTMLElement;
+	private readonly scratchLinks: IScratchSessionLinks | undefined;
+	private readonly scratchBoards: IScratchBoardService | undefined;
+	private scratchBoardId: string | undefined;
 	private designSession: string | undefined;
 	private designKeys = '';
 	/** Editors currently painted in Open Tabs. Unchanged focus events must not rebuild those rows. */
@@ -278,6 +291,9 @@ class AgentViewSidebarsContribution extends Disposable {
 	private placeScheduled = false;
 	private dockApplied = false;
 	private collapsed = false;
+	/** Expanded in a chat with no room beside it: a card over the transcript, the chat keeps its width. */
+	private overlay = false;
+	private readonly overlayListeners = this._register(new DisposableStore());
 	/** The chat holding the actions, which carries their state as classes (see syncQuickOpenHost). */
 	private quickOpenEditor: HTMLElement | undefined;
 	// has-turns moves the actions between the chat column and the transcript.
@@ -403,6 +419,27 @@ class AgentViewSidebarsContribution extends Disposable {
 				}
 			}));
 		}
+		// The Scratch board this chat came from (or drew on), grouped like its designs.
+		this.scratchSection = append(body, $('.volt-agent-dock-section.volt-agent-dock-scratch.hidden'));
+		this.scratchGroup = this._register(new DockGroup(this.scratchSection, localize('voltAgent.dock.scratchGroup', "Scratch")));
+		this.scratchList = append(this.scratchGroup.body, $('.volt-agent-dock-tab-list'));
+		const scratchRow = append(this.scratchList, $('button.volt-agent-dock-row')) as HTMLButtonElement;
+		scratchRow.type = 'button';
+		const scratchRowIcon = createSurfaceStrokeIcon(scratchRow.ownerDocument, SCRATCH_ICON_SHAPES);
+		scratchRowIcon.classList.add('volt-agent-stroke-icon');
+		scratchRow.appendChild(scratchRowIcon);
+		this.scratchRowLabel = append(scratchRow, $('span.volt-agent-dock-row-label'));
+		this.scratchRow = scratchRow;
+		this._register(addDisposableListener(scratchRow, 'click', () => this.openScratch()));
+		this.scratchLinks = instantiationService.invokeFunction(accessor => accessor.getIfExists(IScratchSessionLinks));
+		this.scratchBoards = instantiationService.invokeFunction(accessor => accessor.getIfExists(IScratchBoardService));
+		if (this.scratchLinks) {
+			this._register(this.scratchLinks.onDidChange(() => this.syncScratch()));
+		}
+		if (this.scratchBoards) {
+			// Renamed or deleted boards.
+			this._register(this.scratchBoards.onDidChangeIndex(() => this.syncScratch()));
+		}
 
 		// Sections like Cursor's project menu: the project's tools, then git, then the agents.
 		const [changes, browser, terminal, files] = this.dockActions();
@@ -426,7 +463,14 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.createActionRow(workspace, terminal);
 		this.createActionRow(workspace, browser);
 
-		const git = append(append(body, $('.volt-agent-dock-section.volt-agent-dock-git')), $('.volt-agent-dock-actions'));
+		// Commit, Push & PR stays on the composer; the toolbar keeps the branch, the changes and the pull requests.
+		this.pullRequests = instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
+		this.pullRequestsGroup = this._register(new DockGroup(append(body, $('.volt-agent-dock-section.volt-agent-dock-pull-requests')), localize('voltAgent.dock.pullRequests', "Pull requests")));
+		// Changes lead the Pull requests group: what the next pull request would carry, then the branch it goes from.
+		const git = append(this.pullRequestsGroup.body, $('.volt-agent-dock-actions'));
+		const changesLabel = this.createActionRow(git, changes);
+		this.changesAdd = append(changesLabel.parentElement!, $('span.volt-agent-dock-stat.add'));
+		this.changesDel = append(changesLabel.parentElement!, $('span.volt-agent-dock-stat.del'));
 		// The branch dropdown under the row, as the new chat's Branch pill opens it; git.checkout is the fallback without a repository.
 		this.branchLabel = this.createActionRow(git, {
 			id: 'branch',
@@ -443,13 +487,6 @@ class AgentViewSidebarsContribution extends Disposable {
 			},
 		});
 		this.branchRow = this.branchLabel.parentElement!;
-		// Commit, Push & PR stays on the composer; the toolbar keeps the branch, the changes and the pull requests.
-		this.pullRequests = instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
-		this.pullRequestsGroup = this._register(new DockGroup(append(body, $('.volt-agent-dock-section.volt-agent-dock-pull-requests')), localize('voltAgent.dock.pullRequests', "Pull requests")));
-		// Changes lead the Pull requests group: what the next pull request would carry.
-		const changesLabel = this.createActionRow(append(this.pullRequestsGroup.body, $('.volt-agent-dock-actions')), changes);
-		this.changesAdd = append(changesLabel.parentElement!, $('span.volt-agent-dock-stat.add'));
-		this.changesDel = append(changesLabel.parentElement!, $('span.volt-agent-dock-stat.del'));
 		// The chat's pull request: its title opens the Pull Requests tab of the right sidebar, its list first.
 		this.pullRequestControl = this._register(instantiationService.createInstance(AgentPullRequestDockControl, this.pullRequestsGroup.body, this.pullRequests, {
 			openCommandId: SHOW_PULL_REQUESTS_COMMAND_ID,
@@ -477,7 +514,10 @@ class AgentViewSidebarsContribution extends Disposable {
 		this._register(this.lineage.onDidChangeSummary(summary => this.syncAgentsRail(summary)));
 		this._register(CommandsRegistry.registerCommand(SHOW_AGENTS_IN_SIDE_TOOLBAR_COMMAND_ID, () => this.revealAgents()));
 
-		this.chatResize = new ResizeObserver(() => this.syncDockToWindow());
+		this.chatResize = new ResizeObserver(() => {
+			this.syncDockToWindow();
+			this.layoutOverlay();
+		});
 		this._register(toDisposable(() => this.chatResize.disconnect()));
 		this._register(toDisposable(() => this.quickOpenEditorWatch.disconnect()));
 		this.placeQuickOpen(root);
@@ -613,7 +653,8 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.branchWatch.clear();
 		const repositories = [...this.scmService.repositories];
 		const folder = this.workspaceContextService.getWorkspace().folders[0]?.uri;
-		const repository = repositories.find(candidate => !!folder && !!candidate.provider.rootUri && isEqual(candidate.provider.rootUri, folder)) ?? repositories[0];
+		// The folder's own repository, or the one it sits in; never an unrelated one Git also opened.
+		const repository = folder ? repositories.find(candidate => !!candidate.provider.rootUri && isEqual(candidate.provider.rootUri, folder)) ?? this.scmService.getRepository(folder) : repositories[0];
 		this.branchRepository = repository;
 		// The diff counts follow the working tree.
 		if (repository) {
@@ -624,8 +665,6 @@ class AgentViewSidebarsContribution extends Disposable {
 			const name = repository?.provider.historyProvider.read(reader)?.historyItemRef.read(reader)?.name;
 			this.branchLabel.textContent = name ?? '';
 			this.branchRow.style.display = name ? '' : 'none';
-			// The branch is the git section's only row: without it the section and its rule go.
-			this.branchRow.closest('.volt-agent-dock-section')?.classList.toggle('hidden', !name);
 		}));
 	}
 
@@ -732,8 +771,9 @@ class AgentViewSidebarsContribution extends Disposable {
 			// toggle(…, true), not add(): add() rewrites the attribute even when the class is there, which
 			// would wake the class watch above again, forever.
 			editor.classList.toggle('has-quick-open', true);
-			editor.classList.toggle('quick-open-expanded', this.quickOpen.classList.contains('expanded'));
-			editor.classList.toggle('quick-open-collapsed', this.quickOpen.classList.contains('collapsed'));
+			// Over the transcript the card takes no column: the chat keeps the rail's reserve.
+			editor.classList.toggle('quick-open-expanded', this.quickOpen.classList.contains('expanded') && !this.overlay);
+			editor.classList.toggle('quick-open-collapsed', this.quickOpen.classList.contains('collapsed') || this.overlay);
 			editor.classList.toggle('quick-open-user-hidden', this.quickOpen.classList.contains('user-hidden'));
 		}
 		this.quickOpenToggle.classList.toggle('available', !!editor);
@@ -799,7 +839,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		const collapsed = typeof this.narrowOverride === 'boolean'
 			? this.narrowOverride
 			: narrow || isAgentRightDockCollapsed(this.storageService);
-		if (this.dockApplied && collapsed === this.collapsed) {
+		if (this.dockApplied && collapsed === this.collapsed && (!collapsed && narrow && !popup) === this.overlay) {
 			return;
 		}
 		this.dockApplied = true;
@@ -878,8 +918,12 @@ class AgentViewSidebarsContribution extends Disposable {
 
 	private applyDock(collapsed: boolean): void {
 		this.collapsed = collapsed;
+		// The title bar popup has the rows while the chat is too narrow even for the rail.
+		this.overlay = !collapsed && this.windowNarrow && !this.popupMode;
 		this.quickOpen.classList.toggle('collapsed', collapsed);
 		this.quickOpen.classList.toggle('expanded', !collapsed);
+		this.quickOpen.classList.toggle('overlay', this.overlay);
+		this.syncOverlay();
 		this.syncQuickOpenHost();
 		const label = collapsed
 			? localize('voltAgent.dock.expand', "Expand")
@@ -887,6 +931,56 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.chevronLabel.textContent = label;
 		this.chevron.setAttribute('aria-label', label);
 		this.chevron.setAttribute('aria-expanded', String(!collapsed));
+	}
+
+	/**
+	 * The expanded toolbar where the chat has no room for its column: it opens over the transcript
+	 * instead of pushing it, and closes like a popover (a click outside, Escape, or a row's action).
+	 */
+	private syncOverlay(): void {
+		this.overlayListeners.clear();
+		if (!this.overlay) {
+			this.body.style.removeProperty('width');
+			this.body.style.removeProperty('max-height');
+			return;
+		}
+		this.layoutOverlay();
+		const close = () => {
+			if (this.overlay) {
+				this.narrowOverride = true;
+				this.applyDock(true);
+			}
+		};
+		const doc = this.quickOpen.ownerDocument;
+		this.overlayListeners.add(addDisposableListener(doc, 'mousedown', e => {
+			const target = e.target as Node | null;
+			// Menus a row opened (the branch list) live outside the card.
+			if (target && !this.quickOpen.contains(target) && !(isHTMLElement(target) && target.closest('.context-view, .monaco-menu-container, .volt-menu'))) {
+				close();
+			}
+		}, true));
+		this.overlayListeners.add(addDisposableListener(doc, 'keydown', e => {
+			if (e.key === 'Escape') {
+				close();
+			}
+		}, true));
+		// A row ran its action; group headers only fold their rows, so the card stays.
+		this.overlayListeners.add(addDisposableListener(this.body, 'click', e => {
+			const target = e.target as HTMLElement | null;
+			if (target?.closest('button, [role="button"]') && !target.closest('.volt-agent-lineage-divider, .volt-agent-dock-group-head')) {
+				close();
+			}
+		}));
+	}
+
+	/** The card fits the transcript it covers. */
+	private layoutOverlay(): void {
+		const scroller = this.quickOpen.parentElement;
+		if (!this.overlay || !scroller) {
+			return;
+		}
+		this.body.style.width = `${Math.max(160, Math.min(228, scroller.clientWidth - 24))}px`;
+		this.body.style.maxHeight = `${Math.max(120, scroller.clientHeight - 24)}px`;
 	}
 
 	private syncRightToggle(): void {
@@ -1055,6 +1149,33 @@ class AgentViewSidebarsContribution extends Disposable {
 		});
 	}
 
+	/** Shows the way back to the chat's Scratch board while it has one (and the board is still there). */
+	private syncScratch(): void {
+		const sessionId = this.designSession;
+		const boardId = sessionId ? this.scratchLinks?.boardFor(sessionId) : undefined;
+		const board = boardId ? this.scratchBoards?.getBoard(boardId) : undefined;
+		this.scratchBoardId = board?.id;
+		this.scratchSection.classList.toggle('hidden', !board);
+		if (!board) {
+			return;
+		}
+		const title = boardDisplayTitle(board);
+		this.scratchGroup.setCount(1);
+		this.scratchRowLabel.textContent = title;
+		setAgentTooltip(this.scratchRow, localize('voltAgent.dock.openScratch', "Open {0} beside the chat", title));
+	}
+
+	/** Opens the board beside the chat (like a design), on this chat's drawing. */
+	private openScratch(): void {
+		const boardId = this.scratchBoardId;
+		const sessionId = this.designSession;
+		if (boardId && sessionId) {
+			void this.commandService.executeCommand(OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, sessionId, boardId);
+		} else if (boardId) {
+			void this.commandService.executeCommand(OPEN_SCRATCH_BOARD_COMMAND_ID, boardId);
+		}
+	}
+
 	/** Close the tab in whichever group shows it: a chat's tools area, else the main editor part. */
 	private closeTab(editor: EditorInput): void {
 		if (closeAgentToolEditor(editor)) {
@@ -1076,6 +1197,7 @@ class AgentViewSidebarsContribution extends Disposable {
 			this.designSession = sessionId;
 			this.renderDesigns();
 		}
+		this.syncScratch();
 		if (sessionId !== this.changesSessionId) {
 			this.changesSessionId = sessionId;
 			this.renderChangesStats();

@@ -178,7 +178,7 @@ import { NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID } from '../autom
 import { createModeIcon, ModeIconId } from '../chrome/agentModeIcons.js';
 import { showAgentPlusMenu } from '../composer/agentPlusMenu.js';
 import { IVoltMenuHandle, IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
-import { AgentMentionController, IAgentDisplayMention, IAgentImageAttachment, IAgentMentionHost, browserMentionColor, cloneDisplayMentions, imageAttachmentsFromMentions, mentionIconClasses, videoDetail } from '../composer/agentMentions.js';
+import { AgentMentionController, IAgentDisplayMention, IAgentImageAttachment, IAgentMentionHost, browserMentionColor, cloneDisplayMentions, imageAttachmentsFromMentions, mentionIconClasses, setComposerClipData, videoDetail } from '../composer/agentMentions.js';
 import { AgentImageStrip, formatImageSize, IAgentImageStripItem, imageThumbClass } from '../composer/agentImageAttachments.js';
 import { AgentImageViewer, showAgentImageViewer } from '../composer/agentImageViewer.js';
 import { VIDEO_EXTENSIONS } from '../composer/agentVideoAttachments.js';
@@ -844,6 +844,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	/** The pane width at the last layout; a prompt's clamp is measured once per width. */
 	private layoutWidth = 0;
 	private readonly promptClamps = new WeakMap<IAgentUserMessage, { readonly width: number; readonly text: string; readonly multiline: boolean; readonly clamped: boolean }>();
+	/** A sent prompt's text element and its chips, for copying the prompt with its chips. */
+	private readonly userMessageTexts = new WeakMap<HTMLElement, IAgentUserMessage>();
+	private readonly userChipMentions = new WeakMap<HTMLElement, IAgentDisplayMention>();
 	/** Redraws a quiet, non-rotating live line when it should start reading "Taking longer than expected". */
 	private slowTurnTimer: IDisposable | undefined;
 	private dockSyncAt = 0;
@@ -1099,6 +1102,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onAddToChat: (text, source) => this.addChatSelection(text, this.sessionKey, source),
 			onAddToSideChat: (text, source) => void this.addChatSelectionToSideChat(text, source),
 		}));
+		this._register(addDisposableListener(this.threadEl, 'copy', e => this.copyUserMessageSelection(e)));
 		this._register(registerCitationTarget(this.citationTarget));
 		this.editorMainEl = append(this.container, $('.volt-agent-editor-main'));
 		this.runGroupBar = append(this.editorMainEl, $('.volt-agent-group-bar.hidden'));
@@ -2471,6 +2475,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				classes.push(`c${mention.accent ?? 0}`);
 			}
 			const chip = append(parent, $(`.${classes.join('.')}`));
+			this.userChipMentions.set(chip, mention);
 			if (mention.kind === 'browser') {
 				chip.style.setProperty('--volt-mention-accent', browserMentionColor(mention.accent));
 			}
@@ -2558,6 +2563,93 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		} else if (cursor === 0) {
 			this.setUserMessageText(parent, text);
 		}
+	}
+
+	/**
+	 * Copying from a sent prompt keeps its chips: the text goes on the clipboard as usual and as a
+	 * composer clip, so pasting into a composer brings its images, files and mentions back. Only a
+	 * selection inside one prompt; anything wider copies as plain text.
+	 */
+	private copyUserMessageSelection(e: ClipboardEvent): void {
+		const selection = getWindow(this.threadEl).getSelection();
+		if (!e.clipboardData || !selection || selection.isCollapsed || selection.rangeCount !== 1) {
+			return;
+		}
+		const range = selection.getRangeAt(0);
+		const common = range.commonAncestorContainer;
+		const row = (isHTMLElement(common) ? common : common.parentElement)?.closest('.volt-agent-user-row');
+		const textEl = row?.querySelector<HTMLElement>('.volt-agent-text');
+		const message = textEl && this.userMessageTexts.get(textEl);
+		if (!textEl || !message) {
+			return;
+		}
+		const covered = (node: Node): [number, number] | undefined => {
+			if (!range.intersectsNode(node)) {
+				return undefined;
+			}
+			const from = node === range.startContainer ? range.startOffset : 0;
+			const to = node === range.endContainer ? range.endOffset : node.nodeValue?.length ?? 0;
+			return to > from ? [from, to] : undefined;
+		};
+		const textNodes = (root: Node): Text[] => {
+			const nodes: Text[] = [];
+			const walker = textEl.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+			for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+				nodes.push(node as Text);
+			}
+			return nodes;
+		};
+		let text = '';
+		let mentions: { offset: number; mention: IAgentDisplayMention }[] = [];
+		let whole = true;
+		const seenChips = new Set<HTMLElement>();
+		for (const node of textNodes(textEl)) {
+			const chip = node.parentElement?.closest<HTMLElement>('.volt-agent-inline-mention');
+			if (!chip) {
+				const part = covered(node);
+				whole &&= !!part && part[0] === 0 && part[1] === node.data.length;
+				text += part ? node.data.slice(part[0], part[1]) : '';
+				continue;
+			}
+			if (seenChips.has(chip)) {
+				continue;
+			}
+			seenChips.add(chip);
+			// A chip whose whole name is selected copies as the chip; its size line is not part of the prompt.
+			const pill = chip.querySelector('.volt-agent-mention-pill');
+			const labelNodes = pill ? textNodes(pill) : [];
+			const parts = labelNodes.map(covered);
+			const mention = this.userChipMentions.get(chip);
+			if (mention && labelNodes.length && parts.every((part, i) => part && part[0] === 0 && part[1] === labelNodes[i].data.length)) {
+				mentions.push({ offset: text.length, mention });
+				text += mention.label;
+			} else {
+				whole = false;
+				text += labelNodes.map((node, i) => {
+					const part = parts[i];
+					return part ? node.data.slice(part[0], part[1]) : '';
+				}).join('');
+			}
+		}
+		if (!mentions.length) {
+			return;
+		}
+		if (whole) {
+			// The whole prompt copies as it was typed, markdown marks included.
+			text = message.text;
+			mentions = [];
+			let cursor = 0;
+			for (const mention of message.mentions ?? []) {
+				const index = mention.label ? text.indexOf(mention.label, cursor) : -1;
+				if (index >= 0) {
+					mentions.push({ offset: index, mention });
+					cursor = index + mention.label.length;
+				}
+			}
+		}
+		e.preventDefault();
+		e.clipboardData.setData('text/plain', text);
+		setComposerClipData(e.clipboardData, text, mentions);
 	}
 
 	/** A `/skill` token in a sent message: its card on hover, its file on click. */
@@ -3726,6 +3818,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			this.threadListeners.add(fitImageStripToOneRow(strip, stripItems, i => this.openMessageMedia(message, i)));
 		}
 		const text = append(main, $('.volt-agent-text'));
+		this.userMessageTexts.set(text, message);
 		this.renderUserMessageText(text, message);
 		// Bottom-right of the first lines of a long prompt; CSS shows it only while the bubble is clamped.
 		const readMore = append(clip, $('button.volt-agent-user-read-more')) as HTMLButtonElement;

@@ -5420,6 +5420,14 @@ pre.volt-agent-searchable {
 	font-size: 13px;
 }
 
+/* This Mac: the same 13px as the access trigger's lock. */
+.volt-agent-landing-pick .trigger-icon .volt-agent-svg-icon,
+.volt-agent-landing-pick .trigger-icon .volt-agent-svg-icon svg {
+	display: block;
+	width: 13px;
+	height: 13px;
+}
+
 .volt-agent-landing-pick.empty {
 	opacity: 0.7;
 }
@@ -5653,7 +5661,7 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-context-meter .percent {
-	font-weight: 500;
+	font-weight: 400;
 }
 
 .volt-agent-context-meter .tokens {
@@ -8094,6 +8102,8 @@ pre.volt-agent-searchable {
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.chat:not(.file-icon):not(.folder-icon)::before { content: '\ea6b'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.mcp:not(.file-icon):not(.folder-icon)::before { content: '\eb50'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.branch:not(.file-icon):not(.folder-icon)::before { content: '\ea68'; }
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.scratch:not(.file-icon):not(.folder-icon)::before { content: '\ebaf'; }
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.canvas:not(.file-icon):not(.folder-icon)::before { content: '\eb5c'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.browser::before {
 	content: '' !important;
 	background-color: var(--volt-mention-accent, #89b4fa) !important;

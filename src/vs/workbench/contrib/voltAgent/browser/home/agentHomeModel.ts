@@ -1031,9 +1031,10 @@ export function sessionShowsStatusBadge(session: IAgentSessionMeta, view: IAgent
 /**
  * The badge after an agent tab's age: "Input", "Working 2m", "Waiting", "Woke", "Done", "Draft", "Limit reached",
  * "Failed", "Interrupted", "Stopped". Idle tabs have none. `live` is the orchestrator's view (see {@link agentHomeLiveWork}).
- * Read from the persisted session meta (status, summary), so it survives a reload.
+ * Read from the persisted session meta (status, summary), so it survives a reload. `seen`: the reply was looked at,
+ * so "Done" is no longer news and the tab reads like an idle one.
  */
-export function sessionStatusBadge(session: IAgentSessionMeta, now: number, live?: AgentHomeWorkState): IAgentHomeStatusBadge | undefined {
+export function sessionStatusBadge(session: IAgentSessionMeta, now: number, live?: AgentHomeWorkState, seen = false): IAgentHomeStatusBadge | undefined {
 	switch (session.attention) {
 		case 'approval':
 		case 'question':
@@ -1073,9 +1074,10 @@ export function sessionStatusBadge(session: IAgentSessionMeta, now: number, live
 			return { kind: 'interrupted', label: localize('voltAgent.home.badge.interrupted', "Interrupted") };
 		case 'done':
 			// Some CLIs end the turn normally with the limit message as the whole reply.
-			return LIMIT_REPLY.test(session.summary ?? '')
-				? limitReachedBadge()
-				: { kind: 'done', label: localize('voltAgent.home.badge.done', "Done") };
+			if (LIMIT_REPLY.test(session.summary ?? '')) {
+				return limitReachedBadge();
+			}
+			return seen ? undefined : { kind: 'done', label: localize('voltAgent.home.badge.done', "Done") };
 		case 'idle':
 			return session.turnCount === 0 ? { kind: 'draft', label: localize('voltAgent.home.badge.draft', "Draft") } : undefined;
 		case 'cancelled':

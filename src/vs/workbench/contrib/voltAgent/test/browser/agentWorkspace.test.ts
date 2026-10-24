@@ -7,6 +7,7 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { InMemoryStorageService } from '../../../../../platform/storage/common/storage.js';
 import { AgentWorkspaceService, createAgentWorkspace, mergeAgentWorkspaces, reviveAgentWorkspaces } from '../../browser/workspace/agentWorkspace.js';
+import { VoltWindowScopeService } from '../../../../services/voltWindowScope/common/voltWindowScopeService.js';
 import { chooseAgentBrowserSurfaceMount } from '../../browser/workspace/agentBrowserMount.js';
 import { surfaceDropAccepted, shouldOpenSurfaceSplit, isLastOpenSurface, shouldHideAgentQuickOpenRail, surfaceKindForMenuAction } from '../../browser/workspace/agentSurfaceHost.js';
 import { agentSurfaceMenuItems } from '../../browser/workspace/agentSurfaceMenu.js';
@@ -16,7 +17,7 @@ suite('Agent workspaces', () => {
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
 	test('each agent gets its own clean workspace', () => {
-		const service = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService())));
+		const service = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService()), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		service.update('a', 'terminals', [{ id: 't1', cwd: '/repo' }]);
 		service.setMemory('a', 'note', 'keep');
 
@@ -28,7 +29,7 @@ suite('Agent workspaces', () => {
 	});
 
 	test('activating switches the active workspace once', () => {
-		const service = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService())));
+		const service = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService()), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		const seen: (string | undefined)[] = [];
 		store.add(service.onDidChangeActive(w => seen.push(w?.sessionId)));
 		service.activate('a');
@@ -41,12 +42,12 @@ suite('Agent workspaces', () => {
 
 	test('persists across reloads', async () => {
 		const storage = store.add(new InMemoryStorageService());
-		const first = store.add(new AgentWorkspaceService(storage));
+		const first = store.add(new AgentWorkspaceService(storage, store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		first.activate('a');
 		first.update('a', 'layout', { dock: 'terminal' });
 		await storage.flush();
 
-		const second = store.add(new AgentWorkspaceService(storage));
+		const second = store.add(new AgentWorkspaceService(storage, store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		assert.strictEqual(second.active?.sessionId, 'a');
 		assert.deepStrictEqual(second.get('a')?.layout, { dock: 'terminal' });
 	});
@@ -70,14 +71,14 @@ suite('Agent workspaces', () => {
 
 	test('a save keeps what another window stored in the meantime', async () => {
 		const storage = store.add(new InMemoryStorageService());
-		const windowA = store.add(new AgentWorkspaceService(storage));
-		const windowB = store.add(new AgentWorkspaceService(storage));
+		const windowA = store.add(new AgentWorkspaceService(storage, store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
+		const windowB = store.add(new AgentWorkspaceService(storage, store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		windowA.update('a', 'layout', { dock: 'browser' });
 		await storage.flush();
 		windowB.update('b', 'layout', { dock: 'terminal' });
 		await storage.flush();
 
-		const reloaded = store.add(new AgentWorkspaceService(storage));
+		const reloaded = store.add(new AgentWorkspaceService(storage, store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		assert.deepStrictEqual(reloaded.get('a')?.layout, { dock: 'browser' });
 		assert.deepStrictEqual(reloaded.get('b')?.layout, { dock: 'terminal' });
 	});
@@ -125,7 +126,7 @@ suite('Agent workspaces', () => {
 		assert.strictEqual(shouldOpenSurfaceSplit(1), true);
 		assert.strictEqual(shouldOpenSurfaceSplit(3), true);
 
-		const service = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService())));
+		const service = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService()), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		const first = service.openSurface('a', { kind: 'browser', url: 'https://example.com', title: 'example.com' }, false);
 		const second = service.openSurface('a', { kind: 'terminal', title: 'Terminal', cwd: '/repo' }, false);
 		assert.strictEqual(shouldOpenSurfaceSplit(service.get('a')?.surfaces.length ?? 0), true);
@@ -157,10 +158,13 @@ suite('Agent workspaces', () => {
 		assert.strictEqual(surfaceKindForMenuAction('changes'), 'changes');
 		assert.strictEqual(surfaceKindForMenuAction('sideChat'), 'chat');
 		assert.strictEqual(surfaceKindForMenuAction('browser'), 'browser');
+		assert.strictEqual(surfaceKindForMenuAction('device'), 'device');
 		assert.strictEqual(surfaceKindForMenuAction('file'), 'file');
-		assert.deepStrictEqual(agentSurfaceMenuItems().map(item => item.id), ['file', 'terminal', 'browser', 'changes', 'sideChat']);
+		assert.strictEqual(surfaceKindForMenuAction('scratch'), 'scratch');
+		assert.strictEqual(surfaceKindForMenuAction('canvas'), 'canvas');
+		assert.deepStrictEqual(agentSurfaceMenuItems().map(item => item.id), ['file', 'terminal', 'browser', 'device', 'changes', 'scratch', 'canvas', 'sideChat']);
 
-		const service = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService())));
+		const service = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService()), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		const first = service.openSurface('a', { kind: 'changes', title: 'Changes' }, true);
 		const again = service.openSurface('a', { kind: 'changes', title: 'Changes' }, true);
 		assert.strictEqual(again.id, first.id);
@@ -173,7 +177,7 @@ suite('Agent workspaces', () => {
 	});
 
 	test('a file opened twice stays one surface, and another chat keeps its own', () => {
-		const service = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService())));
+		const service = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService()), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		service.openSurface('a', { kind: 'file', resource: 'file:///repo-a/src/index.ts', title: 'index.ts' }, true);
 		service.openSurface('a', { kind: 'terminal', title: 'Terminal', cwd: '/repo-a' }, false);
 		service.openSurface('b', { kind: 'browser', url: 'https://example.com', title: 'example.com' }, false);
@@ -186,14 +190,14 @@ suite('Agent workspaces', () => {
 	});
 
 	test('scratch memory drops values that are too large to store', () => {
-		const service = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService())));
+		const service = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService()), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		service.setMemory('a', 'note', 'keep');
 		service.setMemory('a', 'blob', 'x'.repeat(9000));
 		assert.deepStrictEqual(service.get('a')?.memory, { note: 'keep' });
 	});
 
 	test('split ratio stays inside the pane', () => {
-		const service = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService())));
+		const service = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService()), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		service.setSplitRatio('a', 0.99);
 		service.setSplitRatio('a', Number.NaN);
 		assert.strictEqual(service.get('a')?.layout.splitRatio, 0.5);

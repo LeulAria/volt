@@ -521,7 +521,7 @@ export class AgentComposerChips extends Disposable {
 	setAgents(agents: IAgentComposerAgentsChip | undefined): void {
 		const next = agents && agents.live > 0 ? agents : undefined;
 		const current = this.agents;
-		if (current?.label === next?.label && current?.waiting === next?.waiting && current?.tooltip === next?.tooltip && current?.live === next?.live) {
+		if (current?.label === next?.label && current?.waiting === next?.waiting && current?.live === next?.live) {
 			return;
 		}
 		this.agents = next;
