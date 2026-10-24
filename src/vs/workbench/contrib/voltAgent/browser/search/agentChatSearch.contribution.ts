@@ -127,7 +127,7 @@ class AgentChatSearchPicker extends Disposable {
 	}
 
 	private refreshSessions(): void {
-		const metas = this.history.list({ includeArchived: true }).filter(meta => !meta.subagent);
+		const metas = this.history.list({ includeArchived: true, inWindow: true }).filter(meta => !meta.subagent);
 		this.sessions = new Map(metas.map(meta => [meta.id, meta]));
 		this.candidates = metas.map(meta => ({
 			id: meta.id,

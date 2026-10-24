@@ -153,6 +153,8 @@ import { IVoltBadgeService, VOLT_BADGE_CHANNEL_NAME } from '../../platform/voltB
 import { VoltBadgeMainService } from '../../platform/voltBadge/electron-main/voltBadgeMainService.js';
 import { IVoltAwakeService, VOLT_AWAKE_CHANNEL_NAME } from '../../platform/voltAwake/common/voltAwake.js';
 import { VoltAwakeMainService } from '../../platform/voltAwake/electron-main/voltAwakeMainService.js';
+import { VOLT_WINDOW_SCOPES_CHANNEL_NAME } from '../../platform/voltWindowScope/common/voltWindowScope.js';
+import { IVoltWindowScopesMainService, VoltWindowScopesMainService } from '../../platform/voltWindowScope/electron-main/voltWindowScopesMainService.js';
 import { IVoltDiagnosticsService } from '../../platform/voltDiagnostics/common/voltDiagnostics.js';
 import { registerVoltDiagnosticsMain, VoltDiagnosticsMainService } from '../../platform/voltDiagnostics/electron-main/voltDiagnosticsMainService.js';
 import { IVoltStorageService, VOLT_STORAGE_CHANNEL_NAME } from '../../platform/voltStorage/common/voltStorage.js';
@@ -1129,6 +1131,9 @@ export class CodeApplication extends Disposable {
 		// Volt Lid-Closed Mode (keeps the computer awake while agents work)
 		services.set(IVoltAwakeService, new SyncDescriptor(VoltAwakeMainService, undefined, false /* proxied to other processes */));
 
+		// Volt window scopes (a New Window keeps its chats and projects until it closes)
+		services.set(IVoltWindowScopesMainService, new SyncDescriptor(VoltWindowScopesMainService, undefined, false /* proxied to other processes */));
+
 		// Volt diagnostics (tracing export, stall log, heap snapshots)
 		services.set(IVoltDiagnosticsService, new SyncDescriptor(VoltDiagnosticsMainService, undefined, false /* proxied to other processes */));
 
@@ -1346,6 +1351,9 @@ export class CodeApplication extends Disposable {
 
 		// Volt Lid-Closed Mode (created here, at startup, so it undoes what a crashed run left before any window asks)
 		mainProcessElectronServer.registerChannel(VOLT_AWAKE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltAwakeService), disposables));
+
+		// Volt window scopes
+		mainProcessElectronServer.registerChannel(VOLT_WINDOW_SCOPES_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltWindowScopesMainService), disposables));
 
 		// Volt storage cleanup and first-run import
 		mainProcessElectronServer.registerChannel(VOLT_STORAGE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltStorageService), disposables));

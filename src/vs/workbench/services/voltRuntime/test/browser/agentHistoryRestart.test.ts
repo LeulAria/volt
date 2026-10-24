@@ -14,6 +14,7 @@ import { FileService } from '../../../../../platform/files/common/fileService.js
 import { InMemoryFileSystemProvider } from '../../../../../platform/files/common/inMemoryFilesystemProvider.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { AgentHistoryService } from '../../browser/history/agentHistoryService.js';
+import { VoltWindowScopeService } from '../../../voltWindowScope/common/voltWindowScopeService.js';
 import { AGENT_HISTORY_FORMAT_VERSION } from '../../common/history/agentHistory.js';
 
 suite('Agent history after a restart', () => {
@@ -48,6 +49,7 @@ suite('Agent history after a restart', () => {
 			{ onWillShutdown: Event.None } as never,
 			new NullLogService(),
 			{} as never,
+			disposables.add(new VoltWindowScopeService(undefined, undefined, undefined)),
 		));
 		await service.whenReady;
 		assert.strictEqual(service.get('done-chat')?.status, 'done', 'the log says it finished');

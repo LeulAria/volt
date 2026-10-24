@@ -233,6 +233,12 @@ export interface IAgentHistoryListOptions extends IAgentSessionSearchOptions {
 	readonly workspaceId?: string;
 	readonly includeArchived?: boolean;
 	readonly limit?: number;
+	/**
+	 * Only chats this window lists. A window opened with New Window lists only the chats started
+	 * in it, and the main window leaves those out until it closes. For lists the user sees; leave
+	 * it off where every chat matters (cleanup, usage).
+	 */
+	readonly inWindow?: boolean;
 }
 
 export interface IAgentSessionAppendAssistant {

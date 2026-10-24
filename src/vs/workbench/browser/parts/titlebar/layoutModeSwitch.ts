@@ -10,7 +10,7 @@ import { Disposable } from '../../../../base/common/lifecycle.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
 import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
-import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { ConfigurationTarget, IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { ContextKeyExpr, IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
@@ -21,6 +21,7 @@ import { IViewDescriptorService, ViewContainerLocation } from '../../../common/v
 import { IPaneCompositePartService } from '../../../services/panecomposite/browser/panecomposite.js';
 import { IWorkbenchLayoutService, Parts, Position, isMultiWindowPart } from '../../../services/layout/browser/layoutService.js';
 import { ILifecycleService, LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
+import { IVoltWindowScopeService } from '../../../services/voltWindowScope/common/voltWindowScope.js';
 import { AGENT_SIDE_PANEL_ID, stampLayoutModeChrome } from './agentLayoutChrome.js';
 import { LAYOUT_MODE_CONTEXT_KEY } from './layoutKeybindingMode.js';
 import { AGENT_LIST_WIDTH, AGENT_SIDEBAR_MIN_WIDTH, LAYOUT_MODE_STORAGE_KEY, readAgentLeftSidebarHidden, readStoredLayoutModeValue, SIDEBAR_LOCATION_KEY, writeAgentLeftSidebarHidden, type LayoutMode } from './layoutModeStartup.js';
@@ -54,9 +55,26 @@ export function storeAgentLeftSidebarHidden(storageService: IStorageService, hid
 	writeAgentLeftSidebarHidden(storageService, hidden);
 }
 
-export function readStoredLayoutMode(storageService: IStorageService, layoutService: IWorkbenchLayoutService): LayoutMode {
-	const stored = storageService.get(LAYOUT_MODE_STORAGE_KEY, StorageScope.PROFILE, '');
+export function readStoredLayoutMode(storageService: IStorageService, layoutService: IWorkbenchLayoutService, windowScope?: IVoltWindowScopeService): LayoutMode {
+	const own = windowScope?.scope ? windowScope.layoutMode : undefined;
+	const stored = own ?? storageService.get(LAYOUT_MODE_STORAGE_KEY, StorageScope.PROFILE, '');
 	return readStoredLayoutModeValue(stored, layoutService.getSideBarPosition() === Position.RIGHT);
+}
+
+/**
+ * Moves the side bar for a mode. A New Window with a scope of its own keeps the move in memory: the
+ * user setting is every other window's, so writing it would switch them too.
+ */
+function applySidebarLocation(configurationService: IConfigurationService, mode: LayoutMode, windowScope: IVoltWindowScopeService | undefined): Promise<void> {
+	const location = mode === 'agent' ? 'right' : 'left';
+	if (windowScope?.scope) {
+		return configurationService.inspect<string>(SIDEBAR_LOCATION_KEY).memoryValue === location
+			? Promise.resolve()
+			: configurationService.updateValue(SIDEBAR_LOCATION_KEY, location, ConfigurationTarget.MEMORY);
+	}
+	return configurationService.getValue<string>(SIDEBAR_LOCATION_KEY) === location
+		? Promise.resolve()
+		: configurationService.updateValue(SIDEBAR_LOCATION_KEY, location);
 }
 
 export function isAgentRightDockCollapsed(storageService: IStorageService): boolean {
@@ -117,13 +135,16 @@ export async function setLayoutMode(
 	layoutService: IWorkbenchLayoutService,
 	mode: LayoutMode,
 	storageService: IStorageService,
+	windowScope?: IVoltWindowScopeService,
 ): Promise<void> {
 	onWillChangeLayoutModeEmitter.fire(mode);
-	storageService.store(LAYOUT_MODE_STORAGE_KEY, mode, StorageScope.PROFILE, StorageTarget.USER);
-	const location = mode === 'agent' ? 'right' : 'left';
-	if (configurationService.getValue<string>(SIDEBAR_LOCATION_KEY) !== location) {
-		await configurationService.updateValue(SIDEBAR_LOCATION_KEY, location);
+	if (windowScope?.scope) {
+		// Only this window switches; new windows still open in the mode the profile last used.
+		windowScope.setLayoutMode(mode);
+	} else {
+		storageService.store(LAYOUT_MODE_STORAGE_KEY, mode, StorageScope.PROFILE, StorageTarget.USER);
 	}
+	await applySidebarLocation(configurationService, mode, windowScope);
 	if (mode === 'agent') {
 		storeAgentLeftSidebarHidden(storageService, false);
 	}
@@ -202,7 +223,7 @@ registerAction2(class ToggleLayoutModeAction extends Action2 {
 	override run(accessor: ServicesAccessor): Promise<void> {
 		const layoutService = accessor.get(IWorkbenchLayoutService);
 		const next: LayoutMode = getLayoutMode(layoutService) === 'agent' ? 'ide' : 'agent';
-		return setLayoutMode(accessor.get(IConfigurationService), layoutService, next, accessor.get(IStorageService));
+		return setLayoutMode(accessor.get(IConfigurationService), layoutService, next, accessor.get(IStorageService), accessor.get(IVoltWindowScopeService));
 	}
 });
 
@@ -232,7 +253,7 @@ registerAction2(class SetAgentLayoutModeAction extends Action2 {
 	}
 
 	override run(accessor: ServicesAccessor): Promise<void> {
-		return setLayoutMode(accessor.get(IConfigurationService), accessor.get(IWorkbenchLayoutService), 'agent', accessor.get(IStorageService));
+		return setLayoutMode(accessor.get(IConfigurationService), accessor.get(IWorkbenchLayoutService), 'agent', accessor.get(IStorageService), accessor.get(IVoltWindowScopeService));
 	}
 });
 
@@ -262,7 +283,7 @@ registerAction2(class SetIdeLayoutModeAction extends Action2 {
 	}
 
 	override run(accessor: ServicesAccessor): Promise<void> {
-		return setLayoutMode(accessor.get(IConfigurationService), accessor.get(IWorkbenchLayoutService), 'ide', accessor.get(IStorageService));
+		return setLayoutMode(accessor.get(IConfigurationService), accessor.get(IWorkbenchLayoutService), 'ide', accessor.get(IStorageService), accessor.get(IVoltWindowScopeService));
 	}
 });
 
@@ -279,10 +300,11 @@ class LayoutModeChromeContribution extends Disposable {
 		@IViewDescriptorService private readonly viewDescriptorService: IViewDescriptorService,
 		@IPaneCompositePartService private readonly paneCompositeService: IPaneCompositePartService,
 		@ILifecycleService lifecycleService: ILifecycleService,
+		@IVoltWindowScopeService private readonly windowScope: IVoltWindowScopeService,
 	) {
 		super();
 		this.layoutModeKey = LayoutModeContext.bindTo(contextKeyService);
-		const mode = readStoredLayoutMode(this.storageService, this.layoutService);
+		const mode = readStoredLayoutMode(this.storageService, this.layoutService, this.windowScope);
 		this.layoutModeKey.set(mode);
 		this._register(onDidChangeLayoutMode(next => this.layoutModeKey.set(next)));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
@@ -307,17 +329,15 @@ class LayoutModeChromeContribution extends Disposable {
 	}
 
 	private finish(): void {
-		const mode = readStoredLayoutMode(this.storageService, this.layoutService);
-		if (this.storageService.get(LAYOUT_MODE_STORAGE_KEY, StorageScope.PROFILE, '') !== mode) {
+		const mode = readStoredLayoutMode(this.storageService, this.layoutService, this.windowScope);
+		if (!this.windowScope.scope && this.storageService.get(LAYOUT_MODE_STORAGE_KEY, StorageScope.PROFILE, '') !== mode) {
 			this.storageService.store(LAYOUT_MODE_STORAGE_KEY, mode, StorageScope.PROFILE, StorageTarget.USER);
 		}
 		applyLayoutModeChrome(this.layoutService, this.configurationService, this.storageService);
 		this.layoutModeKey.set(getLayoutMode(this.layoutService));
 		this.keepAgentsOnAuxiliaryBar();
-		const location = mode === 'agent' ? 'right' : 'left';
-		if (this.configurationService.getValue<string>(SIDEBAR_LOCATION_KEY) !== location) {
-			void this.configurationService.updateValue(SIDEBAR_LOCATION_KEY, location);
-		}
+		// A scoped window pins its side bar in memory, so the main window switching modes leaves it be.
+		void applySidebarLocation(this.configurationService, mode, this.windowScope);
 		if (mode === 'agent' && !isAgentLeftSidebarHidden(this.storageService)) {
 			void openAgentSidebar(this.configurationService, this.layoutService, this.paneCompositeService);
 		}

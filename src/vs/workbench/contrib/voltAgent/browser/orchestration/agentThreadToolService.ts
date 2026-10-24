@@ -360,6 +360,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		const cursor = numberArg(args.cursor, 0, 100_000) ?? 0;
 		const metas = this.history.list({
 			includeArchived: args.include_archived === true,
+			inWindow: true,
 			...(project && project !== 'all' ? { workspaceId: project.id } : {}),
 		});
 		const now = Date.now();
@@ -397,7 +398,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			return { error: 'Pass a `query`.' };
 		}
 		const project = this.projectArg(caller, args.project);
-		const options = project && project !== 'all' ? { workspaceId: project.id } : {};
+		const options = { inWindow: true, ...(project && project !== 'all' ? { workspaceId: project.id } : {}) };
 		const limit = numberArg(args.limit, 1, 50) ?? 20;
 		const now = Date.now();
 		const indexed = await Promise.race([this.chatSearch.whenCurrent().then(() => true, () => false), timeout(SEARCH_INDEX_WAIT_MS).then(() => false)]);

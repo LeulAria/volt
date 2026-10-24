@@ -161,7 +161,7 @@ export class AgentChatSearchService extends Disposable implements IAgentChatSear
 	private async build(): Promise<void> {
 		await this.history.whenReady;
 		this.stale = false;
-		const sessions = this.history.list({ includeArchived: true })
+		const sessions = this.history.list({ includeArchived: true, inWindow: true })
 			.filter(meta => !meta.subagent && meta.turnCount > 0)
 			.sort((a, b) => b.updatedAt - a.updatedAt);
 		const live = new Set(sessions.map(meta => meta.id));

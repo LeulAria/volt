@@ -47,6 +47,7 @@ import { IInstantiationService } from '../../instantiation/common/instantiation.
 import { VSBuffer } from '../../../base/common/buffer.js';
 import { errorHandler } from '../../../base/common/errors.js';
 import { FocusMode } from '../../native/common/native.js';
+import { IVoltWindowScopesMainService } from '../../voltWindowScope/electron-main/voltWindowScopesMainService.js';
 
 export interface IWindowCreationOptions {
 	readonly state: IWindowState;
@@ -724,7 +725,8 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 		@IWindowsMainService private readonly windowsMainService: IWindowsMainService,
 		@IStateService stateService: IStateService,
 		@IInstantiationService instantiationService: IInstantiationService,
-		@ICSSDevelopmentService private readonly cssDevelopmentService: ICSSDevelopmentService
+		@ICSSDevelopmentService private readonly cssDevelopmentService: ICSSDevelopmentService,
+		@IVoltWindowScopesMainService private readonly voltWindowScopes: IVoltWindowScopesMainService
 	) {
 		super(configurationService, stateService, environmentMainService, logService);
 
@@ -733,7 +735,13 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 		//#region create browser window
 		{
-			this.configObjectUrl = this._register(protocolMainService.createIPCObjectUrl<INativeWindowConfiguration>(configuration => this.refreshDevCssModules(configuration)));
+			this.configObjectUrl = this._register(protocolMainService.createIPCObjectUrl<INativeWindowConfiguration>(async configuration => {
+				// Every load (first, reload, crash reload) starts from the scopes as they are now.
+				if (configuration) {
+					configuration.voltWindowScopes = this.voltWindowScopes.scopes;
+				}
+				await this.refreshDevCssModules(configuration);
+			}));
 
 			// Load window state
 			const [state, hasMultipleDisplays] = this.restoreWindowState(config.state);
