@@ -32,8 +32,6 @@ export interface IOverlayInput {
 	/** Point handles of a single selected connector. */
 	readonly points?: { readonly at: readonly Vec[]; readonly mids: readonly Vec[]; readonly active?: number; readonly bound: readonly boolean[] };
 	readonly hover?: readonly Vec[];
-	/** The hovered element's connections: its connectors' paths and the outlines of what they join. */
-	readonly links?: { readonly lines: readonly (readonly Vec[])[]; readonly nodes: readonly (readonly Vec[])[] };
 	readonly marquee?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
 	readonly guides: readonly IOverlayGuide[];
 	readonly binding?: { readonly outline: readonly Vec[]; readonly ports: readonly Vec[]; readonly activePort: number | undefined };
@@ -82,22 +80,6 @@ export class ScratchOverlay {
 		}
 		if (input.frameHighlight) {
 			poly(input.frameHighlight, 'sx-ov-frame-target');
-		}
-		if (input.links) {
-			const line = (points: readonly Vec[], className: string) => add('polyline', { points: points.map(p => `${svgNum(p[0])},${svgNum(p[1])}`).join(' ') }, className);
-			for (const node of input.links.nodes) {
-				poly(node, 'sx-ov-link-node');
-			}
-			// A soft glow under each connector, then the line itself, then its ends.
-			for (const points of input.links.lines) {
-				line(points, 'sx-ov-link-glow');
-			}
-			for (const points of input.links.lines) {
-				line(points, 'sx-ov-link');
-				for (const end of [points[0], points[points.length - 1]]) {
-					add('circle', { cx: svgNum(end[0]), cy: svgNum(end[1]), r: '3' }, 'sx-ov-link-end');
-				}
-			}
 		}
 		if (input.hover) {
 			poly(input.hover, 'sx-ov-hover');

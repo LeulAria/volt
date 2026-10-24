@@ -14,7 +14,7 @@ export const SCRATCH_ENABLED_SETTING = 'volt.scratch.enabled';
 export const SCRATCH_AGENT_TOOLS_SETTING = 'volt.scratch.agentTools';
 /** Put the chats list away while Scratch shows in the agent layout. */
 export const SCRATCH_HIDE_CHATS_SETTING = 'volt.scratch.hideChatsList';
-/** Hovering a shape lights up its connectors (and fades the rest); hovering a connector, its two ends. */
+/** Hovering a shape greys out everything not connected to it; hovering a connector, everything but its two ends. */
 export const SCRATCH_HIGHLIGHT_CONNECTIONS_SETTING = 'volt.scratch.highlightConnections';
 export const SCRATCH_NEW_THEME_SETTING = 'volt.scratch.newBoard.theme';
 export const SCRATCH_NEW_GRID_SETTING = 'volt.scratch.newBoard.grid';
@@ -102,7 +102,7 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			type: 'boolean',
 			default: true,
 			scope: ConfigurationScope.APPLICATION,
-			description: localize('voltScratch.highlightConnections', "Hovering a shape on a Scratch board highlights the connectors joined to it and fades the others; hovering a connector highlights what it joins."),
+			description: localize('voltScratch.highlightConnections', "Hovering a shape on a Scratch board greys out everything not connected to it; hovering a connector keeps only what it joins."),
 		},
 		[SCRATCH_NEW_THEME_SETTING]: {
 			type: 'string',

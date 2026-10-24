@@ -118,7 +118,7 @@ export class CanvasScratchPage {
 			localize('voltCanvasScratch.hideChatsDesc', "Put the chats list away while Scratch is open and bring it back when you leave"));
 		this.switchRow(group, SCRATCH_HIGHLIGHT_CONNECTIONS_SETTING,
 			localize('voltCanvasScratch.highlightConnections', "Highlight Connections"),
-			localize('voltCanvasScratch.highlightConnectionsDesc', "Hover a shape to light up the connectors joined to it and fade the rest; hover a connector to see what it joins"));
+			localize('voltCanvasScratch.highlightConnectionsDesc', "Hover a shape to grey out everything not connected to it; hover a connector to see what it joins. Also the toggle beside Library"));
 		kit.settingRow(group,
 			localize('voltCanvasScratch.boards', "Boards"),
 			localize('voltCanvasScratch.boardsDesc', "Open Scratch on your last board, or start a new one"),

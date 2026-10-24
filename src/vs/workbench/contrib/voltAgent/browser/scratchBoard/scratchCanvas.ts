@@ -28,7 +28,7 @@ import { parseElement } from '../../common/scratchBoard/scratchDocument.js';
 import { createCard, createDraw, createFrame, createIcon, createImage, createLabel, createLinear, createNote, createShape, createText, duplicateElements, newElementId, ScratchPatch } from '../../common/scratchBoard/scratchFactory.js';
 import { freehandDrawing } from '../../common/scratchBoard/scratchDrawing.js';
 import { simplifyStroke } from '../../common/scratchBoard/scratchFreehand.js';
-import { elementBox, elementBounds, elementCenter, elementCorners, elementIntersectsSegment, elementOutline, elementsInMarquee, geometricBounds, hitTestElement, linearHitPolyline, linearWorldPoints, topmostHit, withFrameContents, worldToLocal } from '../../common/scratchBoard/scratchGeometry.js';
+import { elementBox, elementBounds, elementCenter, elementCorners, elementIntersectsSegment, elementOutline, elementsInMarquee, geometricBounds, hitTestElement, linearWorldPoints, topmostHit, withFrameContents, worldToLocal } from '../../common/scratchBoard/scratchGeometry.js';
 import { extractMermaidSource, parseMermaidFlowchart } from '../../common/scratchBoard/scratchMermaid.js';
 import { htmlToMarkdown, isEmptyRichText, looksLikeMarkdown } from '../../common/scratchBoard/scratchHtml.js';
 import { layeredLayout } from '../../common/scratchBoard/scratchLayout.js';
@@ -205,6 +205,7 @@ export class ScratchCanvas extends Disposable {
 		super();
 		this._register(configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(SCRATCH_HIGHLIGHT_CONNECTIONS_SETTING)) {
+				this.toolbar.refresh();
 				this.requestFrame();
 			}
 		}));
@@ -822,7 +823,7 @@ export class ScratchCanvas extends Disposable {
 				hover = elementOutline(el).map(p => this.toScreen(p));
 			}
 		}
-		const links = this.connectionHighlight(scene, !!gesture && gesture.kind !== 'pending');
+		this.highlightConnectionsOf(scene, !!gesture && gesture.kind !== 'pending');
 		let marquee: IOverlayInput['marquee'];
 		if (gesture?.kind === 'marquee') {
 			const a = this.toScreen(gesture.startWorld);
@@ -859,7 +860,7 @@ export class ScratchCanvas extends Disposable {
 				frameHighlight = elementCorners(frame).map(p => this.toScreen(p));
 			}
 		}
-		return { outlines, groupOutlines, box, points, hover, links, marquee, guides, binding, eraser, laser, editing: editingOutline, runs: this.runs.outlines(), frameHighlight };
+		return { outlines, groupOutlines, box, points, hover, marquee, guides, binding, eraser, laser, editing: editingOutline, runs: this.runs.outlines(), frameHighlight };
 	}
 
 	/** Whether hovering lights up connections (Settings > Canvas & Scratch, and the board menu). */
@@ -872,11 +873,12 @@ export class ScratchCanvas extends Disposable {
 	}
 
 	/**
-	 * What the hovered element is joined to, the way node canvases show it: a shape's connectors
-	 * drawn over in the accent with the elements at their other ends outlined, every other
-	 * connector faded; a connector with the two elements it joins. Nothing while dragging.
+	 * What the hovered element is joined to, the way node canvases show it: a shape, its
+	 * connectors and the elements at their other ends stay as drawn while everything else greys
+	 * out; a connector keeps the two elements it joins. Frames stay (they hold the diagram).
+	 * Nothing while dragging.
 	 */
-	private connectionHighlight(scene: ScratchScene, busy: boolean): IOverlayInput['links'] {
+	private highlightConnectionsOf(scene: ScratchScene, busy: boolean): void {
 		const el = this.highlightConnections && !busy && this.state.tool === 'select' && this.hoverId ? scene.get(this.hoverId) : undefined;
 		let connectors: IScratchLinearElement[] = [];
 		if (el && isLinear(el)) {
@@ -885,30 +887,23 @@ export class ScratchCanvas extends Disposable {
 			connectors = boundConnectors(scene.getElements(), new Set([el.id]));
 		}
 		const faded = new Set<string>();
-		if (connectors.length && el && !isLinear(el)) {
-			const lit = new Set(connectors.map(c => c.id));
+		if (el && connectors.length) {
+			const lit = new Set<string>([el.id]);
+			for (const c of connectors) {
+				lit.add(c.id);
+				for (const binding of [c.startBinding, c.endBinding]) {
+					if (binding) {
+						lit.add(binding.elementId);
+					}
+				}
+			}
 			for (const other of scene.getElements()) {
-				if (isLinear(other) && !lit.has(other.id)) {
+				if (!lit.has(other.id) && other.type !== 'frame') {
 					faded.add(other.id);
 				}
 			}
 		}
 		this.setFaded(faded);
-		if (!el || !connectors.length) {
-			return undefined;
-		}
-		const ends = new Set<string>();
-		for (const c of connectors) {
-			for (const binding of [c.startBinding, c.endBinding]) {
-				if (binding && binding.elementId !== el.id) {
-					ends.add(binding.elementId);
-				}
-			}
-		}
-		return {
-			lines: connectors.map(c => linearHitPolyline(c).map(p => this.toScreen(p))),
-			nodes: [...ends].map(id => scene.get(id)).filter((n): n is ScratchElement => !!n).map(n => elementOutline(n).map(p => this.toScreen(p))),
-		};
 	}
 
 	private setFaded(ids: ReadonlySet<string>): void {

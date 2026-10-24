@@ -5,7 +5,6 @@
 
 import { $, addDisposableListener, append } from '../../../../../base/browser/dom.js';
 import { Disposable, toDisposable } from '../../../../../base/common/lifecycle.js';
-import { isMacintosh } from '../../../../../base/common/platform.js';
 import { localize } from '../../../../../nls.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { createFrame, createCard, createNote } from '../../common/scratchBoard/scratchFactory.js';
@@ -57,10 +56,8 @@ const TOOLS: readonly IToolSpec[] = [
 	{ tool: 'note', icon: 'sticky-note', label: localize('voltScratch.tool.note', "Sticky note"), key: 'N' },
 	{ tool: 'image', icon: 'image', label: localize('voltScratch.tool.image', "Image"), key: '9' },
 	{ tool: 'eraser', icon: 'eraser', label: localize('voltScratch.tool.eraser', "Eraser"), key: 'E' },
-	// Comment sits in the top right, beside Ask Agent.
+	// Comment sits in the top right, beside Library.
 ];
-
-const MOD = isMacintosh ? '⌘' : 'Ctrl+';
 
 /** The side bars' distance from the board's edge, and the least room between them and the tools. */
 const BAR_INSET = 12;
@@ -95,6 +92,7 @@ export class ScratchToolbar extends Disposable {
 	private readonly moreButton: HTMLButtonElement;
 	private readonly titleInput: HTMLInputElement;
 	private readonly libraryButton: HTMLButtonElement;
+	private readonly linksButton: HTMLButtonElement;
 	private readonly commentButton: HTMLButtonElement;
 	/** Where the comments' "(n) Send" goes, first in the top right. */
 	readonly commentsSlot: HTMLElement;
@@ -166,19 +164,23 @@ export class ScratchToolbar extends Disposable {
 		this.moreButton = this.toolButton(bar, 'ellipsis-vertical', localize('voltScratch.moreTools', "More tools"), '');
 		this._register(addDisposableListener(this.moreButton, 'click', () => this.showMore()));
 
-		// Right: library, ask the agent about the whole board, comment.
+		// Right: connections, library, comment.
 		const right = append(parent, $('.sx-top-right.sx-chrome-item'));
 		this.commentsSlot = append(right, $('.sx-comments-slot'));
+		// Hovering a shape shows what it is joined to (on by default; the setting is shared with the board menu).
+		this.linksButton = this.labelButton(right, 'workflow', '', undefined, 'sx-icon-only');
+		this.linksButton.setAttribute('aria-label', localize('voltScratch.highlightConnections', "Highlight Connections"));
+		setAgentTooltip(this.linksButton, localize('voltScratch.highlightConnectionsTooltip', "Show a shape's connections on hover"), undefined, undefined, 'below');
+		this._register(addDisposableListener(this.linksButton, 'click', () => {
+			this.canvas.setHighlightConnections(!this.canvas.highlightConnections);
+			this.canvas.focus();
+		}));
 		this.libraryButton = this.labelButton(right, 'library-big', localize('voltScratch.library', "Library"), 'Shift+L');
 		this._register(addDisposableListener(this.libraryButton, 'click', () => {
 			this.canvas.toggleLibrary();
 			this.refresh();
 		}));
-		const ask = this.labelButton(right, 'agent-spark', localize('voltScratch.askBoard', "Ask Agent"), undefined, 'sx-ask');
-		// allow-any-unicode-next-line
-		append(ask, $('kbd')).textContent = `${MOD}↵`;
-		setAgentTooltip(ask, localize('voltScratch.askBoardTooltip', "Send the selection, or the whole board, to an agent"), undefined, undefined, 'below');
-		this._register(addDisposableListener(ask, 'click', () => this.canvas.openComposer(this.canvas.state.selection.size === 0)));
+		// Asking an agent about the board: the selection bar's Ask Agent and its shortcut (no button here).
 		// The comment tool: click something or drag a box round several things, then write.
 		this.commentButton = this.labelButton(right, 'message-circle', localize('voltScratch.tool.comment', "Comment"), 'C');
 		this.commentButton.setAttribute('aria-pressed', 'false');
@@ -267,7 +269,9 @@ export class ScratchToolbar extends Disposable {
 		const button = append(parent, $(`button.sx-label-button${extra ? `.${extra}` : ''}`)) as HTMLButtonElement;
 		button.type = 'button';
 		button.appendChild(scratchIcon(parent.ownerDocument, icon, { size: 14 }));
-		append(button, $('span')).textContent = label;
+		if (label) {
+			append(button, $('span')).textContent = label;
+		}
 		if (shortcut) {
 			setAgentTooltip(button, label, shortcut, undefined, 'below');
 		}
@@ -301,6 +305,9 @@ export class ScratchToolbar extends Disposable {
 		this.lockButton.classList.toggle('active', state.toolLocked);
 		this.lockButton.replaceChildren(scratchIcon(this.lockButton.ownerDocument, state.toolLocked ? 'lock' : 'lock-open', { size: 14 }));
 		this.libraryButton.classList.toggle('active', this.canvas.libraryOpen);
+		const links = this.canvas.highlightConnections;
+		this.linksButton.classList.toggle('active', links);
+		this.linksButton.setAttribute('aria-pressed', String(links));
 		if (this.titleInput.ownerDocument.activeElement !== this.titleInput) {
 			this.titleInput.value = this.host.boardTitle();
 			this.sizeTitle();

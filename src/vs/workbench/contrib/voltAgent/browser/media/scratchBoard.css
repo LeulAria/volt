@@ -186,9 +186,9 @@
 	filter: opacity(0.28);
 }
 
-/* Connectors not joined to the hovered shape step back while its own light up. */
+/* Highlight Connections: everything not joined to the hovered element greys out; its own lines stay as drawn. */
 .sx-el.sx-faded {
-	filter: opacity(0.25);
+	filter: grayscale(1) opacity(0.3);
 	transition: filter 120ms ease-out;
 }
 
@@ -654,38 +654,6 @@
 
 .sx-ov-hover {
 	stroke-opacity: 0.5;
-}
-
-/* The hovered element's connections (Highlight Connections): its connectors in the accent over a soft glow, what they join outlined. */
-.sx-ov-link,
-.sx-ov-link-glow {
-	fill: none;
-	stroke: var(--sx-accent);
-	stroke-linecap: round;
-	stroke-linejoin: round;
-}
-
-.sx-ov-link {
-	stroke-width: 2.5;
-	stroke-opacity: 0.95;
-}
-
-.sx-ov-link-glow {
-	stroke-width: 9;
-	stroke-opacity: 0.16;
-}
-
-.sx-ov-link-end {
-	fill: var(--sx-accent);
-	stroke: none;
-}
-
-.sx-ov-link-node {
-	fill: var(--sx-accent);
-	fill-opacity: 0.05;
-	stroke: var(--sx-accent);
-	stroke-width: 1.5;
-	stroke-opacity: 0.8;
 }
 
 .sx-ov-group {
@@ -1216,6 +1184,13 @@
 
 .sx-label-button:hover {
 	background: color-mix(in srgb, var(--sx-panel-bg) 90%, var(--sx-panel-fg));
+}
+
+/* Icon only (Highlight Connections): square, like the folded labels. */
+.sx-label-button.sx-icon-only {
+	width: var(--sx-bar-height);
+	padding: 0;
+	justify-content: center;
 }
 
 .sx-label-button.active {
