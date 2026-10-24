@@ -1014,7 +1014,8 @@
 	box-sizing: border-box;
 	height: var(--sx-bar-height);
 	padding: 0 4px;
-	border-radius: var(--sx-bar-radius);
+	/* Squared off (the other bars are pills). */
+	border-radius: 8px;
 	background: var(--sx-panel-bg);
 	box-shadow: var(--sx-panel-shadow);
 }
@@ -1036,7 +1037,7 @@
 	color: var(--sx-panel-fg);
 	font: inherit;
 	font-size: 13px;
-	font-weight: 500;
+	font-weight: 400;
 	text-overflow: ellipsis;
 	outline: none;
 	transition: background-color 100ms ease, border-color 100ms ease;
