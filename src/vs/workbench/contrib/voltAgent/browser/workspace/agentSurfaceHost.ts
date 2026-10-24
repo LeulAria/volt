@@ -15,7 +15,7 @@ import { basename } from '../../../../../base/common/resources.js';
 import { URI, UriComponents } from '../../../../../base/common/uri.js';
 import { localize, localize2 } from '../../../../../nls.js';
 import { Action2, MenuId, registerAction2 } from '../../../../../platform/actions/common/actions.js';
-import { CommandsRegistry } from '../../../../../platform/commands/common/commands.js';
+import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { ContextKeyExpr, IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
@@ -59,7 +59,7 @@ import { AgentChangesEditorInput, isAgentChangesDiffFor, openAgentChangesDiff } 
 import { AgentChangesScope } from '../review/agentSessionChanges.js';
 import { AgentFilesSidebar, AgentFilesSidebarView } from './agentFilesSidebar.js';
 import { AgentSurfaceAddMenu, IAgentSurfaceAddMenuHost } from './agentSurfaceAddMenu.js';
-import { type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
+import { OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
 import { AgentToolsEditorPart, AgentToolsPartContext, hasSavedAgentTools } from './agentToolsEditorPart.js';
 import { attachSessionToProject } from './agentShell.js';
 import { registerAgentFileEditorRouting } from './agentFileEditorRouting.js';
@@ -90,11 +90,13 @@ export const SHOW_AGENT_FILES_COMMAND_ID = 'workbench.action.voltAgentTools.show
 const FLOAT_MARGIN = 12;
 const FLOAT_MIN_WIDTH = 260;
 const FLOAT_MIN_HEIGHT = 180;
+/** A new preview's width: a small 16:10 screen. */
+const FLOAT_WIDTH = 320;
 
-/** Where the floating preview sits, from the chat's top-right corner. Shared by every chat in the window. */
+/** Where the floating preview sits, from the chat's bottom-right corner. Shared by every chat in the window. */
 interface IFloatRect {
 	readonly right: number;
-	readonly top: number;
+	readonly bottom: number;
 	readonly width: number;
 	readonly height: number;
 }
@@ -447,6 +449,8 @@ export class AgentSurfaceHost extends Disposable {
 	private readonly leadTitle: HTMLElement;
 	private floatBarTimer: number | undefined;
 	private floatDrag: { kind: string; startX: number; startY: number; start: IFloatRect } | undefined;
+	private composerObserver: ResizeObserver | undefined;
+	private observedComposer: HTMLElement | undefined;
 	/** A preview is opening to float: the area has its tab before that tab is the active one. */
 	private openingFloat = false;
 	private ratio = 0.5;
@@ -966,9 +970,12 @@ export class AgentSurfaceHost extends Disposable {
 
 	//#region Tools area
 
-	/** A side chat hosted in another chat's tools: it hands its tool requests to that chat. */
+	/**
+	 * A side chat hosted in another chat's tools: it hands its tool requests to that chat. A chat in a
+	 * toolless slot (Scratch's agent dock) opens no tools of its own either; Open in Agents shows them.
+	 */
 	private nested(): boolean {
-		return !!this.container.closest('.volt-agent-tools-area');
+		return !!this.container.closest('.volt-agent-tools-area, .volt-agent-toolless');
 	}
 
 	private target(): AgentSurfaceHost | undefined {
@@ -1592,7 +1599,7 @@ export class AgentSurfaceHost extends Disposable {
 		}
 	}
 
-	/** A preview over the chat's top-right corner, without its tab row or address bar. */
+	/** A preview over the chat's bottom-right corner, without its tab row or address bar. */
 	private placeFloating(entry: IToolsPart): void {
 		const box = this.container.getBoundingClientRect();
 		this.releaseTitlebar();
@@ -1611,16 +1618,97 @@ export class AgentSurfaceHost extends Disposable {
 	private floatBounds(box: DOMRect): { left: number; top: number; width: number; height: number } {
 		const maxWidth = Math.max(FLOAT_MIN_WIDTH, box.width - FLOAT_MARGIN * 2);
 		const maxHeight = Math.max(FLOAT_MIN_HEIGHT, box.height - FLOAT_MARGIN * 2);
-		let rect = floatRect;
-		if (!rect) {
-			const width = Math.min(640, Math.max(320, Math.round(box.width * 0.42)));
-			rect = { right: FLOAT_MARGIN, top: FLOAT_MARGIN, width, height: Math.round(width * 0.98) };
-		}
+		const rect = floatRect ?? this.defaultFloatRect(box);
 		const width = Math.min(maxWidth, Math.max(FLOAT_MIN_WIDTH, rect.width));
 		const height = Math.min(maxHeight, Math.max(FLOAT_MIN_HEIGHT, rect.height));
 		const right = Math.min(Math.max(FLOAT_MARGIN, rect.right), Math.max(FLOAT_MARGIN, box.width - width - FLOAT_MARGIN));
-		const top = Math.min(Math.max(FLOAT_MARGIN, rect.top), Math.max(FLOAT_MARGIN, box.height - height - FLOAT_MARGIN));
-		return { left: box.right - right - width, top: box.top + top, width, height };
+		const bottom = Math.min(Math.max(FLOAT_MARGIN, rect.bottom), Math.max(FLOAT_MARGIN, box.height - height - FLOAT_MARGIN));
+		return { left: box.right - right - width, top: box.bottom - bottom - height, width, height };
+	}
+
+	/**
+	 * Until the preview is moved: in the room beside the chat column, under the side toolbar, when it
+	 * fits there; otherwise in the corner, above the composer's cards and chips.
+	 * The page shows at a desktop width scaled down (browserEditor.ts), so the preview is a 16:10 screen.
+	 */
+	private defaultFloatRect(box: DOMRect): IFloatRect {
+		const composer = this.chat.querySelector<HTMLElement>(':scope > .volt-agent-composer');
+		if (composer) {
+			this.observeComposer(composer);
+		}
+		const column = composer?.getBoundingClientRect();
+		const side = column && column.width > 0 ? Math.floor(box.right - column.right - FLOAT_MARGIN * 2) : 0;
+		if (side >= FLOAT_MIN_WIDTH) {
+			const width = Math.min(FLOAT_WIDTH, side);
+			const height = Math.round(width * 0.625);
+			const toolbar = this.sideToolbar();
+			const top = toolbar ? Math.round(toolbar.getBoundingClientRect().bottom - box.top + FLOAT_MARGIN) : FLOAT_MARGIN;
+			const bottom = Math.round(box.height - top - height);
+			if (bottom >= FLOAT_MARGIN) {
+				return { right: FLOAT_MARGIN, bottom, width, height };
+			}
+		}
+		const width = Math.min(FLOAT_WIDTH, Math.max(FLOAT_MIN_WIDTH, box.width - FLOAT_MARGIN * 2));
+		return { right: FLOAT_MARGIN, bottom: this.composerClearance(box, width), width, height: Math.round(width * 0.625) };
+	}
+
+	/** The chat's side toolbar (multitasks, open tabs, pull requests) while it shows beside the chat. */
+	private sideToolbar(): HTMLElement | undefined {
+		const toolbar = this.container.querySelector<HTMLElement>('.volt-agent-quick-open-actions');
+		if (!toolbar || !this.container.classList.contains('has-quick-open') || this.container.classList.contains('quick-open-user-hidden')) {
+			return undefined;
+		}
+		const rect = toolbar.getBoundingClientRect();
+		return rect.width > 0 && rect.height > 0 ? toolbar : undefined;
+	}
+
+	/** Until the preview is moved it sits in the corner, above the composer's cards and chips when it would cover them. */
+	private composerClearance(box: DOMRect, width: number): number {
+		const composer = this.chat.querySelector<HTMLElement>(':scope > .volt-agent-composer');
+		if (!composer) {
+			return FLOAT_MARGIN;
+		}
+		this.observeComposer(composer);
+		// The chips row and the Tasks card hang above the composer's own top edge; popups don't count.
+		let top = Infinity;
+		let right = -Infinity;
+		for (const child of composer.children) {
+			const rect = child.getBoundingClientRect();
+			const position = getWindow(composer).getComputedStyle(child).position;
+			if (rect.width > 0 && rect.height > 0 && position !== 'absolute' && position !== 'fixed') {
+				top = Math.min(top, rect.top);
+				right = Math.max(right, rect.right);
+			}
+		}
+		if (right <= box.right - FLOAT_MARGIN - width) {
+			return FLOAT_MARGIN;
+		}
+		return Math.max(FLOAT_MARGIN, Math.round(box.bottom - top + FLOAT_MARGIN));
+	}
+
+	/** The composer grows with the prompt and gains cards and chips; a preview resting above it moves with them. */
+	private observeComposer(composer: HTMLElement): void {
+		if (this.observedComposer === composer) {
+			return;
+		}
+		this.observedComposer = composer;
+		if (!this.composerObserver) {
+			const observer = this.composerObserver = new (getWindow(composer).ResizeObserver)(() => {
+				if (this.presentation === 'floating' && !floatRect && !this.floatDrag) {
+					this.place();
+				}
+			});
+			this._register(toDisposable(() => observer.disconnect()));
+		}
+		this.composerObserver.disconnect();
+		for (const element of [composer, ...composer.children]) {
+			this.composerObserver.observe(element);
+		}
+		// The side toolbar grows and shrinks with its lists; a preview under it moves with it.
+		const toolbar = this.container.querySelector<HTMLElement>('.volt-agent-quick-open-actions');
+		if (toolbar) {
+			this.composerObserver.observe(toolbar);
+		}
 	}
 
 	/**
@@ -1682,7 +1770,7 @@ export class AgentSurfaceHost extends Disposable {
 			kind,
 			startX: event.clientX,
 			startY: event.clientY,
-			start: { right: box.right - current.left - current.width, top: current.top - box.top, width: current.width, height: current.height },
+			start: { right: box.right - current.left - current.width, bottom: box.bottom - current.top - current.height, width: current.width, height: current.height },
 		};
 		// The page would take the pointer as it passes over it.
 		this.area.classList.add('float-dragging');
@@ -1694,10 +1782,10 @@ export class AgentSurfaceHost extends Disposable {
 			}
 			const dx = e.clientX - drag.startX;
 			const dy = e.clientY - drag.startY;
-			let { right, top, width, height } = drag.start;
+			let { right, bottom, width, height } = drag.start;
 			if (drag.kind === 'move') {
 				right -= dx;
-				top += dy;
+				bottom -= dy;
 			} else {
 				if (drag.kind.includes('e')) {
 					width += dx;
@@ -1708,10 +1796,10 @@ export class AgentSurfaceHost extends Disposable {
 				}
 				if (drag.kind.includes('s')) {
 					height += dy;
+					bottom -= dy;
 				}
 				if (drag.kind.includes('n')) {
 					height -= dy;
-					top += dy;
 				}
 				// Past the minimum the opposite edge stays put.
 				if (width < FLOAT_MIN_WIDTH) {
@@ -1721,13 +1809,13 @@ export class AgentSurfaceHost extends Disposable {
 					width = FLOAT_MIN_WIDTH;
 				}
 				if (height < FLOAT_MIN_HEIGHT) {
-					if (drag.kind.includes('n')) {
-						top -= FLOAT_MIN_HEIGHT - height;
+					if (drag.kind.includes('s')) {
+						bottom -= FLOAT_MIN_HEIGHT - height;
 					}
 					height = FLOAT_MIN_HEIGHT;
 				}
 			}
-			floatRect = { right, top, width, height };
+			floatRect = { right, bottom, width, height };
 			this.place();
 		};
 		const end = () => {
@@ -1737,7 +1825,7 @@ export class AgentSurfaceHost extends Disposable {
 			// Keep what was clamped, so the next drag starts from what is on screen.
 			const settled = this.floatBounds(this.container.getBoundingClientRect());
 			const now = this.container.getBoundingClientRect();
-			floatRect = { right: now.right - settled.left - settled.width, top: settled.top - now.top, width: settled.width, height: settled.height };
+			floatRect = { right: now.right - settled.left - settled.width, bottom: now.bottom - settled.top - settled.height, width: settled.width, height: settled.height };
 		};
 		store.add(addDisposableListener(handle, 'pointermove', move));
 		store.add(addDisposableListener(handle, 'pointerup', end));
@@ -2207,8 +2295,17 @@ export class AgentSurfaceHost extends Disposable {
 			case 'browser':
 				this.openBrowser();
 				return;
+			case 'device':
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_DEVICE_PREVIEW_COMMAND_ID));
+				return;
 			case 'changes':
 				this.openChanges();
+				return;
+			case 'scratch':
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, this.sessionId));
+				return;
+			case 'canvas':
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_CANVAS_IN_TOOLS_COMMAND_ID, this.sessionId));
 				return;
 			case 'sideChat':
 				void this.openSideChat();

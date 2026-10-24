@@ -40,6 +40,8 @@ export class VoltBrowserEditorInput extends EditorInput {
 	private title = localize('voltBrowser.tab', "Browser");
 	private _favicon: string | undefined;
 	url = DEFAULT_BROWSER_URL;
+	/** The chat whose agent opened this tab to work in, because the user was using theirs. */
+	agentOwner: string | undefined;
 
 	static getNewEditorUri(): URI {
 		const handle = Math.floor(Math.random() * 1e9);
@@ -95,7 +97,7 @@ export class VoltBrowserEditorInput extends EditorInput {
 	}
 
 	override getName(): string {
-		return this.title;
+		return this.agentOwner ? localize('voltBrowser.agentTab', "Agent · {0}", this.title) : this.title;
 	}
 
 	override getIcon(): ThemeIcon {
