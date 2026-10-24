@@ -554,6 +554,7 @@ export class ScratchComposer extends Disposable {
 				modelRef: this.modelRef,
 				// The chat beside the board's project, else the one the window has selected.
 				projectId: this.canvas.agentProjectId,
+				siblings: scene.runs.map(run => run.sessionId),
 				title,
 			};
 			// Where the outline goes: round what was sent (and the comments' spots), or a free spot.

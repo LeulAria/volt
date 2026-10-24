@@ -52,6 +52,8 @@ export interface IScratchSendRequest {
 	readonly modelRef: string | undefined;
 	/** A project to run in; undefined starts the chat in a scratch folder. */
 	readonly projectId: string | undefined;
+	/** The board's other chats: without a project, this one joins their scratch folder (one project, a thread each). */
+	readonly siblings?: readonly string[];
 	readonly title: string;
 }
 
@@ -149,8 +151,17 @@ class ScratchAgentBridge extends Disposable implements IScratchAgentBridge {
 			attachSessionToProject(this.sessionContext, this.workspace, this.history, threadId, project);
 			return project;
 		}
-		// No project: the chat gets a scratch folder of its own, like New Chat Without Project.
-		return this.instantiationService.createInstance(AgentScratchFolders).bind(threadId, request.title || request.instruction);
+		const folders = this.instantiationService.createInstance(AgentScratchFolders);
+		// No project: the board's earlier chats already have a scratch folder; this chat is another thread in it.
+		for (const sibling of [...request.siblings ?? []].reverse()) {
+			const binding = this.sessionContext.bindingFor(sibling);
+			const shared = binding && this.sessionContext.getProject(binding.projectId);
+			if (shared?.scratch) {
+				return folders.share(threadId, shared);
+			}
+		}
+		// The board's first: a scratch folder of its own, like New Chat Without Project.
+		return folders.bind(threadId, request.title || request.instruction);
 	}
 
 	async send(request: IScratchSendRequest): Promise<string> {
