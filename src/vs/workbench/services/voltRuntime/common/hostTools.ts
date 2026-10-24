@@ -748,7 +748,40 @@ If you know the page (you wrote it), skip browser_snapshot. Pass observe: "on_fa
 	},
 ];
 
-const TOOL_PREFIX_RE = /^(?:mcp__volt__|volt[-_:]\s*|volt\.)/i;
+const TOOL_PREFIX_RE = /^(?:mcp__volt__|volt__|volt[-_:]\s*|volt\.)/i;
+
+/**
+ * An agent's raw name for an MCP tool, split into server and tool. Agents spell it differently:
+ * `mcp__volt__wait_tasks` (Claude), `volt__wait_tasks` (Grok, Codex), `volt-wait_tasks`,
+ * `volt.wait_tasks`, and Cursor's `volt: wait_tasks`, `volt-wait_tasks: wait_tasks` or
+ * `MCP: wait_tasks`. Undefined for a name that carries no server (and for Cursor's placeholder
+ * "MCP: tool", which names no tool yet).
+ */
+export function splitMcpToolName(raw: string | undefined): { readonly server?: string; readonly tool: string } | undefined {
+	const value = (raw ?? '').trim();
+	const prefixed = /^mcp__(.+?)__(.+)$/i.exec(value) ?? /^([a-z0-9][\w.-]*?)__([a-z0-9][\w.-]*)$/i.exec(value);
+	if (prefixed) {
+		return { server: prefixed[1], tool: prefixed[2] };
+	}
+	const colon = /^([^\s:]+):\s*([a-z0-9][\w.-]*)$/i.exec(value);
+	if (colon && colon[2].toLowerCase() !== 'tool' && (/^(?:mcp|volt)\b/i.test(colon[1]) || /[-_]/.test(colon[1]) || colon[2].includes('_'))) {
+		return /^mcp$/i.test(colon[1]) ? { tool: colon[2] } : { server: /^volt\b/i.test(colon[1]) ? 'volt' : colon[1], tool: colon[2] };
+	}
+	const dashed = /^volt[-.]([a-z0-9][\w.-]*)$/i.exec(value);
+	return dashed ? { server: 'volt', tool: dashed[1] } : undefined;
+}
+
+/** A raw tool name, not words: snake_case (`wait_tasks`) or with a server (`volt__wait_tasks`). */
+export function isRawToolName(value: string): boolean {
+	const trimmed = value.trim();
+	return !!splitMcpToolName(trimmed) || (/^[A-Za-z][\w-]*$/.test(trimmed) && trimmed.includes('_'));
+}
+
+/** A tool's raw name in words: `wait_tasks` reads "Wait tasks", `getLibraryDocs` "Get library docs". */
+export function humanizeToolName(name: string): string {
+	const words = name.replace(/[_\-.]+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/\s+/g, ' ').trim().toLowerCase();
+	return words ? words.charAt(0).toUpperCase() + words.slice(1) : name;
+}
 
 /**
  * The bare host tool behind an agent's name for it: `browser_click`, `mcp__volt__browser_click`

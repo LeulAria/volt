@@ -1050,7 +1050,8 @@ function renderApprovalBlock(parent: HTMLElement, block: IApprovalBlock, ctx: IB
 	const isCommand = block.action === 'shell' || block.action === 'git';
 	// Cursor's ACP titles wrap the command in backticks (`node --test`).
 	const unquote = (text: string) => text.trim().replace(/^`+([^`][\s\S]*?)`+$/, '$1').trim();
-	const resource = isCommand ? unquote(block.resource) : block.resource.trim();
+	// A tool waiting for approval reads in words ("Use tool: Create issue"), not `mcp__github__create_issue`.
+	const resource = isCommand ? unquote(block.resource) : block.action === 'mcp' ? friendlyToolTitle(block.resource) ?? block.resource.trim() : block.resource.trim();
 	const reason = block.reason?.trim() && !block.blocked && !restatesResource(block.reason, resource) ? block.reason.trim() : undefined;
 	if (isCommand && resource) {
 		// A command waiting to run reads as the terminal it will run in, highlighted, with

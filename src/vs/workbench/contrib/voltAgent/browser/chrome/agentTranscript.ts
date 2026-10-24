@@ -453,7 +453,8 @@ function activityStep(id: string, item: IAgentActivityItem): ITranscriptStep {
 	if (item.kind === 'thought') {
 		return thoughtStep(id, item.text ?? '', undefined);
 	}
-	return { id, kind: item.kind, action: item.label, detail: cleanDetail(item.detail), item };
+	// Saved chats can hold a raw MCP name as the label ("mcp__volt__wait_tasks").
+	return { id, kind: item.kind, action: friendlyToolTitle(item.label) ?? item.label, detail: cleanDetail(item.detail), item };
 }
 
 /** Drops a bogus " in <scope>" that older chats derived from half-streamed glob input. */

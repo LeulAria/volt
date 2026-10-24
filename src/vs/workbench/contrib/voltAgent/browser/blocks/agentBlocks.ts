@@ -1538,6 +1538,12 @@ export function describeExploreActivity(name: string, title: string | undefined,
 		}
 	}
 
+	// Claude titles MCP calls with their raw name: "mcp__volt__wait_tasks" reads "Wait tasks".
+	const friendly = friendlyToolTitle(title?.trim());
+	if (friendly) {
+		return { label: friendly, path: filePath, startLine: args.startLine, endLine: args.endLine, clickable: !!filePath };
+	}
+
 	if (kind === 'wait') {
 		const label = title && !GENERIC_TOOL_TITLE_RE.test(title.trim()) ? title.trim() : 'Waited';
 		return { label };

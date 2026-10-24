@@ -1230,7 +1230,7 @@ export function runActions(automation: Pick<IAutomation, 'tools'>, inRepository:
 export function mcpServerOf(name: string, title: string | undefined, configured: readonly string[]): string | undefined {
 	const norm = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
 	for (const raw of [name, title ?? '']) {
-		const claude = /^mcp__(.+?)__/.exec(raw);
+		const claude = /^(?:mcp__)?(.+?)__/.exec(raw);
 		if (claude && claude[1] !== 'volt') {
 			return configured.find(server => norm(server) === norm(claude[1])) ?? claude[1];
 		}

@@ -35,6 +35,12 @@ import type { IAgentActivity, IAgentAssistantMessage, IAgentMessage, IAgentPromp
  */
 const PARTIAL_RECORD_DELAY_MS = 10_000;
 
+/** The status line for a running tool: an MCP tool's name in words ("Scratch draw", not `mcp__volt__scratch_draw`). */
+function toolStatus(title: string | undefined, name: string | undefined): string {
+	const raw = title || name || '';
+	return friendlyToolTitle(raw) ?? raw;
+}
+
 /** A card a tool call draws and later events update by call id. */
 type CallBlock = ITerminalBlock | IToolBlock | IFileChangeBlock | IPlanBlock;
 
@@ -807,7 +813,7 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 				input: event.input,
 			}));
 		}
-		activity.status = event.title || event.name;
+		activity.status = toolStatus(event.title, event.name);
 	}
 
 	private replaceCallBlock(last: IAgentAssistantMessage, callId: string, block: ITerminalBlock | IFileChangeBlock | IToolBlock | IPlanBlock): void {
@@ -1041,9 +1047,9 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 						};
 						activity.items.push(item);
 						last.segments.push({ kind: 'activity', item });
-						activity.status = [described.label, described.detail].filter(Boolean).join(' ') || event.title || event.name;
+						activity.status = [described.label, described.detail].filter(Boolean).join(' ') || toolStatus(event.title, event.name);
 					} else {
-						activity.status = event.title || event.name;
+						activity.status = toolStatus(event.title, event.name);
 					}
 				}
 				const id = `tool-${event.callId}`;

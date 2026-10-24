@@ -4,9 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { isMemoryToolName } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
+import { AGENT_TASK_TOOLS, bareTaskToolName } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import { describeLocator, parseLocator } from '../../../../services/voltRuntime/common/tools/browserRun.js';
 import { TERMINAL_START_TOOL_NAME, TERMINAL_TOOLS, TERMINAL_SEND_TOOL_NAME, APP_OPEN_TOOL_NAME } from '../../../../services/voltRuntime/common/terminalTools.js';
-import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, CANVAS_READ_TOOL_NAME, CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, MOCKUPS_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME, THREAD_TOOL_NAMES, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, CANVAS_READ_TOOL_NAME, CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, humanizeToolName, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, isRawToolName, MOCKUPS_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME, splitMcpToolName, THREAD_TOOL_NAMES, VOLT_HOST_TOOLS, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 
 /** How one of Volt's own MCP tools reads in the activity trail, the way Cursor words its browser actions. */
 export interface IHostToolActivity {
@@ -54,32 +55,40 @@ export function hostToolCall(name: string | undefined, title: string | undefined
 	return { tool, args };
 }
 
-const MCP_TOOL_RE = /^mcp__(.+?)__(.+)$/;
-
-/** Volt's own tool behind a raw name (`mcp__volt__terminal_start`, `volt: terminal_start`, `terminal_start`), if it is one. */
+/** Volt's own tool behind a raw name (`mcp__volt__terminal_start`, `volt__terminal_start`, `volt: terminal_start`, `terminal_start`), if it is one. */
 function terminalToolName(raw: string | undefined): string | undefined {
 	const value = (raw ?? '').trim();
 	const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
-	const id = tail.replace(/^mcp__volt__/i, '').toLowerCase();
+	const id = tail.replace(/^(?:mcp__volt__|volt__)/i, '').toLowerCase();
 	return TERMINAL_TOOLS.some(tool => tool.name === id) ? id : undefined;
 }
 
 /**
- * A tool's raw MCP name in words, so the transcript never shows `mcp__volt__terminal_start`:
- * Volt's tools read as their own title ("Started terminal"), others as their name spelled out
- * ("mcp__aws-docs__search_docs" → "Search docs").
+ * A tool's raw name in words, so the transcript never shows `mcp__volt__wait_tasks`,
+ * `volt__wait_tasks` or `list_dir`: Volt's tools read as their own title ("Waited for tasks",
+ * "Started terminal"), others as their name spelled out ("mcp__aws-docs__search_docs" reads
+ * "Search docs"). Undefined for a title that is already words ("Read file").
  */
 export function friendlyToolTitle(raw: string | undefined): string | undefined {
-	const terminal = terminalToolName(raw);
+	const value = (raw ?? '').trim();
+	if (!value) {
+		return undefined;
+	}
+	const terminal = terminalToolName(value);
 	if (terminal) {
 		return TERMINAL_TOOLS.find(tool => tool.name === terminal)?.title;
 	}
-	const mcp = MCP_TOOL_RE.exec((raw ?? '').trim());
-	if (!mcp) {
+	const split = splitMcpToolName(value);
+	if (!split && !isRawToolName(value)) {
 		return undefined;
 	}
-	const words = mcp[2].replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim().toLowerCase();
-	return words ? words.charAt(0).toUpperCase() + words.slice(1) : undefined;
+	const tool = split?.tool ?? value;
+	const task = bareTaskToolName(tool);
+	if (task) {
+		return AGENT_TASK_TOOLS.find(info => info.name === task)?.title;
+	}
+	const host = voltHostToolName(tool);
+	return (host ? VOLT_HOST_TOOLS.find(info => info.name === host)?.title : undefined) ?? humanizeToolName(tool);
 }
 
 /** The managed terminal tools as rows: what started, what was typed, which app opened. */
