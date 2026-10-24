@@ -11,7 +11,6 @@ import {
   Triangle,
   Vector2,
   Vector3,
-  type Object3D,
   type PerspectiveCamera,
   type Texture,
 } from "three";
@@ -22,7 +21,6 @@ export type DuoPanelId = 1 | 3;
 export type DuoHingeLeaf = "left" | "right";
 export type DuoFrameLayout = { width: number; height: number };
 
-/** Hardware mounting is independent of app orientation and the model's orbit. The inverse is shared by taps and drags. */
 export function duoRawPoint(panel: DuoPanelId, x: number, y: number) {
   return panel === 1 ? { x, y } : { x: y, y: 1 - x };
 }
@@ -78,7 +76,6 @@ export function createDuoScene(asset: Group, textures: Record<DuoPanelId, Textur
     3: new MeshBasicMaterial({ map: textures[3], toneMapped: false }),
   };
   const originals = new Map<Mesh, Mesh["material"]>();
-  // The two inner meshes sample halves of one framebuffer. Cover UVs face outward on the rear leaf.
   for (const id of [1, 3] as const) {
     const { bounds, size } = boundsByPanel[id === 1 ? 0 : 1]!;
     for (const mesh of surfaces[id]) {
@@ -110,7 +107,6 @@ export function createDuoScene(asset: Group, textures: Record<DuoPanelId, Textur
       const radians = ((180 - Math.min(180, Math.max(0, angle))) * Math.PI) / 360;
       left.rotation.y = radians;
       right.rotation.y = -radians;
-      // Orbit the folded body's center, while retaining the authored hinge pivots.
       content.position.set(0, 0, 0);
       root.updateWorldMatrix(true, true);
       inverse.copy(root.matrixWorld).invert();
@@ -151,7 +147,6 @@ export function createDuoScene(asset: Group, textures: Record<DuoPanelId, Textur
       };
       if (panel === 1) return [frame([cover], "cover")];
       const inside = frame([innerLeft, innerRight], "inside");
-      // Leaf views only make sense when both displays form a useful open fold.
       return currentAngle > 20 && currentAngle < 165
         ? [inside, frame([innerLeft], "left"), frame([innerRight], "right")]
         : [inside];
@@ -169,7 +164,7 @@ export function createDuoScene(asset: Group, textures: Record<DuoPanelId, Textur
       root.updateMatrixWorld(true);
       camera.updateMatrixWorld(true);
       ray.setFromCamera(new Vector2(x * 2 - 1, 1 - y * 2), camera);
-      let object: Object3D | undefined = ray.intersectObject(root, true)[0]?.object;
+      let object = ray.intersectObject(root, true)[0]?.object;
       while (object) {
         if (object === left) return "left";
         if (object === right) return "right";
@@ -207,7 +202,6 @@ export function createDuoScene(asset: Group, textures: Record<DuoPanelId, Textur
           .addScaledVector(captured.uv[2], bary.z);
         return duoRawPoint(captured.panel, uv.x, 1 - uv.y);
       }
-      // The chassis occludes rear displays. Only the first visible hit can own a contact.
       const hit = ray.intersectObject(root, true)[0];
       if (!hit?.uv || !hit.face || !(hit.object instanceof Mesh)) return null;
       const panel: DuoPanelId | null = surfaces[1].includes(hit.object)

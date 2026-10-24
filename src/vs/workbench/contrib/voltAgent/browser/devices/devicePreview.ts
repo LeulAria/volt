@@ -41,7 +41,16 @@ const PREVIEW_MAX_SIDE = 1400;
 const TAP_SLOP = 6;
 const STAGE_PAD = 28;
 /** The iPhone Duo's hinge shapes in the fold menu. */
-type DuoShape = 'closed' | 'half' | 'open' | 'laptop' | 'tent';
+type DuoShape = 'closed' | 'slight' | 'half' | 'mostly' | 'open' | 'tent';
+
+/** The iPhone Duo's hinge presets, closed to flat. The menu marks the one nearest the real angle. */
+const DUO_FOLDS: readonly { readonly id: Exclude<DuoShape, 'tent'>; readonly angle: number }[] = [
+	{ id: 'closed', angle: 0 },
+	{ id: 'slight', angle: 45 },
+	{ id: 'half', angle: 90 },
+	{ id: 'mostly', angle: 135 },
+	{ id: 'open', angle: 180 },
+];
 /** Android screenshots are in pixels; frames are drawn in dp (Pixel density). */
 const ANDROID_DENSITY = 2.625;
 
@@ -391,7 +400,7 @@ export class DevicePreview extends Disposable {
 		const current = this.postures.current;
 		this.postureButton.classList.add('open');
 		const items: IVoltMenuItem<() => void>[] = duo
-			? duo.items.map(item => ({ id: item.id, label: item.label, checked: item.id === duo.current, data: () => this.live?.controlDuo(item.command) }))
+			? duo.items.map(item => ({ id: item.id, label: item.label, checked: item.id === duo.current, data: () => item.commands.forEach(command => this.live?.controlDuo(command)) }))
 			: this.postures.supported.map(id => ({ id, label: postureLabel(id), checked: id === current, data: () => void this.setPosture(id) }));
 		showVoltMenu(this.contextViewService, {
 			anchor: this.postureButton,
@@ -407,29 +416,42 @@ export class DevicePreview extends Disposable {
 	}
 
 	/**
-	 * The iPhone Duo's hinge while it streams live: closed, half open (a book when held upright, a
-	 * laptop when held sideways), open flat, or standing as a laptop or a tent. Fold shapes move
-	 * only the hinge; stands also place the device.
+	 * The iPhone Duo's hinge while it streams live: closed, slightly, half or mostly open, flat open,
+	 * or standing as a tent. Folds move only the hinge. Tent also stands the device on its edges, which
+	 * a simulator without physical orientation refuses ("could not change the device pose").
 	 */
-	private duoPostures(): { readonly current: DuoShape; readonly items: readonly { readonly id: DuoShape; readonly label: string; readonly command: DuoCommand }[] } | undefined {
+	private duoPostures(): { readonly current: DuoShape; readonly items: readonly { readonly id: DuoShape; readonly label: string; readonly commands: readonly DuoCommand[] }[] } | undefined {
 		const live = this.live;
-		if (!live?.screen?.supportsHingeAngle || !this.target || !isIphoneDuo(this.target.device.name)) {
+		const screen = live?.screen;
+		if (!live || !screen?.supportsHingeAngle || !this.target || !isIphoneDuo(this.target.device.name)) {
 			return undefined;
 		}
 		const fold = live.foldState();
 		if (!fold) {
 			return undefined;
 		}
-		const current: DuoShape = fold.stand && (live.screen.hingePose === 'laptop' || live.screen.hingePose === 'tent') ? live.screen.hingePose : fold.fold;
-		const half = fold.phoneVertical ? localize('voltDevices.duoBook', "Book") : localize('voltDevices.duoHalf', "Half Open");
+		const angle = screen.hingeAngle ?? (screen.screenId === 1 ? 0 : 180);
+		const nearest = DUO_FOLDS.reduce((best, item) => Math.abs(item.angle - angle) < Math.abs(best.angle - angle) ? item : best);
+		const current: DuoShape = fold.stand && screen.hingePose === 'tent' ? 'tent' : nearest.id;
+		const stands = !!screen.supportsPhysicalOrientation;
+		// Leaving a stand puts the phone back the way it is held first, as T3 Code does, then folds it.
+		const hold = stands && fold.stand ? live.holdOrientation(fold.phoneVertical) : undefined;
+		const labels: Record<Exclude<DuoShape, 'tent'>, string> = {
+			closed: localize('voltDevices.duoClosed', "Closed"),
+			slight: localize('voltDevices.duoSlight', "Slightly Open"),
+			half: localize('voltDevices.duoHalf', "Half Open"),
+			mostly: localize('voltDevices.duoMostly', "Mostly Open"),
+			open: localize('voltDevices.duoOpen', "Open"),
+		};
 		return {
 			current,
 			items: [
-				{ id: 'closed', label: localize('voltDevices.duoClosed', "Closed"), command: { control: 'angle', value: 0 } },
-				{ id: 'half', label: half, command: { control: 'angle', value: 90 } },
-				{ id: 'open', label: localize('voltDevices.duoOpen', "Open"), command: { control: 'angle', value: 180 } },
-				{ id: 'laptop', label: localize('voltDevices.duoLaptop', "Laptop"), command: { control: 'pose', value: 'laptop' } },
-				{ id: 'tent', label: localize('voltDevices.duoTent', "Tent"), command: { control: 'pose', value: 'tent' } },
+				...DUO_FOLDS.map(item => ({
+					id: item.id,
+					label: labels[item.id],
+					commands: [...(hold ? [{ control: 'orientation', value: hold } as const] : []), { control: 'angle', value: item.angle } as const],
+				})),
+				...(stands ? [{ id: 'tent' as const, label: localize('voltDevices.duoTent', "Tent"), commands: [{ control: 'pose', value: 'tent' } as const] }] : []),
 			],
 		};
 	}
@@ -862,7 +884,7 @@ export class DevicePreview extends Disposable {
 		this.liveStore.clear();
 		this.live = undefined;
 		this.duoLoading = false;
-		this.duoHost.classList.add('hidden');
+		this.showDuo(false);
 		if (hadFrame) {
 			this.frameKey = '';
 			this.shot = undefined;
@@ -915,30 +937,37 @@ export class DevicePreview extends Disposable {
 		if (!wanted) {
 			live.unmountDuo();
 			this.duoLoading = false;
-			this.duoHost.classList.add('hidden');
-			this.rig.classList.remove('hidden');
+			this.showDuo(false);
 			return;
 		}
 		if (live.hasDuo || this.duoLoading) {
 			return;
 		}
 		this.duoLoading = true;
-		void this.devices.deviceModelUrl('iphone-duo').then(url => {
+		void this.devices.deviceModel('iphone-duo').then(model => {
 			this.duoLoading = false;
 			if (this.live !== live || !this.threeD) {
 				return;
 			}
-			if (!url) {
+			if (!model) {
 				live.loseDuo(localize('voltDevices.duoModelMissing', "The iPhone Duo 3D model is not on this Mac (~/.volt/device-models/iphone-duo.glb)."));
 				this.notificationService.info(live.duoUnavailable!);
 				return;
 			}
-			this.duoHost.classList.remove('hidden');
-			this.rig.classList.add('hidden');
-			live.mountDuo(this.duoHost, url, localize('voltDevices.duoLabel', "Interactive 3D iPhone Duo. Drag the screen to touch it. Drag outside it or swipe with two fingers to turn it. Pinch over it to open or close the hinge."), cause => {
+			this.showDuo(true);
+			live.mountDuo(this.duoHost, model, localize('voltDevices.duoLabel', "Interactive 3D iPhone Duo. Drag the screen to touch it. Drag outside it or swipe with two fingers to turn it. Pinch over it to open or close the hinge."), cause => {
 				live.loseDuo(cause instanceof Error ? cause.message : localize('voltDevices.duoUnavailable', "The 3D view is unavailable."));
 			});
 		});
+	}
+
+	/**
+	 * The flat frame stays in the DOM under the 3D canvas (the Duo draws from its live canvas), so
+	 * the stage hides it while the Duo shows; the rig's own `hidden` is toggled by unrelated renders.
+	 */
+	private showDuo(shown: boolean): void {
+		this.stage.classList.toggle('duo', shown);
+		this.duoHost.classList.toggle('hidden', !shown);
 	}
 
 	//#endregion

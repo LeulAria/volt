@@ -12,7 +12,7 @@ import { join } from '../../../base/common/path.js';
 import { ILogService } from '../../log/common/log.js';
 
 export const DEVICE_HUB_PACKAGE = 'expo-device-hub';
-export const DEVICE_HUB_VERSION = '0.12.0';
+export const DEVICE_HUB_VERSION = '0.15.3';
 const READY_TIMEOUT = 30_000;
 const INSTALL_TIMEOUT = 240_000;
 const ATTACH_TIMEOUT = 60_000;

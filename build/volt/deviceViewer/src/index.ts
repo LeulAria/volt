@@ -2,24 +2,28 @@
  * Volt's entry into the device viewer bundle: T3 Code's serve-sim stream client and its iPhone
  * Duo viewer (MIT, see LICENSE.txt), plus a DOM port of T3's React `DeviceDuoViewport`.
  */
-import { createDuoPinch, duoFoldState } from "./duoControl.ts";
+import { createDuoPinch, duoFoldState, duoHoldOrientation } from "./duoControl.ts";
 import type { DuoCommand, DuoControlState } from "./duoControl.ts";
 import { createDuoViewer } from "./duoViewer.ts";
 import { createCanvasFrameSink } from "./frame.ts";
+import { provideDeviceModel } from "./modelScene.ts";
 import { createPhoneInteraction } from "./phoneInteraction.ts";
 import { bindPhoneTrackpad } from "./phoneTrackpad.ts";
 import type { DeviceScreenSize, DeviceStreamClient } from "./stream.ts";
 
 export { createDeviceStreamClient } from "./stream.ts";
+export type { DeviceHubAccess } from "./hubAccess.ts";
 export type {
-  DeviceHubAccess,
   DeviceScreenSize,
   DeviceStreamClient,
   DeviceStreamEvents,
   DeviceStreamStatus,
 } from "./stream.ts";
-export { createCanvasFrameSink, duoFoldState };
+export { createCanvasFrameSink, duoFoldState, duoHoldOrientation };
 export type { DuoCommand, DuoControlState };
+
+/** Key for the model bytes the workbench provides; never fetched. */
+const DUO_MODEL_URL = "volt-device-model:iphone-duo";
 
 export interface DuoViewport {
   readonly setScreen: (screen: DeviceScreenSize | null) => void;
@@ -43,12 +47,14 @@ export function mountDuoViewport(options: {
   host: HTMLElement;
   decoded: HTMLCanvasElement;
   client: DeviceStreamClient;
-  modelUrl: string;
+  /** The .glb file's bytes (the workbench CSP blocks fetching blob: URLs). */
+  modelData: ArrayBuffer;
   screen: DeviceScreenSize | null;
   label: string;
   onUnavailable: (cause?: unknown) => void;
 }): DuoViewport {
   const { host, decoded, client } = options;
+  provideDeviceModel(DUO_MODEL_URL, options.modelData);
   const win = host.ownerDocument.defaultView ?? window;
   const doc = host.ownerDocument;
   const canvas = doc.createElement("canvas");
@@ -61,7 +67,7 @@ export function mountDuoViewport(options: {
   const viewer = createDuoViewer({
     canvas,
     sources,
-    model: { id: "iphone-duo", url: options.modelUrl },
+    model: { id: "iphone-duo", url: DUO_MODEL_URL },
     onUnavailable: () => options.onUnavailable(),
     onModelError: (cause) => options.onUnavailable(cause),
     onPanelRequested: (panel) =>
@@ -94,7 +100,7 @@ export function mountDuoViewport(options: {
     angle: () => preview ?? screen?.hingeAngle ?? (screen?.screenId === 1 ? 0 : 180),
     contains: (x, y) => !!screen && viewer.beginHinge(x, y),
     change: (angle) => {
-      viewer.setHingePreview(angle ?? preview);
+      viewer.setHingePreview(angle ?? preview, true);
       if (angle !== null) client.controlDuo({ control: "angle", value: angle });
     },
   });
