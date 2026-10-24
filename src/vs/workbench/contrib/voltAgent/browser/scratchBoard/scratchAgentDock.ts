@@ -14,6 +14,7 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
+import { withFrameContents } from '../../common/scratchBoard/scratchGeometry.js';
 import { IScratchAgentRun } from '../../common/scratchBoard/scratchTypes.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createThinkingDots } from '../composer/agentComposerChips.js';
@@ -79,10 +80,13 @@ export class ScratchAgentDock extends Disposable {
 	private readonly menu = this._register(new MutableDisposable());
 	private runs: IScratchAgentRun[] = [];
 	private selectedRunId: string | undefined;
+	/** The run whose diagram the selection is on, if any. */
+	private focusedRunId: string | undefined;
 	private open: boolean;
+	/** The transcript card over the composer: shut until the composer's status chip opens it. */
+	private transcript = false;
 	private height: number;
 	private visible = false;
-	private beside = false;
 	private pageHeight = 0;
 	private chat: AgentEditor | undefined;
 	private chatSession: string | undefined;
@@ -142,7 +146,8 @@ export class ScratchAgentDock extends Disposable {
 			}));
 		};
 		action('locate-fixed', localize('voltScratch.dockShow', "Show on Board"), () => this.showOnBoard());
-		action('maximize-2', localize('voltScratch.dockOpenChat', "Open in Agents"), () => void this.openInAgents());
+		// Folds the transcript back into the composer's status chip; the composer stays.
+		action('minimize-2', localize('voltScratch.dockCollapse', "Collapse to Chip"), () => this.setTranscript(false));
 		action('x', localize('voltScratch.dockClose', "Close"), () => this.setOpen(false));
 		this.body = append(this.panel, $('.sx-dock-body.volt-browser-dock-float-body'));
 		this.emptyEl = append(this.panel, $('.sx-dock-empty'));
@@ -198,11 +203,20 @@ export class ScratchAgentDock extends Disposable {
 			this.syncRuns();
 		}));
 		this._register(canvas.onDidChangeScene(() => this.syncScheduler.schedule()));
+		// The closed bar only shows while the user is on a run's diagram.
+		this._register(canvas.state.onDidChangeSelection(() => this.syncFocus()));
 		this._register(canvas.onDidStartRun(run => {
 			// A chat just started from the board: the dock follows it (open or closed, as the user left it).
 			this.selectedRunId = run.id;
 			this.syncRuns();
 		}));
+		// A press on the board (outside the dock, which sits beside the canvas) closes the open dock. A run
+		// chip opens and closes it itself; the chat's menus open in the context view, not on the board.
+		this._register(addDisposableListener(canvas.element, 'pointerdown', e => {
+			if (this.open && !this.element.hidden && !(isHTMLElement(e.target) && e.target.closest('.sx-run-chip'))) {
+				this.setOpen(false);
+			}
+		}, true));
 		// The whole-board composer opens where the dock stands: the dock makes way (its bar stays).
 		this._register(canvas.onDidOpenComposer(() => this.setOpen(false)));
 		// The library (right) stays uncovered: the dock moves left of it.
@@ -219,25 +233,8 @@ export class ScratchAgentDock extends Disposable {
 		}));
 	}
 
-	/**
-	 * The board sits in a chat's right panel, beside that chat: the dock stays away and never holds a
-	 * chat (it would take the transcript from the panel beside it); a run chip opens its chat instead.
-	 */
-	setBeside(beside: boolean): void {
-		if (this.beside === beside) {
-			return;
-		}
-		this.beside = beside;
-		if (beside) {
-			this.visible = false;
-			this.release();
-		}
-		this.render();
-	}
-
 	/** The page is on screen (or not): the chat is only held while it is. */
 	setVisible(visible: boolean): void {
-		visible = visible && !this.beside;
 		if (this.visible === visible) {
 			return;
 		}
@@ -280,8 +277,13 @@ export class ScratchAgentDock extends Disposable {
 	showSession(sessionId: string): void {
 		this.syncRuns();
 		const run = [...this.runs].reverse().find(r => r.sessionId === sessionId);
-		if (!run || this.beside) {
+		if (!run) {
 			void this.agents.openChat(sessionId);
+			return;
+		}
+		// The chip of the run already open closes the dock again.
+		if (this.open && !this.element.hidden && this.selectedRunId === run.id) {
+			this.setOpen(false);
 			return;
 		}
 		this.select(run.id);
@@ -323,8 +325,41 @@ export class ScratchAgentDock extends Disposable {
 		if (!this.runs.some(run => run.id === this.selectedRunId)) {
 			this.selectedRunId = this.defaultRun()?.id;
 		}
+		this.focusedRunId = this.runOnSelection()?.id;
 		this.render();
 		this.bindSelected();
+	}
+
+	/** The newest run whose diagram holds something selected (a frame it marks counts for all inside). */
+	private runOnSelection(): IScratchAgentRun | undefined {
+		const scene = this.canvas.scene;
+		const selection = this.canvas.state.selection;
+		if (!scene || !selection.size) {
+			return undefined;
+		}
+		const elements = scene.getElements();
+		for (let i = this.runs.length - 1; i >= 0; i--) {
+			const marked = withFrameContents(elements, new Set(this.runs[i].elementIds));
+			for (const id of selection) {
+				if (marked.has(id)) {
+					return this.runs[i];
+				}
+			}
+		}
+		return undefined;
+	}
+
+	/** Selecting on a run's diagram shows its bar (and makes it the dock's run); selecting elsewhere hides the closed bar. */
+	private syncFocus(): void {
+		const run = this.runOnSelection();
+		if (run?.id === this.focusedRunId) {
+			return;
+		}
+		this.focusedRunId = run?.id;
+		if (run && !this.open) {
+			this.select(run.id);
+		}
+		this.render();
 	}
 
 	/** The newest run still working, else the newest. */
@@ -350,6 +385,15 @@ export class ScratchAgentDock extends Disposable {
 		this.bindSelected();
 	}
 
+	private setTranscript(on: boolean): void {
+		if (this.transcript === on || !this.open) {
+			return;
+		}
+		this.transcript = on;
+		this.render();
+		this.layoutChat();
+	}
+
 	/** Folds the open dock to its bar (Escape); false when it was not open. */
 	close(): boolean {
 		if (!this.open || this.element.hidden) {
@@ -366,6 +410,8 @@ export class ScratchAgentDock extends Disposable {
 		if (!open) {
 			this.focusPending = false;
 			this.menu.clear();
+			// Opened again, the dock starts at its composer.
+			this.transcript = false;
 		}
 		if (this.open !== open) {
 			this.open = open;
@@ -390,13 +436,18 @@ export class ScratchAgentDock extends Disposable {
 
 	private render(): void {
 		const run = this.selected();
-		this.element.hidden = !run || this.beside;
-		if (!run || this.beside) {
+		// Closed, the bar stays out of the way until the user is on a run's diagram; a chip click opens the dock.
+		const hidden = !run || (!this.open && !this.focusedRunId);
+		this.element.hidden = hidden;
+		// The open dock covers the board's bottom edge: its zoom and undo would sit under the chat's chips.
+		this.canvas.element.classList.toggle('sx-dock-open', !hidden && this.open);
+		if (!run || hidden) {
 			return;
 		}
 		this.element.classList.toggle('open', this.open);
 		this.syncSides();
-		this.panel.hidden = !this.open;
+		// A deleted chat has no composer: its note shows in the card instead.
+		this.panel.hidden = !this.open || (!this.transcript && this.emptyEl.hidden);
 		this.chatHost.hidden = !this.open || !this.emptyEl.hidden;
 		this.bar.hidden = this.open;
 		const status = this.agents.status(run.sessionId);
@@ -551,6 +602,8 @@ export class ScratchAgentDock extends Disposable {
 		editor.create(this.chatHost);
 		editor.setVisible(true);
 		store.add(editor.onDidChangeDock(() => this.renderBar()));
+		// "Worked for 39s" (or the live status) shows the transcript over the composer, and hides it again.
+		store.add(editor.onDidClickStatus(() => this.setTranscript(!this.transcript)));
 		// The composer grows with what is typed, the approval tray and the queue: the chat's slot follows it.
 		this.composerObserver = new (getWindow(this.chatHost).ResizeObserver)(() => this.layoutChat());
 		this.observeComposer();
@@ -613,6 +666,7 @@ export class ScratchAgentDock extends Disposable {
 		this.emptyEl.hidden = !run;
 		this.body.hidden = !!run;
 		this.chatHost.hidden = !this.open || !!run;
+		this.panel.hidden = !this.open || (!this.transcript && !run);
 		if (!run) {
 			return;
 		}
@@ -628,7 +682,7 @@ export class ScratchAgentDock extends Disposable {
 
 	/** Sizes the chat's slot to its composer, and the card to what is left of the page. */
 	private layoutChat(): void {
-		if (!this.open || this.panel.hidden) {
+		if (!this.open) {
 			return;
 		}
 		const composer = this.chatHost.querySelector<HTMLElement>('.volt-agent-composer');
@@ -656,6 +710,9 @@ export class ScratchAgentDock extends Disposable {
 			if (width > 0) {
 				this.chat.layout(new Dimension(width, composerHeight));
 			}
+		}
+		if (this.panel.hidden) {
+			return;
 		}
 		const room = this.pageHeight - TOP_CLEARANCE - BOTTOM - (composerHeight ? composerHeight + floating + GAP : 0);
 		const height = Math.round(Math.max(Math.min(MIN_HEIGHT, room), Math.min(this.height, room)));
@@ -715,20 +772,5 @@ export class ScratchAgentDock extends Disposable {
 			this.canvas.reveal(live);
 		}
 		this.canvas.focus();
-	}
-
-	private async openInAgents(): Promise<void> {
-		const run = this.selected();
-		if (!run) {
-			return;
-		}
-		// Let go first, so the chat's panel takes the transcript over from a single owner.
-		this.release();
-		const boardId = this.canvas.model?.id;
-		await this.agents.openChat(run.sessionId);
-		// The drawing comes along: the board opens in the chat's right panel, on this run's part of it.
-		if (boardId) {
-			await this.agents.openBoardBeside(run.sessionId, boardId);
-		}
 	}
 }

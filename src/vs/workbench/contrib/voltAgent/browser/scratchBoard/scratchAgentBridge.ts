@@ -20,7 +20,6 @@ import { IVoltProjectRecord, IVoltSessionContextService } from '../../../../serv
 import { AGENT_DEFAULT_MODEL_SETTING } from '../../common/agentComposerSettings.js';
 import { attachmentPathLines, IAgentDisplayMention } from '../composer/agentMentions.js';
 import { OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
-import { OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID } from './scratchBoardInput.js';
 import { AgentHistoryCodec } from '../history/agentHistoryCodec.js';
 import { stashTurnDisplay } from '../orchestration/agentTurnDisplays.js';
 import { AgentScratchFolders } from '../workspace/agentScratchProject.js';
@@ -70,8 +69,6 @@ export interface IScratchAgentBridge {
 	/** The chat is still there (not deleted). */
 	exists(sessionId: string): boolean;
 	openChat(sessionId: string): Promise<void>;
-	/** Opens `boardId` in the right panel of chat `sessionId`, that chat's drawing in view. */
-	openBoardBeside(sessionId: string, boardId: string): Promise<void>;
 }
 
 class ScratchAgentBridge extends Disposable implements IScratchAgentBridge {
@@ -255,14 +252,6 @@ class ScratchAgentBridge extends Disposable implements IScratchAgentBridge {
 			await this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, sessionId);
 		} catch (err) {
 			this.logService.warn('[volt scratch] could not open the chat', err);
-		}
-	}
-
-	async openBoardBeside(sessionId: string, boardId: string): Promise<void> {
-		try {
-			await this.commandService.executeCommand(OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, sessionId, boardId);
-		} catch (err) {
-			this.logService.warn('[volt scratch] could not open the board beside the chat', err);
 		}
 	}
 }

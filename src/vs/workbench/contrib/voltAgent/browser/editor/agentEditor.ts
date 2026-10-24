@@ -969,6 +969,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private readonly snapshotStore = this._register(new DisposableStore());
 	private readonly _onDidChangeDock = this._register(new Emitter<void>());
 	readonly onDidChangeDock: Event<void> = this._onDidChangeDock.event;
+	/** The composer's status chip ("Worked for 39s", "Working...") was clicked; a dock shows or hides the transcript. */
+	private readonly _onDidClickStatus = this._register(new Emitter<void>());
+	readonly onDidClickStatus: Event<void> = this._onDidClickStatus.event;
 	private readonly _onDidComposerSend = this._register(new Emitter<void>());
 	readonly onDidComposerSend: Event<void> = this._onDidComposerSend.event;
 
@@ -1290,7 +1293,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onTerminalClick: () => this.surfaceHost.openTerminal(),
 			onScrollToBottom: () => this.scrollThreadToEnd(),
 			onCompactClick: () => this.toggleCompactFirst(),
-			onStatusClick: () => this.scrollThreadToEnd(),
+			onStatusClick: () => {
+				this.scrollThreadToEnd();
+				this._onDidClickStatus.fire();
+			},
 			onAgentsClick: anchor => this.showAgentsMenu(anchor),
 			onMultitaskPickCancel: () => this.composerQueue?.stopPicking(),
 			terminalRuns: this.terminalChips,
@@ -7044,7 +7050,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	private syncHostedChrome(): void {
-		if (this.container?.closest('.volt-agent-tools-area')) {
+		// A board's or canvas's own chat dock (toolless) keeps the chat's composer (the follow-up pill), even in a right panel.
+		if (this.container?.closest('.volt-agent-tools-area') && !this.container.closest('.volt-agent-toolless')) {
 			this.setBrowserHosted(!this.isSubagentChat());
 		}
 	}

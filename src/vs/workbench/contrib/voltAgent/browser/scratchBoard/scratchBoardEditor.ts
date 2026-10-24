@@ -114,10 +114,7 @@ class ScratchBoardPage extends Disposable {
 
 	setVisible(visible: boolean): void {
 		this.canvas.setVisible(visible);
-		if (visible) {
-			// The chat is beside the board: no dock there.
-			this.dock.setBeside(this.besideChat());
-		}
+		// The dock works wherever the board is, beside a chat too: a run chip always opens its chat here.
 		this.dock.setVisible(visible);
 	}
 
