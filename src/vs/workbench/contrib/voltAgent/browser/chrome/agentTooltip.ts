@@ -21,6 +21,10 @@ export interface IAgentTooltipRow {
 	icon?: AgentTooltipIcon;
 	/** Card rows only: quieter label (e.g. folder path under the chat title). */
 	muted?: boolean;
+	/** Card rows only, without an icon: a "label … value" line (e.g. "Effort  High"). */
+	value?: string;
+	/** Card rows only: a hairline above the row. */
+	separator?: boolean;
 	onClick?: () => void;
 }
 
@@ -293,6 +297,20 @@ export class AgentTooltip extends Disposable {
 
 	/** A card: a title row, then icon rows whose detail sits under the label. */
 	private renderCardRow(row: IAgentTooltipRow): void {
+		if (row.separator) {
+			append(this.domNode, $('.volt-agent-tooltip-card-sep'));
+		}
+		if (!row.icon && (row.value !== undefined || row.shortcut)) {
+			const line = append(this.domNode, $('.volt-agent-tooltip-card-line'));
+			append(line, $('span.volt-agent-tooltip-label')).textContent = row.label;
+			if (row.value !== undefined) {
+				append(line, $('span.volt-agent-tooltip-card-value')).textContent = row.value;
+			}
+			if (row.shortcut) {
+				append(line, this.renderShortcut(row.shortcut));
+			}
+			return;
+		}
 		if (!row.icon) {
 			append(this.domNode, $('.volt-agent-tooltip-card-title')).textContent = row.label;
 			return;
