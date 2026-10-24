@@ -15,7 +15,12 @@ import type { ScratchCanvas } from './scratchCanvas.js';
 import { scratchIcon, ScratchIconName } from './scratchIcons.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const PAD = 12;
+/** Room between the outline and what it marks. */
+const PAD = 20;
+/** The chip sits this far above the outline's top edge. */
+const CHIP_GAP = 6;
+/** How far a press on the chip moves before it drags the diagram instead of opening the chat. */
+const DRAG_THRESHOLD = 4;
 
 interface IRunView {
 	readonly outline: SVGRectElement;
@@ -113,12 +118,11 @@ export class ScratchRuns extends Disposable {
 			view.outline.setAttribute('width', svgNum(Math.max(1, w)));
 			view.outline.setAttribute('height', svgNum(Math.max(1, h)));
 			this.paintStatus(run, view, this.agents.status(run.sessionId));
-			// The chip sits on the frame's top edge, kept on screen.
+			// The chip sits above the outline, never on it, so it does not cover a frame's name; kept on screen.
 			const chipW = view.chip.offsetWidth || 160, chipH = view.chip.offsetHeight || 26;
-			let chipX = Math.max(8, Math.min(width - 80, x + 8));
+			let chipX = Math.max(8, Math.min(width - 80, x));
 			// Below the toolbar when the outline's top is off screen.
-			// Centred on the edge, a little high, so it clears a frame name inside the outline's padding.
-			const chipY = Math.max(64, Math.min(height - 32, y - Math.round(chipH / 2) - 3));
+			const chipY = Math.max(64, Math.min(height - 32, y - chipH - CHIP_GAP));
 			for (let moved = true; moved;) {
 				moved = false;
 				for (const other of placed) {
@@ -158,10 +162,40 @@ export class ScratchRuns extends Disposable {
 		close.setAttribute('aria-label', localize('voltScratch.run.hide', "Hide outline"));
 		close.appendChild(scratchIcon(doc, 'x', { size: 12 }));
 		setAgentTooltip(close, localize('voltScratch.run.hide', "Hide outline"), undefined, undefined, 'above');
-		store.add(addDisposableListener(chip, 'pointerdown', e => e.stopPropagation()));
+		// The chip is the diagram's handle: past a few pixels a press drags what the run marks; a click opens the chat.
+		let press: { readonly id: number; readonly x: number; readonly y: number } | undefined;
+		let dragged = false;
+		store.add(addDisposableListener(chip, 'pointerdown', e => {
+			e.stopPropagation();
+			dragged = false;
+			press = e.button === 0 && !(e.target as HTMLElement).closest('.sx-run-close') ? { id: e.pointerId, x: e.clientX, y: e.clientY } : undefined;
+			if (press) {
+				try {
+					chip.setPointerCapture(e.pointerId);
+				} catch {
+					// Synthetic events have no capture.
+				}
+			}
+		}));
+		store.add(addDisposableListener(chip, 'pointermove', e => {
+			if (!press || e.pointerId !== press.id || Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_THRESHOLD) {
+				return;
+			}
+			// The board takes the pointer over from here (its capture replaces the chip's).
+			const start = { pointerId: press.id, clientX: press.x, clientY: press.y };
+			press = undefined;
+			dragged = this.canvas.dragRun(run.id, start);
+		}));
+		const endPress = () => { press = undefined; };
+		store.add(addDisposableListener(chip, 'pointerup', endPress));
+		store.add(addDisposableListener(chip, 'pointercancel', endPress));
 		store.add(addDisposableListener(chip, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
+			if (dragged) {
+				dragged = false;
+				return;
+			}
 			if ((e.target as HTMLElement).closest('.sx-run-close')) {
 				this.canvas.hideRun(run.id);
 				return;

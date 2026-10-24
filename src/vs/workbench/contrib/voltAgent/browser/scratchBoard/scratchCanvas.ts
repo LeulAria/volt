@@ -3561,6 +3561,33 @@ export class ScratchCanvas extends Disposable {
 		this._onDidStartRun.fire(run);
 	}
 
+	/**
+	 * Drags what a run marks, its chip the handle (like a frame's name): the board's own move from
+	 * here on, so snapping, connectors and undo behave as for any drag. False when there is nothing
+	 * to move (a run drawn into a free spot only, or something locked).
+	 */
+	dragRun(runId: string, e: { readonly pointerId: number; readonly clientX: number; readonly clientY: number }): boolean {
+		const scene = this.scene;
+		const run = scene?.runs.find(r => r.id === runId);
+		if (!scene || !run || this.gesture || scene.inTransaction) {
+			return false;
+		}
+		const elements = run.elementIds.map(id => scene.get(id)).filter((el): el is ScratchElement => !!el);
+		if (!elements.length || elements.some(el => el.locked)) {
+			return false;
+		}
+		const screen = this.clientToScreen(e);
+		this.startMove({ kind: 'pending', pointerId: e.pointerId, start: screen, startWorld: this.toWorld(screen), hitId: undefined, shift: false, alt: false, insideSelection: false }, elements);
+		try {
+			this.stage.setPointerCapture(e.pointerId);
+		} catch {
+			// Synthetic events have no capture.
+		}
+		this.updateCursor();
+		this.requestFrame();
+		return true;
+	}
+
 	hideRun(runId: string): void {
 		const scene = this.actionScene();
 		if (!scene) {

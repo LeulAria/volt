@@ -772,7 +772,7 @@
 	--sx-run: var(--sx-accent);
 	fill: color-mix(in srgb, var(--sx-run) 3%, transparent);
 	stroke: var(--sx-run);
-	stroke-width: 1.5;
+	stroke-width: 1;
 	stroke-dasharray: 7 5;
 	stroke-linecap: round;
 }
