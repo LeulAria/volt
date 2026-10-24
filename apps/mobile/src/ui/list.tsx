@@ -44,7 +44,7 @@ export function ListRow({ icon, iconColor, iconBg, label, detail, value, chevron
 }) {
 	const { p } = useTheme();
 	return (
-		<Tap disabled={!onPress} haptics="selection" onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 50, paddingHorizontal: 14, paddingVertical: 9 }}>
+		<Row onPress={onPress}>
 			{icon ? (
 				<View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: iconBg ?? p.fill, alignItems: 'center', justifyContent: 'center' }}>
 					<Icon name={icon} size={16} color={iconColor ?? (destructive ? p.danger : p.fgSecondary)} />
@@ -58,6 +58,13 @@ export function ListRow({ icon, iconColor, iconBg, label, detail, value, chevron
 			{right}
 			{checked ? <Icon name="check" size={18} color={p.accent} strokeWidth={2.2} /> : null}
 			{chevron ? <Icon name="chevronRight" size={15} color={p.fgQuaternary} /> : null}
-		</Tap>
+		</Row>
 	);
+}
+
+const ROW = { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 50, paddingHorizontal: 14, paddingVertical: 9 } as const;
+
+/** A row that only presses when it does something (an info row isn't drawn dimmed as disabled). */
+function Row({ onPress, children }: { readonly onPress?: () => void; readonly children: ReactNode }) {
+	return onPress ? <Tap haptics="selection" onPress={onPress} style={ROW}>{children}</Tap> : <View style={ROW}>{children}</View>;
 }

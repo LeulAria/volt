@@ -23,6 +23,8 @@ export interface IChatContext {
 	/** The message whose checkpoint was just restored (a Redo pill shows under it). */
 	readonly redoTurnId?: string;
 	readonly onRedo: () => void;
+	/** Shown, not driven from here (a subagent's transcript): no edit, retry or rewind. */
+	readonly readOnly?: boolean;
 }
 
 export const ChatContext = createContext<IChatContext | undefined>(undefined);

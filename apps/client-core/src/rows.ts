@@ -6,7 +6,7 @@
 import { basename, firstLine, pluralize } from './format';
 import type { IconName } from './icons';
 import type { ToolDensity } from './prefs';
-import type { ActivityKind, AgentBlock, AgentMessage, IActivityItem, IAssistantMessage, IPromptAttachment, ITodoStep, IUserMessage } from './types';
+import type { ActivityKind, AgentBlock, AgentMessage, AgentSegment, IActivityItem, IAssistantMessage, IPromptAttachment, ITodoStep, IUserMessage } from './types';
 
 export type StepStatus = 'running' | 'done' | 'error';
 
@@ -59,7 +59,7 @@ export type TranscriptRow =
 	| { readonly kind: 'cards'; readonly key: string; readonly items: readonly { readonly title: string; readonly body: string; readonly meta?: string }[] }
 	| { readonly kind: 'visual'; readonly key: string; readonly title: string; readonly visual: 'chart' | 'html' }
 	| { readonly kind: 'working'; readonly key: string; readonly status: string; readonly since?: number }
-	| { readonly kind: 'footer'; readonly key: string; readonly copyText: string; readonly durationMs?: number; readonly model?: string; readonly tokens?: number; readonly costUsd?: number; readonly outcome?: 'done' | 'failed' | 'stopped'; readonly turnId?: string };
+	| { readonly kind: 'footer'; readonly key: string; readonly copyText: string; readonly durationMs?: number; readonly model?: string; readonly tokens?: number; readonly costUsd?: number; readonly outcome?: 'done' | 'failed' | 'stopped'; readonly turnId?: string; readonly filesChanged?: number; readonly tokensUsed?: number; readonly tokensWindow?: number };
 
 export type RowKind = TranscriptRow['kind'];
 
@@ -524,9 +524,22 @@ function assistantRows(message: IAssistantMessage, mkey: string): TranscriptRow[
 			...(message.costUsd ? { costUsd: message.costUsd } : {}),
 			...(message.cancelled ? { outcome: 'stopped' as const } : message.outcome ? { outcome: message.outcome } : {}),
 			...(message.id ? { turnId: message.id } : {}),
+			...(filesChanged(segments) ? { filesChanged: filesChanged(segments) } : {}),
+			...(!tokens && message.tokensUsed ? { tokensUsed: message.tokensUsed, ...(message.tokensWindow ? { tokensWindow: message.tokensWindow } : {}) } : {}),
 		});
 	}
 	return rows;
+}
+
+/** Files a turn edited, created or deleted (its file cards), for the footer's Changes link. */
+function filesChanged(segments: readonly AgentSegment[]): number {
+	const paths = new Set<string>();
+	for (const segment of segments) {
+		if (segment.kind === 'block' && segment.block.type === 'file') {
+			paths.add(segment.block.path);
+		}
+	}
+	return paths.size;
 }
 
 /**

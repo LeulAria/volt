@@ -49,10 +49,23 @@
 		opacity: 0.7;
 	}
 
-	/* A tapped (selected) chat shows its Snooze and Settle. */
+	/* A tapped (selected) chat shows its Snooze and Settle, over its badge and age as hover does. */
 	.monaco-list-row.selected .volt-agent-home-row.is-session > .actions,
 	.monaco-list-row.focused .volt-agent-home-row.is-session > .actions {
 		display: flex;
+	}
+
+	.monaco-list-row.selected .volt-agent-home-row.is-session > .status-badge,
+	.monaco-list-row.selected .volt-agent-home-row.is-session > .meta,
+	.monaco-list-row.focused .volt-agent-home-row.is-session > .status-badge,
+	.monaco-list-row.focused .volt-agent-home-row.is-session > .meta {
+		visibility: hidden;
+	}
+
+	/* No hover measured where the buttons land: the title fades under a fixed width instead. */
+	.monaco-list-row.selected .volt-agent-home-row.is-session > .name,
+	.monaco-list-row.focused .volt-agent-home-row.is-session > .name {
+		mask-image: linear-gradient(to right, #000 calc(100% - var(--volt-home-name-cover, 96px) - 16px), transparent calc(100% - var(--volt-home-name-cover, 96px)));
 	}
 
 	.volt-agent-turn.user .volt-agent-user-restore {
@@ -66,6 +79,99 @@
 	.volt-agent-table-cell .volt-agent-table-cell-copy {
 		opacity: 1;
 		pointer-events: auto;
+	}
+
+	/* Copy on code blocks, tables and diagrams; a terminal's menu; a subagent's and a queued prompt's stop. */
+	.volt-md-code-block .volt-md-code-block-overlay,
+	.volt-agent-markdown .volt-agent-table-shell .volt-agent-table-actions {
+		opacity: 1;
+		pointer-events: auto;
+	}
+
+	.volt-diagram .volt-diagram-tools > .volt-diagram-button,
+	.volt-agent-block.terminal .volt-agent-term-menu,
+	.volt-agent-surface-tab .close,
+	.volt-agent-queue-item .volt-agent-queue-remove,
+	.volt-subagent-row .volt-subagent-stop,
+	.volt-agent-work-agent .volt-agent-work-agent-stop,
+	.volt-agent-changes-widget .monaco-component.multiDiffEditor .multiDiffEntry .header .header-content .actions {
+		opacity: 1;
+	}
+
+	.volt-agent-picker-list .monaco-list-row .volt-agent-picker-edit:not(.hidden) {
+		opacity: 1;
+		pointer-events: auto;
+	}
+
+	.volt-subagent-cursor .volt-tr-subagent-stop,
+	.volt-agent-lineage-row.stoppable .volt-agent-lineage-stop,
+	.volt-agent-lineage-row.resumable .volt-agent-lineage-resume {
+		display: inline-flex;
+	}
+
+	.volt-agent-lineage-row.stoppable .volt-subagent-clock,
+	.volt-agent-lineage-row.resumable .volt-subagent-clock {
+		display: none;
+	}
+
+	/* Keyboard hints (Alt+Enter to Use as Mode) mean nothing without a keyboard at hand. */
+	.volt-slash-row .volt-slash-hint {
+		display: none !important;
+	}
+
+	/* Rows a tap selected keep their actions in reach (Keep / Undo, a turn's review, a chat's pin). */
+	.monaco-list-row.selected .volt-agent-pending-row-actions {
+		display: flex;
+	}
+}
+
+/* A narrow / and @ menu: the name keeps its room and the description gives way. */
+.monaco-workbench.web.volt-web-phone .volt-slash-name {
+	flex-shrink: 0;
+}
+
+/*
+ * A finger, not a pointer: controls get room to be hit (the title bar's, the chat footer's, the files
+ * sidebar's tabs). The rows of lists and menus are sized in TypeScript (voltMenu.ts).
+ */
+@media (pointer: coarse) {
+	.monaco-workbench.web .part.titlebar .volt-titlebar-control {
+		min-width: 32px;
+		min-height: 32px;
+	}
+
+	.monaco-workbench.web .volt-agent-footer-btn {
+		width: 32px;
+		height: 32px;
+	}
+
+	.monaco-workbench.web .volt-agent-files-sidebar-tab {
+		min-width: 32px;
+		min-height: 32px;
+	}
+
+	/* The composer's own buttons: add, mic, send, and the chips under it. */
+	.monaco-workbench.web .volt-agent-plus,
+	.monaco-workbench.web .volt-agent-send {
+		min-width: 32px;
+		min-height: 32px;
+	}
+
+	.monaco-workbench.web .volt-agent-mic-btn:not(.recording) {
+		min-width: 32px;
+		min-height: 32px;
+	}
+
+	.monaco-workbench.web .volt-agent-status-access,
+	.monaco-workbench.web .volt-agent-status-branch,
+	.monaco-workbench.web .volt-agent-context-meter {
+		min-height: 30px;
+	}
+
+	.monaco-workbench.web .volt-agent-term-menu,
+	.monaco-workbench.web .volt-agent-surface-tab .close {
+		min-width: 28px;
+		min-height: 28px;
 	}
 }
 
@@ -82,6 +188,59 @@
 		min-width: 0;
 		overflow: hidden;
 	}
+}
+
+/*
+ * Phone-wide windows (voltWebTouch.ts sets `volt-web-phone`): the title bar keeps the agents list's
+ * toggle, New Agent, the chat's title, the side toolbar, Files and the right panel. Search, Back,
+ * Forward, the terminal and Switch to IDE move into its "…" menu; the brand and the laptop mark go.
+ */
+.monaco-workbench .volt-agent-titlebar-toggles > .volt-agent-titlebar-toggle.volt-web-titlebar-more {
+	display: none;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-agent-titlebar-toggles > .volt-agent-titlebar-toggle.volt-web-titlebar-more {
+	display: inline-flex;
+}
+
+/* As specific as the agent layout's own rules that show them while the agents list is closed. */
+.monaco-workbench.web.volt-web-phone.volt-layout-agent .titlebar-left > .volt-agent-brand-logo.in-titlebar,
+.monaco-workbench.web.volt-web-phone.volt-layout-agent .titlebar-left > .volt-agent-nav-titlebar,
+.monaco-workbench.web.volt-web-phone.volt-layout-agent .volt-agent-primary-header > .volt-agent-primary-header-search,
+.monaco-workbench.web.volt-web-phone.volt-layout-agent .volt-agent-primary-header-title > .volt-agent-primary-header-laptop,
+.monaco-workbench.web.volt-web-phone.volt-layout-agent .volt-agent-titlebar-toggles > .volt-agent-switch-to-ide,
+.monaco-workbench.web.volt-web-phone.volt-layout-agent .volt-agent-titlebar-toggles > .volt-agent-bottom-panel-toggle {
+	display: none !important;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-agent-primary-header,
+.monaco-workbench.web.volt-web-phone .volt-agent-primary-header-title {
+	min-width: 0;
+}
+
+.monaco-workbench.web.volt-web-phone .titlebar-left {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.monaco-workbench.web.volt-web-phone .titlebar-right {
+	flex: 0 0 auto;
+}
+
+/*
+ * Phone-wide windows: the tools (files, changes, pull requests, tabs) lie over the chat below its
+ * title bar (agentSurfaceHost.ts placeOverChat), solid so the chat does not show through.
+ */
+.volt-agent-tools-area.over-chat {
+	background: var(--volt-agent-window-bg-base);
+}
+
+.volt-agent-tools-area.over-chat .volt-agent-files-sidebar {
+	background: var(--volt-agent-window-bg-base);
+}
+
+.volt-agent-tools-area.over-chat .volt-agent-tools-grip {
+	display: none;
 }
 
 /* The preview's page is an iframe here (no `<webview>`): the same rules as the desktop's frame. */

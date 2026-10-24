@@ -14,6 +14,7 @@ const HEARTBEAT_MS = 30_000;
  * hours after the lid opens. This timer never waits longer than a heartbeat before it reads
  * `Date.now()` again, and reads it at once when the machine comes back (the network returns, the
  * window is shown or focused). Late is fine; it never fires early, and it fires once per `schedule`.
+ * The agent server hosts this too: in Node there is no window, and the heartbeat alone wakes it.
  */
 export class DeadlineTimer extends Disposable {
 

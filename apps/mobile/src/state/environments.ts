@@ -22,6 +22,18 @@ const CATALOG_KEY = 'volt.catalog.v1';
 const CLIENT_ID_KEY = 'volt.clientId';
 const tokenKey = (environmentId: string) => `volt.token.${environmentId.replace(/[^A-Za-z0-9._-]/g, '_')}`;
 
+/**
+ * Tokens: the keychain / keystore. The web build (a browser preview of the app, `expo start --web`)
+ * has no secure store, so it keeps them with the rest of the catalog.
+ */
+const tokens = Platform.OS === 'web'
+	? {
+		setItemAsync: (key: string, value: string) => AsyncStorage.setItem(key, value),
+		getItemAsync: (key: string) => AsyncStorage.getItem(key),
+		deleteItemAsync: (key: string) => AsyncStorage.removeItem(key),
+	}
+	: SecureStore;
+
 export const asyncStorage: IStorage = {
 	getItem: key => AsyncStorage.getItem(key),
 	setItem: (key, value) => AsyncStorage.setItem(key, value),
@@ -58,7 +70,7 @@ export function useActiveEnvironment(): ISavedEnvironment | undefined {
 async function persist(catalog: IEnvironmentCatalog): Promise<void> {
 	const stripped: IEnvironmentCatalog = { ...catalog, environments: catalog.environments.map(env => ({ ...env, token: '' })) };
 	await AsyncStorage.setItem(CATALOG_KEY, JSON.stringify(stripped));
-	await Promise.all(catalog.environments.map(env => SecureStore.setItemAsync(tokenKey(env.environmentId), env.token)));
+	await Promise.all(catalog.environments.map(env => tokens.setItemAsync(tokenKey(env.environmentId), env.token)));
 }
 
 export async function loadEnvironments(): Promise<void> {
@@ -67,7 +79,7 @@ export async function loadEnvironments(): Promise<void> {
 	}
 	try {
 		const parsed = parseCatalog(await AsyncStorage.getItem(CATALOG_KEY));
-		const environments = await Promise.all(parsed.environments.map(async env => ({ ...env, token: (await SecureStore.getItemAsync(tokenKey(env.environmentId)).catch(() => null)) ?? '' })));
+		const environments = await Promise.all(parsed.environments.map(async env => ({ ...env, token: (await tokens.getItemAsync(tokenKey(env.environmentId)).catch(() => null)) ?? '' })));
 		set({ loaded: true, catalog: { ...parsed, environments: environments.filter(env => env.token) } });
 	} catch {
 		set({ loaded: true, catalog: EMPTY_CATALOG });
@@ -118,7 +130,7 @@ export async function activate(environmentId: string): Promise<void> {
 
 export async function forget(environmentId: string): Promise<void> {
 	const catalog = removeEnvironment(state.catalog, environmentId);
-	await SecureStore.deleteItemAsync(tokenKey(environmentId)).catch(() => undefined);
+	await tokens.deleteItemAsync(tokenKey(environmentId)).catch(() => undefined);
 	await persist(catalog);
 	set({ loaded: true, catalog });
 }

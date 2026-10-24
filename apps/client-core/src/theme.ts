@@ -170,6 +170,102 @@ export const lightPalette: IVoltPalette = {
 	},
 };
 
+/** Volt Dark Midnight: the Nord-blue dark theme (cursor-dark-midnight-color-theme.json). */
+export const midnightPalette: IVoltPalette = {
+	...darkPalette,
+	canvas: '#1E2127',
+	sidebar: '#191C22',
+	surface: '#232730',
+	raised: '#272C36',
+	composer: '#242832',
+	bubble: '#242832',
+	bubbleBorder: 'rgba(216,222,233,0.10)',
+	fg: '#D8DEE9',
+	fgSecondary: 'rgba(216,222,233,0.76)',
+	fgTertiary: 'rgba(216,222,233,0.56)',
+	fgQuaternary: 'rgba(216,222,233,0.36)',
+	stroke: 'rgba(255,255,255,0.09)',
+	strokeFaint: 'rgba(255,255,255,0.05)',
+	fill: 'rgba(216,222,233,0.07)',
+	fillFaint: 'rgba(216,222,233,0.035)',
+	fillStrong: 'rgba(216,222,233,0.13)',
+	accent: '#88C0D0',
+	link: '#8FBCBB',
+	success: '#A3BE8C',
+	danger: '#BF616A',
+	warning: '#EBCB8B',
+	info: '#88C0D0',
+	violet: '#B48EAD',
+	primary: '#88C0D0',
+	onPrimary: '#191C22',
+	codeBg: '#191C22',
+	diffAddedFg: '#A3BE8C',
+	diffRemovedFg: '#BF616A',
+	diffAdded: 'rgba(163,190,140,0.16)',
+	diffRemoved: 'rgba(191,97,106,0.16)',
+};
+
+/** Volt Dark High Contrast: near-black surfaces, stronger lines (cursor-dark-hc-color-theme.json). */
+export const contrastPalette: IVoltPalette = {
+	...darkPalette,
+	canvas: '#0A0A0A',
+	sidebar: '#0A0A0A',
+	surface: '#141414',
+	raised: '#1A1A1A',
+	composer: '#161616',
+	bubble: '#161616',
+	bubbleBorder: 'rgba(240,240,240,0.22)',
+	fgSecondary: 'rgba(240,240,240,0.86)',
+	fgTertiary: 'rgba(240,240,240,0.70)',
+	fgQuaternary: 'rgba(240,240,240,0.50)',
+	stroke: 'rgba(240,240,240,0.24)',
+	strokeFaint: 'rgba(240,240,240,0.14)',
+	fill: 'rgba(240,240,240,0.10)',
+	fillFaint: 'rgba(240,240,240,0.05)',
+	fillStrong: 'rgba(240,240,240,0.18)',
+	success: '#A3BE8C',
+	danger: '#E06C75',
+	warning: '#EBCB8B',
+	codeBg: '#000000',
+};
+
+/** Volt Light Colorblind: blue/orange instead of green/red for status and diffs. */
+export const colorblindPalette: IVoltPalette = {
+	...lightPalette,
+	accent: '#1F79C0',
+	link: '#0066AB',
+	success: '#0066AB',
+	danger: '#B35900',
+	warning: '#795F00',
+	diffAdded: 'rgba(0,102,171,0.12)',
+	diffRemoved: 'rgba(179,89,0,0.12)',
+	diffAddedFg: '#0066AB',
+	diffRemovedFg: '#B35900',
+	syntax: { ...lightPalette.syntax, inserted: '#0066AB', deleted: '#B35900', tag: '#006E4E' },
+};
+
+export type VoltThemeId = 'dark' | 'midnight' | 'contrast' | 'light' | 'colorblind';
+
+export interface IVoltTheme {
+	readonly id: VoltThemeId;
+	/** The desktop theme's name (Settings > Appearance). */
+	readonly label: string;
+	readonly palette: IVoltPalette;
+}
+
+/** The desktop's built-in Volt themes, in its theme gallery's order. */
+export const VOLT_THEMES: readonly IVoltTheme[] = [
+	{ id: 'dark', label: 'Volt Dark', palette: darkPalette },
+	{ id: 'midnight', label: 'Volt Dark Midnight', palette: midnightPalette },
+	{ id: 'contrast', label: 'Volt Dark High Contrast', palette: contrastPalette },
+	{ id: 'light', label: 'Volt Light', palette: lightPalette },
+	{ id: 'colorblind', label: 'Volt Light Colorblind', palette: colorblindPalette },
+];
+
+export function voltTheme(id: string | null | undefined): IVoltTheme | undefined {
+	return VOLT_THEMES.find(theme => theme.id === id);
+}
+
 export function paletteFor(scheme: 'dark' | 'light'): IVoltPalette {
 	return scheme === 'dark' ? darkPalette : lightPalette;
 }

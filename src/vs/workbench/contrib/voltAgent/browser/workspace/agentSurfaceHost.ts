@@ -9,6 +9,7 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
+import { isWeb } from '../../../../../base/common/platform.js';
 import { Disposable, DisposableMap, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../../base/common/network.js';
 import { basename } from '../../../../../base/common/resources.js';
@@ -92,6 +93,11 @@ const FLOAT_MIN_WIDTH = 260;
 const FLOAT_MIN_HEIGHT = 180;
 /** A new preview's width: a small 16:10 screen. */
 const FLOAT_WIDTH = 320;
+/**
+ * A browser window narrower than this (a phone, a tablet in split view) has no room for the chat
+ * and the tools side by side: the tools lie over the chat, below its title bar, and close back to it.
+ */
+const TOOLS_OVER_CHAT_MAX_WIDTH = 600;
 
 /** Where the floating preview sits, from the chat's bottom-right corner. Shared by every chat in the window. */
 interface IFloatRect {
@@ -1227,7 +1233,7 @@ export class AgentSurfaceHost extends Disposable {
 	}
 
 	private applySplit(ratio: number | undefined): void {
-		if (ratio === undefined) {
+		if (ratio === undefined || this.toolsOverChat()) {
 			// Explicit full-size chat: clearing alone can leave a prior `0 0 Npx` gap.
 			this.chat.style.flex = '1 1 auto';
 			this.chat.style.width = '100%';
@@ -1284,7 +1290,12 @@ export class AgentSurfaceHost extends Disposable {
 				this.placeFullscreen(entry);
 				return;
 			}
+			if (this.open && this.toolsOverChat()) {
+				this.placeOverChat(entry);
+				return;
+			}
 		}
+		this.area.classList.remove('over-chat');
 		let box = this.panel.getBoundingClientRect();
 		// The spacer was just unhidden and can still measure 0. Lay the overlay on the chat's right side anyway.
 		if (this.open && entry && (box.width <= 0 || box.height <= 0)) {
@@ -1586,6 +1597,34 @@ export class AgentSurfaceHost extends Disposable {
 		const height = Math.round(root.bottom - top);
 		const partWidth = Math.round(root.width) - this.layoutFilesSidebar(entry, Math.round(root.width), height);
 		entry.part.layout(partWidth, height, 0, 0);
+	}
+
+	/** Whether the tools cover the chat instead of sharing the row with it (see {@link TOOLS_OVER_CHAT_MAX_WIDTH}). */
+	private toolsOverChat(): boolean {
+		if (!isWeb || this.nested()) {
+			return false;
+		}
+		const width = this.layoutService.mainContainer.clientWidth;
+		return width > 0 && width < TOOLS_OVER_CHAT_MAX_WIDTH;
+	}
+
+	/** Over the whole chat below the title bar, which keeps the toggles that close the tools. */
+	private placeOverChat(entry: IToolsPart): void {
+		const root = this.layoutService.mainContainer.getBoundingClientRect();
+		const box = this.container.getBoundingClientRect();
+		this.releaseTitlebar();
+		this.area.classList.add('over-chat');
+		const height = Math.max(0, Math.round(root.bottom - box.top));
+		this.setAreaBounds(root.left, box.top, root.width, height);
+		this.mountTitleButtons(entry);
+		this.partsHost.style.removeProperty('top');
+		this.partsHost.style.left = '0px';
+		this.announceVisibility();
+		const width = Math.round(root.width);
+		const partWidth = width - this.layoutFilesSidebar(entry, width, height);
+		if (partWidth > 0 && height > 0) {
+			entry.part.layout(partWidth, height, 0, 0);
+		}
 	}
 
 	/** Only the top-left group's tab row makes room for the lead; split groups keep theirs. */

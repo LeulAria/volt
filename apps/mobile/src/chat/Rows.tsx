@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { basename, compactNumber, dirname, duration, type IRowImage, type IStepItem, languageForPath, money, pendingLabel, RADIUS, type TranscriptRow } from '@volt/client-core';
+import { router } from 'expo-router';
 import { memo, type ReactNode, useState } from 'react';
 import { ActivityIndicator, Image, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
@@ -58,7 +59,7 @@ function UserRow({ row, chatId }: { readonly row: RowOf<'user'>; readonly chatId
 	const long = row.text.length > 700 || row.text.split('\n').length > 14;
 	const tint = row.mode ? mode(row.mode as Parameters<typeof mode>[0]) : undefined;
 	// Sent prompts typed here or on the desktop take the menu; another chat's message, a steer or a pending one don't.
-	const actionable = !!ctx && !!row.turnId && !row.pending && !row.from && !row.steer;
+	const actionable = !!ctx && !ctx.readOnly && !!row.turnId && !row.pending && !row.from && !row.steer;
 	const menu = () => {
 		if (actionable) {
 			haptic.medium();
@@ -333,7 +334,8 @@ function FooterRow({ row }: { readonly row: RowOf<'footer'> }) {
 	const { p } = useTheme();
 	const ctx = useChatContext();
 	const [copied, setCopied] = useState(false);
-	const parts = [row.outcome === 'stopped' ? 'Stopped' : row.outcome === 'failed' ? 'Failed' : undefined, duration(row.durationMs), row.model, row.tokens ? `${compactNumber(row.tokens)} tokens` : undefined, money(row.costUsd)].filter(Boolean);
+	const context = !row.tokens && row.tokensUsed ? `${compactNumber(row.tokensUsed)}${row.tokensWindow ? ` / ${compactNumber(row.tokensWindow)}` : ''} context` : undefined;
+	const parts = [row.outcome === 'stopped' ? 'Stopped' : row.outcome === 'failed' ? 'Failed' : undefined, duration(row.durationMs), row.model, row.tokens ? `${compactNumber(row.tokens)} tokens` : context, money(row.costUsd)].filter(Boolean);
 	return (
 		<View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
 			{row.copyText ? (
@@ -345,12 +347,19 @@ function FooterRow({ row }: { readonly row: RowOf<'footer'> }) {
 					<Icon name={copied ? 'check' : 'copy'} size={14} color={copied ? p.success : p.fgTertiary} />
 				</Tap>
 			) : null}
-			{ctx && row.turnId ? (
+			{ctx && !ctx.readOnly && row.turnId ? (
 				<Tap haptics="light" hitSlop={6} onPress={() => ctx.onRetry(row.turnId!)} style={{ width: 30, height: 28, alignItems: 'center', justifyContent: 'center', borderRadius: 8 }} accessibilityLabel="Retry">
 					<Icon name="refresh" size={14} color={p.fgTertiary} />
 				</Tap>
 			) : null}
 			<T variant="footnote" color={p.fgQuaternary} numberOfLines={1} style={{ flex: 1 }}>{parts.join(' · ')}</T>
+			{ctx && row.turnId && row.filesChanged ? (
+				// This turn's changes, as the desktop's per-turn review opens them.
+				<Tap haptics="selection" hitSlop={6} onPress={() => router.push({ pathname: '/changes/[id]', params: { id: ctx.chatId, turn: row.turnId! } })} accessibilityLabel="Changes in this turn" style={{ flexDirection: 'row', alignItems: 'center', gap: 4, height: 28, paddingHorizontal: 9, borderRadius: 8, backgroundColor: p.fillFaint }}>
+					<Icon name="fileDiff" size={13} color={p.fgTertiary} />
+					<T variant="footnote" weight="600" color={p.fgSecondary}>{row.filesChanged} {row.filesChanged === 1 ? 'file' : 'files'}</T>
+				</Tap>
+			) : null}
 		</View>
 	);
 }

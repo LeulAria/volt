@@ -423,3 +423,13 @@
 	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 	color: var(--vscode-foreground);
 }
+
+/* A touch screen: rows a finger can hit (voltMenu.ts adds COARSE_ROW_EXTRA to their heights). */
+.volt-menu.coarse .volt-menu-row,
+.volt-menu.coarse .volt-menu-message {
+	height: 40px;
+}
+
+.volt-menu.coarse .volt-menu-row.two-line {
+	height: 56px;
+}
