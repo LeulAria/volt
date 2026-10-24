@@ -6,7 +6,13 @@ import { gsap, REDUCED, useGSAP } from "@/lib/gsap";
 import { defaultArch } from "@/lib/releases";
 import { useDetectedPlatform, useReleases } from "@/lib/useReleases";
 import { COLUMN } from "./geometry";
-import { GithubMarkIcon, InstallCommand, REPO_URL } from "./install";
+import {
+  DISCORD_URL,
+  DiscordIcon,
+  GithubMarkIcon,
+  InstallCommand,
+  REPO_URL,
+} from "./install";
 
 /* ------------------------------------------------------------------ */
 /* Closing construction                                                */
@@ -155,7 +161,11 @@ export function ClosingCta() {
   );
 
   return (
-    <section ref={ref} className={cn(COLUMN, "relative py-20 md:py-28")}>
+    // opaque so the column guides stop at this section
+    <section
+      ref={ref}
+      className={cn(COLUMN, "relative bg-[#0a0d0c] py-20 md:py-28")}
+    >
       <div className="relative flex flex-col items-center text-center">
         <div
           data-construct
@@ -330,6 +340,13 @@ export function ClosingCta() {
             Or install from a terminal
           </div>
           <InstallCommand />
+          <Link
+            to="/docs/$"
+            params={{ _splat: "install" }}
+            className="mt-4 inline-block text-[13px] text-white/50 underline underline-offset-4 transition-colors hover:text-white"
+          >
+            Step-by-step install guide
+          </Link>
         </div>
       </div>
     </section>
@@ -353,17 +370,17 @@ function ClosingDownload() {
 export function SiteFooter() {
   return (
     <footer className={cn(COLUMN, "py-10")}>
-      <div className="flex flex-col gap-6 text-[13px] text-white/40 md:flex-row md:items-center">
+      <div className="flex flex-col gap-6 text-[13px] text-white/40 md:flex-row md:items-center lg:mx-5">
         <span className="font-mono text-[15px] font-semibold tracking-wide text-white/80">
           volt
         </span>
         <nav className="flex flex-wrap gap-x-6 gap-y-2 md:ml-8">
           <Link
             to="/docs/$"
-            params={{ _splat: "" }}
+            params={{ _splat: "install" }}
             className="transition-colors hover:text-white"
           >
-            Docs
+            Install guide
           </Link>
           <Link to="/download" className="transition-colors hover:text-white">
             Download
@@ -374,6 +391,15 @@ export function SiteFooter() {
         </nav>
         <div className="flex items-center gap-4 md:ml-auto">
           <span>© {new Date().getFullYear()} Volt</span>
+          <a
+            href={DISCORD_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Volt on Discord"
+            className="transition-colors hover:text-white"
+          >
+            <DiscordIcon className="size-4" />
+          </a>
           <a
             href={REPO_URL}
             target="_blank"

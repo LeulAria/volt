@@ -197,25 +197,24 @@ export function ComposerPrompt() {
 
   return (
     <div ref={rootRef} className="w-full min-w-0 max-w-full text-white md:w-[min(500px,88vw)]">
-      <div className="mb-2 flex w-full min-w-0 flex-wrap items-center gap-1.5">
-        <div className="flex w-full min-w-0 flex-1 flex-wrap items-center gap-1.5">
-          <span className="inline-flex h-7 shrink-0 items-center rounded-full border border-white/15 bg-white/[0.08] px-2.5 text-[12px] text-white/80 backdrop-blur-xl">
-            Changes
-            <span className="ml-1.5 text-[#3ecf8e]">+15863</span>
-            <span className="ml-1 text-[#f07178]">-1237</span>
-          </span>
-          <span className="hidden h-7 shrink-0 items-center rounded-full border border-white/15 bg-white/[0.08] px-2.5 text-[12px] text-white/80 backdrop-blur-xl md:inline-flex">
-            Worked for 36s
-          </span>
-          <button
-            type="button"
-            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full border border-white/15 bg-white/[0.08] px-2.5 text-[12px] text-white/80 backdrop-blur-xl transition-colors hover:bg-white/[0.12]"
-          >
-            Commit & Push
-            <ChevronDownIcon className="w-[9px] text-white/45" />
-          </button>
-        </div>
-        <span className="hidden h-7 shrink-0 items-center rounded-full border border-white/15 bg-white/[0.08] px-2.5 text-[12px] text-white/45 backdrop-blur-xl md:inline-flex">
+      {/* One line of chips: the row is one chip tall, so a chip that would wrap lands on a clipped second line. */}
+      <div className="mb-2 flex h-7 w-full min-w-0 flex-wrap items-center gap-x-1.5 gap-y-4 overflow-hidden">
+        <span className="inline-flex h-7 shrink-0 items-center rounded-full border border-white/15 bg-white/[0.08] px-2.5 text-[12px] text-white/80 backdrop-blur-xl">
+          Changes
+          <span className="ml-1.5 text-[#3ecf8e]">+15863</span>
+          <span className="ml-1 text-[#f07178]">-1237</span>
+        </span>
+        <span className="inline-flex h-7 shrink-0 items-center rounded-full border border-white/15 bg-white/[0.08] px-2.5 text-[12px] text-white/80 backdrop-blur-xl">
+          Worked for 36s
+        </span>
+        <button
+          type="button"
+          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full border border-white/15 bg-white/[0.08] px-2.5 text-[12px] text-white/80 backdrop-blur-xl transition-colors hover:bg-white/[0.12]"
+        >
+          Commit & Push
+          <ChevronDownIcon className="w-[9px] text-white/45" />
+        </button>
+        <span className="ml-auto inline-flex h-7 shrink-0 items-center rounded-full border border-white/15 bg-white/[0.08] px-2.5 text-[12px] text-white/45 backdrop-blur-xl">
           {triggerLabel(selected, effort, fast)}
         </span>
       </div>

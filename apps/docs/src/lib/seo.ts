@@ -1,9 +1,10 @@
 import { appName, docsRoute } from "./shared";
 
-/** Canonical site origin. Set `VITE_SITE_URL` in production (e.g. https://voltleularia.com). */
+/** Canonical site origin (og:image, canonical links, sitemap). `VITE_SITE_URL` overrides it. */
 export const siteUrl =
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_SITE_URL?.replace(/\/$/, "")) ||
-  "https://volt.leularia.com";
+  (typeof import.meta !== "undefined" &&
+    import.meta.env?.VITE_SITE_URL?.replace(/\/$/, "")) ||
+  "https://getvolt.dev";
 
 export const seo = {
   /** Primary brand + positioning (≤60 chars ideal for titles) */
@@ -32,7 +33,7 @@ export const seo = {
     "desktop IDE",
   ].join(", "),
   /** Social / OG image (path under `public/`) */
-  defaultOgImagePath: "/hero-ide.png",
+  defaultOgImagePath: "/og-volt-ipad.jpg",
 } as const;
 
 export function absoluteUrl(path: string): string {
@@ -70,6 +71,8 @@ export function rootHeadMeta(): Array<
     { property: "og:title", content: seo.brandTitle },
     { property: "og:description", content: seo.homeDescription },
     { property: "og:image", content: absoluteUrl(seo.defaultOgImagePath) },
+    { property: "og:image:width", content: "868" },
+    { property: "og:image:height", content: "868" },
     { name: "twitter:image", content: absoluteUrl(seo.defaultOgImagePath) },
     { name: "application-name", content: appName },
   ];
@@ -146,6 +149,8 @@ export function homeRouteMeta(): Array<
     { property: "og:description", content: desc },
     { property: "og:url", content: siteUrl },
     { property: "og:image", content: absoluteUrl(seo.defaultOgImagePath) },
+    { property: "og:image:width", content: "868" },
+    { property: "og:image:height", content: "868" },
     { property: "og:type", content: "website" },
     { name: "twitter:title", content: title },
     { name: "twitter:description", content: desc },
@@ -182,6 +187,8 @@ export function docsPageMeta(opts: {
     { property: "og:url", content: url },
     { property: "og:type", content: "article" },
     { property: "og:image", content: absoluteUrl(seo.defaultOgImagePath) },
+    { property: "og:image:width", content: "868" },
+    { property: "og:image:height", content: "868" },
     { name: "twitter:card", content: "summary_large_image" },
     { name: "twitter:title", content: title },
     { name: "twitter:description", content: desc },
@@ -199,7 +206,9 @@ export function docsPageMeta(opts: {
   ];
 }
 
-export function docsPageLinks(slugPath: string): Array<{ rel: string; href: string }> {
+export function docsPageLinks(
+  slugPath: string,
+): Array<{ rel: string; href: string }> {
   return [{ rel: "canonical", href: absoluteUrl(slugPath) }];
 }
 
@@ -220,6 +229,8 @@ export function downloadRouteMeta(): Array<
     { property: "og:description", content: desc },
     { property: "og:url", content: url },
     { property: "og:image", content: absoluteUrl(seo.defaultOgImagePath) },
+    { property: "og:image:width", content: "868" },
+    { property: "og:image:height", content: "868" },
     { property: "og:type", content: "website" },
     { name: "twitter:title", content: title },
     { name: "twitter:description", content: desc },

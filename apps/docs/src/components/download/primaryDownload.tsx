@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowDownToLine, ArrowUpRight } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { focusRing, OsIcon } from "@/components/landing/install";
 import { Spinner } from "@/components/landing/primitives";
 import { cn } from "@/lib/cn";
@@ -18,6 +18,7 @@ import {
   recommendedPkg,
 } from "@/lib/releases";
 import { GITHUB_RELEASES_URL, type ReleasesState } from "@/lib/useReleases";
+import { DownloadDialog } from "./downloadDialog";
 import { MacInstallGuide } from "./macInstallGuide";
 
 const BUTTON =
@@ -35,6 +36,7 @@ export function PrimaryDownload({
   arch,
   onArch,
   installGuide = false,
+  toDownloadPage = false,
   className,
 }: {
   state: ReleasesState;
@@ -45,6 +47,8 @@ export function PrimaryDownload({
   onArch?: (arch: Arch) => void;
   /** macOS: a "How to install on Mac" button beside the download that opens the step-by-step drawer. */
   installGuide?: boolean;
+  /** The button opens /download for this platform instead of downloading (the landing page's). */
+  toDownloadPage?: boolean;
   className?: string;
 }) {
   const platform = platformOf(os);
@@ -53,6 +57,7 @@ export function PrimaryDownload({
   const asset = primaryAsset(release, os, arch, recommendedPkg(os));
   const info = CHANNEL_INFO[channel];
   const title = `Download for ${platform.label}`;
+  const [confirming, setConfirming] = useState(false);
 
   let button: ReactNode;
   let meta: ReactNode;
@@ -65,15 +70,8 @@ export function PrimaryDownload({
     );
     meta = <span>Asking GitHub for the newest {info.label} release.</span>;
   } else if (asset) {
-    button = (
-      <a
-        href={asset.url}
-        className={cn(
-          BUTTON,
-          "bg-white text-black hover:opacity-90",
-          focusRing,
-        )}
-      >
+    const label = (
+      <>
         <OsIcon
           os={os}
           className={cn(
@@ -82,7 +80,30 @@ export function PrimaryDownload({
           )}
         />
         <span className="truncate">{title}</span>
-        <ArrowDownToLine className="size-4 shrink-0 opacity-60" />
+        {toDownloadPage ? (
+          <ArrowUpRight className="size-4 shrink-0 opacity-60" />
+        ) : (
+          <ArrowDownToLine className="size-4 shrink-0 opacity-60" />
+        )}
+      </>
+    );
+    const look = cn(BUTTON, "bg-white text-black hover:opacity-90", focusRing);
+    button = toDownloadPage ? (
+      <Link to="/download" search={{ os }} className={look}>
+        {label}
+      </Link>
+    ) : (
+      <a
+        href={asset.url}
+        onClick={(e) => {
+          // A dialog first: which build, its size, and what the first launch asks.
+          e.preventDefault();
+          setConfirming(true);
+        }}
+        aria-haspopup="dialog"
+        className={look}
+      >
+        {label}
       </a>
     );
     meta = (
@@ -151,6 +172,13 @@ export function PrimaryDownload({
       </p>
       {onArch && os === "darwin" ? (
         <MacArchSwitch arch={arch} onArch={onArch} />
+      ) : null}
+      {asset && !toDownloadPage ? (
+        <DownloadDialog
+          asset={asset}
+          open={confirming}
+          onClose={() => setConfirming(false)}
+        />
       ) : null}
     </div>
   );
@@ -234,6 +262,7 @@ export function LandingDownload({
         channel={channel}
         os={os}
         arch={arch}
+        toDownloadPage
         className="items-center text-center [&>p]:justify-center"
       />
       <Link

@@ -1,13 +1,15 @@
 import {
+  Asterisk,
+  Atom,
   Check,
   ChevronDown,
   ChevronRight,
   Clock3,
+  FileDiff,
+  FlaskConical,
+  Folder,
   GitBranch,
   Plus,
-  Search,
-  Settings,
-  Star,
 } from "lucide-react";
 import {
   AnimatePresence,
@@ -17,7 +19,6 @@ import {
 } from "motion/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
-import { BrandIcon, type BrandId, brandLabel } from "./brandIcons";
 import { COLUMN } from "./geometry";
 import {
   EASE_OUT,
@@ -38,11 +39,18 @@ const FEATURES: {
   width: string;
 }[] = [
   {
+    id: "turns",
+    title: "Every turn, accounted for.",
+    body: "Each turn and each subagent lists the files it changed, with the lines it added and removed. Open one to review just its work.",
+    Art: TurnsArt,
+    width: "max-w-[460px]",
+  },
+  {
     id: "models",
     title: "Every frontier model, one picker.",
     body: "Switch between Claude, GPT, Gemini, Grok, or a local model mid-conversation. Tune effort, context, and speed per chat.",
     Art: ModelPickerArt,
-    width: "max-w-[560px]",
+    width: "max-w-[480px]",
   },
   {
     id: "git",
@@ -63,7 +71,7 @@ const FEATURES: {
     title: "Agents in parallel.",
     body: "Each task gets its own worktree, so runs never step on each other.",
     Art: ParallelArt,
-    width: "max-w-[440px]",
+    width: "max-w-[520px]",
   },
   {
     id: "automations",
@@ -246,213 +254,221 @@ export function FeatureBento() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Model picker                                                        */
+/* Agent turns                                                         */
 /* ------------------------------------------------------------------ */
 
-type PickerTab = {
-  id: BrandId;
-  models: string[];
-  /** Model the check sits on while this tab is showing. */
-  picked: number;
+type TurnIcon = "agent" | "turn" | "ts" | "react" | "test" | "folder";
+
+type TurnRow = {
+  depth: number;
+  icon: TurnIcon;
+  label: string;
+  meta?: string;
+  add?: number;
+  del?: number;
+  /** Opens with the selected subagent. */
+  child?: boolean;
+  selected?: boolean;
+  open?: boolean;
+  folderTone?: string;
 };
 
-const PICKER_TABS: PickerTab[] = [
+/** The Changes sidebar's Agent turns tree, as Volt draws it after a multi-agent turn. */
+const TURN_ROWS: TurnRow[] = [
   {
-    id: "claude",
-    picked: 0,
-    models: [
-      "Opus 5.5 Medium Fast",
-      "Sonnet 5 High",
-      "Fable 5.1 High",
-      "Haiku 4.5",
-      "Opus 5 High",
-      "Fable 5 High",
-      "Opus 4.8 High",
-      "Sonnet 4.6 High",
-    ],
+    depth: 0,
+    icon: "agent",
+    label: "Cut web type errors",
+    meta: "Sonnet 5.5",
+    add: 5,
+    del: 1,
+    open: true,
+  },
+  { depth: 1, icon: "ts", label: "index.ts", add: 3 },
+  { depth: 1, icon: "ts", label: "tenant.ts", add: 2, del: 1 },
+  {
+    depth: 0,
+    icon: "turn",
+    label: "run the failed agents",
+    meta: "Turn 3",
+    add: 8712,
+    del: 1677,
+    open: true,
   },
   {
-    id: "codex",
-    picked: 1,
-    models: [
-      "GPT 5.6 Sol High",
-      "GPT 5.6 Sol Medium",
-      "GPT 5.5 Codex High",
-      "GPT 5.5 Medium",
-      "GPT 5.5 Mini",
-    ],
+    depth: 1,
+    icon: "agent",
+    label: "Resume T-E2E-fixes",
+    meta: "claude-opus-5.5",
+    add: 19,
+    del: 8,
+    selected: true,
   },
   {
-    id: "antigravity",
-    picked: 0,
-    models: [
-      "Gemini 3 Pro High",
-      "Gemini 3 Pro Medium",
-      "Gemini 3 Flash",
-      "Gemini 3 Flash Lite",
-    ],
+    depth: 2,
+    icon: "react",
+    label: "CheckInPanel.tsx",
+    add: 6,
+    del: 1,
+    child: true,
   },
   {
-    id: "cursor",
-    picked: 0,
-    models: ["Composer 2.5 Fast", "Composer 2.5", "Auto"],
+    depth: 2,
+    icon: "test",
+    label: "prepareBookingFormData.test.ts",
+    child: true,
   },
   {
-    id: "grok",
-    picked: 0,
-    models: [
-      "Grok 4.6 Extra High Fast",
-      "Grok 4.6 High",
-      "Grok 4.5 High Fast",
-      "Grok Code Fast 2",
-    ],
+    depth: 2,
+    icon: "ts",
+    label: "prepareBookingFormData.ts",
+    add: 13,
+    del: 7,
+    child: true,
   },
+  {
+    depth: 1,
+    icon: "agent",
+    label: "Resume T-PRICE model",
+    meta: "claude-opus-5.5",
+    add: 65,
+    del: 9,
+  },
+  {
+    depth: 1,
+    icon: "agent",
+    label: "Resume T-BILL deposits",
+    meta: "claude-opus-5.5",
+    add: 20,
+    del: 2,
+  },
+  { depth: 1, icon: "folder", label: "apps/web", folderTone: "#4C8DF6" },
+  { depth: 1, icon: "folder", label: "packages", folderTone: "#4C8DF6" },
+  { depth: 0, icon: "turn", label: "Turn 2", add: 11 },
 ];
-const TAB_MS = 2600;
-const EFFORT = ["Low", "Medium", "High", "Extra High", "Max"];
 
-function ModelPickerArt() {
-  const { ref, t } = useLoopClock(TAB_MS * PICKER_TABS.length, TAB_MS - 1);
-  const tabIndex = Math.floor(t / TAB_MS) % PICKER_TABS.length;
-  const tab = PICKER_TABS[tabIndex];
-  const local = t % TAB_MS;
-  // the pointer drifts down the list, then settles back on the picked model
-  const hover =
-    local < 700
-      ? tab.picked
-      : local < 1900
-        ? Math.min(
-            tab.models.length - 1,
-            Math.floor((local - 700) / 400) + tab.picked + 1,
-          )
-        : tab.picked;
-  const effort = [1, 2, 3, 1, 3][tabIndex];
-  const fast = tabIndex !== 1;
+const TURN_CHILDREN = TURN_ROWS.filter((row) => row.child);
 
+function TurnGlyph({ icon, tone }: { icon: TurnIcon; tone?: string }) {
+  switch (icon) {
+    case "agent":
+      return <Asterisk className="size-4 text-[#D97757]" strokeWidth={2.25} />;
+    case "turn":
+      return <GitBranch className="size-3.5 text-white/60" />;
+    case "react":
+      return <Atom className="size-3.5 text-[#61DAFB]" />;
+    case "test":
+      return <FlaskConical className="size-3.5 text-[#61DAFB]" />;
+    case "folder":
+      return (
+        <Folder
+          className="size-3.5"
+          style={{ color: tone }}
+          fill={tone}
+          fillOpacity={0.35}
+        />
+      );
+    case "ts":
+      return (
+        <span className="grid size-3.5 place-items-center rounded-[2px] bg-[#3178C6] font-sans text-[7px] font-bold leading-none text-white">
+          TS
+        </span>
+      );
+  }
+}
+
+/**
+ * The tree fills in turn by turn, then the subagent row is picked and opens on the files it
+ * changed (each file slides in with its +/- count).
+ */
+function TurnsArt() {
+  const { ref, t } = useLoopClock(7000, 5200);
+  const select = t >= 2300;
+  const open = t >= 2700;
+  let shown = 0;
   return (
     <div
       ref={ref}
-      className="relative flex h-[380px] w-full justify-center gap-3"
+      className="w-full rounded-[14px] border border-white/10 bg-[#161616] py-2.5 text-[12.5px] shadow-[0_20px_40px_rgba(0,0,0,0.4)]"
     >
-      <div className="mt-14 hidden w-[190px] shrink-0 self-start rounded-[12px] border border-white/10 bg-[#232323] py-1.5 text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:block">
-        <MenuLabel>Options</MenuLabel>
-        <div className="flex h-8 items-center px-3 text-white/90">
-          Fast
-          <span
-            className={cn(
-              "relative ml-auto h-[18px] w-[32px] rounded-full transition-colors duration-300",
-              fast ? "bg-[#3ecf8e]" : "bg-white/20",
-            )}
-          >
-            <span
-              className={cn(
-                "absolute top-[2px] size-[14px] rounded-full bg-white shadow transition-[left] duration-300",
-                fast ? "left-[16px]" : "left-[2px]",
-              )}
-            />
-          </span>
-        </div>
-        <Divider />
-        <MenuLabel>Context</MenuLabel>
-        <MenuItem checked>200K</MenuItem>
-        <MenuItem>1M</MenuItem>
-        <Divider />
-        <MenuLabel>Effort</MenuLabel>
-        {EFFORT.map((e, i) => (
-          <MenuItem key={e} checked={i === effort}>
-            {e}
-          </MenuItem>
-        ))}
+      <div className="mb-1.5 flex items-center gap-1.5 px-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-white/40">
+        <ChevronDown className="size-3.5" />
+        Agent turns
       </div>
-
-      <div className="h-full w-[300px] shrink-0 overflow-hidden rounded-[12px] border border-white/10 bg-[#232323] text-[13px] shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:w-[330px]">
-        <div className="flex h-11 items-center gap-2 border-b border-white/[0.07] px-3.5 text-white/35">
-          <Search className="size-3.5" />
-          Search models...
-        </div>
-        <div className="flex h-11 items-center gap-1 border-b border-white/[0.07] px-2 text-white/45">
-          <span className="grid size-8 place-items-center">
-            <Star className="size-4" />
-          </span>
-          {PICKER_TABS.map((p) => (
-            <span
-              key={p.id}
-              title={brandLabel(p.id)}
-              className={cn(
-                "relative grid size-8 place-items-center transition-opacity duration-300",
-                p.id === tab.id
-                  ? "text-white opacity-100"
-                  : "text-white/80 opacity-55",
-              )}
-            >
-              <BrandIcon id={p.id} size={16} />
-              {p.id === tab.id ? (
-                <motion.span
-                  layoutId="picker-tab"
-                  className="absolute -bottom-[7px] left-1/2 h-[2px] w-5 -translate-x-1/2 rounded-full bg-white/70"
-                  transition={{ type: "spring", stiffness: 420, damping: 36 }}
+      {TURN_ROWS.map((row) => {
+        // the selected row's files wait for it to open; everything else fills in top to bottom
+        const visible = row.child
+          ? t >= 2700 + TURN_CHILDREN.indexOf(row) * 170
+          : t >= 150 + shown++ * 140;
+        if (row.child && !open) return null;
+        const selected = row.selected && select;
+        const chevron =
+          row.icon === "agent" || row.icon === "turn" || row.icon === "folder";
+        const expanded = row.selected ? open : row.open;
+        return (
+          <div
+            key={row.label}
+            className={cn(
+              "relative flex h-7 items-center gap-1.5 pr-3 transition-[opacity,transform,background-color] duration-300 ease-out",
+              visible ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0",
+              selected ? "bg-white/[0.07] ring-1 ring-inset ring-white/15" : "",
+            )}
+            style={{ paddingLeft: 10 + row.depth * 16 }}
+          >
+            <span className="grid w-3.5 shrink-0 place-items-center text-white/45">
+              {chevron ? (
+                <ChevronRight
+                  className={cn(
+                    "size-3.5 transition-transform duration-300",
+                    expanded ? "rotate-90" : "",
+                  )}
                 />
               ) : null}
             </span>
-          ))}
-          <Settings className="mr-1.5 ml-auto size-4" />
-        </div>
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={tab.id}
-            className="py-1"
-            initial={{ opacity: 0, x: 8 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -8 }}
-            transition={{ duration: 0.22, ease: "easeOut" }}
-          >
-            {tab.models.map((m, i) => (
-              <div
-                key={m}
-                className={cn(
-                  "mx-1 flex h-[34px] items-center rounded-md px-2.5 text-white/85 transition-colors duration-200",
-                  i === hover && "bg-white/[0.07]",
-                )}
-              >
-                {m}
-                <span className="ml-auto flex items-center gap-3">
-                  {i === tab.picked ? (
-                    <Check className="size-4 text-white" />
-                  ) : null}
-                  <Star className="size-3.5 text-white/25" />
-                </span>
-              </div>
-            ))}
-          </motion.div>
-        </AnimatePresence>
-      </div>
+            <span className="grid w-4 shrink-0 place-items-center">
+              <TurnGlyph icon={row.icon} tone={row.folderTone} />
+            </span>
+            <span className="min-w-0 truncate text-white/85">{row.label}</span>
+            {row.meta ? (
+              <span className="min-w-0 shrink truncate text-[11.5px] text-white/35">
+                {row.meta}
+              </span>
+            ) : null}
+            <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2 font-mono text-[11px]">
+              {selected ? (
+                <FileDiff className="size-3.5 text-white/55" />
+              ) : null}
+              {row.add ? (
+                <span className="text-[#3ecf8e]">+{row.add}</span>
+              ) : null}
+              {row.del ? (
+                <span className="text-[#f87171]">-{row.del}</span>
+              ) : null}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function MenuLabel({ children }: { children: ReactNode }) {
-  return (
-    <div className="px-3 pt-1.5 pb-1 text-[12px] text-white/45">{children}</div>
-  );
-}
+/* ------------------------------------------------------------------ */
+/* Model picker                                                        */
+/* ------------------------------------------------------------------ */
 
-function MenuItem({
-  children,
-  checked,
-}: {
-  children: ReactNode;
-  checked?: boolean;
-}) {
+/** The composer's model picker on the Claude tab, as the agent window draws it. */
+function ModelPickerArt() {
   return (
-    <div className="flex h-8 items-center px-3 text-white/90">
-      {children}
-      {checked ? <Check className="ml-auto size-3.5 text-white/80" /> : null}
-    </div>
+    <img
+      src="/showcase/model-picker.png"
+      alt="Volt's model picker: provider tabs over a list of Claude models, with Sonnet 5.5 High checked, next to the context and effort menu"
+      width={946}
+      height={956}
+      loading="lazy"
+      decoding="async"
+      className="w-full rounded-[14px] border border-white/10 shadow-[0_20px_40px_rgba(0,0,0,0.4)]"
+    />
   );
-}
-
-function Divider() {
-  return <div className="my-1 h-px bg-white/[0.07]" />;
 }
 
 /* ------------------------------------------------------------------ */
@@ -759,76 +775,18 @@ function HunkActions({ accepted }: { accepted: boolean }) {
 /* Parallel agents                                                     */
 /* ------------------------------------------------------------------ */
 
-const LANES = [
-  {
-    title: "Rate limit search API",
-    branch: "feat/rate-limit",
-    start: 0,
-    dur: 3800,
-    tone: "#ff6228",
-  },
-  {
-    title: "Migrate settings to zod",
-    branch: "chore/zod",
-    start: 600,
-    dur: 5200,
-    tone: "#7aa7ff",
-  },
-  {
-    title: "Fix flaky e2e on CI",
-    branch: "fix/e2e-retry",
-    start: 1200,
-    dur: 4300,
-    tone: "#c792ea",
-  },
-  {
-    title: "Write v0.0.1 changelog",
-    branch: "docs/changelog",
-    start: 300,
-    dur: 2600,
-    tone: "#3ecf8e",
-  },
-];
-
+/** The Previous agents list with one subagent's hover card, as the agent window draws it. */
 function ParallelArt() {
-  const { ref, t } = useLoopClock(8000, 7000);
   return (
-    <div ref={ref} className="flex w-full flex-col gap-2">
-      {LANES.map((lane) => {
-        const p = span(t, lane.start, lane.dur);
-        const finished = p >= 1;
-        return (
-          <div
-            key={lane.branch}
-            className="rounded-xl border border-white/10 bg-[#161616] px-3 py-2.5"
-          >
-            <div className="flex items-center gap-2 text-[12.5px]">
-              {finished ? (
-                <Check className="size-3.5 text-[#3ecf8e]" strokeWidth={2.5} />
-              ) : (
-                <Spinner className="size-3.5" />
-              )}
-              <span className="min-w-0 flex-1 truncate text-white/85">
-                {lane.title}
-              </span>
-              <span className="font-mono text-[10.5px] text-white/35">
-                {lane.branch}
-              </span>
-            </div>
-            <div className="mt-2 h-[3px] overflow-hidden rounded-full bg-white/[0.07]">
-              <div
-                className="h-full rounded-full"
-                style={{
-                  width: `${Math.max(4, p * 100)}%`,
-                  background: finished ? "#3ecf8e" : lane.tone,
-                  boxShadow: finished ? "none" : `0 0 10px ${lane.tone}`,
-                }}
-              />
-            </div>
-          </div>
-        );
-      })}
-    </div>
+    <img
+      src="/showcase/previous-agents.png"
+      alt="Volt's Previous agents list with a subagent's hover card: its model, that it failed after 37 minutes, and a link to watch its chat"
+      width={1006}
+      height={986}
+      loading="lazy"
+      decoding="async"
+      className="w-full rounded-[14px] border border-white/10 shadow-[0_20px_40px_rgba(0,0,0,0.4)]"
+    />
   );
 }
 

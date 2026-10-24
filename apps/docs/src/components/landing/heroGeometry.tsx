@@ -121,6 +121,9 @@ export function HeroGeometry() {
             },
             1.1,
           );
+        // Hidden until now (the server's markup is the finished drawing): the strokes are at
+        // their start, so it draws itself in once the page has loaded.
+        gsap.set(svg, { visibility: "visible" });
 
         gsap.to(ring, {
           rotation: 360,
@@ -153,6 +156,7 @@ export function HeroGeometry() {
       ref={ref}
       viewBox={`0 0 ${VIEW} ${VIEW}`}
       aria-hidden
+      data-hero-geometry
       className="pointer-events-none absolute inset-0 size-full overflow-visible text-white"
       fill="none"
     >
