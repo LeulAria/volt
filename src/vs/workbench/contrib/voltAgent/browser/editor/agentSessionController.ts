@@ -11,6 +11,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { alwaysAllowPattern } from '../../../../services/voltRuntime/common/access/wildcard.js';
 import { mergeToolInput } from '../../../../services/voltRuntime/common/acpToolInput.js';
+import { isRetryNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { IVoltEvent, IVoltEventEnvelope, IVoltRateLimitReading, IVoltToolDiff } from '../../../../services/voltRuntime/common/events.js';
 import type { IVoltVisualRef } from '../../../../services/voltRuntime/common/hostTools.js';
 import { runStatusLine } from '../../../../services/voltRuntime/common/harness/workLog.js';
@@ -830,11 +831,15 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 		if (!text) {
 			return;
 		}
+		activity.status = text;
+		activity.statusPinned = true;
+		// Retries shimmer in the status line with the turn's clock; each attempt as a row would stack up.
+		if (isRetryNotice(text)) {
+			return;
+		}
 		// A run supervisor's finding (loop, stall, budget) becomes a tray with actions, not a red line.
 		const supervision = classifySupervisionNotice(`${text}\n${description ?? ''}`);
 		appendProviderNotice(message.segments, { severity, title: text, description, ...(supervision ? { supervision } : {}), ...(rateLimit ? { rateLimit } : {}) });
-		activity.status = text;
-		activity.statusPinned = true;
 	}
 
 	/** Every reply's segments, the latest reply first. */

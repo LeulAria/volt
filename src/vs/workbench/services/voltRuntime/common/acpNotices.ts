@@ -57,6 +57,13 @@ export function isUsageLimitText(text: string | undefined): boolean {
 	return !!text && LIMIT_FAMILY.test(text);
 }
 
+const RETRY_RE = /^(?:reconnecting|retrying)\b/i;
+
+/** "Reconnecting to Claude, attempt 3 of 10.": progress of a retry, for the live status line, not a transcript row. */
+export function isRetryNotice(title: string | undefined): boolean {
+	return !!title && RETRY_RE.test(title.trim());
+}
+
 const SIGN_IN_RE = /\b(sign in|log in|authenticate|authentication|oauth)\b/i;
 
 /** A provider notice that means the user has to sign in before the agent can continue. */
