@@ -242,4 +242,12 @@ export interface ISCMViewService {
 	 */
 	readonly activeRepository: IObservable<ISCMRepository | undefined>;
 	pinActiveRepository(repository: ISCMRepository | undefined): void;
+
+	/**
+	 * Volt: the repository of the chat (or IDE layout) Source Control is scoped to. While set,
+	 * `repositories` lists only it, so the Repositories view and the pickers show no other.
+	 */
+	readonly scopedRepository: ISCMRepository | undefined;
+	readonly onDidChangeScopedRepository: Event<void>;
+	scopeRepository(repository: ISCMRepository | undefined): void;
 }

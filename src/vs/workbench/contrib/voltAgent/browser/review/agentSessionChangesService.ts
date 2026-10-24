@@ -7,7 +7,7 @@ import { Emitter, Event, IValueWithChangeEvent } from '../../../../../base/commo
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../../base/common/network.js';
 import { basename, isAbsolute } from '../../../../../base/common/path.js';
-import { isEqual, isEqualOrParent, joinPath } from '../../../../../base/common/resources.js';
+import { extUriIgnorePathCase, isEqual, isEqualOrParent, joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
@@ -309,10 +309,10 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 			};
 		}
 		if (scope === 'staged') {
-			return this.scmStats('index');
+			return this.scmStats(sessionId, 'index');
 		}
 		if (scope === 'unstaged') {
-			return this.scmStats('workingTree', 'untracked');
+			return this.scmStats(sessionId, 'workingTree', 'untracked');
 		}
 		const turnId = agentScopeTurnId(scope);
 		if (turnId) {
@@ -335,10 +335,10 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 			return this.edits.getPendingFiles(sessionId).map(file => this.pendingItem(sessionId, file));
 		}
 		if (scope === 'staged') {
-			return this.scmItems('index');
+			return this.scmItems(sessionId, 'index');
 		}
 		if (scope === 'unstaged') {
-			return this.scmItems('workingTree', 'untracked');
+			return this.scmItems(sessionId, 'workingTree', 'untracked');
 		}
 		const turnId = agentScopeTurnId(scope);
 		if (turnId) {
@@ -556,15 +556,15 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 		return files.find(file => file.path === path || path.endsWith(file.path) || file.path.endsWith(path));
 	}
 
-	private scmStats(...groupIds: string[]): IAgentSessionChangeStats {
-		const items = this.scmItems(...groupIds);
+	private scmStats(sessionId: string, ...groupIds: string[]): IAgentSessionChangeStats {
+		const items = this.scmItems(sessionId, ...groupIds);
 		return { files: items.length, additions: 0, deletions: 0 };
 	}
 
-	private scmItems(...groupIds: string[]): MultiDiffEditorItem[] {
+	private scmItems(sessionId: string, ...groupIds: string[]): MultiDiffEditorItem[] {
 		const items: MultiDiffEditorItem[] = [];
 		const seen = new Set<string>();
-		for (const repository of this.scmService.repositories) {
+		for (const repository of this.sessionRepositories(sessionId)) {
 			for (const group of repository.provider.groups) {
 				if (!groupIds.includes(group.id)) {
 					continue;
@@ -580,6 +580,24 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 			}
 		}
 		return items;
+	}
+
+	/**
+	 * The chat's own repository: Git also opens the parent checkout, nested repositories and other
+	 * worktrees, and their changes are not this chat's. Every repository for a chat without a folder.
+	 */
+	private sessionRepositories(sessionId: string): Iterable<ISCMRepository> {
+		const root = this.sessionContext.rootFor(sessionId);
+		if (!root) {
+			return this.scmService.repositories;
+		}
+		for (const repository of this.scmService.repositories) {
+			if (repository.provider.rootUri && extUriIgnorePathCase.isEqual(repository.provider.rootUri, root)) {
+				return [repository];
+			}
+		}
+		const containing = this.scmService.getRepository(root);
+		return containing ? [containing] : [];
 	}
 
 	private scmItem(resource: ISCMResource, groupId: string): MultiDiffEditorItem {

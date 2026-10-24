@@ -108,7 +108,25 @@ export class SCMViewService implements ISCMViewService {
 	private _repositories: ISCMRepositoryView[] = [];
 
 	get repositories(): ISCMRepository[] {
-		return this._repositories.map(r => r.repository);
+		const scoped = this._scopedRepository;
+		const views = scoped ? this._repositories.filter(r => r.repository === scoped) : this._repositories;
+		return views.map(r => r.repository);
+	}
+
+	private _scopedRepository: ISCMRepository | undefined;
+	get scopedRepository(): ISCMRepository | undefined {
+		return this._scopedRepository;
+	}
+
+	private readonly _onDidChangeScopedRepository = new Emitter<void>();
+	readonly onDidChangeScopedRepository = this._onDidChangeScopedRepository.event;
+
+	scopeRepository(repository: ISCMRepository | undefined): void {
+		if (this._scopedRepository === repository) {
+			return;
+		}
+		this._scopedRepository = repository;
+		this._onDidChangeScopedRepository.fire();
 	}
 
 	get visibleRepositories(): ISCMRepository[] {
@@ -499,7 +517,7 @@ export class SCMViewService implements ISCMViewService {
 			return;
 		}
 
-		const all = this.repositories.map(r => getProviderStorageKey(r.provider));
+		const all = this._repositories.map(r => getProviderStorageKey(r.repository.provider));
 		const visible = this.visibleRepositories.map(r => all.indexOf(getProviderStorageKey(r.provider)));
 		this.previousState = { all, sortKey: this._repositoriesSortKey, visible };
 
@@ -523,5 +541,6 @@ export class SCMViewService implements ISCMViewService {
 		this.disposables.dispose();
 		this._onDidChangeRepositories.dispose();
 		this._onDidSetVisibleRepositories.dispose();
+		this._onDidChangeScopedRepository.dispose();
 	}
 }
