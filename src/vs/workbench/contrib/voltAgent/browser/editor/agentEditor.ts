@@ -5,6 +5,7 @@
 
 import '../media/agentEditor.css';
 import '../media/agentComposerInput.css';
+import { findLast, findLastIdx } from '../../../../../base/common/arraysFind.js';
 import { $, addDisposableListener, append, Dimension, DragAndDropObserver, getWindow, isHTMLElement, isSVGElement, runAtThisOrScheduleAtNextAnimationFrame, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { isWeb } from '../../../../../base/common/platform.js';
 import type { IMouseWheelEvent } from '../../../../../base/browser/mouseEvent.js';
@@ -5236,7 +5237,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (this.isStreaming()) {
 			return;
 		}
-		const index = this.messages.findLastIndex(message => message.kind === 'user');
+		const index = findLastIdx(this.messages, message => message.kind === 'user');
 		const user = this.messages[index];
 		if (user?.kind !== 'user') {
 			return;
@@ -5719,7 +5720,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (!wasStreaming) {
 			return;
 		}
-		const index = this.messages.findLastIndex(startsExchange);
+		const index = findLastIdx(this.messages, startsExchange);
 		if (index >= 0) {
 			getWindow(this.container).requestAnimationFrame(() => this.startUserEdit(index));
 		}
@@ -6609,7 +6610,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		for (let i = this.messages.length - 1; i >= 0; i--) {
 			const message = this.messages[i];
 			if (message.kind === 'agent') {
-				const found = message.segments.findLast(segment => segment.kind === 'compaction');
+				const found = findLast(message.segments, segment => segment.kind === 'compaction');
 				if (found?.kind === 'compaction') {
 					return found.compaction;
 				}
@@ -6712,7 +6713,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	/** T3's "Resume with less context": see `shouldCompactBeforeSend`. */
 	private compactsBeforeSend(text: string): boolean {
-		const last = this.messages.findLast(message => message.kind === 'agent');
+		const last = findLast(this.messages, message => message.kind === 'agent');
 		const state = this.compactState();
 		return shouldCompactBeforeSend({
 			enabled: this.configurationService.getValue<boolean>(COMPACT_OLD_THREADS_SETTING) !== false,

@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { findLast } from '../../../../../base/common/arraysFind.js';
 import { localize } from '../../../../../nls.js';
 import { extractLocalPreviewUrl } from '../preview/localPreview.js';
 import { isSnapshotActivity } from '../preview/browserSnapshot.js';
@@ -948,7 +949,7 @@ export function tasksCard(steps: readonly IAgentTodoStep[], live: boolean): ITas
 export function composerTasks(messages: readonly { readonly kind: string; readonly steps?: readonly IAgentTodoStep[]; readonly activity?: { readonly streaming?: boolean } }[]): ITasksCard | undefined {
 	const agents = messages.filter(message => message.kind === 'agent');
 	const last = agents.at(-1);
-	const owner = agents.findLast(message => !!message.steps?.length);
+	const owner = findLast(agents, message => !!message.steps?.length);
 	if (!last || !owner?.steps) {
 		return undefined;
 	}

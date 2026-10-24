@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { findLast } from '../../../../../base/common/arraysFind.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { hashAsync } from '../../../../../base/common/hash.js';
@@ -215,7 +216,7 @@ class SessionHandle implements IAgentSessionHandle {
 				// A reply that was streaming when the window went away: its last snapshot, unless the
 				// log already has that reply as recent (or final).
 				const partial = await this.readPartial();
-				const logged = partial && decoded.entries.findLast((entry): entry is IAgentAssistantEntry => entry.type === 'agent' && entry.turn === partial.turn);
+				const logged = partial && findLast(decoded.entries, (entry): entry is IAgentAssistantEntry => entry.type === 'agent' && entry.turn === partial.turn);
 				const restored = partial && (!logged || (!logged.final && logged.at < partial.at)) ? [partial] : [];
 				// Appends that raced the load stay after the stored entries.
 				this.entries = [...decoded.entries, ...restored, ...this.entries];

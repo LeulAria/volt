@@ -6,6 +6,7 @@
 import '../media/agentEdits.css';
 import { $, addDisposableListener, append, getTotalWidth } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { findLastIdx } from '../../../../../base/common/arraysFind.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Event } from '../../../../../base/common/event.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
@@ -216,7 +217,7 @@ export class AgentEditsEditorController extends Disposable implements IEditorCon
 		} else if (delta > 0) {
 			index = ranges.findIndex(range => range.startLineNumber > position.lineNumber);
 		} else {
-			index = ranges.findLastIndex(range => range.endLineNumber < position.lineNumber);
+			index = findLastIdx(ranges, range => range.endLineNumber < position.lineNumber);
 		}
 		if (index < 0 && delta < 0) {
 			index = ranges.length - 1;

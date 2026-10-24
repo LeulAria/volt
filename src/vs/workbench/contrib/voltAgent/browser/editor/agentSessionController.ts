@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { findLast } from '../../../../../base/common/arraysFind.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, IDisposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -1230,7 +1231,7 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 			}
 			case 'plan': {
 				// A turn's first update continues the chat's list: Claude's task tools and Cursor's to-dos outlive a turn.
-				const previous = last.steps.length ? last.steps : carryTodoSteps(this.host.messages.findLast((message): message is IAgentAssistantMessage => message !== last && message.kind === 'agent' && message.steps.length > 0)?.steps ?? []);
+				const previous = last.steps.length ? last.steps : carryTodoSteps(findLast(this.host.messages, (message): message is IAgentAssistantMessage => message !== last && message.kind === 'agent' && message.steps.length > 0)?.steps ?? []);
 				last.title = localize('voltAgent.planTitle', "Plan");
 				// Each to-do done keeps what this reply produced while it was in progress (the Tasks card's outcome line).
 				last.steps = stampTodoSteps(previous, event.entries.map(entry => ({
