@@ -27,7 +27,8 @@
 .volt-agent-terminal-status.starting,
 .volt-agent-terminal-status.running,
 .volt-agent-terminal-status.ready,
-.volt-agent-terminal-status.attention {
+.volt-agent-terminal-status.attention,
+.volt-agent-terminal-status.stopping {
 	color: inherit;
 }
 

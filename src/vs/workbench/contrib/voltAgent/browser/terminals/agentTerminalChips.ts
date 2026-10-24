@@ -9,7 +9,6 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
-import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
@@ -48,7 +47,7 @@ const STATUS_WEIGHT: Record<AgentTerminalStatus, number> = {
 /**
  * The chat's managed terminals as one chip in the composer's chip row (agentComposerChips.ts):
  * "1 terminal" or "2 terminals" (the running count), with a chevron for the menu. A live
- * terminal leads with the row's dot loader; a spinner only while it stops. Clicking opens
+ * terminal, stopping ones included, leads with the row's dot loader. Clicking opens
  * the terminal in the chat's tools on the right; starting a terminal never opens them by itself.
  */
 export class AgentTerminalChips extends Disposable {
@@ -283,9 +282,6 @@ function menuItems(info: IAgentTerminalInfo, grouped: boolean): IVoltMenuItem<IC
 function statusIndicator(status: AgentTerminalStatus): HTMLElement {
 	const el = $(`span.volt-agent-terminal-status.${status}`);
 	switch (status) {
-		case 'stopping':
-			el.appendChild(renderIcon(ThemeIcon.modify(Codicon.loading, 'spin')));
-			break;
 		case 'failed':
 			el.appendChild(renderIcon(Codicon.error));
 			break;
@@ -296,7 +292,7 @@ function statusIndicator(status: AgentTerminalStatus): HTMLElement {
 			el.appendChild(renderIcon(Codicon.debugStop));
 			break;
 		default:
-			// Starting, running, ready, needs input: the row's loader, like "2 subagents running".
+			// Starting, running, ready, needs input, stopping: the row's loader, like "2 subagents running".
 			el.appendChild(createThinkingDots());
 	}
 	return el;
