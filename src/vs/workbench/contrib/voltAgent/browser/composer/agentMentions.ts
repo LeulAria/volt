@@ -6,6 +6,7 @@
 import { addDisposableListener, DragAndDropObserver, getDomNodePagePosition, getWindow } from '../../../../../base/browser/dom.js';
 import { IKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
+import { decodeBase64, encodeBase64, VSBuffer } from '../../../../../base/common/buffer.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { compareFileNamesDefault } from '../../../../../base/common/comparers.js';
 import { IMatch, matchesFuzzy } from '../../../../../base/common/filters.js';
@@ -149,6 +150,22 @@ export interface IAgentDisplayMention {
 	file?: IAgentFilePayload;
 	citation?: IAgentCitation;
 	terminalQuote?: IAgentTerminalQuote;
+}
+
+function toDisplayMention(mention: IAgentMention): IAgentDisplayMention {
+	return {
+		label: mention.label,
+		accent: mention.accent,
+		kind: mention.kind,
+		value: mention.value,
+		resource: mention.resource,
+		range: mention.range,
+		image: mention.image,
+		video: mention.video,
+		file: mention.file,
+		citation: mention.citation,
+		terminalQuote: mention.terminalQuote,
+	};
 }
 
 export { imageAttachmentsFromMentions, resourceAttachmentsFromMentions, videoFrameName } from './agentMentionImages.js';
@@ -304,6 +321,38 @@ function filterRows(rows: readonly AgentMentionRow[], query: string): AgentMenti
 
 function chipText(label: string): string {
 	return label;
+}
+
+/**
+ * Composer text with its chips, put on the clipboard beside the plain text. Pasting it into any
+ * composer (another chat, another window) brings the chips back, images and files included.
+ */
+const COMPOSER_CLIP_MIME = 'application/vnd.volt.composer-clip+json';
+
+interface IComposerClip {
+	readonly version: 1;
+	/** The copied text with each chip's label where the chip was. */
+	readonly text: string;
+	/** Where each chip's label starts in `text`. */
+	readonly mentions: readonly { readonly offset: number; readonly mention: IAgentDisplayMention }[];
+}
+
+function encodeComposerClip(clip: IComposerClip): string {
+	return JSON.stringify(clip, (_key, value) => value instanceof Uint8Array ? { $bytes: encodeBase64(VSBuffer.wrap(value)) } : value);
+}
+
+function decodeComposerClip(raw: string): IComposerClip | undefined {
+	if (!raw) {
+		return undefined;
+	}
+	try {
+		const clip = JSON.parse(raw, (_key, value) => value && typeof value === 'object' && typeof value.$bytes === 'string' && Object.keys(value).length === 1
+			? decodeBase64(value.$bytes).buffer
+			: value);
+		return clip?.version === 1 && typeof clip.text === 'string' && Array.isArray(clip.mentions) ? clip : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 export function mentionIconClasses(
@@ -824,19 +873,7 @@ export class AgentMentionController extends Disposable {
 			})
 			.filter((item): item is { mention: IAgentMention; offset: number } => !!item)
 			.sort((a, b) => a.offset - b.offset);
-		return items.map(({ mention }) => ({
-			label: mention.label,
-			accent: mention.accent,
-			kind: mention.kind,
-			value: mention.value,
-			resource: mention.resource,
-			range: mention.range,
-			image: mention.image,
-			video: mention.video,
-			file: mention.file,
-			citation: mention.citation,
-			terminalQuote: mention.terminalQuote,
-		}));
+		return items.map(({ mention }) => toDisplayMention(mention));
 	}
 
 	restoreMentions(mentions: readonly IAgentDisplayMention[]): void {
@@ -858,45 +895,54 @@ export class AgentMentionController extends Disposable {
 			if (index < 0) {
 				continue;
 			}
-			const start = model.getPositionAt(index);
-			const end = model.getPositionAt(index + item.label.length);
-			const mention: IAgentMention = {
-				id: `${item.kind}:${generateUuid()}`,
-				kind: item.kind,
-				label: item.label,
-				accent: item.accent,
-				value: item.value,
-				resource: item.resource ? URI.revive(item.resource) : undefined,
-				range: item.range,
-				image: item.image,
-				video: item.video,
-				file: item.file,
-				citation: item.citation,
-				terminalQuote: item.terminalQuote,
-			};
-			this.addDecoration(mention, {
-				startLineNumber: start.lineNumber,
-				startColumn: start.column,
-				endLineNumber: end.lineNumber,
-				endColumn: end.column,
-			});
-			this.mentions.push(mention);
-			this.mentionCatalog.push(mention);
-			if (mention.kind === 'chat' && mention.value) {
-				void this.loadChatContext(mention.value);
-			}
-			if (mention.kind === 'skill') {
-				this.attachSlashItem(mention);
-			}
-			if (mention.image && !mention.image.path) {
-				this.persistImage(mention.image);
-			}
-			if (mention.video && (!mention.video.path || !mention.video.frames)) {
-				this.prepareVideo(mention.video);
-			}
+			this.attachMentionAt(item, index);
 			cursor = index + item.label.length;
 		}
 		this.notifyImages();
+	}
+
+	/** A chip for a saved (or pasted) mention over its label, which starts at `offset` in the text. */
+	private attachMentionAt(item: IAgentDisplayMention, offset: number): void {
+		const model = this.editor.getModel();
+		if (!model) {
+			return;
+		}
+		const start = model.getPositionAt(offset);
+		const end = model.getPositionAt(offset + item.label.length);
+		const mention: IAgentMention = {
+			id: `${item.kind}:${generateUuid()}`,
+			kind: item.kind,
+			label: item.label,
+			accent: item.accent,
+			value: item.value,
+			resource: item.resource ? URI.revive(item.resource) : undefined,
+			range: item.range,
+			image: item.image,
+			video: item.video,
+			file: item.file,
+			citation: item.citation,
+			terminalQuote: item.terminalQuote,
+		};
+		this.addDecoration(mention, {
+			startLineNumber: start.lineNumber,
+			startColumn: start.column,
+			endLineNumber: end.lineNumber,
+			endColumn: end.column,
+		});
+		this.mentions.push(mention);
+		this.mentionCatalog.push(mention);
+		if (mention.kind === 'chat' && mention.value) {
+			void this.loadChatContext(mention.value);
+		}
+		if (mention.kind === 'skill') {
+			this.attachSlashItem(mention);
+		}
+		if (mention.image && !mention.image.path) {
+			this.persistImage(mention.image);
+		}
+		if (mention.video && (!mention.video.path || !mention.video.frames)) {
+			this.prepareVideo(mention.video);
+		}
 	}
 
 	serialize(): string {
@@ -2285,7 +2331,7 @@ export class AgentMentionController extends Disposable {
 		const current = this.host.sessionId?.();
 		const now = Date.now();
 		const rows: AgentMentionRow[] = [];
-		const sessions = this.agentHistory.list()
+		const sessions = this.agentHistory.list({ inWindow: true })
 			.filter(session => session.id !== current && session.turnCount > 0
 				&& (!root || session.workspaceFolder === root || !!session.workspaceFolders?.includes(root)))
 			.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -2868,9 +2914,10 @@ export class AgentMentionController extends Disposable {
 	}
 
 	/** Pasted screenshots are all `image.png`; number repeats so the text can tell them apart. */
-	private uniqueMediaName(fileName: string): string {
+	private uniqueMediaName(fileName: string, alsoTaken: readonly string[] = []): string {
 		const name = truncateLabel(fileName, 40);
 		const taken = new Set(this.mentions.filter(mention => mention.kind === 'image' || mention.kind === 'video' || mention.file).map(mention => mention.label));
+		alsoTaken.forEach(label => taken.add(label));
 		if (!taken.has(name)) {
 			return name;
 		}
@@ -3198,28 +3245,95 @@ export class AgentMentionController extends Disposable {
 		}
 		const selected = model.getValueInRange(selection);
 		const selectionStart = model.getOffsetAt(selection.getStartPosition());
-		const replacements = this.mentions
+		const chips = this.mentions
 			.map(mention => {
 				const range = mention.decorationId ? model.getDecorationRange(mention.decorationId) : undefined;
-				return range && Range.areIntersecting(range, selection) ? { mention, range } : undefined;
+				return range && Range.areIntersecting(range, selection)
+					? { mention, start: model.getOffsetAt(range.getStartPosition()) - selectionStart, end: model.getOffsetAt(range.getEndPosition()) - selectionStart }
+					: undefined;
 			})
-			.filter((item): item is { mention: IAgentMention; range: Range } => !!item)
-			.sort((a, b) => model.getOffsetAt(b.range.getStartPosition()) - model.getOffsetAt(a.range.getStartPosition()));
-		if (!replacements.length) {
+			.filter((item): item is { mention: IAgentMention; start: number; end: number } => !!item)
+			.sort((a, b) => a.start - b.start);
+		if (!chips.length) {
 			return;
 		}
-		let text = selected;
-		for (const { mention, range } of replacements) {
-			const start = Math.max(0, model.getOffsetAt(range.getStartPosition()) - selectionStart);
-			const end = Math.min(selected.length, model.getOffsetAt(range.getEndPosition()) - selectionStart);
-			if (end <= start) {
+		// The plain text spells each chip out; the clip keeps whole chips as chips.
+		let text = '';
+		let clipText = '';
+		const clipMentions: { offset: number; mention: IAgentDisplayMention }[] = [];
+		let cursor = 0;
+		for (const { mention, start, end } of chips) {
+			const from = Math.max(0, start);
+			const to = Math.min(selected.length, end);
+			if (to <= from || from < cursor) {
 				continue;
 			}
-			text = `${text.slice(0, start)}${this.tagValueFor(mention)}${text.slice(end)}`;
+			const between = selected.slice(cursor, from);
+			const tag = this.tagValueFor(mention);
+			text += between + tag;
+			clipText += between;
+			if (start >= 0 && end <= selected.length) {
+				const display = toDisplayMention(mention);
+				// A video with a saved copy is pasted from that file, not carried in the clipboard.
+				const video = display.video?.path ? { ...display.video, bytes: undefined } : display.video;
+				clipMentions.push({ offset: clipText.length, mention: { ...display, video } });
+				clipText += selected.slice(from, to);
+			} else {
+				clipText += tag;
+			}
+			cursor = to;
 		}
+		text += selected.slice(cursor);
+		clipText += selected.slice(cursor);
 		e.preventDefault();
 		e.stopPropagation();
 		e.clipboardData.setData('text/plain', text);
+		if (clipMentions.length) {
+			e.clipboardData.setData(COMPOSER_CLIP_MIME, encodeComposerClip({ version: 1, text: clipText, mentions: clipMentions }));
+		}
+	}
+
+	/** Text copied out of a composer, its chips added back over their labels. */
+	private pasteComposerClip(clip: IComposerClip): void {
+		const model = this.editor.getModel();
+		const selection = this.editor.getSelection();
+		if (!model || !selection) {
+			return;
+		}
+		// Images, videos and files are renamed like new ones when this composer already has the name.
+		let text = '';
+		let cursor = 0;
+		const placed: { offset: number; mention: IAgentDisplayMention }[] = [];
+		for (const { offset, mention } of [...clip.mentions].sort((a, b) => a.offset - b.offset)) {
+			if (!mention?.label || offset < cursor || clip.text.slice(offset, offset + mention.label.length) !== mention.label) {
+				continue;
+			}
+			text += clip.text.slice(cursor, offset);
+			const media = mention.kind === 'image' || mention.kind === 'video' || !!mention.file;
+			const label = media ? this.uniqueMediaName(mention.label, placed.map(item => item.mention.label)) : mention.label;
+			const image = mention.image && { ...mention.image, id: `image-${generateUuid()}`, name: label };
+			placed.push({ offset: text.length, mention: { ...mention, label, image } });
+			text += label;
+			cursor = offset + mention.label.length;
+		}
+		text += clip.text.slice(cursor);
+		const start = model.getOffsetAt(selection.getStartPosition());
+		const alreadyInserting = this.insertingMention;
+		this.insertingMention = true;
+		try {
+			this.editor.executeEdits('volt-agent-paste', [{ range: selection, text }]);
+			for (const { offset, mention } of placed) {
+				this.attachMentionAt(mention, start + offset);
+			}
+		} finally {
+			if (!alreadyInserting) {
+				this.insertingMention = false;
+			}
+		}
+		const end = model.getPositionAt(start + text.length);
+		this.editor.setPosition(end);
+		this.editor.revealPosition(end);
+		this.notifyImages();
 	}
 
 	private syncMentionRanges(): void {
@@ -3408,6 +3522,14 @@ export class AgentMentionController extends Disposable {
 					await this.attachBlob(file, undefined);
 				}
 			})();
+			return;
+		}
+		// Copied out of a composer: the chips come back (Cmd+Shift+V pastes the plain text).
+		const clip = decodeComposerClip(data.getData(COMPOSER_CLIP_MIME));
+		if (clip?.mentions.length) {
+			e.preventDefault();
+			e.stopPropagation();
+			this.pasteComposerClip(clip);
 			return;
 		}
 		const text = data.getData('text/plain');
