@@ -6,7 +6,7 @@
 import { errorMessage, formatCode, type ISavedEnvironment, normalizeCode } from '@volt/client-core';
 import { useEffect, useRef, useState } from 'react';
 import { pairWithCode } from '../app/session';
-import { Button, Icon } from '../ui/primitives';
+import { Button, Icon, VoltMark } from '../ui/primitives';
 
 /** Signs this browser in with a one-time code from Volt on the computer. */
 export function PairPage({ code: initialCode, error: initialError, onPaired }: { readonly code?: string; readonly error?: string; readonly onPaired: (environment: ISavedEnvironment) => void }) {
@@ -44,9 +44,9 @@ export function PairPage({ code: initialCode, error: initialError, onPaired }: {
 	return (
 		<div className="pair-page">
 			<div className="pair-card">
-				<div className="pair-mark"><Icon name="bolt" size={26} /></div>
+				<VoltMark className="pair-mark" />
 				<h1>Connect to Volt</h1>
-				<p className="pair-lede">Follow and steer the agents running on your computer. In Volt, open <b>Settings {'›'} Devices</b> or run <b>Volt: Pair a Phone or Browser…</b>, then enter the code it shows.</p>
+				<p className="pair-lede">Follow and steer the agents running on your computer. In Volt, run <b>Volt: Pair a Phone or Browser…</b> from the Command Palette, then enter the code it shows.</p>
 				<form className="pair-form" onSubmit={e => {
 					e.preventDefault();
 					void submit();

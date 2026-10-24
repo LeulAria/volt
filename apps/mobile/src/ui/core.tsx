@@ -6,7 +6,7 @@
 import { type ChatStatus, type IconName, ICONS, RADIUS, statusColor, timer, TYPE } from '@volt/client-core';
 import * as Haptics from 'expo-haptics';
 import { memo, type ReactNode, useEffect } from 'react';
-import { ActivityIndicator, Pressable, type PressableProps, type StyleProp, StyleSheet, Text, type TextProps, type TextStyle, View, type ViewStyle } from 'react-native';
+import { ActivityIndicator, Image, Pressable, type PressableProps, type StyleProp, StyleSheet, Text, type TextProps, type TextStyle, View, type ViewStyle } from 'react-native';
 import Animated, { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import Svg, { Path } from 'react-native-svg';
 import { useNow } from '../state/client';
@@ -104,6 +104,15 @@ export function Button({ label, onPress, variant = 'secondary', icon, busy, disa
 			{busy ? <ActivityIndicator size="small" color={fg} /> : icon ? <Icon name={icon} size={size === 'sm' ? 15 : 17} color={fg} /> : null}
 			<T variant={size === 'lg' ? 'callout' : size === 'sm' ? 'small' : 'body'} weight="600" color={fg}>{label}</T>
 		</Tap>
+	);
+}
+
+/** Volt's app icon (brand/volt-icon.png, cropped to its squircle). */
+export function VoltMark({ size, style }: { readonly size: number; readonly style?: StyleProp<ViewStyle> }) {
+	return (
+		<View style={[{ width: size, height: size }, style]}>
+			<Image source={require('../../assets/volt-mark.png')} style={{ width: size, height: size }} accessibilityIgnoresInvertColors />
+		</View>
 	);
 }
 

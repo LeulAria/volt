@@ -15,7 +15,7 @@ import { ConnectionPill, OfflineBanner } from '../src/home/Connection';
 import { useChatItems, useClient, useCollections, useOptionalClient } from '../src/state/client';
 import { useActiveEnvironment } from '../src/state/environments';
 import { useTheme } from '../src/theme/theme';
-import { Button, EmptyState, haptic, Icon, IconButton, Pill, T, Tap } from '../src/ui/core';
+import { Button, EmptyState, haptic, Icon, IconButton, Pill, T, Tap, VoltMark } from '../src/ui/core';
 import { ActionSheet, ConfirmSheet, InputSheet, type ISheetAction } from '../src/ui/sheets';
 
 export default function Home() {
@@ -47,9 +47,7 @@ function Welcome() {
 		<View style={{ flex: 1, paddingTop: insets.top + 40, paddingBottom: insets.bottom + 24, paddingHorizontal: 24 }}>
 			<Stack.Screen options={{ headerShown: false }} />
 			<Animated.View entering={FadeIn.duration(400)} style={{ flex: 1, justifyContent: 'center', gap: 16 }}>
-				<View style={{ width: 64, height: 64, borderRadius: 18, backgroundColor: p.primary, alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 20, shadowOffset: { width: 0, height: 10 } }}>
-					<Icon name="bolt" size={30} color={p.onPrimary} />
-				</View>
+				<VoltMark size={64} style={{ shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 20, shadowOffset: { width: 0, height: 10 } }} />
 				<T variant="display" weight="800" style={{ letterSpacing: -1, marginTop: 8 }}>Your agents,{'\n'}in your pocket.</T>
 				<T variant="callout" color={p.fgTertiary}>Pair with Volt on your computer to follow every chat live, answer questions, approve commands and start new work from anywhere.</T>
 				<View style={{ gap: 14, marginTop: 18 }}>

@@ -13,7 +13,7 @@ import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { pairWith } from '../src/state/environments';
 import { useTheme } from '../src/theme/theme';
-import { Button, haptic, Icon, IconButton, T, Tap } from '../src/ui/core';
+import { Button, haptic, Icon, IconButton, T, Tap, VoltMark } from '../src/ui/core';
 
 /**
  * Pairs this phone with Volt on a computer: scan the QR the computer shows, or type its address
@@ -126,9 +126,7 @@ export default function Connect() {
 			) : manual || !permission?.granted ? (
 				<KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
 					<Animated.View entering={FadeIn.duration(220)} style={{ flex: 1, justifyContent: 'center', padding: 24, gap: 14 }}>
-						<View style={{ width: 56, height: 56, borderRadius: 16, backgroundColor: p.primary, alignItems: 'center', justifyContent: 'center' }}>
-							<Icon name="bolt" size={26} color={p.onPrimary} />
-						</View>
+						<VoltMark size={56} />
 						<T variant="title1" weight="800" style={{ letterSpacing: -0.6 }}>Connect to Volt</T>
 						<T variant="body" color={p.fgTertiary}>In Volt on your computer, run <T variant="body" weight="600" color={p.fgSecondary}>Pair a Phone or Browser…</T>. Enter the address and code it shows.</T>
 						{!manual && permission && !permission.granted ? (

@@ -15,7 +15,7 @@ import { Sidebar } from '../home/Sidebar';
 import { PairPage } from '../pair/PairPage';
 import { Settings } from '../settings/Settings';
 import { Toasts } from '../ui/overlays';
-import { Button, EmptyState, Icon, IconButton, Spinner } from '../ui/primitives';
+import { Button, EmptyState, Icon, IconButton, Spinner, VoltMark } from '../ui/primitives';
 import { ClientProvider, useClient, useStatus } from './client';
 import { navigate, type Route, useRoute } from './router';
 import { bootstrap, type BootResult, clientId, forgetEnvironment, openWorkbench, refreshWorkbenchAvailable, serverOrigin, webStorage, workbenchTarget } from './session';
@@ -49,7 +49,7 @@ export function App() {
 function Splash() {
 	return (
 		<div className="splash">
-			<div className="splash-mark"><Icon name="bolt" size={26} /></div>
+			<VoltMark className="splash-mark" />
 			<Spinner size={16} />
 		</div>
 	);
