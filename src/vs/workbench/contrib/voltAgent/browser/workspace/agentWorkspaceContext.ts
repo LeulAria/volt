@@ -26,11 +26,17 @@ import { DevicePreviewEditorInput } from '../devices/deviceEditor.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
 import { AgentChangesEditorInput } from '../review/agentChangesEditor.js';
+import { ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
+import { IScratchBoardService } from '../scratchBoard/scratchBoardService.js';
+import { boardDisplayTitle } from '../../common/scratchBoard/scratchIndex.js';
 import { agentSessionToolTabs } from './agentSurfaceHost.js';
 
 /** The turn waits at most this long for the snapshot (git, the device's app); then it goes without. */
 const SNAPSHOT_BUDGET_MS = 1200;
 const OUTPUT_LINES = 30;
+/** CanvasEditorInput.TypeID and CANVAS_SCHEME (visuals/canvas/canvasEditor.ts), not imported for its weight. */
+const CANVAS_INPUT_TYPE_ID = 'workbench.input.voltCanvas';
+const CANVAS_SCHEME = 'volt-canvas';
 
 /**
  * What the user has open beside each chat, for its agent: a compact snapshot the runtime puts in
@@ -46,6 +52,7 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+		@IScratchBoardService private readonly scratchBoards: IScratchBoardService,
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 	) {
 		super();
@@ -56,7 +63,7 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 				name: WORKSPACE_STATUS_TOOL_NAME,
 				title: 'Checked the workspace',
 				group: 'core',
-				description: 'What the user has open beside this chat in Volt, in detail: every right-panel tab (which one is in front), the simulator or emulator shown and the app in front on it, browser tabs and their URLs, terminals with their running or last command, exit code and last output lines, and git branch with the changed files. Call it when the request refers to something on screen ("this", "the app", "the error in the terminal") and the turn\'s workspace summary does not say enough.',
+				description: 'What the user has open beside this chat in Volt, in detail: every right-panel tab (which one is in front), the simulator or emulator shown and the app in front on it, browser tabs and their URLs, scratch boards and design canvases with their ids, terminals with their running or last command, exit code and last output lines, and git branch with the changed files. Call it when the request refers to something on screen ("this", "the app", "the error in the terminal") and the turn\'s workspace summary does not say enough.',
 				inputSchema: { type: 'object', properties: {} },
 			}],
 			invoke: (_name, _args, call) => this.status(call),
@@ -125,6 +132,16 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 		}
 		if (input instanceof AgentEditorInput) {
 			return { kind: 'chat', title, focused };
+		}
+		if (input instanceof ScratchBoardEditorInput) {
+			const boardId = input.boardId;
+			const board = boardId ? this.scratchBoards.getBoard(boardId) : undefined;
+			return { kind: 'scratch', title: board ? boardDisplayTitle(board) : title, focused, ...(boardId ? { surfaceId: boardId } : {}) };
+		}
+		if (input.typeId === CANVAS_INPUT_TYPE_ID || input.resource?.scheme === CANVAS_SCHEME) {
+			// CanvasEditorInput is read structurally: its module pulls in webviews and the editor.
+			const canvasId = (input as { readonly canvasId?: unknown }).canvasId;
+			return { kind: 'canvas', title, focused, ...(typeof canvasId === 'string' && canvasId ? { surfaceId: canvasId } : {}) };
 		}
 		const resource = input.resource;
 		if (resource?.scheme === Schemas.file || resource?.scheme === Schemas.vscodeUserData) {

@@ -37,6 +37,7 @@ import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js'
 import { IAgentPageCrumb } from '../customize/agentMarketplaceView.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { localEnvironmentLabel } from '../home/agentHomeFilter.js';
+import { ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
 import { displayComputerName, IUsageEnvironmentSelection, showUsageEnvironmentMenu, usageEnvironmentTriggerLabel, usageMachineName } from '../usage/agentUsageEnvironmentMenu.js';
 import { setAgentTooltip } from './agentTooltip.js';
@@ -550,6 +551,10 @@ class AgentTitlebarHeaderContribution extends Disposable {
 				return uriFromStoredRoot(stored);
 			}
 		}
+		if (editor instanceof ScratchBoardEditorInput) {
+			// The project the board's agents run in: the one the window has selected, none when it has none.
+			return this.sessionContext.activeProject?.root;
+		}
 		return this.sessionContext.activeProject?.root
 			?? this.workspaceContextService.getWorkspace().folders[0]?.uri;
 	}
@@ -628,7 +633,7 @@ class AgentTitlebarHeaderContribution extends Disposable {
 			this.titleCluster.hidden = short.length === 0;
 			this.titleLabel.textContent = short;
 			const folder = this.folderUri();
-			const project = folder ? this.projectName(folder) : '';
+			const project = folder ? this.projectName(folder) : editor instanceof ScratchBoardEditorInput ? scratchProjectLabel() : '';
 			this.projectLabel.textContent = project;
 			this.projectLabel.hidden = !project;
 			this.projectSeparator.hidden = !project;

@@ -306,11 +306,36 @@ export const SCREENS_REPLIES = `To show the app's screens, call ${SCREENS_TOOL_N
 
 export const CANVAS_REPLIES = `To design screens or a flow, call ${CANVAS_RENDER_TOOL_NAME} from the volt MCP server once with every screen as a frame (iphone, android, tablet, browser, desktop or component; real copy and styling; shared markup in head, css and components; data-next on the element that leads to the next screen) instead of describing them or writing throwaway files: the user moves, plays and comments on it, and you change it afterwards with ${CANVAS_UPDATE_TOOL_NAME} edits rather than a new canvas.`;
 
+/** The Scratch board's tools are registered in contrib/, which services/ cannot import. */
+const SCRATCH_READ_TOOL_NAME = 'scratch_read';
+const SCRATCH_DRAW_TOOL_NAME = 'scratch_draw';
+
+export const SCRATCH_REPLIES = `For a sketch, a diagram, a plan or brainstormed points, call ${SCRATCH_DRAW_TOOL_NAME} from the volt MCP server to draw on the user's Scratch board (a Mermaid flowchart for diagrams, sticky notes for points, markdown cards for longer text; ${SCRATCH_READ_TOOL_NAME} first to build on what is there; \`replace\` with a frameId to redraw a frame) instead of a diagram in the reply: the user moves and edits it, so answer in a line or two.`;
+
+/** Agents otherwise screenshot the simulator and tap guessed coordinates, one call per tap. */
+export const DEVICE_REPLIES = 'For a native mobile app, use the iOS Simulator or Android Emulator through the volt MCP device tools: device_list and device_boot when none is running, device_launch_app, then device_snapshot to read the screen\'s accessibility tree and device_act to tap, type, scroll and verify by visible text in one call, instead of guessing coordinates or looping on device_screenshot and device_tap. One device_screenshot at the end shows the user the result.';
+
+/** Which of Volt's surfaces beside the chat fits the request. Sent with any surface hint. */
+export const SURFACES = `Volt has four surfaces beside the chat: the Scratch board (${SCRATCH_DRAW_TOOL_NAME}) for sketches, diagrams and notes the user edits; the design canvas (${CANVAS_RENDER_TOOL_NAME}) for UI screens and flows; the in-app browser (browser_* tools) for web pages and checking web UI; and the device (device_* tools) for native mobile apps. A surface the user attached with @ or has open in the right panel (see <volt_workspace>) is the one to use.`;
+
+/**
+ * Device tools come from the same volt MCP server as the visual tools, and the input has no
+ * separate flag for them, so every hint here waits for `visuals`.
+ */
 function galleryHints(input: IContextPackInput): string[] {
 	if (!input.visuals) {
 		return [];
 	}
-	return [...(input.intent.wantsCanvas ? [CANVAS_REPLIES] : []), ...(input.intent.wantsMockups ? [MOCKUP_REPLIES] : []), ...(input.intent.wantsScreens ? [SCREENS_REPLIES] : [])];
+	const { intent } = input;
+	const surfaces = intent.wantsCanvas || intent.wantsScratch || intent.wantsDevice || intent.wantsPreview;
+	return [
+		...(surfaces ? [SURFACES] : []),
+		...(intent.wantsScratch ? [SCRATCH_REPLIES] : []),
+		...(intent.wantsCanvas ? [CANVAS_REPLIES] : []),
+		...(intent.wantsDevice ? [DEVICE_REPLIES] : []),
+		...(intent.wantsMockups ? [MOCKUP_REPLIES] : []),
+		...(intent.wantsScreens ? [SCREENS_REPLIES] : []),
+	];
 }
 
 export const WORKSPACE_SCOPE = 'Keep project exploration inside this workspace. You may read a skill or instruction file explicitly supplied by the user or listed by your configured skills, including its referenced resources, even when it lives outside the workspace. Do not search the home folder, sibling projects, or other tools\' private data and chat history unless the user asks; if something the user mentions is missing, say so instead of hunting for it elsewhere.';

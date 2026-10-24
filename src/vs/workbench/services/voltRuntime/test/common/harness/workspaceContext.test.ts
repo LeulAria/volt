@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { formatWorkspaceContext, formatWorkspaceStatus, IWorkspaceSnapshot, IWorkspaceTab, workspaceContextKey } from '../../../common/harness/workspaceContext.js';
+import { describeTab, formatWorkspaceContext, formatWorkspaceStatus, IWorkspaceSnapshot, IWorkspaceTab, workspaceContextKey } from '../../../common/harness/workspaceContext.js';
 
 const iphone: IWorkspaceTab = {
 	kind: 'device',
@@ -60,6 +60,45 @@ suite('Volt workspace context', () => {
 		assert.strictEqual(workspaceContextKey(base), workspaceContextKey({ ...base, git: { branch: 'main', changed: 9 } }));
 		assert.notStrictEqual(workspaceContextKey(base), workspaceContextKey({ ...base, tabs: [{ ...iphone, device: { ...iphone.device!, foreground: 'com.apple.Maps' } }] }));
 		assert.notStrictEqual(workspaceContextKey(base), workspaceContextKey({ ...base, tabs: [{ ...iphone, focused: false }, { ...browser, focused: true }] }));
+	});
+
+	test('a scratch board in front names its boardId and routes board requests to it', () => {
+		const board: IWorkspaceTab = { kind: 'scratch', title: 'Auth flow', focused: true, surfaceId: 'b-123' };
+		assert.strictEqual(describeTab(board), 'Scratch board "Auth flow" (boardId b-123)');
+		const text = formatWorkspaceContext({ panelOpen: true, tabs: [board, browser] })!;
+		assert.ok(text.includes('- In front: Scratch board "Auth flow" (boardId b-123)'));
+		assert.ok(text.includes('requests about "the board" or a diagram mean this board: scratch_read / scratch_draw with its boardId'));
+		assert.ok(!text.includes('The browser is in front'));
+	});
+
+	test('a design canvas in front names its canvasId and routes design requests to it', () => {
+		const canvas: IWorkspaceTab = { kind: 'canvas', title: 'Onboarding', focused: true, surfaceId: 'c-9' };
+		assert.strictEqual(describeTab(canvas), 'Design canvas "Onboarding" (canvasId c-9)');
+		const text = formatWorkspaceContext({ panelOpen: true, tabs: [canvas] })!;
+		assert.ok(text.includes('requests about "the design" or screens mean this canvas: canvas_read / canvas_update with its canvasId'));
+	});
+
+	test('a board or canvas behind other tabs still carries its id, without the hint', () => {
+		const text = formatWorkspaceContext({ panelOpen: true, tabs: [{ ...browser, focused: true }, { kind: 'scratch', title: 'Notes', focused: false, surfaceId: 'b-1' }, { kind: 'canvas', title: 'Home', focused: false, surfaceId: 'c-1' }] })!;
+		assert.ok(text.includes('- Scratch board "Notes" (boardId b-1)'));
+		assert.ok(text.includes('- Design canvas "Home" (canvasId c-1)'));
+		assert.ok(!text.includes('scratch_read'));
+		assert.ok(!text.includes('canvas_read'));
+		assert.strictEqual(describeTab({ kind: 'scratch', title: 'Scratch', focused: false }), 'Scratch board "Scratch"');
+	});
+
+	test('another board or canvas in the same tab counts as a change', () => {
+		const base: IWorkspaceSnapshot = { panelOpen: true, tabs: [{ kind: 'scratch', title: 'Untitled board', focused: true, surfaceId: 'b-1' }] };
+		assert.notStrictEqual(workspaceContextKey(base), workspaceContextKey({ ...base, tabs: [{ ...base.tabs[0], surfaceId: 'b-2' }] }));
+		const canvas: IWorkspaceSnapshot = { panelOpen: true, tabs: [{ kind: 'canvas', title: 'Canvas', focused: true, surfaceId: 'c-1' }] };
+		assert.notStrictEqual(workspaceContextKey(canvas), workspaceContextKey({ ...canvas, tabs: [{ ...canvas.tabs[0], surfaceId: 'c-2' }] }));
+	});
+
+	test('workspace_status names the board and canvas tools', () => {
+		const text = formatWorkspaceStatus({ panelOpen: true, tabs: [{ kind: 'scratch', title: 'Notes', focused: true, surfaceId: 'b-1' }, { kind: 'canvas', title: 'Home', focused: false, surfaceId: 'c-1' }] });
+		assert.ok(text.includes('[in front] Scratch board "Notes" (boardId b-1)'));
+		assert.ok(text.includes('scratch_read reads the board'));
+		assert.ok(text.includes('canvas_update edits it by canvasId'));
 	});
 
 	test('workspace_status carries terminal output and changed files', () => {

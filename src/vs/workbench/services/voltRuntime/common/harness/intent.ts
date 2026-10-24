@@ -39,6 +39,10 @@ export interface IIntent {
 	readonly wantsScreens?: boolean;
 	/** Screens, flows or a design board to work on ("design the onboarding flow", "mobile screens", "figma"): canvas_render. */
 	readonly wantsCanvas?: boolean;
+	/** A sketch, diagram, brainstorm or notes on the whiteboard ("sketch out the architecture", "mind map"): scratch_draw. */
+	readonly wantsScratch?: boolean;
+	/** A native mobile app on the iOS Simulator or Android Emulator ("run the ios app", "on the simulator"): device_* tools. */
+	readonly wantsDevice?: boolean;
 	/** How they asked to be answered - form, completeness, lookup. Every lane reads this. */
 	readonly shape: IRequestShape;
 	/** Something long-running is involved: a server, a watcher, Docker. Managed terminals fit. */
@@ -104,6 +108,19 @@ const UI_NOUN = '(?:side ?bar|nav ?bar|nav(?:igation)?|header|footer|page|screen
 const MOCKUP_INTENT = new RegExp(`\\bmock[- ]?ups?\\b|\\bwire ?frames?\\b|\\b${UI_NOUN}s? (?:alternatives?|variations?|variants?|options|ideas|concepts|directions|versions|designs|explorations)\\b|\\b(?:alternatives?|variations?|variants?|options|ideas|concepts|directions|versions|designs|explorations) (?:for|of) (?:the |our |my |a |an |this )?[\\w -]{0,30}?${UI_NOUN}\\b|\\bdesign (?:alternatives?|options|ideas|directions|concepts)\\b`, 'i');
 /** Designing several screens, a flow or a board: the design canvas. */
 const CANVAS_INTENT = /\b(?:design canvas|figma|(?:user|screen|ux) flows?|(?:design|mock ?up|prototype|sketch|wireframe)\b[^.?!]{0,40}\b(?:screens|flows?|(?:mobile|ios|android|iphone) app|website|landing page|prototype)|(?:mobile|ios|android|iphone|ipad|tablet|app) (?:screens|ui|design|mockups?|prototype)|clickable prototype|screen designs?|responsive (?:design|layouts?|previews?)|(?:phone|tablet|desktop) (?:and|&|\/) (?:phone|tablet|desktop))\b/i;
+/**
+ * A sketch, a diagram, a brainstorm or notes on Volt's whiteboard: the Scratch board. "On the
+ * board" alone is game code (chess pieces) or a Trello board, so only "my/our board" counts.
+ */
+const SCRATCH_INTENT = /\b(?:white ?boards?|scratch ?boards?|on(?:to)? (?:my|our) board|sketch (?:out|up)\b|sketch(?: (?:me|us))?(?: (?:a|an|the|our|my))?(?: quick| rough| simple)? (?:diagram|flow ?chart|flow|architecture|plan|system design|map|overview)s?|mind ?maps?|sticky notes?|post-?it notes?|brainstorm(?:ing)?\b[^.?!]{0,40}\b(?:board|visually|sticky|notes|map|diagram))\b/i;
+/**
+ * A native mobile app on a simulator or emulator. Bare "simulator", "emulator" and "device" are
+ * ordinary code words (a physics simulator, a terminal emulator, a device driver), so each needs
+ * mobile or app context.
+ */
+const DEVICE_INTENT = /\b(?:(?:ios|iphone|ipad|xcode|android|apple) (?:simulators?|emulators?)|(?:on|in|into|to|with|using) (?:the|a|an|my) (?:simulator|emulator)|(?:boot|open|launch|start|run)(?: up)? (?:the|a|an) (?:simulator|emulator)|(?:ios|android|iphone|ipad|react native|expo|flutter|swiftui) app\b[^.?!]{0,40}\b(?:run|runs|running|test|open|launch|start|install|try|check)|(?:run|test|open|launch|start|install|try|check|debug)\b[^.?!]{0,40}\b(?:ios|android|iphone|ipad|react native|expo|flutter|swiftui) app|(?:run|test|try|open|launch|install|check|see|show)\b[^.?!]{0,40}\bon (?:my|the|a|an) (?:phone|iphone|ipad|android(?: phone| device)?|pixel|(?:test|physical|real) device))\b/i;
+/** How the composer writes a picked `/name` skill into the prompt: `[/scratch skill]`. */
+const SURFACE_SKILL_TAG = /\[\/(scratch|canvas|browser|device) skill\]/gi;
 const SCREENS_INTENT = /\b(?:(?:all|every|each) (?:of )?(?:the |our |my )?(?:app'?s? |current |existing |mobile |web )?(?:screens|pages|views)|(?:current|existing|app'?s?|mobile) screens|screen ?shots? of (?:all|every|each|the)|inspect (?:the |our |my )?(?:app|ui|screens|pages|mobile)|(?:light|dark) (?:and|&|\/) (?:light|dark)(?: (?:mode|theme)s?)?)\b/i;
 /** Web UI work: something rendered in a browser that an agent should check there, not only in code. */
 const UI_WORK = /\b(?:buttons?|click(?:ing|s)?|pages?|layout|ui|ux|css|styles?|styling|responsive|mobile|phones?|tablet|viewport|overflow|scroll(?:s|ing)? sideways|horizontal scroll|forms?|modal|dialog|dropdown|navbar|nav ?bar|header|footer|widget|component|frontend|front-end|accessib\w*|a11y|contrast|screen ?reader|dark mode|prototype|mock ?ups?|draft|landing page|html|in the browser|e2e|end[- ]to[- ]end|user flow|sign ?up|log ?in|checkout|loading state|empty state|error state|renders?|visual(?:ly)?)\b/i;
@@ -154,7 +171,12 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 		&& (IMAGE_FILE.test(raw) || (context.attachments ?? []).some(name => IMAGE_FILE.test(name)));
 	if (matchesDesign) { signals.push('design-reference'); }
 
-	const uiWork = hasWorkspace && (wantsPreview || matchesDesign || UI_WORK.test(raw));
+	// A picked surface skill forces that surface, whatever the words say.
+	const surfaceSkills = new Set([...raw.matchAll(SURFACE_SKILL_TAG)].map(match => match[1].toLowerCase()));
+	const browserSkill = surfaceSkills.has('browser');
+	if (browserSkill) { signals.push('skill-browser'); }
+
+	const uiWork = hasWorkspace && (wantsPreview || matchesDesign || browserSkill || UI_WORK.test(raw));
 	if (uiWork) { signals.push('ui'); }
 
 	const broadChange = hasWorkspace && mode !== 'ask' && mode !== 'plan' && BROAD_CHANGE.test(raw);
@@ -167,8 +189,12 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	if (wantsMockups) { signals.push('mockups'); }
 	const wantsScreens = SCREENS_INTENT.test(raw);
 	if (wantsScreens) { signals.push('screens'); }
-	const wantsCanvas = CANVAS_INTENT.test(raw);
+	const wantsCanvas = surfaceSkills.has('canvas') || CANVAS_INTENT.test(raw);
 	if (wantsCanvas) { signals.push('canvas'); }
+	const wantsScratch = surfaceSkills.has('scratch') || SCRATCH_INTENT.test(raw);
+	if (wantsScratch) { signals.push('scratch'); }
+	const wantsDevice = surfaceSkills.has('device') || DEVICE_INTENT.test(raw);
+	if (wantsDevice) { signals.push('device'); }
 
 	let lane: VoltLane;
 
@@ -207,8 +233,8 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	}
 
 	// "5 sidebar alternatives" has no coding verb, but it is work on the project shown as a gallery,
-	// not a question to answer in prose.
-	if (lane === 'chat' && (wantsMockups || wantsScreens || wantsCanvas) && hasWorkspace && mode !== 'ask' && !slashChat) {
+	// not a question to answer in prose. The same holds for a board, a device or a picked /browser.
+	if (lane === 'chat' && (wantsMockups || wantsScreens || wantsCanvas || wantsScratch || wantsDevice || browserSkill) && hasWorkspace && mode !== 'ask' && !slashChat) {
 		lane = 'agent';
 		signals.push('gallery');
 	}
@@ -247,6 +273,8 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 		...(wantsMockups ? { wantsMockups } : {}),
 		...(wantsScreens ? { wantsScreens } : {}),
 		...(wantsCanvas ? { wantsCanvas } : {}),
+		...(wantsScratch ? { wantsScratch } : {}),
+		...(wantsDevice ? { wantsDevice } : {}),
 		...(wantsServices ? { wantsServices } : {}),
 		shape,
 	};

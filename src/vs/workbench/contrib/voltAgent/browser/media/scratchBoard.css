@@ -1,0 +1,2981 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Scratch: the whiteboard page (scratchBoardEditor.ts) and its canvas (scratchCanvas.ts).
+ *
+ * The board is DOM: a world layer moved by one transform, one absolutely placed node per element
+ * (SVG for strokes, HTML for rich text), and a screen-space SVG overlay for selection and guides.
+ * Element nodes take no pointer events; hit testing is geometric. The chrome floats on top in
+ * opaque panels (the agent window is see-through: no backdrop-filter anywhere). Colours on the
+ * board come from the board; the chrome takes the workbench theme like every Volt surface.
+ */
+
+/* ---- Page ------------------------------------------------------------------------------ */
+
+/*
+ * Sized by the editor's layout, not by `inset: 0`: in a chat's right panel the nearest positioned
+ * ancestor is the whole tab group, and the board covered its tab bar.
+ */
+.sx-editor {
+	position: relative;
+	overflow: hidden;
+}
+
+.sx-page {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	/* Volt's active colour (the home filter uses it too); focusBorder is a faint ring in Volt's themes. */
+	--sx-accent: var(--vscode-textLink-foreground, #4c8dff);
+	--sx-accent-soft: color-mix(in srgb, var(--sx-accent) 14%, transparent);
+	--sx-panel-bg: var(--vscode-editor-background, #1e1e1e);
+	--sx-panel-fg: var(--vscode-foreground, #cccccc);
+	--sx-panel-muted: var(--vscode-descriptionForeground, rgba(204, 204, 204, 0.7));
+	--sx-panel-ring: var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	--sx-panel-shadow: 0 0 0 1px var(--sx-panel-ring), 0 2px 10px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+	--sx-hover: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.08));
+	--sx-divider: var(--vscode-menu-separatorBackground, rgba(128, 128, 128, 0.3));
+	--sx-success: #40c057;
+	--sx-danger: #fa5252;
+	--sx-warning: #fab005;
+	/* Every bar on the board (top chrome, zoom, history, selection, format) shares these. */
+	--sx-bar-height: 28px;
+	/* Pills, like the design canvas's bars: round bars, round buttons in them. */
+	--sx-bar-radius: 999px;
+	--sx-bar-button: 23px;
+	--sx-bar-button-radius: 999px;
+	/* Where panels under the top bars start (ScratchCanvas.chromeTop matches it). */
+	--sx-under-bars: 48px;
+	/* Comments wear the theme's button colours, like Ask Agent. */
+	--sx-comment: var(--vscode-button-background, #3b82f6);
+	--sx-comment-fg: var(--vscode-button-foreground, #ffffff);
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+	font-size: 13px;
+	color: var(--sx-panel-fg);
+}
+
+.monaco-workbench.vs .sx-page,
+.monaco-workbench.hc-light .sx-page {
+	--sx-panel-ring: var(--vscode-widget-border, rgba(0, 0, 0, 0.09));
+	--sx-panel-shadow: 0 0 0 1px var(--sx-panel-ring), 0 1px 2px rgba(0, 0, 0, 0.04), 0 3px 12px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.1));
+	--sx-hover: var(--vscode-toolbar-hoverBackground, rgba(0, 0, 0, 0.05));
+	--sx-success: #2f9e44;
+	--sx-danger: #e03131;
+	--sx-warning: #e8590c;
+}
+
+.monaco-workbench.hc-black .sx-page,
+.monaco-workbench.hc-light .sx-page {
+	--sx-panel-shadow: 0 0 0 1px var(--vscode-contrastBorder);
+}
+
+.sx-page-main {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	overflow: hidden;
+}
+
+/* ---- Canvas ---------------------------------------------------------------------------- */
+
+.sx-canvas {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	background: var(--sx-board, #ffffff);
+	outline: none;
+	user-select: none;
+	-webkit-user-select: none;
+	touch-action: none;
+	contain: strict;
+	transition: background-color 160ms ease;
+}
+
+.sx-canvas:focus,
+.sx-canvas:focus-visible {
+	outline: none !important;
+}
+
+.sx-stage {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	cursor: default;
+}
+
+.sx-canvas[data-tool="hand"] .sx-stage {
+	cursor: grab;
+}
+
+.sx-grid {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+}
+
+.sx-world {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 0;
+	height: 0;
+	overflow: visible;
+	transform-origin: 0 0;
+	pointer-events: none;
+}
+
+/* Promoted only while the camera moves; the layer re-rasters sharp once it settles. */
+.sx-world.sx-moving {
+	will-change: transform;
+}
+
+.sx-preview {
+	position: absolute;
+	top: 0;
+	left: 0;
+	overflow: visible;
+}
+
+.sx-draw-preview {
+	position: absolute;
+	top: 0;
+	left: 0;
+	overflow: visible;
+}
+
+.sx-draw-preview.sx-highlighter {
+	mix-blend-mode: multiply;
+}
+
+.sx-canvas.sx-dark .sx-draw-preview.sx-highlighter {
+	mix-blend-mode: screen;
+}
+
+/* ---- Elements -------------------------------------------------------------------------- */
+
+.sx-el {
+	position: absolute;
+	top: 0;
+	left: 0;
+	box-sizing: border-box;
+	pointer-events: none;
+	transform-origin: 50% 50%;
+}
+
+.sx-el > * {
+	transition: scale 180ms cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+
+.sx-el > svg.sx-svg {
+	position: absolute;
+	top: 0;
+	left: 0;
+	overflow: visible;
+}
+
+.sx-el.sx-hidden {
+	visibility: hidden;
+}
+
+.sx-el.sx-erasing {
+	filter: opacity(0.28);
+}
+
+/* Connectors not joined to the hovered shape step back while its own light up. */
+.sx-el.sx-faded {
+	filter: opacity(0.25);
+	transition: filter 120ms ease-out;
+}
+
+/* A connector end hovering a shape it will attach to: the shape leans in. */
+.sx-el.sx-bind-target > * {
+	scale: 1.035;
+}
+
+/* The canvas asks the browser which link or checkbox is under a click. */
+.sx-el.sx-probe,
+.sx-el.sx-probe * {
+	pointer-events: auto;
+}
+
+/* Rich text: text, sticky notes and markdown cards. */
+.sx-el > .sx-rich {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	white-space: pre-wrap;
+}
+
+.sx-el.sx-text.sx-autosize > .sx-rich {
+	width: max-content;
+	white-space: pre;
+}
+
+.sx-el.sx-text.sx-empty > .sx-rich:not(.sx-editing-text) {
+	min-height: 1lh;
+}
+
+.sx-el.sx-note {
+	background: var(--sx-note, #ffec99);
+	border-radius: 6px;
+	box-shadow: 0 1px 1px rgba(0, 0, 0, 0.06), 0 8px 18px -10px rgba(0, 0, 0, 0.32);
+}
+
+.sx-canvas.sx-dark .sx-el.sx-note {
+	box-shadow: 0 1px 1px rgba(0, 0, 0, 0.3), 0 8px 18px -10px rgba(0, 0, 0, 0.7);
+}
+
+.sx-el.sx-note > .sx-rich {
+	top: 18px;
+	left: 18px;
+	width: calc(100% - 36px);
+}
+
+.sx-el.sx-card {
+	background: var(--sx-card, #ffffff);
+	border-radius: 10px;
+	box-shadow:
+		0 0 0 1px color-mix(in srgb, var(--sx-card-border, #1e1e1e) 18%, transparent),
+		0 1px 2px rgba(0, 0, 0, 0.05),
+		0 10px 24px -14px rgba(0, 0, 0, 0.28);
+}
+
+.sx-canvas.sx-dark .sx-el.sx-card {
+	box-shadow:
+		0 0 0 1px color-mix(in srgb, var(--sx-card-border, #e0e0e0) 20%, transparent),
+		0 10px 24px -14px rgba(0, 0, 0, 0.7);
+}
+
+.sx-el.sx-card > .sx-rich {
+	top: 18px;
+	left: 22px;
+	width: calc(100% - 44px);
+}
+
+/* Shape, icon and connector labels. */
+.sx-label {
+	position: absolute;
+	display: flex;
+	box-sizing: border-box;
+	pointer-events: none;
+}
+
+.sx-label[data-placement="inside"] {
+	inset: 10px;
+	justify-content: center;
+	align-items: center;
+}
+
+.sx-label[data-placement="inside"][data-valign="top"] {
+	align-items: flex-start;
+}
+
+.sx-label[data-placement="inside"][data-valign="bottom"] {
+	align-items: flex-end;
+}
+
+.sx-label[data-placement="below"] {
+	top: calc(100% + 4px);
+	left: -100%;
+	width: 300%;
+	justify-content: center;
+}
+
+.sx-label[data-placement="along"] {
+	width: max-content;
+	max-width: 220px;
+	transform: translate(-50%, -50%);
+	justify-content: center;
+}
+
+.sx-label > .sx-label-text {
+	max-width: 100%;
+	white-space: pre-wrap;
+}
+
+.sx-label[data-placement="along"] > .sx-label-text {
+	padding: 0 4px;
+	border-radius: 4px;
+	background: var(--sx-label-bg, transparent);
+}
+
+.sx-el.sx-image > .sx-image {
+	position: absolute;
+	inset: 0;
+	display: block;
+	width: 100%;
+	height: 100%;
+	box-sizing: border-box;
+	border: var(--sx-image-border, none);
+	object-fit: fill;
+	-webkit-user-drag: none;
+}
+
+.sx-el.sx-image.sx-round > .sx-image {
+	border-radius: 12px;
+}
+
+.sx-el.sx-image.sx-loading {
+	border-radius: 8px;
+	background: linear-gradient(100deg, rgba(128, 128, 128, 0.08) 30%, rgba(128, 128, 128, 0.18) 50%, rgba(128, 128, 128, 0.08) 70%);
+	background-size: 300% 100%;
+	animation: sx-shimmer 1.4s linear infinite;
+}
+
+.sx-el.sx-image.sx-loading > .sx-image,
+.sx-el.sx-image.sx-missing > .sx-image {
+	visibility: hidden;
+}
+
+.sx-el.sx-image.sx-missing {
+	border: 1.5px dashed rgba(128, 128, 128, 0.5);
+	border-radius: 8px;
+	background: rgba(128, 128, 128, 0.06);
+}
+
+@keyframes sx-shimmer {
+	from { background-position: 100% 0; }
+	to { background-position: -100% 0; }
+}
+
+.sx-el.sx-icon > .sx-icon-img {
+	position: absolute;
+	inset: 0;
+	display: block;
+	width: 100%;
+	height: 100%;
+	-webkit-user-drag: none;
+}
+
+.sx-el.sx-frame {
+	border: 1px solid var(--sx-frame-border, #868e96);
+	border-radius: 8px;
+	background: var(--sx-frame-fill, transparent);
+}
+
+.sx-el.sx-frame > .sx-frame-name {
+	position: absolute;
+	bottom: 100%;
+	left: 1px;
+	max-width: 100%;
+	/* The gap under the name is part of the tab, so it is grabbable too (scratchCanvas.frameTitleAt). */
+	padding-bottom: calc(10px * max(1, 1 / var(--sx-zoom, 1)));
+	overflow: hidden;
+	color: #343a40;
+	/* World-sized when zoomed in; never smaller than 13px on screen when zoomed out. */
+	font: 600 calc(13px * max(1, 1 / var(--sx-zoom, 1))) / 1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+	letter-spacing: -0.005em;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+/* The name reads as a heading over the diagram: near white on a dark board. */
+.sx-canvas.sx-dark .sx-el.sx-frame > .sx-frame-name {
+	color: #f1f3f5;
+}
+
+.sx-el > .sx-link-badge {
+	position: absolute;
+	top: -9px;
+	right: -9px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	background: var(--sx-accent, #4c8dff);
+	color: #ffffff;
+	box-shadow: 0 0 0 2px var(--sx-board, #ffffff);
+}
+
+.monaco-workbench .sx-el > .sx-link-badge.codicon[class*="codicon-"] {
+	font-size: 11px;
+}
+
+/* ---- Rich text ------------------------------------------------------------------------- */
+
+.sx-rich {
+	box-sizing: border-box;
+	overflow-wrap: anywhere;
+	word-wrap: break-word;
+	outline: none;
+	cursor: inherit;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.sx-rich * {
+	box-sizing: border-box;
+}
+
+.sx-rich.sx-editing-text {
+	cursor: text;
+	user-select: text;
+	-webkit-user-select: text;
+	pointer-events: auto;
+	caret-color: currentColor;
+}
+
+.sx-label > .sx-label-text.sx-editing-text {
+	min-width: 1ch;
+}
+
+.sx-rich p {
+	margin: 0;
+	min-height: 1lh;
+}
+
+.sx-rich h1 {
+	margin: 0.2em 0 0.25em;
+	font-size: 1.75em;
+	font-weight: 700;
+	line-height: 1.15;
+}
+
+.sx-rich h2 {
+	margin: 0.2em 0;
+	font-size: 1.4em;
+	font-weight: 700;
+	line-height: 1.2;
+}
+
+.sx-rich h3 {
+	margin: 0.15em 0;
+	font-size: 1.15em;
+	font-weight: 650;
+}
+
+.sx-rich > :first-child {
+	margin-top: 0;
+}
+
+.sx-rich > :last-child {
+	margin-bottom: 0;
+}
+
+.sx-rich strong,
+.sx-rich b {
+	font-weight: 700;
+}
+
+.sx-rich ul,
+.sx-rich ol {
+	margin: 0.1em 0;
+	padding-left: 1.4em;
+}
+
+.sx-rich li[data-checked] {
+	position: relative;
+	margin-left: -1.4em;
+	padding-left: 1.5em;
+	list-style: none;
+}
+
+/* Round checkboxes: a ring, filled with a check when done. */
+.sx-rich li[data-checked]::before {
+	content: "";
+	position: absolute;
+	top: 0.2em;
+	left: 0.12em;
+	width: 0.95em;
+	height: 0.95em;
+	box-sizing: border-box;
+	border: 1.5px solid currentColor;
+	border-radius: 50%;
+	opacity: 0.7;
+}
+
+.sx-rich li[data-checked="true"] {
+	opacity: 0.55;
+	text-decoration: line-through;
+}
+
+.sx-rich li[data-checked="true"]::before {
+	background: currentColor;
+	opacity: 0.85;
+}
+
+.sx-rich li[data-checked="true"]::after {
+	content: "";
+	position: absolute;
+	top: 0.37em;
+	left: 0.47em;
+	width: 0.22em;
+	height: 0.42em;
+	border: solid var(--sx-board, #ffffff);
+	border-width: 0 0.12em 0.12em 0;
+	transform: rotate(45deg);
+}
+
+.sx-el.sx-note .sx-rich li[data-checked="true"]::after {
+	border-color: var(--sx-note, #ffec99);
+}
+
+.sx-el.sx-card .sx-rich li[data-checked="true"]::after {
+	border-color: var(--sx-card, #ffffff);
+}
+
+.sx-rich.sx-editing-text li[data-checked]::before {
+	cursor: pointer;
+}
+
+.sx-rich blockquote {
+	margin: 0.2em 0;
+	padding-left: 0.8em;
+	border-left: 3px solid currentColor;
+	opacity: 0.8;
+}
+
+.sx-rich code {
+	padding: 0.08em 0.32em;
+	border-radius: 4px;
+	background: rgba(127, 127, 127, 0.16);
+	font-family: var(--monaco-monospace-font, "Geist Mono", ui-monospace, Menlo, monospace);
+	font-size: 0.86em;
+}
+
+.sx-rich pre {
+	margin: 0.3em 0;
+	padding: 0.6em 0.8em;
+	overflow: hidden;
+	border-radius: 8px;
+	background: rgba(127, 127, 127, 0.12);
+	white-space: pre-wrap;
+}
+
+.sx-rich pre code {
+	padding: 0;
+	background: none;
+	font-size: 0.86em;
+}
+
+.sx-rich table {
+	width: 100%;
+	margin: 0.3em 0;
+	border-collapse: collapse;
+	font-size: 0.92em;
+}
+
+.sx-rich th,
+.sx-rich td {
+	/* A row with nothing in it yet is still a row you can click into (a cell's height is its minimum). */
+	height: calc(1lh + 0.6em);
+	padding: 0.3em 0.55em;
+	border: 1px solid rgba(127, 127, 127, 0.35);
+	text-align: left;
+	vertical-align: top;
+}
+
+.sx-rich th {
+	background: rgba(127, 127, 127, 0.1);
+	font-weight: 650;
+}
+
+.sx-rich td[align="center"],
+.sx-rich th[align="center"] {
+	text-align: center;
+}
+
+.sx-rich td[align="right"],
+.sx-rich th[align="right"] {
+	text-align: right;
+}
+
+.sx-rich hr {
+	margin: 0.5em 0;
+	border: none;
+	border-top: 1px solid rgba(127, 127, 127, 0.4);
+}
+
+.sx-rich a {
+	color: #1971c2;
+	text-decoration: underline;
+	text-underline-offset: 0.15em;
+}
+
+.sx-canvas.sx-dark .sx-rich a {
+	color: #74c0fc;
+}
+
+.sx-rich mark {
+	padding: 0 0.1em;
+	background: #ffec99;
+	color: inherit;
+}
+
+.sx-canvas.sx-dark .sx-rich mark {
+	background: #5c4813;
+}
+
+/* Highlighted code (blocks/agentCodeBlock.ts) uses the editor's token colours. */
+.sx-rich pre code .mtk1 {
+	color: inherit;
+}
+
+/* ---- Overlay --------------------------------------------------------------------------- */
+
+.sx-overlay {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	overflow: visible;
+	pointer-events: none;
+}
+
+.sx-overlay * {
+	vector-effect: non-scaling-stroke;
+}
+
+.sx-ov-box,
+.sx-ov-outline,
+.sx-ov-hover,
+.sx-ov-group,
+.sx-ov-editing {
+	fill: none;
+	stroke: var(--sx-accent);
+	stroke-width: 1;
+}
+
+.sx-ov-dashed {
+	stroke-dasharray: 5 4;
+}
+
+.sx-ov-outline {
+	stroke-opacity: 0.75;
+}
+
+.sx-ov-hover {
+	stroke-opacity: 0.5;
+}
+
+/* The hovered element's connections (Highlight Connections): its connectors in the accent over a soft glow, what they join outlined. */
+.sx-ov-link,
+.sx-ov-link-glow {
+	fill: none;
+	stroke: var(--sx-accent);
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.sx-ov-link {
+	stroke-width: 2.5;
+	stroke-opacity: 0.95;
+}
+
+.sx-ov-link-glow {
+	stroke-width: 9;
+	stroke-opacity: 0.16;
+}
+
+.sx-ov-link-end {
+	fill: var(--sx-accent);
+	stroke: none;
+}
+
+.sx-ov-link-node {
+	fill: var(--sx-accent);
+	fill-opacity: 0.05;
+	stroke: var(--sx-accent);
+	stroke-width: 1.5;
+	stroke-opacity: 0.8;
+}
+
+.sx-ov-group {
+	stroke-dasharray: 2 3;
+	stroke-opacity: 0.7;
+}
+
+.sx-ov-editing {
+	stroke-opacity: 0.55;
+}
+
+.sx-ov-handle {
+	fill: var(--sx-board, #ffffff);
+	stroke: var(--sx-accent);
+	stroke-width: 1;
+}
+
+.sx-ov-mid {
+	fill: var(--sx-accent);
+	fill-opacity: 0.45;
+	stroke: none;
+}
+
+.sx-ov-point {
+	fill: var(--sx-board, #ffffff);
+	stroke: var(--sx-accent);
+	stroke-width: 1.5;
+}
+
+.sx-ov-point.sx-ov-bound {
+	fill: var(--sx-accent);
+	fill-opacity: 0.35;
+}
+
+.sx-ov-point.sx-ov-active {
+	fill: var(--sx-accent);
+	fill-opacity: 1;
+}
+
+/* What a connector end will attach to, while it is dragged over it. */
+.sx-ov-bind {
+	fill: var(--sx-accent);
+	fill-opacity: 0.06;
+	stroke: var(--sx-accent);
+	stroke-width: 2;
+	stroke-opacity: 0.9;
+	animation: sx-bind-in 220ms cubic-bezier(0.3, 1.5, 0.5, 1);
+	transform-box: fill-box;
+	transform-origin: center;
+}
+
+@keyframes sx-bind-in {
+	from { stroke-opacity: 0; fill-opacity: 0; scale: 0.96; }
+	to { stroke-opacity: 0.9; fill-opacity: 0.06; scale: 1; }
+}
+
+.sx-ov-port {
+	fill: var(--sx-board, #ffffff);
+	stroke: var(--sx-accent);
+	stroke-width: 1.5;
+}
+
+.sx-ov-port.sx-ov-active {
+	fill: var(--sx-accent);
+}
+
+.sx-ov-guide,
+.sx-ov-guide-x {
+	fill: none;
+	stroke: var(--sx-danger);
+	stroke-width: 1;
+}
+
+.sx-ov-marquee {
+	fill: var(--sx-accent);
+	fill-opacity: 0.07;
+	stroke: var(--sx-accent);
+	stroke-width: 1;
+	stroke-opacity: 0.8;
+}
+
+.sx-ov-eraser {
+	fill: none;
+	stroke: rgba(128, 128, 128, 0.35);
+	stroke-width: 6;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.sx-ov-laser {
+	fill: none;
+	stroke: #ff3b30;
+	stroke-linecap: round;
+	filter: drop-shadow(0 0 3px rgba(255, 59, 48, 0.6));
+}
+
+.sx-ov-frame-target {
+	fill: var(--sx-accent);
+	fill-opacity: 0.04;
+	stroke: var(--sx-accent);
+	stroke-width: 1.5;
+}
+
+/* ---- Agent runs ------------------------------------------------------------------------ */
+
+.sx-runs {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	overflow: visible;
+	pointer-events: none;
+}
+
+.sx-run-outline {
+	--sx-run: var(--sx-accent);
+	fill: color-mix(in srgb, var(--sx-run) 3%, transparent);
+	stroke: var(--sx-run);
+	stroke-width: 1.5;
+	stroke-dasharray: 7 5;
+	stroke-linecap: round;
+}
+
+.sx-run-outline[data-state="starting"],
+.sx-run-outline[data-state="running"],
+.sx-run-outline[data-state="queued"] {
+	animation: sx-march 0.9s linear infinite;
+}
+
+.sx-run-outline[data-state="waiting"] {
+	--sx-run: var(--sx-warning);
+	animation: sx-march 1.8s linear infinite;
+}
+
+.sx-run-outline[data-state="done"] {
+	--sx-run: var(--sx-success);
+}
+
+.sx-run-outline[data-state="failed"] {
+	--sx-run: var(--sx-danger);
+}
+
+.sx-run-outline[data-state="stopped"],
+.sx-run-outline[data-state="idle"] {
+	--sx-run: var(--sx-panel-muted);
+	stroke-opacity: 0.7;
+}
+
+@keyframes sx-march {
+	to { stroke-dashoffset: -24; }
+}
+
+.sx-run-chips {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	pointer-events: none;
+}
+
+.sx-run-chip {
+	--sx-run: var(--sx-accent);
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	max-width: min(360px, 60%);
+	height: 26px;
+	padding: 0 6px 0 8px;
+	border: none;
+	border-radius: 13px;
+	background: var(--sx-panel-bg);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--sx-run) 45%, transparent), 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.2));
+	color: var(--sx-panel-fg);
+	font: inherit;
+	font-size: 12px;
+	white-space: nowrap;
+	cursor: pointer;
+	pointer-events: auto;
+	transition: box-shadow 120ms ease;
+}
+
+.sx-run-chip:hover {
+	box-shadow: 0 0 0 1px var(--sx-run), 0 2px 10px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.26));
+}
+
+.sx-run-chip[data-state="waiting"] { --sx-run: var(--sx-warning); }
+.sx-run-chip[data-state="done"] { --sx-run: var(--sx-success); }
+.sx-run-chip[data-state="failed"] { --sx-run: var(--sx-danger); }
+.sx-run-chip[data-state="stopped"],
+.sx-run-chip[data-state="idle"] { --sx-run: var(--sx-panel-muted); }
+
+.sx-run-icon {
+	display: flex;
+	flex: none;
+	color: var(--sx-run);
+}
+
+.sx-run-chip[data-state="starting"] .sx-run-icon svg,
+.sx-run-chip[data-state="running"] .sx-run-icon svg,
+.sx-run-chip[data-state="queued"] .sx-run-icon svg {
+	animation: sx-spin 0.9s linear infinite;
+}
+
+@keyframes sx-spin {
+	to { transform: rotate(360deg); }
+}
+
+.sx-run-title {
+	min-width: 0;
+	overflow: hidden;
+	font-weight: 500;
+	text-overflow: ellipsis;
+}
+
+.sx-run-meta {
+	flex: none;
+	color: var(--sx-panel-muted);
+}
+
+.sx-run-close {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	color: var(--sx-panel-muted);
+	opacity: 0;
+	transition: opacity 120ms ease, background-color 120ms ease;
+}
+
+.sx-run-chip:hover .sx-run-close,
+.sx-run-chip:focus-visible .sx-run-close {
+	opacity: 1;
+}
+
+.sx-run-close:hover {
+	background: var(--sx-hover);
+	color: var(--sx-panel-fg);
+}
+
+/* ---- Chrome ---------------------------------------------------------------------------- */
+
+.sx-chrome {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	z-index: 2;
+}
+
+.sx-chrome-item {
+	pointer-events: auto;
+}
+
+.sx-chrome [hidden] {
+	display: none !important;
+}
+
+.sx-panel {
+	box-sizing: border-box;
+	border-radius: 8px;
+	background: var(--sx-panel-bg);
+	box-shadow: var(--sx-panel-shadow);
+	color: var(--sx-panel-fg);
+}
+
+.sx-divider {
+	flex: none;
+	align-self: stretch;
+	width: 1px;
+	margin: 6px 4px;
+	background: var(--sx-divider);
+}
+
+.sx-icon {
+	display: block;
+	flex: none;
+}
+
+/* The bars' icons draw a 1px line at any icon size. */
+.sx-top-left .sx-icon *,
+.sx-toolbar .sx-icon *,
+.sx-top-right .sx-icon *,
+.sx-bottom-left .sx-icon * {
+	stroke-width: 1px;
+	vector-effect: non-scaling-stroke;
+}
+
+.sx-icon-button,
+.sx-tool-button,
+.sx-label-button,
+.sx-choice,
+.sx-swatch,
+.sx-zoom-value,
+.sx-library-tile,
+.sx-library-icon {
+	margin: 0;
+	padding: 0;
+	border: none;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	outline: none;
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+}
+
+.sx-icon-button:focus-visible,
+.sx-tool-button:focus-visible,
+.sx-label-button:focus-visible,
+.sx-choice:focus-visible,
+.sx-swatch:focus-visible,
+.sx-zoom-value:focus-visible,
+.sx-selection-comment:focus-visible,
+.sx-library-tile:focus-visible,
+.sx-library-icon:focus-visible,
+.sx-run-chip:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder) !important;
+	outline-offset: 1px;
+}
+
+.sx-icon-button {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 30px;
+	height: 30px;
+	border-radius: var(--sx-bar-button-radius);
+	transition: background-color 100ms ease, color 100ms ease;
+}
+
+.sx-icon-button:hover:not(:disabled) {
+	background: var(--sx-hover);
+}
+
+.sx-icon-button.active {
+	background: var(--sx-accent-soft);
+	color: var(--sx-accent);
+}
+
+.sx-icon-button:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
+/* Top left: menu, boards, the title. */
+.sx-top-left {
+	position: absolute;
+	top: 12px;
+	left: 12px;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	box-sizing: border-box;
+	height: var(--sx-bar-height);
+	padding: 0 4px;
+	border-radius: var(--sx-bar-radius);
+	background: var(--sx-panel-bg);
+	box-shadow: var(--sx-panel-shadow);
+}
+
+.sx-top-left .sx-icon-button {
+	width: var(--sx-bar-button);
+	height: var(--sx-bar-button);
+}
+
+.sx-title {
+	box-sizing: border-box;
+	min-width: 80px;
+	height: var(--sx-bar-button);
+	margin: 0 0 0 2px;
+	padding: 0 8px;
+	border: 1px solid transparent;
+	border-radius: var(--sx-bar-button-radius);
+	background: transparent;
+	color: var(--sx-panel-fg);
+	font: inherit;
+	font-size: 13px;
+	font-weight: 500;
+	text-overflow: ellipsis;
+	outline: none;
+	transition: background-color 100ms ease, border-color 100ms ease;
+}
+
+.sx-title:hover {
+	background: var(--sx-hover);
+}
+
+.sx-title:focus {
+	border-color: var(--vscode-focusBorder);
+	background: var(--vscode-input-background, transparent);
+}
+
+/* The tools, centred at the top like Excalidraw's. */
+.sx-toolbar {
+	position: absolute;
+	top: 12px;
+	left: 50%;
+	display: flex;
+	align-items: center;
+	gap: 1px;
+	height: var(--sx-bar-height);
+	padding: 0 4px;
+	border-radius: var(--sx-bar-radius);
+	transform: translateX(calc(-50% + var(--sx-tools-shift, 0px)));
+}
+
+.sx-toolbar .sx-divider {
+	margin: 8px 3px;
+}
+
+.sx-tool-button {
+	position: relative;
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: var(--sx-bar-button);
+	height: var(--sx-bar-button);
+	border-radius: var(--sx-bar-button-radius);
+	transition: background-color 100ms ease, color 100ms ease;
+}
+
+.sx-tool-button:hover {
+	background: var(--sx-hover);
+}
+
+.sx-tool-button.active {
+	background: var(--sx-accent-soft);
+	color: var(--sx-accent);
+}
+
+.sx-tool-key {
+	position: absolute;
+	right: 2px;
+	bottom: 1px;
+	color: var(--sx-panel-muted);
+	font-size: 8px;
+	font-weight: 500;
+	line-height: 1;
+	pointer-events: none;
+}
+
+.sx-tool-button.active .sx-tool-key {
+	color: var(--sx-accent);
+}
+
+/* The toolbar loses its key hints, then its edges, as the canvas narrows. */
+@container sx-chrome (max-width: 900px) {
+	.sx-tool-key {
+		display: none;
+	}
+}
+
+.sx-chrome {
+	container: sx-chrome / inline-size;
+}
+
+@container sx-chrome (max-width: 760px) {
+	.sx-top-left .sx-title {
+		display: none;
+	}
+	.sx-top-right .sx-label-button span {
+		display: none;
+	}
+	.sx-top-right .sx-label-button {
+		width: var(--sx-bar-height);
+		padding: 0;
+		justify-content: center;
+	}
+}
+
+/*
+ * Folded by ScratchToolbar.fit when the centred tools would touch a side bar: the right's labels
+ * go first, then the title. Narrower still, the tools centre between the side bars
+ * (`--sx-tools-shift`) and their last tools move to "more".
+ */
+.sx-fold-labels .sx-top-right .sx-label-button span,
+.sx-fold-labels .sx-top-right .sx-label-button > kbd,
+.sx-fold-labels .sx-top-right .volt-annotations-send.sx-comments-send > .send > .label {
+	display: none;
+}
+
+.sx-fold-labels .sx-top-right .sx-label-button {
+	width: var(--sx-bar-height);
+	padding: 0;
+	justify-content: center;
+}
+
+.sx-fold-title .sx-top-left .sx-title {
+	display: none;
+}
+
+.sx-toolbar .sx-overflowed {
+	display: none;
+}
+
+/* Top right: library, ask an agent. */
+.sx-top-right {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: var(--sx-bar-height);
+}
+
+.sx-label-button {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	box-sizing: border-box;
+	height: var(--sx-bar-height);
+	padding: 0 12px 0 10px;
+	border-radius: var(--sx-bar-radius);
+	background: var(--sx-panel-bg);
+	box-shadow: var(--sx-panel-shadow);
+	font-size: 12.5px;
+	font-weight: 500;
+	white-space: nowrap;
+	transition: background-color 100ms ease, color 100ms ease, box-shadow 100ms ease;
+}
+
+.sx-label-button:hover {
+	background: color-mix(in srgb, var(--sx-panel-bg) 90%, var(--sx-panel-fg));
+}
+
+.sx-label-button.active {
+	color: var(--sx-accent);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--sx-accent) 60%, transparent), 0 2px 10px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.2));
+}
+
+/* Ask Agent looks like its neighbours (Library, Comment); only its shortcut cap sets it apart. */
+.sx-label-button.sx-ask {
+	position: relative;
+	padding: 0 6px 0 10px;
+}
+
+.sx-label-button.sx-ask:active {
+	transform: translateY(0.5px);
+}
+
+/* The shortcut, a quiet key cap inside the button. */
+.sx-label-button.sx-ask > kbd {
+	display: inline-flex;
+	align-items: center;
+	height: 18px;
+	margin-left: 2px;
+	padding: 0 5px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--sx-panel-fg) 10%, transparent);
+	color: var(--sx-panel-muted);
+	font-family: inherit;
+	font-size: 11px;
+	font-weight: 500;
+	opacity: 0.9;
+}
+
+@container sx-chrome (max-width: 900px) {
+	.sx-label-button.sx-ask > kbd {
+		display: none;
+	}
+}
+
+/* Folded to its icon on a narrow board: a square with the icon in the middle. */
+@container sx-chrome (max-width: 760px) {
+	.sx-top-right .sx-label-button.sx-ask {
+		width: var(--sx-bar-height);
+		padding: 0;
+		justify-content: center;
+	}
+}
+
+/* Comments waiting: "(n) Send" joins the top right, and its neighbours fold to icons sooner. */
+@container sx-chrome (max-width: 1080px) {
+	.sx-top-right.sx-with-comments .sx-label-button span,
+	.sx-top-right.sx-with-comments .sx-label-button > kbd {
+		display: none;
+	}
+	.sx-top-right.sx-with-comments .sx-label-button,
+	.sx-top-right.sx-with-comments .sx-label-button.sx-ask {
+		width: var(--sx-bar-height);
+		padding: 0;
+		justify-content: center;
+	}
+}
+
+@container sx-chrome (max-width: 800px) {
+	.sx-top-right .volt-annotations-send.sx-comments-send > .send > .label {
+		display: none;
+	}
+	.sx-top-right .volt-annotations-send.sx-comments-send > .send {
+		padding: 0 6px 0 7px;
+	}
+}
+
+/* The hint under the toolbar. */
+.sx-hint {
+	position: absolute;
+	top: var(--sx-under-bars);
+	left: 50%;
+	max-width: calc(100% - 48px);
+	transform: translateX(-50%);
+	color: var(--sx-panel-muted);
+	font-size: 12px;
+	line-height: 1.3;
+	text-align: center;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	opacity: 0;
+	transition: opacity 160ms ease;
+	pointer-events: none;
+}
+
+.sx-canvas.sx-dark .sx-hint {
+	color: rgba(255, 255, 255, 0.5);
+}
+
+.sx-canvas.sx-light .sx-hint {
+	color: rgba(0, 0, 0, 0.45);
+}
+
+.sx-hint.visible {
+	opacity: 1;
+}
+
+/*
+ * Pop-ins animate `translate` and `scale`, never `transform`: the selection bar, composer and
+ * format bar are placed with a transform, and animating it would fly them in from the corner.
+ */
+@keyframes sx-pop-in {
+	from { opacity: 0; translate: 0 -3px; scale: 0.98; }
+	to { opacity: 1; translate: 0 0; scale: 1; }
+}
+
+/* ---- Properties ------------------------------------------------------------------------ */
+
+/* One row under the board's menu: a button per kind of setting, then the quick actions. */
+.sx-inspector {
+	position: absolute;
+	top: var(--sx-under-bars);
+	left: 12px;
+	display: flex;
+	box-sizing: border-box;
+	max-width: calc(100% - 24px);
+	height: var(--sx-bar-height);
+	border-radius: var(--sx-bar-radius);
+	background: var(--sx-panel-bg);
+	box-shadow: var(--sx-panel-shadow);
+	opacity: 0;
+	transform: translateY(-4px);
+	visibility: hidden;
+	transition: opacity 140ms ease, transform 140ms ease, visibility 0s linear 140ms;
+}
+
+.sx-inspector.visible {
+	opacity: 1;
+	transform: none;
+	visibility: visible;
+	transition: opacity 140ms ease, transform 140ms ease, visibility 0s;
+}
+
+.sx-inspector-body {
+	display: flex;
+	align-items: center;
+	gap: 1px;
+	min-width: 0;
+	padding: 0 4px;
+	overflow: hidden;
+}
+
+.sx-inspector-body > .sx-divider {
+	margin: 8px 4px;
+}
+
+/* Plain icons: a round backdrop only on hover, or while its choices are open. */
+.sx-prop-trigger,
+.sx-prop-action {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	height: var(--sx-bar-button);
+	margin: 0;
+	padding: 0;
+	border: none;
+	border-radius: 999px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	outline: none;
+	cursor: pointer;
+	transition: background-color 100ms ease, color 100ms ease;
+}
+
+.sx-prop-trigger {
+	gap: 1px;
+	padding: 0 5px 0 7px;
+}
+
+.sx-prop-action {
+	width: var(--sx-bar-button);
+}
+
+.sx-prop-trigger:hover,
+.sx-prop-trigger.open,
+.sx-prop-action:hover {
+	background: var(--sx-hover);
+}
+
+.sx-prop-trigger:focus-visible,
+.sx-prop-action:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder) !important;
+	outline-offset: 1px;
+}
+
+.sx-prop-chevron {
+	color: var(--sx-panel-muted);
+	transition: transform 140ms ease;
+}
+
+.sx-prop-trigger.open .sx-prop-chevron {
+	transform: rotate(180deg);
+}
+
+/* The colours button: the fill inside, the stroke as its ring. */
+.sx-prop-dot {
+	box-sizing: border-box;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: var(--sx-dot-fill, transparent);
+	box-shadow: inset 0 0 0 2.5px var(--sx-dot-ring, currentColor), 0 0 0 0.5px rgba(128, 128, 128, 0.45);
+}
+
+.sx-prop-dot.sx-transparent {
+	background-color: transparent;
+}
+
+/* A setting's choices, under its button. */
+.sx-prop-pop {
+	position: absolute;
+	z-index: 3;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	box-sizing: border-box;
+	min-width: 176px;
+	max-width: 300px;
+	padding: 12px;
+	border-radius: 12px;
+	animation: sx-pop-in 120ms ease;
+}
+
+.sx-prop {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.sx-prop-label {
+	color: var(--sx-panel-muted);
+	font-size: 11.5px;
+	font-weight: 500;
+}
+
+.sx-prop-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+}
+
+.sx-choice {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 30px;
+	height: 30px;
+	border-radius: 50%;
+	color: var(--sx-panel-fg);
+	transition: background-color 100ms ease, color 100ms ease;
+}
+
+.sx-choice:hover {
+	background: var(--sx-hover);
+}
+
+.sx-choice.active {
+	color: var(--sx-accent);
+}
+
+.sx-choice.active:hover {
+	background: var(--sx-accent-soft);
+}
+
+.sx-choice:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
+.sx-swatch {
+	position: relative;
+	flex: none;
+	width: 22px;
+	height: 22px;
+	margin: 2px;
+	/* Rounded squares, like a palette's chips. */
+	border-radius: 5px;
+	background: var(--sx-swatch, transparent);
+	box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.35);
+	transition: transform 100ms ease, box-shadow 100ms ease;
+}
+
+.sx-swatch:hover {
+	transform: scale(1.1);
+}
+
+.sx-swatch.active {
+	box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.35), 0 0 0 2px var(--sx-panel-bg), 0 0 0 3.5px var(--sx-accent);
+}
+
+.sx-swatch.sx-transparent {
+	background-color: #ffffff;
+	background-image:
+		linear-gradient(45deg, rgba(0, 0, 0, 0.12) 25%, transparent 25%, transparent 75%, rgba(0, 0, 0, 0.12) 75%),
+		linear-gradient(45deg, rgba(0, 0, 0, 0.12) 25%, transparent 25%, transparent 75%, rgba(0, 0, 0, 0.12) 75%);
+	background-position: 0 0, 4px 4px;
+	background-size: 8px 8px;
+}
+
+/* "More colours": a rainbow frame around the current custom colour, the swatch's own shape. */
+.sx-swatch-custom::after {
+	content: "";
+	position: absolute;
+	inset: -3px;
+	box-sizing: border-box;
+	padding: 2px;
+	border-radius: 7px;
+	background: conic-gradient(#fa5252, #fab005, #40c057, #228be6, #be4bdb, #fa5252);
+	-webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask-composite: exclude;
+}
+
+.sx-swatch-custom.active,
+.sx-swatch-custom.expanded {
+	box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.35);
+}
+
+.sx-swatch-small {
+	width: 18px;
+	height: 18px;
+	margin: 0;
+}
+
+.sx-slider-row {
+	flex-wrap: nowrap;
+	gap: 10px;
+	min-width: 180px;
+}
+
+.sx-slider {
+	flex: 1;
+	min-width: 0;
+	height: 18px;
+	margin: 0;
+	background: transparent;
+	accent-color: var(--sx-accent);
+	cursor: pointer;
+}
+
+.sx-slider-value {
+	flex: none;
+	width: 30px;
+	color: var(--sx-panel-muted);
+	font-size: 11.5px;
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+}
+
+/* The full palette, opened from a row's rainbow swatch. */
+.sx-palette {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-top: -4px;
+}
+
+.sx-color-grid {
+	display: flex;
+	gap: 4px;
+}
+
+.sx-color-col {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.sx-color-footer {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.sx-hash {
+	color: var(--sx-panel-muted);
+	font-family: var(--monaco-monospace-font, "Geist Mono", ui-monospace, monospace);
+	font-size: 12px;
+}
+
+.sx-hex {
+	flex: 1;
+	min-width: 0;
+	height: 26px;
+	padding: 0 10px;
+	border: 1px solid var(--vscode-input-border, var(--sx-divider));
+	border-radius: 6px;
+	background: var(--vscode-input-background, transparent);
+	color: var(--vscode-input-foreground, var(--sx-panel-fg));
+	font-family: var(--monaco-monospace-font, "Geist Mono", ui-monospace, monospace);
+	font-size: 12px;
+	text-transform: lowercase;
+	outline: none;
+}
+
+.sx-hex:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.sx-hex.invalid {
+	border-color: var(--vscode-inputValidation-errorBorder, var(--sx-danger));
+}
+
+/* ---- Zoom, history, overview ----------------------------------------------------------- */
+
+.sx-bottom-left {
+	position: absolute;
+	bottom: 12px;
+	left: 12px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.sx-zoom,
+.sx-history {
+	display: flex;
+	align-items: center;
+	height: var(--sx-bar-height);
+	padding: 0 4px;
+	border-radius: var(--sx-bar-radius);
+}
+
+.sx-zoom .sx-icon-button,
+.sx-history .sx-icon-button {
+	width: var(--sx-bar-button);
+	height: var(--sx-bar-button);
+}
+
+.sx-zoom-value {
+	min-width: 50px;
+	height: var(--sx-bar-button);
+	padding: 0 4px;
+	border-radius: var(--sx-bar-button-radius);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+}
+
+.sx-zoom-value:hover {
+	background: var(--sx-hover);
+}
+
+.sx-minimap {
+	position: absolute;
+	right: 12px;
+	bottom: 12px;
+	width: 208px;
+	height: 136px;
+	overflow: hidden;
+	/* A map, not a bar: square-ish corners even though the bars are pills. */
+	border-radius: 10px;
+	cursor: pointer;
+	transition: width 180ms ease, height 180ms ease;
+}
+
+.sx-minimap-canvas {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: block;
+	width: 208px;
+	height: 136px;
+	transition: opacity 120ms ease;
+}
+
+.sx-minimap-viewport {
+	position: absolute;
+	top: 0;
+	left: 0;
+	box-sizing: border-box;
+	border: 1.5px solid var(--sx-accent);
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--sx-accent) 8%, transparent);
+	pointer-events: none;
+}
+
+.sx-minimap-toggle.sx-icon-button {
+	position: absolute;
+	right: 4px;
+	bottom: 4px;
+	width: 24px;
+	height: 24px;
+	border-radius: 6px;
+	background: var(--sx-panel-bg);
+	color: var(--sx-panel-muted);
+	opacity: 0;
+	transition: opacity 120ms ease, background-color 100ms ease;
+}
+
+.sx-minimap:hover .sx-minimap-toggle,
+.sx-minimap-toggle:focus-visible {
+	opacity: 1;
+}
+
+.sx-minimap.collapsed {
+	width: var(--sx-bar-height);
+	height: var(--sx-bar-height);
+	cursor: default;
+}
+
+.sx-minimap.collapsed .sx-minimap-canvas,
+.sx-minimap.collapsed .sx-minimap-viewport {
+	opacity: 0;
+	visibility: hidden;
+}
+
+.sx-minimap.collapsed .sx-minimap-toggle.sx-icon-button {
+	right: 4px;
+	bottom: 4px;
+	width: var(--sx-bar-button);
+	height: var(--sx-bar-button);
+	opacity: 1;
+	color: inherit;
+}
+
+/* ---- Selection bar, agent composer ----------------------------------------------------- */
+
+.sx-selection-bar {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: var(--sx-bar-height);
+	padding: 0 4px;
+	/* Floats over the drawing: a rounded box, not one of the chrome's pills. */
+	border-radius: 8px;
+	animation: sx-pop-in 120ms ease;
+}
+
+.sx-selection-bar .sx-divider {
+	margin: 8px 2px;
+}
+
+/* A Volt primary button (voltButton.css), sized to the bar. */
+.monaco-workbench .sx-selection-bar .volt-button.sx-selection-comment {
+	gap: 6px;
+	height: var(--sx-bar-button);
+	padding: 0 4px 0 9px;
+	border-radius: 6px;
+	font-size: 12.5px;
+}
+
+.sx-selection-comment > kbd {
+	display: inline-flex;
+	align-items: center;
+	height: 18px;
+	margin-left: 1px;
+	padding: 0 5px;
+	border-radius: 3px;
+	background: rgba(255, 255, 255, 0.16);
+	color: inherit;
+	font-family: inherit;
+	font-size: 11px;
+	font-weight: 500;
+	opacity: 0.9;
+}
+
+.sx-welcome-tip kbd,
+.sx-shortcut-keys kbd {
+	display: inline-flex;
+	align-items: center;
+	height: 18px;
+	padding: 0 5px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--sx-panel-fg) 9%, transparent);
+	color: var(--sx-panel-muted);
+	font-family: inherit;
+	font-size: 11px;
+	font-weight: 500;
+}
+
+.sx-selection-bar .sx-icon-button {
+	width: var(--sx-bar-button);
+	height: var(--sx-bar-button);
+	border-radius: 6px;
+}
+
+.sx-composer {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: flex;
+	flex-direction: column;
+	width: 440px;
+	max-width: calc(100% - 24px);
+	border-radius: 12px;
+}
+
+/* It rises into place and fades in (`translate`, so its placing transform stays). */
+.sx-composer.sx-composer-in {
+	animation: sx-rise-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes sx-rise-in {
+	from { opacity: 0; translate: 0 12px; }
+	to { opacity: 1; translate: 0 0; }
+}
+
+.sx-composer-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 40px;
+	padding: 0 6px 0 14px;
+}
+
+.sx-composer-title {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.sx-composer-title .sx-icon {
+	color: var(--sx-accent);
+}
+
+.sx-composer-scope {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	color: var(--sx-panel-muted);
+	font-size: 12px;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.sx-composer-header .sx-icon-button {
+	width: 26px;
+	height: 26px;
+}
+
+.sx-composer-preview {
+	position: relative;
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	margin: 0 12px;
+	padding: 8px 30px 8px 8px;
+	border-radius: 9px;
+	background: color-mix(in srgb, var(--sx-panel-fg) 4%, transparent);
+}
+
+/* Takes the board off the message: a small round X in the card's corner. */
+.sx-composer-detach {
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	margin: 0;
+	padding: 0;
+	border: none;
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--sx-panel-fg) 10%, transparent);
+	color: var(--sx-panel-muted);
+	cursor: pointer;
+	transition: background-color 100ms ease, color 100ms ease;
+}
+
+.sx-composer-detach:hover {
+	background: color-mix(in srgb, var(--sx-panel-fg) 18%, transparent);
+	color: var(--sx-panel-fg);
+}
+
+/* With the board taken off: a quiet way to put it back. */
+.sx-composer-attach {
+	display: inline-flex;
+	align-self: flex-start;
+	align-items: center;
+	gap: 5px;
+	height: 24px;
+	margin: 0 12px;
+	padding: 0 10px 0 8px;
+	border: 1px dashed color-mix(in srgb, var(--sx-panel-fg) 22%, transparent);
+	border-radius: 999px;
+	background: transparent;
+	color: var(--sx-panel-muted);
+	font: inherit;
+	font-size: 11.5px;
+	cursor: pointer;
+	transition: background-color 100ms ease, color 100ms ease;
+}
+
+.sx-composer-attach:hover {
+	background: var(--sx-hover);
+	color: var(--sx-panel-fg);
+}
+
+.sx-composer-preview:empty {
+	display: none;
+}
+
+.sx-composer-thumb {
+	position: relative;
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 96px;
+	height: 64px;
+	overflow: hidden;
+	border-radius: 6px;
+	background: var(--sx-board, #ffffff);
+	box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.25);
+}
+
+.sx-composer-thumb img {
+	display: block;
+	max-width: 100%;
+	max-height: 100%;
+	object-fit: contain;
+}
+
+.sx-composer-thumb-loading {
+	position: absolute;
+	inset: 0;
+	background: linear-gradient(100deg, rgba(128, 128, 128, 0.06) 30%, rgba(128, 128, 128, 0.16) 50%, rgba(128, 128, 128, 0.06) 70%);
+	background-size: 300% 100%;
+	animation: sx-shimmer 1.4s linear infinite;
+}
+
+.sx-composer-chips {
+	display: flex;
+	flex: 1;
+	flex-wrap: wrap;
+	align-content: flex-start;
+	gap: 5px;
+	min-width: 0;
+}
+
+.sx-composer-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	max-width: 100%;
+	height: 22px;
+	padding: 0 7px;
+	border-radius: 11px;
+	background: color-mix(in srgb, var(--sx-panel-fg) 8%, transparent);
+	color: var(--sx-panel-muted);
+	font-size: 11.5px;
+	white-space: nowrap;
+}
+
+.sx-composer-chip > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sx-composer-input {
+	box-sizing: border-box;
+	min-height: 44px;
+	max-height: 180px;
+	margin: 10px 12px 0;
+	padding: 2px 2px;
+	border: none;
+	background: transparent;
+	color: var(--sx-panel-fg);
+	font: inherit;
+	font-size: 13.5px;
+	line-height: 1.45;
+	resize: none;
+	outline: none;
+}
+
+/* The panel is the field: no ring of its own (the workbench outlines every focused textarea). */
+.monaco-workbench .sx-composer .sx-composer-input:focus,
+.monaco-workbench .sx-composer .sx-composer-input:focus-visible {
+	outline: none !important;
+}
+
+.sx-composer-input::placeholder {
+	color: var(--sx-panel-muted);
+	opacity: 0.8;
+}
+
+.sx-composer-footer {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 10px 10px 8px;
+	/* The chat composer's send colours (agentEditor.css): light button, dark arrow. */
+	--volt-mode-send-bg: #f4f4f5;
+	--volt-mode-send-fg: #111;
+}
+
+.sx-composer-pickers {
+	display: flex;
+	flex: 1;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}
+
+.sx-composer-model {
+	max-width: 200px;
+}
+
+/* ---- Text formatting bar --------------------------------------------------------------- */
+
+.sx-format-bar {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: flex;
+	align-items: center;
+	gap: 1px;
+	height: var(--sx-bar-height);
+	padding: 0 4px;
+	border-radius: var(--sx-bar-radius);
+	animation: sx-pop-in 100ms ease;
+}
+
+.sx-format-bar .sx-divider {
+	margin: 8px 3px;
+}
+
+.sx-format-button.sx-tool-button {
+	width: var(--sx-bar-button);
+	height: var(--sx-bar-button);
+	border-radius: var(--sx-bar-button-radius);
+}
+
+/* ---- Library --------------------------------------------------------------------------- */
+
+.sx-library {
+	position: absolute;
+	top: var(--sx-under-bars);
+	right: 12px;
+	bottom: 160px;
+	display: none;
+	flex-direction: column;
+	width: 300px;
+	overflow: hidden;
+}
+
+.sx-library.visible {
+	display: flex;
+	animation: sx-drawer-in 160ms ease;
+}
+
+@keyframes sx-drawer-in {
+	from { opacity: 0; transform: translateX(8px); }
+	to { opacity: 1; transform: none; }
+}
+
+.sx-library-header {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: space-between;
+	height: 42px;
+	padding: 0 6px 0 14px;
+}
+
+.sx-library-title {
+	font-weight: 600;
+}
+
+.sx-library-header .sx-icon-button {
+	width: 26px;
+	height: 26px;
+}
+
+.sx-library-search {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 7px;
+	height: 30px;
+	margin: 0 12px 6px;
+	padding: 0 9px;
+	border: 1px solid var(--vscode-input-border, transparent);
+	border-radius: 7px;
+	background: var(--vscode-input-background, color-mix(in srgb, var(--sx-panel-fg) 6%, transparent));
+	color: var(--sx-panel-muted);
+}
+
+.sx-library-search:focus-within {
+	border-color: var(--vscode-focusBorder);
+}
+
+.sx-library-search input {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	padding: 0;
+	border: none;
+	background: transparent;
+	color: var(--vscode-input-foreground, var(--sx-panel-fg));
+	font: inherit;
+	font-size: 12.5px;
+	outline: none;
+}
+
+/* The box shows focus; the workbench's input[type="search"]:focus ring would draw a second frame inside it. */
+.monaco-workbench .sx-library-search input[type="search"]:focus {
+	outline: none;
+}
+
+.sx-library-search input::placeholder {
+	color: var(--vscode-input-placeholderForeground, var(--sx-panel-muted));
+}
+
+.sx-library-body {
+	flex: 1;
+	min-height: 0;
+	padding: 0 12px 12px;
+	overflow-y: auto;
+	scrollbar-width: thin;
+}
+
+.sx-library-section {
+	margin: 12px 0 6px;
+	color: var(--sx-panel-muted);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.sx-library-grid {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 6px;
+}
+
+.sx-library-tile {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	min-width: 0;
+	height: 70px;
+	padding: 6px 4px;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--sx-panel-fg) 4%, transparent);
+	color: var(--sx-panel-fg);
+	cursor: grab;
+	transition: background-color 100ms ease, box-shadow 100ms ease, transform 100ms ease;
+}
+
+.sx-library-tile:hover {
+	background: color-mix(in srgb, var(--sx-panel-fg) 8%, transparent);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sx-accent) 40%, transparent);
+}
+
+.sx-library-tile:active,
+.sx-library-icon:active {
+	cursor: grabbing;
+	transform: scale(0.97);
+}
+
+.sx-library-tile > span {
+	max-width: 100%;
+	overflow: hidden;
+	color: var(--sx-panel-muted);
+	font-size: 11px;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.sx-library-icons {
+	display: grid;
+	grid-template-columns: repeat(6, 1fr);
+	gap: 4px;
+}
+
+.sx-library-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	aspect-ratio: 1;
+	border-radius: 7px;
+	cursor: grab;
+	transition: background-color 100ms ease, transform 100ms ease;
+}
+
+.sx-library-icon:hover {
+	background: color-mix(in srgb, var(--sx-panel-fg) 8%, transparent);
+}
+
+.sx-library-icon img {
+	display: block;
+	width: 22px;
+	height: 22px;
+	pointer-events: none;
+	-webkit-user-drag: none;
+}
+
+/* Downloaded icons draw in black (currentColor is lost in an <img>); lighten them on dark chrome. */
+.monaco-workbench.vs-dark .sx-library-icon img,
+.monaco-workbench.hc-black .sx-library-icon img {
+	filter: invert(0.9);
+}
+
+.sx-library-empty,
+.sx-library-hint {
+	padding: 10px 2px;
+	color: var(--sx-panel-muted);
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+.sx-library-footer {
+	margin-top: 14px;
+	color: var(--sx-panel-muted);
+	font-size: 11px;
+	opacity: 0.8;
+}
+
+/* ---- Welcome ----------------------------------------------------------------------------- */
+
+.sx-welcome {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	opacity: 0;
+	visibility: hidden;
+	pointer-events: none;
+	transition: opacity 200ms ease, visibility 0s linear 200ms;
+}
+
+.sx-welcome.visible {
+	opacity: 1;
+	visibility: visible;
+	transition: opacity 200ms ease 80ms, visibility 0s;
+}
+
+.sx-welcome-card {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 10px;
+	max-width: 420px;
+	padding: 24px;
+	text-align: center;
+}
+
+.sx-welcome-title {
+	font-family: "Excalifont", "Virgil", "Segoe Print", "Bradley Hand", cursive;
+	font-size: 34px;
+	line-height: 1.1;
+}
+
+.sx-canvas.sx-light .sx-welcome-title {
+	color: rgba(0, 0, 0, 0.72);
+}
+
+.sx-canvas.sx-dark .sx-welcome-title {
+	color: rgba(255, 255, 255, 0.82);
+}
+
+.sx-welcome-text {
+	max-width: 340px;
+	font-size: 13.5px;
+	line-height: 1.45;
+}
+
+.sx-canvas.sx-light .sx-welcome-text,
+.sx-canvas.sx-light .sx-welcome-tip {
+	color: rgba(0, 0, 0, 0.5);
+}
+
+.sx-canvas.sx-dark .sx-welcome-text,
+.sx-canvas.sx-dark .sx-welcome-tip {
+	color: rgba(255, 255, 255, 0.52);
+}
+
+.sx-welcome-tips {
+	display: grid;
+	grid-template-columns: auto auto;
+	gap: 7px 12px;
+	margin-top: 8px;
+	font-size: 12.5px;
+}
+
+.sx-welcome-tip {
+	display: contents;
+}
+
+.sx-welcome-tip > kbd {
+	justify-self: end;
+}
+
+.sx-welcome-tip > span {
+	justify-self: start;
+}
+
+.sx-canvas.sx-light .sx-welcome-tip kbd {
+	background: rgba(0, 0, 0, 0.06);
+	color: rgba(0, 0, 0, 0.6);
+}
+
+.sx-canvas.sx-dark .sx-welcome-tip kbd {
+	background: rgba(255, 255, 255, 0.08);
+	color: rgba(255, 255, 255, 0.65);
+}
+
+/* ---- Modals ------------------------------------------------------------------------------ */
+
+.sx-modal-backdrop {
+	position: absolute;
+	inset: 0;
+	z-index: 4;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 24px;
+	background: rgba(0, 0, 0, 0.28);
+	animation: sx-fade-in 120ms ease;
+}
+
+.monaco-workbench.vs .sx-modal-backdrop,
+.monaco-workbench.hc-light .sx-modal-backdrop {
+	background: rgba(0, 0, 0, 0.14);
+}
+
+@keyframes sx-fade-in {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+.sx-modal {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	width: 520px;
+	max-width: 100%;
+	max-height: 100%;
+	padding: 18px;
+	overflow: auto;
+	border-radius: 12px;
+	outline: none;
+	animation: sx-pop-in 140ms ease;
+}
+
+.sx-modal-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+
+.sx-modal-title {
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.sx-modal-text {
+	color: var(--sx-panel-muted);
+	font-size: 12.5px;
+	line-height: 1.45;
+}
+
+.sx-modal-input {
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 180px;
+	padding: 10px 12px;
+	border: 1px solid var(--vscode-input-border, var(--sx-divider));
+	border-radius: 8px;
+	background: var(--vscode-input-background, transparent);
+	color: var(--vscode-input-foreground, var(--sx-panel-fg));
+	font-family: var(--monaco-monospace-font, "Geist Mono", ui-monospace, monospace);
+	font-size: 12.5px;
+	line-height: 1.5;
+	resize: vertical;
+	outline: none;
+}
+
+.sx-modal-input:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.sx-modal-error {
+	min-height: 16px;
+	color: var(--vscode-errorForeground, var(--sx-danger));
+	font-size: 12px;
+}
+
+.sx-modal-error:empty {
+	min-height: 0;
+}
+
+.sx-modal-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+.sx-shortcuts-dialog.sx-modal {
+	width: 920px;
+	gap: 14px;
+}
+
+.sx-shortcuts-dialog .sx-icon-button {
+	width: 28px;
+	height: 28px;
+}
+
+.sx-shortcut-columns {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+	gap: 18px 24px;
+}
+
+.sx-shortcut-group {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.sx-shortcut-title {
+	margin-bottom: 6px;
+	color: var(--sx-panel-muted);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.sx-shortcut-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	min-height: 26px;
+	font-size: 12.5px;
+}
+
+.sx-shortcut-label {
+	min-width: 0;
+}
+
+.sx-shortcut-keys {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 4px;
+}
+
+.sx-shortcut-or {
+	color: var(--sx-panel-muted);
+	font-size: 11px;
+}
+
+/* ---- Menus (voltMenu) ---------------------------------------------------------------- */
+
+.sx-menu-swatch {
+	display: block;
+	width: 14px;
+	height: 14px;
+	border-radius: 4px;
+	box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.35);
+}
+
+.sx-menu-anchor {
+	pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sx-run-outline,
+	.sx-run-chip .sx-run-icon svg,
+	.sx-el.sx-image.sx-loading,
+	.sx-composer-thumb-loading {
+		animation: none !important;
+	}
+	.sx-el > *,
+	.sx-ov-bind,
+	.sx-inspector,
+	.sx-welcome,
+	.sx-minimap {
+		transition: none !important;
+		animation: none !important;
+	}
+}
+
+/* ---- Comments (scratchComments.ts) --------------------------------------------------------- */
+
+/* Numbered bubbles on the board, pointed corner on what they are about, like the design canvas's. */
+.sx-comment-layer {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	pointer-events: none;
+}
+
+.sx-comment-pin {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: grid;
+	place-items: center;
+	box-sizing: border-box;
+	min-width: 24px;
+	height: 24px;
+	margin: 0;
+	padding: 0 6px;
+	border: none;
+	border-radius: 12px 12px 12px 3px;
+	background: var(--sx-comment);
+	box-shadow: 0 0 0 2px var(--sx-board, #fff), 0 4px 12px -2px rgba(0, 0, 0, 0.4);
+	color: var(--sx-comment-fg);
+	font: 700 11.5px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+	font-variant-numeric: tabular-nums;
+	pointer-events: auto;
+	cursor: pointer;
+	transform-origin: 0 100%;
+	transition: scale 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.sx-comment-pin:hover,
+.sx-comment-pin.open {
+	scale: 1.12;
+}
+
+.sx-comment-pin.sx-pin-new {
+	animation: sx-pin-in 120ms ease-out;
+}
+
+/* What it was on is gone: it stays where it was, faded. */
+.sx-comment-pin.outdated {
+	opacity: 0.55;
+}
+
+/* The comment being written: an empty bubble with a plus. */
+.sx-comment-pin.draft {
+	background: var(--sx-panel-bg);
+	box-shadow: 0 0 0 2px var(--sx-comment), 0 4px 12px -2px rgba(0, 0, 0, 0.4);
+	color: var(--sx-comment);
+	pointer-events: none;
+	animation: sx-pin-in 120ms ease-out;
+}
+
+/* Fades in where it was placed: growing from its pointed corner read as flying in from the side. */
+@keyframes sx-pin-in {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+/* The comment box is the browser's inspect prompt (voltCommentComposer.css). */
+
+/* "(3) Send" and its menu chevron in the top right, the bars' height. */
+.sx-comments-slot {
+	display: contents;
+}
+
+.sx-top-right .volt-annotations-send.sx-comments-send {
+	--volt-annotations-bg: var(--sx-comment);
+	--volt-annotations-fg: var(--sx-comment-fg);
+	height: var(--sx-bar-height);
+	border-radius: var(--sx-bar-radius);
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+.sx-top-right .volt-annotations-send.sx-comments-send > .send {
+	padding: 0 10px 0 7px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sx-comment-pin,
+	.sx-comment-pin.sx-pin-new,
+	.sx-comment-pin.draft,
+	.sx-composer.sx-composer-in {
+		animation: none;
+		transition: none;
+	}
+}
+
+/* ---- Agent dock (scratchAgentDock.ts) ------------------------------------------------------ */
+
+/*
+ * The board's agents at the bottom of the page, as the browser docks its agent (browserEditor.css):
+ * closed, a pill with the live step; open, the transcript in a card with the chat's chips and
+ * composer floating under it. It sits over the canvas, outside it, so keys, clipboard and wheel in
+ * the chat never reach the board.
+ */
+.sx-dock {
+	position: absolute;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	z-index: 4;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 8px;
+	padding: 0 12px 12px;
+	pointer-events: none;
+	container: sx-dock / inline-size;
+	--sx-dock-width: min(680px, 100%);
+	/* The browser dock's float: solid, so text stays readable over any board. */
+	--sx-dock-card-bg: #222222;
+	--sx-dock-card-border: rgba(255, 255, 255, 0.1);
+	--sx-dock-card-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+	--sx-dock-pill-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
+	--sx-dock-hover: rgba(255, 255, 255, 0.08);
+}
+
+.monaco-workbench.vs .sx-dock,
+.monaco-workbench.hc-light .sx-dock {
+	--sx-dock-card-bg: #f6f6f6;
+	--sx-dock-card-border: rgba(0, 0, 0, 0.1);
+	--sx-dock-card-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+	--sx-dock-pill-shadow: 0 6px 18px rgba(0, 0, 0, 0.14), 0 1px 3px rgba(0, 0, 0, 0.1);
+	--sx-dock-hover: rgba(0, 0, 0, 0.06);
+}
+
+.sx-dock[hidden],
+.sx-dock [hidden] {
+	display: none !important;
+}
+
+/* Closed: the browser dock's activity pill. */
+.sx-dock-bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	box-sizing: border-box;
+	min-width: 220px;
+	max-width: max(260px, min(520px, calc(100% - 500px)));
+	height: 34px;
+	padding: 0 10px 0 12px;
+	border: 1px solid var(--sx-dock-card-border);
+	border-radius: 17px;
+	background: var(--sx-dock-card-bg);
+	box-shadow: var(--sx-dock-pill-shadow);
+	color: var(--vscode-foreground);
+	font-size: 12.5px;
+	white-space: nowrap;
+	cursor: pointer;
+	pointer-events: auto;
+	user-select: none;
+	outline: none;
+	animation: sx-dock-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
+	transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.sx-dock-bar:hover {
+	background: color-mix(in srgb, var(--sx-dock-card-bg) 92%, var(--vscode-foreground));
+}
+
+.sx-dock-bar:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+/* While an agent works, the accent says so from across the board. */
+.sx-dock-bar[data-state="working"] {
+	border-color: color-mix(in srgb, var(--sx-accent) 55%, transparent);
+}
+
+.sx-dock-bar-status {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	color: var(--sx-panel-muted);
+}
+
+.sx-dock-bar[data-state="working"] .sx-dock-bar-status { color: var(--sx-accent); }
+.sx-dock-bar[data-state="waiting"] .sx-dock-bar-status { color: var(--sx-warning); }
+.sx-dock-bar[data-state="done"] .sx-dock-bar-status { color: var(--sx-success); }
+.sx-dock-bar[data-state="failed"] .sx-dock-bar-status { color: var(--sx-danger); }
+
+.sx-dock-bar-status > .volt-browser-dock-dots {
+	display: inline-flex;
+	width: 11px;
+	height: 11px;
+}
+
+/* The title gives way first: the state ("Done · Worked for 7s") or live step stays readable. */
+.sx-dock-bar-title {
+	flex: 1 1 auto;
+	min-width: 40px;
+	overflow: hidden;
+	font-weight: 500;
+	text-overflow: ellipsis;
+}
+
+.sx-dock-bar-activity {
+	flex: 0 0 auto;
+	min-width: 0;
+	max-width: 55%;
+	overflow: hidden;
+	color: var(--sx-panel-muted);
+	text-overflow: ellipsis;
+}
+
+.sx-dock-bar-activity:not(:empty)::before {
+	content: "·";
+	margin-right: 8px;
+	opacity: 0.7;
+}
+
+.sx-dock-bar-count {
+	flex: none;
+	height: 20px;
+	padding: 0 7px;
+	border-radius: 10px;
+	background: var(--sx-dock-hover);
+	color: var(--sx-panel-muted);
+	font-size: 11px;
+	font-weight: 500;
+	line-height: 20px;
+	font-variant-numeric: tabular-nums;
+}
+
+.sx-dock-bar-chevron {
+	flex: none;
+	color: var(--sx-panel-muted);
+	transition: transform 160ms ease;
+}
+
+.sx-dock-bar:hover .sx-dock-bar-chevron {
+	color: var(--vscode-foreground);
+	transform: translateY(-1px);
+}
+
+@container sx-dock (max-width: 760px) {
+	.sx-dock-bar-activity {
+		display: none;
+	}
+}
+
+/* Open: the transcript card (the browser dock's float), resizable from its top edge. */
+.sx-dock-panel {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	width: var(--sx-dock-width);
+	min-height: 0;
+	overflow: hidden;
+	border: 1px solid var(--sx-dock-card-border);
+	border-radius: 14px;
+	background: var(--sx-dock-card-bg);
+	box-shadow: var(--sx-dock-card-shadow);
+	color: var(--vscode-foreground);
+	pointer-events: auto;
+	contain: layout paint;
+	animation: sx-dock-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sx-dock-grip {
+	position: absolute;
+	top: 0;
+	right: 0;
+	left: 0;
+	z-index: 2;
+	height: 6px;
+	cursor: ns-resize;
+}
+
+.sx-dock-grip::after {
+	content: "";
+	position: absolute;
+	top: 3px;
+	left: 50%;
+	width: 32px;
+	height: 3px;
+	border-radius: 2px;
+	background: var(--sx-dock-card-border);
+	opacity: 0;
+	transform: translateX(-50%);
+	transition: opacity 120ms ease;
+}
+
+.sx-dock-panel:hover .sx-dock-grip::after,
+.sx-dock.resizing .sx-dock-grip::after {
+	opacity: 1;
+}
+
+.sx-dock.resizing,
+.sx-dock.resizing * {
+	cursor: ns-resize !important;
+	user-select: none;
+}
+
+.sx-dock-head {
+	flex: none;
+}
+
+/* The title: the run's prompt; with several agents on the board, a switcher. */
+.sx-dock-title {
+	--sx-run: var(--sx-accent);
+	display: flex;
+	flex: 1 1 auto;
+	align-items: center;
+	gap: 7px;
+	min-width: 0;
+	height: 24px;
+	margin: 0 0 0 -5px;
+	padding: 0 6px 0 5px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-size: 13px;
+	font-weight: 500;
+	text-align: left;
+	cursor: default;
+	outline: none;
+}
+
+.sx-dock-title.several {
+	flex: 0 1 auto;
+	cursor: pointer;
+}
+
+.sx-dock-title.several:hover {
+	background: var(--sx-dock-hover);
+}
+
+.sx-dock-title:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+}
+
+.sx-dock-title[data-state="waiting"] { --sx-run: var(--sx-warning); }
+.sx-dock-title[data-state="done"] { --sx-run: var(--sx-success); }
+.sx-dock-title[data-state="failed"] { --sx-run: var(--sx-danger); }
+.sx-dock-title[data-state="stopped"],
+.sx-dock-title[data-state="idle"] { --sx-run: var(--sx-panel-muted); }
+
+.sx-dock-title-icon {
+	display: flex;
+	flex: none;
+	color: var(--sx-run);
+}
+
+.sx-dock-title[data-state="starting"] .sx-dock-title-icon svg,
+.sx-dock-title[data-state="running"] .sx-dock-title-icon svg,
+.sx-dock-title[data-state="queued"] .sx-dock-title-icon svg {
+	animation: sx-spin 0.9s linear infinite;
+}
+
+.sx-dock-title-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sx-dock-title-chevron {
+	flex: none;
+	opacity: 0.6;
+}
+
+/* The runs menu's state icons take the run's colour. */
+.sx-dock-menu-icon.state-done { color: var(--sx-success); }
+.sx-dock-menu-icon.state-failed { color: var(--sx-danger); }
+.sx-dock-menu-icon.state-waiting { color: var(--sx-warning); }
+.sx-dock-menu-icon.state-running,
+.sx-dock-menu-icon.state-starting,
+.sx-dock-menu-icon.state-queued { color: var(--sx-accent); }
+
+.sx-dock-head .volt-browser-dock-icon {
+	color: var(--sx-panel-muted);
+}
+
+.sx-dock-head .volt-browser-dock-icon:hover {
+	color: var(--vscode-foreground);
+}
+
+/* The transcript, moved here from the chat (browserEditor.css styles it as the browser dock's). */
+.sx-dock-body .volt-agent-quick-open-actions {
+	display: none !important;
+}
+
+.sx-dock-empty {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	padding: 24px;
+	text-align: center;
+}
+
+.sx-dock-empty-title {
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.sx-dock-empty-text {
+	margin-bottom: 8px;
+	color: var(--sx-panel-muted);
+	font-size: 12px;
+}
+
+/*
+ * Under the card: the chat itself with its transcript moved out, so just its chips, approvals,
+ * queue and composer pill, floating on the board like the browser dock's.
+ */
+.sx-dock-chat {
+	position: relative;
+	flex: none;
+	width: var(--sx-dock-width);
+	pointer-events: auto;
+}
+
+.sx-dock-chat .volt-agent-editor {
+	--volt-agent-quick-open-reserve: 0px !important;
+	background: transparent !important;
+	overflow: visible;
+}
+
+.sx-dock-chat .volt-agent-editor .volt-agent-composer {
+	margin: 0 !important;
+	padding: 0 !important;
+}
+
+/* Solid, as the card: lines on the board must not show through the text. */
+.sx-dock-chat .volt-agent-input-box,
+.sx-dock-chat .volt-agent-queue-card,
+.sx-dock-chat .volt-agent-running-card {
+	background: var(--sx-dock-card-bg) !important;
+	box-shadow: var(--sx-dock-pill-shadow);
+}
+
+/* Access, branch and context live with the chat in Agents; the dock keeps to the composer, as the browser's does. */
+.sx-dock-chat .volt-agent-composer-status {
+	display: none !important;
+}
+
+@keyframes sx-dock-in {
+	from { opacity: 0; transform: translateY(6px); }
+	to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sx-dock-bar,
+	.sx-dock-panel,
+	.sx-dock-title .sx-dock-title-icon svg,
+	.sx-dock-bar-chevron {
+		animation: none !important;
+		transition: none !important;
+	}
+}

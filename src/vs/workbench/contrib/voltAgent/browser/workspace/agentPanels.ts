@@ -25,6 +25,7 @@ import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { markAgentSwitch } from '../editor/agentSwitchTiming.js';
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
 import { AutomationsEditorInput } from '../automations/automationsEditor.js';
+import { ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
 import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js';
 import { AGENT_NEW_CHAT_DRAFT_SETTING } from '../../common/agentComposerSettings.js';
 import { agentPanelTabsMode, isBlankNewChat, latestSessionForFolder, unsentDraftForFolder } from '../home/agentHomeModel.js';
@@ -251,7 +252,7 @@ export async function activateAgentProject(
 	sessionContext.selectProject(project.id);
 	const latest = latestSessionForFolder(
 		{ uri: project.root, name: project.displayName, current: true, workspace: false },
-		history.list({ includeArchived: false }),
+		history.list({ includeArchived: false, inWindow: true }),
 	);
 	const input = await openAgentPanel(editorGroups, instantiation, latest?.id);
 	attachSessionToProject(sessionContext, workspace, history, input.sessionId, project);
@@ -293,7 +294,7 @@ function unsentDraftChat(
 	const showing = findAgentPanelGroup(editorGroups.mainPart).activeEditor;
 	return unsentDraftForFolder(
 		{ uri: project.root, name: project.displayName, current: true, workspace: false },
-		history.list({ includeArchived: false }),
+		history.list({ includeArchived: false, inWindow: true }),
 		showing instanceof AgentEditorInput ? showing.sessionId : undefined,
 	)?.id;
 }
@@ -403,11 +404,11 @@ class AgentPanelTabsContribution extends Disposable {
 		}
 		// Only an editor on screen needs a title. A file left behind in a background group would
 		// otherwise bring the chat's own tab row back under the titlebar, which already names it.
-		// Usage, Automations and Customize need none either: the titlebar names them (and their trail).
+		// Usage, Automations, Customize and Scratch need none either: the titlebar names them (and their trail).
 		let nonAgentEditors = 0;
 		for (const group of this.editorGroupsService.mainPart.groups) {
 			const active = group.activeEditor;
-			if (active && !(active instanceof AgentEditorInput) && !(active instanceof AgentUsageEditorInput) && !(active instanceof AutomationsEditorInput) && !(active instanceof AgentCustomizeEditorInput)) {
+			if (active && !(active instanceof AgentEditorInput) && !(active instanceof AgentUsageEditorInput) && !(active instanceof AutomationsEditorInput) && !(active instanceof AgentCustomizeEditorInput) && !(active instanceof ScratchBoardEditorInput)) {
 				nonAgentEditors++;
 			}
 		}

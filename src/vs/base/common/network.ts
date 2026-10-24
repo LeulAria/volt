@@ -102,6 +102,9 @@ export namespace Schemas {
 	/** Scheme used for the agent Automations editor tab. */
 	export const voltAutomations = 'volt-automations';
 
+	/** Scheme used for the Scratch whiteboard editor tab. */
+	export const voltScratchBoard = 'volt-scratchboard';
+
 	/** Scheme used for a multi-model run group's compare editor tab. */
 	export const voltRunGroup = 'volt-run-group';
 
