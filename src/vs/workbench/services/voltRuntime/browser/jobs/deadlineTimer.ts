@@ -3,9 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { addDisposableListener } from '../../../../../base/browser/dom.js';
-import { mainWindow } from '../../../../../base/browser/window.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 
 /** The longest the timer sleeps before it reads the wall clock again. */
 const HEARTBEAT_MS = 30_000;
@@ -28,10 +26,19 @@ export class DeadlineTimer extends Disposable {
 		private readonly heartbeatMs = HEARTBEAT_MS,
 	) {
 		super();
-		const wake = () => this.check();
-		this._register(addDisposableListener(mainWindow, 'online', wake));
-		this._register(addDisposableListener(mainWindow, 'focus', wake));
-		this._register(addDisposableListener(mainWindow.document, 'visibilitychange', wake));
+		// The agent server runs this too, where there is no window: the heartbeat alone wakes it.
+		const win = (globalThis as { window?: Window }).window;
+		if (win) {
+			const wake = () => this.check();
+			win.addEventListener('online', wake);
+			win.addEventListener('focus', wake);
+			win.document.addEventListener('visibilitychange', wake);
+			this._register(toDisposable(() => {
+				win.removeEventListener('online', wake);
+				win.removeEventListener('focus', wake);
+				win.document.removeEventListener('visibilitychange', wake);
+			}));
+		}
 		this._register({ dispose: () => this.clear() });
 	}
 

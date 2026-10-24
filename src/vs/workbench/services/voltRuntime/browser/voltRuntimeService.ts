@@ -4,7 +4,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { inlineResourceContext } from '../common/fileAttachments.js';
-import { getActiveDocument } from '../../../../base/browser/dom.js';
 import { DeferredPromise, IntervalTimer, raceTimeout, RunOnceScheduler } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
@@ -2429,8 +2428,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				return;
 			}
 			// Nor while no Volt window has focus: a night in the background was hundreds of spawns and
-			// failed localhost probes. The first tick after the user is back runs as usual.
-			if (!getActiveDocument().hasFocus()) {
+			// failed localhost probes. The first tick after the user is back runs as usual. (The agent
+			// server has no window: it refreshes on every tick.)
+			const doc = (globalThis as { document?: Document }).document;
+			if (doc && !doc.hasFocus()) {
 				return;
 			}
 			void this.refreshProviders();

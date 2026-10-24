@@ -27,6 +27,7 @@ import { IAgentServerClients } from './serverClients.js';
 import { IAnyWorkspaceIdentifier, ISingleFolderWorkspaceIdentifier, IWorkspace, IWorkspaceContextService, IWorkspaceFolder, IWorkspaceFoldersChangeEvent, IWorkspaceFoldersWillChangeEvent, IWorkspaceIdentifier, WorkbenchState } from '../../../platform/workspace/common/workspace.js';
 import { IUserDataProfile } from '../../../platform/userDataProfile/common/userDataProfile.js';
 import { IPathService } from '../../../workbench/services/path/common/pathService.js';
+import { IWorkspaceTrustManagementService, IWorkspaceTrustUriInfo } from '../../../platform/workspace/common/workspaceTrust.js';
 import { BeforeShutdownErrorEvent, BeforeShutdownEvent, ILifecycleService, LifecyclePhase, ShutdownReason, StartupKind, WillShutdownEvent, WillShutdownJoinerOrder } from '../../../workbench/services/lifecycle/common/lifecycle.js';
 import { IFileMatch, IFileQuery, ISearchComplete, ISearchProgressItem, ISearchService, ISerializedSearchComplete, ISerializedSearchProgressItem, isSerializedSearchComplete, isSerializedSearchSuccess, ITextQuery, SearchProviderType } from '../../../workbench/services/search/common/search.js';
 import { SearchService as RawSearchService } from '../../../workbench/services/search/node/rawSearchService.js';
@@ -305,6 +306,20 @@ export class ServerPathService implements IPathService {
 }
 
 /** Shutdown hooks (history flushes its logs) run when the server stops. */
+/**
+ * Workspace trust is the desktop's prompt, which the server cannot show: no folder is trusted
+ * here, so a repository's own hooks never run unattended. User-level hooks still run.
+ */
+export class ServerWorkspaceTrustService implements Partial<IWorkspaceTrustManagementService> {
+	declare readonly _serviceBrand: undefined;
+	readonly onDidChangeTrust = Event.None;
+	readonly onDidChangeTrustedFolders = Event.None;
+	readonly workspaceResolved = Promise.resolve();
+	readonly workspaceTrustInitialized = Promise.resolve();
+	isWorkspaceTrusted(): boolean { return false; }
+	async getUriTrustInfo(uri: URI): Promise<IWorkspaceTrustUriInfo> { return { uri, trusted: false }; }
+}
+
 export class ServerLifecycleService extends Disposable implements ILifecycleService {
 	declare readonly _serviceBrand: undefined;
 	readonly startupKind = StartupKind.NewWindow;
