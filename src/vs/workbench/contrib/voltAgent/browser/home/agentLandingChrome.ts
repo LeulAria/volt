@@ -433,7 +433,7 @@ export class AgentLandingChrome extends Disposable {
 			ariaLabel: localize('voltAgent.env.runOn', "Run on"),
 			width: 260,
 			sections: [
-				{ id: 'machine', title: localize('voltAgent.env.runOn', "Run on"), items: [{ id: 'local', label: THIS_MACHINE, icon: Codicon.deviceDesktop, checked: this.runOn === 'same-branch', data: { runOn: 'same-branch' } }] },
+				{ id: 'machine', title: localize('voltAgent.env.runOn', "Run on"), items: [{ id: 'local', label: THIS_MACHINE, icon: createThisMacIcon, checked: this.runOn === 'same-branch', data: { runOn: 'same-branch' } }] },
 				{
 					id: 'worktree',
 					items: [{

@@ -100,9 +100,9 @@ export function createAccessIcon(mode: VoltAccessMode, strokeWidth?: string): HT
 	}
 }
 
-/** This Mac on the new chat's machine picker, drawn at the access trigger's weight. */
+/** This Mac (a laptop) on the new chat's machine picker and its menu, drawn at the access trigger's weight. */
 export function createThisMacIcon(): HTMLElement {
-	return svgIcon([{ d: 'M5 22H13M17 22H19M8.99999 12L6.00002 22M5 2L11.5 17.5' }], [], 'this-mac', '1.3');
+	return svgIcon([{ d: 'M1 20H23M4 16H20C20.5523 16 21 15.5523 21 15V5C21 4.44772 20.5523 4 20 4H4C3.44772 4 3 4.44772 3 5V15C3 15.5523 3.44772 16 4 16Z' }], [], 'this-mac', '1.3');
 }
 
 export type SandboxIconId = 'off' | 'workspace-write' | 'read-only' | 'network';
