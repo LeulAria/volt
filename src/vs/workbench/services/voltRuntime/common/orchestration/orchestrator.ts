@@ -734,8 +734,8 @@ export interface IAgentOrchestratorService {
 	resumeLimit(threadId: string): Promise<IOrchSubmitResult>;
 	/** The chat's own auto-resume choice while parked: false cancels, true asks, undefined follows the setting. */
 	configureLimit(threadId: string, auto: boolean | undefined): Promise<void>;
-	/** Starts every queued message of the chat now, each as a multitask agent running in parallel. Returns how many started. */
-	multitaskQueue(threadId: string): Promise<number>;
+	/** Starts every queued message of the chat now (or only `itemIds`), each as a multitask agent running in parallel. Returns how many started. */
+	multitaskQueue(threadId: string, itemIds?: readonly string[]): Promise<number>;
 	/** Wakes the chat with a notification turn (see `thread.notify`). A retried `turnId` is not sent twice. */
 	notify(threadId: string, prompt: IOrchPrompt, turnId: string, options?: { readonly interrupt?: boolean }): Promise<IOrchSubmitResult>;
 	/** The user's Stop (or Stop all). Agents interrupt chats with `dispatch({ type: 'turn.cancel' })`, which does not fire `onDidStop`. */

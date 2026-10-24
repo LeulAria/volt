@@ -61,6 +61,8 @@ export class BrowserAgentDock extends Disposable {
 	private readonly hitEl: HTMLElement;
 	private readonly composer: BrowserAgentComposer;
 	private readonly composerQueue: AgentComposerQueue;
+	/** The queued messages ticked while Start Multitasking is on; undefined when it is off. */
+	private multitaskPick: readonly string[] | undefined;
 	private readonly agentStore = this._register(new MutableDisposable<DisposableStore>());
 	private agentEditor: AgentEditor | undefined;
 	private hostedThread: AgentThreadView | undefined;
@@ -100,6 +102,7 @@ export class BrowserAgentDock extends Disposable {
 
 		this.chips = this._register(instantiationService.createInstance(AgentComposerChips, {
 			dock: true,
+			onMultitaskPickCancel: () => this.composerQueue.stopPicking(),
 			onStatusClick: () => {
 				this.setFloatOpen(true);
 				this.setExpanded(true);
@@ -164,6 +167,7 @@ export class BrowserAgentDock extends Disposable {
 					this.agentEditor.startMultitasking();
 				}
 			},
+			onMultitaskPick: ids => this.setMultitaskPick(ids),
 			onReorder: ids => this.reorderQueued(ids),
 		}));
 		this.hitEl.insertBefore(this.composerQueue.element, this.chips.element);
@@ -358,6 +362,11 @@ export class BrowserAgentDock extends Disposable {
 		return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
 	}
 
+	/** Words or chips in the dock's composer that haven't been sent. */
+	hasDraft(): boolean {
+		return this.composer.hasDraft();
+	}
+
 	layout(): void {
 		if (this.expanded) {
 			if (this.mode === 'expanded') {
@@ -478,7 +487,27 @@ export class BrowserAgentDock extends Disposable {
 		}
 	}
 
+	/** Start Multitasking is on: the chip counts the ticked messages and Send (over Stop) starts them. */
+	private setMultitaskPick(ids: readonly string[] | undefined): void {
+		this.multitaskPick = ids;
+		this.chips.setMultitaskPick(ids?.length);
+		this.composer.setPendingSend(!!ids?.length);
+	}
+
 	private async submit(text: string, display?: IAgentPromptDisplay, openFloat = true, withComments = true): Promise<void> {
+		const picked = this.multitaskPick;
+		if (picked) {
+			// Send starts the ticked queued messages, each as its own agent; typed words still go to the chat.
+			this.composerQueue.stopPicking();
+			if (picked.length) {
+				this.composer.setMode('Multitask');
+				this.composerQueue.setMode('Multitask');
+				this.agentEditor?.startMultitasking(picked);
+			}
+			if (!text.trim() && !(withComments && this.pendingComments())) {
+				return;
+			}
+		}
 		let displayText = display?.text ?? this.composer.getDisplayText();
 		let mentions = display?.mentions ?? this.composer.getDisplayMentions();
 		// The tab's queued comments go with the message, ahead of what was typed.
@@ -735,7 +764,7 @@ export class BrowserAgentDock extends Disposable {
 					? 36
 					: mode === 'chip'
 						? 0
-						: Math.max(this.composerHost.scrollHeight, this.composer.element.offsetHeight, 44);
+						: Math.max(this.composerHost.scrollHeight, this.composer.element.offsetHeight, 38);
 		if (from.width === toWidth && from.height === toHeight && mode !== 'expanded') {
 			return;
 		}

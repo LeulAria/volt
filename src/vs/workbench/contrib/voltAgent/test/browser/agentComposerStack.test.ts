@@ -27,8 +27,15 @@ suite('Agent composer stack', () => {
 		return store.add(new AgentComposerQueue({ onRemove: () => { }, onClear: () => { }, onMultitask: () => { }, onReorder: () => { } }));
 	}
 
-	test('subagents get their own card, apart from the queued prompts', () => {
+	test('running subagents stay in the chip: no card while nothing waits for Resume', () => {
 		const view = queue();
+		view.setAgents({ views: [agent('a', 'Design system inventory')], conflicts: [{ path: 'src/a.ts', titles: ['A', 'B'] }] });
+		assert.strictEqual(view.agentsElement.classList.contains('hidden'), true);
+	});
+
+	test('subagents waiting for Resume get their own card, apart from the queued prompts', () => {
+		const view = queue();
+		view.setState({ running: false, steer: false, paused: 'interrupted' });
 		view.setAgents({ views: [agent('a', 'Design system inventory'), agent('b', 'Front office domain bugs')], conflicts: [] });
 		assert.strictEqual(view.agentsElement.classList.contains('hidden'), false);
 		assert.strictEqual(view.agentsElement.querySelector('.volt-agent-work-toggle')?.textContent, '2 subagents running');

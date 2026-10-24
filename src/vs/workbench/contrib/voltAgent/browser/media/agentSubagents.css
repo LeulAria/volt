@@ -277,7 +277,7 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 
 /*
  * "N subagents running" over the chip row, under the Tasks card and drawn like it (agentEditor.css
- * .volt-agent-tasks-card): the same edge and corners with no fill, a 40px header line that opens
+ * .volt-agent-tasks-card): the same edge and corners with no fill, a 30px header line that opens
  * into the rows. The card is the only surface: no wrapper paints around it.
  */
 .volt-agent-agents-card {
@@ -286,7 +286,7 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 	flex: 0 0 auto;
 	width: 100%;
 	max-width: 720px;
-	margin: 0 auto 8px;
+	margin: 0 auto 6px;
 	box-sizing: border-box;
 	color: var(--vscode-foreground);
 	font-size: 13px;
@@ -294,9 +294,9 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 
 /* The card's surface; above the composer it opens upward over the chat (agentEditor.css, by .volt-agent-tasks-panel). */
 .volt-agent-agents-card > .volt-agent-work-section {
-	padding: 0 16px;
+	padding: 0 12px;
 	box-sizing: border-box;
-	border-radius: 12px;
+	border-radius: 10px;
 	background: transparent;
 	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
 	overflow: hidden;
@@ -312,7 +312,7 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 }
 
 .volt-agent-agents-card .volt-agent-work-head {
-	min-height: 38px;
+	min-height: 30px;
 }
 
 .volt-agent-agents-card .volt-agent-work-head:not(:last-child) {
@@ -413,13 +413,58 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 .volt-agent-work-conflict {
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: 5px;
+	min-width: 0;
 	font-size: 12px;
-	color: #e5a33a;
-	padding: 2px 0 2px;
+	white-space: nowrap;
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+	padding: 2px 6px;
 }
 
-.volt-agent-work-conflict .codicon { font-size: 12px; }
+.volt-agent-work-conflict .codicon {
+	flex: none;
+	font-size: 12px;
+	color: #e5a33a;
+}
+
+.volt-agent-work-conflict-text { flex: none; }
+
+.volt-agent-work-conflict-agents {
+	display: flex;
+	gap: 6px;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.volt-agent-work-conflict-file,
+.volt-agent-work-conflict-agent {
+	min-width: 0;
+	max-width: 180px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	padding: 0;
+	border: none;
+	background: none;
+	font: inherit;
+	color: color-mix(in srgb, var(--vscode-foreground) 80%, transparent);
+}
+
+.volt-agent-work-conflict-file {
+	flex: none;
+	color: #e5a33a;
+}
+
+button.volt-agent-work-conflict-file,
+button.volt-agent-work-conflict-agent {
+	cursor: pointer;
+}
+
+button.volt-agent-work-conflict-file:hover,
+button.volt-agent-work-conflict-agent:hover {
+	text-decoration: underline;
+	color: var(--vscode-foreground);
+}
 
 /* A notification turn: subagent reports Volt sent to this chat. */
 
@@ -549,13 +594,6 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 	padding: 0;
 }
 
-/* Room under the branch, the git group's last row: padding in the row, so its hover fills it. */
-.monaco-workbench.volt-layout-agent .volt-agent-quick-open-actions.expanded .volt-agent-dock-git .volt-agent-dock-row:last-child {
-	box-sizing: border-box;
-	height: 31px;
-	padding-bottom: 5px;
-}
-
 /* Rows run flush to the rules between sections. */
 .monaco-workbench.volt-layout-agent .volt-agent-quick-open-actions.expanded .volt-agent-quick-open-body > .volt-agent-dock-section {
 	padding: 0;
@@ -564,11 +602,6 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 /* Only between sections on screen: a hidden first section leaves no rule along the top. */
 .monaco-workbench.volt-layout-agent .volt-agent-quick-open-actions.expanded .volt-agent-quick-open-body > .volt-agent-dock-section:not(.hidden) ~ .volt-agent-dock-section:not(.hidden) {
 	border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
-}
-
-/* The branch reads as the last row of "On this window": no rule between it and Browser. */
-.monaco-workbench.volt-layout-agent .volt-agent-quick-open-actions.expanded .volt-agent-quick-open-body > .volt-agent-dock-workspace:not(.hidden) + .volt-agent-dock-section.volt-agent-dock-git {
-	border-top: 0;
 }
 
 .volt-agent-lineage.hidden,
@@ -980,11 +1013,12 @@ button.volt-tr-subagent.volt-subagent-cursor:hover .volt-tr-subagent-title {
 }
 
 /* The row opens the subagent's chat: a hover fill that reaches past the text, so it reads as one target. */
-button.volt-tr-subagent.volt-subagent-cursor {
+.volt-tr-subagent.volt-subagent-cursor {
 	box-sizing: border-box;
-	width: calc(100% + 12px);
-	margin: 0 -6px;
-	padding: 2px 6px;
+	width: calc(100% + 20px);
+	margin: 0 -10px;
+	padding: 5px 10px;
+	border-radius: 8px;
 }
 
 button.volt-tr-subagent.volt-subagent-cursor:hover {
@@ -1014,7 +1048,8 @@ button.volt-tr-subagent.volt-subagent-cursor:hover .volt-tr-subagent-status:not(
 .volt-tr-subagents {
 	display: flex;
 	flex-direction: column;
-	gap: 10px;
+	/* The rows' own padding spaces them. */
+	gap: 2px;
 	margin: 4px 0;
 }
 
@@ -1124,7 +1159,38 @@ button.volt-agent-work-agent:hover .volt-agent-work-agent-title { color: var(--v
 .volt-agent-queue-item:hover .volt-agent-svg-icon.grip,
 .volt-agent-queue-list.reordering .volt-agent-svg-icon.grip { display: inline-flex; }
 
-.volt-agent-notification-list { gap: 8px; margin: 2px 0 0; }
+/* Start Multitasking on: each circle is a checkbox, ticked by default; Send starts the ticked ones. */
+.volt-agent-queue-check {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	flex-shrink: 0;
+	border-radius: 50%;
+	border: 1.3px solid color-mix(in srgb, var(--vscode-foreground) 48%, transparent);
+	box-sizing: border-box;
+}
+.volt-agent-queue-item:not(.picked) .volt-agent-queue-check .codicon { visibility: hidden; }
+.volt-agent-queue-item.picked .volt-agent-queue-check {
+	border-color: #4c8dff;
+	background: #4c8dff;
+	color: #ffffff;
+}
+.monaco-workbench .volt-agent-queue-item .volt-agent-queue-check .codicon.codicon-check { font-size: 10px; color: inherit; }
+.volt-agent-queue-item.pickable { cursor: pointer; }
+.volt-agent-queue-item.pickable:not(.picked) .volt-agent-queue-text { opacity: 0.5; }
+.volt-agent-queue-item.pickable:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.volt-agent-queue-head .volt-agent-queue-multitask.active,
+.volt-agent-queue-head .volt-agent-queue-multitask.active:hover { color: #4c8dff; }
+
+.volt-agent-notification-list { gap: 2px; margin: 2px 0 0; }
+
+/* The row clips (long titles), so report rows keep their fill inside it instead of reaching past the text. */
+.volt-agent-notification-list .volt-tr-subagent.volt-subagent-cursor {
+	width: 100%;
+	margin: 0;
+}
 
 .volt-subagent-cursor,
 .volt-subagent-cursor .volt-tr-subagent-text {

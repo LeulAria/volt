@@ -8,8 +8,10 @@ import { $, addDisposableListener, append, getWindow } from '../../../../../base
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { disposableTimeout } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { createModeIcon } from '../chrome/agentModeIcons.js';
 import { Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, IDisposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
+import { extUriIgnorePathCase } from '../../../../../base/common/resources.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -68,8 +70,6 @@ export interface IAgentComposerAgentsChip {
 	readonly live: number;
 	/** Agents blocked on an approval or an answer. */
 	readonly waiting: number;
-	/** One line per agent, for the hover. */
-	readonly tooltip: string;
 }
 
 /** The chat's managed terminals as one chip of the row (agentTerminalChips.ts), owned by the chat. */
@@ -90,6 +90,8 @@ export interface IAgentComposerChipsOptions {
 	onCompactClick?: () => void;
 	/** The round arrow at the end of the row, shown while the thread is scrolled up. */
 	onScrollToBottom?: () => void;
+	/** The × on the "N to multitask" chip: Start Multitasking turns off and the messages stay queued. */
+	onMultitaskPickCancel?: () => void;
 	/** The chat's terminals ("2 terminals running" with its menu), after the agents chip. The dock has none. */
 	terminalRuns?: IAgentComposerTerminalRuns;
 	/** The chat's usage-limit park ("Claude limit · resets 5 PM" with Resume when Claude is back), first in the row. */
@@ -169,6 +171,10 @@ export class AgentComposerChips extends Disposable {
 	private readonly commentsLabelEl: HTMLElement;
 	private pendingComments = 0;
 	private readonly compactChip: HTMLButtonElement;
+	/** Start Multitasking is on: how many queued messages Send starts as agents (undefined when off). */
+	private readonly multitaskChip: HTMLElement;
+	private readonly multitaskLabelEl: HTMLElement;
+	private multitaskPick: number | undefined;
 	private readonly compactLabelEl: HTMLElement;
 	private compactState: AgentCompactChipState = 'hidden';
 	private compactDetail: IAgentCompactChipDetail = {};
@@ -260,6 +266,21 @@ export class AgentComposerChips extends Disposable {
 				}
 			}));
 		}
+
+		this.multitaskChip = append(this.element, $('.volt-agent-composer-chip.multitask-pick.volt-browser-dock-chip.hidden'));
+		this.multitaskChip.setAttribute('role', 'status');
+		this.multitaskChip.appendChild(createModeIcon('multitask'));
+		this.multitaskLabelEl = append(this.multitaskChip, $('span.volt-agent-composer-chip-label'));
+		setAgentTooltip(this.multitaskLabelEl, localize('voltAgent.multitaskPickChip', "Press Send to start the ticked queued messages, each as its own agent in parallel"));
+		const cancelPick = append(this.multitaskChip, $('button.volt-agent-composer-chip-close')) as HTMLButtonElement;
+		cancelPick.type = 'button';
+		cancelPick.appendChild(renderIcon(Codicon.close));
+		setAgentTooltip(cancelPick, localize('voltAgent.multitaskPickCancel', "Keep them queued"));
+		this._register(addDisposableListener(cancelPick, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.options.onMultitaskPickCancel?.();
+		}));
 
 		this.compactChip = append(this.element, $('button.volt-agent-composer-chip.compact.volt-browser-dock-chip.hidden')) as HTMLButtonElement;
 		this.compactChip.type = 'button';
@@ -454,6 +475,15 @@ export class AgentComposerChips extends Disposable {
 		}
 	}
 
+	/** Start Multitasking's live count: the chip reads "18 to multitask"; undefined hides it. */
+	setMultitaskPick(count: number | undefined): void {
+		if (this.multitaskPick === count) {
+			return;
+		}
+		this.multitaskPick = count;
+		this.render();
+	}
+
 	private syncComments(): void {
 		const count = !this.options.dock && this.sessionId ? this.browserComments.pending({ sessionId: this.sessionId }).length : 0;
 		if (count !== this.pendingComments) {
@@ -575,8 +605,14 @@ export class AgentComposerChips extends Disposable {
 		}
 	}
 
+	/** Changes in the window's folders' repositories, not every one Git opened (parents, nested checkouts). */
 	private scmHasChanges(): boolean {
+		const folders = this.workspaceContextService.getWorkspace().folders.map(folder => folder.uri);
 		for (const repository of this.scmService.repositories) {
+			const root = repository.provider.rootUri;
+			if (!root || !folders.some(folder => extUriIgnorePathCase.isEqual(root, folder) || this.scmService.getRepository(folder) === repository)) {
+				continue;
+			}
 			for (const group of repository.provider.groups) {
 				if (group.resources.length) {
 					return true;
@@ -713,6 +749,7 @@ export class AgentComposerChips extends Disposable {
 		const showTerminals = this.runningTerminals > 0 && !showRuns;
 		const showAgents = !!this.agents;
 		const showComments = this.pendingComments > 0;
+		const showMultitask = this.multitaskPick !== undefined;
 		// Steps aside while Source Control shows this chat's changes in the right panel, and while the
 		// Changes chip is up: one git chip at a time, Changes first.
 		const showCommit = !showChanges && this.gitVisible && !this.newChat && !(this.sessionId && isAgentScmShown(this.sessionId));
@@ -724,7 +761,7 @@ export class AgentComposerChips extends Disposable {
 		this.toggleChip(this.prChip, showPr, this.prExit);
 		const showLimit = !!this.options.limitRun?.visible;
 		const showAgentRun = !!this.options.agentRun?.visible;
-		const visible = this.hostOpen && !this.newChat && (showLimit || showAgentRun || showStatus || showComments || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
+		const visible = this.hostOpen && !this.newChat && (showLimit || showAgentRun || showStatus || showComments || showMultitask || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
 		this.element.classList.toggle('is-visible', visible);
 		// A chat hosted in another chat's tools hides the row but keeps its terminals (agentEditor.css).
 		this.element.classList.toggle('has-terminal-runs', showRuns);
@@ -740,6 +777,12 @@ export class AgentComposerChips extends Disposable {
 			? localize('voltAgent.oneComment', "1 comment")
 			: localize('voltAgent.manyComments', "{0} comments", this.pendingComments);
 
+		this.multitaskChip.classList.toggle('hidden', !showMultitask);
+		this.multitaskChip.classList.toggle('empty', this.multitaskPick === 0);
+		this.multitaskLabelEl.textContent = this.multitaskPick === 0
+			? localize('voltAgent.multitaskPickNone', "None to multitask")
+			: localize('voltAgent.multitaskPickCount', "{0} to multitask", this.multitaskPick ?? 0);
+
 		this.agentsChip.classList.toggle('hidden', !showAgents);
 		if (this.agents) {
 			const agents = this.agents;
@@ -748,7 +791,6 @@ export class AgentComposerChips extends Disposable {
 			this.agentsLabelEl.textContent = agents.label;
 			this.agentsWaitingEl.textContent = agents.waiting ? localize('voltAgent.agentsChip.waiting', "\u00b7 {0} needs you", agents.waiting) : '';
 			this.agentsChip.setAttribute('aria-label', agents.waiting ? `${agents.label}, ${localize('voltAgent.agentsChip.waitingAria', "{0} need you", agents.waiting)}` : agents.label);
-			setAgentTooltip(this.agentsChip, agents.tooltip);
 		}
 
 		this.changesAddEl.textContent = this.insertions > 0 ? `+${this.insertions}` : '';
@@ -773,7 +815,7 @@ export class AgentComposerChips extends Disposable {
 		const runs = this.options.terminalRuns?.element;
 		const limit = this.options.limitRun?.element;
 		const agentRun = this.options.agentRun?.element;
-		return [...(limit ? [limit] : []), ...(agentRun ? [agentRun] : []), this.statusChip, this.agentsChip, ...(runs ? [runs] : []), this.commentsChip, this.compactChip, this.changesChip, this.terminalsChip, this.gitControl.element, this.prChip];
+		return [...(limit ? [limit] : []), ...(agentRun ? [agentRun] : []), this.statusChip, this.agentsChip, ...(runs ? [runs] : []), this.commentsChip, this.multitaskChip, this.compactChip, this.changesChip, this.terminalsChip, this.gitControl.element, this.prChip];
 	}
 
 	private scheduleLayout(): void {

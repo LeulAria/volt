@@ -1746,9 +1746,12 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	 * The queue's "Start Multitasking": every queued message starts now as a multitask agent of the
 	 * chat (its own chat, running beside the others), instead of waiting its turn. Returns how many started.
 	 */
-	async multitaskQueue(threadId: string): Promise<number> {
+	async multitaskQueue(threadId: string, itemIds?: readonly string[]): Promise<number> {
 		await this.whenReady;
-		const items = (this.state.threads[threadId]?.queue ?? []).filter(item => (item.kind ?? 'prompt') === 'prompt').slice(0, this.limits.spawnsPerCall);
+		const only = itemIds ? new Set(itemIds) : undefined;
+		const items = (this.state.threads[threadId]?.queue ?? [])
+			.filter(item => (item.kind ?? 'prompt') === 'prompt' && (!only || only.has(item.id)))
+			.slice(0, this.limits.spawnsPerCall);
 		let started = 0;
 		for (const item of items) {
 			const display = item.prompt.display as { readonly text?: unknown } | undefined;

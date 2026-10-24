@@ -218,7 +218,8 @@ export interface IOrchDockModel {
 	readonly failed: number;
 	readonly queue: readonly IOrchQueueItem[];
 	readonly pause?: OrchPause;
-	readonly conflicts: readonly { readonly path: string; readonly titles: readonly string[] }[];
+	/** Files two live agents in one checkout both changed; `taskIds` line up with `titles`. */
+	readonly conflicts: readonly { readonly path: string; readonly titles: readonly string[]; readonly taskIds: readonly string[] }[];
 }
 
 /**
@@ -238,6 +239,7 @@ export function dockModel(state: IOrchState, threadId: string): IOrchDockModel {
 	const conflicts = thread ? (state.conflicts[thread.rootId] ?? []).map(conflict => ({
 		path: conflict.path,
 		titles: conflict.taskIds.map(id => state.tasks[id]?.title ?? state.threads[id]?.title ?? 'This chat'),
+		taskIds: conflict.taskIds,
 	})) : [];
 	return {
 		agents: shown.map(agentRow),
