@@ -1,0 +1,76 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* A link: its URL in link colour, led by the site's logo when it is a known site (YouTube, GitHub, X...). */
+
+.volt-brand-link {
+	color: color-mix(in srgb, var(--vscode-textLink-foreground, #4daafc) 70%, var(--vscode-foreground, #cccccc));
+	overflow-wrap: anywhere;
+	cursor: pointer;
+}
+
+.volt-brand-link-head {
+	white-space: nowrap;
+}
+
+.volt-brand-link:hover,
+.volt-brand-link:focus-visible {
+	text-decoration: underline;
+	text-underline-offset: 3px;
+	outline: none;
+}
+
+/* In a reply the link is the markdown anchor itself. */
+.volt-agent-markdown a.volt-brand-link,
+.volt-agent-markdown a.volt-brand-link:hover {
+	color: color-mix(in srgb, var(--vscode-textLink-foreground, #4daafc) 70%, var(--vscode-foreground, #cccccc));
+	font-weight: inherit;
+	background: none;
+}
+
+.volt-link-brand-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	margin-right: 5px;
+	vertical-align: -2px;
+}
+
+.volt-link-brand-icon svg {
+	display: block;
+}
+
+/* Black-and-white marks follow the text colour. */
+.volt-link-brand-icon:is(.github, .x, .notion, .vercel, .tiktok, .medium, .wikipedia, .apple, .openai) {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-markdown a .volt-link-brand-icon {
+	margin-right: 4px;
+}
+
+/* Composer: the URL stays editable text, led by the site's logo. */
+.volt-agent-monaco .volt-agent-composer-link {
+	color: color-mix(in srgb, var(--vscode-textLink-foreground, #4daafc) 70%, var(--vscode-foreground, #cccccc));
+}
+
+.volt-agent-monaco .volt-agent-composer-link-icon {
+	display: inline-block;
+	position: relative;
+	width: 19px;
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-monaco .volt-agent-composer-link-icon::before {
+	content: '';
+	position: absolute;
+	left: 1px;
+	top: 50%;
+	width: 14px;
+	height: 14px;
+	transform: translateY(-50%);
+}
