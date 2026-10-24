@@ -1,0 +1,209 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Every account's limits over the Usage button (agentUsageHoverCard.ts): compact, one line per
+ * limit window, accounts split by hairlines. Opaque, like the menus.
+ */
+.volt-usage-hover-card {
+	position: fixed;
+	/* Over context-view menus (2575), under the agent tooltip (2700). */
+	z-index: 2600;
+	display: flex;
+	flex-direction: column;
+	width: 280px;
+	max-width: calc(100vw - 16px);
+	max-height: calc(100vh - 16px);
+	box-sizing: border-box;
+	padding: 8px 10px 6px;
+	overflow-y: auto;
+	border-radius: 10px;
+	background: var(--vscode-editor-background, #1e1e1e);
+	color: var(--vscode-foreground);
+	box-shadow:
+		0 0 0 1px var(--vscode-widget-border, rgba(255, 255, 255, 0.1)),
+		0 6px 20px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+	font-size: 11.5px;
+	line-height: 15px;
+	cursor: default;
+	animation: volt-usage-hover-in 100ms ease-out;
+}
+
+@keyframes volt-usage-hover-in {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+.volt-usage-hover-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 20px;
+	padding-bottom: 4px;
+}
+
+.volt-usage-hover-title {
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.volt-usage-hover-checked {
+	flex: 1;
+	min-width: 0;
+	color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
+	font-size: 11px;
+}
+
+.volt-usage-hover-head .monaco-button {
+	height: 20px;
+	padding: 0 6px;
+	font-size: 11px;
+}
+
+/* One account: who, then a line per limit window. */
+.volt-usage-hover-account {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	padding: 6px 0;
+	border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+}
+
+.volt-usage-hover-who {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+	height: 18px;
+}
+
+.volt-usage-hover-who > :first-child {
+	flex: none;
+}
+
+.volt-usage-hover-name {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	font-weight: 500;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	transition: filter 120ms ease-out;
+}
+
+/* Account emails stay blurred until the eye in the head shows them (a plain filter, never backdrop-filter). */
+.volt-usage-hover-card.names-hidden .volt-usage-hover-name.private {
+	filter: blur(4px);
+	user-select: none;
+}
+
+/* Beats `.monaco-workbench .volt-button` (28px, padded) and the workbench codicon size. */
+.monaco-workbench .volt-usage-hover-head .volt-usage-hover-eye.volt-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	flex: none;
+}
+
+.monaco-workbench .volt-usage-hover-head .volt-usage-hover-eye .codicon[class*='codicon-'] {
+	font-size: 13px;
+}
+
+.volt-usage-hover-plan {
+	flex: 1 0 auto;
+	color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
+	font-size: 10.5px;
+	white-space: nowrap;
+}
+
+.volt-usage-hover-badge {
+	flex: none;
+	padding: 0 5px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--vscode-textLink-foreground, #4c8dff) 18%, transparent);
+	color: var(--vscode-textLink-foreground, #4c8dff);
+	font-size: 10px;
+	font-weight: 500;
+	line-height: 15px;
+}
+
+/* "Current week · Opus   [bar]   47%   3d" */
+.volt-usage-hover-window {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 64px 32px 26px;
+	align-items: center;
+	gap: 8px;
+	height: 18px;
+	padding-left: 17px;
+}
+
+.volt-usage-hover-label {
+	overflow: hidden;
+	color: color-mix(in srgb, var(--vscode-foreground) 80%, transparent);
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.volt-usage-hover-bar {
+	display: block;
+	height: 3px;
+	overflow: hidden;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.volt-usage-hover-fill {
+	display: block;
+	height: 100%;
+	border-radius: inherit;
+	background: var(--vscode-textLink-foreground, #4c8dff);
+}
+
+.volt-usage-hover-window.high .volt-usage-hover-fill {
+	background: var(--vscode-editorWarning-foreground, #e5a50a);
+}
+
+.volt-usage-hover-window.full .volt-usage-hover-fill {
+	background: var(--vscode-errorForeground, #f14c4c);
+}
+
+.volt-usage-hover-value {
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+}
+
+.volt-usage-hover-window.full .volt-usage-hover-value {
+	color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.volt-usage-hover-reset {
+	color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+}
+
+.volt-usage-hover-note,
+.volt-usage-hover-empty {
+	padding-left: 17px;
+	color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
+	font-size: 11px;
+}
+
+.volt-usage-hover-empty {
+	padding: 4px 0;
+}
+
+.volt-usage-hover-note.warn {
+	color: var(--vscode-editorWarning-foreground, #e5a50a);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-usage-hover-card {
+		animation: none;
+	}
+}
