@@ -366,7 +366,7 @@ export function MacInstallGuide({ className }: { className?: string }) {
           >
             <header className="flex shrink-0 items-start justify-between gap-4 border-b border-white/10 px-6 py-5">
               <div className="min-w-0">
-                <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/40">
+                <div className="text-[12.5px] font-medium text-white/45">
                   macOS · about a minute
                 </div>
                 <h3
@@ -396,7 +396,7 @@ export function MacInstallGuide({ className }: { className?: string }) {
               {PHASES.map((phase) => (
                 <section key={phase.label} className="mt-8">
                   <div className="mb-4 flex items-baseline gap-3">
-                    <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/80">
+                    <h3 className="text-[14px] font-semibold text-white/85">
                       {phase.label}
                     </h3>
                     <span className="text-[12.5px] text-white/40">

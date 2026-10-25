@@ -214,7 +214,7 @@ function DownloadPage() {
             )}
           >
             <div className="w-full max-w-[460px]">
-              <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-white/35">
+              <div className="mb-2 text-[12.5px] font-medium text-white/45">
                 Or install from a terminal
               </div>
               <InstallCommand />

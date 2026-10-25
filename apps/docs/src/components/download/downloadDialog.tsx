@@ -115,7 +115,7 @@ export function DownloadDialog({
               />
             </span>
             <div className="min-w-0">
-              <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/40">
+              <div className="text-[12.5px] font-medium text-white/45">
                 {info.app} {asset.version}
               </div>
               <h3

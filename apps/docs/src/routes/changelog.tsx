@@ -183,12 +183,7 @@ function Section({ section }: { section: ChangelogSection }) {
   return (
     <section className="mt-10">
       {section.title ? (
-        <h3
-          className={cn(
-            "text-[14px] font-medium uppercase tracking-[0.06em]",
-            style.tone,
-          )}
-        >
+        <h3 className={cn("text-[14px] font-medium", style.tone)}>
           {section.title}
         </h3>
       ) : null}

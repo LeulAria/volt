@@ -10,9 +10,9 @@ import {
 import { DISCORD_URL, DiscordIcon, focusRing, GithubMarkIcon } from "./install";
 
 const PILL =
-  "inline-flex h-6 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] px-2.5 leading-none text-[10px] font-medium uppercase tracking-[0.16em] text-white/70 backdrop-blur-xl transition-colors duration-150 hover:border-white/25 hover:bg-white/10 hover:text-white";
+  "inline-flex h-6 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] px-2.5 leading-none text-[12px] font-medium text-white/70 backdrop-blur-xl transition-colors duration-150 hover:border-white/25 hover:bg-white/10 hover:text-white";
 const TEXT_LINK =
-  "inline-flex h-6 items-center justify-center rounded-md px-2 leading-none text-[10px] font-medium uppercase tracking-[0.16em] text-white/65 transition-colors duration-150 hover:text-white";
+  "inline-flex h-6 items-center justify-center rounded-md px-2 leading-none text-[12px] font-medium text-white/65 transition-colors duration-150 hover:text-white";
 
 /** Logo, the beta label with the newest GitHub release, Changelog / Download as text links, and the Discord / GitHub pills (GitHub with its live star count). */
 export function SiteHeader({
@@ -58,9 +58,9 @@ export function SiteHeader({
             ? `Public beta, version ${version}: releases on GitHub`
             : "Public beta: releases on GitHub"
         }
-        className={`inline-flex h-6 min-w-0 items-center justify-center gap-1.5 rounded-md px-2 text-center text-[10px] font-medium tracking-[0.08em] text-white/65 transition-colors duration-150 hover:text-white sm:gap-2 sm:tracking-[0.16em] ${focusRing}`}
+        className={`inline-flex h-6 min-w-0 items-center justify-center gap-1.5 rounded-md px-2 text-center text-[12px] font-medium text-white/65 transition-colors duration-150 hover:text-white sm:gap-2 ${focusRing}`}
       >
-        <span className="inline-flex items-center pt-px pl-[0.16em] uppercase leading-none">
+        <span className="inline-flex items-center leading-none">
           Public beta
         </span>
         {version ? (
