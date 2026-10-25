@@ -1,6 +1,7 @@
 import changelogSource from "virtual:changelog";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowUpRight } from "lucide-react";
+import { Inline } from "@/components/inlineMarkdown";
 import { SiteFooter } from "@/components/landing/closing";
 import {
   COLUMN,
@@ -15,8 +16,6 @@ import {
   type ChangelogRelease,
   type ChangelogSection,
   parseChangelog,
-  parseInline,
-  resolveChangelogHref,
   splitReleaseTitle,
 } from "@/lib/changelog";
 import { cn } from "@/lib/cn";
@@ -229,52 +228,5 @@ function Section({ section }: { section: ChangelogSection }) {
         </div>
       ))}
     </section>
-  );
-}
-
-function Inline({ text }: { text: string }) {
-  return (
-    <>
-      {parseInline(text).map((token, index) => {
-        const key = `${index}-${token.text}`;
-        switch (token.kind) {
-          case "strong":
-            return (
-              <strong key={key} className="font-semibold text-white/90">
-                {token.text}
-              </strong>
-            );
-          case "em":
-            return (
-              <em key={key} className="text-white/80">
-                {token.text}
-              </em>
-            );
-          case "code":
-            return (
-              <code
-                key={key}
-                className="rounded bg-white/[0.07] px-1.5 py-0.5 font-mono text-[0.86em] text-white/80"
-              >
-                {token.text}
-              </code>
-            );
-          case "link":
-            return (
-              <a
-                key={key}
-                href={resolveChangelogHref(token.href, REPO_URL)}
-                target="_blank"
-                rel="noreferrer"
-                className="text-white/85 underline decoration-white/30 underline-offset-4 transition-colors hover:text-white hover:decoration-white/70"
-              >
-                {token.text}
-              </a>
-            );
-          default:
-            return <span key={key}>{token.text}</span>;
-        }
-      })}
-    </>
   );
 }

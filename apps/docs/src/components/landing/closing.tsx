@@ -4,6 +4,7 @@ import { LandingDownload } from "@/components/download/primaryDownload";
 import { cn } from "@/lib/cn";
 import { gsap, REDUCED, useGSAP } from "@/lib/gsap";
 import { defaultArch } from "@/lib/releases";
+import { useHydrated } from "@/lib/useHydrated";
 import { useDetectedPlatform, useReleases } from "@/lib/useReleases";
 import { COLUMN } from "./geometry";
 import {
@@ -74,11 +75,13 @@ const LABEL = "fill-white/40 font-mono text-[10px] tracking-[0.08em]";
 
 export function ClosingCta() {
   const ref = useRef<HTMLElement>(null);
+  const hydrated = useHydrated();
 
   useGSAP(
     () => {
       const root = ref.current;
-      if (!root) return;
+      // The construction is drawn after hydration (see below); animate it once it is there.
+      if (!root || !hydrated) return;
       gsap.matchMedia().add(`not ${REDUCED}`, () => {
         const trigger = {
           trigger: root.querySelector("[data-construct]"),
@@ -157,7 +160,7 @@ export function ClosingCta() {
         });
       });
     },
-    { scope: ref },
+    { scope: ref, dependencies: [hydrated] },
   );
 
   return (
@@ -171,146 +174,149 @@ export function ClosingCta() {
           data-construct
           className="relative aspect-square w-[min(88vw,520px)]"
         >
-          <svg
-            viewBox="-300 -300 600 600"
-            aria-hidden
-            fill="none"
-            className="absolute inset-0 size-full overflow-visible"
-          >
-            <g stroke="currentColor" className="text-white">
-              <line
-                data-c-centre
-                x1={-300}
-                y1={0}
-                x2={300}
-                y2={0}
-                strokeOpacity={0.09}
-                vectorEffect="non-scaling-stroke"
-              />
-              <line
-                data-c-centre
-                x1={0}
-                y1={-300}
-                x2={0}
-                y2={300}
-                strokeOpacity={0.09}
-                vectorEffect="non-scaling-stroke"
-              />
-              <line
-                data-c-centre
-                x1={-R2 * Math.SQRT1_2}
-                y1={-R2 * Math.SQRT1_2}
-                x2={R2 * Math.SQRT1_2}
-                y2={R2 * Math.SQRT1_2}
-                strokeOpacity={0.05}
-                vectorEffect="non-scaling-stroke"
-              />
-              <line
-                data-c-centre
-                x1={-R2 * Math.SQRT1_2}
-                y1={R2 * Math.SQRT1_2}
-                x2={R2 * Math.SQRT1_2}
-                y2={-R2 * Math.SQRT1_2}
-                strokeOpacity={0.05}
-                vectorEffect="non-scaling-stroke"
-              />
-              <circle
-                data-c-draw
-                r={R0}
-                strokeOpacity={0.14}
-                strokeDasharray="2 6"
-                vectorEffect="non-scaling-stroke"
-                transform="rotate(-90)"
-              />
-              <circle
-                data-c-draw
-                r={R1}
-                strokeOpacity={0.1}
-                vectorEffect="non-scaling-stroke"
-                transform="rotate(-90)"
-              />
-              <circle
-                data-c-draw
-                r={R2}
-                strokeOpacity={0.14}
-                vectorEffect="non-scaling-stroke"
-                transform="rotate(-90)"
-              />
-              <g data-c-ring>
-                {RING.map((t) => (
-                  <line
-                    key={t.i}
-                    x1={t.x1}
-                    y1={t.y1}
-                    x2={t.x2}
-                    y2={t.y2}
-                    strokeOpacity={t.long ? 0.3 : 0.12}
-                    vectorEffect="non-scaling-stroke"
-                  />
-                ))}
+          {/* 20 KB of construction lines, drawn in on scroll: only in the browser. */}
+          {hydrated ? (
+            <svg
+              viewBox="-300 -300 600 600"
+              aria-hidden
+              fill="none"
+              className="absolute inset-0 size-full overflow-visible"
+            >
+              <g stroke="currentColor" className="text-white">
+                <line
+                  data-c-centre
+                  x1={-300}
+                  y1={0}
+                  x2={300}
+                  y2={0}
+                  strokeOpacity={0.09}
+                  vectorEffect="non-scaling-stroke"
+                />
+                <line
+                  data-c-centre
+                  x1={0}
+                  y1={-300}
+                  x2={0}
+                  y2={300}
+                  strokeOpacity={0.09}
+                  vectorEffect="non-scaling-stroke"
+                />
+                <line
+                  data-c-centre
+                  x1={-R2 * Math.SQRT1_2}
+                  y1={-R2 * Math.SQRT1_2}
+                  x2={R2 * Math.SQRT1_2}
+                  y2={R2 * Math.SQRT1_2}
+                  strokeOpacity={0.05}
+                  vectorEffect="non-scaling-stroke"
+                />
+                <line
+                  data-c-centre
+                  x1={-R2 * Math.SQRT1_2}
+                  y1={R2 * Math.SQRT1_2}
+                  x2={R2 * Math.SQRT1_2}
+                  y2={-R2 * Math.SQRT1_2}
+                  strokeOpacity={0.05}
+                  vectorEffect="non-scaling-stroke"
+                />
+                <circle
+                  data-c-draw
+                  r={R0}
+                  strokeOpacity={0.14}
+                  strokeDasharray="2 6"
+                  vectorEffect="non-scaling-stroke"
+                  transform="rotate(-90)"
+                />
+                <circle
+                  data-c-draw
+                  r={R1}
+                  strokeOpacity={0.1}
+                  vectorEffect="non-scaling-stroke"
+                  transform="rotate(-90)"
+                />
+                <circle
+                  data-c-draw
+                  r={R2}
+                  strokeOpacity={0.14}
+                  vectorEffect="non-scaling-stroke"
+                  transform="rotate(-90)"
+                />
+                <g data-c-ring>
+                  {RING.map((t) => (
+                    <line
+                      key={t.i}
+                      x1={t.x1}
+                      y1={t.y1}
+                      x2={t.x2}
+                      y2={t.y2}
+                      strokeOpacity={t.long ? 0.3 : 0.12}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  ))}
+                </g>
+                {/* golden angle */}
+                <line
+                  data-c-draw
+                  x1={0}
+                  y1={0}
+                  x2={0}
+                  y2={-R2}
+                  stroke="#ff6228"
+                  strokeOpacity={0.35}
+                  vectorEffect="non-scaling-stroke"
+                />
+                <line
+                  data-c-draw
+                  x1={0}
+                  y1={0}
+                  x2={GA.x}
+                  y2={GA.y}
+                  stroke="#ff6228"
+                  strokeOpacity={0.35}
+                  vectorEffect="non-scaling-stroke"
+                />
+                <path
+                  data-c-draw
+                  d={arcPath(R0 * 1.3, 0, GOLDEN_ANGLE)}
+                  stroke="#ff6228"
+                  strokeOpacity={0.8}
+                  vectorEffect="non-scaling-stroke"
+                />
               </g>
-              {/* golden angle */}
-              <line
-                data-c-draw
-                x1={0}
-                y1={0}
-                x2={0}
-                y2={-R2}
-                stroke="#ff6228"
-                strokeOpacity={0.35}
-                vectorEffect="non-scaling-stroke"
-              />
-              <line
-                data-c-draw
-                x1={0}
-                y1={0}
-                x2={GA.x}
-                y2={GA.y}
-                stroke="#ff6228"
-                strokeOpacity={0.35}
-                vectorEffect="non-scaling-stroke"
-              />
               <path
-                data-c-draw
-                d={arcPath(R0 * 1.3, 0, GOLDEN_ANGLE)}
+                data-spiral
+                d={SPIRAL}
                 stroke="#ff6228"
-                strokeOpacity={0.8}
+                strokeOpacity={0.55}
                 vectorEffect="non-scaling-stroke"
               />
-            </g>
-            <path
-              data-spiral
-              d={SPIRAL}
-              stroke="#ff6228"
-              strokeOpacity={0.55}
-              vectorEffect="non-scaling-stroke"
-            />
-            <g className="max-md:hidden">
-              <text data-c-label x={R1 + 8} y={-8} className={LABEL}>
-                φ = 1.6180
-              </text>
-              <text data-c-label x={R2 + 30} y={4} className={LABEL}>
-                r₂ {g(R2)}
-              </text>
-              <text
-                data-c-label
-                x={R0 * 1.3 * 0.75 + 6}
-                y={R0 * 0.2}
-                className="fill-[#ff8a5a] font-mono text-[10px] tracking-[0.08em]"
-              >
-                {GOLDEN_ANGLE.toFixed(1)}°
-              </text>
-              <text
-                data-c-label
-                x={-R0 - 6}
-                y={-6}
-                textAnchor="end"
-                className={LABEL}
-              >
-                r₀ {R0}
-              </text>
-            </g>
-          </svg>
+              <g className="max-md:hidden">
+                <text data-c-label x={R1 + 8} y={-8} className={LABEL}>
+                  φ = 1.6180
+                </text>
+                <text data-c-label x={R2 + 30} y={4} className={LABEL}>
+                  r₂ {g(R2)}
+                </text>
+                <text
+                  data-c-label
+                  x={R0 * 1.3 * 0.75 + 6}
+                  y={R0 * 0.2}
+                  className="fill-[#ff8a5a] font-mono text-[10px] tracking-[0.08em]"
+                >
+                  {GOLDEN_ANGLE.toFixed(1)}°
+                </text>
+                <text
+                  data-c-label
+                  x={-R0 - 6}
+                  y={-6}
+                  textAnchor="end"
+                  className={LABEL}
+                >
+                  r₀ {R0}
+                </text>
+              </g>
+            </svg>
+          ) : null}
           <img
             data-c-icon
             src="/volt-icon-256.png"
@@ -387,6 +393,15 @@ export function SiteFooter() {
           </Link>
           <Link to="/changelog" className="transition-colors hover:text-white">
             Changelog
+          </Link>
+          <Link to="/about" className="transition-colors hover:text-white">
+            About
+          </Link>
+          <Link to="/contact" className="transition-colors hover:text-white">
+            Contact
+          </Link>
+          <Link to="/privacy" className="transition-colors hover:text-white">
+            Privacy
           </Link>
           <a href="/llms.txt" className="transition-colors hover:text-white">
             llms.txt

@@ -10,10 +10,22 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AboutRouteImport } from './routes/about'
+import { Route as AboutDotmdRouteImport } from './routes/about[.]md'
 import { Route as ChangelogRouteImport } from './routes/changelog'
+import { Route as ChangelogDotmdRouteImport } from './routes/changelog[.]md'
+import { Route as ContactRouteImport } from './routes/contact'
+import { Route as ContactDotmdRouteImport } from './routes/contact[.]md'
 import { Route as DownloadRouteImport } from './routes/download'
+import { Route as DownloadDotmdRouteImport } from './routes/download[.]md'
+import { Route as IndexDotmdRouteImport } from './routes/index[.]md'
 import { Route as LlmsFullDottxtRouteImport } from './routes/llms-full[.]txt'
 import { Route as LlmsDottxtRouteImport } from './routes/llms[.]txt'
+import { Route as OpenapiDotjsonRouteImport } from './routes/openapi[.]json'
+import { Route as PrivacyRouteImport } from './routes/privacy'
+import { Route as PrivacyDotmdRouteImport } from './routes/privacy[.]md'
+import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
+import { Route as ApiMcpRouteImport } from './routes/api/mcp'
 import { Route as ApiSearchRouteImport } from './routes/api/search'
 import { Route as DocsSplatRouteImport } from './routes/docs/$'
 import { Route as LlmsDotmdxDocsSplatRouteImport } from './routes/llms[.]mdx.docs.$'
@@ -23,14 +35,49 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AboutRoute = AboutRouteImport.update({
+  id: '/about',
+  path: '/about',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AboutDotmdRoute = AboutDotmdRouteImport.update({
+  id: '/about.md',
+  path: '/about.md',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ChangelogRoute = ChangelogRouteImport.update({
   id: '/changelog',
   path: '/changelog',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ChangelogDotmdRoute = ChangelogDotmdRouteImport.update({
+  id: '/changelog.md',
+  path: '/changelog.md',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContactRoute = ContactRouteImport.update({
+  id: '/contact',
+  path: '/contact',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContactDotmdRoute = ContactDotmdRouteImport.update({
+  id: '/contact.md',
+  path: '/contact.md',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DownloadRoute = DownloadRouteImport.update({
   id: '/download',
   path: '/download',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DownloadDotmdRoute = DownloadDotmdRouteImport.update({
+  id: '/download.md',
+  path: '/download.md',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IndexDotmdRoute = IndexDotmdRouteImport.update({
+  id: '/index.md',
+  path: '/index.md',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LlmsFullDottxtRoute = LlmsFullDottxtRouteImport.update({
@@ -41,6 +88,31 @@ const LlmsFullDottxtRoute = LlmsFullDottxtRouteImport.update({
 const LlmsDottxtRoute = LlmsDottxtRouteImport.update({
   id: '/llms.txt',
   path: '/llms.txt',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OpenapiDotjsonRoute = OpenapiDotjsonRouteImport.update({
+  id: '/openapi.json',
+  path: '/openapi.json',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyDotmdRoute = PrivacyDotmdRouteImport.update({
+  id: '/privacy.md',
+  path: '/privacy.md',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
+  id: '/sitemap.xml',
+  path: '/sitemap.xml',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMcpRoute = ApiMcpRouteImport.update({
+  id: '/api/mcp',
+  path: '/api/mcp',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiSearchRoute = ApiSearchRouteImport.update({
@@ -61,20 +133,44 @@ const LlmsDotmdxDocsSplatRoute = LlmsDotmdxDocsSplatRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
+  '/about.md': typeof AboutDotmdRoute
   '/changelog': typeof ChangelogRoute
+  '/changelog.md': typeof ChangelogDotmdRoute
+  '/contact': typeof ContactRoute
+  '/contact.md': typeof ContactDotmdRoute
   '/download': typeof DownloadRoute
+  '/download.md': typeof DownloadDotmdRoute
+  '/index.md': typeof IndexDotmdRoute
   '/llms-full.txt': typeof LlmsFullDottxtRoute
   '/llms.txt': typeof LlmsDottxtRoute
+  '/openapi.json': typeof OpenapiDotjsonRoute
+  '/privacy': typeof PrivacyRoute
+  '/privacy.md': typeof PrivacyDotmdRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/api/mcp': typeof ApiMcpRoute
   '/api/search': typeof ApiSearchRoute
   '/docs/$': typeof DocsSplatRoute
   '/llms.mdx/docs/$': typeof LlmsDotmdxDocsSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
+  '/about.md': typeof AboutDotmdRoute
   '/changelog': typeof ChangelogRoute
+  '/changelog.md': typeof ChangelogDotmdRoute
+  '/contact': typeof ContactRoute
+  '/contact.md': typeof ContactDotmdRoute
   '/download': typeof DownloadRoute
+  '/download.md': typeof DownloadDotmdRoute
+  '/index.md': typeof IndexDotmdRoute
   '/llms-full.txt': typeof LlmsFullDottxtRoute
   '/llms.txt': typeof LlmsDottxtRoute
+  '/openapi.json': typeof OpenapiDotjsonRoute
+  '/privacy': typeof PrivacyRoute
+  '/privacy.md': typeof PrivacyDotmdRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/api/mcp': typeof ApiMcpRoute
   '/api/search': typeof ApiSearchRoute
   '/docs/$': typeof DocsSplatRoute
   '/llms.mdx/docs/$': typeof LlmsDotmdxDocsSplatRoute
@@ -82,10 +178,22 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
+  '/about.md': typeof AboutDotmdRoute
   '/changelog': typeof ChangelogRoute
+  '/changelog.md': typeof ChangelogDotmdRoute
+  '/contact': typeof ContactRoute
+  '/contact.md': typeof ContactDotmdRoute
   '/download': typeof DownloadRoute
+  '/download.md': typeof DownloadDotmdRoute
+  '/index.md': typeof IndexDotmdRoute
   '/llms-full.txt': typeof LlmsFullDottxtRoute
   '/llms.txt': typeof LlmsDottxtRoute
+  '/openapi.json': typeof OpenapiDotjsonRoute
+  '/privacy': typeof PrivacyRoute
+  '/privacy.md': typeof PrivacyDotmdRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/api/mcp': typeof ApiMcpRoute
   '/api/search': typeof ApiSearchRoute
   '/docs/$': typeof DocsSplatRoute
   '/llms.mdx/docs/$': typeof LlmsDotmdxDocsSplatRoute
@@ -94,30 +202,66 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/about'
+    | '/about.md'
     | '/changelog'
+    | '/changelog.md'
+    | '/contact'
+    | '/contact.md'
     | '/download'
+    | '/download.md'
+    | '/index.md'
     | '/llms-full.txt'
     | '/llms.txt'
+    | '/openapi.json'
+    | '/privacy'
+    | '/privacy.md'
+    | '/sitemap.xml'
+    | '/api/mcp'
     | '/api/search'
     | '/docs/$'
     | '/llms.mdx/docs/$'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/about'
+    | '/about.md'
     | '/changelog'
+    | '/changelog.md'
+    | '/contact'
+    | '/contact.md'
     | '/download'
+    | '/download.md'
+    | '/index.md'
     | '/llms-full.txt'
     | '/llms.txt'
+    | '/openapi.json'
+    | '/privacy'
+    | '/privacy.md'
+    | '/sitemap.xml'
+    | '/api/mcp'
     | '/api/search'
     | '/docs/$'
     | '/llms.mdx/docs/$'
   id:
     | '__root__'
     | '/'
+    | '/about'
+    | '/about.md'
     | '/changelog'
+    | '/changelog.md'
+    | '/contact'
+    | '/contact.md'
     | '/download'
+    | '/download.md'
+    | '/index.md'
     | '/llms-full.txt'
     | '/llms.txt'
+    | '/openapi.json'
+    | '/privacy'
+    | '/privacy.md'
+    | '/sitemap.xml'
+    | '/api/mcp'
     | '/api/search'
     | '/docs/$'
     | '/llms.mdx/docs/$'
@@ -125,10 +269,22 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AboutRoute: typeof AboutRoute
+  AboutDotmdRoute: typeof AboutDotmdRoute
   ChangelogRoute: typeof ChangelogRoute
+  ChangelogDotmdRoute: typeof ChangelogDotmdRoute
+  ContactRoute: typeof ContactRoute
+  ContactDotmdRoute: typeof ContactDotmdRoute
   DownloadRoute: typeof DownloadRoute
+  DownloadDotmdRoute: typeof DownloadDotmdRoute
+  IndexDotmdRoute: typeof IndexDotmdRoute
   LlmsFullDottxtRoute: typeof LlmsFullDottxtRoute
   LlmsDottxtRoute: typeof LlmsDottxtRoute
+  OpenapiDotjsonRoute: typeof OpenapiDotjsonRoute
+  PrivacyRoute: typeof PrivacyRoute
+  PrivacyDotmdRoute: typeof PrivacyDotmdRoute
+  SitemapDotxmlRoute: typeof SitemapDotxmlRoute
+  ApiMcpRoute: typeof ApiMcpRoute
   ApiSearchRoute: typeof ApiSearchRoute
   DocsSplatRoute: typeof DocsSplatRoute
   LlmsDotmdxDocsSplatRoute: typeof LlmsDotmdxDocsSplatRoute
@@ -143,6 +299,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/about': {
+      id: '/about'
+      path: '/about'
+      fullPath: '/about'
+      preLoaderRoute: typeof AboutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/about.md': {
+      id: '/about.md'
+      path: '/about.md'
+      fullPath: '/about.md'
+      preLoaderRoute: typeof AboutDotmdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/changelog': {
       id: '/changelog'
       path: '/changelog'
@@ -150,11 +320,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChangelogRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/changelog.md': {
+      id: '/changelog.md'
+      path: '/changelog.md'
+      fullPath: '/changelog.md'
+      preLoaderRoute: typeof ChangelogDotmdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/contact': {
+      id: '/contact'
+      path: '/contact'
+      fullPath: '/contact'
+      preLoaderRoute: typeof ContactRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/contact.md': {
+      id: '/contact.md'
+      path: '/contact.md'
+      fullPath: '/contact.md'
+      preLoaderRoute: typeof ContactDotmdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/download': {
       id: '/download'
       path: '/download'
       fullPath: '/download'
       preLoaderRoute: typeof DownloadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/download.md': {
+      id: '/download.md'
+      path: '/download.md'
+      fullPath: '/download.md'
+      preLoaderRoute: typeof DownloadDotmdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/index.md': {
+      id: '/index.md'
+      path: '/index.md'
+      fullPath: '/index.md'
+      preLoaderRoute: typeof IndexDotmdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/llms-full.txt': {
@@ -169,6 +374,41 @@ declare module '@tanstack/react-router' {
       path: '/llms.txt'
       fullPath: '/llms.txt'
       preLoaderRoute: typeof LlmsDottxtRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/openapi.json': {
+      id: '/openapi.json'
+      path: '/openapi.json'
+      fullPath: '/openapi.json'
+      preLoaderRoute: typeof OpenapiDotjsonRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy.md': {
+      id: '/privacy.md'
+      path: '/privacy.md'
+      fullPath: '/privacy.md'
+      preLoaderRoute: typeof PrivacyDotmdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sitemap.xml': {
+      id: '/sitemap.xml'
+      path: '/sitemap.xml'
+      fullPath: '/sitemap.xml'
+      preLoaderRoute: typeof SitemapDotxmlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/mcp': {
+      id: '/api/mcp'
+      path: '/api/mcp'
+      fullPath: '/api/mcp'
+      preLoaderRoute: typeof ApiMcpRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/search': {
@@ -197,10 +437,22 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AboutRoute: AboutRoute,
+  AboutDotmdRoute: AboutDotmdRoute,
   ChangelogRoute: ChangelogRoute,
+  ChangelogDotmdRoute: ChangelogDotmdRoute,
+  ContactRoute: ContactRoute,
+  ContactDotmdRoute: ContactDotmdRoute,
   DownloadRoute: DownloadRoute,
+  DownloadDotmdRoute: DownloadDotmdRoute,
+  IndexDotmdRoute: IndexDotmdRoute,
   LlmsFullDottxtRoute: LlmsFullDottxtRoute,
   LlmsDottxtRoute: LlmsDottxtRoute,
+  OpenapiDotjsonRoute: OpenapiDotjsonRoute,
+  PrivacyRoute: PrivacyRoute,
+  PrivacyDotmdRoute: PrivacyDotmdRoute,
+  SitemapDotxmlRoute: SitemapDotxmlRoute,
+  ApiMcpRoute: ApiMcpRoute,
   ApiSearchRoute: ApiSearchRoute,
   DocsSplatRoute: DocsSplatRoute,
   LlmsDotmdxDocsSplatRoute: LlmsDotmdxDocsSplatRoute,
@@ -210,10 +462,11 @@ export const routeTree = rootRouteImport
   ._addFileTypes<FileRouteTypes>()
 
 import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
+import type { startInstance } from './start.ts'
 declare module '@tanstack/react-start' {
   interface Register {
     ssr: true
     router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
   }
 }

@@ -1,4 +1,5 @@
-import { appName, docsRoute } from "./shared";
+import { appName, docsContentRoute, docsRoute, gitConfig } from "./shared";
+import { SITE_DISCORD_URL as DISCORD_URL } from "./sitePages";
 
 /** Canonical site origin (og:image, canonical links, sitemap). `VITE_SITE_URL` overrides it. */
 export const siteUrl =
@@ -96,6 +97,61 @@ export function rootHeadLinks(): Array<{
   ];
 }
 
+const ORGANIZATION_ID = `${siteUrl}/#organization`;
+const REPO_URL = `https://github.com/${gitConfig.user}/${gitConfig.repo}`;
+
+/**
+ * Where the organization is, for schema.org's PostalAddress. Left empty until the maintainers publish
+ * one; the Organization below includes it only when it is set.
+ */
+const ORGANIZATION_ADDRESS:
+  | {
+      streetAddress?: string;
+      addressLocality?: string;
+      addressRegion?: string;
+      postalCode?: string;
+      addressCountry: string;
+    }
+  | undefined = undefined;
+
+/** JSON-LD: Organization, who runs the site and how to reach them (the Contact page's channels). */
+export function jsonLdOrganization() {
+  return {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "@id": ORGANIZATION_ID,
+    name: appName,
+    legalName: "Volt ADK",
+    url: siteUrl,
+    logo: absoluteUrl("/volt-icon-256.png"),
+    description: seo.homeDescription,
+    sameAs: [REPO_URL, DISCORD_URL],
+    contactPoint: [
+      {
+        "@type": "ContactPoint",
+        contactType: "customer support",
+        url: `${REPO_URL}/issues/new/choose`,
+        availableLanguage: ["English"],
+      },
+      {
+        "@type": "ContactPoint",
+        contactType: "technical support",
+        url: DISCORD_URL,
+        availableLanguage: ["English"],
+      },
+      {
+        "@type": "ContactPoint",
+        contactType: "security",
+        url: `${REPO_URL}/security/advisories/new`,
+        availableLanguage: ["English"],
+      },
+    ],
+    ...(ORGANIZATION_ADDRESS
+      ? { address: { "@type": "PostalAddress", ...ORGANIZATION_ADDRESS } }
+      : {}),
+  };
+}
+
 /** JSON-LD: WebSite (root). */
 export function jsonLdWebSite() {
   return {
@@ -104,12 +160,51 @@ export function jsonLdWebSite() {
     name: appName,
     url: siteUrl,
     description: seo.homeDescription,
-    publisher: {
-      "@type": "Organization",
-      name: appName,
-      url: siteUrl,
-    },
+    publisher: { "@id": ORGANIZATION_ID },
   };
+}
+
+type HeadMeta = Array<
+  | { title: string }
+  | { name: string; content: string }
+  | { property: string; content: string }
+  | { "script:ld+json": Record<string, unknown> }
+>;
+type HeadLink = { rel: string; href: string; type?: string; title?: string };
+
+/** `<link rel="alternate" type="text/markdown">`: the page as Markdown, for agents. */
+export function markdownAlternate(href: string): HeadLink {
+  return { rel: "alternate", type: "text/markdown", href, title: "Markdown" };
+}
+
+/** Meta for the site's plain pages (About, Contact, Privacy). */
+export function sitePageMeta(opts: {
+  title: string;
+  description: string;
+  path: string;
+  organization?: boolean;
+}): HeadMeta {
+  const title = `${opts.title} — ${appName}`;
+  const url = absoluteUrl(opts.path);
+  return [
+    { title },
+    { name: "description", content: opts.description },
+    { property: "og:title", content: title },
+    { property: "og:description", content: opts.description },
+    { property: "og:url", content: url },
+    { property: "og:image", content: absoluteUrl(seo.defaultOgImagePath) },
+    { property: "og:type", content: "website" },
+    { name: "twitter:title", content: title },
+    { name: "twitter:description", content: opts.description },
+    ...(opts.organization ? [{ "script:ld+json": jsonLdOrganization() }] : []),
+  ];
+}
+
+export function sitePageLinks(path: string): HeadLink[] {
+  return [
+    { rel: "canonical", href: absoluteUrl(path) },
+    markdownAlternate(`${path}.md`),
+  ];
 }
 
 /** JSON-LD: SoftwareApplication (product). */
@@ -155,13 +250,14 @@ export function homeRouteMeta(): Array<
     { name: "twitter:title", content: title },
     { name: "twitter:description", content: desc },
     { name: "twitter:image", content: absoluteUrl(seo.defaultOgImagePath) },
+    { "script:ld+json": jsonLdOrganization() },
     { "script:ld+json": jsonLdWebSite() },
     { "script:ld+json": jsonLdSoftwareApplication() },
   ];
 }
 
-export function homeRouteLinks(): Array<{ rel: string; href: string }> {
-  return [{ rel: "canonical", href: siteUrl }];
+export function homeRouteLinks(): HeadLink[] {
+  return [{ rel: "canonical", href: siteUrl }, markdownAlternate("/index.md")];
 }
 
 export function docsPageMeta(opts: {
@@ -200,16 +296,24 @@ export function docsPageMeta(opts: {
         description: desc,
         url,
         author: { "@type": "Organization", name: appName },
-        publisher: { "@type": "Organization", name: appName, url: siteUrl },
+        publisher: {
+          "@type": "Organization",
+          "@id": ORGANIZATION_ID,
+          name: appName,
+          url: siteUrl,
+        },
       },
     },
   ];
 }
 
-export function docsPageLinks(
-  slugPath: string,
-): Array<{ rel: string; href: string }> {
-  return [{ rel: "canonical", href: absoluteUrl(slugPath) }];
+export function docsPageLinks(slugPath: string): HeadLink[] {
+  // /docs/install → /llms.mdx/docs/install/content.md (the llms.mdx route), /docs → /llms.mdx/docs/content.md
+  const markdown = `${docsContentRoute}${slugPath.slice(docsRoute.length)}/content.md`;
+  return [
+    { rel: "canonical", href: absoluteUrl(slugPath) },
+    markdownAlternate(markdown),
+  ];
 }
 
 /** Meta entries for `/download`. */
@@ -237,8 +341,8 @@ export function downloadRouteMeta(): Array<
   ];
 }
 
-export function downloadRouteLinks(): Array<{ rel: string; href: string }> {
-  return [{ rel: "canonical", href: absoluteUrl("/download") }];
+export function downloadRouteLinks(): HeadLink[] {
+  return sitePageLinks("/download");
 }
 
 /** Meta entries for `/changelog`. */
@@ -266,6 +370,6 @@ export function changelogRouteMeta(): Array<
   ];
 }
 
-export function changelogRouteLinks(): Array<{ rel: string; href: string }> {
-  return [{ rel: "canonical", href: absoluteUrl("/changelog") }];
+export function changelogRouteLinks(): HeadLink[] {
+  return sitePageLinks("/changelog");
 }

@@ -7,6 +7,7 @@ import {
   BOLT_W,
 } from "@/lib/boltGeometry";
 import { gsap, REDUCED, useGSAP } from "@/lib/gsap";
+import { useHydrated } from "@/lib/useHydrated";
 
 /*
  * Construction drawing around the brand bolt. The bolt's ink box is fitted into the square
@@ -74,6 +75,8 @@ const LABEL = "fill-white/45 font-mono text-[15px] tracking-[0.06em]";
 
 export function HeroGeometry() {
   const ref = useRef<SVGSVGElement>(null);
+  // The drawing is 15 KB of SVG and starts hidden, so it is drawn only in the browser.
+  const hydrated = useHydrated();
 
   useGSAP(
     () => {
@@ -148,8 +151,10 @@ export function HeroGeometry() {
         });
       });
     },
-    { scope: ref },
+    { scope: ref, dependencies: [hydrated] },
   );
+
+  if (!hydrated) return null;
 
   return (
     <svg
