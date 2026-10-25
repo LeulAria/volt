@@ -46,6 +46,22 @@ export const EXPLORER_ICON_SHAPES: SvgIconShapes = [
 	['path', { d: 'M2 10h20' }],
 ];
 
+/** Lucide square-terminal, globe and smartphone: strokes like the other rows, instead of filled codicons. */
+const TERMINAL_ICON_SHAPES: SvgIconShapes = [
+	['rect', { x: 3, y: 3, width: 18, height: 18, rx: 2 }],
+	['path', { d: 'm7 11 2-2-2-2' }],
+	['path', { d: 'M11 13h4' }],
+];
+const BROWSER_ICON_SHAPES: SvgIconShapes = [
+	['circle', { cx: 12, cy: 12, r: 10 }],
+	['path', { d: 'M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20' }],
+	['path', { d: 'M2 12h20' }],
+];
+const DEVICE_ICON_SHAPES: SvgIconShapes = [
+	['rect', { x: 5, y: 2, width: 14, height: 20, rx: 2 }],
+	['path', { d: 'M12 18h.01' }],
+];
+
 export const SIDE_CHAT_ICON_PATH = 'M7 7H15M7 11H11M5 3H19C20.1046 3 21 3.89543 21 5V15C21 16.1046 20.1046 17 19 17H16L12.3536 20.6464C12.1583 20.8417 11.8417 20.8417 11.6464 20.6464L8 17H5C3.89543 17 3 16.1046 3 15V5C3 3.89543 3.89543 3 5 3Z';
 
 /** Right-rail / tab-bar + menu rows that open an agent surface. */
@@ -101,17 +117,20 @@ export function agentSurfaceMenuItems(): readonly IAgentSurfaceMenuItem[] {
 			id: 'terminal',
 			label: localize('voltAgent.surfaceMenu.terminal', "Terminal"),
 			icon: Codicon.terminal,
+			svgPath: TERMINAL_ICON_SHAPES,
 		},
 		{
 			id: 'browser',
 			label: localize('voltAgent.surfaceMenu.browser', "Browser"),
 			icon: Codicon.globe,
+			svgPath: BROWSER_ICON_SHAPES,
 		},
 		{
 			// The iOS Simulator / Android Emulator preview.
 			id: 'device',
 			label: localize('voltAgent.surfaceMenu.device', "Device"),
 			icon: Codicon.deviceMobile,
+			svgPath: DEVICE_ICON_SHAPES,
 		},
 		{
 			id: 'changes',

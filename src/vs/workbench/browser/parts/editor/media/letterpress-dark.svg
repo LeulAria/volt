@@ -3,16 +3,16 @@
 	<!-- The Volt bolt from brand/volt-icon.svg, without its squircle: the glyph with its two folded faces. -->
 	<defs>
 		<linearGradient id="voltBoltShadow" x1="0" y1="0" x2="1" y2="0">
-			<stop offset="0" stop-color="#C9C9CC"/>
-			<stop offset="1" stop-color="#ADADB1"/>
+			<stop offset="0" stop-color="#6E6E73"/>
+			<stop offset="1" stop-color="#606065"/>
 		</linearGradient>
 		<linearGradient id="voltBoltLight" x1="0.2" y1="0" x2="0.5" y2="1">
-			<stop offset="0" stop-color="#E2E2E5"/>
-			<stop offset="1" stop-color="#CFCFD3"/>
+			<stop offset="0" stop-color="#7E7E83"/>
+			<stop offset="1" stop-color="#727277"/>
 		</linearGradient>
 		<clipPath id="voltBoltClip"><path d="M561.9,243.1 L336.4,525.2 A13,13 0 0 0 345.0,546.2 L476.0,561.9 A8,8 0 0 1 482.9,571.6 L439.2,770.0 A13,13 0 0 0 462.1,780.9 L687.6,498.8 A13,13 0 0 0 679.0,477.8 L548.0,462.1 A8,8 0 0 1 541.1,452.4 L584.8,254.0 A13,13 0 0 0 561.9,243.1 Z"/></clipPath>
 	</defs>
-	<path d="M561.9,243.1 L336.4,525.2 A13,13 0 0 0 345.0,546.2 L476.0,561.9 A8,8 0 0 1 482.9,571.6 L439.2,770.0 A13,13 0 0 0 462.1,780.9 L687.6,498.8 A13,13 0 0 0 679.0,477.8 L548.0,462.1 A8,8 0 0 1 541.1,452.4 L584.8,254.0 A13,13 0 0 0 561.9,243.1 Z" fill="#FFFFFF"/>
+	<path d="M561.9,243.1 L336.4,525.2 A13,13 0 0 0 345.0,546.2 L476.0,561.9 A8,8 0 0 1 482.9,571.6 L439.2,770.0 A13,13 0 0 0 462.1,780.9 L687.6,498.8 A13,13 0 0 0 679.0,477.8 L548.0,462.1 A8,8 0 0 1 541.1,452.4 L584.8,254.0 A13,13 0 0 0 561.9,243.1 Z" fill="#8E8E93"/>
 	<g clip-path="url(#voltBoltClip)">
 		<path d="M321.8,543.4 L539.2,461.0 L500.6,563.0 L484.8,563.0 Z" fill="url(#voltBoltShadow)"/>
 		<path d="M539.2,461.0 L702.2,480.6 L462.9,662.4 Z" fill="url(#voltBoltLight)"/>
