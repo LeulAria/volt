@@ -7053,8 +7053,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private syncHostedChrome(): void {
 		// A board's or canvas's own chat dock (toolless) keeps the chat's composer (the follow-up pill), even in a right panel.
 		if (this.container?.closest('.volt-agent-tools-area') && !this.container.closest('.volt-agent-toolless')) {
-			this.setBrowserHosted(!this.isSubagentChat());
+			const readable = this.input instanceof AgentEditorInput && this.input.showTranscriptInTools;
+			this.setBrowserHosted(!this.isSubagentChat() && !readable);
 		}
+	}
+
+	/** Keeps this chat's transcript on screen in another chat's right panel (a chat opened to be read, like a commit's explanation). */
+	showTranscriptInTools(): void {
+		if (this.input instanceof AgentEditorInput) {
+			this.input.showTranscriptInTools = true;
+		}
+		this.syncHostedChrome();
 	}
 
 	/** This chat runs a task another chat delegated. */

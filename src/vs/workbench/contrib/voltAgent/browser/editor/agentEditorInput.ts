@@ -509,6 +509,13 @@ export class AgentEditorInput extends EditorInput {
 		}
 	}
 
+	/**
+	 * In another chat's right panel this chat keeps its transcript instead of the compact
+	 * composer-only chrome: it was opened to be read (Explain / Review from the Git Graph).
+	 * Saved with the tab.
+	 */
+	showTranscriptInTools = false;
+
 	override getIcon(): ThemeIcon {
 		return AgentEditorIcon;
 	}
@@ -579,7 +586,8 @@ export class AgentEditorInputSerializer implements IEditorSerializer {
 		}
 		const resource = editorInput.resource.toString();
 		const title = editorInput.storedTitle;
-		return title ? JSON.stringify({ resource, title }) : resource;
+		const transcript = editorInput.showTranscriptInTools || undefined;
+		return title || transcript ? JSON.stringify({ resource, title, transcript }) : resource;
 	}
 
 	deserialize(instantiationService: IInstantiationService, serializedEditorInput: string): EditorInput | undefined {
@@ -587,16 +595,19 @@ export class AgentEditorInputSerializer implements IEditorSerializer {
 			// Older windows stored the bare resource.
 			let resource = serializedEditorInput;
 			let title: string | undefined;
+			let transcript = false;
 			if (serializedEditorInput.startsWith('{')) {
-				const parsed = JSON.parse(serializedEditorInput) as { resource?: unknown; title?: unknown };
+				const parsed = JSON.parse(serializedEditorInput) as { resource?: unknown; title?: unknown; transcript?: unknown };
 				if (typeof parsed.resource !== 'string') {
 					return undefined;
 				}
 				resource = parsed.resource;
 				title = typeof parsed.title === 'string' ? parsed.title : undefined;
+				transcript = parsed.transcript === true;
 			}
 			const input = instantiationService.createInstance(AgentEditorInput, URI.parse(resource));
 			input.seedTitle(title);
+			input.showTranscriptInTools = transcript;
 			return input;
 		} catch {
 			return undefined;
