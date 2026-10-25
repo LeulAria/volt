@@ -87,6 +87,7 @@ jobs:
 
   linux-cli-tests:
     name: Linux
+    if: github.repository == 'microsoft/vscode' # needs Microsoft's runners
     uses: ./.github/workflows/pr-linux-cli-test.yml
     with:
       job_name: CLI
@@ -94,6 +95,7 @@ jobs:
 
   linux-electron-tests:
     name: Linux
+    if: github.repository == 'microsoft/vscode' # needs Microsoft's runners
     uses: ./.github/workflows/pr-linux-test.yml
     with:
       job_name: Electron
@@ -101,6 +103,7 @@ jobs:
 
   linux-browser-tests:
     name: Linux
+    if: github.repository == 'microsoft/vscode' # needs Microsoft's runners
     uses: ./.github/workflows/pr-linux-test.yml
     with:
       job_name: Browser
@@ -108,6 +111,7 @@ jobs:
 
   linux-remote-tests:
     name: Linux
+    if: github.repository == 'microsoft/vscode' # needs Microsoft's runners
     uses: ./.github/workflows/pr-linux-test.yml
     with:
       job_name: Remote
@@ -115,6 +119,7 @@ jobs:
 
   macos-electron-tests:
     name: macOS
+    if: github.repository == 'microsoft/vscode' # needs Microsoft's runners
     uses: ./.github/workflows/pr-darwin-test.yml
     with:
       job_name: Electron
@@ -122,6 +127,7 @@ jobs:
 
   macos-browser-tests:
     name: macOS
+    if: github.repository == 'microsoft/vscode' # needs Microsoft's runners
     uses: ./.github/workflows/pr-darwin-test.yml
     with:
       job_name: Browser
@@ -129,6 +135,7 @@ jobs:
 
   macos-remote-tests:
     name: macOS
+    if: github.repository == 'microsoft/vscode' # needs Microsoft's runners
     uses: ./.github/workflows/pr-darwin-test.yml
     with:
       job_name: Remote
@@ -136,6 +143,7 @@ jobs:
 
   windows-electron-tests:
     name: Windows
+    if: github.repository == 'microsoft/vscode' # needs Microsoft's runners
     uses: ./.github/workflows/pr-win32-test.yml
     with:
       job_name: Electron
@@ -143,6 +151,7 @@ jobs:
 
   windows-browser-tests:
     name: Windows
+    if: github.repository == 'microsoft/vscode' # needs Microsoft's runners
     uses: ./.github/workflows/pr-win32-test.yml
     with:
       job_name: Browser
@@ -150,6 +159,7 @@ jobs:
 
   windows-remote-tests:
     name: Windows
+    if: github.repository == 'microsoft/vscode' # needs Microsoft's runners
     uses: ./.github/workflows/pr-win32-test.yml
     with:
       job_name: Remote
