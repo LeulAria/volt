@@ -1150,6 +1150,13 @@ export interface BlameInformation {
 	readonly authorName?: string;
 	readonly authorEmail?: string;
 	readonly authorDate?: number;
+	/** The repository-relative path of the file in the commit. */
+	readonly filename?: string;
+	/** The parent commit and the path of the file in it; missing when the commit added the file. */
+	readonly previous?: {
+		readonly hash: string;
+		readonly filename: string;
+	};
 	readonly ranges: {
 		readonly startLineNumber: number;
 		readonly endLineNumber: number;
@@ -1167,6 +1174,7 @@ function parseGitBlame(data: string): BlameInformation[] {
 	let authorEmail: string | undefined = undefined;
 	let authorTime: number | undefined = undefined;
 	let message: string | undefined = undefined;
+	let previous: { hash: string; filename: string } | undefined = undefined;
 	let startLineNumber: number | undefined = undefined;
 	let endLineNumber: number | undefined = undefined;
 
@@ -1194,6 +1202,13 @@ function parseGitBlame(data: string): BlameInformation[] {
 		if (commitHash && line.startsWith('summary ')) {
 			message = line.substring('summary '.length);
 		}
+		if (commitHash && line.startsWith('previous ')) {
+			// previous <hash> <filename>
+			const separator = line.indexOf(' ', 'previous '.length);
+			if (separator !== -1) {
+				previous = { hash: line.substring('previous '.length, separator), filename: line.substring(separator + 1) };
+			}
+		}
 
 		// Commit end
 		if (commitHash && startLineNumber && endLineNumber && line.startsWith('filename ')) {
@@ -1202,12 +1217,13 @@ function parseGitBlame(data: string): BlameInformation[] {
 				existingCommit.ranges.push({ startLineNumber, endLineNumber });
 				blameInformation.set(commitHash, existingCommit);
 			} else {
+				const filename = line.substring('filename '.length);
 				blameInformation.set(commitHash, {
-					hash: commitHash, authorName, authorEmail, authorDate: authorTime, subject: message, ranges: [{ startLineNumber, endLineNumber }]
+					hash: commitHash, authorName, authorEmail, authorDate: authorTime, subject: message, filename, previous, ranges: [{ startLineNumber, endLineNumber }]
 				});
 			}
 
-			commitHash = authorName = authorEmail = authorTime = message = startLineNumber = endLineNumber = undefined;
+			commitHash = authorName = authorEmail = authorTime = message = previous = startLineNumber = endLineNumber = undefined;
 		}
 	}
 
@@ -1477,6 +1493,16 @@ export class Repository {
 		}
 
 		return parseGitCommits(result.stdout);
+	}
+
+	/**
+	 * The local branch a commit is on (`git name-rev`), without the `~N`/`^N` suffix,
+	 * or `undefined` when no local branch contains the commit.
+	 */
+	async getBranchNameOfCommit(hash: string, cancellationToken?: CancellationToken): Promise<string | undefined> {
+		const result = await this.exec(['name-rev', '--name-only', '--no-undefined', '--refs=refs/heads/*', hash], { cancellationToken });
+		const name = result.stdout.trim().replace(/[~^].*$/, '');
+		return name !== '' ? name : undefined;
 	}
 
 	async logFile(uri: Uri, options?: LogFileOptions, cancellationToken?: CancellationToken): Promise<Commit[]> {

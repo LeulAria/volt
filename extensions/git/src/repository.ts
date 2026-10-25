@@ -1167,6 +1167,16 @@ export class Repository implements Disposable {
 		return this.run(Operation.Config(false), () => this.repository.config('unset', 'local', key));
 	}
 
+	/** The value of a config key across all scopes (local, global, system). */
+	getEffectiveConfig(key: string): Promise<string> {
+		return this.run(Operation.Config(true), () => this.repository.config('get', '', key));
+	}
+
+	/** The local branch a commit is on, without running a repository operation. */
+	getBranchNameOfCommit(hash: string, cancellationToken?: CancellationToken): Promise<string | undefined> {
+		return this.repository.getBranchNameOfCommit(hash, cancellationToken);
+	}
+
 	log(options?: GitLogOptions & { silent?: boolean }, cancellationToken?: CancellationToken): Promise<Commit[]> {
 		const showProgress = !options || options.silent !== true;
 		return this.run(Operation.Log(showProgress), () => this.repository.log(options, cancellationToken));

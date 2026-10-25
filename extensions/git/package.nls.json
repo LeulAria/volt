@@ -150,6 +150,7 @@
 	"command.graphDeleteTag": "Delete Tag",
 	"command.blameToggleEditorDecoration": "Toggle Git Blame Editor Decoration",
 	"command.blameToggleStatusBarItem": "Toggle Git Blame Status Bar Item",
+	"command.blameOpenFileChanges": "Open Changes",
 	"command.api.getRepositories": "Get Repositories",
 	"command.api.getRepositoryState": "Get Repository State",
 	"command.api.getRemoteSources": "Get Remote Sources",

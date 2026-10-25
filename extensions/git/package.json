@@ -1323,6 +1323,11 @@
         "command": "git.blame.toggleStatusBarItem",
         "title": "%command.blameToggleStatusBarItem%",
         "category": "Git"
+      },
+      {
+        "command": "git.blame.openFileChanges",
+        "title": "%command.blameOpenFileChanges%",
+        "category": "Git"
       }
     ],
     "continueEditSession": [
@@ -2517,6 +2522,10 @@
         },
         {
           "command": "git.graph.revert",
+          "when": "false"
+        },
+        {
+          "command": "git.blame.openFileChanges",
           "when": "false"
         },
         {
@@ -4360,12 +4369,12 @@
         },
         "git.blame.editorDecoration.enabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "markdownDescription": "%config.blameEditorDecoration.enabled%"
         },
         "git.blame.editorDecoration.template": {
           "type": "string",
-          "default": "${subject}, ${authorName} (${authorDateAgo})",
+          "default": "${authorName}, ${authorDateAgo} • ${subject}",
           "markdownDescription": "%config.blameEditorDecoration.template%"
         },
         "git.blame.statusBarItem.enabled": {
