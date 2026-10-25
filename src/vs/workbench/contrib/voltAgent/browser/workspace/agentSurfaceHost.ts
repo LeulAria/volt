@@ -1253,7 +1253,9 @@ export class AgentSurfaceHost extends Disposable {
 
 	/** Whether the tabs show beside the files sidebar: they have one, and Close Right Panel did not hide them. */
 	private showsTabs(entry: IToolsPart): boolean {
-		return !(this.tabsHidden && this.presentation === 'split') && entry.part.groups.some(group => group.count > 0);
+		// Opened with no tab (Open Right Panel, or the last tab closed), the area beside the files
+		// sidebar shows its list of what can open instead of the sidebar taking the whole area.
+		return !(this.tabsHidden && this.presentation === 'split') && (entry.part.groups.some(group => group.count > 0) || this.keepOpen);
 	}
 
 	/** The room the chat and the tabs split: the row less the split line and a sidebar beside the tabs. */
