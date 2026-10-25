@@ -101,8 +101,9 @@ export default defineConfig({
         { path: "/about" },
         { path: "/contact" },
         { path: "/privacy" },
-        // Markdown versions of the site's pages, for agents (src/lib/agentMarkdown.ts)
-        { path: "/index.md" },
+        // Markdown versions of the site's pages, for agents (src/lib/agentMarkdown.ts). Not /index.md:
+        // the home page has no prerendered index.html, so a static index.md would be what Vercel serves
+        // at `/` to browsers too. The server function answers /index.md instead.
         { path: "/download.md" },
         { path: "/changelog.md" },
         { path: "/about.md" },
