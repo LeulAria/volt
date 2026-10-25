@@ -452,6 +452,7 @@ export class AgentSurfaceHost extends Disposable {
 	private presentation: BrowserPresentation = 'split';
 	private readonly closePanelButton: HTMLButtonElement;
 	private readonly fullscreenButton: HTMLButtonElement;
+	private readonly emptyAddButton: HTMLButtonElement;
 	/** Explorer, Source Control or Search at the right edge of the tools. */
 	private readonly filesSidebar: AgentFilesSidebar;
 	/** Full screen: room for the window's traffic lights, then the chat's own tab. */
@@ -514,6 +515,20 @@ export class AgentSurfaceHost extends Disposable {
 		this.fullscreenButton = $('button.volt-agent-tools-fullscreen') as HTMLButtonElement;
 		this.fullscreenButton.type = 'button';
 		this._register(addDisposableListener(this.fullscreenButton, 'click', () => this.toggleFullscreen()));
+		// An empty group has no editor actions, so its + is ours; agentEditor.css shows it only while the area is empty.
+		this.emptyAddButton = $('button.volt-agent-tools-fullscreen.volt-agent-tools-empty-add') as HTMLButtonElement;
+		this.emptyAddButton.type = 'button';
+		const addLabel = localize('voltAgent.toolsAdd.empty', "Open in Tools");
+		this.emptyAddButton.setAttribute('aria-label', addLabel);
+		setAgentTooltip(this.emptyAddButton, addLabel);
+		this.emptyAddButton.appendChild(renderIcon(Codicon.add));
+		this._register(addDisposableListener(this.emptyAddButton, 'click', () => {
+			if (this.addMenu.isVisible) {
+				this.addMenu.hide();
+			} else {
+				this.addMenu.show(this.emptyAddButton);
+			}
+		}));
 		this.grip = append(this.area, $('.volt-agent-tools-grip'));
 		this.grip.title = this.sash.title;
 		this.partsHost = append(this.area, $('.volt-agent-tools-parts'));
@@ -1428,8 +1443,9 @@ export class AgentSurfaceHost extends Disposable {
 		const toggle = this.filesSidebar.toggleButton;
 		toggle.style.display = isPseudoToolsSession(this.sessionId) ? 'none' : '';
 		if (toggle.parentElement !== actions || this.fullscreenButton.parentElement !== actions || this.closePanelButton.parentElement !== actions
+			|| this.emptyAddButton.parentElement !== actions
 			|| toggle.nextSibling !== this.fullscreenButton || this.fullscreenButton.nextSibling !== this.closePanelButton) {
-			actions.append(toggle, this.fullscreenButton, this.closePanelButton);
+			actions.append(this.emptyAddButton, toggle, this.fullscreenButton, this.closePanelButton);
 		}
 		this.scheduleOpenToolsButton(entry);
 	}
@@ -2435,6 +2451,7 @@ export class AgentSurfaceHost extends Disposable {
 		this.disposed = true;
 		this.closePanelButton.remove();
 		this.fullscreenButton.remove();
+		this.emptyAddButton.remove();
 		this.filesSidebar.hide();
 		hosts.delete(this);
 		this.addMenu.hide();

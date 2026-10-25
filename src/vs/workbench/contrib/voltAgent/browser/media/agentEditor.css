@@ -8828,6 +8828,38 @@ pre.volt-agent-searchable {
 	height: 100%;
 }
 
+/*
+ * The tab row stays on an empty tools area: its + and the files, Full Screen and Close Right Panel buttons
+ * live there. The tab control lays an empty group out with no title height, so the row sits over the top of
+ * the centred watermark instead of pushing it down.
+ */
+.monaco-workbench .part.editor.volt-agent-tools-part > .content .editor-group-container.empty > .title {
+	display: block;
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	z-index: 10;
+	height: var(--editor-group-tab-height);
+}
+
+.monaco-workbench .part.editor.volt-agent-tools-part > .content .editor-group-container.empty > .title > .tabs-and-actions-container.empty {
+	display: flex;
+	height: var(--editor-group-tab-height);
+}
+
+/* The empty area's own + takes the place the + after the last tab would have. */
+.monaco-workbench .volt-agent-tools-area .editor-group-container:not(.empty) .volt-agent-tools-empty-add {
+	display: none;
+}
+
+.monaco-workbench .volt-agent-tools-area .editor-group-container.empty .volt-agent-tools-empty-add {
+	position: absolute;
+	top: calc((var(--editor-group-tab-height) - 22px) / 2);
+	left: 6px;
+	margin: 0;
+}
+
 /* An empty tools area lists what can open here under the bolt, drawn like the watermark's shortcuts. */
 .monaco-workbench .part.editor.volt-agent-tools-part > .content .editor-group-container > .editor-group-watermark {
 	max-width: 260px;
