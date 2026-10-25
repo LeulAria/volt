@@ -446,8 +446,8 @@ export class AgentSurfaceHost extends Disposable {
 	private toolsHidden = false;
 	/** Close Right Panel with the files sidebar open: the tabs go, the sidebar stays and fills the area. */
 	private tabsHidden = false;
-	/** Opened with no tab: the empty area lists what can open, until a tab opens or the panel closes. */
-	private openedEmpty = false;
+	/** The panel stays open with no tab (its empty area lists what can open) until it is closed or the chat changes. */
+	private keepOpen = false;
 	/** How the tools are drawn: beside the chat, floating over it (a preview), or across the whole window. */
 	private presentation: BrowserPresentation = 'split';
 	private readonly closePanelButton: HTMLButtonElement;
@@ -640,7 +640,7 @@ export class AgentSurfaceHost extends Disposable {
 			return false;
 		}
 		if (!this.shown?.part.groups.some(candidate => candidate.count > 0)) {
-			this.openedEmpty = true;
+			this.keepOpen = true;
 		}
 		const group = this.toolsGroup();
 		this.setPresentation('split');
@@ -653,7 +653,7 @@ export class AgentSurfaceHost extends Disposable {
 	 * panel leaves it filling the area. Without it, the whole right panel closes.
 	 */
 	private closeTabs(): void {
-		this.openedEmpty = false;
+		this.keepOpen = false;
 		if (this.filesSidebarOpen() && this.presentation === 'split') {
 			this.tabsHidden = true;
 		} else {
@@ -684,7 +684,7 @@ export class AgentSurfaceHost extends Disposable {
 		if (this.sessionId !== sessionId) {
 			this.toolsHidden = false;
 			this.tabsHidden = false;
-			this.openedEmpty = false;
+			this.keepOpen = false;
 			this.setPresentation('split', false);
 			this.hidePart();
 			this.sessionId = sessionId;
@@ -1180,13 +1180,14 @@ export class AgentSurfaceHost extends Disposable {
 	/** Whether the shown area has a tab to show, and the user has not closed it. */
 	private hasTools(): boolean {
 		const entry = this.shown;
-		if (entry?.part.groups.some(group => group.count > 0)) {
-			// Once a tab opens, closing the last one closes the panel again.
-			this.openedEmpty = false;
+		if (this.presentation !== 'floating' && entry?.part.groups.some(group => group.count > 0)) {
+			// Docked beside the chat, closing the last tab leaves the panel open on its list. A preview
+			// floating over the chat is not the panel, so it does not keep one open.
+			this.keepOpen = true;
 		}
 		// In the IDE layout a chat's tools are tabs in the middle (see agentIdeWorkspace), not a split beside it.
 		return !this.toolsHidden && !this.nested() && !!entry && entry.sessionId === this.sessionId
-			&& (entry.part.groups.some(group => group.count > 0) || this.filesSidebarOpen() || this.openedEmpty)
+			&& (entry.part.groups.some(group => group.count > 0) || this.filesSidebarOpen() || this.keepOpen)
 			&& getLayoutMode(this.layoutService) === 'agent';
 	}
 
@@ -1196,7 +1197,13 @@ export class AgentSurfaceHost extends Disposable {
 			return;
 		}
 		const hasTools = this.hasTools();
+		const empty = !this.shown?.part.groups.some(group => group.count > 0);
+		// The empty area is see-through like the chat beside it (agentEditor.css); tabs keep the solid fill.
+		this.area.classList.toggle('tools-empty', empty);
 		if (!hasTools && this.presentation !== 'split') {
+			this.setPresentation('split', false);
+		} else if (empty && this.presentation === 'fullscreen') {
+			// The last tab closed in full screen: the list sits beside the chat, not over it.
 			this.setPresentation('split', false);
 		} else if (this.presentation === 'floating' && !this.openingFloat && !(this.shown?.part.activeGroup.activeEditor instanceof VoltBrowserEditorInput)) {
 			// Only a preview floats; another tool coming to the front docks the area beside the chat.

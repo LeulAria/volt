@@ -61,6 +61,7 @@ with the desktop.
 **Right panel**
 - Opening the right panel with no tabs lists what can open there (File, Terminal, Browser, Device, Changes, Scratch, Canvas,
   Automations, New Side Chat) with their shortcuts, instead of opening a browser. Each opens as a tab; File opens the Explorer.
+  The empty panel is see-through like the chat, and closing its last tab leaves it open on that list.
 - In the agent layout, ⌃⌥ and the first letter opens each of them in the right panel: ⌃⌥F File, ⌃⌥T Terminal, ⌃⌥B Browser,
   ⌃⌥D Device, ⌃⌥C Changes, ⌃⌥S Scratch, ⌃⌥V Canvas, ⌃⌥A Automations, ⌃⌥N New Side Chat (Ctrl+Alt+Shift on Windows and Linux).
 - Automations can open as a right-panel tab, from that list or the + menu.

@@ -8809,6 +8809,21 @@ pre.volt-agent-searchable {
 	background: var(--volt-agent-window-bg-base, var(--vscode-editor-background));
 }
 
+/*
+ * With no tab, the area holds only the list of what can open: no webview, terminal or scrolling list,
+ * so it is see-through like the chat and the left sidebar (agentSurfaceHost sets `tools-empty`). The
+ * title bar and the chat's editor part paint the window's translucent fill under it. Full screen and
+ * floating stay solid; they cover the chat.
+ */
+.volt-agent-tools-area.tools-empty:not(.floating):not(.fullscreen),
+.volt-agent-tools-area.tools-empty:not(.floating):not(.fullscreen) > .volt-agent-tools-parts,
+.monaco-workbench .volt-agent-tools-area.tools-empty:not(.floating):not(.fullscreen) .editor-group-container,
+.monaco-workbench .volt-agent-tools-area.tools-empty:not(.floating):not(.fullscreen) .editor-group-container > .title,
+.monaco-workbench .volt-agent-tools-area.tools-empty:not(.floating):not(.fullscreen) .editor-group-container > .title .tabs-and-actions-container {
+	background: transparent !important;
+	background-color: transparent !important;
+}
+
 /* Only reserves the tools' room in the row; the tools area is laid over it. Its fill would show under a see-through files sidebar. */
 .monaco-workbench.volt-layout-agent .volt-agent-editor > .volt-agent-surfaces {
 	background: transparent;
