@@ -1,10 +1,10 @@
 {
 	"channel": "stable",
 	"version": "0.0.3",
-	"commit": "1b942afc748a57b6c40c9bd552eb80da4815d4ba",
+	"commit": "98920e32f3fcc3002170da8537193bf86bffa0ee",
 	"tag": "v0.0.3",
 	"releaseUrl": "https://github.com/LeulAria/volt/releases/tag/v0.0.3",
-	"publishedAt": "2026-10-25T04:10:13Z",
+	"publishedAt": "2026-10-25T04:41:33Z",
 	"platforms": [
 		"darwin",
 		"darwin-arm64",
@@ -23,128 +23,128 @@
 		{
 			"name": "volt-stable-0.0.3-darwin-arm64.dmg",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-darwin-arm64.dmg",
-			"size": 114195794,
-			"sha256": "92e607a8a34402795b0547fc3e69aeca15492c6641ba0b6dd59f0a27f0422b11"
+			"size": 114211799,
+			"sha256": "1d3403af7aeffdbdda85d8d55b54f2d0887147522f33af6a63b29517a2ede3e4"
 		},
 		{
 			"name": "volt-stable-0.0.3-darwin-arm64.zip",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-darwin-arm64.zip",
-			"size": 152438121,
-			"sha256": "863bf18d05c4f48d9f9bcb905e01d20fcb499845f8c2a355640462ea5d6599ff"
+			"size": 152435261,
+			"sha256": "d20dd5542db9edf89eed959f5f555e702522e89e22f39da8bb7fe6ed7ece4864"
 		},
 		{
 			"name": "volt-stable-0.0.3-darwin-universal.dmg",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-darwin-universal.dmg",
-			"size": 189534249,
-			"sha256": "4d664ee86074ca8448e86fe0da0736ea282662695c09a618c92f83fa99031e9f"
+			"size": 189514377,
+			"sha256": "47a011b3d67a8dd6933b67266aa7492952f12100937557c7fc573c8eb88eb802"
 		},
 		{
 			"name": "volt-stable-0.0.3-darwin-universal.zip",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-darwin-universal.zip",
-			"size": 247755724,
-			"sha256": "f1e934102ae3e36eaa306eeb547e6390c701f82aa00d54c0958bc1fc15e1596b"
+			"size": 247752874,
+			"sha256": "977d5568841860b45316dc1adeff4413c562e49d6ca49c7957a60f474bb7bd74"
 		},
 		{
 			"name": "volt-stable-0.0.3-darwin-x64.dmg",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-darwin-x64.dmg",
-			"size": 124784761,
-			"sha256": "3f2b02a604cfa43c61763b91babca88ffc8c5ba2e5c7eaabca525a295ee0929a"
+			"size": 124842847,
+			"sha256": "4a3e3e9041bc1d7bfbbfe88dec1d48701011ad0e0b504751a9d1d6f020fe1e93"
 		},
 		{
 			"name": "volt-stable-0.0.3-darwin-x64.zip",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-darwin-x64.zip",
-			"size": 159100580,
-			"sha256": "1620c33fd366a74ca9dd6b52859fea3ac7475344bd760de43f1d98676141e576"
+			"size": 159097726,
+			"sha256": "a8b473365797f0255e3255536c2da297a1ccd93788ec78916aaf616eacecdca2"
 		},
 		{
 			"name": "volt-stable-0.0.3-linux-arm64.deb",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-linux-arm64.deb",
-			"size": 103286060,
-			"sha256": "bd90c3cbcfaed4df1d82b426cd9a887ef81f5a226a9b369b0353368c07f0c744"
+			"size": 103287988,
+			"sha256": "c4309659fe6075b5fd012f0d8878233cc7c0596215b1f57a9d7496f202bd99b3"
 		},
 		{
 			"name": "volt-stable-0.0.3-linux-arm64.rpm",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-linux-arm64.rpm",
-			"size": 104068545,
-			"sha256": "55f5163a9c96b33feee5be2ebe8ffe31a30250d06e2f1751553b5c9eaecf8ef6"
+			"size": 104071005,
+			"sha256": "4649606fcfa95363439df8e6e4fd0ba780a28797c7e6325d60c4d48e1ec201c3"
 		},
 		{
 			"name": "volt-stable-0.0.3-linux-arm64.tar.gz",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-linux-arm64.tar.gz",
-			"size": 152175998,
-			"sha256": "aaca61b6e28fd73af923bf35ced36a490750989e72a7def4713a243079949d1f"
+			"size": 152174574,
+			"sha256": "a9dad9366db9ad0befb9c09a33c01ba637eaf5d6c87e5cca2d65dd0d05e419f8"
 		},
 		{
 			"name": "volt-stable-0.0.3-linux-armhf.deb",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-linux-armhf.deb",
-			"size": 101941324,
-			"sha256": "afd46d1755a3d42151c6fe417609009ff45da2d994c0d59cb1c424121af307cb"
+			"size": 101948156,
+			"sha256": "86c72a797fa4e7c7beaa6d56b590a5ece9ce9a7fafb5590a08844ca604fd0c49"
 		},
 		{
 			"name": "volt-stable-0.0.3-linux-armhf.rpm",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-linux-armhf.rpm",
-			"size": 102747377,
-			"sha256": "a2474c5523da3a2947120af97e53bd41134e5e5830b0822d4d1b22e88f151bb2"
+			"size": 102735653,
+			"sha256": "a8cb038615902633a4d8f9f38f1c8d9ae239f6f12ea7c1647fd02b13277d08b1"
 		},
 		{
 			"name": "volt-stable-0.0.3-linux-armhf.tar.gz",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-linux-armhf.tar.gz",
-			"size": 141085557,
-			"sha256": "10bbb7619b822618fe72b4d1332c3d7036f36ce5b378af68a568189651a65bb4"
+			"size": 141080232,
+			"sha256": "86e8bf7bc5b910c074d3cbb20d6bf8239107284fa64d3928ebd393ceb073cac6"
 		},
 		{
 			"name": "volt-stable-0.0.3-linux-x64.deb",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-linux-x64.deb",
-			"size": 110566292,
-			"sha256": "4258b5ef53150c39cc8895b9afd86fdb22400753fbe20595fa908c2623b01579"
+			"size": 110560932,
+			"sha256": "451dad5fdda2a450cdc18b293630fff82a45f46cebf77f52543c070cd2ae5ac8"
 		},
 		{
 			"name": "volt-stable-0.0.3-linux-x64.rpm",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-linux-x64.rpm",
-			"size": 110950757,
-			"sha256": "24773ee186f2247e5e63de4a3a963d3a8562e91da3a45bcbab76a3d8f9188cb9"
+			"size": 110942857,
+			"sha256": "c7918742ec220c09c86b23cbd4624ac6a690d60424c2a1f2a4885d9d5573bbb3"
 		},
 		{
 			"name": "volt-stable-0.0.3-linux-x64.tar.gz",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-linux-x64.tar.gz",
-			"size": 154348624,
-			"sha256": "112ce222243716edf051061cf1f0a7bc0d3d56431f43fc33da46de50f6ba6ad9"
+			"size": 154353856,
+			"sha256": "0eaf2bbe3c320e9204051e19032cae5b23c48cb58b394c1af3018f3f472b460e"
 		},
 		{
 			"name": "volt-stable-0.0.3-win32-arm64-system-setup.exe",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-win32-arm64-system-setup.exe",
-			"size": 112244687,
-			"sha256": "6fed13d801f288de8d3f3da06cbfbc8d105bbfffbd3d4529d9decda1def64644"
+			"size": 112258407,
+			"sha256": "27dbf1d34c2c3e33a0b6f3c887fb72021deedb25eb45b3da850743820488c7e3"
 		},
 		{
 			"name": "volt-stable-0.0.3-win32-arm64-user-setup.exe",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-win32-arm64-user-setup.exe",
-			"size": 112245057,
-			"sha256": "81656394304ccb6107bf2d4fc72ed6424870645c793072c1c92f52ecdd00fa95"
+			"size": 112258781,
+			"sha256": "419eed17099850c0ea77be291490077382f38341303403d13f035a8793257db7"
 		},
 		{
 			"name": "volt-stable-0.0.3-win32-arm64.zip",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-win32-arm64.zip",
-			"size": 160404044,
-			"sha256": "97b1bb2a00f0492328b370cc3c40d7f5f5e68e0ebacdca23be4fce1fe2bdf433"
+			"size": 160402467,
+			"sha256": "d78f5971ab65d83426a4226f72be11799c39efeb5a09594144f9626d7960e4bd"
 		},
 		{
 			"name": "volt-stable-0.0.3-win32-x64-system-setup.exe",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-win32-x64-system-setup.exe",
-			"size": 117366912,
-			"sha256": "5bdf8100c158c6e3b259fd563856ae2d3343425e33d25b3d9596f246a356825b"
+			"size": 117365527,
+			"sha256": "09f6fb71e5f98623eb27e0c05721dd39043e7d65beff9f58f49d0ea8f356a663"
 		},
 		{
 			"name": "volt-stable-0.0.3-win32-x64-user-setup.exe",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-win32-x64-user-setup.exe",
-			"size": 117367316,
-			"sha256": "961975192ead27b41971d76f8f3773c08d357e2275542ebe2da48a053fac8d2d"
+			"size": 117365931,
+			"sha256": "72c5f9d1b2120bc341e1aa8ba2a050cd12453d44afb7c05237a43a193b005fb7"
 		},
 		{
 			"name": "volt-stable-0.0.3-win32-x64.zip",
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.3/volt-stable-0.0.3-win32-x64.zip",
-			"size": 161759729,
-			"sha256": "2e3bd29c0397a22a3e85d76ce5c2cd27055fcdcf879e1766d8b14bec47909b14"
+			"size": 161758152,
+			"sha256": "4784eaf47a3ecb499bb9ca8bfb7d89f5cc711050e773014cb50b4d36bb4a3cc7"
 		}
 	]
 }
