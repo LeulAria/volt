@@ -61,7 +61,8 @@ the web and mobile apps catching up with the desktop.
 **Right panel**
 - Opening the right panel with no tabs lists what can open there (File, Terminal, Browser, Device, Changes, Scratch, Canvas,
   Automations, New Side Chat) with their shortcuts, instead of opening a browser. Each opens as a tab; File opens the Explorer.
-  The empty panel is see-through like the chat, and closing its last tab leaves it open on that list.
+  The empty panel is see-through like the chat, and closing its last tab leaves it open on that list. With the files
+  sidebar open, *Open Right Panel* brings the panel back beside it.
 - In the agent layout, ⌃⌥ and the first letter opens each of them in the right panel: ⌃⌥F File, ⌃⌥T Terminal, ⌃⌥B Browser,
   ⌃⌥D Device, ⌃⌥C Changes, ⌃⌥S Scratch, ⌃⌥V Canvas, ⌃⌥A Automations, ⌃⌥N New Side Chat (Ctrl+Alt+Shift on Windows and Linux).
 - Automations can open as a right-panel tab, from that list or the + menu.
@@ -80,6 +81,8 @@ the web and mobile apps catching up with the desktop.
 - A New Window keeps its own chats, projects and layout until it closes.
 - A simpler Open Workspace menu: recents, folders, New project, On This Mac and Git Repo.
 - A Volt About sheet in place of the stock dialog, and a laptop icon for *This Mac*.
+- The empty editor's watermark and the small app mark are the app icon's folded bolt on its own, in grey, without the
+  square around it. The right panel's list and + menu draw every icon in the same line style.
 - Text is smoothed by default (*Font Smoothing: antialiased*).
 - The setup wizard can be skipped from any step.
 - Marks in the image viewer can be moved and resized.
