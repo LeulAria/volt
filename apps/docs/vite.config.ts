@@ -1,9 +1,11 @@
-import react from "@vitejs/plugin-react";
-import { tanstackStart } from "@tanstack/react-start/plugin/vite";
-import { defineConfig } from "vite";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import react from "@vitejs/plugin-react";
 import mdx from "fumadocs-mdx/vite";
 import { nitro } from "nitro/vite";
+import { defineConfig, type Plugin } from "vite";
 
 const SILENT_WARNINGS = new Set([
   "MODULE_LEVEL_DIRECTIVE",
@@ -14,11 +16,30 @@ const SILENT_WARNINGS = new Set([
   "EMPTY_BUNDLE",
 ]);
 
+/**
+ * `virtual:changelog`: the repository's CHANGELOG.md as a string, for /changelog. A plain
+ * `?raw` import would go through the MDX plugin, which claims every .md file.
+ */
+function changelogSource(): Plugin {
+  const id = "virtual:changelog";
+  const file = fileURLToPath(new URL("../../CHANGELOG.md", import.meta.url));
+  return {
+    name: "volt-changelog",
+    resolveId: (source) => (source === id ? `\0${id}` : undefined),
+    load(resolved) {
+      if (resolved !== `\0${id}`) return undefined;
+      this.addWatchFile(file);
+      return `export default ${JSON.stringify(readFileSync(file, "utf8"))};`;
+    },
+  };
+}
+
 export default defineConfig({
   server: {
     port: 3000,
   },
   plugins: [
+    changelogSource(),
     mdx(await import("./source.config")),
     tailwindcss(),
     tanstackStart({
@@ -36,6 +57,9 @@ export default defineConfig({
         },
         {
           path: "/download",
+        },
+        {
+          path: "/changelog",
         },
         {
           path: "/api/search",

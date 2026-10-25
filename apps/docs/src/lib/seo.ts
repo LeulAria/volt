@@ -240,3 +240,32 @@ export function downloadRouteMeta(): Array<
 export function downloadRouteLinks(): Array<{ rel: string; href: string }> {
   return [{ rel: "canonical", href: absoluteUrl("/download") }];
 }
+
+/** Meta entries for `/changelog`. */
+export function changelogRouteMeta(): Array<
+  | { title: string }
+  | { name: string; content: string }
+  | { property: string; content: string }
+> {
+  const title = `Changelog — ${appName}`;
+  const desc =
+    "What changed in each Volt release: new features, changes, and fixes, newest first.";
+  const url = absoluteUrl("/changelog");
+  return [
+    { title },
+    { name: "description", content: desc },
+    { property: "og:title", content: title },
+    { property: "og:description", content: desc },
+    { property: "og:url", content: url },
+    { property: "og:image", content: absoluteUrl(seo.defaultOgImagePath) },
+    { property: "og:image:width", content: "868" },
+    { property: "og:image:height", content: "868" },
+    { property: "og:type", content: "website" },
+    { name: "twitter:title", content: title },
+    { name: "twitter:description", content: desc },
+  ];
+}
+
+export function changelogRouteLinks(): Array<{ rel: string; href: string }> {
+  return [{ rel: "canonical", href: absoluteUrl("/changelog") }];
+}

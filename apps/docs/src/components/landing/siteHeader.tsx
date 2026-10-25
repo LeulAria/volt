@@ -75,6 +75,13 @@ export function SiteHeader({
       </a>
       <Link
         {...hero}
+        to="/changelog"
+        className={`${PILL} max-md:hidden ${focusRing}`}
+      >
+        Changelog
+      </Link>
+      <Link
+        {...hero}
         to="/download"
         className={`${PILL} max-sm:hidden ${focusRing}`}
       >

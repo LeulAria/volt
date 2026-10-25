@@ -385,6 +385,9 @@ export function SiteFooter() {
           <Link to="/download" className="transition-colors hover:text-white">
             Download
           </Link>
+          <Link to="/changelog" className="transition-colors hover:text-white">
+            Changelog
+          </Link>
           <a href="/llms.txt" className="transition-colors hover:text-white">
             llms.txt
           </a>
