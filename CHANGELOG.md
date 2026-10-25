@@ -10,9 +10,9 @@ Download a build from [Releases](https://github.com/LeulAria/volt/releases). On 
 
 ## [0.0.3] - 2026-10-25
 
-Scratch, subagent budgets and a calmer right panel. A week of work since `0.0.2`: Scratch, a whiteboard that agents draw on; budgets and handoff contracts for subagents;
-agents that keep out of a browser tab you are using; windows with their own chats; and the web and mobile apps catching up
-with the desktop.
+Scratch, subagent budgets and a calmer right panel. This release brings Scratch, a whiteboard that agents draw on; budgets
+and handoff contracts for subagents; agents that keep out of a browser tab you are using; windows with their own chats; and
+the web and mobile apps catching up with the desktop.
 
 ### Highlights
 
@@ -112,10 +112,9 @@ with the desktop.
 
 ## [0.0.2] - 2026-10-18
 
-The first build you can download from GitHub Releases for macOS, Windows and Linux. It covers the eleven days of work
-since the `0.0.1` tag: multi-agent work (subagents, plan mode, forks, worktrees, sandboxes), a code index that
-agents search, an in-app browser with a design mode, Git views for branches and worktrees, several Claude
-accounts, and a good deal of speed work.
+The first build you can download from GitHub Releases for macOS, Windows and Linux. It brings multi-agent work
+(subagents, plan mode, forks, worktrees, sandboxes), a code index that agents search, an in-app browser with a design
+mode, Git views for branches and worktrees, several Claude accounts, and a good deal of speed work.
 
 ### Highlights
 
