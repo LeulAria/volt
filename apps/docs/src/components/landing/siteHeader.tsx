@@ -11,8 +11,10 @@ import { DISCORD_URL, DiscordIcon, focusRing, GithubMarkIcon } from "./install";
 
 const PILL =
   "inline-flex h-6 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] px-2.5 leading-none text-[10px] font-medium uppercase tracking-[0.16em] text-white/70 backdrop-blur-xl transition-colors duration-150 hover:border-white/25 hover:bg-white/10 hover:text-white";
+const TEXT_LINK =
+  "inline-flex h-6 items-center justify-center rounded-md px-2 leading-none text-[10px] font-medium uppercase tracking-[0.16em] text-white/65 transition-colors duration-150 hover:text-white";
 
-/** Logo, the beta badge with the current version (a link to the GitHub releases), and the Download / Discord / GitHub pills (GitHub with its live star count). */
+/** Logo, the beta label with the newest GitHub release, Changelog / Download as text links, and the Discord / GitHub pills (GitHub with its live star count). */
 export function SiteHeader({
   animate = false,
   className,
@@ -56,7 +58,7 @@ export function SiteHeader({
             ? `Public beta, version ${version}: releases on GitHub`
             : "Public beta: releases on GitHub"
         }
-        className={`inline-flex h-6 min-w-0 items-center justify-center gap-1.5 rounded-full border border-white/15 bg-white/[0.06] px-2 text-center text-[10px] font-medium tracking-[0.08em] text-white/75 backdrop-blur-xl transition-colors duration-150 hover:border-white/25 hover:bg-white/10 hover:text-white sm:gap-2 sm:px-2.5 sm:tracking-[0.16em] ${focusRing}`}
+        className={`inline-flex h-6 min-w-0 items-center justify-center gap-1.5 rounded-md px-2 text-center text-[10px] font-medium tracking-[0.08em] text-white/65 transition-colors duration-150 hover:text-white sm:gap-2 sm:tracking-[0.16em] ${focusRing}`}
       >
         <span className="inline-flex items-center pt-px pl-[0.16em] uppercase leading-none">
           Public beta
@@ -76,14 +78,14 @@ export function SiteHeader({
       <Link
         {...hero}
         to="/changelog"
-        className={`${PILL} max-md:hidden ${focusRing}`}
+        className={`${TEXT_LINK} max-md:hidden ${focusRing}`}
       >
         Changelog
       </Link>
       <Link
         {...hero}
         to="/download"
-        className={`${PILL} max-sm:hidden ${focusRing}`}
+        className={`${TEXT_LINK} max-sm:hidden ${focusRing}`}
       >
         Download
       </Link>
