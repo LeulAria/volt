@@ -8,13 +8,14 @@ import {
   useReleases,
 } from "@/lib/useReleases";
 import { DISCORD_URL, DiscordIcon, focusRing, GithubMarkIcon } from "./install";
+import { SiteMenu } from "./siteMenu";
 
 const PILL =
   "inline-flex h-6 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] px-2.5 leading-none text-[12px] font-medium text-white/70 backdrop-blur-xl transition-colors duration-150 hover:border-white/25 hover:bg-white/10 hover:text-white";
 const TEXT_LINK =
   "inline-flex h-6 items-center justify-center rounded-md px-2 leading-none text-[12px] font-medium text-white/65 transition-colors duration-150 hover:text-white";
 
-/** Logo, the beta label with the newest GitHub release, Changelog / Download as text links, and the Discord / GitHub pills (GitHub with its live star count). */
+/** Logo, the beta label with the newest GitHub release, Changelog / Download as text links, and the Discord / GitHub pills (GitHub with its live star count). Below md the text links move into the menu sheet. */
 export function SiteHeader({
   animate = false,
   className,
@@ -85,7 +86,7 @@ export function SiteHeader({
       <Link
         {...hero}
         to="/download"
-        className={`${TEXT_LINK} max-sm:hidden ${focusRing}`}
+        className={`${TEXT_LINK} max-md:hidden ${focusRing}`}
       >
         Download
       </Link>
@@ -132,6 +133,7 @@ export function SiteHeader({
           </>
         ) : null}
       </a>
+      <SiteMenu hero={hero} version={version} stars={stars} />
     </header>
   );
 }
