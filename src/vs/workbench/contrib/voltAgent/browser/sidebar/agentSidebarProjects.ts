@@ -36,7 +36,7 @@ export function collectSidebarProjects(
 ): IAgentSidebarProject[] {
 	const active = sessionContext.activeProject?.root.toString();
 	const byPath = new Map<string, IAgentSessionMeta[]>();
-	for (const session of history.list()) {
+	for (const session of history.list({ inWindow: true })) {
 		if (session.subagent) {
 			continue;
 		}

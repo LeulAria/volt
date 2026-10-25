@@ -25,6 +25,7 @@ import { EditorResourceAccessor } from '../../../../common/editor.js';
 import { IHistoryService } from '../../../../services/history/common/history.js';
 import { ISearchService } from '../../../../services/search/common/search.js';
 import { searchFilesAndFolders } from '../../../search/browser/searchChatContext.js';
+import { CANVAS_ENABLED_SETTING, SCRATCH_ENABLED_SETTING } from '../../common/canvasScratchSettings.js';
 import { createHomeSearchIcon } from '../home/agentHomeIcons.js';
 import { agentSurfaceMenuItems, createSurfaceStrokeIcon, IAgentSurfaceMenuItem, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
 
@@ -179,7 +180,11 @@ export class AgentSurfaceAddMenu extends Disposable {
 			rows = [];
 			list.replaceChildren();
 			const q = query.trim().toLowerCase();
-			const actions = agentSurfaceMenuItems().filter(action => !q || action.label.toLowerCase().includes(q) || action.id.toLowerCase().includes(q));
+			// Settings > Canvas & Scratch can turn either off: its row goes too.
+			const off = (setting: string) => this.configurationService.getValue(setting) === false;
+			const hidden = (id: AgentSurfaceMenuActionId) => (id === 'scratch' && off(SCRATCH_ENABLED_SETTING)) || (id === 'canvas' && off(CANVAS_ENABLED_SETTING));
+			const actions = agentSurfaceMenuItems().filter(action => !hidden(action.id)
+				&& (!q || action.label.toLowerCase().includes(q) || action.id.toLowerCase().includes(q)));
 			for (const action of actions) {
 				addRow(this.actionRow(list, action), () => this.host.runAction(action.id));
 			}

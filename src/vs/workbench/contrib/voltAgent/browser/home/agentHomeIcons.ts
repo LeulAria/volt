@@ -69,6 +69,23 @@ export function createHomeNewChatIcon(): HTMLElement {
 	return createHomeSvgIcon('new-chat', AGENT_HOME_NEW_CHAT_ICON_PATH, { strokeWidth: '1' });
 }
 
+/** A notebook with its tabs, for Scratch beside New Chat. */
+export const AGENT_HOME_SCRATCH_ICON_PATHS = [
+	'M2 6h4',
+	'M2 10h4',
+	'M2 14h4',
+	'M2 18h4',
+	'M6 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-16a2 2 0 0 1 2 -2z',
+	'M15 2v20',
+	'M15 7h5',
+	'M15 12h5',
+	'M15 17h5',
+] as const;
+
+export function createHomeScratchIcon(): HTMLElement {
+	return createHomeStrokeIcon('scratch', AGENT_HOME_SCRATCH_ICON_PATHS, '1');
+}
+
 export function createHomeNewProjectIcon(): HTMLElement {
 	return createHomeSvgIcon('new-project', AGENT_HOME_NEW_PROJECT_ICON_PATH, {
 		strokeWidth: '2',
@@ -204,6 +221,16 @@ export const AGENT_HOME_LAPTOP_ICON_PATHS = [
 	'M2 19h20',
 ] as const;
 /** GitLab tanuki outline. */
+/** Git's diamond with its branch, for the Git Repo row of the Open Workspace menu. */
+export const AGENT_HOME_GIT_ICON_PATHS = [
+	'M13.446 2.6l7.955 7.954a2.045 2.045 0 0 1 0 2.892l-7.955 7.955a2.045 2.045 0 0 1 -2.892 0l-7.955 -7.955a2.045 2.045 0 0 1 0 -2.892l7.955 -7.955a2.045 2.045 0 0 1 2.892 0z',
+	'M15 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0',
+	'M11 8a1 1 0 1 0 2 0a1 1 0 1 0 -2 0',
+	'M11 16a1 1 0 1 0 2 0a1 1 0 1 0 -2 0',
+	'M12 15v-6',
+	'M15 11l-2 -2',
+	'M11 7l-1.9 -1.9',
+] as const;
 export const AGENT_HOME_GITLAB_ICON_PATH = 'M12 21l-9.5-7l2.5-10l3 7h8l3-7l2.5 10z';
 /** Bitbucket bucket outline. */
 export const AGENT_HOME_BITBUCKET_ICON_PATHS = [
@@ -213,6 +240,10 @@ export const AGENT_HOME_BITBUCKET_ICON_PATHS = [
 
 export function createHomeLaptopIcon(): HTMLElement {
 	return createHomeStrokeIcon('laptop', AGENT_HOME_LAPTOP_ICON_PATHS, '1.25');
+}
+
+export function createHomeGitIcon(): HTMLElement {
+	return createHomeStrokeIcon('git', AGENT_HOME_GIT_ICON_PATHS, '1.25');
 }
 
 export function createHomeGitLabIcon(): HTMLElement {

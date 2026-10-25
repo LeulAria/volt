@@ -112,30 +112,32 @@ Keep the current branch's pull request ready to merge. Work in rounds until noth
 List what you fixed (with commits), what is still failing and why, and the comments that need the user.`,
 	},
 	{
+		name: 'browser',
+		title: 'Browser',
+		summary: 'Do this in Volt\'s in-app browser beside the chat.',
+		description: 'Do this in Volt\'s in-app browser beside the chat. Use to open, read, test or fix a web page and check it where the user can watch.',
+		body: `# Browser
+
+Do this in Volt's in-app browser beside the chat, with the \`browser_*\` tools of the volt MCP server.
+
+- **browser_act** runs a whole flow (type, click, select, wait) in one call, with elements found by role, label or text.
+- **browser_run** applies file edits and then checks the page in one call: fix and verify together.
+- **browser_snapshot** reads a page; **browser_navigate** opens a URL.
+
+Do not write Playwright, puppeteer or headless-Chrome scripts, and do not open the user's own browser. When the tab the user has open fits the task (the \`<volt_workspace>\` block lists it), use it. When the check passes, answer in a few lines.`,
+	},
+	{
 		name: 'canvas',
 		title: 'Canvas',
-		summary: 'Create a document, diagram, or small website to express an idea.',
-		description: 'Create a document, diagram, or small website to express an idea.',
+		summary: 'Design screens or a flow on Volt\'s design canvas.',
+		description: 'Design screens or a flow on Volt\'s design canvas, where the user can play the flow and comment on each frame.',
 		body: `# Canvas
 
-Express an idea as something the user can look at: a one-page document, a diagram, a mockup, or a small interactive website.
+Answer with Volt's design canvas, not with HTML files.
 
-## Choose the form
-
-- **Diagram** (flow, architecture, sequence, state): a Mermaid block in the reply for something small; a standalone HTML page with inline SVG when it needs layout control or interaction.
-- **Document** (a plan, a comparison, a report): a single HTML page with clear headings, or Markdown when the user will edit it.
-- **Mockup or prototype**: a single HTML file with inline CSS and JavaScript, no build step and no external network requests except well-known CDNs when truly needed.
-
-## Build it
-
-1. Put the file in the project only if it belongs there; otherwise write it to a scratch location such as \`.volt/canvas/<name>.html\`.
-2. Keep it self-contained so it opens straight from disk. Use system fonts, a restrained palette, and real content instead of lorem ipsum.
-3. Support light and dark color schemes with \`prefers-color-scheme\`.
-4. Open it for the user: Volt shows local HTML files in its browser panel (\`file://\` path) or in a preview tab.
-
-## Finish
-
-Say what the canvas shows and how to change it, in two or three sentences. Do not paste the whole file into the reply.`,
+1. Call **canvas_render** once with every screen as a frame: iphone, android, tablet, browser, desktop or component. Use real copy, not lorem ipsum. Put shared markup in \`head\`, \`css\` and \`components\`, and set \`data-next\` on the element that leads to the next screen so the user can play the flow.
+2. If the chat already has a canvas (the user attached one with @, or the \`<volt_workspace>\` block shows one open in the right panel), change it with **canvas_update** instead of making a new one. Read it first with **canvas_read** when you need its frames.
+3. Finish with one or two sentences about what the canvas shows. Do not paste the HTML into the reply.`,
 	},
 	{
 		name: 'code-review',
@@ -167,6 +169,22 @@ Skip style nits a formatter or linter would catch.
 - Verify each finding by reading the surrounding code; drop anything you cannot support.
 - Most severe first. For each: \`path:line\`, what is wrong, a concrete failing scenario, and the fix in one or two sentences (a short snippet when it helps).
 - End with a one-line verdict: ready to merge, merge after fixes, or needs rework.`,
+	},
+	{
+		name: 'device',
+		title: 'Device',
+		summary: 'Do this on the iOS Simulator or Android Emulator.',
+		description: 'Do this on the iOS Simulator or Android Emulator. Use to run, test or check a native mobile app where the user can watch.',
+		body: `# Device
+
+Do this on the iOS Simulator or Android Emulator with the \`device_*\` tools of the volt MCP server.
+
+- No device running: find one with **device_list** and start it with **device_boot**.
+- **device_launch_app** opens the app (**device_install_app** first when it is not installed).
+- **device_snapshot** reads the screen's accessibility tree; **device_act** taps, types and scrolls by visible text and verifies each step.
+- **device_screenshot** shows the user the result.
+
+Find elements by their text or role, never by guessing screen coordinates.`,
 	},
 	{
 		name: 'explain',
@@ -201,6 +219,22 @@ Create a hosted repository for the current project and push it.
 5. **Create and push.** Ask for the name (default: the folder name), the owner (personal or an organization) and visibility (default: private). Then:
 	\`gh repo create <owner>/<name> --private --source . --remote origin --push\`
 6. **Report** the repository URL and the branch that was pushed.`,
+	},
+	{
+		name: 'scratch',
+		title: 'Scratch',
+		summary: 'Answer on the Scratch board as a diagram, notes or cards.',
+		description: 'Answer on the user\'s Scratch board: diagrams, sticky notes and markdown cards the user can move and edit.',
+		body: `# Scratch
+
+Answer on the user's Scratch board with **scratch_draw**. When you build on what is already there, read it first with **scratch_read**.
+
+- A diagram (flow, architecture, plan): a Mermaid flowchart.
+- Separate points or ideas: sticky notes.
+- Longer text: markdown cards.
+- To change a frame you drew before, redraw it with \`replace\` set to its frameId instead of adding a new one.
+
+A board the user attached with @, or the one open in the right panel (the \`<volt_workspace>\` block lists it), is the one to use: pass its \`boardId\`. Keep the chat reply to a line or two; the user sees the board.`,
 	},
 	{
 		name: 'create-skill',

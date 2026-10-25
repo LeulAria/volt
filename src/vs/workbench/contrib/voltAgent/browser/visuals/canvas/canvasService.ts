@@ -11,6 +11,7 @@ import { URI } from '../../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../../base/common/uuid.js';
 import { localize } from '../../../../../../nls.js';
 import { IClipboardService } from '../../../../../../platform/clipboard/common/clipboardService.js';
+import { IConfigurationService } from '../../../../../../platform/configuration/common/configuration.js';
 import { ICommandService } from '../../../../../../platform/commands/common/commands.js';
 import { IEnvironmentService } from '../../../../../../platform/environment/common/environment.js';
 import { IFileService } from '../../../../../../platform/files/common/files.js';
@@ -19,9 +20,10 @@ import { ILogService } from '../../../../../../platform/log/common/log.js';
 import { INotificationService } from '../../../../../../platform/notification/common/notification.js';
 import { IThemeService } from '../../../../../../platform/theme/common/themeService.js';
 import { IPageChannelPort, registerPageChannel, setPageContext } from '../agentVisualBridge.js';
+import { CANVAS_FRAME_THEME_SETTING, readCanvasFrameTheme } from '../../../common/canvasScratchSettings.js';
 import { themeKind } from '../visualTheme.js';
 import { OPEN_CANVAS_COMMAND_ID } from './canvasCard.js';
-import { applyCanvasLayout, applyCanvasUpdate, CANVAS_SIZE_PRESETS, canvasFromMockups, CanvasCommentStatus, formatCanvasChoice, formatCanvasFeedback, ICanvasAnchor, ICanvasCreate, ICanvasDoc, ICanvasLayout, ICanvasTweak, ICanvasUpdateResult, archiveResolvedCanvasComments, removeCanvasComment, upsertCanvasComment } from './canvasModel.js';
+import { applyCanvasLayout, applyCanvasUpdate, CANVAS_SIZE_PRESETS, canvasFromMockups, CanvasCommentStatus, CanvasTheme, formatCanvasChoice, formatCanvasFeedback, ICanvasAnchor, ICanvasCreate, ICanvasDoc, ICanvasLayout, ICanvasTweak, ICanvasUpdateResult, archiveResolvedCanvasComments, removeCanvasComment, upsertCanvasComment } from './canvasModel.js';
 import { ICanvasPageData, ICanvasStrings } from './canvasPage.js';
 
 export const IVoltCanvasService = createDecorator<IVoltCanvasService>('voltCanvasService');
@@ -56,17 +58,23 @@ export interface IVoltCanvasService {
 	getVersion(id: string, version: number): Promise<ICanvasDoc | undefined>;
 	/** The canvases a chat made, newest first. */
 	listFor(chat: string): Promise<readonly ICanvasDoc[]>;
+	/** Every stored canvas, newest first (the composer's @ menu). */
+	listAll(): Promise<readonly ICanvasDoc[]>;
 	/** The canvas's own agent chat, made the first time it is asked for. */
 	ensureAgentChat(id: string): Promise<string>;
 	/** Whether `sessionId` is the agent chat of canvas `id` (from memory: a canvas in view is). */
 	isAgentChat(id: string, sessionId: string): boolean;
 	/**
-	 * The canvas's agent, shown in its sidebar: every prompt about the canvas (comments, "Ask",
-	 * "Design the next screen", a variant's Choose) goes to it instead of the chat the canvas is in.
+	 * The chat shown with the canvas (the tab's chat island, while it holds the chat): every prompt
+	 * about the canvas (comments, "Ask", "Design the next screen", a variant's Choose) goes to it.
 	 */
 	registerAgent(id: string, agent: ICanvasAgentPort): IDisposable;
+	/** Makes `chat` the canvas's chat (one started from the canvas's island). */
+	setChat(id: string, chat: string): Promise<void>;
 	/** The page data for a view of `doc`. `pinned`: a view in the chat's history, kept at its version. */
 	pageData(doc: ICanvasDoc, mode: 'inline' | 'panel', focus?: string, pinned?: boolean): ICanvasPageData;
+	/** The look frames open in when neither the frame nor the canvas sets one (Settings, else the Volt theme). */
+	defaultLook(): CanvasTheme;
 	/** Handles a message a canvas view posted. */
 	handle(port: IPageChannelPort, payload: unknown): void;
 }
@@ -128,6 +136,7 @@ export function canvasStrings(): ICanvasStrings {
 		fit: localize('voltCanvas.fit', "Zoom to Fit"),
 		zoom100: localize('voltCanvas.zoom100', "Zoom to 100%"),
 		zoomSelection: localize('voltCanvas.zoomSelection', "Zoom to Selection"),
+		more: localize('voltCanvas.more', "More"),
 		light: localize('voltCanvas.light', "Light"),
 		dark: localize('voltCanvas.dark', "Dark"),
 		devices: localize('voltCanvas.devices', "Device Frames"),
@@ -239,6 +248,7 @@ export class VoltCanvasService extends Disposable implements IVoltCanvasService 
 		@IClipboardService private readonly clipboardService: IClipboardService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@ILogService private readonly logService: ILogService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
 	) {
 		super();
 		this.folder = joinPath(environmentService.userRoamingDataHome, 'agentSessions', 'canvases');
@@ -294,9 +304,17 @@ export class VoltCanvasService extends Disposable implements IVoltCanvasService 
 	}
 
 	async listFor(chat: string): Promise<readonly ICanvasDoc[]> {
+		return this.listWhere(owner => owner === chat);
+	}
+
+	async listAll(): Promise<readonly ICanvasDoc[]> {
+		return this.listWhere(() => true);
+	}
+
+	private async listWhere(owned: (chat: string | undefined) => boolean): Promise<readonly ICanvasDoc[]> {
 		this.index ??= this.readIndex();
 		const index = await this.index;
-		const ids = [...index].filter(([, owner]) => owner === chat).map(([id]) => id);
+		const ids = [...index].filter(([, owner]) => owned(owner)).map(([id]) => id);
 		const docs = await Promise.all(ids.map(id => this.get(id)));
 		return docs.filter((doc): doc is ICanvasDoc => !!doc).sort((a, b) => b.updatedAt - a.updatedAt);
 	}
@@ -340,7 +358,17 @@ export class VoltCanvasService extends Disposable implements IVoltCanvasService 
 	}
 
 	isAgentChat(id: string, sessionId: string): boolean {
-		return this.docs.get(id)?.agentChat === sessionId || this.agents.get(id)?.sessionId === sessionId;
+		return this.docs.get(id)?.agentChat === sessionId;
+	}
+
+	async setChat(id: string, chat: string): Promise<void> {
+		const doc = await this.get(id);
+		if (!doc || doc.chat === chat) {
+			return;
+		}
+		this.latest.set(chat, id);
+		void this.index?.then(index => index.set(id, chat));
+		this.commit({ ...doc, chat }, 'comments', 'user');
 	}
 
 	registerAgent(id: string, agent: ICanvasAgentPort): IDisposable {
@@ -496,12 +524,17 @@ export class VoltCanvasService extends Disposable implements IVoltCanvasService 
 
 	//#region Views
 
+	defaultLook(): CanvasTheme {
+		const look = readCanvasFrameTheme(this.configurationService.getValue(CANVAS_FRAME_THEME_SETTING));
+		return look === 'auto' ? themeKind(this.themeService.getColorTheme()) : look;
+	}
+
 	pageData(doc: ICanvasDoc, mode: 'inline' | 'panel', focus?: string, pinned?: boolean): ICanvasPageData {
 		return {
 			doc,
 			mode,
 			...(pinned ? { pinned: true } : {}),
-			theme: themeKind(this.themeService.getColorTheme()),
+			theme: this.defaultLook(),
 			strings: canvasStrings(),
 			presets: CANVAS_SIZE_PRESETS,
 			...(focus ? { focus } : {}),
@@ -681,9 +714,15 @@ export class VoltCanvasService extends Disposable implements IVoltCanvasService 
 	 * tab asks the chat view it was opened from. Without one, the text goes to the clipboard.
 	 */
 	private prompt(port: IPageChannelPort, doc: ICanvasDoc, text: string, send: boolean): void {
-		// In a chat, that chat takes it. On the board's tab, the chat the canvas belongs to (opened if needed).
+		// In a chat, that chat takes it. On the board's tab, its chat island when it holds the canvas's
+		// chat; else the chat the canvas belongs to (opened if needed).
 		if (port.prompt) {
 			port.prompt(text, send);
+			return;
+		}
+		const agent = this.agents.get(doc.id);
+		if (agent) {
+			agent.prompt(text, send);
 			return;
 		}
 		const prompter = chatPrompter;
@@ -693,11 +732,6 @@ export class VoltCanvasService extends Disposable implements IVoltCanvasService 
 					this.promptChat(port, doc, text, send);
 				}
 			});
-			return;
-		}
-		const agent = this.agents.get(doc.id);
-		if (agent) {
-			agent.prompt(text, send);
 			return;
 		}
 		const waiting = this.waiting.get(doc.id) ?? [];

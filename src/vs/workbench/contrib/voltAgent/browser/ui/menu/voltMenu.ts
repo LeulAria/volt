@@ -97,8 +97,8 @@ export type VoltMenuSections<T> = readonly IVoltMenuSection<T>[] | ((query: stri
 export interface IVoltMenuSearch {
 	readonly placeholder: string;
 	readonly ariaLabel?: string;
-	/** Show the magnifier in front of the field. Defaults to false, like the other menus. */
-	readonly icon?: boolean;
+	/** Show the magnifier in front of the field, or this icon instead. Defaults to false, like the other menus. */
+	readonly icon?: boolean | (() => HTMLElement);
 	/** The sections function filters by the query; otherwise sections load once and filter locally. */
 	readonly remote?: boolean;
 }
@@ -116,6 +116,8 @@ export interface IVoltSubmenu<T> {
 	readonly sections: VoltMenuSections<T>;
 	readonly footer?: readonly IVoltMenuItem<T>[];
 	readonly width?: number;
+	/** The list's tallest, in px, before it scrolls. Defaults to 360. */
+	readonly maxListHeight?: number;
 	readonly emptyMessage?: string;
 	/** Extra classes on the menu, for its own styling; a flyout takes its submenu's. */
 	readonly className?: string;
@@ -310,7 +312,8 @@ class VoltMenuWidget<T> extends Disposable {
 		if (options.search) {
 			const searchRow = append(this.root, $('.volt-menu-search'));
 			if (options.search.icon) {
-				searchRow.appendChild(renderIcon(Codicon.search)).classList.add('volt-menu-search-icon');
+				const icon = options.search.icon === true ? renderIcon(Codicon.search) : options.search.icon();
+				searchRow.appendChild(icon).classList.add('volt-menu-search-icon');
 			}
 			this.input = this._register(new InputBox(searchRow, undefined, {
 				placeholder: options.search.placeholder,
@@ -589,7 +592,7 @@ class VoltMenuWidget<T> extends Disposable {
 	private showRows(rows: Row<T>[]): void {
 		this.rows = rows;
 		this.list.splice(0, this.list.length, rows);
-		const height = Math.min(MAX_LIST_HEIGHT, rows.reduce((sum, row) => sum + rowHeight(row), 0));
+		const height = Math.min(this.options.maxListHeight ?? MAX_LIST_HEIGHT, rows.reduce((sum, row) => sum + rowHeight(row), 0));
 		this.listHost.style.height = `${height}px`;
 		this.list.layout(height);
 	}

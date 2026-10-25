@@ -8,7 +8,7 @@ import { Extensions, IConfigurationRegistry } from '../../../../platform/configu
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING } from '../../../services/voltRuntime/common/compaction.js';
 import { HANDOFF_BUDGET_PERCENT_SETTING, HANDOFF_DEFAULT_MAX_TOKENS, HANDOFF_DEFAULT_PERCENT, HANDOFF_MAX_TOKENS_SETTING, HANDOFF_MIN_TOKENS } from '../../../services/voltRuntime/common/contextHandoff.js';
-import { DEFAULT_ORCH_LIMITS, ORCH_KEEP_WORKING_SETTING, ORCH_LIMIT_MAX, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, ORCH_BUDGET_TOKENS_SETTING, ORCH_BUDGET_USD_SETTING, ORCH_DEFAULT_BUDGET_USD, ORCH_KEEP_WORKING_SETTING, ORCH_LIMIT_MAX, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCH_ROLE_MODELS_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING } from '../../../services/voltRuntime/common/orchestration/limitRecovery.js';
 import { LEARN_FROM_RUNS_SETTING } from '../../../services/voltRuntime/common/harness/experience.js';
 
@@ -60,6 +60,33 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			minimum: 1,
 			maximum: ORCH_LIMIT_MAX.spawnsPerCall,
 			description: localize('voltAgent.multitaskMaxPerCall', "How many multitask agents or subagents an agent can start in one go (one delegate_task call). It starts the rest once those report. Those over the running limits wait their turn."),
+		},
+		[ORCH_BUDGET_USD_SETTING]: {
+			type: 'number',
+			default: ORCH_DEFAULT_BUDGET_USD,
+			minimum: 0,
+			description: localize('voltAgent.multitaskBudgetUsd', "What the subagents of one request may spend together, in US dollars (the agent's reported cost, else list price). Past it, Volt stops the subagents still working, tells the chat why, and starts no more until your next message. 0 turns the limit off."),
+		},
+		[ORCH_BUDGET_TOKENS_SETTING]: {
+			type: 'number',
+			default: 0,
+			minimum: 0,
+			description: localize('voltAgent.multitaskBudgetTokens', "The same limit in tokens (input, output and cache writes; cache reads are not counted), for models Volt has no price for. 0 turns it off."),
+		},
+		[ORCH_ROLE_MODELS_SETTING]: {
+			type: 'object',
+			default: {},
+			additionalProperties: { type: 'string' },
+			properties: {
+				default: { type: 'string', description: localize('voltAgent.roleModels.default', "Model for roles not listed here.") },
+				research: { type: 'string', description: localize('voltAgent.roleModels.research', "Model for research tasks (read-only).") },
+				review: { type: 'string', description: localize('voltAgent.roleModels.review', "Model for reviews (read-only). A model from another vendor than the one that wrote the code gives a real second opinion.") },
+				implementation: { type: 'string', description: localize('voltAgent.roleModels.implementation', "Model for implementation tasks.") },
+				test: { type: 'string', description: localize('voltAgent.roleModels.test', "Model for test tasks.") },
+				design: { type: 'string', description: localize('voltAgent.roleModels.design', "Model for UI and design tasks.") },
+				general: { type: 'string', description: localize('voltAgent.roleModels.general', "Model for general tasks.") },
+			},
+			markdownDescription: localize('voltAgent.multitaskRoleModels', "The model a subagent runs on when its agent asks for `model: \"auto\"`, by task role. Values are models as the model picker names them (`claude-code:claude-haiku-5-5`, `codex:gpt-6-sol`, or a label such as `Sonnet 5.5`). A role without an entry uses `default`, else the chat's model."),
 		},
 		[LIMIT_AUTO_RESUME_SETTING]: {
 			type: 'boolean',

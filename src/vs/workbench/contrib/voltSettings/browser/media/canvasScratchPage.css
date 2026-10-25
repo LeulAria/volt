@@ -1,0 +1,15 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Settings > Canvas & Scratch: a colour chip in place of a dropdown option's icon. */
+.volt-settings-swatch {
+	display: inline-block;
+	box-sizing: border-box;
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+	opacity: 1 !important;
+}

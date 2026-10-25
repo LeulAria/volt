@@ -3,10 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { buildTaskNotification, isLiveTaskState, isTerminalTaskState, taskNotificationDisplay } from './agentTasks.js';
+import { buildTaskNotification, describeSpend, formatTokens, formatUsd, isLiveTaskState, isTerminalTaskState, taskNotificationDisplay, withUpstreamReports } from './agentTasks.js';
 import { isRetryableFailure, isTransientFailure } from '../jobs/retryPolicy.js';
 import { LIMIT_CANARY_WAIT_MS, LIMIT_RESUME_TEXT, LIMIT_STAGGER_MS, limitAutoResumes, limitDueAt, limitResumeDisplay } from './limitRecovery.js';
-import { DEFAULT_ORCH_LIMITS, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimitPark, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchRescue, IOrchState, IOrchTask, IOrchTaskSpawn, IOrchThread, IOrchTurn, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimitPark, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchRescue, IOrchState, IOrchTask, IOrchTaskSpawn, IOrchTaskUsage, IOrchThread, IOrchTurn, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
 import { applyOrchEvent, applyOrchEvents } from './orchestratorProjector.js';
 import { MAX_STALE_PLAN_ROUNDS, MAX_STEP_CONTINUATIONS, planContinuationCount, planContinueText, planTurnId, stepLimitContinueText, RESCUE_STAGGER_MS, rescueDueAt, rescueLabel, rescueResumeText, rescueTurnId, rescueWaits } from './rescue.js';
 import { normalizeVoltMode } from '../modes.js';
@@ -299,6 +299,8 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 				}],
 			};
 		}
+		case 'task.usage':
+			return decideTaskUsage(state, command.taskId, command.usage, command.at, limits);
 		case 'task.worktree': {
 			const task = state.tasks[command.taskId];
 			if (!task) {
@@ -785,7 +787,72 @@ function decideCancel(state: IOrchState, threadId: string, cascade: 'turn' | 'al
 	return { events };
 }
 
-function decideTaskCancel(state: IOrchState, taskId: string, at: number, reason: string | undefined): IOrchDecision {
+/**
+ * Why a tree may not spend more this request, or undefined. A cap that ran out stays out until the
+ * user's next message, even when the setting is raised meanwhile (the stopped work already reported).
+ */
+export function overBudget(root: IOrchThread | undefined, limits: IOrchLimits): string | undefined {
+	const spend = root?.spend;
+	if (!spend) {
+		return undefined;
+	}
+	if (spend.capped) {
+		return spend.capped.reason;
+	}
+	if (limits.budgetUsd > 0 && spend.usd >= limits.budgetUsd) {
+		return `This request's subagents spent ${formatUsd(spend.usd)} of their ${formatUsd(limits.budgetUsd)} budget.`;
+	}
+	if (limits.budgetTokens > 0 && spend.tokens >= limits.budgetTokens) {
+		return `This request's subagents used ${formatTokens(spend.tokens)} of their ${formatTokens(limits.budgetTokens)} token budget.`;
+	}
+	return undefined;
+}
+
+/**
+ * A task's new spend totals: the growth goes to its root's count. Past the request's budget every
+ * live Volt task of the tree stops (as failed, so the parent hears why and can decide); past the
+ * task's own cap only that task stops.
+ */
+function decideTaskUsage(state: IOrchState, taskId: string, usage: IOrchTaskUsage, at: number, limits: IOrchLimits): IOrchDecision {
+	const task = state.tasks[taskId];
+	if (!task || task.source !== 'volt') {
+		return { events: [] };
+	}
+	const before = task.usage;
+	const usd = Math.max(0, (usage.costUsd ?? 0) - (before?.costUsd ?? 0));
+	const tokens = Math.max(0, usage.tokens - (before?.tokens ?? 0));
+	if (!usd && !tokens && before?.priced === usage.priced) {
+		return { events: [] };
+	}
+	const events: OrchEvent[] = [{ type: 'task.updated', taskId: task.id, usage }];
+	const root = state.threads[task.rootId];
+	if (root && (usd || tokens)) {
+		events.push({ type: 'spend.added', threadId: root.id, usd: Math.round(usd * 1e6) / 1e6, tokens, at });
+	}
+	let next = applyOrchEvents(state, events);
+	const nextRoot = next.threads[task.rootId];
+	const over = !root?.spend?.capped ? overBudget(nextRoot, limits) : undefined;
+	if (over && nextRoot) {
+		const reason = `Stopped: ${over} Its partial work stays in its chat.`;
+		events.push({ type: 'spend.capped', threadId: nextRoot.id, at, reason: over });
+		next = applyOrchEvents(next, [events.at(-1)!]);
+		// The root's own tasks fail, so it hears why; deeper ones are cancelled with their parents
+		// (a failed report would wake a stopped subagent, and it would spend again to read it).
+		for (const live of Object.values(next.tasks).filter(other => other.rootId === task.rootId && other.source === 'volt' && isLiveTaskState(other.state)).sort(byCreated)) {
+			const decision = decideTaskCancel(next, live.id, at, reason, live.parentId === live.rootId ? 'failed' : 'cancelled');
+			events.push(...decision.events);
+			next = applyOrchEvents(next, decision.events);
+		}
+		return { events };
+	}
+	const own = next.tasks[task.id];
+	if (own.budgetUsd !== undefined && (own.usage?.costUsd ?? 0) >= own.budgetUsd && isLiveTaskState(own.state)) {
+		events.push(...decideTaskCancel(next, own.id, at, `Stopped: it spent ${formatUsd(own.usage?.costUsd ?? 0)} of its ${formatUsd(own.budgetUsd)} budget. Its partial work stays in its chat.`, 'failed').events);
+	}
+	return { events };
+}
+
+function decideTaskCancel(state: IOrchState, taskId: string, at: number, reason: string | undefined, endState: 'cancelled' | 'failed' = 'cancelled'): IOrchDecision {
 	const task = state.tasks[taskId];
 	if (!task) {
 		return { events: [], rejected: `No task ${taskId}.` };
@@ -808,14 +875,15 @@ function decideTaskCancel(state: IOrchState, taskId: string, at: number, reason:
 		// Its own subagents stop with it.
 		let next = applyOrchEvents(state, events);
 		for (const grandchild of liveChildren(state, child.id)) {
-			if (grandchild.source === 'volt') {
+			if (grandchild.source === 'volt' && isLiveTaskState(next.tasks[grandchild.id]?.state ?? 'completed')) {
+				// Cancelled, not failed: the stopped subagent must not wake up for their reports.
 				const decision = decideTaskCancel(next, grandchild.id, at, reason);
 				events.push(...decision.events);
 				next = applyOrchEvents(next, decision.events);
 			}
 		}
 	}
-	events.push({ type: 'task.settled', taskId: task.id, state: 'cancelled', at, ...(reason ? { error: reason } : {}) });
+	events.push({ type: 'task.settled', taskId: task.id, state: endState, at, ...(reason ? { error: reason } : {}) });
 	return { events };
 }
 
@@ -875,6 +943,11 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 	if (outcome === 'failed' && !superseded && !limit && !previous && recoversFromFailure(thread, active, error)) {
 		const task = thread.taskId ? state.tasks[thread.taskId] : undefined;
 		return { events: restartTurn(state, thread, active, task, at, failureResume(active, error!)) };
+	}
+	// Past the quick retries, a subagent with fallback models goes on in the same chat on the next one.
+	const ownTask = thread.taskId ? state.tasks[thread.taskId] : undefined;
+	if (outcome === 'failed' && !superseded && active.phase !== 'cancelling' && ownTask?.fallbacks?.length && (ownTask.state === 'running' || ownTask.state === 'waiting')) {
+		return { events: fallBack(thread, active, ownTask, at, error) };
 	}
 	// The agent ended its turn with its plan unfinished: it goes on while the rounds get somewhere.
 	const planRound = outcome === 'done' && !superseded && !previous && openPlan?.length ? planProgress(state, thread, active, openPlan.length, !!worked, limits) : undefined;
@@ -996,6 +1069,30 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 	return { events };
 }
 
+/**
+ * A subagent's round failed on its model (a provider error, a usage limit, a model that is not
+ * available): the same prompt goes again, first in the queue, on the next fallback model. The task
+ * keeps its id and keeps running, so the parent's wait and any task waiting on it (`after`) follow.
+ */
+function fallBack(thread: IOrchThread, active: IOrchTurn, task: IOrchTask, at: number, error: string | undefined): OrchEvent[] {
+	const [next, ...rest] = task.fallbacks!;
+	const failed = task.modelLabel ?? task.modelRef ?? 'its model';
+	const failedOn = [...(task.failedOn ?? []), failed];
+	const why = error?.trim() ? `: ${error.trim().replace(/\s+/g, ' ').slice(0, 300)}` : '';
+	const text = `[Volt subagent] The attempt on ${failed} failed${why}. You continue it on ${next.label}. Check what it already changed before you redo anything, then do the task below.\n\n${active.prompt.text}`;
+	return [
+		{ type: 'turn.settled', threadId: thread.id, turnId: active.id, outcome: 'failed', at, ...(error ? { error } : {}) },
+		{ type: 'task.updated', taskId: task.id, modelRef: next.ref, modelLabel: next.label, fallbacks: rest, failedOn, activity: `Retrying on ${next.label}` },
+		{ type: 'thread.updated', threadId: thread.id, modelRef: next.ref, modelLabel: next.label },
+		{
+			type: 'queue.added',
+			threadId: thread.id,
+			head: true,
+			item: { id: `${active.id}~f${failedOn.length}`, prompt: { ...active.prompt, text, modelRef: next.ref }, at, kind: active.kind === 'followup' ? 'followup' : 'brief' },
+		},
+	];
+}
+
 function harnessEndState(outcome: OrchOutcome): Extract<OrchTaskState, 'completed' | 'failed' | 'cancelled' | 'interrupted'> {
 	switch (outcome) {
 		case 'done': return 'completed';
@@ -1049,6 +1146,16 @@ function decideSpawn(state: IOrchState, command: Extract<OrchCommand, { type: 't
 	if (loop) {
 		return { events: [], rejected: loop };
 	}
+	const over = overBudget(state.threads[parent.rootId], limits);
+	if (over) {
+		return { events: [], rejected: `${over} No more subagents until the user's next message: finish with what you have, or tell the user what is left and that the budget (setting volt.agent.multitask.budgetUsd) can be raised.` };
+	}
+	for (const id of spawn.after ?? []) {
+		const upstream = state.tasks[id];
+		if (!upstream || upstream.rootId !== parent.rootId || upstream.source !== 'volt') {
+			return { events: [], rejected: `\`after\` names ${id}, which is not a task of this chat. Call task_status to list them.` };
+		}
+	}
 	const task: IOrchTask = {
 		id: spawn.taskId,
 		source: 'volt',
@@ -1075,6 +1182,10 @@ function decideSpawn(state: IOrchState, command: Extract<OrchCommand, { type: 't
 		delivery: 'none',
 		rounds: 1,
 		...(previous ? { previousTaskId: previous.id, iteration: (previous.iteration ?? 1) + 1 } : {}),
+		...(spawn.contract ? { contract: spawn.contract } : {}),
+		...(spawn.after?.length ? { after: [...new Set(spawn.after)] } : {}),
+		...(spawn.budgetUsd !== undefined && spawn.budgetUsd > 0 ? { budgetUsd: spawn.budgetUsd } : {}),
+		...(spawn.fallbacks?.length ? { fallbacks: spawn.fallbacks } : {}),
 	};
 	const child = newThread(spawn.childId, command.at, parent, {
 		title: spawn.title,
@@ -1575,12 +1686,31 @@ function scheduleRound(state: IOrchState, at: number, limits: IOrchLimits, seq: 
 	// between chats so one chat's long batch does not hold every free slot.
 	const queued = fairOrder(Object.values(next.tasks).filter(task => task.source === 'volt' && task.state === 'queued'));
 	for (const task of queued) {
+		// A task that needs others' results (`after`) waits for them without taking a slot.
+		const upstream = (task.after ?? []).map(id => next.tasks[id]).filter((dep): dep is IOrchTask => !!dep);
+		if (upstream.some(dep => !isTerminalTaskState(dep.state))) {
+			continue;
+		}
+		const broken = upstream.filter(dep => dep.state !== 'completed');
+		if (broken.length) {
+			const reason = `Not started: it waited for ${broken.map(dep => `${dep.id} "${dep.title}" (${dep.state})`).join(', ')}. Fix or rerun that work, then delegate this again.`;
+			for (const event of decideTaskCancel(next, task.id, at, reason, 'failed').events) {
+				push(event);
+			}
+			continue;
+		}
 		const running = Object.values(next.tasks).filter(other => other.source === 'volt' && (other.state === 'running' || other.state === 'waiting'));
 		if (running.length >= limits.runningTotal) {
 			break;
 		}
 		if (running.filter(other => other.parentId === task.parentId).length >= limits.runningPerParent) {
 			continue;
+		}
+		// Its brief gets the reports it waited for, once (a later round's queue has no brief left).
+		const child = upstream.length && task.childId ? next.threads[task.childId] : undefined;
+		const brief = child?.queue.find(item => item.id === `${task.id}-r1`);
+		if (child && brief) {
+			push({ type: 'queue.updated', threadId: child.id, itemId: brief.id, prompt: { ...brief.prompt, text: withUpstreamReports(brief.prompt.text, upstream) } });
 		}
 		push({ type: 'task.started', taskId: task.id, at });
 	}
@@ -1606,7 +1736,7 @@ function scheduleRound(state: IOrchState, at: number, limits: IOrchLimits, seq: 
 						threadId: current.id,
 						turnId: steering.id,
 						steerId: `s${current.turns}-${seq + events.length + 1}`,
-						prompt: { text: buildTaskNotification(finished, others, at), display: { text: taskNotificationDisplay(finished), notification: true } },
+						prompt: { text: buildTaskNotification(finished, others, at, describeSpend(next.threads[current.rootId]?.spend, limits)), display: { text: taskNotificationDisplay(finished), notification: true } },
 						taskIds: ids,
 					});
 				}
@@ -1669,7 +1799,7 @@ function scheduleRound(state: IOrchState, at: number, limits: IOrchLimits, seq: 
 				id: `n${current.turns + 1}-${seq + events.length + 1}`,
 				kind: 'notification',
 				prompt: {
-					text: buildTaskNotification(finished, others, at),
+					text: buildTaskNotification(finished, others, at, describeSpend(next.threads[current.rootId]?.spend, limits)),
 					display: { text: taskNotificationDisplay(finished), notification: true },
 				},
 				at,

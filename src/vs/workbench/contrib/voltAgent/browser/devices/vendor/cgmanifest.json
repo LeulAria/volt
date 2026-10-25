@@ -6,9 +6,14 @@
 			"version": "0.180.0"
 		},
 		{
-			"component": { "type": "git", "git": { "name": "t3code", "repositoryUrl": "https://github.com/pingdotgg/t3code", "commitHash": "f570bd21663f56ce94c41829d3b7d72886e25a34" } },
+			"component": { "type": "npm", "npm": { "name": "effect", "version": "4.0.5" } },
 			"license": "MIT",
-			"version": "f570bd21663f56ce94c41829d3b7d72886e25a34"
+			"version": "4.0.5"
+		},
+		{
+			"component": { "type": "git", "git": { "name": "t3code", "repositoryUrl": "https://github.com/pingdotgg/t3code", "commitHash": "9179178fdff5ac750c29ef8d6234d5e75538c124" } },
+			"license": "MIT",
+			"version": "9179178fdff5ac750c29ef8d6234d5e75538c124"
 		}
 	],
 	"version": 1

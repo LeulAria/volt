@@ -42,6 +42,7 @@ suite('Agent repository switching', () => {
 			set visibleRepositories(value: ISCMRepository[]) { visible = value; visibleChanged.fire(); },
 			onDidChangeVisibleRepositories: visibleChanged.event,
 			focus: () => { },
+			scopeRepository: () => { },
 		} as unknown as ISCMViewService;
 		const focus = disposables.add(new AgentScmRepositoryFocus(
 			{

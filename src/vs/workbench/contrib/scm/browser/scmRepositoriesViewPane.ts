@@ -51,10 +51,7 @@ class RepositoryTreeDataSource extends Disposable implements IAsyncDataSource<IS
 			? inputOrElement.provider.id
 			: undefined;
 
-		const repositories = this.scmViewService.repositories
-			.filter(r => r.provider.parentId === parentId);
-
-		return repositories;
+		return this.childrenOf(parentId);
 	}
 
 	hasChildren(inputOrElement: ISCMViewService | ISCMRepository): boolean {
@@ -62,10 +59,16 @@ class RepositoryTreeDataSource extends Disposable implements IAsyncDataSource<IS
 			? inputOrElement.provider.id
 			: undefined;
 
-		const repositories = this.scmViewService.repositories
-			.filter(r => r.provider.parentId === parentId);
+		return this.childrenOf(parentId).length > 0;
+	}
 
-		return repositories.length > 0;
+	/** Volt: a repository whose parent is not listed (a worktree Source Control is scoped to) is a root. */
+	private childrenOf(parentId: string | undefined): ISCMRepository[] {
+		const repositories = this.scmViewService.repositories;
+		const listed = new Set(repositories.map(r => r.provider.id));
+		return repositories.filter(r => parentId === undefined
+			? r.provider.parentId === undefined || !listed.has(r.provider.parentId)
+			: r.provider.parentId === parentId);
 	}
 }
 
@@ -160,6 +163,12 @@ export class SCMRepositoriesViewPane extends ViewPane {
 					if (removedRepository) {
 						await this.updateRepository(removedRepository);
 					}
+				}));
+
+				// Volt: Source Control scoped to another repository (or no longer scoped)
+				this.visibilityDisposables.add(this.scmViewService.onDidChangeScopedRepository(async () => {
+					await this.updateChildren();
+					await this.treeOperationSequencer.queue(() => this.updateTreeSelection());
 				}));
 
 				// Update tree selection
@@ -316,6 +325,8 @@ export class SCMRepositoriesViewPane extends ViewPane {
 		const parentRepository = this.scmViewService.repositories
 			.find(r => r.provider.id === repository.provider.parentId);
 		if (!parentRepository) {
+			// Volt: the parent is scoped out, so the repository is a root.
+			await this.updateChildren();
 			return;
 		}
 

@@ -17,6 +17,7 @@ import { ILoggerResource, LogLevel } from '../../log/common/log.js';
 import { PolicyDefinition, PolicyValue } from '../../policy/common/policy.js';
 import { IPartsSplash } from '../../theme/common/themeService.js';
 import { IUserDataProfile } from '../../userDataProfile/common/userDataProfile.js';
+import { IVoltWindowScopes } from '../../voltWindowScope/common/voltWindowScope.js';
 import { IAnyWorkspaceIdentifier, ISingleFolderWorkspaceIdentifier, IWorkspaceIdentifier } from '../../workspace/common/workspace.js';
 
 export const WindowMinimumSize = {
@@ -470,6 +471,11 @@ export interface INativeWindowConfiguration extends IWindowConfiguration, Native
 
 	os: IOSConfiguration;
 	policiesData?: IStringDictionary<{ definition: PolicyDefinition; value: PolicyValue }>;
+
+	/** Volt: the window's own scope, when it was opened with New Window beside a main window. */
+	voltWindowScope?: string;
+	/** Volt: every open scope when the window loads, so its lists are right from the first frame. */
+	voltWindowScopes?: IVoltWindowScopes;
 }
 
 /**

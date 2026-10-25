@@ -125,6 +125,8 @@ export class AgentScmRepositoryFocus extends Disposable {
 			if (!repository) {
 				return;
 			}
+			// The Repositories list and the pickers show it alone too, not the project's other worktrees.
+			this.scmViewService.scopeRepository(repository);
 			if (shownState !== 'ready') {
 				setState({ kind: 'ready' });
 			}

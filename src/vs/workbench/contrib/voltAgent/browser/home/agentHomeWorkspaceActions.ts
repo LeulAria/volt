@@ -35,11 +35,9 @@ import { AddProjectDialog } from '../../../voltProjects/browser/ui/addProjectVie
 import { agentHomeWorkspaceEntries, cloneFolderName, commitFailureSummary, freeFolderName, gitErrorSummary, IAgentHomeWorkspaceEntry, namedProjectReadme, projectFolderSlug } from './agentHomeWorkspace.js';
 import { IAgentHomeWorkspaceMenuHost, showAgentHomeWorkspaceMenu } from './agentHomeWorkspaceMenu.js';
 
-/** Parent folder for clones and Start from scratch, once the user picks one. */
+/** Parent folder for clones and new projects, once the user picks one. */
 const LOCATION_STORAGE_KEY = 'volt.agent.home.projectsLocation';
 export const INIT_TIMEOUT_MS = 30_000;
-/** Folder name for Start from scratch; a number follows when it is taken. */
-const SCRATCH_FOLDER_NAME = 'new-project';
 
 /** What the Open Workspace menu does: open and clone local folders, then show them as projects. */
 export class AgentHomeWorkspaceActions {
@@ -68,7 +66,7 @@ export class AgentHomeWorkspaceActions {
 
 	/**
 	 * The menu's host, with the folder list read now. `current` is the project the caller shows,
-	 * checked in the menu. `openOne` takes a single picked, created or scratch folder.
+	 * checked in the menu. `openOne` takes a single picked or created folder.
 	 */
 	async menuHost(current?: URI, openOne?: (folder: URI) => Promise<void>): Promise<IAgentHomeWorkspaceMenuHost> {
 		this.openOne = openOne;
@@ -81,7 +79,6 @@ export class AgentHomeWorkspaceActions {
 			openFolders: folders => this.openFolders(folders),
 			browse: () => this.browse(),
 			browseGitHub: () => this.instantiationService.createInstance(AddProjectDialog).show('github'),
-			startFromScratch: () => this.startFromScratch(),
 			createProject: name => this.createProject(name),
 			clone: url => this.clone(url),
 			reportError: message => this.notificationService.error(message),
@@ -124,7 +121,7 @@ export class AgentHomeWorkspaceActions {
 	private async changeLocation(): Promise<void> {
 		const picked = await this.folderPicker.pickFolder({
 			title: localize('voltAgent.workspace.chooseLocation', "Choose where new projects go"),
-			subtitle: localize('voltAgent.workspace.chooseLocationSubtitle', "Clones, new folders and scratch projects are created here"),
+			subtitle: localize('voltAgent.workspace.chooseLocationSubtitle', "Clones and new projects are created here"),
 			acceptLabel: localize('voltAgent.workspace.choose', "Choose"),
 			initialPath: this.locationUri().fsPath,
 		});
@@ -180,21 +177,6 @@ export class AgentHomeWorkspaceActions {
 	/** Volt's in-app folder picker (This PC); it adds the folder and opens a chat in it. */
 	private async browse(): Promise<void> {
 		await this.instantiationService.createInstance(AddProjectDialog).show('thisPC');
-	}
-
-	/** An empty git repository in the projects location, open in a new chat. */
-	private async startFromScratch(): Promise<void> {
-		const parent = this.locationUri();
-		try {
-			const name = await freeFolderName(SCRATCH_FOLDER_NAME, candidate => this.fileService.exists(joinPath(parent, candidate)));
-			const target = joinPath(parent, name);
-			await this.fileService.createFolder(target);
-			// Git lets the chat show its changes and use worktrees; a folder without it still works.
-			await this.git(target.fsPath, ['init'], INIT_TIMEOUT_MS);
-			await this.openFolders([target]);
-		} catch (err) {
-			this.notificationService.error(localize('voltAgent.workspace.scratchFailed', "Could not create a project: {0}", toErrorMessage(err)));
-		}
 	}
 
 	/**
@@ -304,7 +286,7 @@ function shellQuote(arg: string): string {
 }
 
 /**
- * The project menu (Recents, Start from scratch, Local folder, On This Mac, clone hosts) under
+ * The project menu (Recents, Local folders, New project, On This Mac, Git Repo) under
  * `anchor`, shared by the sidebar header, the new agent's project picker and Add Project.
  * Without `openOne`, a folder shows its latest chat (or a new one). A second click on the
  * same anchor closes it.

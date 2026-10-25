@@ -536,28 +536,245 @@
 	display: none;
 }
 
-/* The canvas's agent: a real chat (model picker, composer, live transcript) under the comments. */
-.volt-canvas-pane-head.agent {
+/*
+ * The tab's chat island (canvasAgentChat.ts), as Scratch docks its agents (scratchBoard.css "Agent
+ * dock"): closed, a pill with the chat's live step; open, the transcript in a solid card with the
+ * chat's chips and composer under it. Over the page's webview, inside the view's opaque, contained
+ * layer; the card and pill are solid (volt-transparent-window).
+ */
+.volt-canvas-dock {
+	position: absolute;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	z-index: 2;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 8px;
+	padding: 0 12px 12px;
+	pointer-events: none;
+}
+
+.volt-canvas-dock[hidden],
+.volt-canvas-dock [hidden] {
+	display: none !important;
+}
+
+/* Closed: the pill, kept clear of the board's minimap in the bottom right. */
+.volt-canvas-dock-bar {
+	appearance: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	box-sizing: border-box;
+	min-width: 200px;
+	max-width: max(200px, min(440px, calc(100% - 400px)));
 	height: 34px;
-	border-top: 1px solid var(--vscode-panel-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+	margin: 0;
+	padding: 0 10px 0 12px;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: 17px;
+	background: #222222;
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 12.5px;
+	white-space: nowrap;
+	cursor: pointer;
+	pointer-events: auto;
+	user-select: none;
+	outline: none;
+	animation: volt-canvas-dock-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
+	transition: border-color 120ms ease, background-color 120ms ease;
 }
 
-.volt-canvas-pane-hint {
+.monaco-workbench.vs .volt-canvas-dock-bar,
+.monaco-workbench.hc-light .volt-canvas-dock-bar {
+	border-color: rgba(0, 0, 0, 0.1);
+	background: #f6f6f6;
+	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14), 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.volt-canvas-dock-bar:hover {
+	background: #2a2a2a;
+}
+
+.monaco-workbench.vs .volt-canvas-dock-bar:hover,
+.monaco-workbench.hc-light .volt-canvas-dock-bar:hover {
+	background: #efefef;
+}
+
+.volt-canvas-dock-bar:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.volt-canvas-dock-bar[data-state="working"] {
+	border-color: color-mix(in srgb, var(--vscode-textLink-foreground) 55%, transparent);
+}
+
+.volt-canvas-dock-bar-status {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
 	color: var(--vscode-descriptionForeground);
-	font-size: 11.5px;
-	font-weight: 400;
 }
 
-.volt-canvas-agent-slot {
+.volt-canvas-dock-bar[data-state="working"] .volt-canvas-dock-bar-status {
+	color: var(--vscode-textLink-foreground);
+}
+
+.volt-canvas-dock-bar-status > .volt-browser-dock-dots {
+	display: inline-flex;
+	width: 11px;
+	height: 11px;
+}
+
+.volt-canvas-dock-bar-status .codicon,
+.volt-canvas-dock-bar-chevron .codicon {
+	font-size: 14px;
+}
+
+.volt-canvas-dock-bar-title {
+	flex: 1 1 auto;
+	min-width: 40px;
+	overflow: hidden;
+	font-weight: 500;
+	text-align: left;
+	text-overflow: ellipsis;
+}
+
+.volt-canvas-dock-bar-activity {
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: 55%;
+	overflow: hidden;
+	color: var(--vscode-descriptionForeground);
+	text-overflow: ellipsis;
+}
+
+.volt-canvas-dock-bar-activity:empty {
+	display: none;
+}
+
+.volt-canvas-dock-bar-chevron {
+	display: flex;
+	flex: none;
+	color: var(--vscode-descriptionForeground);
+	transition: transform 160ms ease;
+}
+
+.volt-canvas-dock-bar:hover .volt-canvas-dock-bar-chevron {
+	color: var(--vscode-foreground);
+	transform: translateY(-1px);
+}
+
+.volt-canvas-dock[data-mode="beside"] .volt-canvas-dock-bar:hover .volt-canvas-dock-bar-chevron {
+	transform: translateX(1px);
+}
+
+/* Open: the transcript card (the browser dock's float). */
+.volt-canvas-dock-panel {
 	position: relative;
-	flex: 1;
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	width: min(680px, 100%);
 	min-height: 0;
 	overflow: hidden;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: 14px;
+	background: #222222;
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+	color: var(--vscode-foreground);
+	pointer-events: auto;
+	contain: layout paint;
+	animation: volt-canvas-dock-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.volt-canvas-agent-chat {
-	position: absolute;
-	inset: 0;
+.monaco-workbench.vs .volt-canvas-dock-panel,
+.monaco-workbench.hc-light .volt-canvas-dock-panel {
+	border-color: rgba(0, 0, 0, 0.1);
+	background: #f6f6f6;
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+}
+
+.volt-canvas-dock-head {
+	flex: none;
+}
+
+.volt-canvas-dock-head .volt-browser-dock-icon {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-canvas-dock-head .volt-browser-dock-icon:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-canvas-dock-body .volt-agent-quick-open-actions {
+	display: none !important;
+}
+
+/* Under the card: the chat with its transcript moved out, so just its chips, queue and composer. */
+.volt-canvas-dock-chat {
+	position: relative;
+	flex: none;
+	width: min(680px, 100%);
+	pointer-events: auto;
+}
+
+.volt-canvas-dock-chat .volt-agent-editor {
+	--volt-agent-quick-open-reserve: 0px !important;
+	background: transparent !important;
+	overflow: visible;
+}
+
+.volt-canvas-dock-chat .volt-agent-editor .volt-agent-composer {
+	margin: 0 !important;
+	padding: 0 !important;
+}
+
+/* Solid, as the card: the board must not show through the text. */
+.volt-canvas-dock-chat .volt-agent-input-box,
+.volt-canvas-dock-chat .volt-agent-queue-card,
+.volt-canvas-dock-chat .volt-agent-running-card {
+	background: #222222 !important;
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
+}
+
+.monaco-workbench.vs .volt-canvas-dock-chat .volt-agent-input-box,
+.monaco-workbench.vs .volt-canvas-dock-chat .volt-agent-queue-card,
+.monaco-workbench.vs .volt-canvas-dock-chat .volt-agent-running-card,
+.monaco-workbench.hc-light .volt-canvas-dock-chat .volt-agent-input-box,
+.monaco-workbench.hc-light .volt-canvas-dock-chat .volt-agent-queue-card,
+.monaco-workbench.hc-light .volt-canvas-dock-chat .volt-agent-running-card {
+	background: #f6f6f6 !important;
+	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14), 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Access, branch and context live with the chat in Agents; the island keeps to the composer. */
+.volt-canvas-dock-chat .volt-agent-composer-status {
+	display: none !important;
+}
+
+@keyframes volt-canvas-dock-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-canvas-dock-bar,
+	.volt-canvas-dock-panel,
+	.volt-canvas-dock-bar-chevron {
+		animation: none !important;
+		transition: none !important;
+	}
 }
 
 /* Expand: the canvas in the preview dialog, filling it. */

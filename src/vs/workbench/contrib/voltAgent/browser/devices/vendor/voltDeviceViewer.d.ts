@@ -85,7 +85,11 @@ export function duoFoldState(screen: Pick<DeviceScreenSize, 'orientation' | 'scr
 	readonly fold: 'closed' | 'open' | 'half';
 	readonly stand: boolean;
 	readonly phoneVertical: boolean;
+	readonly settled: boolean;
 };
+
+/** The orientation that keeps the phone held as it is (upright or sideways) on the display `screenId`. */
+export function duoHoldOrientation(vertical: boolean, screenId: number | undefined): DeviceOrientation;
 
 export interface DuoViewport {
 	readonly setScreen: (screen: DeviceScreenSize | null) => void;
@@ -101,7 +105,8 @@ export function mountDuoViewport(options: {
 	host: HTMLElement;
 	decoded: HTMLCanvasElement;
 	client: DeviceStreamClient;
-	modelUrl: string;
+	/** The .glb file's bytes (the workbench CSP blocks fetching blob: URLs). */
+	modelData: ArrayBuffer;
 	screen: DeviceScreenSize | null;
 	label: string;
 	onUnavailable: (cause?: unknown) => void;

@@ -122,11 +122,16 @@ export function Segmented<T extends string>({ value, options, onChange }: { read
 	);
 }
 
-/** The bolt mark and wordmark (Volt's black bolt icon). */
+/** Volt's app icon (brand/volt-icon.svg, cropped to its squircle). Size and shadow come from `className`. */
+export function VoltMark({ className }: { readonly className?: string }) {
+	return <img className={className ? `volt-mark ${className}` : 'volt-mark'} src="/volt-mark.svg" alt="" draggable={false} />;
+}
+
+/** The app icon and wordmark. */
 export function Wordmark({ subtitle }: { readonly subtitle?: ReactNode }) {
 	return (
 		<div className="wordmark">
-			<span className="wordmark-mark"><Icon name="bolt" size={14} /></span>
+			<VoltMark className="wordmark-mark" />
 			<span className="wordmark-text">Volt</span>
 			{subtitle ? <span className="wordmark-sub">{subtitle}</span> : null}
 		</div>

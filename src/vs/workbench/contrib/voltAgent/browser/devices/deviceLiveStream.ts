@@ -132,6 +132,11 @@ export class DeviceLiveStream extends Disposable {
 		return this.screen ? this.lib.duoFoldState(this.screen) : undefined;
 	}
 
+	/** The orientation that keeps the phone held as it stands, sent before folding out of a stand. */
+	holdOrientation(vertical: boolean): Viewer.DeviceOrientation | undefined {
+		return this.screen ? this.lib.duoHoldOrientation(vertical, this.screen.screenId) : undefined;
+	}
+
 	/** A dropped stream starts again a few times (the hub restarting, a simulator reboot) before giving up. */
 	private retry(reason: string): void {
 		if (this.retries >= MAX_RETRIES || this.disposed) {
@@ -174,7 +179,7 @@ export class DeviceLiveStream extends Disposable {
 		this.client.controlDuo(command);
 	}
 
-	mountDuo(host: HTMLElement, modelUrl: string, label: string, onUnavailable: (cause?: unknown) => void): void {
+	mountDuo(host: HTMLElement, modelData: ArrayBuffer, label: string, onUnavailable: (cause?: unknown) => void): void {
 		if (this.duo) {
 			return;
 		}
@@ -182,7 +187,7 @@ export class DeviceLiveStream extends Disposable {
 			host,
 			decoded: this.canvas,
 			client: this.client,
-			modelUrl,
+			modelData,
 			screen: this.screen ?? null,
 			label,
 			onUnavailable,

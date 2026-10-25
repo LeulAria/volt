@@ -429,8 +429,9 @@
 	background: transparent;
 }
 
-/* Set on each reply on every scroll (agentThreadView.ts). Not inherited, so a new value restyles the
- * reply alone rather than everything in it. */
+/* Set on each reply on every scroll (agentThreadView.ts): the pinned card's bottom. Not inherited, so a
+ * new value restyles the reply alone rather than everything in it. Replies stay hidden for 10px below
+ * the card (the gap it keeps above) so a line cut by its edge never peeks out half-drawn. */
 @property --volt-sticky-fade-end {
 	syntax: '<length>';
 	inherits: false;
@@ -439,8 +440,8 @@
 
 .volt-agent-exchange.has-stuck-turn > .volt-agent-turn:not(.user),
 .volt-agent-exchange.has-stuck-turn > .volt-agent-turn.notification {
-	-webkit-mask-image: linear-gradient(to bottom, transparent 0px, transparent var(--volt-sticky-fade-end, 0px), #000 calc(var(--volt-sticky-fade-end, 0px) + 24px));
-	mask-image: linear-gradient(to bottom, transparent 0px, transparent var(--volt-sticky-fade-end, 0px), #000 calc(var(--volt-sticky-fade-end, 0px) + 24px));
+	-webkit-mask-image: linear-gradient(to bottom, transparent 0px, transparent calc(var(--volt-sticky-fade-end, 0px) + 10px), #000 calc(var(--volt-sticky-fade-end, 0px) + 34px));
+	mask-image: linear-gradient(to bottom, transparent 0px, transparent calc(var(--volt-sticky-fade-end, 0px) + 10px), #000 calc(var(--volt-sticky-fade-end, 0px) + 34px));
 }
 
 .volt-agent-turn.user .volt-agent-user-row {
@@ -3849,7 +3850,7 @@ pre.volt-agent-searchable {
 	flex: 0 0 auto;
 	width: 100%;
 	max-width: 720px;
-	margin: 0 auto 8px;
+	margin: 0 auto 6px;
 	box-sizing: border-box;
 	color: var(--vscode-foreground);
 	font-size: 13px;
@@ -3858,7 +3859,7 @@ pre.volt-agent-searchable {
 /* The card's surface. No fill while closed: the card is its edge and its rows, so the window shows through. */
 .volt-agent-tasks-panel {
 	box-sizing: border-box;
-	border-radius: 12px;
+	border-radius: 10px;
 	background: transparent;
 	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
 	overflow: hidden;
@@ -3875,12 +3876,9 @@ pre.volt-agent-searchable {
  * pushes the transcript. Open, it is opaque (it covers chat text, and see-through layers over the
  * window are a paint risk) and sits over the other card.
  */
-.volt-agent-composer > .volt-agent-tasks-card {
-	height: 42px;
-}
-
-.volt-agent-composer > .volt-agent-agents-card {
-	height: 40px;
+.volt-agent-composer > :is(.volt-agent-tasks-card, .volt-agent-agents-card) {
+	/* The chips' 30px line plus the card's edge. */
+	height: 32px;
 }
 
 .volt-agent-composer > :is(.volt-agent-tasks-card, .volt-agent-agents-card).expanded {
@@ -3928,8 +3926,8 @@ pre.volt-agent-searchable {
 	align-items: center;
 	gap: 8px;
 	width: 100%;
-	min-height: 40px;
-	padding: 0 16px;
+	min-height: 30px;
+	padding: 0 12px;
 	border: 0;
 	background: transparent;
 	color: inherit;
@@ -4016,7 +4014,7 @@ pre.volt-agent-searchable {
 	gap: 8px;
 	min-width: 0;
 	min-height: 26px;
-	padding: 0 16px;
+	padding: 0 12px;
 	font-size: 13px;
 	color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
 }
@@ -4428,6 +4426,50 @@ pre.volt-agent-searchable {
 	background-color: #333;
 }
 
+/* Beat the composer's `.view-line span { font-weight: 300 !important }`. */
+.volt-agent-monaco .monaco-editor .view-line span.volt-agent-md-bold,
+.volt-agent-monaco .monaco-editor .view-line span.volt-agent-md-heading {
+	font-weight: 600 !important;
+}
+
+.volt-agent-monaco .monaco-editor .view-line span.volt-agent-md-italic {
+	font-style: italic !important;
+}
+
+.volt-agent-monaco .monaco-editor .view-line span.volt-agent-md-strike {
+	text-decoration: line-through !important;
+}
+
+.volt-agent-monaco .volt-agent-md-code {
+	font-family: var(--vscode-editor-font-family, monospace);
+	font-size: 12.5px;
+	background: color-mix(in srgb, var(--vscode-editor-foreground) 8%, transparent);
+	border-radius: 4px;
+}
+
+.volt-agent-monaco .volt-agent-md-marker {
+	opacity: 0.45;
+}
+
+.volt-agent-monaco .volt-agent-md-marker-hidden {
+	color: transparent !important;
+	font-size: 0 !important;
+	letter-spacing: -1em;
+}
+
+.volt-agent-text .volt-agent-inline-md.md-bold,
+.volt-agent-text .volt-agent-inline-md.md-heading {
+	font-weight: 600;
+}
+
+.volt-agent-text code.volt-agent-inline-md {
+	font-family: var(--vscode-editor-font-family, monospace);
+	font-size: 12.5px;
+	padding: 1px 4px;
+	background: color-mix(in srgb, var(--vscode-editor-foreground) 8%, transparent);
+	border-radius: 4px;
+}
+
 .volt-agent-monaco.has-line-numbers .volt-agent-placeholder {
 	left: 28px;
 }
@@ -4710,6 +4752,21 @@ pre.volt-agent-searchable {
 	color: inherit;
 }
 
+/* No room: the chip is just its icon, and the x takes the icon's place on hover. */
+.volt-agent-toolbar.compact-mode .volt-agent-mode.chip {
+	width: 24px;
+	min-width: 24px;
+	padding: 0;
+	gap: 0;
+	justify-content: center;
+}
+
+.volt-agent-toolbar.compact-mode .volt-agent-mode.chip .volt-agent-mode-label,
+.volt-agent-toolbar.compact-mode .volt-agent-mode.chip:not(:hover) .volt-agent-mode-close,
+.volt-agent-toolbar.compact-mode .volt-agent-mode.chip:hover > .volt-agent-svg-icon {
+	display: none;
+}
+
 .volt-agent-access {
 	background: transparent;
 	color: var(--vscode-descriptionForeground);
@@ -4847,13 +4904,27 @@ pre.volt-agent-searchable {
 	display: none;
 }
 
+/* Icon only: a 26px circle with the mark in its centre (the brand-icon left padding no longer applies). */
 .volt-agent-toolbar.compact-model-icon .volt-agent-model {
 	flex: 0 0 auto;
-	min-width: 0;
+	justify-content: center;
+	min-width: 26px;
 	width: auto !important;
 	max-width: none;
-	padding: 0 4px;
+	padding: 0;
 	gap: 0;
+}
+
+.volt-agent-toolbar.compact-model-icon .volt-agent-model:not(.comparing) {
+	width: 26px !important;
+}
+
+.volt-agent-toolbar.compact-model-icon .volt-agent-model.comparing {
+	padding: 0 5px;
+}
+
+.volt-agent-toolbar.compact-model-icon .volt-agent-model-stack {
+	margin-right: 0;
 }
 
 .volt-agent-toolbar.compact-model-icon .volt-agent-model-label,
@@ -5349,6 +5420,14 @@ pre.volt-agent-searchable {
 	font-size: 13px;
 }
 
+/* This Mac: the same 13px as the access trigger's lock. */
+.volt-agent-landing-pick .trigger-icon .volt-agent-svg-icon,
+.volt-agent-landing-pick .trigger-icon .volt-agent-svg-icon svg {
+	display: block;
+	width: 13px;
+	height: 13px;
+}
+
 .volt-agent-landing-pick.empty {
 	opacity: 0.7;
 }
@@ -5582,7 +5661,7 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-context-meter .percent {
-	font-weight: 500;
+	font-weight: 400;
 }
 
 .volt-agent-context-meter .tokens {
@@ -8023,6 +8102,8 @@ pre.volt-agent-searchable {
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.chat:not(.file-icon):not(.folder-icon)::before { content: '\ea6b'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.mcp:not(.file-icon):not(.folder-icon)::before { content: '\eb50'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.branch:not(.file-icon):not(.folder-icon)::before { content: '\ea68'; }
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.scratch:not(.file-icon):not(.folder-icon)::before { content: '\ebaf'; }
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.canvas:not(.file-icon):not(.folder-icon)::before { content: '\eb5c'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.browser::before {
 	content: '' !important;
 	background-color: var(--volt-mention-accent, #89b4fa) !important;
@@ -8780,13 +8861,13 @@ pre.volt-agent-searchable {
 }
 
 /*
- * Floating preview: the tools area over the chat's top-right corner, without its tab row or address
+ * Floating preview: the tools area over the chat's bottom-right corner, without its tab row or address
  * bar. It keeps its solid fill and own layer (rounded clip included), so the page in it cannot break
  * the see-through window (see the volt-transparent-window skill).
  */
 .volt-agent-tools-area.floating {
 	z-index: 61;
-	border-radius: 12px;
+	border-radius: 8px;
 	overflow: hidden;
 	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 18px 50px rgba(0, 0, 0, 0.5), 0 4px 14px rgba(0, 0, 0, 0.3);
 }
@@ -9579,6 +9660,7 @@ pre.volt-agent-searchable {
 
 .volt-agent-clone-banner .text {
 	flex: 1;
+	font-variant-numeric: tabular-nums;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -9893,7 +9975,9 @@ pre.volt-agent-searchable {
 	visibility: hidden;
 }
 
+/* A clamped prompt keeps it shown: Read more already leaves its slot, which read as a gap. */
 .volt-agent-turn.user:hover .volt-agent-user-restore,
+.volt-agent-turn.user .volt-agent-bubble.clamped .volt-agent-user-restore,
 .volt-agent-user-restore:focus-visible {
 	visibility: visible;
 }
@@ -10033,4 +10117,53 @@ pre.volt-agent-searchable {
 .volt-agent-composer-chip.comments .codicon {
 	font-size: 14px;
 	color: var(--vscode-textLink-foreground);
+}
+
+/* "18 to multitask": Start Multitasking is on; Send starts the ticked queued messages. The × keeps them queued. */
+.volt-agent-composer-chip.multitask-pick {
+	gap: 6px;
+	padding-right: 5px;
+	color: #4c8dff;
+	border-color: color-mix(in srgb, #4c8dff 35%, transparent);
+	cursor: default;
+}
+
+.volt-agent-composer-chip.multitask-pick.empty {
+	color: #9a9a9a;
+	border-color: rgba(255, 255, 255, 0.12);
+}
+
+.volt-agent-composer-chip.multitask-pick > .volt-agent-svg-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.volt-agent-composer-chip.multitask-pick > .volt-agent-svg-icon,
+.volt-agent-composer-chip.multitask-pick > .volt-agent-svg-icon svg {
+	width: 14px;
+	height: 14px;
+}
+
+.volt-agent-composer-chip-close {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: transparent;
+	color: #9a9a9a;
+	cursor: pointer;
+}
+
+.volt-agent-composer-chip-close:hover {
+	background: rgba(255, 255, 255, 0.08);
+	color: var(--vscode-foreground);
+}
+
+.monaco-workbench .volt-agent-composer-chip .volt-agent-composer-chip-close .codicon.codicon-close {
+	font-size: 12px;
 }

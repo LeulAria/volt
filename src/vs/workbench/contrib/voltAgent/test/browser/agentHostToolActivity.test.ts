@@ -9,7 +9,8 @@ import { describeExploreActivity, IAgentActivityItem, applyExploreInputToActivit
 import { describeHostToolActivity, friendlyToolTitle, sameHostToolArgs } from '../../browser/blocks/agentHostToolActivity.js';
 import { buildThreadParts, mergeFileBlocks, turnFileChanges } from '../../browser/chrome/agentTimeline.js';
 import { isAgentTransportError } from '../../../../services/voltRuntime/browser/agents/acpProvider.js';
-import { isVoltHostTool, PULL_REQUEST_TOOL_NAMES } from '../../../../services/voltRuntime/common/hostTools.js';
+import { isVoltHostTool, PULL_REQUEST_TOOL_NAMES, splitMcpToolName, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
+import { bareTaskToolName } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import { PULL_REQUEST_TOOLS } from '../../browser/pullRequests/agentPullRequestService.js';
 
 suite('Agent host tool activity', () => {
@@ -111,5 +112,29 @@ suite('Agent host tool activity', () => {
 		assert.strictEqual(friendlyToolTitle('mcp__aws-docs__search_docs'), 'Search docs');
 		assert.strictEqual(friendlyToolTitle('Read file'), undefined);
 		assert.deepStrictEqual(describeExploreActivity('mcp__volt__terminal_start', 'mcp__volt__terminal_start', '{"command":"npm run dev"}'), { label: 'Started terminal', detail: 'npm run dev' });
+		assert.strictEqual(describeExploreActivity('mcp__volt__wait_tasks', 'mcp__volt__wait_tasks', '{"task_ids":["t-1"]}').label, 'Waited for tasks');
+		assert.strictEqual(friendlyToolTitle('mcp__volt__task_status'), 'Checked task');
+	});
+
+	test('every agent\'s spelling of a tool name reads as words', () => {
+		// Grok and Codex name MCP tools `server__tool`; Cursor `server: tool`; others plain snake_case.
+		assert.strictEqual(friendlyToolTitle('volt__wait_tasks'), 'Waited for tasks');
+		assert.strictEqual(describeExploreActivity('volt__wait_tasks', 'volt__wait_tasks', '{}').label, 'Waited for tasks');
+		assert.strictEqual(friendlyToolTitle('volt: delegate_task'), 'Delegated task');
+		assert.strictEqual(friendlyToolTitle('volt-thread_read: thread_read'), 'Thread read');
+		assert.strictEqual(friendlyToolTitle('mcp__volt__ask_question'), 'Asked questions');
+		assert.strictEqual(friendlyToolTitle('volt__terminal_start'), 'Started terminal');
+		assert.strictEqual(friendlyToolTitle('context7__get-library-docs'), 'Get library docs');
+		assert.strictEqual(friendlyToolTitle('github: create_issue'), 'Create issue');
+		assert.strictEqual(friendlyToolTitle('list_dir'), 'List dir');
+		assert.strictEqual(friendlyToolTitle('wait_tasks'), 'Waited for tasks');
+		// Already words, a path, or Cursor's placeholder: left alone.
+		for (const words of ['Read file', 'Edited app.ts', 'src/my_file.ts', 'MCP: tool', 'TodoWrite', 'Search: auth middleware']) {
+			assert.strictEqual(friendlyToolTitle(words), undefined, words);
+		}
+		assert.deepStrictEqual(splitMcpToolName('mcp__aws-docs__search_docs'), { server: 'aws-docs', tool: 'search_docs' });
+		assert.deepStrictEqual(splitMcpToolName('MCP: browser_click'), { tool: 'browser_click' });
+		assert.strictEqual(voltHostToolName('volt__browser_click'), 'browser_click', 'Volt\'s own tools are recognized in this spelling too');
+		assert.strictEqual(bareTaskToolName('volt__delegate_task'), 'delegate_task');
 	});
 });

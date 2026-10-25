@@ -7,7 +7,7 @@ import { Event } from '../../../../../base/common/event.js';
 import type { IDisposable } from '../../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import type { IVoltModelOptions } from '../models/modelOptions.js';
-import type { AgentTaskDelivery, AgentTaskIsolation, AgentTaskOrigin, AgentTaskRole } from './agentTasks.js';
+import type { AgentTaskDelivery, AgentTaskIsolation, AgentTaskOrigin, AgentTaskRole, ITaskContract } from './agentTasks.js';
 import type { IWorkspaceMoveSpec } from '../git/workspaceMove.js';
 
 /**
@@ -259,6 +259,41 @@ export interface IOrchThread {
 	readonly moving?: IOrchMove;
 	/** How the latest move ended; the next turn opens with it. */
 	readonly lastMove?: IOrchMoveResult;
+	/** A root chat: what its delegated tasks (the whole tree) spent since the user's latest message. */
+	readonly spend?: IOrchSpend;
+}
+
+/** What a task spent, folded from its chat's usage reports (absolute totals, so a repeat changes nothing). */
+export interface IOrchTaskUsage {
+	/** Fresh tokens: input, output and cache writes. Cache reads repeat on every call and cost a tenth, so they are left out. */
+	readonly tokens: number;
+	readonly input: number;
+	readonly output: number;
+	readonly cacheRead: number;
+	readonly cacheWrite: number;
+	readonly costUsd?: number;
+	/** Where the cost came from: the agent reported it, or Volt priced its tokens at list price. */
+	readonly priced?: 'reported' | 'list';
+}
+
+/**
+ * A tree's subagent spend for one request of the user (Roo's aggregated task cost, prime-agent's
+ * child usage attribution): every delegated task under the root adds to it, and the user's next
+ * message starts a new count.
+ */
+export interface IOrchSpend {
+	readonly usd: number;
+	readonly tokens: number;
+	/** The user turn the count started at. */
+	readonly since: number;
+	/** The budget ran out: live subagents were stopped and new ones are refused until the user's next message. */
+	readonly capped?: { readonly at: number; readonly reason: string };
+}
+
+/** A model to run a task on, as the service resolved it from the catalog. */
+export interface IOrchModelChoice {
+	readonly ref: string;
+	readonly label: string;
 }
 
 export type OrchTaskSource = 'volt' | 'harness';
@@ -314,6 +349,18 @@ export interface IOrchTask {
 	readonly iteration?: number;
 	/** Times Volt restarted while it ran and it continued on its own. */
 	readonly restarts?: number;
+	/** The handoff contract the parent gave (goal, constraints, files to read, done-when checks). */
+	readonly contract?: ITaskContract;
+	/** Tasks of the same root that must finish before this one starts; their reports go into its brief. */
+	readonly after?: readonly string[];
+	/** What it spent so far. */
+	readonly usage?: IOrchTaskUsage;
+	/** Its own spending cap (USD): it is stopped once it spent this much. */
+	readonly budgetUsd?: number;
+	/** Models still to retry on, in order, when it fails on its model: the same chat goes on with the same prompt. */
+	readonly fallbacks?: readonly IOrchModelChoice[];
+	/** Models it failed on before the one it runs on now. */
+	readonly failedOn?: readonly string[];
 }
 
 export interface IOrchConflict {
@@ -373,6 +420,11 @@ export interface IOrchTaskSpawn {
 	readonly toolCallId?: string;
 	/** The task this one is the next round of (a new review after fixes). */
 	readonly previousTaskId?: string;
+	readonly contract?: ITaskContract;
+	/** Tasks of the same root that must finish first. */
+	readonly after?: readonly string[];
+	readonly budgetUsd?: number;
+	readonly fallbacks?: readonly IOrchModelChoice[];
 	/** Id for the new task and its child chat, picked by the caller so a retry can be recognized. */
 	readonly taskId: string;
 	readonly childId: string;
@@ -428,6 +480,8 @@ export type OrchCommandBody =
 	/** The parent's agent read these reports itself (task_status, wait_tasks): no notification turn. */
 	| { readonly type: 'task.ack'; readonly taskIds: readonly string[] }
 	| { readonly type: 'task.progress'; readonly taskId: string; readonly activity?: string; readonly steps?: number; readonly files?: readonly string[] }
+	/** What a Volt task spent so far (totals): it adds to its root's spend, and a budget it passes stops the work. */
+	| { readonly type: 'task.usage'; readonly taskId: string; readonly usage: IOrchTaskUsage }
 	| { readonly type: 'task.worktree'; readonly taskId: string; readonly path: string; readonly branch: string }
 	/** Something outside a turn failed the task (its worktree could not be created). */
 	| { readonly type: 'task.error'; readonly taskId: string; readonly error: string }
@@ -491,6 +545,12 @@ export const ORCH_MAX_PARALLEL_SETTING = 'volt.agent.multitask.maxParallel';
 export const ORCH_MAX_PARALLEL_TOTAL_SETTING = 'volt.agent.multitask.maxParallelTotal';
 /** Agents one delegate_task call may start with `tasks` (`spawnsPerCall`). */
 export const ORCH_MAX_PER_CALL_SETTING = 'volt.agent.multitask.maxPerCall';
+/** What one request's subagents may spend together, in US dollars (`budgetUsd`; 0: no limit). */
+export const ORCH_BUDGET_USD_SETTING = 'volt.agent.multitask.budgetUsd';
+/** The same in fresh tokens (`budgetTokens`; 0: no limit). */
+export const ORCH_BUDGET_TOKENS_SETTING = 'volt.agent.multitask.budgetTokens';
+/** The model `model: "auto"` picks for each task role (role -> model value). */
+export const ORCH_ROLE_MODELS_SETTING = 'volt.agent.multitask.roleModels';
 
 export type OrchCommand = OrchCommandBody & {
 	/** Idempotency key. A command id seen before is acknowledged without effect. */
@@ -522,7 +582,11 @@ export type OrchEvent =
 	| { readonly type: 'input.closed'; readonly threadId: string; readonly inputId: string }
 	| { readonly type: 'task.created'; readonly task: IOrchTask }
 	| { readonly type: 'task.started'; readonly taskId: string; readonly at: number }
-	| { readonly type: 'task.updated'; readonly taskId: string; readonly activity?: string; readonly steps?: number; readonly files?: readonly string[]; readonly title?: string; readonly kind?: string; readonly modelLabel?: string; readonly worktreePath?: string; readonly worktreeBranch?: string }
+	| { readonly type: 'task.updated'; readonly taskId: string; readonly activity?: string; readonly steps?: number; readonly files?: readonly string[]; readonly title?: string; readonly kind?: string; readonly modelLabel?: string; readonly worktreePath?: string; readonly worktreeBranch?: string; readonly usage?: IOrchTaskUsage; readonly modelRef?: string; readonly fallbacks?: readonly IOrchModelChoice[]; readonly failedOn?: readonly string[] }
+	/** A task's new spend, added to its root's count for this request. */
+	| { readonly type: 'spend.added'; readonly threadId: string; readonly usd: number; readonly tokens: number; readonly at: number }
+	/** The root's budget for this request ran out. */
+	| { readonly type: 'spend.capped'; readonly threadId: string; readonly at: number; readonly reason: string }
 	| { readonly type: 'task.waiting'; readonly taskId: string; readonly on: 'approval' | 'question' | undefined }
 	| { readonly type: 'task.settled'; readonly taskId: string; readonly state: Extract<OrchTaskState, 'completed' | 'failed' | 'cancelled' | 'interrupted'>; readonly at: number; readonly result?: string; readonly error?: string }
 	| { readonly type: 'task.resumed'; readonly taskId: string; readonly at: number }
@@ -613,6 +677,13 @@ export interface IOrchLimits {
 	 * service turns it on from the setting.
 	 */
 	readonly supervise: boolean;
+	/**
+	 * What one request's delegated tasks may spend together (USD; 0: no limit). Past it, live
+	 * subagents of the tree are stopped and new ones refused until the user's next message.
+	 */
+	readonly budgetUsd: number;
+	/** The same in fresh tokens (input, output, cache writes; 0: no limit), for models without a price. */
+	readonly budgetTokens: number;
 }
 
 export const DEFAULT_ORCH_LIMITS: IOrchLimits = {
@@ -628,7 +699,12 @@ export const DEFAULT_ORCH_LIMITS: IOrchLimits = {
 	maxWakeups: 8,
 	maxRestartResumes: 2,
 	supervise: false,
+	budgetUsd: 0,
+	budgetTokens: 0,
 };
+
+/** The subagent budget per request the setting starts at (USD). */
+export const ORCH_DEFAULT_BUDGET_USD = 25;
 
 /** The most each multitask setting accepts. */
 export const ORCH_LIMIT_MAX = { runningPerParent: 16, runningTotal: 32, spawnsPerCall: 16 } as const;
@@ -649,7 +725,13 @@ export function readOrchLimits(get: (key: string) => unknown): IOrchLimits {
 	const maxSpawnsPerTurn = Math.max(DEFAULT_ORCH_LIMITS.maxSpawnsPerTurn, spawnsPerCall * 2);
 	// On unless turned off.
 	const supervise = get(ORCH_KEEP_WORKING_SETTING) !== false;
-	return { ...DEFAULT_ORCH_LIMITS, runningPerParent, runningTotal, spawnsPerCall, maxSpawnsPerTurn, supervise };
+	const amount = (key: string, fallback: number) => {
+		const value = get(key);
+		return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : fallback;
+	};
+	const budgetUsd = amount(ORCH_BUDGET_USD_SETTING, ORCH_DEFAULT_BUDGET_USD);
+	const budgetTokens = Math.floor(amount(ORCH_BUDGET_TOKENS_SETTING, 0));
+	return { ...DEFAULT_ORCH_LIMITS, runningPerParent, runningTotal, spawnsPerCall, maxSpawnsPerTurn, supervise, budgetUsd, budgetTokens };
 }
 
 //#endregion
@@ -734,8 +816,8 @@ export interface IAgentOrchestratorService {
 	resumeLimit(threadId: string): Promise<IOrchSubmitResult>;
 	/** The chat's own auto-resume choice while parked: false cancels, true asks, undefined follows the setting. */
 	configureLimit(threadId: string, auto: boolean | undefined): Promise<void>;
-	/** Starts every queued message of the chat now, each as a multitask agent running in parallel. Returns how many started. */
-	multitaskQueue(threadId: string): Promise<number>;
+	/** Starts every queued message of the chat now (or only `itemIds`), each as a multitask agent running in parallel. Returns how many started. */
+	multitaskQueue(threadId: string, itemIds?: readonly string[]): Promise<number>;
 	/** Wakes the chat with a notification turn (see `thread.notify`). A retried `turnId` is not sent twice. */
 	notify(threadId: string, prompt: IOrchPrompt, turnId: string, options?: { readonly interrupt?: boolean }): Promise<IOrchSubmitResult>;
 	/** The user's Stop (or Stop all). Agents interrupt chats with `dispatch({ type: 'turn.cancel' })`, which does not fire `onDidStop`. */

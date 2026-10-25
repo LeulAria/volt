@@ -201,6 +201,41 @@ suite('Volt intent router', () => {
 		assert.strictEqual(classifyIntent('give me 5 sidebar alternatives', 'ask').lane, 'chat');
 	});
 
+	test('whiteboard sketches are scratch work; game boards and plain brainstorming are not', () => {
+		for (const text of ['sketch out the auth architecture', 'put this on my board', 'make a mind map of the release plan', 'sketch a diagram of the data flow', 'add sticky notes for each risk', 'draw it on the whiteboard']) {
+			const intent = classifyIntent(text, 'agent');
+			assert.strictEqual(intent.wantsScratch, true, text);
+			assert.ok(intent.signals.includes('scratch'), text);
+			assert.notStrictEqual(intent.lane, 'chat', text);
+		}
+		for (const text of ['render the chess pieces on the board', 'add a member to the board in trello.ts', 'brainstorm some names for the product', 'fix the sketchy null check in parser.ts']) {
+			assert.strictEqual(classifyIntent(text, 'agent').wantsScratch, undefined, text);
+		}
+	});
+
+	test('native mobile apps on a simulator are device work; device drivers and other emulators are not', () => {
+		for (const text of ['run the ios app on the simulator', 'open the iOS simulator', 'test the android app', 'the expo app crashes when I open settings', 'try it on my iphone', 'boot the emulator and check the login screen']) {
+			const intent = classifyIntent(text, 'agent');
+			assert.strictEqual(intent.wantsDevice, true, text);
+			assert.ok(intent.signals.includes('device'), text);
+		}
+		for (const text of ['fix the device driver for the usb port', 'write a physics simulator in sim.ts', 'the terminal emulator escapes are wrong', 'copy the tensor to the device before the kernel runs', 'run the tests']) {
+			assert.strictEqual(classifyIntent(text, 'agent').wantsDevice, undefined, text);
+		}
+	});
+
+	test('a picked surface skill sets that surface whatever the words say', () => {
+		const scratch = classifyIntent('[/scratch skill] how does the auth flow work', 'agent');
+		assert.strictEqual(scratch.wantsScratch, true);
+		assert.strictEqual(scratch.lane, 'agent');
+		assert.strictEqual(classifyIntent('[/canvas skill] the onboarding', 'agent').wantsCanvas, true);
+		assert.strictEqual(classifyIntent('[/device skill] check the settings screen', 'agent').wantsDevice, true);
+		const browser = classifyIntent('[/browser skill] look at localhost', 'agent');
+		assert.strictEqual(browser.uiWork, true);
+		assert.ok(browser.signals.includes('skill-browser'));
+		assert.strictEqual(classifyIntent('[/code-review skill] the auth flow', 'agent').wantsScratch, undefined);
+	});
+
 	test('without a workspace everything is chat', () => {
 		assert.strictEqual(classifyIntent('add pagination to the users table', 'agent', { hasWorkspace: false }).lane, 'chat');
 	});

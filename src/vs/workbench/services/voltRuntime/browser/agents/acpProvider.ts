@@ -339,7 +339,7 @@ function isVoltHostToolPermission(params: unknown): boolean {
 		return isVoltHostTool(raw.toolName) || !!bareTaskToolName(raw.toolName);
 	}
 	const title = typeof toolCall.title === 'string' ? toolCall.title.trim() : '';
-	return /^(volt[-:]|mcp__volt__)/i.test(title) && (isVoltHostTool(title) || !!bareTaskToolName(title));
+	return /^(volt[-:]|mcp__volt__|volt__)/i.test(title) && (isVoltHostTool(title) || !!bareTaskToolName(title));
 }
 
 function allowOncePermission(params: unknown): unknown {
@@ -714,7 +714,7 @@ export class AcpAgentProvider implements IAgentProvider {
 					thinking: { type: 'disabled' },
 					effort: 'low',
 					// An agent entry without a model list would run the account's default (often Opus).
-					...(req.modelId ? {} : { model: 'haiku' }),
+					...(req.modelId ? optionalModel(this.claudeModel(req)) : { model: 'haiku' }),
 				},
 			},
 		};
@@ -729,7 +729,20 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (req.textOnly) {
 			return this.textOnlyMeta(req);
 		}
-		return this.takesSystemPrompt() ? claudeWorkRulesMeta() : undefined;
+		return this.takesSystemPrompt() ? claudeWorkRulesMeta(this.claudeModel(req)) : undefined;
+	}
+
+	/**
+	 * The exact model a Claude Code session starts on, sent with `session/new`. Its adapter's model
+	 * picker lists only aliases (default, opus[1m], sonnet, haiku): `session/set_config_option` with
+	 * `claude-sonnet-5-5` fails and the session silently stays on the account's default (Opus), and
+	 * one it maps to an alias runs that alias's newest model. `_meta` takes the id itself.
+	 */
+	private claudeModel(req: IAgentStartRequest): string | undefined {
+		if (this.id !== 'claude-code' || !req.modelId || req.modelId.trim().toLowerCase() === 'default') {
+			return undefined;
+		}
+		return applyContextWindowSuffix(applyOptionsToParameterizedId(req.modelId, req.options), req.options);
 	}
 
 	/** Spawns the agent and opens a session; with `resume`, continues that session (in `req.cwd`) instead of a new one. */
@@ -948,7 +961,11 @@ export class AcpAgentProvider implements IAgentProvider {
 	private async applySelection(session: IAcpSession, req: IAgentStartRequest): Promise<void> {
 		const sessionId = session.handle.providerSessionId ?? session.handle.id;
 		const modelConfigId = session.configOptions?.find(isModelConfigOption)?.id ?? 'model';
-		if (this.id === 'cursor-acp' && !req.modelId) {
+		const exact = this.claudeModel(req);
+		if (exact) {
+			// It started on this model (`session/new` `_meta`); a write here could only swap in an alias.
+			session.currentModel = exact;
+		} else if (this.id === 'cursor-acp' && !req.modelId) {
 			await this.setConfigOption(session, sessionId, modelConfigId, 'auto');
 		} else if (req.modelId) {
 			const selected = this.id === 'antigravity'
@@ -2216,6 +2233,10 @@ function backgroundTaskUpdate(params: unknown): { readonly kind: 'spawned' | 'pr
 
 function nonBlank(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function optionalModel(model: string | undefined): { model?: string } {
+	return model ? { model } : {};
 }
 
 function formatQuiet(ms: number): string {

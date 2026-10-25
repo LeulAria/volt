@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { findLast } from '../../../../../base/common/arraysFind.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, IDisposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -11,6 +12,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { alwaysAllowPattern } from '../../../../services/voltRuntime/common/access/wildcard.js';
 import { mergeToolInput } from '../../../../services/voltRuntime/common/acpToolInput.js';
+import { isRetryNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { IVoltEvent, IVoltEventEnvelope, IVoltRateLimitReading, IVoltToolDiff } from '../../../../services/voltRuntime/common/events.js';
 import type { IVoltVisualRef } from '../../../../services/voltRuntime/common/hostTools.js';
 import { runStatusLine } from '../../../../services/voltRuntime/common/harness/workLog.js';
@@ -33,6 +35,12 @@ import type { IAgentActivity, IAgentAssistantMessage, IAgentMessage, IAgentPromp
  * text on a crash for far less work while streaming. The final record is written at once.
  */
 const PARTIAL_RECORD_DELAY_MS = 10_000;
+
+/** The status line for a running tool: an MCP tool's name in words ("Scratch draw", not `mcp__volt__scratch_draw`). */
+function toolStatus(title: string | undefined, name: string | undefined): string {
+	const raw = title || name || '';
+	return friendlyToolTitle(raw) ?? raw;
+}
 
 /** A card a tool call draws and later events update by call id. */
 type CallBlock = ITerminalBlock | IToolBlock | IFileChangeBlock | IPlanBlock;
@@ -806,7 +814,7 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 				input: event.input,
 			}));
 		}
-		activity.status = event.title || event.name;
+		activity.status = toolStatus(event.title, event.name);
 	}
 
 	private replaceCallBlock(last: IAgentAssistantMessage, callId: string, block: ITerminalBlock | IFileChangeBlock | IToolBlock | IPlanBlock): void {
@@ -830,11 +838,15 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 		if (!text) {
 			return;
 		}
+		activity.status = text;
+		activity.statusPinned = true;
+		// Retries shimmer in the status line with the turn's clock; each attempt as a row would stack up.
+		if (isRetryNotice(text)) {
+			return;
+		}
 		// A run supervisor's finding (loop, stall, budget) becomes a tray with actions, not a red line.
 		const supervision = classifySupervisionNotice(`${text}\n${description ?? ''}`);
 		appendProviderNotice(message.segments, { severity, title: text, description, ...(supervision ? { supervision } : {}), ...(rateLimit ? { rateLimit } : {}) });
-		activity.status = text;
-		activity.statusPinned = true;
 	}
 
 	/** Every reply's segments, the latest reply first. */
@@ -1036,9 +1048,9 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 						};
 						activity.items.push(item);
 						last.segments.push({ kind: 'activity', item });
-						activity.status = [described.label, described.detail].filter(Boolean).join(' ') || event.title || event.name;
+						activity.status = [described.label, described.detail].filter(Boolean).join(' ') || toolStatus(event.title, event.name);
 					} else {
-						activity.status = event.title || event.name;
+						activity.status = toolStatus(event.title, event.name);
 					}
 				}
 				const id = `tool-${event.callId}`;
@@ -1219,7 +1231,7 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 			}
 			case 'plan': {
 				// A turn's first update continues the chat's list: Claude's task tools and Cursor's to-dos outlive a turn.
-				const previous = last.steps.length ? last.steps : carryTodoSteps(this.host.messages.findLast((message): message is IAgentAssistantMessage => message !== last && message.kind === 'agent' && message.steps.length > 0)?.steps ?? []);
+				const previous = last.steps.length ? last.steps : carryTodoSteps(findLast(this.host.messages, (message): message is IAgentAssistantMessage => message !== last && message.kind === 'agent' && message.steps.length > 0)?.steps ?? []);
 				last.title = localize('voltAgent.planTitle', "Plan");
 				// Each to-do done keeps what this reply produced while it was in progress (the Tasks card's outcome line).
 				last.steps = stampTodoSteps(previous, event.entries.map(entry => ({

@@ -9,7 +9,7 @@ import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent
 import { isWeb } from '../../../../../base/common/platform.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IAction, Separator, toAction } from '../../../../../base/common/actions.js';
-import { disposableTimeout, timeout } from '../../../../../base/common/async.js';
+import { disposableTimeout, raceTimeout, timeout } from '../../../../../base/common/async.js';
 import { encodeBase64, VSBuffer } from '../../../../../base/common/buffer.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
@@ -44,6 +44,7 @@ import { BATCH_EDITS_STORAGE_KEY, IVoltAnnotationItem, VoltAnnotationsSendButton
 import { BrowserAgentComposer } from './browserComposer.js';
 import { OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
+import { createVoltButton } from '../chrome/voltButton.js';
 import { BrowserDeviceMode } from './browserDevices.js';
 import { BrowserAgentDock } from './browserDock.js';
 import { BROWSER_PRESENT_EVENT, BROWSER_PRESENTATION_EVENT, BrowserPresentation, DEFAULT_BROWSER_URL, VoltBrowserEditorInput } from './browserEditorInput.js';
@@ -195,6 +196,42 @@ interface IPageContextParams {
 }
 
 const ZOOM_LEVELS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+/** How long after the user last pressed, typed or scrolled in a page (or took control of it) an agent leaves the tab to them. */
+const USER_ACTIVE_MS = 2 * 60 * 1000;
+
+/**
+ * Notes the user's own input in the page: when, and which fields they typed into, so an agent can
+ * tell the tab is in use before it takes it. Installed on every document the tab loads.
+ */
+const USER_ACTIVITY_TRACKER = `(() => {
+	if (window.__voltUserActivity) return;
+	const activity = window.__voltUserActivity = { at: 0, fields: [] };
+	const mark = event => { if (event.isTrusted) activity.at = Date.now(); };
+	for (const type of ['pointerdown', 'keydown', 'wheel']) addEventListener(type, mark, { capture: true, passive: true });
+	addEventListener('input', event => {
+		if (!event.isTrusted || !(event.target instanceof Element)) return;
+		activity.at = Date.now();
+		activity.fields = activity.fields.filter(field => field.element.deref() && field.element.deref() !== event.target).slice(-30);
+		activity.fields.push({ element: new WeakRef(event.target), at: activity.at });
+	}, true);
+})()`;
+
+/** The user's last input after `since` (0 when none), and how many fields they typed into still hold text. */
+function userActivityScript(since: number): string {
+	return `(() => {
+		const activity = window.__voltUserActivity;
+		if (!activity) return { at: 0, drafts: 0 };
+		const text = element => 'value' in element ? String(element.value ?? '') : element.isContentEditable ? element.textContent ?? '' : '';
+		const drafts = activity.fields.filter(field => {
+			const element = field.element.deref();
+			return field.at > ${since} && element && element.isConnected && element.type !== 'password' && text(element).trim();
+		}).length;
+		return { at: activity.at > ${since} ? activity.at : 0, drafts };
+	})()`;
+}
+
+/** A floating preview lays the page out this wide and scales it down, so sites show their desktop layout. */
+const FLOAT_DESKTOP_WIDTH = 1280;
 
 /** The page's colors at its top (`theme-color`, else its background) and at its bottom (its background). */
 const SCREEN_COLOR_SCRIPT = `(() => {
@@ -426,6 +463,8 @@ export class VoltBrowserView extends Disposable {
 	private userAgent = BROWSER_USER_AGENT;
 	private devtoolsOpen = false;
 	private presentation: BrowserPresentation | undefined;
+	/** The floating preview's scale-down of the desktop-wide page; 1 when the page fills the stage. */
+	private desktopScale = 1;
 	private stage!: HTMLElement;
 	private overlay!: HTMLElement;
 	private hoverBox!: HTMLElement;
@@ -459,6 +498,8 @@ export class VoltBrowserView extends Disposable {
 	private readonly loadRetry = this._register(new MutableDisposable());
 	private loadRetries = 0;
 	private designMode = false;
+	/** The page whose focus design mode is holding (DevTools focus emulation), so an open dropdown stays open. */
+	private pageFocusHeld: number | undefined;
 	/** Fn held in design mode: the pointer is the page's again (clicks and hovers go to it), not a picker. */
 	private pagePointer = false;
 	private fnHeld = false;
@@ -479,6 +520,14 @@ export class VoltBrowserView extends Disposable {
 	private probeHandle: number | undefined;
 	private lastProbe = '';
 	private agentLock: HTMLElement | undefined;
+	/** When an agent last handed the page back; the page's input before then was the agent's, not the user's. */
+	private agentReleasedAt = 0;
+	private userTookControlAt = 0;
+	/** The tab this one runs under while an agent drives it out of sight, and the tabs running under this one. */
+	private runningUnder: VoltBrowserView | undefined;
+	private readonly underneath = new Set<VoltBrowserView>();
+	private readonly agentNotice = this._register(new DisposableStore());
+	private agentNoticeEl: HTMLElement | undefined;
 	private readonly consoleMessages: IVoltConsoleMessage[] = [];
 	private consoleSeen = 0;
 	private readonly _onDidTakeControl = this._register(new Emitter<void>());
@@ -548,6 +597,7 @@ export class VoltBrowserView extends Disposable {
 		}
 		this.layer = layer;
 		this.owner = slot;
+		this.stopRunningUnder(false);
 		this.element.classList.remove('parked');
 		// A tab opened while its tools area floats or spans the window takes that presentation at once.
 		const area = slot.closest('.volt-agent-tools-area');
@@ -562,6 +612,54 @@ export class VoltBrowserView extends Disposable {
 		}
 		this.owner = undefined;
 		this.element.classList.add('parked');
+		// Nothing covers the tabs under this one now: they would show through, so they park too.
+		for (const under of [...this.underneath]) {
+			under.stopRunningUnder(true);
+		}
+	}
+
+	/**
+	 * Keeps this tab's page live while `front` covers it: laid under it at the same size, so the page
+	 * loads, paints and takes an agent's input, but the user never sees or clicks it. A parked page
+	 * stops painting, which would stall the agent's screenshots and waits. False when it can't.
+	 */
+	runUnder(front: VoltBrowserView): boolean {
+		if (this.owner) {
+			return true;
+		}
+		const layer = front.layer;
+		if (front === this || !front.owner || !layer) {
+			return false;
+		}
+		if (this.element.parentElement !== layer) {
+			// In another part's layer, moving the webview would restart its page.
+			if (this.element.parentElement) {
+				return false;
+			}
+			layer.insertBefore(this.element, front.element);
+			this.dragListeners.clear();
+			this.passDragsThroughPage(layer.ownerDocument);
+		}
+		this.runningUnder?.underneath.delete(this);
+		this.runningUnder = front;
+		front.underneath.add(this);
+		this.layer = layer;
+		this.element.classList.remove('parked');
+		this.element.classList.add('underneath');
+		this.place(front.owner);
+		return true;
+	}
+
+	private stopRunningUnder(park: boolean): void {
+		if (!this.runningUnder) {
+			return;
+		}
+		this.runningUnder.underneath.delete(this);
+		this.runningUnder = undefined;
+		this.element.classList.remove('underneath');
+		if (park) {
+			this.element.classList.add('parked');
+		}
 	}
 
 	layoutOver(slot: HTMLElement): void {
@@ -583,6 +681,9 @@ export class VoltBrowserView extends Disposable {
 	private place(slot: HTMLElement): void {
 		if (!this.layer) {
 			return;
+		}
+		for (const under of this.underneath) {
+			under.place(slot);
 		}
 		const box = slot.getBoundingClientRect();
 		const origin = this.layer.getBoundingClientRect();
@@ -654,6 +755,7 @@ export class VoltBrowserView extends Disposable {
 		exitDesign.type = 'button';
 		exitDesign.appendChild(renderIcon(Codicon.close));
 		setAgentTooltip(exitDesign, localize('voltBrowser.exitDesign', "Exit Design Mode"), formatAgentTooltipShortcut({ key: 'Escape' }));
+		this._register(addDisposableListener(exitDesign, 'mousedown', e => e.preventDefault()));
 		this._register(addDisposableListener(exitDesign, 'click', e => {
 			e.preventDefault();
 			this.setDesignMode(false);
@@ -681,6 +783,8 @@ export class VoltBrowserView extends Disposable {
 		}));
 		this.designButton = this.actionButton(actions, 'design', localize('voltBrowser.design', "Design"), () => this.setDesignMode(!this.designMode));
 		setAgentTooltip(this.designButton, localize('voltBrowser.designMode', "Design Mode"), formatAgentTooltipShortcut({ meta: true, shift: true, key: 'D' }));
+		// Pressing the button must not take focus from the page: its open dropdown or menu would close.
+		this._register(addDisposableListener(this.designButton, 'mousedown', e => e.preventDefault()));
 		this.responsiveButton = this.actionButton(actions, 'responsive', localize('voltBrowser.responsive', "Responsive Design Mode"), () => this.toggleResponsive());
 		this.responsiveButton.appendChild(createAriaIcon(ARIA_ICONS.smartphone));
 		this.devtoolsButton = this.actionButton(actions, 'devtools', localize('voltBrowser.devtools', "Toggle Developer Tools"), () => this.toggleDevTools());
@@ -1150,6 +1254,7 @@ export class VoltBrowserView extends Disposable {
 		on('dom-ready', () => {
 			const firstReady = !this.guestReady;
 			this.guestReady = true;
+			this.runScript(USER_ACTIVITY_TRACKER).catch(() => undefined);
 			this.syncNavButtons();
 			this.applyPageSettings();
 			if (!firstReady) {
@@ -1282,6 +1387,7 @@ export class VoltBrowserView extends Disposable {
 		});
 		this.stage.insertBefore(webview, this.overlay);
 		this.webview = webview;
+		this.layoutDesktopPreview();
 		return webview;
 	}
 
@@ -1514,10 +1620,51 @@ export class VoltBrowserView extends Disposable {
 			this.clearSelection(true);
 			this.clearHover();
 			this.drawing = undefined;
+			void this.releasePageFocus();
 		} else {
-			this.container.focus();
+			void this.holdPageFocus();
 		}
 		this.syncDesignChrome();
+	}
+
+	/**
+	 * Design mode needs the keys (Escape, the arrows), but taking focus from the page blurs it and closes
+	 * whatever it had open. Focus emulation keeps the page focused while this editor has the keyboard.
+	 */
+	private async holdPageFocus(): Promise<void> {
+		const id = this.pageContentsId();
+		const service = this.browserService();
+		if (id !== undefined && service && this.pageFocusHeld !== id) {
+			try {
+				if (await service.setFocusEmulation(id, true)) {
+					this.pageFocusHeld = id;
+				}
+			} catch {
+				// An app started before this feature has no handler; design mode works, the page just blurs.
+			}
+		}
+		if (!this.designMode) {
+			void this.releasePageFocus();
+			return;
+		}
+		this.container.focus();
+	}
+
+	private async releasePageFocus(): Promise<void> {
+		const id = this.pageFocusHeld;
+		if (id === undefined) {
+			return;
+		}
+		this.pageFocusHeld = undefined;
+		// The keyboard goes back to the page before it stops pretending, so it never sees a blur.
+		if (getWindow(this.container).document.activeElement === this.container && this.pageContentsId() === id) {
+			this.focusPage();
+		}
+		try {
+			await this.browserService()?.setFocusEmulation(id, false);
+		} catch {
+			// The page is gone.
+		}
 	}
 
 	private syncDesignChrome(): void {
@@ -1603,6 +1750,8 @@ export class VoltBrowserView extends Disposable {
 	}
 
 	private onViewportLayout(): void {
+		// Responsive mode just ended while floating: the page goes back to the desktop scale.
+		this.layoutDesktopPreview();
 		this.syncResponsiveButton();
 		this.clearHover();
 		if (this.selection) {
@@ -1666,7 +1815,7 @@ export class VoltBrowserView extends Disposable {
 		}
 		// Electron reports the spot in the window's coordinates; Inspect Element wants the page's.
 		const frame = webview.getBoundingClientRect();
-		const scale = this.deviceMode.scale || 1;
+		const scale = this.pageScale() || 1;
 		const anchor = { x: params.x, y: params.y };
 		const pageX = Math.round((params.x - frame.left) / scale);
 		const pageY = Math.round((params.y - frame.top) / scale);
@@ -3061,7 +3210,7 @@ export class VoltBrowserView extends Disposable {
 	private pagePointInStage(x: number, y: number): { x: number; y: number } {
 		const frame = this.webview?.getBoundingClientRect();
 		const stage = this.stage.getBoundingClientRect();
-		const scale = this.deviceMode.scale;
+		const scale = this.pageScale();
 		return { x: (frame ? frame.left - stage.left : 0) + x * scale, y: (frame ? frame.top - stage.top : 0) + y * scale };
 	}
 
@@ -3092,6 +3241,7 @@ export class VoltBrowserView extends Disposable {
 		}
 		this.container.classList.toggle('agent-locked', locked);
 		if (!locked) {
+			this.agentReleasedAt = Date.now();
 			this.agentLock?.remove();
 			this.agentLock = undefined;
 			return;
@@ -3110,6 +3260,7 @@ export class VoltBrowserView extends Disposable {
 		store.add(addDisposableListener(pill, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
+			this.userTookControlAt = Date.now();
 			this.setAgentLock(false);
 			this._onDidTakeControl.fire();
 		}));
@@ -3121,10 +3272,83 @@ export class VoltBrowserView extends Disposable {
 		this.agentLock = lock;
 	}
 
+	/**
+	 * Why the user is using this tab, or undefined when an agent can take it. In use: a comment or
+	 * prompt being written, open comments, design mode, the address bar, text the user typed into
+	 * the page, or any input (or Take control) in the last two minutes.
+	 */
+	async userBusyReason(): Promise<string | undefined> {
+		if (!this.container) {
+			return undefined;
+		}
+		if ((!this.promptEl.classList.contains('hidden') && this.composer?.hasDraft()) || this.openPin() || this.dock?.hasDraft()) {
+			return 'they are writing a comment on the page';
+		}
+		if (this.commentStore.list({ viewId: this.viewId }).some(comment => comment.status === 'open')) {
+			return 'it has their open comments';
+		}
+		if (this.designMode) {
+			return 'they are in design mode';
+		}
+		if (getWindow(this.container).document.activeElement === this.urlInput) {
+			return 'they are typing in the address bar';
+		}
+		if (Date.now() - this.userTookControlAt < USER_ACTIVE_MS) {
+			return 'they took control of it';
+		}
+		const activity = await raceTimeout(this.runScript<{ at: number; drafts: number }>(userActivityScript(this.agentReleasedAt)).catch(() => undefined), 1000);
+		if (activity?.drafts) {
+			return 'they typed into the page';
+		}
+		if (activity?.at && Date.now() - activity.at < USER_ACTIVE_MS) {
+			return 'they used it in the last two minutes';
+		}
+		return undefined;
+	}
+
+	/**
+	 * A note at the top of the page about an agent working in a tab of its own. `refresh` offers a
+	 * reload to pick up what the agent changed; `onView` opens the agent's tab. Never takes focus,
+	 * so the user's typing in the page carries on.
+	 */
+	setAgentNotice(notice: { readonly text: string; readonly refresh?: boolean; readonly onView?: () => void } | undefined): void {
+		this.agentNotice.clear();
+		this.agentNoticeEl?.remove();
+		this.agentNoticeEl = undefined;
+		if (!notice || !this.stage) {
+			return;
+		}
+		const el = append(this.stage, $('.volt-browser-agent-notice'));
+		el.setAttribute('role', 'status');
+		this.agentNoticeEl = el;
+		this.agentNotice.add(addDisposableListener(el, 'mousedown', e => e.preventDefault()));
+		append(el, $('span.volt-browser-agent-notice-text')).textContent = notice.text;
+		if (notice.refresh) {
+			const refresh = this.agentNotice.add(createVoltButton(el, 'primary'));
+			refresh.label = localize('voltBrowser.agentNoticeRefresh', "Refresh");
+			this.agentNotice.add(refresh.onDidClick(() => {
+				this.setAgentNotice(undefined);
+				this.callGuest(() => this.webview?.reload());
+			}));
+		}
+		const onView = notice.onView;
+		if (onView) {
+			const view = this.agentNotice.add(createVoltButton(el, 'secondary'));
+			view.label = localize('voltBrowser.agentNoticeView', "View Agent Tab");
+			this.agentNotice.add(view.onDidClick(() => onView()));
+		}
+		const close = append(el, $('button.volt-browser-agent-notice-close')) as HTMLButtonElement;
+		close.type = 'button';
+		close.setAttribute('aria-label', localize('voltBrowser.agentNoticeDismiss', "Dismiss"));
+		close.appendChild(renderIcon(Codicon.close));
+		this.agentNotice.add(addDisposableListener(close, 'click', () => this.setAgentNotice(undefined)));
+	}
+
 	//#endregion
 
 	private layout(): void {
 		this.deviceMode?.layout();
+		this.layoutDesktopPreview();
 		if (this.selection) {
 			this.positionPrompt();
 		}
@@ -3132,6 +3356,33 @@ export class VoltBrowserView extends Disposable {
 			this.placeComment(pin);
 		}
 		this.dock?.layout();
+	}
+
+	/** Floating over the chat the page keeps a desktop width, scaled down to the preview. Responsive mode lays the page out itself. */
+	private layoutDesktopPreview(): void {
+		const width = this.stage?.clientWidth ?? 0;
+		const scale = this.presentation === 'floating' && !this.deviceMode?.active && width > 0 ? Math.min(1, width / FLOAT_DESKTOP_WIDTH) : 1;
+		const wasScaled = this.desktopScale < 1;
+		this.desktopScale = scale;
+		this.stage?.classList.toggle('desktop-preview', scale < 1);
+		const page = this.webview;
+		if (!page || this.deviceMode?.active) {
+			return;
+		}
+		if (scale < 1) {
+			page.style.width = `${FLOAT_DESKTOP_WIDTH}px`;
+			page.style.height = `${Math.ceil(this.stage.clientHeight / scale)}px`;
+			page.style.transform = `scale(${scale})`;
+		} else if (wasScaled) {
+			for (const property of ['width', 'height', 'transform']) {
+				page.style.removeProperty(property);
+			}
+		}
+	}
+
+	/** CSS px on screen per page px: responsive mode's fit, or the floating preview's desktop scale. */
+	private pageScale(): number {
+		return this.deviceMode.active ? this.deviceMode.scale : this.desktopScale;
 	}
 
 	async revealAgentInSidebar(): Promise<void> {
@@ -3161,6 +3412,10 @@ export class VoltBrowserView extends Disposable {
 	}
 
 	override dispose(): void {
+		this.stopRunningUnder(false);
+		for (const under of [...this.underneath]) {
+			under.stopRunningUnder(true);
+		}
 		for (const pin of [...this.pins.values()]) {
 			this.disposePin(pin);
 		}
@@ -3174,6 +3429,7 @@ export class VoltBrowserView extends Disposable {
 		this.webview?.remove();
 		this.webview = undefined;
 		this.guestReady = false;
+		this.pageFocusHeld = undefined;
 		this.pendingUrl = undefined;
 		this.element.remove();
 		super.dispose();

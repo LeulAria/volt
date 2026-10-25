@@ -219,6 +219,8 @@ export class BrowserAgentComposer extends Disposable {
 	private working = false;
 	/** Something rides along without text (the browser tab's comments): Send works on an empty box. */
 	private extraContent = false;
+	/** Something waits on Send even while the agent works (the queue's picked multitasks): Send, not Stop. */
+	private pendingSend = false;
 	private currentMode = 'Agent';
 	private plusMenu: IVoltMenuHandle | undefined;
 	/** The model picked in this draft's chip; undefined follows the chat's model. */
@@ -350,7 +352,7 @@ export class BrowserAgentComposer extends Disposable {
 		// Keep the text focused: a blur here reflows the box under the pointer and the click misses.
 		this._register(addDisposableListener(this.sendButton, 'mousedown', e => e.preventDefault()));
 		this._register(addDisposableListener(this.sendButton, 'click', () => {
-			if (this.working) {
+			if (this.working && !this.pendingSend) {
 				this.callbacks.onStop?.();
 				return;
 			}
@@ -358,7 +360,7 @@ export class BrowserAgentComposer extends Disposable {
 				this.toggleDictation();
 				return;
 			}
-			if (this.value.trim() || this.extraContent) {
+			if (this.value.trim() || this.extraContent || this.pendingSend) {
 				this.submit();
 			}
 		}));
@@ -387,7 +389,23 @@ export class BrowserAgentComposer extends Disposable {
 		this.syncSend();
 		this.layout();
 		this.editor?.focus();
+		this.revealCursor();
 		return mention;
+	}
+
+	/**
+	 * Scrolls the chip just added (it goes in at the cursor) into view. Past five lines the box
+	 * scrolls inside itself, and layout settles its height a frame later, so reveal again then.
+	 */
+	private revealCursor(): void {
+		const reveal = () => {
+			const position = this.editor?.getPosition();
+			if (position) {
+				this.editor?.revealPosition(position);
+			}
+		};
+		reveal();
+		getWindow(this.element).requestAnimationFrame(() => getWindow(this.element).requestAnimationFrame(reveal));
 	}
 
 	/** A saved draft's images, videos and files, back in the box. */
@@ -522,6 +540,14 @@ export class BrowserAgentComposer extends Disposable {
 	setExtraContent(on: boolean): void {
 		if (this.extraContent !== on) {
 			this.extraContent = on;
+			this.syncSend();
+		}
+	}
+
+	/** On, Send is ready with an empty box and wins over Stop while the agent works. */
+	setPendingSend(on: boolean): void {
+		if (this.pendingSend !== on) {
+			this.pendingSend = on;
 			this.syncSend();
 		}
 	}
@@ -686,7 +712,7 @@ export class BrowserAgentComposer extends Disposable {
 
 	private submit(): void {
 		const text = this.getSubmitText();
-		if (!text && !this.extraContent) {
+		if (!text && !this.extraContent && !this.pendingSend) {
 			return;
 		}
 		this.callbacks.onSubmit(text);
@@ -822,10 +848,10 @@ export class BrowserAgentComposer extends Disposable {
 
 	/** Empty composer stays a single-line pill; a mention or typed text reveals model + send. */
 	private syncSend(): void {
-		const hasContent = this.hasContent() || this.extraContent || this.dictation?.active || !!this.mentionController?.hasMedia;
+		const hasContent = this.hasContent() || this.extraContent || this.pendingSend || this.dictation?.active || !!this.mentionController?.hasMedia;
 		this.element.classList.toggle('empty', !hasContent && !this.working);
 		this.element.classList.toggle('has-content', hasContent || this.working);
-		const kind: 'mic' | 'send' | 'stop' = this.working ? 'stop' : hasContent ? 'send' : 'mic';
+		const kind: 'mic' | 'send' | 'stop' = this.pendingSend ? 'send' : this.working ? 'stop' : hasContent ? 'send' : 'mic';
 		if (this.sendKind === kind && this.sendButton.childElementCount) {
 			return;
 		}

@@ -30,7 +30,7 @@ import { IViewContainersRegistry, IViewsRegistry, ViewContainerLocation, Extensi
 import { IEditorResolverService, RegisteredEditorPriority } from '../../../../services/editor/common/editorResolverService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IMultiDiffSourceResolverService } from '../../../multiDiffEditor/browser/multiDiffSourceResolverService.js';
-import { ISCMService } from '../../../scm/common/scm.js';
+import { ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
 import { buildReviewLinePrompt, currentLink } from '../../common/agentPullRequests.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { AgentFilesSidebar } from '../workspace/agentFilesSidebar.js';
@@ -354,7 +354,7 @@ registerAction2(class extends Action2 {
 		const progressService = accessor.get(IProgressService);
 		const notificationService = accessor.get(INotificationService);
 		const repository = [...scmService.repositories].find(candidate => URI.isUri(rootUri) && candidate.provider.rootUri?.toString() === rootUri.toString())
-			?? [...scmService.repositories][0];
+			?? accessor.get(ISCMViewService).activeRepository.get();
 		const root = repository?.provider.rootUri;
 		if (!repository || !root || root.scheme !== 'file') {
 			return;

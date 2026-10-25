@@ -83,13 +83,15 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 			return updateThread(state, event.threadId, thread => {
 				// A turn that goes out ends a usage-limit park, except the resume of that park: it holds
 				// until the provider answers (`limit.recovered`) or the resume ends.
-				const { pause: _pause, wakeups: _wakeups, limit: _limit, rescue: _rescue, ...rest } = thread;
+				const { pause: _pause, wakeups: _wakeups, limit: _limit, rescue: _rescue, spend: _spend, ...rest } = thread;
 				const keep = event.turn.limitProbe !== undefined && thread.limit ? { limit: thread.limit } : {};
 				const automatic = event.turn.kind === 'notification';
 				const wakeups = automatic ? (thread.wakeups ?? 0) + 1 : event.turn.kind === 'external' ? thread.wakeups : 0;
 				// A prompt (the user's, or one they queued) takes over from a restart Volt was waiting to send.
 				const rescue = thread.rescue && (event.turn.kind !== 'prompt' || isRescueTurnId(event.turn.id)) ? { rescue: thread.rescue } : {};
-				return { ...rest, ...keep, ...rescue, active: event.turn, turns: thread.turns + 1, ...(wakeups ? { wakeups } : {}) };
+				// The user's next message starts a new subagent budget for the tree.
+				const spend = thread.spend && !(event.turn.kind === 'prompt' && !isRescueTurnId(event.turn.id)) ? { spend: thread.spend } : {};
+				return { ...rest, ...keep, ...rescue, ...spend, active: event.turn, turns: thread.turns + 1, ...(wakeups ? { wakeups } : {}) };
 			});
 		case 'turn.steered':
 			return state;
@@ -147,6 +149,24 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 				...(event.modelLabel !== undefined ? { modelLabel: event.modelLabel } : {}),
 				...(event.worktreePath !== undefined ? { worktreePath: event.worktreePath } : {}),
 				...(event.worktreeBranch !== undefined ? { worktreeBranch: event.worktreeBranch } : {}),
+				...(event.usage !== undefined ? { usage: event.usage } : {}),
+				...(event.modelRef !== undefined ? { modelRef: event.modelRef } : {}),
+				...(event.fallbacks !== undefined ? { fallbacks: event.fallbacks } : {}),
+				...(event.failedOn !== undefined ? { failedOn: event.failedOn } : {}),
+			}));
+		case 'spend.added':
+			return updateThread(state, event.threadId, thread => ({
+				...thread,
+				spend: {
+					...(thread.spend ?? { since: event.at }),
+					usd: Math.round(((thread.spend?.usd ?? 0) + event.usd) * 1e6) / 1e6,
+					tokens: (thread.spend?.tokens ?? 0) + event.tokens,
+				},
+			}));
+		case 'spend.capped':
+			return updateThread(state, event.threadId, thread => ({
+				...thread,
+				spend: { ...(thread.spend ?? { usd: 0, tokens: 0, since: event.at }), capped: { at: event.at, reason: event.reason } },
 			}));
 		case 'task.waiting':
 			return updateTask(state, event.taskId, task => {

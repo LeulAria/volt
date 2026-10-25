@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { findLast } from '../../../../../base/common/arraysFind.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Schemas } from '../../../../../base/common/network.js';
@@ -268,7 +269,7 @@ export class AgentEditorInput extends EditorInput {
 						assistant.id = turn.id;
 						messages.push(assistant);
 						// A completed compaction with its summary: the model's context starts over from it.
-						const compaction = assistant.segments.findLast(segment => segment.kind === 'compaction' && segment.compaction.status === 'completed' && !!segment.compaction.summary?.trim());
+						const compaction = findLast(assistant.segments, segment => segment.kind === 'compaction' && segment.compaction.status === 'completed' && !!segment.compaction.summary?.trim());
 						if (compaction?.kind === 'compaction') {
 							modelTranscript = [{ role: 'assistant', content: compaction.compaction.summary!.trim(), compacted: true }];
 							if (compactCommand) {

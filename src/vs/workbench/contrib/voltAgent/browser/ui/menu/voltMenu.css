@@ -77,6 +77,12 @@
 	flex-shrink: 0;
 }
 
+.volt-menu-search .volt-menu-search-icon svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+}
+
 .volt-menu-search .monaco-inputbox,
 .volt-menu-search .monaco-inputbox.synthetic-focus,
 .volt-menu-search .monaco-inputbox .input:focus {

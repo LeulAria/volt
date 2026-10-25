@@ -9,7 +9,7 @@ import { useChatItems, useClient, useCollections, useRuntime, useStatus } from '
 import { chatPath, navigate } from '../app/router';
 import { Composer } from '../chat/Composer';
 import { Dialog, type IMenuItem, MenuButton } from '../ui/overlays';
-import { Button, Icon, IconButton, StatusIcon } from '../ui/primitives';
+import { Button, Icon, IconButton, StatusIcon, VoltMark } from '../ui/primitives';
 
 const LAST_PROJECT_KEY = 'volt.web.lastProject';
 
@@ -77,7 +77,7 @@ export function NewChat({ initialProjectId, compact, onStarted }: { readonly ini
 		<div className={`newchat${compact ? ' compact' : ''}`}>
 			<div className="newchat-center">
 				<div className="newchat-hero">
-					<div className="hero-mark"><Icon name="bolt" size={22} /></div>
+					<VoltMark className="hero-mark" />
 					<h1>What should Volt do{project ? <> in <span className="hero-project">{project.name}</span></> : null}?</h1>
 					<p className="hero-sub">It runs on {client.environment.label}. Keep going here, on your phone, or at your desk.</p>
 				</div>

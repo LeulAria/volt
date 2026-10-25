@@ -407,6 +407,11 @@
 	display: none;
 }
 
+/* The flat frame keeps feeding the Duo from its canvas, so it is hidden rather than removed. */
+.volt-device-stage.duo .volt-device-scene {
+	visibility: hidden;
+}
+
 .volt-duo-canvas {
 	display: block;
 	width: 100%;

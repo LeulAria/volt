@@ -58,6 +58,7 @@ import { IAuxiliaryWindowsMainService } from '../../auxiliaryWindow/electron-mai
 import { IAuxiliaryWindow } from '../../auxiliaryWindow/electron-main/auxiliaryWindow.js';
 import { ICSSDevelopmentService } from '../../cssDev/node/cssDevService.js';
 import { ResourceSet } from '../../../base/common/map.js';
+import { IVoltWindowScopesMainService } from '../../voltWindowScope/electron-main/voltWindowScopesMainService.js';
 
 //#region Helper Interfaces
 
@@ -114,6 +115,9 @@ interface IOpenBrowserWindowOptions {
 	 * never loses the session it switches away from.
 	 */
 	readonly switchFrom?: ICodeWindow;
+
+	/** Volt: a New Window, which gets a scope of its own when a main window is open. */
+	readonly ownScope?: boolean;
 }
 
 interface IPathResolveOptions {
@@ -242,6 +246,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 
 	private readonly windows = new Map<number, ICodeWindow>();
 	private readonly pendingWorkspaceSwitch = new Map<number /* window switched away from */, number /* window switched to */>();
+	private readonly voltScopes = new Map<number /* window */, string /* its scope */>();
 
 	private readonly windowsStateHandler: WindowsStateHandler;
 
@@ -267,7 +272,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		@IProtocolMainService private readonly protocolMainService: IProtocolMainService,
 		@IThemeMainService private readonly themeMainService: IThemeMainService,
 		@IAuxiliaryWindowsMainService private readonly auxiliaryWindowsMainService: IAuxiliaryWindowsMainService,
-		@ICSSDevelopmentService private readonly cssDevelopmentService: ICSSDevelopmentService
+		@ICSSDevelopmentService private readonly cssDevelopmentService: ICSSDevelopmentService,
+		@IVoltWindowScopesMainService private readonly voltWindowScopes: IVoltWindowScopesMainService
 	) {
 		super();
 
@@ -786,7 +792,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 			windowToUse,
 			emptyWindowBackupInfo,
 			forceProfile: openConfig.forceProfile,
-			forceTempProfile: openConfig.forceTempProfile
+			forceTempProfile: openConfig.forceTempProfile,
+			ownScope: !!openConfig.forceEmpty && !emptyWindowBackupInfo && !openConfig.initialStartup
 		});
 	}
 
@@ -1592,6 +1599,17 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 			cssModules: this.cssDevelopmentService.isEnabled ? await this.cssDevelopmentService.getCssModules() : undefined
 		};
 
+		// Volt: a New Window opened beside a main window keeps its chats, projects and layout to
+		// itself until it closes. A window keeps its scope through reloads, workspace changes and
+		// the project sessions that share its browser window.
+		const scope = window
+			? this.voltScopes.get(window.id)
+			: options.switchFrom
+				? this.voltScopes.get(options.switchFrom.id)
+				: options.ownScope && !configuration.extensionDevelopmentPath && this.getWindows().some(other => !this.voltScopes.has(other.id))
+					? this.voltWindowScopes.createScope()
+					: undefined;
+
 		// New window
 		if (!window) {
 			const state = this.windowsStateHandler.getNewWindowState(configuration);
@@ -1670,6 +1688,10 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		// Update window identifier and session now
 		// that we have the window object in hand.
 		configuration.windowId = window.id;
+		if (scope) {
+			this.voltScopes.set(window.id, scope);
+			configuration.voltWindowScope = scope;
+		}
 
 		// If the window was already loaded, make sure to unload it
 		// first and only load the new configuration if that was
@@ -1810,6 +1832,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		// Remove from our list so that Electron can clean it up
 		this.windows.delete(window.id);
 		this.pendingWorkspaceSwitch.delete(window.id);
+		this.releaseVoltScope(window);
 
 		// A session that went away while on screen hands the window to the
 		// most recently used session that shares it
@@ -1833,9 +1856,17 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		// Remove from our list so that Electron can clean it up
 		this.windows.delete(window.id);
 		this.pendingWorkspaceSwitch.delete(window.id);
+		this.releaseVoltScope(window);
 
 		// Emit
 		this._onDidDestroyWindow.fire(window);
+	}
+
+	/** A scope ends with the last window in it; its chats and projects then show in the main window. */
+	private releaseVoltScope(window: ICodeWindow): void {
+		if (this.voltScopes.delete(window.id)) {
+			this.voltWindowScopes.retainScopes(new Set(this.voltScopes.values()));
+		}
 	}
 
 	getFocusedWindow(): ICodeWindow | undefined {

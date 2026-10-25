@@ -44,11 +44,13 @@ export function subagentStartHookCommand(context: string = CLAUDE_SUBAGENT_RULES
  * appended to Claude Code's prompt, and a SubagentStart hook that hands every subagent its rules.
  * Kept identical across sessions so a resumed session is not rebuilt for a changed fingerprint.
  */
-export function claudeWorkRulesMeta(): Record<string, unknown> {
+export function claudeWorkRulesMeta(model?: string): Record<string, unknown> {
 	return {
 		systemPrompt: { type: 'preset', preset: 'claude_code', append: CLAUDE_MAIN_RULES },
 		claudeCode: {
 			options: {
+				// The exact model: the adapter's picker takes only its aliases (default, sonnet, haiku, ...).
+				...(model ? { model } : {}),
 				settings: {
 					hooks: {
 						SubagentStart: [{ hooks: [{ type: 'command', command: subagentStartHookCommand(), timeout: 10 }] }],

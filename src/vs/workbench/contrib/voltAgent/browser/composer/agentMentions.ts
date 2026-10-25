@@ -6,6 +6,7 @@
 import { addDisposableListener, DragAndDropObserver, getDomNodePagePosition, getWindow } from '../../../../../base/browser/dom.js';
 import { IKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
+import { decodeBase64, encodeBase64, VSBuffer } from '../../../../../base/common/buffer.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { compareFileNamesDefault } from '../../../../../base/common/comparers.js';
 import { IMatch, matchesFuzzy } from '../../../../../base/common/filters.js';
@@ -31,7 +32,7 @@ import { IModelService } from '../../../../../editor/common/services/model.js';
 import { MarkdownString } from '../../../../../base/common/htmlContent.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { IInstantiationService, ServiceIdentifier } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { extractEditorsDropData, getPathForFile } from '../../../../../platform/dnd/browser/dnd.js';
@@ -68,11 +69,19 @@ import { IAgentTerminalCopyService } from '../terminals/agentTerminalCopy.js';
 import { formatDuration, IAgentVideoFrame, ITimeRange, mapRangesToSource, MAX_VIDEO_BYTES, normalizeVideoMime, probeVideo, rangesDuration, videoExtensionForMime, videoMimeForExtension } from './agentVideoAttachments.js';
 import { AgentVideoViewer, IAgentVideoClip, showAgentVideoViewer } from './agentVideoViewer.js';
 import { IAgentCustomizeService, IAgentSlashItem } from '../customize/agentCustomizeService.js';
+import { CANVAS_ENABLED_SETTING, SCRATCH_ENABLED_SETTING } from '../../common/canvasScratchSettings.js';
+import { describeForAgent } from '../../common/scratchBoard/scratchDescribe.js';
+import { boardDisplayTitle } from '../../common/scratchBoard/scratchIndex.js';
+import { IScratchBoardService } from '../scratchBoard/scratchBoardService.js';
+import { OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, OPEN_SCRATCH_BOARD_COMMAND_ID } from '../scratchBoard/scratchBoardInput.js';
+import { OPEN_CANVAS_COMMAND_ID } from '../visuals/canvas/canvasCard.js';
+import { IVoltCanvasService } from '../visuals/canvas/canvasService.js';
+import type { ICanvasDoc } from '../visuals/canvas/canvasModel.js';
 import { IPathService } from '../../../../services/path/common/pathService.js';
 import { AgentSlashMenu, rankSlashItems } from './agentSlashMenu.js';
 import { AgentSkillHoverCard } from './agentSkillHoverCard.js';
 
-export type AgentMentionKind = 'file' | 'folder' | 'terminal' | 'chat' | 'branch' | 'browser' | 'image' | 'video' | 'mcp' | 'selection' | 'skill';
+export type AgentMentionKind = 'file' | 'folder' | 'terminal' | 'chat' | 'branch' | 'browser' | 'image' | 'video' | 'mcp' | 'selection' | 'skill' | 'scratch' | 'canvas';
 
 export interface IAgentImagePayload {
 	id: string;
@@ -149,6 +158,22 @@ export interface IAgentDisplayMention {
 	file?: IAgentFilePayload;
 	citation?: IAgentCitation;
 	terminalQuote?: IAgentTerminalQuote;
+}
+
+function toDisplayMention(mention: IAgentMention): IAgentDisplayMention {
+	return {
+		label: mention.label,
+		accent: mention.accent,
+		kind: mention.kind,
+		value: mention.value,
+		resource: mention.resource,
+		range: mention.range,
+		image: mention.image,
+		video: mention.video,
+		file: mention.file,
+		citation: mention.citation,
+		terminalQuote: mention.terminalQuote,
+	};
 }
 
 export { imageAttachmentsFromMentions, resourceAttachmentsFromMentions, videoFrameName } from './agentMentionImages.js';
@@ -246,7 +271,7 @@ export interface IAgentMentionHost {
 	currentModelLabel?(): string | undefined;
 }
 
-type MentionMenuView = 'root' | 'files' | 'computer' | 'terminals' | 'chats';
+type MentionMenuView = 'root' | 'files' | 'computer' | 'terminals' | 'chats' | 'boards' | 'canvases';
 
 /** An entry of the folder This Mac shows. */
 interface IComputerEntry {
@@ -306,6 +331,51 @@ function chipText(label: string): string {
 	return label;
 }
 
+/**
+ * Composer text with its chips, put on the clipboard beside the plain text. Pasting it into any
+ * composer (another chat, another window) brings the chips back, images and files included.
+ */
+const COMPOSER_CLIP_MIME = 'application/vnd.volt.composer-clip+json';
+
+interface IComposerClip {
+	readonly version: 1;
+	/** The copied text with each chip's label where the chip was. */
+	readonly text: string;
+	/** Where each chip's label starts in `text`. */
+	readonly mentions: readonly { readonly offset: number; readonly mention: IAgentDisplayMention }[];
+}
+
+function encodeComposerClip(clip: IComposerClip): string {
+	return JSON.stringify(clip, (_key, value) => value instanceof Uint8Array ? { $bytes: encodeBase64(VSBuffer.wrap(value)) } : value);
+}
+
+/**
+ * Puts text and its chips on the clipboard as a composer clip, which any composer pastes back as
+ * chips. Used by the composer's own copy and by copying a sent prompt out of the chat.
+ */
+export function setComposerClipData(data: DataTransfer, text: string, mentions: readonly { readonly offset: number; readonly mention: IAgentDisplayMention }[]): void {
+	data.setData(COMPOSER_CLIP_MIME, encodeComposerClip({
+		version: 1,
+		text,
+		// A video with a saved copy is pasted from that file, not carried in the clipboard.
+		mentions: mentions.map(({ offset, mention }) => ({ offset, mention: mention.video?.path ? { ...mention, video: { ...mention.video, bytes: undefined } } : mention })),
+	}));
+}
+
+function decodeComposerClip(raw: string): IComposerClip | undefined {
+	if (!raw) {
+		return undefined;
+	}
+	try {
+		const clip = JSON.parse(raw, (_key, value) => value && typeof value === 'object' && typeof value.$bytes === 'string' && Object.keys(value).length === 1
+			? decodeBase64(value.$bytes).buffer
+			: value);
+		return clip?.version === 1 && typeof clip.text === 'string' && Array.isArray(clip.mentions) ? clip : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 export function mentionIconClasses(
 	mention: Pick<IAgentDisplayMention, 'kind' | 'resource' | 'file'>,
 	modelService: IModelService,
@@ -333,7 +403,9 @@ export function mentionIconClasses(
 					: mention.kind === 'mcp' ? Codicon.server
 						: mention.kind === 'branch' ? Codicon.gitBranch
 							: mention.kind === 'browser' ? Codicon.inspect
-								: Codicon.globe;
+								: mention.kind === 'scratch' ? Codicon.notebook
+									: mention.kind === 'canvas' ? Codicon.symbolColor
+										: Codicon.globe;
 	return ['codicon', `codicon-${icon.id}`];
 }
 
@@ -428,6 +500,10 @@ export class AgentMentionController extends Disposable {
 	private mcpServers: readonly IVoltMcpServerStatus[] | undefined;
 	/** Transcripts of referenced chats, by session id. */
 	private readonly chatContexts = new Map<string, string>();
+	/** What a referenced Scratch board or design canvas holds, by `kind:id`, read when it is picked. */
+	private readonly surfaceContexts = new Map<string, string>();
+	/** The design canvases for the @ menu's Canvases list; read when that list opens. */
+	private canvasDocs: readonly ICanvasDoc[] | undefined;
 	private lastDropAt = 0;
 	private hoveredMentionId: string | undefined;
 	private insertingMention = false;
@@ -824,19 +900,7 @@ export class AgentMentionController extends Disposable {
 			})
 			.filter((item): item is { mention: IAgentMention; offset: number } => !!item)
 			.sort((a, b) => a.offset - b.offset);
-		return items.map(({ mention }) => ({
-			label: mention.label,
-			accent: mention.accent,
-			kind: mention.kind,
-			value: mention.value,
-			resource: mention.resource,
-			range: mention.range,
-			image: mention.image,
-			video: mention.video,
-			file: mention.file,
-			citation: mention.citation,
-			terminalQuote: mention.terminalQuote,
-		}));
+		return items.map(({ mention }) => toDisplayMention(mention));
 	}
 
 	restoreMentions(mentions: readonly IAgentDisplayMention[]): void {
@@ -858,45 +922,57 @@ export class AgentMentionController extends Disposable {
 			if (index < 0) {
 				continue;
 			}
-			const start = model.getPositionAt(index);
-			const end = model.getPositionAt(index + item.label.length);
-			const mention: IAgentMention = {
-				id: `${item.kind}:${generateUuid()}`,
-				kind: item.kind,
-				label: item.label,
-				accent: item.accent,
-				value: item.value,
-				resource: item.resource ? URI.revive(item.resource) : undefined,
-				range: item.range,
-				image: item.image,
-				video: item.video,
-				file: item.file,
-				citation: item.citation,
-				terminalQuote: item.terminalQuote,
-			};
-			this.addDecoration(mention, {
-				startLineNumber: start.lineNumber,
-				startColumn: start.column,
-				endLineNumber: end.lineNumber,
-				endColumn: end.column,
-			});
-			this.mentions.push(mention);
-			this.mentionCatalog.push(mention);
-			if (mention.kind === 'chat' && mention.value) {
-				void this.loadChatContext(mention.value);
-			}
-			if (mention.kind === 'skill') {
-				this.attachSlashItem(mention);
-			}
-			if (mention.image && !mention.image.path) {
-				this.persistImage(mention.image);
-			}
-			if (mention.video && (!mention.video.path || !mention.video.frames)) {
-				this.prepareVideo(mention.video);
-			}
+			this.attachMentionAt(item, index);
 			cursor = index + item.label.length;
 		}
 		this.notifyImages();
+	}
+
+	/** A chip for a saved (or pasted) mention over its label, which starts at `offset` in the text. */
+	private attachMentionAt(item: IAgentDisplayMention, offset: number): void {
+		const model = this.editor.getModel();
+		if (!model) {
+			return;
+		}
+		const start = model.getPositionAt(offset);
+		const end = model.getPositionAt(offset + item.label.length);
+		const mention: IAgentMention = {
+			id: `${item.kind}:${generateUuid()}`,
+			kind: item.kind,
+			label: item.label,
+			accent: item.accent,
+			value: item.value,
+			resource: item.resource ? URI.revive(item.resource) : undefined,
+			range: item.range,
+			image: item.image,
+			video: item.video,
+			file: item.file,
+			citation: item.citation,
+			terminalQuote: item.terminalQuote,
+		};
+		this.addDecoration(mention, {
+			startLineNumber: start.lineNumber,
+			startColumn: start.column,
+			endLineNumber: end.lineNumber,
+			endColumn: end.column,
+		});
+		this.mentions.push(mention);
+		this.mentionCatalog.push(mention);
+		if (mention.kind === 'chat' && mention.value) {
+			void this.loadChatContext(mention.value);
+		}
+		if ((mention.kind === 'scratch' || mention.kind === 'canvas') && mention.value) {
+			void this.loadSurfaceContext(mention.kind, mention.value);
+		}
+		if (mention.kind === 'skill') {
+			this.attachSlashItem(mention);
+		}
+		if (mention.image && !mention.image.path) {
+			this.persistImage(mention.image);
+		}
+		if (mention.video && (!mention.video.path || !mention.video.frames)) {
+			this.prepareVideo(mention.video);
+		}
 	}
 
 	serialize(): string {
@@ -1240,7 +1316,7 @@ export class AgentMentionController extends Disposable {
 				}
 			} else if (mention.kind === 'video' && mention.video) {
 				this.openVideoViewer(mention);
-			} else if (mention.kind === 'file' || mention.kind === 'folder') {
+			} else if (mention.kind === 'file' || mention.kind === 'folder' || mention.kind === 'scratch' || mention.kind === 'canvas') {
 				void this.openMention(mention);
 			} else if (mention.citation) {
 				this.host.openCitation?.(mention.citation, e.target.element ?? undefined);
@@ -1336,6 +1412,18 @@ export class AgentMentionController extends Disposable {
 	}
 
 	private async openMention(mention: IAgentMention): Promise<void> {
+		// A board or canvas opens beside the chat, like the + menu's.
+		if (mention.kind === 'scratch' && mention.value) {
+			const sessionId = this.host.sessionId?.();
+			await (sessionId
+				? this.commandService.executeCommand(OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, sessionId, mention.value)
+				: this.commandService.executeCommand(OPEN_SCRATCH_BOARD_COMMAND_ID, mention.value));
+			return;
+		}
+		if (mention.kind === 'canvas' && mention.value) {
+			await this.commandService.executeCommand(OPEN_CANVAS_COMMAND_ID, mention.value);
+			return;
+		}
 		const resource = mention.resource;
 		if (!resource) {
 			return;
@@ -2189,11 +2277,28 @@ export class AgentMentionController extends Disposable {
 			return { kind: 'list', rows: [back, ...(chats.length ? chats : [this.message(query ? localize('voltAgent.mention.noMatchingChats', "No matching chats") : localize('voltAgent.mention.noChats', "No other chats in this project"))])] };
 		}
 
+		if (view === 'boards') {
+			const boards = this.boardRows(query);
+			return { kind: 'list', rows: [back, ...(boards.length ? boards : [this.message(query ? localize('voltAgent.mention.noMatchingBoards', "No matching boards") : localize('voltAgent.mention.noBoards', "No Scratch boards yet"))])] };
+		}
+
+		if (view === 'canvases') {
+			const canvases = this.canvasRows(query);
+			return {
+				kind: 'list', rows: [back, ...(canvases.length ? canvases : [this.message(this.canvasDocs === undefined
+					? localize('voltAgent.mention.loadingCanvases', "Loading...")
+					: query ? localize('voltAgent.mention.noMatchingCanvases', "No matching canvases") : localize('voltAgent.mention.noCanvases', "No design canvases yet"))])],
+			};
+		}
+
 		const categories: AgentMentionRow[] = [
 			{ kind: 'item', id: 'files', label: localize('voltAgent.mention.files', "Files & Folders"), icon: Codicon.folder, submenu: true, run: () => this.setMenuView('files') },
 			{ kind: 'item', id: 'computer', label: THIS_MACHINE, icon: Codicon.deviceDesktop, submenu: true, run: () => this.openComputer(undefined) },
 			{ kind: 'item', id: 'terminals', label: localize('voltAgent.mention.terminals', "Terminals"), icon: Codicon.terminal, submenu: true, run: () => this.setMenuView('terminals') },
 			{ kind: 'item', id: 'chats', label: localize('voltAgent.mention.chats', "Chats"), icon: Codicon.commentDiscussion, submenu: true, run: () => this.setMenuView('chats') },
+			// The surfaces beside a chat: a board or a canvas goes to the agent with what is on it.
+			...(this.surfaceOff(SCRATCH_ENABLED_SETTING) ? [] : [{ kind: 'item' as const, id: 'boards', label: localize('voltAgent.mention.boards', "Scratch Boards"), icon: Codicon.notebook, submenu: true, run: () => this.setMenuView('boards') }]),
+			...(this.surfaceOff(CANVAS_ENABLED_SETTING) ? [] : [{ kind: 'item' as const, id: 'canvases', label: localize('voltAgent.mention.canvases', "Canvases"), icon: Codicon.symbolColor, submenu: true, run: () => this.openCanvasesView() }]),
 			{
 				kind: 'item',
 				id: 'branch',
@@ -2285,7 +2390,7 @@ export class AgentMentionController extends Disposable {
 		const current = this.host.sessionId?.();
 		const now = Date.now();
 		const rows: AgentMentionRow[] = [];
-		const sessions = this.agentHistory.list()
+		const sessions = this.agentHistory.list({ inWindow: true })
 			.filter(session => session.id !== current && session.turnCount > 0
 				&& (!root || session.workspaceFolder === root || !!session.workspaceFolders?.includes(root)))
 			.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -2312,6 +2417,130 @@ export class AgentMentionController extends Disposable {
 			}
 		}
 		return rows;
+	}
+
+	/** Settings > Canvas & Scratch turned the surface off: no way to mention it either. */
+	private surfaceOff(setting: string): boolean {
+		return this.configurationService.getValue(setting) === false;
+	}
+
+	/** Optional: the board and canvas services are not in every workbench (tests, the web build's slices). */
+	private surfaceService<T>(id: ServiceIdentifier<T>): T | undefined {
+		return this.instantiationService.invokeFunction(accessor => accessor.getIfExists(id));
+	}
+
+	/** Scratch boards, the last edited first. */
+	private boardRows(query: string): AgentMentionRow[] {
+		const boards = this.surfaceService(IScratchBoardService);
+		if (!boards) {
+			return [];
+		}
+		const now = Date.now();
+		const rows: AgentMentionRow[] = [];
+		const metas = boards.index.boards.filter(meta => !meta.deleted && !meta.archived).sort((a, b) => (b.edited || b.created) - (a.edited || a.created));
+		for (const meta of metas) {
+			const title = boardDisplayTitle(meta);
+			const labelMatches = query ? matchesFuzzy(query, title, true) : undefined;
+			if (query && !labelMatches) {
+				continue;
+			}
+			rows.push({
+				kind: 'item',
+				id: `board:${meta.id}`,
+				label: title,
+				labelMatches: labelMatches ?? undefined,
+				icon: Codicon.notebook,
+				description: compactSessionAge(meta.edited || meta.created, now),
+				run: () => {
+					void this.loadSurfaceContext('scratch', meta.id);
+					this.pickMention({ id: generateUuid(), kind: 'scratch', label: truncateLabel(title, 40), value: meta.id });
+				},
+			});
+			if (rows.length >= MAX_CHAT_ITEMS) {
+				break;
+			}
+		}
+		return rows;
+	}
+
+	/** The Canvases list: read from disk when it opens, then drawn again. */
+	private openCanvasesView(): void {
+		this.setMenuView('canvases');
+		const canvases = this.surfaceService(IVoltCanvasService);
+		if (!canvases) {
+			this.canvasDocs = [];
+			return;
+		}
+		void canvases.listAll().then(docs => {
+			this.canvasDocs = docs;
+			if (this.menuView === 'canvases') {
+				this.refreshMentionMenu(false);
+			}
+		}, () => this.canvasDocs = []);
+	}
+
+	/** Design canvases, the last changed first; this chat's own lead. */
+	private canvasRows(query: string): AgentMentionRow[] {
+		const current = this.host.sessionId?.();
+		const now = Date.now();
+		const docs = [...this.canvasDocs ?? []].sort((a, b) => Number(b.chat === current) - Number(a.chat === current) || b.updatedAt - a.updatedAt);
+		const rows: AgentMentionRow[] = [];
+		for (const doc of docs) {
+			const labelMatches = query ? matchesFuzzy(query, doc.title, true) : undefined;
+			if (query && !labelMatches) {
+				continue;
+			}
+			rows.push({
+				kind: 'item',
+				id: `canvas:${doc.id}`,
+				label: doc.title,
+				labelMatches: labelMatches ?? undefined,
+				icon: Codicon.symbolColor,
+				description: compactSessionAge(doc.updatedAt, now),
+				run: () => {
+					void this.loadSurfaceContext('canvas', doc.id);
+					this.pickMention({ id: generateUuid(), kind: 'canvas', label: truncateLabel(doc.title, 40), value: doc.id });
+				},
+			});
+			if (rows.length >= MAX_CHAT_ITEMS) {
+				break;
+			}
+		}
+		return rows;
+	}
+
+	/**
+	 * Reads what a mentioned board or canvas holds once, so sending can attach it without waiting:
+	 * a board's text, diagram and frames as the agent reads them; a canvas's frames and comments.
+	 */
+	private async loadSurfaceContext(kind: 'scratch' | 'canvas', id: string): Promise<void> {
+		const key = `${kind}:${id}`;
+		if (this.surfaceContexts.has(key)) {
+			return;
+		}
+		try {
+			if (kind === 'scratch') {
+				const boards = this.surfaceService(IScratchBoardService);
+				const meta = boards?.getBoard(id);
+				const doc = meta ? await boards!.readBoardDocument(id) : undefined;
+				if (meta && doc) {
+					const text = doc.elements.length ? describeForAgent(doc.elements, { boardTitle: boardDisplayTitle(meta), whole: true }) : 'The board is empty.';
+					this.surfaceContexts.set(key, text.length > MAX_CHAT_CONTEXT_CHARS ? `${text.slice(0, MAX_CHAT_CONTEXT_CHARS)}\n...` : text);
+				}
+				return;
+			}
+			const doc = await this.surfaceService(IVoltCanvasService)?.get(id);
+			if (doc) {
+				const frames = doc.frames.map(frame => `- ${frame.id}: ${frame.name} (${frame.kind})`);
+				const open = doc.comments.filter(comment => comment.status !== 'resolved').length;
+				this.surfaceContexts.set(key, [
+					`Design canvas "${doc.title}", version ${doc.version}, ${doc.frames.length} frame${doc.frames.length === 1 ? '' : 's'}${open ? `, ${open} open comment${open === 1 ? '' : 's'}` : ''}.`,
+					...frames,
+				].join('\n'));
+			}
+		} catch {
+			// Unreadable: the mention still names the surface and its id.
+		}
 	}
 
 	/** Recently opened files first, then the workspace search, ranked like Quick Open. */
@@ -2495,6 +2724,13 @@ export class AgentMentionController extends Disposable {
 				if (output) {
 					blocks.push(`<attached_terminal name="${mention.label}">\n${output}\n</attached_terminal>`);
 				}
+			} else if (mention.kind === 'scratch' && mention.value) {
+				// The board itself, and how to answer on it: the agent draws there, not in the chat.
+				const content = this.surfaceContexts.get(`scratch:${mention.value}`);
+				blocks.push(`<attached_scratch_board title="${mention.label}" boardId="${mention.value}">\n${content ? `${content}\n\n` : ''}Answer on this board: read it with scratch_read and draw with scratch_draw (boardId "${mention.value}"; pass a frame's id as replace to redraw it).\n</attached_scratch_board>`);
+			} else if (mention.kind === 'canvas' && mention.value) {
+				const content = this.surfaceContexts.get(`canvas:${mention.value}`);
+				blocks.push(`<attached_canvas title="${mention.label}" canvasId="${mention.value}">\n${content ? `${content}\n\n` : ''}Work on this canvas: read it with canvas_read and change it with canvas_update (id "${mention.value}") rather than making a new one.\n</attached_canvas>`);
 			}
 		}
 		return blocks;
@@ -2868,9 +3104,10 @@ export class AgentMentionController extends Disposable {
 	}
 
 	/** Pasted screenshots are all `image.png`; number repeats so the text can tell them apart. */
-	private uniqueMediaName(fileName: string): string {
+	private uniqueMediaName(fileName: string, alsoTaken: readonly string[] = []): string {
 		const name = truncateLabel(fileName, 40);
 		const taken = new Set(this.mentions.filter(mention => mention.kind === 'image' || mention.kind === 'video' || mention.file).map(mention => mention.label));
+		alsoTaken.forEach(label => taken.add(label));
 		if (!taken.has(name)) {
 			return name;
 		}
@@ -3141,7 +3378,7 @@ export class AgentMentionController extends Disposable {
 			return mention.value ?? serializeTerminalSelection(mention.terminalQuote);
 		}
 		// Named references; a chat's or terminal's content follows the prompt (see contextBlocks).
-		if (mention.kind === 'chat' || mention.kind === 'terminal' || mention.kind === 'mcp') {
+		if (mention.kind === 'chat' || mention.kind === 'terminal' || mention.kind === 'mcp' || mention.kind === 'scratch' || mention.kind === 'canvas') {
 			return `@${mention.kind}/${mention.label}`;
 		}
 		if (mention.value) {
@@ -3198,28 +3435,92 @@ export class AgentMentionController extends Disposable {
 		}
 		const selected = model.getValueInRange(selection);
 		const selectionStart = model.getOffsetAt(selection.getStartPosition());
-		const replacements = this.mentions
+		const chips = this.mentions
 			.map(mention => {
 				const range = mention.decorationId ? model.getDecorationRange(mention.decorationId) : undefined;
-				return range && Range.areIntersecting(range, selection) ? { mention, range } : undefined;
+				return range && Range.areIntersecting(range, selection)
+					? { mention, start: model.getOffsetAt(range.getStartPosition()) - selectionStart, end: model.getOffsetAt(range.getEndPosition()) - selectionStart }
+					: undefined;
 			})
-			.filter((item): item is { mention: IAgentMention; range: Range } => !!item)
-			.sort((a, b) => model.getOffsetAt(b.range.getStartPosition()) - model.getOffsetAt(a.range.getStartPosition()));
-		if (!replacements.length) {
+			.filter((item): item is { mention: IAgentMention; start: number; end: number } => !!item)
+			.sort((a, b) => a.start - b.start);
+		if (!chips.length) {
 			return;
 		}
-		let text = selected;
-		for (const { mention, range } of replacements) {
-			const start = Math.max(0, model.getOffsetAt(range.getStartPosition()) - selectionStart);
-			const end = Math.min(selected.length, model.getOffsetAt(range.getEndPosition()) - selectionStart);
-			if (end <= start) {
+		// The plain text spells each chip out; the clip keeps whole chips as chips.
+		let text = '';
+		let clipText = '';
+		const clipMentions: { offset: number; mention: IAgentDisplayMention }[] = [];
+		let cursor = 0;
+		for (const { mention, start, end } of chips) {
+			const from = Math.max(0, start);
+			const to = Math.min(selected.length, end);
+			if (to <= from || from < cursor) {
 				continue;
 			}
-			text = `${text.slice(0, start)}${this.tagValueFor(mention)}${text.slice(end)}`;
+			const between = selected.slice(cursor, from);
+			const tag = this.tagValueFor(mention);
+			text += between + tag;
+			clipText += between;
+			if (start >= 0 && end <= selected.length) {
+				clipMentions.push({ offset: clipText.length, mention: toDisplayMention(mention) });
+				clipText += selected.slice(from, to);
+			} else {
+				clipText += tag;
+			}
+			cursor = to;
 		}
+		text += selected.slice(cursor);
+		clipText += selected.slice(cursor);
 		e.preventDefault();
 		e.stopPropagation();
 		e.clipboardData.setData('text/plain', text);
+		if (clipMentions.length) {
+			setComposerClipData(e.clipboardData, clipText, clipMentions);
+		}
+	}
+
+	/** Text copied out of a composer, its chips added back over their labels. */
+	private pasteComposerClip(clip: IComposerClip): void {
+		const model = this.editor.getModel();
+		const selection = this.editor.getSelection();
+		if (!model || !selection) {
+			return;
+		}
+		// Images, videos and files are renamed like new ones when this composer already has the name.
+		let text = '';
+		let cursor = 0;
+		const placed: { offset: number; mention: IAgentDisplayMention }[] = [];
+		for (const { offset, mention } of [...clip.mentions].sort((a, b) => a.offset - b.offset)) {
+			if (!mention?.label || offset < cursor || clip.text.slice(offset, offset + mention.label.length) !== mention.label) {
+				continue;
+			}
+			text += clip.text.slice(cursor, offset);
+			const media = mention.kind === 'image' || mention.kind === 'video' || !!mention.file;
+			const label = media ? this.uniqueMediaName(mention.label, placed.map(item => item.mention.label)) : mention.label;
+			const image = mention.image && { ...mention.image, id: `image-${generateUuid()}`, name: label };
+			placed.push({ offset: text.length, mention: { ...mention, label, image } });
+			text += label;
+			cursor = offset + mention.label.length;
+		}
+		text += clip.text.slice(cursor);
+		const start = model.getOffsetAt(selection.getStartPosition());
+		const alreadyInserting = this.insertingMention;
+		this.insertingMention = true;
+		try {
+			this.editor.executeEdits('volt-agent-paste', [{ range: selection, text }]);
+			for (const { offset, mention } of placed) {
+				this.attachMentionAt(mention, start + offset);
+			}
+		} finally {
+			if (!alreadyInserting) {
+				this.insertingMention = false;
+			}
+		}
+		const end = model.getPositionAt(start + text.length);
+		this.editor.setPosition(end);
+		this.editor.revealPosition(end);
+		this.notifyImages();
 	}
 
 	private syncMentionRanges(): void {
@@ -3408,6 +3709,14 @@ export class AgentMentionController extends Disposable {
 					await this.attachBlob(file, undefined);
 				}
 			})();
+			return;
+		}
+		// Copied out of a composer: the chips come back (Cmd+Shift+V pastes the plain text).
+		const clip = decodeComposerClip(data.getData(COMPOSER_CLIP_MIME));
+		if (clip?.mentions.length) {
+			e.preventDefault();
+			e.stopPropagation();
+			this.pasteComposerClip(clip);
 			return;
 		}
 		const text = data.getData('text/plain');

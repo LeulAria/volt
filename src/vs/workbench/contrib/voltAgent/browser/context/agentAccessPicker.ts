@@ -62,7 +62,7 @@ export class AgentAccessPicker extends Disposable {
 	render(): void {
 		const sessionId = this.host.sessionId();
 		const option = accessModeOption(this.runtime.getAccessMode(sessionId));
-		this.icon.replaceChildren(createAccessIcon(option.id));
+		this.icon.replaceChildren(createAccessIcon(option.id, '1.3'));
 		this.label.textContent = option.label;
 		this.element.dataset.mode = option.id;
 		const sandbox = this.runtime.getSandboxSettings(sessionId);

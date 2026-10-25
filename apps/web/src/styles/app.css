@@ -133,7 +133,8 @@ code, pre, kbd { font-family: var(--font-mono); }
 .segmented button.on { background: var(--raised); color: var(--fg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 0 0 1px var(--stroke-faint); }
 
 .wordmark { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.wordmark-mark { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; background: var(--primary); color: var(--on-primary); flex: none; }
+.volt-mark { display: block; flex: none; user-select: none; }
+.wordmark-mark { width: 22px; height: 22px; }
 .wordmark-text { font-weight: 650; font-size: 15px; letter-spacing: -0.02em; }
 .wordmark-sub { color: var(--fg3); font-size: 12px; }
 
@@ -217,7 +218,7 @@ code, pre, kbd { font-family: var(--font-mono); }
 .main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--canvas); }
 
 .splash, .blocked { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; color: var(--fg3); background: var(--canvas); }
-.splash-mark { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; background: var(--primary); color: var(--on-primary); box-shadow: 0 10px 30px var(--shadow); }
+.splash-mark { width: 52px; height: 52px; filter: drop-shadow(0 10px 30px var(--shadow)); }
 
 .offline-banner { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 7px 12px; font-size: 12px; color: var(--warning); background: color-mix(in srgb, var(--warning) 10%, var(--canvas)); border-bottom: 1px solid var(--stroke-faint); }
 .offline-banner button { color: var(--fg); font-weight: 600; margin-left: 4px; }
@@ -668,7 +669,7 @@ code, pre, kbd { font-family: var(--font-mono); }
 .newchat { flex: 1; min-height: 0; overflow-y: auto; display: flex; justify-content: center; padding: 10vh 24px 40px; }
 .newchat-center { width: 100%; max-width: 700px; display: flex; flex-direction: column; gap: 18px; }
 .newchat-hero { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; margin-bottom: 8px; }
-.hero-mark { width: 46px; height: 46px; border-radius: 13px; display: grid; place-items: center; background: var(--primary); color: var(--on-primary); box-shadow: 0 12px 30px var(--shadow); }
+.hero-mark { width: 46px; height: 46px; filter: drop-shadow(0 12px 30px var(--shadow)); }
 .newchat-hero h1 { margin: 6px 0 0; font-size: 26px; line-height: 32px; font-weight: 650; letter-spacing: -0.025em; }
 .hero-project { color: var(--accent); }
 .hero-sub { margin: 0; color: var(--fg3); font-size: 13.5px; }
@@ -753,7 +754,7 @@ code, pre, kbd { font-family: var(--font-mono); }
 
 .pair-page { height: 100%; overflow-y: auto; display: flex; align-items: center; justify-content: center; padding: 32px 16px; background: radial-gradient(1200px 600px at 50% -10%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 60%), var(--canvas); }
 .pair-card { width: 100%; max-width: 420px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 12px; }
-.pair-mark { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; background: var(--primary); color: var(--on-primary); box-shadow: 0 14px 40px var(--shadow); margin-bottom: 6px; }
+.pair-mark { width: 56px; height: 56px; filter: drop-shadow(0 14px 40px var(--shadow)); margin-bottom: 6px; }
 .pair-card h1 { margin: 0; font-size: 26px; font-weight: 650; letter-spacing: -0.025em; }
 .pair-lede { margin: 0; color: var(--fg3); font-size: 13.5px; line-height: 20px; }
 .pair-lede b { color: var(--fg2); font-weight: 600; }

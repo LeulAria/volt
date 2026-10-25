@@ -99,8 +99,8 @@ export interface IAgentDevicesService {
 	canStream(target: IDeviceTarget): boolean;
 	/** Starts the device hub and attaches it to `target`; resolves with the hub's origin. */
 	attachStream(target: IDeviceTarget): Promise<string>;
-	/** A blob: URL of a 3D model on this machine, or undefined when it is missing. */
-	deviceModelUrl(id: VoltDeviceModelId): Promise<string | undefined>;
+	/** A 3D model's bytes on this machine, or undefined when it is missing. */
+	deviceModel(id: VoltDeviceModelId): Promise<ArrayBuffer | undefined>;
 	/** The bundle id or package in front, when it can be told cheaply. */
 	foregroundApp(target: IDeviceTarget): Promise<string | undefined>;
 }
@@ -142,7 +142,7 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 	private readonly refs = new Map<string, DeviceRefs>();
 	/** The screen as the agent last read it per device, so the next result reports only what changed. */
 	private readonly seen = new Map<string, IPageView>();
-	private readonly modelUrls = new Map<VoltDeviceModelId, Promise<string | undefined>>();
+	private readonly models = new Map<VoltDeviceModelId, Promise<ArrayBuffer | undefined>>();
 
 	constructor(
 		@IVoltDevicesService private readonly devices: IVoltDevicesService,
@@ -230,23 +230,23 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 		return this.devices.foregroundApp(target.host, target.device).catch(() => undefined);
 	}
 
-	deviceModelUrl(id: VoltDeviceModelId): Promise<string | undefined> {
-		let url = this.modelUrls.get(id);
-		if (!url) {
-			url = this.devices.readDeviceModel(id).then(base64 => {
+	deviceModel(id: VoltDeviceModelId): Promise<ArrayBuffer | undefined> {
+		let model = this.models.get(id);
+		if (!model) {
+			model = this.devices.readDeviceModel(id).then(base64 => {
 				if (!base64) {
-					this.modelUrls.delete(id);
+					this.models.delete(id);
 					return undefined;
 				}
 				const bytes = decodeBase64(base64).buffer;
-				return URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'model/gltf-binary' }));
+				return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 			}, () => {
-				this.modelUrls.delete(id);
+				this.models.delete(id);
 				return undefined;
 			});
-			this.modelUrls.set(id, url);
+			this.models.set(id, model);
 		}
-		return url;
+		return model;
 	}
 
 	async boot(target: IDeviceTarget, timeoutMs?: number): Promise<VoltDeviceState> {

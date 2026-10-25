@@ -48,9 +48,9 @@ import { AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTIN
 import { AGENT_HOME_AUTO_SETTLE_DAYS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING } from '../../voltAgent/common/agentHomeSettings.js';
 import '../../voltAgent/common/agentAwakeSettings.js';
 
-/** Settings on the Composer page whose rows redraw when they change. */
 /** Settings on the Appearance page whose controls redraw when they change. */
 const APPEARANCE_PAGE_SETTINGS = [ThemeSettings.DETECT_COLOR_SCHEME, ThemeSettings.PREFERRED_DARK_THEME, ThemeSettings.PREFERRED_LIGHT_THEME, ThemeSettings.FILE_ICON_THEME, 'editor.fontSize', 'editor.fontFamily', 'window.zoomLevel'];
+/** Settings on the Composer page whose rows redraw when they change. */
 const COMPOSER_PAGE_SETTINGS = [AGENT_PROMPT_HISTORY_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_KEEP_WORKING_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING, AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING, AGENT_HOME_AUTO_SETTLE_DAYS_SETTING];
 import { AgentModelPicker, type IModelOption, type IProviderGroup } from '../../voltAgent/browser/picker/agentModelPicker.js';
 import { appendSettingsBlock, SettingsStickyHeads } from './settingsStickyHeads.js';
@@ -61,6 +61,7 @@ import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js'
 import { AppearancePage, ISettingsPageKit } from './appearancePage.js';
 import { CodeIntelligencePage } from './codeIntelligencePage.js';
 import { GitPage } from './gitPage.js';
+import { CanvasScratchPage } from './canvasScratchPage.js';
 import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
 import { createSettingsIcon } from './settingsIcons.js';
@@ -75,9 +76,8 @@ import { AgentCustomizeEditor, AgentCustomizeEditorInput } from '../../voltAgent
 /** The Tab page's on/off settings. */
 type TabToggle = 'enabled' | 'partialAccepts' | 'inComments' | 'whitespaceOnly' | 'autoImport' | 'autoImportPython';
 
-type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'beta' | 'security' | 'connected' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize';
+type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'connected' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize';
 
-/** The Modes nav glyph (a small robot face), drawn in currentColor like the codicons beside it. */
 /** The nav, in groups separated by a gap. Icons come from settingsIcons.ts; the codicon is the fallback. */
 const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: number }[] = [
 	{ id: 'general', label: localize('voltSettings.general', "General"), icon: Codicon.settingsGear, group: 0 },
@@ -88,6 +88,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: nu
 	{ id: 'composer', label: localize('voltSettings.composer', "Composer"), icon: Codicon.commentDiscussion, group: 1 },
 	{ id: 'tab', label: localize('voltSettings.tab', "Tab & Prediction"), icon: Codicon.keyboard, group: 1 },
 	{ id: 'codeIntelligence', label: localize('voltSettings.codeIntelligence', "Code Intelligence"), icon: Codicon.database, group: 1 },
+	{ id: 'canvas', label: localize('voltSettings.canvasScratch', "Canvas & Scratch"), icon: Codicon.symbolColor, group: 1 },
 	{ id: 'beta', label: localize('voltSettings.betaPage', "Beta"), icon: Codicon.beaker, group: 1 },
 	{ id: 'security', label: localize('voltSettings.security', "Security"), icon: Codicon.shield, group: 2 },
 	{ id: 'connected', label: localize('voltSettings.connectedAgents', "Connected agents"), icon: Codicon.link, group: 2 },
@@ -110,6 +111,8 @@ const SECTION_ALIASES: Record<string, SettingsSection> = {
 	theme: 'appearance',
 	pullRequests: 'git',
 	integrations: 'git',
+	scratch: 'canvas',
+	canvasScratch: 'canvas',
 };
 
 const MODE_COPY: Record<VoltMode, { title: string; body: string }> = {
@@ -307,7 +310,7 @@ export class VoltSettingsEditor extends EditorPane {
 
 		// The agent list's footer row, so Usage, Automations and Customize are a click away here too.
 		const footer = append(sidebar, $('.volt-settings-footer'));
-		this.footerActions = appendAgentFooterActions(footer, commandService, this._store);
+		this.footerActions = appendAgentFooterActions(footer, commandService, this._store, this.instantiationService);
 		// Customize opens Skills & Plugins here instead of leaving Settings. A capture listener runs
 		// before the footer's own click handler on the button, and stops it.
 		this._register(addDisposableListener(this.footerActions.customize, 'click', e => {
@@ -553,6 +556,9 @@ export class VoltSettingsEditor extends EditorPane {
 			case 'codeIntelligence':
 				this.renderCodeIntelligence();
 				break;
+			case 'canvas':
+				this.renderCanvasScratch();
+				break;
 			case 'beta':
 				this.renderBeta();
 				break;
@@ -755,11 +761,6 @@ export class VoltSettingsEditor extends EditorPane {
 			host => this.textGenerationPicker(host, 'git', localize('voltSettings.gitTextModel', "Git text model"), localize('voltSettings.gitTextDefault', "Default"), localize('voltSettings.gitTextDefaultDesc', "Use the text generation model")),
 		);
 		this.renderPower();
-
-		this.sectionLabel(localize('voltSettings.predictionAndVoice', "Prediction and voice"));
-		const assist = this.settingsGroup();
-		this.predictionModelRow(assist);
-		this.voiceModelRow(assist);
 		this.renderUpdates();
 	}
 
@@ -1173,6 +1174,23 @@ export class VoltSettingsEditor extends EditorPane {
 		}).render();
 	}
 
+	/** Scratch and the design canvas: on/off, new boards, drawing style, history (canvasScratchPage.ts). */
+	private renderCanvasScratch(): void {
+		this.instantiationService.createInstance(CanvasScratchPage, {
+			store: this.renderStore,
+			pageHead: (title, lead) => void this.pageHead(title, lead),
+			sectionLabel: label => this.sectionLabel(label),
+			sectionHint: text => void (append(this.target, $('.volt-settings-section-hint')).textContent = text),
+			settingsGroup: () => this.settingsGroup(),
+			settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
+			toggle: (parent, on, label, onClick) => void this.switch(parent, on, label, onClick),
+			stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
+			dropdown: (parent, options, value, label, onChange) => this.dropdown(parent, options, value, label, onChange),
+			rerender: () => this.renderContent(),
+			isCurrent: () => this.section === 'canvas',
+		}).render();
+	}
+
 	/** Pull request links and reviews, attribution, branch names and code hosts (gitPage.ts). */
 	private renderGit(): void {
 		this.instantiationService.createInstance(GitPage, {
@@ -1385,17 +1403,10 @@ export class VoltSettingsEditor extends EditorPane {
 			localize('voltSettings.securityLead', "Where keys are stored and what the agent is allowed to run."),
 		);
 
-		const basics = this.settingsGroup();
 		this.settingRow(
-			basics,
+			this.settingsGroup(),
 			localize('voltSettings.secrets', "Secrets"),
 			localize('voltSettings.securityBody', "API keys are stored in OS secret storage, never in settings.json."),
-		);
-		this.settingRow(
-			basics,
-			localize('voltSettings.accessMode', "Default access"),
-			localize('voltSettings.accessModeDescSecurity', "What agents may do without asking. Each chat can still change it from the composer."),
-			host => this.accessModeControl(host),
 		);
 
 		this.sectionLabel(localize('voltSettings.projectRules', "Project rules"));

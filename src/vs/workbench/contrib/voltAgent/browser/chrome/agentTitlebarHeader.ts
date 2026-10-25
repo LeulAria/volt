@@ -16,9 +16,7 @@ import { localize } from '../../../../../nls.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
-import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
-import { INativeHostService } from '../../../../../platform/native/common/native.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
 import { getLayoutMode, onDidChangeLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
@@ -37,6 +35,8 @@ import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js'
 import { IAgentPageCrumb } from '../customize/agentMarketplaceView.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { localEnvironmentLabel } from '../home/agentHomeFilter.js';
+import { ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
+import { getComputerName, onDidChangeComputerName } from '../usage/agentComputerName.js';
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
 import { displayComputerName, IUsageEnvironmentSelection, showUsageEnvironmentMenu, usageEnvironmentTriggerLabel, usageMachineName } from '../usage/agentUsageEnvironmentMenu.js';
 import { setAgentTooltip } from './agentTooltip.js';
@@ -142,6 +142,18 @@ export function agentHeaderHoverLines(name: string | undefined, branch: string |
 
 function folderDisplayPath(uri: URI): string {
 	return uri.scheme === Schemas.file ? uri.fsPath : uri.path;
+}
+
+/**
+ * The computer's name as the machine menu shows it ("Leul's MacBook Pro"), or undefined while it
+ * is unknown. A dotted host name is not that label: "This Mac" stays until the real name arrives.
+ */
+function machineDisplayName(raw: string | undefined): string | undefined {
+	let display = raw ? displayComputerName(raw).replace(/\.local$/i, '').trim() : '';
+	if (display && !display.includes(' ') && display.includes('-')) {
+		display = display.replace(/-/g, ' ');
+	}
+	return display && (display.includes(' ') || !display.includes('.')) ? display : undefined;
 }
 
 function strokeAttrs(el: SVGElement, width: string): void {
@@ -345,29 +357,17 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		@ISCMViewService private readonly scmViewService: ISCMViewService,
 		@IClipboardService private readonly clipboardService: IClipboardService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
-		@IInstantiationService instantiationService: IInstantiationService,
 	) {
 		super();
-		this.machineLabel = usageMachineName(headerProcessEnv(), localEnvironmentLabel());
-		const nativeHost = instantiationService.invokeFunction(accessor => accessor.getIfExists(INativeHostService));
-		if (nativeHost) {
-			try {
-				void nativeHost.getComputerName().then(name => {
-					let display = displayComputerName(name).replace(/\.local$/i, '').trim();
-					if (display && !display.includes(' ') && display.includes('-')) {
-						display = display.replace(/-/g, ' ');
-					}
-					// A dotted host name is not the label in the menu. Keep "This Mac" until the real name arrives.
-					if (!display || display === this.machineLabel || (!display.includes(' ') && display.includes('.')) || this._store.isDisposed) {
-						return;
-					}
-					this.machineLabel = display;
-					this.scheduleRender();
-				}, () => undefined);
-			} catch {
-				// Older main process without getComputerName. The fallback label stays.
+		this.machineLabel = machineDisplayName(getComputerName()) ?? usageMachineName(headerProcessEnv(), localEnvironmentLabel());
+		// The desktop reports the computer's name shortly after startup.
+		this._register(onDidChangeComputerName(() => {
+			const display = machineDisplayName(getComputerName());
+			if (display && display !== this.machineLabel) {
+				this.machineLabel = display;
+				this.scheduleRender();
 			}
-		}
+		}));
 		this.element = $('.volt-agent-primary-header');
 		this.element.hidden = true;
 		this.dragSpacer = $('.volt-agent-titlebar-drag');
@@ -550,6 +550,10 @@ class AgentTitlebarHeaderContribution extends Disposable {
 				return uriFromStoredRoot(stored);
 			}
 		}
+		if (editor instanceof ScratchBoardEditorInput) {
+			// The project the board's agents run in: the one the window has selected, none when it has none.
+			return this.sessionContext.activeProject?.root;
+		}
 		return this.sessionContext.activeProject?.root
 			?? this.workspaceContextService.getWorkspace().folders[0]?.uri;
 	}
@@ -628,7 +632,7 @@ class AgentTitlebarHeaderContribution extends Disposable {
 			this.titleCluster.hidden = short.length === 0;
 			this.titleLabel.textContent = short;
 			const folder = this.folderUri();
-			const project = folder ? this.projectName(folder) : '';
+			const project = folder ? this.projectName(folder) : editor instanceof ScratchBoardEditorInput ? scratchProjectLabel() : '';
 			this.projectLabel.textContent = project;
 			this.projectLabel.hidden = !project;
 			this.projectSeparator.hidden = !project;

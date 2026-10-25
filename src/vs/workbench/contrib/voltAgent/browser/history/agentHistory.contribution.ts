@@ -21,6 +21,8 @@ import { INotificationService } from '../../../../../platform/notification/commo
 import { Registry } from '../../../../../platform/registry/common/platform.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../../browser/editor.js';
 import { ContextKeyExpr } from '../../../../../platform/contextkey/common/contextkey.js';
+import { InputFocusedContext } from '../../../../../platform/contextkey/common/contextkeys.js';
+import { EditorContextKeys } from '../../../../../editor/common/editorContextKeys.js';
 import { ActiveEditorContext } from '../../../../common/contextkeys.js';
 import { EditorExtensions, IEditorFactoryRegistry } from '../../../../common/editor.js';
 import { IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
@@ -47,6 +49,7 @@ import {
 import { AGENT_CUSTOMIZE_EDITOR_ID, AgentCustomizeEditor, AgentCustomizeEditorInput, AgentCustomizeEditorInputSerializer } from '../customize/agentCustomizeEditor.js';
 import { AGENT_USAGE_EDITOR_ID, AgentUsageEditor, AgentUsageEditorInput, AgentUsageEditorInputSerializer, OPEN_AGENT_USAGE_COMMAND_ID } from '../usage/agentUsageEditor.js';
 import { findEditorCommandsContext } from '../editor/agentEditorCommandsContext.js';
+import { CONTEXT_IN_AGENT_INPUT } from '../editor/agentFindWidget.js';
 import { AgentSidePanel } from '../chrome/agentSidePanel.js';
 import { findAgentPanelGroup, openAgentPanel } from '../workspace/agentPanels.js';
 import { agentSideChatParents, liveAgentToolsPart, revealAgentSideChat } from '../workspace/agentSurfaceHost.js';
@@ -273,6 +276,63 @@ registerAction2(class FocusAgentListAction extends Action2 {
 
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		await showAgentSidePanel(accessor, true);
+	}
+});
+
+/**
+ * Agent layout, and not typing in a field where the keys select text, except the chat composer:
+ * a prompt has little use for selecting to its start or end, and switching chats from it is the point.
+ */
+const agentTabStepWhen = ContextKeyExpr.and(
+	ContextKeyExpr.equals(LAYOUT_MODE_CONTEXT_KEY, 'agent'),
+	ContextKeyExpr.or(ContextKeyExpr.and(EditorContextKeys.textInputFocus.negate(), InputFocusedContext.negate()), CONTEXT_IN_AGENT_INPUT),
+	ContextKeyExpr.not('terminalFocus'),
+	ContextKeyExpr.not('notebookEditorFocused'),
+);
+
+async function stepAgentTab(accessor: ServicesAccessor, direction: -1 | 1): Promise<void> {
+	const views = accessor.get(IViewsService);
+	const view = views.getViewWithId<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID) ?? await views.openView<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID, false);
+	view?.stepChat(direction);
+}
+
+registerAction2(class NextAgentTabAction extends Action2 {
+	constructor() {
+		super({
+			id: 'voltAgent.nextAgentTab',
+			title: localize2('voltAgent.nextAgentTab', "Next Agent Tab"),
+			f1: true,
+			precondition: ContextKeyExpr.equals(LAYOUT_MODE_CONTEXT_KEY, 'agent'),
+			keybinding: {
+				weight: KeybindingWeight.WorkbenchContrib + 50,
+				when: agentTabStepWhen,
+				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.DownArrow,
+			},
+		});
+	}
+
+	override run(accessor: ServicesAccessor): Promise<void> {
+		return stepAgentTab(accessor, 1);
+	}
+});
+
+registerAction2(class PreviousAgentTabAction extends Action2 {
+	constructor() {
+		super({
+			id: 'voltAgent.previousAgentTab',
+			title: localize2('voltAgent.previousAgentTab', "Previous Agent Tab"),
+			f1: true,
+			precondition: ContextKeyExpr.equals(LAYOUT_MODE_CONTEXT_KEY, 'agent'),
+			keybinding: {
+				weight: KeybindingWeight.WorkbenchContrib + 50,
+				when: agentTabStepWhen,
+				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.UpArrow,
+			},
+		});
+	}
+
+	override run(accessor: ServicesAccessor): Promise<void> {
+		return stepAgentTab(accessor, -1);
 	}
 });
 

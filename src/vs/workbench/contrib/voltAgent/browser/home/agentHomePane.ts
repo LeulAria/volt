@@ -54,6 +54,8 @@ import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
 import { appendAgentFooterActions } from './agentHomeFooterActions.js';
 import { SEARCH_AGENT_CHATS_COMMAND_ID } from '../search/agentChatSearchService.js';
 import { createHomeAutomationsIcon, createHomeFilterIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeNewChatIcon, createHomeOpenWorkspaceIcon, createHomeSearchIcon, createHomeStatusBadgeIcon } from './agentHomeIcons.js';
+import { OPEN_SCRATCH_BOARD_COMMAND_ID, ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
+import { IScratchSessionLinks } from '../scratchBoard/scratchSessionLinks.js';
 import { showAgentSnoozeMenu } from './agentSnoozeMenu.js';
 import { activateAgentProject, findAgentPanelGroup, startAgentChat } from '../workspace/agentPanels.js';
 import { AgentChatStart } from '../workspace/agentShell.js';
@@ -107,6 +109,7 @@ import {
 import { AgentRepoResolver, dominantRepoOwner, IAgentRepoInfo, repoDisplayName } from './agentRepoInfo.js';
 import { agentSessionHoverRows, agentSessionStatusNote } from './agentSessionHover.js';
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
+import { IAgentThreadAttentionService } from '../attention/agentThreadAttention.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { IAgentPrBadge, prBadge, sessionPrFilterTag, visibleLinks } from '../../common/agentPullRequests.js';
 import { IAgentRunGroupService } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
@@ -477,7 +480,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			}
 		}
 
-		const badge = sessionShowsStatusBadge(session, this.host.view) ? this.host.limitBadge(session.id) ?? sessionStatusBadge(session, now, this.host.liveWork(session.id)) : undefined;
+		const badge = sessionShowsStatusBadge(session, this.host.view) ? this.host.limitBadge(session.id) ?? sessionStatusBadge(session, now, this.host.liveWork(session.id), this.host.replySeen(session)) : undefined;
 		if (badge) {
 			this.renderStatusBadge(template.badge, badge);
 		}
@@ -993,8 +996,11 @@ export class AgentHomePane extends Disposable {
 	private readonly rowsFrame = this._register(new MutableDisposable());
 	/** A chat opened on the press; the click that completes the press does not open it again. */
 	private pressed: { readonly element: AgentHomeElement; readonly at: number } | undefined;
-	/** The arrows' chat: one opens at a time, and a held arrow opens only where it stops. */
-	private browsing: { pending: string | undefined; opening: boolean } = { pending: undefined, opening: false };
+	/**
+	 * The arrows' chat: one opens at a time, and a held arrow opens only where it stops. `target` is
+	 * the last chat reached, until the opens catch up with it; `focusChat` puts the keyboard in it.
+	 */
+	private browsing: { pending: string | undefined; opening: boolean; target: string | undefined; focusChat: boolean } = { pending: undefined, opening: false, target: undefined, focusChat: false };
 	/** Recently opened folders, read once and again only when that list changes. */
 	private recents: Promise<readonly (IRecentFolder | IRecentWorkspace)[]> | undefined;
 	private refreshSeq = 0;
@@ -1008,6 +1014,7 @@ export class AgentHomePane extends Disposable {
 	private readonly pullRequests: IAgentPullRequestService | undefined;
 	/** Desktop only: prompts sent to several models at once. */
 	private readonly runGroups: IAgentRunGroupService | undefined;
+	private readonly scratchLinks: IScratchSessionLinks | undefined;
 	/** Whether the tree was last built with two-line agent tabs; their height changes with it. */
 	private builtTwoLine: boolean | undefined;
 	/** Chats the orchestrator sees busy: a turn starting or running, or subagents still at work. */
@@ -1037,8 +1044,10 @@ export class AgentHomePane extends Disposable {
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IAgentThreadLifecycleService private readonly lifecycle: IAgentThreadLifecycleService,
+		@IAgentThreadAttentionService private readonly attention: IAgentThreadAttentionService,
 	) {
 		super();
+		this._register(this.attention.onDidChange(() => this.scheduleRefresh()));
 		this._register(this.voltProjects.onDidChange(() => this.scheduleRefresh()));
 		this._register(this.runtime.onDidChangeCatalog(() => this.scheduleRefresh()));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
@@ -1064,6 +1073,7 @@ export class AgentHomePane extends Disposable {
 		if (this.pullRequests) {
 			this._register(this.pullRequests.onDidChange(() => this.scheduleRefresh()));
 		}
+		this.scratchLinks = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IScratchSessionLinks));
 		this.runGroups = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentRunGroupService));
 		if (this.runGroups) {
 			this._register(this.runGroups.onDidChange(() => this.scheduleRefresh()));
@@ -1227,7 +1237,7 @@ export class AgentHomePane extends Disposable {
 		}));
 
 		const store = this._register(new DisposableStore());
-		appendAgentFooterActions(footer, this.commandService, store);
+		appendAgentFooterActions(footer, this.commandService, store, this.instantiationService);
 
 		let wasOpen = false;
 		const sync = () => {
@@ -1360,6 +1370,11 @@ export class AgentHomePane extends Disposable {
 
 	liveWork(sessionId: string): AgentHomeWorkState | undefined {
 		return this.live.get(sessionId);
+	}
+
+	/** The last reply was looked at: not marked unread and not finished out of sight since. */
+	replySeen(session: IAgentSessionMeta): boolean {
+		return !session.unread && !this.attention.isUnread(session.id);
 	}
 
 	/** A chat parked at a usage limit says when it resumes, and the countdown moves with the clock tick. */
@@ -1653,12 +1668,34 @@ export class AgentHomePane extends Disposable {
 		// No text selection from the press. The list keeps the keyboard, so the arrows go on from here.
 		event.preventDefault();
 		this.pressed = { element, at: Date.now() };
-		void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, element.session.id, { preserveFocus: true });
+		void this.openChat(element.session.id);
+	}
+
+	/** The Scratch board on screen, when chat `sessionId` belongs to it. */
+	private scratchBoardShowing(sessionId: string): string | undefined {
+		const active = this.editorGroupsService.mainPart.activeGroup?.activeEditor;
+		if (!(active instanceof ScratchBoardEditorInput) || !active.boardId) {
+			return undefined;
+		}
+		return this.scratchLinks?.boardFor(sessionId) === active.boardId ? active.boardId : undefined;
+	}
+
+	/**
+	 * Shows a picked chat. One of the board's own chats, picked while that board shows, opens in the
+	 * board's dock beside its drawing (Open in Agents there takes it to the full chat).
+	 */
+	private openChat(sessionId: string): Promise<unknown> {
+		const boardId = this.scratchBoardShowing(sessionId);
+		return boardId
+			? this.commandService.executeCommand(OPEN_SCRATCH_BOARD_COMMAND_ID, boardId, sessionId, true)
+			: this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, sessionId, { preserveFocus: true });
 	}
 
 	/** Shows the chat the arrows reached; while one opens, the latest reached waits its turn. */
-	private showWhileBrowsing(sessionId: string): void {
+	private showWhileBrowsing(sessionId: string, focusChat = false): void {
 		this.browsing.pending = sessionId;
+		this.browsing.target = sessionId;
+		this.browsing.focusChat = focusChat;
 		if (this.browsing.opening) {
 			return;
 		}
@@ -1667,12 +1704,64 @@ export class AgentHomePane extends Disposable {
 			this.browsing.pending = undefined;
 			if (!id || this.isActiveChat(id)) {
 				this.browsing.opening = false;
+				this.browsing.target = undefined;
+				if (this.browsing.focusChat) {
+					findAgentPanelGroup(this.editorGroupsService.mainPart).focus();
+				}
 				return;
 			}
 			this.browsing.opening = true;
 			void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, id, { preserveFocus: true }).finally(next);
 		};
 		next();
+	}
+
+	/**
+	 * ⌘⇧↓ / ⌘⇧↑ (Ctrl+Shift elsewhere): the next or previous agent tab, in the list's order and
+	 * wrapping at its ends. Only rows on screen count, not those in folded groups. From the list the
+	 * keyboard stays there; from anywhere else it lands in the chat shown.
+	 */
+	stepChat(direction: -1 | 1): void {
+		const rows: { readonly id: string; readonly element: AgentHomeElement; readonly tree: WorkbenchObjectTree<AgentHomeElement> }[] = [];
+		const seen = new Set<string>();
+		const walk = (tree: WorkbenchObjectTree<AgentHomeElement>, node: ITreeNode<AgentHomeElement | null, void>) => {
+			for (const child of node.children) {
+				const element = child.element;
+				if (!element || !child.visible) {
+					continue;
+				}
+				// A chat filed under two groups is one tab, where it first shows.
+				if (element.type === 'session' && !seen.has(element.session.id)) {
+					seen.add(element.session.id);
+					rows.push({ id: element.session.id, element, tree });
+				}
+				if (!child.collapsed) {
+					walk(tree, child);
+				}
+			}
+		};
+		for (const pane of this.panes) {
+			if (pane.isExpanded() && pane.tree) {
+				walk(pane.tree, pane.tree.getNode());
+			}
+		}
+		if (!rows.length) {
+			return;
+		}
+		const active = this.editorGroupsService.mainPart.activeGroup?.activeEditor;
+		const current = this.browsing.target ?? (active instanceof AgentEditorInput ? active.sessionId : undefined);
+		const at = rows.findIndex(row => row.id === current);
+		const index = at === -1
+			? (direction > 0 ? 0 : rows.length - 1)
+			: (at + direction + rows.length) % rows.length;
+		const row = rows[index];
+		row.tree.setFocus([row.element]);
+		row.tree.reveal(row.element);
+		const fromList = this.element.contains(getWindow(this.element).document.activeElement);
+		if (fromList) {
+			row.tree.domFocus();
+		}
+		this.showWhileBrowsing(row.id, !fromList);
 	}
 
 	/** A character typed in the list moves the keyboard into the shown chat's composer, which takes it. */
@@ -1702,7 +1791,7 @@ export class AgentHomePane extends Disposable {
 			findAgentPanelGroup(this.editorGroupsService.mainPart).focus();
 			return;
 		}
-		void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, sessionId, { preserveFocus: true });
+		void this.openChat(sessionId);
 	}
 
 	private isExpandToggleClick(tree: WorkbenchObjectTree<AgentHomeElement>, element: AgentHomeElement, browserEvent: UIEvent | undefined): boolean {
@@ -1753,7 +1842,7 @@ export class AgentHomePane extends Disposable {
 				return;
 			case 'session':
 				// A click keeps the keyboard in the list too; typing moves it to the composer (typeIntoComposer).
-				await this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, element.session.id, { preserveFocus: true });
+				await this.openChat(element.session.id);
 				return;
 			case 'runGroup':
 				await this.commandService.executeCommand(OPEN_RUN_GROUP_COMMAND_ID, element.group.id);
@@ -1962,7 +2051,7 @@ export class AgentHomePane extends Disposable {
 			}
 		}
 		const sessions = sessionsWithOpenDrafts(
-			this.history.list({ includeArchived: this.viewState.archived === 'show' }),
+			this.history.list({ includeArchived: this.viewState.archived === 'show', inWindow: true }),
 			this.openDrafts(),
 		).map(session => !session.parentId && toolsParents.has(session.id) ? { ...session, parentId: toolsParents.get(session.id) } : session)
 			.filter(session => !this.isSubagentSession(session));

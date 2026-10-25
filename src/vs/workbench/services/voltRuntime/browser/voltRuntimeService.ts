@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { inlineResourceContext } from '../common/fileAttachments.js';
+import { findLast, findLastIdx } from '../../../../base/common/arraysFind.js';
 import { DeferredPromise, IntervalTimer, raceTimeout, RunOnceScheduler } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
@@ -407,7 +408,7 @@ function resumedSubagent(entry: INativeJournalEntry | undefined): { readonly mes
 	if (last.role === 'assistant' && !last.toolCalls?.length && last.content.trim()) {
 		return { report: last.content.trim() };
 	}
-	const at = messages.findLastIndex(message => message.role === 'assistant' && !!message.toolCalls?.length);
+	const at = findLastIdx(messages, message => message.role === 'assistant' && !!message.toolCalls?.length);
 	if (at >= 0) {
 		const answered = new Set(messages.slice(at + 1).filter(message => message.role === 'tool').map(message => message.callId));
 		const cut = messages[at].toolCalls!.filter(call => !answered.has(call.id));
@@ -2428,10 +2429,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				return;
 			}
 			// Nor while no Volt window has focus: a night in the background was hundreds of spawns and
-			// failed localhost probes. The first tick after the user is back runs as usual. The agent
-			// server has no document (and must not import base/browser, which needs a window): it skips.
+			// failed localhost probes. The first tick after the user is back runs as usual. (The agent
+			// server has no window: it refreshes on every tick.)
 			const doc = (globalThis as { document?: Document }).document;
-			if (!doc?.hasFocus()) {
+			if (doc && !doc.hasFocus()) {
 				return;
 			}
 			void this.refreshProviders();
@@ -3022,7 +3023,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const messages = state.messages;
 		const unstarted = new Set(interrupted.pending);
 		const wanted = new Set([...interrupted.running, ...interrupted.pending]);
-		const at = messages.findLastIndex(message => message.role === 'assistant' && !!message.toolCalls?.some(call => wanted.has(call.id)));
+		const at = findLastIdx(messages, message => message.role === 'assistant' && !!message.toolCalls?.some(call => wanted.has(call.id)));
 		if (at < 0) {
 			return;
 		}
@@ -4491,7 +4492,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return undefined;
 		}
 		const earlier = session.messages.slice(0, -1);
-		const fromLabel = (reused ? unseen : earlier).findLast(message => message.role === 'assistant' && message.model && message.model !== item.label)?.model;
+		const fromLabel = findLast(reused ? unseen : earlier, message => message.role === 'assistant' && message.model && message.model !== item.label)?.model;
 		const forked = !!session.forkedFrom;
 		session.forkedFrom = undefined;
 		const reason: HandoffReason = reused ? 'return' : forked ? 'fork' : fromLabel ? 'switch' : 'resume';

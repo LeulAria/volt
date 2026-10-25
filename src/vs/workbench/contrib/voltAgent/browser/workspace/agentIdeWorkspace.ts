@@ -295,6 +295,8 @@ class AgentIdeWorkspaceContribution extends Disposable {
 				this.scmViewService.focus(repository);
 			}
 			this.scmViewService.pinActiveRepository(repository);
+			// The Repositories list and the pickers show it alone too, not the project's other worktrees.
+			this.scmViewService.scopeRepository(repository);
 		};
 		// Git opens repositories one by one after the folder changes, and source control brings back
 		// the one it showed last as they come; the scope's repository wins while that settles.

@@ -1,0 +1,11 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": { "noEmit": true, "plugins": [], "skipLibCheck": true, "types": ["node", "mocha", "trusted-types", "wicg-file-system-access"] },
+	"include": [
+		"./typings",
+		"./vs/workbench/contrib/voltAgent/common/scratchBoard/**/*.ts",
+		"./vs/workbench/contrib/voltAgent/test/*/scratchBoard*.test.ts",
+		"./vs/workbench/contrib/voltAgent/browser/scratchBoard/**/*.ts"
+	],
+	"exclude": []
+}

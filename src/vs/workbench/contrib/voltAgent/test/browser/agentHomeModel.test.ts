@@ -523,6 +523,8 @@ suite('Agent home list model', () => {
 		const now = 10 * 60_000;
 		assert.deepStrictEqual(sessionStatusBadge(session('w', { status: 'running', lastPromptAt: now - 2 * 60_000 }), now), { kind: 'working', label: 'Working 2m' });
 		assert.deepStrictEqual(sessionStatusBadge(session('d', { status: 'done' }), now), { kind: 'done', label: 'Done' });
+		assert.strictEqual(sessionStatusBadge(session('d', { status: 'done' }), now, undefined, true), undefined, 'a reply already looked at is not news');
+		assert.deepStrictEqual(sessionStatusBadge(session('d', { status: 'error', summary: 'Connection reset' }), now, undefined, true), { kind: 'failed', label: 'Failed' }, 'failures stay after a look');
 		assert.deepStrictEqual(sessionStatusBadge(session('n', { status: 'idle', turnCount: 0 }), now), { kind: 'draft', label: 'Draft' });
 		assert.strictEqual(sessionStatusBadge(session('i', { status: 'idle', turnCount: 2 }), now), undefined);
 		assert.deepStrictEqual(sessionStatusBadge(session('c', { status: 'cancelled' }), now), { kind: 'stopped', label: 'Stopped' });

@@ -31,6 +31,8 @@ export interface IVoltAnnotationsMenuOptions {
 	readonly onRemove: (id: string) => void;
 	readonly onClear: () => void;
 	readonly onHide?: () => void;
+	/** The heading: "2 edits" unless the caller counts something else. */
+	readonly countLabel?: (count: number) => string;
 }
 
 /** The numbered square the batch list and the pins share. */
@@ -61,7 +63,7 @@ export function showVoltAnnotationsMenu(contextViewService: IContextViewService,
 		className: 'volt-annotations-menu',
 		ariaLabel: localize('voltAnnotations.menu', "Design Annotations"),
 		heading: {
-			title: () => annotationCountLabel(options.items().length),
+			title: () => (options.countLabel ?? annotationCountLabel)(options.items().length),
 			action: { label: localize('voltAnnotations.clearAll', "Clear All"), run: () => options.onClear() },
 		},
 		sections: () => [{
@@ -98,6 +100,10 @@ export interface IVoltAnnotationsSendButtonOptions {
 	readonly onOpen?: (id: string) => void;
 	readonly onRemove: (id: string) => void;
 	readonly onClear: () => void;
+	/** Wording for what is batched (Scratch sends comments, not design edits). */
+	readonly countLabel?: (count: number) => string;
+	readonly sendHint?: string;
+	readonly listHint?: string;
 }
 
 /**
@@ -123,11 +129,11 @@ export class VoltAnnotationsSendButton extends Disposable {
 		send.type = 'button';
 		this.countEl = append(send, $('span.count'));
 		append(send, $('span.label')).textContent = localize('voltAnnotations.send', "Send");
-		setAgentTooltip(send, localize('voltAnnotations.sendHint', "Send design annotations to agent"));
+		setAgentTooltip(send, options.sendHint ?? localize('voltAnnotations.sendHint', "Send design annotations to agent"));
 		this.moreButton = append(this.element, $('button.more')) as HTMLButtonElement;
 		this.moreButton.type = 'button';
 		this.moreButton.appendChild(renderIcon(Codicon.chevronDown));
-		setAgentTooltip(this.moreButton, localize('voltAnnotations.list', "Show Annotations"));
+		setAgentTooltip(this.moreButton, options.listHint ?? localize('voltAnnotations.list', "Show Annotations"));
 		this._register(addDisposableListener(send, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
@@ -152,6 +158,7 @@ export class VoltAnnotationsSendButton extends Disposable {
 			onOpen: this.options.onOpen,
 			onRemove: this.options.onRemove,
 			onClear: this.options.onClear,
+			countLabel: this.options.countLabel,
 			onHide: () => this.menu = undefined,
 		});
 	}

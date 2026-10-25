@@ -27,7 +27,7 @@ import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/ru
 import { createBrandIcon, providerFamily, providerFamilyLabel } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
 import { createHomeSearchIcon } from '../home/agentHomeIcons.js';
-import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { setAgentTooltip, type IAgentTooltipRow } from '../chrome/agentTooltip.js';
 import { createAutoSparkIcon, IModelPickerRow, ModelPickerListDelegate, ModelPickerListRenderer, pickerListHeight } from './agentModelPickerList.js';
 import { parseRememberedModels, RUN_GROUP_MAX_MODELS, RUN_GROUP_MODELS_STORAGE_KEY, toggleRunModel } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { filterPickerModels, sortProviderGroups, MODEL_FAVORITES_STORAGE_KEY, parseFavoriteRefs, PICKER_FAVORITES_TAB, PICKER_SHORTCUT_COUNT, toggleFavoriteRefs, type IModelOption, type IProviderGroup } from './agentModelPickerModel.js';
@@ -366,6 +366,55 @@ export class AgentModelPicker extends Disposable {
 			chip.textContent = effort.full;
 			chip.setAttribute('aria-label', effort.full);
 		}
+	}
+
+	/** The trigger's hover card: the model (or the compared set) and its picked effort, speed, and context. */
+	triggerHoverRows(): IAgentTooltipRow[] {
+		const picked = this.multiModels();
+		if (picked?.length) {
+			return picked.map(model => ({
+				label: splitModelDisplayName(model.name).name,
+				detail: [this.modelFamilyLabel(model), this.modelOptionsLabel(model)].filter(Boolean).join(' · ') || undefined,
+				icon: () => createBrandIcon(model.family, 13),
+			}));
+		}
+		if (this.modelAuto) {
+			return [{
+				label: this.host.binding?.autoLabel ?? localize('voltAgent.auto', "Auto"),
+				detail: localize('voltAgent.autoHoverDetail', "Volt picks the model for each turn"),
+				icon: () => createAutoSparkIcon(),
+			}];
+		}
+		const model = this.selectedModel();
+		if (!model) {
+			return [{ label: localize('voltAgent.connectModel', "Connect a model") }];
+		}
+		const options = this.runtime.getModelOptions(model.ref);
+		const rows: IAgentTooltipRow[] = [{
+			label: splitModelDisplayName(model.name).name,
+			detail: this.modelFamilyLabel(model),
+			icon: () => createBrandIcon(model.family, 13),
+		}];
+		const effort = this.triggerEffort();
+		if (effort) {
+			rows.push({ label: localize('voltAgent.hoverEffort', "Effort"), value: effort.full });
+		}
+		const fast = model.optionDescriptors.find(descriptor => descriptor.id === MODEL_OPTION_FAST);
+		if (fast) {
+			rows.push({
+				label: localize('voltAgent.hoverSpeed', "Speed"),
+				value: isBooleanOn(fast, options) ? localize('voltAgent.hoverSpeedFast', "Fast") : localize('voltAgent.hoverSpeedStandard', "Standard"),
+			});
+		}
+		const context = this.selectedContextLabel(model, options);
+		if (context) {
+			rows.push({ label: localize('voltAgent.hoverContext', "Context"), value: context });
+		}
+		return rows;
+	}
+
+	private modelFamilyLabel(model: IModelOption): string | undefined {
+		return model.qualifier?.trim() || providerFamilyLabel(model.providerId) || undefined;
 	}
 
 	cycleEffort(): void {

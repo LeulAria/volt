@@ -292,3 +292,44 @@
 .volt-agent-tooltip-card-detail {
 	line-height: 16px;
 }
+
+/* A "label … value" line under a card's icon rows (the model button: Effort, Speed, Context, then its shortcuts). */
+.volt-agent-tooltip-card-line {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	min-width: 0;
+	font-size: 12px;
+	line-height: 16px;
+}
+
+.volt-agent-tooltip-card-line > .volt-agent-tooltip-label {
+	color: color-mix(in srgb, currentColor 55%, transparent);
+}
+
+.volt-agent-tooltip-card-value {
+	flex: none;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-tooltip-card-sep {
+	height: 1px;
+	margin: 2px 0;
+	background: rgba(255, 255, 255, 0.08);
+}
+
+.monaco-workbench.vs .volt-agent-tooltip-card-sep,
+.monaco-workbench.hc-light .volt-agent-tooltip-card-sep {
+	background: rgba(0, 0, 0, 0.08);
+}
+
+/* A brand mark keeps its own colour at full strength. */
+.volt-agent-tooltip-card-icon.volt-brand-icon {
+	opacity: 1;
+}
+
+.volt-agent-tooltip-card-icon.volt-auto-spark path {
+	fill: none;
+	stroke: currentColor;
+}

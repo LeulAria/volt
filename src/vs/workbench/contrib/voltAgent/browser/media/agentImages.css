@@ -694,10 +694,6 @@
 	cursor: text;
 }
 
-.volt-agent-image-viewer-surface[data-tool='select'].over-shape .volt-agent-image-viewer-canvas {
-	cursor: move;
-}
-
 .volt-agent-image-text-input {
 	position: absolute;
 	box-sizing: content-box;

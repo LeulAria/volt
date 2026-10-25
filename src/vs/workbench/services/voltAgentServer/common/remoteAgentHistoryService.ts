@@ -11,6 +11,7 @@ import { IEnvironmentService } from '../../../../platform/environment/common/env
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { AgentSessionAttention, IAgentForkOrigin, IAgentHistoryListOptions, IAgentHistoryService, IAgentSessionAppendAssistant, IAgentSessionDraft, IAgentSessionHandle, IAgentSessionLifecycle, IAgentSessionMeta, IAgentSessionTranscript, IAgentSessionTruncation, IAgentSessionWorkspace } from '../../voltRuntime/common/history/agentHistory.js';
 import { describeWorkspace, matchesHistoryListOptions, parseAttachmentRef, searchSessions, sortSessions } from '../../voltRuntime/common/history/agentHistoryLog.js';
+import { IVoltWindowScopeService } from '../../voltWindowScope/common/voltWindowScope.js';
 import { IAgentServerClientService } from './agentServerClient.js';
 
 interface IHistoryMetaState {
@@ -45,6 +46,7 @@ export class RemoteAgentHistoryService extends Disposable implements IAgentHisto
 		@IAgentServerClientService private readonly client: IAgentServerClientService,
 		@IWorkspaceContextService workspaceContextService: IWorkspaceContextService,
 		@IEnvironmentService environmentService: IEnvironmentService,
+		@IVoltWindowScopeService private readonly windowScope: IVoltWindowScopeService,
 	) {
 		super();
 		this.whenReady = client.whenReady;
@@ -56,6 +58,11 @@ export class RemoteAgentHistoryService extends Disposable implements IAgentHisto
 				this._onDidChange.fire();
 			}
 		}));
+		this._register(windowScope.onDidChange(() => this._onDidChange.fire()));
+	}
+
+	private matches(meta: IAgentSessionMeta, options?: IAgentHistoryListOptions): boolean {
+		return matchesHistoryListOptions(meta, options) && (!options?.inWindow || this.windowScope.showsSession(meta.id));
 	}
 
 	private get metaState(): IHistoryMetaState | undefined {
@@ -67,12 +74,12 @@ export class RemoteAgentHistoryService extends Disposable implements IAgentHisto
 	}
 
 	list(options?: IAgentHistoryListOptions): IAgentSessionMeta[] {
-		const sorted = sortSessions(this.all().filter(meta => matchesHistoryListOptions(meta, options)));
+		const sorted = sortSessions(this.all().filter(meta => this.matches(meta, options)));
 		return options?.limit !== undefined ? sorted.slice(0, options.limit) : sorted;
 	}
 
 	search(query: string, options?: IAgentHistoryListOptions): IAgentSessionMeta[] {
-		const ranked = searchSessions(this.all().filter(meta => matchesHistoryListOptions(meta, options)), query, options);
+		const ranked = searchSessions(this.all().filter(meta => this.matches(meta, options)), query, options);
 		return options?.limit !== undefined ? ranked.slice(0, options.limit) : ranked;
 	}
 
@@ -87,6 +94,10 @@ export class RemoteAgentHistoryService extends Disposable implements IAgentHisto
 	open(id: string): IAgentSessionHandle {
 		let handle = this.handles.get(id);
 		if (!handle) {
+			if (!this.client.mirror.has('history', id)) {
+				// A chat the server does not know yet is one this window is starting.
+				this.windowScope.claimSession(id);
+			}
 			handle = new RemoteSessionHandle(id, this.client, () => this.get(id), truncation => this._onDidTruncate.fire(truncation));
 			this.handles.set(id, handle);
 		}

@@ -12,7 +12,7 @@ import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/
 import { AgentBlock, AgentSegment, createPlanBlock, humanTerminalTitle, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, ITerminalBlock, IToolBlock, isExploreTool, isPhantomFileBlock, isPlanTool, IVisualBlock, parsePlanToolInput, splitMarkdownToBlocks, SupervisionKind, terminalCommandLabels } from '../blocks/agentBlocks.js';
 import type { AgentToolDensity } from '../../common/agentAppearanceSettings.js';
 import { computeChangeStats } from '../review/fileChangePreviewModel.js';
-import { isSignInNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
+import { isRetryNotice, isSignInNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { fileChangeSource, partitionAssistantText } from './agentTimeline.js';
 import { CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, RENDER_CHART_TOOL_NAME, SILENT_VISUAL_TOOL_NAMES, VISUAL_TOOL_NAMES } from '../../../../services/voltRuntime/common/hostTools.js';
 import { peekCanvasInput } from '../visuals/canvas/canvasModel.js';
@@ -183,6 +183,10 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 				rows.push({ kind: 'compaction', id: `compaction-${segment.compaction.id}`, compaction: segment.compaction });
 				break;
 			case 'notice':
+				// Chats saved before retries moved to the status line.
+				if (isRetryNotice(segment.title)) {
+					break;
+				}
 				flushReply();
 				flushSteps();
 				rows.push({ kind: 'notice', id: `notice-${textIndex++}`, severity: segment.severity, title: segment.title, ...(segment.description ? { description: segment.description } : {}), ...(segment.supervision ? { supervision: segment.supervision } : {}), ...(segment.sandbox ? { sandbox: segment.sandbox } : {}) });
@@ -449,7 +453,8 @@ function activityStep(id: string, item: IAgentActivityItem): ITranscriptStep {
 	if (item.kind === 'thought') {
 		return thoughtStep(id, item.text ?? '', undefined);
 	}
-	return { id, kind: item.kind, action: item.label, detail: cleanDetail(item.detail), item };
+	// Saved chats can hold a raw MCP name as the label ("mcp__volt__wait_tasks").
+	return { id, kind: item.kind, action: friendlyToolTitle(item.label) ?? item.label, detail: cleanDetail(item.detail), item };
 }
 
 /** Drops a bogus " in <scope>" that older chats derived from half-streamed glob input. */

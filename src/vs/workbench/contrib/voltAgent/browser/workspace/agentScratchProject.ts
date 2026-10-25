@@ -73,16 +73,23 @@ export class AgentScratchFolders {
 			const name = await freeFolderName(scratchFolderName(new Date(), firstMessage, generateUuid()), candidate => this.fileService.exists(joinPath(root, candidate)));
 			const folder = joinPath(root, name);
 			await this.fileService.createFolder(folder);
-			const project = this.sessionContext.registerScratchProject(folder, scratchProjectLabel());
-			if (!this.sessionContext.bindSession(sessionId, project.id)) {
-				return undefined;
-			}
-			this.history.pinSessionWorkspace(sessionId, { id: AGENT_SCRATCH_WORKSPACE_ID, label: project.displayName, folders: [project.root.fsPath] });
-			this.workspace.bindProject(sessionId, bindingFromProject(project));
-			return project;
+			return this.share(sessionId, this.sessionContext.registerScratchProject(folder, scratchProjectLabel()));
 		} catch (err) {
 			this.notificationService.error(localize('voltAgent.scratch.failed', "Could not make a folder for this chat: {0}", toErrorMessage(err)));
 			return undefined;
 		}
+	}
+
+	/**
+	 * Binds the chat to a scratch folder another chat already runs in (the agents of one Scratch
+	 * board: separate chats in one folder). Undefined when the chat could not be bound.
+	 */
+	share(sessionId: string, project: IVoltProjectRecord): IVoltProjectRecord | undefined {
+		if (!this.sessionContext.bindSession(sessionId, project.id)) {
+			return undefined;
+		}
+		this.history.pinSessionWorkspace(sessionId, { id: AGENT_SCRATCH_WORKSPACE_ID, label: project.displayName, folders: [project.root.fsPath] });
+		this.workspace.bindProject(sessionId, bindingFromProject(project));
+		return project;
 	}
 }

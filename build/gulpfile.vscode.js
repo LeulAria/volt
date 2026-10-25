@@ -80,6 +80,9 @@ const vscodeResourceIncludes = [
 	'out-build/vs/platform/voltDesktop/node/helper/VoltDesktop.swift',
 	'out-build/vs/platform/voltDevices/node/android/volt-ui.jar',
 
+	// Scratch board hand-drawn font (loaded at runtime with FontFace)
+	'out-build/vs/workbench/contrib/voltAgent/browser/media/fonts/excalifont/*.woff2',
+
 	// Touchbar
 	'out-build/vs/workbench/browser/parts/editor/media/*.png',
 	'out-build/vs/workbench/contrib/debug/browser/media/*.png',

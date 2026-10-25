@@ -16,6 +16,7 @@ import { IInstantiationService } from '../../../../platform/instantiation/common
 import { MarkdownRenderer, openLinkFromMarkdown } from '../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { createWorkbenchDialogOptions } from '../../../../platform/dialogs/browser/dialog.js';
+import { showVoltAboutDialog } from './voltAboutDialog.js';
 
 export class BrowserDialogHandler extends AbstractDialogHandler {
 
@@ -74,6 +75,13 @@ export class BrowserDialogHandler extends AbstractDialogHandler {
 	}
 
 	async about(title: string, details: string, detailsToCopy: string): Promise<void> {
+
+		// Volt: the About sheet (voltAboutDialog.ts); the stock dialog below stays as the fallback
+		try {
+			return await showVoltAboutDialog(this.layoutService.activeContainer, { title, details, copy: () => this.clipboardService.writeText(detailsToCopy) });
+		} catch (error) {
+			this.logService.error('Volt About sheet failed, showing the stock dialog', error);
+		}
 
 		const { button } = await this.doShow(
 			Severity.Info,

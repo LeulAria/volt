@@ -18,6 +18,7 @@ import { Workspace } from '../../../../../platform/workspace/common/workspace.js
 import { TestContextService } from '../../../../test/common/workbenchTestServices.js';
 import { IPathService } from '../../../../services/path/common/pathService.js';
 import { VoltSessionContextService } from '../../../../services/voltRuntime/browser/sessionContextService.js';
+import { VoltWindowScopeService } from '../../../../services/voltWindowScope/common/voltWindowScopeService.js';
 import { IAgentHistoryService, IAgentSessionWorkspace } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { AGENT_SCRATCH_WORKSPACE_ID } from '../../browser/home/agentHomeWorkspace.js';
 import { AgentScratchFolders } from '../../browser/workspace/agentScratchProject.js';
@@ -42,8 +43,8 @@ suite('Agent scratch folders', () => {
 		const notifications = { error: (message: string) => { errors.push(message); } } as unknown as INotificationService;
 		const pins = new Map<string, IAgentSessionWorkspace>();
 		const history = { pinSessionWorkspace: (id: string, workspace: IAgentSessionWorkspace) => { pins.set(id, workspace); } } as unknown as IAgentHistoryService;
-		const sessionContext = disposables.add(new VoltSessionContextService(disposables.add(new InMemoryStorageService()), new TestContextService(new Workspace('empty', [], false, null, () => false))));
-		const workspace = disposables.add(new AgentWorkspaceService(disposables.add(new InMemoryStorageService())));
+		const sessionContext = disposables.add(new VoltSessionContextService(disposables.add(new InMemoryStorageService()), new TestContextService(new Workspace('empty', [], false, null, () => false)), disposables.add(new VoltWindowScopeService(undefined, undefined, undefined))));
+		const workspace = disposables.add(new AgentWorkspaceService(disposables.add(new InMemoryStorageService()), disposables.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		const pathService = { userHome: () => URI.file(home) } as unknown as IPathService;
 		const folders = new AgentScratchFolders(fileService, pathService, stdio, notifications, sessionContext, history, workspace);
 		return { folders, fileService, sessionContext, workspace, pins, errors, execs };

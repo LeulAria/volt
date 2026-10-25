@@ -83,6 +83,8 @@ import { AgentHistoryService } from '../../../workbench/services/voltRuntime/bro
 import { VoltHostToolService } from '../../../workbench/services/voltRuntime/browser/host/hostToolService.js';
 import { AgentOrchestratorService } from '../../../workbench/services/voltRuntime/browser/orchestration/agentOrchestratorService.js';
 import { VoltSessionContextService } from '../../../workbench/services/voltRuntime/browser/sessionContextService.js';
+import { VoltWindowScopeService } from '../../../workbench/services/voltWindowScope/common/voltWindowScopeService.js';
+import { IVoltWindowScopeService } from '../../../workbench/services/voltWindowScope/common/voltWindowScope.js';
 import { AgentRuntimeService } from '../../../workbench/services/voltRuntime/browser/voltRuntimeService.js';
 import { IAgentWorktreeService } from '../../../workbench/services/voltRuntime/common/git/agentWorktree.js';
 import { IAgentHistoryService } from '../../../workbench/services/voltRuntime/common/history/agentHistory.js';
@@ -247,7 +249,11 @@ export async function main(argv: string[]): Promise<void> {
 		message: typeof notification.message === 'string' ? notification.message : String(notification.message),
 	})));
 
+	services.set(IWorkspaceTrustManagementService, new ServerWorkspaceTrustService() as unknown as IWorkspaceTrustManagementService);
+	services.set(IVoltHooksService, new SyncDescriptor(VoltHooksService));
 	services.set(IVoltHostToolService, new SyncDescriptor(VoltHostToolService));
+	// The server has no windows: it keeps and lists every chat and project.
+	services.set(IVoltWindowScopeService, new SyncDescriptor(VoltWindowScopeService, [undefined, undefined, undefined]));
 	services.set(IVoltSessionContextService, new SyncDescriptor(VoltSessionContextService));
 	services.set(IAgentHistoryService, new SyncDescriptor(AgentHistoryService));
 	services.set(IAgentWorktreeService, new SyncDescriptor(AgentWorktreeService));
@@ -258,8 +264,6 @@ export async function main(argv: string[]): Promise<void> {
 	services.set(IAgentWorktreeSetupService, new SyncDescriptor(AgentWorktreeSetupService));
 	services.set(IVoltBrowserAccessService, new SyncDescriptor(VoltBrowserAccessService));
 	services.set(IVoltMemoryService, new SyncDescriptor(VoltMemoryService));
-	services.set(IWorkspaceTrustManagementService, new SyncDescriptor(ServerWorkspaceTrustService));
-	services.set(IVoltHooksService, new SyncDescriptor(VoltHooksService));
 
 	const instantiationService = disposables.add(new InstantiationService(services, true));
 	services.set(IInstantiationService, instantiationService);
