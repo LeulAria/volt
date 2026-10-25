@@ -6,9 +6,11 @@
 import { $, addDisposableListener, append, getWindow } from '../../../../../base/browser/dom.js';
 import { AnchorAlignment } from '../../../../../base/browser/ui/contextview/contextview.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { KeybindingLabel } from '../../../../../base/browser/ui/keybindingLabel/keybindingLabel.js';
 import { CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { OS } from '../../../../../base/common/platform.js';
 import { basename, dirname, relativePath } from '../../../../../base/common/resources.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -20,6 +22,7 @@ import { IConfigurationService } from '../../../../../platform/configuration/com
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { FileKind } from '../../../../../platform/files/common/files.js';
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
+import { defaultKeybindingLabelStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { EditorResourceAccessor } from '../../../../common/editor.js';
 import { IHistoryService } from '../../../../services/history/common/history.js';
@@ -28,7 +31,6 @@ import { searchFilesAndFolders } from '../../../search/browser/searchChatContext
 import { CANVAS_ENABLED_SETTING, SCRATCH_ENABLED_SETTING } from '../../common/canvasScratchSettings.js';
 import { createHomeSearchIcon } from '../home/agentHomeIcons.js';
 import { agentSurfaceMenuItems, createSurfaceStrokeIcon, IAgentSurfaceMenuItem, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
-
 const MAX_FILE_RESULTS = 20;
 const SEARCH_DEBOUNCE_MS = 80;
 
@@ -59,6 +61,40 @@ export function looksLikeUrl(value: string): boolean {
 		|| /^localhost(:\d+)?(\/|$)/i.test(text)
 		|| /^[\w-]+(\.[\w-]+)*:\d+(\/|$)/.test(text)
 		|| (/^[\w-]+(\.[\w-]+)+(\/|$)/.test(text) && !/\.(ts|tsx|js|jsx|json|md|css|html?|py|rs|go|java|c|h|cpp)$/i.test(text));
+}
+
+/** The + menu's rows less what Settings > Canvas & Scratch turned off. */
+export function visibleSurfaceMenuItems(configurationService: IConfigurationService): readonly IAgentSurfaceMenuItem[] {
+	const off = (setting: string) => configurationService.getValue(setting) === false;
+	return agentSurfaceMenuItems().filter(action => !(action.id === 'scratch' && off(SCRATCH_ENABLED_SETTING)) && !(action.id === 'canvas' && off(CANVAS_ENABLED_SETTING)));
+}
+
+/**
+ * The empty tools area's list: what the + menu opens, drawn like the editor watermark (name on
+ * the left, shortcut keys on the right). Returns a disposable for its listeners and labels.
+ */
+export function renderSurfaceOpenList(container: HTMLElement, items: readonly IAgentSurfaceMenuItem[], keybindingService: IKeybindingService, run: (id: AgentSurfaceMenuActionId) => void): IDisposable {
+	const store = new DisposableStore();
+	const list = append(container, $('.volt-agent-tools-open-list'));
+	list.setAttribute('role', 'list');
+	for (const item of items) {
+		const row = append(list, $('button.volt-agent-tools-open-row')) as HTMLButtonElement;
+		row.type = 'button';
+		row.setAttribute('role', 'listitem');
+		const leading = append(row, $('span.leading'));
+		leading.appendChild(item.svgPath ? createSurfaceStrokeIcon(leading.ownerDocument, item.svgPath) : renderIcon(item.icon));
+		append(row, $('span.label')).textContent = item.label;
+		const keys = item.keybindingCommand ? keybindingService.lookupKeybinding(item.keybindingCommand) : undefined;
+		if (keys) {
+			store.add(new KeybindingLabel(append(row, $('span.keys')), OS, defaultKeybindingLabelStyles)).set(keys);
+		}
+		store.add(addDisposableListener(row, 'click', e => {
+			e.preventDefault();
+			run(item.id);
+		}));
+	}
+	store.add(toDisposable(() => list.remove()));
+	return store;
 }
 
 interface IRow {
@@ -181,10 +217,8 @@ export class AgentSurfaceAddMenu extends Disposable {
 			list.replaceChildren();
 			const q = query.trim().toLowerCase();
 			// Settings > Canvas & Scratch can turn either off: its row goes too.
-			const off = (setting: string) => this.configurationService.getValue(setting) === false;
-			const hidden = (id: AgentSurfaceMenuActionId) => (id === 'scratch' && off(SCRATCH_ENABLED_SETTING)) || (id === 'canvas' && off(CANVAS_ENABLED_SETTING));
-			const actions = agentSurfaceMenuItems().filter(action => !hidden(action.id)
-				&& (!q || action.label.toLowerCase().includes(q) || action.id.toLowerCase().includes(q)));
+			const actions = visibleSurfaceMenuItems(this.configurationService)
+				.filter(action => !q || action.label.toLowerCase().includes(q) || action.id.toLowerCase().includes(q));
 			for (const action of actions) {
 				addRow(this.actionRow(list, action), () => this.host.runAction(action.id));
 			}

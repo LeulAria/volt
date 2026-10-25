@@ -8828,6 +8828,74 @@ pre.volt-agent-searchable {
 	height: 100%;
 }
 
+/* An empty tools area lists what can open here under the bolt, drawn like the watermark's shortcuts. */
+.monaco-workbench .part.editor.volt-agent-tools-part > .content .editor-group-container > .editor-group-watermark {
+	max-width: 260px;
+}
+
+.monaco-workbench .part.editor.volt-agent-tools-part > .content .editor-group-container > .editor-group-watermark > .shortcuts {
+	display: none;
+}
+
+.volt-agent-tools-open-list {
+	display: flex;
+	flex-direction: column;
+	align-self: stretch;
+	min-width: 220px;
+}
+
+.volt-agent-tools-open-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 26px;
+	margin: 0;
+	padding: 0 2px 0 8px;
+	border: none;
+	border-radius: 5px;
+	background: none;
+	color: var(--vscode-editorWatermark-foreground);
+	font: inherit;
+	font-size: 12px;
+	letter-spacing: 0.02em;
+	text-align: left;
+	opacity: .8;
+	cursor: pointer;
+}
+
+.volt-agent-tools-open-row:hover,
+.volt-agent-tools-open-row:focus-visible {
+	opacity: 1;
+	background: color-mix(in srgb, var(--vscode-editorWatermark-foreground) 10%, transparent);
+	outline: none;
+}
+
+.volt-agent-tools-open-row > .leading {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+}
+
+.volt-agent-tools-open-row > .leading .volt-agent-surface-stroke-icon {
+	width: 14px;
+	height: 14px;
+}
+
+.volt-agent-tools-open-row > .label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-tools-open-row > .keys .monaco-keybinding-key {
+	font-size: 10px;
+	padding: 2px 4px;
+}
+
 /* The area paints the fill; the part inside adds no second translucent layer on top of it. */
 .monaco-workbench.volt-layout-agent .volt-agent-tools-area .part.editor {
 	background: transparent !important;

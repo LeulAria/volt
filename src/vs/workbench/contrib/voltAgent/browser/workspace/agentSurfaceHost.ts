@@ -17,6 +17,8 @@ import { URI, UriComponents } from '../../../../../base/common/uri.js';
 import { localize, localize2 } from '../../../../../nls.js';
 import { Action2, MenuId, registerAction2 } from '../../../../../platform/actions/common/actions.js';
 import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
 import { ContextKeyExpr, IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
@@ -59,8 +61,8 @@ import { sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { AgentChangesEditorInput, isAgentChangesDiffFor, openAgentChangesDiff } from '../review/agentChangesEditor.js';
 import { AgentChangesScope } from '../review/agentSessionChanges.js';
 import { AgentFilesSidebar, AgentFilesSidebarView } from './agentFilesSidebar.js';
-import { AgentSurfaceAddMenu, IAgentSurfaceAddMenuHost } from './agentSurfaceAddMenu.js';
-import { OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
+import { AgentSurfaceAddMenu, IAgentSurfaceAddMenuHost, renderSurfaceOpenList, visibleSurfaceMenuItems } from './agentSurfaceAddMenu.js';
+import { OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
 import { AgentToolsEditorPart, AgentToolsPartContext, hasSavedAgentTools } from './agentToolsEditorPart.js';
 import { attachSessionToProject } from './agentShell.js';
 import { registerAgentFileEditorRouting } from './agentFileEditorRouting.js';
@@ -444,6 +446,8 @@ export class AgentSurfaceHost extends Disposable {
 	private toolsHidden = false;
 	/** Close Right Panel with the files sidebar open: the tabs go, the sidebar stays and fills the area. */
 	private tabsHidden = false;
+	/** Opened with no tab: the empty area lists what can open, until a tab opens or the panel closes. */
+	private openedEmpty = false;
 	/** How the tools are drawn: beside the chat, floating over it (a preview), or across the whole window. */
 	private presentation: BrowserPresentation = 'split';
 	private readonly closePanelButton: HTMLButtonElement;
@@ -620,13 +624,12 @@ export class AgentSurfaceHost extends Disposable {
 		if (this.disposed || this.nested() || !this.isOnScreen() || !this.sessionId) {
 			return false;
 		}
-		const group = this.toolsGroup();
-		if (this.shown?.part.groups.some(candidate => candidate.count > 0)) {
-			this.setPresentation('split');
-			group?.focus();
-		} else {
-			this.openBrowser();
+		if (!this.shown?.part.groups.some(candidate => candidate.count > 0)) {
+			this.openedEmpty = true;
 		}
+		const group = this.toolsGroup();
+		this.setPresentation('split');
+		group?.focus();
 		return true;
 	}
 
@@ -635,6 +638,7 @@ export class AgentSurfaceHost extends Disposable {
 	 * panel leaves it filling the area. Without it, the whole right panel closes.
 	 */
 	private closeTabs(): void {
+		this.openedEmpty = false;
 		if (this.filesSidebarOpen() && this.presentation === 'split') {
 			this.tabsHidden = true;
 		} else {
@@ -665,6 +669,7 @@ export class AgentSurfaceHost extends Disposable {
 		if (this.sessionId !== sessionId) {
 			this.toolsHidden = false;
 			this.tabsHidden = false;
+			this.openedEmpty = false;
 			this.setPresentation('split', false);
 			this.hidePart();
 			this.sessionId = sessionId;
@@ -1041,8 +1046,19 @@ export class AgentSurfaceHost extends Disposable {
 		}));
 		// The editor service does not report editor changes in areas made after startup, so watch each group.
 		const groupListeners = store.add(new DisposableMap<number>());
+		const openLists = store.add(new DisposableMap<number>());
 		const entry: IToolsPart = { sessionId, part, element, store, lastUsed: ++partClock, holder: undefined };
 		const watchGroup = (group: IEditorGroup) => {
+			// An empty group lists what can open here in its watermark (agentEditor.css hides the stock shortcuts).
+			const watermark = part.getGroup(group.id)?.element.querySelector<HTMLElement>(':scope > .editor-group-watermark');
+			if (watermark && !openLists.has(group.id)) {
+				openLists.set(group.id, this.instantiationService.invokeFunction(accessor => renderSurfaceOpenList(
+					watermark,
+					visibleSurfaceMenuItems(accessor.get(IConfigurationService)),
+					accessor.get(IKeybindingService),
+					id => entry.holder?.runMenuAction(id),
+				)));
+			}
 			if (!groupListeners.has(group.id)) {
 				groupListeners.set(group.id, group.onDidModelChange(() => {
 					entry.holder?.syncOpen();
@@ -1058,6 +1074,7 @@ export class AgentSurfaceHost extends Disposable {
 		}));
 		store.add(part.onDidRemoveGroup(group => {
 			groupListeners.deleteAndDispose(group.id);
+			openLists.deleteAndDispose(group.id);
 			entry.holder?.syncOpen();
 			notifyAgentToolEditors();
 		}));
@@ -1148,9 +1165,13 @@ export class AgentSurfaceHost extends Disposable {
 	/** Whether the shown area has a tab to show, and the user has not closed it. */
 	private hasTools(): boolean {
 		const entry = this.shown;
+		if (entry?.part.groups.some(group => group.count > 0)) {
+			// Once a tab opens, closing the last one closes the panel again.
+			this.openedEmpty = false;
+		}
 		// In the IDE layout a chat's tools are tabs in the middle (see agentIdeWorkspace), not a split beside it.
 		return !this.toolsHidden && !this.nested() && !!entry && entry.sessionId === this.sessionId
-			&& (entry.part.groups.some(group => group.count > 0) || this.filesSidebarOpen())
+			&& (entry.part.groups.some(group => group.count > 0) || this.filesSidebarOpen() || this.openedEmpty)
 			&& getLayoutMode(this.layoutService) === 'agent';
 	}
 
@@ -2345,6 +2366,9 @@ export class AgentSurfaceHost extends Disposable {
 				return;
 			case 'canvas':
 				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_CANVAS_IN_TOOLS_COMMAND_ID, this.sessionId));
+				return;
+			case 'automations':
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, this.sessionId));
 				return;
 			case 'sideChat':
 				void this.openSideChat();

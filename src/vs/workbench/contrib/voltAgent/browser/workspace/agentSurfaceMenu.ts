@@ -6,7 +6,7 @@
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
-import { AGENT_HOME_SCRATCH_ICON_PATHS } from '../home/agentHomeIcons.js';
+import { AGENT_HOME_AUTOMATIONS_ICON_PATH, AGENT_HOME_SCRATCH_ICON_PATHS } from '../home/agentHomeIcons.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../preview/browserEditorInput.js';
 import { OPEN_AGENT_CHANGES_COMMAND_ID } from '../review/agentChangesEditor.js';
 
@@ -18,6 +18,9 @@ export const OPEN_SCRATCH_IN_TOOLS_COMMAND_ID = 'workbench.action.voltScratchBoa
 
 /** Registered in electron-browser/agentVisuals.contribution.ts, which browser/ can't import: a chat's design canvas as a tab. */
 export const OPEN_CANVAS_IN_TOOLS_COMMAND_ID = 'volt.canvas.openInTools';
+
+/** Registered in automations.contribution.ts, which imports this host: Automations as a tab. */
+export const OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID = 'voltAgent.automations.openInTools';
 
 /** A painter's palette: the design canvas, as its tab and the Designs rows show it (the + menu). */
 export const CANVAS_ICON_SHAPES: SvgIconShapes = [
@@ -47,7 +50,7 @@ export const EXPLORER_ICON_SHAPES: SvgIconShapes = [
 export const SIDE_CHAT_ICON_PATH = 'M7 7H15M7 11H11M5 3H19C20.1046 3 21 3.89543 21 5V15C21 16.1046 20.1046 17 19 17H16L12.3536 20.6464C12.1583 20.8417 11.8417 20.8417 11.6464 20.6464L8 17H5C3.89543 17 3 16.1046 3 15V5C3 3.89543 3.89543 3 5 3Z';
 
 /** Right-rail / tab-bar + menu rows that open an agent surface. */
-export type AgentSurfaceMenuActionId = 'file' | 'terminal' | 'browser' | 'device' | 'changes' | 'scratch' | 'canvas' | 'sideChat';
+export type AgentSurfaceMenuActionId = 'file' | 'terminal' | 'browser' | 'device' | 'changes' | 'scratch' | 'canvas' | 'automations' | 'sideChat';
 
 export interface IAgentSurfaceMenuItem {
 	readonly id: AgentSurfaceMenuActionId;
@@ -115,6 +118,12 @@ export function agentSurfaceMenuItems(): readonly IAgentSurfaceMenuItem[] {
 			svgPath: CANVAS_ICON_SHAPES,
 		},
 		{
+			id: 'automations',
+			label: localize('voltAgent.surfaceMenu.automations', "Automations"),
+			icon: Codicon.zap,
+			svgPath: AGENT_HOME_AUTOMATIONS_ICON_PATH,
+		},
+		{
 			id: 'sideChat',
 			label: localize('voltAgent.surfaceMenu.sideChat', "New Side Chat"),
 			icon: Codicon.commentDiscussion,
@@ -124,7 +133,7 @@ export function agentSurfaceMenuItems(): readonly IAgentSurfaceMenuItem[] {
 }
 
 /** Maps a + menu action to the surface kind it opens (file uses the file opener, not a draft alone). */
-export function surfaceKindForMenuAction(id: AgentSurfaceMenuActionId): 'file' | 'terminal' | 'browser' | 'device' | 'changes' | 'scratch' | 'canvas' | 'chat' {
+export function surfaceKindForMenuAction(id: AgentSurfaceMenuActionId): 'file' | 'terminal' | 'browser' | 'device' | 'changes' | 'scratch' | 'canvas' | 'automations' | 'chat' {
 	switch (id) {
 		case 'file':
 			return 'file';
@@ -140,6 +149,8 @@ export function surfaceKindForMenuAction(id: AgentSurfaceMenuActionId): 'file' |
 			return 'scratch';
 		case 'canvas':
 			return 'canvas';
+		case 'automations':
+			return 'automations';
 		case 'sideChat':
 			return 'chat';
 		default: {

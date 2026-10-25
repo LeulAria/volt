@@ -16,6 +16,8 @@ import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase 
 import { EditorExtensions, IEditorFactoryRegistry } from '../../../../common/editor.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IAutomationService } from '../../../../services/voltRuntime/common/automations/automations.js';
+import { openInAgentTools } from '../workspace/agentSurfaceHost.js';
+import { OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID } from '../workspace/agentSurfaceMenu.js';
 import { NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATION_RUNS_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID } from './automationCommands.js';
 import { AutomationsRoute, IAutomationSeed } from './automationRoutes.js';
 import { AutomationService } from './automationService.js';
@@ -70,6 +72,25 @@ registerAction2(class OpenAutomationsAction extends Action2 {
 			? { page: 'detail', id: automationId, tab: view === 'runs' ? 'runs' : 'settings' }
 			: { page: 'list' };
 		await openAutomations(accessor, route);
+	}
+});
+
+registerAction2(class OpenAutomationsInToolsAction extends Action2 {
+	constructor() {
+		super({ id: OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, title: localize2('voltAutomations.openInTools', "Open Automations Beside Chat") });
+	}
+
+	/** A tab in the chat's right panel (its own input, so the main panel's tab stays where it is); no chat on screen opens the usual tab. */
+	override async run(accessor: ServicesAccessor, sessionId?: unknown): Promise<void> {
+		const input = accessor.get(IInstantiationService).createInstance(AutomationsEditorInput);
+		input.route = { page: 'list' };
+		const opened = openInAgentTools(input, typeof sessionId === 'string' ? sessionId : undefined, { pinned: true });
+		if (opened) {
+			await opened;
+		} else {
+			input.dispose();
+			await openAutomations(accessor, { page: 'list' });
+		}
 	}
 });
 
