@@ -98,7 +98,7 @@ Files downloaded with `curl` or `gh` are not quarantined, so macOS never shows t
 ```bash
 # Apple silicon: arm64. On an Intel Mac use x64.
 ARCH=arm64
-VERSION=0.0.2
+VERSION=0.0.3
 
 curl -fL -o ~/Downloads/Volt.dmg \
   "https://github.com/LeulAria/volt/releases/download/v${VERSION}/volt-stable-${VERSION}-darwin-${ARCH}.dmg"

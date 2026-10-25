@@ -8,6 +8,105 @@ Volt is built on VS Code (Code - OSS 1.105). Changes to that base come from upst
 Download a build from [Releases](https://github.com/LeulAria/volt/releases). On a Mac, read the
 [macOS install guide](docs/install/macos.md) first: the builds are not signed with an Apple Developer ID.
 
+## [0.0.3] - 2026-10-25
+
+A week of work since `0.0.2`: Scratch, a whiteboard that agents draw on; budgets and handoff contracts for subagents;
+agents that keep out of a browser tab you are using; windows with their own chats; and the web and mobile apps catching up
+with the desktop.
+
+### Highlights
+
+- **Scratch, a whiteboard for you and your agents.** Sketch, write and diagram on an infinite board, then ask an agent about
+  what you selected. The agent draws its answer back as a diagram beside your drawing, and its chat opens in a dock at the
+  bottom of the board.
+- **Subagents with budgets and contracts.** Each delegated task carries a goal, constraints, the files it owns and when it is
+  done. A request has a spending cap, tasks can wait for each other, and a task can fall back to another model.
+- **Agents keep out of your browser tab.** If you are typing, commenting or designing in a tab, an agent opens its own
+  *Agent* tab beside it instead of taking yours over.
+- **A New Window with its own chats.** A second window lists only the chats and projects started in it and hands them back
+  to the main window when it closes.
+- **Web and mobile catch up.** The mobile app is laid out like the GitHub app, with source control and pull requests, and the
+  workbench in a browser fits phones, tablets and touch screens.
+
+### Added
+
+**Scratch**
+- A full-page whiteboard opened from the notebook icon before New Chat: shapes, arrows, freehand, text, sticky notes, images,
+  frames and a shape library, in a hand-drawn style with a board theme that follows light or dark.
+- Diagrams from Mermaid, with elbow connectors that route around each other and swimlanes for subgraphs.
+- *Ask Agent* on a selection (or Cmd+Enter). Agents read the board and draw back into a titled frame with `scratch_read` and
+  `scratch_draw`, and a dashed outline with a chip marks each run. Drag a chip to move the whole diagram; click it to open the
+  run's chat in the dock.
+- Each run is its own chat thread, and every chat from one board shares one project.
+- The agent dock opens with only the text box. *Worked for…* shows the transcript, *Collapse to Chip* folds it away, and a
+  press on the board closes the dock.
+- Comments on the board, numbered pins sent together, as on the design canvas.
+- Hovering a shape greys out everything not connected to it, toggled from the toolbar.
+- One properties row for colours, stroke, arrows, text, opacity and arrange.
+- Boards save on their own across windows, with snapshots every ten minutes and a 30-day trash.
+- A *Canvas & Scratch* settings page.
+
+**Agents and chats**
+- Subagent handoff contracts (goal, constraints, files, done when) with fixed report headings, a summary of the parent's
+  context, `after` dependencies, `fallback_models`, `model: "auto"`, and a spending budget per request
+  (`volt.agent.multitask.budgetUsd`, `budgetTokens`).
+- *Start Multitasking* is a toggle: tick which queued messages start as parallel agents.
+- Copy a prompt with its chips (images and files included) and paste it into any composer.
+- *Next Agent Tab* and *Previous Agent Tab* commands, `@` mentions for Scratch boards and design canvases, and a row in the
+  chat toolbar that opens the chat's board.
+- Links in replies lead with their site's logo, and the composer styles inline markdown as you type.
+- The model button's hover card shows the picked effort, speed and context.
+- Retries show in the live status line (*Reconnecting to Claude, attempt 3 of 10*) instead of stacking rows.
+
+**Right panel**
+- Opening the right panel with no tabs lists what can open there (File, Terminal, Browser, Device, Changes, Scratch, Canvas,
+  Automations, New Side Chat) with their shortcuts, instead of opening a browser. Each opens as a tab; File opens the Explorer.
+- Automations can open as a right-panel tab, from that list or the + menu.
+
+**Browser and canvas**
+- An agent that finds you busy in a tab works in its own *Agent · …* tab underneath, with a notice to view it, and a *Refresh*
+  when it changed the app.
+- A browser floating over the chat lays pages out at desktop width and scales them down, so sites show their desktop layout.
+- The design canvas gets a shared comment composer and more room.
+
+**Usage and accounts**
+- The Usage page lists every saved Claude account's limits, then the other accounts whose limits Volt read (Codex, Cursor…).
+- A limits card on the Usage button, with account names blurred until you reveal them.
+
+**Windows, home and look**
+- A New Window keeps its own chats, projects and layout until it closes.
+- A simpler Open Workspace menu: recents, folders, New project, On This Mac and Git Repo.
+- A Volt About sheet in place of the stock dialog, and a laptop icon for *This Mac*.
+- Text is smoothed by default (*Font Smoothing: antialiased*).
+- The setup wizard can be skipped from any step.
+- Marks in the image viewer can be moved and resized.
+- The iPhone Duo's hinge folds while it streams live.
+
+**Web, mobile and the agent server**
+- Mobile: Home, Inbox, Projects and You tabs; project pages; source control with Commit, Pull and Push; pull requests with
+  checks, Merge and comments; dictation, attachments, `@` and `/` pickers, chat tabs and subagents in the chat screen.
+- Web: the browser workbench fits phones, tablets and touch screens, and dictates with the browser's speech recognition.
+- The agent server serves git, pull requests and the `/` menu to the web and mobile apps, which now use Volt's app icon.
+
+### Changed
+
+- Source Control shows only the chat's own repository, not the parent checkout, nested repositories or other worktrees.
+- MCP tools read in words in the transcript, whatever name the agent gives them.
+- The install script (`install.sh`) exists and works on macOS and Linux, checking each download's SHA-256.
+
+### Fixed
+
+- The agent server starts again: no browser-only imports, and hooks and folder trust are registered. It never trusts a folder,
+  so a repository's own hooks never run unattended, and its timed jobs run without a window.
+- Stopping terminals show the row's loader.
+- The title bar reads the computer's name in a way that also works in the web build.
+
+### Known limitations
+
+- macOS builds are still not signed with an Apple Developer ID or notarized, and Windows installers are not code-signed. See
+  the [macOS install guide](docs/install/macos.md).
+- Windows and Linux builds have had little testing. Scratch, the web and mobile apps and the agent server are new and may change.
+
 ## [0.0.2] - 2026-10-18
 
 The first build you can download from GitHub Releases for macOS, Windows and Linux. It covers the eleven days of work
@@ -156,5 +255,6 @@ accounts, and a good deal of speed work.
 The first tagged build of Volt, which added the release pipeline with Stable, Beta and Nightly channels. It was never published to
 GitHub Releases.
 
+[0.0.3]: https://github.com/LeulAria/volt/releases/tag/v0.0.3
 [0.0.2]: https://github.com/LeulAria/volt/releases/tag/v0.0.2
 [0.0.1]: https://github.com/LeulAria/volt/commit/7cc39172

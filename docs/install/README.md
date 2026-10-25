@@ -1,7 +1,7 @@
 # Install Volt
 
 Download builds from [GitHub Releases](https://github.com/LeulAria/volt/releases/latest) or from [volt.leularia.com/download](https://volt.leularia.com/download).
-Files are named `volt-<channel>-<version>-<os>-<arch>.<ext>`, for example `volt-stable-0.0.2-darwin-arm64.dmg`.
+Files are named `volt-<channel>-<version>-<os>-<arch>.<ext>`, for example `volt-stable-0.0.3-darwin-arm64.dmg`.
 
 | Platform | Download | Guide |
 | --- | --- | --- |
@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/LeulAria/VOLT/main/install.sh | bas
 ```
 
 On a Mac it puts `Volt.app` in `/Applications` (or `~/Applications`). On Linux it unpacks into `~/.local/share/volt` and links `~/.local/bin/volt`.
-`VOLT_VERSION=0.0.2` picks a version and `VOLT_INSTALL_DIR` the folder. Read [`install.sh`](../../install.sh) first; it is short.
+`VOLT_VERSION=0.0.3` picks a version and `VOLT_INSTALL_DIR` the folder. Read [`install.sh`](../../install.sh) first; it is short.
 
 ## Windows
 
@@ -51,13 +51,13 @@ volt --version
 
 ```bash
 # Debian, Ubuntu
-sudo apt install ./volt-stable-0.0.2-linux-x64.deb
+sudo apt install ./volt-stable-0.0.3-linux-x64.deb
 
 # Fedora, RHEL, openSUSE
-sudo dnf install ./volt-stable-0.0.2-linux-x64.rpm
+sudo dnf install ./volt-stable-0.0.3-linux-x64.rpm
 
 # Any distribution: unpack and run the volt binary inside
-tar xzf volt-stable-0.0.2-linux-x64.tar.gz
+tar xzf volt-stable-0.0.3-linux-x64.tar.gz
 ```
 
 Then run `volt` or `volt .`. Volt tells you when an update is out and opens the download page.

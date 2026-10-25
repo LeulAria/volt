@@ -14,7 +14,7 @@
 #        the .deb or .rpm from the release page instead.
 #
 # Environment:
-#   VOLT_VERSION      install this version instead of the latest, for example 0.0.2
+#   VOLT_VERSION      install this version instead of the latest, for example 0.0.3
 #   VOLT_INSTALL_DIR  macOS: where Volt.app goes. Linux: where the files are unpacked.
 #
 # Read this file before you run it; it is short on purpose. Nothing here needs sudo.
