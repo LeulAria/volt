@@ -155,6 +155,23 @@ export function parseInline(text: string): InlineToken[] {
   return tokens;
 }
 
+/**
+ * A release's title is the first sentence of its intro, when more follows it; the rest stays the intro.
+ * Markdown marks are dropped from the title.
+ */
+export function splitReleaseTitle(intro: readonly string[]): {
+  title?: string;
+  intro: string[];
+} {
+  const [first, ...rest] = intro;
+  const match = first ? /^(.+?[.!?])\s+(\S.*)$/.exec(first) : null;
+  if (!match) {
+    return { intro: [...intro] };
+  }
+  const title = match[1].replace(/[`*]/g, "").replace(/\.$/, "");
+  return { title, intro: [match[2], ...rest] };
+}
+
 /** Links in CHANGELOG.md are relative to the repository root; on the site they point at GitHub. */
 export function resolveChangelogHref(href: string, repoUrl: string): string {
   if (

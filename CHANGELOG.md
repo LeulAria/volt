@@ -10,7 +10,7 @@ Download a build from [Releases](https://github.com/LeulAria/volt/releases). On 
 
 ## [0.0.3] - 2026-10-25
 
-A week of work since `0.0.2`: Scratch, a whiteboard that agents draw on; budgets and handoff contracts for subagents;
+Scratch, subagent budgets and a calmer right panel. A week of work since `0.0.2`: Scratch, a whiteboard that agents draw on; budgets and handoff contracts for subagents;
 agents that keep out of a browser tab you are using; windows with their own chats; and the web and mobile apps catching up
 with the desktop.
 

@@ -17,6 +17,7 @@ import {
   parseChangelog,
   parseInline,
   resolveChangelogHref,
+  splitReleaseTitle,
 } from "@/lib/changelog";
 import { cn } from "@/lib/cn";
 import { formatDate } from "@/lib/releases";
@@ -97,56 +98,60 @@ function ReleaseEntry({
   latest: boolean;
 }) {
   const id = `v${release.version}`;
+  const { title, intro } = splitReleaseTitle(release.intro);
   return (
     <>
       <SectionRule />
       <article
         id={id}
         aria-labelledby={`${id}-title`}
-        className={cn(
-          COLUMN,
-          "relative grid gap-6 pt-12 pb-4 md:grid-cols-[220px_minmax(0,1fr)] md:gap-10 md:pt-16",
-        )}
+        className={cn(COLUMN, "relative pt-12 pb-4 md:pt-16")}
       >
-        <header
-          className={cn(HEADING_INSET, "md:sticky md:top-8 md:self-start")}
-        >
-          <a
-            href={`#${id}`}
-            className={`inline-flex items-center gap-3 rounded ${focusRing}`}
-          >
+        <div className={cn(HEADING_INSET, "max-w-[820px] pr-4 md:pr-8")}>
+          <header>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[15px]">
+              <a
+                href={`#${id}`}
+                className={`rounded text-white/90 transition-colors hover:text-white ${focusRing}`}
+              >
+                {release.version}
+              </a>
+              {release.date ? (
+                <span className="text-white/40">
+                  {formatDate(`${release.date}T12:00:00Z`)}
+                </span>
+              ) : null}
+              <span
+                className={cn(
+                  "inline-flex h-7 items-center rounded-full border px-3 font-sans text-[13px]",
+                  latest
+                    ? "border-[#ff8a5a]/40 text-[#ff8a5a]"
+                    : "border-white/15 text-white/60",
+                )}
+              >
+                {latest ? "Latest" : "Stable"}
+              </span>
+              <a
+                href={`${REPO_URL}/releases/tag/v${release.version}`}
+                target="_blank"
+                rel="noreferrer"
+                className={cn(LINK, "font-sans text-[13px] text-white/45")}
+              >
+                Release notes
+                <ArrowUpRight className="size-3.5" />
+              </a>
+            </div>
             <h2
               id={`${id}-title`}
-              className="font-mono text-[22px] font-semibold tracking-[-0.01em] text-white md:text-[26px]"
+              className="mt-4 text-balance text-[24px] font-semibold leading-[1.25] tracking-[-0.02em] text-white md:text-[28px]"
             >
-              {release.version}
+              {title ?? `Volt ${release.version}`}
             </h2>
-            {latest ? (
-              <span className="inline-flex h-5 items-center rounded-full border border-[#ff8a5a]/40 bg-[#ff8a5a]/10 px-2 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-[#ff8a5a]">
-                Latest
-              </span>
-            ) : null}
-          </a>
-          {release.date ? (
-            <div className="mt-2 text-[13px] text-white/45">
-              {formatDate(`${release.date}T12:00:00Z`)}
-            </div>
-          ) : null}
-          <a
-            href={`${REPO_URL}/releases/tag/v${release.version}`}
-            target="_blank"
-            rel="noreferrer"
-            className={cn(LINK, "mt-3 text-[13px]")}
-          >
-            Release notes
-            <ArrowUpRight className="size-3.5" />
-          </a>
-        </header>
-        <div className="max-w-[720px] pl-4 sm:pl-6 md:pl-0 md:pr-8">
-          {release.intro.map((paragraph) => (
+          </header>
+          {intro.map((paragraph) => (
             <p
               key={paragraph}
-              className="text-pretty text-[16px] leading-[1.7] text-white/75"
+              className="mt-3 text-pretty text-[16px] leading-[1.75] text-white/60 md:text-[17px]"
             >
               <Inline text={paragraph} />
             </p>
@@ -160,36 +165,64 @@ function ReleaseEntry({
   );
 }
 
+/** Keep a Changelog's section names, each with its colour and the mark its items lead with. */
+const SECTION_STYLES: Record<string, { tone: string; mark: string }> = {
+  highlights: { tone: "text-[#ff8a5a]", mark: "★" },
+  added: { tone: "text-emerald-400", mark: "+" },
+  changed: { tone: "text-amber-300", mark: "~" },
+  performance: { tone: "text-sky-400", mark: "↑" },
+  fixed: { tone: "text-violet-300", mark: "✓" },
+  removed: { tone: "text-red-400", mark: "–" },
+  deprecated: { tone: "text-orange-300", mark: "!" },
+  security: { tone: "text-red-400", mark: "!" },
+};
+const DEFAULT_SECTION_STYLE = { tone: "text-white/50", mark: "•" };
+
 function Section({ section }: { section: ChangelogSection }) {
+  const style =
+    SECTION_STYLES[section.title.toLowerCase()] ?? DEFAULT_SECTION_STYLE;
   return (
-    <section className="mt-10 first:mt-0">
+    <section className="mt-10">
       {section.title ? (
-        <h3 className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-white/45">
+        <h3
+          className={cn(
+            "text-[14px] font-medium uppercase tracking-[0.06em]",
+            style.tone,
+          )}
+        >
           {section.title}
         </h3>
       ) : null}
       {section.paragraphs.map((paragraph) => (
         <p
           key={paragraph}
-          className="mt-4 text-pretty text-[14.5px] leading-[1.7] text-white/65"
+          className="mt-3 text-pretty text-[16px] leading-[1.75] text-white/60"
         >
           <Inline text={paragraph} />
         </p>
       ))}
       {section.groups.map((group, index) => (
-        <div key={group.label ?? index} className="mt-5">
+        <div key={group.label ?? index} className="mt-4">
           {group.label ? (
-            <h4 className="mb-2 text-[14px] font-medium text-white/85">
+            <h4 className="mt-6 mb-2 text-[15px] font-medium text-white/85">
               {group.label}
             </h4>
           ) : null}
-          <ul className="space-y-2">
+          <ul className="space-y-2.5">
             {group.items.map((item) => (
               <li
                 key={item}
-                className="relative pl-5 text-pretty text-[14.5px] leading-[1.7] text-white/65 before:absolute before:top-[0.8em] before:left-1 before:size-1 before:rounded-full before:bg-white/30"
+                className="grid grid-cols-[1.5rem_minmax(0,1fr)] text-pretty text-[16px] leading-[1.75] text-white/60"
               >
-                <Inline text={item} />
+                <span
+                  aria-hidden
+                  className={cn("select-none font-mono opacity-80", style.tone)}
+                >
+                  {style.mark}
+                </span>
+                <span>
+                  <Inline text={item} />
+                </span>
               </li>
             ))}
           </ul>
