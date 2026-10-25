@@ -342,7 +342,7 @@ export function ClosingCta() {
           <ClosingDownload />
         </div>
         <div data-c-rest className="mt-10 w-full max-w-[420px]">
-          <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-white/35">
+          <div className="mb-2 text-[12.5px] font-medium text-white/45">
             Or install from a terminal
           </div>
           <InstallCommand />

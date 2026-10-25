@@ -142,7 +142,7 @@ function Home() {
                     {/* Below md: 2 lines (curl, then platforms). md+: one line with curl capped at 300px */}
                     <div className="flex w-full min-w-0 flex-col gap-3 md:flex-row md:items-end md:gap-3">
                       <div className="flex w-full min-w-0 flex-col md:w-auto md:max-w-[300px] md:shrink-0">
-                        <div className="mb-1 w-fit text-[10px] font-medium uppercase tracking-[0.16em] text-white/35">
+                        <div className="mb-1 w-fit text-[12.5px] font-medium text-white/45">
                           Install
                         </div>
                         <InstallCommand />

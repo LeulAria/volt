@@ -198,8 +198,8 @@ function Text({
       stroke="none"
       fill={color ?? "currentColor"}
       fillOpacity={color ? 1 : tone}
-      className="font-mono uppercase transition-[fill,fill-opacity] duration-500"
-      style={{ fontSize: size, letterSpacing: "0.12em" }}
+      className="font-mono transition-[fill,fill-opacity] duration-500"
+      style={{ fontSize: size }}
     >
       {children}
     </text>

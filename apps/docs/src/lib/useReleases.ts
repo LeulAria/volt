@@ -14,7 +14,6 @@ export const RELEASES_API = `https://api.github.com/repos/${gitConfig.user}/${gi
 export const GITHUB_RELEASES_URL = `https://github.com/${gitConfig.user}/${gitConfig.repo}/releases`;
 
 const CACHE_KEY = "volt:releases:v1";
-const CACHE_MS = 10 * 60 * 1000;
 
 export type ReleasesState =
   | { status: "loading" }
@@ -23,12 +22,14 @@ export type ReleasesState =
 
 let inflight: Promise<GhRelease[]> | null = null;
 
+/**
+ * The tab's last answer from GitHub, shown at once while a fresh one loads. It is never trusted as
+ * current: a release published since must show up on the next page load, not minutes later.
+ */
 function readCache(): GhRelease[] | null {
   try {
     const raw = sessionStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const { at, data } = JSON.parse(raw) as { at: number; data: GhRelease[] };
-    return Date.now() - at < CACHE_MS ? data : null;
+    return raw ? (JSON.parse(raw) as { data: GhRelease[] }).data : null;
   } catch {
     return null;
   }
@@ -43,8 +44,8 @@ async function fetchReleases(): Promise<GhRelease[]> {
     const mod = await import("./releases.fixture.json");
     return trimReleases(mod.default);
   }
-  const cached = readCache();
-  if (cached) return cached;
+  // Once per page load. The browser's HTTP cache (GitHub sends max-age=60 and an ETag) keeps
+  // reloads off the unauthenticated rate limit.
   const res = await fetch(RELEASES_API, {
     headers: { Accept: "application/vnd.github+json" },
   });
@@ -59,24 +60,25 @@ async function fetchReleases(): Promise<GhRelease[]> {
   return data;
 }
 
-/** Releases per channel from the GitHub API, fetched once per tab and cached briefly. */
+/** Releases per channel from the GitHub API: the tab's last answer at once, then a fresh one per page load. */
 export function useReleases(): ReleasesState {
   const [state, setState] = useState<ReleasesState>({ status: "loading" });
   useEffect(() => {
     let cancelled = false;
+    const show = (data: GhRelease[]) => {
+      if (!cancelled)
+        setState({ status: "ready", releases: pickChannelReleases(data) });
+    };
+    const cached = readCache();
+    if (cached) show(cached);
     inflight ??= fetchReleases().catch((err) => {
       inflight = null;
       throw err;
     });
-    inflight.then(
-      (data) => {
-        if (!cancelled)
-          setState({ status: "ready", releases: pickChannelReleases(data) });
-      },
-      () => {
-        if (!cancelled) setState({ status: "error" });
-      },
-    );
+    inflight.then(show, () => {
+      // A failed refresh keeps the last answer on screen
+      if (!cancelled && !cached) setState({ status: "error" });
+    });
     return () => {
       cancelled = true;
     };
