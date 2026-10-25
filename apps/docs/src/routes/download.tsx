@@ -97,7 +97,7 @@ function DownloadPage() {
             <p className="mt-5 max-w-xl text-pretty text-[15px] leading-[1.65] text-white/50 md:text-[17px]">
               {unsupported
                 ? "Volt is a desktop app for macOS, Windows, and Linux. Open this page on your computer, or grab a build below."
-                : `Free while in public beta. Here is the build for ${platformLabel}; every other platform and channel is listed below.`}
+                : `Here is the build for ${platformLabel}; every other platform and channel is listed below.`}
             </p>
             <PrimaryDownload
               state={state}

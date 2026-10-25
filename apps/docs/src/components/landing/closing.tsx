@@ -336,7 +336,7 @@ export function ClosingCta() {
           data-c-rest
           className="mt-4 max-w-xl text-balance text-[16px] leading-relaxed text-white/50 md:text-[18px]"
         >
-          Free while in public beta. macOS, Windows, and Linux.
+          macOS, Windows, and Linux.
         </p>
         <div data-c-rest className="mt-10 w-full">
           <ClosingDownload />

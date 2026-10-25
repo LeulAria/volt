@@ -174,7 +174,7 @@ export function homeMarkdown(): string {
 
 Workspace, editor, Git and terminal, unified in one lightning-fast surface. AI agents handle the mechanics so you stay in flow.
 
-${appName} is free while in public beta, for macOS, Windows and Linux. [Download it](/download.md), or install from a terminal (macOS and Linux):
+${appName} is available for macOS, Windows and Linux. [Download it](/download.md), or install from a terminal (macOS and Linux):
 
 \`\`\`bash
 ${INSTALL_COMMAND}
@@ -204,7 +204,7 @@ ${appName} doesn't sell tokens. Plug in Claude Code, Codex, OpenCode, Cursor, Gr
 
 ## Get started with ${appName}
 
-Free while in public beta. macOS, Windows and Linux. Get the latest build from the [download page](/download.md) or [GitHub Releases](${SITE_REPO_URL}/releases/latest), and follow the [install guide](/docs/install) on a Mac.
+macOS, Windows and Linux. Get the latest build from the [download page](/download.md) or [GitHub Releases](${SITE_REPO_URL}/releases/latest), and follow the [install guide](/docs/install) on a Mac.
 
 ${SITE_LINKS_MARKDOWN}
 `;
@@ -214,7 +214,7 @@ ${SITE_LINKS_MARKDOWN}
 export function downloadMarkdown(): string {
   return `# Download ${appName}
 
-${appName} is free while in public beta, for macOS (Apple silicon and Intel), Windows (x64 and Arm) and Linux (x64, arm64, armhf).
+${appName} is available for macOS (Apple silicon and Intel), Windows (x64 and Arm) and Linux (x64, arm64, armhf).
 
 - **Latest release:** [GitHub Releases](${SITE_REPO_URL}/releases/latest) lists every file of the newest Stable build with its checksum.
 - **macOS:** \`volt-stable-<version>-darwin-arm64.dmg\` for Apple silicon, \`-darwin-x64.dmg\` for Intel. The build is not signed with an Apple Developer ID yet; the [install guide](/docs/install) shows how to open it the first time.
