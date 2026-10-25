@@ -145,6 +145,7 @@
 	"command.graphCheckout": "Checkout",
 	"command.graphCheckoutDetached": "Checkout (Detached)",
 	"command.graphCherryPick": "Cherry Pick",
+	"command.graphRevert": "Revert Commit",
 	"command.graphDeleteBranch": "Delete Branch",
 	"command.graphDeleteTag": "Delete Tag",
 	"command.blameToggleEditorDecoration": "Toggle Git Blame Editor Decoration",

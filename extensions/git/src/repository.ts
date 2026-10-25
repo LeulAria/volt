@@ -9,12 +9,13 @@ import * as path from 'path';
 import picomatch from 'picomatch';
 import { CancellationError, CancellationToken, CancellationTokenSource, Command, commands, Disposable, Event, EventEmitter, FileDecoration, FileType, l10n, LogLevel, LogOutputChannel, Memento, ProgressLocation, ProgressOptions, QuickDiffProvider, RelativePattern, scm, SourceControl, SourceControlInputBox, SourceControlInputBoxValidation, SourceControlInputBoxValidationType, SourceControlResourceDecorations, SourceControlResourceGroup, SourceControlResourceState, TabInputNotebookDiff, TabInputTextDiff, TabInputTextMultiDiff, ThemeColor, ThemeIcon, Uri, window, workspace, WorkspaceEdit } from 'vscode';
 import { ActionButton } from './actionButton';
+import { CommitActivityDay, commitActivityArgs, parseCommitActivity } from './commitActivity';
 import { ApiRepository } from './api/api1';
-import { Branch, BranchQuery, Change, CommitOptions, FetchOptions, ForcePushMode, GitErrorCodes, LogOptions, Ref, RefType, Remote, Status } from './api/git';
+import { Branch, BranchQuery, Change, CommitOptions, FetchOptions, ForcePushMode, GitErrorCodes, Ref, RefType, Remote, Status } from './api/git';
 import { AutoFetcher } from './autofetch';
 import { GitBranchProtectionProvider, IBranchProtectionProviderRegistry } from './branchProtection';
 import { debounce, memoize, sequentialize, throttle } from './decorators';
-import { Repository as BaseRepository, BlameInformation, Commit, getLockFilePath, GitError, LogFileOptions, LsTreeElement, PullOptions, RefQuery, Stash, Submodule, Worktree } from './git';
+import { Repository as BaseRepository, BlameInformation, Commit, getLockFilePath, GitError, GitLogOptions, LogFileOptions, LsTreeElement, PullOptions, RefQuery, Stash, Submodule, Worktree } from './git';
 import { GitHistoryProvider } from './historyProvider';
 import { Operation, OperationKind, OperationManager, OperationResult } from './operation';
 import { CommitCommandsCenter, IPostCommitCommandsProviderRegistry } from './postCommitCommands';
@@ -1166,7 +1167,7 @@ export class Repository implements Disposable {
 		return this.run(Operation.Config(false), () => this.repository.config('unset', 'local', key));
 	}
 
-	log(options?: LogOptions & { silent?: boolean }, cancellationToken?: CancellationToken): Promise<Commit[]> {
+	log(options?: GitLogOptions & { silent?: boolean }, cancellationToken?: CancellationToken): Promise<Commit[]> {
 		const showProgress = !options || options.silent !== true;
 		return this.run(Operation.Log(showProgress), () => this.repository.log(options, cancellationToken));
 	}
@@ -1614,8 +1615,23 @@ export class Repository implements Disposable {
 		await this.run(Operation.CherryPick, () => this.repository.cherryPickAbort());
 	}
 
+	async revertCommit(commitHash: string, mainline?: number): Promise<void> {
+		await this.run(Operation.RevertCommit, () => this.repository.revertCommit(commitHash, mainline));
+	}
+
 	async move(from: string, to: string): Promise<void> {
 		await this.run(Operation.Move, () => this.repository.move(from, to));
+	}
+
+	/**
+	 * Commits per local day across the refs given (every branch, remote and tag when none), for the
+	 * Git Graph's activity strip. One read-only `git log` of times and trailers, outside the
+	 * operation queue so it never waits behind (or holds up) status and blame.
+	 */
+	async getCommitActivity(refNames: string[] | undefined, cancellationToken?: CancellationToken): Promise<CommitActivityDay[]> {
+		const walkStdin = !!refNames?.length;
+		const result = await this.repository.exec(commitActivityArgs(walkStdin), { input: walkStdin ? refNames!.join('\n') : undefined, cancellationToken });
+		return parseCommitActivity(result.stdout);
 	}
 
 	async getBranch(name: string): Promise<Branch> {

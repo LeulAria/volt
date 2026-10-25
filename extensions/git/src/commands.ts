@@ -11,6 +11,7 @@ import TelemetryReporter from '@vscode/extension-telemetry';
 import { uniqueNamesGenerator, adjectives, animals, colors, NumberDictionary } from '@joaomoreno/unique-names-generator';
 import { ForcePushMode, GitErrorCodes, RefType, Status, CommitOptions, RemoteSourcePublisher, Remote, Branch, Ref } from './api/git';
 import { getLockFilePath, Git, Stash, Worktree } from './git';
+import type { CommitActivityDay } from './commitActivity';
 import { Model } from './model';
 import { GitResourceGroup, Repository, Resource, ResourceGroupType } from './repository';
 import { DiffEditorSelectionHunkToolbarContext, LineChange, applyLineChanges, getIndexDiffInformation, getModifiedRange, getWorkingTreeDiffInformation, intersectDiffWithRange, invertLineChange, toLineChanges, toLineRanges, compareLineChanges } from './staging';
@@ -4250,6 +4251,27 @@ export class CommandCenter {
 		}
 
 		await repository.cherryPick(historyItem.id);
+	}
+
+	@command('git.graph.revert', { repository: true })
+	async revertCommit(repository: Repository, historyItem?: SourceControlHistoryItem): Promise<void> {
+		if (!historyItem) {
+			return;
+		}
+
+		// A merge commit is reverted against its first parent
+		await repository.revertCommit(historyItem.id, historyItem.parentIds.length > 1 ? 1 : undefined);
+	}
+
+	/** The Git Graph's activity strip: commits per day for `rootPath` (fsPath), walking `refNames` or every branch. */
+	@command('_volt.git.commitActivity')
+	async commitActivity(rootPath?: unknown, refNames?: unknown): Promise<CommitActivityDay[] | undefined> {
+		if (typeof rootPath !== 'string') {
+			return undefined;
+		}
+		const repository = this.model.getRepository(Uri.file(rootPath));
+		const revs = Array.isArray(refNames) ? refNames.filter((ref): ref is string => typeof ref === 'string' && /^[^\s-][^\s]*$/.test(ref)) : undefined;
+		return repository?.getCommitActivity(revs);
 	}
 
 	@command('git.cherryPickAbort', { repository: true })
