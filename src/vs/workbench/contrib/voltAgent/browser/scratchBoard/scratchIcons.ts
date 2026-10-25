@@ -10,6 +10,9 @@
  * are drawn for Scratch, after Excalidraw's.
  */
 
+import { localize } from '../../../../../nls.js';
+import { ScratchShapeKind } from '../../common/scratchBoard/scratchTypes.js';
+
 type IconAttrs = Readonly<Record<string, string>>;
 type IconNode = readonly [string, IconAttrs];
 
@@ -245,6 +248,25 @@ const TABLER: Readonly<Record<string, readonly IconNode[]>> = {
 };
 
 export type ScratchIconName = keyof typeof LUCIDE | keyof typeof CUSTOM | keyof typeof TABLER;
+
+export const SHAPE_LABELS: Readonly<Record<ScratchShapeKind, string>> = {
+	rectangle: localize('voltScratch.shape.rectangle', "Rectangle"),
+	diamond: localize('voltScratch.shape.diamond', "Diamond"),
+	ellipse: localize('voltScratch.shape.ellipse', "Ellipse"),
+	triangle: localize('voltScratch.shape.triangle', "Triangle"),
+	hexagon: localize('voltScratch.shape.hexagon', "Hexagon"),
+	parallelogram: localize('voltScratch.shape.parallelogram', "Parallelogram"),
+	cylinder: localize('voltScratch.shape.cylinder', "Cylinder"),
+	pill: localize('voltScratch.shape.pill', "Pill"),
+	document: localize('voltScratch.shape.document', "Document"),
+	cloud: localize('voltScratch.shape.cloud', "Cloud"),
+	star: localize('voltScratch.shape.star', "Star"),
+};
+
+export const SHAPE_ICONS: Readonly<Record<ScratchShapeKind, ScratchIconName>> = {
+	rectangle: 'square', diamond: 'diamond', ellipse: 'circle', triangle: 'triangle', hexagon: 'hexagon', parallelogram: 'shape-parallelogram',
+	cylinder: 'cylinder', pill: 'shape-pill', document: 'shape-document', cloud: 'cloud', star: 'star',
+};
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 

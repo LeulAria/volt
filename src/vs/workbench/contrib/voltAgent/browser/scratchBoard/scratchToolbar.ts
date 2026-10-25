@@ -13,7 +13,7 @@ import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
 import type { IScratchCanvasHost, ScratchCanvas } from './scratchCanvas.js';
 import { ScratchTool } from './scratchCanvasState.js';
-import { scratchIcon, ScratchIconName } from './scratchIcons.js';
+import { scratchIcon, ScratchIconName, SHAPE_ICONS, SHAPE_LABELS } from './scratchIcons.js';
 import { CODE_TEMPLATE_HTML, createChecklistBlock, createTableBlock, promptMermaid } from './scratchLibrary.js';
 
 interface IToolSpec {
@@ -23,25 +23,6 @@ interface IToolSpec {
 	readonly label: string;
 	readonly key: string;
 }
-
-export const SHAPE_LABELS: Readonly<Record<ScratchShapeKind, string>> = {
-	rectangle: localize('voltScratch.shape.rectangle', "Rectangle"),
-	diamond: localize('voltScratch.shape.diamond', "Diamond"),
-	ellipse: localize('voltScratch.shape.ellipse', "Ellipse"),
-	triangle: localize('voltScratch.shape.triangle', "Triangle"),
-	hexagon: localize('voltScratch.shape.hexagon', "Hexagon"),
-	parallelogram: localize('voltScratch.shape.parallelogram', "Parallelogram"),
-	cylinder: localize('voltScratch.shape.cylinder', "Cylinder"),
-	pill: localize('voltScratch.shape.pill', "Pill"),
-	document: localize('voltScratch.shape.document', "Document"),
-	cloud: localize('voltScratch.shape.cloud', "Cloud"),
-	star: localize('voltScratch.shape.star', "Star"),
-};
-
-export const SHAPE_ICONS: Readonly<Record<ScratchShapeKind, ScratchIconName>> = {
-	rectangle: 'square', diamond: 'diamond', ellipse: 'circle', triangle: 'triangle', hexagon: 'hexagon', parallelogram: 'shape-parallelogram',
-	cylinder: 'cylinder', pill: 'shape-pill', document: 'shape-document', cloud: 'cloud', star: 'star',
-};
 
 const TOOLS: readonly IToolSpec[] = [
 	{ tool: 'hand', icon: 'hand', label: localize('voltScratch.tool.hand', "Hand"), key: 'H' },

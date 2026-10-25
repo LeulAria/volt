@@ -16,9 +16,8 @@ import { IScratchStyleDefaults, ScratchElement, ScratchShapeKind } from '../../c
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { voltButtonClasses } from '../chrome/voltButton.js';
 import type { ScratchCanvas } from './scratchCanvas.js';
-import { iconSvgMarkup, scratchIcon, ScratchIconName } from './scratchIcons.js';
+import { iconSvgMarkup, scratchIcon, ScratchIconName, SHAPE_ICONS, SHAPE_LABELS } from './scratchIcons.js';
 import { iconDataUrl } from './scratchRenderer.js';
-import { SHAPE_ICONS, SHAPE_LABELS } from './scratchToolbar.js';
 
 const ARIA_SEARCH = 'https://icons.leularia.com/api/v1/search';
 const ARIA_ICONS = 'https://icons.leularia.com/api/v1/icons';

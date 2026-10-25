@@ -58,7 +58,8 @@ import { markdownToRichHtml, plainTextAsRichHtml, sanitizeRichHtml } from './scr
 import { ScratchRuns } from './scratchRuns.js';
 import { showScratchShortcuts } from './scratchShortcuts.js';
 import { IScratchTextTarget, ScratchFormatBar, ScratchTextEditor } from './scratchTextEditor.js';
-import { SHAPE_LABELS, ScratchToolbar } from './scratchToolbar.js';
+import { SHAPE_LABELS } from './scratchIcons.js';
+import { ScratchToolbar } from './scratchToolbar.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CLIPBOARD_MIME = 'application/x-volt-scratch';
