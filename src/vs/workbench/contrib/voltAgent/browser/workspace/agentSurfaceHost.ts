@@ -62,7 +62,7 @@ import { AgentChangesEditorInput, isAgentChangesDiffFor, openAgentChangesDiff } 
 import { AgentChangesScope } from '../review/agentSessionChanges.js';
 import { AgentFilesSidebar, AgentFilesSidebarView } from './agentFilesSidebar.js';
 import { AgentSurfaceAddMenu, IAgentSurfaceAddMenuHost, renderSurfaceOpenList, visibleSurfaceMenuItems } from './agentSurfaceAddMenu.js';
-import { OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
+import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
 import { AgentToolsEditorPart, AgentToolsPartContext, hasSavedAgentTools } from './agentToolsEditorPart.js';
 import { attachSessionToProject } from './agentShell.js';
 import { registerAgentFileEditorRouting } from './agentFileEditorRouting.js';
@@ -2360,6 +2360,15 @@ export class AgentSurfaceHost extends Disposable {
 		return true;
 	}
 
+	/** A + menu row from its Ctrl+Option shortcut: opens it in the right panel of the chat on screen. */
+	runSurfaceShortcut(id: AgentSurfaceMenuActionId): boolean {
+		if (this.disposed || this.nested() || !this.isOnScreen() || !this.sessionId) {
+			return false;
+		}
+		this.runMenuAction(id);
+		return true;
+	}
+
 	private runMenuAction(id: AgentSurfaceMenuActionId): void {
 		switch (id) {
 			case 'file':
@@ -2550,6 +2559,36 @@ registerAction2(class ToggleAgentToolsFullScreenAction extends Action2 {
 		}
 	}
 });
+
+// Ctrl+Option + a letter opens each + menu row in the agent layout (Ctrl+Alt+Shift off a Mac, where Ctrl+Alt is AltGr).
+for (const item of agentSurfaceMenuItems()) {
+	const key = SURFACE_OPEN_KEYS[item.id];
+	registerAction2(class extends Action2 {
+		constructor() {
+			super({
+				id: surfaceOpenCommandId(item.id),
+				title: localize2('voltAgent.tools.openSurface', "Open {0} in Right Panel", item.label),
+				category: localize2('voltAgent.category', "Agent"),
+				f1: true,
+				precondition: LayoutModeContext.isEqualTo('agent'),
+				keybinding: {
+					primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyMod.Shift | key,
+					mac: { primary: KeyMod.WinCtrl | KeyMod.Alt | key },
+					weight: KeybindingWeight.WorkbenchContrib + 50,
+					when: LayoutModeContext.isEqualTo('agent'),
+				},
+			});
+		}
+
+		override run(): void {
+			for (const host of hosts) {
+				if (isChatToolsHost(host) && host.runSurfaceShortcut(item.id)) {
+					return;
+				}
+			}
+		}
+	});
+}
 
 registerAction2(class ToggleAgentToolsPanelAction extends Action2 {
 	constructor() {

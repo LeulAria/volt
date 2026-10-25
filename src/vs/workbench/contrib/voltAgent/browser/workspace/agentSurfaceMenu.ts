@@ -4,11 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { KeyCode } from '../../../../../base/common/keyCodes.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { AGENT_HOME_AUTOMATIONS_ICON_PATH, AGENT_HOME_SCRATCH_ICON_PATHS } from '../home/agentHomeIcons.js';
-import { OPEN_BROWSER_COMMAND_ID } from '../preview/browserEditorInput.js';
-import { OPEN_AGENT_CHANGES_COMMAND_ID } from '../review/agentChangesEditor.js';
 
 /** Registered in electron-browser/voltDevices.contribution.ts, which browser/ can't import. */
 export const OPEN_DEVICE_PREVIEW_COMMAND_ID = 'volt.devices.openPreview';
@@ -52,13 +51,34 @@ export const SIDE_CHAT_ICON_PATH = 'M7 7H15M7 11H11M5 3H19C20.1046 3 21 3.89543 
 /** Right-rail / tab-bar + menu rows that open an agent surface. */
 export type AgentSurfaceMenuActionId = 'file' | 'terminal' | 'browser' | 'device' | 'changes' | 'scratch' | 'canvas' | 'automations' | 'sideChat';
 
+/** Each row's own command, registered in agentSurfaceHost.ts: opens it in the right panel of the chat on screen. */
+export function surfaceOpenCommandId(id: AgentSurfaceMenuActionId): string {
+	return `workbench.action.voltAgentTools.open.${id}`;
+}
+
+/**
+ * The letter after Ctrl+Option (Ctrl+Alt+Shift off a Mac, where Ctrl+Alt is AltGr) that opens each row in the
+ * agent layout: its first letter, Canvas taking V since Changes has C.
+ */
+export const SURFACE_OPEN_KEYS: Readonly<Record<AgentSurfaceMenuActionId, KeyCode>> = {
+	file: KeyCode.KeyF,
+	terminal: KeyCode.KeyT,
+	browser: KeyCode.KeyB,
+	device: KeyCode.KeyD,
+	changes: KeyCode.KeyC,
+	scratch: KeyCode.KeyS,
+	canvas: KeyCode.KeyV,
+	automations: KeyCode.KeyA,
+	sideChat: KeyCode.KeyN,
+};
+
 export interface IAgentSurfaceMenuItem {
 	readonly id: AgentSurfaceMenuActionId;
 	readonly label: string;
 	readonly icon: ThemeIcon;
 	/** Stroke path or shapes on a 24x24 box, drawn instead of `icon`. */
 	readonly svgPath?: string | SvgIconShapes;
-	/** Existing command id used only to look up a keybinding label. */
+	/** Command id used only to look up a keybinding label (the row's own Ctrl+Option command). */
 	readonly keybindingCommand?: string;
 }
 
@@ -69,7 +89,7 @@ export function shouldHideAgentQuickOpenRail(surfacePaneOpen: boolean): boolean 
 
 /** Menu rows for the surface tab-bar +. */
 export function agentSurfaceMenuItems(): readonly IAgentSurfaceMenuItem[] {
-	return [
+	const items: readonly IAgentSurfaceMenuItem[] = [
 		{
 			// Opens the Explorer in the files sidebar; typing in the menu's box still finds a file.
 			id: 'file',
@@ -81,27 +101,23 @@ export function agentSurfaceMenuItems(): readonly IAgentSurfaceMenuItem[] {
 			id: 'terminal',
 			label: localize('voltAgent.surfaceMenu.terminal', "Terminal"),
 			icon: Codicon.terminal,
-			keybindingCommand: 'workbench.action.terminal.new',
 		},
 		{
 			id: 'browser',
 			label: localize('voltAgent.surfaceMenu.browser', "Browser"),
 			icon: Codicon.globe,
-			keybindingCommand: OPEN_BROWSER_COMMAND_ID,
 		},
 		{
 			// The iOS Simulator / Android Emulator preview.
 			id: 'device',
 			label: localize('voltAgent.surfaceMenu.device', "Device"),
 			icon: Codicon.deviceMobile,
-			keybindingCommand: OPEN_DEVICE_PREVIEW_COMMAND_ID,
 		},
 		{
 			id: 'changes',
 			label: localize('voltAgent.surfaceMenu.changes', "Changes"),
 			icon: Codicon.diff,
 			svgPath: CHANGES_ICON_PATH,
-			keybindingCommand: OPEN_AGENT_CHANGES_COMMAND_ID,
 		},
 		{
 			// The chat's board (or a clean one), drawn on in the chat's project.
@@ -130,6 +146,7 @@ export function agentSurfaceMenuItems(): readonly IAgentSurfaceMenuItem[] {
 			svgPath: SIDE_CHAT_ICON_PATH,
 		},
 	];
+	return items.map(item => ({ ...item, keybindingCommand: surfaceOpenCommandId(item.id) }));
 }
 
 /** Maps a + menu action to the surface kind it opens (file uses the file opener, not a draft alone). */
