@@ -73,9 +73,9 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 	properties: {
 		[AGENT_SERVER_ENABLED_SETTING]: {
 			type: 'boolean',
-			default: false,
+			default: true,
 			scope: ConfigurationScope.APPLICATION,
-			description: localize('voltAgentServer.enabled', "Run agents in the Volt agent server, a background process that keeps them working while Volt's windows are closed, after Volt quits and across sleep. Reopening Volt shows their progress. Takes effect after a restart."),
+			description: localize('voltAgentServer.enabled', "Run agents in the Volt agent server, a background process: they keep working while a window reloads or closes, after Volt quits and across sleep, and reopening Volt shows their progress. The server stops on its own after 15 minutes with no window open and nothing left to do. Turn off to run agents inside each window instead. Takes effect after a restart."),
 		},
 	},
 });
