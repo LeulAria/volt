@@ -8,7 +8,7 @@ import {
 	distanceToSegment, expandBounds, pointInPolygon, rotate, sampleCubics, segmentsIntersect, unionBounds, Vec,
 } from './scratchMath.js';
 import { shapeGeometry } from './scratchShapes.js';
-import { IScratchBounds, IScratchDrawElement, IScratchLinearElement, ScratchElement } from './scratchTypes.js';
+import { IScratchBounds, IScratchDrawElement, IScratchFrameElement, IScratchLinearElement, ScratchElement } from './scratchTypes.js';
 
 /**
  * Where elements are and what a point or a drag touches. World coordinates throughout; an
@@ -172,9 +172,26 @@ export function elementBounds(el: ScratchElement): IScratchBounds {
 	return bounds;
 }
 
-/** The frame's name tab: a strip above the top edge, in world coordinates. */
+/** Room between a container frame's outline and its header row. */
+export const FRAME_HEADER_INSET_X = 20;
+export const FRAME_HEADER_INSET_Y = 16;
+
+/** How tall a container frame's header strip is (its handle, like a plain frame's tab), insets included. */
+export function frameHeaderHeight(el: IScratchFrameElement): number {
+	const header = el.header;
+	if (!header) {
+		return 0;
+	}
+	return FRAME_HEADER_INSET_Y * 2 + Math.max(header.icon?.size ?? 0, header.fontSize * 1.25);
+}
+
+/** The frame's name tab: a strip above the top edge (a container's header strip inside it), in world coordinates. */
 function frameTabPolygon(el: ScratchElement): Vec[] {
 	const box = elementBox(el);
+	if (el.type === 'frame' && el.header) {
+		const h = Math.min(box.height, frameHeaderHeight(el));
+		return [localToWorld(el, [0, 0]), localToWorld(el, [box.width, 0]), localToWorld(el, [box.width, h]), localToWorld(el, [0, h])];
+	}
 	const w = Math.min(box.width, FRAME_TAB_MAX_WIDTH);
 	return [
 		localToWorld(el, [0, -FRAME_TAB_HEIGHT]),

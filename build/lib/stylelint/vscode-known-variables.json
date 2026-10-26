@@ -1186,6 +1186,7 @@
 		"--sx-hover",
 		"--sx-image-border",
 		"--sx-label-bg",
+		"--sx-label-gap",
 		"--sx-note",
 		"--sx-panel-bg",
 		"--sx-panel-fg",

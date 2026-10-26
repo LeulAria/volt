@@ -52,6 +52,7 @@ export function createLabel(html: string, style: IScratchStyleDefaults = DEFAULT
 		fontSize: overrides.fontSize ?? style.fontSize,
 		textAlign: overrides.textAlign ?? 'center',
 		verticalAlign: overrides.verticalAlign ?? 'middle',
+		...(overrides.color ? { color: overrides.color } : {}),
 	};
 }
 

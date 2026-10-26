@@ -3,15 +3,15 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
+import { append, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { Disposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { darkModeColor } from '../../common/scratchBoard/scratchColor.js';
-import { freehandDrawing, IScratchPathSpec, linearCenterline, linearDrawing, shapeDrawing } from '../../common/scratchBoard/scratchDrawing.js';
-import { elementBounds, elementBox } from '../../common/scratchBoard/scratchGeometry.js';
-import { boundsIntersect, pointAlongPolyline, svgNum } from '../../common/scratchBoard/scratchMath.js';
+import { connectorLabelAnchor, frameDrawing, freehandDrawing, IScratchPathSpec, LABEL_BESIDE_GAP, linearDrawing, shapeDrawing } from '../../common/scratchBoard/scratchDrawing.js';
+import { elementBounds, elementBox, FRAME_HEADER_INSET_X, FRAME_HEADER_INSET_Y, frameHeaderHeight } from '../../common/scratchBoard/scratchGeometry.js';
+import { boundsIntersect, svgNum } from '../../common/scratchBoard/scratchMath.js';
 import { IScratchSceneChange, ScratchScene } from '../../common/scratchBoard/scratchScene.js';
-import { IScratchBounds, IScratchLabel, IScratchLinearElement, isRichText, ScratchElement, ScratchFontFamily, ScratchRichTextElement } from '../../common/scratchBoard/scratchTypes.js';
+import { IScratchBounds, IScratchFrameElement, IScratchInlineIcon, IScratchLabel, IScratchLinearElement, isRichText, ScratchElement, ScratchFontFamily, ScratchRichTextElement } from '../../common/scratchBoard/scratchTypes.js';
 import { highlightCodeBlocks, setRichHtml } from './scratchRichText.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -120,10 +120,11 @@ export class ScratchRenderer extends Disposable {
 	}
 
 	/**
-	 * The size of a frame's name tab in world units (it sits inside the world layer, so its layout
-	 * box is unscaled). The tab grows when zoomed out to stay readable, so its hit area follows it.
+	 * Where a frame's name tab is and how big, in world units relative to the frame's top left (it
+	 * sits inside the world layer, so its layout box is unscaled): above the frame for a plain one,
+	 * inside for a container. A plain tab grows when zoomed out to stay readable, so its hit area follows it.
 	 */
-	frameTitleSize(id: string): { readonly width: number; readonly height: number } | undefined {
+	frameTitleSize(id: string): { readonly x: number; readonly y: number; readonly width: number; readonly height: number } | undefined {
 		const view = this.views.get(id);
 		if (!view || view.culled || view.element.type !== 'frame') {
 			return undefined;
@@ -132,7 +133,7 @@ export class ScratchRenderer extends Disposable {
 		if (!tab || !tab.textContent) {
 			return undefined;
 		}
-		return { width: tab.offsetWidth, height: tab.offsetHeight };
+		return { x: tab.offsetLeft, y: tab.offsetTop, width: tab.offsetWidth, height: tab.offsetHeight };
 	}
 
 	richHostFor(id: string): HTMLElement | undefined {
@@ -141,6 +142,11 @@ export class ScratchRenderer extends Disposable {
 
 	labelHostFor(id: string): HTMLElement | undefined {
 		return this.views.get(id)?.labelHost;
+	}
+
+	/** The editable text of an element's label (the label also holds a shape's icon). */
+	labelTextFor(id: string): HTMLElement | undefined {
+		return this.views.get(id)?.labelHost?.querySelector<HTMLElement>(':scope > .sx-label-text') ?? undefined;
 	}
 
 	/** Everything, after a board loads. */
@@ -190,7 +196,7 @@ export class ScratchRenderer extends Disposable {
 				view.node.classList.remove('sx-editing');
 				// The editor rewrote the text's DOM (code lost its colours): paint it again from the scene.
 				delete view.richHost?.dataset.html;
-				const label = view.labelHost?.firstElementChild as HTMLElement | null | undefined;
+				const label = view.labelHost?.querySelector<HTMLElement>(':scope > .sx-label-text');
 				if (label) {
 					delete label.dataset.html;
 				}
@@ -306,7 +312,7 @@ export class ScratchRenderer extends Disposable {
 		view.renderedVersion = el.version;
 		view.renderedDark = this.dark;
 		switch (el.type) {
-			case 'shape': this.paintSvg(view, shapeDrawing(el, this.mapColor), box.width, box.height, 0, 0); this.paintLabel(view, el.label, el.stroke, 'inside'); break;
+			case 'shape': this.paintSvg(view, shapeDrawing(el, this.mapColor), box.width, box.height, 0, 0); this.paintLabel(view, el.label, el.stroke, 'inside', el.icon ?? null); break;
 			case 'line':
 			case 'arrow': this.paintLinear(view, el); break;
 			case 'draw': this.paintSvg(view, freehandDrawing(el, this.mapColor), box.width, box.height, box.x - el.x, box.y - el.y); break;
@@ -315,7 +321,7 @@ export class ScratchRenderer extends Disposable {
 			case 'card': this.paintRich(view, el); break;
 			case 'image': this.paintImage(view, el.assetId, el.mime, el.strokeWidth, el.stroke, el.roundness === 'round'); break;
 			case 'icon': this.paintIcon(view, el.svg, el.tintable, el.stroke); this.paintLabel(view, el.label, el.stroke, 'below'); break;
-			case 'frame': this.paintFrame(view, el.name, el.stroke, el.fill); break;
+			case 'frame': this.paintFrame(view, el); break;
 		}
 		this.paintLink(view);
 	}
@@ -354,12 +360,13 @@ export class ScratchRenderer extends Disposable {
 		const box = elementBox(el);
 		this.paintSvg(view, linearDrawing(el, this.mapColor), box.width, box.height, box.x - el.x, box.y - el.y);
 		if (el.label && el.label.html) {
-			const line = linearCenterline(el);
-			const mid = pointAlongPolyline(line, 0.5).point;
+			// On the middle of the connector, or beside its longest stretch; local coordinates are relative to x, y.
+			const { at, side } = connectorLabelAnchor(el);
 			const host = this.ensureLabel(view, 'along');
-			// Centred on the middle of the connector; local coordinates are relative to x, y.
-			host.style.left = `${svgNum(el.x + mid[0] - box.x)}px`;
-			host.style.top = `${svgNum(el.y + mid[1] - box.y)}px`;
+			host.style.left = `${svgNum(el.x + at[0] - box.x)}px`;
+			host.style.top = `${svgNum(el.y + at[1] - box.y)}px`;
+			host.dataset.side = side;
+			host.style.setProperty('--sx-label-gap', `${LABEL_BESIDE_GAP}px`);
 			host.style.setProperty('--sx-label-bg', this.host.labelBackground());
 			this.fillLabel(host, el.label, el.stroke);
 		} else {
@@ -384,29 +391,50 @@ export class ScratchRenderer extends Disposable {
 		view.labelHost = undefined;
 	}
 
-	private paintLabel(view: IView, label: IScratchLabel | null, color: string, placement: 'inside' | 'below'): void {
-		if (!label || !label.html) {
+	private paintLabel(view: IView, label: IScratchLabel | null, color: string, placement: 'inside' | 'below', icon: IScratchInlineIcon | null = null): void {
+		if ((!label || !label.html) && !icon) {
 			this.removeLabel(view);
 			return;
 		}
 		const host = this.ensureLabel(view, placement);
 		host.style.left = '';
 		host.style.top = '';
-		this.fillLabel(host, label, color);
+		// A card's icon sits in the label's flow: above the text or before it.
+		let img = host.querySelector<HTMLImageElement>(':scope > img.sx-label-icon');
+		if (icon) {
+			if (!img) {
+				img = this.world.ownerDocument.createElement('img');
+				img.className = 'sx-label-icon';
+				img.draggable = false;
+				img.alt = '';
+				host.appendChild(img);
+			}
+			img.style.width = img.style.height = `${icon.size}px`;
+			img.src = iconDataUrl(icon.svg, icon.tintable ? this.mapColor(color) : undefined);
+			host.dataset.icon = icon.placement;
+		} else {
+			img?.remove();
+			delete host.dataset.icon;
+		}
+		if (label && label.html) {
+			this.fillLabel(host, label, color);
+		} else {
+			host.querySelector(':scope > .sx-label-text')?.remove();
+		}
 	}
 
 	private fillLabel(host: HTMLElement, label: IScratchLabel, color: string): void {
 		host.style.fontFamily = fontStack(label.fontFamily);
 		host.style.fontSize = `${label.fontSize}px`;
 		host.style.lineHeight = String(lineHeightFor(label.fontFamily));
-		host.style.color = this.mapColor(color);
+		host.style.color = this.mapColor(label.color ?? color);
 		host.style.textAlign = label.textAlign;
 		host.dataset.valign = label.verticalAlign;
-		let content = host.firstElementChild as HTMLElement | null;
+		let content = host.querySelector<HTMLElement>(':scope > .sx-label-text');
 		if (!content) {
 			content = this.world.ownerDocument.createElement('div');
 			content.className = 'sx-label-text sx-rich';
-			host.appendChild(content);
+			host.prepend(content);
 		}
 		if (content.dataset.html !== label.html) {
 			setRichHtml(content, label.html);
@@ -484,16 +512,50 @@ export class ScratchRenderer extends Disposable {
 		img.src = iconDataUrl(svg, tintable ? this.mapColor(stroke) : undefined, this.dark && !tintable);
 	}
 
-	private paintFrame(view: IView, name: string, stroke: string, fill: string): void {
+	private paintFrame(view: IView, el: IScratchFrameElement): void {
+		const doc = this.world.ownerDocument;
 		let tab = view.node.querySelector(':scope > .sx-frame-name') as HTMLElement | null;
 		if (!tab) {
-			tab = this.world.ownerDocument.createElement('div');
+			tab = doc.createElement('div');
 			tab.className = 'sx-frame-name';
 			view.node.appendChild(tab);
 		}
-		tab.textContent = name;
-		view.node.style.setProperty('--sx-frame-border', this.mapColor(stroke));
-		view.node.style.setProperty('--sx-frame-fill', fill === 'transparent' ? 'transparent' : this.mapColor(fill));
+		const header = el.header;
+		view.node.classList.toggle('sx-container', !!header);
+		if (!header) {
+			view.node.querySelector(':scope > svg.sx-svg')?.remove();
+			tab.style.cssText = '';
+			tab.textContent = el.name;
+			view.node.style.setProperty('--sx-frame-border', this.mapColor(el.stroke));
+			view.node.style.setProperty('--sx-frame-fill', el.fill === 'transparent' ? 'transparent' : this.mapColor(el.fill));
+			return;
+		}
+		// A container: its outline is drawn like a shape's, and the name sits inside after its icon.
+		const box = elementBox(el);
+		this.paintSvg(view, frameDrawing(el, this.mapColor), box.width, box.height, 0, 0);
+		tab.replaceChildren();
+		tab.style.left = `${FRAME_HEADER_INSET_X}px`;
+		tab.style.top = `${FRAME_HEADER_INSET_Y}px`;
+		tab.style.maxWidth = `calc(100% - ${FRAME_HEADER_INSET_X * 2}px)`;
+		tab.style.minHeight = `${frameHeaderHeight(el) - FRAME_HEADER_INSET_Y * 2}px`;
+		tab.style.fontFamily = fontStack(header.fontFamily);
+		tab.style.fontSize = `${header.fontSize}px`;
+		tab.style.lineHeight = String(lineHeightFor(header.fontFamily));
+		tab.style.color = this.mapColor(header.color);
+		if (header.icon) {
+			const img = append(tab, doc.createElement('img'));
+			img.className = 'sx-frame-icon';
+			img.draggable = false;
+			img.alt = '';
+			img.style.width = img.style.height = `${header.icon.size}px`;
+			img.src = iconDataUrl(header.icon.svg, header.icon.tintable ? this.mapColor(el.stroke) : undefined);
+		}
+		append(tab, doc.createElement('span')).textContent = el.name;
+		if (header.subtitle) {
+			const sub = append(tab, doc.createElement('span'));
+			sub.className = 'sx-frame-subtitle';
+			sub.textContent = header.subtitle;
+		}
 	}
 
 	private paintLink(view: IView): void {

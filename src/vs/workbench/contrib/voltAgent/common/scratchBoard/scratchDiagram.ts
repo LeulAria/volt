@@ -4,11 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { elbowRouteScore, facingSide, IScratchLeg, IScratchObstacle, IScratchRouteContext, legsOf, normalizeLinear, rebindConnector, routeCrossings, routeElbowThrough, routeObstacles, routeOverlap, ScratchSide, separateElbowLegs, withLegs } from './scratchBinding.js';
+import { connectorLabelAnchor, labelBoxAt } from './scratchDrawing.js';
 import { createFrame, createLabel, createLinear, createShape } from './scratchFactory.js';
 import { escapeHtml } from './scratchHtml.js';
 import { geometricBounds, linearHitPolyline } from './scratchGeometry.js';
 import { layeredLayoutWithRoutes } from './scratchLayout.js';
-import { boundsIntersect, expandBounds, pointAlongPolyline, type Vec } from './scratchMath.js';
+import { boundsIntersect, expandBounds, pointAlongPolyline, segmentEntersBounds, type Vec } from './scratchMath.js';
 import { graphToMermaid, IMermaidColors, IMermaidEdge, IMermaidGraph, IMermaidNode, MermaidCurve, MermaidNodeShape } from './scratchMermaid.js';
 import {
 	AGENT_SCRATCH_STYLE, DEFAULT_SCRATCH_STYLE, IScratchBounds, IScratchFrameElement, IScratchLinearElement, IScratchShapeElement, IScratchStyleDefaults,
@@ -820,31 +821,6 @@ export function elementsToMermaid(elements: readonly ScratchElement[], htmlToTex
 const OVERLAP_INSET = 6;
 const MAX_OVERLAPS = 12;
 
-/** Whether segment a-b enters `box` (Liang-Barsky clipping). */
-function segmentEntersBounds(a: Vec, b: Vec, box: IScratchBounds): boolean {
-	let t0 = 0, t1 = 1;
-	const dx = b[0] - a[0], dy = b[1] - a[1];
-	const edges: [number, number][] = [[-dx, a[0] - box.minX], [dx, box.maxX - a[0]], [-dy, a[1] - box.minY], [dy, box.maxY - a[1]]];
-	for (const [p, q] of edges) {
-		if (Math.abs(p) < 1e-9) {
-			if (q < 0) {
-				return false;
-			}
-			continue;
-		}
-		const t = q / p;
-		if (p < 0) {
-			t0 = Math.max(t0, t);
-		} else {
-			t1 = Math.min(t1, t);
-		}
-		if (t0 > t1) {
-			return false;
-		}
-	}
-	return true;
-}
-
 /**
  * What makes a drawing hard to read, in plain sentences: a connector running through a shape that
  * is not one of its ends, a connector label on a shape or on another label, shapes on top of each
@@ -859,33 +835,36 @@ export function diagramOverlaps(elements: readonly ScratchElement[], htmlToText:
 	};
 	const byId = new Map(elements.map(el => [el.id, el]));
 	const out: string[] = [];
-	const labels: { readonly text: string; readonly box: IScratchBounds }[] = [];
+	const labels: { readonly text: string; readonly box: IScratchBounds; readonly beside: boolean; readonly lineId: string }[] = [];
+	const paths = new Map<string, Vec[]>();
+	const what = (el: IScratchLinearElement) => `the connector ${name(el.startBinding ? byId.get(el.startBinding.elementId) : undefined)} → ${name(el.endBinding ? byId.get(el.endBinding.elementId) : undefined)}`;
 
 	for (const el of elements) {
 		if (!isLinear(el)) {
 			continue;
 		}
 		const path = linearHitPolyline(el);
+		paths.set(el.id, path);
 		const ends = new Set([el.startBinding?.elementId, el.endBinding?.elementId]);
-		const what = `the connector ${name(el.startBinding ? byId.get(el.startBinding.elementId) : undefined)} → ${name(el.endBinding ? byId.get(el.endBinding.elementId) : undefined)}`;
 		for (const node of nodes) {
 			const box = inner.get(node.id)!;
 			if (!ends.has(node.id) && box.maxX > box.minX && box.maxY > box.minY && path.some((p, i) => i > 0 && segmentEntersBounds(path[i - 1], p, box))) {
-				out.push(`${what} runs through ${name(node)}`);
+				out.push(`${what(el)} runs through ${name(node)}`);
 			}
 		}
 		const text = el.label?.html ? htmlToText(el.label.html).trim() : '';
 		if (text && path.length > 1) {
 			const lines = text.split('\n');
-			const mid = pointAlongPolyline(path, 0.5).point;
 			// The label's own font: a hand-drawn 16px label is wider than a 13px system one.
 			const metrics = textMetrics(el.label!.fontFamily, el.label!.fontSize);
 			const width = Math.max(...lines.map(l => l.length)) * metrics.char + 8;
 			const height = lines.length * metrics.line;
-			const box = { minX: mid[0] - width / 2, minY: mid[1] - height / 2, maxX: mid[0] + width / 2, maxY: mid[1] + height / 2 };
+			// On the middle of the line, or beside its longest stretch (see connectorLabelAnchor).
+			const { at, side } = connectorLabelAnchor(el);
+			const box = labelBoxAt([el.x + at[0], el.y + at[1]], side, width, height);
 			for (const node of nodes) {
 				if (boundsIntersect(box, inner.get(node.id)!)) {
-					out.push(`the label "${clip(text, 40)}" on ${what} sits on ${name(node)}`);
+					out.push(`the label "${clip(text, 40)}" on ${what(el)} sits on ${name(node)}`);
 				}
 			}
 			for (const other of labels) {
@@ -893,7 +872,20 @@ export function diagramOverlaps(elements: readonly ScratchElement[], htmlToText:
 					out.push(`the labels "${clip(other.text, 40)}" and "${clip(text, 40)}" overlap`);
 				}
 			}
-			labels.push({ text, box });
+			labels.push({ text, box, beside: side !== 'on', lineId: el.id });
+		}
+	}
+	// A label beside its line has no backing: another line through it makes both hard to read.
+	for (const label of labels) {
+		if (!label.beside) {
+			continue;
+		}
+		const box = expandBounds(label.box, -2);
+		for (const el of elements) {
+			const path = paths.get(el.id);
+			if (path && el.id !== label.lineId && isLinear(el) && path.some((p, i) => i > 0 && segmentEntersBounds(path[i - 1], p, box))) {
+				out.push(`${what(el)} runs through the label "${clip(label.text, 40)}"`);
+			}
 		}
 	}
 
