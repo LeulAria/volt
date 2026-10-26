@@ -319,6 +319,17 @@ suite('Volt agent history log', () => {
 		assert.strictEqual(settled.sessions[1].status, 'done');
 	});
 
+	test('a saved title that is only a tag is named from the first prompt again', () => {
+		const index = normalizeIndex({
+			version: 1,
+			sessions: [
+				meta({ id: 'leaked', title: '<traced_as_tool_call>', preview: 'review commit e68832b2f8' }),
+				meta({ id: 'custom', title: '<mine>', customTitle: true }),
+			],
+		});
+		assert.deepStrictEqual(index?.sessions.map(item => item.title), ['Review commit e68832b2f8', '<mine>']);
+	});
+
 	test('sorts pinned first, then most recent', () => {
 		const sorted = sortSessions([
 			meta({ id: 'old', updatedAt: 1 }),
