@@ -47,6 +47,37 @@ const HEADER_PATH_MAX_LENGTH = 37;
 /** Grace period so the pointer can cross the gap between the title and the card. */
 const HEADER_HOVER_HIDE_DELAY = 150;
 const HEADER_COPIED_FEEDBACK_MS = 1200;
+/** A chat title cut shorter than this does not count as fitting: the bar drops something else instead. */
+const HEADER_TITLE_MIN_WIDTH = 56;
+
+/**
+ * What the title bar drops, in this order, while its row is wider than the chat column: the project crumb,
+ * the "VOLT" wordmark, the chat title, back/forward, the bolt, then the IDE switch. Each step is a class on
+ * the title bar's container that agentTitlebarHeader.css hides by, so nothing runs under the buttons on the right.
+ */
+export const TITLEBAR_FIT_STEPS = [
+	'volt-fit-no-project',
+	'volt-fit-no-wordmark',
+	'volt-fit-no-title',
+	'volt-fit-no-nav',
+	'volt-fit-no-brand',
+	'volt-fit-no-ide',
+] as const;
+
+/**
+ * The fewest steps at which the row fits. It starts from the last level, so a resize measures once or twice:
+ * steps come back while the level below still fits, then more go while the row does not.
+ */
+export function fitTitlebarLevel(current: number, fitsAt: (level: number) => boolean, max = TITLEBAR_FIT_STEPS.length): number {
+	let level = Math.max(0, Math.min(current, max));
+	while (level > 0 && fitsAt(level - 1)) {
+		level--;
+	}
+	while (level < max && !fitsAt(level)) {
+		level++;
+	}
+	return level;
+}
 
 /** Folder glyph shown beside the project path. */
 export const AGENT_HEADER_FOLDER_PATH = 'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z';
@@ -342,6 +373,10 @@ class AgentTitlebarHeaderContribution extends Disposable {
 	private usageCrumb = false;
 	private environments: IUsageEnvironmentSelection = { all: true, local: true };
 	private machineLabel: string;
+	/** Watches the title bar's left column; it narrows when the window, the sidebar or the tools beside the chat change. */
+	private readonly fitObserver = new ResizeObserver(() => this.fit());
+	private fitTarget: HTMLElement | undefined;
+	private fitLevel = 0;
 
 	constructor(
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
@@ -373,6 +408,7 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		this.dragSpacer = $('.volt-agent-titlebar-drag');
 		this.dragSpacer.hidden = true;
 		this._register({ dispose: () => this.dragSpacer.remove() });
+		this._register({ dispose: () => this.fitObserver.disconnect() });
 
 		this.newAgentButton = append(this.element, $('button.volt-agent-primary-header-button.volt-agent-primary-header-new.volt-titlebar-control')) as HTMLButtonElement;
 		this.newAgentButton.type = 'button';
@@ -521,6 +557,43 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		if (this.element.nextElementSibling !== this.dragSpacer) {
 			this.element.insertAdjacentElement('afterend', this.dragSpacer);
 		}
+		if (this.fitTarget !== left) {
+			this.fitObserver.disconnect();
+			this.fitObserver.observe(left);
+			this.fitTarget = left;
+		}
+	}
+
+	/** Drops title bar items, least needed first, until the row fits beside the buttons on the right. */
+	private fit(): void {
+		const left = this.element.parentElement;
+		const container = left?.parentElement;
+		if (!left || !container) {
+			return;
+		}
+		if (this.element.hidden) {
+			this.fitLevel = 0;
+			this.applyFit(container, 0);
+			return;
+		}
+		this.fitLevel = fitTitlebarLevel(this.fitLevel, level => {
+			this.applyFit(container, level);
+			return !this.overflows(left);
+		});
+		this.applyFit(container, this.fitLevel);
+	}
+
+	private applyFit(container: HTMLElement, level: number): void {
+		TITLEBAR_FIT_STEPS.forEach((step, index) => container.classList.toggle(step, index < level));
+	}
+
+	private overflows(left: HTMLElement): boolean {
+		if (left.scrollWidth > left.clientWidth + 1) {
+			return true;
+		}
+		// The title shrinks before anything overflows; cut to a few letters it is better gone.
+		const label = this.titleLabel;
+		return label.offsetParent !== null && label.clientWidth < Math.min(label.scrollWidth, HEADER_TITLE_MIN_WIDTH);
 	}
 
 	/** The chat in the main editor area. A tab focused in the chat's tools does not retitle the bar. */
@@ -584,6 +657,7 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		this.dragSpacer.hidden = !agent;
 		if (!agent) {
 			this.hideHover();
+			this.fit();
 			return;
 		}
 		this.mount();
@@ -643,6 +717,8 @@ class AgentTitlebarHeaderContribution extends Disposable {
 				this.titleCluster.removeAttribute('aria-label');
 			}
 		}
+		// A longer title or another page's crumbs can need room the column does not have.
+		this.fit();
 		if (!this.hover.classList.contains('hidden')) {
 			this.showHover();
 		}
