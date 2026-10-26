@@ -4,10 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { freehandOptionsFor, freehandOutline, outlineToSvgPath } from './scratchFreehand.js';
-import { catmullRomSegments, clamp, distance, normalize, sampleCubics, svgNum, Vec } from './scratchMath.js';
+import { catmullRomSegments, clamp, distance, lerp, normalize, pointAlongPolyline, sampleCubics, sub, svgNum, Vec } from './scratchMath.js';
 import { cleanCurve, IRoughOptions, roughCurve, roughPolyline, roughShape } from './scratchRough.js';
 import { pathToSvg, shapeGeometry } from './scratchShapes.js';
-import type { IScratchDrawElement, IScratchLinearElement, IScratchShapeElement, ScratchArrowhead, ScratchStrokeStyle } from './scratchTypes.js';
+import type { IScratchBounds, IScratchDrawElement, IScratchFrameElement, IScratchLinearElement, IScratchShapeElement, ScratchArrowhead, ScratchStrokeStyle } from './scratchTypes.js';
 
 /**
  * An element as SVG paths in its own unrotated box. The DOM renderer and the SVG/PNG exporter
@@ -283,6 +283,63 @@ export function linearCenterline(el: IScratchLinearElement): Vec[] {
 		return sampleCubics(catmullRomSegments(points), 12);
 	}
 	return points;
+}
+
+/** Where a connector's label sits against its line. */
+export type ScratchLabelSide = 'on' | 'above' | 'below' | 'right' | 'left';
+
+/**
+ * Where a connector's label goes, in the connector's own coordinates (relative to x, y). A
+ * `middle` label sits on the middle of the line; a `top` or `bottom` one sits beside the middle of
+ * the longest stretch, above or below it when it runs level, right or left of it when upright.
+ */
+export function connectorLabelAnchor(el: IScratchLinearElement): { readonly at: Vec; readonly side: ScratchLabelSide } {
+	const line = linearCenterline(el);
+	const align = el.label?.verticalAlign ?? 'middle';
+	if (align === 'middle' || line.length < 2) {
+		return { at: pointAlongPolyline(line, 0.5).point, side: 'on' };
+	}
+	let at: Vec;
+	let direction: Vec;
+	if (el.arrowType === 'round') {
+		({ point: at, direction } = pointAlongPolyline(line, 0.5));
+	} else {
+		let best = 1;
+		let longest = -1;
+		for (let i = 1; i < line.length; i++) {
+			const d = distance(line[i - 1], line[i]);
+			// A clearly longer stretch wins; between equals, the first.
+			if (d > longest + 0.5) {
+				longest = d;
+				best = i;
+			}
+		}
+		at = lerp(line[best - 1], line[best], 0.5);
+		direction = sub(line[best], line[best - 1]);
+	}
+	const level = Math.abs(direction[0]) >= Math.abs(direction[1]);
+	const first = align === 'top';
+	return { at, side: level ? (first ? 'above' : 'below') : (first ? 'right' : 'left') };
+}
+
+/** Room between a label beside a line and the line. */
+export const LABEL_BESIDE_GAP = 6;
+
+/** The box a label of `width` x `height` takes when placed at `at` on `side`. */
+export function labelBoxAt(at: Vec, side: ScratchLabelSide, width: number, height: number): IScratchBounds {
+	const g = LABEL_BESIDE_GAP;
+	switch (side) {
+		case 'above': return { minX: at[0] - width / 2, maxX: at[0] + width / 2, minY: at[1] - g - height, maxY: at[1] - g };
+		case 'below': return { minX: at[0] - width / 2, maxX: at[0] + width / 2, minY: at[1] + g, maxY: at[1] + g + height };
+		case 'right': return { minX: at[0] + g + 2, maxX: at[0] + g + 2 + width, minY: at[1] - height / 2, maxY: at[1] + height / 2 };
+		case 'left': return { minX: at[0] - g - 2 - width, maxX: at[0] - g - 2, minY: at[1] - height / 2, maxY: at[1] + height / 2 };
+		default: return { minX: at[0] - width / 2, maxX: at[0] + width / 2, minY: at[1] - height / 2, maxY: at[1] + height / 2 };
+	}
+}
+
+/** A container frame's outline: drawn like a rounded rectangle with the frame's stroke, fill and roughness. */
+export function frameDrawing(el: IScratchFrameElement, mapColor: (c: string) => string): IScratchPathSpec[] {
+	return shapeDrawing({ ...el, type: 'shape', shape: 'rectangle', roundness: 'round', label: null }, mapColor);
 }
 
 /** Head size grows a little with stroke width (Excalidraw's sizes at width 2). */

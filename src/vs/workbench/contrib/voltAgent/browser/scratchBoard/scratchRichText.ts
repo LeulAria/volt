@@ -17,6 +17,8 @@ import { highlight } from '../blocks/agentCodeBlock.js';
 export const RICH_TEXT_TAGS = [
 	'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'del', 'code', 'pre', 'a', 'ul', 'ol', 'li',
 	'h1', 'h2', 'h3', 'blockquote', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span', 'div', 'mark',
+	// A quieter line under a card's title (a diagram's subtitles).
+	'small',
 ] as const;
 
 const LINK_PROTOCOLS = ['http', 'https', 'mailto'];

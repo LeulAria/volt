@@ -12,6 +12,7 @@ import {
 	agentHeaderHoverLines,
 	createAgentHeaderFolderIcon,
 	createAgentHeaderGitIcon,
+	fitTitlebarLevel,
 	formatHeaderFolderPath,
 	headerBranchName,
 	headerFolderPath,
@@ -66,6 +67,25 @@ suite('Agent primary header', () => {
 			{ kind: 'path', title: '~/volt' },
 		]);
 		assert.deepStrictEqual(agentHeaderHoverLines('volt', 'main', ''), []);
+	});
+
+	test('drops the fewest title bar items that make the row fit, measuring from the last level', () => {
+		const tried: number[] = [];
+		const fitsFrom = (min: number) => (level: number) => {
+			tried.push(level);
+			return level >= min;
+		};
+		assert.strictEqual(fitTitlebarLevel(0, fitsFrom(0)), 0);
+		assert.deepStrictEqual(tried.splice(0), [0]);
+		// Narrowed: more steps go.
+		assert.strictEqual(fitTitlebarLevel(0, fitsFrom(3)), 3);
+		assert.deepStrictEqual(tried.splice(0), [0, 1, 2, 3]);
+		// Widened: steps come back until the level below no longer fits.
+		assert.strictEqual(fitTitlebarLevel(4, fitsFrom(2)), 2);
+		assert.deepStrictEqual(tried.splice(0), [3, 2, 1, 2]);
+		// Too narrow even with every step: the last one, never past it.
+		assert.strictEqual(fitTitlebarLevel(2, () => false, 6), 6);
+		assert.strictEqual(fitTitlebarLevel(9, () => true, 6), 0);
 	});
 
 	test('tildifies and shortens the folder path', () => {

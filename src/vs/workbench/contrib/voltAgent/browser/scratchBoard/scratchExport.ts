@@ -12,10 +12,10 @@ import { IFileDialogService } from '../../../../../platform/dialogs/common/dialo
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IPathService } from '../../../../services/path/common/pathService.js';
-import { freehandDrawing, IScratchPathSpec, linearCenterline, linearDrawing, shapeDrawing } from '../../common/scratchBoard/scratchDrawing.js';
-import { elementBounds, elementBox, elementCenter } from '../../common/scratchBoard/scratchGeometry.js';
-import { pointAlongPolyline, svgNum, unionBounds } from '../../common/scratchBoard/scratchMath.js';
-import { IScratchBounds, IScratchLabel, isRichText, ScratchElement } from '../../common/scratchBoard/scratchTypes.js';
+import { connectorLabelAnchor, frameDrawing, freehandDrawing, IScratchPathSpec, LABEL_BESIDE_GAP, linearDrawing, ScratchLabelSide, shapeDrawing } from '../../common/scratchBoard/scratchDrawing.js';
+import { elementBounds, elementBox, elementCenter, FRAME_HEADER_INSET_X, FRAME_HEADER_INSET_Y, frameHeaderHeight } from '../../common/scratchBoard/scratchGeometry.js';
+import { svgNum, unionBounds } from '../../common/scratchBoard/scratchMath.js';
+import { IScratchBounds, IScratchInlineIcon, IScratchLabel, isRichText, ScratchElement } from '../../common/scratchBoard/scratchTypes.js';
 import { IScratchBoardService } from './scratchBoardService.js';
 import type { ScratchCanvas } from './scratchCanvas.js';
 import type { ScratchScene } from '../../common/scratchBoard/scratchScene.js';
@@ -79,6 +79,7 @@ const RICH_CSS = `
 .sx-x hr{border:none;border-top:1px solid rgba(127,127,127,.4);margin:.5em 0}
 .sx-x a{color:#1971c2;text-decoration:underline}
 .sx-x mark{background:#ffec99;color:inherit;padding:0 .1em}
+.sx-x small{font-size:.7em;opacity:.6}
 `;
 
 /** What a render reads: the canvas, or a board that is not on screen (an agent tool). */
@@ -154,7 +155,7 @@ export class ScratchExporter {
 		const map = (c: string) => dark ? canvas.mapColor(c) : c;
 		const doc = getWindow(canvas.element).document;
 		const parts: string[] = [];
-		const usesHand = elements.some(el => (isRichText(el) && el.fontFamily === 'hand') || ((el.type === 'shape' || el.type === 'arrow' || el.type === 'line' || el.type === 'icon') && el.label?.fontFamily === 'hand'));
+		const usesHand = elements.some(el => (isRichText(el) && el.fontFamily === 'hand') || ((el.type === 'shape' || el.type === 'arrow' || el.type === 'line' || el.type === 'icon') && el.label?.fontFamily === 'hand') || (el.type === 'frame' && el.header?.fontFamily === 'hand'));
 		const fonts = usesHand ? await this.embeddedFonts() : '';
 		// A done checkbox's check is cut out in the board's colour, as on the board.
 		const check = map(scene.settings.background);
@@ -189,18 +190,23 @@ export class ScratchExporter {
 		switch (el.type) {
 			case 'shape':
 				inner.push(pathsSvg(shapeDrawing(el, map)));
-				if (el.label) {
+				if (el.label || el.icon) {
 					const b = local(box.x, box.y, box.width, box.height);
-					inner.push(this.labelSvg(el.label, map(el.stroke), b.x + LABEL_PADDING, b.y + LABEL_PADDING, Math.max(1, b.w - LABEL_PADDING * 2), Math.max(1, b.h - LABEL_PADDING * 2), doc));
+					inner.push(this.labelSvg(el.label, map(el.stroke), b.x + LABEL_PADDING, b.y + LABEL_PADDING, Math.max(1, b.w - LABEL_PADDING * 2), Math.max(1, b.h - LABEL_PADDING * 2), doc, undefined, el.icon ?? null, map));
 				}
 				break;
 			case 'line':
 			case 'arrow':
 				inner.push(pathsSvg(linearDrawing(el, map)));
 				if (el.label) {
-					const mid = pointAlongPolyline(linearCenterline(el), 0.5).point;
-					const w = 220, h = el.label.fontSize * 3;
-					inner.push(this.labelSvg(el.label, map(el.stroke), mid[0] - w / 2, mid[1] - h / 2, w, h, doc, background));
+					const { at, side } = connectorLabelAnchor(el);
+					// As wide as the board lets it be (see .sx-label[data-placement="along"] in scratchBoard.css).
+					const w = side === 'above' || side === 'below' ? 360 : 220, h = el.label.fontSize * 3;
+					// A box the label is aligned in, on its side of the line (or centred on it).
+					const g = LABEL_BESIDE_GAP;
+					const x = side === 'right' ? at[0] + g + 2 : side === 'left' ? at[0] - g - 2 - w : at[0] - w / 2;
+					const y = side === 'above' ? at[1] - g - h : side === 'below' ? at[1] + g : at[1] - h / 2;
+					inner.push(this.labelSvg(el.label, map(el.stroke), x, y, w, h, doc, side === 'on' ? background : undefined, null, map, side));
 				}
 				break;
 			case 'draw':
@@ -241,6 +247,16 @@ export class ScratchExporter {
 			}
 			case 'frame': {
 				const b = local(box.x, box.y, box.width, box.height);
+				if (el.header) {
+					// A container: its drawn outline, and the name inside after its icon, as on the board.
+					const header = el.header;
+					inner.push(`<g transform="translate(${svgNum(b.x)} ${svgNum(b.y)})">${pathsSvg(frameDrawing(el, map))}</g>`);
+					const icon = header.icon ? `<img src="${escapeAttr(iconDataUrl(header.icon.svg, header.icon.tintable ? map(el.stroke) : undefined))}" width="${svgNum(header.icon.size)}" height="${svgNum(header.icon.size)}" style="display:block;flex:none"/>` : '';
+					const subtitle = header.subtitle ? `<span style="align-self:center;margin-left:4px;font-size:.62em;opacity:.6">${escapeText(header.subtitle)}</span>` : '';
+					const rowHeight = frameHeaderHeight(el) - FRAME_HEADER_INSET_Y * 2;
+					inner.push(`<foreignObject x="${svgNum(b.x + FRAME_HEADER_INSET_X)}" y="${svgNum(b.y + FRAME_HEADER_INSET_Y)}" width="${svgNum(Math.max(1, b.w - FRAME_HEADER_INSET_X * 2))}" height="${svgNum(rowHeight + 8)}"><div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;align-items:center;gap:10px;height:${svgNum(rowHeight)}px;white-space:nowrap;overflow:hidden;color:${escapeAttr(map(header.color))};font-family:${escapeAttr(fontStack(header.fontFamily))};font-size:${header.fontSize}px;line-height:${lineHeightFor(header.fontFamily)}">${icon}<span>${escapeText(el.name)}</span>${subtitle}</div></foreignObject>`);
+					break;
+				}
 				inner.push(`<rect x="${svgNum(b.x)}" y="${svgNum(b.y)}" width="${svgNum(b.w)}" height="${svgNum(b.h)}" rx="8" fill="${el.fill === 'transparent' ? 'none' : escapeAttr(map(el.fill))}" stroke="${escapeAttr(map(el.stroke))}" stroke-width="1"/>`);
 				// The name as the board shows it: a heading in the ink colour, 10px clear of the frame.
 				inner.push(`<text x="${svgNum(b.x + 1)}" y="${svgNum(b.y - 13)}" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="${escapeAttr(map(FRAME_TITLE_INK))}">${escapeText(el.name)}</text>`);
@@ -250,11 +266,26 @@ export class ScratchExporter {
 		return `${open}${inner.join('')}</g>`;
 	}
 
-	private labelSvg(label: IScratchLabel, color: string, x: number, y: number, width: number, height: number, doc: Document, background?: string): string {
-		const valign = label.verticalAlign === 'top' ? 'flex-start' : label.verticalAlign === 'bottom' ? 'flex-end' : 'center';
-		const xhtml = this.xhtml(label.html, doc);
+	/**
+	 * A label in a box, laid out as the board lays it out: centred (or at its vertical alignment),
+	 * with a shape's icon above or before it, or against one side of the box for a label beside a line.
+	 */
+	private labelSvg(label: IScratchLabel | null, color: string, x: number, y: number, width: number, height: number, doc: Document, background?: string, icon: IScratchInlineIcon | null = null, map: (c: string) => string = c => c, side: ScratchLabelSide = 'on'): string {
+		const valign = label?.verticalAlign === 'top' ? 'flex-start' : label?.verticalAlign === 'bottom' ? 'flex-end' : 'center';
 		const bg = background ? `background:${background};padding:0 4px;border-radius:4px;` : '';
-		return `<foreignObject x="${svgNum(x)}" y="${svgNum(y)}" width="${svgNum(width)}" height="${svgNum(height)}"><div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;align-items:${valign};justify-content:center;width:100%;height:100%;"><div class="sx-x" style="${bg}max-width:100%;color:${color};font-family:${escapeAttr(fontStack(label.fontFamily))};font-size:${label.fontSize}px;line-height:${lineHeightFor(label.fontFamily)};text-align:${label.textAlign};">${xhtml}</div></div></foreignObject>`;
+		let layout: string;
+		if (side !== 'on') {
+			layout = `align-items:${side === 'above' ? 'flex-end' : side === 'below' ? 'flex-start' : 'center'};justify-content:${side === 'right' ? 'flex-start' : side === 'left' ? 'flex-end' : 'center'};`;
+		} else if (icon?.placement === 'top') {
+			layout = `flex-direction:column;align-items:center;justify-content:${valign};gap:10px;`;
+		} else if (icon) {
+			layout = 'align-items:center;justify-content:flex-start;gap:14px;padding-left:10px;box-sizing:border-box;';
+		} else {
+			layout = `align-items:${valign};justify-content:center;`;
+		}
+		const img = icon ? `<img src="${escapeAttr(iconDataUrl(icon.svg, icon.tintable ? map(color) : undefined))}" width="${svgNum(icon.size)}" height="${svgNum(icon.size)}" style="display:block;flex:none"/>` : '';
+		const text = label ? `<div class="sx-x" style="${bg}max-width:100%;min-width:0;color:${escapeAttr(label.color ? map(label.color) : color)};font-family:${escapeAttr(fontStack(label.fontFamily))};font-size:${label.fontSize}px;line-height:${lineHeightFor(label.fontFamily)};text-align:${side === 'right' ? 'left' : side === 'left' ? 'right' : label.textAlign};">${this.xhtml(label.html, doc)}</div>` : '';
+		return `<foreignObject x="${svgNum(x)}" y="${svgNum(y)}" width="${svgNum(width)}" height="${svgNum(height)}"><div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;${layout}width:100%;height:100%;">${img}${text}</div></foreignObject>`;
 	}
 
 	private richSvg(html: string, o: { color: string; fontFamily: IScratchLabel['fontFamily']; fontSize: number; align: string; x: number; y: number; width: number; height: number; nowrap: boolean }, doc: Document): string {

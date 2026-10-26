@@ -6,7 +6,7 @@
 import { isValidColor } from './scratchColor.js';
 import {
 	DEFAULT_SCRATCH_SETTINGS, IScratchAgentRun, IScratchBinding, IScratchBoardDocument, IScratchBoardMeta, IScratchBoardSettings,
-	IScratchCamera, IScratchFolder, IScratchIndex, IScratchLabel, IScratchRect, SCRATCH_MAX_ZOOM, SCRATCH_MIN_ZOOM, SCRATCH_SCHEMA_VERSION,
+	IScratchCamera, IScratchFolder, IScratchFrameHeader, IScratchIndex, IScratchInlineIcon, IScratchLabel, IScratchRect, SCRATCH_MAX_ZOOM, SCRATCH_MIN_ZOOM, SCRATCH_SCHEMA_VERSION,
 	ScratchArrowhead, ScratchElement, ScratchPoint, ScratchPressurePoint,
 } from './scratchTypes.js';
 import { SHAPE_KINDS } from './scratchShapes.js';
@@ -77,6 +77,37 @@ function label(v: unknown): IScratchLabel | null {
 		fontSize: num(v.fontSize, 20, 4, 400),
 		textAlign: oneOf(v.textAlign, ALIGNS, 'center'),
 		verticalAlign: oneOf(v.verticalAlign, ['top', 'middle', 'bottom'] as const, 'middle'),
+		...(typeof v.color === 'string' && isValidColor(v.color) ? { color: v.color } : {}),
+	};
+}
+
+function inlineIcon(v: unknown): IScratchInlineIcon | null {
+	if (!isObject(v)) {
+		return null;
+	}
+	const svg = str(v.svg, '', 500_000);
+	if (!/^\s*<svg[\s>]/i.test(svg)) {
+		return null;
+	}
+	return {
+		iconId: str(v.iconId, '', 200),
+		svg,
+		tintable: bool(v.tintable, true),
+		placement: oneOf(v.placement, ['top', 'left'] as const, 'top'),
+		size: num(v.size, 32, 4, 512),
+	};
+}
+
+function frameHeader(v: unknown): IScratchFrameHeader | null {
+	if (!isObject(v)) {
+		return null;
+	}
+	return {
+		icon: inlineIcon(v.icon),
+		subtitle: str(v.subtitle, '', 500),
+		fontFamily: oneOf(v.fontFamily, FONTS, 'hand'),
+		fontSize: num(v.fontSize, 24, 4, 400),
+		color: color(v.color, '#1e1e1e'),
 	};
 }
 
@@ -117,8 +148,10 @@ export function parseElement(v: unknown): ScratchElement | undefined {
 		link: typeof v.link === 'string' && v.link ? v.link : null,
 	};
 	switch (v.type) {
-		case 'shape':
-			return { ...base, type: 'shape', shape: oneOf(v.shape, SHAPE_KINDS, 'rectangle'), label: label(v.label) };
+		case 'shape': {
+			const icon = inlineIcon(v.icon);
+			return { ...base, type: 'shape', shape: oneOf(v.shape, SHAPE_KINDS, 'rectangle'), label: label(v.label), ...(icon ? { icon } : {}) };
+		}
 		case 'line':
 		case 'arrow': {
 			const points = Array.isArray(v.points) ? v.points.map(point).filter((p): p is ScratchPoint => !!p) : [];
@@ -180,8 +213,10 @@ export function parseElement(v: unknown): ScratchElement | undefined {
 			}
 			return { ...base, type: 'icon', iconId: str(v.iconId, '', 200), svg, tintable: bool(v.tintable, true), label: label(v.label) };
 		}
-		case 'frame':
-			return { ...base, type: 'frame', name: str(v.name, 'Frame', 500) };
+		case 'frame': {
+			const header = frameHeader(v.header);
+			return { ...base, type: 'frame', name: str(v.name, 'Frame', 500), ...(header ? { header } : {}) };
+		}
 	}
 	return undefined;
 }

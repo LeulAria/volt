@@ -176,7 +176,6 @@
 
 .volt-menu-label .highlight {
 	color: var(--vscode-list-highlightForeground);
-	font-weight: 600;
 }
 
 .volt-menu-description {

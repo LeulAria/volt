@@ -1109,7 +1109,8 @@ export class ScratchCanvas extends Disposable {
 	/** The topmost frame whose name tab (as big as its text on screen, padding included) holds `world`. */
 	/** How far a frame's name tab rises above its top edge, in board units (0 without a name or while not drawn). */
 	frameTitleHeight(id: string): number {
-		return this.renderer?.frameTitleSize(id)?.height ?? 0;
+		// A container's name is inside it: nothing rises above.
+		return Math.max(0, -(this.renderer?.frameTitleSize(id)?.y ?? 0));
 	}
 
 	private frameTitleAt(world: Vec, includeLocked: boolean): ScratchElement | undefined {
@@ -1130,7 +1131,10 @@ export class ScratchCanvas extends Disposable {
 				continue;
 			}
 			const local = worldToLocal(el, world);
-			if (local[0] >= -slop && local[0] <= tab.width + slop && local[1] >= -tab.height - slop && local[1] <= 0) {
+			// Above a plain frame (its tab starts at its edge), inside a container.
+			const left = el.header ? tab.x : 0;
+			const bottom = el.header ? tab.y + tab.height : 0;
+			if (local[0] >= left - slop && local[0] <= left + tab.width + slop && local[1] >= bottom - tab.height - slop && local[1] <= bottom + (el.header ? slop : 0)) {
 				return el;
 			}
 		}
@@ -2211,12 +2215,12 @@ export class ScratchCanvas extends Disposable {
 		} else if (hasLabel(el)) {
 			kind = 'label';
 			initial = el.label?.html ?? '';
-			host = renderer.labelHostFor(id)?.firstElementChild as HTMLElement | undefined;
+			host = renderer.labelTextFor(id);
 			if (!host) {
 				// No label yet: give the renderer one to paint, then edit it.
 				const label: IScratchLabel = createLabel('<p><br></p>', this.state.style, el.type === 'icon' ? { fontSize: 16 } : el.type === 'shape' ? {} : { fontSize: Math.min(20, this.state.style.fontSize) });
 				scene.transact('', tx => tx.update(id, { label }), { record: false });
-				host = renderer.labelHostFor(id)?.firstElementChild as HTMLElement | undefined;
+				host = renderer.labelTextFor(id);
 				initial = '';
 			}
 		} else {

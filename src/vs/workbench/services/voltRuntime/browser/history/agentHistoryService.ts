@@ -54,6 +54,7 @@ import {
 	deriveTitle,
 	encodeRecord,
 	foldTranscript,
+	isMarkupOnlyTitle,
 	metaAfterEntry,
 	normalizeIndex,
 	parseAttachmentRef,
@@ -1205,7 +1206,7 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 	async setAgentTitle(id: string, title: string): Promise<void> {
 		const text = title.trim();
 		const meta = this.sessions.get(id);
-		if (!meta || !text || meta.customTitle) {
+		if (!meta || !text || meta.customTitle || isMarkupOnlyTitle(text)) {
 			return;
 		}
 		const handle = this.open(id);

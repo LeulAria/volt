@@ -75,7 +75,7 @@ export type AgentHomeElement =
 	| { readonly type: 'group'; readonly id: AgentHomeGroupId; readonly count?: number }
 	/**
 	 * `nested` sessions sit under their project; the others name it on their second line.
-	 * `sideDepth` is set on a side chat, listed right under the chat it was opened in.
+	 * `sideDepth` is set on a run listed under its run group. Side chats are rows like any other chat.
 	 */
 	| { readonly type: 'session'; readonly session: IAgentSessionMeta; readonly folderKey: string; readonly nested: boolean; readonly sideDepth?: number; readonly runMember?: IAgentHomeRunMember }
 	/** One prompt sent to several models: a row that opens the compare view and folds out into its runs. */
@@ -495,7 +495,7 @@ function buildHomeTree(
 	const now = options.now ?? Date.now();
 	const unique = uniqueHomeFolders(folders);
 	const workspaceFileIds = new Set(unique.flatMap(folder => folder.workspace && folder.workspaceId ? [folder.workspaceId] : []));
-	const { roots: visible, sideChats } = splitSideChats(sessions.filter(session => sessionPassesHomeFilters(session, view, workspaceFileIds, options.prTags)));
+	const visible = sessions.filter(session => sessionPassesHomeFilters(session, view, workspaceFileIds, options.prTags));
 	const active = visible.filter(session => sessionHomeShelf(session) === 'active');
 	const pinned = sortSessionsForHome(active.filter(session => session.pinned), view.chatOrder);
 	// Busy chats fold into Working and come back to the inbox when they finish, fail or need the user.
@@ -573,64 +573,7 @@ function buildHomeTree(
 		}
 	}
 
-	return sideChats.size ? withSideChats(tree, sideChats) : tree;
-}
-
-/**
- * Side chats whose chat is listed too go under that chat instead of in the list. One whose chat
- * is filtered out, archived or gone stays a row of its own.
- */
-export function splitSideChats(sessions: readonly IAgentSessionMeta[]): { roots: IAgentSessionMeta[]; sideChats: Map<string, IAgentSessionMeta[]> } {
-	const byId = new Map(sessions.map(session => [session.id, session]));
-	const listedUnder = (session: IAgentSessionMeta): boolean => {
-		// Parents that point at each other would hide every one of them, so a loop lists them all as rows.
-		const seen = new Set<string>([session.id]);
-		let parentId = session.parentId;
-		while (parentId && byId.has(parentId)) {
-			if (seen.has(parentId)) {
-				return false;
-			}
-			seen.add(parentId);
-			parentId = byId.get(parentId)?.parentId;
-		}
-		return seen.size > 1;
-	};
-	const roots: IAgentSessionMeta[] = [];
-	const sideChats = new Map<string, IAgentSessionMeta[]>();
-	for (const session of sessions) {
-		if (session.parentId && listedUnder(session)) {
-			const siblings = sideChats.get(session.parentId) ?? [];
-			siblings.push(session);
-			sideChats.set(session.parentId, siblings);
-		} else {
-			roots.push(session);
-		}
-	}
-	return { roots, sideChats };
-}
-
-/** Puts each chat's side chats right below its row, oldest first, the way they were opened. */
-function withSideChats(nodes: readonly IAgentHomeNode[], sideChats: ReadonlyMap<string, readonly IAgentSessionMeta[]>): IAgentHomeNode[] {
-	const result: IAgentHomeNode[] = [];
-	const appendSideChats = (parent: Extract<AgentHomeElement, { type: 'session' }>, depth: number) => {
-		const children = [...sideChats.get(parent.session.id) ?? []].sort((a, b) => a.createdAt - b.createdAt);
-		for (const session of children) {
-			const element: Extract<AgentHomeElement, { type: 'session' }> = { type: 'session', session, folderKey: parent.folderKey, nested: parent.nested, sideDepth: depth };
-			result.push({ element });
-			appendSideChats(element, depth + 1);
-		}
-	};
-	for (const node of nodes) {
-		if (node.children) {
-			result.push({ ...node, children: withSideChats(node.children, sideChats) });
-			continue;
-		}
-		result.push(node);
-		if (node.element.type === 'session') {
-			appendSideChats(node.element, 1);
-		}
-	}
-	return result;
+	return tree;
 }
 
 interface IBucketNodeOptions {

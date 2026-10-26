@@ -37,6 +37,9 @@ suite('Volt chat title generation', () => {
 		assert.strictEqual(sanitizeTitle('{"title":"Sidebar chat titles"}'), 'Sidebar chat titles');
 		assert.strictEqual(sanitizeTitle('   \n'), undefined);
 		assert.strictEqual(sanitizeTitle('New chat'), undefined);
+		assert.strictEqual(sanitizeTitle('<traced_as_tool_call>'), undefined);
+		assert.strictEqual(sanitizeTitle('<tool_call name="x"></tool_call>'), undefined);
+		assert.strictEqual(sanitizeTitle('Fix <Button> focus ring'), 'Fix <Button> focus ring');
 		assert.ok(sanitizeTitle('word '.repeat(30))!.length <= 48);
 	});
 

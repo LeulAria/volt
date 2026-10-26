@@ -706,7 +706,7 @@ function rowLevel(element: AgentHomeElement): number {
 		case 'runGroup':
 			return 1;
 		case 'session':
-			// A side chat steps in past its chat's dot, so it reads as part of that chat.
+			// A run steps in past its group's icon, so it reads as part of that group.
 			return 1 + 3 * (element.sideDepth ?? 0);
 		case 'more':
 			return 1;

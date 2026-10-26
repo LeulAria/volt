@@ -8863,6 +8863,12 @@ pre.volt-agent-searchable {
 	height: var(--editor-group-tab-height);
 }
 
+/* The row's empty space does not pick up the whole tab group (VS Code drags a group by its tab bar): it only
+ * drew a ghost of the bar, and a drop outside the window moved the tabs into a new one. Tabs still drag to reorder. */
+.monaco-workbench .volt-agent-tools-area .editor-group-container > .title .tabs-container {
+	-webkit-user-drag: none;
+}
+
 /* The empty area's own + takes the place the + after the last tab would have. */
 .monaco-workbench .volt-agent-tools-area .editor-group-container:not(.empty) .volt-agent-tools-empty-add {
 	display: none;
