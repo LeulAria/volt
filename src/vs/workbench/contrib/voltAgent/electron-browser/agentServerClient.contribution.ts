@@ -19,6 +19,7 @@ import { InstantiationType, registerSingleton } from '../../../../platform/insta
 import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerMainProcessRemoteService } from '../../../../platform/ipc/electron-browser/services.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
+import { Schemas } from '../../../../base/common/network.js';
 import { INativeHostService } from '../../../../platform/native/common/native.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
@@ -29,6 +30,14 @@ import { IWebSocketLike } from '../../../../platform/voltAgentServer/common/conn
 import { DEFAULT_TOPICS } from '../../../../platform/voltAgentServer/common/protocol.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
+import { ITextModelService } from '../../../../editor/common/services/resolverService.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
+import { IMarkerService } from '../../../../platform/markers/common/markers.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+import { CodeIntelHost } from '../../../services/voltRuntime/browser/host/codeIntelHost.js';
+import { lspAllowedFor } from '../../../services/voltRuntime/common/codeIntelligence.js';
+import { IVoltBrowserAccessService } from '../../../services/voltRuntime/common/browserAccess.js';
 import { IHostService } from '../../../services/host/browser/host.js';
 import { AGENT_SERVER_ENABLED_SETTING, AgentServerClient, agentServerEnabled, IAgentServerClientService } from '../../../services/voltAgentServer/common/agentServerClient.js';
 import { RemoteAgentHistoryService } from '../../../services/voltAgentServer/common/remoteAgentHistoryService.js';
@@ -42,7 +51,7 @@ import { AgentOrchestratorService } from '../../../services/voltRuntime/browser/
 import { VoltSessionContextService } from '../../../services/voltRuntime/browser/sessionContextService.js';
 import { AgentRuntimeService } from '../../../services/voltRuntime/browser/voltRuntimeService.js';
 import { IAgentHistoryService } from '../../../services/voltRuntime/common/history/agentHistory.js';
-import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
+import { AGENT_SERVER_WINDOW_COMMANDS, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
 import { IAgentOrchestratorService } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IProviderProfile, secretKeyForProfile } from '../../../services/voltRuntime/common/profiles.js';
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
@@ -89,7 +98,7 @@ class DesktopAgentServerClient extends AgentServerClient {
 				}
 			},
 			createSocket: url => new WebSocket(url) as unknown as IWebSocketLike,
-			client: { kind: 'desktop', id: generateUuid(), capabilities: ['browser', 'surface'], topics: [...DEFAULT_TOPICS, 'runtime.event'] },
+			client: { kind: 'desktop', id: generateUuid(), capabilities: ['browser', 'surface', 'codeIntel'], topics: [...DEFAULT_TOPICS, 'runtime.event'] },
 			onError: (method, err) => logService.warn(`[volt agent server] ${method} failed`, err),
 		});
 		this.connect();
@@ -128,8 +137,8 @@ registerSingleton(IAgentCheckpointService, <never>eitherLocalOrRemote(AgentCheck
 setAgentSessionControlFactory((input, instantiationService) => instantiationService.invokeFunction(accessor =>
 	agentServerEnabled(accessor.get(IConfigurationService)) ? instantiationService.createInstance(RemoteAgentSessionControl, input) : undefined));
 
-/** Commands the server may ask this window to run: the in-app browser's. */
-const WINDOW_COMMANDS = new Set([AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID]);
+/** Commands the server may ask this window to run: the in-app browser's, and what the user has open. */
+const WINDOW_COMMANDS = AGENT_SERVER_WINDOW_COMMANDS;
 
 /**
  * What a window does for the agent server: the things only a window can (the in-app browser,
@@ -177,7 +186,15 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 			// Cancellation stays on the server; a token does not cross the socket.
 			return commands.executeCommand(id, ...args.map(arg => withoutToken(arg)));
 		}));
+		this.serveCodeIntel(client, accessor, logService);
+		const browserAccess = accessor.get(IVoltBrowserAccessService);
+		const sendBrowserChoices = () => client.call('browserAccess.setChoices', browserAccess.chatChoices()).catch(err => logService.warn('[volt agent server] could not send the browser access choices', err));
+		this._register(browserAccess.onDidChange(() => void sendBrowserChoices()));
+		if (client.isReady) {
+			void sendBrowserChoices();
+		}
 		this._register(client.onDidResync(() => {
+			void sendBrowserChoices();
 			void this.handOverKeys(client, secrets, logService);
 			this.applyEdits(client, edits, logService);
 		}));
@@ -209,6 +226,46 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 		};
 		globalThis.addEventListener?.('online', online);
 		this._register({ dispose: () => globalThis.removeEventListener?.('online', online) });
+	}
+
+	/**
+	 * Agents in the server ask this window's language servers (go to definition, references,
+	 * outline, diagnostics). Worktrees outside this window's folders follow Settings > Code Intelligence.
+	 */
+	private serveCodeIntel(client: IAgentServerClientService, accessor: ServicesAccessor, logService: ILogService): void {
+		const configuration = accessor.get(IConfigurationService);
+		const workspace = accessor.get(IWorkspaceContextService);
+		// The server sends a file's queries to the window that has its folder open.
+		const sendFolders = () => client.call('codeIntel.setFolders', workspace.getWorkspace().folders.filter(folder => folder.uri.scheme === Schemas.file).map(folder => folder.uri.fsPath))
+			.catch(err => logService.trace('[volt agent server] could not send this window\'s folders', err));
+		this._register(workspace.onDidChangeWorkspaceFolders(() => void sendFolders()));
+		this._register(client.onDidResync(() => void sendFolders()));
+		if (client.isReady) {
+			void sendFolders();
+		}
+		const host = this._register(new CodeIntelHost(accessor.get(IMarkerService), accessor.get(ITextModelService), accessor.get(ILanguageFeaturesService), accessor.get(IFileService)));
+		host.setLspPolicy(uri => lspAllowedFor(configuration, !workspace.isInsideWorkspace(uri)));
+		const allowed = (uri: unknown): uri is URI => URI.isUri(uri) && host.lspAllowed(uri);
+		this._register(client.registerHandler('codeIntel.noteWrite', uri => {
+			if (URI.isUri(uri)) {
+				host.noteWrite(uri);
+			}
+			return true;
+		}));
+		this._register(client.registerHandler('codeIntel.errorCounts', uri => URI.isUri(uri) ? [...host.errorCounts(uri)] : []));
+		this._register(client.registerHandler('codeIntel.newErrors', (uri, baseline) =>
+			allowed(uri) ? host.newErrors(uri, new Map(Array.isArray(baseline) ? baseline as [string, number][] : [])) : []));
+		this._register(client.registerHandler('codeIntel.diagnostics', (uris, severity) => {
+			const list = Array.isArray(uris) ? uris.filter(allowed) : undefined;
+			if (Array.isArray(uris) && uris.length && !list?.length) {
+				throw new Error('Language servers are off for this checkout (Settings > Code Intelligence), so the editor has no diagnostics for it. Run the project\'s type checker or linter instead.');
+			}
+			return host.diagnostics(list?.length ? list : undefined, severity === 'warning' || severity === 'all' ? severity : 'error');
+		}));
+		const position = (line: unknown, column: unknown) => Number.isInteger(line) && Number.isInteger(column) && (line as number) >= 1 && (column as number) >= 1;
+		this._register(client.registerHandler('codeIntel.definitions', (uri, line, column) => allowed(uri) && position(line, column) ? host.definitions(uri, line as number, column as number) : []));
+		this._register(client.registerHandler('codeIntel.references', (uri, line, column) => allowed(uri) && position(line, column) ? host.references(uri, line as number, column as number) : []));
+		this._register(client.registerHandler('codeIntel.symbols', uri => allowed(uri) ? host.symbols(uri) : []));
 	}
 
 	/** The desktop keeps provider keys encrypted for this app; the server gets the ones it lacks. */
