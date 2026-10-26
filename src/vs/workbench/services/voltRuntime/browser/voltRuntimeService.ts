@@ -93,7 +93,7 @@ import { applyCompaction, clearOldToolResults, COMPACTION_SYSTEM, compactionBoun
 import { chooseEffort, EffortLevel, higherEffort } from '../common/deepseek/effort.js';
 import { IToolDocuments } from './tools/fileTools.js';
 import { ISubagentRequest, NATIVE_ASK_QUESTION_TOOL_NAME } from './tools/metaTools.js';
-import { CodeIntelHost } from './host/codeIntelHost.js';
+import { createRuntimeCodeIntel, IRuntimeCodeIntel } from './host/codeIntelHost.js';
 import { McpHost } from './host/mcpHost.js';
 import { INativeBackgroundAgent, INativeJournalEntry, NativeJournal } from './history/nativeJournal.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
@@ -545,7 +545,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly hookStartedSessions = new Set<string>();
 	/** Times a `stop` hook sent the agent back to work in the current run, per chat. */
 	private readonly hookFollowups = new Map<string, number>();
-	private readonly codeIntel: CodeIntelHost;
+	private readonly codeIntel: IRuntimeCodeIntel;
 	private readonly searchIndex: ISearchIndex;
 	/** Every search Volt runs: the agent's tools and the context retriever (index, FFF, ripgrep). */
 	private readonly search: VoltSearch;
@@ -636,7 +636,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super();
-		this.codeIntel = this._register(new CodeIntelHost(markerService, textModelService, languageFeaturesService, fileService));
+		this.codeIntel = this._register(createRuntimeCodeIntel(markerService, textModelService, languageFeaturesService, fileService));
 		// Worktrees are outside the workspace folders; their language servers are opt-in (Settings > Code Intelligence).
 		this.codeIntel.setLspPolicy(uri => lspAllowedFor(this.configurationService, !this.workspace.isInsideWorkspace(uri)));
 		this.searchIndex = {
