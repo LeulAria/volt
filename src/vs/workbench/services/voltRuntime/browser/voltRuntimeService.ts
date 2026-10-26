@@ -5406,10 +5406,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (session?.activeRun) {
 			session.activeRun = { ...session.activeRun, status: 'waiting' };
 		}
-		this.emitAccess(request, { type: 'access.ask', request });
-		return new Promise<IAccessDecision>(resolve => {
+		const answer = new Promise<IAccessDecision>(resolve => {
 			this.pendingApprovals.set(request.id, { resolve, request: { ...request, reason: decision.policySource ?? request.reason } });
 		});
+		// Pending first: listeners read the pending list when the event fires (the agent server publishes it then).
+		this.emitAccess(request, { type: 'access.ask', request });
+		return answer;
 	}
 
 	private emitAccess(request: IAccessRequest, event: IVoltEvent): void {
