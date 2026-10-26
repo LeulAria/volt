@@ -57,6 +57,8 @@ export const AGENT_SERVER_COLLECTIONS = [
 	'checkpoints',
 	/** The edits journal (see ServerEditsJournal). */
 	'edits',
+	/** Per terminal id: the agents' terminals and CLI agents' background commands (see ServerTerminals). */
+	'terminals',
 ] as const;
 
 export type AgentServerCollection = typeof AGENT_SERVER_COLLECTIONS[number];

@@ -39,6 +39,8 @@ export interface IIdleExitOptions {
 	readonly orchestrator: IAgentOrchestratorService;
 	/** Phones may connect at any time while the server listens on the network. */
 	readonly network: boolean;
+	/** Other work that keeps the server up, by name (a running terminal, a scheduled automation). */
+	readonly busy?: () => string | undefined;
 	readonly stop: () => void;
 	readonly logService: ILogService;
 }
@@ -62,7 +64,7 @@ export function stopWhenIdle(options: IIdleExitOptions): IDisposable {
 		if (Date.now() - lonelySince < IDLE_EXIT_MS || !options.runsIdle()) {
 			return;
 		}
-		if (busyThread(options.orchestrator.getState())) {
+		if (busyThread(options.orchestrator.getState()) || options.busy?.()) {
 			return;
 		}
 		clearInterval(timer);

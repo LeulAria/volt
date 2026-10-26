@@ -14,6 +14,7 @@ import { DisposableStore, toDisposable } from '../../../base/common/lifecycle.js
 import { FileAccess, Schemas } from '../../../base/common/network.js';
 import { extname, join, normalize, sep } from '../../../base/common/path.js';
 import { joinPath } from '../../../base/common/resources.js';
+import { URI } from '../../../base/common/uri.js';
 import { ITextModelService } from '../../../editor/common/services/resolverService.js';
 import { ILanguageFeaturesService } from '../../../editor/common/services/languageFeatures.js';
 import { LanguageFeaturesService } from '../../../editor/common/services/languageFeaturesService.js';
@@ -67,7 +68,7 @@ import { AgentChatSearchService, IAgentChatSearchService } from '../../../workbe
 import { AgentRunGroupService } from '../../../workbench/contrib/voltAgent/browser/runGroups/agentRunGroupService.js';
 import { IAgentRunGroupService } from '../../../workbench/services/voltRuntime/common/runGroups/runGroups.js';
 import { AgentWorkspaceMover } from '../../../workbench/contrib/voltAgent/browser/orchestration/agentWorkspaceMover.js';
-import { AgentCheckpointService, CHECKPOINT_BEGIN_TURN_COMMAND_ID, IAgentCheckpointService } from '../../../workbench/contrib/voltAgent/browser/review/agentCheckpointService.js';
+import { CHECKPOINT_BEGIN_TURN_COMMAND_ID, IAgentCheckpointService } from '../../../workbench/contrib/voltAgent/browser/review/agentCheckpointService.js';
 import { IAgentEditsService } from '../../../workbench/contrib/voltAgent/browser/review/agentEditsService.js';
 import { IAgentWorkspaceService } from '../../../workbench/contrib/voltAgent/browser/workspace/agentWorkspace.js';
 import { VoltHostMcpBridge } from '../../../workbench/contrib/voltAgent/common/voltHostMcpBridge.js';
@@ -85,7 +86,7 @@ import { VoltHooksService } from '../../../workbench/services/voltRuntime/browse
 import { IVoltHooksService } from '../../../workbench/services/voltRuntime/common/hooks/voltHooks.js';
 import { IWorkspaceTrustManagementService } from '../../../platform/workspace/common/workspaceTrust.js';
 import { IAgentWorktreeSetupService } from '../../../workbench/services/voltRuntime/common/git/worktreeSetupPlan.js';
-import { AgentHistoryService } from '../../../workbench/services/voltRuntime/browser/history/agentHistoryService.js';
+import { AgentHistoryService, setAgentHistoryAppender } from '../../../workbench/services/voltRuntime/browser/history/agentHistoryService.js';
 import { VoltHostToolService } from '../../../workbench/services/voltRuntime/browser/host/hostToolService.js';
 import { AgentOrchestratorService } from '../../../workbench/services/voltRuntime/browser/orchestration/agentOrchestratorService.js';
 import { VoltSessionContextService } from '../../../workbench/services/voltRuntime/browser/sessionContextService.js';
@@ -111,6 +112,13 @@ import { setRuntimeCodeIntelFactory } from '../../../workbench/services/voltRunt
 import { ServerEditsJournal } from './serverEditsJournal.js';
 import { importDesktopStorage, ServerCommandService, ServerConsoleLogger, ServerLifecycleService, ServerNotificationService, ServerPathService, ServerSearchService, ServerSecretStorageService, ServerStorageService, ServerTextModelService, serverTextFileService, ServerWorkspaceContextService, ServerWorkspaceTrustService } from './serverPlatformServices.js';
 import { ServerSessionHost } from './serverSessionHost.js';
+import { ServerTerminals } from './serverTerminals.js';
+import { ServerProjectEnv } from './serverProjectEnv.js';
+import { ServerDocuments } from './serverDocuments.js';
+import { ServerAgentCheckpointService } from './serverCheckpoints.js';
+import { ProjectEnvVoltStdioService } from '../../../workbench/services/voltRuntime/common/projectEnvStdio.js';
+import { AutomationService } from '../../../workbench/contrib/voltAgent/browser/automations/automationService.js';
+import { IAutomationService } from '../../../workbench/services/voltRuntime/common/automations/automations.js';
 import { IPairingHttpContext, machineLabel, ServerPairing } from './serverPairing.js';
 import { ServerWorkbench } from './serverWorkbench.js';
 import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
@@ -216,8 +224,10 @@ export async function main(argv: string[]): Promise<void> {
 	if (reaped) {
 		logService.info(`[volt agent server] stopped ${reaped} agent process group(s) the previous server left running`);
 	}
-	const stdioService = disposables.add(new VoltStdioService(logService, configurationService, args.userDataDir, disposables.add(new ChildLedger(childrenFile))));
-	services.set(IVoltStdioService, stdioService);
+	const childLedger = disposables.add(new ChildLedger(childrenFile));
+	const stdioService = disposables.add(new VoltStdioService(logService, configurationService, args.userDataDir, childLedger));
+	// Project Settings > Environment reaches what runs here too (windows send the settings; ServerProjectEnv).
+	services.set(IVoltStdioService, new ProjectEnvVoltStdioService(stdioService));
 	services.set(IVoltGitService, disposables.add(new VoltGitService(resolveEnv, logService, { shadowRoot: join(args.userDataDir, 'volt-checkpoints') })));
 	services.set(IVoltHostMcpService, disposables.add(new VoltHostMcpService(logService)));
 	// The phone's git and pull request screens (ServerGit), and the browser workbench's own channel, share one.
@@ -294,6 +304,8 @@ export async function main(argv: string[]): Promise<void> {
 	// The server has no windows: it keeps and lists every chat and project.
 	services.set(IVoltWindowScopeService, new SyncDescriptor(VoltWindowScopeService, [undefined, undefined, undefined]));
 	services.set(IVoltSessionContextService, new SyncDescriptor(VoltSessionContextService));
+	// Chat logs are on this machine's disk: a turn appends its records (synced) instead of rewriting the log.
+	setAgentHistoryAppender(appendDurably);
 	services.set(IAgentHistoryService, new SyncDescriptor(AgentHistoryService));
 	services.set(IAgentWorktreeService, new SyncDescriptor(AgentWorktreeService));
 	services.set(IAgentRuntimeService, new SyncDescriptor(AgentRuntimeService));
@@ -304,13 +316,20 @@ export async function main(argv: string[]): Promise<void> {
 	services.set(IAgentChatSearchService, new SyncDescriptor(AgentChatSearchService));
 	services.set(IAgentRunGroupService, new SyncDescriptor(AgentRunGroupService));
 	services.set(IAgentChatForkService, new SyncDescriptor(AgentThreadToolService));
-	services.set(IAgentCheckpointService, new SyncDescriptor(AgentCheckpointService));
+	// It watches each chat's work tree itself (the server has no workspace folders), so unchanged projects reuse the last snapshot.
+	services.set(IAgentCheckpointService, new SyncDescriptor(ServerAgentCheckpointService));
 	services.set(IAgentWorktreeSetupService, new SyncDescriptor(AgentWorktreeSetupService));
 	services.set(IVoltBrowserAccessService, new SyncDescriptor(VoltBrowserAccessService));
 	services.set(IVoltMemoryService, new SyncDescriptor(VoltMemoryService));
+	// Scheduled automations fire here, so they run with no window open (windows claim the same slots, so each runs once).
+	services.set(IAutomationService, new SyncDescriptor(AutomationService));
 
 	const instantiationService = disposables.add(new InstantiationService(services, true));
 	services.set(IInstantiationService, instantiationService);
+	// Before any run resumes: the commands it starts get their project's environment.
+	disposables.add(instantiationService.createInstance(ServerProjectEnv, protocol));
+	// And the agents read the windows' unsaved changes (their edits go into those buffers).
+	disposables.add(instantiationService.createInstance(ServerDocuments, protocol));
 
 	const editsJournal = disposables.add(instantiationService.createInstance(ServerEditsJournal, join(paths.dir, 'edits-journal.json'), collections.get('edits')!));
 	await editsJournal.load();
@@ -366,6 +385,10 @@ export async function main(argv: string[]): Promise<void> {
 		}
 		return imported;
 	}));
+	// The agents' terminals run here, in the server's own pty: dev servers outlive every window.
+	const terminals = disposables.add(instantiationService.createInstance(ServerTerminals, protocol, collections.get('terminals')!, resolveEnv, childLedger));
+	const automations = instantiationService.invokeFunction(accessor => accessor.get(IAutomationService));
+	void automations.whenReady.catch(err => logService.warn('[volt agent server] automations did not load', err));
 	const ownerOnly = (role: string) => {
 		if (role !== 'owner') {
 			throw Object.assign(new Error('Only Volt on this computer can pair or remove devices.'), { code: 'Forbidden' });
@@ -491,7 +514,12 @@ export async function main(argv: string[]): Promise<void> {
 	if (process.env['VSCODE_DEV'] && !product.commit) {
 		disposables.add(restartWhenStale(join(appRoot, 'out'), runsIdle, () => void stop(0), logService));
 	}
-	disposables.add(stopWhenIdle({ clients: () => protocol.listClients().length, runsIdle, orchestrator, network: args.host !== '127.0.0.1' && args.host !== 'localhost', stop: () => void stop(0), logService }));
+	const busy = () => terminals.hasLive()
+		? 'an agent terminal is running'
+		: automations.list().some(automation => automation.enabled && automation.triggers.some(trigger => trigger.provider === 'schedule'))
+			? 'an automation is scheduled'
+			: undefined;
+	disposables.add(stopWhenIdle({ clients: () => protocol.listClients().length, runsIdle, orchestrator, network: args.host !== '127.0.0.1' && args.host !== 'localhost', busy, stop: () => void stop(0), logService }));
 	process.on('uncaughtException', err => logService.error('[volt agent server] uncaught exception', err));
 	process.on('unhandledRejection', err => logService.error('[volt agent server] unhandled rejection', err));
 }
@@ -707,3 +735,13 @@ async function sendFile(req: http.IncomingMessage, res: http.ServerResponse, ser
 	}
 }
 
+/** Appends to a file and waits until the bytes are on disk. */
+async function appendDurably(file: URI, text: string): Promise<void> {
+	const handle = await fs.open(file.fsPath, 'a');
+	try {
+		await handle.appendFile(text, 'utf8');
+		await handle.datasync();
+	} finally {
+		await handle.close();
+	}
+}

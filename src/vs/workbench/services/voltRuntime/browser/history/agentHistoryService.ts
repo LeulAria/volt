@@ -87,6 +87,20 @@ const DRAFT_WINDOW_MS = 600;
 /** Longest single wait for a snooze to end; setTimeout cannot count past ~24.8 days. */
 const SNOOZE_TIMER_MAX_MS = 86_400_000;
 
+/** Appends `text` to `file` and makes it durable before resolving (the agent server's `fs`). */
+export type AgentHistoryAppender = (file: URI, text: string) => Promise<void>;
+
+let historyAppender: AgentHistoryAppender | undefined;
+
+/**
+ * The agent server writes chat logs on a real disk, where an append is reliable: it sets this so a
+ * turn appends its records instead of rewriting the whole log. Unset (a window's vscode-userdata
+ * provider, whose offset appends were unreliable), every write is an atomic rewrite.
+ */
+export function setAgentHistoryAppender(appender: AgentHistoryAppender | undefined): void {
+	historyAppender = appender;
+}
+
 function isNotFound(err: unknown): boolean {
 	return err instanceof FileOperationError && err.fileOperationResult === FileOperationResult.FILE_NOT_FOUND;
 }
@@ -489,10 +503,36 @@ class SessionHandle implements IAgentSessionHandle {
 		});
 	}
 
-	private async writeBatch(_batch: readonly string[]): Promise<void> {
+	private async writeBatch(batch: readonly string[]): Promise<void> {
+		// Append where it is reliable (the agent server's disk) to a log that is on disk and sound,
+		// unless enough of it is stale that a rewrite should compact it anyway.
+		const append = historyAppender;
+		if (append && batch.length && this.logFile.scheme === 'file' && this.materialized && !this.damaged) {
+			const effective = compactRecords(this.transcript ?? foldTranscript(this.header, this.entries)).length;
+			if (!shouldCompact(this.recordCount + batch.length, effective, false)) {
+				await append(this.logFile, batch.join(''));
+				this.recordCount += batch.length;
+				await this.dropPartialFile();
+				this.service.rememberOnDisk(this.id);
+				return;
+			}
+		}
 		// Atomic rewrite on vscode-userdata: offset appends on that provider can
 		// succeed without the new bytes being readable after a reload.
 		await this.rewrite();
+	}
+
+	/** The log holds the reply the partial file kept (or that reply was dropped): the file goes. */
+	private async dropPartialFile(): Promise<void> {
+		if (!this.partialOnDisk || this.partial) {
+			return;
+		}
+		this.partialOnDisk = false;
+		await this.service.fileService.del(this.partialFile).catch(err => {
+			if (!isNotFound(err)) {
+				this.service.logService.warn(`[agent history] failed to delete ${this.partialFile.toString()}`, err);
+			}
+		});
 	}
 
 	/** Atomically rewrite the log with only the effective records. */
@@ -509,15 +549,7 @@ class SessionHandle implements IAgentSessionHandle {
 		}
 		await this.service.ensureDirectories();
 		await this.service.fileService.writeFile(this.logFile, VSBuffer.fromString(text), ATOMIC);
-		if (this.partialOnDisk && !this.partial) {
-			// The log now holds the reply the partial file kept (or that reply was dropped).
-			this.partialOnDisk = false;
-			await this.service.fileService.del(this.partialFile).catch(err => {
-				if (!isNotFound(err)) {
-					this.service.logService.warn(`[agent history] failed to delete ${this.partialFile.toString()}`, err);
-				}
-			});
-		}
+		await this.dropPartialFile();
 		const arrived = this.entries.slice(entriesAtStart);
 		this.entries = [...records.filter((record): record is AgentHistoryEntry => record.type !== 'header'), ...arrived];
 		this.pending = this.pending.slice(pendingAtStart);

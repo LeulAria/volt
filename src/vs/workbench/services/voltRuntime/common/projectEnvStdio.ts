@@ -8,8 +8,9 @@ import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecR
 import { projectRunEnv } from './projectRunEnv.js';
 
 /**
- * The main-process stdio service, with each project's environment added to the agent processes
- * and commands run in it (Project Settings > Environment). Everything else passes straight through.
+ * The stdio service (the main process's over its channel, or the agent server's own), with each
+ * project's environment added to the agent processes and commands run in it (Project Settings >
+ * Environment). Everything else passes straight through.
  */
 export class ProjectEnvVoltStdioService implements IVoltStdioService {
 
@@ -17,8 +18,8 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 
 	private readonly inner: IVoltStdioService;
 
-	constructor(channel: IChannel) {
-		this.inner = ProxyChannel.toService<IVoltStdioService>(channel);
+	constructor(source: IChannel | IVoltStdioService) {
+		this.inner = isStdioService(source) ? source : ProxyChannel.toService<IVoltStdioService>(source);
 	}
 
 	get onData() { return this.inner.onData; }
@@ -49,4 +50,8 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	sandboxSupport(): Promise<IVoltSandboxSupportInfo> { return this.inner.sandboxSupport!(); }
 	allowSandboxDomains(id: string, domains: readonly string[]): Promise<void> { return this.inner.allowSandboxDomains!(id, domains); }
 	sandboxAllows(id: string, path: string, access: 'read' | 'write'): Promise<boolean> { return this.inner.sandboxAllows!(id, path, access); }
+}
+
+function isStdioService(source: IChannel | IVoltStdioService): source is IVoltStdioService {
+	return typeof (source as Partial<IVoltStdioService>).exec === 'function';
 }
