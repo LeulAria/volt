@@ -17,7 +17,7 @@
 	color: var(--vscode-menu-foreground, var(--vscode-foreground));
 	border-radius: 8px;
 	box-shadow:
-		0 0 0 1px var(--vscode-widget-border, rgba(255, 255, 255, 0.1)),
+		0 0 0 1px var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)),
 		0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
 	font-size: 13px;
 	font-weight: 300;
@@ -28,8 +28,8 @@
 .monaco-workbench.vs .volt-theme-picker,
 .monaco-workbench.hc-light .volt-theme-picker {
 	box-shadow:
-		0 0 0 1px var(--vscode-widget-border, rgba(0, 0, 0, 0.1)),
-		0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.16));
+		0 0 0 1px var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent)),
+		0 4px 16px rgba(0, 0, 0, 0.08);
 }
 
 .volt-theme-picker-search {

@@ -2000,6 +2000,13 @@
 	--volt-mode-send-fg: #111;
 }
 
+/* As the chat composer on light themes: a near-white send button vanished on the light panel. */
+.monaco-workbench.vs .sx-composer-footer,
+.monaco-workbench.hc-light .sx-composer-footer {
+	--volt-mode-send-bg: var(--vscode-foreground);
+	--volt-mode-send-fg: var(--vscode-editor-background, #fff);
+}
+
 .sx-composer-pickers {
 	display: flex;
 	flex: 1;

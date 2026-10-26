@@ -307,7 +307,7 @@
 	border-radius: 10px;
 	background: var(--vscode-editor-background, #1e1e1e);
 	color: var(--vscode-foreground, #e8e8e8);
-	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	border: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
 	box-sizing: border-box;
 	pointer-events: auto;

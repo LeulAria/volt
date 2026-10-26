@@ -564,7 +564,7 @@
 	box-sizing: border-box;
 	border: 1px solid rgba(255, 255, 255, 0.1);
 	border-radius: 20px;
-	background: rgba(34, 34, 34, 0.78);
+	background: var(--volt-surface-raised);
 	transition: border-color 180ms ease;
 }
 
@@ -575,12 +575,12 @@
 .monaco-workbench.vs .volt-run-composer-box,
 .monaco-workbench.hc-light .volt-run-composer-box {
 	background: rgba(236, 236, 236, 0.82);
-	border-color: rgba(0, 0, 0, 0.1);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
 }
 
 .monaco-workbench.vs .volt-run-composer-box:focus-within,
 .monaco-workbench.hc-light .volt-run-composer-box:focus-within {
-	border-color: rgba(0, 0, 0, 0.2);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
 }
 
 .volt-run-input {

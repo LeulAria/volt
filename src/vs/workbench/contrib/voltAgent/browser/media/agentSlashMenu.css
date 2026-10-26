@@ -11,7 +11,7 @@
 
 .volt-agent-slash-host {
 	--volt-slash-bg: var(--vscode-editorWidget-background, #222222);
-	--volt-slash-border: var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	--volt-slash-border: var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 	--volt-slash-row-hover: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.07)));
 	--volt-slash-match: color-mix(in srgb, var(--vscode-textLink-foreground, #4daafc) 70%, var(--vscode-foreground, #cccccc));
 	position: relative;
@@ -175,7 +175,7 @@
 .volt-skill-card {
 	box-sizing: border-box;
 	padding: 9px 11px 10px;
-	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	border: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 	border-radius: 10px;
 	background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background, #1e1e1e));
 	box-shadow: 0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));

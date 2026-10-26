@@ -6,8 +6,6 @@
 import './media/appearancePage.css';
 import { $, addDisposableListener, append } from '../../../../base/browser/dom.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../base/browser/ui/contextview/contextview.js';
-import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Codicon } from '../../../../base/common/codicons.js';
 import { Color } from '../../../../base/common/color.js';
 import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
 import { isMacintosh } from '../../../../base/common/platform.js';
@@ -26,17 +24,6 @@ import { createVoltDropdown } from '../../voltAgent/browser/ui/dropdown/voltDrop
 import { createSettingsIcon } from './settingsIcons.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 
-/** What a theme card paints: a sidebar, an editor with a few lines of code, and an accent. */
-interface IThemeSwatch {
-	readonly sidebar: string;
-	readonly editor: string;
-	readonly foreground: string;
-	readonly muted: string;
-	readonly accent: string;
-	readonly keyword: string;
-	readonly string: string;
-	readonly func: string;
-}
 
 /** Volt's own themes lead each list; the rest follow by name. */
 function themeOrder(a: IWorkbenchColorTheme, b: IWorkbenchColorTheme): number {
@@ -54,20 +41,16 @@ function tokenColor(theme: IWorkbenchColorTheme, scopes: readonly string[]): str
 	return undefined;
 }
 
-function swatch(theme: IWorkbenchColorTheme): IThemeSwatch {
+/** A small chip in a theme's colors for its menu row: sidebar, editor, and the accent in a corner. */
+function themeChip(theme: IWorkbenchColorTheme): HTMLElement {
 	const color = (id: string, fallback: string) => theme.getColor(id, true)?.toString() ?? fallback;
 	const dark = isDark(theme.type);
-	const foreground = color('editor.foreground', dark ? '#d4d4d4' : '#1f1f1f');
-	return {
-		sidebar: color('sideBar.background', color('editor.background', dark ? '#181818' : '#f3f3f3')),
-		editor: color('editor.background', dark ? '#1e1e1e' : '#ffffff'),
-		foreground,
-		muted: color('editorLineNumber.foreground', dark ? '#6e7681' : '#9a9a9a'),
-		accent: color('button.background', color('focusBorder', '#3b82f6')),
-		keyword: tokenColor(theme, ['keyword', 'storage.type', 'keyword.control', 'storage']) ?? foreground,
-		string: tokenColor(theme, ['string', 'string.quoted']) ?? foreground,
-		func: tokenColor(theme, ['entity.name.function', 'support.function']) ?? foreground,
-	};
+	const editor = color('editor.background', dark ? '#1e1e1e' : '#ffffff');
+	const sidebar = color('sideBar.background', editor);
+	const accent = color('button.background', color('focusBorder', '#3b82f6'));
+	const chip = $('span.volt-settings-theme-chip');
+	chip.style.background = `linear-gradient(${accent}, ${accent}) right 2px bottom 2px / 6px 3px no-repeat, linear-gradient(90deg, ${sidebar} 0 38%, ${editor} 38%)`;
+	return chip;
 }
 
 type AppearanceMode = 'system' | 'light' | 'dark';
@@ -118,9 +101,9 @@ const DENSITY_SAMPLE: readonly { readonly kind: 'edit' | 'run'; readonly title: 
 ];
 
 /**
- * Volt Settings > Appearance: System / Light / Dark, and every installed color theme as a card
- * drawn in its own colors. Picking a card applies it at once; under System it becomes the theme
- * for that scheme.
+ * Volt Settings > Appearance: System / Light / Dark, then a dark theme and a light theme picked from
+ * dropdowns of every installed color theme. A pick for the scheme on screen applies at once; the
+ * other waits for Mode or System to switch to it.
  */
 export class AppearancePage {
 
@@ -177,19 +160,6 @@ export class AppearancePage {
 		return id.startsWith('Cursor ') ? `Volt ${id.slice('Cursor '.length)}` : id;
 	}
 
-	/** Picks a theme. Under System it is saved as that scheme's theme too, so the OS switch keeps it. */
-	private async pick(theme: IWorkbenchColorTheme): Promise<void> {
-		if (this.configuration.getValue<boolean>(ThemeSettings.DETECT_COLOR_SCHEME)) {
-			const key = isDark(theme.type) ? ThemeSettings.PREFERRED_DARK_THEME : ThemeSettings.PREFERRED_LIGHT_THEME;
-			await this.configuration.updateValue(key, theme.settingsId);
-			if (isDark(theme.type) !== isDark(this.themes.getColorTheme().type)) {
-				// The OS is on the other scheme: the pick waits for it, so say nothing changed on screen.
-				return;
-			}
-		}
-		await this.themes.setColorTheme(theme, 'auto');
-	}
-
 	/** System / Light / Dark as a dropdown, each with its glyph. */
 	renderModeControl(host: HTMLElement): void {
 		const option = (id: AppearanceMode, label: string, description: string) => ({ id, label, description, icon: () => createSettingsIcon(`appearance-${id}`)! });
@@ -205,79 +175,80 @@ export class AppearancePage {
 		}, this.store);
 	}
 
-	/** Theme cards, dark ones then light ones. Themes load their colors first so the cards show them. */
-	async renderGallery(host: HTMLElement, needle: string): Promise<void> {
-		const all = (await this.themes.getColorThemes()).filter(theme => !needle || theme.label.toLowerCase().includes(needle));
+	/**
+	 * Dark theme and Light theme rows under Mode: each a dropdown of that scheme's themes with a chip
+	 * in the theme's colors, then a row that opens the VS Code theme picker. The dropdowns fill in
+	 * once the themes have loaded their colors; the rows are there from the start so nothing jumps.
+	 */
+	renderThemePickers(kit: ISettingsPageKit, group: HTMLElement): Promise<void> {
+		const hosts = new Map<ColorScheme, HTMLElement>();
+		kit.settingRow(
+			group,
+			localize('voltSettings.appearance.darkTheme', "Dark theme"),
+			localize('voltSettings.appearance.darkThemeDesc', "Used in Dark mode, and by System while macOS is dark."),
+			host => hosts.set(ColorScheme.DARK, host),
+		);
+		kit.settingRow(
+			group,
+			localize('voltSettings.appearance.lightTheme', "Light theme"),
+			localize('voltSettings.appearance.lightThemeDesc', "Used in Light mode, and by System while macOS is light."),
+			host => hosts.set(ColorScheme.LIGHT, host),
+		);
+		kit.settingRow(
+			group,
+			localize('voltSettings.appearance.moreThemes', "More themes"),
+			localize('voltSettings.appearance.moreThemesDesc', "Install a VS Code theme and it joins these lists."),
+			host => {
+				const more = this.store.add(createVoltButton(host, 'secondary'));
+				more.label = localize('voltSettings.appearance.browse', "Browse");
+				// The color theme quick pick, with Browse Additional Color Themes. Quick input sits above
+				// the settings overlay, so the page stays open under it.
+				this.store.add(more.onDidClick(() => void this.commands.executeCommand('workbench.action.selectTheme')));
+			},
+		);
+		return this.fillThemePickers(hosts);
+	}
+
+	private async fillThemePickers(hosts: ReadonlyMap<ColorScheme, HTMLElement>): Promise<void> {
+		const all = await this.themes.getColorThemes();
 		await Promise.all(all.map(theme => theme instanceof ColorThemeData ? theme.ensureLoaded(this.resources).catch(() => undefined) : undefined));
 		if (!this.isCurrent()) {
 			return;
 		}
-		const active = this.themes.getColorTheme().settingsId;
-		const system = this.configuration.getValue<boolean>(ThemeSettings.DETECT_COLOR_SCHEME);
-		const preferred = new Set([this.preferredTheme(ColorScheme.DARK), this.preferredTheme(ColorScheme.LIGHT)]);
-		const groups: { title: string; themes: IWorkbenchColorTheme[] }[] = [
-			{ title: localize('voltSettings.appearance.darkThemes', "Dark"), themes: all.filter(theme => isDark(theme.type)).sort(themeOrder) },
-			{ title: localize('voltSettings.appearance.lightThemes', "Light"), themes: all.filter(theme => !isDark(theme.type)).sort(themeOrder) },
-		];
-		for (const group of groups) {
-			if (!group.themes.length) {
+		const active = this.themes.getColorTheme();
+		for (const [scheme, host] of hosts) {
+			const dark = scheme === ColorScheme.DARK;
+			const themes = all.filter(theme => isDark(theme.type) === dark).sort(themeOrder);
+			if (!themes.length) {
 				continue;
 			}
-			append(host, $('.volt-settings-theme-group-title')).textContent = group.title;
-			const grid = append(host, $('.volt-settings-theme-grid'));
-			for (const theme of group.themes) {
-				this.themeCard(grid, theme, theme.settingsId === active, system && preferred.has(theme.settingsId) && theme.settingsId !== active);
-			}
+			// The scheme on screen shows the theme in use; the other shows the one it will switch to.
+			const current = isDark(active.type) === dark ? active.settingsId : this.preferredTheme(scheme);
+			createVoltDropdown(host, this.contextView, {
+				options: themes.map(theme => ({ id: theme.settingsId, label: theme.label, icon: () => themeChip(theme) })),
+				value: themes.find(theme => theme.settingsId === current)?.settingsId ?? themes[0].settingsId,
+				ariaLabel: dark ? localize('voltSettings.appearance.darkTheme', "Dark theme") : localize('voltSettings.appearance.lightTheme', "Light theme"),
+				align: 'right',
+				width: 280,
+				onChange: id => {
+					const theme = themes.find(candidate => candidate.settingsId === id);
+					if (theme) {
+						void this.pick(scheme, theme);
+					}
+				},
+			}, this.store);
 		}
-		const more = this.store.add(createVoltButton(host, 'ghost', { supportIcons: true }));
-		more.element.classList.add('volt-settings-theme-more');
-		more.label = `$(${Codicon.extensions.id}) ${localize('voltSettings.appearance.more', "Browse more themes")}`;
-		// The color theme quick pick: every installed theme by scheme, plus Browse Additional Color
-		// Themes. Quick input sits above the settings overlay, so the page stays open under it.
-		this.store.add(more.onDidClick(() => void this.commands.executeCommand('workbench.action.selectTheme')));
 	}
 
-	private themeCard(grid: HTMLElement, theme: IWorkbenchColorTheme, active: boolean, standby: boolean): void {
-		const colors = swatch(theme);
-		const card = append(grid, $('button.volt-settings-theme')) as HTMLButtonElement;
-		card.type = 'button';
-		card.classList.toggle('active', active);
-		card.setAttribute('aria-pressed', String(active));
-		card.title = theme.label;
-
-		const preview = append(card, $('.volt-settings-theme-preview'));
-		preview.style.background = colors.editor;
-		const side = append(preview, $('.side'));
-		side.style.background = colors.sidebar;
-		for (let i = 0; i < 3; i++) {
-			const item = append(side, $('span'));
-			item.style.background = colors.muted;
+	/**
+	 * Saves the theme as that scheme's theme (what Mode and System switch to) and applies it when the
+	 * window is on that scheme now.
+	 */
+	private async pick(scheme: ColorScheme, theme: IWorkbenchColorTheme): Promise<void> {
+		await this.configuration.updateValue(scheme === ColorScheme.DARK ? ThemeSettings.PREFERRED_DARK_THEME : ThemeSettings.PREFERRED_LIGHT_THEME, theme.settingsId);
+		if (isDark(theme.type) === isDark(this.themes.getColorTheme().type)) {
+			await this.themes.setColorTheme(theme, 'auto');
 		}
-		const code = append(preview, $('.code'));
-		const line = (parts: [string, number][]) => {
-			const row = append(code, $('.line'));
-			for (const [color, width] of parts) {
-				const token = append(row, $('span'));
-				token.style.background = color;
-				token.style.width = `${width}%`;
-			}
-		};
-		line([[colors.keyword, 22], [colors.func, 34]]);
-		line([[colors.foreground, 16], [colors.string, 44]]);
-		line([[colors.keyword, 14], [colors.foreground, 26], [colors.func, 20]]);
-		line([[colors.muted, 38]]);
-		const accent = append(preview, $('.accent'));
-		accent.style.background = colors.accent;
-
-		const label = append(card, $('.volt-settings-theme-label'));
-		append(label, $('span.name')).textContent = theme.label;
-		if (active) {
-			append(label, $('span.check')).appendChild(renderIcon(Codicon.check));
-		} else if (standby) {
-			const tag = append(label, $('span.tag'));
-			tag.textContent = isDark(theme.type) ? localize('voltSettings.appearance.whenDark', "When dark") : localize('voltSettings.appearance.whenLight', "When light");
-		}
-		this.store.add(addDisposableListener(card, 'click', () => void this.pick(theme)));
 	}
 
 	//#region Agent Conversations, Colors, Typography, High Contrast, Motion
