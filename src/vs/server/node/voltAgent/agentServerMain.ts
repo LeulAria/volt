@@ -49,8 +49,8 @@ import { getResolvedShellEnv } from '../../../platform/shell/node/shellEnv.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../platform/workspace/common/workspace.js';
 import { AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo } from '../../../platform/voltAgentServer/common/protocol.js';
-import { AgentServerProtocol, tokensEqual } from '../../../platform/voltAgentServer/common/protocolServer.js';
-import { agentServerPaths, clearAgentServerRuntime, ensureAgentServerToken, preferredAgentServerPort, writeAgentServerRuntime } from '../../../platform/voltAgentServer/node/agentServerFiles.js';
+import { AgentServerProtocol, IClientCallOptions, tokensEqual } from '../../../platform/voltAgentServer/common/protocolServer.js';
+import { agentServerPaths, clearAgentServerRuntime, ensureAgentServerToken, isProcessAlive, preferredAgentServerPort, writeAgentServerRuntime } from '../../../platform/voltAgentServer/node/agentServerFiles.js';
 import { acceptWebSocket } from '../../../platform/voltAgentServer/node/webSocket.js';
 import { IVoltGitService } from '../../../platform/voltGit/common/voltGit.js';
 import { VoltGitService } from '../../../platform/voltGit/node/voltGitService.js';
@@ -61,6 +61,12 @@ import { VoltHostMcpService } from '../../../platform/voltHostMcp/node/voltHostM
 import { IVoltStdioService } from '../../../platform/voltStdio/common/voltStdio.js';
 import { VoltStdioService } from '../../../platform/voltStdio/node/voltStdioService.js';
 import { AgentTurnHostContribution } from '../../../workbench/contrib/voltAgent/browser/orchestration/agentTurnHost.js';
+import { AgentThreadToolService } from '../../../workbench/contrib/voltAgent/browser/orchestration/agentThreadToolService.js';
+import { IAgentChatForkService } from '../../../workbench/contrib/voltAgent/browser/orchestration/agentChatFork.js';
+import { AgentChatSearchService, IAgentChatSearchService } from '../../../workbench/contrib/voltAgent/browser/search/agentChatSearchService.js';
+import { AgentRunGroupService } from '../../../workbench/contrib/voltAgent/browser/runGroups/agentRunGroupService.js';
+import { IAgentRunGroupService } from '../../../workbench/services/voltRuntime/common/runGroups/runGroups.js';
+import { AgentWorkspaceMover } from '../../../workbench/contrib/voltAgent/browser/orchestration/agentWorkspaceMover.js';
 import { AgentCheckpointService, CHECKPOINT_BEGIN_TURN_COMMAND_ID, IAgentCheckpointService } from '../../../workbench/contrib/voltAgent/browser/review/agentCheckpointService.js';
 import { IAgentEditsService } from '../../../workbench/contrib/voltAgent/browser/review/agentEditsService.js';
 import { IAgentWorkspaceService } from '../../../workbench/contrib/voltAgent/browser/workspace/agentWorkspace.js';
@@ -96,6 +102,12 @@ import { RunModeTracker } from '../../../workbench/services/voltRuntime/common/h
 import { AgentServerApi, createCollections } from './serverApi.js';
 import { ServerAgentWorkspaceService } from './serverAgentWorkspace.js';
 import { IAgentServerClients } from './serverClients.js';
+import { ChildLedger } from '../../../platform/voltStdio/node/childLedger.js';
+import { ServerCodeIntel, WindowFolders } from './serverCodeIntel.js';
+import { restartWhenStale } from './serverDevRestart.js';
+import { stopWhenIdle } from './serverIdleExit.js';
+import { setBeaconProcessProbe } from '../../../workbench/services/voltRuntime/browser/jobs/workbenchBeacons.js';
+import { setRuntimeCodeIntelFactory } from '../../../workbench/services/voltRuntime/browser/host/codeIntelHost.js';
 import { ServerEditsJournal } from './serverEditsJournal.js';
 import { importDesktopStorage, ServerCommandService, ServerConsoleLogger, ServerLifecycleService, ServerNotificationService, ServerPathService, ServerSearchService, ServerSecretStorageService, ServerStorageService, ServerTextModelService, serverTextFileService, ServerWorkspaceContextService, ServerWorkspaceTrustService } from './serverPlatformServices.js';
 import { ServerSessionHost } from './serverSessionHost.js';
@@ -198,7 +210,13 @@ export async function main(argv: string[]): Promise<void> {
 	services.set(ILanguageFeaturesService, new LanguageFeaturesService());
 	services.set(INotificationService, notificationService as unknown as INotificationService);
 	services.set(ICommandService, new SyncDescriptor(ServerCommandService));
-	const stdioService = disposables.add(new VoltStdioService(logService, configurationService, args.userDataDir));
+	// Agent CLIs and commands a killed server left running would otherwise run forever, unowned.
+	const childrenFile = join(paths.dir, 'children.json');
+	const reaped = await ChildLedger.reapOrphans(childrenFile);
+	if (reaped) {
+		logService.info(`[volt agent server] stopped ${reaped} agent process group(s) the previous server left running`);
+	}
+	const stdioService = disposables.add(new VoltStdioService(logService, configurationService, args.userDataDir, disposables.add(new ChildLedger(childrenFile))));
 	services.set(IVoltStdioService, stdioService);
 	services.set(IVoltGitService, disposables.add(new VoltGitService(resolveEnv, logService, { shadowRoot: join(args.userDataDir, 'volt-checkpoints') })));
 	services.set(IVoltHostMcpService, disposables.add(new VoltHostMcpService(logService)));
@@ -236,13 +254,34 @@ export async function main(argv: string[]): Promise<void> {
 			}
 		}
 	}));
-	services.set(IAgentServerClients, {
+	// Set once the session host exists: which connections have a chat open.
+	let holdersOf: (sessionId: string) => ReadonlySet<number> = () => new Set();
+	const clients: IAgentServerClients = {
 		_serviceBrand: undefined,
 		onDidChange: clientsChanged.event,
 		list: () => protocol.listClients(),
 		has: capability => !!protocol.clientWith(capability),
 		call: <T>(capability: Parameters<AgentServerProtocol['callClient']>[0], method: string, ...params: unknown[]) => protocol.callClient<T>(capability, method, params),
-	} satisfies IAgentServerClients);
+		callWith: <T>(capability: Parameters<AgentServerProtocol['callClient']>[0], options: IClientCallOptions, method: string, ...params: unknown[]) => protocol.callClient<T>(capability, method, params, options),
+		callForChat: <T>(capability: Parameters<AgentServerProtocol['callClient']>[0], sessionId: string | undefined, method: string, ...params: unknown[]) => {
+			const holders = sessionId ? holdersOf(sessionId) : undefined;
+			return protocol.callClient<T>(capability, method, params, holders?.size ? { prefer: connectionId => holders.has(connectionId) } : undefined);
+		},
+		holders: sessionId => holdersOf(sessionId),
+	};
+	services.set(IAgentServerClients, clients);
+	// Its chat-ownership beacons name this process, so the next server takes over at once after a crash.
+	setBeaconProcessProbe({ pid: process.pid, alive: isProcessAlive });
+	// Language servers live in a window: the runtime's code tools ask the one that has the file's folder open.
+	const windowFolders = new WindowFolders();
+	disposables.add(protocol.registerMethod('codeIntel.setFolders', (ctx, folders) => {
+		if (ctx.client.role === 'owner') {
+			windowFolders.set(ctx.client.connectionId, folders);
+		}
+		return true;
+	}));
+	disposables.add(protocol.onDidChangeClients(() => windowFolders.retain(new Set(protocol.listClients().map(client => client.connectionId)))));
+	setRuntimeCodeIntelFactory(() => new ServerCodeIntel(clients, configurationService, fileService, windowFolders));
 	disposables.add(notificationService.onDidNotify(notification => protocol.publish('server', {
 		kind: 'notification',
 		severity: notification.severity,
@@ -260,6 +299,11 @@ export async function main(argv: string[]): Promise<void> {
 	services.set(IAgentRuntimeService, new SyncDescriptor(AgentRuntimeService));
 	services.set(IAgentOrchestratorService, new SyncDescriptor(AgentOrchestratorService));
 	services.set(IAgentWorkspaceService, new SyncDescriptor(ServerAgentWorkspaceService));
+	// The thread tools (send to, wait for, fork and search other chats) and what they use: served
+	// here so agents coordinating chats work with no window open.
+	services.set(IAgentChatSearchService, new SyncDescriptor(AgentChatSearchService));
+	services.set(IAgentRunGroupService, new SyncDescriptor(AgentRunGroupService));
+	services.set(IAgentChatForkService, new SyncDescriptor(AgentThreadToolService));
 	services.set(IAgentCheckpointService, new SyncDescriptor(AgentCheckpointService));
 	services.set(IAgentWorktreeSetupService, new SyncDescriptor(AgentWorktreeSetupService));
 	services.set(IVoltBrowserAccessService, new SyncDescriptor(VoltBrowserAccessService));
@@ -280,10 +324,32 @@ export async function main(argv: string[]): Promise<void> {
 	}));
 
 	const sessionHost = disposables.add(instantiationService.createInstance(ServerSessionHost, data => protocol.publish('session', data)));
+	holdersOf = sessionId => sessionHost.holders(sessionId);
 	const [history, orchestrator] = instantiationService.invokeFunction(accessor => [accessor.get(IAgentHistoryService), accessor.get(IAgentOrchestratorService)] as const);
 	await history.whenReady;
 	await orchestrator.whenReady;
 	disposables.add(instantiationService.createInstance(AgentTurnHostContribution));
+	// Moves to another checkout run here: a window's mover does not reach the server's orchestrator.
+	disposables.add(instantiationService.createInstance(AgentWorkspaceMover));
+	instantiationService.invokeFunction(accessor => accessor.get(IAgentChatForkService));
+	// The browser menu's per-chat "Let Agents Use the Browser" lives in a window's storage: it sends its copy.
+	instantiationService.invokeFunction(accessor => {
+		const browserAccess = accessor.get(IVoltBrowserAccessService);
+		disposables.add(protocol.registerMethod('browserAccess.setChoices', (ctx, choices) => {
+			// A paired phone must not lift a block the user set on this computer.
+			if (ctx.client.role !== 'owner') {
+				throw Object.assign(new Error('Only Volt on this computer can change browser access.'), { code: 'Forbidden' });
+			}
+			const next: Record<string, boolean> = {};
+			for (const [sessionId, allowed] of Object.entries(choices && typeof choices === 'object' && !Array.isArray(choices) ? choices : {})) {
+				if (typeof allowed === 'boolean') {
+					next[sessionId] = allowed;
+				}
+			}
+			browserAccess.setChatChoices(next);
+			return true;
+		}));
+	});
 	disposables.add(instantiationService.createInstance(VoltHostMcpBridge));
 	// Mode and folder per chat for the host tools (a window's browser automation did this).
 	instantiationService.invokeFunction(accessor => accessor.get(IVoltHostToolService).setSessionResolver(disposables.add(new RunModeTracker(accessor.get(IAgentRuntimeService)))));
@@ -420,6 +486,12 @@ export async function main(argv: string[]): Promise<void> {
 	disposables.add(toDisposable(() => server.close()));
 	process.on('SIGTERM', () => void stop(0));
 	process.on('SIGINT', () => void stop(0));
+	const sessions = collections.get('sessions')!;
+	const runsIdle = () => sessions.keys().every(key => (sessions.get(key) as { activeRun?: { status?: string } } | undefined)?.activeRun?.status !== 'running');
+	if (process.env['VSCODE_DEV'] && !product.commit) {
+		disposables.add(restartWhenStale(join(appRoot, 'out'), runsIdle, () => void stop(0), logService));
+	}
+	disposables.add(stopWhenIdle({ clients: () => protocol.listClients().length, runsIdle, orchestrator, network: args.host !== '127.0.0.1' && args.host !== 'localhost', stop: () => void stop(0), logService }));
 	process.on('uncaughtException', err => logService.error('[volt agent server] uncaught exception', err));
 	process.on('unhandledRejection', err => logService.error('[volt agent server] unhandled rejection', err));
 }

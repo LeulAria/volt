@@ -74,7 +74,7 @@ const RUNTIME_METHODS = [
 	'setProjectRules', 'revokeSavedApproval', 'listMcpServers', 'generateText', 'getRunMetrics', 'listReceipts', 'setActiveCatalogRef',
 	'stopAgentBackgroundTask', 'warmPredictor',
 ] as const;
-const ORCHESTRATOR_METHODS = ['submit', 'move', 'resumeLimit', 'configureLimit', 'notify', 'cancel', 'dispatch', 'ensureThreadLoaded'] as const;
+const ORCHESTRATOR_METHODS = ['submit', 'move', 'resumeLimit', 'configureLimit', 'notify', 'multitaskQueue', 'cancel', 'dispatch', 'ensureThreadLoaded'] as const;
 const HISTORY_METHODS = [
 	'search', 'rename', 'setAgentTitle', 'delete', 'setPinned', 'setArchived', 'setSettled', 'setAutoSettle', 'setSnoozed', 'restoreLifecycle',
 	'setUnread', 'clearWoke', 'markAllRead', 'setAttention', 'pinSessionWorkspace', 'pinSessionParent', 'putAttachment', 'getAttachment',
@@ -115,7 +115,7 @@ export class AgentServerApi extends Disposable {
 		super();
 		this.runtimeRefresh = this._register(new RunOnceScheduler(() => this.publishRuntime(), 20));
 		this.historyRefresh = this._register(new RunOnceScheduler(() => this.publishHistory(), 50));
-		this.clientTools = this._register(new ServerClientTools(protocol, hostTools));
+		this.clientTools = this._register(new ServerClientTools(protocol, hostTools, sessionId => sessions.holders(sessionId)));
 		const files = this._register(new ServerFiles(protocol, () => this.fileRoots(), logService));
 		const allowed = (path: string) => files.allowed(path);
 		this._register(new ServerGit(protocol, allowed, pullRequests, logService));
