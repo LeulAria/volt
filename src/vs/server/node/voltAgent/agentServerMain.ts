@@ -113,6 +113,10 @@ import { ServerEditsJournal } from './serverEditsJournal.js';
 import { importDesktopStorage, ServerCommandService, ServerConsoleLogger, ServerLifecycleService, ServerNotificationService, ServerPathService, ServerSearchService, ServerSecretStorageService, ServerStorageService, ServerTextModelService, serverTextFileService, ServerWorkspaceContextService, ServerWorkspaceTrustService } from './serverPlatformServices.js';
 import { ServerSessionHost } from './serverSessionHost.js';
 import { ServerTerminals } from './serverTerminals.js';
+import { ServerRelay } from './serverRelay.js';
+import { IVoltRelayService } from '../../../platform/voltRelay/common/voltRelay.js';
+import { VoltRelayService } from '../../../platform/voltRelay/node/voltRelayService.js';
+import { AutomationHookSync, hookedTriggers } from '../../../workbench/contrib/voltAgent/browser/automations/automationHookSync.js';
 import { ServerProjectEnv } from './serverProjectEnv.js';
 import { ServerDocuments } from './serverDocuments.js';
 import { ServerAgentCheckpointService } from './serverCheckpoints.js';
@@ -238,6 +242,9 @@ export async function main(argv: string[]): Promise<void> {
 	// Its own index folder: the desktop's index process may be writing to the desktop one.
 	const codeIndex = disposables.add(new VoltCodeIndexService(join(args.userDataDir, 'volt-index-server'), logService));
 	services.set(IVoltCodeIndexService, codeIndex);
+	// The relay connection and the local webhook URL live here (the main process leaves them alone in this mode).
+	const relay = disposables.add(new VoltRelayService(args.userDataDir, logService));
+	services.set(IVoltRelayService, relay);
 
 	//#endregion
 
@@ -386,9 +393,12 @@ export async function main(argv: string[]): Promise<void> {
 		return imported;
 	}));
 	// The agents' terminals run here, in the server's own pty: dev servers outlive every window.
-	const terminals = disposables.add(instantiationService.createInstance(ServerTerminals, protocol, collections.get('terminals')!, resolveEnv, childLedger));
+	const terminals = disposables.add(instantiationService.createInstance(ServerTerminals, protocol, collections.get('terminals')!, join(paths.dir, 'terminals.json'), resolveEnv, childLedger));
 	const automations = instantiationService.invokeFunction(accessor => accessor.get(IAutomationService));
 	void automations.whenReady.catch(err => logService.warn('[volt agent server] automations did not load', err));
+	// Webhook triggers run here: deliveries the relay held while nothing was connected, and ones posted to the local URL.
+	disposables.add(new ServerRelay(protocol, relay));
+	disposables.add(instantiationService.createInstance(AutomationHookSync));
 	const ownerOnly = (role: string) => {
 		if (role !== 'owner') {
 			throw Object.assign(new Error('Only Volt on this computer can pair or remove devices.'), { code: 'Forbidden' });
@@ -496,6 +506,8 @@ export async function main(argv: string[]): Promise<void> {
 		server.close();
 		try {
 			await lifecycleService.shutdown();
+			// Its terminals stop with the server: the next one lists them as stopped, restartable.
+			await terminals.saveRecords();
 			await editsJournal.flush();
 			await history.flushAll();
 			await storageService.close();
@@ -518,7 +530,9 @@ export async function main(argv: string[]): Promise<void> {
 		? 'an agent terminal is running'
 		: automations.list().some(automation => automation.enabled && automation.triggers.some(trigger => trigger.provider === 'schedule'))
 			? 'an automation is scheduled'
-			: undefined;
+			: hookedTriggers(automations.list()).some(({ automation }) => automation.enabled)
+				? 'an automation waits for webhooks'
+				: undefined;
 	disposables.add(stopWhenIdle({ clients: () => protocol.listClients().length, runsIdle, orchestrator, network: args.host !== '127.0.0.1' && args.host !== 'localhost', busy, stop: () => void stop(0), logService }));
 	process.on('uncaughtException', err => logService.error('[volt agent server] uncaught exception', err));
 	process.on('unhandledRejection', err => logService.error('[volt agent server] unhandled rejection', err));

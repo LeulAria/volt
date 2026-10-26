@@ -8,6 +8,12 @@ import { createDecorator } from '../../instantiation/common/instantiation.js';
 export const IVoltAgentServerMainService = createDecorator<IVoltAgentServerMainService>('voltAgentServerMainService');
 export const VOLT_AGENT_SERVER_CHANNEL_NAME = 'voltAgentServer';
 
+/**
+ * Windows run their agents in the agent server when this is on (the default). The main process
+ * reads it too: the server then holds the relay connection instead of the main process.
+ */
+export const VOLT_AGENT_SERVER_ENABLED_SETTING = 'volt.agentServer.enabled';
+
 /** Where a window finds this profile's agent server. */
 export interface IVoltAgentServerEndpoint {
 	/** `ws://127.0.0.1:<port>/ws` */

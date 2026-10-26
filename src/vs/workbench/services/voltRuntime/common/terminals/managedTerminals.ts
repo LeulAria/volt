@@ -50,6 +50,16 @@ export interface IAgentTerminalStart {
 	readonly readyPattern?: string;
 }
 
+/** A terminal that was running when its host went away (the agent server restarted or crashed). */
+export interface IAgentTerminalRecord extends IAgentTerminalStart {
+	readonly chatId: string;
+	readonly label: string;
+	readonly startedAt: number;
+	readonly urls: readonly string[];
+	/** The end of its output. */
+	readonly tail: string;
+}
+
 /** Set in the environment of every terminal the agent starts. */
 export const AGENT_TERMINAL_ENV = 'VOLT_AGENT_TERMINAL';
 
@@ -189,7 +199,6 @@ export class ManagedTerminal {
 	exitCode: number | undefined;
 	endedAt: number | undefined;
 	lastActivity = Date.now();
-	readonly startedAt = Date.now();
 	readonly urls = new Set<string>();
 	error: string | undefined;
 	process: IManagedTerminalProcess | undefined;
@@ -212,6 +221,7 @@ export class ManagedTerminal {
 		readonly cwd: string | undefined,
 		readonly readyPattern: RegExp | undefined,
 		readonly readySource: string | undefined,
+		readonly startedAt = Date.now(),
 	) { }
 
 	info(): IAgentTerminalInfo {
@@ -399,6 +409,39 @@ export class ManagedTerminals extends Disposable {
 		if (terminal && !isTerminalLive(terminal.status)) {
 			this.forget(terminal, true);
 		}
+	}
+
+	/** What runs now, to list again as ended if this host goes away (see {@link adoptEnded}). */
+	records(): IAgentTerminalRecord[] {
+		return [...this.terminals.values()].filter(terminal => !terminal.task && isTerminalLive(terminal.status)).map(terminal => ({
+			chatId: terminal.chatId,
+			command: terminal.command,
+			label: terminal.label,
+			...(terminal.cwd ? { cwd: terminal.cwd } : {}),
+			...(terminal.readySource ? { readyPattern: terminal.readySource } : {}),
+			startedAt: terminal.startedAt,
+			urls: [...terminal.urls],
+			tail: terminal.log.tail(4_000),
+		}));
+	}
+
+	/**
+	 * A terminal that was running before this host restarted: listed as ended with `reason`, its last
+	 * output kept, so the chat and the agent see what stopped and can start it again (restart).
+	 */
+	adoptEnded(record: IAgentTerminalRecord, reason: string): IAgentTerminalInfo {
+		const terminal = new ManagedTerminal(`${this.idPrefix}${this.nextId++}`, record.chatId, record.command, record.label, record.cwd, agentPattern(record.readyPattern), record.readyPattern, record.startedAt);
+		terminal.log.append(record.tail);
+		for (const url of record.urls) {
+			terminal.urls.add(url);
+		}
+		terminal.status = 'failed';
+		terminal.endedAt = Date.now();
+		terminal.error = reason;
+		this.terminals.set(terminal.id, terminal);
+		this.pruneFinished(record.chatId);
+		this.changed(terminal);
+		return terminal.info();
 	}
 
 	/** A deleted chat takes its terminals with it. */

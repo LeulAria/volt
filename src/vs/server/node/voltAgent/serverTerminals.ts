@@ -3,8 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { promises as fs } from 'fs';
 import type { IPty } from 'node-pty';
 import { homedir } from 'os';
+import { RunOnceScheduler } from '../../../base/common/async.js';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable, toDisposable } from '../../../base/common/lifecycle.js';
 import { basename, delimiter, join } from '../../../base/common/path.js';
@@ -23,7 +25,7 @@ import { IVoltHostToolService } from '../../../workbench/services/voltRuntime/co
 import { IAgentRuntimeService } from '../../../workbench/services/voltRuntime/common/runtime.js';
 import { isTerminalLive, TERMINAL_TOOLS, VoltTerminalToolName } from '../../../workbench/services/voltRuntime/common/terminalTools.js';
 import {
-	IAgentTerminalStart, IManagedTerminalBackend, IManagedTerminalExit, IManagedTerminalLaunch, IManagedTerminalProcess, ManagedTerminal, ManagedTerminals, ManagedTerminalTools,
+	IAgentTerminalRecord, IAgentTerminalStart, IManagedTerminalBackend, IManagedTerminalExit, IManagedTerminalLaunch, IManagedTerminalProcess, ManagedTerminal, ManagedTerminals, ManagedTerminalTools,
 } from '../../../workbench/services/voltRuntime/common/terminals/managedTerminals.js';
 
 /** Raw output kept per terminal for windows that open it later (escape sequences and all). */
@@ -32,6 +34,9 @@ const MAX_RAW_CHARS = 1_000_000;
 const STREAM_MS = 16;
 /** A window that takes longer than this to take a chunk is not waited for (the chunk is not resent). */
 const STREAM_CALL_TIMEOUT_MS = 30_000;
+/** Running terminals are written down at most this often (and at once when one starts or ends). */
+const RECORD_SAVE_MS = 3_000;
+const RESTARTED_REASON = 'Stopped: the agent server restarted while it ran. Restart it to run it again.';
 const DEFAULT_COLS = 120;
 /** How long after a process exits its last output may still arrive. */
 const EXIT_FLUSH_MS = 100;
@@ -232,10 +237,15 @@ export class ServerTerminals extends Disposable {
 	private streamTimer: ReturnType<typeof setTimeout> | undefined;
 	/** Chat -> the ids last published for it, so ones that went away are deleted. */
 	private readonly published = new Map<string, Set<string>>();
+	private readonly saver: RunOnceScheduler;
+	private saving: Promise<void> = Promise.resolve();
+	private lastSaved = '';
 
 	constructor(
 		private readonly protocol: AgentServerProtocol,
 		private readonly collection: ReplicatedCollection,
+		/** Where running terminals are written down, so a restart lists them as stopped instead of losing them. */
+		private readonly recordFile: string,
 		resolveEnv: () => Promise<NodeJS.ProcessEnv>,
 		ledger: ChildLedger,
 		@IAgentRuntimeService runtime: IAgentRuntimeService,
@@ -254,9 +264,19 @@ export class ServerTerminals extends Disposable {
 			tools: TERMINAL_TOOLS,
 			invoke: (name, args, call) => tools.invoke(name as VoltTerminalToolName, args, call),
 		}));
-		this._register(this.core.onDidChange(chatId => this.publish(chatId)));
+		this.saver = this._register(new RunOnceScheduler(() => void this.saveRecords(), RECORD_SAVE_MS));
+		this._register(this.core.onDidChange(chatId => {
+			this.publish(chatId);
+			// Throttled, not debounced: a server that prints all the time is still written down.
+			if (!this.saver.isScheduled()) {
+				this.saver.schedule();
+			}
+		}));
 		this._register(this.core.onDidWriteData(({ terminal, data }) => this.onData(terminal, data)));
-		this._register(this.core.onDidEnd(terminal => this.onEnd(terminal)));
+		this._register(this.core.onDidEnd(terminal => {
+			this.onEnd(terminal);
+			void this.saveRecords();
+		}));
 		this._register(this.core.onDidForget(terminal => {
 			this.raw.delete(terminal.id);
 			this.viewers.delete(terminal.id);
@@ -277,10 +297,48 @@ export class ServerTerminals extends Disposable {
 			}
 		}));
 		this.registerMethods();
+		void this.adoptRecords();
 		this._register(toDisposable(() => {
 			clearTimeout(this.streamTimer);
 			this.core.killAll();
 		}));
+	}
+
+	/** Writes down what runs now (call before the server stops: its terminals stop with it). */
+	saveRecords(): Promise<void> {
+		this.saver.cancel();
+		const text = JSON.stringify(this.core.records());
+		if (text === this.lastSaved) {
+			return this.saving;
+		}
+		this.lastSaved = text;
+		this.saving = this.saving.then(async () => {
+			const temp = `${this.recordFile}.${process.pid}.tmp`;
+			await fs.writeFile(temp, text, { mode: 0o600 });
+			await fs.rename(temp, this.recordFile);
+		}).catch(err => this.logService.warn('[volt agent server] could not write down the running terminals', err));
+		return this.saving;
+	}
+
+	/** Terminals the last server ran when it stopped or crashed: listed as stopped, with their last output. */
+	private async adoptRecords(): Promise<void> {
+		let records: unknown;
+		try {
+			records = JSON.parse(await fs.readFile(this.recordFile, 'utf8'));
+		} catch {
+			return;
+		}
+		let adopted = 0;
+		for (const record of Array.isArray(records) ? records : []) {
+			if (isRecord(record)) {
+				this.core.adoptEnded(record, RESTARTED_REASON);
+				adopted++;
+			}
+		}
+		if (adopted) {
+			this.logService.info(`[volt agent server] ${adopted} terminal(s) were running when the last server stopped; listed as stopped`);
+		}
+		void this.saveRecords();
 	}
 
 	/** Whether a terminal the agent started still runs (the server stays up for it). */
@@ -434,4 +492,10 @@ function parseStart(value: unknown): IAgentTerminalStart {
 		throw new Error('command is required.');
 	}
 	return { command, label: text('label'), cwd: text('cwd'), readyPattern: text('readyPattern') };
+}
+
+function isRecord(value: unknown): value is IAgentTerminalRecord {
+	const record = value as Partial<IAgentTerminalRecord> | undefined;
+	return !!record && typeof record.chatId === 'string' && typeof record.command === 'string' && typeof record.label === 'string'
+		&& typeof record.startedAt === 'number' && Array.isArray(record.urls) && typeof record.tail === 'string';
 }

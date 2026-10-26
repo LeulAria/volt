@@ -63,6 +63,10 @@ import { IAgentEditsService } from '../browser/review/agentEditsService.js';
 import { RemoteAgentCheckpointService } from '../browser/review/remoteAgentCheckpointService.js';
 import { AgentTerminalsService, IAgentTerminalsService } from '../browser/terminals/agentTerminals.js';
 import { RemoteAgentTerminalsService } from '../browser/terminals/remoteAgentTerminals.js';
+import { IMainProcessService } from '../../../../platform/ipc/common/mainProcessService.js';
+import { ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
+import { IVoltRelayService, VOLT_RELAY_CHANNEL_NAME } from '../../../../platform/voltRelay/common/voltRelay.js';
+import { RemoteVoltRelayService } from '../../../services/voltAgentServer/common/remoteVoltRelayService.js';
 import { IAgentSurfaceDraft, IAgentWorkspaceService } from '../browser/workspace/agentWorkspace.js';
 import { AgentEditsJournalEntry } from '../common/agentEditsJournal.js';
 import { ResourceMap, ResourceSet } from '../../../../base/common/map.js';
@@ -144,6 +148,16 @@ registerSingleton(IVoltHostToolService, <never>eitherLocalOrRemote(VoltHostToolS
 registerSingleton(IAgentCheckpointService, <never>eitherLocalOrRemote(AgentCheckpointService, RemoteAgentCheckpointService), InstantiationType.Delayed);
 // Agents' terminals run where the agents do: in the server they outlive this window, which shows them attached.
 registerSingleton(IAgentTerminalsService, <never>eitherLocalOrRemote(AgentTerminalsService, RemoteAgentTerminalsService), InstantiationType.Delayed);
+
+/** The main process's relay, for windows that run their agents themselves. */
+class MainProcessRelayService {
+	constructor(@IMainProcessService mainProcessService: IMainProcessService) {
+		return ProxyChannel.toService<IVoltRelayService>(mainProcessService.getChannel(VOLT_RELAY_CHANNEL_NAME));
+	}
+}
+
+// The relay lives with the agents: in the server, webhook automations run with no window open.
+registerSingleton(IVoltRelayService, <never>eitherLocalOrRemote(MainProcessRelayService, RemoteVoltRelayService), InstantiationType.Delayed);
 
 // Chats' transcripts come from the server's session controllers.
 setAgentSessionControlFactory((input, instantiationService) => instantiationService.invokeFunction(accessor =>
