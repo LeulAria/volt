@@ -98,7 +98,7 @@
 .monaco-workbench.hc-light .volt-agent-tooltip {
 	background: #ececec;
 	color: #1a1a1a;
-	border-color: rgba(0, 0, 0, 0.08);
+	border-color: rgba(0, 0, 0, 0.1);
 	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
 }
 
@@ -179,7 +179,7 @@
 .monaco-workbench.vs .volt-agent-tooltip.pill,
 .monaco-workbench.hc-light .volt-agent-tooltip.pill {
 	background: #ececec;
-	border-color: rgba(0, 0, 0, 0.08);
+	border-color: rgba(0, 0, 0, 0.1);
 	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
 }
 

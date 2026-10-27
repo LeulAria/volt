@@ -22,7 +22,7 @@
 	box-sizing: border-box;
 	border-radius: 8px;
 	/* A host can set --volt-dt-line to match its own edges (the snooze dialog does). */
-	border: 1px solid var(--volt-dt-line, var(--vscode-widget-border, rgba(255, 255, 255, 0.1)));
+	border: 1px solid var(--volt-dt-line, var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)));
 	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
 	color: var(--vscode-foreground);
 	font: inherit;
@@ -45,7 +45,7 @@ button.volt-dt-control:hover {
 
 /* A value was just picked: focus stays for the keyboard, the highlight goes until focus moves on. */
 .volt-dt-field.quiet:not(.open) > .volt-dt-control {
-	border-color: var(--volt-dt-line, var(--vscode-widget-border, rgba(255, 255, 255, 0.1)));
+	border-color: var(--volt-dt-line, var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)));
 }
 
 .volt-dt-control.text {
@@ -141,7 +141,7 @@ button.volt-dt-control:hover {
 	background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #1f1f1f));
 	color: var(--vscode-menu-foreground, var(--vscode-foreground));
 	box-shadow:
-		0 0 0 1px var(--vscode-widget-border, rgba(255, 255, 255, 0.1)),
+		0 0 0 1px var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)),
 		0 10px 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.4));
 	isolation: isolate;
 	contain: paint;
@@ -151,8 +151,14 @@ button.volt-dt-control:hover {
 .vs .volt-dt-popover,
 .hc-light .volt-dt-popover {
 	box-shadow:
-		0 0 0 1px var(--vscode-widget-border, rgba(0, 0, 0, 0.1)),
-		0 10px 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.16));
+		0 0 0 1px var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent)),
+		0 8px 24px rgba(0, 0, 0, 0.1);
+}
+
+/* Light themes: the footer rule matches the popover's 12% edge. */
+.vs .volt-dt-calendar-footer,
+.hc-light .volt-dt-calendar-footer {
+	border-top-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
 }
 
 .volt-dt-popover.above {
