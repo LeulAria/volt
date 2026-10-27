@@ -6,6 +6,7 @@
 import { execFile, spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
+import { raceCancellationError } from '../../../base/common/async.js';
 import { CancellationToken } from '../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
@@ -21,8 +22,9 @@ import { AbstractLogger, ILogger, LogLevel } from '../../../platform/log/common/
 import { INotification, INotificationHandle, INotificationService, NoOpNotification } from '../../../platform/notification/common/notification.js';
 import { ISecretStorageService } from '../../../platform/secrets/common/secrets.js';
 import { AbstractStorageService, StorageScope, StorageTarget } from '../../../platform/storage/common/storage.js';
-import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID } from '../../../workbench/services/voltRuntime/common/hostTools.js';
-import { toWire } from '../../../platform/voltAgentServer/common/wire.js';
+import { AGENT_SERVER_WINDOW_COMMANDS, BROWSER_PAGE_URL_COMMAND_ID } from '../../../workbench/services/voltRuntime/common/hostTools.js';
+import { WORKSPACE_SNAPSHOT_COMMAND_ID } from '../../../workbench/services/voltRuntime/common/harness/workspaceContext.js';
+import { fromWire, toWire } from '../../../platform/voltAgentServer/common/wire.js';
 import { IAgentServerClients } from './serverClients.js';
 import { IAnyWorkspaceIdentifier, ISingleFolderWorkspaceIdentifier, IWorkspace, IWorkspaceContextService, IWorkspaceFolder, IWorkspaceFoldersChangeEvent, IWorkspaceFoldersWillChangeEvent, IWorkspaceIdentifier, WorkbenchState } from '../../../platform/workspace/common/workspace.js';
 import { IUserDataProfile } from '../../../platform/userDataProfile/common/userDataProfile.js';
@@ -416,8 +418,14 @@ export class ServerSearchService implements Partial<ISearchService> {
 
 //#region Commands, notifications, editor-only services
 
-/** Commands only a Volt window can run (the in-app browser lives there). */
-export const WINDOW_COMMANDS: ReadonlySet<string> = new Set([AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID]);
+/** Commands only a Volt window can run (the in-app browser, what the user has open). */
+export const WINDOW_COMMANDS = AGENT_SERVER_WINDOW_COMMANDS;
+
+/** Window commands that answer from memory: a hung window must not hold up a turn. The others drive the browser and take as long as it does. */
+const WINDOW_COMMAND_TIMEOUT_MS: ReadonlyMap<string, number> = new Map([
+	[WORKSPACE_SNAPSHOT_COMMAND_ID, 5_000],
+	[BROWSER_PAGE_URL_COMMAND_ID, 10_000],
+]);
 
 /**
  * Runs commands from the CommandsRegistry (the checkpoint service registers its own). Commands
@@ -443,7 +451,18 @@ export class ServerCommandService implements ICommandService {
 				return this.instantiationService.invokeFunction(command.handler, ...args) as T;
 			}
 			if (WINDOW_COMMANDS.has(id)) {
-				return await this.clients.call<T>('browser', 'command.execute', id, ...args.map(arg => toWire(arg)));
+				// A token does not cross the socket (the window runs the command with none).
+				// These all name the chat first: its browser tab is in the window that has it open.
+				const sessionId = typeof args[0] === 'string' ? args[0] : undefined;
+				const holders = sessionId ? this.clients.holders(sessionId) : undefined;
+				const answer = this.clients.callWith<unknown>('browser', {
+					prefer: holders?.size ? connectionId => holders.has(connectionId) : undefined,
+					timeoutMs: WINDOW_COMMAND_TIMEOUT_MS.get(id),
+				}, 'command.execute', id, ...args.map(arg => CancellationToken.isCancellationToken(arg) ? undefined : toWire(arg)));
+				// The caller stops waiting when it cancels, even though the window cannot be told to.
+				const token = args.find(arg => CancellationToken.isCancellationToken(arg)) as CancellationToken | undefined;
+				// The window sends its answer in wire form (screenshots as `$u8`, URIs): revive it.
+				return fromWire<T>(token ? await raceCancellationError(answer, token) : await answer);
 			}
 			throw new Error(`command '${id}' not found on the agent server`);
 		} finally {

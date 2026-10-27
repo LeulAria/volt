@@ -15,7 +15,7 @@ import { IPathService } from '../../../../services/path/common/pathService.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltProjectRecord, IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { AGENT_SCRATCH_WORKSPACE_ID, freeFolderName, scratchFolderName, scratchProjectLabel } from '../home/agentHomeWorkspace.js';
-import { runGit } from '../home/agentHomeWorkspaceActions.js';
+import { runGit } from '../home/agentGitRun.js';
 import { bindingFromProject } from './agentShell.js';
 import { IAgentWorkspaceService } from './agentWorkspace.js';
 
