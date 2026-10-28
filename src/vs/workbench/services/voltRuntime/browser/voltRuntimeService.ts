@@ -143,7 +143,7 @@ const ACCESS_CHATS_LIMIT = 500;
 const TAB_PREDICTION_SESSION_ID = 'volt-tab-prediction';
 
 /** Bumped whenever the built-in profile list changes so existing installs pick it up. */
-const CLI_SEED_VERSION = 4;
+const CLI_SEED_VERSION = 5;
 
 /** Idle chat agents kept warm per window, most recently used first. */
 const MAX_IDLE_AGENTS = 3;
