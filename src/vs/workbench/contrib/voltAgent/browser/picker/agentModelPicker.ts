@@ -503,25 +503,7 @@ export class AgentModelPicker extends Disposable {
 				scrollRightBtn.appendChild(renderIcon(Codicon.chevronRight));
 				scrollRightBtn.setAttribute('aria-label', localize('voltAgent.providersNext', "Show more providers"));
 				setAgentTooltip(scrollRightBtn, localize('voltAgent.providersNext', "Show more providers"));
-				// Outside the scrolling tab strip, so it stays put however many providers there are.
 				const multiHost = this.host.multi;
-				let multiToggle: HTMLButtonElement | undefined;
-				if (multiHost) {
-					multiToggle = append(tabBar, $('button.volt-agent-picker-multi')) as HTMLButtonElement;
-					multiToggle.type = 'button';
-					multiToggle.appendChild(renderIcon(Codicon.layers));
-					store.add(addDisposableListener(multiToggle, 'mousedown', e => e.stopPropagation()));
-					store.add(addDisposableListener(multiToggle, 'click', e => {
-						e.preventDefault();
-						e.stopPropagation();
-						if (multiHost.unavailableReason()) {
-							return;
-						}
-						this.setMulti(!this.isMulti());
-						renderAll();
-						search.focus();
-					}));
-				}
 				const settings = append(tabBar, $('button.volt-agent-picker-settings')) as HTMLButtonElement;
 				settings.type = 'button';
 				settings.appendChild(createSettingsIcon());
@@ -612,17 +594,6 @@ export class AgentModelPicker extends Disposable {
 					const on = this.isMulti();
 					menu.classList.toggle('multi', on);
 					multiFooter.classList.toggle('hidden', !on);
-					if (multiToggle && multiHost) {
-						const reason = multiHost.unavailableReason();
-						multiToggle.classList.toggle('active', on);
-						multiToggle.classList.toggle('disabled', !!reason);
-						multiToggle.setAttribute('aria-pressed', String(on));
-						const label = reason ?? (on
-							? localize('voltAgent.multiOff', "Back to one model")
-							: localize('voltAgent.multiOn', "Compare models: run this prompt on several models, each in its own worktree (⇧-click a model)"));
-						multiToggle.setAttribute('aria-label', label);
-						setAgentTooltip(multiToggle, label);
-					}
 					if (on) {
 						const count = this.multiRefs!.length;
 						multiCount.textContent = count < 2

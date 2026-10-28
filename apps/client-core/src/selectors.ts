@@ -404,7 +404,7 @@ export function modelLabel(runtime: IRuntimeState, ref: string | undefined): str
 
 const PROVIDER_NAMES: Record<string, string> = {
 	'claude-code': 'Claude Code', claude: 'Claude', anthropic: 'Anthropic', codex: 'Codex', openai: 'OpenAI', cursor: 'Cursor', 'cursor-acp': 'Cursor',
-	gemini: 'Gemini', 'gemini-cli': 'Gemini CLI', grok: 'Grok', xai: 'xAI', opencode: 'OpenCode', ollama: 'Ollama', lmstudio: 'LM Studio', openrouter: 'OpenRouter', kimi: 'Kimi',
+	gemini: 'Gemini', 'gemini-cli': 'Gemini CLI', grok: 'Grok', xai: 'xAI', opencode: 'OpenCode', ollama: 'Ollama', lmstudio: 'LM Studio', openrouter: 'OpenRouter', kimi: 'Kimi', fx: 'fx',
 };
 
 export function providerName(providerId: string): string {
