@@ -813,8 +813,30 @@ export class ProvidersPage {
 				}
 				break;
 		}
+		this.reachRightEdge(pane, scroller);
 		scroller.scrollTop = this.detailScrollTop;
 		this.host.store.add(addDisposableListener(scroller, 'scroll', () => this.detailScrollTop = scroller.scrollTop));
+	}
+
+	/**
+	 * The detail scroller runs out to the page's right edge, so its scrollbar sits at the edge of
+	 * the window instead of beside the centered column. Padding of the same width keeps the content
+	 * where it was.
+	 */
+	private reachRightEdge(pane: HTMLElement, scroller: HTMLElement): void {
+		const page = pane.closest('.volt-settings-content');
+		if (!isHTMLElement(page)) {
+			return;
+		}
+		const fit = () => {
+			const edge = Math.max(0, Math.round(page.getBoundingClientRect().right - pane.getBoundingClientRect().right));
+			scroller.style.marginRight = `-${edge}px`;
+			scroller.style.paddingRight = `${edge}px`;
+		};
+		fit();
+		const resize = new ResizeObserver(fit);
+		resize.observe(page);
+		this.host.store.add(toDisposable(() => resize.disconnect()));
 	}
 
 	/** Icon, title and status across the top of the right pane. Returns the slot for its actions. */
