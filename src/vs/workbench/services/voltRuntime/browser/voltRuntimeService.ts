@@ -123,7 +123,10 @@ import { IToolCall, IToolContext, IToolResult, IVoltTool, toolSchemas } from '..
 import { deepseekKnobs, resolveApproval } from '../common/deepseek/approval.js';
 import { VoltLlmAdapter } from './deepseek/voltLlmAdapter.js';
 import { buildSubagentPrompt, customSubagentPrompt, nativeModelTurn } from '../common/deepseek/prompt.js';
-import { ApprovalOutcome } from '../common/deepseek/protocol.js';
+import { ApprovalOutcome, StreamChunk } from '../common/deepseek/protocol.js';
+import { endToolRun, ITrajectoryRequest, ITrajectoryRequestInput, recordStream, startToolRun } from '../common/harness/trajectory.js';
+import { IVoltTrajectoryService } from '../common/trajectory.js';
+import './trajectoryService.js';
 import { turnWriteGate } from '../common/turnWriteGate.js';
 import { createBuiltinTools } from './tools/registry.js';
 import { loadProjectInstructions } from './prompt/projectInstructions.js';
@@ -637,6 +640,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		@IVoltHooksService private readonly hooks: IVoltHooksService,
 		@IVoltCodeIndexService codeIndexService: IVoltCodeIndexService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IVoltTrajectoryService private readonly trajectory: IVoltTrajectoryService,
 	) {
 		super();
 		this.codeIntel = this._register(createRuntimeCodeIntel(markerService, textModelService, languageFeaturesService, fileService));
@@ -2672,6 +2676,28 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		},
 	};
 
+	/** Records a native model request for the Trajectory panel; the stream itself passes through unchanged. */
+	private traceStream(stream: AsyncIterable<StreamChunk>, traced: { request?: ITrajectoryRequest }, input: Omit<ITrajectoryRequestInput, 'id' | 'index'>): AsyncIterable<StreamChunk> {
+		const request = this.trajectory.begin(input);
+		traced.request = request;
+		return request ? recordStream(stream, request, () => this.trajectory.changed(input.sessionId)) : stream;
+	}
+
+	/** Times a batch's tool calls against the request whose answer asked for them; returns the result hook. */
+	private traceTools(sessionId: string, request: ITrajectoryRequest | undefined, calls: readonly IToolCall[]): (result: IToolResult) => void {
+		if (!request) {
+			return () => { };
+		}
+		for (const call of calls) {
+			startToolRun(request, call);
+		}
+		this.trajectory.changed(sessionId);
+		return result => {
+			endToolRun(request, result);
+			this.trajectory.changed(sessionId);
+		};
+	}
+
 	/**
 	 * Native model path. DeepSeek owns the turn, the tool pipeline, and approval.
 	 * Volt streams the selected provider, paints `IVoltEvent`s, and owns what the loop cannot:
@@ -2815,9 +2841,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.logService.info(`[volt] restarting the background ${agent.label} subagent of ${session.sessionId}`);
 			void this.runSubagent(session, state, agent.request, { callId: agent.callId, signal: new AbortController().signal, cwd, sessionId: session.sessionId, mode: request.mode }, true);
 		}
+		// The request on the wire now, for the Trajectory panel; its answer's tool calls are timed against it.
+		const traced: { request?: ITrajectoryRequest; step?: number } = {};
 		const emit = (event: IVoltEvent) => {
 			if (event.type === 'usage' && this.isCurrent(session, run)) {
 				state.promptTokens = event.used ?? event.input + (event.cache ?? 0) + (event.cacheWrite ?? 0);
+			}
+			if (event.type === 'usage' && event.costUsd !== undefined && traced.request) {
+				traced.request.costUsd = event.costUsd;
+				this.trajectory.changed(session.sessionId);
 			}
 			this.emitEngine(session, run, event);
 		};
@@ -2898,8 +2930,21 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				...(streamOptions?.maxOutputTokens ? { maxOutputTokens: streamOptions.maxOutputTokens } : {}),
 			}, token));
 			const result = await runDeepseekLoop({
-				stream: (messages, _token, streamOptions) => openStream(messages, streamOptions),
+				stream: (messages, _token, streamOptions) => this.traceStream(openStream(messages, streamOptions), traced, {
+					sessionId: session.sessionId,
+					runId: run.runId,
+					...(traced.step !== undefined ? { step: traced.step } : {}),
+					provider: profile.providerId,
+					model: item.id,
+					modelLabel: item.label,
+					system: system.content,
+					messages,
+					tools: schemas,
+					options,
+					...(streamOptions?.maxOutputTokens ? { maxOutputTokens: streamOptions.maxOutputTokens } : {}),
+				}),
 				// Claude's prompt cache lasts five minutes: kept while a long tool or an approval holds the run.
+				// Not traced: the ping is aborted at its first chunk, so it is not a request of the run.
 				...(keepsPromptCacheBriefly(profile.providerId, item.id) && this.configurationService.getValue<boolean>(PROMPT_CACHE_KEEPALIVE_SETTING) !== false ? {
 					keepAlive: async (messages: readonly INativeLoopMessage[], streamOptions: IDeepseekStreamOptions) => {
 						const abort = new AbortController();
@@ -2918,6 +2963,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					for (const call of calls) {
 						dispatched.add(call.id);
 					}
+					const traceResult = this.traceTools(session.sessionId, traced.request, calls);
 					checkpoint();
 					return runToolBatch(registry, calls, {
 						cwd,
@@ -2929,6 +2975,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						authorize: async () => ({ allow: true }),
 						onResult: result => {
 							finished.set(result.callId, result);
+							traceResult(result);
 							checkpoint();
 							onResult?.(result);
 						},
@@ -2944,6 +2991,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				contextWindow,
 				maxOutputTokens: 128_000,
 				prepareTurn: async (messages, step) => {
+					traced.step = step;
 					if (!this.isCurrent(session, run)) {
 						return;
 					}
@@ -3575,21 +3623,34 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				this.journal.log(journalId, childEntry, () => withRunningCalls(childEntry(), finishedCalls, startedCalls));
 			}
 		};
+		const traced: { request?: ITrajectoryRequest } = {};
 		const work = async (): Promise<{ text: string; isError?: boolean }> => {
 			try {
 				const result = await runDeepseekLoop({
-					stream: messages => new VoltLlmAdapter(provider).stream({
+					stream: messages => this.traceStream(new VoltLlmAdapter(provider).stream({
 						modelId: item.id,
 						messages: nativeToModelMessages([system, ...messages]),
 						profile,
 						apiKey,
 						options,
 						tools: toolSchemas(tools),
-					}, source.token),
+					}, source.token), traced, {
+						sessionId: session.sessionId,
+						runId,
+						provider: profile.providerId,
+						model: item.id,
+						modelLabel: item.label,
+						agent: label,
+						system: system.content,
+						messages,
+						tools: toolSchemas(tools),
+						options,
+					}),
 					execute: (calls, onResult) => {
 						for (const call of calls) {
 							startedCalls.add(call.id);
 						}
+						const traceResult = this.traceTools(session.sessionId, traced.request, calls);
 						save();
 						return runToolBatch(registry, calls, {
 							cwd: root?.fsPath,
@@ -3602,6 +3663,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 							authorize: async () => ({ allow: true }),
 							onResult: result => {
 								finishedCalls.set(result.callId, result);
+								traceResult(result);
 								save();
 								onResult?.(result);
 							},
