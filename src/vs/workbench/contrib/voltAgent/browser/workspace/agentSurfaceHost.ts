@@ -62,7 +62,7 @@ import { AgentChangesEditorInput, isAgentChangesDiffFor, openAgentChangesDiff } 
 import { AgentChangesScope } from '../review/agentSessionChanges.js';
 import { AgentFilesSidebar, AgentFilesSidebarView } from './agentFilesSidebar.js';
 import { AgentSurfaceAddMenu, IAgentSurfaceAddMenuHost, renderSurfaceOpenList, visibleSurfaceMenuItems } from './agentSurfaceAddMenu.js';
-import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
+import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
 import { AgentToolsEditorPart, AgentToolsPartContext, hasSavedAgentTools } from './agentToolsEditorPart.js';
 import { attachSessionToProject } from './agentShell.js';
 import { registerAgentFileEditorRouting } from './agentFileEditorRouting.js';
@@ -318,6 +318,24 @@ export function openInAgentTools(input: EditorInput, sessionId?: string, options
 	const candidates = [...hosts].filter(host => host.canOpenTools());
 	const host = (sessionId ? candidates.find(candidate => candidate.showsSession(sessionId)) : undefined) ?? candidates.find(isChatToolsHost);
 	return host?.openEditorInTools(input, options);
+}
+
+/**
+ * A new side chat in the tools of the chat on screen (preferring `sessionId`'s), bound to that
+ * chat's project. Undefined when no chat is on screen (the IDE layout, the home page).
+ */
+export function openSideChatOnScreen(sessionId?: string): Promise<IEditorPane | undefined> | undefined {
+	const candidates = [...hosts].filter(host => host.canOpenTools());
+	const host = (sessionId ? candidates.find(candidate => candidate.showsSession(sessionId)) : undefined) ?? candidates.find(isChatToolsHost);
+	return host?.openSideChat();
+}
+
+/**
+ * A new side chat in the tools area that holds `element` (a tab's content), bound to that chat's
+ * project. Works with the tools full screen, when the chat itself is not on screen.
+ */
+export function openSideChatBeside(element: HTMLElement): Promise<IEditorPane | undefined> | undefined {
+	return [...hosts].find(host => host.holdsInTools(element))?.openSideChat();
 }
 
 /** The chat whose tools are on screen, if any. */
@@ -628,6 +646,11 @@ export class AgentSurfaceHost extends Disposable {
 	/** The chat this host shows. */
 	get currentSessionId(): string | undefined {
 		return this.sessionId;
+	}
+
+	/** Whether `element` lives in this host's tools area (one of its tabs). */
+	holdsInTools(element: HTMLElement): boolean {
+		return !this.disposed && !this.nested() && this.area.contains(element);
 	}
 
 	/** A chat the user can see, so a click in its dock can open the right panel. */
@@ -2394,6 +2417,9 @@ export class AgentSurfaceHost extends Disposable {
 				return;
 			case 'changes':
 				this.openChanges();
+				return;
+			case 'gitGraph':
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, this.sessionId));
 				return;
 			case 'scratch':
 				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, this.sessionId));

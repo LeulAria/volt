@@ -1133,8 +1133,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}));
 		append(this.editorMainEl, this.threadEl);
 		this.threadView.rememberHome();
+		// Only a toolbar no chat holds yet: a docked chat (Scratch, canvas) taking it from the open chat
+		// would leave that chat's composer keeping room for a toolbar that is gone.
 		const quickOpen = getWindow(this.container).document.querySelector('.volt-agent-quick-open-actions');
-		if (isHTMLElement(quickOpen)) {
+		if (isHTMLElement(quickOpen) && !quickOpen.closest('.volt-agent-editor')) {
 			mountAgentQuickOpenActions(this.threadScroll.getDomNode(), quickOpen);
 		}
 		this.applyCodeFont();
@@ -5645,6 +5647,41 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		}
 	}
 
+	/**
+	 * `/scratch` in a chat that already has turns starts a new chat, so the board answer gets a fresh
+	 * tab: the prompt moves there with its tokens and is sent at once. Docked chats (Scratch, canvas) keep it.
+	 */
+	private startScratchInNewChat(): boolean {
+		if (!this.wantsScratchChat()) {
+			return false;
+		}
+		const text = this.inputModel?.getValue() ?? '';
+		void this.sendInNewChat(text, cloneDisplayMentions(this.mentionController?.displayMentions() ?? []));
+		return true;
+	}
+
+	private wantsScratchChat(): boolean {
+		if (!this.messages.length || this.queueEdit || this.editingUserIndex !== undefined || this.isSubagentChat()
+			|| this.container.closest('.volt-agent-toolless') || !this.group) {
+			return false;
+		}
+		const mentions = this.mentionController?.displayMentions() ?? [];
+		return mentions.some(mention => mention.kind === 'skill' && (mention.value ?? mention.label.replace(/^\//, '')).toLowerCase() === 'scratch')
+			|| /^\s*\/scratch(?=\s|$)/i.test(this.inputModel?.getValue() ?? '');
+	}
+
+	private async sendInNewChat(text: string, mentions: IAgentDisplayMention[]): Promise<void> {
+		this.hidePlusMenu();
+		this.clearComposer();
+		this.updateSendButton();
+		const next = this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.getNewEditorUri());
+		const pane = await this.group.openEditor(next, { pinned: true });
+		if (pane instanceof AgentEditor) {
+			pane.prefillDraft(text, mentions);
+			pane.send();
+		}
+	}
+
 	private async openEditInNewAgent(): Promise<void> {
 		if (this.editingUserIndex === undefined) {
 			return;
@@ -6165,7 +6202,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			});
 			return;
 		}
-		if (this.startInScratchFolder()) {
+		if (this.startScratchInNewChat() || this.startInScratchFolder()) {
 			return;
 		}
 		this.submitting = true;
@@ -6373,6 +6410,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private sendAndStartNewChat(): void {
 		const model = this.inputModel;
 		if (!model || !this.composerCanSend() || this.questionTray?.active || this.queueEdit || this.editingUserIndex !== undefined) {
+			return;
+		}
+		if (this.wantsScratchChat()) {
+			// `/scratch` already goes to a new chat.
+			this.send();
 			return;
 		}
 		this.send();
@@ -7053,8 +7095,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private syncHostedChrome(): void {
 		// A board's or canvas's own chat dock (toolless) keeps the chat's composer (the follow-up pill), even in a right panel.
 		if (this.container?.closest('.volt-agent-tools-area') && !this.container.closest('.volt-agent-toolless')) {
-			this.setBrowserHosted(!this.isSubagentChat());
+			const readable = this.input instanceof AgentEditorInput && this.input.showTranscriptInTools;
+			this.setBrowserHosted(!this.isSubagentChat() && !readable);
 		}
+	}
+
+	/** Keeps this chat's transcript on screen in another chat's right panel (a chat opened to be read, like a commit's explanation). */
+	showTranscriptInTools(): void {
+		if (this.input instanceof AgentEditorInput) {
+			this.input.showTranscriptInTools = true;
+		}
+		this.syncHostedChrome();
 	}
 
 	/** This chat runs a task another chat delegated. */

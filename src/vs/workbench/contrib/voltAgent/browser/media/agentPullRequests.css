@@ -11,9 +11,9 @@
 .volt-pr-hover-card,
 .volt-pr-dock,
 .volt-pr-checks-menu {
-	--volt-pr-border: rgba(255, 255, 255, 0.08);
-	--volt-pr-surface: rgba(255, 255, 255, 0.03);
-	--volt-pr-surface-strong: rgba(255, 255, 255, 0.06);
+	--volt-pr-border: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	--volt-pr-surface: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+	--volt-pr-surface-strong: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
 	--volt-pr-muted: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
 	--volt-pr-open: #3fb950;
 	--volt-pr-draft: #8b949e;
@@ -34,9 +34,9 @@
 .monaco-workbench.hc-light .volt-pr-dock,
 .monaco-workbench.vs .volt-pr-checks-menu,
 .monaco-workbench.hc-light .volt-pr-checks-menu {
-	--volt-pr-border: rgba(0, 0, 0, 0.09);
-	--volt-pr-surface: rgba(0, 0, 0, 0.025);
-	--volt-pr-surface-strong: rgba(0, 0, 0, 0.05);
+	--volt-pr-border: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	--volt-pr-surface: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+	--volt-pr-surface-strong: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
 	--volt-pr-open: #1a7f37;
 	--volt-pr-draft: #6e7781;
 	--volt-pr-merged: #8250df;
@@ -364,6 +364,11 @@
 	color: #f5f5f5;
 }
 
+.monaco-workbench.vs .volt-pr-button.primary:hover:not(:disabled),
+.monaco-workbench.hc-light .volt-pr-button.primary:hover:not(:disabled) {
+	background: #3a3a3a;
+}
+
 .volt-pr-button.secondary {
 	border-color: var(--volt-pr-border);
 	background: var(--volt-pr-surface-strong);
@@ -415,6 +420,11 @@
 	background: #1a1a1a;
 	color: #f5f5f5;
 	border-left-color: rgba(255, 255, 255, 0.2);
+}
+
+.monaco-workbench.vs .volt-pr-split > .volt-pr-icon-button.primary:hover,
+.monaco-workbench.hc-light .volt-pr-split > .volt-pr-icon-button.primary:hover {
+	background: #3a3a3a;
 }
 
 .volt-pr-icon-button {
@@ -764,7 +774,7 @@
 	padding: 7px 10px;
 	border: 1px solid var(--volt-pr-border);
 	border-radius: 8px;
-	background: var(--vscode-input-background, rgba(255, 255, 255, 0.04));
+	background: var(--vscode-input-background, color-mix(in srgb, var(--vscode-foreground) 4%, transparent));
 	color: var(--vscode-input-foreground, var(--vscode-foreground));
 	font: inherit;
 	font-size: 13px;
@@ -2422,9 +2432,9 @@
 }
 
 .volt-git-dialog {
-	--volt-pr-border: rgba(255, 255, 255, 0.09);
-	--volt-pr-surface: rgba(255, 255, 255, 0.03);
-	--volt-pr-surface-strong: rgba(255, 255, 255, 0.07);
+	--volt-pr-border: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+	--volt-pr-surface: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+	--volt-pr-surface-strong: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
 	--volt-pr-muted: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
 	--volt-pr-add: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
 	--volt-pr-del: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
@@ -2447,9 +2457,15 @@
 
 .monaco-workbench.vs .volt-git-dialog,
 .monaco-workbench.hc-light .volt-git-dialog {
-	--volt-pr-border: rgba(0, 0, 0, 0.1);
-	--volt-pr-surface: rgba(0, 0, 0, 0.025);
-	--volt-pr-surface-strong: rgba(0, 0, 0, 0.05);
+	--volt-pr-border: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	--volt-pr-surface: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+	--volt-pr-surface-strong: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.monaco-workbench.vs .volt-git-dialog-backdrop,
+.monaco-workbench.hc-light .volt-git-dialog-backdrop {
+	background: rgba(0, 0, 0, 0.2);
 }
 
 @keyframes volt-git-dialog-in {

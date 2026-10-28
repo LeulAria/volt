@@ -48,7 +48,7 @@
 	--vq-accent-soft: rgba(201, 130, 42, 0.14);
 	--vq-bg: #ffffff;
 	--vq-on-accent: #ffffff;
-	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 2px 10px rgba(0, 0, 0, 0.06);
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 2px 10px rgba(0, 0, 0, 0.06);
 }
 
 .volt-question-tray.hidden {

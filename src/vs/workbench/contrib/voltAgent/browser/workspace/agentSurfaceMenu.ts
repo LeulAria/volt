@@ -21,6 +21,19 @@ export const OPEN_CANVAS_IN_TOOLS_COMMAND_ID = 'volt.canvas.openInTools';
 /** Registered in automations.contribution.ts, which imports this host: Automations as a tab. */
 export const OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID = 'voltAgent.automations.openInTools';
 
+/** Registered in gitGraph/gitGraph.contribution.ts, which imports this host: the repository's commit graph as a tab. */
+export const OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID = 'volt.gitGraph.openInTools';
+
+/** Lucide git-graph (AriaIcons): two branches off a trunk, the Git Graph tab and its + menu row. */
+export const GIT_GRAPH_ICON_SHAPES: SvgIconShapes = [
+	['circle', { cx: 5, cy: 6, r: 3 }],
+	['path', { d: 'M5 9v6' }],
+	['circle', { cx: 5, cy: 18, r: 3 }],
+	['path', { d: 'M12 3v18' }],
+	['circle', { cx: 19, cy: 6, r: 3 }],
+	['path', { d: 'M16 15.7A9 9 0 0 0 19 9' }],
+];
+
 /** A painter's palette: the design canvas, as its tab and the Designs rows show it (the + menu). */
 export const CANVAS_ICON_SHAPES: SvgIconShapes = [
 	['path', { d: 'M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z' }],
@@ -65,7 +78,7 @@ const DEVICE_ICON_SHAPES: SvgIconShapes = [
 export const SIDE_CHAT_ICON_PATH = 'M7 7H15M7 11H11M5 3H19C20.1046 3 21 3.89543 21 5V15C21 16.1046 20.1046 17 19 17H16L12.3536 20.6464C12.1583 20.8417 11.8417 20.8417 11.6464 20.6464L8 17H5C3.89543 17 3 16.1046 3 15V5C3 3.89543 3.89543 3 5 3Z';
 
 /** Right-rail / tab-bar + menu rows that open an agent surface. */
-export type AgentSurfaceMenuActionId = 'file' | 'terminal' | 'browser' | 'device' | 'changes' | 'scratch' | 'canvas' | 'automations' | 'sideChat';
+export type AgentSurfaceMenuActionId = 'file' | 'terminal' | 'browser' | 'device' | 'changes' | 'gitGraph' | 'scratch' | 'canvas' | 'automations' | 'sideChat';
 
 /** Each row's own command, registered in agentSurfaceHost.ts: opens it in the right panel of the chat on screen. */
 export function surfaceOpenCommandId(id: AgentSurfaceMenuActionId): string {
@@ -82,6 +95,7 @@ export const SURFACE_OPEN_KEYS: Readonly<Record<AgentSurfaceMenuActionId, KeyCod
 	browser: KeyCode.KeyB,
 	device: KeyCode.KeyD,
 	changes: KeyCode.KeyC,
+	gitGraph: KeyCode.KeyG,
 	scratch: KeyCode.KeyS,
 	canvas: KeyCode.KeyV,
 	automations: KeyCode.KeyA,
@@ -139,6 +153,13 @@ export function agentSurfaceMenuItems(): readonly IAgentSurfaceMenuItem[] {
 			svgPath: CHANGES_ICON_PATH,
 		},
 		{
+			// The project's commit graph: branches, refs, agents, search and a commit inspector.
+			id: 'gitGraph',
+			label: localize('voltAgent.surfaceMenu.gitGraph', "Git Graph"),
+			icon: Codicon.gitCommit,
+			svgPath: GIT_GRAPH_ICON_SHAPES,
+		},
+		{
 			// The chat's board (or a clean one), drawn on in the chat's project.
 			id: 'scratch',
 			label: localize('voltAgent.surfaceMenu.scratch', "Scratch"),
@@ -169,7 +190,7 @@ export function agentSurfaceMenuItems(): readonly IAgentSurfaceMenuItem[] {
 }
 
 /** Maps a + menu action to the surface kind it opens (file uses the file opener, not a draft alone). */
-export function surfaceKindForMenuAction(id: AgentSurfaceMenuActionId): 'file' | 'terminal' | 'browser' | 'device' | 'changes' | 'scratch' | 'canvas' | 'automations' | 'chat' {
+export function surfaceKindForMenuAction(id: AgentSurfaceMenuActionId): 'file' | 'terminal' | 'browser' | 'device' | 'changes' | 'gitGraph' | 'scratch' | 'canvas' | 'automations' | 'chat' {
 	switch (id) {
 		case 'file':
 			return 'file';
@@ -181,6 +202,8 @@ export function surfaceKindForMenuAction(id: AgentSurfaceMenuActionId): 'file' |
 			return 'device';
 		case 'changes':
 			return 'changes';
+		case 'gitGraph':
+			return 'gitGraph';
 		case 'scratch':
 			return 'scratch';
 		case 'canvas':

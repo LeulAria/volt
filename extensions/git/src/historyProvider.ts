@@ -10,7 +10,8 @@ import { IDisposable, deltaHistoryItemRefs, dispose, filterEvent, subject, trunc
 import { toMultiFileDiffEditorUris } from './uri';
 import { AvatarQuery, AvatarQueryCommit, Branch, LogOptions, Ref, RefType } from './api/git';
 import { emojify, ensureEmojis } from './emoji';
-import { Commit } from './git';
+import { Commit, GitLogOptions } from './git';
+import { parseHistoryQuery } from './historyQuery';
 import { OperationKind, OperationResult } from './operation';
 import { ISourceControlHistoryItemDetailsProviderRegistry, provideSourceControlHistoryItemAvatar, provideSourceControlHistoryItemMessageLinks } from './historyItemDetailsProvider';
 import { throttle } from './decorators';
@@ -537,21 +538,88 @@ export class GitHistoryProvider implements SourceControlHistoryProvider, FileDec
 			return [];
 		}
 
+		const query = parseHistoryQuery(filterText);
+		const maxEntries = options.maxEntries ?? 50;
+
+		// Searches walk the graph's references (so a date or author filter covers the same branches as
+		// the graph and its activity counts), in commit-date order so matches stream instead of waiting
+		// for a full `--topo-order` walk, and ask for the full reference names.
+		const searchOptions: GitLogOptions & { silent: boolean } = { ...options, walkOrder: 'date', decorate: true, silent: true };
+
+		// A bare hex token may be a commit. Only on the first page, so that paging does not repeat it.
+		const commitLookup = query.commit && !options.skip
+			? this._lookupCommit(query.commit)
+			: Promise.resolve(undefined);
+
+		let searchResults: Commit[][];
+		if (!query.hasFields) {
+			// Plain text: author or message, merged and sorted by date
+			searchResults = await Promise.all([
+				this.repository.log({ ...searchOptions, author: filterText }, token),
+				this.repository.log({ ...searchOptions, grep: filterText }, token)
+			]);
+		} else if (query.lineRange) {
+			// `-L` cannot be combined with statistics. Find the commits first, then
+			// read them again, without walking, to get their statistics.
+			// Line numbers are the file's at HEAD, so a line's history walks from HEAD.
+			const lineCommits = await this.repository.log({
+				...searchOptions,
+				refNames: undefined,
+				shortStats: false,
+				author: query.author,
+				grep: query.message,
+				since: query.since,
+				until: query.until,
+				merges: query.merges,
+				lineRange: query.lineRange
+			}, token);
+
+			searchResults = [lineCommits.length > 0 && !token.isCancellationRequested
+				? await this.repository.log({ refNames: lineCommits.map(c => c.hash), noWalk: true, shortStats: true, silent: true }, token)
+				: lineCommits];
+		} else {
+			searchResults = [await this.repository.log({
+				...searchOptions,
+				author: query.author,
+				grep: query.message,
+				since: query.since,
+				until: query.until,
+				merges: query.merges,
+				path: query.path,
+				follow: query.follow
+			}, token)];
+		}
+
+		const commit = await commitLookup;
+		if (token.isCancellationRequested) {
+			return [];
+		}
+
 		const commits = new Map<string, Commit>();
+		if (commit) {
+			commits.set(commit.hash, commit);
+		}
 
-		// Search by author and commit message in parallel
-		const [authorResults, grepResults] = await Promise.all([
-			this.repository.log({ ...options, refNames: undefined, author: filterText, silent: true }, token),
-			this.repository.log({ ...options, refNames: undefined, grep: filterText, silent: true }, token)
-		]);
+		const results = searchResults.length > 1
+			? searchResults.flat().sort((a, b) => (b.commitDate?.getTime() ?? 0) - (a.commitDate?.getTime() ?? 0))
+			: searchResults.flat();
 
-		for (const commit of [...authorResults, ...grepResults]) {
-			if (!commits.has(commit.hash)) {
-				commits.set(commit.hash, commit);
+		for (const result of results) {
+			if (!commits.has(result.hash)) {
+				commits.set(result.hash, result);
 			}
 		}
 
-		return Array.from(commits.values()).slice(0, options.maxEntries ?? 50);
+		return Array.from(commits.values()).slice(0, maxEntries);
+	}
+
+	private async _lookupCommit(hash: string): Promise<Commit | undefined> {
+		try {
+			return await this.repository.getCommit(`${hash}^{commit}`);
+		} catch {
+			// Not a commit (or an ambiguous prefix)
+			return undefined;
+		}
 	}
 
 	private toSourceControlHistoryItemRef(ref: Ref): SourceControlHistoryItemRef {

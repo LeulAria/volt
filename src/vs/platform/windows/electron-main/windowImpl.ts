@@ -1015,6 +1015,15 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 		// Handle configuration changes
 		this._register(this.configurationService.onDidChangeConfiguration(e => this.onConfigurationUpdated(e)));
 
+		// The see-through material keeps the appearance it was created with: switching between a
+		// light and a dark theme left light glass under a dark sidebar. Recreate it on the new one.
+		this._register(this.themeMainService.onDidChangeColorScheme(() => {
+			if (isMacintosh && this.transparentChrome && !this.backgrounded && !this._win.isDestroyed()) {
+				this._win.setVibrancy(null);
+				this._win.setVibrancy('under-window');
+			}
+		}));
+
 		// Handle Workspace events
 		this._register(this.workspacesManagementMainService.onDidDeleteUntitledWorkspace(e => this.onDidDeleteUntitledWorkspace(e)));
 

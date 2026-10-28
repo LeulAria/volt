@@ -102,6 +102,9 @@ export namespace Schemas {
 	/** Scheme used for the agent Automations editor tab. */
 	export const voltAutomations = 'volt-automations';
 
+	/** Scheme used for a repository's Git Graph editor tab. */
+	export const voltGitGraph = 'volt-git-graph';
+
 	/** Scheme used for the Scratch whiteboard editor tab. */
 	export const voltScratchBoard = 'volt-scratchboard';
 

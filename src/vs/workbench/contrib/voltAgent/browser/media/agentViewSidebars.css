@@ -364,10 +364,15 @@
 	overflow-y: auto;
 	overscroll-behavior: contain;
 	scrollbar-width: thin;
-	border-color: var(--vscode-menu-border, var(--vscode-widget-border, rgba(255, 255, 255, 0.1)));
+	border-color: var(--vscode-menu-border, var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)));
 	border-radius: 10px;
 	background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
 	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
+}
+
+.monaco-workbench.vs.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element > .volt-agent-quick-open-actions.expanded.overlay > .volt-agent-quick-open-body,
+.monaco-workbench.hc-light.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element > .volt-agent-quick-open-actions.expanded.overlay > .volt-agent-quick-open-body {
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
 }
 
 /* The collapse chevron stays on top of the card, at the corner where the rail's chevron was. */
@@ -635,12 +640,17 @@
 	max-height: calc(100% - 60px);
 	overflow-y: auto;
 	box-sizing: border-box;
-	border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, rgba(255, 255, 255, 0.1)));
+	border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)));
 	border-radius: 10px;
 	background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
 	color: var(--vscode-menu-foreground, var(--vscode-foreground));
 	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
 	-webkit-app-region: no-drag;
+}
+
+.monaco-workbench.vs .volt-agent-quick-open-actions.volt-agent-quick-open-popup,
+.monaco-workbench.hc-light .volt-agent-quick-open-actions.volt-agent-quick-open-popup {
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
 }
 
 .monaco-workbench .volt-agent-quick-open-actions.volt-agent-quick-open-popup.hidden {

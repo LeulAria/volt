@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { WORKSPACE_STATUS_TOOL_NAME } from './harness/workspaceContext.js';
+import { WORKSPACE_SNAPSHOT_COMMAND_ID, WORKSPACE_STATUS_TOOL_NAME } from './harness/workspaceContext.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
@@ -39,6 +39,14 @@ export const AUTOMATE_BROWSER_COMMAND_ID = 'volt.browser.automate';
 export const BROWSER_PAGE_URL_COMMAND_ID = 'volt.browser.pageUrl';
 /** `(sessionId, IVoltBrowserPreflightRequest) => IVoltBrowserPreflightResult`: the browser half of the turn primer. */
 export const PREFLIGHT_BROWSER_COMMAND_ID = 'volt.browser.preflight';
+
+/**
+ * Commands agents use that only a Volt window registers (the in-app browser, what the user has
+ * open). The agent server runs them in a connected window; the window runs only these for it.
+ */
+export const AGENT_SERVER_WINDOW_COMMANDS: ReadonlySet<string> = new Set([
+	AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, PREFLIGHT_BROWSER_COMMAND_ID, WORKSPACE_SNAPSHOT_COMMAND_ID,
+]);
 
 export interface IVoltBrowserPreflightRequest {
 	/** The chat's folder. */

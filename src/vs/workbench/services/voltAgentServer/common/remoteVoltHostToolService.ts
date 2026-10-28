@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { RunOnceScheduler } from '../../../../base/common/async.js';
-import { CancellationToken } from '../../../../base/common/cancellation.js';
+import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Emitter } from '../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../voltRuntime/common/hostTools.js';
@@ -18,6 +18,8 @@ export interface IRemoteHostToolCall {
 	readonly cwd?: string;
 	readonly source?: 'mcp' | 'native';
 	readonly external?: IVoltHostToolCall['external'];
+	/** Set on calls the server may cancel (`hostTools.cancel`). */
+	readonly cancelKey?: string;
 }
 
 export function toRemoteHostToolCall(call: IVoltHostToolCall | undefined): IRemoteHostToolCall | undefined {
@@ -53,6 +55,8 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 	/** Providers registered in this window. */
 	private readonly providers = new Set<IVoltHostToolProvider>();
 	private readonly publishTools: RunOnceScheduler;
+	/** Calls the server is running here, by `cancelKey`. */
+	private readonly running = new Map<string, CancellationTokenSource>();
 
 	constructor(@IAgentServerClientService private readonly client: IAgentServerClientService) {
 		super();
@@ -73,6 +77,29 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 		// A new connection (or a restarted server) learns this window's tools again.
 		this._register(client.onDidResync(() => this.sendTools()));
 		this._register(client.registerHandler('hostTools.invoke', (name, args, call) => this.invokeLocal(String(name), args, call as IRemoteHostToolCall | undefined)));
+		this._register(client.registerHandler('hostTools.needsApproval', (name, args, call) => {
+			const provider = this.providerFor(String(name));
+			return provider?.needsApproval?.(String(name), asRecord(args), this.localCall(call as IRemoteHostToolCall | undefined, CancellationToken.None)) ?? undefined;
+		}));
+		this._register(client.registerHandler('hostTools.approved', (name, args, call) => {
+			const local = this.localCall(call as IRemoteHostToolCall | undefined, CancellationToken.None);
+			if (local) {
+				this.providerFor(String(name))?.approved?.(String(name), asRecord(args), local);
+			}
+			return true;
+		}));
+		this._register(client.registerHandler('hostTools.cancel', cancelKey => {
+			this.running.get(String(cancelKey))?.cancel();
+			return true;
+		}));
+		// The server drops its side of every call when the socket closes: what still runs here
+		// would answer nobody (desktop control acting for a server that is gone).
+		this._register(client.onDidChangeState(state => {
+			if (state === 'closed') {
+				this.cancelRunning();
+			}
+		}));
+		this._register(toDisposable(() => this.cancelRunning()));
 	}
 
 	listTools(): readonly IVoltHostToolInfo[] {
@@ -97,14 +124,47 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 		this.client.send('hostTools.setClientTools', tools);
 	}
 
+	private cancelRunning(): void {
+		for (const source of this.running.values()) {
+			source.cancel();
+		}
+		this.running.clear();
+	}
+
+	private providerFor(name: string): IVoltHostToolProvider | undefined {
+		return [...this.providers].find(candidate => candidate.tools.some(tool => tool.name === name));
+	}
+
+	private localCall(call: IRemoteHostToolCall | undefined, token: CancellationToken): IVoltHostToolCall | undefined {
+		if (!call) {
+			return undefined;
+		}
+		const { cancelKey: _cancelKey, ...rest } = call;
+		return { ...rest, mode: call.mode as VoltMode | undefined, token };
+	}
+
 	/** The server runs a tool one of this window's providers serves. */
 	private async invokeLocal(name: string, args: unknown, call: IRemoteHostToolCall | undefined): Promise<IVoltHostToolResult> {
-		const provider = [...this.providers].find(candidate => candidate.tools.some(tool => tool.name === name));
+		const provider = this.providerFor(name);
 		if (!provider) {
 			return { error: `This Volt window no longer serves ${name}.` };
 		}
-		const record = args && typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : {};
-		return provider.invoke(name, record, call ? { ...call, mode: call.mode as VoltMode | undefined, token: CancellationToken.None } : undefined);
+		const key = typeof call?.cancelKey === 'string' ? call.cancelKey : undefined;
+		const source = new CancellationTokenSource();
+		if (key) {
+			this.running.get(key)?.cancel();
+			this.running.set(key, source);
+		}
+		try {
+			return await provider.invoke(name, asRecord(args), this.localCall(call, source.token));
+		} catch (err) {
+			return { error: err instanceof Error ? err.message : String(err) };
+		} finally {
+			if (key && this.running.get(key) === source) {
+				this.running.delete(key);
+			}
+			source.dispose();
+		}
 	}
 
 	/** The turn primer runs with the agents, in the server; a window has nothing to add to it. */
@@ -127,4 +187,8 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 	setQuestionHandler(): void { }
 	setSessionResolver(): void { }
 	setApprover(): void { }
+}
+
+function asRecord(args: unknown): Record<string, unknown> {
+	return args && typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : {};
 }

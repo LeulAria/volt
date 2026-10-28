@@ -85,6 +85,7 @@ import { BuiltInExtensionsContext, ExtensionMarketplaceStatusUpdater, Extensions
 import { ExtensionsWorkbenchService } from './extensionsWorkbenchService.js';
 import './media/extensionManagement.css';
 import { UnsupportedExtensionsMigrationContrib } from './unsupportedExtensionsMigrationContribution.js';
+import { VoltDefaultWorkspaceExtensions } from './voltDefaultWorkspaceExtensions.js';
 
 // Singletons
 registerSingleton(IExtensionsWorkbenchService, ExtensionsWorkbenchService, InstantiationType.Eager /* Auto updates extensions */);
@@ -2030,6 +2031,7 @@ if (isWeb) {
 }
 
 registerWorkbenchContribution2(ExtensionToolsContribution.ID, ExtensionToolsContribution, WorkbenchPhase.AfterRestored);
+registerWorkbenchContribution2(VoltDefaultWorkspaceExtensions.ID, VoltDefaultWorkspaceExtensions, WorkbenchPhase.Eventually);
 
 
 // Running Extensions
