@@ -8,6 +8,7 @@ import { ClaudeAccessBridge } from './claudeBridge.js';
 import { CodexAccessBridge } from './codexBridge.js';
 import { CursorAccessBridge } from './cursorBridge.js';
 import { DefaultAcpBridge } from './defaultAcpBridge.js';
+import { FxAccessBridge } from './fxBridge.js';
 import { OpenCodeAccessBridge } from './opencodeBridge.js';
 
 const BRIDGES: IProviderAccessBridge[] = [
@@ -16,6 +17,7 @@ const BRIDGES: IProviderAccessBridge[] = [
 	new CursorAccessBridge('cursor-acp'),
 	new CursorAccessBridge('grok'),
 	new OpenCodeAccessBridge(),
+	new FxAccessBridge(),
 	new DefaultAcpBridge('acp-generic'),
 ];
 
