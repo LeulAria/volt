@@ -230,6 +230,11 @@
 	line-height: 18px;
 }
 
+/* The row's fill shows it is being edited; the workbench's text-input focus outline would box the text in. */
+.monaco-workbench .volt-question-option.editing input.volt-question-other-input:focus {
+	outline: none;
+}
+
 .volt-question-other-input::placeholder {
 	color: var(--vq-fg-muted);
 }
