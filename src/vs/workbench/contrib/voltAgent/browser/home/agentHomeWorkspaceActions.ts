@@ -4,14 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { VSBuffer } from '../../../../../base/common/buffer.js';
+import { IGitRun, runGit } from './agentGitRun.js';
 import { toErrorMessage } from '../../../../../base/common/errorMessage.js';
 import { hash } from '../../../../../base/common/hash.js';
 import { untildify } from '../../../../../base/common/labels.js';
 import { isAbsolute } from '../../../../../base/common/path.js';
-import { isWindows } from '../../../../../base/common/platform.js';
 import { isEqual, joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
-import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -38,6 +37,9 @@ import { IAgentHomeWorkspaceMenuHost, showAgentHomeWorkspaceMenu } from './agent
 /** Parent folder for clones and new projects, once the user picks one. */
 const LOCATION_STORAGE_KEY = 'volt.agent.home.projectsLocation';
 export const INIT_TIMEOUT_MS = 30_000;
+
+export { runGit } from './agentGitRun.js';
+export type { IGitRun } from './agentGitRun.js';
 
 /** What the Open Workspace menu does: open and clone local folders, then show them as projects. */
 export class AgentHomeWorkspaceActions {
@@ -252,37 +254,6 @@ export class AgentHomeWorkspaceActions {
 	private git(cwd: string, args: readonly string[], timeoutMs: number): Promise<IGitRun> {
 		return runGit(this.stdio, cwd, args, timeoutMs);
 	}
-}
-
-export interface IGitRun {
-	readonly exitCode: number | null;
-	readonly stderr: string;
-	readonly timedOut: boolean;
-}
-
-/** Runs git in the user's shell, with their environment, so it is the git they use in a terminal. */
-export async function runGit(stdio: IVoltStdioService, cwd: string, args: readonly string[], timeoutMs: number): Promise<IGitRun> {
-	try {
-		const result = await stdio.exec({
-			id: `git-${generateUuid().slice(0, 8)}`,
-			command: ['git', ...args].map(shellQuote).join(' '),
-			cwd,
-			// No terminal to answer a credential prompt; fail instead of waiting for the timeout.
-			env: { GIT_TERMINAL_PROMPT: '0' },
-			timeoutMs,
-			inlineChars: 20_000,
-		});
-		return { exitCode: result.exitCode, stderr: result.stderr, timedOut: result.timedOut };
-	} catch (err) {
-		return { exitCode: 1, stderr: toErrorMessage(err), timedOut: false };
-	}
-}
-
-function shellQuote(arg: string): string {
-	if (/^[\w@%+=:,./~^-]+$/.test(arg)) {
-		return arg;
-	}
-	return isWindows ? `"${arg.replace(/"/g, '""')}"` : `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
 /**

@@ -1042,7 +1042,7 @@
 	min-width: 200px;
 	padding: 0;
 	border-radius: 8px;
-	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	border: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 	background: var(--vscode-editor-background, #1e1e1e);
 	color: var(--vscode-menu-foreground, var(--vscode-foreground));
 	box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
@@ -1056,7 +1056,7 @@
 .monaco-workbench.hc-light .volt-agent-home-filter-menu,
 .monaco-workbench.vs .volt-agent-home-filter-flyout,
 .monaco-workbench.hc-light .volt-agent-home-filter-flyout {
-	border-color: var(--vscode-widget-border, rgba(0, 0, 0, 0.1));
+	border-color: var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
 }
 
 .volt-agent-home-filter-flyout.hidden {
@@ -1200,11 +1200,17 @@ html.volt-layout-agent-window body {
 	--volt-agent-window-bg-base: var(--vscode-sideBar-background, var(--vscode-titleBar-activeBackground, #141414));
 	/* 85% of the window shows; the desktop comes through the rest, like the sidebar. */
 	--volt-agent-window-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 85%, transparent);
-	--volt-agent-sidebar-bg: color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000) 55%, transparent);
-	--volt-agent-chat-bg: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
+	--volt-agent-sidebar-bg: color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000) 74%, transparent);
+	--volt-agent-chat-bg:var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
 	--volt-agent-titlebar-height: 35px;
 	background: transparent !important;
 	background-color: transparent !important;
+}
+
+/* High contrast themes draw a window border (window.activeBorder); the see-through window has its
+ * own native edge, and the extra line read as a frame around the glass. */
+.monaco-workbench.volt-layout-agent.border:not(.fullscreen) {
+	border: 0;
 }
 
 /* Full screen has no desktop behind the window, only the vibrancy material: the see-through
@@ -1212,6 +1218,20 @@ html.volt-layout-agent-window body {
 .monaco-workbench.volt-layout-agent.fullscreen {
 	--volt-agent-window-bg: var(--volt-agent-window-bg-base);
 	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000);
+}
+
+/* Light themes: the sidebar is a shade under the chat, not 22% black (that turned it a muddy grey),
+ * and the window fill is denser so the light glass does not wash the chat out. */
+.monaco-workbench.volt-layout-agent.vs,
+.monaco-workbench.volt-layout-agent.hc-light {
+	--volt-agent-window-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 92%, transparent);
+	--volt-agent-sidebar-bg: color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base) 95%, #000) 72%, transparent);
+}
+
+.monaco-workbench.volt-layout-agent.vs.fullscreen,
+.monaco-workbench.volt-layout-agent.hc-light.fullscreen {
+	--volt-agent-window-bg: var(--volt-agent-window-bg-base);
+	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 95%, #000);
 }
 
 .monaco-workbench.volt-layout-agent .monaco-grid-view,
@@ -1610,6 +1630,12 @@ html.volt-layout-agent-window body {
 	letter-spacing: 0.02em;
 	white-space: nowrap;
 	color: #fff;
+}
+
+/* The bolt is a white bitmap: on light themes the mark and the wordmark flip to near black together. */
+.monaco-workbench.vs .volt-agent-brand-logo,
+.monaco-workbench.hc-light .volt-agent-brand-logo {
+	filter: invert(0.86);
 }
 
 .monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle:hover {

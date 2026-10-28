@@ -67,6 +67,24 @@
 	box-shadow: 0 0 0 2px var(--vscode-focusBorder);
 }
 
+/* Light themes: a near-white knob on a near-white page needs a hairline ring to read. */
+.monaco-workbench.vs .volt-appearance-slider::-webkit-slider-thumb,
+.monaco-workbench.hc-light .volt-appearance-slider::-webkit-slider-thumb {
+	background: #ffffff;
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 18%, transparent), 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+.monaco-workbench.vs .volt-appearance-slider:focus-visible::-webkit-slider-thumb,
+.monaco-workbench.hc-light .volt-appearance-slider:focus-visible::-webkit-slider-thumb {
+	box-shadow: 0 0 0 2px var(--vscode-focusBorder);
+}
+
+.monaco-workbench.vs .volt-appearance-density-preview,
+.monaco-workbench.hc-light .volt-appearance-density-preview {
+	background: var(--vscode-editor-background, var(--vscode-editorWidget-background));
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+}
+
 .volt-appearance-slider-row {
 	gap: 14px;
 }

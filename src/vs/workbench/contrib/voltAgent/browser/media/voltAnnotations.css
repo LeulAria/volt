@@ -6,7 +6,7 @@
 /* Batched design annotations: "(2) Send | v" in a toolbar, and the list under its arrow. */
 .volt-annotations-send {
 	--volt-annotations-bg: var(--vscode-button-background, #3b82f6);
-	--volt-annotations-fg: #fff;
+	--volt-annotations-fg: var(--vscode-button-foreground, #fff);
 	display: inline-flex;
 	align-items: stretch;
 	flex: none;
@@ -35,7 +35,7 @@
 }
 
 .volt-annotations-send > button:hover {
-	background: color-mix(in srgb, #fff 12%, transparent);
+	background: color-mix(in srgb, var(--volt-annotations-fg) 12%, transparent);
 }
 
 .volt-annotations-send > .send {
@@ -107,7 +107,7 @@
 	box-sizing: border-box;
 	border-radius: 999px;
 	background: var(--vscode-button-background, #3b82f6);
-	color: #fff;
+	color: var(--vscode-button-foreground, #fff);
 	font-size: 11px;
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;

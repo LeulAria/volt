@@ -83,7 +83,7 @@
 
 .monaco-workbench.vs .volt-browser-toolbar,
 .monaco-workbench.hc-light .volt-browser-toolbar {
-	border-bottom-color: rgba(0, 0, 0, 0.08);
+	border-bottom-color: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
 .volt-browser-nav,
@@ -103,7 +103,9 @@
 }
 
 .monaco-workbench.vs .volt-browser-nav,
-.monaco-workbench.hc-light .volt-browser-nav {
+.monaco-workbench.hc-light .volt-browser-nav,
+.monaco-workbench.vs .volt-browser-action,
+.monaco-workbench.hc-light .volt-browser-action {
 	color: #4a4a4a;
 }
 
@@ -114,7 +116,9 @@
 }
 
 .monaco-workbench.vs .volt-browser-nav:hover:not(:disabled),
-.monaco-workbench.hc-light .volt-browser-nav:hover:not(:disabled) {
+.monaco-workbench.hc-light .volt-browser-nav:hover:not(:disabled),
+.monaco-workbench.vs .volt-browser-action:hover,
+.monaco-workbench.hc-light .volt-browser-action:hover {
 	background: rgba(0, 0, 0, 0.06);
 	color: #000;
 }
@@ -269,6 +273,12 @@
 	width: 100%;
 	overflow: hidden;
 	background: #111;
+}
+
+/* What shows before a page paints: the theme's surface, not a black slab. */
+.monaco-workbench.vs .volt-browser-stage,
+.monaco-workbench.hc-light .volt-browser-stage {
+	background: var(--vscode-editor-background);
 }
 
 /*
@@ -529,7 +539,7 @@ webview.volt-browser-frame {
 /* Compact follow-up composer: same pill as the agent window, no + / toolbar. */
 .volt-agent-input-box.follow-up.volt-browser-agent-composer,
 .volt-agent-input-box.follow-up:not(.multiline).volt-browser-agent-composer {
-	--volt-composer-bg: rgba(34, 34, 34, 0.78);
+	--volt-composer-bg: var(--volt-surface-raised);
 	--vscode-editor-background: transparent;
 	--vscode-editorGutter-background: transparent;
 	--volt-mode-send-bg: #f4f4f5;
@@ -537,15 +547,15 @@ webview.volt-browser-frame {
 	width: 100%;
 	max-width: none;
 	margin: 0;
-	background: rgba(34, 34, 34, 0.78);
+	background: var(--volt-surface-raised);
 }
 
 .volt-agent-input-box.follow-up.volt-browser-agent-composer.dock,
 .volt-agent-input-box.follow-up:not(.multiline).volt-browser-agent-composer.dock {
-	--volt-composer-bg: rgba(34, 34, 34, 0.78) !important;
+	--volt-composer-bg: var(--volt-surface-raised) !important;
 	--vscode-editor-background: transparent !important;
 	--vscode-editorGutter-background: transparent !important;
-	background: rgba(34, 34, 34, 0.78) !important;
+	background: var(--volt-surface-raised) !important;
 	border: 0;
 	box-shadow: none;
 	backdrop-filter: none;
@@ -554,6 +564,11 @@ webview.volt-browser-frame {
 
 .monaco-workbench.vs .volt-agent-input-box.follow-up.volt-browser-agent-composer,
 .monaco-workbench.hc-light .volt-agent-input-box.follow-up.volt-browser-agent-composer {
+	--volt-composer-bg: rgba(236, 236, 236, 0.82);
+	/* Send as in the chat composer: foreground fill, editor-colour icon. The composer blanks
+		--vscode-editor-background, so the icon reads the copy taken on .volt-browser-editor. */
+	--volt-mode-send-bg: var(--vscode-foreground);
+	--volt-mode-send-fg: var(--volt-browser-editor-bg, #fff);
 	background: rgba(236, 236, 236, 0.82);
 }
 
@@ -785,6 +800,18 @@ webview.volt-browser-frame {
 	color: #e6e6e6;
 }
 
+.monaco-workbench.vs .volt-browser-composer-mic,
+.monaco-workbench.hc-light .volt-browser-composer-mic {
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+}
+
+.monaco-workbench.vs .volt-browser-composer-mic:hover,
+.monaco-workbench.hc-light .volt-browser-composer-mic:hover,
+.monaco-workbench.vs .volt-browser-composer-mic.recording,
+.monaco-workbench.hc-light .volt-browser-composer-mic.recording {
+	color: var(--vscode-foreground);
+}
+
 /* Dictating: the mic is the waveform pill with its stop square, as in the chat's composer. */
 .volt-browser-composer-mic.recording {
 	width: auto;
@@ -814,6 +841,24 @@ webview.volt-browser-frame {
 
 .volt-browser-agent-composer .volt-agent-send.stop:hover {
 	background: #d8d8da !important;
+}
+
+.monaco-workbench.vs .volt-browser-agent-composer .volt-agent-send.stop,
+.monaco-workbench.hc-light .volt-browser-agent-composer .volt-agent-send.stop {
+	background: var(--vscode-foreground) !important;
+	color: var(--volt-browser-editor-bg, #fff) !important;
+}
+
+.monaco-workbench.vs .volt-browser-agent-composer .volt-agent-send.stop:hover,
+.monaco-workbench.hc-light .volt-browser-agent-composer .volt-agent-send.stop:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 82%, var(--volt-browser-editor-bg, #fff)) !important;
+}
+
+.monaco-workbench.vs .volt-browser-agent-composer .volt-agent-send.stop .volt-agent-svg-icon,
+.monaco-workbench.vs .volt-browser-agent-composer .volt-agent-send.stop .volt-agent-svg-icon svg,
+.monaco-workbench.hc-light .volt-browser-agent-composer .volt-agent-send.stop .volt-agent-svg-icon,
+.monaco-workbench.hc-light .volt-browser-agent-composer .volt-agent-send.stop .volt-agent-svg-icon svg {
+	color: var(--volt-browser-editor-bg, #fff) !important;
 }
 
 .volt-browser-agent-composer .volt-agent-send .volt-agent-svg-icon.send,
@@ -913,7 +958,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 }
 
 .volt-browser-dock {
-	--volt-composer-bg: rgba(34, 34, 34, 0.78);
+	--volt-composer-bg: var(--volt-surface-raised);
 	--volt-dock-ease: cubic-bezier(0.22, 1, 0.36, 1);
 	--volt-dock-max: 650px;
 	/* The collapsed bar over a dark page: a lighter tint. */
@@ -1676,6 +1721,33 @@ the background paints a solid square) and keep the glyph in the accent. */
 	--volt-mode-send-fg: #fff;
 }
 
+/* Light themes: the mode chip tints from its own hue (as in the chat composer), not the dark fills. */
+.monaco-workbench.vs .volt-browser-agent-composer[data-mode="plan"],
+.monaco-workbench.hc-light .volt-browser-agent-composer[data-mode="plan"] {
+	--volt-mode-fg: #9a6315;
+}
+
+.monaco-workbench.vs .volt-browser-agent-composer[data-mode="ask"],
+.monaco-workbench.hc-light .volt-browser-agent-composer[data-mode="ask"] {
+	--volt-mode-fg: #1f7a47;
+}
+
+.monaco-workbench.vs .volt-browser-agent-composer[data-mode="debug"],
+.monaco-workbench.hc-light .volt-browser-agent-composer[data-mode="debug"] {
+	--volt-mode-fg: #b23a58;
+}
+
+.monaco-workbench.vs .volt-browser-agent-composer[data-mode="multitask"],
+.monaco-workbench.hc-light .volt-browser-agent-composer[data-mode="multitask"] {
+	--volt-mode-fg: #7650c4;
+}
+
+.monaco-workbench.vs .volt-browser-agent-composer:is([data-mode="plan"], [data-mode="ask"], [data-mode="debug"], [data-mode="multitask"]),
+.monaco-workbench.hc-light .volt-browser-agent-composer:is([data-mode="plan"], [data-mode="ask"], [data-mode="debug"], [data-mode="multitask"]) {
+	--volt-mode-bg: color-mix(in srgb, var(--volt-mode-fg) 11%, var(--volt-browser-editor-bg, #fff));
+	--volt-mode-border: color-mix(in srgb, var(--volt-mode-fg) 26%, var(--volt-browser-editor-bg, #fff));
+}
+
 .volt-browser-agent-composer.dock .volt-agent-mode .volt-agent-svg-icon,
 .volt-browser-agent-composer.dock .volt-agent-mode .volt-agent-svg-icon svg {
 	width: 14px;
@@ -2192,6 +2264,11 @@ the background paints a solid square) and keep the glyph in the accent. */
 	background: rgba(255, 255, 255, 0.1);
 }
 
+.monaco-workbench.vs .volt-browser-action.more.open,
+.monaco-workbench.hc-light .volt-browser-action.more.open {
+	background: rgba(0, 0, 0, 0.08);
+}
+
 /* Float over the chat only makes sense beside a chat. */
 .volt-browser-action.float {
 	display: none;
@@ -2221,7 +2298,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 
 .monaco-workbench.vs .volt-browser-bookmarks,
 .monaco-workbench.hc-light .volt-browser-bookmarks {
-	border-bottom-color: rgba(0, 0, 0, 0.08);
+	border-bottom-color: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
 .volt-browser-bookmark {
@@ -2391,6 +2468,11 @@ the background paints a solid square) and keep the glyph in the accent. */
 	border-color: rgba(0, 0, 0, 0.12);
 }
 
+.monaco-workbench.vs .volt-browser-start-field:focus-within,
+.monaco-workbench.hc-light .volt-browser-start-field:focus-within {
+	border-color: rgba(0, 0, 0, 0.24);
+}
+
 .volt-browser-start-field svg {
 	stroke-width: 1.5;
 }
@@ -2468,6 +2550,13 @@ the background paints a solid square) and keep the glyph in the accent. */
 	pointer-events: none;
 }
 
+.monaco-workbench.vs .volt-browser-toast,
+.monaco-workbench.hc-light .volt-browser-toast {
+	background: var(--vscode-editorWidget-background, #fff);
+	color: var(--vscode-foreground);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08), 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
 /* The ⋯ menu (browserMenu.ts): opaque, rounded, with switches, a flyout and a zoom stepper. */
 .volt-browser-menu-host {
 	position: relative;
@@ -2527,6 +2616,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 .monaco-workbench.vs .volt-browser-menu-row:focus-visible,
 .monaco-workbench.vs .volt-browser-menu-row.open,
 .monaco-workbench.hc-light .volt-browser-menu-row:hover:not(:disabled):not(.zoom),
+.monaco-workbench.hc-light .volt-browser-menu-row:focus-visible,
 .monaco-workbench.hc-light .volt-browser-menu-row.open {
 	background: rgba(0, 0, 0, 0.06);
 }
@@ -2650,6 +2740,13 @@ the background paints a solid square) and keep the glyph in the accent. */
 .monaco-workbench.vs .volt-browser-menu-zoom-button,
 .monaco-workbench.hc-light .volt-browser-menu-zoom-button {
 	border-color: rgba(0, 0, 0, 0.14);
+}
+
+.monaco-workbench.vs .volt-browser-menu-zoom-button:hover,
+.monaco-workbench.vs .volt-browser-menu-zoom-button:focus-visible,
+.monaco-workbench.hc-light .volt-browser-menu-zoom-button:hover,
+.monaco-workbench.hc-light .volt-browser-menu-zoom-button:focus-visible {
+	background: rgba(0, 0, 0, 0.06);
 }
 
 /* In the agent window the composer dock appears only across the window; beside a chat it would repeat it. */
@@ -2907,7 +3004,8 @@ the background paints a solid square) and keep the glyph in the accent. */
 
 .monaco-workbench.vs .volt-browser-devicebar-button:hover,
 .monaco-workbench.vs .volt-browser-devicebar-button.open,
-.monaco-workbench.hc-light .volt-browser-devicebar-button:hover {
+.monaco-workbench.hc-light .volt-browser-devicebar-button:hover,
+.monaco-workbench.hc-light .volt-browser-devicebar-button.open {
 	background: rgba(0, 0, 0, 0.06);
 }
 
@@ -2955,7 +3053,9 @@ the background paints a solid square) and keep the glyph in the accent. */
 }
 
 .monaco-workbench.vs input.volt-browser-devicebar-dimension:hover,
-.monaco-workbench.vs input.volt-browser-devicebar-dimension:focus {
+.monaco-workbench.vs input.volt-browser-devicebar-dimension:focus,
+.monaco-workbench.hc-light input.volt-browser-devicebar-dimension:hover,
+.monaco-workbench.hc-light input.volt-browser-devicebar-dimension:focus {
 	background: rgba(0, 0, 0, 0.06);
 }
 
@@ -3414,6 +3514,7 @@ the background paints a solid square) and keep the glyph in the accent. */
 
 .monaco-workbench.vs .volt-browser-editor,
 .monaco-workbench.hc-light .volt-browser-editor {
+	--volt-browser-editor-bg: var(--vscode-editor-background, #fff);
 	--volt-design-accent: #2563eb;
 	--volt-design-head: #7c3aed;
 }

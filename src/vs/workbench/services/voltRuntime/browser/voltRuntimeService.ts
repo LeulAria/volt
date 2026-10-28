@@ -65,7 +65,7 @@ import { AgentQuestionDraft, answeredQuestions, IAgentQuestionRequest, IAgentQue
 import { AcpAgentProvider, IAcpBackgroundTask, IAcpFileWrite, IAcpSupervisionOptions } from './agents/acpProvider.js';
 import { AcpLoopDetector } from '../common/harness/acpLoopDetector.js';
 import { LOOP_NOTICE_TITLE } from '../common/harness/supervisor.js';
-import { DeepseekDirective, IDeepseekStep, runDeepseekLoop, watchedStream } from '../common/deepseek/loop.js';
+import { DeepseekDirective, IDeepseekStep, IDeepseekStreamOptions, PROMPT_CACHE_KEEPALIVE_SETTING, runDeepseekLoop, watchedStream } from '../common/deepseek/loop.js';
 import { EditBaselineTracker } from './editBaselines.js';
 import './host/hostToolService.js';
 import './memory/voltMemoryService.js';
@@ -85,15 +85,16 @@ import { FileLedger } from '../common/harness/fileLedger.js';
 import { alwaysRules, findInstruction, instructionsIndex, ISubagentDoc, rulesForPath } from '../common/harness/instructions.js';
 import { IVoltHookRunContext, IVoltHooksService } from '../common/hooks/voltHooks.js';
 import './hooks/voltHooksService.js';
+import { EVIDENCE_GATE_SETTING, EvidenceObserver } from '../common/harness/evidenceObserver.js';
 import { EXPERIENCE_SYSTEM, experienceRecord, experienceRequest, LEARN_FROM_RUNS_SETTING, lessonMemory, parseExperience, shouldReflect } from '../common/harness/experience.js';
 import { searchArchivedHistory } from '../common/harness/historySearch.js';
 import { parseStateOps, renderStateRead } from '../common/harness/appState.js';
 import { AgentAppStateStore } from './state/agentAppState.js';
 import { applyCompaction, clearOldToolResults, COMPACTION_SYSTEM, compactionBoundary, compactionRequest, DEFAULT_COMPACTION, dropBoundReasoning, effectiveWindow, ICarryForward, inContextCompactionRequest, isClearedToolResult, isVoltNote, mechanicalSummary, MIN_IN_CONTEXT_SUMMARY_CHARS, promptPrefixKey, pruneImages, serializeForSummary, shouldCompact, shouldCompactEarly } from '../common/harness/nativeCompaction.js';
 import { chooseEffort, EffortLevel, higherEffort } from '../common/deepseek/effort.js';
-import { IToolDocuments } from './tools/fileTools.js';
+import { IToolDocuments, runtimeToolDocuments } from './tools/fileTools.js';
 import { ISubagentRequest, NATIVE_ASK_QUESTION_TOOL_NAME } from './tools/metaTools.js';
-import { CodeIntelHost } from './host/codeIntelHost.js';
+import { createRuntimeCodeIntel, IRuntimeCodeIntel } from './host/codeIntelHost.js';
 import { McpHost } from './host/mcpHost.js';
 import { INativeBackgroundAgent, INativeJournalEntry, NativeJournal } from './history/nativeJournal.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
@@ -145,7 +146,7 @@ const ACCESS_CHATS_LIMIT = 500;
 const TAB_PREDICTION_SESSION_ID = 'volt-tab-prediction';
 
 /** Bumped whenever the built-in profile list changes so existing installs pick it up. */
-const CLI_SEED_VERSION = 4;
+const CLI_SEED_VERSION = 5;
 
 /** Idle chat agents kept warm per window, most recently used first. */
 const MAX_IDLE_AGENTS = 3;
@@ -211,6 +212,8 @@ interface IRunState {
 	/** run.end was emitted; later engine events are dropped (file changes excepted). */
 	ended: boolean;
 	lane?: VoltLane;
+	/** How the request was classified (lane, budget, signals). */
+	intent?: IIntent;
 	/** Native: the transcript this run appends to. Detached from the session when the run is cancelled. */
 	transcript?: INativeLoopMessage[];
 	/** The latest to-do list the engine reported. */
@@ -548,7 +551,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly hookStartedSessions = new Set<string>();
 	/** Times a `stop` hook sent the agent back to work in the current run, per chat. */
 	private readonly hookFollowups = new Map<string, number>();
-	private readonly codeIntel: CodeIntelHost;
+	private readonly codeIntel: IRuntimeCodeIntel;
 	private readonly searchIndex: ISearchIndex;
 	/** Every search Volt runs: the agent's tools and the context retriever (index, FFF, ripgrep). */
 	private readonly search: VoltSearch;
@@ -640,7 +643,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		@IVoltTrajectoryService private readonly trajectory: IVoltTrajectoryService,
 	) {
 		super();
-		this.codeIntel = this._register(new CodeIntelHost(markerService, textModelService, languageFeaturesService, fileService));
+		this.codeIntel = this._register(createRuntimeCodeIntel(markerService, textModelService, languageFeaturesService, fileService));
 		// Worktrees are outside the workspace folders; their language servers are opt-in (Settings > Code Intelligence).
 		this.codeIntel.setLspPolicy(uri => lspAllowedFor(this.configurationService, !this.workspace.isInsideWorkspace(uri)));
 		this.searchIndex = {
@@ -1075,6 +1078,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		});
 		session.lastLane = intent.lane;
 		run.lane = intent.lane;
+		run.intent = intent;
 		if (session.activeRun?.runId === run.runId) {
 			session.activeRun = { ...session.activeRun, lane: intent.lane };
 		}
@@ -2649,10 +2653,18 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	/** Open editors: agent edits go into the buffer the user sees when it has unsaved changes. */
 	private readonly toolDocuments: IToolDocuments = {
 		dirtyText: uri => {
+			const host = runtimeToolDocuments();
+			if (host) {
+				return host.dirtyText(uri);
+			}
 			const model = this.textFileService.files.get(uri);
 			return model?.isDirty() ? model.textEditorModel?.getValue() : undefined;
 		},
 		writeOpen: async (uri, text) => {
+			const host = runtimeToolDocuments();
+			if (host) {
+				return host.writeOpen(uri, text);
+			}
 			const model = this.textFileService.files.get(uri);
 			const editor = model?.textEditorModel;
 			if (!model || !editor) {
@@ -2904,18 +2916,21 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		};
 		// Where this run's own messages start, for the reflection after it.
 		const runFrom = transcript.length;
+		// The evidence harness beside the loop: watches every step, judges the finish (gates it when the setting is on).
+		const evidence = this.evidenceObserver(session, run, request, root);
 		run.metrics.mark('prompt');
 		try {
+			const openStream = (messages: readonly INativeLoopMessage[], streamOptions: IDeepseekStreamOptions | undefined) => linkedStream(cancel, streamOptions?.signal, token => new VoltLlmAdapter(provider).stream({
+				modelId: item.id,
+				messages: nativeToModelMessages([system, ...messages]),
+				profile,
+				apiKey,
+				options,
+				tools: schemas,
+				...(streamOptions?.maxOutputTokens ? { maxOutputTokens: streamOptions.maxOutputTokens } : {}),
+			}, token));
 			const result = await runDeepseekLoop({
-				stream: (messages, _token, streamOptions) => this.traceStream(linkedStream(cancel, streamOptions?.signal, token => new VoltLlmAdapter(provider).stream({
-					modelId: item.id,
-					messages: nativeToModelMessages([system, ...messages]),
-					profile,
-					apiKey,
-					options,
-					tools: schemas,
-					...(streamOptions?.maxOutputTokens ? { maxOutputTokens: streamOptions.maxOutputTokens } : {}),
-				}, token)), traced, {
+				stream: (messages, _token, streamOptions) => this.traceStream(openStream(messages, streamOptions), traced, {
 					sessionId: session.sessionId,
 					runId: run.runId,
 					...(traced.step !== undefined ? { step: traced.step } : {}),
@@ -2928,6 +2943,21 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					options,
 					...(streamOptions?.maxOutputTokens ? { maxOutputTokens: streamOptions.maxOutputTokens } : {}),
 				}),
+				// Claude's prompt cache lasts five minutes: kept while a long tool or an approval holds the run.
+				// Not traced: the ping is aborted at its first chunk, so it is not a request of the run.
+				...(keepsPromptCacheBriefly(profile.providerId, item.id) && this.configurationService.getValue<boolean>(PROMPT_CACHE_KEEPALIVE_SETTING) !== false ? {
+					keepAlive: async (messages: readonly INativeLoopMessage[], streamOptions: IDeepseekStreamOptions) => {
+						const abort = new AbortController();
+						const iterator = openStream(messages, { ...streamOptions, signal: abort.signal })[Symbol.asyncIterator]();
+						try {
+							// The first chunk means the prompt was read, and with it the cached prefix.
+							await iterator.next();
+						} finally {
+							abort.abort();
+							await iterator.return?.().catch(() => undefined);
+						}
+					},
+				} : {}),
 				execute: (calls, onResult) => {
 					// The model's calls are on disk before they run, and each result as it lands.
 					for (const call of calls) {
@@ -3009,7 +3039,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				claimInbox: () => this.isCurrent(session, run) ? claimInbox(state) : [],
 				controller: {
 					afterStep: async step => {
-						const directive = await this.afterNativeStep(session, run, state, step);
+						const sendBack = await this.observeEvidence(evidence, step);
+						const directive = withSendBack(await this.afterNativeStep(session, run, state, step), sendBack);
 						if (directive.kind !== 'continue' || !step.wantsToFinish || cancel.isCancellationRequested) {
 							return directive;
 						}
@@ -3022,6 +3053,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			}
 			if (result.assistant) {
 				void this.hooks.run('afterAgentResponse', hookContext(), { text: result.assistant });
+			}
+			const observer = await evidence;
+			if (observer || result.lessons?.length) {
+				run.metrics.noteEvidence(observer ? observer.summary(result.lessons) : { complete: result.outcome === 'done', reason: '', changedFiles: 0, lessons: result.lessons ?? [] });
 			}
 			const nativeActivity = this.runActivity(run);
 			if (result.assistant || nativeActivity) {
@@ -3243,6 +3278,41 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const gate = await this.qualityContinuation(session, run);
 		const message = [...steered, ...(gate ? [gate] : [])].join('\n\n');
 		return message ? { kind: 'inject', message } : { kind: 'continue' };
+	}
+
+	/**
+	 * The evidence harness for a native run: built from the run's intent and the project's checks
+	 * (read once per folder and cached). A failure to build it leaves the run unobserved.
+	 */
+	private evidenceObserver(session: ISessionState, run: IRunState, request: IVoltSendRequest, root: URI | undefined): Promise<EvidenceObserver | undefined> {
+		const intent = run.intent;
+		if (!intent) {
+			return Promise.resolve(undefined);
+		}
+		const checks = root ? this.projectChecksFor(root).catch((): IProjectChecks => ({})) : Promise.resolve<IProjectChecks>({});
+		return checks.then(value => new EvidenceObserver({
+			text: request.text,
+			intent,
+			checks: value,
+			readOnly: !modePolicy(request.mode).allowWrites,
+			hasPriorTurns: session.messages.filter(message => message.role === 'user').length > 1,
+		})).catch(err => {
+			this.logService.trace('[volt] the evidence harness could not start', err);
+			return undefined;
+		});
+	}
+
+	/** One step through the evidence harness; with `volt.agent.evidenceGate` on, an unproven finish comes back as a send-back. */
+	private async observeEvidence(evidence: Promise<EvidenceObserver | undefined>, step: IDeepseekStep): Promise<string | undefined> {
+		const observer = await evidence;
+		let sendBack: string | undefined;
+		try {
+			sendBack = observer?.observe(step);
+		} catch (err) {
+			this.logService.trace('[volt] the evidence harness failed on a step', err);
+			return undefined;
+		}
+		return sendBack && this.configurationService.getValue<boolean>(EVIDENCE_GATE_SETTING) === true ? sendBack : undefined;
 	}
 
 	/**
@@ -5467,10 +5537,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (session?.activeRun) {
 			session.activeRun = { ...session.activeRun, status: 'waiting' };
 		}
-		this.emitAccess(request, { type: 'access.ask', request });
-		return new Promise<IAccessDecision>(resolve => {
+		const answer = new Promise<IAccessDecision>(resolve => {
 			this.pendingApprovals.set(request.id, { resolve, request: { ...request, reason: decision.policySource ?? request.reason } });
 		});
+		// Pending first: listeners read the pending list when the event fires (the agent server publishes it then).
+		this.emitAccess(request, { type: 'access.ask', request });
+		return answer;
 	}
 
 	private emitAccess(request: IAccessRequest, event: IVoltEvent): void {
@@ -5747,3 +5819,16 @@ function asToolEvent(event: { type: string;[key: string]: unknown }): IVoltEvent
 
 registerSingleton(IAgentRuntimeService, AgentRuntimeService, InstantiationType.Delayed);
 registerSingleton(IVoltStdioService, NullVoltStdioService, InstantiationType.Delayed);
+
+/** The controller's directive with the evidence harness's send-back added (a finish it does not accept). */
+function withSendBack(directive: DeepseekDirective, sendBack: string | undefined): DeepseekDirective {
+	if (!sendBack || directive.kind === 'stop') {
+		return directive;
+	}
+	return directive.kind === 'inject' ? { kind: 'inject', message: `${directive.message}\n\n${sendBack}` } : { kind: 'inject', message: sendBack };
+}
+
+/** Providers whose prompt cache Volt writes with the five-minute lifetime: Claude, direct or through OpenRouter. */
+function keepsPromptCacheBriefly(providerId: string, modelId: string): boolean {
+	return providerId === 'anthropic' || (providerId === 'openrouter' && /(?:^|[/~])anthropic\/|claude/i.test(modelId));
+}

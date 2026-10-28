@@ -11,6 +11,8 @@ import { HANDOFF_BUDGET_PERCENT_SETTING, HANDOFF_DEFAULT_MAX_TOKENS, HANDOFF_DEF
 import { DEFAULT_ORCH_LIMITS, ORCH_BUDGET_TOKENS_SETTING, ORCH_BUDGET_USD_SETTING, ORCH_DEFAULT_BUDGET_USD, ORCH_KEEP_WORKING_SETTING, ORCH_LIMIT_MAX, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCH_ROLE_MODELS_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING } from '../../../services/voltRuntime/common/orchestration/limitRecovery.js';
 import { LEARN_FROM_RUNS_SETTING } from '../../../services/voltRuntime/common/harness/experience.js';
+import { EVIDENCE_GATE_SETTING } from '../../../services/voltRuntime/common/harness/evidenceObserver.js';
+import { PROMPT_CACHE_KEEPALIVE_SETTING } from '../../../services/voltRuntime/common/deepseek/loop.js';
 
 export { ORCH_MAX_PARALLEL_SETTING as AGENT_MULTITASK_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING as AGENT_MULTITASK_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING as AGENT_MULTITASK_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING as AGENT_RESUME_AFTER_RESTART_SETTING, ORCH_KEEP_WORKING_SETTING as AGENT_KEEP_WORKING_SETTING, COMPACT_OLD_THREADS_SETTING as AGENT_COMPACT_OLD_THREADS_SETTING, LIMIT_AUTO_RESUME_SETTING as AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING };
 
@@ -28,6 +30,16 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			type: 'boolean',
 			default: true,
 			description: localize('voltAgent.learnFromRuns', "Learn from finished work. After a long run, or one that got past errors, Volt reads what it did and keeps at most one lesson backed by what happened (a command this project really needs, the fix for an error that came back) as a project memory, so later chats do not pay to discover it again. Usually nothing is kept. Each reflection is one small request to the chat's model."),
+		},
+		[PROMPT_CACHE_KEEPALIVE_SETTING]: {
+			type: 'boolean',
+			default: true,
+			description: localize('voltAgent.promptCacheKeepAlive', "Keep Claude's prompt cache warm while a run waits. Claude keeps a chat's prompt cached for five minutes; when a long command, a delegated task or your approval holds the run longer, Volt reads the prompt again shortly before it expires (at most six times per wait), so the next step costs a tenth of the input price instead of a full rewrite of the cache."),
+		},
+		[EVIDENCE_GATE_SETTING]: {
+			type: 'boolean',
+			default: false,
+			description: localize('voltAgent.evidenceGate', "Check Volt's own agents' finished work against what they did. When an agent says it is done but the evidence does not show it (checks the task needs never ran or failed, the files it had to change are untouched), Volt sends it back once or twice with the specific gap. Off, the check only watches: its verdict is kept with each run's metrics."),
 		},
 		[ORCH_RESUME_AFTER_RESTART_SETTING]: {
 			type: 'string',

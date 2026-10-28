@@ -8,6 +8,7 @@ import { Disposable, IDisposable } from '../../../../base/common/lifecycle.js';
 import { isWeb } from '../../../../base/common/platform.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import { VOLT_AGENT_SERVER_ENABLED_SETTING } from '../../../../platform/voltAgentServer/common/agentServerService.js';
 import { CollectionMirror } from '../../../../platform/voltAgentServer/common/collections.js';
 import { AgentServerConnection, AgentServerConnectionState, IAgentServerConnectionOptions } from '../../../../platform/voltAgentServer/common/connection.js';
 import { ICollectionDelta } from '../../../../platform/voltAgentServer/common/protocol.js';
@@ -16,7 +17,7 @@ import { fromWire, toWire } from '../../../../platform/voltAgentServer/common/wi
 import { IVoltEventEnvelope } from '../../voltRuntime/common/events.js';
 
 /** The desktop runs its agents in the agent server (and is one of its clients) when this is on. */
-export const AGENT_SERVER_ENABLED_SETTING = 'volt.agentServer.enabled';
+export const AGENT_SERVER_ENABLED_SETTING = VOLT_AGENT_SERVER_ENABLED_SETTING;
 
 let enabledAtStartup: boolean | undefined;
 

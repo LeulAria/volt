@@ -199,26 +199,18 @@ suite('Agent home list model', () => {
 		assert.ok(first?.type === 'session' && first.nested);
 	});
 
-	test('lists a side chat right under the chat it was opened in, even when it is newer', () => {
+	test('lists a side chat as a row of its own, not indented under its chat', () => {
 		const tree = buildAgentHomeTree([folder('/tmp/volt', { current: true })], [
-			session('parent', { workspaceFolder: '/tmp/volt', updatedAt: 10 }),
+			session('parent', { workspaceFolder: '/tmp/volt', updatedAt: 10, pinned: true }),
 			session('other', { workspaceFolder: '/tmp/volt', updatedAt: 15 }),
 			session('side', { workspaceFolder: '/tmp/volt', updatedAt: 30, parentId: 'parent' }),
 		], view());
+		const pinned = tree.find(node => node.element.type === 'bucket' && node.element.id === 'pinned');
+		assert.deepStrictEqual(sessionIds(pinned), ['parent'], 'the side chat does not join its chat in Pinned');
 		const project = section(tree).children?.[0];
-		assert.deepStrictEqual(sessionIds(project), ['other', 'parent', 'side']);
-		const side = project?.children?.[2].element;
-		assert.ok(side?.type === 'session' && side.sideDepth === 1 && side.nested);
-	});
-
-	test('lists a side chat on its own when its chat is not listed', () => {
-		const tree = buildAgentHomeTree([folder('/tmp/volt', { current: true })], [
-			session('side', { workspaceFolder: '/tmp/volt', parentId: 'gone' }),
-			session('a', { workspaceFolder: '/tmp/volt', parentId: 'b' }),
-			session('b', { workspaceFolder: '/tmp/volt', parentId: 'a' }),
-		], view());
-		const ids = sessionIds(section(tree).children?.[0]).sort();
-		assert.deepStrictEqual(ids, ['a', 'b', 'side']);
+		assert.deepStrictEqual(sessionIds(project), ['side', 'other']);
+		const side = project?.children?.[0].element;
+		assert.ok(side?.type === 'session' && side.sideDepth === undefined);
 	});
 
 	test('lists sessions whose folder the sidebar does not know', () => {

@@ -831,28 +831,27 @@ export class VoltSettingsEditor extends EditorPane {
 		})), this.runtime.getAccessMode(), localize('voltSettings.accessMode', "Default access"), mode => void this.runtime.setAccessMode(mode), 340);
 	}
 
-	/** Resolves once the theme gallery (drawn after the themes load their colors) is in. */
+	/** Resolves once the theme pickers (filled after the themes load their colors) are in. */
 	private renderAppearance(): Promise<void> {
 		this.pageHead(
 			localize('voltSettings.appearance', "Appearance"),
 			localize('voltSettings.appearanceLead', "Pick a color theme. Volt's own themes come first; every VS Code theme you install shows up here too."),
 		);
+		const kit = this.settingsKit();
+		const themeGroup = this.settingsGroup();
 		this.settingRow(
-			this.settingsGroup(),
+			themeGroup,
 			localize('voltSettings.appearanceMode', "Mode"),
-			localize('voltSettings.appearanceModeDesc', "System follows macOS and switches between your dark and light picks."),
+			localize('voltSettings.appearanceModeDesc', "System follows macOS and switches between your dark and light themes."),
 			host => this.appearance.renderModeControl(host),
 		);
-		this.sectionLabel(localize('voltSettings.colorTheme', "Color theme"));
-		const gallery = append(this.target, $('.volt-settings-theme-gallery'));
 		const generation = this.renderGeneration;
-		const galleryReady = this.appearance.renderGallery(gallery, this.search.trim().toLowerCase()).then(() => {
+		const themesReady = this.appearance.renderThemePickers(kit, themeGroup).then(() => {
 			if (generation === this.renderGeneration) {
 				this.scheduleScrollSync();
 			}
 		}, () => undefined);
 
-		const kit = this.settingsKit();
 		this.appearance.renderAgentConversations(kit);
 		this.appearance.renderColors(kit);
 		this.appearance.renderTypography(kit);
@@ -876,7 +875,7 @@ export class VoltSettingsEditor extends EditorPane {
 				});
 			},
 		);
-		return galleryReady;
+		return themesReady;
 	}
 
 	/** The row helpers the Appearance page's sections draw with. */

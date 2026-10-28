@@ -21,6 +21,31 @@
 	display: none !important;
 }
 
+/* A chat column too narrow for the whole row (agentTitlebarHeader.ts fit): items go, least needed first, instead of
+ * running under the buttons on the right. Past the last step the column clips. Clip, not hidden: a hidden column
+ * scrolls sideways when a cut-off button takes focus. */
+.monaco-workbench.volt-layout-agent .part.titlebar > .titlebar-container > .titlebar-left {
+	overflow-x: clip;
+}
+
+.monaco-workbench.volt-layout-agent .titlebar-container.volt-fit-no-project .volt-agent-primary-header-project,
+.monaco-workbench.volt-layout-agent .titlebar-container.volt-fit-no-project .volt-agent-primary-header-title > .volt-agent-primary-header-separator,
+.monaco-workbench.volt-layout-agent .titlebar-container.volt-fit-no-project .volt-agent-primary-header-laptop {
+	display: none !important;
+}
+
+.monaco-workbench.volt-layout-agent .titlebar-container.volt-fit-no-wordmark {
+	--volt-agent-brand-wordmark-width: 0px;
+}
+
+.monaco-workbench.volt-layout-agent .titlebar-container.volt-fit-no-wordmark .volt-agent-brand-wordmark,
+.monaco-workbench.volt-layout-agent .titlebar-container.volt-fit-no-title .volt-agent-primary-header-title,
+.monaco-workbench.volt-layout-agent .titlebar-container.volt-fit-no-nav > .titlebar-left > .volt-agent-nav-titlebar,
+.monaco-workbench.volt-layout-agent .titlebar-container.volt-fit-no-brand > .titlebar-left > .volt-agent-brand-logo.in-titlebar,
+.monaco-workbench.volt-layout-agent .titlebar-container.volt-fit-no-ide .volt-agent-switch-to-ide {
+	display: none !important;
+}
+
 /* Search and New Agent belong to the closed sidebar. The open sidebar keeps only the title. */
 .monaco-workbench.volt-layout-agent .volt-agent-primary-header-search,
 .monaco-workbench.volt-layout-agent .volt-agent-primary-header-new {
@@ -307,7 +332,7 @@
 	border-radius: 10px;
 	background: var(--vscode-editor-background, #1e1e1e);
 	color: var(--vscode-foreground, #e8e8e8);
-	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	border: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
 	box-sizing: border-box;
 	pointer-events: auto;

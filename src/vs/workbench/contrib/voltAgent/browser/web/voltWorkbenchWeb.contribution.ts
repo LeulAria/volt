@@ -64,6 +64,8 @@ import { RemoteAgentSessionControl } from '../editor/remoteAgentSessionControl.j
 import { IAgentCheckpointService } from '../review/agentCheckpointService.js';
 import { IAgentEditsService } from '../review/agentEditsService.js';
 import { RemoteAgentCheckpointService } from '../review/remoteAgentCheckpointService.js';
+import { IAgentTerminalsService } from '../terminals/agentTerminals.js';
+import { RemoteAgentTerminalsService } from '../terminals/remoteAgentTerminals.js';
 import { IVoltCanvasService, VoltCanvasService } from '../visuals/canvas/canvasService.js';
 import { IAgentSurfaceDraft, IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { AgentEditsJournalEntry } from '../../common/agentEditsJournal.js';
@@ -144,6 +146,8 @@ registerSingleton(IAgentHistoryService, RemoteAgentHistoryService, Instantiation
 registerSingleton(IVoltSessionContextService, RemoteVoltSessionContextService, InstantiationType.Delayed);
 registerSingleton(IVoltHostToolService, RemoteVoltHostToolService, InstantiationType.Delayed);
 registerSingleton(IAgentCheckpointService, RemoteAgentCheckpointService, InstantiationType.Delayed);
+// The agents' terminals run in the agent server too; this page shows them attached to it.
+registerSingleton(IAgentTerminalsService, RemoteAgentTerminalsService, InstantiationType.Delayed);
 setAgentSessionControlFactory((input, instantiationService) => instantiationService.createInstance(RemoteAgentSessionControl, input));
 
 //#endregion

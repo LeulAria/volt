@@ -53,6 +53,7 @@ export const enum OperationKind {
 	RebaseAbort = 'RebaseAbort',
 	RebaseContinue = 'RebaseContinue',
 	Refresh = 'Refresh',
+	RevertCommit = 'RevertCommit',
 	RevertFiles = 'RevertFiles',
 	RevList = 'RevList',
 	RevParse = 'RevParse',
@@ -73,7 +74,7 @@ export type Operation = AddOperation | ApplyOperation | BlameOperation | BranchO
 	GetBranchOperation | GetBranchesOperation | GetCommitTemplateOperation | GetObjectDetailsOperation | GetObjectFilesOperation | GetRefsOperation | GetWorktreesOperation |
 	GetRemoteRefsOperation | HashObjectOperation | IgnoreOperation | LogOperation | LogFileOperation | MergeOperation | MergeAbortOperation |
 	MergeBaseOperation | MoveOperation | PostCommitCommandOperation | PullOperation | PushOperation | RemoteOperation | RenameBranchOperation |
-	RemoveOperation | ResetOperation | RebaseOperation | RebaseAbortOperation | RebaseContinueOperation | RefreshOperation | RevertFilesOperation |
+	RemoveOperation | ResetOperation | RebaseOperation | RebaseAbortOperation | RebaseContinueOperation | RefreshOperation | RevertCommitOperation | RevertFilesOperation |
 	RevListOperation | RevParseOperation | SetBranchUpstreamOperation | ShowOperation | StageOperation | StatusOperation | StashOperation |
 	SubmoduleUpdateOperation | SyncOperation | TagOperation | WorktreeOperation;
 
@@ -124,6 +125,7 @@ export type RebaseOperation = BaseOperation & { kind: OperationKind.Rebase };
 export type RebaseAbortOperation = BaseOperation & { kind: OperationKind.RebaseAbort };
 export type RebaseContinueOperation = BaseOperation & { kind: OperationKind.RebaseContinue };
 export type RefreshOperation = BaseOperation & { kind: OperationKind.Refresh };
+export type RevertCommitOperation = BaseOperation & { kind: OperationKind.RevertCommit };
 export type RevertFilesOperation = BaseOperation & { kind: OperationKind.RevertFiles };
 export type RevListOperation = BaseOperation & { kind: OperationKind.RevList };
 export type RevParseOperation = BaseOperation & { kind: OperationKind.RevParse };
@@ -184,6 +186,7 @@ export const Operation = {
 	RebaseAbort: { kind: OperationKind.RebaseAbort, blocking: false, readOnly: false, remote: false, retry: false, showProgress: true } as RebaseAbortOperation,
 	RebaseContinue: { kind: OperationKind.RebaseContinue, blocking: false, readOnly: false, remote: false, retry: false, showProgress: true } as RebaseContinueOperation,
 	Refresh: { kind: OperationKind.Refresh, blocking: false, readOnly: false, remote: false, retry: false, showProgress: true } as RefreshOperation,
+	RevertCommit: { kind: OperationKind.RevertCommit, blocking: false, readOnly: false, remote: false, retry: false, showProgress: true } as RevertCommitOperation,
 	RevertFiles: (showProgress: boolean) => ({ kind: OperationKind.RevertFiles, blocking: false, readOnly: false, remote: false, retry: false, showProgress } as RevertFilesOperation),
 	RevList: { kind: OperationKind.RevList, blocking: false, readOnly: true, remote: false, retry: false, showProgress: false } as RevListOperation,
 	RevParse: { kind: OperationKind.RevParse, blocking: false, readOnly: true, remote: false, retry: false, showProgress: false } as RevParseOperation,

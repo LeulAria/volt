@@ -11,6 +11,7 @@ import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolProvider, IVoltHostToolResult } from '../../../../services/voltRuntime/common/hostTools.js';
+import { architectureToElements, IArchitectureSpec, parseArchitectureSpec } from '../../common/scratchBoard/scratchArchitecture.js';
 import { rebindConnector, routeContext, withLegs } from '../../common/scratchBoard/scratchBinding.js';
 import { describeForAgent } from '../../common/scratchBoard/scratchDescribe.js';
 import { diagramOverlaps, mermaidToElements, readingOrder } from '../../common/scratchBoard/scratchDiagram.js';
@@ -20,9 +21,10 @@ import { htmlToPlainText } from '../../common/scratchBoard/scratchHtml.js';
 import { boundsIntersect, unionBounds } from '../../common/scratchBoard/scratchMath.js';
 import { extractMermaidSource, parseMermaidFlowchart } from '../../common/scratchBoard/scratchMermaid.js';
 import { ScratchScene } from '../../common/scratchBoard/scratchScene.js';
-import { AGENT_SCRATCH_STYLE, IScratchAgentRun, IScratchBounds, isLinear, ScratchElement } from '../../common/scratchBoard/scratchTypes.js';
+import { AGENT_DIAGRAM_STYLE, AGENT_SCRATCH_STYLE, IScratchAgentRun, IScratchBounds, isLinear, ScratchElement } from '../../common/scratchBoard/scratchTypes.js';
 import { boardDisplayTitle } from '../../common/scratchBoard/scratchIndex.js';
 import { ScratchBoardEditor } from './scratchBoardEditor.js';
+import { fetchDiagramIcons, handTextMeasure } from './scratchDiagramIcons.js';
 import type { ScratchCanvas } from './scratchCanvas.js';
 import { ScratchExporter } from './scratchExport.js';
 import { IScratchBoardService } from './scratchBoardService.js';
@@ -77,12 +79,73 @@ export const SCRATCH_TOOLS: readonly IVoltHostToolInfo[] = [
 			'Leave most nodes plain (they draw in quiet grey); colour only what must stand out, sparingly and by meaning, with `classDef name fill:#..,stroke:#..` plus `class A,B name` (or A:::name), light fill with a darker stroke: blue #a5d8ff/#1971c2 core, green #b2f2bb/#2f9e44 data, yellow #ffec99/#f08c00 async, purple #eebefa/#9c36b5 AI and models, red #ffc9c9/#e03131 external or risk, gray #e9ecef/#868e96 out of scope.',
 			'AI systems: keep UI, orchestrator, agents, tools, model providers, memory or vector store, guardrails and human approval, and tracing apart. Do not invent components; mark assumptions with "?" or a sticky note; keep proposed and existing apart (own frame, or dashed edges and outlines). Check the returned image and fix overlaps, crossings or clipped labels with `replace` before you answer.',
 			'Nothing may overlap: a line never runs through a shape that is not one of its ends, and an edge label never sits on a shape or another label. The layout routes an edge that skips a level around the nodes in between, but it cannot fix every graph: the result names each overlap it finds, and you redraw until it reports none. Help it: declare nodes in flow order, keep side branches (cancel, fail, timeout) after the main path, give an edge that jumps several steps a short label or none, and avoid many edges into one node from far apart.',
+			'Architecture pictures (how a system fits together: services, vendors, machines, the numbered path a request or ticket takes) use `diagram` instead of `mermaid`: a hand-drawn board in the Excalidraw style with real icons and brand logos fetched from Aria Icons. Groups are the places things run (a vendor like Neon or Vercel, "Your Mac", "Sources") drawn as coloured containers with an icon and a name; each holds cards with an icon, a title and a quieter subtitle ("Webhook inbox" / "Linear and GitHub"). Edges join cards or whole groups, with numbered labels beside the line ("1. New ticket"). Always place every group on a grid with `row` and `col` from 0 (rowSpan/colSpan to stretch), so the flow reads left to right and top to bottom and linked groups sit next to each other; a 2-3 column grid reads best. Without them the layout lines groups up along `direction`, which is wider and tangles more.',
+			'Icons: an Aria Icons id, `logos:<brand>-icon` (logos:github-icon, logos:slack-icon, logos:vercel-icon, logos:neon-icon, logos:linear-icon, logos:postgresql, logos:aws) or `simple-icons:<brand>` for brand logos, `lucide:<name>` for everything else (lucide:webhook, lucide:database, lucide:monitor, lucide:git-pull-request, lucide:laptop, lucide:inbox, lucide:history, lucide:radio); a plain word is searched. Colours by name: green, cyan, blue, violet, purple, pink, red, orange, yellow, gray: a group in its colour, cards inside take it unless they set their own. `dashed: true` marks something planned or not built yet.',
 		].join(' '),
 		inputSchema: {
 			type: 'object',
 			properties: {
 				title: { type: 'string', description: 'The frame\'s name, e.g. "OAuth sign-in (PKCE)".' },
 				mermaid: { type: 'string', description: 'A Mermaid flowchart for the diagram.' },
+				diagram: {
+					type: 'object',
+					description: 'An architecture picture (instead of `mermaid`): groups of icon cards joined by labelled connectors.',
+					properties: {
+						direction: { type: 'string', enum: ['LR', 'TB'], description: 'Which way the flow runs when groups have no row/col.' },
+						groups: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									id: { type: 'string' },
+									label: { type: 'string', description: 'The name in the header, e.g. "Neon".' },
+									sub: { type: 'string', description: 'A quieter note after the name, e.g. "Database and inbox".' },
+									icon: { type: 'string', description: 'Icon id (logos:neon-icon, lucide:laptop) or a word.' },
+									color: { type: 'string', description: 'green, cyan, blue, violet, purple, pink, red, orange, yellow, gray, or #hex.' },
+									dashed: { type: 'boolean' },
+									layout: { type: 'string', enum: ['row', 'column'], description: 'Cards side by side (icon above the title) or stacked (icon before it).' },
+									row: { type: 'number' },
+									col: { type: 'number' },
+									rowSpan: { type: 'number' },
+									colSpan: { type: 'number' },
+									nodes: {
+										type: 'array',
+										items: {
+											type: 'object',
+											properties: {
+												id: { type: 'string' },
+												label: { type: 'string' },
+												sub: { type: 'string', description: 'One short line under the title.' },
+												icon: { type: 'string' },
+												color: { type: 'string' },
+												dashed: { type: 'boolean' },
+											},
+											required: ['label'],
+										},
+									},
+								},
+								required: ['label'],
+							},
+						},
+						nodes: { type: 'array', description: 'Cards outside every group (same fields as a group\'s nodes, plus row and col).', items: { type: 'object' } },
+						edges: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									from: { type: 'string', description: 'A card or group id.' },
+									to: { type: 'string' },
+									label: { type: 'string', description: 'Short, numbered along the main path: "2. Claim it".' },
+									color: { type: 'string' },
+									style: { type: 'string', enum: ['solid', 'dashed', 'dotted'] },
+									both: { type: 'boolean', description: 'Arrowheads at both ends.' },
+									labelSide: { type: 'string', enum: ['top', 'bottom'], description: 'Above/right of the line (default) or below/left.' },
+								},
+								required: ['from', 'to'],
+							},
+						},
+					},
+				},
 				notes: {
 					type: 'array',
 					maxItems: MAX_NOTES,
@@ -197,12 +260,36 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 		const mermaid = typeof args.mermaid === 'string' && args.mermaid.trim() ? args.mermaid.trim().slice(0, MAX_TEXT) : undefined;
 		const notes = (Array.isArray(args.notes) ? args.notes : []).slice(0, MAX_NOTES).map(parseNote).filter((n): n is INoteInput => !!n);
 		const cards = (Array.isArray(args.cards) ? args.cards : []).slice(0, MAX_CARDS).filter((c): c is string => typeof c === 'string' && !!c.trim()).map(c => c.slice(0, MAX_TEXT));
-		if (!mermaid && !notes.length && !cards.length) {
-			return { error: 'Nothing to draw: pass `mermaid`, `notes` or `cards`.' };
+		let architecture: IArchitectureSpec | undefined;
+		let warnings: string[] = [];
+		if (args.diagram !== undefined && args.diagram !== null) {
+			if (mermaid) {
+				return { error: 'Pass `diagram` or `mermaid`, not both: draw the other in a second scratch_draw.' };
+			}
+			const parsed = parseArchitectureSpec(args.diagram);
+			if ('error' in parsed) {
+				return { error: parsed.error };
+			}
+			architecture = parsed.spec;
+			warnings = parsed.warnings;
+		}
+		if (!mermaid && !architecture && !notes.length && !cards.length) {
+			return { error: 'Nothing to draw: pass `diagram`, `mermaid`, `notes` or `cards`.' };
 		}
 		const graph = mermaid ? parseMermaidFlowchart(extractMermaidSource(mermaid) ?? mermaid) : undefined;
 		if (mermaid && (!graph || !graph.nodes.length)) {
 			return { error: 'That Mermaid did not parse as a flowchart. Start with `flowchart LR` (or TD) and use only nodes, edges and subgraphs; sequence diagrams are not supported, so draw the steps as a flowchart.' };
+		}
+		// Icons and the hand font's widths before the board is touched: the user may draw meanwhile.
+		let architectureElements: ScratchElement[] = [];
+		if (architecture) {
+			const names = [...architecture.groups, ...architecture.groups.flatMap(g => g.nodes), ...architecture.nodes].map(item => item.icon).filter((n): n is string => !!n);
+			const [icons, measure] = await Promise.all([fetchDiagramIcons(names), handTextMeasure(mainWindow.document)]);
+			const missing = [...new Set(names)].filter(n => !icons.has(n));
+			if (missing.length) {
+				warnings.push(`no icon was found for ${missing.map(n => `"${n}"`).join(', ')}, so those draw without one`);
+			}
+			architectureElements = architectureToElements(architecture, [0, 0], { style: AGENT_DIAGRAM_STYLE, icon: name => icons.get(name), measure });
 		}
 
 		const boardId = await this.boardFor(args, call);
@@ -224,6 +311,13 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 			// Lay the parts out from (0, 0): diagram, then a row of notes, then the cards.
 			const content: ScratchElement[] = [];
 			let cursorY = 0;
+			if (architectureElements.length) {
+				content.push(...architectureElements);
+				const b = unionBounds(architectureElements.map(el => geometricBounds(el)));
+				if (b) {
+					cursorY = b.maxY + GAP;
+				}
+			}
 			if (graph) {
 				const diagram = mermaidToElements(graph, [0, 0], style);
 				content.push(...diagram);
@@ -324,9 +418,11 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 					}));
 				}
 				// Connectors land on their shapes' outlines; elbows keep their routes, or go round what is in the way.
+				// An architecture diagram's lines were routed with it (sides, tracks) and only moved: they stay.
+				const routed = new Set(architectureElements.filter(isLinear).map(el => el.id));
 				let around = routeContext(scene.getElements());
 				for (const el of placed) {
-					if (isLinear(el)) {
+					if (isLinear(el) && !routed.has(el.id)) {
 						const patch = rebindConnector(scene.get(el.id) as typeof el, id => scene.get(id), undefined, around);
 						if (patch) {
 							around = withLegs(around, el.id, patch.points.map(p => [patch.x + p[0], patch.y + p[1]] as const));
@@ -341,8 +437,10 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 
 			const shapes = placed.filter(el => el.type === 'shape').length;
 			const connectors = placed.filter(el => isLinear(el)).length;
+			const groups = architectureElements.filter(el => el.type === 'frame').length;
 			const parts = [
-				shapes ? `${shapes} shapes` : '',
+				groups ? `${groups} groups` : '',
+				shapes ? `${shapes} ${architecture ? 'cards' : 'shapes'}` : '',
 				connectors ? `${connectors} connectors` : '',
 				notes.length ? `${notes.length} sticky notes` : '',
 				cards.length ? `${cards.length} cards` : '',
@@ -353,8 +451,9 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 			const check = overlaps.length
 				? `Overlaps to fix before you answer: ${overlaps.join('; ')}. Redraw with replace: "${frame.id}": reorder the nodes or edges so the ends sit next to each other, split a crowded diagram into two, or shorten the labels.`
 				: 'No line runs through a shape and no label sits on a shape or another label.';
+			const notices = warnings.length ? ` Note: ${warnings.join('; ')}.` : '';
 			return {
-				text: `Drew "${title}" on the Scratch board "${boardTitle}" (${parts}), ${replaced ? 'in place of the earlier drawing' : spot ? 'in the free spot kept for it' : 'beside what the user sent'}. frameId ${frame.id}, boardId ${boardId}. ${check} ${image ? 'The image is the drawing as the user sees it: check it here (no screenshots or desktop tools needed). ' : ''}The user sees it on their board now and can undo it; to change it, call scratch_draw again with replace: "${frame.id}". Do not repeat the drawing in your reply.`,
+				text: `Drew "${title}" on the Scratch board "${boardTitle}" (${parts}), ${replaced ? 'in place of the earlier drawing' : spot ? 'in the free spot kept for it' : 'beside what the user sent'}. frameId ${frame.id}, boardId ${boardId}. ${check}${notices} ${image ? 'The image is the drawing as the user sees it: check it here (no screenshots or desktop tools needed). ' : ''}The user sees it on their board now and can undo it; to change it, call scratch_draw again with replace: "${frame.id}". Do not repeat the drawing in your reply.`,
 				...(image ? { image } : {}),
 			};
 		} finally {

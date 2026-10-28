@@ -299,10 +299,75 @@
 	white-space: pre-wrap;
 }
 
+/* A card's icon: above its text, or before it with the text starting at the left. */
+.sx-label > .sx-label-icon {
+	display: block;
+	flex: none;
+	order: -1;
+	-webkit-user-drag: none;
+}
+
+.sx-label[data-placement="inside"][data-icon="top"] {
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+}
+
+.sx-label[data-placement="inside"][data-icon="top"][data-valign="top"] {
+	justify-content: flex-start;
+}
+
+.sx-label[data-placement="inside"][data-icon="top"][data-valign="bottom"] {
+	justify-content: flex-end;
+}
+
+.sx-label[data-placement="inside"][data-icon="left"] {
+	justify-content: flex-start;
+	gap: 14px;
+	padding-left: 10px;
+}
+
+.sx-label[data-placement="inside"][data-icon="left"] > .sx-label-text {
+	min-width: 0;
+}
+
 .sx-label[data-placement="along"] > .sx-label-text {
 	padding: 0 4px;
 	border-radius: 4px;
 	background: var(--sx-label-bg, transparent);
+}
+
+/* Beside the line: above or below a level stretch, right or left of an upright one, on the board itself. */
+.sx-label[data-placement="along"]:not([data-side="on"]) > .sx-label-text {
+	padding: 0;
+	background: none;
+}
+
+/* Above or below a level stretch there is room along the line: a sentence stays on one line. */
+.sx-label[data-placement="along"][data-side="above"],
+.sx-label[data-placement="along"][data-side="below"] {
+	max-width: 360px;
+}
+
+.sx-label[data-placement="along"][data-side="above"] {
+	transform: translate(-50%, calc(-100% - var(--sx-label-gap, 6px)));
+}
+
+.sx-label[data-placement="along"][data-side="below"] {
+	transform: translate(-50%, var(--sx-label-gap, 6px));
+}
+
+.sx-label[data-placement="along"][data-side="right"] {
+	transform: translate(calc(var(--sx-label-gap, 6px) + 2px), -50%);
+	justify-content: flex-start;
+	text-align: left;
+}
+
+.sx-label[data-placement="along"][data-side="left"] {
+	transform: translate(calc(-100% - var(--sx-label-gap, 6px) - 2px), -50%);
+	justify-content: flex-end;
+	text-align: right;
 }
 
 .sx-el.sx-image > .sx-image {
@@ -378,6 +443,40 @@
 /* The name reads as a heading over the diagram: near white on a dark board. */
 .sx-canvas.sx-dark .sx-el.sx-frame > .sx-frame-name {
 	color: #f1f3f5;
+}
+
+/* A container (a diagram's group): the outline is drawn in its SVG, the name sits inside after an icon. */
+.sx-el.sx-frame.sx-container {
+	border: none;
+	background: none;
+}
+
+.sx-el.sx-frame.sx-container > .sx-frame-name {
+	bottom: auto;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 0;
+	font-weight: normal;
+	letter-spacing: normal;
+}
+
+.sx-el.sx-frame.sx-container > .sx-frame-name > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sx-el.sx-frame.sx-container > .sx-frame-name > .sx-frame-icon {
+	display: block;
+	flex: none;
+	-webkit-user-drag: none;
+}
+
+.sx-el.sx-frame.sx-container > .sx-frame-name > .sx-frame-subtitle {
+	align-self: center;
+	margin-left: 4px;
+	font-size: 0.62em;
+	opacity: 0.6;
 }
 
 .sx-el > .sx-link-badge {
@@ -602,6 +701,12 @@
 
 .sx-canvas.sx-dark .sx-rich a {
 	color: #74c0fc;
+}
+
+/* A card's subtitle: smaller and quieter than its title. */
+.sx-rich small {
+	font-size: 0.7em;
+	opacity: 0.6;
 }
 
 .sx-rich mark {
@@ -1998,6 +2103,13 @@
 	/* The chat composer's send colours (agentEditor.css): light button, dark arrow. */
 	--volt-mode-send-bg: #f4f4f5;
 	--volt-mode-send-fg: #111;
+}
+
+/* As the chat composer on light themes: a near-white send button vanished on the light panel. */
+.monaco-workbench.vs .sx-composer-footer,
+.monaco-workbench.hc-light .sx-composer-footer {
+	--volt-mode-send-bg: var(--vscode-foreground);
+	--volt-mode-send-fg: var(--vscode-editor-background, #fff);
 }
 
 .sx-composer-pickers {

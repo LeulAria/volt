@@ -81,13 +81,34 @@ export interface IScratchLabel {
 	readonly fontFamily: ScratchFontFamily;
 	readonly fontSize: number;
 	readonly textAlign: ScratchTextAlign;
+	/**
+	 * Inside a shape: where the text sits. Along a connector: `middle` on the line (with the board
+	 * colour behind it), `top` beside it (above a level stretch, right of an upright one), `bottom`
+	 * on the other side.
+	 */
 	readonly verticalAlign: ScratchVerticalAlign;
+	/** The text's own colour (light-space); without it the text takes the element's stroke. */
+	readonly color?: string;
+}
+
+/** An icon drawn with a shape's label or in a container frame's header (Aria Icons, icons.leularia.com). */
+export interface IScratchInlineIcon {
+	/** `set:name`, e.g. `lucide:webhook`. */
+	readonly iconId: string;
+	readonly svg: string;
+	/** Draws with currentColor, so it takes the element's stroke colour. Brand logos keep their own. */
+	readonly tintable: boolean;
+	/** Above the label, centred, or before it (the label then starts at the left). Frames always put it before the name. */
+	readonly placement: 'top' | 'left';
+	/** Width and height in board units. */
+	readonly size: number;
 }
 
 export interface IScratchShapeElement extends IScratchElementBase {
 	readonly type: 'shape';
 	readonly shape: ScratchShapeKind;
 	readonly label: IScratchLabel | null;
+	readonly icon?: IScratchInlineIcon | null;
 }
 
 /**
@@ -167,10 +188,26 @@ export interface IScratchIconElement extends IScratchElementBase {
 	readonly label: IScratchLabel | null;
 }
 
+/**
+ * A frame drawn as a container (a group in an architecture diagram): its outline is drawn like a
+ * shape's (stroke, width, style, roughness), and the name sits inside at the top left, after an
+ * icon and before a quieter subtitle.
+ */
+export interface IScratchFrameHeader {
+	readonly icon: IScratchInlineIcon | null;
+	readonly subtitle: string;
+	readonly fontFamily: ScratchFontFamily;
+	readonly fontSize: number;
+	/** The name's colour (light-space). */
+	readonly color: string;
+}
+
 /** A named region; elements inside move with it. */
 export interface IScratchFrameElement extends IScratchElementBase {
 	readonly type: 'frame';
 	readonly name: string;
+	/** Set: a container with its name inside. Unset: a plain frame with its name in a tab above. */
+	readonly header?: IScratchFrameHeader | null;
 }
 
 export type ScratchElement =
@@ -367,6 +404,22 @@ export const AGENT_SCRATCH_STYLE: IScratchStyleDefaults = {
 	roughness: 0,
 	fontFamily: 'sans',
 	fontSize: SCRATCH_FONT_SIZES.small,
+	noteColor: SCRATCH_NOTE_COLORS[7],
+};
+
+/**
+ * What agents draw diagrams in: the board's own hand-drawn look (Excalifont, a light wobble, open
+ * outlines in ink), like a diagram someone sketched in Excalidraw. Colour comes from the diagram.
+ */
+export const AGENT_DIAGRAM_STYLE: IScratchStyleDefaults = {
+	...DEFAULT_SCRATCH_STYLE,
+	stroke: SCRATCH_STROKE_COLORS[0],
+	fill: 'transparent',
+	fillStyle: 'solid',
+	strokeWidth: SCRATCH_STROKE_WIDTHS.bold,
+	roughness: 1,
+	fontFamily: 'hand',
+	fontSize: SCRATCH_FONT_SIZES.medium,
 	noteColor: SCRATCH_NOTE_COLORS[7],
 };
 

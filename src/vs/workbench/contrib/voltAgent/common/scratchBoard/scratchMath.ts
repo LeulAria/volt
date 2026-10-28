@@ -87,6 +87,31 @@ export function boundsIntersect(a: IScratchBounds, b: IScratchBounds): boolean {
 	return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
 }
 
+/** Whether segment a-b enters `box` (Liang-Barsky clipping). */
+export function segmentEntersBounds(a: Vec, b: Vec, box: IScratchBounds): boolean {
+	let t0 = 0, t1 = 1;
+	const dx = b[0] - a[0], dy = b[1] - a[1];
+	const edges: [number, number][] = [[-dx, a[0] - box.minX], [dx, box.maxX - a[0]], [-dy, a[1] - box.minY], [dy, box.maxY - a[1]]];
+	for (const [p, q] of edges) {
+		if (Math.abs(p) < 1e-9) {
+			if (q < 0) {
+				return false;
+			}
+			continue;
+		}
+		const t = q / p;
+		if (p < 0) {
+			t0 = Math.max(t0, t);
+		} else {
+			t1 = Math.min(t1, t);
+		}
+		if (t0 > t1) {
+			return false;
+		}
+	}
+	return true;
+}
+
 /** `inner` lies entirely inside `outer`. */
 export function boundsContain(outer: IScratchBounds, inner: IScratchBounds): boolean {
 	return inner.minX >= outer.minX && inner.maxX <= outer.maxX && inner.minY >= outer.minY && inner.maxY <= outer.maxY;
