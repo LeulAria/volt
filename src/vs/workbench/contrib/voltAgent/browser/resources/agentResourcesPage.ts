@@ -90,4 +90,6 @@ export interface IAgentResourcesSectionContext {
 	navigate(section: AgentResourcesSectionId): void;
 	/** Renders the page again (after a change the page cannot see, such as a setting). */
 	rerender(): void;
+	/** The harness page's summaries of settings files, by file; the page clears it when files change. */
+	readonly harnessSummaries: Map<string, Promise<string | undefined>>;
 }

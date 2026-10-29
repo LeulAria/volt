@@ -11,7 +11,7 @@ import { IListAccessibilityProvider } from '../../../../../base/browser/ui/list/
 import { RenderIndentGuides } from '../../../../../base/browser/ui/tree/abstractTree.js';
 import { ICompressedTreeElement, ICompressedTreeNode } from '../../../../../base/browser/ui/tree/compressedObjectTreeModel.js';
 import { ICompressibleTreeRenderer } from '../../../../../base/browser/ui/tree/objectTree.js';
-import { ITreeNode } from '../../../../../base/browser/ui/tree/tree.js';
+import { ITreeNode, ObjectTreeElementCollapseState } from '../../../../../base/browser/ui/tree/tree.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
@@ -157,6 +157,8 @@ export class AgentResourceTree extends Disposable {
 	private readonly tree: WorkbenchCompressibleObjectTree<ResourceElement>;
 	private readonly labels: ResourceLabels;
 	private showGroup = false;
+	/** What the tree last showed, to skip a rebuild that changes nothing. */
+	private key: string | undefined;
 
 	private readonly _onDidOpen = this._register(new Emitter<{ readonly item: IAgentResource; readonly sideBySide: boolean; readonly preserveFocus: boolean }>());
 	readonly onDidOpen = this._onDidOpen.event;
@@ -208,7 +210,14 @@ export class AgentResourceTree extends Disposable {
 
 	/** `showGroup`: each file also names its group (the "All Agent Resources" filter). */
 	setResources(folder: URI, items: readonly IAgentResource[], showGroup = false): void {
+		// The same files with the same states: keep the tree as it is, scroll and all.
+		const key = JSON.stringify([folder.toString(), showGroup, items.map(item => [item.resource.toString(), item.status.kind, item.status.message, item.kind, item.description])]);
+		if (key === this.key) {
+			return;
+		}
+		this.key = key;
 		this.showGroup = showGroup;
+		// Folders the user collapsed stay collapsed (the tree finds them by identity); new ones open.
 		this.tree.setChildren(null, buildTree(folder, items));
 	}
 
@@ -243,7 +252,7 @@ function buildTree(folder: URI, items: readonly IAgentResource[]): ICompressedTr
 		...[...current.folders].sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) => ({
 			element: { type: 'folder' as const, uri: child.uri, name },
 			collapsible: true,
-			collapsed: false,
+			collapsed: ObjectTreeElementCollapseState.PreserveOrExpanded,
 			children: toElements(child),
 		})),
 		...[...current.files].sort((a, b) => fileName(a).localeCompare(fileName(b))).map(item => ({

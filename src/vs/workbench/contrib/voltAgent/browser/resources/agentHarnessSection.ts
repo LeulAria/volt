@@ -658,11 +658,24 @@ export class AgentHarnessSection extends Disposable {
 			}
 		}));
 
-		void this.fileService.readFile(item.resource, { limits: { size: MAX_READ_BYTES } }).then(file => {
-			const summary = !this.stale ? summarize(item, file.value.toString()) : undefined;
-			if (summary) {
+		void this.summary(item).then(summary => {
+			if (summary && !this.stale) {
 				append(desc, $('span')).textContent = ` · ${summary}`;
 			}
-		}, () => { /* unreadable or too big: the row still opens it */ });
+		});
+	}
+
+	/** The file's summary, read once until the page sees the files change. */
+	private summary(item: IAgentResource): Promise<string | undefined> {
+		const key = item.resource.toString();
+		let summary = this.ctx.harnessSummaries.get(key);
+		if (!summary) {
+			summary = this.fileService.readFile(item.resource, { limits: { size: MAX_READ_BYTES } }).then(
+				file => summarize(item, file.value.toString()),
+				() => undefined, // unreadable or too big: the row still opens it
+			);
+			this.ctx.harnessSummaries.set(key, summary);
+		}
+		return summary;
 	}
 }

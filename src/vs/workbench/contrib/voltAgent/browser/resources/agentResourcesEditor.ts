@@ -27,6 +27,7 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../../pla
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
+import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { getLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
@@ -217,6 +218,12 @@ export class AgentResourcesEditor extends EditorPane {
 	private readonly renderStore = this._register(new DisposableStore());
 	private readonly chromeStore = this._register(new DisposableStore());
 	private readonly renderScheduler = this._register(new RunOnceScheduler(() => this.render(), 80));
+	/** Search and scope only change the section: the nav and the toolbar stay. */
+	private readonly bodyScheduler = this._register(new RunOnceScheduler(() => this.renderBody(), 80));
+	/** Set when a change comes in while the page is hidden; it renders when shown again. */
+	private dirty = false;
+	/** What the harness page read from other harnesses' files, until the files change. */
+	private readonly harnessSummaries = new Map<string, Promise<string | undefined>>();
 
 	constructor(
 		group: IEditorGroup,
@@ -232,6 +239,7 @@ export class AgentResourcesEditor extends EditorPane {
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@ITextEditorService private readonly textEditorService: ITextEditorService,
 		@IOpenerService private readonly openerService: IOpenerService,
+		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService,
 	) {
 		super(AgentResourcesEditor.ID, group, telemetryService, themeService, storage);
 		this.restoreState();
@@ -305,11 +313,15 @@ export class AgentResourcesEditor extends EditorPane {
 		this.surfaceHost = this._register(this.instantiationService.createInstance(AgentSurfaceHost, this.rootEl, this.mainEl));
 
 		this._register(this.resources.onDidChange(folder => {
+			this.harnessSummaries.clear();
 			if (this.folder && folder.toString() === this.folder.toString()) {
-				this.renderScheduler.schedule();
+				this.scheduleRender();
 			}
 		}));
-		this._register(this.resources.onDidChangeGlobal(() => this.renderScheduler.schedule()));
+		this._register(this.resources.onDidChangeGlobal(() => {
+			this.harnessSummaries.clear();
+			this.scheduleRender();
+		}));
 		this._register(this.workspaceService.onDidChangeWorkspaceFolders(() => {
 			this.folder = this.pickFolder(this.folder);
 			this.load();
@@ -340,6 +352,13 @@ export class AgentResourcesEditor extends EditorPane {
 		}
 		if (!options?.preserveFocus) {
 			this.searchInput.focus();
+		}
+	}
+
+	protected override setEditorVisible(visible: boolean): void {
+		super.setEditorVisible(visible);
+		if (visible && this.dirty) {
+			this.render();
 		}
 	}
 
@@ -427,12 +446,24 @@ export class AgentResourcesEditor extends EditorPane {
 			this.marketplace.setQuery(value);
 			return;
 		}
-		this.renderScheduler.schedule();
+		this.bodyScheduler.schedule();
+	}
+
+	/** Renders soon, or once the page is shown again when it is hidden. */
+	private scheduleRender(): void {
+		if (this.isVisible()) {
+			this.renderScheduler.schedule();
+		} else {
+			this.dirty = true;
+		}
 	}
 
 	private allItems(): IAgentResource[] {
 		const workspace = this.folder ? this.resources.get(this.folder) ?? [] : [];
-		return [...workspace, ...(this.resources.getGlobal() ?? [])];
+		const global = this.resources.getGlobal() ?? [];
+		// With the home folder (or ~/.claude) open, the workspace scan finds the global files again: list them once, as Global.
+		const globalKeys = new Set(global.map(item => this.uriIdentityService.extUri.getComparisonKey(item.resource)));
+		return [...workspace.filter(item => !globalKeys.has(this.uriIdentityService.extUri.getComparisonKey(item.resource))), ...global];
 	}
 
 	private filtered(items: readonly IAgentResource[]): IAgentResource[] {
@@ -452,22 +483,42 @@ export class AgentResourcesEditor extends EditorPane {
 
 	//#region Rendering
 
+	/** The whole page: nav, header and toolbar, and the section. */
 	private render(): void {
 		if (!this.sectionEl) {
 			return;
 		}
 		this.renderScheduler.cancel();
-		this.renderStore.clear();
+		if (!this.isVisible()) {
+			this.dirty = true;
+			return;
+		}
+		this.dirty = false;
 		const all = this.allItems();
-		const items = this.filtered(all);
 		const section = agentResourcesSection(this.section);
 		this.renderNav(all);
 		this.renderChrome(section);
 		const market = section.id === 'marketplace';
 		this.marketplace.setVisible(market);
 		this.sectionEl.classList.toggle('hidden', market);
+		this.renderBody(all);
+	}
+
+	/** The section alone, for a search or scope change: the nav and the scope dropdown are kept. */
+	private renderBody(all = this.allItems()): void {
+		if (!this.sectionEl) {
+			return;
+		}
+		this.bodyScheduler.cancel();
+		if (!this.isVisible()) {
+			this.dirty = true;
+			return;
+		}
+		this.renderStore.clear();
+		const items = this.filtered(all);
+		const section = agentResourcesSection(this.section);
 		clearNode(this.sectionEl);
-		if (!market) {
+		if (section.id !== 'marketplace') {
 			const ctx: IAgentResourcesSectionContext = {
 				store: this.renderStore,
 				folder: this.folder,
@@ -478,6 +529,7 @@ export class AgentResourcesEditor extends EditorPane {
 				openDiff: (original, modified, label) => void this.openDiff(original, modified, label),
 				navigate: id => this.setSection(id),
 				rerender: () => this.renderScheduler.schedule(),
+				harnessSummaries: this.harnessSummaries,
 			};
 			if (section.id === 'harness') {
 				this.renderStore.add(this.instantiationService.createInstance(AgentHarnessSection, this.sectionEl, ctx)).render();
@@ -530,7 +582,7 @@ export class AgentResourcesEditor extends EditorPane {
 			onChange: value => {
 				this.scope = value;
 				this.storeState();
-				this.render();
+				this.renderBody();
 			},
 		}, this.chromeStore);
 	}

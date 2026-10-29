@@ -19,6 +19,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { WorkbenchList } from '../../../../../platform/list/browser/listService.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 import { IAgentRuntimeService, IVoltMcpServerStatus } from '../../../../services/voltRuntime/common/runtime.js';
 import { AGENT_RESOURCE_ECOSYSTEM_LABELS, AGENT_RESOURCE_SCOPE_KIND_DESCRIPTIONS, AGENT_RESOURCE_SCOPE_KIND_LABELS, AgentResourceEcosystem, AgentResourceGroupId, AgentResourceScopeKind, agentResourceScopeKind } from '../../common/agentResources.js';
@@ -198,6 +199,7 @@ export class AgentResourcesSections {
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IAgentCustomizeService private readonly customize: IAgentCustomizeService,
+		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService,
 	) { }
 
 	render(section: Exclude<AgentResourcesSectionId, 'marketplace' | 'harness'>, container: HTMLElement): void {
@@ -560,16 +562,26 @@ export class AgentResourcesSections {
 		const configs = items.filter(item => item.servers !== undefined || /mcp|\.claude\.json|config\.toml|settings/.test(item.relativePath));
 		const plugins = items.filter(item => !configs.includes(item));
 		// Settings files that also define MCP servers (Gemini, Codex) count as server sources.
-		const sources = [...configs, ...this.ctx.items.filter(item => item.group === 'config' && item.servers?.length)];
+		const fileKey = (item: IAgentResource) => this.uriIdentityService.extUri.getComparisonKey(item.resource);
+		const sources = [...new Map([...configs, ...this.ctx.items.filter(item => item.group === 'config' && item.servers?.length)].map(item => [fileKey(item), item] as const)).values()];
 		const rows: IServerRow[] = [];
 		for (const item of sources) {
+			const key = fileKey(item);
 			for (const server of item.servers ?? []) {
 				const readers = agentResourceReaders(item);
+				// Other files only, each once: the same file listed twice is not a duplicate.
+				const alsoIn = new Map<string, IAgentResource>();
+				for (const other of sources) {
+					const otherKey = fileKey(other);
+					if (otherKey !== key && !alsoIn.has(otherKey) && other.servers?.some(candidate => candidate.name === server.name)) {
+						alsoIn.set(otherKey, other);
+					}
+				}
 				rows.push({
 					server,
 					item,
 					voltLoads: !!readers?.includes('volt'),
-					alsoIn: sources.filter(other => other !== item && other.servers?.some(candidate => candidate.name === server.name)),
+					alsoIn: [...alsoIn.values()],
 				});
 			}
 		}
