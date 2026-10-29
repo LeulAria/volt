@@ -36,6 +36,8 @@ export interface IAgentComposerQueueOptions {
 	onEdit?(id: string): void;
 	/** Send this prompt now: steer the running agent, interrupt it, or just send when idle. */
 	onSendNow?(id: string): void;
+	/** Send this prompt in a new chat, whose agent starts with this chat's conversation as a condensed handoff. */
+	onSendToNewChat?(id: string): void;
 	/** The queue was paused by an error or left idle: send the next prompt and keep draining. */
 	onResume?(): void;
 	onCancelEdit?(): void;
@@ -572,8 +574,12 @@ export class AgentComposerQueue extends Disposable {
 			this.listeners.add(bindTruncatedHoverTooltip(text, preview));
 			const onEdit = this.options.onEdit;
 			const onSendNow = this.options.onSendNow;
+			const onSendToNewChat = this.options.onSendToNewChat;
 			if (!isEditing && onEdit) {
 				this.appendRowAction(row, createEditIcon(), localize('voltAgent.queue.edit', "Edit queued message"), () => onEdit(item.id));
+			}
+			if (!isEditing && !picking && onSendToNewChat) {
+				this.appendRowAction(row, Codicon.export, localize('voltAgent.queue.newChatHint', "Send in a new chat, with this conversation handed over condensed"), () => onSendToNewChat(item.id), 'new-chat', localize('voltAgent.queue.newChat', "Send in new chat"));
 			}
 			if (!isEditing && onSendNow) {
 				this.appendRowAction(row, Codicon.arrowUp, sendNow.tooltip, () => onSendNow(item.id), 'send-now', sendNow.label);

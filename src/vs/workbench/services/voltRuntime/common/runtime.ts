@@ -59,6 +59,16 @@ export interface IVoltSeedMessage {
 	readonly compacted?: boolean;
 }
 
+export interface IVoltSeedOptions {
+	readonly forkedFrom?: string;
+	readonly continuedFrom?: {
+		readonly id: string;
+		readonly title: string;
+		/** That chat was still running its last turn. */
+		readonly live?: boolean;
+	};
+}
+
 export interface IVoltCompactionPlan {
 	readonly kind: 'native' | 'handoff';
 	/** `handoff`: estimated tokens the conversation compacts to. */
@@ -94,9 +104,11 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	getOrCreateSession(key: string): IVoltSession;
 	/**
 	 * Restore a session's model transcript from durable history when it has none yet. `forkedFrom`
-	 * marks a fork, so its first agent is briefed as one.
+	 * marks a fork, so its first agent is briefed as one. `continuedFrom` marks a new chat started
+	 * from another chat's queued message: `messages` are that chat's, and its first agent gets them
+	 * as a condensed handoff (also on a model Volt runs itself, which would otherwise read them whole).
 	 */
-	seedSession(key: string, messages: readonly IVoltSeedMessage[], options?: { readonly forkedFrom?: string }): void;
+	seedSession(key: string, messages: readonly IVoltSeedMessage[], options?: IVoltSeedOptions): void;
 	/**
 	 * Lets go of an idle chat's heavy state (its model transcript, file ledger, agent processes),
 	 * for a chat the orchestrator forgot. Its text history stays; if it runs again, the transcript

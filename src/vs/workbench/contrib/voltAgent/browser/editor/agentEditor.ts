@@ -446,7 +446,7 @@ export interface IAgentUserMessage {
 	/** Sent by a scheduled task, not typed now: drawn with a "Scheduled" divider above it. */
 	scheduled?: { id: string; title: string; webhook?: boolean };
 	/** Written by another chat's agent (a message, the task it launched, or a fork's first prompt): drawn with a "From" pill that opens that chat. */
-	fromThread?: { id: string; title: string; kind: 'message' | 'launch' | 'fork' | 'merge'; external?: boolean };
+	fromThread?: { id: string; title: string; kind: 'message' | 'launch' | 'fork' | 'merge' | 'continue'; external?: boolean };
 }
 
 /** A `context.handoff` as the transcript keeps it: the divider's numbers and the text that was sent. */
@@ -1253,6 +1253,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			onReorder: ids => this.reorderQueuedPrompts(ids),
 			onEdit: id => this.editQueuedPrompt(id),
 			onSendNow: id => this.sendQueuedNow(id),
+			onSendToNewChat: id => this.sendQueuedToNewChat(id),
 			onResume: () => this.resumeQueue(),
 			onCancelEdit: () => this.cancelQueueEdit(),
 			onOpenAgent: view => this.openSubagent(view.key),
@@ -3442,11 +3443,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private renderFromThreadPill(turn: HTMLElement, from: NonNullable<IAgentUserMessage['fromThread']>): void {
 		const divider = append(turn, $('.volt-agent-subagent-of.from-thread'));
 		const pill = append(divider, $('span.volt-agent-subagent-of-pill'));
-		pill.appendChild(renderIcon(from.kind === 'fork' ? Codicon.repoForked : from.kind === 'merge' ? Codicon.gitMerge : from.kind === 'launch' ? Codicon.rocket : Codicon.commentDiscussion));
+		pill.appendChild(renderIcon(from.kind === 'fork' ? Codicon.repoForked : from.kind === 'merge' ? Codicon.gitMerge : from.kind === 'launch' ? Codicon.rocket : from.kind === 'continue' ? Codicon.export : Codicon.commentDiscussion));
 		append(pill, $('span.label')).textContent = from.kind === 'fork'
 			? localize('voltAgent.fromThread.fork', "Forked by")
 			: from.kind === 'merge' ? localize('voltAgent.fromThread.merge', "Merged back by")
-				: from.kind === 'launch' ? localize('voltAgent.fromThread.launch', "Started by") : localize('voltAgent.fromThread.message', "From");
+				: from.kind === 'launch' ? localize('voltAgent.fromThread.launch', "Started by")
+					: from.kind === 'continue' ? localize('voltAgent.fromThread.continue', "Continued from") : localize('voltAgent.fromThread.message', "From");
 		append(pill, $('span.parent')).textContent = `· ${from.external ? from.title : this.history.get(from.id)?.title || from.title}`;
 		if (from.external) {
 			// An agent outside Volt (Claude Code, Codex, …) the user connected: there is no chat to open.
@@ -3457,7 +3459,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		pill.tabIndex = 0;
 		setAgentTooltip(pill, from.external
 			? localize('voltAgent.fromThread.external', "Written by {0}, an agent outside Volt that you connected, not by you. Click to see or revoke connected agents.", from.title)
-			: localize('voltAgent.fromThread.open', "Written by the agent of another chat, not by you. Click to open that chat."));
+			: from.kind === 'continue'
+				? localize('voltAgent.fromThread.continueHint', "You sent this queued message to a new chat. Its agent got that chat's conversation as a condensed handoff. Click to open that chat.")
+				: localize('voltAgent.fromThread.open', "Written by the agent of another chat, not by you. Click to open that chat."));
 		const open = (e: UIEvent) => {
 			e.preventDefault();
 			e.stopPropagation();
@@ -7583,6 +7587,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const threadId = this.sessionKey;
 		const canSteer = this.canSteer();
 		void this.threadLifecycle.bringBack(threadId).then(() => this.orchestrator.dispatch({ type: 'queue.sendNow', threadId, itemId: id, canSteer }));
+	}
+
+	/** The queued message leaves this chat for a new one, whose agent starts briefed with this conversation, condensed. */
+	private sendQueuedToNewChat(id: string): void {
+		if (!this.queuedItems.some(item => item.id === id) || this.queueEdit?.id === id) {
+			return;
+		}
+		this.forkService.continueInNewChat(this.sessionKey, id)
+			.catch(err => this.notificationService.error(localize('voltAgent.queue.newChatFailed', "Could not send the message to a new chat: {0}", err instanceof Error ? err.message : String(err))));
 	}
 
 	/** Cursor's "Edit queued message": the prompt moves into the composer; Enter puts it back changed. */

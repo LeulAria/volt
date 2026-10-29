@@ -44,7 +44,7 @@ import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKe
 import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IModelRequest, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { cheapestReasoningLevel, resolveTabModel } from '../common/models/modelAccess.js';
-import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltTaskModels } from '../common/runtime.js';
+import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../common/runtime.js';
 import { countUserTurns, IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
@@ -325,6 +325,8 @@ interface ISessionState extends IVoltSession {
 	parkedAgents?: IParkedAgent[];
 	/** The chat was forked from another: its first agent is briefed as a fork. */
 	forkedFrom?: string;
+	/** The chat started from another chat's queued message: its first agent gets that chat as a condensed handoff. */
+	continuedFrom?: IVoltSeedOptions['continuedFrom'];
 	/** What the agent last heard about the window around the chat (see workspaceLead). */
 	workspaceSent?: { readonly handle: IAgentSessionHandle; readonly key: string };
 }
@@ -846,13 +848,16 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return session;
 	}
 
-	seedSession(key: string, messages: readonly IVoltSeedMessage[], options?: { readonly forkedFrom?: string }): void {
+	seedSession(key: string, messages: readonly IVoltSeedMessage[], options?: IVoltSeedOptions): void {
 		const session = this.getOrCreateSession(key) as ISessionState;
 		if (options?.forkedFrom) {
 			session.forkedFrom = options.forkedFrom;
 		}
 		if (session.messages.length || session.activeRun) {
 			return;
+		}
+		if (options?.continuedFrom) {
+			session.continuedFrom = options.continuedFrom;
 		}
 		session.messages = messages.filter(message => message.content.trim() || message.activity?.tools.length || message.activity?.files.length).map(message => ({
 			role: message.role,
@@ -2806,7 +2811,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		// A run held to its proof from the start reads the contract with the request, so it plans the checks.
 		const proofNote = isVoltNote(request.text) ? undefined : observer?.contractNote();
 		const promptText = [request.text, pasted, hookNotes.length ? `<hook_context>\n${hookNotes.join('\n\n')}\n</hook_context>` : undefined, retrieved?.text, laneNote, proofNote].filter(Boolean).join('\n\n');
-		this.syncNativeTranscript(session, state, promptText, images);
+		// A chat started from another chat's queued message reads that chat condensed, not mirrored whole.
+		const continued = session.continuedFrom && !state.messages.length ? this.contextHandoff(session, item, false) : undefined;
+		this.syncNativeTranscript(session, state, promptText, images, continued?.text);
+		if (continued) {
+			this.emitContextHandoff(session, run, item, continued, false);
+		}
 
 		// The root can only differ from the early read if the chat moved while the previous run settled.
 		const { projectInstructions, instructions, mcpTools, memoryContext } = await (isEqual(early.root, root) ? early : this.nativeTurnInputs(root, allowMcp)).read();
@@ -3238,8 +3248,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * a native model and an ACP agent. Turns the native transcript has not seen are mirrored in as
 	 * plain text before the new message, so a model switch never loses the conversation.
 	 */
-	private syncNativeTranscript(session: ISessionState, state: INativeState, text: string, images?: IModelImage[]): void {
-		const unseen = session.messages.slice(state.synced, -1);
+	private syncNativeTranscript(session: ISessionState, state: INativeState, text: string, images?: IModelImage[], handoff?: string): void {
+		if (handoff) {
+			// The unseen turns arrive as this condensed handoff, ahead of the new message.
+			text = `${handoff}\n\n${text}`;
+		}
+		const unseen = handoff ? [] : session.messages.slice(state.synced, -1);
 		for (const message of unseen) {
 			if (!message.content.trim() || message.role === 'system') {
 				continue;
@@ -4584,22 +4598,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						return;
 					}
 					if (handoff) {
-						this.emit(session, run.runId, {
-							type: 'context.handoff',
-							reason: handoff.reason,
-							...(handoff.fromLabel ? { fromLabel: handoff.fromLabel } : {}),
-							toLabel: item.label,
-							tokens: handoff.tokens,
-							budget: handoff.budget,
-							reused,
-							turns: handoff.turns,
-							verbatimTurns: handoff.verbatimTurns,
-							condensedTurns: handoff.condensedTurns,
-							omittedTurns: handoff.omittedTurns,
-							toolCalls: handoff.toolCalls,
-							files: handoff.files.length,
-							text: handoff.text,
-						});
+						this.emitContextHandoff(session, run, item, handoff, reused);
 					}
 					const images = this.modelImages(request.images);
 					// An agent with no /compact of its own writes a hand-off summary that replaces the history.
@@ -4769,7 +4768,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const fromLabel = findLast(reused ? unseen : earlier, message => message.role === 'assistant' && message.model && message.model !== item.label)?.model;
 		const forked = !!session.forkedFrom;
 		session.forkedFrom = undefined;
-		const reason: HandoffReason = reused ? 'return' : forked ? 'fork' : fromLabel ? 'switch' : 'resume';
+		const continued = reused ? undefined : session.continuedFrom;
+		session.continuedFrom = undefined;
+		const reason: HandoffReason = reused ? 'return' : continued ? 'continue' : forked ? 'fork' : fromLabel ? 'switch' : 'resume';
 		const handoff = buildContextHandoff({
 			messages: unseen,
 			budget: this.handoffBudgetFor(item),
@@ -4777,9 +4778,31 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			firstTurn: countUserTurns(session.messages.slice(0, synced)) + 1,
 			...(fromLabel ? { fromLabel } : {}),
 			toLabel: item.label,
-			threadId: session.sessionId,
+			// Turns left out are read from the chat they happened in.
+			threadId: continued?.id ?? session.sessionId,
+			...(continued ? { fromChat: continued.title, ...(continued.live ? { lastTurnLive: true } : {}) } : {}),
 		});
 		return handoff && { ...handoff, ...(fromLabel ? { fromLabel } : {}) };
+	}
+
+	/** The divider over the turn: what was handed to the agent, and how the budget was spent. */
+	private emitContextHandoff(session: ISessionState, run: IRunState, item: IVoltCatalogItem, handoff: IContextHandoff & { readonly fromLabel?: string }, reused: boolean): void {
+		this.emit(session, run.runId, {
+			type: 'context.handoff',
+			reason: handoff.reason,
+			...(handoff.fromLabel ? { fromLabel: handoff.fromLabel } : {}),
+			toLabel: item.label,
+			tokens: handoff.tokens,
+			budget: handoff.budget,
+			reused,
+			turns: handoff.turns,
+			verbatimTurns: handoff.verbatimTurns,
+			condensedTurns: handoff.condensedTurns,
+			omittedTurns: handoff.omittedTurns,
+			toolCalls: handoff.toolCalls,
+			files: handoff.files.length,
+			text: handoff.text,
+		});
 	}
 
 	private handoffBudgetFor(item: IVoltCatalogItem): number {
