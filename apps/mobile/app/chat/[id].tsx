@@ -10,7 +10,7 @@ import {
 import { BlurView } from 'expo-blur';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, StyleSheet, Text, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import Animated, { FadeInDown, FadeOutDown, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -309,8 +309,8 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 					<IconButton icon="chevronLeft" label="Back" size={24} color={p.fg} onPress={() => router.back()} />
 					<Tap haptics="selection" onPress={() => setSwitcher(true)} style={{ flex: 1, minWidth: 0, paddingHorizontal: 4 }} accessibilityLabel="Switch chat">
 						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-							<T variant="callout" weight="700" numberOfLines={1} style={{ letterSpacing: -0.2, flexShrink: 1 }}>{meta?.title || 'New chat'}</T>
-							<Icon name="chevronDown" size={13} color={p.fgTertiary} />
+							<Text numberOfLines={1} style={{ fontSize: 15, lineHeight: 20, fontWeight: '500', color: p.fg, flexShrink: 1 }}>{meta?.title || 'New chat'}</Text>
+							<Icon name="chevronDown" size={12} color={p.iconTertiary} />
 						</View>
 						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
 							{tone ? <T variant="footnote" weight="600" color={tone}>{status.label}</T> : null}

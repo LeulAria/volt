@@ -7,7 +7,7 @@ import {
 	highlight, type IVoltPalette, markdownFor, type MdBlock, type MdCallout, type MdInline, parseInline, parseMarkdown, resolveLanguage, stripHtml
 } from '@volt/client-core';
 import * as Clipboard from 'expo-clipboard';
-import { Fragment, memo, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { Fragment, memo, type ReactNode, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { Image, Linking, ScrollView, StyleSheet, Text, type TextStyle, useWindowDimensions, View } from 'react-native';
 import { FileIcon } from '../files/FileIcon';
 import { useConversationPrefs } from '../state/prefs';
@@ -158,11 +158,7 @@ const BlockView = memo(function BlockView({ block, open, depth, tone, first, las
 			if (only) {
 				return <MarkdownImage src={only.src} alt={only.alt} />;
 			}
-			return (
-				<Text selectable style={{ color: face.color, fontSize: face.size, lineHeight: face.line, fontWeight: face.weight, marginTop: top(depth ? 0 : 4), marginBottom: bottom(depth ? 0 : face.after) }}>
-					{renderInlines(parseInline(block.text, open), ctx)}
-				</Text>
-			);
+			return <Paragraph text={block.text} open={open && tone === 'reply'} ctx={ctx} face={face} style={{ marginTop: top(depth ? 0 : 4), marginBottom: bottom(depth ? 0 : face.after) }} />;
 		}
 		case 'heading': {
 			const h = tone === 'reply' ? HEADING[block.level] ?? HEADING[4] : { size: face.size, line: face.line };
@@ -227,6 +223,67 @@ const BlockView = memo(function BlockView({ block, open, depth, tone, first, las
 			return <View style={{ marginTop: top(8), marginBottom: bottom(12) }}><TableView header={block.header} rows={block.rows} align={block.align} /></View>;
 	}
 }, (a, b) => a.block === b.block && a.open === b.open && a.depth === b.depth && a.tone === b.tone && a.first === b.first && a.last === b.last);
+
+/** How long streamed text keeps its fresh tint before it settles to the text colour. */
+const FRESH_MS = 520;
+
+/**
+ * Streamed reply text arrives light blue and settles to the text colour (agentFreshText.ts): the
+ * characters added since the last frame are tinted until the next one, or for a moment once the
+ * stream pauses. Only plain text at the paragraph's end is tinted, so inline markup still parses.
+ */
+function Paragraph({ text, open, ctx, face, style }: { readonly text: string; readonly open: boolean; readonly ctx: IInlineContext; readonly face: IFace; readonly style: TextStyle }) {
+	const { dark } = useTheme();
+	const seen = useRef(text.length);
+	const freshFrom = useRef(text.length);
+	if (!open) {
+		seen.current = freshFrom.current = text.length;
+	} else if (text.length > seen.current) {
+		freshFrom.current = seen.current;
+		seen.current = text.length;
+	}
+	const [, settle] = useReducer((n: number) => n + 1, 0);
+	const fresh = open ? Math.min(160, text.length - freshFrom.current) : 0;
+	useEffect(() => {
+		if (!fresh) {
+			return;
+		}
+		const timer = setTimeout(() => {
+			freshFrom.current = seen.current;
+			settle();
+		}, FRESH_MS);
+		return () => clearTimeout(timer);
+	}, [text, fresh]);
+	const nodes = parseInline(text, open);
+	return (
+		<Text selectable style={[{ color: face.color, fontSize: face.size, lineHeight: face.line, fontWeight: face.weight }, style]}>
+			{fresh ? renderFresh(nodes, fresh, ctx, dark ? '#C2DCFF' : '#5B95E6') : renderInlines(nodes, ctx)}
+		</Text>
+	);
+}
+
+/** The inlines with their last `count` characters of trailing plain text in `color`. */
+function renderFresh(nodes: readonly MdInline[], count: number, ctx: IInlineContext, color: string): ReactNode[] {
+	let split = nodes.length;
+	let left = count;
+	const tail: string[] = [];
+	while (split > 0 && left > 0) {
+		const node = nodes[split - 1];
+		if (node.t !== 'text') {
+			break;
+		}
+		if (node.v.length <= left) {
+			tail.unshift(node.v);
+			left -= node.v.length;
+			split--;
+		} else {
+			tail.unshift(node.v.slice(node.v.length - left));
+			const head: MdInline = { t: 'text', v: node.v.slice(0, node.v.length - left) };
+			return [...renderInlines([...nodes.slice(0, split - 1), head], ctx), <Text key="fresh" style={{ color }}>{tail.join('')}</Text>];
+		}
+	}
+	return tail.length ? [...renderInlines(nodes.slice(0, split), ctx), <Text key="fresh" style={{ color }}>{tail.join('')}</Text>] : renderInlines(nodes, ctx);
+}
 
 function Blocks({ blocks, open, depth, tone }: { readonly blocks: readonly MdBlock[]; readonly open: boolean; readonly depth: number; readonly tone: MarkdownTone }) {
 	return (
