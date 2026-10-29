@@ -20,7 +20,7 @@ import { AgentSessionAttention, AgentSessionStatus, IAgentHistoryService } from 
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { AgentBlock, appendProviderNotice, appendSandboxDenial, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, IPlanBlock, isCompactCommand, isExploreTool, isFileChangeTool, isNewLimitWarning, isPlanTool, isShellTool, refreshLimitWarning, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments, isHiddenExploreToolBlock } from '../blocks/agentBlocks.js';
-import { friendlyToolTitle, sameHostToolArgs } from '../blocks/agentHostToolActivity.js';
+import { friendlyToolTitle, hostToolCall, sameHostToolArgs } from '../blocks/agentHostToolActivity.js';
 import { carryTodoSteps, classifySupervisionNotice, stampTodoSteps } from '../chrome/agentTimeline.js';
 import { agentMessagePlainText } from '../context/agentContextUsage.js';
 import { extractToolImage } from '../preview/browserSnapshot.js';
@@ -1015,7 +1015,9 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 				}
 				const kind = event.kind;
 				const parsed = parseShellToolInput(event.input);
-				const shell = isShellTool(event.name, event.title, event.input, kind) || (!kind && looksLikeShell(parsed.command));
+				// Codex reports an MCP call as `execute` with the call as its title: Volt's own tools are rows, not commands.
+				const shell = !hostToolCall(event.name, event.title, event.input)
+					&& (isShellTool(event.name, event.title, event.input, kind) || (!kind && looksLikeShell(parsed.command)));
 				if (shell) {
 					const ran = firstCommandName(parsed.command);
 					activity.items.push({

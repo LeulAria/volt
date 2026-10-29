@@ -46,6 +46,13 @@ function text(value: unknown, max = 80): string | undefined {
  */
 export function hostToolCall(name: string | undefined, title: string | undefined, input: string | undefined): { tool: string; args: Record<string, unknown> } | undefined {
 	const rec = parseRecord(input);
+	// Codex titles an MCP call with the call itself: `{"server":"volt","tool":"…","arguments":{…}}`.
+	const codex = [parseRecord(title), parseRecord(name), rec].find(candidate => candidate?.server === 'volt' && typeof candidate.tool === 'string');
+	if (codex) {
+		const tool = voltHostToolName(codex.tool as string);
+		const args = codex.arguments && typeof codex.arguments === 'object' && !Array.isArray(codex.arguments) ? codex.arguments as Record<string, unknown> : {};
+		return tool ? { tool, args } : undefined;
+	}
 	const wrapped = rec && typeof rec.toolName === 'string' && (rec.providerIdentifier === 'volt' || rec.args !== undefined);
 	const tool = voltHostToolName(name, title) ?? (wrapped ? voltHostToolName(rec.toolName as string) : undefined);
 	if (!tool) {
