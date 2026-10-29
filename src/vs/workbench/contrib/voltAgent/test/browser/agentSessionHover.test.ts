@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { createSessionHoverFolderIcon } from '../../browser/home/agentHomeIcons.js';
+import { createSessionHoverBranchIcon, createSessionHoverFolderIcon } from '../../browser/home/agentHomeIcons.js';
 import { agentSessionHoverRows, agentSessionStatusNote } from '../../browser/home/agentSessionHover.js';
 
 suite('Agent session hover card', () => {
@@ -43,7 +43,7 @@ suite('Agent session hover card', () => {
 		}]);
 		assert.deepStrictEqual(withBranch, [
 			{ label: 'Testing' },
-			{ label: 'leularia/Agent-Test', detail: 'main', icon: Codicon.gitBranch },
+			{ label: 'leularia/Agent-Test', detail: 'main', icon: createSessionHoverBranchIcon },
 			{ label: '~/Desktop/Agent-Test', icon: createSessionHoverFolderIcon, muted: true },
 		]);
 

@@ -4381,6 +4381,14 @@ pre.volt-agent-searchable {
 	font-size: 12px;
 }
 
+/* The pencil (agentHomeIcons.ts), drawn at the size of the arrow and trash codicons beside it. */
+.volt-agent-queue-remove .volt-agent-svg-icon,
+.volt-agent-queue-remove .volt-agent-svg-icon svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+}
+
 .volt-agent-queue-chips {
 	display: flex;
 	flex-wrap: wrap;

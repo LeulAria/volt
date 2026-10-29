@@ -31,6 +31,7 @@ import {
 	IContextUsageSnapshot,
 	overheadFromCustomizations,
 } from './agentContextUsage.js';
+import { WORKTREE_ICON_PATH } from '../chrome/accessIcons.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { formatCost } from '../usage/agentUsageFormat.js';
 import { buildSessionUsage, ISessionUsageMessage, ISessionUsageModelRef, ISessionUsageOptions, ISessionUsageSummary, sessionModelIds } from './agentSessionUsage.js';
@@ -665,9 +666,9 @@ function createLocalIcon(doc: Document): SVGSVGElement {
 	return svg;
 }
 
-/** Two tracks splitting off, mirrored so the branch leaves to the left. */
+/** The worktree mark the new chat's machine picker shows too. */
 function createWorktreeIcon(doc: Document): SVGSVGElement {
-	const svg = statusIcon(doc, ['M6 7C6 8.10457 5.10457 9 4 9C2.89543 9 2 8.10457 2 7C2 5.89543 2.89543 5 4 5C5.10457 5 6 5.89543 6 7ZM6 7H18M18 7C18 8.10457 18.8954 9 20 9C21.1046 9 22 8.10457 22 7C22 5.89543 21.1046 5 20 5C18.8954 5 18 5.89543 18 7ZM18 17C18 18.1046 18.8954 19 20 19C21.1046 19 22 18.1046 22 17C22 15.8954 21.1046 15 20 15C18.8954 15 18 15.8954 18 17ZM18 17H12C10.8954 17 10 16.1046 10 15V10C10 8.34315 8.65685 7 7 7']);
+	const svg = statusIcon(doc, [WORKTREE_ICON_PATH]);
 	svg.style.transform = 'scaleX(-1)';
 	return svg;
 }

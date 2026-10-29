@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
@@ -13,6 +13,7 @@ import { AgentTooltip, bindTruncatedHoverTooltip, setAgentTooltip } from '../chr
 import { groupSummary, isLiveSubagentState, ISubagentView, renderCursorCardRow, tickSubagentClocks } from '../chrome/agentSubagents.js';
 import { ITasksCard } from '../chrome/agentTimeline.js';
 import { AgentTasksCard, closeOnOutsideClick } from './agentTasksCard.js';
+import { createEditIcon } from '../home/agentHomeIcons.js';
 
 export interface IQueuedPrompt {
 	id: string;
@@ -572,7 +573,7 @@ export class AgentComposerQueue extends Disposable {
 			const onEdit = this.options.onEdit;
 			const onSendNow = this.options.onSendNow;
 			if (!isEditing && onEdit) {
-				this.appendRowAction(row, Codicon.edit, localize('voltAgent.queue.edit', "Edit queued message"), () => onEdit(item.id));
+				this.appendRowAction(row, createEditIcon(), localize('voltAgent.queue.edit', "Edit queued message"), () => onEdit(item.id));
 			}
 			if (!isEditing && onSendNow) {
 				this.appendRowAction(row, Codicon.arrowUp, sendNow.tooltip, () => onSendNow(item.id), 'send-now', sendNow.label);
@@ -593,12 +594,13 @@ export class AgentComposerQueue extends Disposable {
 		}
 	}
 
-	private appendRowAction(row: HTMLElement, icon: ThemeIcon, tooltip: string, run: () => void, extraClass?: string, ariaLabel?: string): void {
+	private appendRowAction(row: HTMLElement, icon: ThemeIcon | HTMLElement, tooltip: string, run: () => void, extraClass?: string, ariaLabel?: string): void {
 		const button = append(row, $(extraClass ? `button.volt-agent-queue-remove.${extraClass}` : 'button.volt-agent-queue-remove')) as HTMLButtonElement;
 		button.type = 'button';
 		button.setAttribute('aria-label', ariaLabel ?? tooltip);
 		setAgentTooltip(button, tooltip);
-		button.appendChild(renderIcon(icon));
+		// An element first: `ThemeIcon.isThemeIcon` takes any object with a string `id`, and every element has one.
+		button.appendChild(isHTMLElement(icon) ? icon : renderIcon(icon));
 		this.listeners.add(addDisposableListener(button, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
