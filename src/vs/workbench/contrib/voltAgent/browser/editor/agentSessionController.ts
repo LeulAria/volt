@@ -113,7 +113,8 @@ export interface IAgentSessionControl extends IDisposable {
 	/** The turn is on screen from `showPendingTurn` and not started yet. */
 	isPendingTurn?(turnId: string): boolean;
 	endUnstartedTurn(turnId: string, failure: string | undefined): void;
-	recordSteer(text: string): boolean;
+	/** `mentions` are the composer's chips in `text` (a pasted image's bytes), shown as in a sent message. */
+	recordSteer(text: string, mentions?: IAgentPromptDisplay['mentions']): boolean;
 	/**
 	 * Where the transcript comes from when another process owns it (the agent server): the input
 	 * loads it through this instead of reading the history log.
@@ -502,12 +503,12 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 	}
 
 	/** A message steered into the running turn: the reply shows where it landed. False when nothing runs. */
-	recordSteer(text: string): boolean {
+	recordSteer(text: string, mentions?: IAgentPromptDisplay['mentions']): boolean {
 		const reply = this.host.messages.at(-1);
 		if (reply?.kind !== 'agent' || !reply.activity?.streaming) {
 			return false;
 		}
-		(reply.steers ??= []).push({ text, at: reply.segments.length });
+		(reply.steers ??= []).push({ text, at: reply.segments.length, ...(mentions?.length ? { mentions } : {}) });
 		this.host.recordAssistant(reply, false, 'running', agentMessagePlainText(reply));
 		this.fire({ kind: 'render' });
 		return true;

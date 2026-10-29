@@ -18,6 +18,7 @@ import { CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, RENDER_CHART_TOOL_NAM
 import { peekCanvasInput } from '../visuals/canvas/canvasModel.js';
 import { chartLoaderShape } from '../visuals/agentDotLoader.js';
 import { friendlyToolTitle } from '../blocks/agentHostToolActivity.js';
+import type { IAgentDisplayMention } from '../composer/agentMentions.js';
 
 /**
  * Cursor's transcript model. Between two pieces of assistant text, every tool call and
@@ -68,7 +69,7 @@ export type TranscriptRow =
 	| { readonly kind: 'subagents'; readonly id: string; readonly items: readonly { readonly id: string; readonly tool: IToolBlock; readonly live: boolean }[]; readonly live: boolean }
 	| { readonly kind: 'notice'; readonly id: string; readonly severity: 'info' | 'warning' | 'error'; readonly title: string; readonly description?: string; readonly supervision?: SupervisionKind; readonly sandbox?: ISandboxDenial }
 	/** A message the user sent into the running turn ("Steer"); the agent read it between steps. */
-	| { readonly kind: 'steer'; readonly id: string; readonly text: string }
+	| { readonly kind: 'steer'; readonly id: string; readonly text: string; readonly mentions?: readonly IAgentDisplayMention[] }
 	/** "Compacting context" while the agent summarizes the chat, then "Context compacted". */
 	| { readonly kind: 'compaction'; readonly id: string; readonly compaction: IAgentCompaction };
 
@@ -76,6 +77,8 @@ export type TranscriptRow =
 export interface ITranscriptSteer {
 	readonly text: string;
 	readonly at: number;
+	/** The composer's chips in `text` (a pasted image with its bytes), drawn as in a sent message. */
+	readonly mentions?: readonly IAgentDisplayMention[];
 }
 
 const SUBAGENT_RE = /^(task|agent|subagent|delegate|run_agent|spawn_agent)$/i;
@@ -111,7 +114,7 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 			const steer = pendingSteers.shift()!;
 			flushReply();
 			flushSteps();
-			rows.push({ kind: 'steer', id: `steer-${steerIndex++}`, text: steer.text.trim() });
+			rows.push({ kind: 'steer', id: `steer-${steerIndex++}`, text: steer.text.trim(), ...(steer.mentions?.length ? { mentions: steer.mentions } : {}) });
 		}
 	};
 
