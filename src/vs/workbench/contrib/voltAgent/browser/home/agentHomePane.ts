@@ -113,6 +113,7 @@ import { IAgentPullRequestService } from '../pullRequests/agentPullRequestServic
 import { IAgentThreadAttentionService } from '../attention/agentThreadAttention.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { IAgentPrBadge, prBadge, sessionPrFilterTag, visibleLinks } from '../../common/agentPullRequests.js';
+import { orderPullRequestLinks, renderPullRequestList } from '../pullRequests/agentPullRequestList.js';
 import { IAgentRunGroupService } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { runBadgeKind, runGroupBadge, runGroupSummary, runStatusLabel } from '../runGroups/agentRunGroupLabels.js';
 import { ARCHIVE_RUN_GROUP_COMMAND_ID, OPEN_RUN_GROUP_COMMAND_ID } from '../runGroups/agentRunGroupCommands.js';
@@ -671,9 +672,10 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		if (badge.link.watch) {
 			append(pill, renderIcon(Codicon.eye)).classList.add('watch');
 		}
+		// No tooltip: the row's hover card already lists its pull requests.
 		const snapshot = badge.link.snapshot;
-		setAgentTooltip(pill, snapshot
-			? `#${snapshot.number} ${snapshot.title}\n${snapshot.baseRefName} ← ${snapshot.headRefName}${badge.link.watch ? `\n${localize('voltAgent.home.prWatched', "Watched: the agent wakes on checks, reviews and conflicts")}` : ''}`
+		pill.setAttribute('aria-label', snapshot
+			? `#${snapshot.number} ${snapshot.title}`
 			: localize('voltAgent.home.prLinked', "Pull request #{0}", badge.number));
 		template.elementDisposables.add(addDisposableListener(pill, 'mousedown', e => e.stopPropagation()));
 		template.elementDisposables.add(addDisposableListener(pill, 'click', e => {
@@ -1842,7 +1844,9 @@ export class AgentHomePane extends Disposable {
 
 	/** Details card beside an agent tab: title, last-run note, branch, and the folder on disk. */
 	bindSessionHover(anchor: HTMLElement, session: IAgentSessionMeta): IDisposable {
-		return this.hover.bind(anchor, () => this.sessionHoverRows(session), { placement: 'end', variant: 'card', delay: SESSION_HOVER_DELAY_MS });
+		// With pull requests the pointer can cross to the card to open one; without, it hides on leaving the row.
+		const interactive = () => !!this.pullRequests && visibleLinks(this.pullRequests.links(session.id)).length > 0;
+		return this.hover.bind(anchor, () => this.sessionHoverRows(session), { placement: 'end', variant: 'card', delay: SESSION_HOVER_DELAY_MS, interactive });
 	}
 
 	private sessionHoverRows(session: IAgentSessionMeta): IAgentTooltipRow[] {
@@ -1856,16 +1860,18 @@ export class AgentHomePane extends Disposable {
 			folders,
 			session.workspaceLabel,
 		);
-		// The chat's pull requests, after the title and status; a click opens one.
+		// Every pull request of the chat, under a hairline, as a list (agentPullRequestList.ts); opening one shows it.
 		const links = this.pullRequests ? visibleLinks(this.pullRequests.links(session.id)) : [];
-		const prRows: IAgentTooltipRow[] = links.slice(0, 5).map(link => ({
-			label: `#${link.number} ${link.snapshot?.title ?? ''}`.trim(),
-			detail: link.snapshot ? `${link.snapshot.state}${link.watch ? ` · ${localize('voltAgent.home.prWatching', "watching")}` : ''}` : undefined,
-			icon: Codicon.gitPullRequest,
-			onClick: () => void this.commandService.executeCommand(OPEN_PULL_REQUEST_COMMAND_ID, { host: link.repo.host, owner: link.repo.owner, name: link.repo.name, number: link.number }, session.id),
-		}));
-		const at = rows.findIndex(row => row.icon === Codicon.gitBranch);
-		rows.splice(at >= 0 ? at : Math.min(rows.length, 2), 0, ...prRows);
+		if (links.length) {
+			rows.push({
+				label: localize('voltAgent.home.pullRequests', "Pull requests"),
+				separator: true,
+				render: parent => renderPullRequestList(this.instantiationService, parent, orderPullRequestLinks(links), link => {
+					this.hover.hide();
+					void this.commandService.executeCommand(OPEN_PULL_REQUEST_COMMAND_ID, { host: link.repo.host, owner: link.repo.owner, name: link.repo.name, number: link.number }, session.id);
+				}),
+			});
+		}
 		return rows;
 	}
 

@@ -33,7 +33,7 @@ import { AgentPullRequestHoverCard } from '../pullRequests/agentPullRequestHover
 import { SHOW_PULL_REQUESTS_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { AgentGitActionsControl } from '../pullRequests/agentGitActionsControl.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
-import { currentLink, IAgentPrLink, isOpenState } from '../../common/agentPullRequests.js';
+import { currentLink, IAgentPrLink, isOpenState, visibleLinks } from '../../common/agentPullRequests.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { IVoltBrowserComments } from '../preview/browserCommentStore.js';
 
@@ -159,12 +159,15 @@ export class AgentComposerChips extends Disposable {
 	private readonly prChip: HTMLButtonElement;
 	private readonly prIcon: HTMLElement;
 	private readonly prLabel: HTMLElement;
+	/** "+2": the chat's other pull requests, listed by the hover card. */
+	private readonly prMore: HTMLElement;
 	private readonly prChecks: HTMLElement;
 	private readonly prExit = this._register(new MutableDisposable());
 	private readonly pullRequests: IAgentPullRequestService | undefined;
 	/** State, checks and size of the chat's pull request, with Merge when it is ready, over the chip. */
 	private readonly prHoverCard: AgentPullRequestHoverCard | undefined;
-	private pr: { readonly kind: 'link'; readonly link: IAgentPrLink } | undefined;
+	/** `unmerged`: one of the chat's pull requests is still open or a draft (or not loaded yet). */
+	private pr: { readonly kind: 'link'; readonly link: IAgentPrLink; readonly others: number; readonly unmerged: boolean } | undefined;
 	private prGen = 0;
 	/** Comments left in the chat's browser tab, waiting to go with the next message. */
 	private readonly commentsChip: HTMLButtonElement;
@@ -322,9 +325,10 @@ export class AgentComposerChips extends Disposable {
 		this.prChip.type = 'button';
 		this.prIcon = append(this.prChip, $('span.volt-agent-composer-chip-pr-icon'));
 		this.prLabel = append(this.prChip, $('span.volt-agent-composer-chip-label'));
+		this.prMore = append(this.prChip, $('span.volt-agent-composer-chip-pr-more.hidden'));
 		this.prChecks = append(this.prChip, $('span.volt-agent-composer-chip-pr-checks'));
 		this.prHoverCard = this.pullRequests
-			? this._register(this.instantiationService.createInstance(AgentPullRequestHoverCard, this.prChip, () => this.pr?.link))
+			? this._register(this.instantiationService.createInstance(AgentPullRequestHoverCard, this.prChip, () => this.pr?.link, () => this.sessionId))
 			: undefined;
 
 		this.scrollChip = append(this.element, $('button.volt-agent-composer-chip.scroll-bottom.hidden')) as HTMLButtonElement;
@@ -694,9 +698,16 @@ export class AgentComposerChips extends Disposable {
 		const service = this.pullRequests;
 		let next: typeof this.pr;
 		if (sessionId && service) {
-			const link = currentLink(service.links(sessionId));
+			const links = service.links(sessionId);
+			const link = currentLink(links);
 			if (link) {
-				next = { kind: 'link', link };
+				const visible = visibleLinks(links);
+				next = {
+					kind: 'link',
+					link,
+					others: visible.filter(other => other.key !== link.key).length,
+					unmerged: visible.some(other => !other.snapshot || isOpenState(other.snapshot.state)),
+				};
 			}
 		}
 		if (gen !== this.prGen) {
@@ -713,9 +724,10 @@ export class AgentComposerChips extends Disposable {
 
 	private renderPullRequestChip(): boolean {
 		const pr = this.pr;
-		// A repository without an `origin` remote shows no pull request, even one linked before.
+		// Any pull request still open shows, wherever the chat works now (its worktree may be gone).
+		// Only finished ones need a repository with an `origin` remote.
 		const folder = this.gitFolder();
-		if (!pr || !folder || !this.pullRequests?.hasOrigin(folder)) {
+		if (!pr || (!pr.unmerged && (!folder || !this.pullRequests?.hasOrigin(folder)))) {
 			this.prHoverCard?.hide();
 			return false;
 		}
@@ -727,6 +739,11 @@ export class AgentComposerChips extends Disposable {
 		this.prChip.classList.add(`state-${state}`);
 		this.prIcon.appendChild(renderIcon(prChipIcon(state)));
 		this.prLabel.textContent = `PR #${pr.link.number}`;
+		this.prMore.textContent = pr.others ? `+${pr.others}` : '';
+		this.prMore.classList.toggle('hidden', !pr.others);
+		this.prChip.setAttribute('aria-label', pr.others
+			? localize('voltAgent.prNumberMore', "Pull request #{0} and {1} more", pr.link.number, pr.others)
+			: localize('voltAgent.prNumber', "Pull request #{0}", pr.link.number));
 		const checks = snapshot && isOpenState(state) ? snapshot.checks.state : 'none';
 		this.prChecks.classList.toggle('hidden', checks === 'none');
 		if (checks !== 'none') {

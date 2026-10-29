@@ -10,6 +10,8 @@
 .volt-pr-list-view,
 .volt-pr-hover-card,
 .volt-pr-dock,
+.volt-pr-dock-links,
+.volt-pr-link-list,
 .volt-pr-checks-menu {
 	--volt-pr-border: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 	--volt-pr-surface: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
@@ -32,6 +34,10 @@
 .monaco-workbench.hc-light .volt-pr-hover-card,
 .monaco-workbench.vs .volt-pr-dock,
 .monaco-workbench.hc-light .volt-pr-dock,
+.monaco-workbench.vs .volt-pr-dock-links,
+.monaco-workbench.hc-light .volt-pr-dock-links,
+.monaco-workbench.vs .volt-pr-link-list,
+.monaco-workbench.hc-light .volt-pr-link-list,
 .monaco-workbench.vs .volt-pr-checks-menu,
 .monaco-workbench.hc-light .volt-pr-checks-menu {
 	--volt-pr-border: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
@@ -1208,6 +1214,16 @@
 }
 
 .volt-agent-composer-chip-pr-checks.hidden {
+	display: none;
+}
+
+/* "+2": the chat's other pull requests (the hover card lists them all). */
+.volt-agent-composer-chip-pr-more {
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-composer-chip-pr-more.hidden {
 	display: none;
 }
 
@@ -2691,15 +2707,77 @@
 	box-sizing: border-box;
 	padding: 12px;
 	border-radius: 10px;
-	background: var(--vscode-editor-background, #1e1e1e);
+	/* The sidebar row's hover card surface (agentTooltip.css), not the darker editor background. */
+	background: #1c1c1c;
 	color: var(--vscode-foreground);
 	box-shadow:
-		0 0 0 1px var(--vscode-widget-border, rgba(255, 255, 255, 0.1)),
-		0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+		0 0 0 1px rgba(255, 255, 255, 0.08),
+		0 4px 16px rgba(0, 0, 0, 0.3);
 	font-size: 12px;
 	font-weight: 400;
 	line-height: 18px;
 	cursor: default;
+}
+
+.monaco-workbench.vs .volt-pr-hover-card,
+.monaco-workbench.hc-light .volt-pr-hover-card {
+	background: var(--vscode-editor-background, #ffffff);
+	box-shadow:
+		0 0 0 1px rgba(0, 0, 0, 0.1),
+		0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+/* Several pull requests: only the list (below), edge to edge on all four sides; the rounded
+ * corners clip the first and last row's highlight. */
+.volt-pr-hover-card.list {
+	padding: 0 12px;
+	overflow: hidden;
+}
+
+/* A chat's pull requests in a hover card (agentPullRequestList.ts): a VS Code list whose rows run
+ * to the card's edges with square corners, like Previous agents. The card's 12px side padding
+ * moves into the rows so the icons line up with the card's other rows. */
+.volt-pr-link-list {
+	margin: 0 -12px;
+}
+
+.volt-pr-link-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-pr-link-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 26px;
+	padding: 0 12px;
+	min-width: 0;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+/* Four classes: `.monaco-workbench .codicon[class*='codicon-']` draws every codicon at 16px. */
+.volt-pr-link-list .volt-pr-link-icon .codicon[class*='codicon-'] {
+	font-size: 14px;
+}
+
+.volt-pr-link-icon {
+	display: flex;
+	flex: none;
+}
+
+.volt-pr-link-number {
+	flex: none;
+	color: var(--volt-pr-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-pr-link-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .volt-pr-hover-head {
@@ -2976,6 +3054,14 @@
 	padding: 0 12px;
 	min-width: 0;
 	cursor: pointer;
+}
+
+/* The same 14px as the toolbar's other row icons, in the state's color. */
+.volt-agent-quick-open-actions .volt-pr-dock-link .volt-pr-icon .codicon {
+	font-size: 14px;
+	width: 14px;
+	height: 14px;
+	color: inherit;
 }
 
 .volt-pr-dock {
