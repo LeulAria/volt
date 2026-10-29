@@ -92,6 +92,8 @@ export interface IAgentComposerChipsOptions {
 	onScrollToBottom?: () => void;
 	/** The × on the "N to multitask" chip: Start Multitasking turns off and the messages stay queued. */
 	onMultitaskPickCancel?: () => void;
+	/** The host shows "N to multitask" in its text area (`multitaskToken`), not in this row. */
+	multitaskInInput?: boolean;
 	/** The chat's terminals ("2 terminals running" with its menu), after the agents chip. The dock has none. */
 	terminalRuns?: IAgentComposerTerminalRuns;
 	/** The chat's usage-limit park ("Claude limit · resets 5 PM" with Resume when Claude is back), first in the row. */
@@ -173,6 +175,8 @@ export class AgentComposerChips extends Disposable {
 	private readonly compactChip: HTMLButtonElement;
 	/** Start Multitasking is on: how many queued messages Send starts as agents (undefined when off). */
 	private readonly multitaskChip: HTMLElement;
+	/** "N to multitask" for a host that places it in its text area (`multitaskInInput`). */
+	get multitaskToken(): HTMLElement { return this.multitaskChip; }
 	private readonly multitaskLabelEl: HTMLElement;
 	private multitaskPick: number | undefined;
 	private readonly compactLabelEl: HTMLElement;
@@ -267,7 +271,9 @@ export class AgentComposerChips extends Disposable {
 			}));
 		}
 
-		this.multitaskChip = append(this.element, $('.volt-agent-composer-chip.multitask-pick.volt-browser-dock-chip.hidden'));
+		this.multitaskChip = options.multitaskInInput
+			? $('.volt-agent-multitask-token.hidden')
+			: append(this.element, $('.volt-agent-composer-chip.multitask-pick.volt-browser-dock-chip.hidden'));
 		this.multitaskChip.setAttribute('role', 'status');
 		this.multitaskChip.appendChild(createModeIcon('multitask'));
 		this.multitaskLabelEl = append(this.multitaskChip, $('span.volt-agent-composer-chip-label'));
@@ -750,6 +756,7 @@ export class AgentComposerChips extends Disposable {
 		const showAgents = !!this.agents;
 		const showComments = this.pendingComments > 0;
 		const showMultitask = this.multitaskPick !== undefined;
+		const multitaskInRow = showMultitask && !this.options.multitaskInInput;
 		// Steps aside while Source Control shows this chat's changes in the right panel, and while the
 		// Changes chip is up: one git chip at a time, Changes first.
 		const showCommit = !showChanges && this.gitVisible && !this.newChat && !(this.sessionId && isAgentScmShown(this.sessionId));
@@ -761,7 +768,7 @@ export class AgentComposerChips extends Disposable {
 		this.toggleChip(this.prChip, showPr, this.prExit);
 		const showLimit = !!this.options.limitRun?.visible;
 		const showAgentRun = !!this.options.agentRun?.visible;
-		const visible = this.hostOpen && !this.newChat && (showLimit || showAgentRun || showStatus || showComments || showMultitask || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
+		const visible = this.hostOpen && !this.newChat && (showLimit || showAgentRun || showStatus || showComments || multitaskInRow || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
 		this.element.classList.toggle('is-visible', visible);
 		// A chat hosted in another chat's tools hides the row but keeps its terminals (agentEditor.css).
 		this.element.classList.toggle('has-terminal-runs', showRuns);

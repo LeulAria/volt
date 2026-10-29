@@ -8,7 +8,8 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
-import { joinPath } from '../../../../../base/common/resources.js';
+import { basename, joinPath } from '../../../../../base/common/resources.js';
+import { generateUuid } from '../../../../../base/common/uuid.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
@@ -44,9 +45,12 @@ import {
 	buildFixChecksPrompt,
 	buildFixThreadPrompt,
 	buildResolveConflictsPrompt,
-	buildReviewLinePrompt,
+	buildPrCommentsPrompt,
+	IAgentPrComment,
 	IAgentPrLink,
 	isOpenState,
+	prCommentPlace,
+	prCommentsDisplay,
 	primaryAction,
 	resolveChains,
 	resolveMergeMethod,
@@ -56,13 +60,15 @@ import { AGENT_PR_AUTO_REVIEW_SETTING, AGENT_PR_POST_REVIEW_COMMENTS_SETTING, IA
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { renderMarkdownInto } from '../blocks/agentBlockRenderers.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { VoltAnnotationsSendButton } from '../chrome/voltAnnotations.js';
+import { IVoltCommentAnchor, VoltCommentComposer } from '../chrome/voltCommentComposer.js';
 import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { createVoltSegmented } from '../ui/segmented/voltSegmented.js';
 import { AgentPullRequestCodeDiff, canShowInCodeDiff } from './agentPullRequestCodeDiff.js';
 import { openPullRequestDiff } from './agentPullRequestDiff.js';
 import { AgentPullRequestEditorInput } from './agentPullRequestEditorInput.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
-import { ago, avatar, checkDuration, checkIcon, composeInChat, iconSpan, MERGE_LABELS, openPullRequest, problemText, prStateIcon, signInWithGh, visibleChatSession } from './agentPullRequestUi.js';
+import { ago, avatar, checkDuration, checkIcon, composeInChat, iconSpan, MERGE_LABELS, openPullRequest, problemText, prStateIcon, sendInChat, signInWithGh, visibleChatSession } from './agentPullRequestUi.js';
 import { openOnHost } from './agentPrLinks.js';
 
 type Tab = 'summary' | 'timeline' | 'code';
@@ -87,6 +93,20 @@ const MERGE_METHOD_NAMES: Record<VoltPrMergeMethod, string> = {
 function detailQuery(pullRequests: IAgentPullRequestService, request: IVoltPrRequest): IVoltQuery<IVoltPullRequestDetail> {
 	return { key: `pr.detail:${prKey(request.repo, request.number)}`, fetch: () => pullRequests.detail(request, true), staleTime: 10_000 };
 }
+
+/** A comment for the chat's agent waiting to go with the others. */
+interface IWaitingComment extends IAgentPrComment {
+	readonly id: string;
+}
+
+/** What the open comment box is on; `id` when it edits a waiting comment. */
+type CommentDraft = Omit<IAgentPrComment, 'text'> & { readonly id?: string };
+
+/**
+ * Comments for the chat's agent waiting to go together, per pull request. Shared by the views, so
+ * closing the tab (or opening the pull request beside another chat) keeps them for the session.
+ */
+const waitingByPr = new Map<string, IWaitingComment[]>();
 
 interface IPatchLoad {
 	readonly files?: readonly IVoltPrFilePatch[];
@@ -143,7 +163,13 @@ export class AgentPullRequestView extends Disposable {
 	private composeOpen = false;
 	private composeMode: 'comment' | 'review' = 'comment';
 	private reviewEvent: 'comment' | 'approve' | 'requestChanges' = 'comment';
-	private readonly composeHost: HTMLElement;
+	/** The GitHub Comment | Review card, or its round button; rebuilt by renderCompose. */
+	private readonly composeSlot: HTMLElement;
+	/** The browser's inspect prompt as the comment box (Batch edits, model, Send). */
+	private readonly commentComposer: VoltCommentComposer;
+	/** "(2) Send | v" beside the round button: the waiting comments and the way to the chat. */
+	private readonly commentsSend: VoltAnnotationsSendButton;
+	private commentDraft: CommentDraft | undefined;
 
 	constructor(
 		parent: HTMLElement,
@@ -172,8 +198,39 @@ export class AgentPullRequestView extends Disposable {
 		this.element.tabIndex = -1;
 		this.header = append(this.element, $('.volt-pr-header'));
 		this.body = append(this.element, $('.volt-pr-body'));
-		this.composeHost = append(this.element, $('.volt-pr-compose-host'));
+		const composeHost = append(this.element, $('.volt-pr-compose-host'));
+		const commentsSlot = append(composeHost, $('.volt-pr-comments-send-slot'));
+		this.composeSlot = append(composeHost, $('.volt-pr-compose-slot'));
 		this.markdownRenderer = this.instantiationService.createInstance(MarkdownRenderer, {});
+		// Batch edits on: Enter keeps the comment; off (or Cmd+Enter): it goes with the waiting ones.
+		this.commentComposer = this._register(this.instantiationService.createInstance(VoltCommentComposer, this.element, {
+			onAdd: text => this.saveComment(text),
+			onSend: text => {
+				this.saveComment(text);
+				void this.sendComments();
+			},
+			onClose: () => this.commentDraft = undefined,
+			onDelete: () => {
+				if (this.commentDraft?.id) {
+					this.removeComments([this.commentDraft.id]);
+				}
+				this.commentDraft = undefined;
+			},
+		}));
+		this.commentComposer.element.classList.add('volt-pr-comment-composer');
+		this.commentsSend = this._register(this.instantiationService.createInstance(VoltAnnotationsSendButton, commentsSlot, {
+			items: () => this.waitingComments().map((comment, i) => {
+				const place = prCommentPlace(comment);
+				return { id: comment.id, number: i + 1, text: place ? `${place}: ${comment.text}` : comment.text };
+			}),
+			onSend: () => void this.sendComments(),
+			onOpen: id => this.editComment(id),
+			onRemove: id => this.removeComments([id]),
+			onClear: () => this.setWaiting(this.commentsKey, []),
+			countLabel: count => count === 1 ? localize('voltPr.oneComment', "1 comment") : localize('voltPr.comments', "{0} comments", count),
+			sendHint: localize('voltPr.sendComments', "Send the comments to the chat with the pull request's branch and commits"),
+			listHint: localize('voltPr.showComments', "Show Comments"),
+		}));
 		this._register(this.pullRequests.onDidChangePullRequest(key => {
 			if (this.input?.target.kind === 'pr' && key === prKey(this.input.target.repo, this.input.target.number) && !this.loading && Date.now() - this.loadedAt > 3_000) {
 				void this.load(false);
@@ -243,6 +300,9 @@ export class AgentPullRequestView extends Disposable {
 			void this.flushViewed();
 		}
 		this.input = input;
+		this.commentComposer.hide();
+		this.commentDraft = undefined;
+		this.commentsSend.setCount(this.waitingComments().length);
 		this.detail = undefined;
 		this.detailSignature = undefined;
 		this.error = undefined;
@@ -984,6 +1044,13 @@ export class AgentPullRequestView extends Disposable {
 			}
 		}
 		const general: IVoltMenuItem<Pick>[] = [
+			...(pr.state !== 'merged' ? [{
+				id: 'hostComment', label: localize('voltPr.hostComment', "Comment or Review on GitHub"), icon: Codicon.comment, data: () => {
+					this.composeOpen = true;
+					this.renderCompose(pr);
+					this.composeSlot.querySelector<HTMLTextAreaElement>('textarea')?.focus();
+				},
+			}] : []),
 			{ id: 'openHost', label: localize('voltPr.openOnHost', "Open on GitHub"), icon: Codicon.linkExternal, data: () => openOnHost(this.openerService, pr.url) },
 			{ id: 'copyLink', label: localize('voltPr.copyLink', "Copy Link"), icon: Codicon.copy, data: () => this.copy(pr.url, localize('voltPr.copiedLink', "Copied the link")) },
 			{ id: 'copyNumber', label: localize('voltPr.copyNumber', "Copy PR Number"), icon: Codicon.symbolNumeric, data: () => this.copy(`#${pr.number}`, localize('voltPr.copiedNumber', "Copied #{0}", pr.number)) },
@@ -1711,12 +1778,7 @@ export class AgentPullRequestView extends Disposable {
 						this.openDiff(pr, path);
 					}
 				},
-				ask: (path, start, end, code) => {
-					const pr = this.detail;
-					if (pr) {
-						void this.toAgent(buildReviewLinePrompt(pr, path, start, end, code, ''));
-					}
-				},
+				ask: (path, start, end, code, anchor) => this.openComment(anchor, { path, startLine: start, endLine: end, code }),
 			});
 		}
 		return this.codeDiffWidget.value;
@@ -1765,35 +1827,34 @@ export class AgentPullRequestView extends Disposable {
 	//#region Composer
 
 	/**
-	 * T3 Code's floating composer: a round button at the bottom right opens a card with Comment |
-	 * Review. A review can comment, approve or request changes (not on your own pull request).
+	 * The round button at the bottom right opens the comment box for the chat's agent (the browser's
+	 * inspect prompt). The ⋯ menu opens T3 Code's GitHub card instead: Comment | Review, where a
+	 * review can comment, approve or request changes (not on your own pull request).
 	 */
 	private renderCompose(pr: IVoltPullRequestDetail | undefined): void {
 		// Kept while typing: a background re-read must not take the field away.
-		if (this.isTyping() && this.composeOpen && this.composeHost.contains(this.element.ownerDocument.activeElement)) {
+		if (this.isTyping() && this.composeOpen && this.composeSlot.contains(this.element.ownerDocument.activeElement)) {
 			return;
 		}
 		this.composeStore.clear();
-		clearNode(this.composeHost);
-		if (!pr || pr.state === 'merged') {
+		clearNode(this.composeSlot);
+		if (!pr) {
 			return;
 		}
-		if (!this.composeOpen) {
-			const fab = append(this.composeHost, $('button.volt-pr-compose-fab')) as HTMLButtonElement;
+		if (!this.composeOpen || pr.state === 'merged') {
+			const fab = append(this.composeSlot, $('button.volt-pr-compose-fab')) as HTMLButtonElement;
 			fab.type = 'button';
 			fab.appendChild(renderIcon(Codicon.comment));
-			const label = localize('voltPr.composeOpen', "Comment or Review");
+			const label = localize('voltPr.composeAgent', "Comment for the Agent");
 			fab.setAttribute('aria-label', label);
 			setAgentTooltip(fab, label);
 			this.composeStore.add(addDisposableListener(fab, 'click', e => {
 				EventHelper.stop(e, true);
-				this.composeOpen = true;
-				this.renderCompose(pr);
-				this.composeHost.querySelector<HTMLTextAreaElement>('textarea')?.focus();
+				this.openComment(fab, {});
 			}));
 			return;
 		}
-		const card = append(this.composeHost, $('.volt-pr-compose-card'));
+		const card = append(this.composeSlot, $('.volt-pr-compose-card'));
 		const top = append(card, $('.volt-pr-compose-top'));
 		const ownPr = pr.author.login.toLowerCase() === pr.viewer.toLowerCase();
 		createVoltSegmented<'comment' | 'review'>(top, [
@@ -1802,7 +1863,7 @@ export class AgentPullRequestView extends Disposable {
 		], this.composeMode, mode => {
 			this.composeMode = mode;
 			this.renderCompose(pr);
-			this.composeHost.querySelector<HTMLTextAreaElement>('textarea')?.focus();
+			this.composeSlot.querySelector<HTMLTextAreaElement>('textarea')?.focus();
 		}, this.composeStore, 'small');
 		append(top, $('.volt-pr-spacer'));
 		const close = append(top, $('button.volt-pr-icon-button')) as HTMLButtonElement;
@@ -1876,6 +1937,11 @@ export class AgentPullRequestView extends Disposable {
 			}
 		};
 		this.composeStore.add(addDisposableListener(area, 'input', sync));
+		// Keep the text focused until the click lands: leaving the field redraws a view that waited
+		// for it, which took the button away between mousedown and click (the comment never posted).
+		for (const button of [submit, close]) {
+			this.composeStore.add(addDisposableListener(button, 'mousedown', e => e.preventDefault()));
+		}
 		this.composeStore.add(addDisposableListener(submit, 'click', e => {
 			EventHelper.stop(e, true);
 			void doSubmit();
@@ -1896,6 +1962,108 @@ export class AgentPullRequestView extends Disposable {
 				void doSubmit();
 			}
 		}));
+	}
+
+	/** The waiting comments are kept per pull request. */
+	private get commentsKey(): string | undefined {
+		const target = this.target;
+		return target ? prKey(target.repo, target.number) : undefined;
+	}
+
+	private waitingComments(): readonly IWaitingComment[] {
+		const key = this.commentsKey;
+		return key ? waitingByPr.get(key) ?? [] : [];
+	}
+
+	private setWaiting(key: string | undefined, comments: IWaitingComment[]): void {
+		if (!key) {
+			return;
+		}
+		if (comments.length) {
+			waitingByPr.set(key, comments);
+		} else {
+			waitingByPr.delete(key);
+		}
+		if (key === this.commentsKey) {
+			this.commentsSend.setCount(comments.length);
+		}
+	}
+
+	/** Opens the comment box beside `anchor`: on the pull request, or on lines of a file (`draft`). */
+	private openComment(anchor: HTMLElement, draft: CommentDraft, text?: string): void {
+		const pr = this.detail;
+		if (!pr) {
+			return;
+		}
+		this.commentDraft = draft;
+		let chip: string;
+		if (draft.path) {
+			const name = basename(URI.file(`/${draft.path}`));
+			const { startLine: start, endLine: end } = draft;
+			chip = !start ? name : !end || end === start ? `${name}:${start}` : `${name}:${start}-${end}`;
+		} else {
+			const title = `#${pr.number} ${pr.title}`;
+			chip = title.length > 40 ? `${title.slice(0, 39)}\u2026` : title;
+		}
+		const box = anchor.getBoundingClientRect();
+		const view = this.element.getBoundingClientRect();
+		const at: IVoltCommentAnchor = { x: box.left - view.left, y: box.top - view.top, width: box.width, height: box.height };
+		this.commentComposer.show(at, chip, { text, deletable: !!draft.id });
+	}
+
+	/** Keeps the comment being written: a new one, or a waiting one's new words. */
+	private saveComment(text: string): void {
+		const draft = this.commentDraft;
+		this.commentDraft = undefined;
+		const key = this.commentsKey;
+		if (!draft || !key || !text.trim()) {
+			return;
+		}
+		const comments = this.waitingComments();
+		const { id, ...on } = draft;
+		this.setWaiting(key, id
+			? comments.map(comment => comment.id === id ? { ...comment, text } : comment)
+			: [...comments, { ...on, id: generateUuid(), text }]);
+	}
+
+	private editComment(id: string): void {
+		const comment = this.waitingComments().find(candidate => candidate.id === id);
+		if (comment) {
+			const { text, ...draft } = comment;
+			this.openComment(this.commentsSend.element, draft, text);
+		}
+	}
+
+	private removeComments(ids: readonly string[]): void {
+		const gone = new Set(ids);
+		this.setWaiting(this.commentsKey, this.waitingComments().filter(comment => !gone.has(comment.id)));
+	}
+
+	/**
+	 * Sends the waiting comments to the chat as one message: the pull request, its branch and commits,
+	 * then each comment with the lines it is on. Kept when there is no chat to send them to.
+	 */
+	private async sendComments(): Promise<void> {
+		const pr = this.detail;
+		const key = this.commentsKey;
+		const comments = this.waitingComments();
+		if (!pr || !key || !comments.length) {
+			return;
+		}
+		const prompt = buildPrCommentsPrompt(pr, comments);
+		const sessionId = this.sessionId ?? this.instantiationService.invokeFunction(visibleChatSession);
+		if (!sessionId) {
+			await this.copy(prompt, localize('voltPr.commentsCopied', "No chat is linked to this pull request; the comments were copied."));
+			return;
+		}
+		const sent = await this.instantiationService.invokeFunction(accessor => sendInChat(accessor, sessionId, prompt, prCommentsDisplay(pr, comments)));
+		if (!sent) {
+			await this.copy(prompt, localize('voltPr.commentsCopiedFallback', "The chat could not be opened; the comments were copied."));
+			return;
+		}
+		// Only the ones that went: one added while the chat opened stays.
+		const sentIds = new Set(comments.map(comment => comment.id));
+		this.setWaiting(key, (waitingByPr.get(key) ?? []).filter(comment => !sentIds.has(comment.id)));
 	}
 
 	//#endregion

@@ -10266,6 +10266,58 @@ pre.volt-agent-searchable {
 	height: 14px;
 }
 
+/* The same "1 to multitask" as blue text at the start of the text area: Send starts the ticked messages. */
+.volt-agent-multitask-token {
+	display: inline-flex;
+	align-items: center;
+	align-self: flex-start;
+	flex: 0 0 auto;
+	gap: 6px;
+	height: 22px;
+	margin: 8px 12px 0;
+	font-family: var(--volt-font);
+	font-size: 14px;
+	line-height: 22px;
+	color: #4c8dff;
+	white-space: nowrap;
+	cursor: default;
+}
+
+.volt-agent-multitask-token.hidden {
+	display: none;
+}
+
+.volt-agent-multitask-token.empty {
+	color: var(--vscode-descriptionForeground);
+}
+
+/* One-line follow-up: right after the +, the typed text follows it on the same line. */
+.volt-agent-input-box.follow-up:not(.multiline) .volt-agent-multitask-token {
+	order: 2;
+	align-self: center;
+	margin: 0 -4px 0 10px;
+}
+
+.volt-agent-multitask-token > .volt-agent-svg-icon,
+.volt-agent-multitask-token > .volt-agent-svg-icon svg {
+	display: inline-flex;
+	width: 14px;
+	height: 14px;
+}
+
+.volt-agent-multitask-token .volt-agent-composer-chip-close {
+	color: inherit;
+	opacity: 0.8;
+}
+
+.volt-agent-multitask-token .volt-agent-composer-chip-close:hover {
+	opacity: 1;
+}
+
+.monaco-workbench .volt-agent-multitask-token .volt-agent-composer-chip-close .codicon.codicon-close {
+	font-size: 12px;
+}
+
 .volt-agent-composer-chip-close {
 	display: inline-flex;
 	align-items: center;

@@ -54,8 +54,8 @@ export interface IPrCodeDiffDelegate {
 	toggleViewed(path: string, viewed: boolean): void;
 	/** The file's name in its header was clicked. */
 	openFile(path: string): void;
-	/** Ask the chat's agent about lines of a file: a selection on the new side, else the whole change (its patch). */
-	ask(path: string, start: number, end: number, code: string): void;
+	/** Comment for the chat's agent on lines of a file: a selection on the new side, else the whole change (its patch). `anchor` is the button clicked. */
+	ask(path: string, start: number, end: number, code: string, anchor: HTMLElement): void;
 }
 
 /** A file the diff can show: it has hunks, or it only moved. */
@@ -262,13 +262,13 @@ export class AgentPullRequestCodeDiff extends Disposable {
 			const ask = append(container, $('button.volt-pr-code-ask')) as HTMLButtonElement;
 			ask.type = 'button';
 			ask.appendChild(renderIcon(Codicon.commentDiscussion));
-			const askLabel = localize('voltPr.askFile', "Ask the agent about the selected lines, or about this file's changes");
+			const askLabel = localize('voltPr.commentFile', "Comment on the selected lines, or on this file's changes, for the agent");
 			ask.setAttribute('aria-label', askLabel);
 			setAgentTooltip(ask, askLabel);
 			store.add(addDisposableListener(ask, 'click', e => {
 				e.preventDefault();
 				e.stopPropagation();
-				this.ask(file);
+				this.ask(file, ask);
 			}));
 		}
 		if (this.delegate.viewed(file.path) !== undefined) {
@@ -299,7 +299,7 @@ export class AgentPullRequestCodeDiff extends Disposable {
 	}
 
 	/** The new side's selected lines, else the file's whole change. */
-	private ask(file: PrCodeFile): void {
+	private ask(file: PrCodeFile, anchor: HTMLElement): void {
 		const item = this.itemFor(file.path);
 		const editor = item?.modifiedUri ? this.widget.tryGetCodeEditor(item.modifiedUri)?.editor : undefined;
 		const selection = editor?.getSelection();
@@ -307,13 +307,13 @@ export class AgentPullRequestCodeDiff extends Disposable {
 		if (selection && model && !selection.isEmpty()) {
 			const end = selection.endColumn === 1 && selection.endLineNumber > selection.startLineNumber ? selection.endLineNumber - 1 : selection.endLineNumber;
 			const code = model.getValueInRange({ startLineNumber: selection.startLineNumber, startColumn: 1, endLineNumber: end, endColumn: model.getLineMaxColumn(end) });
-			this.delegate.ask(file.path, selection.startLineNumber, end, code);
+			this.delegate.ask(file.path, selection.startLineNumber, end, code, anchor);
 			return;
 		}
 		const hunks = parseUnifiedPatch(file.patch ?? '');
 		const first = hunks[0];
 		const last = hunks[hunks.length - 1];
-		this.delegate.ask(file.path, first ? Math.max(1, first.newStart) : 1, last ? Math.max(1, last.newStart + last.newLines - 1) : 1, file.patch ?? '');
+		this.delegate.ask(file.path, first ? Math.max(1, first.newStart) : 1, last ? Math.max(1, last.newStart + last.newLines - 1) : 1, file.patch ?? '', anchor);
 	}
 
 	private createLabel(element: HTMLElement): IResourceLabel {

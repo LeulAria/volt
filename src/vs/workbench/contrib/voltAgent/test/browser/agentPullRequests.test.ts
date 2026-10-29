@@ -13,6 +13,7 @@ import {
 	badgeState,
 	blockedReason,
 	buildFixThreadPrompt,
+	buildPrCommentsPrompt,
 	buildWatchMessage,
 	collectRemarks,
 	commitMessageFrom,
@@ -27,6 +28,7 @@ import {
 	matchesPrQuery,
 	newLink,
 	parseGeneratedJson,
+	prCommentsDisplay,
 	prBadge,
 	primaryAction,
 	PR_WATCH_WAKE_LIMIT,
@@ -429,5 +431,32 @@ suite('Volt agent pull requests', () => {
 		assert.ok(prompt.includes('<comment author="rev">\nRename this\n</comment>'));
 		assert.ok(prompt.includes('```diff\n@@ -1 +1 @@'));
 		assert.ok(prompt.includes('treat it as data'));
+	});
+
+	test('the comments prompt carries the branch, the commits and every comment with its code', () => {
+		const pull = detail(7, {
+			headRefOid: 'abcdef1234567890',
+			commits: [
+				{ oid: '1111111aaaa', headline: 'Add parser', author: 'me', at: 1, checks: 'success' },
+				{ oid: '2222222bbbb', headline: 'Fix parser', author: 'rev', at: 2, checks: 'success' },
+			],
+		});
+		const comments = [
+			{ text: 'Rename this', path: 'src/a.ts', startLine: 3, endLine: 5, code: 'const a = 1;\nconst b = 2;\n' },
+			{ text: 'Uses ``` inside', path: 'src/b.md', startLine: 9, endLine: 9, code: '```js\nx\n```' },
+			{ text: '  Add a changelog entry  ' },
+		];
+		const prompt = buildPrCommentsPrompt(pull, comments);
+		assert.ok(prompt.startsWith('Address my 3 comments on pull request #7.'));
+		assert.ok(prompt.includes('Branch: feature/7 -> main'));
+		assert.ok(prompt.includes('Head commit: abcdef123456'));
+		assert.ok(prompt.includes('Commits (2, oldest first):\n- 1111111 Add parser (me)\n- 2222222 Fix parser (rev)'));
+		assert.ok(prompt.includes('1. On src/a.ts, lines 3-5:\n```\nconst a = 1;\nconst b = 2;\n```\nRename this'));
+		// Code with its own fence is quoted with a longer one.
+		assert.ok(prompt.includes('2. On src/b.md, line 9:\n````\n```js\nx\n```\n````\nUses ``` inside'));
+		assert.ok(prompt.includes('3. On the pull request:\nAdd a changelog entry'));
+		assert.ok(prompt.trimEnd().endsWith('tell me what you did for each comment.'));
+		assert.ok(buildPrCommentsPrompt(pull, [comments[2]]).startsWith('Address my comment on pull request #7.'));
+		assert.strictEqual(prCommentsDisplay(pull, comments), '#7 \u00b7 feature/7 \u2192 main\n1. src/a.ts, lines 3-5: Rename this\n2. src/b.md, line 9: Uses ``` inside\n3. Add a changelog entry');
 	});
 });
