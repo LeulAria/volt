@@ -10465,3 +10465,47 @@ pre.volt-agent-searchable {
 .monaco-workbench .volt-agent-composer-chip .volt-agent-composer-chip-close .codicon.codicon-close {
 	font-size: 12px;
 }
+
+/*
+ * The same count as a token in the composer's input: blue text, no pill. A line above the prompt in
+ * the new-chat and multiline composers; right after the + on the one-line follow-up.
+ */
+.volt-agent-multitask-token {
+	display: flex;
+	align-items: center;
+	align-self: flex-start;
+	flex: none;
+	gap: 6px;
+	margin: 8px 10px -6px;
+	color: #4c8dff;
+	font-size: 14px;
+	line-height: 22px;
+	white-space: nowrap;
+	cursor: default;
+}
+
+.volt-agent-multitask-token.hidden {
+	display: none;
+}
+
+.volt-agent-multitask-token.empty {
+	color: #9a9a9a;
+}
+
+.volt-agent-multitask-token > .volt-agent-svg-icon,
+.volt-agent-multitask-token > .volt-agent-svg-icon svg {
+	display: flex;
+	width: 14px;
+	height: 14px;
+}
+
+.volt-agent-input-box.follow-up:not(.multiline) .volt-agent-multitask-token {
+	order: 2;
+	align-self: center;
+	margin: 0 0 0 8px;
+}
+
+/* Four classes: `.monaco-workbench .codicon[class*='codicon-']` draws every codicon at 16px. */
+.monaco-workbench .volt-agent-multitask-token .volt-agent-composer-chip-close .codicon.codicon-close {
+	font-size: 12px;
+}

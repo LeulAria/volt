@@ -1315,6 +1315,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			},
 			onAgentsClick: anchor => this.showAgentsMenu(anchor),
 			onMultitaskPickCancel: () => this.composerQueue?.stopPicking(),
+			multitaskInInput: true,
 			terminalRuns: this.terminalChips,
 			limitRun: this.limitChip,
 		}));
@@ -1388,6 +1389,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this._register(this.voiceDictation.onDidCommit(text => this.endDictatedText(text)));
 		this._register(this.voiceDictation.onDidFail(message => this.notificationService.warn(message)));
 		this.inputBox = append(this.composerEl, $('.volt-agent-input-box'));
+		// Start Multitasking's "N to multitask" sits in the input, before the prompt.
+		const multitaskToken = this.composerChips?.multitaskToken;
+		if (multitaskToken) {
+			append(this.inputBox, multitaskToken);
+		}
 		this.monacoHost = append(this.inputBox, $('.volt-agent-monaco.show-file-icons'));
 		this.placeholderEl = append(this.monacoHost, $('.volt-agent-placeholder'));
 		this.placeholderEl.setAttribute('aria-hidden', 'true');
@@ -5804,6 +5810,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private setMultitaskPick(ids: readonly string[] | undefined): void {
 		this.multitaskPick = ids;
 		this.composerChips?.setMultitaskPick(ids?.length);
+		// The token in the input takes room from the editor: lay it out again.
+		this.layoutInputEditor();
 		this.updateSendButton();
 	}
 

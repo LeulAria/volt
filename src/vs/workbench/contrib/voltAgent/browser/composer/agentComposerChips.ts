@@ -92,6 +92,8 @@ export interface IAgentComposerChipsOptions {
 	onScrollToBottom?: () => void;
 	/** The × on the "N to multitask" chip: Start Multitasking turns off and the messages stay queued. */
 	onMultitaskPickCancel?: () => void;
+	/** "N to multitask" is a token in the composer's input ({@link AgentComposerChips.multitaskToken}), not a chip of the row. */
+	multitaskInInput?: boolean;
 	/** The chat's terminals ("2 terminals running" with its menu), after the agents chip. The dock has none. */
 	terminalRuns?: IAgentComposerTerminalRuns;
 	/** The chat's usage-limit park ("Claude limit · resets 5 PM" with Resume when Claude is back), first in the row. */
@@ -270,7 +272,10 @@ export class AgentComposerChips extends Disposable {
 			}));
 		}
 
-		this.multitaskChip = append(this.element, $('.volt-agent-composer-chip.multitask-pick.volt-browser-dock-chip.hidden'));
+		// In the input, it is blue text before the prompt; the host puts it there (multitaskToken).
+		this.multitaskChip = this.options.multitaskInInput
+			? $('.volt-agent-multitask-token.hidden')
+			: append(this.element, $('.volt-agent-composer-chip.multitask-pick.volt-browser-dock-chip.hidden'));
 		this.multitaskChip.setAttribute('role', 'status');
 		this.multitaskChip.appendChild(createModeIcon('multitask'));
 		this.multitaskLabelEl = append(this.multitaskChip, $('span.volt-agent-composer-chip-label'));
@@ -477,6 +482,11 @@ export class AgentComposerChips extends Disposable {
 		} else {
 			this.scheduleRefresh();
 		}
+	}
+
+	/** With `multitaskInInput`: "N to multitask" with its ×, for the host to place in the composer's input. */
+	get multitaskToken(): HTMLElement | undefined {
+		return this.options.multitaskInInput ? this.multitaskChip : undefined;
 	}
 
 	/** Start Multitasking's live count: the chip reads "18 to multitask"; undefined hides it. */
@@ -767,6 +777,8 @@ export class AgentComposerChips extends Disposable {
 		const showAgents = !!this.agents;
 		const showComments = this.pendingComments > 0;
 		const showMultitask = this.multitaskPick !== undefined;
+		// A token in the input does not keep the row up.
+		const showMultitaskChip = showMultitask && !this.options.multitaskInInput;
 		// Steps aside while Source Control shows this chat's changes in the right panel, and while the
 		// Changes chip is up: one git chip at a time, Changes first.
 		const showCommit = !showChanges && this.gitVisible && !this.newChat && !(this.sessionId && isAgentScmShown(this.sessionId));
@@ -778,7 +790,7 @@ export class AgentComposerChips extends Disposable {
 		this.toggleChip(this.prChip, showPr, this.prExit);
 		const showLimit = !!this.options.limitRun?.visible;
 		const showAgentRun = !!this.options.agentRun?.visible;
-		const visible = this.hostOpen && !this.newChat && (showLimit || showAgentRun || showStatus || showComments || showMultitask || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
+		const visible = this.hostOpen && !this.newChat && (showLimit || showAgentRun || showStatus || showComments || showMultitaskChip || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
 		this.element.classList.toggle('is-visible', visible);
 		// A chat hosted in another chat's tools hides the row but keeps its terminals (agentEditor.css).
 		this.element.classList.toggle('has-terminal-runs', showRuns);
@@ -832,7 +844,9 @@ export class AgentComposerChips extends Disposable {
 		const runs = this.options.terminalRuns?.element;
 		const limit = this.options.limitRun?.element;
 		const agentRun = this.options.agentRun?.element;
-		return [...(limit ? [limit] : []), ...(agentRun ? [agentRun] : []), this.statusChip, this.agentsChip, ...(runs ? [runs] : []), this.commentsChip, this.multitaskChip, this.compactChip, this.changesChip, this.terminalsChip, this.gitControl.element, this.prChip];
+		// A multitask token in the input is not the row's: folding it would move it back into the row.
+		const multitask = this.options.multitaskInInput ? [] : [this.multitaskChip];
+		return [...(limit ? [limit] : []), ...(agentRun ? [agentRun] : []), this.statusChip, this.agentsChip, ...(runs ? [runs] : []), this.commentsChip, ...multitask, this.compactChip, this.changesChip, this.terminalsChip, this.gitControl.element, this.prChip];
 	}
 
 	private scheduleLayout(): void {
