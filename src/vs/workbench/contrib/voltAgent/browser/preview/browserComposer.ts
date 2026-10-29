@@ -55,6 +55,8 @@ export interface IBrowserComposerCallbacks {
 	onBlur?(): void;
 	onStop?(): void;
 	onKeepExpanded?(): void;
+	/** Escape in the text; true when it was used (a queued message being edited is put back). */
+	onEscape?(): boolean;
 	dock?: boolean;
 	/**
 	 * The chat's model (the design prompt): the model chip shows it until the user picks another for
@@ -459,6 +461,19 @@ export class BrowserAgentComposer extends Disposable {
 		this.editor?.focus();
 	}
 
+	/** Replaces the draft: its text and chips (a queued message loaded for editing, or the draft it stood in for). */
+	setContent(text: string, mentions: readonly IAgentDisplayMention[] | undefined): void {
+		this.ensureEditor();
+		this.mentionController?.clear();
+		this.setDraft(text);
+		if (mentions?.length) {
+			this.mentionController?.restoreMentions(mentions);
+			this.syncPlaceholder();
+			this.syncSend();
+			this.layout();
+		}
+	}
+
 	appendPlainText(text: string): void {
 		const extra = text.trim();
 		if (!extra) {
@@ -783,6 +798,11 @@ export class BrowserAgentComposer extends Disposable {
 				e.preventDefault();
 				e.stopPropagation();
 				this.dictation.cancel();
+				return;
+			}
+			if (e.keyCode === KeyCode.Escape && this.callbacks.onEscape?.()) {
+				e.preventDefault();
+				e.stopPropagation();
 				return;
 			}
 			if (e.keyCode === KeyCode.Space && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey) {
