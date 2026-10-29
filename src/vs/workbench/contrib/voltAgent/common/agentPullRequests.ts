@@ -853,6 +853,83 @@ export function buildReviewLinePrompt(pr: Pick<IVoltPullRequest, 'number' | 'tit
 	].join('\n');
 }
 
+/** A comment for the chat's agent from the pull request view: on the pull request, or on lines of a file. */
+export interface IAgentPrComment {
+	readonly text: string;
+	readonly path?: string;
+	readonly startLine?: number;
+	readonly endLine?: number;
+	/** The lines it is on (or the file's patch), quoted for the agent. */
+	readonly code?: string;
+}
+
+/** Commits listed in the comments prompt, newest kept; a longer branch says how many were left out. */
+const MAX_PROMPT_COMMITS = 30;
+/** Code quoted per comment; a whole file's patch is cut here. */
+const MAX_COMMENT_CODE_CHARS = 6_000;
+
+/** "src/a.ts, lines 3-5", "src/a.ts", or undefined for a comment on the whole pull request. */
+export function prCommentPlace(comment: Pick<IAgentPrComment, 'path' | 'startLine' | 'endLine'>): string | undefined {
+	if (!comment.path) {
+		return undefined;
+	}
+	const { startLine: start, endLine: end } = comment;
+	if (!start) {
+		return comment.path;
+	}
+	return !end || end === start ? `${comment.path}, line ${start}` : `${comment.path}, lines ${start}-${end}`;
+}
+
+/**
+ * The batch of comments the pull request view sends to the chat: the pull request (title, URL,
+ * branch, head and its commits) once, then each comment numbered with the code it is on.
+ */
+export function buildPrCommentsPrompt(pr: Pick<IVoltPullRequestDetail, 'number' | 'title' | 'url' | 'headRefName' | 'baseRefName' | 'headRefOid' | 'commits'>, comments: readonly IAgentPrComment[]): string {
+	const commits = pr.commits.slice(-MAX_PROMPT_COMMITS);
+	const skipped = pr.commits.length - commits.length;
+	const lines = [
+		comments.length === 1 ? `Address my comment on pull request #${pr.number}.` : `Address my ${comments.length} comments on pull request #${pr.number}.`,
+		'',
+		prContext(pr),
+		`Head commit: ${pr.headRefOid.slice(0, 12)}`,
+	];
+	if (pr.commits.length) {
+		lines.push('', `Commits (${pr.commits.length}, oldest first):`);
+		if (skipped) {
+			lines.push(`- (${skipped} earlier commits not listed)`);
+		}
+		lines.push(...commits.map(commit => `- ${commit.oid.slice(0, 7)} ${commit.headline}${commit.author ? ` (${commit.author})` : ''}`));
+	}
+	lines.push('', comments.length === 1 ? 'Comment:' : 'Comments:');
+	comments.forEach((comment, i) => {
+		const place = prCommentPlace(comment);
+		lines.push('', `${i + 1}. ${place ? `On ${place}` : 'On the pull request'}:`);
+		const code = comment.code?.replace(/\s+$/, '');
+		if (code) {
+			const quoted = code.length > MAX_COMMENT_CODE_CHARS ? `${code.slice(0, MAX_COMMENT_CODE_CHARS)}\n... (cut)` : code;
+			// A fence longer than any run of backticks in the code, so the quote cannot end early.
+			const fence = '`'.repeat(Math.max(3, ...(quoted.match(/`+/g) ?? []).map(run => run.length + 1)));
+			lines.push(fence, quoted, fence);
+		}
+		lines.push(comment.text.trim());
+	});
+	lines.push('', `Work on ${pr.headRefName} (check it out first if this chat is on another branch), make the changes, and tell me what you did for each comment.`);
+	return lines.join('\n');
+}
+
+/** What the chat's transcript shows for that batch: the comments, not the whole prompt. */
+export function prCommentsDisplay(pr: Pick<IVoltPullRequest, 'number' | 'headRefName' | 'baseRefName'>, comments: readonly IAgentPrComment[]): string {
+	const head = `#${pr.number} \u00b7 ${pr.headRefName} \u2192 ${pr.baseRefName}`;
+	if (comments.length === 1) {
+		const place = prCommentPlace(comments[0]);
+		return `${head}\n${place ? `${place}: ` : ''}${comments[0].text.trim()}`;
+	}
+	return [head, ...comments.map((comment, i) => {
+		const place = prCommentPlace(comment);
+		return `${i + 1}. ${place ? `${place}: ` : ''}${comment.text.trim()}`;
+	})].join('\n');
+}
+
 export function buildExplainPrompt(pr: Pick<IVoltPullRequest, 'number' | 'title' | 'url' | 'headRefName' | 'baseRefName'>): string {
 	return [
 		`Explain pull request #${pr.number}: what it changes, why, and anything risky a reviewer should look at.`,
