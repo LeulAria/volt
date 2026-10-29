@@ -96,6 +96,9 @@ export namespace Schemas {
 	/** Scheme used for the agent Customize (rules, skills, MCP) editor tab. */
 	export const voltCustomize = 'volt-customize';
 
+	/** Scheme used for the Agent Resources editor tab (instructions, skills, MCP, harness, by scope). */
+	export const voltAgentResources = 'volt-agent-resources';
+
 	/** Scheme used for the agent Usage (cost, tokens, limits) editor tab. */
 	export const voltUsage = 'volt-usage';
 

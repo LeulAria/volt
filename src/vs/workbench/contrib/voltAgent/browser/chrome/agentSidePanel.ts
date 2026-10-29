@@ -407,6 +407,23 @@ export class AgentSidePanel extends ViewPane {
 		await this.openPage(AgentCustomizeEditorInput);
 	}
 
+	/** Shows a full-page editor of the window (Agent Resources) the way Customize opens: the main panel in agent layout. */
+	async openEditorPage(input: EditorInput): Promise<void> {
+		if (this.isAgentLayout()) {
+			this.revealCenterEditors();
+			await this.editorService.openEditor(input, { pinned: true });
+			return;
+		}
+		if (!this.editorPart) {
+			return;
+		}
+		await this.editorPart.whenRestored;
+		const group = this.editorPart.activeGroup;
+		await group.openEditor(group.editors.find(editor => editor.matches(input)) ?? input, { pinned: true });
+		this.syncAgentLayout();
+		group.focus();
+	}
+
 	private async openPage(ctor: typeof AgentCustomizeEditorInput): Promise<void> {
 		if (this.isAgentLayout()) {
 			this.revealCenterEditors();
