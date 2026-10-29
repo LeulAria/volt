@@ -17,7 +17,7 @@ import { VoltMode } from '../../voltRuntime/common/modes.js';
 import { IProviderProfile, IProviderProfileDraft } from '../../voltRuntime/common/profiles.js';
 import { IAgentDetectResult, IModelMessage, IVoltCatalogItem, IVoltProviderStatus } from '../../voltRuntime/common/providers.js';
 import type { IAgentQuestionRequest, IAgentQuestionResponse } from '../../voltRuntime/common/questions.js';
-import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltTaskModels } from '../../voltRuntime/common/runtime.js';
+import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../../voltRuntime/common/runtime.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IVoltSendRequest, IVoltSession } from '../../voltRuntime/common/session.js';
 import { IAgentServerClientService } from './agentServerClient.js';
@@ -172,7 +172,7 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 	/** The agent server's runtime frees its own sessions. */
 	releaseSession(_key: string): void { }
 
-	seedSession(key: string, messages: readonly IVoltSeedMessage[], options?: { readonly forkedFrom?: string }): void {
+	seedSession(key: string, messages: readonly IVoltSeedMessage[], options?: IVoltSeedOptions): void {
 		// The server's own copy of a chat seeds its model transcript when it loads the chat; a fork
 		// made here (with a transcript the server has not loaded yet) is seeded there too.
 		this.client.send('runtime.seedSession', key, messages, options);

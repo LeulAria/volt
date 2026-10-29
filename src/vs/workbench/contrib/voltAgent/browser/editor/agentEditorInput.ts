@@ -15,7 +15,7 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.js';
 import { EditorInputCapabilities, GroupIdentifier, IEditorSerializer, IRevertOptions, IUntypedEditorInput } from '../../../../common/editor.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
-import { AgentSessionStatus, IAgentHistoryService, IAgentSessionHandle } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { AgentSessionStatus, IAgentHistoryService, IAgentSessionHandle, IAgentSessionTranscript, IAgentSessionTurn } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService, IVoltSeedMessage } from '../../../../services/voltRuntime/common/runtime.js';
 import { isCompactCommand } from '../../../../services/voltRuntime/common/compaction.js';
 import { handoffActivityOf } from '../blocks/agentHandoffActivity.js';
@@ -58,6 +58,46 @@ export const AGENT_EDITOR_LINE_NUMBERS_SETTING = 'volt.agent.editor.lineNumbers'
  * alone (beside the chat's log), so a crash loses at most this much of a reply that was streaming.
  */
 const PARTIAL_SNAPSHOT_INTERVAL_MS = 10_000;
+
+/**
+ * One saved turn as the model saw it, added to `transcript`: the prompt, then what the reply said
+ * and did. A completed compaction starts the transcript over from its summary.
+ */
+function appendModelTurn(transcript: IVoltSeedMessage[], turn: IAgentSessionTurn, assistant: IAgentAssistantMessage | undefined, cwd: string | undefined): IVoltSeedMessage[] {
+	const compactCommand = isCompactCommand(turn.user.text);
+	if (!compactCommand) {
+		transcript.push({ role: 'user', content: turn.user.text });
+	}
+	if (!turn.assistant || !assistant) {
+		return transcript;
+	}
+	const compaction = findLast(assistant.segments, segment => segment.kind === 'compaction' && segment.compaction.status === 'completed' && !!segment.compaction.summary?.trim());
+	if (compaction?.kind === 'compaction') {
+		transcript = [{ role: 'assistant', content: compaction.compaction.summary!.trim(), compacted: true }];
+		if (compactCommand) {
+			return transcript;
+		}
+	}
+	// What the model said, not the saved plain text: that one also lists tool rows and
+	// their raw input, which a model handed this chat read back as part of the reply.
+	const reply = assistant.text?.trim() || turn.assistant.text;
+	const activity = handoffActivityOf(assistant.segments, cwd);
+	const model = (assistant as { model?: { label?: string } }).model?.label;
+	if (reply || activity) {
+		transcript.push({ role: 'assistant', content: reply ?? '', ...(model ? { model } : {}), ...(activity ? { activity } : {}) });
+	}
+	return transcript;
+}
+
+/** A saved chat's conversation as its model saw it (for another session to be briefed with). */
+export async function loadModelTranscript(codec: AgentHistoryCodec, transcript: IAgentSessionTranscript): Promise<IVoltSeedMessage[]> {
+	let messages: IVoltSeedMessage[] = [];
+	for (const turn of transcript.turns) {
+		const assistant = turn.assistant ? await codec.thawAssistant(turn.assistant.message, true, turn.assistant.at) : undefined;
+		messages = appendModelTurn(messages, turn, assistant, transcript.worktreePath);
+	}
+	return messages;
+}
 
 /**
  * Inputs closed while their agent was still running. They keep recording until
@@ -261,33 +301,12 @@ export class AgentEditorInput extends EditorInput {
 				}
 				user.id = turn.id;
 				messages.push(user);
-				const compactCommand = isCompactCommand(turn.user.text);
-				if (!compactCommand) {
-					modelTranscript.push({ role: 'user', content: turn.user.text });
+				const assistant = turn.assistant ? await this.codec.thawAssistant(turn.assistant.message, true, turn.assistant.at) : undefined;
+				if (assistant) {
+					assistant.id = turn.id;
+					messages.push(assistant);
 				}
-				if (turn.assistant) {
-					const assistant = await this.codec.thawAssistant(turn.assistant.message, true, turn.assistant.at);
-					if (assistant) {
-						assistant.id = turn.id;
-						messages.push(assistant);
-						// A completed compaction with its summary: the model's context starts over from it.
-						const compaction = findLast(assistant.segments, segment => segment.kind === 'compaction' && segment.compaction.status === 'completed' && !!segment.compaction.summary?.trim());
-						if (compaction?.kind === 'compaction') {
-							modelTranscript = [{ role: 'assistant', content: compaction.compaction.summary!.trim(), compacted: true }];
-							if (compactCommand) {
-								continue;
-							}
-						}
-						// What the model said, not the saved plain text: that one also lists tool rows and
-						// their raw input, which a model handed this chat read back as part of the reply.
-						const reply = assistant.text?.trim() || turn.assistant.text;
-						const activity = handoffActivityOf(assistant.segments, transcript.worktreePath);
-						const model = (assistant as { model?: { label?: string } }).model?.label;
-						if (reply || activity) {
-							modelTranscript.push({ role: 'assistant', content: reply ?? '', ...(model ? { model } : {}), ...(activity ? { activity } : {}) });
-						}
-					}
-				}
+				modelTranscript = appendModelTurn(modelTranscript, turn, assistant, transcript.worktreePath);
 			}
 			this.messages = messages;
 			this.runtime.seedSession(this.sessionId, modelTranscript);

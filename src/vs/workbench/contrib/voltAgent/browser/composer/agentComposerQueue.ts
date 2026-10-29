@@ -14,6 +14,7 @@ import { groupSummary, isLiveSubagentState, ISubagentView, renderCursorCardRow, 
 import { ITasksCard } from '../chrome/agentTimeline.js';
 import { AgentTasksCard, closeOnOutsideClick } from './agentTasksCard.js';
 import { createEditIcon } from '../home/agentHomeIcons.js';
+import type { IAgentDisplayMention } from './agentMentions.js';
 
 export interface IQueuedPrompt {
 	id: string;
@@ -36,6 +37,8 @@ export interface IAgentComposerQueueOptions {
 	onEdit?(id: string): void;
 	/** Send this prompt now: steer the running agent, interrupt it, or just send when idle. */
 	onSendNow?(id: string): void;
+	/** Send this prompt in a new chat, whose agent starts with this chat's conversation as a condensed handoff. */
+	onSendToNewChat?(id: string): void;
 	/** The queue was paused by an error or left idle: send the next prompt and keep draining. */
 	onResume?(): void;
 	onCancelEdit?(): void;
@@ -48,6 +51,47 @@ export interface IAgentComposerQueueOptions {
 	onStopAllAgents?(): void;
 	/** A conflicting file's name was clicked: open it. */
 	onOpenFile?(path: string): void;
+}
+
+export interface IAgentQueueEditContent {
+	readonly text: string;
+	readonly mentions: IAgentDisplayMention[];
+}
+
+/** A composer other than the chat's own that a queued prompt can be edited in (the browser dock's). */
+export interface IAgentQueueEditSurface {
+	content(): IAgentQueueEditContent;
+	setContent(text: string, mentions: readonly IAgentDisplayMention[] | undefined): void;
+	focus(): void;
+}
+
+/** The chat a queue card acts on (its editor). */
+export interface IAgentQueueHost {
+	removeQueuedPrompt(id: string): void;
+	clearPromptQueue(): void;
+	reorderQueuedPrompts(ids: readonly string[]): void;
+	editQueuedPrompt(id: string, surface?: IAgentQueueEditSurface): void;
+	cancelQueueEdit(): void;
+	sendQueuedNow(id: string): void;
+	sendQueuedToNewChat(id: string): void;
+	resumeQueue(): void;
+}
+
+/**
+ * What a queued row does, the same in the chat's card and in the browser dock's: remove, clear,
+ * reorder, edit (in `surface`, else the chat's composer), send now, send in a new chat, resume.
+ */
+export function queueRowActions(host: () => IAgentQueueHost | undefined, surface?: IAgentQueueEditSurface): Pick<IAgentComposerQueueOptions, 'onRemove' | 'onClear' | 'onReorder' | 'onEdit' | 'onCancelEdit' | 'onSendNow' | 'onSendToNewChat' | 'onResume'> {
+	return {
+		onRemove: id => host()?.removeQueuedPrompt(id),
+		onClear: () => host()?.clearPromptQueue(),
+		onReorder: ids => host()?.reorderQueuedPrompts(ids),
+		onEdit: id => host()?.editQueuedPrompt(id, surface),
+		onCancelEdit: () => host()?.cancelQueueEdit(),
+		onSendNow: id => host()?.sendQueuedNow(id),
+		onSendToNewChat: id => host()?.sendQueuedToNewChat(id),
+		onResume: () => host()?.resumeQueue(),
+	};
 }
 
 /** Subagents shown in the card, with the conflicts between them. */
@@ -572,8 +616,12 @@ export class AgentComposerQueue extends Disposable {
 			this.listeners.add(bindTruncatedHoverTooltip(text, preview));
 			const onEdit = this.options.onEdit;
 			const onSendNow = this.options.onSendNow;
+			const onSendToNewChat = this.options.onSendToNewChat;
 			if (!isEditing && onEdit) {
 				this.appendRowAction(row, createEditIcon(), localize('voltAgent.queue.edit', "Edit queued message"), () => onEdit(item.id));
+			}
+			if (!isEditing && !picking && onSendToNewChat) {
+				this.appendRowAction(row, Codicon.export, localize('voltAgent.queue.newChatHint', "Send in a new chat, with this conversation handed over condensed"), () => onSendToNewChat(item.id), 'new-chat', localize('voltAgent.queue.newChat', "Send in new chat"));
 			}
 			if (!isEditing && onSendNow) {
 				this.appendRowAction(row, Codicon.arrowUp, sendNow.tooltip, () => onSendNow(item.id), 'send-now', sendNow.label);

@@ -46,13 +46,14 @@ export interface IAgentPromptHostOptions {
 /**
  * A prompt another chat's agent sent (thread_send), started (thread_launch) or forked into
  * (thread_fork), or a fork's changes merged back into it (thread_merge_back), carried as `host`: the
- * transcript shows it as that chat's message, not the user's.
+ * transcript shows it as that chat's message, not the user's. `continue`: the user's own queued
+ * message, moved out of that chat into a new one.
  */
 export interface IAgentThreadSourceHost {
 	readonly fromThread: {
 		readonly id: string;
 		readonly title: string;
-		readonly kind: 'message' | 'launch' | 'fork' | 'merge';
+		readonly kind: 'message' | 'launch' | 'fork' | 'merge' | 'continue';
 		/** An agent outside Volt (OAuth MCP): `title` is its name and `id` is no chat. */
 		readonly external?: boolean;
 	};
@@ -61,7 +62,7 @@ export interface IAgentThreadSourceHost {
 export function threadSourceOf(host: unknown): IAgentThreadSourceHost['fromThread'] | undefined {
 	const from = (host as Partial<IAgentThreadSourceHost> | undefined)?.fromThread;
 	return from && typeof from.id === 'string' && typeof from.title === 'string'
-		? { id: from.id, title: from.title, kind: from.kind === 'launch' || from.kind === 'fork' || from.kind === 'merge' ? from.kind : 'message', ...(from.external === true ? { external: true } : {}) }
+		? { id: from.id, title: from.title, kind: from.kind === 'launch' || from.kind === 'fork' || from.kind === 'merge' || from.kind === 'continue' ? from.kind : 'message', ...(from.external === true ? { external: true } : {}) }
 		: undefined;
 }
 

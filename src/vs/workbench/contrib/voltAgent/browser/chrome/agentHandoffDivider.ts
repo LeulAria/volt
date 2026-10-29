@@ -33,6 +33,9 @@ export function handoffDividerText(handoff: IAgentUserMessage['handoff'], info: 
 	if (info?.reason === 'fork') {
 		return { label: localize('voltAgent.handoff.forked', "Forked conversation"), detail: localize('voltAgent.handoff.handedOff', "handed off {0}", tokens(info.tokens)) };
 	}
+	if (info?.reason === 'continue') {
+		return { label: localize('voltAgent.handoff.continued', "Earlier chat condensed"), detail: localize('voltAgent.handoff.handedOff', "handed off {0}", tokens(info.tokens)) };
+	}
 	if (!handoff && info?.reason !== 'switch') {
 		// A fresh session of the same model (the old one was let go): nothing changed for the user.
 		return undefined;
@@ -86,7 +89,7 @@ export function renderHandoffDivider(parent: HTMLElement, message: IAgentUserMes
 	const line = append(el, $('.volt-tr-compaction-line'));
 	const pill = append(line, $(info ? 'button.volt-tr-compaction-pill' : 'span.volt-tr-compaction-pill'));
 	const icon = append(pill, $('span.volt-tr-compaction-icon'));
-	icon.appendChild(renderIcon(info?.reason === 'fork' ? Codicon.repoForked : Codicon.arrowSwap));
+	icon.appendChild(renderIcon(info?.reason === 'fork' ? Codicon.repoForked : info?.reason === 'continue' ? Codicon.export : Codicon.arrowSwap));
 	append(pill, $('span.volt-tr-compaction-label')).textContent = text.label;
 	if (text.detail) {
 		append(pill, $('span.volt-tr-compaction-detail')).textContent = `· ${text.detail}`;
