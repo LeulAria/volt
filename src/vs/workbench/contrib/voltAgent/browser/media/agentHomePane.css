@@ -2043,10 +2043,11 @@ html.volt-layout-agent-window body {
 	display: none;
 }
 
-/* Under the hover actions the badge, age and unread dot keep their space, so nothing shifts; the
- * chips are see-through, so the dot would show through them. */
+/* Under the hover actions the badge, age, settled row's PR pill and unread dot keep their space, so
+ * nothing shifts; the chips are see-through, so they would show through them. */
 .monaco-list-row:hover .volt-agent-home-row.is-session > .status-badge,
 .monaco-list-row:hover .volt-agent-home-row.is-session > .meta,
+.monaco-list-row:hover .volt-agent-home-row.is-session > .line-pr,
 .monaco-list-row:hover .volt-agent-home-row.is-session > .unread-dot {
 	visibility: hidden;
 }
