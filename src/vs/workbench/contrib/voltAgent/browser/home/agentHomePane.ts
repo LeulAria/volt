@@ -506,8 +506,9 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.container.classList.toggle('pinned', !!session.pinned);
 		template.container.classList.toggle('active-chat', this.host.isActiveChat(session.id));
 
-		// Flat rows start at the title: no glyph slot. The project is named on the second line instead.
-		template.container.classList.toggle('no-glyph', !element.nested);
+		// Agent tabs start at the title: no glyph slot. A flat row names its project on the second line;
+		// under a project the row steps in past the folder's icon instead (agentHomePane.css).
+		template.container.classList.add('no-glyph');
 		template.name.textContent = session.title || localize('voltAgent.home.untitled', "New Agent");
 		const oneLine = isOneLineSession(session);
 		const twoLine = this.host.twoLine && !oneLine;
