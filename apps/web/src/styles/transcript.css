@@ -271,3 +271,29 @@ button.tr-header:hover .tr-chevron, .tr-group.open > .tr-header .tr-chevron, .tr
 @media (hover: none) { .approval-btn { height: 30px; padding: 0 14px; } }
 .tray-plan .approval-line .icon { color: var(--icon3); }
 .tray-plan-body { max-height: 320px; overflow: auto; margin-top: 4px; padding-right: 4px; }
+
+/* Terminals (the desktop's Terminals tab) */
+.terminals-btn { position: relative; display: inline-flex; }
+.terminals-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--info); box-shadow: 0 0 0 1.5px var(--canvas); pointer-events: none; }
+.terminals { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.terminals-tabs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.terminals-tab { display: inline-flex; align-items: center; gap: 6px; flex: none; max-width: 220px; height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid transparent; background: var(--fill-faint); color: var(--fg2); font-size: 13px; }
+.terminals-tab span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.terminals-tab.active { background: var(--fill-strong); border-color: var(--stroke); color: var(--fg); }
+.terminal-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fg4); flex: none; }
+.terminal-dot.ready { background: var(--success); }
+.terminal-dot.attention { background: var(--warning); }
+.terminal-dot.failed { background: var(--danger); }
+.terminal-view { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.terminal-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; line-height: 20px; }
+.terminal-status { color: var(--fg2); }
+.terminal-status.failed { color: var(--danger); }
+.terminal-when { color: var(--fg4); }
+.terminal-spacer { flex: 1; }
+.terminal-url { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 999px; background: color-mix(in srgb, var(--link) 12%, transparent); color: var(--link); font-size: 12px; font-weight: 500; text-decoration: none; }
+.terminal-command { padding: 0; }
+.terminal-output { height: min(56vh, 520px); overflow: auto; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--stroke-faint); background: var(--card); }
+.terminal-output pre { margin: 0; font-family: var(--font-mono); font-size: 12px; line-height: 18px; color: var(--fg2); white-space: pre-wrap; word-break: break-word; }
+.terminal-exit { margin-top: 6px; font-family: var(--font-mono); font-size: 12px; color: var(--fg4); }
+.terminal-exit.failed, .terminal-error { color: var(--danger); }
+.terminal-error { font-size: 13px; line-height: 18px; white-space: pre-wrap; }

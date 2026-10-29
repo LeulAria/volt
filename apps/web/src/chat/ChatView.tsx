@@ -17,6 +17,7 @@ import { Button, EmptyState, Icon, IconButton, LiveTimer, Spinner, StatusIcon } 
 import { Composer } from './Composer';
 import { TranscriptRowView } from './Rows';
 import { ChatRowContext, type IChatRowContext, WorkedToggleContext } from './rowContext';
+import { TerminalsButton } from './Terminals';
 import { ApprovalCard, LimitTray, PausedTray, QuestionCard, QueueTray } from './Trays';
 
 const CHAT_COLLECTIONS = ['history', 'orch.threads', 'orch.tasks', 'sessions', 'access', 'questions', 'projects', 'runtime'];
@@ -288,6 +289,7 @@ export function ChatView({ chatId, variant = 'page', openPath }: IChatViewProps)
 								</div>
 							</div>
 							{running && thread?.active ? <span className="header-timer"><Spinner size={11} /><LiveTimer since={thread.active.at} /></span> : null}
+							<TerminalsButton chatId={chatId} />
 							<IconButton icon="fileDiff" label="Review changes" onClick={() => navigate(changesPath(chatId))} />
 							<IconButton icon="sidebar" label="Details" active={detailsOpen} onClick={toggleDetails} />
 							<MenuButton className="icon-btn" items={menu} placement="bottom-end" width={220} label="Chat actions"><Icon name="more" size={16} /></MenuButton>
