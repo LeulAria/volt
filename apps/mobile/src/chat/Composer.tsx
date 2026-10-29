@@ -5,7 +5,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
-	ACCESS_MODES, type AccessMode, catalogItem, COMPOSER_MODES, type ComposerMode, type Delivery, type IconName, type IMcpServerStatus, type IPromptAttachment, type IPromptMention, modelLabel
+	ACCESS_MODES, type AccessMode, catalogItem, compactNumber, COMPOSER_MODES, type ComposerMode, type Delivery, type IconName, type IMcpServerStatus, type IPromptAttachment, type IPromptMention, modelLabel
 } from '@volt/client-core';
 import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Platform, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -15,6 +15,7 @@ import { useAttachment, useClient, useRuntime } from '../state/client';
 import { useTheme } from '../theme/theme';
 import { haptic, Icon, Pill, T, Tap } from '../ui/core';
 import { ActionSheet, type ISheetAction } from '../ui/sheets';
+import Svg, { Circle } from 'react-native-svg';
 import { type IComposerImage, imageKey, imageOnlyPrompt, pickImages, uploadImage } from './attachments';
 import { fileFacts, fileKey, type IComposerFile, type IComposerMention, isSendableImage, MAX_FILES, pickFiles, promptParts, uploadFile } from './composerFiles';
 import { ComposerSuggest, type ISlashItem, type ITrigger, triggerAt } from './ComposerSuggest';
@@ -54,6 +55,9 @@ export interface IComposerProps {
 	readonly banner?: ReactNode;
 	/** Images can be attached (default true). */
 	readonly allowImages?: boolean;
+	/** The chat's context: tokens in use and the model's window (the desktop's context meter). */
+	readonly contextUsed?: number;
+	readonly contextWindow?: number;
 }
 
 export interface IComposerSendExtra {
@@ -367,6 +371,7 @@ export function Composer(props: IComposerProps) {
 							<Icon name={accessIcon(access.id)} size={16} color={access.id === 'full-access' ? p.warning : p.fgTertiary} />
 						</Tap>
 					</ScrollView>
+					{props.contextUsed && props.contextWindow ? <ContextRing used={props.contextUsed} size={props.contextWindow} /> : null}
 					{dictation.available ? <MicButton listening={dictation.listening} onPress={() => dictation.listening ? dictation.stop() : void dictation.start(text)} /> : null}
 					<Animated.View style={sendScale}>
 						{showStop ? (
@@ -423,6 +428,27 @@ const ComposerThumb = memo(function ComposerThumb({ image, onRemove }: { readonl
 		</Animated.View>
 	);
 });
+
+/**
+ * How full the chat's context is (agentEditor.css `.volt-agent-context-meter`): a ring that fills
+ * as the context does, amber past 80% and red past 95%; tap for the numbers.
+ */
+function ContextRing({ used, size }: { readonly used: number; readonly size: number }) {
+	const { p } = useTheme();
+	const client = useClient();
+	const share = Math.min(1, used / size);
+	const r = 6.5;
+	const c = 2 * Math.PI * r;
+	const color = share > 0.95 ? p.danger : share > 0.8 ? p.warning : p.fgTertiary;
+	return (
+		<Tap hitSlop={8} haptics="selection" onPress={() => client.toast('info', `Context: ${compactNumber(used)} of ${compactNumber(size)} tokens (${Math.round(share * 100)}%)`)} accessibilityLabel={`Context ${Math.round(share * 100)} percent full`} style={{ width: 26, height: 30, alignItems: 'center', justifyContent: 'center' }}>
+			<Svg width={16} height={16} viewBox="0 0 16 16">
+				<Circle cx={8} cy={8} r={r} stroke={p.fillStrong} strokeWidth={2} fill="none" />
+				<Circle cx={8} cy={8} r={r} stroke={color} strokeWidth={2} fill="none" strokeDasharray={`${c * share} ${c}`} strokeLinecap="round" transform="rotate(-90 8 8)" />
+			</Svg>
+		</Tap>
+	);
+}
 
 /** The mic: dictates into the box; red and pulsing while it listens (tap again to stop). */
 function MicButton({ listening, onPress }: { readonly listening: boolean; readonly onPress: () => void }) {

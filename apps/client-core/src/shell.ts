@@ -298,6 +298,12 @@ export function tokenizeShell(command: string): readonly IShellToken[] {
 			end++;
 		}
 		const word = command.slice(i, end);
+		if (expectCommand && /^[A-Za-z_]\w*=/.test(word)) {
+			// `FOO=1 cmd`: an assignment before the program; the program still comes next.
+			push('var', word);
+			i = end;
+			continue;
+		}
 		if (expectCommand) {
 			push(SHELL_KEYWORDS.has(word) ? 'kw' : SHELL_BUILTINS.has(word) ? 'builtin' : 'cmd', word);
 			expectCommand = word === 'sudo' || word === 'xargs' || word === 'nice' || word === 'nohup' || word === 'time' || word === 'env' || word === 'command';

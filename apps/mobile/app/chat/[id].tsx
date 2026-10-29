@@ -284,6 +284,8 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 							onAccessChange={m => void client.setAccessMode(m, chatId)}
 							onSend={send}
 							onStop={() => void client.stop(chatId)}
+							contextUsed={transcript?.contextUsed}
+							contextWindow={transcript?.contextWindow}
 							prefill={prefill}
 							placeholder={editing ? 'Edit your message…' : undefined}
 							banner={editing ? (

@@ -519,8 +519,9 @@ function isAnswerRow(row: TranscriptRow): boolean {
 		|| row.kind === 'cards' || row.kind === 'visual' || row.kind === 'answers' || row.kind === 'error';
 }
 
+/** Tool work: a turn with any folds it behind "Worked for" (reasoning alone does not). */
 function isWorkRow(row: TranscriptRow): boolean {
-	return row.kind === 'steps' || row.kind === 'subagents' || row.kind === 'file' || row.kind === 'thought';
+	return row.kind === 'steps' || row.kind === 'subagents' || row.kind === 'file';
 }
 
 function assistantRows(message: IAssistantMessage, mkey: string, index: number): IMessageRows {
@@ -576,6 +577,11 @@ function assistantRows(message: IAssistantMessage, mkey: string, index: number):
 
 	segments.forEach((segment, i) => {
 		const key = `${mkey}:${i}`;
+		// What draws nothing (hidden steps, a subagent's own activity, blank text) keeps parallel subagents together.
+		if ((segment.kind === 'activity' && (segment.item.hidden || (segment.item.callId && subagentCalls.has(segment.item.callId))))
+			|| ((segment.kind === 'text' || segment.kind === 'thought') && !segment.text.trim())) {
+			return;
+		}
 		if (segment.kind !== 'block' || segment.block.type !== 'tool' || !isSubagentCall(segment.block.name, segment.block.title)) {
 			flushSubagents();
 		}
