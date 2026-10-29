@@ -208,3 +208,6 @@ Build a small headless set of real tasks (10–20 repo tasks across short, multi
 cases). It runs against the agent server and scores pass/fail, steps, tokens and recoveries. Durability features
 can't be built on without being measured, and "agents lose hope after 2 hours" is exactly the kind of bug only this
 would catch.
+
+Start from the proof cases: every gated run is saved to `<user data>/voltProofs/cases.jsonl` with its request, project,
+contract and receipt (`ProofCaseJournal`). A replay sends the same request and scores it against the same contract.

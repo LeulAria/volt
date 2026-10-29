@@ -1,0 +1,257 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Proof of done: the receipt card under a run's answer. Same frame as the Answers card. */
+.volt-agent-receipt {
+	margin: 8px 0;
+	border-radius: 12px;
+	border: 1px solid rgba(240, 240, 241, 0.12);
+	background: rgba(255, 255, 255, 0.02);
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 8px 8px 10px;
+	font-size: 13px;
+	line-height: 18px;
+}
+
+.monaco-workbench.vs .volt-agent-receipt,
+.monaco-workbench.hc-light .volt-agent-receipt {
+	border-color: rgba(0, 0, 0, 0.1);
+	background: rgba(0, 0, 0, 0.015);
+}
+
+.volt-agent-receipt-header {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 20px;
+	line-height: 20px;
+}
+
+.volt-agent-receipt-verdict {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	flex: none;
+}
+
+.volt-agent-receipt-verdict .codicon {
+	font-size: 14px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-receipt.proven .volt-agent-receipt-verdict .codicon {
+	color: var(--vscode-testing-iconPassed);
+}
+
+.volt-agent-receipt.failed .volt-agent-receipt-verdict .codicon {
+	color: var(--vscode-testing-iconFailed);
+}
+
+.volt-agent-receipt-title {
+	color: var(--vscode-foreground);
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+.volt-agent-receipt-meta {
+	min-width: 0;
+	margin-left: auto;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-agent-receipt-lines {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 4px 0 0;
+	padding: 0 4px;
+	list-style: none;
+}
+
+.volt-agent-receipt-line {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-agent-receipt-status {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 18px;
+	flex: none;
+}
+
+.volt-agent-receipt-status .codicon {
+	font-size: 13px;
+	color: var(--vscode-descriptionForeground);
+	opacity: 0.7;
+}
+
+.volt-agent-receipt-line.proven .volt-agent-receipt-status .codicon {
+	color: var(--vscode-testing-iconPassed);
+	opacity: 1;
+}
+
+.volt-agent-receipt-line.failed .volt-agent-receipt-status .codicon {
+	color: var(--vscode-testing-iconFailed);
+	opacity: 1;
+}
+
+.volt-agent-receipt-line.stale .volt-agent-receipt-status .codicon {
+	color: var(--vscode-editorWarning-foreground);
+	opacity: 1;
+}
+
+.volt-agent-receipt-body {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	flex: 1;
+}
+
+.volt-agent-receipt-text {
+	color: var(--vscode-foreground);
+	overflow-wrap: anywhere;
+}
+
+.volt-agent-receipt-line.missing .volt-agent-receipt-text,
+.volt-agent-receipt-line.unavailable .volt-agent-receipt-text {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-receipt-proof {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-receipt-command {
+	flex: none;
+	max-width: 60%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	padding: 0 5px;
+	border-radius: 4px;
+	background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.12));
+	color: var(--vscode-foreground);
+	font-family: var(--monaco-monospace-font);
+	font-size: 11px;
+	line-height: 17px;
+}
+
+.volt-agent-receipt-command.copyable {
+	cursor: pointer;
+}
+
+.volt-agent-receipt-command.copyable:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.volt-agent-receipt-command:focus-visible,
+.volt-agent-receipt-file.openable:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.volt-agent-receipt-detail {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-receipt-line.failed .volt-agent-receipt-detail {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-receipt-section {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 6px 4px 0;
+	padding-top: 8px;
+	border-top: 1px solid rgba(240, 240, 241, 0.08);
+}
+
+.volt-agent-receipt-label {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	opacity: 0.8;
+}
+
+.volt-agent-receipt-note {
+	color: var(--vscode-foreground);
+	overflow-wrap: anywhere;
+}
+
+.volt-agent-receipt-note.gap::before {
+	content: '\2013\00a0';
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-receipt-files {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 6px;
+	margin: 6px 4px 0;
+	padding-top: 8px;
+	border-top: 1px solid rgba(240, 240, 241, 0.08);
+}
+
+.volt-agent-receipt-files .volt-agent-receipt-label {
+	margin-right: 2px;
+}
+
+.volt-agent-receipt-file,
+.volt-agent-receipt-more {
+	display: inline-flex;
+	align-items: center;
+	max-width: 220px;
+	height: 20px;
+	padding: 0 6px;
+	border-radius: 5px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.volt-agent-receipt-more {
+	background: none;
+}
+
+.volt-agent-receipt-file.openable {
+	cursor: pointer;
+}
+
+.volt-agent-receipt-file.openable:hover {
+	color: var(--vscode-foreground);
+}
+
+.monaco-workbench.vs .volt-agent-receipt-section,
+.monaco-workbench.hc-light .volt-agent-receipt-section,
+.monaco-workbench.vs .volt-agent-receipt-files,
+.monaco-workbench.hc-light .volt-agent-receipt-files {
+	border-top-color: rgba(0, 0, 0, 0.08);
+}

@@ -5,7 +5,7 @@
 
 import {
 	attachmentsOf, basename, compactNumber, dirname, duration, errorMessage, type IPromptAttachment, type IRestorePreview, type IRowImage, type IStepItem, money, pendingLabel,
-	type TranscriptRow, uuid
+	receiptHeadline, receiptStatus, type TranscriptRow, uuid
 } from '@volt/client-core';
 import { Fragment, memo, type ReactNode, useState } from 'react';
 import { useAttachment, useClient } from '../app/client';
@@ -412,6 +412,68 @@ function ChartRow({ row }: { readonly row: RowOf<'chart'> }) {
 	);
 }
 
+/** Proof of done under the answer: the verdict, each item with its proof, what is left, and the files changed. */
+function ReceiptRow({ row }: { readonly row: RowOf<'receipt'> }) {
+	const ctx = useChatRow();
+	const receipt = row.receipt;
+	const head = receiptHeadline(receipt);
+	const absolute = (path: string) => path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) ? path : ctx?.root ? `${ctx.root}/${path}` : undefined;
+	const more = receipt.changedCount - receipt.changed.length;
+	return (
+		<div className={`card row-receipt receipt-${receipt.verdict}`} role="group" aria-label={head.title}>
+			<div className="card-head receipt-head">
+				<Icon name={head.icon} size={14} className={`tone-${head.tone}`} />
+				<span>{head.title}</span>
+				<span className="receipt-meta" title={receipt.gated ? 'This run could only finish once its checks passed after its last edit.' : undefined}>{head.meta}</span>
+			</div>
+			<ul className="receipt-lines">
+				{receipt.lines.map((line, i) => {
+					const status = receiptStatus(line.status);
+					return (
+						<li key={i} className={`receipt-line status-${line.status}`}>
+							<span className={`receipt-mark tone-${status.tone}`} title={status.label} aria-label={status.label}><Icon name={status.icon} size={13} /></span>
+							<div className="receipt-body">
+								<div className="receipt-text">{line.source === 'agent' ? `Agent: \u201c${line.text}\u201d` : line.text}</div>
+								{line.command || line.detail ? (
+									<div className="receipt-proof">
+										{line.command ? <button type="button" className="receipt-command" title="Copy command" onClick={() => copyText(line.command!)}>{line.command}</button> : null}
+										{line.detail ? <span className="receipt-detail" title={line.detail}>{line.detail}</span> : null}
+									</div>
+								) : null}
+							</div>
+						</li>
+					);
+				})}
+			</ul>
+			{receipt.review && (receipt.review.summary || receipt.review.gaps.length) ? (
+				<div className="receipt-section">
+					<div className="receipt-label">Second opinion</div>
+					{receipt.review.summary ? <div className="receipt-note">{receipt.review.summary}</div> : null}
+					{receipt.review.gaps.map((gap, i) => <div key={i} className="receipt-note receipt-gap">{gap}</div>)}
+				</div>
+			) : null}
+			{receipt.open.length ? (
+				<div className="receipt-section">
+					<div className="receipt-label">Left open</div>
+					{receipt.open.map((entry, i) => <div key={i} className="receipt-note">{entry}</div>)}
+				</div>
+			) : null}
+			{receipt.changedCount ? (
+				<div className="receipt-files">
+					<span className="receipt-label">{receipt.changedCount === 1 ? '1 file changed' : `${receipt.changedCount} files changed`}</span>
+					{receipt.changed.map(path => {
+						const target = absolute(path);
+						return target
+							? <button key={path} type="button" className="receipt-file" title={path} onClick={() => openTab({ name: 'file', path: target })}>{basename(path)}</button>
+							: <span key={path} className="receipt-file" title={path}>{basename(path)}</span>;
+					})}
+					{more > 0 ? <span className="receipt-more">+{more} more</span> : null}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
 function FooterRow({ row }: { readonly row: RowOf<'footer'> }) {
 	const client = useClient();
 	const ctx = useChatRow();
@@ -498,6 +560,8 @@ export const TranscriptRowView = memo(function TranscriptRowView({ row, chatId }
 					{row.note ? <div className="answer-note">{row.note}</div> : null}
 				</div>
 			);
+		case 'receipt':
+			return <ReceiptRow row={row} />;
 		case 'notice':
 			return (
 				<div className={`row-notice notice-${row.severity}`}>

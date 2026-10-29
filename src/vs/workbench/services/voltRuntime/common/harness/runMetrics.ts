@@ -65,6 +65,15 @@ export interface IRunEvidence {
 	readonly changedFiles: number;
 	/** `doom → nudge: worked (read_file)`, one per recovery. */
 	readonly lessons: readonly string[];
+	/** The run's proof-of-done receipt, reduced to what a benchmark compares. */
+	readonly receipt?: {
+		readonly verdict: 'proven' | 'partial' | 'failed';
+		readonly proven: number;
+		readonly total: number;
+		readonly gated: boolean;
+		readonly sentBack: number;
+		readonly review?: 'pass' | 'fail';
+	};
 }
 
 export interface IRunMetrics {

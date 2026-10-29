@@ -323,7 +323,26 @@ export type AgentBlock =
 	| (IBaseBlock & { readonly type: 'approval'; readonly requestId: string; readonly action: string; readonly resource: string; readonly risk: string; readonly reason?: string; readonly decision?: 'allow' | 'deny'; readonly scope?: 'once' | 'always'; readonly blocked?: boolean })
 	| (IBaseBlock & { readonly type: 'answers'; readonly requestId: string; readonly outcome: 'answered' | 'skipped' | 'cancelled'; readonly items: readonly { readonly question: string; readonly answer: string }[]; readonly note?: string })
 	| (IBaseBlock & { readonly type: 'plan'; readonly callId?: string; readonly name?: string; readonly markdown: string; readonly openQuestions?: readonly string[] })
-	| (IBaseBlock & { readonly type: 'visual'; readonly kind: 'chart' | 'html'; readonly title: string; readonly ref: string });
+	| (IBaseBlock & { readonly type: 'visual'; readonly kind: 'chart' | 'html'; readonly title: string; readonly ref: string })
+	| (IBaseBlock & { readonly type: 'receipt'; readonly runId: string; readonly receipt: IReceiptJson });
+
+/**
+ * Where a proof-of-done item stands. `stale`: it passed before the last edit; `claimed`: nothing
+ * could run it and no second opinion settled it; `unavailable`: the project has no command for it.
+ */
+export type ProofStatus = 'proven' | 'failed' | 'stale' | 'missing' | 'claimed' | 'unavailable';
+
+/** A run's proof-of-done receipt, as the desktop's `IRunReceipt` sends it. */
+export interface IReceiptJson {
+	readonly verdict: 'proven' | 'partial' | 'failed';
+	readonly lines: readonly { readonly text: string; readonly kind: string; readonly status: ProofStatus; readonly source: 'user' | 'volt' | 'agent'; readonly command?: string; readonly detail?: string }[];
+	readonly changed: readonly string[];
+	readonly changedCount: number;
+	readonly open: readonly string[];
+	readonly review?: { readonly verdict: 'pass' | 'fail'; readonly summary: string; readonly gaps: readonly string[] };
+	readonly gated: boolean;
+	readonly sentBack: number;
+}
 
 export type ActivityKind = 'thought' | 'read' | 'search' | 'note' | 'wait' | 'browser';
 
