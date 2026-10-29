@@ -261,7 +261,7 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 						{approvals.length || questions.length || thread?.limit || (thread?.queue.length ?? 0) > 0 || tasks.length ? (
 							<View style={{ paddingHorizontal: 16, gap: 8 }}>
 								<SubagentsTray chatId={chatId} />
-								{approvals.map(request => <ApprovalCard key={request.id} request={request} />)}
+								{approvals.map(request => <ApprovalCard key={request.id} request={request} onBuildPlan={() => setMode('Agent')} />)}
 								{questions[0] ? <QuestionCard key={questions[0].id} request={questions[0]} /> : null}
 								{thread?.limit ? <LimitBanner chatId={chatId} thread={thread} /> : null}
 								{thread && !thread.active && thread.pause && thread.pause !== 'limit' && thread.queue.length ? <PausedBanner chatId={chatId} thread={thread} /> : null}

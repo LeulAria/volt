@@ -296,7 +296,7 @@ export function ChatView({ chatId, variant = 'page', openPath }: IChatViewProps)
 					<Transcript chatId={chatId} />
 					<div className="chat-bottom">
 						<div className="trays">
-							{approvals.map(request => <ApprovalCard key={request.id} request={request} />)}
+							{approvals.map(request => <ApprovalCard key={request.id} request={request} onBuildPlan={() => setMode('Agent')} />)}
 							{questions[0] ? <QuestionCard key={questions[0].id} request={questions[0]} /> : null}
 							{thread?.limit ? <LimitTray chatId={chatId} thread={thread} /> : null}
 							{thread && !thread.active && thread.pause && thread.pause !== 'limit' && thread.queue.length ? <PausedTray chatId={chatId} thread={thread} /> : null}

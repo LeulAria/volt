@@ -269,3 +269,5 @@ button.tr-header:hover .tr-chevron, .tr-group.open > .tr-header .tr-chevron, .tr
 .approval-btn.primary { background: var(--approve); color: var(--on-approve); }
 .approval-btn.primary:hover { background: color-mix(in srgb, #f0f0f0 10%, var(--approve)); }
 @media (hover: none) { .approval-btn { height: 30px; padding: 0 14px; } }
+.tray-plan .approval-line .icon { color: var(--icon3); }
+.tray-plan-body { max-height: 320px; overflow: auto; margin-top: 4px; padding-right: 4px; }

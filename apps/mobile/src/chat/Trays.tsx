@@ -3,13 +3,14 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { clockTime, firstLine, type IAccessRequest, type IOrchThread, type IQuestionRequest } from '@volt/client-core';
+import { clockTime, firstLine, type IAccessRequest, type IOrchThread, type IQuestionRequest, questionApproval } from '@volt/client-core';
 import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Animated, { FadeInDown, FadeOutDown } from 'react-native-reanimated';
 import { useClient } from '../state/client';
 import { FONT, useTheme } from '../theme/theme';
 import { Button, haptic, Icon, IconButton, T, Tap } from '../ui/core';
+import { Markdown } from './Markdown';
 
 const ACTION_TITLES: Record<string, string> = {
 	shell: 'Run a command', edit: 'Edit a file', read: 'Read a file', search: 'Search the project', web: 'Open a web page', network: 'Use the network',
@@ -42,7 +43,50 @@ function ApprovalButton({ label, kind, busy, onPress }: { readonly label: string
  * action, then its target in the quaternary tone), the command or path in a mono box, why, and
  * Deny / Always allow / Allow at its foot.
  */
-export function ApprovalCard({ request }: { readonly request: IAccessRequest }) {
+export function ApprovalCard({ request, onBuildPlan }: { readonly request: IAccessRequest; readonly onBuildPlan?: () => void }) {
+	const question = questionApproval(request);
+	return question ? <PlanCard request={request} question={question} onBuildPlan={onBuildPlan} /> : <PermissionCard request={request} />;
+}
+
+/** A plan waiting for Build (the chat goes on in Agent mode) or Keep planning; or a yes/no question. */
+function PlanCard({ request, question, onBuildPlan }: { readonly request: IAccessRequest; readonly question: NonNullable<ReturnType<typeof questionApproval>>; readonly onBuildPlan?: () => void }) {
+	const { p } = useTheme();
+	const client = useClient();
+	const [busy, setBusy] = useState(false);
+	const [open, setOpen] = useState(false);
+	const decide = async (effect: 'allow' | 'deny') => {
+		setBusy(true);
+		await client.respondToApproval(request.id, effect, 'once');
+		if (effect === 'allow' && question.plan) {
+			onBuildPlan?.();
+		}
+		setBusy(false);
+	};
+	return (
+		<Animated.View entering={FadeInDown.duration(160)} exiting={FadeOutDown.duration(140)} style={[trayStyle(p), { padding: 0 }]}>
+			<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingTop: 10 }}>
+				<Icon name={question.plan ? 'book' : 'help'} size={14} color={p.iconTertiary} />
+				<Text numberOfLines={1} style={{ flex: 1, fontSize: 14, lineHeight: 22, fontWeight: '500', color: p.fgSecondary }}>{question.title}</Text>
+			</View>
+			{question.markdown ? (
+				<Tap haptics="selection" onPress={() => setOpen(o => !o)} style={{ paddingHorizontal: 12, paddingTop: 4 }}>
+					<View style={{ maxHeight: open ? 420 : 132, overflow: 'hidden' }}>
+						<ScrollView nestedScrollEnabled scrollEnabled={open}>
+							<Markdown text={question.markdown} />
+						</ScrollView>
+					</View>
+					<Text style={{ fontSize: 12, lineHeight: 20, fontWeight: '500', color: p.fgTertiary }}>{open ? 'Show less' : 'Read the whole plan'}</Text>
+				</Tap>
+			) : null}
+			<View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6, paddingHorizontal: 12, paddingVertical: 10 }}>
+				<ApprovalButton label={question.plan ? 'Keep planning' : 'Decline'} kind="secondary" busy={busy} onPress={() => void decide('deny')} />
+				<ApprovalButton label={question.plan ? 'Build' : 'Approve'} kind="primary" busy={busy} onPress={() => void decide('allow')} />
+			</View>
+		</Animated.View>
+	);
+}
+
+function PermissionCard({ request }: { readonly request: IAccessRequest }) {
 	const { p } = useTheme();
 	const client = useClient();
 	const [busy, setBusy] = useState<string | undefined>();

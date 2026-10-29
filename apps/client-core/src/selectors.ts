@@ -442,3 +442,17 @@ export const PROVIDER_COLORS: Readonly<Record<string, string>> = {
 };
 
 //#endregion
+
+/**
+ * An approval that is the agent asking, not a permission (`action: 'question'`): a plan waiting
+ * for Build or Keep planning, or a yes/no question. The desktop draws it as the plan itself
+ * (agentBlockRenderers.ts renderQuestionBlock).
+ */
+export function questionApproval(request: IAccessRequest): { readonly plan: boolean; readonly title: string; readonly markdown: string } | undefined {
+	if (request.action !== 'question') {
+		return undefined;
+	}
+	const markdown = request.resource?.value ?? request.preview?.detail ?? '';
+	const plan = /plan/i.test(request.reason ?? '') || /^\s*#/.test(markdown);
+	return { plan, title: plan ? 'Plan ready' : request.reason || 'Question', markdown };
+}
