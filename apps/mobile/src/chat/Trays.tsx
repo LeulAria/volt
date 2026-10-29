@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { clockTime, firstLine, type IAccessRequest, type IOrchQueueItem, type IOrchThread, type IQuestionRequest, questionApproval, queuedText, RADIUS } from '@volt/client-core';
+import { clockTime, firstLine, type IAccessRequest, type IOrchQueueItem, type IOrchThread, type IQuestionRequest, questionApproval, queuedText } from '@volt/client-core';
 import { useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Animated, { FadeInDown, FadeOutDown } from 'react-native-reanimated';

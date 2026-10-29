@@ -5,7 +5,7 @@
 
 import { applyToolDensity, buildRows, type TranscriptRow } from '@volt/client-core';
 import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, Platform, StyleSheet, View, type ViewProps, type ViewToken } from 'react-native';
+import { FlatList, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, Platform, StyleSheet, View, type ViewProps } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { usePending, useTranscript } from '../state/client';
 import { useConversationPrefs } from '../state/prefs';

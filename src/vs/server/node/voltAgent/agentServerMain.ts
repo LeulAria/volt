@@ -65,7 +65,6 @@ import { AgentTurnHostContribution } from '../../../workbench/contrib/voltAgent/
 import { AgentThreadToolService } from '../../../workbench/contrib/voltAgent/browser/orchestration/agentThreadToolService.js';
 import { IAgentChatForkService } from '../../../workbench/contrib/voltAgent/browser/orchestration/agentChatFork.js';
 import { AgentChatSearchService, IAgentChatSearchService } from '../../../workbench/contrib/voltAgent/browser/search/agentChatSearchService.js';
-import { AgentRunGroupService } from '../../../workbench/contrib/voltAgent/browser/runGroups/agentRunGroupService.js';
 import { IAgentRunGroupService } from '../../../workbench/services/voltRuntime/common/runGroups/runGroups.js';
 import { AgentWorkspaceMover } from '../../../workbench/contrib/voltAgent/browser/orchestration/agentWorkspaceMover.js';
 import { CHECKPOINT_BEGIN_TURN_COMMAND_ID, IAgentCheckpointService } from '../../../workbench/contrib/voltAgent/browser/review/agentCheckpointService.js';
@@ -124,7 +123,6 @@ import { ProjectEnvVoltStdioService } from '../../../workbench/services/voltRunt
 import { AutomationService } from '../../../workbench/contrib/voltAgent/browser/automations/automationService.js';
 import { IAutomationService } from '../../../workbench/services/voltRuntime/common/automations/automations.js';
 import { ServerAgentRunGroupService } from './serverRunGroups.js';
-import { IAgentRunGroupService } from '../../../workbench/services/voltRuntime/common/runGroups/runGroups.js';
 import { IPairingHttpContext, machineLabel, ServerPairing } from './serverPairing.js';
 import { ServerWorkbench } from './serverWorkbench.js';
 import { ServerRender } from './serverRender.js';
@@ -324,7 +322,7 @@ export async function main(argv: string[]): Promise<void> {
 	// The thread tools (send to, wait for, fork and search other chats) and what they use: served
 	// here so agents coordinating chats work with no window open.
 	services.set(IAgentChatSearchService, new SyncDescriptor(AgentChatSearchService));
-	services.set(IAgentRunGroupService, new SyncDescriptor(AgentRunGroupService));
+	services.set(IAgentRunGroupService, new SyncDescriptor(ServerAgentRunGroupService));
 	services.set(IAgentChatForkService, new SyncDescriptor(AgentThreadToolService));
 	// It watches each chat's work tree itself (the server has no workspace folders), so unchanged projects reuse the last snapshot.
 	services.set(IAgentCheckpointService, new SyncDescriptor(ServerAgentCheckpointService));
@@ -333,7 +331,6 @@ export async function main(argv: string[]): Promise<void> {
 	services.set(IVoltMemoryService, new SyncDescriptor(VoltMemoryService));
 	// Scheduled automations fire here, so they run with no window open (windows claim the same slots, so each runs once).
 	services.set(IAutomationService, new SyncDescriptor(AutomationService));
-	services.set(IAgentRunGroupService, new SyncDescriptor(ServerAgentRunGroupService));
 
 	const instantiationService = disposables.add(new InstantiationService(services, true));
 	services.set(IInstantiationService, instantiationService);
