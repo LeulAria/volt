@@ -28,6 +28,9 @@ export interface IChatRowContext {
 
 export const ChatRowContext = createContext<IChatRowContext | undefined>(undefined);
 
+/** Opens or folds a finished turn's "Worked for" (the transcript keeps which are open). */
+export const WorkedToggleContext = createContext<((turnKey: string, open: boolean) => void) | undefined>(undefined);
+
 export function useChatRow(): IChatRowContext | undefined {
 	return useContext(ChatRowContext);
 }

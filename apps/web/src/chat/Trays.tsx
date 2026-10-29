@@ -38,15 +38,13 @@ export function ApprovalCard({ request }: { readonly request: IAccessRequest }) 
 	const risky = request.risk === 'high' || request.risk === 'critical';
 	return (
 		<div className={`tray tray-approval${risky ? ' risky' : ''}`}>
-			<div className="tray-eyebrow"><Icon name="shieldAlert" size={13} />Approval needed{request.risk && request.risk !== 'safe' ? <span className={`risk risk-${request.risk}`}>{request.risk} risk</span> : null}</div>
-			<div className="tray-title">{approvalTitle(request)}</div>
+			<div className="approval-line"><Icon name="shieldAlert" size={14} /><span className="approval-action">{approvalTitle(request)}</span>{request.risk && request.risk !== 'safe' ? <span className={`approval-detail risk-${request.risk}`}>{request.risk} risk</span> : null}</div>
 			{detail ? <pre className="tray-detail">{detail}</pre> : null}
 			{request.reason ? <div className="tray-reason">{request.reason}</div> : null}
-			<div className="tray-actions">
-				<Button variant="primary" size="sm" busy={busy === 'once'} onClick={() => void answer('once', 'allow', 'once')}>Allow once</Button>
-				<Button size="sm" busy={busy === 'always'} onClick={() => void answer('always', 'allow', 'always')}>Always allow</Button>
-				<span className="tray-spacer" />
-				<Button variant="danger" size="sm" busy={busy === 'deny'} onClick={() => void answer('deny', 'deny', 'once')}>Deny</Button>
+			<div className="tray-actions approval-footer">
+				<button type="button" className="approval-btn text" disabled={!!busy} onClick={() => void answer('deny', 'deny', 'once')}>Deny</button>
+				<button type="button" className="approval-btn secondary" disabled={!!busy} onClick={() => void answer('always', 'allow', 'always')}>Always allow</button>
+				<button type="button" className="approval-btn primary" disabled={!!busy} onClick={() => void answer('once', 'allow', 'once')}>Allow</button>
 			</div>
 		</div>
 	);

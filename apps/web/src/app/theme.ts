@@ -66,7 +66,7 @@ function vars(p: IVoltPalette): string {
 		['bubble', p.bubble], ['bubble-border', p.bubbleBorder], ['fg', p.fg], ['fg2', p.fgSecondary], ['fg3', p.fgTertiary], ['fg4', p.fgQuaternary],
 		['stroke', p.stroke], ['stroke-faint', p.strokeFaint], ['fill', p.fill], ['fill-faint', p.fillFaint], ['fill-strong', p.fillStrong],
 		['accent', p.accent], ['link', p.link], ['success', p.success], ['danger', p.danger], ['warning', p.warning], ['info', p.info], ['violet', p.violet],
-		['primary', p.primary], ['on-primary', p.onPrimary], ['code-bg', p.codeBg], ['diff-add', p.diffAdded], ['diff-del', p.diffRemoved],
+		['primary', p.primary], ['on-primary', p.onPrimary], ['code-bg', p.codeBg], ['card', p.card], ['icon3', p.iconTertiary], ['approve', p.approve], ['on-approve', p.onApprove], ['diff-add', p.diffAdded], ['diff-del', p.diffRemoved],
 		['diff-add-fg', p.diffAddedFg], ['diff-del-fg', p.diffRemovedFg], ['overlay', p.overlay], ['shadow', p.shadow],
 	];
 	const syntax = Object.entries(p.syntax).map(([k, v]) => `--syn-${k}:${v};`).join('');

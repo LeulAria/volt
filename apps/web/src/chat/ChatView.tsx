@@ -16,7 +16,7 @@ import { ConfirmDialog, type IMenuItem, MenuButton, PromptDialog } from '../ui/o
 import { Button, EmptyState, Icon, IconButton, LiveTimer, Spinner, StatusIcon } from '../ui/primitives';
 import { Composer } from './Composer';
 import { TranscriptRowView } from './Rows';
-import { ChatRowContext, type IChatRowContext } from './rowContext';
+import { ChatRowContext, type IChatRowContext, WorkedToggleContext } from './rowContext';
 import { ApprovalCard, LimitTray, PausedTray, QuestionCard, QueueTray } from './Trays';
 
 const CHAT_COLLECTIONS = ['history', 'orch.threads', 'orch.tasks', 'sessions', 'access', 'questions', 'projects', 'runtime'];
@@ -26,7 +26,32 @@ function Transcript({ chatId }: { readonly chatId: string }) {
 	const transcript = useTranscript(chatId);
 	const pending = usePending(chatId);
 	const { toolDensity } = useConversationPrefs();
-	const rows = useMemo(() => applyToolDensity(buildRows(transcript?.messages ?? [], pending), toolDensity), [transcript?.messages, pending, toolDensity]);
+	// "Worked for" folds: turns watched while they ran start open (as on the desktop) unless folded.
+	const [openWorked, setOpenWorked] = useState<ReadonlySet<string>>(() => new Set());
+	const [closedWorked, setClosedWorked] = useState<ReadonlySet<string>>(() => new Set());
+	const watched = useRef(new Set<string>());
+	const toggleWorked = useCallback((turnKey: string, open: boolean) => {
+		const flip = (set: ReadonlySet<string>, add: boolean) => {
+			const next = new Set(set);
+			if (add) {
+				next.add(turnKey);
+			} else {
+				next.delete(turnKey);
+			}
+			return next;
+		};
+		setOpenWorked(prev => flip(prev, open));
+		setClosedWorked(prev => flip(prev, !open));
+	}, []);
+	const rows = useMemo(() => {
+		const messages = transcript?.messages ?? [];
+		const last = messages[messages.length - 1];
+		if (last?.kind === 'agent' && last.activity?.streaming) {
+			watched.current.add(`a:${last.id ?? `i${messages.length - 1}`}`);
+		}
+		const open = watched.current.size ? new Set([...watched.current, ...openWorked]) : openWorked;
+		return applyToolDensity(buildRows(messages, pending, { openWorked: open, closedWorked }), toolDensity);
+	}, [transcript?.messages, pending, toolDensity, openWorked, closedWorked]);
 	const scroller = useRef<HTMLDivElement>(null);
 	const content = useRef<HTMLDivElement>(null);
 	const stuck = useRef(true);
@@ -82,11 +107,13 @@ function Transcript({ chatId }: { readonly chatId: string }) {
 					</div>
 				) : null}
 				{transcript?.status === 'error' && !rows.length ? <EmptyState icon="alertCircle" title="Couldn't open this chat" body={transcript.error} /> : null}
-				{rows.map(row => (
-					<div key={row.key} className={`trow trow-${row.kind}`}>
-						<TranscriptRowView row={row} chatId={chatId} />
-					</div>
-				))}
+				<WorkedToggleContext.Provider value={toggleWorked}>
+					{rows.map(row => (
+						<div key={row.key} className={`trow trow-${row.kind}`}>
+							<TranscriptRowView row={row} chatId={chatId} />
+						</div>
+					))}
+				</WorkedToggleContext.Provider>
 			</div>
 			{!atBottom ? <button type="button" className="jump" onClick={jump} aria-label="Jump to latest"><Icon name="arrowDown" size={15} /></button> : null}
 		</div>
