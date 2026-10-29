@@ -39,6 +39,7 @@ import { ITextEditorService } from '../../../../services/textfile/common/textEdi
 import { AgentResourceScopeKind, agentResourceScopeKind } from '../../common/agentResources.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createAgentScrollable } from '../editor/agentScrollable.js';
+import { createHomeSearchIcon } from '../home/agentHomeIcons.js';
 import { AgentMarketplaceView, IAgentMarketplaceScope } from '../customize/agentMarketplaceView.js';
 import { createVoltDropdown } from '../ui/dropdown/voltDropdown.js';
 import { AgentSurfaceHost } from '../workspace/agentSurfaceHost.js';
@@ -191,7 +192,6 @@ export class AgentResourcesEditor extends EditorPane {
 	private mainEl!: HTMLElement;
 	private navList!: WorkbenchList<INavRow>;
 	private navHost!: HTMLElement;
-	private folderHost!: HTMLElement;
 	private titleEl!: HTMLElement;
 	private leadEl!: HTMLElement;
 	private toolbarEl!: HTMLElement;
@@ -248,7 +248,6 @@ export class AgentResourcesEditor extends EditorPane {
 		const brand = append(nav, $('.volt-ares-brand'));
 		append(brand, $('.volt-ares-brand-title')).textContent = localize('agentResources.title', "Agent Resources");
 		append(brand, $('.volt-ares-brand-lead')).textContent = localize('agentResources.brandLead', "Inspect, configure and extend your agents.");
-		this.folderHost = append(nav, $('.volt-ares-folder'));
 		this.navHost = append(nav, $('.volt-ares-nav-list'));
 		this.navList = this._register(this.instantiationService.createInstance(WorkbenchList<INavRow>, 'VoltAgentResourcesNav', this.navHost, new NavDelegate(), [new NavRenderer()], {
 			identityProvider: { getId: (row: INavRow) => row.section.id },
@@ -268,7 +267,8 @@ export class AgentResourcesEditor extends EditorPane {
 		this.leadEl = append(heading, $('.volt-ares-lead'));
 		this.toolbarEl = append(header, $('.volt-ares-toolbar'));
 		const search = append(this.toolbarEl, $('.volt-customize-search.volt-ares-search'));
-		search.appendChild(renderIcon(Codicon.search));
+		// The agent sidebar's own magnifier, as on every Volt search field.
+		search.appendChild(createHomeSearchIcon());
 		this.searchInput = append(search, $('input.volt-customize-search-input')) as HTMLInputElement;
 		this.searchInput.type = 'text';
 		this.searchInput.spellcheck = false;
@@ -531,23 +531,6 @@ export class AgentResourcesEditor extends EditorPane {
 				this.render();
 			},
 		}, this.chromeStore);
-		clearNode(this.folderHost);
-		const folders = this.workspaceService.getWorkspace().folders.map(folder => folder.uri);
-		if (this.extraFolder && !folders.some(folder => folder.toString() === this.extraFolder!.toString())) {
-			folders.push(this.extraFolder);
-		}
-		if (folders.length) {
-			createVoltDropdown(this.folderHost, this.contextViewService, {
-				options: folders.map(folder => ({ id: folder.toString(), label: basename(folder), description: folder.fsPath, icon: Codicon.folder })),
-				value: (this.folder ?? folders[0]).toString(),
-				ariaLabel: localize('agentResources.folder', "Project"),
-				width: 300,
-				onChange: value => {
-					this.folder = folders.find(folder => folder.toString() === value);
-					this.load();
-				},
-			}, this.chromeStore);
-		}
 	}
 
 	//#endregion

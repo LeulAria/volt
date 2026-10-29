@@ -27,6 +27,7 @@ import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { kindInfo } from '../customize/agentCustomize.js';
 import { itemNameError, showCustomizeConfirmDialog, showCustomizeInputDialog } from '../customize/agentCustomizeDialogs.js';
 import { IAgentCustomizeService } from '../customize/agentCustomizeService.js';
+import { createHomeSearchIcon } from '../home/agentHomeIcons.js';
 import { createVoltDropdown } from '../ui/dropdown/voltDropdown.js';
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { createSurfaceStrokeIcon } from '../workspace/agentSurfaceMenu.js';
@@ -234,11 +235,11 @@ export class AgentResourcesSections {
 	}
 
 	/** Customize's pills: `primary` is the white one (Customize's Manage), `secondary` outlined, `ghost` text only. */
-	private button(parent: HTMLElement, label: string, run: (anchor: HTMLElement) => void, kind: 'primary' | 'secondary' | 'ghost' = 'secondary', icon?: ThemeIcon): void {
+	private button(parent: HTMLElement, label: string, run: (anchor: HTMLElement) => void, kind: 'primary' | 'secondary' | 'ghost' = 'secondary', icon?: ThemeIcon | (() => HTMLElement)): void {
 		const button = append(parent, $(`button.volt-ares-btn.${kind}`)) as HTMLButtonElement;
 		button.type = 'button';
 		if (icon) {
-			button.appendChild(renderIcon(icon));
+			button.appendChild(ThemeIcon.isThemeIcon(icon) ? renderIcon(icon) : icon());
 		}
 		append(button, $('span')).textContent = label;
 		this.ctx.store.add(addDisposableListener(button, 'click', () => run(button)));
@@ -459,7 +460,7 @@ export class AgentResourcesSections {
 			? localize('agentResources.scriptsLead', "{0} of these run scripts. Read a skill's files before you trust it.", withScripts)
 			: localize('agentResources.skillsLead2', "Each skill is a folder with a SKILL.md. Agents load it when its description matches the task."), items.length);
 		this.button(block.actions, localize('agentResources.newSkill', "New Skill"), anchor => this.showCreateMenu(anchor, this.folderCreatables('skills', SKILL_DIRS.map(dir => ({ dir, file: '{name}/SKILL.md' })), name => kindInfo('skill').template(name)), localize('agentResources.newSkill', "New Skill")), 'primary', Codicon.add);
-		this.button(block.actions, localize('agentResources.discover', "Discover"), () => this.ctx.navigate('marketplace'), 'ghost', Codicon.search);
+		this.button(block.actions, localize('agentResources.discover', "Discover"), () => this.ctx.navigate('marketplace'), 'ghost', createHomeSearchIcon);
 		this.scopedLists(block.body, items, {
 			name: item => item.name || agentResourceName(item),
 			chips: item => {
@@ -609,7 +610,7 @@ export class AgentResourcesSections {
 			detail: item => item.servers ? (item.servers.length ? item.servers.map(server => server.name).join(', ') : localize('agentResources.noServersInFile', "No servers")) : item.description || item.kind,
 		}, localize('agentResources.noConfigFiles', "No MCP configuration files."));
 		const external = this.block(container, localize('agentResources.pluginsExtensions', "Plugins & extensions"), localize('agentResources.pluginsLead', "Bundles installed through Volt, Claude Code, Cursor or Gemini CLI. Their manager owns them."), plugins.length);
-		this.button(external.actions, localize('agentResources.browse', "Browse"), () => this.ctx.navigate('marketplace'), 'ghost', Codicon.search);
+		this.button(external.actions, localize('agentResources.browse', "Browse"), () => this.ctx.navigate('marketplace'), 'ghost', createHomeSearchIcon);
 		this.scopedLists(external.body, plugins, { name: item => item.source ? `${item.source} · ${agentResourceName(item)}` : agentResourceName(item) }, localize('agentResources.noPlugins', "No plugins or extensions installed."));
 	}
 

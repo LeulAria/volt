@@ -64,18 +64,6 @@
 	color: var(--volt-ares-muted);
 }
 
-.volt-ares-folder {
-	padding: 0 12px 12px;
-}
-
-.volt-ares-folder:empty {
-	display: none;
-}
-
-.volt-ares-folder > .volt-dropdown {
-	width: 100%;
-}
-
 .volt-ares-nav-list {
 	flex: none;
 }
@@ -197,6 +185,26 @@
 
 .volt-ares-scope {
 	flex: none;
+}
+
+/* The agent sidebar's magnifier (createHomeSearchIcon), in the search field and on buttons. */
+.volt-ares-search > span {
+	display: inline-flex;
+	flex: none;
+}
+
+.volt-ares-search svg {
+	width: 15px;
+	height: 15px;
+}
+
+.volt-ares-btn > span:first-child:not(:last-child) {
+	display: inline-flex;
+}
+
+.volt-ares-btn svg {
+	width: 14px;
+	height: 14px;
 }
 
 .volt-ares-market-header {
@@ -962,7 +970,6 @@
 	}
 
 	.volt-ares-brand,
-	.volt-ares-folder,
 	.volt-ares-nav-label,
 	.volt-ares-nav-count,
 	.volt-ares-nav-issues {
