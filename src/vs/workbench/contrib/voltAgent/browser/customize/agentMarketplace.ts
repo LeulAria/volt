@@ -605,7 +605,8 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 		} else {
 			throw new Error(localize('voltMarketplace.unsupportedSource', "Volt can't install plugins from {0} sources yet.", source.label));
 		}
-		void this.customize.refresh();
+		// Listeners read the marketplaces again, and a plugin counts as installed once Customize has seen its folder.
+		await this.customize.refresh().catch(() => undefined);
 		this._onDidChange.fire();
 		return target;
 	}
@@ -619,7 +620,7 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 		if (await this.fileService.exists(target)) {
 			await this.fileService.del(target, { recursive: true, useTrash: true });
 		}
-		void this.customize.refresh();
+		await this.customize.refresh().catch(() => undefined);
 		this._onDidChange.fire();
 	}
 

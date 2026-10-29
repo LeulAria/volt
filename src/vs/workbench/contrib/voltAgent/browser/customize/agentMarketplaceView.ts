@@ -648,8 +648,7 @@ export class AgentMarketplaceView extends Disposable {
 
 	private renderSearch(): void {
 		const query = this.query;
-		const plugins = (this.marketplaces ?? []).flatMap(marketplace => marketplace.plugins.filter(plugin =>
-			`${plugin.name} ${plugin.description} ${plugin.author} ${plugin.category ?? ''}`.toLowerCase().includes(query.toLowerCase())));
+		const plugins = rankPlugins((this.marketplaces ?? []).flatMap(marketplace => marketplace.plugins), query);
 		if (query.length < 2) {
 			this.message(localize('voltMarketplace.typeMore', "Type at least two characters to search skills.sh."));
 		} else if (!this.searchResults) {
@@ -1247,4 +1246,40 @@ export class AgentMarketplaceView extends Disposable {
 
 function sameFilter(a: MarketplaceFilter, b: MarketplaceFilter): boolean {
 	return a.kind === b.kind && (a.kind !== 'marketplace' || a.name === (b as { name: string }).name);
+}
+
+/**
+ * The plugins that match `query`, best first: the name itself, a name that starts with it, a name
+ * that holds it, then the category, then the description or author. A marketplace of 300 plugins
+ * mentions "review" in dozens of descriptions; code-review and pr-review-toolkit come first.
+ */
+export function rankPlugins(plugins: readonly IMarketplacePlugin[], query: string): IMarketplacePlugin[] {
+	const q = query.trim().toLowerCase();
+	if (!q) {
+		return [];
+	}
+	const score = (plugin: IMarketplacePlugin): number => {
+		const name = plugin.name.toLowerCase();
+		if (name === q) {
+			return 0;
+		}
+		if (name.startsWith(q)) {
+			return 1;
+		}
+		if (name.split(/[-_\s]+/).some(word => word.startsWith(q))) {
+			return 2;
+		}
+		if (name.includes(q)) {
+			return 3;
+		}
+		if ((plugin.category ?? '').toLowerCase().includes(q)) {
+			return 4;
+		}
+		return `${plugin.description} ${plugin.author}`.toLowerCase().includes(q) ? 5 : -1;
+	};
+	return plugins
+		.map((plugin, index) => ({ plugin, index, score: score(plugin) }))
+		.filter(entry => entry.score >= 0)
+		.sort((a, b) => a.score - b.score || a.index - b.index)
+		.map(entry => entry.plugin);
 }
