@@ -67,6 +67,9 @@ import { IMainProcessService } from '../../../../platform/ipc/common/mainProcess
 import { ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import { IVoltRelayService, VOLT_RELAY_CHANNEL_NAME } from '../../../../platform/voltRelay/common/voltRelay.js';
 import { RemoteVoltRelayService } from '../../../services/voltAgentServer/common/remoteVoltRelayService.js';
+import { WindowAgentRunGroupService } from '../browser/runGroups/agentRunGroupWindowService.js';
+import { RemoteAgentRunGroupService } from '../browser/runGroups/remoteAgentRunGroupService.js';
+import { IAgentRunGroupService } from '../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { IAgentSurfaceDraft, IAgentWorkspaceService } from '../browser/workspace/agentWorkspace.js';
 import { AgentEditsJournalEntry } from '../common/agentEditsJournal.js';
 import { ResourceMap, ResourceSet } from '../../../../base/common/map.js';
@@ -158,6 +161,8 @@ class MainProcessRelayService {
 
 // The relay lives with the agents: in the server, webhook automations run with no window open.
 registerSingleton(IVoltRelayService, <never>eitherLocalOrRemote(MainProcessRelayService, RemoteVoltRelayService), InstantiationType.Delayed);
+// Run groups live in the server with the chats they start, so every client sees the same ones.
+registerSingleton(IAgentRunGroupService, <never>eitherLocalOrRemote(WindowAgentRunGroupService, RemoteAgentRunGroupService), InstantiationType.Delayed);
 
 // Chats' transcripts come from the server's session controllers.
 setAgentSessionControlFactory((input, instantiationService) => instantiationService.invokeFunction(accessor =>

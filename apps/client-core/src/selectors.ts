@@ -6,7 +6,7 @@
 import { basename, firstLine, uriPath } from './format';
 import type { StatusTone } from './theme';
 import type {
-	IAccessRequest, ICatalogItem, IOrchTask, IOrchThread, IProjectRecord, IProviderStatus, IQuestionRequest, IRuntimeState, ISessionMeta, ISessionSummary
+	IAccessRequest, ICatalogItem, IOrchQueueItem, IOrchTask, IOrchThread, IProjectRecord, IProviderStatus, IQuestionRequest, IRuntimeState, ISessionMeta, ISessionSummary
 } from './types';
 
 /** The mirrored collections, as the client holds them (each replaced when it changes). */
@@ -35,6 +35,8 @@ export interface IChatListItem {
 	readonly snoozed: boolean;
 	readonly snoozedUntil?: number;
 	readonly unread: boolean;
+	/** An unsent draft (in any composer, desktop or device) in a chat that has turns, as the desktop marks it. */
+	readonly draft: boolean;
 	readonly queued: number;
 	readonly subagents: number;
 	readonly error?: string;
@@ -225,6 +227,7 @@ export function selectChatItems(cols: Collections): readonly IChatListItem[] {
 			snoozed: !!meta.snoozed,
 			...(meta.snoozedUntil ? { snoozedUntil: meta.snoozedUntil } : {}),
 			unread: !!meta.unread,
+			draft: !!meta.hasDraft && (meta.turnCount ?? 0) > 0,
 			queued: thread?.queue.length ?? 0,
 			subagents: liveTasks.get(meta.id) ?? 0,
 			...(status === 'failed' && thread?.last?.error ? { error: firstLine(thread.last.error, 160) } : {}),
@@ -455,4 +458,10 @@ export function questionApproval(request: IAccessRequest): { readonly plan: bool
 	const markdown = request.resource?.value ?? request.preview?.detail ?? '';
 	const plan = /plan/i.test(request.reason ?? '') || /^\s*#/.test(markdown);
 	return { plan, title: plan ? 'Plan ready' : request.reason || 'Question', markdown };
+}
+
+/** What a queued prompt says as its author wrote it (the transcript's text, not the model's). */
+export function queuedText(item: IOrchQueueItem): string {
+	const shown = (item.prompt.display as { readonly text?: unknown } | undefined)?.text;
+	return typeof shown === 'string' && shown ? shown : item.prompt.text;
 }

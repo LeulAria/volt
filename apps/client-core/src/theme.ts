@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { IRenderTheme } from './client';
 import type { ComposerMode } from './types';
 import type { TokenKind } from './markdown/highlight';
 
@@ -343,3 +344,8 @@ export const MOTION = { fast: 120, base: 180, entrance: 220, pane: 260 } as cons
 
 export const FONT_MONO_STACK = '"Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
 export const FONT_UI_STACK = '-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, Roboto, sans-serif';
+
+/** The colors a page drawn on the server (a diagram, a formula, an agent's page) takes to match the app. */
+export function renderThemeFor(p: IVoltPalette): IRenderTheme {
+	return { kind: p.scheme, background: p.canvas, foreground: p.fg, muted: p.fgSecondary, border: p.stroke, accent: p.link, surface: p.surface, code: p.codeBg };
+}

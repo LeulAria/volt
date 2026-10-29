@@ -66,6 +66,8 @@ import { IAgentEditsService } from '../review/agentEditsService.js';
 import { RemoteAgentCheckpointService } from '../review/remoteAgentCheckpointService.js';
 import { IAgentTerminalsService } from '../terminals/agentTerminals.js';
 import { RemoteAgentTerminalsService } from '../terminals/remoteAgentTerminals.js';
+import { RemoteAgentRunGroupService } from '../runGroups/remoteAgentRunGroupService.js';
+import { IAgentRunGroupService } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { IVoltCanvasService, VoltCanvasService } from '../visuals/canvas/canvasService.js';
 import { IAgentSurfaceDraft, IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { AgentEditsJournalEntry } from '../../common/agentEditsJournal.js';
@@ -148,6 +150,7 @@ registerSingleton(IVoltHostToolService, RemoteVoltHostToolService, Instantiation
 registerSingleton(IAgentCheckpointService, RemoteAgentCheckpointService, InstantiationType.Delayed);
 // The agents' terminals run in the agent server too; this page shows them attached to it.
 registerSingleton(IAgentTerminalsService, RemoteAgentTerminalsService, InstantiationType.Delayed);
+registerSingleton(IAgentRunGroupService, RemoteAgentRunGroupService, InstantiationType.Delayed);
 setAgentSessionControlFactory((input, instantiationService) => instantiationService.createInstance(RemoteAgentSessionControl, input));
 
 //#endregion

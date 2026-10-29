@@ -123,8 +123,11 @@ import { ServerAgentCheckpointService } from './serverCheckpoints.js';
 import { ProjectEnvVoltStdioService } from '../../../workbench/services/voltRuntime/common/projectEnvStdio.js';
 import { AutomationService } from '../../../workbench/contrib/voltAgent/browser/automations/automationService.js';
 import { IAutomationService } from '../../../workbench/services/voltRuntime/common/automations/automations.js';
+import { ServerAgentRunGroupService } from './serverRunGroups.js';
+import { IAgentRunGroupService } from '../../../workbench/services/voltRuntime/common/runGroups/runGroups.js';
 import { IPairingHttpContext, machineLabel, ServerPairing } from './serverPairing.js';
 import { ServerWorkbench } from './serverWorkbench.js';
+import { ServerRender } from './serverRender.js';
 import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
 import { IVoltPullRequestService } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { VoltPullRequestService } from '../../../platform/voltPullRequests/node/voltPullRequestService.js';
@@ -330,6 +333,7 @@ export async function main(argv: string[]): Promise<void> {
 	services.set(IVoltMemoryService, new SyncDescriptor(VoltMemoryService));
 	// Scheduled automations fire here, so they run with no window open (windows claim the same slots, so each runs once).
 	services.set(IAutomationService, new SyncDescriptor(AutomationService));
+	services.set(IAgentRunGroupService, new SyncDescriptor(ServerAgentRunGroupService));
 
 	const instantiationService = disposables.add(new InstantiationService(services, true));
 	services.set(IInstantiationService, instantiationService);
@@ -462,7 +466,9 @@ export async function main(argv: string[]): Promise<void> {
 		pullRequests,
 	}));
 	httpContext = { ...httpContext, workbench: workbench.available };
-	const server = http.createServer((req, res) => void serveHttp(req, res, webRoot, token, epoch, pairing, workbench, httpContext, usage, logService));
+	// Pages, diagrams and formulas for the phone and browser apps, and KaTeX's files for them.
+	const render = disposables.add(new ServerRender(protocol, history, logService));
+	const server = http.createServer((req, res) => void serveHttp(req, res, webRoot, token, epoch, pairing, workbench, render, httpContext, usage, logService));
 	server.on('upgrade', (req, socket: Socket) => {
 		const url = new URL(req.url ?? '/', 'http://localhost');
 		if (url.pathname !== '/ws' && workbench.handleUpgrade(req, socket)) {
@@ -625,7 +631,7 @@ function compressedCopy(file: string, mtime: number, data: Buffer, encoding: 'br
 	return result;
 }
 
-async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, webRoot: string, token: string, epoch: string, pairing: ServerPairing, workbench: ServerWorkbench, ctx: IPairingHttpContext, usage: VoltUsageService, logService: ILogService): Promise<void> {
+async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, webRoot: string, token: string, epoch: string, pairing: ServerPairing, workbench: ServerWorkbench, render: ServerRender, ctx: IPairingHttpContext, usage: VoltUsageService, logService: ILogService): Promise<void> {
 	if (await pairing.handleHttp(req, res, ctx)) {
 		return;
 	}
@@ -634,6 +640,9 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, we
 		return;
 	}
 	if (await workbench.handleHttp(req, res)) {
+		return;
+	}
+	if (await render.handleHttp(req, res)) {
 		return;
 	}
 	const url = new URL(req.url ?? '/', 'http://localhost');

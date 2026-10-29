@@ -21,7 +21,8 @@ export type EditorTab =
 	| { readonly id: string; readonly kind: 'diff'; readonly path: string; readonly base: DiffBase }
 	| { readonly id: string; readonly kind: 'new'; readonly projectId?: string }
 	| { readonly id: string; readonly kind: 'settings'; readonly section: string }
-	| { readonly id: string; readonly kind: 'changes'; readonly chatId: string };
+	| { readonly id: string; readonly kind: 'changes'; readonly chatId: string }
+	| { readonly id: string; readonly kind: 'compare'; readonly groupId: string };
 
 export interface ICursorInfo {
 	readonly line: number;
@@ -159,7 +160,8 @@ export type TabInput =
 	| { readonly kind: 'diff'; readonly path: string; readonly base: DiffBase }
 	| { readonly kind: 'new' }
 	| { readonly kind: 'settings' }
-	| { readonly kind: 'changes'; readonly chatId: string };
+	| { readonly kind: 'changes'; readonly chatId: string }
+	| { readonly kind: 'compare'; readonly groupId: string };
 
 export function tabId(tab: TabInput): string {
 	switch (tab.kind) {
@@ -169,6 +171,7 @@ export function tabId(tab: TabInput): string {
 		case 'new': return 'new';
 		case 'settings': return 'settings';
 		case 'changes': return `changes:${tab.chatId}`;
+		case 'compare': return `compare:${tab.groupId}`;
 	}
 }
 
@@ -181,6 +184,7 @@ export function tabForRoute(route: Route): EditorTab | undefined {
 		case 'new': return { id: 'new', kind: 'new', ...(route.projectId ? { projectId: route.projectId } : {}) };
 		case 'settings': return { id: 'settings', kind: 'settings', section: route.section };
 		case 'changes': return { id: tabId({ kind: 'changes', chatId: route.chatId }), kind: 'changes', chatId: route.chatId };
+		case 'compare': return { id: tabId({ kind: 'compare', groupId: route.id }), kind: 'compare', groupId: route.id };
 		default: return undefined;
 	}
 }
@@ -193,6 +197,7 @@ export function routeForTab(tab: EditorTab): Route {
 		case 'new': return tab.projectId ? { name: 'new', projectId: tab.projectId } : { name: 'new' };
 		case 'settings': return { name: 'settings', section: tab.section };
 		case 'changes': return { name: 'changes', chatId: tab.chatId };
+		case 'compare': return { name: 'compare', id: tab.groupId };
 	}
 }
 

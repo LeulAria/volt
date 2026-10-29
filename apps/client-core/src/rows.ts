@@ -100,7 +100,7 @@ export type TranscriptRow =
 	| { readonly kind: 'todos'; readonly key: string; readonly steps: readonly ITodoStep[]; readonly live: boolean }
 	| { readonly kind: 'chart'; readonly key: string; readonly title?: string; readonly labels: readonly string[]; readonly values: readonly number[]; readonly unit?: string }
 	| { readonly kind: 'cards'; readonly key: string; readonly items: readonly { readonly title: string; readonly body: string; readonly meta?: string }[] }
-	| { readonly kind: 'visual'; readonly key: string; readonly title: string; readonly visual: 'chart' | 'html' }
+	| { readonly kind: 'visual'; readonly key: string; readonly title: string; readonly visual: 'chart' | 'html' | 'canvas'; readonly ref: string; readonly height?: number; readonly detail?: string; readonly pending?: boolean }
 	/** Proof of done under a run's answer. */
 	| { readonly kind: 'receipt'; readonly key: string; readonly receipt: IReceiptJson }
 	/** The live line under a running reply: "Thinking · 12s". */
@@ -234,8 +234,9 @@ function terminalStep(block: Extract<AgentBlock, { type: 'terminal' }>, key: str
 }
 
 function toolStep(block: Extract<AgentBlock, { type: 'tool' }>, key: string): IStepItem {
-	const input = parseInput(block.input);
-	const name = toolName(block.name);
+	const inner = innerTool(block.name, parseInput(block.input), block.input);
+	const input = inner.input;
+	const name = inner.name;
 	const command = /bash|shell|exec|command|terminal|^run$/i.test(name) ? str(input?.command) : undefined;
 	if (command) {
 		return terminalStep({ type: 'terminal', id: block.id, status: block.status, command, output: block.output ?? '', ...(block.title ? { title: block.title } : {}) }, key);
@@ -616,6 +617,22 @@ function assistantRows(message: IAssistantMessage, mkey: string, index: number):
 					}
 					return;
 				}
+				// A wrapper's own row ("use_tool" named after the tool it calls) repeats the call's block.
+				if (item.toolName === 'use_tool') {
+					return;
+				}
+				const visual = visualTool(item);
+				if (visual && !item.error) {
+					// The page or chart it draws follows as its own block: the call itself isn't a step.
+					if (segments.slice(i + 1).some(next => next.kind === 'block' && next.block.type === 'visual')) {
+						return;
+					}
+					if (item.result === undefined && streaming) {
+						flushSteps();
+						body.push({ kind: 'visual', key, title: visualTitle(item), visual, ref: '', pending: true });
+						return;
+					}
+				}
 				addStep(activityStep(item, key));
 				return;
 			}
@@ -720,7 +737,7 @@ function assistantRows(message: IAssistantMessage, mkey: string, index: number):
 						return;
 					case 'visual':
 						flushSteps();
-						body.push({ kind: 'visual', key, title: block.title, visual: block.kind });
+						body.push({ kind: 'visual', key, title: block.title, visual: block.kind, ref: block.ref, ...(block.height ? { height: Math.min(block.height, block.cap ?? block.height) } : {}), ...(block.detail ? { detail: block.detail } : {}), ...(block.status === 'streaming' || !block.ref ? { pending: true } : {}) });
 						return;
 					case 'receipt':
 						flushSteps();
@@ -752,7 +769,7 @@ function assistantRows(message: IAssistantMessage, mkey: string, index: number):
 	if (streaming) {
 		// The live line, when the reply's last row doesn't already show what runs (text streams on its own).
 		if (!last || last.kind === 'steps' || last.kind === 'thought' || last.kind === 'subagents' || (last.kind === 'compaction' && last.status !== 'running') || last.kind === 'file') {
-			tail.push({ kind: 'working', key: `${mkey}:working`, status: message.activity?.status || 'Thinking', ...(message.startedAt ? { since: message.startedAt } : {}) });
+			tail.push({ kind: 'working', key: `${mkey}:working`, status: workingStatus(message.activity?.status), ...(message.startedAt ? { since: message.startedAt } : {}) });
 		}
 	} else {
 		const files = turnFiles(segments);
@@ -990,6 +1007,46 @@ export function messageText(message: AgentMessage): string {
 }
 
 //#endregion
+
+/** The visual a Volt drawing tool call makes (html_render, render_chart, canvas_*), or undefined for any other call. */
+function visualTool(item: IActivityItem): 'chart' | 'html' | 'canvas' | undefined {
+	const name = (item.browserTool ?? item.toolName ?? '').replace(/^mcp__[^_]+__/, '').replace(/^volt[_.]/, '');
+	return name === 'render_chart' ? 'chart' : name === 'html_render' || name === 'render_html' ? 'html' : name === 'canvas_render' || name === 'canvas_update' ? 'canvas' : undefined;
+}
+
+function visualTitle(item: IActivityItem): string {
+	const title = /"title"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(item.text ?? '')?.[1];
+	return title || item.detail || '';
+}
+
+/** `mcp__volt__delegate_task`, `volt__delegate_task`, `volt.delegate_task` → `delegate_task`. */
+function shortToolName(name: string): string {
+	return name.replace(/^mcp__[^_]+(?:_[^_]+)*?__/, '').replace(/^volt(?:__|\.|_(?=[a-z]+_))/, '');
+}
+
+/** A meta tool's real call: Grok's `use_tool { tool_name, tool_input }` is the tool it names. */
+function innerTool(name: string, input: Record<string, unknown> | undefined, raw?: string): { readonly name: string; readonly input: Record<string, unknown> | undefined } {
+	if (name === 'use_tool') {
+		if (typeof input?.tool_name === 'string') {
+			const inner = input.tool_input;
+			return { name: shortToolName(input.tool_name), input: inner && typeof inner === 'object' && !Array.isArray(inner) ? inner as Record<string, unknown> : undefined };
+		}
+		// Grok streams the call more than once into the same input ("{…}{…}"): the name is still readable.
+		const named = raw ? /"tool_name"\s*:\s*"([^"]+)"/.exec(raw)?.[1] : undefined;
+		if (named) {
+			return { name: shortToolName(named), input: undefined };
+		}
+	}
+	return { name: toolName(name), input };
+}
+
+/** The live status line: a bare tool id (`run_terminal_command`, `mcp__volt__html_render`) reads as words. */
+function workingStatus(status: string | undefined): string {
+	if (!status) {
+		return 'Thinking';
+	}
+	return /^[a-z][a-z0-9]*(?:_{1,2}[a-z0-9]+)+$/i.test(status.trim()) ? humanize(shortToolName(status.trim())) : status;
+}
 
 //#region Proof of done
 

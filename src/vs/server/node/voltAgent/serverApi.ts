@@ -29,6 +29,7 @@ import { ServerClientTools } from './serverClientTools.js';
 import { IServerFileRoot, ServerFiles } from './serverFiles.js';
 import { ServerComposer } from './serverComposer.js';
 import { ServerGit } from './serverGit.js';
+import { ServerRunGroups } from './serverRunGroups.js';
 import { IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
 import { IVoltPullRequestService } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { basename } from '../../../base/common/path.js';
@@ -59,6 +60,8 @@ export const AGENT_SERVER_COLLECTIONS = [
 	'edits',
 	/** Per terminal id: the agents' terminals and CLI agents' background commands (see ServerTerminals). */
 	'terminals',
+	/** Per group id: a multi-model run group with its runs' statuses (see ServerRunGroups). */
+	'runGroups',
 ] as const;
 
 export type AgentServerCollection = typeof AGENT_SERVER_COLLECTIONS[number];
@@ -122,6 +125,7 @@ export class AgentServerApi extends Disposable {
 		const allowed = (path: string) => files.allowed(path);
 		this._register(new ServerGit(protocol, allowed, pullRequests, logService));
 		this._register(new ServerComposer(protocol, allowed, instantiationService));
+		this._register(instantiationService.createInstance(ServerRunGroups, protocol, this.col('runGroups')));
 		this.registerMethods();
 		this.observe();
 		this.publishRuntime();

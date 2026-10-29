@@ -6,6 +6,7 @@
 import { basename, type ISavedEnvironment, VoltClient } from '@volt/client-core';
 import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from 'react';
 import { ChatView, openPathInEditor } from '../chat/ChatView';
+import { CompareView } from '../chat/CompareView';
 import { LightboxHost } from '../chat/Lightbox';
 import { ChangesView } from '../ide/ChangesView';
 import { Explorer } from '../ide/Explorer';
@@ -178,11 +179,12 @@ function Shell({ onSignedOut }: { readonly onSignedOut: () => void }) {
 	}
 	return (
 		<div className={`app route-${route.name}`}>
-			<Sidebar activeChatId={chatId} />
+			<Sidebar activeChatId={chatId} activeGroupId={route.name === 'compare' ? route.id : undefined} />
 			<main className="main">
 				{!status.live && status.ready ? <OfflineBanner /> : null}
 				{route.name === 'chat' ? <ChatView key={route.id} chatId={route.id} openPath={openPathInEditor} /> : null}
 				{route.name === 'home' || route.name === 'new' ? <NewChat initialProjectId={route.name === 'new' ? route.projectId : undefined} /> : null}
+				{route.name === 'compare' ? <CompareView key={route.id} groupId={route.id} /> : null}
 				{route.name === 'settings' ? <Settings section={route.section} onSignedOut={onSignedOut} /> : null}
 				{route.name === 'pair' ? <NewChat /> : null}
 			</main>

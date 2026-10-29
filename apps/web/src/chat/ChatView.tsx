@@ -10,7 +10,8 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useCheckpoints, useClient, useCollections, usePending, useTranscript } from '../app/client';
 import { useConversationPrefs } from '../app/prefs';
-import { changesPath, chatPath, filePath, navigate } from '../app/router';
+import { changesPath, chatPath, comparePath, filePath, navigate } from '../app/router';
+import { runGroupOfChat } from '@volt/client-core';
 import { revealInFile } from '../ide/workbench';
 import { ConfirmDialog, type IMenuItem, MenuButton, PromptDialog } from '../ui/overlays';
 import { Button, EmptyState, Icon, IconButton, LiveTimer, Spinner, StatusIcon } from '../ui/primitives';
@@ -146,6 +147,8 @@ export function openPathInEditor(path: string, line?: number): void {
 	}
 }
 
+const RUN_GROUP_COLLECTIONS = ['runGroups'];
+
 export function ChatView({ chatId, variant = 'page', openPath }: IChatViewProps) {
 	const client = useClient();
 	const cols = useCollections(CHAT_COLLECTIONS);
@@ -160,6 +163,8 @@ export function ChatView({ chatId, variant = 'page', openPath }: IChatViewProps)
 	const messages = transcript?.messages ?? [];
 	const running = !!thread?.active || isStreaming(messages);
 	const status = chatStatus(meta, thread, approvals.length, questions.length);
+	// One of a comparison's runs: the header leads back to the comparison.
+	const runGroup = runGroupOfChat(useCollections(RUN_GROUP_COLLECTIONS), chatId);
 
 	const lastMode = useMemo(() => {
 		for (let i = messages.length - 1; i >= 0; i--) {
@@ -285,6 +290,7 @@ export function ChatView({ chatId, variant = 'page', openPath }: IChatViewProps)
 								<div className="chat-sub">
 									{project?.displayName || meta?.workspaceLabel ? <span className="sub-item"><Icon name="folder" size={12} />{project?.displayName ?? meta?.workspaceLabel}</span> : null}
 									{branch ? <span className="sub-item mono"><Icon name="branch" size={12} />{branch}</span> : null}
+									{runGroup ? <button type="button" className="compare-chip" title="Open the comparison" onClick={() => navigate(comparePath(runGroup.id))}><Icon name="layers" size={11} />Compare · {runGroup.runs.length} models</button> : null}
 									{status.status !== 'idle' ? <span className={`sub-item status-text status-${status.status}`}>{status.label}</span> : meta?.updatedAt ? <span className="sub-item">{relativeTime(meta.updatedAt)}</span> : null}
 								</div>
 							</div>
@@ -306,6 +312,7 @@ export function ChatView({ chatId, variant = 'page', openPath }: IChatViewProps)
 						</div>
 						<Composer
 							draftKey={chatId}
+							chatId={chatId}
 							running={running}
 							mode={mode}
 							onModeChange={setMode}

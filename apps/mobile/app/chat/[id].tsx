@@ -23,6 +23,7 @@ import { copyWithHaptic } from '../../src/chat/Markdown';
 import { Transcript } from '../../src/chat/Transcript';
 import { ApprovalCard, LimitBanner, PausedBanner, QuestionCard, QueueChip } from '../../src/chat/Trays';
 import { useCheckpoints, useClient, useCollections, useOptionalClient, useStatus, useTranscript } from '../../src/state/client';
+import { openRunGroup, useRunGroupOfChat } from '../../src/home/RunGroups';
 import { useTheme } from '../../src/theme/theme';
 import { haptic, Icon, IconButton, LiveTimer, T, Tap } from '../../src/ui/core';
 import { ActionSheet, type ISheetAction } from '../../src/ui/sheets';
@@ -251,6 +252,8 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 	const top = insets.top + HEADER_HEIGHT + (tabsShown ? CHAT_TABS_HEIGHT : 0);
 	const subtitle = [project?.displayName ?? meta?.workspaceLabel, session?.worktreeBranch ?? meta?.worktreeBranch].filter(Boolean).join(' · ');
 	const tone = status.status === 'idle' ? undefined : statusColor(status.status, p);
+	// One of a comparison's runs: the header leads back to the comparison.
+	const runGroup = useRunGroupOfChat(chatId);
 
 	return (
 		<View style={{ flex: 1, backgroundColor: p.canvas }}>
@@ -324,6 +327,7 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 							<LiveTimer since={thread.active.at} color={p.info} />
 						</View>
 					) : null}
+					{runGroup ? <IconButton icon="layers" label={`Compare models: ${runGroup.runs.length} runs`} color={p.fg} onPress={() => openRunGroup(runGroup.id)} /> : null}
 					{terminals.length ? (
 						<View>
 							<IconButton icon="terminal" label={`Terminals, ${terminals.length}`} color={p.fg} onPress={() => router.push({ pathname: '/terminals/[id]', params: { id: chatId } })} />

@@ -4,18 +4,22 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	highlight, type IVoltPalette, markdownFor, type MdBlock, type MdCallout, type MdInline, parseInline, parseMarkdown, resolveLanguage, stripHtml
+	highlight, type IVoltPalette, markdownFor, type MdBlock, type MdCallout, type MdInline, parseInline, parseMarkdown, RADIUS, resolveLanguage, stripHtml, texToText
 } from '@volt/client-core';
 import * as Clipboard from 'expo-clipboard';
 import { Fragment, memo, type ReactNode, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { Image, Linking, ScrollView, StyleSheet, Text, type TextStyle, useWindowDimensions, View } from 'react-native';
+import { Image, Linking, Platform, ScrollView, StyleSheet, Text, type TextStyle, useWindowDimensions, View } from 'react-native';
 import { FileIcon } from '../files/FileIcon';
 import { useConversationPrefs } from '../state/prefs';
 import { FONT, useTheme } from '../theme/theme';
-import { haptic, Icon, Tap } from '../ui/core';
+import { haptic, Icon, T, Tap } from '../ui/core';
 import { showImage } from '../ui/ImageViewer';
 import { openFile, resolveFileLink, useChatContext } from './context';
 import { TrDiff } from './TrDiff';
+import { ChartFenceBlock, MathBlock, MermaidBlock } from './Visuals';
+
+/** Inline math reads as math: a serif face, as KaTeX sets it. */
+const MATH_FONT = Platform.select({ ios: 'Times New Roman', android: 'serif', default: '"Times New Roman", serif' });
 
 /**
  * Markdown as native text, set as the desktop sets a reply (agentMarkdown.css): 14/22 in the
@@ -64,6 +68,8 @@ function renderInlines(nodes: readonly MdInline[], ctx: IInlineContext, key = ''
 				return node.v;
 			case 'br':
 				return '\n';
+			case 'math':
+				return <Text key={k} style={{ fontFamily: MATH_FONT, fontSize: ctx.size + 1, color: ctx.p.fg }}>{texToText(node.v)}</Text>;
 			case 'code': {
 				const file = CODE_PATH.test(node.v) ? resolveFileLink(node.v, ctx.folder) : undefined;
 				// A file that opens on tap: link-blue on a light-blue chip, as in Cursor.
@@ -129,7 +135,16 @@ function MarkdownImage({ src, alt }: { readonly src: string; readonly alt: strin
 		};
 	}, [src]);
 	if (failed) {
-		return <Text style={{ color: p.link, fontWeight: '500', marginVertical: 4 }} onPress={() => void Linking.openURL(src).catch(() => undefined)}>{`[${alt || 'image'}]`}</Text>;
+		// A picture that didn't load: what it was, and its address to open elsewhere.
+		return (
+			<Tap haptics="light" onPress={() => void Linking.openURL(src).catch(() => undefined)} accessibilityLabel={`${alt || 'Image'} (not loaded)`} style={{ marginVertical: 6, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, paddingHorizontal: 12, borderRadius: RADIUS.md, backgroundColor: p.fillFaint, borderWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint, maxWidth: '100%' }}>
+				<Icon name="image" size={16} color={p.fgTertiary} />
+				<View style={{ flexShrink: 1 }}>
+					<T variant="small" numberOfLines={1}>{alt || 'Image'}</T>
+					<T variant="caption" color={p.fgTertiary} numberOfLines={1}>{src.replace(/^https?:\/\//, '')}</T>
+				</View>
+			</Tap>
+		);
 	}
 	const width = Math.min(screen - 56, 520);
 	return (
@@ -171,11 +186,11 @@ const BlockView = memo(function BlockView({ block, open, depth, tone, first, las
 		case 'code':
 			return <View style={{ marginTop: top(12), marginBottom: bottom(12) }}><CodeBlock code={block.code} lang={block.lang} streaming={open && !block.closed} /></View>;
 		case 'math':
-			return (
-				<View style={{ marginTop: top(8), marginBottom: bottom(8), padding: 12, borderRadius: 8, backgroundColor: p.fillFaint, borderWidth: 1, borderColor: p.stroke }}>
-					<Text selectable style={{ fontFamily: FONT.mono, fontSize: 12.5, lineHeight: 18, color: p.fg }}>{block.text}</Text>
+			return open ? (
+				<View style={{ marginVertical: 6, padding: 12, borderRadius: RADIUS.md, backgroundColor: p.fillFaint }}>
+					<Text selectable style={{ fontFamily: FONT.mono, fontSize: 13, color: p.fgTertiary }}>{block.text}</Text>
 				</View>
-			);
+			) : <MathBlock tex={block.text} />;
 		case 'hr':
 			return <View style={{ height: 1, backgroundColor: p.stroke, marginTop: top(16), marginBottom: bottom(16) }} />;
 		case 'html':
@@ -341,12 +356,23 @@ export function TableView({ header, rows, align }: { readonly header: readonly s
 
 const COLLAPSE_LINES = 60;
 
+/** A fenced block: a diagram when it is mermaid (once it has finished streaming in), else highlighted code. */
+export const CodeBlock = memo(function CodeBlock(props: { readonly code: string; readonly lang?: string; readonly path?: string; readonly streaming?: boolean }) {
+	if (!props.streaming && !props.path && props.lang?.toLowerCase() === 'mermaid' && props.code.trim()) {
+		return <MermaidBlock source={props.code} fallback={<CodeCard {...props} />} />;
+	}
+	if (!props.streaming && !props.path && props.lang?.toLowerCase() === 'volt-chart' && props.code.trim()) {
+		return <ChartFenceBlock spec={props.code} fallback={<CodeCard {...props} />} />;
+	}
+	return <CodeCard {...props} />;
+});
+
 /**
  * The desktop's code card (`.volt-md-code-block`): the editor's colour, a 1px stroke, 12px
  * corners, 12/18 mono with 6px above and below and 10px at the sides, Copy in the top-right
  * corner. A cited snippet (a path) gets the 31px header with its file icon and name.
  */
-export const CodeBlock = memo(function CodeBlock({ code, lang, path, streaming }: { readonly code: string; readonly lang?: string; readonly path?: string; readonly streaming?: boolean }) {
+const CodeCard = memo(function CodeCard({ code, lang, path, streaming }: { readonly code: string; readonly lang?: string; readonly path?: string; readonly streaming?: boolean }) {
 	const { p } = useTheme();
 	const { codeWrap } = useConversationPrefs();
 	const [copied, setCopied] = useState(false);

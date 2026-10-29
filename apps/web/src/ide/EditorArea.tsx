@@ -3,11 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { basename, chatStatus, historyOf, threadsOf } from '@volt/client-core';
+import { basename, chatStatus, historyOf, runGroupById, threadsOf } from '@volt/client-core';
 import { lazy, memo, type ReactNode, Suspense, useMemo, useState } from 'react';
 import { useChatItems, useClient, useCollections } from '../app/client';
 import { chatPath, navigate, routePath } from '../app/router';
 import { ChatView, openPathInEditor } from '../chat/ChatView';
+import { CompareView } from '../chat/CompareView';
 import { NewChat } from '../home/NewChat';
 import { Settings } from '../settings/Settings';
 import { ContextMenu, type IMenuItem } from '../ui/overlays';
@@ -55,6 +56,8 @@ function EditorContent({ tab, onSignedOut }: { readonly tab: EditorTab; readonly
 			return <Settings section={tab.section} onSignedOut={onSignedOut} />;
 		case 'changes':
 			return <ChangesView chatId={tab.chatId} />;
+		case 'compare':
+			return <CompareView groupId={tab.groupId} />;
 	}
 }
 
@@ -64,7 +67,7 @@ function EditorLoading() {
 
 /** What a tab shows: its icon, its name and (when two tabs share a name) its folder. */
 function useTabLabels(tabs: readonly EditorTab[]): Map<string, { readonly label: string; readonly description?: string; readonly icon: ReactNode; readonly title: string }> {
-	const cols = useCollections(['history', 'orch.threads', 'access', 'questions']);
+	const cols = useCollections(['history', 'orch.threads', 'access', 'questions', 'runGroups']);
 	const { root } = useActiveRoot();
 	return useMemo(() => {
 		const history = historyOf(cols);
@@ -102,6 +105,11 @@ function useTabLabels(tabs: readonly EditorTab[]): Map<string, { readonly label:
 				case 'changes':
 					out.set(tab.id, { label: `Changes: ${history[tab.chatId]?.title ?? 'chat'}`, icon: <Codicon name="git-compare" />, title: 'Review changes' });
 					break;
+				case 'compare': {
+					const group = runGroupById(cols, tab.groupId);
+					out.set(tab.id, { label: `Compare · ${group?.title ?? 'models'}`, icon: <Codicon name="layers" />, title: group ? `Compare models: ${group.title}` : 'Compare models' });
+					break;
+				}
 			}
 		}
 		return out;

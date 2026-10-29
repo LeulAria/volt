@@ -16,6 +16,7 @@ import { ClientProvider, useOptionalClient } from '../src/state/client';
 import { loadEnvironments, useActiveEnvironment, useEnvironments } from '../src/state/environments';
 import { loadFonts, ThemeProvider, useTheme } from '../src/theme/theme';
 import { ImageViewerHost } from '../src/ui/ImageViewer';
+import { FrameViewerHost } from '../src/chat/Visuals';
 import { Toasts } from '../src/ui/sheets';
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
@@ -80,6 +81,8 @@ function Root() {
 			>
 				<Stack.Screen name="(tabs)" options={{ headerShown: false, title: 'Home' }} />
 				<Stack.Screen name="chats" options={{ title: 'Chats' }} />
+				<Stack.Screen name="groups" options={{ title: 'Compare models' }} />
+				<Stack.Screen name="group/[id]" options={{ title: 'Compare models' }} />
 				<Stack.Screen name="project/[id]" options={{ title: '' }} />
 				<Stack.Screen name="scm" options={{ title: 'Source control' }} />
 				<Stack.Screen name="pulls" options={{ title: 'Pull requests' }} />
@@ -103,6 +106,7 @@ function Root() {
 			</Stack>
 			<ToastHost />
 			<ImageViewerHost />
+			<FrameViewerHost />
 		</ClientProvider>
 	);
 }

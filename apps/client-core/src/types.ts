@@ -323,7 +323,7 @@ export type AgentBlock =
 	| (IBaseBlock & { readonly type: 'approval'; readonly requestId: string; readonly action: string; readonly resource: string; readonly risk: string; readonly reason?: string; readonly decision?: 'allow' | 'deny'; readonly scope?: 'once' | 'always'; readonly blocked?: boolean })
 	| (IBaseBlock & { readonly type: 'answers'; readonly requestId: string; readonly outcome: 'answered' | 'skipped' | 'cancelled'; readonly items: readonly { readonly question: string; readonly answer: string }[]; readonly note?: string })
 	| (IBaseBlock & { readonly type: 'plan'; readonly callId?: string; readonly name?: string; readonly markdown: string; readonly openQuestions?: readonly string[] })
-	| (IBaseBlock & { readonly type: 'visual'; readonly kind: 'chart' | 'html'; readonly title: string; readonly ref: string })
+	| (IBaseBlock & { readonly type: 'visual'; readonly kind: 'chart' | 'html' | 'canvas'; readonly title: string; readonly ref: string; readonly height?: number; readonly cap?: number; readonly detail?: string })
 	| (IBaseBlock & { readonly type: 'receipt'; readonly runId: string; readonly receipt: IReceiptJson });
 
 /**
@@ -357,6 +357,8 @@ export interface IActivityItem {
 	readonly files?: readonly string[];
 	readonly callId?: string;
 	readonly toolName?: string;
+	/** Volt's own tools (html_render, render_chart, browser_*), by their short name. */
+	readonly browserTool?: string;
 	readonly toolTitle?: string;
 	readonly result?: string;
 	readonly error?: string;

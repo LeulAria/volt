@@ -6,7 +6,8 @@
 import { buildChatSections, chatCounts, type IChatListItem, type IClientStatus, relativeTime, selectProjects } from '@volt/client-core';
 import { memo, useMemo, useState } from 'react';
 import { useChatItems, useClient, useCollections, useNow, useStatus } from '../app/client';
-import { chatPath, navigate } from '../app/router';
+import { chatPath, comparePath, navigate } from '../app/router';
+import { type IRunGroup, runGroupOfChat, runGroupSummary, selectRunGroups } from '@volt/client-core';
 import { ConfirmDialog, type IMenuItem, MenuButton, PromptDialog } from '../ui/overlays';
 import { Icon, IconButton, LiveTimer, StatusIcon, Wordmark } from '../ui/primitives';
 
@@ -46,6 +47,7 @@ export function ConnectionBadge({ compact }: { readonly compact?: boolean }) {
 
 const ChatRow = memo(function ChatRow({ item, active }: { readonly item: IChatListItem; readonly active: boolean }) {
 	const client = useClient();
+	const runGroup = runGroupOfChat(useCollections(GROUP_COLLECTIONS), item.id);
 	const [renaming, setRenaming] = useState(false);
 	const [deleting, setDeleting] = useState(false);
 	const menu: IMenuItem[] = [
@@ -82,7 +84,9 @@ const ChatRow = memo(function ChatRow({ item, active }: { readonly item: IChatLi
 						{item.pinned ? <Icon name="pin" size={11} className="cr-pin" /> : null}
 						{item.projectName ? <span className="cr-project">{item.projectName}</span> : null}
 						{item.branch ? <span className="cr-branch"><Icon name="branch" size={10} />{item.branch}</span> : null}
+						{item.draft ? <span className="cr-badge" title="Has an unsent draft"><Icon name="pencil" size={10} />Draft</span> : null}
 						{item.queued ? <span className="cr-badge"><Icon name="queue" size={10} />{item.queued}</span> : null}
+						{runGroup ? <span className="cr-badge" title={`One of ${runGroup.runs.length} runs comparing models`}><Icon name="layers" size={10} />Compare</span> : null}
 						{item.subagents ? <span className="cr-badge"><Icon name="agents" size={10} />{item.subagents}</span> : null}
 						<span className="cr-preview">{item.error ?? item.preview}</span>
 					</div>
@@ -95,8 +99,46 @@ const ChatRow = memo(function ChatRow({ item, active }: { readonly item: IChatLi
 	);
 });
 
+const GROUP_COLLECTIONS = ['runGroups'];
+
+function groupTone(group: IRunGroup): 'question' | 'working' | 'failed' | 'stopped' | 'unread' {
+	switch (group.rollup?.status) {
+		case 'needsInput': return 'question';
+		case 'running': return 'working';
+		case 'failed': return 'failed';
+		case 'stopped': return 'stopped';
+		default: return 'unread';
+	}
+}
+
+/** A model comparison in the list: its status, prompt and how far its runs got. */
+const RunGroupRow = memo(function RunGroupRow({ group, active }: { readonly group: IRunGroup; readonly active: boolean }) {
+	return (
+		<div className={`chat-row${active ? ' active' : ''}`}>
+			<a className="chat-row-link" href={comparePath(group.id)} onClick={e => {
+				if (!e.metaKey && !e.ctrlKey && !e.shiftKey) {
+					e.preventDefault();
+					navigate(comparePath(group.id));
+				}
+			}}>
+				<StatusIcon status={groupTone(group)} size={13} />
+				<div className="cr-main">
+					<div className="cr-top">
+						<span className="cr-title">{group.title}</span>
+						<span className="cr-time">{relativeTime(group.createdAt)}</span>
+					</div>
+					<div className="cr-sub">
+						<span className="cr-badge"><Icon name="layers" size={10} />{group.runs.length}</span>
+						<span className="cr-preview">{runGroupSummary(group)}</span>
+					</div>
+				</div>
+			</a>
+		</div>
+	);
+});
+
 /** The chat list. `embedded`: the IDE's Chats view (the title and status bars carry the rest). */
-export function Sidebar({ activeChatId, embedded }: { readonly activeChatId?: string; readonly embedded?: boolean }) {
+export function Sidebar({ activeChatId, activeGroupId, embedded }: { readonly activeChatId?: string; readonly activeGroupId?: string; readonly embedded?: boolean }) {
 	const client = useClient();
 	const status = useStatus();
 	const items = useChatItems();
@@ -109,6 +151,7 @@ export function Sidebar({ activeChatId, embedded }: { readonly activeChatId?: st
 	const sections = useMemo(() => buildChatSections(items, { query, archived, ...(projectId ? { projectId } : {}) }), [items, query, archived, projectId]);
 	const counts = useMemo(() => chatCounts(items), [items]);
 	const project = projects.find(p => p.id === projectId);
+	const groups = selectRunGroups(useCollections(GROUP_COLLECTIONS)).filter(group => !group.archived && (!projectId || group.projectId === projectId));
 	const filterItems: IMenuItem[] = [
 		{ id: 'all', label: 'All projects', icon: 'layers', checked: !projectId, onSelect: () => setProjectId(undefined) },
 		...(projects.length ? [{ id: 'sep', label: '', separator: true }] : []),
@@ -145,7 +188,14 @@ export function Sidebar({ activeChatId, embedded }: { readonly activeChatId?: st
 			<div className="sb-list">
 				{!status.ready ? (
 					<div className="sb-loading">{[0, 1, 2, 3, 4].map(i => <div key={i} className="skeleton-row"><span className="skeleton dot" /><span className="skeleton line" /></div>)}</div>
-				) : sections.length ? sections.map(section => {
+				) : null}
+				{status.ready && groups.length > 0 && !archived && !query ? (
+					<div className="sb-section">
+						<div className="sb-section-title"><span>Compare models</span></div>
+						{groups.slice(0, 5).map(group => <RunGroupRow key={group.id} group={group} active={group.id === activeGroupId} />)}
+					</div>
+				) : null}
+				{!status.ready ? null : sections.length ? sections.map(section => {
 					const open = !section.shelf || openShelves[section.key] || !!query;
 					return (
 						<div key={section.key} className="sb-section">

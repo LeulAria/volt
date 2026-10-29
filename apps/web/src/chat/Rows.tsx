@@ -19,6 +19,7 @@ import { openLightbox } from './Lightbox';
 import { CodeBlock, Inline, Markdown } from './Markdown';
 import { changesPath, navigate } from '../app/router';
 import { FileIcon } from '../ide/icons';
+import { VisualCard } from './Visuals';
 import { useChatRow, WorkedToggleContext } from './rowContext';
 
 type RowOf<K extends TranscriptRow['kind']> = Extract<TranscriptRow, { kind: K }>;
@@ -720,12 +721,7 @@ export const TranscriptRowView = memo(function TranscriptRowView({ row, chatId }
 				</div>
 			);
 		case 'visual':
-			return (
-				<div className="card row-visual">
-					<Icon name={row.visual === 'chart' ? 'layers' : 'globe'} size={15} />
-					<div><div className="visual-title">{row.title}</div><div className="visual-sub">{row.visual === 'chart' ? 'Chart' : 'Page'} shown in Volt on your computer</div></div>
-				</div>
-			);
+			return <VisualCard visualRef={row.ref} kind={row.visual} title={row.title} {...(row.height ? { height: row.height } : {})} {...(row.detail ? { detail: row.detail } : {})} {...(row.pending ? { pending: true } : {})} />;
 		case 'working':
 			return (
 				<div className="tr-tail">

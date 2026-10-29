@@ -9,6 +9,10 @@ import { createPortal } from 'react-dom';
 import { useClient, useToasts } from '../app/client';
 import { Button, Icon } from './primitives';
 
+export interface IMenuModifiers {
+	readonly shiftKey: boolean;
+}
+
 export interface IMenuItem {
 	readonly id: string;
 	readonly label: string;
@@ -17,7 +21,9 @@ export interface IMenuItem {
 	readonly checked?: boolean;
 	readonly danger?: boolean;
 	readonly disabled?: boolean;
-	readonly onSelect?: () => void;
+	readonly onSelect?: (modifiers: IMenuModifiers) => void;
+	/** Leave the menu open after a pick (ticking several models); a function decides per click. */
+	readonly keepOpen?: boolean | ((modifiers: IMenuModifiers) => boolean);
 	/** A heading row (not selectable). */
 	readonly header?: boolean;
 	readonly separator?: boolean;
@@ -125,9 +131,13 @@ export function MenuList({ items, onClose }: { readonly items: readonly IMenuIte
 				}
 				return (
 					<button key={item.id} type="button" role="menuitem" className={`menu-item${item.danger ? ' danger' : ''}${item.checked ? ' checked' : ''}`} disabled={item.disabled}
-						onClick={() => {
-							onClose();
-							item.onSelect?.();
+						onClick={e => {
+							const modifiers: IMenuModifiers = { shiftKey: e.shiftKey };
+							const keep = typeof item.keepOpen === 'function' ? item.keepOpen(modifiers) : item.keepOpen;
+							if (!keep) {
+								onClose();
+							}
+							item.onSelect?.(modifiers);
 						}}>
 						{item.dot ? <span className="menu-dot" style={{ background: item.dot }} /> : item.icon ? <Icon name={item.icon} size={15} /> : <span className="menu-icon-space" />}
 						<span className="menu-label">

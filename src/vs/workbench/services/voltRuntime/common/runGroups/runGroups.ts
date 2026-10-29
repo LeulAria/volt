@@ -311,6 +311,11 @@ export function runStatus(run: Pick<IRunGroupRun, 'setup'>, thread: IRunThreadVi
 		case 'queued':
 			return 'working';
 		case 'blocked':
+			// Held with nothing to send after it ran (archived when another run won): how its last turn ended.
+			if (!thread.status.busy && thread.turns) {
+				return thread.lastOutcome === 'cancelled' ? 'stopped' : thread.lastOutcome === 'failed' ? 'failed' : 'done';
+			}
+			return 'setup';
 		case 'moving':
 			return 'setup';
 		case 'limited':
@@ -601,6 +606,25 @@ export interface IRunWinnerResult {
 	readonly error?: string;
 	/** Worktrees that were not removed (dirty, or refused). */
 	readonly kept?: readonly string[];
+	/**
+	 * Set when the winner was to become a pull request but the service could not show the form
+	 * (the agent server): the client that picked the winner opens its own for this branch.
+	 */
+	readonly pullRequest?: IRunPullRequestHandoff;
+}
+
+export interface IRunPullRequestHandoff {
+	readonly runId: string;
+	readonly branch: string;
+	readonly base?: string;
+	/** The winner's worktree, where its branch is checked out. */
+	readonly worktreePath?: string;
+}
+
+/** A group as the agent server publishes it (`runGroups` collection): with each run's status and the roll-up. */
+export interface IRunGroupView extends IRunGroup {
+	readonly statuses: Readonly<Record<string, RunStatus>>;
+	readonly rollup: IRunGroupRollup;
 }
 
 export interface IRunDiffTarget {
@@ -629,8 +653,8 @@ export interface IAgentRunGroupService {
 
 	/** Creates the chats and worktrees and starts every run. Resolves once the group is recorded. */
 	start(request: IRunGroupStartRequest): Promise<IRunGroup>;
-	/** Stops every run: live turns are cancelled, setups aborted. */
-	stop(groupId: string): Promise<void>;
+	/** Stops every run (or only `runId`): live turns are cancelled, setups aborted. */
+	stop(groupId: string, runId?: string): Promise<void>;
 	/** Runs a failed or stopped setup again and lets the run start. */
 	retrySetup(groupId: string, runId: string): Promise<void>;
 	/** Sends a follow-up to one run or all of them, through each chat's queue. */

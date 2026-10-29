@@ -4,8 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { applyToolDensity, buildRows, type TranscriptRow } from '@volt/client-core';
-import { memo, useCallback, useContext, useMemo, useRef, useState } from 'react';
-import { FlatList, type NativeScrollEvent, type NativeSyntheticEvent, Platform, StyleSheet, View, type ViewToken } from 'react-native';
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { FlatList, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, Platform, StyleSheet, View, type ViewProps, type ViewToken } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { usePending, useTranscript } from '../state/client';
 import { useConversationPrefs } from '../state/prefs';
@@ -13,6 +13,9 @@ import { useTheme } from '../theme/theme';
 import { EmptyState, haptic, Icon, Tap } from '../ui/core';
 import { ChatContext, type IChatContext } from './context';
 import { PinnedPrompt, RowView, rowGap, rowInset } from './Rows';
+
+/** Height of the pinned prompt strip: the row under its bottom edge is the one being read. */
+const PIN_STRIP = 96;
 
 interface ICell {
 	readonly row: TranscriptRow;
@@ -102,29 +105,55 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 	}, [cells]);
 	const latest = useRef({ cells, owners });
 	latest.current = { cells, owners };
-	const [pinned, setPinned] = useState<number | undefined>();
-	// The turn at the top of the screen keeps its prompt in view once the prompt scrolls away.
-	const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken<ICell>[] }) => {
+	// The pinned prompt's row key, not its index: new rows shift every index of the inverted list.
+	const [pinned, setPinned] = useState<string | undefined>();
+	// Where each row sits, measured from the newest end (the list is inverted), the scroll offset and the viewport.
+	const frames = useRef(new Map<string, { readonly y: number; readonly h: number }>());
+	const scroll = useRef({ offset: 0, height: 0 });
+	/**
+	 * The turn being read is the one whose row sits just under the pinned strip; its prompt is
+	 * pinned once that prompt has scrolled off the top. Geometry, not visibility: the strip hides
+	 * the rows behind it, so "visible" would pick the turn above the one being read.
+	 */
+	const updatePinned = useCallback(() => {
 		const { cells: current, owners: owned } = latest.current;
-		const seen = new Set<number>();
-		let top = -1;
-		for (const item of viewableItems) {
-			if (item.index !== null && item.index !== undefined) {
-				seen.add(item.index);
-				top = Math.max(top, item.index);
+		const { offset, height } = scroll.current;
+		if (!height) {
+			return;
+		}
+		const screenTop = offset + height;
+		const line = screenTop - PIN_STRIP;
+		let at = -1;
+		for (let i = 0; i < current.length; i++) {
+			const frame = frames.current.get(current[i].row.key);
+			if (frame && frame.y <= line && line < frame.y + frame.h) {
+				at = i;
+				break;
 			}
 		}
-		const owner = top >= 0 ? owned[top] : undefined;
-		const next = owner !== undefined && !seen.has(owner) && current[owner]?.row.kind === 'user' ? owner : undefined;
+		const owner = at >= 0 ? owned[at] : undefined;
+		const prompt = owner !== undefined ? current[owner] : undefined;
+		const frame = prompt ? frames.current.get(prompt.row.key) : undefined;
+		const next = prompt?.row.kind === 'user' && (!frame || frame.y + frame.h > screenTop + 1) ? prompt.row.key : undefined;
 		setPinned(prev => prev === next ? prev : next);
-	}).current;
-	const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 40 }).current;
-	const pinnedRow = pinned !== undefined ? cells[pinned]?.row : undefined;
+	}, []);
+	useEffect(updatePinned, [cells, updatePinned]);
+	const CellRenderer = useMemo(() => function CellRenderer({ item, onLayout, ...props }: { readonly item: ICell; readonly onLayout?: (e: LayoutChangeEvent) => void } & ViewProps) {
+		return <View {...props} onLayout={e => {
+			onLayout?.(e);
+			frames.current.set(item.row.key, { y: e.nativeEvent.layout.y, h: e.nativeEvent.layout.height });
+			updatePinned();
+		}} />;
+	}, [updatePinned]);
+	const pinnedIndex = pinned !== undefined ? cells.findIndex(cell => cell.row.key === pinned) : -1;
+	const pinnedRow = pinnedIndex >= 0 ? cells[pinnedIndex].row : undefined;
 
 	const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
 		const next = e.nativeEvent.contentOffset.y > 480;
 		setAway(prev => prev === next ? prev : next);
-	}, []);
+		scroll.current = { offset: e.nativeEvent.contentOffset.y, height: e.nativeEvent.layoutMeasurement.height };
+		updatePinned();
+	}, [updatePinned]);
 
 	const renderItem = useCallback(({ item }: { item: ICell }) => <Cell cell={item} chatId={chatId} />, [chatId]);
 
@@ -151,8 +180,11 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 				renderItem={renderItem}
 				onScroll={onScroll}
 				scrollEventThrottle={64}
-				onViewableItemsChanged={onViewableItemsChanged}
-				viewabilityConfig={viewabilityConfig}
+				CellRendererComponent={CellRenderer}
+				onLayout={e => {
+					scroll.current = { ...scroll.current, height: e.nativeEvent.layout.height };
+					updatePinned();
+				}}
 				onScrollToIndexFailed={info => list.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: true })}
 				keyboardDismissMode="interactive"
 				keyboardShouldPersistTaps="handled"
@@ -161,14 +193,18 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 				updateCellsBatchingPeriod={32}
 				windowSize={11}
 				removeClippedSubviews={Platform.OS === 'android'}
-				contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 16, paddingBottom: topInset + 8 }}
+				// The list starts below the header (which is opaque): rows behind it would count as on screen
+				// and pin the wrong prompt.
+				style={{ marginTop: topInset }}
+				contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 12 }}
 				showsVerticalScrollIndicator={false}
 			/>
 			{pinnedRow?.kind === 'user' ? (
-				<Animated.View key={pinnedRow.key} entering={FadeIn.duration(140)} exiting={FadeOut.duration(120)} style={{ position: 'absolute', left: 14, right: 14, top: topInset + 10 }}>
+				<Animated.View key={pinnedRow.key} entering={FadeIn.duration(140)} exiting={FadeOut.duration(120)} style={{ position: 'absolute', left: 0, right: 0, top: topInset, paddingTop: 6, paddingBottom: 8, paddingHorizontal: 16, backgroundColor: p.canvas }}>
+					{/* An opaque strip: the reply scrolling under it never shows above or through the prompt. */}
 					<PinnedPrompt row={pinnedRow} onPress={() => {
-						if (pinned !== undefined) {
-							list.current?.scrollToIndex({ index: pinned, animated: true, viewPosition: 1 });
+						if (pinnedIndex >= 0) {
+							list.current?.scrollToIndex({ index: pinnedIndex, animated: true, viewPosition: 1 });
 						}
 					}} />
 				</Animated.View>

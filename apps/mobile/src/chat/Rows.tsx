@@ -20,6 +20,7 @@ import { haptic, Icon, LiveTimer, ShimmerText, Spinner, Tap } from '../ui/core';
 import { showImage } from '../ui/ImageViewer';
 import { openFile, useChatContext } from './context';
 import { CodeBlock, copyWithHaptic, Inline, Markdown, TableView } from './Markdown';
+import { VisualCard } from './Visuals';
 import { openSubagent, useChatTasks } from './Subagents';
 import { TrDiff } from './TrDiff';
 
@@ -853,15 +854,7 @@ export const RowView = memo(function RowView({ row, chatId }: { readonly row: Tr
 				</View>
 			);
 		case 'visual':
-			return (
-				<View style={[styles.card, { backgroundColor: p.card, borderColor: p.stroke, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 10 }]}>
-					<Icon name={row.visual === 'chart' ? 'layers' : 'globe'} size={15} color={p.iconTertiary} />
-					<View style={{ flex: 1 }}>
-						<Text numberOfLines={1} style={{ fontSize: 13, lineHeight: 20, color: p.fgSecondary }}>{row.title || (row.visual === 'chart' ? 'Chart' : 'Page')}</Text>
-						<Text style={{ fontSize: 12, lineHeight: 16, color: p.fgQuaternary }}>{row.visual === 'chart' ? 'Chart' : 'Page'} shown in Volt on your computer</Text>
-					</View>
-				</View>
-			);
+			return <VisualCard visualRef={row.ref} kind={row.visual} title={row.title} {...(row.height ? { height: row.height } : {})} {...(row.detail ? { detail: row.detail } : {})} {...(row.pending ? { pending: true } : {})} />;
 		case 'working':
 			return <WorkingRow row={row} />;
 		case 'footer':

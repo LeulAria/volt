@@ -17,7 +17,7 @@ import { EmptyState, Icon, IconButton, T, Tap } from '../src/ui/core';
 import { Chips } from '../src/ui/rows';
 import { ActionSheet, type ISheetAction } from '../src/ui/sheets';
 
-export type ChatsFilter = 'all' | 'needs' | 'working' | 'unread' | 'pinned' | 'archived';
+export type ChatsFilter = 'all' | 'needs' | 'working' | 'unread' | 'pinned' | 'settled' | 'archived';
 
 const FILTERS: readonly { readonly id: ChatsFilter; readonly label: string }[] = [
 	{ id: 'all', label: 'All' },
@@ -25,6 +25,7 @@ const FILTERS: readonly { readonly id: ChatsFilter; readonly label: string }[] =
 	{ id: 'working', label: 'Working' },
 	{ id: 'unread', label: 'Unread' },
 	{ id: 'pinned', label: 'Pinned' },
+	{ id: 'settled', label: 'Settled' },
 	{ id: 'archived', label: 'Archived' },
 ];
 
@@ -57,7 +58,10 @@ function Chats() {
 			return buildChatSections(scoped, { query, archived: filter === 'archived' });
 		}
 		const q = query.trim().toLowerCase();
-		const picked = (filter === 'pinned' ? scoped.filter(item => item.pinned && !item.archived) : inboxItems(scoped, filter))
+		// Settled as the desktop shelves it: a snoozed chat sits in Snoozed even when it is also settled.
+		const picked = (filter === 'pinned' ? scoped.filter(item => item.pinned && !item.archived)
+			: filter === 'settled' ? scoped.filter(item => item.settled && !item.snoozed && !item.archived)
+				: inboxItems(scoped, filter))
 			.filter(item => !q || item.title.toLowerCase().includes(q) || item.preview.toLowerCase().includes(q));
 		return picked.length ? [{ key: filter, title: FILTERS.find(f => f.id === filter)!.label, items: picked }] : [];
 	}, [items, filter, query, projectId]);
