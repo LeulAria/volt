@@ -109,11 +109,17 @@
 	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
 }
 
+/* No divider: the chevron's half is a lighter grey than the chip. */
 .volt-agent-composer-chip.terminal-runs > .volt-agent-terminal-runs-more {
-	border-left: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	width: 24px;
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
 }
 
-.volt-agent-composer-chip.terminal-runs > .volt-agent-terminal-runs-more:hover,
+.volt-agent-composer-chip.terminal-runs > .volt-agent-terminal-runs-more:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 11%, transparent);
+	color: var(--vscode-foreground);
+}
+
 .volt-agent-composer-chip.terminal-runs > .volt-agent-terminal-runs-close:hover {
 	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 	color: var(--vscode-foreground);

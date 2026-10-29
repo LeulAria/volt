@@ -67,7 +67,7 @@
 	width: 20px;
 	height: 20px;
 	margin: 0;
-	padding: 3px;
+	padding: 2px;
 	border: 0 !important;
 	box-shadow: none !important;
 	outline: none !important;
@@ -79,10 +79,16 @@
 	-webkit-app-region: no-drag;
 }
 
-.volt-agent-titlebar-toggle > svg,
 .volt-agent-tools-close-panel > svg {
 	width: 14px;
 	height: 14px;
+}
+
+/* The files sidebar's tab row (agentChangesEditor.css) draws the same glyphs at 16px. */
+.volt-agent-titlebar-toggle > svg {
+	flex: none;
+	width: 16px;
+	height: 16px;
 }
 
 .volt-agent-right-panel-toggle > svg {
@@ -94,9 +100,15 @@
 	transform: rotate(-90deg);
 }
 
+/* The folder's open shape reads small and light beside the framed glyphs: larger, with a 1.4px line. */
 .volt-agent-files-panel-toggle > svg {
-	width: 15px;
-	height: 15px;
+	width: 18px;
+	height: 18px;
+}
+
+.volt-agent-files-panel-toggle > svg > * {
+	vector-effect: non-scaling-stroke;
+	stroke-width: 1.4px;
 }
 
 .volt-agent-quick-open-visibility > svg {
