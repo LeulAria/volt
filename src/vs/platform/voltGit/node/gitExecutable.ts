@@ -4,8 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { execFile } from 'child_process';
+import { homedir } from 'os';
 import { delimiter, join } from '../../../base/common/path.js';
-import { isMacintosh } from '../../../base/common/platform.js';
+import { isMacintosh, isWindows } from '../../../base/common/platform.js';
 
 /**
  * On macOS /usr/bin/git is an xcrun shim that refuses to run until the Xcode license is accepted
@@ -35,6 +36,21 @@ async function findFallbackDir(): Promise<string | undefined> {
 		}
 	}
 	return undefined;
+}
+
+/**
+ * `path` with the usual install folders for CLIs like gh appended. An app opened from the Dock gets
+ * only the system PATH, and the user's shell environment (which has them) can fail to resolve in
+ * time at startup; without these gh is never found and pull requests stop linking.
+ */
+export function withCliDirsOnPath(path: string | undefined): string | undefined {
+	if (isWindows) {
+		return path;
+	}
+	const home = homedir();
+	const current = (path ?? '').split(delimiter).filter(Boolean);
+	const extra = ['/opt/homebrew/bin', '/usr/local/bin', join(home, '.local', 'bin'), join(home, 'bin')];
+	return [...current, ...extra.filter(dir => !current.includes(dir))].join(delimiter);
 }
 
 /** `env` with a working git first on PATH when the macOS git shim is broken; otherwise `env` itself. */
