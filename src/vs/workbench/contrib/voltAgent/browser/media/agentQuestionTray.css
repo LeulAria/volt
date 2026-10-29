@@ -218,17 +218,27 @@
 	max-width: 45%;
 }
 
+/* A little taller while typing, so the answer has room. */
+.volt-question-option.other.editing {
+	min-height: 36px;
+}
+
 .volt-question-other-input {
 	flex: 1;
 	min-width: 0;
-	height: 18px;
+	height: 24px;
 	padding: 0;
 	border: 0;
 	outline: none;
 	background: transparent;
 	color: var(--vq-fg);
 	font: inherit;
-	line-height: 18px;
+	line-height: 24px;
+}
+
+/* The row's fill shows it is being edited; the workbench's text-input focus outline would box the text in. */
+.monaco-workbench .volt-question-option.editing input.volt-question-other-input:focus {
+	outline: none;
 }
 
 .volt-question-other-input::placeholder {
