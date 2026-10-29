@@ -126,6 +126,19 @@
 	overflow-wrap: anywhere;
 }
 
+/* The full text of a truncated row (a long queued prompt): 300px at most (16 lines of 18px), ending in an ellipsis. */
+.volt-agent-tooltip.clamped {
+	max-height: 300px;
+	overflow: hidden;
+}
+
+.volt-agent-tooltip.clamped .volt-agent-tooltip-row:not(.file) > .volt-agent-tooltip-label {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 16;
+	overflow: hidden;
+}
+
 .volt-agent-tooltip-kb {
 	flex: none;
 	white-space: nowrap;

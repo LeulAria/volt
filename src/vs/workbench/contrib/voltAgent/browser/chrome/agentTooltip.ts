@@ -53,6 +53,8 @@ export interface IAgentTooltipShowOptions {
 	 * asked when the pointer leaves (whether a row has pull requests is known only once they load).
 	 */
 	interactive?: boolean | (() => boolean);
+	/** Long text stops at 300px and ends in an ellipsis (a whole queued prompt, say). */
+	clamp?: boolean;
 }
 
 export interface IAgentTooltipShortcut {
@@ -160,6 +162,7 @@ export class AgentTooltip extends Disposable {
 		this.domNode.classList.toggle('card', options?.variant === 'card');
 		this.domNode.classList.toggle('beside', options?.placement === 'start' || options?.placement === 'end');
 		this.domNode.classList.toggle('compact', anchor.getAttribute('data-volt-tooltip-compact') === '1');
+		this.domNode.classList.toggle('clamped', !!options?.clamp);
 		this.click = options?.onClick;
 		this.domNode.classList.toggle('clickable', !!this.click);
 		// A drawn block (a list) has no width of its own: the card takes its full width instead.
@@ -461,6 +464,9 @@ function ensureTooltipDelegate(doc: Document): ITooltipDelegate {
  * Show the shared tooltip only when `element` is ellipsis-truncated, and only
  * after the pointer has stayed on it for `delayMs`.
  */
+/** More than a 300px clamped tooltip can show. */
+const TRUNCATED_HOVER_MAX_CHARS = 1500;
+
 export function bindTruncatedHoverTooltip(element: HTMLElement, text: string, delayMs = 1000): IDisposable {
 	const store = new DisposableStore();
 	const win = getWindow(element);
@@ -491,7 +497,8 @@ export function bindTruncatedHoverTooltip(element: HTMLElement, text: string, de
 			element.setAttribute(TOOLTIP_ATTR, text);
 			element.removeAttribute('title');
 			delegate.current = element;
-			delegate.tooltip.show(element, [{ label: text }]);
+			// The box shows at most 300px of it; no need to lay out a whole pasted document.
+			delegate.tooltip.show(element, [{ label: text.length > TRUNCATED_HOVER_MAX_CHARS ? `${text.slice(0, TRUNCATED_HOVER_MAX_CHARS)}…` : text }], { clamp: true });
 		}, delayMs);
 	}));
 	store.add(addDisposableListener(element, 'mouseleave', hide));
