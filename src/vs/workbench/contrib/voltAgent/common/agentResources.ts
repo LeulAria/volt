@@ -70,7 +70,7 @@ export interface IAgentResourceGroup {
 	readonly icon: AgentResourceIconShapes;
 }
 
-/** Lucide icons (via Aria Icons): scroll-text, sparkle, bot, square-slash, webhook, plug, sliders-horizontal. */
+/** Lucide icons (via Aria Icons): scroll-text, puzzle, bot, square-slash, webhook, plug, sliders-horizontal. */
 export const AGENT_RESOURCE_GROUPS: readonly IAgentResourceGroup[] = [
 	{
 		id: 'instructions',
@@ -87,9 +87,8 @@ export const AGENT_RESOURCE_GROUPS: readonly IAgentResourceGroup[] = [
 		id: 'skills',
 		label: localize('agentResources.skills', "Skills"),
 		empty: localize('agentResources.skills.empty', "No skills"),
-		// One four-point star (lucide sparkle): the three-part sparkles read as noise at 15px.
 		icon: [
-			['path', { d: 'M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z' }],
+			['path', { d: 'M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z' }],
 		],
 	},
 	{

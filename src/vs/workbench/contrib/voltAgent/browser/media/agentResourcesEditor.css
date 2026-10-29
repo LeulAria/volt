@@ -473,11 +473,6 @@
 	height: 16px;
 }
 
-/* Tools' marks in the page's ink, not their brand colours (the mark sets its colour inline). */
-.volt-ares-tile > .volt-brand-icon {
-	color: color-mix(in srgb, var(--vscode-foreground) 86%, transparent) !important;
-}
-
 .monaco-workbench .volt-ares-tile > .codicon[class*='codicon-'] {
 	font-size: 15px;
 	width: 15px;
