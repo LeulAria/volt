@@ -80,8 +80,8 @@ export interface IChartBlock extends IAgentBaseBlock {
  */
 export interface IVisualBlock extends IAgentBaseBlock {
 	readonly type: 'visual';
-	/** `canvas`: a design canvas update, drawn as a card that opens the canvas. */
-	kind: 'chart' | 'html' | 'canvas';
+	/** `canvas`: a design canvas update, drawn as a card that opens the canvas. `scratch`: a Scratch drawing's picture. */
+	kind: 'chart' | 'html' | 'canvas' | 'scratch';
 	title: string;
 	/** The stored spec (`volt-attachment:<hash>.json`) or page (`.html`). */
 	ref: string;
@@ -99,6 +99,10 @@ export interface IVisualBlock extends IAgentBaseBlock {
 	detail?: string;
 	/** canvas_render streaming in: the frames it has named so far. */
 	frames?: readonly string[];
+	/** A Scratch drawing: the board and frame Open shows, and the picture's `[width, height]`. */
+	board?: string;
+	frame?: string;
+	size?: readonly [number, number];
 }
 
 export interface IMermaidBlock extends IAgentBaseBlock {

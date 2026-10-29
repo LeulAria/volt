@@ -45,7 +45,7 @@ const SCRATCH_ENABLED = ContextKeyExpr.equals(`config.${SCRATCH_ENABLED_SETTING}
  * Opens the Scratch page (on `boardId` when given) in the main panel, in place of the chat. With
  * `sessionId` (back from that chat), its run is the one the dock shows, and comes into view.
  */
-export async function openScratchBoard(accessor: ServicesAccessor, boardId?: string, sessionId?: string, showChat = false): Promise<void> {
+export async function openScratchBoard(accessor: ServicesAccessor, boardId?: string, sessionId?: string, showChat = false, frameId?: string): Promise<void> {
 	const editorService = accessor.get(IEditorService);
 	const editorGroupsService = accessor.get(IEditorGroupsService);
 	const instantiationService = accessor.get(IInstantiationService);
@@ -68,6 +68,16 @@ export async function openScratchBoard(accessor: ServicesAccessor, boardId?: str
 				pane.focusRun(sessionId);
 			}
 		}
+		showFrame(pane, boardId, frameId);
+	}
+}
+
+/** A drawing the chat showed: selected and in view, once its board is up. */
+function showFrame(pane: ScratchBoardEditor, boardId: string, frameId: string | undefined): void {
+	const canvas = pane.canvas;
+	if (frameId && canvas?.model?.id === boardId && canvas.scene?.get(frameId)) {
+		canvas.select([frameId]);
+		canvas.bringIntoView([frameId]);
 	}
 }
 
@@ -141,7 +151,7 @@ registerAction2(class OpenFreshScratchBoardAction extends Action2 {
  * in view: the board's drawing sits beside the conversation that made it. False when no chat on
  * screen can show tabs.
  */
-export async function openScratchBoardBeside(accessor: ServicesAccessor, sessionId: string, boardId: string): Promise<boolean> {
+export async function openScratchBoardBeside(accessor: ServicesAccessor, sessionId: string, boardId: string, frameId?: string): Promise<boolean> {
 	const input = accessor.get(IInstantiationService).createInstance(ScratchBoardEditorInput);
 	input.boardId = boardId;
 	const pane = await openInAgentTools(input, sessionId);
@@ -152,6 +162,7 @@ export async function openScratchBoardBeside(accessor: ServicesAccessor, session
 	if (pane.canvas?.model?.id === boardId) {
 		pane.focusRun(sessionId);
 	}
+	showFrame(pane, boardId, frameId);
 	return true;
 }
 
@@ -160,8 +171,9 @@ registerAction2(class OpenScratchBoardBesideAction extends Action2 {
 		super({ id: OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, title: localize2('voltScratch.openBeside', "Open Scratch Board Beside Chat") });
 	}
 
-	override async run(accessor: ServicesAccessor, sessionId?: unknown, boardId?: unknown): Promise<boolean> {
-		return typeof sessionId === 'string' && typeof boardId === 'string' ? openScratchBoardBeside(accessor, sessionId, boardId) : false;
+	/** `frameId`: a drawing to select and bring into view (a picture of it was clicked in the chat). */
+	override async run(accessor: ServicesAccessor, sessionId?: unknown, boardId?: unknown, frameId?: unknown): Promise<boolean> {
+		return typeof sessionId === 'string' && typeof boardId === 'string' ? openScratchBoardBeside(accessor, sessionId, boardId, typeof frameId === 'string' ? frameId : undefined) : false;
 	}
 });
 
@@ -177,8 +189,8 @@ registerAction2(class OpenScratchBoardAction extends Action2 {
 	}
 
 	/** `showChat`: that chat opens in the board's dock (picked in the chats list while the board shows). */
-	override async run(accessor: ServicesAccessor, boardId?: unknown, sessionId?: unknown, showChat?: unknown): Promise<void> {
-		await openScratchBoard(accessor, typeof boardId === 'string' ? boardId : undefined, typeof sessionId === 'string' ? sessionId : undefined, showChat === true);
+	override async run(accessor: ServicesAccessor, boardId?: unknown, sessionId?: unknown, showChat?: unknown, frameId?: unknown): Promise<void> {
+		await openScratchBoard(accessor, typeof boardId === 'string' ? boardId : undefined, typeof sessionId === 'string' ? sessionId : undefined, showChat === true, typeof frameId === 'string' ? frameId : undefined);
 	}
 });
 

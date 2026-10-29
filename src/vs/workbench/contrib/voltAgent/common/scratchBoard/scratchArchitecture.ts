@@ -106,7 +106,8 @@ function text(v: unknown, max = 120): string {
 	return typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : typeof v === 'number' ? String(v) : '';
 }
 
-function colorOf(v: unknown): string | undefined {
+/** A colour name from ARCHITECTURE_COLORS or a hex colour, light-space; undefined when it is neither. */
+export function colorOf(v: unknown): string | undefined {
 	if (typeof v !== 'string' || !v.trim()) {
 		return undefined;
 	}

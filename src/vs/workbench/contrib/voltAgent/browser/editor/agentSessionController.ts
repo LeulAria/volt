@@ -579,7 +579,14 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 		if (last.segments.some(segment => segment.kind === 'block' && segment.block.id === id)) {
 			return;
 		}
-		last.segments.push({ kind: 'block', block: { id, type: 'visual', status: 'complete', kind: visual.kind, title: visual.title, ref: visual.ref, ...(visual.height ? { height: visual.height } : {}), ...(visual.heights?.length ? { heights: visual.heights } : {}), ...(visual.cap ? { cap: visual.cap } : {}), ...(visual.canvas ? { canvas: visual.canvas } : {}), ...(visual.detail ? { detail: visual.detail } : {}) } });
+		// A Scratch redraw: the reply shows the drawing as it is now, not each version of it.
+		for (let i = visual.replaces ? last.segments.length - 1 : -1; i >= 0; i--) {
+			const segment = last.segments[i];
+			if (segment.kind === 'block' && segment.block.type === 'visual' && segment.block.frame === visual.replaces) {
+				last.segments.splice(i, 1);
+			}
+		}
+		last.segments.push({ kind: 'block', block: { id, type: 'visual', status: 'complete', kind: visual.kind, title: visual.title, ref: visual.ref, ...(visual.height ? { height: visual.height } : {}), ...(visual.heights?.length ? { heights: visual.heights } : {}), ...(visual.cap ? { cap: visual.cap } : {}), ...(visual.canvas ? { canvas: visual.canvas } : {}), ...(visual.detail ? { detail: visual.detail } : {}), ...(visual.board ? { board: visual.board } : {}), ...(visual.frame ? { frame: visual.frame } : {}), ...(visual.size ? { size: visual.size } : {}) } });
 		for (const segment of last.segments) {
 			if (segment.kind === 'activity' && segment.item.browserTool === tool && segment.item.input && segment.item.input.length > 2000) {
 				segment.item.input = JSON.stringify({ title: visual.title });

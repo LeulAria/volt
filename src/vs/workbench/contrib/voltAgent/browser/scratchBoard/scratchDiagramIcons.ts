@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type { IArchitectureIcon } from '../../common/scratchBoard/scratchArchitecture.js';
+import { registerScratchFonts } from './scratchExport.js';
 import { fontStack } from './scratchRenderer.js';
 
 const ARIA_SEARCH = 'https://icons.leularia.com/api/v1/search';
@@ -112,8 +113,12 @@ export async function fetchDiagramIcons(names: Iterable<string>): Promise<Map<st
  */
 export async function handTextMeasure(doc: Document): Promise<(text: string, fontSize: number) => number> {
 	const family = fontStack('hand');
+	// Only an open board registers Excalifont: a drawing made from a chat would otherwise be measured
+	// in a fallback font, and its text wrap (and be cut off) on the board.
+	registerScratchFonts(doc);
 	try {
-		await doc.fonts.load(`20px ${family}`);
+		// Each subset loads for the characters asked about; these cover what labels and tables use.
+		await doc.fonts.load(`20px ${family}`, 'Aa Zz 09 $%&()/=+-.,:;\'"?! • ↓ ↑');
 	} catch {
 		// Measured in the fallback.
 	}

@@ -6,12 +6,15 @@
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { raceTimeout } from '../../../../../base/common/async.js';
 import { Event } from '../../../../../base/common/event.js';
-import { encodeBase64, VSBuffer } from '../../../../../base/common/buffer.js';
+import { decodeBase64, encodeBase64, VSBuffer } from '../../../../../base/common/buffer.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
-import { IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolProvider, IVoltHostToolResult } from '../../../../services/voltRuntime/common/hostTools.js';
+import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolProvider, IVoltHostToolResult, IVoltVisualRef } from '../../../../services/voltRuntime/common/hostTools.js';
 import { architectureToElements, IArchitectureSpec, parseArchitectureSpec } from '../../common/scratchBoard/scratchArchitecture.js';
+import { describePage, IPageSpec, pageToElements, parsePageSpec } from '../../common/scratchBoard/scratchPage.js';
+import { sketchIconNames, sketchToElements } from '../../common/scratchBoard/scratchSketch.js';
 import { rebindConnector, routeContext, withLegs } from '../../common/scratchBoard/scratchBinding.js';
 import { describeForAgent } from '../../common/scratchBoard/scratchDescribe.js';
 import { diagramOverlaps, mermaidToElements, readingOrder } from '../../common/scratchBoard/scratchDiagram.js';
@@ -48,6 +51,8 @@ const NOTE_MIN_HEIGHT = 96;
 const FRAME_PADDING = 48;
 /** How long a draw waits for the user to finish a drag before giving up. */
 const IDLE_WAIT_MS = 15_000;
+/** How long the drawing's picture may take to reach the chat's attachment store. */
+const PUBLISH_TIMEOUT_MS = 5_000;
 
 export const SCRATCH_TOOLS: readonly IVoltHostToolInfo[] = [
 	{
@@ -68,7 +73,7 @@ export const SCRATCH_TOOLS: readonly IVoltHostToolInfo[] = [
 		group: 'visuals',
 		approvalInReadOnlyModes: 'draws on your Scratch board',
 		description: [
-			'Draw on the user\'s Scratch board (Volt\'s whiteboard; agents draw in clean lines and the system font, like a figure in a paper), beside what they sent you: a diagram from a Mermaid flowchart (laid out automatically into shapes joined by connectors that stay attached when the user moves them), sticky notes, and markdown cards (headings, lists, checklists, tables, code).',
+			'Draw on the user\'s Scratch board (Volt\'s whiteboard; agents draw in clean lines and the system font, like a figure in a paper), beside what they sent you: a diagram from a Mermaid flowchart (laid out automatically into shapes joined by connectors that stay attached when the user moves them), a hand-lettered page (a heading, a comparison table, takeaways), free-form drawings you compose yourself from the board\'s shapes, arrows, text, strokes and icons, sticky notes, and markdown cards (headings, lists, checklists, tables, code). The drawing also shows in the chat as a picture the user can open on the board.',
 			'Everything lands in one frame named `title`, placed next to the user\'s selection, as one step the user can undo. Use it whenever the user asks you to draw, sketch, diagram, map, plan or add something on the board (or the request came from the board and a picture answers it best); keep your chat reply short, the user sees the drawing on their board.',
 			'To redraw, fix or restyle something already on the board (yours, another chat\'s, or a frame the user selected and asked you to redraw), pass its frameId as `replace`: the new drawing takes its place, so the board does not end up with two versions. Draw beside it only when the user asks to keep the original.',
 			'Mermaid: `flowchart LR` or `flowchart TD` only. Node shapes: A[box] B(rounded) C([pill]) D{decision} E[(database)] F((circle)) G{{hexagon}} H[/input/] I[[subroutine]]. Edges: A --> B, A -.-> B (dotted), A ==> B (thick), A -->|label| B, A <--> B. Edges draw as right-angled elbows that keep apart and go round shapes; curve one only where a curve reads better: `linkStyle 4 interpolate basis`. `subgraph Name ... end` becomes a frame. Keep labels short (2-5 words, <br/> for a second line).',
@@ -80,6 +85,8 @@ export const SCRATCH_TOOLS: readonly IVoltHostToolInfo[] = [
 			'AI systems: keep UI, orchestrator, agents, tools, model providers, memory or vector store, guardrails and human approval, and tracing apart. Do not invent components; mark assumptions with "?" or a sticky note; keep proposed and existing apart (own frame, or dashed edges and outlines). Check the returned image and fix overlaps, crossings or clipped labels with `replace` before you answer.',
 			'Nothing may overlap: a line never runs through a shape that is not one of its ends, and an edge label never sits on a shape or another label. The layout routes an edge that skips a level around the nodes in between, but it cannot fix every graph: the result names each overlap it finds, and you redraw until it reports none. Help it: declare nodes in flow order, keep side branches (cancel, fail, timeout) after the main path, give an edge that jumps several steps a short label or none, and avoid many edges into one node from far apart.',
 			'Architecture pictures (how a system fits together: services, vendors, machines, the numbered path a request or ticket takes) use `diagram` instead of `mermaid`: a hand-drawn board in the Excalidraw style with real icons and brand logos fetched from Aria Icons. Groups are the places things run (a vendor like Neon or Vercel, "Your Mac", "Sources") drawn as coloured containers with an icon and a name; each holds cards with an icon, a title and a quieter subtitle ("Webhook inbox" / "Linear and GitHub"). Edges join cards or whole groups, with numbered labels beside the line ("1. New ticket"). Always place every group on a grid with `row` and `col` from 0 (rowSpan/colSpan to stretch), so the flow reads left to right and top to bottom and linked groups sit next to each other; a 2-3 column grid reads best. Without them the layout lines groups up along `direction`, which is wider and tangles more.',
+			'Pages (a comparison, a scorecard, a summary with takeaways: anything that reads best as a hand-lettered slide) use `page`: a big heading, a table whose row names sit in quiet grey with the values centred under their columns, a small footnote and a few takeaway bullets, all in the hand font. Put the things compared in `columns` (colour one to single it out, e.g. the subject in blue) and one row per measure; give a row `best: "high"` or `"low"` and its winning number turns green on its own, or mark a cell `{ "text": "yes, Nov 4", "best": true }`. Keep cells short ("$2 / $10", "67.2%"), say in the footnote where the numbers come from and what green means, and keep bullets to one line each. A page can go with notes or cards but not with `mermaid` or `diagram`: draw those in another call.',
+			'Anything else, draw it yourself with `elements`, and be creative: this is a whiteboard, so make the picture someone would sketch to explain the idea, not a table of text. Illustrated explainers (a metaphor drawn out: a funnel, a pipeline of machines, a tree, a map), timelines and roadmaps, mind maps, hand-drawn bar or line charts, before/after, UI wireframes, a user journey with faces and speech bubbles, an annotated diagram with callouts. `elements` are the board\'s own pieces at x, y in your own coordinates (they are moved into place together): shapes (rectangle, ellipse, diamond, triangle, hexagon, parallelogram, cylinder, pill, document, cloud, star) with optional `text` inside; `text`; `arrow` and `line` with `points` [[x, y], ...] (a curve through them: arrowType "round"; right angles: "elbow") or `from`/`to` element ids so they stay attached; `freehand` strokes (underlines, circles round a word, squiggles, ticks) and `highlighter`; `note` (sticky, fill yellow/pink/blue/green/violet/orange); `icon` (an Aria Icons id or a word). Style each one: `stroke`, `fill` (a colour name or hex), `fillStyle` hachure, cross-hatch or solid (hachure reads hand-made), `strokeWidth`, `strokeStyle` dashed or dotted, `roughness` 0 clean to 2 sketchy, `opacity`, `angle` in degrees, `font` hand/sans/mono, `fontSize` (or small/medium/large/huge), `group` to move pieces together. Make it look designed: a clear title at the top, a grid you keep to (same gaps, aligned edges), two or three colours with meaning, big type for what matters and small grey type for asides, arrows with short labels, and nothing touching that should not. Then look at the returned image and redraw with `replace` until it is something you would show off.',
 			'Icons: an Aria Icons id, `logos:<brand>-icon` (logos:github-icon, logos:slack-icon, logos:vercel-icon, logos:neon-icon, logos:linear-icon, logos:postgresql, logos:aws) or `simple-icons:<brand>` for brand logos, `lucide:<name>` for everything else (lucide:webhook, lucide:database, lucide:monitor, lucide:git-pull-request, lucide:laptop, lucide:inbox, lucide:history, lucide:radio); a plain word is searched. Colours by name: green, cyan, blue, violet, purple, pink, red, orange, yellow, gray: a group in its colour, cards inside take it unless they set their own. `dashed: true` marks something planned or not built yet.',
 		].join(' '),
 		inputSchema: {
@@ -146,6 +153,80 @@ export const SCRATCH_TOOLS: readonly IVoltHostToolInfo[] = [
 						},
 					},
 				},
+				page: {
+					type: 'object',
+					description: 'A hand-lettered page (instead of `mermaid` or `diagram`): heading, comparison table, footnote, takeaway bullets.',
+					properties: {
+						heading: { type: 'string', description: 'The big title on the page; defaults to `title`.' },
+						subtitle: { type: 'string', description: 'One quieter line under the heading.' },
+						table: {
+							type: 'object',
+							properties: {
+								columns: {
+									type: 'array',
+									description: 'The names along the top, one per value column (the row names need none).',
+									items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { label: { type: 'string' }, color: { type: 'string', description: 'blue, green, red, violet, ... or #hex.' } }, required: ['label'] }] },
+								},
+								rows: {
+									type: 'array',
+									items: {
+										type: 'object',
+										properties: {
+											label: { type: 'string', description: 'What the row measures, e.g. "cost per task (AA)".' },
+											cells: {
+												type: 'array',
+												description: 'One value per column, in column order.',
+												items: { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'object', properties: { text: { type: 'string' }, color: { type: 'string' }, best: { type: 'boolean' } }, required: ['text'] }] },
+											},
+											best: { type: 'string', enum: ['high', 'low'], description: 'Which number wins: its cell turns green.' },
+										},
+										required: ['label', 'cells'],
+									},
+								},
+							},
+							required: ['columns', 'rows'],
+						},
+						footnote: { type: 'string', description: 'Small print under the table: sources, dates, what green means.' },
+						bullets: { type: 'array', items: { type: 'string' }, description: 'Takeaways under the table, one line each.' },
+					},
+				},
+				elements: {
+					type: 'array',
+					description: 'Free-form pieces you place yourself: anything the other modes do not cover. Coordinates are yours; the whole set is moved into place together.',
+					items: {
+						type: 'object',
+						properties: {
+							type: { type: 'string', enum: ['rectangle', 'ellipse', 'diamond', 'triangle', 'hexagon', 'parallelogram', 'cylinder', 'pill', 'document', 'cloud', 'star', 'text', 'arrow', 'line', 'freehand', 'highlighter', 'note', 'icon'] },
+							id: { type: 'string', description: 'For arrows\' `from`/`to`.' },
+							x: { type: 'number' },
+							y: { type: 'number' },
+							width: { type: 'number' },
+							height: { type: 'number' },
+							text: { type: 'string', description: 'Inside a shape, along an arrow, or the text itself (markdown; \\n for a new line).' },
+							points: { type: 'array', items: { type: 'array', items: { type: 'number' } }, description: 'Arrows, lines and freehand: [[x, y], ...] in your coordinates.' },
+							from: { type: 'string', description: 'Arrows and lines: the id they start on.' },
+							to: { type: 'string' },
+							arrowType: { type: 'string', enum: ['sharp', 'round', 'elbow'] },
+							startArrowhead: { type: 'string' },
+							endArrowhead: { type: 'string', description: 'arrow, triangle, dot, circle, bar, diamond, none, ...' },
+							icon: { type: 'string', description: 'Icons: lucide:rocket, logos:github-icon, or a word.' },
+							stroke: { type: 'string', description: 'A colour name (red, blue, green, violet, orange, gray, ...) or #hex.' },
+							fill: { type: 'string', description: 'A colour name or #hex; notes: their paper.' },
+							fillStyle: { type: 'string', enum: ['hachure', 'cross-hatch', 'solid'] },
+							strokeWidth: { type: 'number' },
+							strokeStyle: { type: 'string', enum: ['solid', 'dashed', 'dotted'] },
+							roughness: { type: 'number', description: '0 clean, 1 hand-drawn, 2 sketchy.' },
+							opacity: { type: 'number' },
+							angle: { type: 'number', description: 'Degrees, clockwise.' },
+							font: { type: 'string', enum: ['hand', 'sans', 'serif', 'mono'] },
+							fontSize: { anyOf: [{ type: 'number' }, { type: 'string', enum: ['small', 'medium', 'large', 'huge'] }] },
+							textColor: { type: 'string' },
+							align: { type: 'string', enum: ['left', 'center', 'right'] },
+							group: { type: 'string', description: 'Pieces with the same group move together.' },
+						},
+						required: ['type'],
+					},
+				},
 				notes: {
 					type: 'array',
 					maxItems: MAX_NOTES,
@@ -187,6 +268,7 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 		@IScratchBoardService private readonly boards: IScratchBoardService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IScratchSessionLinks private readonly links: IScratchSessionLinks,
+		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IInstantiationService instantiationService: IInstantiationService,
 	) {
 		super();
@@ -206,7 +288,7 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 	}
 
 	/** The board a call is about: the one named, else the one its chat was started from, else the one the user last opened. */
-	private async boardFor(args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<string> {
+	private async boardFor(args: Record<string, unknown>, call: IVoltHostToolCall | undefined, create = false): Promise<string> {
 		await this.boards.whenReady;
 		if (typeof args.boardId === 'string' && args.boardId) {
 			if (!this.boards.getBoard(args.boardId)) {
@@ -224,6 +306,10 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 		const newest = [...index.boards].filter(b => !b.deleted && !b.archived).sort((a, b) => (b.edited || b.created) - (a.edited || a.created))[0]?.id;
 		const id = last ?? newest;
 		if (!id) {
+			// A chat can sketch before the user ever opened Scratch: its drawing starts their first board.
+			if (create) {
+				return this.boards.createBoard();
+			}
 			throw new Error('The user has no Scratch board yet. They can open one from the Scratch button beside New Chat.');
 		}
 		return id;
@@ -273,8 +359,21 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 			architecture = parsed.spec;
 			warnings = parsed.warnings;
 		}
-		if (!mermaid && !architecture && !notes.length && !cards.length) {
-			return { error: 'Nothing to draw: pass `diagram`, `mermaid`, `notes` or `cards`.' };
+		let page: IPageSpec | undefined;
+		if (args.page !== undefined && args.page !== null) {
+			if (mermaid || architecture) {
+				return { error: 'Pass `page` on its own (notes and cards may go with it), not with `mermaid` or `diagram`: draw the other in a second scratch_draw.' };
+			}
+			const parsed = parsePageSpec(args.page, title);
+			if ('error' in parsed) {
+				return { error: parsed.error };
+			}
+			page = parsed.spec;
+			warnings.push(...parsed.warnings);
+		}
+		const hasSketch = Array.isArray(args.elements) && args.elements.length > 0;
+		if (!mermaid && !architecture && !page && !hasSketch && !notes.length && !cards.length) {
+			return { error: 'Nothing to draw: pass `elements`, `diagram`, `mermaid`, `page`, `notes` or `cards`.' };
 		}
 		const graph = mermaid ? parseMermaidFlowchart(extractMermaidSource(mermaid) ?? mermaid) : undefined;
 		if (mermaid && (!graph || !graph.nodes.length)) {
@@ -291,8 +390,20 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 			}
 			architectureElements = architectureToElements(architecture, [0, 0], { style: AGENT_DIAGRAM_STYLE, icon: name => icons.get(name), measure });
 		}
+		const pageElements = page ? pageToElements(page, [0, 0], { style: AGENT_DIAGRAM_STYLE, measure: await handTextMeasure(mainWindow.document) }) : [];
+		let sketchElements: ScratchElement[] = [];
+		if (hasSketch) {
+			const names = sketchIconNames(args.elements);
+			const [icons, measure] = await Promise.all([fetchDiagramIcons(names), handTextMeasure(mainWindow.document)]);
+			const sketched = sketchToElements(args.elements, { style: AGENT_DIAGRAM_STYLE, measure, icon: name => icons.get(name), rich: markdown => markdownToRichHtml(markdown, mainWindow.document) });
+			if ('error' in sketched) {
+				return { error: sketched.error };
+			}
+			sketchElements = sketched.elements;
+			warnings.push(...sketched.warnings);
+		}
 
-		const boardId = await this.boardFor(args, call);
+		const boardId = await this.boardFor(args, call, true);
 		// The chat drew here: its toolbar in Agents leads to this board.
 		if (call?.sessionId) {
 			this.links.link(call.sessionId, boardId);
@@ -311,9 +422,12 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 			// Lay the parts out from (0, 0): diagram, then a row of notes, then the cards.
 			const content: ScratchElement[] = [];
 			let cursorY = 0;
-			if (architectureElements.length) {
-				content.push(...architectureElements);
-				const b = unionBounds(architectureElements.map(el => geometricBounds(el)));
+			for (const drawn of [architectureElements, pageElements]) {
+				if (!drawn.length) {
+					continue;
+				}
+				content.push(...drawn);
+				const b = unionBounds(drawn.map(el => geometricBounds(el)));
 				if (b) {
 					cursorY = b.maxY + GAP;
 				}
@@ -325,6 +439,13 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 				if (b) {
 					cursorY = b.maxY + GAP;
 				}
+			}
+			// The agent's own pieces keep their places relative to each other, under whatever came before.
+			const sketchBounds = unionBounds(sketchElements.map(el => geometricBounds(el)));
+			if (sketchBounds) {
+				const dx = -sketchBounds.minX, dy = cursorY - sketchBounds.minY;
+				content.push(...sketchElements.map(el => ({ ...el, x: el.x + dx, y: el.y + dy })));
+				cursorY += sketchBounds.maxY - sketchBounds.minY + GAP;
 			}
 			if (notes.length) {
 				// Rows as tall as their longest note: a note grows to fit its text, and must not grow into the next row.
@@ -435,29 +556,55 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 			this.show(boardId, [frame.id]);
 			const image = await this.picture(scene, frame.id);
 
-			const shapes = placed.filter(el => el.type === 'shape').length;
-			const connectors = placed.filter(el => isLinear(el)).length;
+			const sketched = new Set(sketchElements.map(el => el.id));
+			const shapes = placed.filter(el => el.type === 'shape' && !sketched.has(el.id)).length;
+			const connectors = placed.filter(el => isLinear(el) && !sketched.has(el.id)).length;
 			const groups = architectureElements.filter(el => el.type === 'frame').length;
 			const parts = [
+				sketchElements.length ? `${sketchElements.length} pieces of your own` : '',
 				groups ? `${groups} groups` : '',
 				shapes ? `${shapes} ${architecture ? 'cards' : 'shapes'}` : '',
 				connectors ? `${connectors} connectors` : '',
+				page ? `a page with ${describePage(page) || 'a heading'}` : '',
 				notes.length ? `${notes.length} sticky notes` : '',
 				cards.length ? `${cards.length} cards` : '',
 			].filter(Boolean).join(', ');
 			const boardTitle = boardDisplayTitle(this.boards.getBoard(boardId)!);
 			const drawn = withFrameContents(scene.getElements(), new Set([frame.id]));
-			const overlaps = diagramOverlaps(scene.getElements().filter(el => drawn.has(el.id)), htmlToPlainText);
+			// Free-form pieces overlap on purpose (a word circled, a label on a shape): the agent judges those from the image.
+			const overlaps = diagramOverlaps(scene.getElements().filter(el => drawn.has(el.id) && !sketched.has(el.id)), htmlToPlainText);
 			const check = overlaps.length
 				? `Overlaps to fix before you answer: ${overlaps.join('; ')}. Redraw with replace: "${frame.id}": reorder the nodes or edges so the ends sit next to each other, split a crowded diagram into two, or shorten the labels.`
 				: 'No line runs through a shape and no label sits on a shape or another label.';
 			const notices = warnings.length ? ` Note: ${warnings.join('; ')}.` : '';
+			// The picture goes in the chat too, with Open to see the drawing on its board.
+			const visual = image ? await this.publish(image, title, boardId, frame.id, replaced?.id) : undefined;
 			return {
-				text: `Drew "${title}" on the Scratch board "${boardTitle}" (${parts}), ${replaced ? 'in place of the earlier drawing' : spot ? 'in the free spot kept for it' : 'beside what the user sent'}. frameId ${frame.id}, boardId ${boardId}. ${check}${notices} ${image ? 'The image is the drawing as the user sees it: check it here (no screenshots or desktop tools needed). ' : ''}The user sees it on their board now and can undo it; to change it, call scratch_draw again with replace: "${frame.id}". Do not repeat the drawing in your reply.`,
+				text: `Drew "${title}" on the Scratch board "${boardTitle}" (${parts}), ${replaced ? 'in place of the earlier drawing' : spot ? 'in the free spot kept for it' : 'beside what the user sent'}. frameId ${frame.id}, boardId ${boardId}. ${check}${notices} ${image ? 'The image is the drawing as the user sees it: check it here (no screenshots or desktop tools needed). ' : ''}The user sees it on their board now${visual ? ' and as a picture in the chat' : ''}, and can undo it; to change it, call scratch_draw again with replace: "${frame.id}". Do not repeat the drawing in your reply.`,
 				...(image ? { image } : {}),
+				...(visual ? { visual } : {}),
 			};
 		} finally {
 			ref.dispose();
+		}
+	}
+
+	/** Stores the drawing's picture for the chat: the transcript shows it with Open, which shows `frameId` on its board. */
+	private async publish(dataUrl: string, title: string, boardId: string, frameId: string, replaces: string | undefined): Promise<IVoltVisualRef | undefined> {
+		try {
+			const png = decodeBase64(dataUrl.slice(dataUrl.indexOf(',') + 1)).buffer;
+			// The chat's picture is extra: a history store that does not answer (an agent server out of
+			// reach) must not hold up the drawing's result.
+			const ref = await raceTimeout(this.history.putAttachment(png, 'image/png'), PUBLISH_TIMEOUT_MS);
+			if (!ref) {
+				return undefined;
+			}
+			// A PNG's width and height are the big-endian words at 16 and 20 of its header.
+			const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+			const size = png.byteLength > 24 ? [view.getUint32(16), view.getUint32(20)] as const : undefined;
+			return { kind: 'scratch', ref, title, board: boardId, frame: frameId, ...(size ? { size } : {}), ...(replaces ? { replaces } : {}) };
+		} catch {
+			return undefined;
 		}
 	}
 
