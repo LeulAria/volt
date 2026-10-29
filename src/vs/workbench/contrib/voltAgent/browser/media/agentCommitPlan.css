@@ -15,12 +15,13 @@
 	--vcp-fg-icon: rgba(240, 240, 241, 0.62);
 	--vcp-hover: rgba(240, 240, 241, 0.08);
 	--vcp-line: rgba(255, 255, 255, 0.07);
-	--vcp-bg: rgba(24, 24, 24, 0.94);
+	/* The hover cards' surface (#1c1c1c, agentTooltip.css), a little see-through. */
+	--vcp-bg: rgba(28, 28, 28, 0.96);
 	--vcp-input: rgba(240, 240, 241, 0.04);
 	--vcp-check-border: rgba(240, 240, 241, 0.3);
 	--vcp-check-border-hover: rgba(240, 240, 241, 0.55);
 	--vcp-check-fill: rgba(240, 240, 241, 0.92);
-	--vcp-check-mark: #181818;
+	--vcp-check-mark: #1c1c1c;
 	box-sizing: border-box;
 	width: 100%;
 	max-width: 760px;
@@ -29,7 +30,7 @@
 	flex-direction: column;
 	border-radius: 12px;
 	background: var(--vcp-bg);
-	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 8px 24px rgba(0, 0, 0, 0.22);
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 24px rgba(0, 0, 0, 0.22);
 	color: var(--vcp-fg);
 	font-family: var(--volt-font);
 	font-size: 13px;
