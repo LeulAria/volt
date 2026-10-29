@@ -308,29 +308,27 @@ export class AgentResourcesSections {
 			append(head, $('span.volt-ares-tile.large')).appendChild(createSurfaceStrokeIcon(card.ownerDocument, section.icon));
 			const copy = append(head, $('.volt-ares-tile-card-copy'));
 			append(copy, $('span.volt-ares-tile-card-title')).textContent = section.label;
-			append(copy, $('span.volt-ares-tile-card-count')).textContent = items.length
-				? localize('agentResources.tileFiles', "{0} files", items.length)
+			// Where the files are, in words: "7 workspace · 1 global · 2 external".
+			const split = SCOPE_ORDER
+				.map(kind => [kind, items.filter(item => agentResourceScopeKind(item.scope) === kind).length] as const)
+				.filter(([, count]) => count > 0);
+			append(copy, $('span.volt-ares-tile-card-split')).textContent = split.length
+				? split.map(([kind, count]) => `${count} ${AGENT_RESOURCE_SCOPE_KIND_LABELS[kind].toLowerCase()}`).join(' · ')
 				: localize('agentResources.tileEmpty', "None yet");
-			if (issues) {
-				const warn = append(head, $('span.volt-ares-chip.warning'));
-				warn.appendChild(renderIcon(Codicon.warning));
-				append(warn, $('span')).textContent = String(issues);
-				setAgentTooltip(warn, localize('agentResources.tileIssues', "{0} need attention", issues));
-			}
-			// How the files split by scope, as a thin bar with the counts under it.
+			append(head, $('span.volt-ares-tile-card-count')).textContent = String(items.length);
+			// The same split as one bar in shades of the page's ink.
 			const bar = append(card, $('.volt-ares-scope-bar'));
-			const legend = append(card, $('.volt-ares-scope-legend'));
-			for (const kind of SCOPE_ORDER) {
-				const count = items.filter(item => agentResourceScopeKind(item.scope) === kind).length;
-				if (!count) {
-					continue;
-				}
+			for (const [kind, count] of split) {
 				append(bar, $(`span.scope-${kind}`)).style.flexGrow = String(count);
-				const entry = append(legend, $('span.volt-ares-scope-legend-entry'));
-				append(entry, $(`span.volt-ares-scope-dot.scope-${kind}`));
-				append(entry, $('span')).textContent = `${count} ${AGENT_RESOURCE_SCOPE_KIND_LABELS[kind].toLowerCase()}`;
 			}
 			bar.classList.toggle('empty', !items.length);
+			if (issues) {
+				const warn = append(card, $('.volt-ares-tile-card-issues'));
+				warn.appendChild(renderIcon(Codicon.warning));
+				append(warn, $('span')).textContent = issues === 1
+					? localize('agentResources.tileIssue', "1 file needs a look")
+					: localize('agentResources.tileIssues', "{0} files need a look", issues);
+			}
 			this.ctx.store.add(addDisposableListener(card, 'click', () => this.ctx.navigate(section.id)));
 		}
 		const attention = this.ctx.items.filter(item => item.status.kind !== 'ok');

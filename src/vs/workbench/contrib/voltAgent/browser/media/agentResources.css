@@ -274,8 +274,8 @@
 	width: 6px;
 	height: 6px;
 	border-radius: 50%;
-	/* The activity bar's badge color: the theme's accent for "something is on" (focusBorder is too faint in some themes). */
-	background: var(--vscode-activityBarBadge-background, #4c8dff);
+	/* The page's ink, not an accent: a filter that is on reads like the white pills. */
+	background: var(--vscode-foreground);
 	box-shadow: 0 0 0 1.5px var(--volt-agent-window-bg-base, #161616);
 	pointer-events: none;
 }
