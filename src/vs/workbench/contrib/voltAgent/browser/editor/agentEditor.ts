@@ -675,6 +675,9 @@ function acceptGhostText(editor: ICodeEditor): boolean {
 /** Model silence (no tool running) after which the live line says the turn is taking longer than expected, as Cursor does. */
 const SLOW_TURN_MS = 90_000;
 
+/** Silence after reply text, with the turn still running, before the live line shows again under the text. */
+const TEXT_QUIET_MS = 1_500;
+
 /** Supervisor tray buttons. Cursor's looping tray has none; these give the user a way forward. */
 const SUPERVISION_ACTION_LABELS: Record<SupervisionAction, { readonly label: () => string; readonly tooltip: () => string }> = {
 	continueDifferently: {
@@ -850,6 +853,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private readonly userChipMentions = new WeakMap<HTMLElement, IAgentDisplayMention>();
 	/** Redraws a quiet, non-rotating live line when it should start reading "Taking longer than expected". */
 	private slowTurnTimer: IDisposable | undefined;
+	/** Redraws the live turn when its reply text has gone quiet, so the live line comes back. */
+	private textQuietTimer: IDisposable | undefined;
 	private dockSyncAt = 0;
 	private findWidget!: AgentFindWidget;
 	private findMatches: HTMLElement[] = [];
@@ -4762,9 +4767,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const message = live.message;
 		this.liveTurns.add(message);
 		const rows = buildTranscriptRows(message.segments, message.text, true, message.steers, readToolDensity(this.configurationService));
+		// Text that stopped growing while the turn runs on (the model plans its next step, or waits on
+		// a subagent): nothing on screen moves, so the live line shows again under the text.
+		const quietFor = Date.now() - (message.activity?.lastEventAt ?? message.startedAt ?? Date.now());
+		const textQuiet = quietFor >= TEXT_QUIET_MS;
+		this.textQuietTimer?.dispose();
+		this.textQuietTimer = textQuiet ? undefined : disposableTimeout(() => this.scheduleThreadRender(), TEXT_QUIET_MS - quietFor + 50);
 		const parts = live.transcript.render(rows, store => this.transcriptHost(message, this.blockRenderContext(message, store), store), {
 			streaming: true,
-			status: this.liveStatusPhrase(message),
+			status: this.liveStatusPhrase(message, textQuiet),
+			textQuiet,
 			workedOpenByDefault: true,
 			statusKey: String(message.startedAt ?? message.id ?? 'live'),
 			// A running turn's to-dos live in the Tasks card on the composer.
@@ -4793,14 +4805,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	/** The live tail's phrase: the current action, or "Thinking" / "Planning next moves" in turn while the model is quiet. */
-	private liveStatusPhrase(message: IAgentAssistantMessage): string {
+	private liveStatusPhrase(message: IAgentAssistantMessage, textQuiet = false): string {
 		const activity = message.activity;
 		if (activity) {
 			activity.shimmerStartedAt ??= Date.now();
 		}
 		const anchor = activity?.shimmerStartedAt ?? Date.now();
 		const now = Date.now();
-		const lines = streamingActivityLines('', activity?.status, activity?.items ?? [], now, anchor, activity?.statusPinned === true);
+		// "Writing" stays the status after the text stops; once it is quiet the model is thinking again.
+		const status = textQuiet && activity?.status === localize('voltAgent.writing', "Writing") ? undefined : activity?.status;
+		const lines = streamingActivityLines('', status, activity?.items ?? [], now, anchor, activity?.statusPinned === true);
 		if (lines.rotate) {
 			this.armStatusRotation(anchor);
 		} else {
@@ -8432,6 +8446,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.statusRotateTimer?.dispose();
 		this.renderHandle?.dispose();
 		this.slowTurnTimer?.dispose();
+		this.textQuietTimer?.dispose();
 		this.contextUsageTimer?.dispose();
 		this.scrollSyncFrame?.dispose();
 		this.prewarmTimer?.dispose();
