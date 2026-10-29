@@ -3,15 +3,16 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { RunOnceScheduler } from '../../../../../base/common/async.js';
+import { Limiter, RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
+import { parse as parseGlob } from '../../../../../base/common/glob.js';
 import { Disposable, DisposableMap, DisposableStore } from '../../../../../base/common/lifecycle.js';
-import { ResourceMap } from '../../../../../base/common/map.js';
+import { ResourceMap, ResourceSet } from '../../../../../base/common/map.js';
 import { OperatingSystem, OS } from '../../../../../base/common/platform.js';
 import { basename, dirname, joinPath, relativePath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
-import { IFileService } from '../../../../../platform/files/common/files.js';
+import { FileChangesEvent, IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
@@ -22,7 +23,7 @@ import { IAgentHistoryService } from '../../../../services/voltRuntime/common/hi
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { ISearchService, QueryType } from '../../../../services/search/common/search.js';
-import { AGENT_RESOURCE_EXCLUDE_GLOBS, AGENT_RESOURCE_GROUPS, AGENT_RESOURCE_INCLUDE_GLOBS, AgentResourceEcosystem, AgentResourceGroupId, AgentResourceScope, classifyAgentResource, classifyAgentResourceMatch, IAgentResourceInfo, IAgentResourceMatch, matchAgentResource, readFrontmatter } from '../../common/agentResources.js';
+import { AGENT_RESOURCE_EXCLUDE_GLOBS, AGENT_RESOURCE_GROUPS, AGENT_RESOURCE_INCLUDE_GLOBS, AGENT_RESOURCE_ROOT_DIRS, AgentResourceEcosystem, AgentResourceGroupId, AgentResourceScope, classifyAgentResource, classifyAgentResourceMatch, IAgentResourceInfo, IAgentResourceMatch, matchAgentResource, readFrontmatter } from '../../common/agentResources.js';
 import { IAgentMcpServerEntry, parseHookEvents, parseMcpServers } from '../../common/agentResourcesModel.js';
 import { AgentCustomizationKind, AgentCustomizationOrigin, kindInfo } from '../customize/agentCustomize.js';
 import { IAgentCustomizeService } from '../customize/agentCustomizeService.js';
@@ -89,7 +90,14 @@ export interface IAgentResourcesService {
 
 /** Files past this are listed by path only: nothing an agent reads is this big. */
 const MAX_READ_BYTES = 256 * 1024;
+/** ~/.claude.json also holds Claude Code's app state, and passes 256 KB for anyone who uses it daily. */
+const CLAUDE_JSON_MAX_BYTES = 16 * 1024 * 1024;
+/** Files read at once: a scan of a big repository must not open hundreds of files in one burst. */
+const READ_CONCURRENCY = 16;
 const MAX_RESULTS = 4000;
+/** Files under a project-root config folder walked directly (they are often gitignored). */
+const ROOT_DIR_MAX_FILES = 1000;
+const ROOT_DIR_DEPTH = 5;
 /** Folders kept scanned and watched at once (the chats on screen and the last few). */
 const MAX_FOLDERS = 4;
 const RESCAN_DELAY_MS = 600;
@@ -97,9 +105,42 @@ const RESCAN_DELAY_MS = 600;
 /** The agent folders in the home folder. Only these are read: the home folder itself is never searched. */
 const HOME_CONFIG_DIRS = ['.claude', '.codex', '.gemini', '.cursor', '.agents', '.volt', '.copilot'];
 /** Subfolders of a home config folder that hold resources; everything else there is app state (projects, sessions, caches). */
-const HOME_WALK_DIRS = new Set(['skills', 'agents', 'agent', 'commands', 'command', 'prompts', 'rules', 'hooks', 'instructions', 'output-styles', 'workflows', 'extensions']);
+const HOME_WALK_DIRS = new Set(['skills', 'agents', 'agent', 'commands', 'command', 'prompts', 'rules', 'hooks', 'instructions', 'output-styles', 'workflows']);
 const HOME_WALK_DEPTH = 4;
-const HOME_MAX_FILES = 2000;
+/** Per walked folder, so one big folder cannot crowd the others out. */
+const HOME_MAX_FILES = 600;
+
+/** Gemini installs extensions in ~/.gemini/extensions; elsewhere (~/.cursor/extensions) that folder holds editor extensions. */
+function isHomeWalkDir(configDir: string, name: string): boolean {
+	return HOME_WALK_DIRS.has(name) || (configDir === '.gemini' && name === 'extensions');
+}
+
+const EXCLUDES = AGENT_RESOURCE_EXCLUDE_GLOBS.map(glob => parseGlob(glob));
+
+function isExcluded(path: string): boolean {
+	return EXCLUDES.some(matches => matches(path));
+}
+
+/** In a config folder or a skills folder: a change there can add or remove several resources. */
+function isUnderAgentFolder(path: string): boolean {
+	return path.split('/').some(segment => segment === 'skills' || AGENT_RESOURCE_ROOT_DIRS.includes(segment));
+}
+
+/** A path under the home folder that the global list reads, or a folder that may hold some. */
+function isHomeResourcePath(path: string): boolean {
+	if (Object.hasOwn(APP_MANAGED_FILES, path)) {
+		return true;
+	}
+	const segments = path.split('/');
+	if (segments.length < 2 || !HOME_CONFIG_DIRS.includes(segments[0])) {
+		return false;
+	}
+	if (segments.length === 2) {
+		return !!matchAgentResource(path) || isHomeWalkDir(segments[0], segments[1]);
+	}
+	// A skill or extension folder itself (added, moved or removed), or a resource inside one.
+	return isHomeWalkDir(segments[0], segments[1]) && (segments.length === 3 || !!matchAgentResource(path) || segments[1] === 'skills' || segments[1] === 'extensions');
+}
 
 /** Files their own app rewrites: Volt shows them and never writes them. */
 const APP_MANAGED_FILES: Record<string, string> = {
@@ -175,6 +216,12 @@ const KIND_GROUP: Partial<Record<AgentCustomizationKind, AgentResourceGroupId>> 
 interface IFolderEntry {
 	resources: readonly IAgentResource[] | undefined;
 	scan: Promise<readonly IAgentResource[]> | undefined;
+	/** Bumped per scan: a slower, older scan never overwrites a newer one. */
+	generation: number;
+	/** Files changed since the last scan, applied one by one instead of searching again. */
+	readonly changed: ResourceMap<true>;
+	/** A change that needs a full search (a folder added or removed, a skill folder's contents). */
+	fullRescan: boolean;
 	readonly rescan: RunOnceScheduler;
 	readonly store: DisposableStore;
 	lastUsed: number;
@@ -197,14 +244,18 @@ export class AgentResourcesService extends Disposable implements IAgentResources
 	readonly onDidChangeFilter = this._onDidChangeFilter.event;
 
 	private readonly folders = new ResourceMap<IFolderEntry>();
+	private readonly evicted = new ResourceSet();
 	private readonly folderStores = this._register(new DisposableMap<string, DisposableStore>());
 	private _filter: AgentResourceFilter | undefined;
 	private _home: URI | undefined;
 	private global: readonly IAgentResource[] | undefined;
 	private globalScan: Promise<readonly IAgentResource[]> | undefined;
-	private readonly globalRescan = this._register(new RunOnceScheduler(() => void this.scanGlobal(), RESCAN_DELAY_MS));
+	private readonly globalRescan = this._register(new RunOnceScheduler(() => void (this.globalScan = this.scanGlobal()), RESCAN_DELAY_MS));
+	private globalGeneration = 0;
 	private readonly globalWatch = this._register(new DisposableStore());
-	private homeWatched = false;
+	/** The folders {@link globalWatch} covers, so a rescan re-arms it only when they change. */
+	private globalWatchKey = '';
+	private readonly readLimiter = this._register(new Limiter<string | undefined>(READ_CONCURRENCY));
 
 	constructor(
 		@IFileService private readonly fileService: IFileService,
@@ -220,27 +271,10 @@ export class AgentResourcesService extends Disposable implements IAgentResources
 	) {
 		super();
 		this._register(fileService.onDidFilesChange(event => {
-			const changed = event.rawAdded.concat(event.rawUpdated, event.rawDeleted);
 			for (const [folder, entry] of this.folders) {
-				if (!entry.resources) {
-					continue;
-				}
-				// Only a change to a file the scan would list (or a deleted folder that held some) rescans.
-				const touches = changed.some(resource => {
-					const path = relativePath(folder, resource);
-					return path !== undefined && path !== '' && (!!matchAgentResource(path) || entry.resources!.some(item => item.relativePath.startsWith(`${path}/`)));
-				});
-				if (touches) {
-					entry.rescan.schedule();
-				}
+				this.onFolderChanges(folder, entry, event);
 			}
-			const home = this._home;
-			if (home && this.global && changed.some(resource => {
-				const path = relativePath(home, resource);
-				return !!path && (HOME_CONFIG_DIRS.some(dir => path === dir || path.startsWith(`${dir}/`)) || path in APP_MANAGED_FILES);
-			})) {
-				this.globalRescan.schedule();
-			}
+			this.onHomeChanges(event);
 		}));
 		// Plugins installed or removed through Customize or a harness's own plugin manager.
 		this._register(customize.onDidChange(() => {
@@ -280,7 +314,16 @@ export class AgentResourcesService extends Disposable implements IAgentResources
 	//#region Project folders
 
 	get(folder: URI): readonly IAgentResource[] | undefined {
-		return this.folders.get(folder)?.resources;
+		const entry = this.folders.get(folder);
+		if (!entry) {
+			// Evicted while still on screen: scan it again, and onDidChange redraws whoever asked.
+			if (this.evicted.delete(folder)) {
+				void this.load(folder);
+			}
+			return undefined;
+		}
+		entry.lastUsed = Date.now();
+		return entry.resources;
 	}
 
 	load(folder: URI): Promise<readonly IAgentResource[]> {
@@ -301,18 +344,25 @@ export class AgentResourcesService extends Disposable implements IAgentResources
 		const created: IFolderEntry = {
 			resources: undefined,
 			scan: undefined,
-			rescan: store.add(new RunOnceScheduler(() => void this.scan(folder, created), RESCAN_DELAY_MS)),
+			generation: 0,
+			changed: new ResourceMap<true>(),
+			fullRescan: false,
+			rescan: store.add(new RunOnceScheduler(() => void (created.scan = this.update(folder, created)), RESCAN_DELAY_MS)),
 			store,
 			lastUsed: Date.now(),
 		};
 		entry = created;
 		this.folders.set(folder, entry);
 		this.folderStores.set(folder.toString(), store);
-		// A chat's worktree is outside the workspace, so nothing else watches it.
-		try {
-			store.add(this.fileService.watch(folder, { recursive: true, excludes: [...AGENT_RESOURCE_EXCLUDE_GLOBS] }));
-		} catch (error) {
-			this.logService.trace('[agentResources] watch failed', error);
+		// The workspace's own watcher already covers its folders, and a second request for the same
+		// path would replace its files.watcherExclude for everyone. A chat's worktree is outside the
+		// workspace, so nothing else watches it.
+		if (!this.workspaceContextService.getWorkspaceFolder(folder)) {
+			try {
+				store.add(this.fileService.watch(folder, { recursive: true, excludes: [...AGENT_RESOURCE_EXCLUDE_GLOBS] }));
+			} catch (error) {
+				this.logService.trace('[agentResources] watch failed', error);
+			}
 		}
 		this.evict();
 		return entry;
@@ -324,13 +374,113 @@ export class AgentResourcesService extends Disposable implements IAgentResources
 		}
 		const oldest = [...this.folders].sort(([, a], [, b]) => a.lastUsed - b.lastUsed)[0];
 		if (oldest) {
+			this.evicted.add(oldest[0]);
 			this.folders.delete(oldest[0]);
 			this.folderStores.deleteAndDispose(oldest[0].toString());
 		}
 	}
 
+	/**
+	 * Which changes a folder's list cares about. A file the scan would list is re-read on its own;
+	 * anything that may add or remove several (a folder, a file inside a skill or config folder)
+	 * searches again.
+	 */
+	private onFolderChanges(folder: URI, entry: IFolderEntry, event: FileChangesEvent): void {
+		let touched = false;
+		const consider = (resource: URI, deleted: boolean) => {
+			const path = relativePath(folder, resource);
+			if (!path || isExcluded(path)) {
+				return;
+			}
+			if (matchAgentResource(path)) {
+				entry.changed.set(resource, true);
+				touched = true;
+				// A skill's script or reference changes what its row says, not just its own entry.
+				if (path.includes('/skills/') || path.startsWith('skills/')) {
+					entry.fullRescan = true;
+				}
+			} else if (isUnderAgentFolder(path) || (deleted && entry.resources?.some(item => item.relativePath.startsWith(`${path}/`)))) {
+				entry.fullRescan = true;
+				touched = true;
+			}
+		};
+		for (const resource of event.rawAdded) {
+			consider(resource, false);
+		}
+		for (const resource of event.rawUpdated) {
+			consider(resource, false);
+		}
+		for (const resource of event.rawDeleted) {
+			consider(resource, true);
+		}
+		if (touched) {
+			entry.rescan.schedule();
+		}
+	}
+
+	/** Applies the changed files to the last scan, or searches again when that is not enough. */
+	private async update(folder: URI, entry: IFolderEntry): Promise<readonly IAgentResource[]> {
+		const changed = [...entry.changed.keys()];
+		entry.changed.clear();
+		const previous = entry.resources;
+		if (!previous || entry.fullRescan) {
+			entry.fullRescan = false;
+			return this.scan(folder, entry);
+		}
+		const generation = ++entry.generation;
+		const key = (uri: URI) => this.uriIdentityService.extUri.getComparisonKey(uri);
+		const next = new Map(previous.map(item => [key(item.resource), item]));
+		await Promise.all(changed.map(async resource => {
+			const path = relativePath(folder, resource);
+			const item = path ? await this.describeFile(folder, resource, path) : undefined;
+			if (item) {
+				next.set(key(resource), item);
+			} else {
+				next.delete(key(resource));
+			}
+		}));
+		return this.commit(folder, entry, generation, sortResources([...next.values()]));
+	}
+
 	private async scan(folder: URI, entry: IFolderEntry): Promise<readonly IAgentResource[]> {
-		let found: URI[] = [];
+		const generation = ++entry.generation;
+		entry.changed.clear();
+		const [found, rootFiles] = await Promise.all([this.search(folder), this.walkRootDirs(folder)]);
+		const seen = new ResourceMap<true>(uri => this.uriIdentityService.extUri.getComparisonKey(uri));
+		const candidates: { resource: URI; path: string }[] = [];
+		for (const resource of [...found, ...rootFiles]) {
+			const path = relativePath(folder, resource);
+			if (path && !seen.has(resource) && matchAgentResource(path)) {
+				seen.set(resource, true);
+				candidates.push({ resource, path });
+			}
+		}
+		const resources = sortResources((await Promise.all(candidates.map(({ resource, path }) => this.describeFile(folder, resource, path))))
+			.filter((item): item is IAgentResource => !!item));
+		return this.commit(folder, entry, generation, resources);
+	}
+
+	private commit(folder: URI, entry: IFolderEntry, generation: number, resources: IAgentResource[]): readonly IAgentResource[] {
+		if (generation !== entry.generation) {
+			// A newer scan started meanwhile; its result is the one that counts.
+			return entry.resources ?? resources;
+		}
+		const previous = entry.resources;
+		entry.resources = resources;
+		entry.scan = undefined;
+		if (this.folders.get(folder) === entry && (!previous || signature(previous) !== signature(resources))) {
+			this._onDidChange.fire(folder);
+		}
+		return resources;
+	}
+
+	private async describeFile(folder: URI, resource: URI, path: string): Promise<IAgentResource | undefined> {
+		const content = await this.read(resource);
+		const info = classifyAgentResource(path, content);
+		return info ? this.describe(info, resource, folder, path, content) : undefined;
+	}
+
+	private async search(folder: URI): Promise<URI[]> {
 		try {
 			const complete = await this.searchService.fileSearch({
 				type: QueryType.File,
@@ -341,31 +491,46 @@ export class AgentResourcesService extends Disposable implements IAgentResources
 				maxResults: MAX_RESULTS,
 				sortByScore: false,
 			});
-			found = complete.results.map(match => match.resource);
+			if (complete.limitHit) {
+				this.logService.warn(`[agentResources] ${folder.fsPath}: listed the first ${MAX_RESULTS} matches only`);
+			}
+			return complete.results.map(match => match.resource);
 		} catch (error) {
 			this.logService.warn('[agentResources] search failed', error);
+			return [];
 		}
-		const seen = new ResourceMap<true>(uri => this.uriIdentityService.extUri.getComparisonKey(uri));
-		const candidates: { resource: URI; path: string }[] = [];
-		for (const resource of found) {
-			const path = relativePath(folder, resource);
-			if (path && !seen.has(resource) && matchAgentResource(path)) {
-				seen.set(resource, true);
-				candidates.push({ resource, path });
+	}
+
+	/**
+	 * The project root's own agent files and config folders, read directly: the search honours
+	 * .gitignore, and CLAUDE.local.md, .claude/settings.local.json, .mcp.json and .cursor/ are
+	 * gitignored in many repositories.
+	 */
+	private async walkRootDirs(folder: URI): Promise<URI[]> {
+		const files: URI[] = [];
+		let left = ROOT_DIR_MAX_FILES;
+		const walk = async (dir: URI, depth: number): Promise<void> => {
+			const stat = await this.fileService.resolve(dir).catch(() => undefined);
+			for (const child of stat?.children ?? []) {
+				if (left <= 0) {
+					return;
+				}
+				const path = relativePath(folder, child.resource);
+				if (!path || isExcluded(child.isDirectory ? `${path}/_` : path)) {
+					continue;
+				}
+				if (child.isFile) {
+					if (matchAgentResource(path)) {
+						files.push(child.resource);
+						left--;
+					}
+				} else if (child.isDirectory && (depth > 0 ? depth < ROOT_DIR_DEPTH : AGENT_RESOURCE_ROOT_DIRS.includes(child.name))) {
+					await walk(child.resource, depth + 1);
+				}
 			}
-		}
-		const resources = sortResources((await Promise.all(candidates.map(async ({ resource, path }) => {
-			const content = await this.read(resource);
-			const info = classifyAgentResource(path, content);
-			return info ? this.describe(info, resource, folder, path, content) : undefined;
-		}))).filter((item): item is IAgentResource => !!item));
-		const previous = entry.resources;
-		entry.resources = resources;
-		entry.scan = undefined;
-		if (this.folders.get(folder) === entry && (!previous || signature(previous) !== signature(resources))) {
-			this._onDidChange.fire(folder);
-		}
-		return resources;
+		};
+		await walk(folder, 0);
+		return files;
 	}
 
 	//#endregion
@@ -384,19 +549,20 @@ export class AgentResourcesService extends Disposable implements IAgentResources
 	}
 
 	private async scanGlobal(): Promise<readonly IAgentResource[]> {
+		const generation = ++this.globalGeneration;
 		const home = this._home ??= await this.pathService.userHome({ preferLocal: true });
-		if (!this.homeWatched) {
-			this.homeWatched = true;
-			this.watchHome(home);
-		}
 		const [homeItems, managed, external] = await Promise.all([
 			this.scanHome(home),
 			this.scanManaged(),
 			this.scanExternal(),
 		]);
 		// A plugin's files may also sit under a home folder (Gemini extensions): the External entry wins.
-		const externalKeys = new Set(external.map(item => item.resource.toString()));
-		const resources = sortResources([...homeItems.filter(item => !externalKeys.has(item.resource.toString())), ...managed, ...external]);
+		const key = (uri: URI) => this.uriIdentityService.extUri.getComparisonKey(uri);
+		const externalKeys = new Set(external.map(item => key(item.resource)));
+		const resources = sortResources([...homeItems.filter(item => !externalKeys.has(key(item.resource))), ...managed, ...external]);
+		if (generation !== this.globalGeneration) {
+			return this.global ?? resources;
+		}
 		const previous = this.global;
 		this.global = resources;
 		this.globalScan = undefined;
@@ -406,44 +572,95 @@ export class AgentResourcesService extends Disposable implements IAgentResources
 		return resources;
 	}
 
-	private watchHome(home: URI): void {
-		for (const dir of HOME_CONFIG_DIRS) {
+	/**
+	 * Watches only where global resources live: the home folder and each config folder for their
+	 * own files (non-recursive, so ~/.claude's history and sessions never wake a scan), and the
+	 * resource subfolders (skills, agents, commands...) recursively. Re-armed when those change.
+	 */
+	private watchHome(home: URI, configDirs: readonly URI[], walkDirs: readonly URI[]): void {
+		const watchKey = [...configDirs, ...walkDirs].map(uri => uri.toString()).sort().join('\n');
+		if (watchKey === this.globalWatchKey) {
+			return;
+		}
+		this.globalWatchKey = watchKey;
+		this.globalWatch.clear();
+		for (const dir of [home, ...configDirs]) {
 			try {
-				// App state in these folders churns (sessions, caches): only the resource subfolders matter, and the handler filters.
-				this.globalWatch.add(this.fileService.watch(joinPath(home, dir), { recursive: true, excludes: ['**/projects/**', '**/sessions/**', '**/plugins/cache/**', '**/todos/**', '**/shell-snapshots/**', '**/statsig/**', '**/file-history/**', '**/logs/**', '**/worktrees/**', '**/node_modules/**'] }));
+				const watcher = this.globalWatch.add(this.fileService.createWatcher(dir, { recursive: false, excludes: [] }));
+				this.globalWatch.add(watcher.onDidChange(event => this.onHomeChanges(event)));
+			} catch (error) {
+				this.logService.trace('[agentResources] home watch failed', error);
+			}
+		}
+		for (const dir of walkDirs) {
+			try {
+				this.globalWatch.add(this.fileService.watch(dir, { recursive: true, excludes: ['**/node_modules/**', '**/.git/**'] }));
 			} catch (error) {
 				this.logService.trace('[agentResources] home watch failed', error);
 			}
 		}
 	}
 
+	private onHomeChanges(event: FileChangesEvent): void {
+		const home = this._home;
+		if (!home || !this.global) {
+			return;
+		}
+		const touches = (resource: URI) => {
+			const path = relativePath(home, resource);
+			return !!path && isHomeResourcePath(path);
+		};
+		if (event.rawAdded.some(touches) || event.rawUpdated.some(touches) || event.rawDeleted.some(touches)) {
+			this.globalRescan.schedule();
+		}
+	}
+
 	/** The agent folders in the home folder, walked only where resources live. */
 	private async scanHome(home: URI): Promise<IAgentResource[]> {
 		const files: URI[] = [];
-		const walk = async (dir: URI, depth: number) => {
-			if (files.length >= HOME_MAX_FILES) {
-				return;
-			}
+		const configDirs: URI[] = [];
+		const walkDirs: URI[] = [];
+		const isResource = (resource: URI) => {
+			const path = relativePath(home, resource);
+			return !!path && (!!matchAgentResource(path) || Object.hasOwn(APP_MANAGED_FILES, path));
+		};
+		// Only files the list would show count toward a folder's budget, and each folder has its own.
+		const walk = async (dir: URI, depth: number, budget: { left: number }) => {
 			const stat = await this.fileService.resolve(dir).catch(() => undefined);
 			for (const child of stat?.children ?? []) {
+				if (budget.left <= 0) {
+					return;
+				}
 				if (child.isFile) {
-					files.push(child.resource);
+					if (isResource(child.resource)) {
+						files.push(child.resource);
+						budget.left--;
+					}
 				} else if (child.isDirectory && depth < HOME_WALK_DEPTH && !child.name.startsWith('.') && child.name !== 'node_modules') {
-					await walk(child.resource, depth + 1);
+					await walk(child.resource, depth + 1, budget);
 				}
 			}
 		};
 		await Promise.all(HOME_CONFIG_DIRS.map(async dir => {
-			const stat = await this.fileService.resolve(joinPath(home, dir)).catch(() => undefined);
-			for (const child of stat?.children ?? []) {
-				if (child.isFile) {
-					files.push(child.resource);
-				} else if (child.isDirectory && HOME_WALK_DIRS.has(child.name)) {
-					await walk(child.resource, 1);
-				}
+			const root = joinPath(home, dir);
+			const stat = await this.fileService.resolve(root).catch(() => undefined);
+			if (!stat?.isDirectory) {
+				return;
 			}
+			configDirs.push(root);
+			await Promise.all((stat.children ?? []).map(async child => {
+				if (child.isFile) {
+					if (isResource(child.resource)) {
+						files.push(child.resource);
+					}
+				} else if (child.isDirectory && isHomeWalkDir(dir, child.name)) {
+					walkDirs.push(child.resource);
+					await walk(child.resource, 1, { left: HOME_MAX_FILES });
+				}
+			}));
 		}));
 		files.push(...Object.keys(APP_MANAGED_FILES).filter(path => !path.includes('/')).map(path => joinPath(home, path)));
+		this.watchHome(home, configDirs, walkDirs);
 		const resources = await Promise.all(files.map(async resource => {
 			const path = relativePath(home, resource);
 			if (!path) {
@@ -459,15 +676,14 @@ export class AgentResourcesService extends Disposable implements IAgentResources
 			if (!exists) {
 				return undefined;
 			}
-			const content = await this.read(resource);
-			// The project's local Claude servers live under projects[<path>] in ~/.claude.json; they are not this list's.
+			const content = await this.read(resource, path === '.claude.json' ? CLAUDE_JSON_MAX_BYTES : undefined);
 			const info = classifyAgentResourceMatch(match, path, content);
 			if (!info) {
 				return undefined;
 			}
 			// Gemini extensions are installed by `gemini extensions install`: External.
 			const scope: AgentResourceScope = path.startsWith('.gemini/extensions/') ? 'external' : 'global';
-			const readOnly = APP_MANAGED_FILES[path]
+			const readOnly = (Object.hasOwn(APP_MANAGED_FILES, path) ? APP_MANAGED_FILES[path] : undefined)
 				?? (path.startsWith('.claude/skills/synced/') ? localize('agentResources.readOnly.synced', "Synced from claude.ai; changes here are overwritten.") : undefined)
 				?? (scope === 'external' ? localize('agentResources.readOnly.geminiExtension', "Installed by gemini extensions; update it there.") : undefined);
 			return this.describe({ ...info, scope }, resource, home, path, content, readOnly, scope === 'external' ? path.split('/')[2] : undefined);
@@ -579,18 +795,25 @@ export class AgentResourcesService extends Disposable implements IAgentResources
 		return { files: children.filter(child => child.name !== 'SKILL.md').length, hasScripts };
 	}
 
-	private async read(resource: URI): Promise<string | undefined> {
-		try {
-			const content = await this.fileService.readFile(resource, { limits: { size: MAX_READ_BYTES } });
-			return content.value.toString();
-		} catch {
-			return undefined;
-		}
+	private read(resource: URI, maxBytes = MAX_READ_BYTES): Promise<string | undefined> {
+		return this.readLimiter.queue(async () => {
+			try {
+				const content = await this.fileService.readFile(resource, { limits: { size: maxBytes } });
+				return content.value.toString();
+			} catch {
+				return undefined;
+			}
+		});
 	}
 }
 
+/** Everything a row or section shows: a change to any of it redraws. */
 function signature(resources: readonly IAgentResource[]): string {
-	return resources.map(item => [item.resource.toString(), item.group, item.ecosystem, item.kind, item.status.kind, item.status.message, item.name, item.description, item.servers?.length, item.hookEvents?.join()].join('\u0001')).join('\n');
+	return resources.map(item => [
+		item.resource.toString(), item.group, item.ecosystem, item.kind, item.scope, item.status.kind, item.status.message, item.name, item.description,
+		item.model, item.tools, item.readOnly, item.source, item.skill?.files, item.skill?.hasScripts, item.hookEvents?.join(),
+		item.servers?.map(server => JSON.stringify(server)).join(),
+	].join('\u0001')).join('\n');
 }
 
 registerSingleton(IAgentResourcesService, AgentResourcesService, InstantiationType.Delayed);

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, EventHelper, getWindow } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, EventHelper, getWindow, runWhenWindowIdle } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IListRenderer, IListVirtualDelegate } from '../../../../../base/browser/ui/list/list.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
@@ -242,6 +242,7 @@ export class AgentResourcesDock extends Disposable {
 	private readonly card: AgentResourcesCard;
 	private open = true;
 	private folder: URI | undefined;
+	private readonly pendingLoad = this._register(new MutableDisposable());
 
 	constructor(
 		@IInstantiationService instantiationService: IInstantiationService,
@@ -317,13 +318,14 @@ export class AgentResourcesDock extends Disposable {
 		this.folder = folder;
 		this.card.hide();
 		this.render();
-		if (folder) {
+		// The scan waits for an idle moment: switching chats or opening the window never waits on it.
+		this.pendingLoad.value = folder && !this.resources.get(folder) ? runWhenWindowIdle(getWindow(this.element), () => {
 			void this.resources.load(folder).then(() => {
 				if (this.folder?.toString() === folder.toString()) {
 					this.render();
 				}
 			});
-		}
+		}, 2000) : undefined;
 	}
 
 	private showInSidebar(filter: AgentResourceFilter): void {
