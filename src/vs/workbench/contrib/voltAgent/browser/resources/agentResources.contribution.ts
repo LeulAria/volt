@@ -39,7 +39,7 @@ registerAction2(class OpenAgentResourcesAction extends Action2 {
 			id: OPEN_AGENT_RESOURCES_COMMAND_ID,
 			title: localize2('agentResources.open', "Open Agent Resources"),
 			category: Categories.View,
-			icon: Codicon.library,
+			icon: Codicon.layers,
 			f1: true,
 		});
 	}

@@ -54,7 +54,8 @@ import { IAgentResource, IAgentResourcesService } from './agentResourcesService.
 export const AGENT_RESOURCES_EDITOR_ID = 'workbench.editor.voltAgentResources';
 export const AGENT_RESOURCES_INPUT_ID = 'workbench.input.voltAgentResources';
 
-const AgentResourcesIcon = registerIcon('volt-agent-resources-editor-label-icon', Codicon.library, localize('agentResources.editorIcon', "Icon of the Agent Resources tab."));
+// Stacked layers: instructions, skills, tools and the harness under the agent. (The books glyph read as "|||\".)
+const AgentResourcesIcon = registerIcon('volt-agent-resources-editor-label-icon', Codicon.layers, localize('agentResources.editorIcon', "Icon of the Agent Resources tab."));
 
 const STATE_KEY = 'volt.agentResources.page';
 /** The right panel's tabs are kept under this id, like a chat's. */
