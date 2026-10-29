@@ -1851,10 +1851,15 @@ export class AgentHomePane extends Disposable {
 	}
 
 	private sessionHoverRows(session: IAgentSessionMeta): IAgentTooltipRow[] {
-		const folders = sessionFolders(session).map(path => ({
-			pathLabel: this.labelService.getUriLabel(uriFromStoredRoot(path)),
-			repo: this.repos.get(path),
-		}));
+		const folders = sessionFolders(session).map((path, index) => {
+			const repo = this.repos.get(path);
+			return {
+				pathLabel: this.labelService.getUriLabel(uriFromStoredRoot(path)),
+				// A chat in its own worktree is on that worktree's branch, not the project checkout's
+				// (the row's second line, the composer and the side toolbar show the same).
+				repo: repo && index === 0 && session.worktreePath && session.worktreeBranch ? { ...repo, branch: session.worktreeBranch } : repo,
+			};
+		});
 		const rows = agentSessionHoverRows(
 			session.title || localize('voltAgent.home.untitled', "New Agent"),
 			agentSessionStatusNote(session),
