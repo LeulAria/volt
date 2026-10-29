@@ -7,14 +7,14 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ClientProvider, useOptionalClient } from '../src/state/client';
 import { loadEnvironments, useActiveEnvironment, useEnvironments } from '../src/state/environments';
-import { ThemeProvider, useTheme } from '../src/theme/theme';
+import { loadFonts, ThemeProvider, useTheme } from '../src/theme/theme';
 import { ImageViewerHost } from '../src/ui/ImageViewer';
 import { Toasts } from '../src/ui/sheets';
 
@@ -39,15 +39,23 @@ function Root() {
 	const { loaded } = useEnvironments();
 	const environment = useActiveEnvironment();
 
+	const [fonts, setFonts] = useState(false);
 	useEffect(() => {
-		void loadEnvironments().finally(() => void SplashScreen.hideAsync().catch(() => undefined));
+		void loadFonts().finally(() => setFonts(true));
+		void loadEnvironments();
 	}, []);
+	const ready = loaded && fonts;
+	useEffect(() => {
+		if (ready) {
+			void SplashScreen.hideAsync().catch(() => undefined);
+		}
+	}, [ready]);
 
 	useEffect(() => {
 		void SystemUI.setBackgroundColorAsync(p.canvas).catch(() => undefined);
 	}, [p.canvas]);
 
-	if (!loaded) {
+	if (!ready) {
 		return null;
 	}
 
