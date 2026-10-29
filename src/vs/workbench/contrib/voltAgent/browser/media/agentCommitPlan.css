@@ -1,0 +1,400 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * The commit review above the composer (agentCommitPlanTray.ts): the question tray's card, holding
+ * a tree of the proposed commits and their files. A little see-through, but without backdrop-filter:
+ * in the transparent agent window that turns the sidebar black and leaves trails behind scrolling
+ * lists (see volt-transparent-window). Its own paint layer, as it holds a scrolling tree.
+ */
+.volt-commit-plan {
+	--vcp-fg: rgba(240, 240, 241, 0.96);
+	--vcp-fg-muted: rgba(240, 240, 241, 0.56);
+	--vcp-fg-icon: rgba(240, 240, 241, 0.62);
+	--vcp-hover: rgba(240, 240, 241, 0.08);
+	--vcp-line: rgba(255, 255, 255, 0.07);
+	--vcp-bg: rgba(24, 24, 24, 0.94);
+	--vcp-input: rgba(240, 240, 241, 0.04);
+	--vcp-check-border: rgba(240, 240, 241, 0.3);
+	--vcp-check-border-hover: rgba(240, 240, 241, 0.55);
+	--vcp-check-fill: rgba(240, 240, 241, 0.92);
+	--vcp-check-mark: #181818;
+	box-sizing: border-box;
+	width: 100%;
+	max-width: 760px;
+	margin: 0 auto 8px;
+	display: flex;
+	flex-direction: column;
+	border-radius: 12px;
+	background: var(--vcp-bg);
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 8px 24px rgba(0, 0, 0, 0.22);
+	color: var(--vcp-fg);
+	font-family: var(--volt-font);
+	font-size: 13px;
+	letter-spacing: -0.08px;
+	isolation: isolate;
+	contain: paint;
+	overflow: hidden;
+	animation: volt-commit-plan-in 140ms ease-out;
+}
+
+.monaco-workbench.vs .volt-commit-plan,
+.monaco-workbench.hc-light .volt-commit-plan {
+	--vcp-fg: rgba(20, 20, 20, 0.94);
+	--vcp-fg-muted: rgba(20, 20, 20, 0.52);
+	--vcp-fg-icon: rgba(20, 20, 20, 0.58);
+	--vcp-hover: rgba(20, 20, 20, 0.06);
+	--vcp-line: rgba(0, 0, 0, 0.08);
+	--vcp-bg: rgba(255, 255, 255, 0.95);
+	--vcp-input: rgba(20, 20, 20, 0.03);
+	--vcp-check-border: rgba(20, 20, 20, 0.28);
+	--vcp-check-border-hover: rgba(20, 20, 20, 0.5);
+	--vcp-check-fill: rgba(20, 20, 20, 0.88);
+	--vcp-check-mark: #ffffff;
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+.volt-commit-plan.hidden,
+.volt-commit-plan .hidden {
+	display: none !important;
+}
+
+@keyframes volt-commit-plan-in {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+}
+
+/* Head: icon, title, then what is in the review. */
+.volt-commit-plan-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	height: 40px;
+	padding: 0 12px;
+}
+
+.volt-commit-plan-head-icon {
+	display: flex;
+	color: var(--vcp-fg-icon);
+}
+
+.volt-commit-plan-head-icon .codicon {
+	font-size: 14px;
+}
+
+.volt-commit-plan-title {
+	white-space: nowrap;
+}
+
+.volt-commit-plan-summary {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	color: var(--vcp-fg-muted);
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.volt-commit-plan-summary > span:first-child {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* The message editor opens between the head and the commits: a square field, no shadow. */
+.volt-commit-plan-editor {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 0 12px 10px;
+}
+
+.volt-commit-plan-editor-label {
+	color: var(--vcp-fg-muted);
+	font-size: 12px;
+}
+
+.volt-commit-plan-editor-input {
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 76px;
+	max-height: 180px;
+	margin: 0;
+	padding: 8px 10px;
+	border: 1px solid var(--vcp-line);
+	border-radius: 0;
+	box-shadow: none;
+	background: var(--vcp-input);
+	color: var(--vcp-fg);
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	line-height: 18px;
+	resize: vertical;
+	outline: none;
+}
+
+.volt-commit-plan-editor-input:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.volt-commit-plan-editor-actions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 6px;
+}
+
+.volt-commit-plan-editor-hint {
+	margin-right: auto;
+	color: var(--vcp-fg-muted);
+	font-size: 11px;
+}
+
+.volt-commit-plan-tree {
+	border-top: 1px solid var(--vcp-line);
+	border-bottom: 1px solid var(--vcp-line);
+}
+
+/* The rows sit on the card, not on the list's own background. */
+.volt-commit-plan-tree .monaco-list,
+.volt-commit-plan-tree .monaco-list-rows {
+	background: transparent;
+}
+
+.volt-commit-plan-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 100%;
+	min-width: 0;
+	padding-right: 12px;
+}
+
+/* Checkboxes: 14px squares, filled when on, a dash when part of what is under them is in. */
+.volt-commit-plan-check {
+	flex: none;
+	display: flex;
+	align-items: center;
+}
+
+.volt-commit-plan .volt-commit-plan-check .monaco-checkbox {
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	margin: 0;
+	padding: 0;
+	border: 1px solid var(--vcp-check-border);
+	border-radius: 4px;
+	background: transparent;
+	color: var(--vcp-check-mark);
+	opacity: 1;
+	cursor: pointer;
+	transition: background-color 80ms ease, border-color 80ms ease;
+}
+
+.volt-commit-plan .volt-commit-plan-check .monaco-checkbox:hover {
+	border-color: var(--vcp-check-border-hover);
+}
+
+.volt-commit-plan .volt-commit-plan-check .monaco-checkbox.checked,
+.volt-commit-plan .volt-commit-plan-check .monaco-checkbox.partial {
+	border-color: var(--vcp-check-fill);
+	background: var(--vcp-check-fill);
+}
+
+.volt-commit-plan .volt-commit-plan-check .monaco-checkbox.codicon::before {
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 1;
+}
+
+.volt-commit-plan .volt-commit-plan-check .monaco-checkbox:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.volt-commit-plan-icon {
+	flex: none;
+	display: flex;
+	color: var(--vcp-fg-icon);
+}
+
+.volt-commit-plan-icon .codicon {
+	font-size: 14px;
+}
+
+.volt-commit-plan-message {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-commit-plan-message.placeholder {
+	color: var(--vcp-fg-muted);
+	font-style: italic;
+}
+
+.volt-commit-plan-description {
+	flex: none;
+	color: var(--vcp-fg-muted);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+/* Regenerate, Edit and Open Changes: on hover (and while a message is being written). */
+.volt-commit-plan-actions {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	margin-left: auto;
+	opacity: 0;
+	transition: opacity 80ms ease;
+}
+
+.monaco-list-row:hover .volt-commit-plan-actions,
+.monaco-list-row.focused .volt-commit-plan-actions,
+.volt-commit-plan-row.generating .volt-commit-plan-actions,
+.volt-commit-plan-actions:focus-within {
+	opacity: 1;
+}
+
+.volt-commit-plan-action {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border-radius: 6px;
+	color: var(--vcp-fg-icon);
+	cursor: pointer;
+}
+
+.volt-commit-plan-action:hover {
+	background: var(--vcp-hover);
+	color: var(--vcp-fg);
+}
+
+.volt-commit-plan-action:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-commit-plan-action .codicon {
+	font-size: 14px;
+}
+
+.volt-commit-plan-svg {
+	display: block;
+	width: 15px;
+	height: 15px;
+}
+
+.volt-commit-plan-action.busy {
+	cursor: default;
+}
+
+.volt-commit-plan-stats {
+	flex: none;
+	display: flex;
+	gap: 6px;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.volt-commit-plan-row.commit .volt-commit-plan-stats {
+	min-width: 52px;
+	justify-content: flex-end;
+}
+
+.volt-commit-plan-stats .add {
+	color: var(--vscode-gitDecoration-addedResourceForeground, #73c991);
+}
+
+.volt-commit-plan-stats .del {
+	color: var(--vscode-gitDecoration-deletedResourceForeground, #e2725b);
+}
+
+.volt-commit-plan-file-label {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.volt-commit-plan-status {
+	flex: none;
+	width: 12px;
+	font-size: 11px;
+	font-weight: 600;
+	text-align: center;
+	color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d);
+}
+
+.volt-commit-plan-status.status-added,
+.volt-commit-plan-status.status-untracked {
+	color: var(--vscode-gitDecoration-untrackedResourceForeground, #73c991);
+}
+
+.volt-commit-plan-status.status-deleted {
+	color: var(--vscode-gitDecoration-deletedResourceForeground, #e2725b);
+}
+
+.volt-commit-plan-status.status-renamed {
+	color: var(--vscode-gitDecoration-renamedResourceForeground, #73c991);
+}
+
+/* Left out: still listed, quieter, so it is clear what stays behind. */
+.volt-commit-plan-row.excluded .volt-commit-plan-message,
+.volt-commit-plan-row.excluded .volt-commit-plan-description,
+.volt-commit-plan-row.excluded .volt-commit-plan-file-label,
+.volt-commit-plan-row.excluded .volt-commit-plan-stats,
+.volt-commit-plan-row.excluded .volt-commit-plan-status,
+.volt-commit-plan-row.excluded .volt-commit-plan-icon {
+	opacity: 0.45;
+}
+
+.volt-commit-plan-row.excluded .volt-commit-plan-file-label .label-name {
+	text-decoration: line-through;
+}
+
+.volt-commit-plan-foot {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 44px;
+	padding: 0 10px 0 12px;
+}
+
+.volt-commit-plan-status-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--vcp-fg-muted);
+	font-size: 12px;
+}
+
+.volt-commit-plan-status-text.error {
+	color: var(--vscode-errorForeground);
+	white-space: normal;
+}
+
+.volt-commit-plan-spacer {
+	flex: 1;
+}
+
+.volt-commit-plan.busy .volt-commit-plan-tree {
+	pointer-events: none;
+	opacity: 0.7;
+}

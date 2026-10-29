@@ -38,6 +38,8 @@ import { agentToolsSessionOnScreen, showAgentFilesSidebar } from '../workspace/a
 import { LayoutModeContext } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import { AgentGitActionsService, IAgentGitActionsService } from './agentGitActionsService.js';
+import { AgentCommitPlanService, IAgentCommitPlanService } from './agentCommitPlanService.js';
+import { COMMIT_PLAN_HEAD_SCHEME, CommitPlanHeadContentProvider } from './agentCommitPlanTray.js';
 import { parseBlobUri, PR_BLOB_SCHEME, PrBlobContentProvider, PrDiffSourceResolver } from './agentPullRequestDiff.js';
 import { AgentPullRequestEditor } from './agentPullRequestEditor.js';
 import { AGENT_PULL_REQUEST_EDITOR_ID, AGENT_PULL_REQUEST_SCHEME, AgentPullRequestEditorInput, AgentPullRequestEditorInputSerializer, parsePullRequestUri } from './agentPullRequestEditorInput.js';
@@ -60,6 +62,16 @@ export const VOLT_COMMIT_MESSAGES_CONTEXT = new RawContextKey<boolean>('voltComm
 registerSingleton(IAgentPullRequestService, AgentPullRequestService, InstantiationType.Delayed);
 registerSingleton(IAgentGitActionsService, AgentGitActionsService, InstantiationType.Delayed);
 registerSingleton(IAgentPrReviewService, AgentPullRequestReviewService, InstantiationType.Delayed);
+registerSingleton(IAgentCommitPlanService, AgentCommitPlanService, InstantiationType.Delayed);
+
+/** Starts the commit review with the workbench, so agents have propose_commits and rename_branch from the first turn. */
+class AgentCommitPlanContribution {
+
+	static readonly ID = 'workbench.contrib.voltAgentCommitPlan';
+
+	constructor(@IAgentCommitPlanService _plans: IAgentCommitPlanService) { }
+}
+registerWorkbenchContribution2(AgentCommitPlanContribution.ID, AgentCommitPlanContribution, WorkbenchPhase.AfterRestored);
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 	id: 'volt.pullRequests',
@@ -148,6 +160,7 @@ class AgentPullRequestResolversContribution extends Disposable {
 		VOLT_COMMIT_MESSAGES_CONTEXT.bindTo(contextKeyService).set(true);
 		this._register(multiDiffSourceResolverService.registerResolver(instantiationService.createInstance(PrDiffSourceResolver)));
 		this._register(textModelService.registerTextModelContentProvider(PR_BLOB_SCHEME, instantiationService.createInstance(PrBlobContentProvider)));
+		this._register(textModelService.registerTextModelContentProvider(COMMIT_PLAN_HEAD_SCHEME, instantiationService.createInstance(CommitPlanHeadContentProvider)));
 		this._register(editorResolverService.registerEditor(
 			`${AGENT_PULL_REQUEST_SCHEME}:**/**`,
 			{ id: AGENT_PULL_REQUEST_EDITOR_ID, label: localize('voltPr.editorLabel', "Pull Request"), priority: RegisteredEditorPriority.builtin },

@@ -51,6 +51,8 @@ export interface IContextPackInput {
 	readonly codeIndexed?: boolean;
 	/** The agent gets Volt's browser test tools (browser_run, browser_mock, playgrounds…) through the volt MCP server. */
 	readonly browserTools?: boolean;
+	/** The agent gets Volt's commit review (propose_commits, rename_branch) through the volt MCP server. */
+	readonly commitReview?: boolean;
 }
 
 export interface IEnvironmentFacts {
@@ -226,6 +228,10 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	if (input.intent.wantsServices && modePolicy(input.mode).allowTerminal) {
 		parts.push(`[Volt] ${MANAGED_TERMINALS}`);
 	}
+	// Agents asked to "commit and push" ran git themselves and renamed the worktree's branch behind Volt's back.
+	if (input.intent.wantsGit && input.commitReview && modePolicy(input.mode).allowTerminal) {
+		parts.push(`[Volt] ${COMMIT_REVIEW}`);
+	}
 	if (input.codeIndexed && input.intent.lane !== 'chat' && input.intent.lane !== 'fast') {
 		parts.push(`[Volt] ${INDEXED_SEARCH}`);
 	}
@@ -289,6 +295,9 @@ export const MANAGED_TERMINALS = `Start servers, watchers, \`docker compose up\`
  * Volt's index answers the same search in milliseconds. Their MCP tools sit behind tool search,
  * so name them. Sent once per agent session, and only for large indexed projects.
  */
+/** Committing and naming the branch go through the user: Volt's commit review, then a question for the branch name. */
+export const COMMIT_REVIEW = 'To commit, split the changes into meaningful commits with Conventional Commits messages (type(scope): summary, e.g. feat(cart): apply discount at checkout) and call propose_commits from the volt MCP server instead of running git commit: the user reviews them (files, diffs, messages) and Volt makes the commits. A worktree starts on a placeholder branch (volt/ and 8 hex characters). Before pushing it or opening a pull request from it, ask the user what to call it with ask_question (one question, 4 names you suggest as type/short-kebab-summary, e.g. feat/cart-discounts or fix/login-redirect; they can type their own), then call rename_branch with the answer; never rename it with git yourself. Push with git as usual afterwards.';
+
 export const INDEXED_SEARCH = 'This project is indexed: search code with instant_grep (regex or literal, the same results as rg), find symbol declarations with find_symbol, and find files by a fuzzy name with find_files, all from the volt MCP server. They answer in milliseconds where Grep, rg and find re-read every file.';
 
 /**

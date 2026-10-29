@@ -7,7 +7,7 @@ import { isMemoryToolName } from '../../../../services/voltRuntime/common/memory
 import { AGENT_TASK_TOOLS, bareTaskToolName } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import { describeLocator, parseLocator } from '../../../../services/voltRuntime/common/tools/browserRun.js';
 import { TERMINAL_START_TOOL_NAME, TERMINAL_TOOLS, TERMINAL_SEND_TOOL_NAME, APP_OPEN_TOOL_NAME } from '../../../../services/voltRuntime/common/terminalTools.js';
-import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, CANVAS_READ_TOOL_NAME, CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, humanizeToolName, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, isRawToolName, MOCKUPS_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME, splitMcpToolName, THREAD_TOOL_NAMES, VOLT_HOST_TOOLS, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, COMMIT_PLAN_TOOL_NAMES, BROWSER_DEVTOOLS_TOOL_NAME, CANVAS_READ_TOOL_NAME, CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, humanizeToolName, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, isRawToolName, MOCKUPS_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME, splitMcpToolName, THREAD_TOOL_NAMES, VOLT_HOST_TOOLS, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 
 /** How one of Volt's own MCP tools reads in the activity trail, the way Cursor words its browser actions. */
 export interface IHostToolActivity {
@@ -149,6 +149,16 @@ export function describeHostToolActivity(name: string | undefined, title: string
 			case 'watch_pull_request': return { tool, label: 'Watching pull request', detail: which };
 			case 'unwatch_pull_request': return { tool, label: 'Stopped watching', detail: which };
 			default: return { tool, label: 'Listed pull requests' };
+		}
+	}
+	if ((COMMIT_PLAN_TOOL_NAMES as readonly string[]).includes(tool)) {
+		switch (tool) {
+			case 'propose_commits': {
+				const count = Array.isArray(args.commits) ? args.commits.length : 0;
+				return { tool, label: 'Proposed commits', detail: count ? `${count} commit${count === 1 ? '' : 's'}` : undefined };
+			}
+			case 'await_commits': return { tool, label: 'Waiting for commit review' };
+			default: return { tool, label: 'Renamed branch', detail: text(args.name, 80) };
 		}
 	}
 	if ((THREAD_TOOL_NAMES as readonly string[]).includes(tool)) {

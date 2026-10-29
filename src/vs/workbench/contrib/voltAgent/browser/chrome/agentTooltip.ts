@@ -25,6 +25,8 @@ export interface IAgentTooltipRow {
 	value?: string;
 	/** Card rows only: a hairline above the row. */
 	separator?: boolean;
+	/** Card rows only, without an icon: the label is a block of text that keeps its line breaks (a commit body). */
+	body?: boolean;
 	onClick?: () => void;
 }
 
@@ -41,6 +43,8 @@ export interface IAgentTooltipShowOptions {
 	delay?: number;
 	/** A click anywhere on the tooltip runs this; it stays open while the pointer crosses to it. */
 	onClick?: () => void;
+	/** It stays open while the pointer crosses to it, to scroll or select its text. */
+	interactive?: boolean;
 }
 
 export interface IAgentTooltipShortcut {
@@ -241,7 +245,7 @@ export class AgentTooltip extends Disposable {
 			clearTimer();
 			this.cancelScheduledShow();
 			// Room to cross the gap to a tooltip the pointer can use (a file list, a clickable card).
-			if (options?.variant === 'files' || options?.onClick) {
+			if (options?.variant === 'files' || options?.onClick || options?.interactive) {
 				this.hideWindow = win;
 				this.hideHandle = win.setTimeout(() => {
 					this.hideHandle = undefined;
@@ -299,6 +303,10 @@ export class AgentTooltip extends Disposable {
 	private renderCardRow(row: IAgentTooltipRow): void {
 		if (row.separator) {
 			append(this.domNode, $('.volt-agent-tooltip-card-sep'));
+		}
+		if (row.body && !row.icon) {
+			append(this.domNode, $('.volt-agent-tooltip-card-body')).textContent = row.label;
+			return;
 		}
 		if (!row.icon && (row.value !== undefined || row.shortcut)) {
 			const line = append(this.domNode, $('.volt-agent-tooltip-card-line'));

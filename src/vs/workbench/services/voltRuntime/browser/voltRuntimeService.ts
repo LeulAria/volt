@@ -4231,6 +4231,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			visuals: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.group === 'visuals'),
 			...(withMemory && await this.largeIndexedProject(root) ? { codeIndexed: true } : {}),
 			browserTools: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'browser_run'),
+			...(intent.wantsGit && this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'propose_commits') ? { commitReview: true } : {}),
 		};
 	}
 

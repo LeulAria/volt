@@ -34,6 +34,9 @@ import {
 	summarizeResult,
 } from '../../common/agentGitActions.js';
 import { currentLink, isOpenState } from '../../common/agentPullRequests.js';
+import { isPlaceholderBranch, PROPOSE_COMMITS_TOOL_NAME } from '../../common/agentCommitPlan.js';
+import { IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
+import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { AGENT_BRANCH_PREFIX_SETTING, AGENT_COMMIT_ATTRIBUTION_SETTING, readBranchPrefix, withCommitAttribution } from '../../common/agentGitSettings.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
 import { openPullRequest } from './agentPullRequestUi.js';
@@ -114,6 +117,8 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IFileService fileService: IFileService,
 		@IHostService hostService: IHostService,
+		@IVoltHostToolService private readonly hostTools: IVoltHostToolService,
+		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
 	) {
 		super();
 		// A pull request linked or created elsewhere changes what the quick action offers.
@@ -280,9 +285,38 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 			await this.pull(folder, sessionId);
 			return;
 		}
+		if (quick.action && this.reviewInChat(sessionId, quick.action, state.context.status)) {
+			return;
+		}
 		if (quick.action) {
 			await this.runNow(folder, sessionId, quick.action);
 		}
+	}
+
+	/**
+	 * With a chat and the commit review: the chat's agent splits the changes into commits the user
+	 * reviews (propose_commits), asks what to call a placeholder branch before it pushes, then pushes
+	 * and opens the pull request, instead of one commit of everything. False: run the steps here.
+	 */
+	private reviewInChat(sessionId: string | undefined, action: AgentGitAction, status: IVoltGitStatus | undefined): boolean {
+		if (!sessionId || !status?.branch || !this.hostTools.listTools().some(tool => tool.name === PROPOSE_COMMITS_TOOL_NAME)) {
+			return false;
+		}
+		const commits = actionIncludesCommit(action, status);
+		const placeholder = isPlaceholderBranch(status.branch);
+		if (!commits && !(placeholder && actionIncludesPush(action))) {
+			return false;
+		}
+		const base = status.defaultBranch ?? 'main';
+		const steps = [
+			commits ? 'Commit the uncommitted changes: split them into meaningful commits with conventional messages and show them to me with propose_commits.' : undefined,
+			actionIncludesPush(action) && placeholder ? `Before pushing, ask me what to call the branch (it is still ${status.branch}) and rename it.` : undefined,
+			actionIncludesPr(action) ? `Then push the branch and open a pull request into ${base}.` : actionIncludesPush(action) ? 'Then push the branch.' : undefined,
+		].filter(Boolean);
+		void this.orchestrator.submit(sessionId, { text: steps.join(' ') }, 'auto').catch(err => {
+			this.notificationService.error(localize('voltGit.askFailed', "Could not ask the agent: {0}", err instanceof Error ? err.message : String(err)));
+		});
+		return true;
 	}
 
 	runMenu(folder: string, sessionId: string | undefined, id: IAgentGitMenuItem['id']): Promise<void> {
@@ -298,16 +332,14 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 			}
 			return;
 		}
-		if (id === 'push') {
-			await this.runNow(folder, sessionId, 'push');
-			return;
-		}
-		if (id === 'createPr') {
-			await this.runNow(folder, sessionId, 'createPr');
-			return;
-		}
 		const status = state.context.status;
-		if (!status) {
+		if (id === 'push' || id === 'createPr') {
+			if (!this.reviewInChat(sessionId, id, status)) {
+				await this.runNow(folder, sessionId, id);
+			}
+			return;
+		}
+		if (!status || this.reviewInChat(sessionId, 'commit', status)) {
 			return;
 		}
 		const choice = await this.instantiationService.invokeFunction(accessor => showAgentGitCommitDialog(accessor, {

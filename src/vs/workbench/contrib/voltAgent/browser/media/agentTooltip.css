@@ -241,6 +241,21 @@
 	white-space: nowrap;
 }
 
+/* A block of text with its own line breaks (a commit message's body); the card scrolls past 450px. */
+.volt-agent-tooltip-card-body {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	opacity: 0.8;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+/* The first block is the heading (a commit's subject). */
+.volt-agent-tooltip-card-body:first-child {
+	font-weight: 600;
+	opacity: 1;
+}
+
 .volt-agent-tooltip-card-row {
 	display: flex;
 	align-items: flex-start;

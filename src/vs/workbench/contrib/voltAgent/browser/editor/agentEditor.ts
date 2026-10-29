@@ -141,6 +141,8 @@ import { AGENT_TOOL_DENSITY_SETTING, readToolDensity } from '../../common/agentA
 import { AgentComposerQueue, IAgentComposerQueueState, QueuePause } from '../composer/agentComposerQueue.js';
 import { AgentTasksCard } from '../composer/agentTasksCard.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
+import { AgentCommitPlanTray } from '../pullRequests/agentCommitPlanTray.js';
+import { IAgentCommitPlanService } from '../pullRequests/agentCommitPlanService.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
 import { AgentLimitChip } from '../composer/agentLimitChip.js';
 import { AgentVoiceDictation } from '../composer/agentVoiceDictation.js';
@@ -767,6 +769,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	/** The agent's to-dos, above the chips like the Context Usage card. */
 	private tasksCard: AgentTasksCard | undefined;
 	private questionTray!: AgentQuestionTray;
+	/** The commits the agent proposed (propose_commits), docked above the composer while the user reviews them. */
+	private commitPlanTray: AgentCommitPlanTray | undefined;
 	private composerChips!: AgentComposerChips;
 	private pendingChanges!: AgentPendingChanges;
 	private readonly freshText = new FreshTextTracker();
@@ -1340,6 +1344,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				prepare: source => answerFiles.prepare(source),
 			},
 		}));
+		// The commit review is opened and closed by the commit plan service (desktop only, like pull requests).
+		if (this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentCommitPlanService))) {
+			this.commitPlanTray = this._register(this.instantiationService.createInstance(AgentCommitPlanTray, { onLayout: () => this.layoutInputEditor() }));
+			append(this.composerEl, this.commitPlanTray.element);
+		}
 		append(this.composerEl, this.questionTray.element);
 		this._register(this.runtime.onDidChangeQuestions(sessionId => {
 			if (sessionId === this.sessionKey) {
@@ -3835,7 +3844,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				: { key: `${i}`, name: mention.label, bytes: mention.image!.bytes, mime: mention.image!.mime, size: mention.image!.bytes.byteLength });
 			strip.update(stripItems);
 			// One row; "+N" on the last tile opens them all.
-			this.threadListeners.add(fitImageStripToOneRow(strip, stripItems, i => this.openMessageMedia(message, i)));
+			this.threadListeners.add(fitImageStripToOneRow(strip, i => this.openMessageMedia(message, i)));
 		}
 		const text = append(main, $('.volt-agent-text'));
 		this.userMessageTexts.set(text, message);
@@ -7727,6 +7736,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private syncQueueStack(): void {
 		this.syncQuestionTray();
+		this.commitPlanTray?.setSession(this.sessionKey);
 		if (!this.composerQueue) {
 			return;
 		}

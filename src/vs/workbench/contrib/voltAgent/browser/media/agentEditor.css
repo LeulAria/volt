@@ -7120,6 +7120,7 @@ pre.volt-agent-searchable {
 	questions, a worktree's setup) they stay in flow. */
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-composer-stack.has-stack ~ .volt-agent-composer-chips.is-visible,
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-question-tray:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-commit-plan:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-clone-banner:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-worktree-setup:not(.hidden) ~ .volt-agent-composer-chips.is-visible {
 	margin-top: 0;

@@ -138,8 +138,8 @@ export interface IAgentPullRequestService {
 	stackNewBranch(folder: string, title: string): Promise<{ readonly branch: string; readonly parent: string }>;
 	/** Restacks the stack `branch` is in and refreshes the pull requests it touched. */
 	restack(folder: string, branch: string | undefined, syncTrunk: boolean): Promise<IVoltPrRestackOutcome>;
-	/** A message for committing everything, or exactly `paths`. */
-	generateCommitMessage(folder: string, sessionId?: string, paths?: readonly string[]): Promise<string | undefined>;
+	/** A message for committing everything, or exactly `paths`; with `previous`, a different one than that. */
+	generateCommitMessage(folder: string, sessionId?: string, paths?: readonly string[], previous?: string): Promise<string | undefined>;
 	/** The merge method last picked for a repository. */
 	lastMergeMethod(repo: IVoltPrRepoRef): VoltPrMergeMethod | undefined;
 	rememberMergeMethod(repo: IVoltPrRepoRef, method: VoltPrMergeMethod): void;
@@ -1246,12 +1246,12 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		return { title: sanitizeCommitSubject(title), body };
 	}
 
-	async generateCommitMessage(folder: string, sessionId?: string, paths?: readonly string[]): Promise<string | undefined> {
+	async generateCommitMessage(folder: string, sessionId?: string, paths?: readonly string[], previous?: string): Promise<string | undefined> {
 		const summary = await this.api.describeChanges({ folder, ...(paths ? { paths } : {}) });
 		if (!summary.files.trim()) {
 			return undefined;
 		}
-		const raw = await this.runtime.generateText(buildCommitMessagePrompt(summary.branch, summary.files, summary.patch, summary.recentSubjects), { sessionId, slot: 'git' });
+		const raw = await this.runtime.generateText(buildCommitMessagePrompt(summary.branch, summary.files, summary.patch, summary.recentSubjects, previous), { sessionId, slot: 'git' });
 		return commitMessageFrom(raw);
 	}
 

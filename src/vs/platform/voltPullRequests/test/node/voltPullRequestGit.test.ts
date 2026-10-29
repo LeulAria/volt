@@ -111,6 +111,29 @@ suite('Volt pull requests: local git', function () {
 		await assert.rejects(service.commit({ folder: work, message: 'x', newBranch: '-bad' }), /Not a valid branch name/);
 	});
 
+	test('rename keeps the changes, drops an upstream under the old name, and refuses a taken name', async () => {
+		git(work, 'checkout', '-q', '-b', 'volt/f7175242');
+		writeFileSync(join(work, 'a.txt'), 'a\n');
+		git(work, 'add', '-A');
+		git(work, 'commit', '-q', '-m', 'Add a');
+		git(work, 'push', '-q', '-u', 'origin', 'volt/f7175242');
+		writeFileSync(join(work, 'b.txt'), 'b\n');
+
+		assert.deepStrictEqual(await service.renameBranch({ folder: work, name: 'feat/add-a' }), { previous: 'volt/f7175242', branch: 'feat/add-a' });
+		assert.strictEqual(git(work, 'symbolic-ref', '--short', 'HEAD'), 'feat/add-a');
+		const status = await service.gitStatus(work);
+		assert.strictEqual(status?.upstream, undefined, 'the old name\'s upstream is gone, so a push publishes the new name');
+		assert.deepStrictEqual(status?.files.map(file => file.path), ['b.txt'], 'uncommitted work comes along');
+
+		const pushed = await service.push({ folder: work });
+		assert.strictEqual(pushed.branch, 'feat/add-a');
+		assert.ok(git(bare, 'branch', '--list', 'feat/add-a'), 'pushed under the new name');
+
+		assert.deepStrictEqual(await service.renameBranch({ folder: work, name: 'feat/add-a' }), { previous: 'feat/add-a', branch: 'feat/add-a' }, 'the same name is a no-op');
+		await assert.rejects(service.renameBranch({ folder: work, name: 'main' }), /already exists/);
+		await assert.rejects(service.renameBranch({ folder: work, name: '-bad' }), /Not a valid branch name/);
+	});
+
 	test('pull fast-forwards from the upstream and says when there is nothing new', async () => {
 		const other = join(root, 'other');
 		git(root, 'clone', '-q', bare, other);

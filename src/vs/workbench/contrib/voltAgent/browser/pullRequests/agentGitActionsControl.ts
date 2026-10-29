@@ -126,7 +126,7 @@ export class AgentGitActionsControl extends Disposable {
 		this.label.textContent = progress?.label ?? quick.label;
 		this.main.classList.toggle('disabled', quick.disabled && !progress);
 		this.main.setAttribute('aria-disabled', String(quick.disabled || !!progress));
-		setAgentTooltip(this.main, progress ? progress.label : quick.hint ?? tooltipFor(quick.action, quick.kind));
+		setAgentTooltip(this.main, progress ? progress.label : quick.hint ?? tooltipFor(quick.action, quick.kind, !!this.options.target().sessionId));
 		this.chevron.disabled = !!progress;
 		this.element.classList.toggle('has-changes', !!state?.context.status?.files.length);
 		if (progress) {
@@ -209,9 +209,17 @@ function iconFor(action: AgentGitAction | 'pull' | undefined): ThemeIcon {
 	}
 }
 
-function tooltipFor(action: AgentGitAction | undefined, kind: 'run' | 'pull' | 'hint'): string {
+function tooltipFor(action: AgentGitAction | undefined, kind: 'run' | 'pull' | 'hint', inChat: boolean): string {
 	if (kind === 'pull') {
 		return localize('voltGit.tip.pull', "Pull the upstream's new commits");
+	}
+	// In a chat the agent splits the changes into commits for review (agentGitActionsService.reviewInChat).
+	if (inChat) {
+		switch (action) {
+			case 'commit': return localize('voltGit.tip.reviewCommit', "Have the agent split the changes into commits for you to review");
+			case 'commitPush': return localize('voltGit.tip.reviewCommitPush', "Review the agent's commits, then push");
+			case 'commitPushPr': return localize('voltGit.tip.reviewCommitPushPr', "Review the agent's commits, then push and open a pull request linked to this chat");
+		}
 	}
 	switch (action) {
 		case 'commit': return localize('voltGit.tip.commit', "Commit every change (the message is written for you)");

@@ -1290,6 +1290,17 @@
 		"--volt-usage-volt",
 		"--volt-usage-weeks",
 		"--volt-usage-yellow",
+		"--vcp-bg",
+		"--vcp-check-border",
+		"--vcp-check-border-hover",
+		"--vcp-check-fill",
+		"--vcp-check-mark",
+		"--vcp-fg",
+		"--vcp-fg-icon",
+		"--vcp-fg-muted",
+		"--vcp-hover",
+		"--vcp-input",
+		"--vcp-line",
 		"--vq-accent",
 		"--vq-accent-soft",
 		"--vq-badge",
@@ -1301,6 +1312,7 @@
 		"--vq-fill",
 		"--vq-on-accent",
 		"--vscode-gitDecoration-modifiedResourceForeground",
-		"--vscode-gitDecoration-renamedResourceForeground"
+		"--vscode-gitDecoration-renamedResourceForeground",
+		"--vscode-gitDecoration-untrackedResourceForeground"
 	]
 }
