@@ -37,6 +37,11 @@ export interface IVoltWindowScopeClaim {
 	readonly layoutMode?: VoltWindowLayoutMode;
 }
 
+/** A window opened for one chat (Open in New Window): what its scope starts with, and the chat it shows. */
+export interface IVoltWindowStart extends IVoltWindowScopeClaim {
+	readonly openSession: string;
+}
+
 export interface IVoltWindowScopesService {
 	readonly _serviceBrand: undefined;
 
@@ -49,6 +54,12 @@ export interface IVoltWindowScopesService {
 	 * a project the main window adds itself is no longer held back by the window that created it.
 	 */
 	claim(scope: string | undefined, claim: IVoltWindowScopeClaim): Promise<void>;
+
+	/** The next window opened with a scope of its own (for a few seconds) starts with `start`. */
+	prepareWindow(start: IVoltWindowStart): Promise<void>;
+
+	/** The chat a window was opened to show. Answered once, so a reload does not open it again. */
+	takeWindowStart(scope: string): Promise<string | undefined>;
 }
 
 export const EMPTY_WINDOW_SCOPE: IVoltWindowScopeState = { sessions: [], projects: [], createdProjects: [] };

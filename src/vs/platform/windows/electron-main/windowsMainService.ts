@@ -1606,7 +1606,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 			? this.voltScopes.get(window.id)
 			: options.switchFrom
 				? this.voltScopes.get(options.switchFrom.id)
-				: options.ownScope && !configuration.extensionDevelopmentPath && this.getWindows().some(other => !this.voltScopes.has(other.id))
+				: options.ownScope && !configuration.extensionDevelopmentPath && (this.voltWindowScopes.hasPreparedStart || this.getWindows().some(other => !this.voltScopes.has(other.id)))
 					? this.voltWindowScopes.createScope()
 					: undefined;
 

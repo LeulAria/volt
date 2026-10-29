@@ -201,6 +201,7 @@ import './services/voltRuntime/electron-browser/voltRelay.contribution.js';
 import './contrib/voltProjects/electron-browser/voltProjects.contribution.js';
 // Volt window scopes (a New Window keeps its chats and projects until it closes)
 import './services/voltWindowScope/electron-browser/voltWindowScopeService.js';
+import './contrib/voltAgent/electron-browser/agentOpenInNewWindow.contribution.js';
 // Volt agent server client (after the agent services it can replace)
 import './contrib/voltAgent/electron-browser/agentServerClient.contribution.js';
 import './contrib/voltAgent/electron-browser/agentComputerName.contribution.js';

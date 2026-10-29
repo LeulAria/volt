@@ -949,9 +949,11 @@
 	position: relative;
 }
 
+/* z-index: the chips paint over everything else in the row (unread dot, badge, age). */
 .volt-agent-home-row > .actions {
 	display: none;
 	position: absolute;
+	z-index: 1;
 	top: 50%;
 	right: 8px;
 	transform: translateY(-50%);
@@ -2032,10 +2034,17 @@ html.volt-layout-agent-window body {
 	display: none;
 }
 
-/* Under the hover actions the badge and age keep their space, so nothing shifts. */
+/* Under the hover actions the badge, age and unread dot keep their space, so nothing shifts; the
+ * chips are see-through, so the dot would show through them. */
 .monaco-list-row:hover .volt-agent-home-row.is-session > .status-badge,
-.monaco-list-row:hover .volt-agent-home-row.is-session > .meta {
+.monaco-list-row:hover .volt-agent-home-row.is-session > .meta,
+.monaco-list-row:hover .volt-agent-home-row.is-session > .unread-dot {
 	visibility: hidden;
+}
+
+/* A dragged chat over a group that would take it (class set in agentHomePane.ts). */
+.volt-agent-home-tree .monaco-pane-view .pane.volt-agent-home-pane.drop-target {
+	background-color: var(--vscode-list-dropBackground);
 }
 
 .volt-agent-home-row > .status-badge.kind-input {
