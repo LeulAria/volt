@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Emitter } from '../../../../../base/common/event.js';
+import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { applyWindowScopeClaim, EMPTY_WINDOW_SCOPE, IVoltWindowScopeClaim, IVoltWindowScopes, IVoltWindowScopesService, IVoltWindowStart } from '../../../../../platform/voltWindowScope/common/voltWindowScope.js';
 
@@ -14,6 +14,7 @@ export class TestWindowScopesHost extends Disposable implements IVoltWindowScope
 
 	private readonly _onDidChangeScopes = this._register(new Emitter<IVoltWindowScopes>());
 	readonly onDidChangeScopes = this._onDidChangeScopes.event;
+	readonly onDidStartWindow = Event.None;
 
 	scopes: IVoltWindowScopes = {};
 
@@ -40,6 +41,8 @@ export class TestWindowScopesHost extends Disposable implements IVoltWindowScope
 	async takeWindowStart(_scope: string): Promise<string | undefined> {
 		return undefined;
 	}
+
+	async didShowWindowStart(_scope: string): Promise<void> { }
 
 	private set(next: IVoltWindowScopes): void {
 		if (next !== this.scopes) {
