@@ -19,7 +19,7 @@ import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { SHOW_AGENT_FILES_COMMAND_ID } from '../workspace/agentSurfaceHost.js';
 import { createSurfaceStrokeIcon } from '../workspace/agentSurfaceMenu.js';
 import { AgentResourceTree, openAgentResource } from './agentResourceTree.js';
-import { agentResourcesSectionFor, OPEN_AGENT_RESOURCES_COMMAND_ID } from './agentResourcesPage.js';
+import { agentResourcesSection, agentResourcesSectionFor, OPEN_AGENT_RESOURCES_COMMAND_ID } from './agentResourcesPage.js';
 import { AgentResourceFilter, IAgentResource, IAgentResourcesService } from './agentResourcesService.js';
 
 /** Opens the files sidebar filtered to a group (or every agent resource without one). */
@@ -38,7 +38,8 @@ const CARD_WIDTH = 300;
 const HIDE_DELAY_MS = 160;
 
 interface IGroupRow {
-	readonly group: IAgentResourceGroup;
+	/** Undefined for the one row a project without agent files gets: it opens the page. */
+	readonly group: IAgentResourceGroup | undefined;
 	readonly items: readonly IAgentResource[];
 	readonly issues: number;
 }
@@ -80,11 +81,11 @@ class GroupRenderer implements IListRenderer<IGroupRow, IGroupTemplate> {
 
 	renderElement(element: IGroupRow, _index: number, template: IGroupTemplate): void {
 		template.store.clear();
-		const icon = createSurfaceStrokeIcon(template.icon.ownerDocument, element.group.icon);
+		const icon = createSurfaceStrokeIcon(template.icon.ownerDocument, element.group?.icon ?? agentResourcesSection('overview').icon);
 		icon.classList.add('volt-agent-stroke-icon');
 		template.icon.replaceChildren(icon);
-		template.label.textContent = element.group.label;
-		template.count.textContent = String(element.items.length);
+		template.label.textContent = element.group?.label ?? localize('agentResources.setUp', "Skills, MCP and Harness");
+		template.count.textContent = element.group ? String(element.items.length) : '';
 		template.issues.classList.toggle('hidden', !element.issues);
 		template.issues.setAttribute('aria-label', element.issues === 1
 			? localize('agentResources.oneIssue', "1 file needs attention")
@@ -278,19 +279,25 @@ export class AgentResourcesDock extends Disposable {
 			(group: IAgentResourceGroup) => void this.commandService.executeCommand(OPEN_AGENT_RESOURCES_COMMAND_ID, agentResourcesSectionFor(group.id), this.folder)));
 		const renderer = new GroupRenderer((row, element) => this.onHover(row, element));
 		this.list = this._register(instantiationService.createInstance(WorkbenchList<IGroupRow>, 'VoltAgentResourceGroups', this.listHost, new GroupDelegate(), [renderer], {
-			identityProvider: { getId: (row: IGroupRow) => row.group.id },
+			identityProvider: { getId: (row: IGroupRow) => row.group?.id ?? 'manage' },
 			multipleSelectionSupport: false,
 			horizontalScrolling: false,
 			alwaysConsumeMouseWheel: false,
 			accessibilityProvider: {
 				getWidgetAriaLabel: () => localize('agentResources.groupsAria', "Agent Resources"),
-				getAriaLabel: (row: IGroupRow) => localize('agentResources.groupAria', "{0}, {1} files", row.group.label, row.items.length),
+				getAriaLabel: (row: IGroupRow) => row.group
+					? localize('agentResources.groupAria', "{0}, {1} files", row.group.label, row.items.length)
+					: localize('agentResources.manage', "Open Agent Resources"),
 			},
 		}));
 		this._register(this.list.onDidOpen(e => {
 			if (e.element) {
 				this.card.hide();
-				this.showInSidebar(e.element.group.id);
+				if (e.element.group) {
+					this.showInSidebar(e.element.group.id);
+				} else {
+					void this.commandService.executeCommand(OPEN_AGENT_RESOURCES_COMMAND_ID, 'overview', this.folder);
+				}
 			}
 		}));
 		this._register(this.list.onDidBlur(() => this.list.setSelection([])));
@@ -324,7 +331,7 @@ export class AgentResourcesDock extends Disposable {
 	}
 
 	private onHover(row: HTMLElement, element: IGroupRow | undefined): void {
-		if (!element || !this.folder) {
+		if (!element?.group || !this.folder) {
 			this.card.scheduleHide();
 			return;
 		}
@@ -334,16 +341,20 @@ export class AgentResourcesDock extends Disposable {
 	private render(): void {
 		const items = this.folder ? this.resources.get(this.folder) ?? [] : [];
 		// Only groups with files: the toolbar stays short in a project with little agent setup.
-		const rows: IGroupRow[] = AGENT_RESOURCE_GROUPS
+		const groupRows: IGroupRow[] = AGENT_RESOURCE_GROUPS
 			.map(group => {
 				const groupItems = items.filter(item => item.group === group.id);
 				return { group, items: groupItems, issues: groupItems.filter(item => item.status.kind !== 'ok').length };
 			})
 			.filter(row => row.items.length > 0);
+		// A project with none of its own still gets the section: global skills, MCP and the harness live behind it.
+		const rows: IGroupRow[] = groupRows.length ? groupRows : [{ group: undefined, items: [], issues: 0 }];
 		// A class, not display: the divider rule between sections skips hidden ones (agentSubagents.css).
-		this.element.classList.toggle('hidden', !rows.length);
+		this.element.classList.toggle('hidden', !this.folder);
 		this.head.setAttribute('aria-expanded', String(this.open));
-		this.headLabel.textContent = localize('agentResources.title', "Agent Resources ({0})", items.length);
+		this.headLabel.textContent = items.length
+			? localize('agentResources.title', "Agent Resources ({0})", items.length)
+			: localize('agentResources.titleEmpty', "Agent Resources");
 		this.head.replaceChildren(renderIcon(this.open ? Codicon.chevronDown : Codicon.chevronRight), this.headLabel, this.manage);
 		const shown = this.open ? rows : [];
 		const height = shown.length * ROW_HEIGHT;
