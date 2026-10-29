@@ -830,12 +830,14 @@ export class AgentSurfaceHost extends Disposable {
 		if (!owner || !owner.requireSession()) {
 			return Promise.resolve(undefined);
 		}
+		// Shows the tabs first: with them hidden (the files sidebar alone) or the panel closed, an
+		// existing tab coming to the front would change nothing on screen.
+		const group = owner.toolsGroup();
 		const resource = input.resource?.toString();
 		const existing = resource ? owner.findInShown(editor => editor.resource?.toString() === resource) : undefined;
 		if (existing) {
 			return existing.group.openEditor(existing.editor, { ...options, pinned: true });
 		}
-		const group = owner.toolsGroup();
 		return group ? group.openEditor(input, { ...options, pinned: true }) : Promise.resolve(undefined);
 	}
 
