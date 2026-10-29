@@ -7,7 +7,7 @@ import { type ChatStatus, type IconName, ICONS, RADIUS, statusColor, timer, TYPE
 import * as Haptics from 'expo-haptics';
 import { memo, type ReactNode, useEffect } from 'react';
 import { ActivityIndicator, Image, Pressable, type PressableProps, type StyleProp, StyleSheet, Text, type TextProps, type TextStyle, View, type ViewStyle } from 'react-native';
-import Animated, { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import Animated, { cancelAnimation, Easing, interpolateColor, makeMutable, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import Svg, { Path } from 'react-native-svg';
 import { useNow } from '../state/client';
 import { FONT, useTheme } from '../theme/theme';
@@ -182,6 +182,66 @@ export function Shimmer({ children, active = true }: { readonly children: ReactN
 	}, [active, opacity]);
 	const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
 	return <Animated.View style={style}>{children}</Animated.View>;
+}
+
+/**
+ * One clock for every live verb ("Exploring", "Running"), so rows drawn at different times sweep
+ * in step, as the desktop locks its shimmers to the page clock. It runs while any shimmer shows.
+ */
+const shimmerClock = makeMutable(0);
+let shimmerUsers = 0;
+
+function useShimmerClock(active: boolean): void {
+	useEffect(() => {
+		if (!active) {
+			return;
+		}
+		if (shimmerUsers++ === 0) {
+			shimmerClock.value = 0;
+			shimmerClock.value = withRepeat(withTiming(1, { duration: 1600, easing: Easing.linear }), -1, false);
+		}
+		return () => {
+			if (--shimmerUsers === 0) {
+				cancelAnimation(shimmerClock);
+			}
+		};
+	}, [active]);
+}
+
+/**
+ * Text that sweeps from the quaternary to the secondary tone and back while it is live
+ * (agentTranscript.css `.volt-tr-action.shimmer`); still, it takes `color`.
+ */
+export const ShimmerText = memo(function ShimmerText({ active, color, from, to, style, children, numberOfLines }: {
+	readonly active: boolean;
+	readonly color: string;
+	readonly from?: string;
+	readonly to?: string;
+	readonly style?: StyleProp<TextStyle>;
+	readonly children: ReactNode;
+	readonly numberOfLines?: number;
+}) {
+	const { p } = useTheme();
+	useShimmerClock(active);
+	const low = from ?? p.fgQuaternary;
+	const high = to ?? p.fgSecondary;
+	const animated = useAnimatedStyle(() => active
+		? { color: interpolateColor(shimmerClock.value, [0, 0.5, 1], [low, high, low]) }
+		: { color }, [active, low, high, color]);
+	return <Animated.Text numberOfLines={numberOfLines} maxFontSizeMultiplier={1.6} style={[style, animated]}>{children}</Animated.Text>;
+});
+
+/** A codicon-style spinner: a three-quarter ring that turns (the desktop's `codicon-loading`). */
+export function Spinner({ size = 13, color }: { readonly size?: number; readonly color?: string }) {
+	const { p } = useTheme();
+	const c = color ?? p.iconTertiary;
+	return (
+		<Spin duration={900}>
+			<Svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round">
+				<Path d="M8 1.75a6.25 6.25 0 1 1-6.25 6.25" />
+			</Svg>
+		</Spin>
+	);
 }
 
 export function LiveTimer({ since, color, variant = 'footnote' }: { readonly since: number; readonly color?: string; readonly variant?: TextVariant }) {

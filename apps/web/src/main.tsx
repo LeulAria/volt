@@ -9,6 +9,7 @@ import { App } from './app/App';
 import { installThemeVariables } from './app/theme';
 import './styles/app.css';
 import './styles/ide.css';
+import './styles/transcript.css';
 
 installThemeVariables();
 

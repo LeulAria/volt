@@ -4,20 +4,22 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	attachmentsOf, basename, compactNumber, dirname, duration, errorMessage, type IPromptAttachment, type IRestorePreview, type IRowImage, type IStepItem, money, pendingLabel,
-	receiptHeadline, receiptStatus, type TranscriptRow, uuid
+	attachmentsOf, basename, compactNumber, dirname, duration, errorMessage, formatWorkedTime, type IPromptAttachment, type IRestorePreview, type IRowImage, type IStepItem,
+	type ISubagentItem, liveVerb, money, pendingLabel, receiptHeadline, receiptStatus, relativeTime, tokenizeShell, type TranscriptRow, uuid
 } from '@volt/client-core';
-import { Fragment, memo, type ReactNode, useState } from 'react';
+import { Fragment, memo, type ReactNode, useContext, useMemo, useState } from 'react';
 import { useAttachment, useClient } from '../app/client';
 import { useConversationPrefs } from '../app/prefs';
 import { Dialog } from '../ui/overlays';
-import { Button, Icon, LiveTimer, Shimmer, Spinner } from '../ui/primitives';
+import { Button, Icon, LiveTimer, Spinner } from '../ui/primitives';
 import { openTab } from '../ide/workbench';
 import { Composer } from './Composer';
 import { DiffLines } from './DiffLines';
 import { openLightbox } from './Lightbox';
 import { CodeBlock, Inline, Markdown } from './Markdown';
-import { useChatRow } from './rowContext';
+import { changesPath, navigate } from '../app/router';
+import { FileIcon } from '../ide/icons';
+import { useChatRow, WorkedToggleContext } from './rowContext';
 
 type RowOf<K extends TranscriptRow['kind']> = Extract<TranscriptRow, { kind: K }>;
 
@@ -62,7 +64,8 @@ function UserRow({ row, chatId }: { readonly row: RowOf<'user'>; readonly chatId
 	const [busy, setBusy] = useState(false);
 	const [revert, setRevert] = useState(false);
 	const [editMode, setEditMode] = useState(ctx?.mode ?? 'Agent');
-	const long = row.text.length > 600 || row.text.split('\n').length > 12;
+	// A long prompt shows its first two lines and Read more, as on the desktop.
+	const long = row.text.length > 180 || row.text.split('\n').length > 2;
 	const turnId = row.turnId;
 	const actionable = !!ctx && !!turnId && !row.pending && !row.from && !row.steer;
 	const checkpoint = actionable && !!ctx?.checkpoints?.checkpoints.some(c => c.turnId === turnId);
@@ -144,7 +147,7 @@ function UserRow({ row, chatId }: { readonly row: RowOf<'user'>; readonly chatId
 				{row.images?.length ? <UserImages images={row.images} /> : null}
 				<div className="user-text">{row.text}</div>
 				{row.chips.length ? <div className="user-chips">{row.chips.map(chip => <span key={chip} className="chip"><Icon name="file" size={11} />{chip}</span>)}</div> : null}
-				{long ? <button type="button" className="user-more" onClick={() => setExpanded(e => !e)}>{expanded ? 'Show less' : 'Show more'}</button> : null}
+				{long ? <button type="button" className="user-more" onClick={() => setExpanded(e => !e)}>{expanded ? 'Show less' : 'Read more'}</button> : null}
 				{actionable ? (
 					<div className="user-actions" role="toolbar" aria-label="Message actions">
 						<button type="button" className="user-action" title="Edit and resend" onClick={() => ctx?.startEdit(turnId)}><Icon name="pencil" size={13} /></button>
@@ -210,96 +213,123 @@ function RestoreBody({ dialog }: { readonly dialog: Extract<UserDialog, { kind: 
 	);
 }
 
-function ThoughtRow({ row }: { readonly row: RowOf<'thought'> }) {
-	const [open, setOpen] = useState(false);
-	const label = row.streaming ? 'Thinking' : row.durationMs && row.durationMs > 1000 ? `Thought for ${duration(row.durationMs)}` : 'Thought';
+/** The chevron after a header: right closed, down open (agentTranscript.css `.volt-tr-chevron`). */
+function Chevron() {
+	return <span className="tr-chevron"><Icon name="chevronDown" size={12} strokeWidth={2} /></span>;
+}
+
+function Stats({ additions, deletions }: { readonly additions?: number; readonly deletions?: number }) {
+	return additions || deletions ? (
+		<span className="tr-stats">
+			{additions ? <span className="add">+{additions}</span> : null}
+			{deletions ? <span className="del">-{deletions}</span> : null}
+		</span>
+	) : null;
+}
+
+/** A work log header: the verb (tertiary), the details (quaternary), stats, exit code, chevron. */
+function TrHeader({ action, detail, command, live, expandable, open, onToggle, additions, deletions, exit, tertiary }: {
+	readonly action: string;
+	readonly detail?: string;
+	readonly command?: string;
+	readonly live?: boolean;
+	readonly expandable: boolean;
+	readonly open?: boolean;
+	readonly onToggle?: () => void;
+	readonly additions?: number;
+	readonly deletions?: number;
+	readonly exit?: number;
+	readonly tertiary?: boolean;
+}) {
+	const body = <>
+		<span className={`tr-action${live ? ' shimmer' : ''}`}>{action}</span>
+		{detail ? <span className={`tr-details${tertiary ? ' tertiary' : ''}`}>{detail}{command ? <span className="tr-command"> {command}</span> : null}</span> : null}
+		<Stats additions={additions} deletions={deletions} />
+		{exit !== undefined ? <span className="tr-exit">exit {exit}</span> : null}
+		{expandable ? <Chevron /> : null}
+	</>;
+	return expandable
+		? <button type="button" className="tr-header" aria-expanded={open} onClick={onToggle}>{body}</button>
+		: <div className="tr-header">{body}</div>;
+}
+
+/** Cursor's command card: `$ cmd args` then the output, 13/18 mono, 200px before it scrolls. */
+function TerminalCard({ command, output }: { readonly command: string; readonly output: string }) {
+	const tokens = useMemo(() => tokenizeShell(command), [command]);
+	const text = output.replace(/[\r\n]+$/, '');
 	return (
-		<div className="row-thought">
-			<Disclosure open={open} onToggle={() => setOpen(o => !o)}>
-				<Icon name="thought" size={14} />
-				<Shimmer active={row.streaming}>{label}</Shimmer>
-			</Disclosure>
-			{open ? <div className="thought-body"><Markdown text={row.text} /></div> : null}
+		<div className="tr-terminal">
+			<button type="button" className="tr-terminal-menu" title="Copy command" onClick={() => copyText(command)}><Icon name="copy" size={12} /></button>
+			<div className="tr-terminal-scroll">
+				<code className="tr-terminal-command"><span className="prompt">$ </span>{tokens.map((t, i) => t.kind === 'text' ? <Fragment key={i}>{t.value}</Fragment> : <span key={i} className={t.kind}>{t.value}</span>)}</code>
+				{text ? <pre className="tr-terminal-output">{text.length > 12000 ? `…${text.slice(-12000)}` : text}</pre> : null}
+			</div>
 		</div>
 	);
 }
 
-function StepBodyView({ step }: { readonly step: IStepItem }) {
+function ToolOutput({ text }: { readonly text: string }) {
+	return (
+		<div className="tr-terminal tool">
+			<div className="tr-terminal-scroll"><pre className="tr-terminal-output">{text.length > 12000 ? `${text.slice(0, 12000)}\n…` : text.replace(/[\r\n]+$/, '')}</pre></div>
+		</div>
+	);
+}
+
+function ThoughtLine({ text, detail, live }: { readonly text: string; readonly detail?: string; readonly live: boolean }) {
+	const [open, setOpen] = useState(false);
+	if (live) {
+		return <div className="tr-group thought live"><TrHeader action="Thinking" live expandable={false} /></div>;
+	}
+	const has = !!text.trim();
+	return (
+		<div className={`tr-group thought${open ? ' open' : ''}`}>
+			<TrHeader action="Thought" detail={detail} expandable={has} open={open} onToggle={() => setOpen(o => !o)} />
+			{open ? <div className="tr-body"><div className="tr-thinking"><Markdown text={text} /></div></div> : null}
+		</div>
+	);
+}
+
+function StepBody({ step }: { readonly step: IStepItem }) {
 	const body = step.body;
 	if (!body) {
 		return null;
 	}
-	if (body.kind === 'command') {
-		return (
-			<div className="step-body term">
-				<div className="term-cmd"><span className="term-prompt">$</span>{body.command}</div>
-				{body.output ? <pre className="term-out">{body.output.length > 12000 ? `${body.output.slice(0, 12000)}\n…` : body.output}</pre> : null}
-				{body.exitCode !== undefined && body.exitCode !== 0 ? <div className="term-exit">exit {body.exitCode}</div> : null}
-			</div>
-		);
+	switch (body.kind) {
+		case 'command': return <TerminalCard command={body.command} output={body.output} />;
+		case 'diff': return <DiffLines diff={body.diff} {...(body.path ? { path: body.path } : {})} />;
+		case 'thought': return <div className="tr-thinking"><Markdown text={body.text} /></div>;
+		default: return <ToolOutput text={body.text} />;
 	}
-	if (body.kind === 'diff') {
-		return <div className="step-body flush"><DiffLines diff={body.diff} {...(body.path ? { path: body.path } : {})} /></div>;
-	}
-	return <pre className={`step-body${body.mono ? ' mono' : ''}`}>{body.text.length > 8000 ? `${body.text.slice(0, 8000)}\n…` : body.text}</pre>;
 }
 
-function StepStats({ step }: { readonly step: IStepItem }) {
-	if (!step.additions && !step.deletions) {
-		return null;
+const StepLine = memo(function StepLine({ step, live, card }: { readonly step: IStepItem; readonly live: boolean; readonly card?: boolean }) {
+	const [open, setOpen] = useState(!!card && !!step.body);
+	if (step.kind === 'thought') {
+		return <ThoughtLine text={step.body?.kind === 'thought' ? step.body.text : ''} detail={step.detail} live={live && step.status === 'running'} />;
 	}
+	const running = live && step.status === 'running';
 	return (
-		<span className="file-stats">
-			{step.additions ? <span className="add">+{step.additions}</span> : null}
-			{step.deletions ? <span className="del">{'−'}{step.deletions}</span> : null}
-		</span>
-	);
-}
-
-function StepLine({ step, card }: { readonly step: IStepItem; readonly card?: boolean }) {
-	const [open, setOpen] = useState(!!card);
-	const expandable = !!step.body;
-	return (
-		<div className={`step step-${step.status}${card && expandable ? ' step-card' : ''}`}>
-			<button type="button" className="step-line" disabled={!expandable} onClick={() => setOpen(o => !o)} aria-expanded={expandable ? open : undefined}>
-				<span className="step-icon">{step.status === 'running' ? <Spinner size={11} /> : <Icon name={step.status === 'error' ? 'xCircle' : step.icon} size={13} />}</span>
-				<Shimmer active={step.status === 'running'}><span className="step-label">{step.label}</span></Shimmer>
-				{step.detail ? <span className="step-detail">{step.detail}</span> : null}
-				<StepStats step={step} />
-				{expandable ? <Icon name="chevronRight" size={11} className={`step-chevron${open ? ' open' : ''}`} /> : null}
-			</button>
-			{open ? <StepBodyView step={step} /> : null}
+		<div className={`tr-group step ${step.kind}${open ? ' open' : ''}${card && step.body ? ' card' : ''}`}>
+			<TrHeader action={running ? liveVerb(step) : step.label} detail={step.detail} command={step.command} live={running} expandable={!!step.body} open={open} onToggle={() => setOpen(o => !o)} additions={step.additions} deletions={step.deletions} exit={step.exitCode} />
+			{open && step.body ? <div className="tr-body"><StepBody step={step} /></div> : null}
 		</div>
 	);
-}
+});
 
 function StepsRow({ row }: { readonly row: RowOf<'steps'> }) {
-	const [open, setOpen] = useState<boolean | undefined>(undefined);
+	const [open, setOpen] = useState(false);
 	if (row.display === 'lines' || row.display === 'cards') {
-		// Standard: a line per call. Detailed: calls with output or a diff open as cards.
 		return (
-			<div className={`row-steps steps-${row.display}`}>
-				<div className="steps-list">
-					{row.items.map(step => <StepLine key={step.key} step={step} card={row.display === 'cards'} />)}
-				</div>
+			<div className={`tr-step-list ${row.display}`}>
+				{row.items.map((step, i) => <StepLine key={step.key} step={step} live={row.live && i === row.items.length - 1} card={row.display === 'cards'} />)}
 			</div>
 		);
 	}
-	// A live group shows its latest steps; a finished one folds behind its summary.
-	const expanded = open ?? row.live;
-	const shown = expanded ? (row.live && open === undefined ? row.items.slice(-4) : row.items) : [];
 	return (
-		<div className="row-steps">
-			<Disclosure open={expanded} onToggle={() => setOpen(!expanded)}>
-				<Shimmer active={row.live}>{row.live ? (row.items[row.items.length - 1]?.label ?? 'Working') : row.summary}</Shimmer>
-				{row.live && row.items.length > 1 ? <span className="steps-count">{row.summary}</span> : null}
-			</Disclosure>
-			{expanded ? (
-				<div className="steps-list">
-					{row.live && open === undefined && row.items.length > 4 ? <div className="steps-more">{row.items.length - 4} earlier</div> : null}
-					{shown.map(step => <StepLine key={step.key} step={step} />)}
-				</div>
-			) : null}
+		<div className={`tr-group${open ? ' open' : ''}${row.live ? ' live' : ''}`}>
+			<TrHeader action={row.action} detail={row.detail} live={row.live} expandable open={open} onToggle={() => setOpen(o => !o)} additions={row.additions} deletions={row.deletions} />
+			{open ? <div className="tr-body">{row.items.map((step, i) => <StepLine key={step.key} step={step} live={row.live && i === row.items.length - 1} />)}</div> : null}
 		</div>
 	);
 }
@@ -308,13 +338,12 @@ export function DiffView({ diff, path }: { readonly diff: string; readonly path?
 	return <DiffLines diff={diff} {...(path ? { path } : {})} />;
 }
 
-function FileRow({ row }: { readonly row: RowOf<'file'> }) {
+/** One edit between the other steps: its own card over a fading peek of its diff (`.volt-tr-edit-card`). */
+function EditCard({ row }: { readonly row: RowOf<'file'> }) {
 	const ctx = useChatRow();
 	const client = useClient();
 	const { toolDensity } = useConversationPrefs();
-	// Detailed density opens each edit on its diff.
 	const [open, setOpen] = useState(toolDensity === 'detailed');
-	const dir = dirname(row.path);
 	const absolute = row.path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(row.path) ? row.path : ctx?.root ? `${ctx.root}/${row.path}` : undefined;
 	const openDiff = async () => {
 		if (!ctx || !absolute) {
@@ -331,27 +360,120 @@ function FileRow({ row }: { readonly row: RowOf<'file'> }) {
 		}
 	};
 	return (
-		<div className={`row-file file-${row.status}${open ? ' open' : ''}`}>
-			<div className="file-head">
-				<button type="button" className="file-toggle" onClick={() => row.diff && setOpen(o => !o)} disabled={!row.diff}>
-					<span className="file-icon">{row.status === 'running' ? <Spinner size={11} /> : <Icon name={row.verb === 'Created' ? 'plus' : row.verb === 'Deleted' ? 'trash' : 'pencil'} size={13} />}</span>
-					<span className="file-verb">{row.verb}</span>
-					<span className="file-name">{basename(row.path)}</span>
-					{dir ? <span className="file-dir">{dir}</span> : null}
-					<span className="file-stats">
-						{row.additions ? <span className="add">+{row.additions}</span> : null}
-						{row.deletions ? <span className="del">{'−'}{row.deletions}</span> : null}
-					</span>
-					{row.diff ? <Icon name="chevronDown" size={12} className={`file-chevron${open ? ' open' : ''}`} /> : null}
+		<div className={`tr-edit-card${open ? ' open' : ''}`}>
+			<div className="tr-edit-head">
+				<button type="button" className="tr-header" aria-expanded={open} onClick={() => setOpen(o => !o)} title={row.path}>
+					<FileIcon path={row.path} />
+					<span className={`tr-edit-name${row.status === 'running' ? ' shimmer' : ''}`}>{basename(row.path)}</span>
+					{row.verb !== 'Edited' ? <span className="tr-details">{row.verb === 'Created' ? 'new' : 'deleted'}</span> : null}
+					<Stats additions={row.additions} deletions={row.deletions} />
+					<Chevron />
 				</button>
 				{absolute && ctx?.openPath && row.verb !== 'Deleted' ? (
-					<span className="file-actions">
-						<button type="button" className="file-action" title="Open the diff in the editor" onClick={() => void openDiff()}><Icon name="fileDiff" size={13} /></button>
-						<button type="button" className="file-action" title="Open the file" onClick={() => ctx.openPath?.(absolute)}><Icon name="external" size={13} /></button>
+					<span className="tr-edit-actions">
+						<button type="button" title="Open the diff in the editor" onClick={() => void openDiff()}><Icon name="fileDiff" size={13} /></button>
+						<button type="button" title="Open the file" onClick={() => ctx.openPath?.(absolute)}><Icon name="external" size={13} /></button>
 					</span>
 				) : null}
 			</div>
-			{open && row.diff ? <DiffLines diff={row.diff} path={row.path} /> : null}
+			{row.diff || row.status === 'running' ? (
+				<div className="tr-edit-body" onClick={open ? undefined : () => setOpen(true)}>
+					{row.diff ? <DiffLines diff={row.diff} path={row.path} /> : <div className="tr-diff-empty">Writing…</div>}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function SubagentLine({ item }: { readonly item: ISubagentItem }) {
+	const [open, setOpen] = useState(false);
+	const live = item.state === 'running';
+	const expandable = !!item.output;
+	return (
+		<div className={`tr-subagent${live ? ' live' : ''}${open ? ' open' : ''}`}>
+			<span className="tr-subagent-icon">{live ? <Spinner size={12} /> : <Icon name={item.state === 'stopped' ? 'stop' : item.state === 'failed' ? 'xCircle' : 'check'} size={13} strokeWidth={2} />}</span>
+			<div className="tr-subagent-text">
+				<button type="button" className="tr-subagent-head" disabled={!expandable} onClick={() => setOpen(o => !o)}>
+					<span className="tr-subagent-title">{item.title}</span>
+					{item.type ? <span className="tr-subagent-type">{item.type}</span> : null}
+					{expandable ? <Chevron /> : null}
+				</button>
+				<div className={`tr-subagent-status${live ? ' shimmer' : ''}`}>{item.status}{live && item.steps > 1 ? <span className="tr-subagent-steps">{item.steps} steps</span> : null}</div>
+				{open && item.output ? <pre className="tr-subagent-output">{item.output}</pre> : null}
+			</div>
+		</div>
+	);
+}
+
+function SubagentsRow({ row }: { readonly row: RowOf<'subagents'> }) {
+	const [open, setOpen] = useState(false);
+	if (row.items.length < 3) {
+		return <div className="tr-subagents">{row.items.map(item => <SubagentLine key={item.key} item={item} />)}</div>;
+	}
+	const working = row.items.filter(item => item.state === 'running').length;
+	return (
+		<div className={`tr-group${open ? ' open' : ''}`}>
+			<TrHeader action={`${row.items.length} subagents`} detail={working ? `${working} working` : undefined} live={row.live} expandable open={open} onToggle={() => setOpen(o => !o)} />
+			{open ? <div className="tr-body tr-subagents">{row.items.map(item => <SubagentLine key={item.key} item={item} />)}</div> : null}
+		</div>
+	);
+}
+
+function CompactionRow({ row }: { readonly row: RowOf<'compaction'> }) {
+	const [open, setOpen] = useState(false);
+	const running = row.status === 'running';
+	const label = running ? 'Compacting context' : row.status === 'failed' ? 'Compaction failed' : row.status === 'cancelled' ? 'Compaction stopped' : 'Context compacted';
+	return (
+		<div className={`tr-compaction${open ? ' open' : ''}${row.status === 'failed' ? ' failed' : ''}`}>
+			<div className="tr-compaction-line">
+				<button type="button" className="tr-compaction-pill" disabled={!row.summary} onClick={() => setOpen(o => !o)}>
+					<span className="tr-compaction-icon"><Icon name="minimize" size={13} /></span>
+					<span className={`tr-compaction-label${running ? ' shimmer' : ''}`}>{label}</span>
+					{row.detail ? <span className="tr-compaction-detail">{row.detail}</span> : null}
+					{row.summary ? <Chevron /> : null}
+				</button>
+			</div>
+			{open && row.summary ? <div className="tr-compaction-summary tr-thinking"><Markdown text={row.summary} /></div> : null}
+		</div>
+	);
+}
+
+function WorkedRow({ row }: { readonly row: RowOf<'worked'> }) {
+	const toggle = useContext(WorkedToggleContext);
+	return (
+		<div className={`tr-group worked${row.open ? ' open' : ''}`}>
+			<TrHeader action="Worked" detail={`for ${formatWorkedTime(row.durationMs)}`} tertiary expandable open={row.open} onToggle={() => toggle?.(row.turnKey, !row.open)} />
+		</div>
+	);
+}
+
+function TurnFilesCard({ row }: { readonly row: RowOf<'turnFiles'> }) {
+	const ctx = useChatRow();
+	const [all, setAll] = useState(false);
+	const shown = all ? row.files : row.files.slice(0, 8);
+	const open = (path: string) => {
+		const absolute = path.startsWith('/') ? path : ctx?.root ? `${ctx.root}/${path}` : undefined;
+		if (absolute) {
+			ctx?.openPath?.(absolute);
+		}
+	};
+	return (
+		<div className="turn-files">
+			<div className="turn-files-header">
+				<span className="turn-files-title">{row.files.length === 1 ? '1 file changed' : `${row.files.length} files changed`}</span>
+				{ctx ? <button type="button" className="turn-files-review" onClick={() => navigate(changesPath(ctx.chatId))}>Review<Icon name="arrowRight" size={12} /></button> : null}
+			</div>
+			<div className="turn-files-rows">
+				{shown.map(file => (
+					<button key={file.path} type="button" className={`turn-files-row${file.verb === 'Deleted' ? ' deleted' : ''}`} disabled={file.verb === 'Deleted'} onClick={() => open(file.path)} title={file.path}>
+						<FileIcon path={file.path} />
+						<span className="turn-files-name">{basename(file.path)}</span>
+						<span className="turn-files-dir">{dirname(file.path)}</span>
+						<Stats additions={file.additions} deletions={file.deletions} />
+					</button>
+				))}
+				{row.files.length > shown.length ? <button type="button" className="turn-files-more" onClick={() => setAll(true)}>{row.files.length - shown.length} more</button> : null}
+			</div>
 		</div>
 	);
 }
@@ -373,21 +495,22 @@ function PlanRow({ row }: { readonly row: RowOf<'plan'> }) {
 
 function TodosRow({ row }: { readonly row: RowOf<'todos'> }) {
 	const done = row.steps.filter(s => s.state === 'done').length;
-	const [open, setOpen] = useState(row.live);
+	const [open, setOpen] = useState<boolean | undefined>(undefined);
+	const expanded = open ?? row.live;
 	return (
-		<div className="row-todos">
-			<Disclosure open={open} onToggle={() => setOpen(o => !o)}>
-				<Icon name="listChecks" size={14} />
-				<span>To-dos</span>
-				<span className="todos-progress"><span style={{ width: `${(done / Math.max(1, row.steps.length)) * 100}%` }} /></span>
-				<span className="steps-count">{done}/{row.steps.length}</span>
-			</Disclosure>
-			{open ? (
-				<ul className="todos">
+		<div className={`tr-group tr-todos${expanded ? ' open' : ''}${row.live ? ' live' : ''}`}>
+			<button type="button" className="tr-header" aria-expanded={expanded} onClick={() => setOpen(!expanded)}>
+				<span className="tr-todos-icon"><Icon name="listChecks" size={13} /></span>
+				<span className="tr-action">To-dos</span>
+				<span className="tr-details">{done} of {row.steps.length} done</span>
+				<Chevron />
+			</button>
+			{expanded ? (
+				<ul className="tr-todo-list">
 					{row.steps.map((step, i) => (
-						<li key={`${i}:${step.label}`} className={`todo todo-${step.state}`}>
-							<span className="todo-mark">{step.state === 'done' ? <Icon name="check" size={11} strokeWidth={2.4} /> : step.state === 'current' ? <span className="todo-pulse" /> : null}</span>
-							<span>{step.label}</span>
+						<li key={`${i}:${step.label}`} className={`tr-todo ${step.state}`}>
+							<span className="tr-todo-mark">{step.state === 'current' && row.live ? <Spinner size={11} /> : <Icon name={step.state === 'done' ? 'checkCircle' : step.state === 'current' ? 'circleDashed' : 'circle'} size={13} />}</span>
+							<span className={`tr-todo-label${step.state === 'current' && row.live ? ' shimmer' : ''}`}>{step.label}</span>
 						</li>
 					))}
 				</ul>
@@ -487,7 +610,8 @@ function FooterRow({ row }: { readonly row: RowOf<'footer'> }) {
 		}
 		void client.retryTurn(ctx.chatId, row.turnId);
 	};
-	const parts = [row.outcome === 'stopped' ? 'Stopped' : row.outcome === 'failed' ? 'Failed' : undefined, duration(row.durationMs), row.model, row.tokens ? `${compactNumber(row.tokens)} tokens` : undefined, money(row.costUsd)].filter(Boolean);
+	const context = !row.tokens && row.tokensUsed ? `${compactNumber(row.tokensUsed)}${row.tokensWindow ? ` / ${compactNumber(row.tokensWindow)}` : ''} context` : undefined;
+	const parts = [row.outcome === 'stopped' ? 'Stopped' : row.outcome === 'failed' ? 'Failed' : undefined, row.endedAt ? relativeTime(row.endedAt) : duration(row.durationMs), row.model, row.tokens ? `${compactNumber(row.tokens)} tokens` : context, money(row.costUsd)].filter(Boolean);
 	return (
 		<div className="row-footer">
 			{row.copyText ? (
@@ -495,9 +619,9 @@ function FooterRow({ row }: { readonly row: RowOf<'footer'> }) {
 					copyText(row.copyText);
 					setCopied(true);
 					setTimeout(() => setCopied(false), 1400);
-				}} aria-label="Copy reply" title="Copy"><Icon name={copied ? 'check' : 'copy'} size={13} /></button>
+				}} aria-label="Copy reply" title="Copy"><Icon name={copied ? 'check' : 'copy'} size={12} /></button>
 			) : null}
-			{ctx && row.turnId && !ctx.running ? <button type="button" className="footer-btn" onClick={retry} aria-label="Retry" title="Retry: send the prompt again"><Icon name="refresh" size={13} /></button> : null}
+			{ctx && row.turnId && !ctx.running ? <button type="button" className="footer-btn" onClick={retry} aria-label="Retry" title="Retry: send the prompt again"><Icon name="refresh" size={12} /></button> : null}
 			<span className="footer-meta">{parts.join(' · ')}</span>
 		</div>
 	);
@@ -523,11 +647,19 @@ export const TranscriptRowView = memo(function TranscriptRowView({ row, chatId }
 		case 'markdown':
 			return <div className="row-md"><Markdown text={row.text} docKey={row.docKey} streaming={row.streaming} /></div>;
 		case 'thought':
-			return <ThoughtRow row={row} />;
+			return <ThoughtLine text={row.text} detail={row.durationMs && row.durationMs >= 1000 ? `${Math.round(row.durationMs / 1000)}s` : 'briefly'} live={row.streaming} />;
 		case 'steps':
 			return <StepsRow row={row} />;
 		case 'file':
-			return <FileRow row={row} />;
+			return <EditCard row={row} />;
+		case 'subagents':
+			return <SubagentsRow row={row} />;
+		case 'compaction':
+			return <CompactionRow row={row} />;
+		case 'worked':
+			return <WorkedRow row={row} />;
+		case 'turnFiles':
+			return <TurnFilesCard row={row} />;
 		case 'code':
 			return <div className="row-code"><CodeBlock code={row.code} lang={row.lang} path={row.path} streaming={row.streaming} /></div>;
 		case 'table':
@@ -544,10 +676,10 @@ export const TranscriptRowView = memo(function TranscriptRowView({ row, chatId }
 			return <PlanRow row={row} />;
 		case 'decision':
 			return (
-				<div className={`row-decision decision-${row.decision ?? 'pending'}`}>
-					<Icon name={row.decision === 'deny' || row.blocked ? 'xCircle' : row.decision === 'allow' ? 'shieldCheck' : 'shieldAlert'} size={14} />
-					<span>{row.blocked ? 'Blocked' : row.decision === 'allow' ? row.scope === 'always' ? 'Always allowed' : 'Allowed' : row.decision === 'deny' ? 'Denied' : 'Asked'} {row.action}</span>
-					<code>{row.resource}</code>
+				<div className="tr-header row-decision">
+					<Icon name="shieldAlert" size={13} />
+					<span className="tr-action">Waiting for approval</span>
+					<span className="tr-details mono">{row.resource}</span>
 				</div>
 			);
 		case 'answers':
@@ -565,17 +697,12 @@ export const TranscriptRowView = memo(function TranscriptRowView({ row, chatId }
 		case 'notice':
 			return (
 				<div className={`row-notice notice-${row.severity}`}>
-					<Icon name={row.severity === 'error' ? 'alertCircle' : row.severity === 'warning' ? 'alert' : 'info'} size={14} />
+					{row.severity === 'error' ? null : <Icon name={row.severity === 'warning' ? 'alert' : 'info'} size={13} />}
 					<div><div className="notice-title">{row.title}</div>{row.description ? <div className="notice-desc">{row.description}</div> : null}</div>
 				</div>
 			);
 		case 'error':
-			return (
-				<div className="row-error">
-					<Icon name="alertCircle" size={15} />
-					<div className="error-text">{row.message}</div>
-				</div>
-			);
+			return <div className="row-error"><div className="error-text">{row.message}</div></div>;
 		case 'todos':
 			return <TodosRow row={row} />;
 		case 'chart':
@@ -601,10 +728,9 @@ export const TranscriptRowView = memo(function TranscriptRowView({ row, chatId }
 			);
 		case 'working':
 			return (
-				<div className="row-working">
-					<span className="working-orb" />
-					<Shimmer>{row.status}</Shimmer>
-					{row.since ? <LiveTimer since={row.since} className="working-timer" /> : null}
+				<div className="tr-tail">
+					<span className="tr-action shimmer">{row.status}</span>
+					{row.since ? <LiveTimer since={row.since} className="tr-elapsed" /> : null}
 				</div>
 			);
 		case 'footer':

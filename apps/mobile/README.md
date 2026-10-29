@@ -41,6 +41,18 @@ Laid out like the GitHub app, in Volt's themes: four tabs.
 - **Theme**: System, or any of the desktop's Volt themes (Dark, Dark Midnight, Dark High
   Contrast, Light, Light Colorblind). **MCP servers**: yours and a project's, with their state.
 - Every chat live, with approvals, questions, the queue, usage-limit pauses and subagents.
+- **The transcript is the desktop's** (client-core `rows.ts`, `src/chat/Rows.tsx`): work folds into
+  22px group lines ("Explored 3 files, 2 searches") whose live verbs shimmer, each edit is a card
+  over a fading peek of its diff, commands are `$` cards in the shell colours, subagents and
+  compaction get rows, a finished turn folds its work behind "Worked for 3m 3s" (open for turns
+  you watched run), and a card lists the files the turn changed. Replies are 14/22 in the light
+  face, code is Geist Mono, a long prompt shows two lines and Read more, the running prompt holds
+  Stop. While a reply streams, only the row that grew re-renders.
+- **Plans**: a plan waiting for approval reads as the plan, with **Build** (back to Agent mode)
+  and **Keep planning**.
+- **Terminals**: the chat's dev servers, tests and background commands (header button while it has
+  any), with live output, Stop, Restart, Copy and their URLs. Typing into one stays with Volt on
+  the computer.
 - New chats in any project (the **New chat** button), with mode, model and access.
 - Images: **+** in the composer picks photos or takes one; they are downscaled to 2048 px JPEG,
   uploaded to Volt's attachment store and sent to the model like images pasted on the desktop.

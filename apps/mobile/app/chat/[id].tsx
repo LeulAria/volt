@@ -4,13 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	approvalsFor, attachmentsOf, chatStatus, type ComposerMode, COMPOSER_MODES, historyOf, type IPromptAttachment, isStreaming, projectOf, questionsFor, runtimeOf, sessionsOf,
+	approvalsFor, attachmentsOf, chatStatus, chatTerminals, isTerminalLive, type ComposerMode, COMPOSER_MODES, historyOf, type IPromptAttachment, isStreaming, projectOf, questionsFor, runtimeOf, sessionsOf,
 	statusColor, threadsOf, uriPath, uuid
 } from '@volt/client-core';
 import { BlurView } from 'expo-blur';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, StyleSheet, Text, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import Animated, { FadeInDown, FadeOutDown, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,7 +27,7 @@ import { useTheme } from '../../src/theme/theme';
 import { haptic, Icon, IconButton, LiveTimer, T, Tap } from '../../src/ui/core';
 import { ActionSheet, type ISheetAction } from '../../src/ui/sheets';
 
-const CHAT_COLLECTIONS = ['history', 'orch.threads', 'orch.tasks', 'sessions', 'access', 'questions', 'projects', 'runtime'];
+const CHAT_COLLECTIONS = ['history', 'orch.threads', 'orch.tasks', 'sessions', 'access', 'questions', 'projects', 'runtime', 'terminals'];
 const HEADER_HEIGHT = 52;
 
 export default function ChatScreen() {
@@ -57,6 +57,8 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 	const messages = transcript?.messages ?? [];
 	const running = !!thread?.active || isStreaming(messages);
 	const status = chatStatus(meta, thread, approvals.length, questions.length);
+	const terminals = useMemo(() => chatTerminals(cols['terminals'], chatId), [cols, chatId]);
+	const liveTerminals = terminals.filter(t => isTerminalLive(t.status)).length;
 
 	const lastMode = useMemo(() => {
 		for (let i = messages.length - 1; i >= 0; i--) {
@@ -110,6 +112,10 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 		...(folder ? { folder } : {}),
 		onMessageMenu: row => setMenuRow(row),
 		onRetry: retry,
+		onStop: () => {
+			haptic.medium();
+			void client.stop(chatId);
+		},
 		...(redoTurnId && checkpoints?.canRedo ? { redoTurnId } : {}),
 		onRedo: () => {
 			haptic.medium();
@@ -255,7 +261,7 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 						{approvals.length || questions.length || thread?.limit || (thread?.queue.length ?? 0) > 0 || tasks.length ? (
 							<View style={{ paddingHorizontal: 16, gap: 8 }}>
 								<SubagentsTray chatId={chatId} />
-								{approvals.map(request => <ApprovalCard key={request.id} request={request} />)}
+								{approvals.map(request => <ApprovalCard key={request.id} request={request} onBuildPlan={() => setMode('Agent')} />)}
 								{questions[0] ? <QuestionCard key={questions[0].id} request={questions[0]} /> : null}
 								{thread?.limit ? <LimitBanner chatId={chatId} thread={thread} /> : null}
 								{thread && !thread.active && thread.pause && thread.pause !== 'limit' && thread.queue.length ? <PausedBanner chatId={chatId} thread={thread} /> : null}
@@ -278,6 +284,8 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 							onAccessChange={m => void client.setAccessMode(m, chatId)}
 							onSend={send}
 							onStop={() => void client.stop(chatId)}
+							contextUsed={transcript?.contextUsed}
+							contextWindow={transcript?.contextWindow}
 							prefill={prefill}
 							placeholder={editing ? 'Edit your message…' : undefined}
 							banner={editing ? (
@@ -301,8 +309,8 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 					<IconButton icon="chevronLeft" label="Back" size={24} color={p.fg} onPress={() => router.back()} />
 					<Tap haptics="selection" onPress={() => setSwitcher(true)} style={{ flex: 1, minWidth: 0, paddingHorizontal: 4 }} accessibilityLabel="Switch chat">
 						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-							<T variant="callout" weight="700" numberOfLines={1} style={{ letterSpacing: -0.2, flexShrink: 1 }}>{meta?.title || 'New chat'}</T>
-							<Icon name="chevronDown" size={13} color={p.fgTertiary} />
+							<Text numberOfLines={1} style={{ fontSize: 15, lineHeight: 20, fontWeight: '500', color: p.fg, flexShrink: 1 }}>{meta?.title || 'New chat'}</Text>
+							<Icon name="chevronDown" size={12} color={p.iconTertiary} />
 						</View>
 						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
 							{tone ? <T variant="footnote" weight="600" color={tone}>{status.label}</T> : null}
@@ -314,6 +322,12 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, height: 26, paddingHorizontal: 9, borderRadius: 13, backgroundColor: `${p.info}22` }}>
 							<ActivityIndicator size="small" color={p.info} style={{ transform: [{ scale: 0.6 }], width: 12 }} />
 							<LiveTimer since={thread.active.at} color={p.info} />
+						</View>
+					) : null}
+					{terminals.length ? (
+						<View>
+							<IconButton icon="terminal" label={`Terminals, ${terminals.length}`} color={p.fg} onPress={() => router.push({ pathname: '/terminals/[id]', params: { id: chatId } })} />
+							{liveTerminals ? <View pointerEvents="none" style={{ position: 'absolute', top: 7, right: 6, width: 7, height: 7, borderRadius: 4, backgroundColor: p.info, borderWidth: 1.5, borderColor: p.canvas }} /> : null}
 						</View>
 					) : null}
 					<IconButton icon="fileDiff" label="Changes" color={p.fg} onPress={() => router.push({ pathname: '/changes/[id]', params: { id: chatId } })} />

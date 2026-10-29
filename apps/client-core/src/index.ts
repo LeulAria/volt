@@ -12,6 +12,8 @@ export * from './types';
 export * from './git';
 export * from './selectors';
 export * from './rows';
+export * from './shell';
+export * from './terminals';
 export * from './format';
 export * from './diff';
 export * from './languages';

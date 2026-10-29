@@ -3,61 +3,122 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { clockTime, firstLine, type IAccessRequest, type IOrchThread, type IQuestionRequest, RADIUS } from '@volt/client-core';
+import { clockTime, firstLine, type IAccessRequest, type IOrchThread, type IQuestionRequest, questionApproval } from '@volt/client-core';
 import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Animated, { FadeInDown, FadeOutDown } from 'react-native-reanimated';
 import { useClient } from '../state/client';
 import { FONT, useTheme } from '../theme/theme';
 import { Button, haptic, Icon, IconButton, T, Tap } from '../ui/core';
+import { Markdown } from './Markdown';
 
 const ACTION_TITLES: Record<string, string> = {
 	shell: 'Run a command', edit: 'Edit a file', read: 'Read a file', search: 'Search the project', web: 'Open a web page', network: 'Use the network',
 	mcp: 'Use a tool', browser: 'Control the browser', subagent: 'Start a subagent', git: 'Run git', question: 'Ask you',
 };
 
-function trayStyle(p: ReturnType<typeof useTheme>['p'], accent: string) {
+function trayStyle(p: ReturnType<typeof useTheme>['p'], accent?: string) {
+	// agentTranscript.css `.volt-agent-block.approval`: the card colour, a 1px stroke, 12px corners.
 	return {
-		backgroundColor: p.raised, borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, borderColor: `${accent}77`, padding: 14,
-		shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 5,
+		backgroundColor: p.card, borderRadius: 12, borderWidth: 1, borderColor: accent ?? p.stroke, padding: 12,
+		shadowColor: '#000', shadowOpacity: p.scheme === 'dark' ? 0.25 : 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 3,
 	};
 }
 
-export function ApprovalCard({ request }: { readonly request: IAccessRequest }) {
+/** The approval's pill buttons (`.volt-approval-btn`): text, secondary and the blue primary. */
+function ApprovalButton({ label, kind, busy, onPress }: { readonly label: string; readonly kind: 'text' | 'secondary' | 'primary'; readonly busy?: boolean; readonly onPress: () => void }) {
+	const { p } = useTheme();
+	const bg = kind === 'primary' ? p.approve : kind === 'secondary' ? p.fill : 'transparent';
+	const fg = kind === 'primary' ? p.onApprove : kind === 'secondary' ? p.fg : p.fgTertiary;
+	return (
+		<Tap haptics={kind === 'primary' ? 'success' : 'light'} hitSlop={6} disabled={busy} onPress={onPress} accessibilityRole="button" accessibilityLabel={label}
+			style={{ height: 30, paddingHorizontal: kind === 'text' ? 8 : 14, borderRadius: kind === 'text' ? 6 : 999, backgroundColor: bg, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 4 }}>
+			<Text style={{ fontSize: 13, lineHeight: 18, letterSpacing: -0.08, fontWeight: kind === 'primary' ? '500' : '400', color: fg, opacity: busy ? 0.5 : 1 }}>{label}</Text>
+		</Tap>
+	);
+}
+
+/**
+ * A permission the agent waits on, as the desktop's approval card: what it wants to do (the
+ * action, then its target in the quaternary tone), the command or path in a mono box, why, and
+ * Deny / Always allow / Allow at its foot.
+ */
+export function ApprovalCard({ request, onBuildPlan }: { readonly request: IAccessRequest; readonly onBuildPlan?: () => void }) {
+	const question = questionApproval(request);
+	return question ? <PlanCard request={request} question={question} onBuildPlan={onBuildPlan} /> : <PermissionCard request={request} />;
+}
+
+/** A plan waiting for Build (the chat goes on in Agent mode) or Keep planning; or a yes/no question. */
+function PlanCard({ request, question, onBuildPlan }: { readonly request: IAccessRequest; readonly question: NonNullable<ReturnType<typeof questionApproval>>; readonly onBuildPlan?: () => void }) {
+	const { p } = useTheme();
+	const client = useClient();
+	const [busy, setBusy] = useState(false);
+	const [open, setOpen] = useState(false);
+	const decide = async (effect: 'allow' | 'deny') => {
+		setBusy(true);
+		await client.respondToApproval(request.id, effect, 'once');
+		if (effect === 'allow' && question.plan) {
+			onBuildPlan?.();
+		}
+		setBusy(false);
+	};
+	return (
+		<Animated.View entering={FadeInDown.duration(160)} exiting={FadeOutDown.duration(140)} style={[trayStyle(p), { padding: 0 }]}>
+			<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingTop: 10 }}>
+				<Icon name={question.plan ? 'book' : 'help'} size={14} color={p.iconTertiary} />
+				<Text numberOfLines={1} style={{ flex: 1, fontSize: 14, lineHeight: 22, fontWeight: '500', color: p.fgSecondary }}>{question.title}</Text>
+			</View>
+			{question.markdown ? (
+				<Tap haptics="selection" onPress={() => setOpen(o => !o)} style={{ paddingHorizontal: 12, paddingTop: 4 }}>
+					<View style={{ maxHeight: open ? 420 : 132, overflow: 'hidden' }}>
+						<ScrollView nestedScrollEnabled scrollEnabled={open}>
+							<Markdown text={question.markdown} />
+						</ScrollView>
+					</View>
+					<Text style={{ fontSize: 12, lineHeight: 20, fontWeight: '500', color: p.fgTertiary }}>{open ? 'Show less' : 'Read the whole plan'}</Text>
+				</Tap>
+			) : null}
+			<View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6, paddingHorizontal: 12, paddingVertical: 10 }}>
+				<ApprovalButton label={question.plan ? 'Keep planning' : 'Decline'} kind="secondary" busy={busy} onPress={() => void decide('deny')} />
+				<ApprovalButton label={question.plan ? 'Build' : 'Approve'} kind="primary" busy={busy} onPress={() => void decide('allow')} />
+			</View>
+		</Animated.View>
+	);
+}
+
+function PermissionCard({ request }: { readonly request: IAccessRequest }) {
 	const { p } = useTheme();
 	const client = useClient();
 	const [busy, setBusy] = useState<string | undefined>();
 	const risky = request.risk === 'high' || request.risk === 'critical';
-	const accent = risky ? p.danger : p.warning;
 	const detail = request.preview?.detail ?? request.resource?.value;
 	const answer = async (id: string, effect: 'allow' | 'deny', scope: 'once' | 'always') => {
 		setBusy(id);
-		if (effect === 'allow') {
-			haptic.success();
-		} else {
+		if (effect === 'deny') {
 			haptic.warning();
 		}
 		await client.respondToApproval(request.id, effect, scope);
 		setBusy(undefined);
 	};
 	return (
-		<Animated.View entering={FadeInDown.duration(220)} exiting={FadeOutDown.duration(160)} style={trayStyle(p, accent)}>
-			<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-				<Icon name="shieldAlert" size={14} color={accent} />
-				<T variant="caption" weight="700" color={accent} style={{ letterSpacing: 0.8 }}>APPROVAL NEEDED</T>
-				{request.risk && request.risk !== 'safe' ? <T variant="caption" color={risky ? p.danger : p.fgTertiary}>{`· ${request.risk} risk`}</T> : null}
+		<Animated.View entering={FadeInDown.duration(160)} exiting={FadeOutDown.duration(140)} style={[trayStyle(p, risky ? `${p.danger}8C` : undefined), { padding: 0 }]}>
+			<View style={{ paddingHorizontal: 12, paddingTop: 10, gap: 8 }}>
+				<View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+					<Icon name="shieldAlert" size={14} color={risky ? p.danger : p.warning} />
+					<Text numberOfLines={1} style={{ fontSize: 14, lineHeight: 22, fontWeight: '500', color: p.fgSecondary, marginLeft: 2 }}>{request.preview?.title ?? ACTION_TITLES[request.action] ?? `Use ${request.action}`}</Text>
+					{request.risk && request.risk !== 'safe' ? <Text numberOfLines={1} style={{ flexShrink: 1, fontSize: 14, lineHeight: 22, color: risky ? p.danger : p.fgQuaternary }}>{`${request.risk} risk`}</Text> : null}
+				</View>
+				{detail ? (
+					<ScrollView nestedScrollEnabled style={{ maxHeight: 160, borderRadius: 8, backgroundColor: p.fillFaint, borderWidth: 1, borderColor: p.strokeFaint }} contentContainerStyle={{ paddingHorizontal: 10, paddingVertical: 8 }}>
+						<Text selectable style={{ fontFamily: FONT.mono, fontSize: 12, lineHeight: 18, color: p.fgSecondary }}>{detail}</Text>
+					</ScrollView>
+				) : null}
+				{request.reason ? <Text style={{ fontSize: 13, lineHeight: 18, color: p.fgTertiary }}>{request.reason}</Text> : null}
 			</View>
-			<T variant="callout" weight="600" style={{ marginTop: 6 }}>{request.preview?.title ?? ACTION_TITLES[request.action] ?? `Use ${request.action}`}</T>
-			{detail ? (
-				<ScrollView style={{ maxHeight: 120, marginTop: 8, borderRadius: RADIUS.md, backgroundColor: p.codeBg, borderWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint }} contentContainerStyle={{ padding: 10 }}>
-					<Text selectable style={{ fontFamily: FONT.mono, fontSize: 12, lineHeight: 18, color: p.fg }}>{detail}</Text>
-				</ScrollView>
-			) : null}
-			{request.reason ? <T variant="footnote" color={p.fgTertiary} style={{ marginTop: 6 }}>{request.reason}</T> : null}
-			<View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-				<Button label="Allow once" variant="primary" size="sm" busy={busy === 'once'} onPress={() => void answer('once', 'allow', 'once')} flex />
-				<Button label="Always" size="sm" busy={busy === 'always'} onPress={() => void answer('always', 'allow', 'always')} />
-				<Button label="Deny" variant="danger" size="sm" busy={busy === 'deny'} onPress={() => void answer('deny', 'deny', 'once')} />
+			<View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6, paddingHorizontal: 12, paddingVertical: 10 }}>
+				<ApprovalButton label="Deny" kind="text" busy={busy === 'deny'} onPress={() => void answer('deny', 'deny', 'once')} />
+				<ApprovalButton label="Always allow" kind="secondary" busy={busy === 'always'} onPress={() => void answer('always', 'allow', 'always')} />
+				<ApprovalButton label="Allow" kind="primary" busy={busy === 'once'} onPress={() => void answer('once', 'allow', 'once')} />
 			</View>
 		</Animated.View>
 	);
@@ -87,7 +148,7 @@ export function QuestionCard({ request }: { readonly request: IQuestionRequest }
 		setBusy(false);
 	};
 	return (
-		<Animated.View entering={FadeInDown.duration(220)} exiting={FadeOutDown.duration(160)} style={trayStyle(p, p.violet)}>
+		<Animated.View entering={FadeInDown.duration(220)} exiting={FadeOutDown.duration(160)} style={trayStyle(p)}>
 			<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
 				<Icon name="help" size={14} color={p.violet} />
 				<T variant="caption" weight="700" color={p.violet} style={{ letterSpacing: 0.8, flex: 1 }} numberOfLines={1}>{(request.title ?? 'Question').toUpperCase()}</T>
