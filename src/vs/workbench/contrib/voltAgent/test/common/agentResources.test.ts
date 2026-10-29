@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { classifyAgentResource, matchAgentResource, readFrontmatter } from '../../common/agentResources.js';
+import { classifyAgentResource, matchAgentResource, readFrontmatter, stripTomlComment, tomlTableKeys } from '../../common/agentResources.js';
 
 function group(path: string, content?: string): string | undefined {
 	return classifyAgentResource(path, content ?? 'x')?.group;
@@ -56,6 +56,28 @@ suite('agentResources', () => {
 		assert.strictEqual(group('.codex/config.toml', 'model = "gpt-5"'), 'config');
 		const codex = classifyAgentResource('.codex/config.toml', '[mcp_servers.github]\ncommand = "x"\n[mcp_servers.linear]\nurl = "y"\n')!;
 		assert.deepStrictEqual([codex.group, codex.description], ['integrations', '2 MCP servers']);
+	});
+
+	test('only each harness\'s own MCP key counts as servers', () => {
+		// Gemini's `mcp` block is allow and deny lists.
+		assert.strictEqual(group('.gemini/settings.json', '{"mcp":{"allowed":[],"excluded":[]}}'), 'config');
+		const opencode = classifyAgentResource('opencode.json', '{"mcp":{"fs":{"type":"local","command":["fs-mcp"]}}}')!;
+		assert.deepStrictEqual([opencode.group, opencode.description], ['integrations', '1 MCP server']);
+		assert.strictEqual(classifyAgentResource('.vscode/mcp.json', '{"servers":{"a":{},"b":{}}}')!.description, '2 MCP servers');
+	});
+
+	test('Codex TOML: quoted table keys and trailing comments', () => {
+		const codex = classifyAgentResource('.codex/config.toml', '[mcp_servers."a.b"] # dotted name\ncommand = "x"\n[mcp_servers.\'x\']\nurl = "y"\n[mcp_servers."a.b".env]\nK = "v"\n')!;
+		assert.deepStrictEqual([codex.group, codex.description], ['integrations', '2 MCP servers']);
+		assert.deepStrictEqual(tomlTableKeys('[mcp_servers."a.b"]'), ['mcp_servers', 'a.b']);
+		assert.deepStrictEqual(tomlTableKeys('[[hooks.Stop]]'), undefined);
+		assert.strictEqual(stripTomlComment('command = "npx # not a comment" # run it'), 'command = "npx # not a comment"');
+	});
+
+	test('a folder named like an object property is not a config folder', () => {
+		assert.strictEqual(matchAgentResource('constructor/settings.json'), undefined);
+		assert.strictEqual(matchAgentResource('toString/skills/x/SKILL.md')!.ecosystem, 'agents');
+		assert.strictEqual(matchAgentResource('constructor/AGENTS.md')!.ecosystem, 'agents');
 	});
 
 	test('a CI workflow counts only when it runs an agent', () => {

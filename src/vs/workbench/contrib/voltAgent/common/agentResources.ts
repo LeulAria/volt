@@ -219,6 +219,12 @@ const PLUGIN_DIRS: Record<string, AgentResourceEcosystem> = {
 };
 
 /**
+ * The project-root folders that hold agent resources. Often gitignored (`.claude/settings.local.json`,
+ * `.cursor/`), so discovery walks them directly as well as searching.
+ */
+export const AGENT_RESOURCE_ROOT_DIRS: readonly string[] = [...Object.keys(CONFIG_DIRS), ...Object.keys(PLUGIN_DIRS), '.github', '.vscode'];
+
+/**
  * What the workspace search lists before {@link classifyAgentResource} decides. Broad on purpose:
  * every file under a config folder is listed, and the classifier keeps the ones it knows.
  */
@@ -276,9 +282,18 @@ function segmentsOf(relativePath: string): string[] {
 	return relativePath.replace(/\\/g, '/').split('/').filter(Boolean);
 }
 
+/** Whose config folder `segment` is; own keys only, so a folder named `constructor` is nobody's. */
+function configDirOf(segment: string): AgentResourceEcosystem | undefined {
+	return Object.hasOwn(CONFIG_DIRS, segment) ? CONFIG_DIRS[segment] : undefined;
+}
+
+function pluginDirOf(segment: string): AgentResourceEcosystem | undefined {
+	return Object.hasOwn(PLUGIN_DIRS, segment) ? PLUGIN_DIRS[segment] : undefined;
+}
+
 function nestedFolder(relativePath: string): string | undefined {
 	const segments = segmentsOf(relativePath);
-	const configIndex = segments.findIndex(segment => segment in CONFIG_DIRS || segment in PLUGIN_DIRS || segment === '.github' || segment === '.vscode');
+	const configIndex = segments.findIndex(segment => !!configDirOf(segment) || !!pluginDirOf(segment) || segment === '.github' || segment === '.vscode');
 	const folder = segments.slice(0, configIndex >= 0 ? configIndex : segments.length - 1);
 	return folder.length ? folder.join('/') : undefined;
 }
@@ -298,7 +313,7 @@ export function matchAgentResource(relativePath: string): IAgentResourceMatch | 
 	// The innermost config folder decides whose a file is.
 	let configIndex = -1;
 	for (let index = segments.length - 2; index >= 0; index--) {
-		if (segments[index] in CONFIG_DIRS || segments[index] in PLUGIN_DIRS) {
+		if (configDirOf(segments[index]) || pluginDirOf(segments[index])) {
 			configIndex = index;
 			break;
 		}
@@ -310,16 +325,17 @@ export function matchAgentResource(relativePath: string): IAgentResourceMatch | 
 	// Skills: SKILL.md in a skill's own folder under a skills directory (config folder or plugin).
 	if (file === 'SKILL.md' && segments.length >= 3 && segments[segments.length - 3] === 'skills') {
 		const ecosystem = configIndex >= 0
-			? (CONFIG_DIRS[segments[configIndex]] ?? PLUGIN_DIRS[segments[configIndex]])
+			? (configDirOf(segments[configIndex]) ?? pluginDirOf(segments[configIndex])!)
 			: segments[segments.length - 4] === '.github' ? 'copilot' : 'agents';
 		return match('skills', ecosystem, localize('agentResources.kind.skill', "Skill"), 'frontmatter');
 	}
 
 	if (configIndex >= 0) {
 		const dir = segments[configIndex];
-		if (dir in PLUGIN_DIRS) {
+		const plugin = pluginDirOf(dir);
+		if (plugin) {
 			return lower.endsWith('.json') && configIndex === segments.length - 2
-				? match('integrations', PLUGIN_DIRS[dir], lower === 'marketplace.json' ? localize('agentResources.kind.marketplace', "Plugin marketplace") : localize('agentResources.kind.plugin', "Plugin manifest"), 'json')
+				? match('integrations', plugin, lower === 'marketplace.json' ? localize('agentResources.kind.marketplace', "Plugin marketplace") : localize('agentResources.kind.plugin', "Plugin manifest"), 'json')
 				: undefined;
 		}
 		return matchInConfigDir(dir, segments.slice(configIndex + 1), match);
@@ -395,8 +411,11 @@ function matchInConfigDir(
 	sub: readonly string[],
 	match: (group: AgentResourceGroupId, ecosystem: AgentResourceEcosystem, kind: string, format: IAgentResourceMatch['format']) => IAgentResourceMatch,
 ): IAgentResourceMatch | undefined {
-	const ecosystem = CONFIG_DIRS[dir];
+	const ecosystem = configDirOf(dir);
 	const file = sub[sub.length - 1];
+	if (!ecosystem || !file) {
+		return undefined;
+	}
 	const lower = file.toLowerCase();
 	const markdown = lower.endsWith('.md') || lower.endsWith('.mdc');
 	// `.clinerules/` is itself the rules folder.
@@ -572,7 +591,7 @@ export function classifyAgentResourceMatch(match: IAgentResourceMatch, relativeP
 				return base;
 			}
 			const object = value as Record<string, unknown>;
-			const servers = objectKeys(object.mcpServers) ?? objectKeys(object.servers) ?? objectKeys(object.mcp);
+			const servers = objectKeys(object[mcpServersKey(relativePath)]);
 			const hooks = objectKeys(object.hooks);
 			if (match.format === 'settings') {
 				// What a settings file configures decides its group; hooks first, as they run code.
@@ -595,10 +614,11 @@ export function classifyAgentResourceMatch(match: IAgentResourceMatch, relativeP
 			return base;
 		}
 		case 'toml': {
-			if (match.group === 'config' && /^\s*\[mcp_servers[.\]]/m.test(content)) {
+			const tables = match.group === 'config' ? content.split(/\r?\n/).map(tomlTableKeys).filter(keys => keys?.[0] === 'mcp_servers') : [];
+			if (tables.length) {
 				base.group = 'integrations';
 				base.kind = localize('agentResources.kind.settingsMcp', "MCP servers in settings");
-				const names = new Set([...content.matchAll(/^\s*\[mcp_servers\.([^.\]\s]+)/gm)].map(entry => entry[1]));
+				const names = new Set(tables.map(keys => keys![1]).filter(name => name !== undefined));
 				base.description = countLabel(names.size, localize('agentResources.oneServer', "1 MCP server"), localize('agentResources.servers', "{0} MCP servers"));
 			} else if (match.group === 'commands') {
 				base.description = /^\s*description\s*=\s*["'](.+?)["']/m.exec(content)?.[1];
@@ -623,4 +643,70 @@ export function classifyAgentResourceMatch(match: IAgentResourceMatch, relativeP
 
 function objectKeys(value: unknown): string[] | undefined {
 	return typeof value === 'object' && value !== null && !Array.isArray(value) ? Object.keys(value) : undefined;
+}
+
+/**
+ * The key a JSON config file lists its MCP servers under: `mcp` in OpenCode's files, `servers` in
+ * VS Code's `.vscode/mcp.json`, `mcpServers` in the rest. Gemini's `mcp` block is allow and deny
+ * lists, not servers.
+ */
+export function mcpServersKey(relativePath: string): 'mcp' | 'servers' | 'mcpServers' {
+	const segments = segmentsOf(relativePath);
+	const file = (segments[segments.length - 1] ?? '').toLowerCase();
+	if (file === 'opencode.json' || file === 'opencode.jsonc' || segments.includes('.opencode')) {
+		return 'mcp';
+	}
+	if (file === 'mcp.json' && segments[segments.length - 2] === '.vscode') {
+		return 'servers';
+	}
+	return 'mcpServers';
+}
+
+/** A TOML line without its `# comment`; a `#` inside a string stays. */
+export function stripTomlComment(line: string): string {
+	let quote: string | undefined;
+	for (let index = 0; index < line.length; index++) {
+		const char = line[index];
+		if (quote) {
+			if (char === '\\' && quote === '"') {
+				index++;
+			} else if (char === quote) {
+				quote = undefined;
+			}
+		} else if (char === '"' || char === '\'') {
+			quote = char;
+		} else if (char === '#') {
+			return line.slice(0, index).trimEnd();
+		}
+	}
+	return line;
+}
+
+const TOML_KEY = /\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|([A-Za-z0-9_-]+))\s*(\.|$)/y;
+
+/**
+ * The keys of a `[table]` header line, quotes removed (`[mcp_servers."a.b"]` is `mcp_servers`, `a.b`);
+ * undefined for any other line, `[[array tables]]` included.
+ */
+export function tomlTableKeys(line: string): string[] | undefined {
+	const header = /^\s*\[([^[].*)\]\s*$/.exec(stripTomlComment(line));
+	if (!header) {
+		return undefined;
+	}
+	const inner = header[1];
+	const keys: string[] = [];
+	let index = 0;
+	while (index < inner.length) {
+		TOML_KEY.lastIndex = index;
+		const part = TOML_KEY.exec(inner);
+		if (!part) {
+			return undefined;
+		}
+		keys.push(part[1] ?? part[2] ?? part[3]);
+		index = TOML_KEY.lastIndex;
+		if (!part[4]) {
+			break;
+		}
+	}
+	return keys.length ? keys : undefined;
 }

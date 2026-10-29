@@ -59,6 +59,18 @@ suite('agentResourcesModel', () => {
 		assert.deepStrictEqual(parseMcpServers('.claude.json', claudeJson, '/repo').map(server => server.name), ['a', 'b']);
 	});
 
+	test('MCP servers by each harness\'s key: OpenCode `mcp`, VS Code `servers`, never Gemini\'s `mcp` lists', () => {
+		assert.deepStrictEqual(parseMcpServers('.gemini/settings.json', '{"mcp":{"allowed":["a"],"excluded":[]}}'), []);
+		assert.deepStrictEqual(parseMcpServers('opencode.json', '{"mcp":{"fs":{"command":["fs-mcp","--root"]}}}').map(server => [server.name, server.target]), [['fs', 'fs-mcp --root']]);
+		assert.deepStrictEqual(parseMcpServers('.opencode/opencode.jsonc', '{"mcp":{"x":{}}}').map(server => server.name), ['x']);
+		assert.deepStrictEqual(parseMcpServers('.mcp.json', '{"servers":{"x":{}}}'), []);
+	});
+
+	test('Codex TOML: quoted server names and trailing comments', () => {
+		const toml = parseMcpServers('.codex/config.toml', '[mcp_servers."a.b"]\ncommand = "npx" # run it\n\n[mcp_servers.\'x\'] # comment\nurl = "https://x.dev/mcp"\n\n[mcp_servers."a.b".env]\nTOKEN = "t" # secret\n');
+		assert.deepStrictEqual(toml.map(server => [server.name, server.transport, server.target, server.envRefs]), [['a.b', 'stdio', 'npx', ['TOKEN']], ['x', 'http', 'x.dev', []]]);
+	});
+
 	test('hook events from settings and hooks files', () => {
 		assert.deepStrictEqual(parseHookEvents('.claude/settings.json', '{"hooks":{"PreToolUse":[],"Stop":[]}}'), ['PreToolUse', 'Stop']);
 		assert.deepStrictEqual(parseHookEvents('.codex/config.toml', '[[hooks.PreToolUse]]\ncommand = "x"\n'), ['PreToolUse']);

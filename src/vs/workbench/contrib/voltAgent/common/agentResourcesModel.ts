@@ -5,7 +5,7 @@
 
 import { parse } from '../../../../base/common/json.js';
 import { localize } from '../../../../nls.js';
-import { AgentResourceEcosystem, AgentResourceGroupId, AgentResourceScope } from './agentResources.js';
+import { AgentResourceEcosystem, AgentResourceGroupId, AgentResourceScope, mcpServersKey, stripTomlComment, tomlTableKeys } from './agentResources.js';
 
 /** What the management page reads out of config files: MCP servers, hook events, instruction load order. */
 
@@ -71,7 +71,8 @@ function serverFromObject(name: string, raw: unknown): IAgentMcpServerEntry {
 
 /**
  * The servers a config file defines: `mcpServers` (Claude, Cursor, Gemini, portable files), `servers`
- * (VS Code), `mcp` (OpenCode) and `[mcp_servers.<name>]` (Codex TOML). `projectPath` picks this
+ * (VS Code's .vscode/mcp.json), `mcp` (OpenCode) and `[mcp_servers.<name>]` (Codex TOML), by
+ * {@link mcpServersKey}. `projectPath` picks this
  * project's local servers out of `~/.claude.json`.
  */
 export function parseMcpServers(relativePath: string, content: string, projectPath?: string): IAgentMcpServerEntry[] {
@@ -90,7 +91,7 @@ export function parseMcpServers(relativePath: string, content: string, projectPa
 			}
 		}
 	};
-	add(value.mcpServers ?? value.servers ?? value.mcp ?? value.managedMcpServers);
+	add(value[mcpServersKey(relativePath)] ?? value.managedMcpServers);
 	if (projectPath && value.projects && typeof value.projects === 'object') {
 		add((value.projects as Record<string, { mcpServers?: unknown } | undefined>)[projectPath]?.mcpServers);
 	}
@@ -100,13 +101,14 @@ export function parseMcpServers(relativePath: string, content: string, projectPa
 function parseTomlMcpServers(content: string): IAgentMcpServerEntry[] {
 	const servers = new Map<string, Record<string, string>>();
 	let current: Record<string, string> | undefined;
-	for (const line of content.split(/\r?\n/)) {
-		const table = /^\s*\[mcp_servers\.([^.\]\s]+)(\.[^\]]+)?\]\s*$/.exec(line);
-		if (table) {
+	for (const raw of content.split(/\r?\n/)) {
+		const line = stripTomlComment(raw);
+		const keys = tomlTableKeys(line);
+		if (keys?.[0] === 'mcp_servers' && keys.length >= 2) {
 			// `[mcp_servers.x.env]` belongs to x; its keys are variable names.
-			current = servers.get(table[1]) ?? {};
-			servers.set(table[1], current);
-			if (table[2] === '.env') {
+			current = servers.get(keys[1]) ?? {};
+			servers.set(keys[1], current);
+			if (keys.length === 3 && keys[2] === 'env') {
 				current.__env = 'true';
 			} else {
 				delete current.__env;
