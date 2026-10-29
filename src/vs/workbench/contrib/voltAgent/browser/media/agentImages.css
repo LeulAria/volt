@@ -139,8 +139,10 @@
 	content: '\ead9';
 }
 
+/* Centered in the 18px chip icon, so its 1px ring and rounded corners stay inside the icon's clip. */
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.volt-agent-mention-thumb:is(.image, .video)::before {
 	content: '' !important;
+	left: 9px !important;
 	border-radius: 3px;
 	background-color: rgba(128, 128, 128, 0.3) !important;
 	background-image: var(--volt-image-thumb, none) !important;

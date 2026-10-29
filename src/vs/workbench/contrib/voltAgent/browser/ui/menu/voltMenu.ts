@@ -155,6 +155,10 @@ const COARSE_ROW_EXTRA = 10;
 const HEADER_HEIGHT = 22;
 const SEPARATOR_HEIGHT = 1;
 const MAX_LIST_HEIGHT = 360;
+/** Space kept between a menu and the window's top or bottom edge. */
+const WINDOW_MARGIN = 8;
+/** A list squeezed below this many px flips to the roomier side instead (when that side has more). */
+const MIN_FIT_HEIGHT = 160;
 const ASYNC_DEBOUNCE_MS = 80;
 /** Long enough to cross into a flyout diagonally without it closing. */
 const FLYOUT_DELAY_MS = 120;
@@ -180,18 +184,32 @@ export function showVoltMenu<T>(contextViewService: IContextViewService, options
 			contextViewService.hideContextView();
 		}
 	};
+	const anchorRect = () => {
+		const covered = options.above?.();
+		const gap = options.gap ?? 0;
+		const page = getDomNodePagePosition(options.anchor);
+		const top = covered ? Math.min(page.top, getDomNodePagePosition(covered).top) : page.top;
+		return { x: page.left, y: top - gap, width: page.width, height: page.top + page.height - top + gap * 2 };
+	};
+	// The room above and below the anchor. A menu taller than both would be laid over the anchor
+	// and pushed sideways by the context view, so the list shrinks to fit instead.
+	const room = (): IVoltMenuRoom => {
+		const rect = anchorRect();
+		const win = getWindow(options.anchor);
+		const above = rect.y - WINDOW_MARGIN;
+		const below = win.innerHeight - (rect.y + rect.height) - WINDOW_MARGIN;
+		return options.position === 'above' ? { preferred: above, other: below } : { preferred: below, other: above };
+	};
 	contextViewService.showContextView({
 		getAnchor: () => {
-			const covered = options.above?.();
-			if (options.gap === undefined && !covered) {
+			// Read on every layout (a resize, the composer moving): refit the list to the room first.
+			widget?.fit();
+			if (options.gap === undefined && !options.above?.()) {
 				return options.anchor;
 			}
 			// Grow the anchor by the gap so the menu keeps its distance whichever side it lands on,
 			// and up over whatever sits on top of it so the menu opens above that too.
-			const gap = options.gap ?? 0;
-			const page = getDomNodePagePosition(options.anchor);
-			const top = covered ? Math.min(page.top, getDomNodePagePosition(covered).top) : page.top;
-			return { x: page.left, y: top - gap, width: page.width, height: page.top + page.height - top + gap * 2 };
+			return anchorRect();
 		},
 		anchorAlignment: options.align === 'right' ? AnchorAlignment.RIGHT : AnchorAlignment.LEFT,
 		anchorPosition: options.position === 'above' ? AnchorPosition.ABOVE : AnchorPosition.BELOW,
@@ -224,6 +242,7 @@ export function showVoltMenu<T>(contextViewService: IContextViewService, options
 			widget = store.add(new VoltMenuWidget<T>(host, options, {
 				hide,
 				relayout: () => contextViewService.layout(),
+				room,
 				pick: item => options.onPick(item),
 				className: options.className,
 				ariaLabel: options.ariaLabel,
@@ -242,9 +261,17 @@ export function showVoltMenu<T>(contextViewService: IContextViewService, options
 	};
 }
 
+/** Height in px a menu may take beside its anchor: on its preferred side and on the other one. */
+interface IVoltMenuRoom {
+	readonly preferred: number;
+	readonly other: number;
+}
+
 interface IWidgetContext<T> {
 	readonly hide: () => void;
 	readonly relayout: () => void;
+	/** Set on root menus: the room around the anchor, which caps the list's height. */
+	readonly room?: () => IVoltMenuRoom;
 	readonly pick: (item: IVoltMenuItem<T>) => void | Promise<void>;
 	readonly className?: string;
 	readonly ariaLabel: string;
@@ -272,6 +299,9 @@ class VoltMenuWidget<T> extends Disposable {
 	private flyoutRow: HTMLElement | undefined;
 	private flyoutTimer: ReturnType<typeof setTimeout> | undefined;
 	private rows: Row<T>[] = [];
+	/** The list's height for its rows; `listHeight` is what it got after fitting the window. */
+	private naturalListHeight = 0;
+	private listHeight = -1;
 	private sections: readonly IVoltMenuSection<T>[] = [];
 	/** Navigable positions: list rows first, then footer rows. */
 	private active = -1;
@@ -592,7 +622,32 @@ class VoltMenuWidget<T> extends Disposable {
 	private showRows(rows: Row<T>[]): void {
 		this.rows = rows;
 		this.list.splice(0, this.list.length, rows);
-		const height = Math.min(this.options.maxListHeight ?? MAX_LIST_HEIGHT, rows.reduce((sum, row) => sum + rowHeight(row), 0));
+		this.naturalListHeight = Math.min(this.options.maxListHeight ?? MAX_LIST_HEIGHT, rows.reduce((sum, row) => sum + rowHeight(row), 0));
+		this.listHeight = -1;
+		this.fit();
+	}
+
+	/**
+	 * Sizes the list to its rows, shrunk (it scrolls) when the whole menu would fit on neither side
+	 * of the anchor. The context view then keeps it on one side, aligned with the anchor, instead
+	 * of laying it over the anchor and shifting it sideways.
+	 */
+	fit(): void {
+		let height = this.naturalListHeight;
+		const room = this.context.room?.();
+		if (room) {
+			// Search field, heading, footer, borders and the host's margin.
+			const chrome = this.root.offsetHeight - this.listHost.offsetHeight + 4;
+			const total = height + chrome;
+			if (total > room.preferred && total > room.other) {
+				const space = room.preferred >= MIN_FIT_HEIGHT + chrome || room.preferred >= room.other ? room.preferred : room.other;
+				height = Math.max(Math.min(height, ROW_HEIGHT), Math.min(height, space - chrome));
+			}
+		}
+		if (height === this.listHeight) {
+			return;
+		}
+		this.listHeight = height;
 		this.listHost.style.height = `${height}px`;
 		this.list.layout(height);
 	}

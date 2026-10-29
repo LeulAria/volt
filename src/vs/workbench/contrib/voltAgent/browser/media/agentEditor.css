@@ -5617,7 +5617,7 @@ pre.volt-agent-searchable {
 	gap: 5px;
 	flex-shrink: 0;
 	height: 22px;
-	color: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
 	font-size: 12px;
 	font-weight: 300;
 	line-height: 22px;
@@ -5625,6 +5625,50 @@ pre.volt-agent-searchable {
 
 .volt-agent-status-env .icon {
 	display: inline-flex;
+}
+
+/* Every footer icon (access, branch, worktree, usage, context ring) is one 14px glyph in its item's
+ * color, centered on the label. The codicon rules need the workbench prefix to beat
+ * `.monaco-workbench .codicon[class*=codicon-]` (16px, icon foreground). */
+.volt-agent-composer-status .volt-agent-status-access .icon,
+.volt-agent-composer-status .volt-agent-status-env .icon {
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	flex: none;
+}
+
+.volt-agent-composer-status .volt-agent-status-access .icon .volt-agent-svg-icon,
+.volt-agent-composer-status .volt-agent-status-access .icon .volt-agent-svg-icon svg,
+.volt-agent-composer-status .volt-agent-status-env .icon svg,
+.volt-agent-composer-status .volt-agent-session-usage > svg,
+.volt-agent-composer-status .volt-agent-context-meter > svg {
+	display: block;
+	width: 14px;
+	height: 14px;
+	flex: none;
+	color: inherit;
+}
+
+/* One stroke weight for the line icons (the ring keeps its own). */
+.volt-agent-composer-status .volt-agent-status-access .icon svg :is(path, rect),
+.volt-agent-composer-status .volt-agent-status-env .icon svg :is(path, circle),
+.volt-agent-composer-status .volt-agent-session-usage > svg path {
+	stroke-width: 1.5;
+}
+
+.monaco-workbench .volt-agent-composer-status .volt-agent-status-branch > .codicon:not(.chevron) {
+	width: 14px;
+	height: 14px;
+	font-size: 14px;
+	line-height: 14px;
+	flex: none;
+	color: inherit;
+}
+
+.monaco-workbench .volt-agent-composer-status :is(.volt-agent-status-branch, .volt-agent-status-access) > .codicon.chevron {
+	color: inherit;
 }
 
 .volt-agent-status-env.hidden {

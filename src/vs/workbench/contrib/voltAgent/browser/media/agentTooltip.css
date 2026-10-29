@@ -205,8 +205,10 @@
 	min-width: 12px;
 }
 
-/* Card: hover details for a sidebar row (title, then icon rows with a muted detail line). */
+/* Card: hover details for a sidebar row (title, then icon rows with a muted detail line).
+ * It sits under plain tooltips: a row button's label must not hide behind the row's card. */
 .volt-agent-tooltip.card {
+	z-index: 2650;
 	gap: 6px;
 	min-width: 220px;
 	max-width: min(300px, calc(100vw - 16px));
