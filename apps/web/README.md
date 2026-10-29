@@ -61,6 +61,10 @@ the right and a status bar. Narrow windows and phones get one pane at a time.
   **Search** (ripgrep on the computer), **Source Control** (changes, diffs against HEAD, commit,
   and what the chat's agent changed), **Review changes** for a whole chat, and the diff editor.
 - **Quick input**: `⌘P` files, `⇧⌘P` commands, `#` chats, `:` line.
+- **The chat reads like the desktop's**: `src/styles/transcript.css` ports agentTranscript.css (work
+  rows, edit cards, `$` command cards, subagents, compaction, "Worked for", the turn's files), and
+  plans waiting for approval offer Build / Keep planning. The header's terminal button opens the
+  chat's terminals with their live output.
 
 Files are read and written through the server's `files.*` methods
 (`src/vs/server/node/voltAgent/serverFiles.ts`), limited to Volt's projects and chat worktrees.
