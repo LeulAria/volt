@@ -1134,19 +1134,26 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		const definition = cliAgentDefinition(profile.providerId);
 		const command = profile.command && definition?.commands.includes(profile.command) ? profile.command : undefined;
-		const argv = titleCommandFor(profile.providerId, command, prompt, pinned && item ? titleAgentModel(item) : undefined);
-		if (!argv) {
-			return undefined;
-		}
-		const result = await this.stdio.exec({
-			id: `title-${generateUuid().slice(0, 8)}`,
-			command: argv.map(quoteShellArg).join(' '),
-			// Away from the project, so the CLI loads no project instructions for a one-liner.
-			cwd: isWindows ? undefined : '/tmp',
-			timeoutMs,
-			inlineChars: maxChars,
-		});
-		return result.exitCode === 0 ? result.stdout : undefined;
+		const run = async (model: string | undefined) => {
+			const argv = titleCommandFor(profile.providerId, command, prompt, model);
+			if (!argv) {
+				return undefined;
+			}
+			const result = await this.stdio.exec({
+				id: `title-${generateUuid().slice(0, 8)}`,
+				command: argv.map(quoteShellArg).join(' '),
+				// Away from the project, so the CLI loads no project instructions for a one-liner.
+				cwd: isWindows ? undefined : '/tmp',
+				timeoutMs,
+				inlineChars: maxChars,
+			});
+			return result.exitCode === 0 ? result.stdout : undefined;
+		};
+		const chatModel = item ? titleAgentModel(item) : undefined;
+		const text = await run(pinned ? chatModel : undefined);
+		// The CLI's own default can be a model the account may not use (Codex on a ChatGPT plan):
+		// the chat's model is one it runs.
+		return text === undefined && !pinned && chatModel ? run(chatModel) : text;
 	}
 
 	async generateText(prompt: string, options?: { readonly sessionId?: string; readonly timeoutMs?: number; readonly slot?: 'title' | 'git' }): Promise<string | undefined> {
