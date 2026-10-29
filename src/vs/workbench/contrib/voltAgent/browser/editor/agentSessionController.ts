@@ -1310,6 +1310,17 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 				}
 				break;
 			}
+			case 'receipt': {
+				// One per run, under the answer it proves; a second one for the same run replaces the first.
+				const block = { type: 'receipt' as const, id: `receipt-${event.runId}`, status: 'complete' as const, runId: event.runId, receipt: event.receipt };
+				const at = last.segments.findIndex(segment => segment.kind === 'block' && segment.block.id === block.id);
+				if (at >= 0) {
+					last.segments[at] = { kind: 'block', block };
+				} else {
+					last.segments.push({ kind: 'block', block });
+				}
+				break;
+			}
 			case 'host.tool':
 				this.attachHostToolResult(last, event);
 				if (event.visual) {

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { basename, compactNumber, dirname, duration, type IRowImage, type IStepItem, languageForPath, money, pendingLabel, RADIUS, type TranscriptRow } from '@volt/client-core';
+import { basename, compactNumber, dirname, duration, type IRowImage, type IStepItem, languageForPath, money, pendingLabel, RADIUS, receiptHeadline, receiptStatus, type TranscriptRow } from '@volt/client-core';
 import { router } from 'expo-router';
 import { memo, type ReactNode, useState } from 'react';
 import { ActivityIndicator, Image, StyleSheet, Text, View } from 'react-native';
@@ -300,6 +300,64 @@ function card(p: ReturnType<typeof useTheme>['p'], border?: string) {
 	return { borderRadius: RADIUS.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: border ?? p.stroke, backgroundColor: p.surface, padding: 14 };
 }
 
+/** Proof of done under the answer: the verdict, each item with its proof (commands copy on tap), what is left, the files changed. */
+function ReceiptRow({ row }: { readonly row: RowOf<'receipt'> }) {
+	const { p } = useTheme();
+	const receipt = row.receipt;
+	const head = receiptHeadline(receipt);
+	const tone = (name: 'success' | 'danger' | 'warning' | 'muted') => name === 'success' ? p.success : name === 'danger' ? p.danger : name === 'warning' ? p.warning : p.fgQuaternary;
+	const section = { marginTop: 10, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint, gap: 2 } as const;
+	const more = receipt.changedCount - receipt.changed.length;
+	return (
+		<View style={card(p)} accessibilityRole="summary" accessibilityLabel={head.title}>
+			<CardHead icon={head.icon} label={head.title} color={head.tone === 'muted' ? undefined : tone(head.tone)} right={<T variant="footnote" color={p.fgTertiary} numberOfLines={1} style={{ flexShrink: 1 }}>{head.meta}</T>} />
+			<View style={{ gap: 8 }}>
+				{receipt.lines.map((line, i) => {
+					const status = receiptStatus(line.status);
+					return (
+						<View key={i} style={{ flexDirection: 'row', gap: 9, alignItems: 'flex-start' }}>
+							<View style={{ paddingTop: 2 }} accessibilityLabel={status.label}><Icon name={status.icon} size={14} color={tone(status.tone)} /></View>
+							<View style={{ flex: 1, gap: 3 }}>
+								<T variant="body" color={line.status === 'missing' || line.status === 'unavailable' ? p.fgTertiary : p.fg}>{line.source === 'agent' ? `Agent: \u201c${line.text}\u201d` : line.text}</T>
+								{line.command ? (
+									<Tap onPress={() => copyWithHaptic(line.command!)} accessibilityLabel={`Copy ${line.command}`} style={{ alignSelf: 'flex-start', maxWidth: '100%', borderRadius: 5, backgroundColor: p.fill, paddingHorizontal: 6, paddingVertical: 1 }}>
+										<Text numberOfLines={1} style={{ fontFamily: FONT.mono, fontSize: 11.5, lineHeight: 17, color: p.fg }}>{line.command}</Text>
+									</Tap>
+								) : null}
+								{line.detail ? <T variant="footnote" color={line.status === 'failed' ? p.fgSecondary : p.fgTertiary} numberOfLines={2}>{line.detail}</T> : null}
+							</View>
+						</View>
+					);
+				})}
+			</View>
+			{receipt.review && (receipt.review.summary || receipt.review.gaps.length) ? (
+				<View style={section}>
+					<T variant="footnote" color={p.fgTertiary}>Second opinion</T>
+					{receipt.review.summary ? <T variant="body">{receipt.review.summary}</T> : null}
+					{receipt.review.gaps.map((gap, i) => <T key={i} variant="body">{`\u2013 ${gap}`}</T>)}
+				</View>
+			) : null}
+			{receipt.open.length ? (
+				<View style={section}>
+					<T variant="footnote" color={p.fgTertiary}>Left open</T>
+					{receipt.open.map((entry, i) => <T key={i} variant="body">{entry}</T>)}
+				</View>
+			) : null}
+			{receipt.changedCount ? (
+				<View style={[section, { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }]}>
+					<T variant="footnote" color={p.fgTertiary}>{receipt.changedCount === 1 ? '1 file changed' : `${receipt.changedCount} files changed`}</T>
+					{receipt.changed.map(path => (
+						<View key={path} style={{ borderRadius: 5, backgroundColor: p.fill, paddingHorizontal: 6, paddingVertical: 1, maxWidth: 200 }}>
+							<T variant="footnote" color={p.fgSecondary} numberOfLines={1}>{basename(path)}</T>
+						</View>
+					))}
+					{more > 0 ? <T variant="footnote" color={p.fgQuaternary}>{`+${more} more`}</T> : null}
+				</View>
+			) : null}
+		</View>
+	);
+}
+
 function TodosRow({ row }: { readonly row: RowOf<'todos'> }) {
 	const { p } = useTheme();
 	const [open, setOpen] = useState(row.live);
@@ -429,6 +487,8 @@ export const RowView = memo(function RowView({ row, chatId }: { readonly row: Tr
 					{row.note ? <T variant="small" color={p.fgSecondary} style={{ marginTop: 6 }}>{row.note}</T> : null}
 				</View>
 			);
+		case 'receipt':
+			return <ReceiptRow row={row} />;
 		case 'notice':
 			return (
 				<View style={{ flexDirection: 'row', gap: 9, alignItems: 'flex-start' }}>

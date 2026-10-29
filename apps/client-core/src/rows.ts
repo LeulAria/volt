@@ -6,7 +6,7 @@
 import { basename, firstLine, pluralize } from './format';
 import type { IconName } from './icons';
 import type { ToolDensity } from './prefs';
-import type { ActivityKind, AgentBlock, AgentMessage, AgentSegment, IActivityItem, IAssistantMessage, IPromptAttachment, ITodoStep, IUserMessage } from './types';
+import type { ActivityKind, AgentBlock, AgentMessage, AgentSegment, IActivityItem, IAssistantMessage, IPromptAttachment, IReceiptJson, ITodoStep, IUserMessage, ProofStatus } from './types';
 
 export type StepStatus = 'running' | 'done' | 'error';
 
@@ -58,6 +58,7 @@ export type TranscriptRow =
 	| { readonly kind: 'chart'; readonly key: string; readonly title?: string; readonly labels: readonly string[]; readonly values: readonly number[]; readonly unit?: string }
 	| { readonly kind: 'cards'; readonly key: string; readonly items: readonly { readonly title: string; readonly body: string; readonly meta?: string }[] }
 	| { readonly kind: 'visual'; readonly key: string; readonly title: string; readonly visual: 'chart' | 'html' }
+	| { readonly kind: 'receipt'; readonly key: string; readonly receipt: IReceiptJson }
 	| { readonly kind: 'working'; readonly key: string; readonly status: string; readonly since?: number }
 	| { readonly kind: 'footer'; readonly key: string; readonly copyText: string; readonly durationMs?: number; readonly model?: string; readonly tokens?: number; readonly costUsd?: number; readonly outcome?: 'done' | 'failed' | 'stopped'; readonly turnId?: string; readonly filesChanged?: number; readonly tokensUsed?: number; readonly tokensWindow?: number };
 
@@ -498,6 +499,10 @@ function assistantRows(message: IAssistantMessage, mkey: string): TranscriptRow[
 						closeSteps(false);
 						rows.push({ kind: 'visual', key, title: block.title, visual: block.kind });
 						return;
+					case 'receipt':
+						closeSteps(false);
+						rows.push({ kind: 'receipt', key, receipt: block.receipt });
+						return;
 				}
 			}
 		}
@@ -588,3 +593,35 @@ export function messageText(message: AgentMessage): string {
 }
 
 //#endregion
+
+// --- proof of done ---------------------------------------------------------------------------
+
+/** The receipt card's head, worded the same on every client: the verdict, then counts and how the run was held. */
+export function receiptHeadline(receipt: IReceiptJson): { readonly title: string; readonly meta: string; readonly icon: IconName; readonly tone: 'success' | 'danger' | 'muted' } {
+	const proven = receipt.lines.filter(line => line.status === 'proven').length;
+	const meta = [
+		`${proven} of ${receipt.lines.length} proven`,
+		...(receipt.review ? [receipt.review.verdict === 'pass' ? 'second opinion agrees' : 'second opinion disagrees'] : []),
+		...(receipt.sentBack ? [receipt.sentBack === 1 ? 'sent back once' : `sent back ${receipt.sentBack} times`] : []),
+	].join(' \u00b7 ');
+	if (receipt.verdict === 'proven') {
+		return { title: 'Proven done', meta, icon: 'shieldCheck', tone: 'success' };
+	}
+	if (receipt.verdict === 'failed') {
+		return { title: 'Not proven', meta, icon: 'shieldAlert', tone: 'danger' };
+	}
+	const checksHold = receipt.lines.every(line => line.status === 'proven' || line.status === 'unavailable' || line.status === 'claimed');
+	return { title: checksHold && !receipt.open.length ? 'Checks pass' : 'Partly proven', meta, icon: 'shield', tone: 'muted' };
+}
+
+/** One receipt line's mark and the words for it. */
+export function receiptStatus(status: ProofStatus): { readonly icon: IconName; readonly label: string; readonly tone: 'success' | 'danger' | 'warning' | 'muted' } {
+	switch (status) {
+		case 'proven': return { icon: 'checkCircle', label: 'Proven', tone: 'success' };
+		case 'failed': return { icon: 'xCircle', label: 'Failed', tone: 'danger' };
+		case 'stale': return { icon: 'history', label: 'Ran before the last edit', tone: 'warning' };
+		case 'missing': return { icon: 'circleDashed', label: 'Not run', tone: 'muted' };
+		case 'claimed': return { icon: 'circle', label: 'Claimed, not checked', tone: 'muted' };
+		case 'unavailable': return { icon: 'minus', label: 'No way to check it here', tone: 'muted' };
+	}
+}

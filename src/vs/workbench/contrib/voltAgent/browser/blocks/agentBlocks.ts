@@ -12,10 +12,11 @@ import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/
 import { presentOutput, type OutputView } from '../../../../services/voltRuntime/common/harness/adaptiveOutput.js';
 import { describeHostToolActivity, describeTerminalToolActivity, friendlyToolTitle, hostToolCall } from './agentHostToolActivity.js';
 import type { IWorkCounts, ToolKind } from '../../../../services/voltRuntime/common/harness/workLog.js';
+import type { IRunReceipt } from '../../../../services/voltRuntime/common/harness/proofOfDone.js';
 
 export type AgentBlockStatus = 'streaming' | 'complete' | 'error';
 
-export type AgentBlockType = 'markdown' | 'code' | 'terminal' | 'table' | 'list' | 'cards' | 'chart' | 'mermaid' | 'tool' | 'file' | 'error' | 'approval' | 'answers' | 'plan' | 'visual';
+export type AgentBlockType = 'markdown' | 'code' | 'terminal' | 'table' | 'list' | 'cards' | 'chart' | 'mermaid' | 'tool' | 'file' | 'error' | 'approval' | 'answers' | 'plan' | 'visual' | 'receipt';
 
 export interface IAgentBaseBlock {
 	readonly id: string;
@@ -163,6 +164,13 @@ export interface IAnswersBlock extends IAgentBaseBlock {
 	note?: string;
 }
 
+/** Proof of done: what a run's finish rests on, item by item, with the evidence for each. Drawn under the answer. */
+export interface IReceiptBlock extends IAgentBaseBlock {
+	readonly type: 'receipt';
+	runId: string;
+	receipt: IRunReceipt;
+}
+
 /** A plan an agent wrote for approval (cursor-agent's createPlan, Volt's propose_plan): the plan itself, then Build. */
 export interface IPlanBlock extends IAgentBaseBlock {
 	readonly type: 'plan';
@@ -216,7 +224,8 @@ export type AgentBlock =
 	| IFileChangeBlock
 	| IErrorBlock
 	| IApprovalBlock
-	| IVisualBlock;
+	| IVisualBlock
+	| IReceiptBlock;
 
 export function createApprovalBlock(partial: Omit<IApprovalBlock, 'type' | 'status'> & { status?: AgentBlockStatus }): IApprovalBlock {
 	return {
@@ -1210,6 +1219,8 @@ export function blocksPlainText(blocks: AgentBlock[]): string {
 				return [block.name, block.markdown].filter(Boolean).join('\n\n');
 			case 'visual':
 				return block.title;
+			case 'receipt':
+				return block.receipt.lines.map(line => `${line.status === 'proven' ? '[x]' : '[ ]'} ${line.text}${line.command ? ` (${line.command})` : ''}`).join('\n');
 		}
 	}).filter(Boolean).join('\n\n');
 }
