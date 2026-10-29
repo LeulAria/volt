@@ -64,6 +64,8 @@ interface IPinnedBrowserComment {
 	readonly refs: Map<string, IBrowserCommentRef>;
 	markIds: string[];
 	bounds: { x: number; y: number; w: number; h: number };
+	/** Its first element's key in the page's tracked elements: the pin follows it. */
+	track?: string;
 }
 const PROBE_SCRIPT = `(() => {
 	const x = __X__;
@@ -130,7 +132,15 @@ const PROBE_SCRIPT = `(() => {
 	for (const attr of Array.from(el.attributes || [])) {
 		attributes[attr.name] = attr.value;
 	}
+	// Kept a moment by number, so picking this answer can track the element itself (TRACK_SCRIPT).
+	const probes = window.__voltProbes || (window.__voltProbes = new Map());
+	const probe = window.__voltProbeCount = (window.__voltProbeCount || 0) + 1;
+	probes.set(probe, el);
+	if (probes.size > 20) {
+		probes.delete(probes.keys().next().value);
+	}
 	return {
+		probe,
 		tag: el.tagName.toLowerCase(),
 		selector: token(el),
 		domPath: parts.join(' > '),
@@ -146,6 +156,43 @@ const PROBE_SCRIPT = `(() => {
 		h: r.height
 	};
 })()`;
+
+/**
+ * Keeps a picked element (a probe's answer) or a drawn region (pinned to the element at its middle)
+ * in the page under `key`, so its marks and pin follow it when the page scrolls or reflows.
+ */
+function trackScript(key: string, probe: number | undefined, region: { x: number; y: number; w: number; h: number } | undefined): string {
+	return `(() => {
+		const region = ${JSON.stringify(region ?? null)};
+		const el = region ? document.elementFromPoint(region.x + region.w / 2, region.y + region.h / 2) : window.__voltProbes && window.__voltProbes.get(${JSON.stringify(probe ?? -1)});
+		if (!el) return false;
+		const r = el.getBoundingClientRect();
+		const tracked = window.__voltTracked || (window.__voltTracked = new Map());
+		tracked.set(${JSON.stringify(key)}, { el: new WeakRef(el), dx: region ? region.x - r.x : 0, dy: region ? region.y - r.y : 0, w: region ? region.w : -1, h: region ? region.h : -1 });
+		return true;
+	})()`;
+}
+
+/** Where every tracked element is now, in page CSS pixels; null once it has left the document. */
+const READ_TRACKED_SCRIPT = `(() => {
+	const tracked = window.__voltTracked;
+	const out = {};
+	if (!tracked) return out;
+	for (const [key, t] of tracked) {
+		const el = t.el.deref();
+		if (!el || !el.isConnected) {
+			tracked.delete(key);
+			out[key] = null;
+			continue;
+		}
+		const r = el.getBoundingClientRect();
+		out[key] = [r.x + t.dx, r.y + t.dy, t.w < 0 ? r.width : t.w, t.h < 0 ? r.height : t.h];
+	}
+	return out;
+})()`;
+
+/** How often tracked marks re-read their elements while nothing moves; each move reads again the next frame. */
+const TRACK_IDLE_MS = 120;
 
 interface IVoltNativeImage {
 	isEmpty?(): boolean;
@@ -303,6 +350,8 @@ export interface IVoltConsoleMessage {
 }
 
 interface IBrowserHit {
+	/** The probe that found it, for {@link trackScript}. */
+	probe?: number;
 	tag: string;
 	selector: string;
 	domPath: string;
@@ -337,6 +386,8 @@ interface IBrowserSelection {
 	bounds: { x: number; y: number; w: number; h: number };
 	/** `bounds` in the page's CSS pixels (device scale and zoom taken out). */
 	pageBounds?: { x: number; y: number; w: number; h: number };
+	/** Its key in the page's tracked elements: `bounds` follows it as the page moves. */
+	track?: string;
 	tag?: string;
 	domPath?: string;
 	className?: string;
@@ -515,7 +566,13 @@ export class VoltBrowserView extends Disposable {
 	private selection: IBrowserSelection | undefined;
 	/** The first element of the open draft: the draft box stays beside it while more are added. */
 	private draftAnchor: IBrowserSelection | undefined;
-	private readonly marks = new Map<string, { box: HTMLElement; accent: number; bounds: { x: number; y: number; w: number; h: number } }>();
+	private readonly marks = new Map<string, { box: HTMLElement; accent: number; bounds: { x: number; y: number; w: number; h: number }; track?: string }>();
+	/** Where each tracked element was last read, in page CSS pixels (see {@link followTracked}). */
+	private readonly trackedBounds = new Map<string, { x: number; y: number; w: number; h: number }>();
+	private following = false;
+	/** Cuts the idle wait short: the user is scrolling the page. */
+	private followWake: (() => void) | undefined;
+	private disposed = false;
 	private drawing: { startX: number; startY: number; currentX: number; currentY: number } | undefined;
 	private probeHandle: number | undefined;
 	private lastProbe = '';
@@ -2181,6 +2238,7 @@ export class VoltBrowserView extends Disposable {
 		const x = view ? (point.x - view.left) / view.deviceScale : point.x;
 		const y = view ? (point.y - view.top) / view.deviceScale : point.y;
 		this.sendInput({ type: 'mouseWheel', x: Math.round(x), y: Math.round(y), deltaX: -e.deltaX * unit, deltaY: -e.deltaY * unit, canScroll: true });
+		this.followWake?.();
 		this.clearHover();
 		this.scheduleProbe(point.x, point.y);
 	}
@@ -2277,13 +2335,104 @@ export class VoltBrowserView extends Disposable {
 			html: hit.html,
 			text: hit.text,
 			component: hit.component,
+			track: await this.track(hit.probe, undefined),
 		};
 		this.finishSelection();
 	}
 
 	private async selectRegion(bounds: { x: number; y: number; w: number; h: number }): Promise<void> {
-		this.selection = { kind: 'region', tag: 'region', bounds, pageBounds: this.stageRectToPage(bounds) };
+		const pageBounds = this.stageRectToPage(bounds);
+		this.selection = { kind: 'region', tag: 'region', bounds, pageBounds, track: await this.track(undefined, pageBounds) };
 		this.finishSelection();
+	}
+
+	/** Tracks a probed element or a region in the page; its key, or undefined when the page could not. */
+	private async track(probe: number | undefined, region: { x: number; y: number; w: number; h: number } | undefined): Promise<string | undefined> {
+		if (probe === undefined && !region) {
+			return undefined;
+		}
+		const key = generateUuid();
+		return await this.runGuest<boolean>(trackScript(key, probe, region)) ? key : undefined;
+	}
+
+	/** Where a tracked element is now on the design layer; `fallback` until (or unless) the page has said. */
+	private liveBounds(track: string | undefined, fallback: { x: number; y: number; w: number; h: number }): { x: number; y: number; w: number; h: number } {
+		const page = track ? this.trackedBounds.get(track) : undefined;
+		return page ? this.pageRectToStage(page) : { ...fallback };
+	}
+
+	/** Whether `rect` (stage pixels) shows any of itself in the page's view. */
+	private inPageView(rect: { x: number; y: number; w: number; h: number }): boolean {
+		const view = this.pageView();
+		return !view || (rect.x + rect.w > view.left && rect.x < view.left + view.width && rect.y + rect.h > view.top && rect.y < view.top + view.height);
+	}
+
+	private hasTracked(): boolean {
+		return [...this.marks.values()].some(mark => mark.track) || [...this.pins.values()].some(pin => pin.track) || !!this.draftAnchor?.track;
+	}
+
+	/**
+	 * Keeps marks, pins and the draft on their elements: reads where the tracked ones are every
+	 * frame while they move (scrolling, reflow), and a few times a second while they don't.
+	 */
+	private followTracked(): void {
+		if (this.following || this.disposed) {
+			return;
+		}
+		this.following = true;
+		const win = getWindow(this.stage);
+		const step = async () => {
+			if (this.disposed || !this.hasTracked()) {
+				this.following = false;
+				return;
+			}
+			let moved = false;
+			const rects = win.document.visibilityState === 'hidden' ? undefined : await this.runGuest<Record<string, [number, number, number, number] | null>>(READ_TRACKED_SCRIPT);
+			for (const [key, rect] of Object.entries(rects ?? {})) {
+				const last = this.trackedBounds.get(key);
+				// An element gone from the page leaves its marks where it last was.
+				if (rect && (!last || last.x !== rect[0] || last.y !== rect[1] || last.w !== rect[2] || last.h !== rect[3])) {
+					this.trackedBounds.set(key, { x: rect[0], y: rect[1], w: rect[2], h: rect[3] });
+					moved = true;
+				}
+			}
+			if (moved) {
+				this.layoutTracked();
+				win.requestAnimationFrame(() => void step());
+				return;
+			}
+			const timer = setTimeout(() => {
+				this.followWake = undefined;
+				void step();
+			}, TRACK_IDLE_MS);
+			this.followWake = () => {
+				clearTimeout(timer);
+				this.followWake = undefined;
+				void step();
+			};
+		};
+		void step();
+	}
+
+	private layoutTracked(): void {
+		for (const mark of this.marks.values()) {
+			if (mark.track) {
+				mark.bounds = this.liveBounds(mark.track, mark.bounds);
+				this.placeBox(mark.box, mark.bounds);
+				mark.box.style.visibility = this.inPageView(mark.bounds) ? '' : 'hidden';
+			}
+		}
+		for (const pin of this.pins.values()) {
+			if (pin.track) {
+				pin.bounds = this.liveBounds(pin.track, pin.bounds);
+				this.placeComment(pin);
+			}
+		}
+		const anchor = this.draftAnchor;
+		if (anchor?.track) {
+			anchor.bounds = this.liveBounds(anchor.track, anchor.bounds);
+			this.positionPrompt();
+		}
 	}
 
 	private finishSelection(): void {
@@ -2326,7 +2475,7 @@ export class VoltBrowserView extends Disposable {
 		const mention = this.composer?.setSelectionChip(ref.label, ref.payload);
 		if (mention) {
 			this.draftRefs.set(mention.id, ref);
-			this.addMark(mention, ref.bounds);
+			this.addMark(mention, ref.bounds, ref.track);
 			// A drawn area is only its picture: it lands in the prompt as an image, as a pasted one would.
 			const composer = this.composer;
 			this.captureRef(ref, selection.kind === 'region' && composer ? () => {
@@ -2355,7 +2504,7 @@ export class VoltBrowserView extends Disposable {
 	private selectionRef(selection: IBrowserSelection): IBrowserCommentRef {
 		const text = selection.kind === 'element' ? (selection.text ?? '').trim() : '';
 		const snippet = text.length > 64 ? `${text.slice(0, 63).trimEnd()}\u2026` : text;
-		return { label: this.selectionChipLabel(selection), payload: this.formatBrowserElement(selection), bounds: { ...selection.bounds }, ...(snippet ? { snippet } : {}) };
+		return { label: this.selectionChipLabel(selection), payload: this.formatBrowserElement(selection), bounds: { ...selection.bounds }, ...(selection.track ? { track: selection.track } : {}), ...(snippet ? { snippet } : {}) };
 	}
 
 	/**
@@ -2449,18 +2598,23 @@ export class VoltBrowserView extends Disposable {
 		this.dock?.setBlocked(draftOpen || commentOpen);
 	}
 
-	private addMark(mention: IAgentMention, bounds: { x: number; y: number; w: number; h: number }): void {
-		this.addBoundsMark(mention.id, bounds, mention.accent ?? 0);
+	private addMark(mention: IAgentMention, bounds: { x: number; y: number; w: number; h: number }, track?: string): void {
+		this.addBoundsMark(mention.id, bounds, mention.accent ?? 0, track);
 	}
 
-	private addBoundsMark(id: string, bounds: { x: number; y: number; w: number; h: number }, accent: number): void {
+	private addBoundsMark(id: string, bounds: { x: number; y: number; w: number; h: number }, accent: number, track?: string): void {
 		if (this.marks.has(id)) {
 			return;
 		}
 		const box = append(this.overlay, $('div.volt-browser-box.mark'));
 		box.style.setProperty('--volt-mark-color', browserMentionColor(accent));
-		this.placeBox(box, bounds);
-		this.marks.set(id, { box, accent, bounds });
+		const live = this.liveBounds(track, bounds);
+		this.placeBox(box, live);
+		box.style.visibility = this.inPageView(live) ? '' : 'hidden';
+		this.marks.set(id, { box, accent, bounds: live, track });
+		if (track) {
+			this.followTracked();
+		}
 	}
 
 	private removeMark(id: string): void {
@@ -2699,12 +2853,13 @@ export class VoltBrowserView extends Disposable {
 		for (const id of pin.markIds) {
 			this.removeMark(id);
 		}
-		comment.refs.forEach((ref, index) => this.addBoundsMark(ids[index], ref.bounds, comment.number - 1));
+		comment.refs.forEach((ref, index) => this.addBoundsMark(ids[index], ref.bounds, comment.number - 1, ref.track));
 		for (const id of ids) {
 			this.marks.get(id)?.box.classList.toggle('settled', comment.status !== 'open');
 		}
 		pin.markIds = ids;
-		pin.bounds = { ...comment.refs[0]?.bounds ?? pin.bounds };
+		pin.track = comment.refs[0]?.track;
+		pin.bounds = this.liveBounds(pin.track, comment.refs[0]?.bounds ?? pin.bounds);
 	}
 
 	private disposePin(pin: IPinnedBrowserComment): void {
@@ -2845,6 +3000,7 @@ export class VoltBrowserView extends Disposable {
 			el.style.left = `${placed.left}px`;
 			el.style.top = `${placed.top}px`;
 			el.style.height = 'auto';
+			el.style.visibility = '';
 			return;
 		}
 		const width = 30;
@@ -2855,6 +3011,8 @@ export class VoltBrowserView extends Disposable {
 		const top = Math.min(Math.max(pad, sel.y - 10), Math.max(pad, stage.height - height - pad));
 		el.style.left = `${left}px`;
 		el.style.top = `${top}px`;
+		// A closed pin scrolls away with its element; an open one stays to be typed in.
+		el.style.visibility = this.inPageView(sel) ? '' : 'hidden';
 	}
 
 	private placeAroundSelection(width: number, height: number, bounds?: { x: number; y: number; w: number; h: number }): { left: number; top: number } {
@@ -3412,6 +3570,8 @@ export class VoltBrowserView extends Disposable {
 	}
 
 	override dispose(): void {
+		this.disposed = true;
+		this.followWake?.();
 		this.stopRunningUnder(false);
 		for (const under of [...this.underneath]) {
 			under.stopRunningUnder(true);

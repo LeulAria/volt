@@ -23,6 +23,8 @@ export interface IBrowserCommentRef {
 	readonly label: string;
 	readonly payload: string;
 	readonly bounds: IBrowserCommentBounds;
+	/** Its key in the page's tracked elements: marks and pins follow the element, not `bounds`, while the page is open. */
+	readonly track?: string;
 	/** The element's text, shortened: the message quotes it after the chip. */
 	readonly snippet?: string;
 	/** What it looked like when picked (its outline included), sent with the message. Filled in once captured. */

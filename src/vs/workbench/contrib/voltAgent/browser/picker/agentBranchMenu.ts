@@ -13,6 +13,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { IProgressService, ProgressLocation } from '../../../../../platform/progress/common/progress.js';
 import { IVoltGitBranches, IVoltGitBranchRef, IVoltGitService } from '../../../../../platform/voltGit/common/voltGit.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { AgentWorktreeTarget } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
@@ -23,11 +24,15 @@ import { IVoltMenuHandle, IVoltMenuItem, IVoltMenuPrompt, IVoltSubmenu, showVolt
 type BranchPick =
 	| { readonly kind: 'ref'; readonly name: string; readonly ref: 'local' | 'remote' | 'tag' }
 	| { readonly kind: 'detached'; readonly ref: string }
+	/** A branch typed in the search that only the remote may have: fetch it, then check it out. No name fetches every branch. */
+	| { readonly kind: 'sync'; readonly remote: string; readonly name?: string }
 	| { readonly kind: 'init' }
 	/** Rows that open a flyout or a prompt; never picked. */
 	| { readonly kind: 'none' };
 
 const NO_PICK: BranchPick = { kind: 'none' };
+/** A single branch over the network; credentials never prompt, so this only covers a slow link. */
+const FETCH_TIMEOUT_MS = 60_000;
 /** What `git check-ref-format --branch` refuses, checked while typing. */
 export const BAD_BRANCH_NAME = /^-|\.\.|[\s~^:?*[\\]|@\{|\/$|\.lock$|^\/|\/\//;
 
@@ -66,6 +71,7 @@ export function showAgentBranchMenu(accessor: ServicesAccessor, options: IAgentB
 	const commandService = accessor.get(ICommandService);
 	const notificationService = accessor.get(INotificationService);
 	const stdio = accessor.get(IVoltStdioService);
+	const progressService = accessor.get(IProgressService);
 	const { root, repository, worktree } = options;
 	const repoRoot = root?.scheme === 'file' ? root.fsPath : undefined;
 	/** The checked-out branch, as of the last load. */
@@ -119,6 +125,39 @@ export function showAgentBranchMenu(accessor: ServicesAccessor, options: IAgentB
 				await options.onDidChange?.('init');
 				return;
 			}
+			if (data.kind === 'sync') {
+				if (!repoRoot) {
+					return;
+				}
+				const remoteRef = data.name ? `${data.remote}/${data.name}` : data.remote;
+				await progressService.withProgress({
+					location: ProgressLocation.Notification,
+					title: localize('voltAgent.syncingBranch', "Fetching {0}...", remoteRef),
+					delay: 400,
+				}, async () => {
+					const args = data.name ? ['fetch', data.remote, `+refs/heads/${data.name}:refs/remotes/${remoteRef}`] : ['fetch', '--prune', data.remote];
+					const result = await runGit(stdio, repoRoot, args, FETCH_TIMEOUT_MS);
+					if (result.exitCode !== 0) {
+						throw new Error(result.timedOut
+							? localize('voltAgent.fetchTimedOut', "Fetching {0} did not finish in time", remoteRef)
+							: data.name && /couldn't find remote ref/i.test(result.stderr)
+								? localize('voltAgent.noRemoteBranch', "{0} has no branch named {1}", data.remote, data.name)
+								: result.stderr.trim() || localize('voltAgent.fetchFailed', "Fetching {0} failed", remoteRef));
+					}
+				});
+				if (!data.name) {
+					// Every branch came down: list the new remote branches in the menu still open.
+					menu?.refresh();
+					return;
+				}
+				if (worktree) {
+					worktree.pick({ kind: 'remote', name: remoteRef });
+					return;
+				}
+				await gitService.checkout({ repoRoot, ref: remoteRef, kind: 'remote' });
+				await options.onDidChange?.('checkout');
+				return;
+			}
 			if (worktree) {
 				// The current branch means the default: a fresh branch from it.
 				if (data.kind === 'ref') {
@@ -148,7 +187,7 @@ export function showAgentBranchMenu(accessor: ServicesAccessor, options: IAgentB
 		}
 	};
 
-	return showVoltMenu<BranchPick>(contextViewService, {
+	const menu: IVoltMenuHandle = showVoltMenu<BranchPick>(contextViewService, {
 		anchor: options.anchor,
 		position: options.position,
 		align: options.align,
@@ -225,8 +264,33 @@ export function showAgentBranchMenu(accessor: ServicesAccessor, options: IAgentB
 				: head && branches.unborn
 					? [{ id: 'unborn-head', label: head, detail: localize('voltAgent.noCommitsYet', "no commits yet"), checked: !target, disabled: true, data: NO_PICK }]
 					: [];
+			// origin, else the first remote with branches; nothing to sync from without one.
+			const remotes = new Set(branches.remote.map(name => name.slice(0, name.indexOf('/'))).filter(Boolean));
+			const remote = remotes.has('origin') ? 'origin' : remotes.values().next().value;
+			// Under Checkout detached: a typed name that is not a local branch is fetched and switched to; otherwise every branch is fetched.
+			const syncItems = (query: string): IVoltMenuItem<BranchPick>[] => {
+				if (!repoRoot || !remote) {
+					return [];
+				}
+				const typed = query.startsWith(`${remote}/`) ? query.slice(remote.length + 1) : query;
+				const name = typed && !BAD_BRANCH_NAME.test(typed) && !existing.has(typed) && !(worktree && branches.unborn) ? typed : undefined;
+				return [{
+					id: 'sync',
+					label: localize('voltAgent.syncFromRemote', "Sync from {0}", remote),
+					detail: name,
+					icon: Codicon.cloudDownload,
+					tooltip: !name
+						? localize('voltAgent.syncAllTooltip', "Fetch every branch from {0}", remote)
+						: worktree
+							? localize('voltAgent.syncWorktreeTooltip', "Fetch {0}/{1} and give it to the worktree", remote, name)
+							: localize('voltAgent.syncTooltip', "Fetch {0}/{1} and switch to it", remote, name),
+					alwaysShow: true,
+					keepOpen: !name,
+					data: { kind: 'sync', remote, name },
+				}];
+			};
 			return [
-				{ id: 'actions', items: actions },
+				{ id: 'actions', items: actions, queryItems: syncItems },
 				{ id: 'local', title: localize('voltAgent.branches', "Branches"), items: [...newTarget, ...current, ...local.map(checkout)] },
 				{ id: 'remote', title: localize('voltAgent.remoteBranches', "Remote branches"), items: ofKind('remote').map(checkout) },
 				{ id: 'tags', title: localize('voltAgent.tags', "Tags"), items: ofKind('tag').map(checkout) },
@@ -235,6 +299,7 @@ export function showAgentBranchMenu(accessor: ServicesAccessor, options: IAgentB
 		emptyMessage: localize('voltAgent.noBranches', "No matching branches"),
 		onPick: item => pick(item.data),
 	});
+	return menu;
 }
 
 /** Volt's git (with each ref's latest commit), else the SCM view's refs for a checkout it cannot reach. */
