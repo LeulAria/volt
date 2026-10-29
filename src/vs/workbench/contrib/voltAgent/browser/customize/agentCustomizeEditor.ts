@@ -44,7 +44,7 @@ import { IAgentRuntimeService, IVoltMcpServerStatus } from '../../../../services
 import { IVoltMemoryService, VoltMemoryScope } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
 import { IVoltHookExecution, IVoltHooksService } from '../../../../services/voltRuntime/common/hooks/voltHooks.js';
 import '../../../../services/voltRuntime/browser/hooks/voltHooksService.js';
-import { createModeIcon } from '../chrome/agentModeIcons.js';
+import { createCustomizationKindIcon } from '../chrome/agentModeIcons.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createAgentScrollable } from '../editor/agentScrollable.js';
 import { createAgentTitleActionViewItem } from '../editor/agentTitleActions.js';
@@ -773,7 +773,8 @@ export class AgentCustomizeEditor extends EditorPane {
 
 	private iconTile(item: IAgentCustomization | undefined, kind: AgentCustomizationKind, status?: 'ready' | 'connecting' | 'idle' | 'error'): HTMLElement {
 		const tile = $('.volt-customize-tile');
-		const plugin = item?.plugin;
+		// The plugin's logo marks only its own row; its skills, rules and commands keep the kind's line icon.
+		const plugin = kind === 'plugin' ? item?.plugin : undefined;
 		if (plugin?.logo) {
 			const cached = this.logos.get(plugin.id);
 			if (cached) {
@@ -807,18 +808,7 @@ export class AgentCustomizeEditor extends EditorPane {
 	}
 
 	private kindIcon(tile: HTMLElement, kind: AgentCustomizationKind): void {
-		switch (kind) {
-			case 'subagent':
-				tile.appendChild(createModeIcon('agent'));
-				break;
-			case 'skill': tile.appendChild(renderIcon(Codicon.zap)); break;
-			case 'rule': tile.appendChild(renderIcon(Codicon.listUnordered)); break;
-			case 'command': tile.appendChild(renderIcon(Codicon.terminal)); break;
-			case 'hook': tile.appendChild(renderIcon(Codicon.file)); break;
-			case 'mcp': tile.appendChild(renderIcon(Codicon.mcp)); break;
-			case 'plugin': tile.appendChild(renderIcon(Codicon.package)); break;
-			case 'memory': tile.appendChild(renderIcon(Codicon.bookmark)); break;
-		}
+		tile.appendChild(createCustomizationKindIcon(kind));
 	}
 
 	private itemRow(item: IAgentCustomization, options?: { badge?: string; descriptionFallback?: string }): IRowSpec {
@@ -1162,7 +1152,7 @@ export class AgentCustomizeEditor extends EditorPane {
 			}
 			const id = `plugin:${plugin.marketplace}/${plugin.name}`;
 			rows.push({
-				icon: (() => { const tile = $('.volt-customize-tile.box'); tile.appendChild(renderIcon(Codicon.package)); return tile; })(),
+				icon: (() => { const tile = $('.volt-customize-tile.box'); this.kindIcon(tile, 'plugin'); return tile; })(),
 				name: plugin.name,
 				description: plugin.description || plugin.author,
 				tooltip: plugin.description,
@@ -1204,10 +1194,10 @@ export class AgentCustomizeEditor extends EditorPane {
 			this.renderStore.add(addDisposableListener(image, 'error', () => {
 				image.remove();
 				tile.classList.remove('logo');
-				tile.appendChild(renderIcon(Codicon.zap));
+				this.kindIcon(tile, 'skill');
 			}));
 		} else {
-			tile.appendChild(renderIcon(Codicon.zap));
+			this.kindIcon(tile, 'skill');
 		}
 		return tile;
 	}

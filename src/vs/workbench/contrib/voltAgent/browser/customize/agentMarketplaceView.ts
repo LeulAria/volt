@@ -16,7 +16,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
-import { createModeIcon } from '../chrome/agentModeIcons.js';
+import { createCustomizationKindIcon } from '../chrome/agentModeIcons.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { AgentCustomizationKind, kindInfo, safeItemName } from './agentCustomize.js';
@@ -743,7 +743,7 @@ export class AgentMarketplaceView extends Disposable {
 			return;
 		}
 		const plugin = this.pluginOf(detail);
-		append(head, $('.volt-marketplace-icon.box.large')).appendChild(renderIcon(Codicon.package));
+		append(head, $('.volt-marketplace-icon.box.large')).appendChild(createCustomizationKindIcon('plugin'));
 		append(head, $('h2.volt-marketplace-detail-title')).textContent = detail.name;
 		this.pageLink(head, detail);
 		if (!plugin) {
@@ -882,11 +882,7 @@ export class AgentMarketplaceView extends Disposable {
 			row.tabIndex = 0;
 			row.setAttribute('role', 'link');
 			const tile = append(row, $('.volt-customize-tile'));
-			if (content.kind === 'subagent') {
-				tile.appendChild(createModeIcon('agent'));
-			} else {
-				tile.appendChild(renderIcon(contentIcon(content.kind)));
-			}
+			tile.appendChild(createCustomizationKindIcon(content.kind));
 			append(append(row, $('.volt-customize-row-copy')), $('span.name')).textContent = content.name;
 			append(row, $('.volt-marketplace-open-arrow')).appendChild(renderIcon(Codicon.arrowRight));
 			setAgentTooltip(row, content.link.kind === 'url' ? content.link.url : content.link.resource.fsPath);
@@ -916,10 +912,10 @@ export class AgentMarketplaceView extends Disposable {
 			image.src = url;
 			this.renderStore.add(addDisposableListener(image, 'error', () => {
 				image.remove();
-				tile.appendChild(renderIcon(Codicon.zap));
+				tile.appendChild(createCustomizationKindIcon('skill'));
 			}));
 		} else {
-			tile.appendChild(renderIcon(Codicon.zap));
+			tile.appendChild(createCustomizationKindIcon('skill'));
 		}
 	}
 
@@ -968,7 +964,7 @@ export class AgentMarketplaceView extends Disposable {
 		for (const plugin of plugins) {
 			const id = `${plugin.marketplace}/${plugin.name}`;
 			const row = append(grid, $('.volt-marketplace-row'));
-			append(row, $('.volt-marketplace-icon.box')).appendChild(renderIcon(Codicon.package));
+			append(row, $('.volt-marketplace-icon.box')).appendChild(createCustomizationKindIcon('plugin'));
 			const copy = append(row, $('.volt-marketplace-row-copy'));
 			append(copy, $('.name')).textContent = plugin.name;
 			append(copy, $('.description')).textContent = plugin.description || plugin.author;
@@ -1234,17 +1230,6 @@ export class AgentMarketplaceView extends Disposable {
 	}
 
 	//#endregion
-}
-
-function contentIcon(kind: AgentCustomizationKind | 'file'): ThemeIcon {
-	switch (kind) {
-		case 'mcp': return Codicon.mcp;
-		case 'skill': return Codicon.zap;
-		case 'rule': return Codicon.listUnordered;
-		case 'command': return Codicon.terminal;
-		case 'hook': return Codicon.file;
-		default: return Codicon.file;
-	}
 }
 
 function sameFilter(a: MarketplaceFilter, b: MarketplaceFilter): boolean {
