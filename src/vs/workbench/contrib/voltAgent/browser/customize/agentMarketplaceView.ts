@@ -451,8 +451,8 @@ export class AgentMarketplaceView extends Disposable {
 		};
 		add(localize('voltMarketplace.all', "All"), { kind: 'all' });
 		add('skills.sh', { kind: 'skills' });
-		for (const marketplace of (this.marketplaces ?? []).filter(candidate => candidate.registry === 'claude')) {
-			add(marketplace.displayName, { kind: 'marketplace', name: marketplace.name });
+		for (const marketplace of (this.marketplaces ?? []).filter(candidate => candidate.registry !== 'volt')) {
+			add(marketplace.shortName ?? marketplace.displayName, { kind: 'marketplace', name: marketplace.name });
 		}
 		add(localize('voltMarketplace.personal', "Personal"), { kind: 'personal' });
 		const addMarketplace = append(chips, $('button.volt-customize-chip.add')) as HTMLButtonElement;
@@ -1108,6 +1108,19 @@ export class AgentMarketplaceView extends Disposable {
 	}
 
 	private showMarketplaceMenu(anchor: HTMLElement, marketplace: IMarketplace): void {
+		if (marketplace.registry === 'builtin') {
+			// Read from GitHub, nothing on disk: its repository is the only place to go.
+			showVoltMenu<string>(this.contextViewService, {
+				anchor,
+				align: 'right',
+				gap: 4,
+				className: 'volt-customize-menu',
+				ariaLabel: marketplace.displayName,
+				sections: [{ id: 'actions', items: [{ id: 'github', label: localize('voltMarketplace.openGithub', "Open on GitHub"), icon: Codicon.github, data: 'github' }] }],
+				onPick: () => this.host.openUrl(marketplace.root.toString(true)),
+			});
+			return;
+		}
 		const items: IVoltMenuItem<string>[] = [
 			{ id: 'reveal', label: localize('voltMarketplace.revealFolder', "Reveal in Finder"), icon: Codicon.folderOpened, data: 'reveal' },
 			{ id: 'manifest', label: localize('voltMarketplace.openManifest', "Open marketplace.json"), icon: Codicon.json, data: 'manifest' },
