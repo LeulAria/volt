@@ -85,7 +85,7 @@ import { FileLedger } from '../common/harness/fileLedger.js';
 import { alwaysRules, findInstruction, instructionsIndex, ISubagentDoc, rulesForPath } from '../common/harness/instructions.js';
 import { IVoltHookRunContext, IVoltHooksService } from '../common/hooks/voltHooks.js';
 import './hooks/voltHooksService.js';
-import { EVIDENCE_GATE_SETTING, EvidenceObserver } from '../common/harness/evidenceObserver.js';
+import { EVIDENCE_GATE_SETTING, EvidenceObserver, PROOF_REVIEW_SETTING, resolveProofGate } from '../common/harness/evidenceObserver.js';
 import { EXPERIENCE_SYSTEM, experienceRecord, experienceRequest, LEARN_FROM_RUNS_SETTING, lessonMemory, parseExperience, shouldReflect } from '../common/harness/experience.js';
 import { searchArchivedHistory } from '../common/harness/historySearch.js';
 import { parseStateOps, renderStateRead } from '../common/harness/appState.js';
@@ -114,16 +114,22 @@ import { CapabilityGroup, VoltLane } from '../common/harness/lanes.js';
 import { applyHumanAction, IHumanAction } from '../common/harness/humanLoop.js';
 import { EvalLedger, evalSampleFromMetrics } from '../common/harness/eval.js';
 import { formatRunMetrics, IRunMetrics, RunMetrics } from '../common/harness/runMetrics.js';
+import { IProofReview, IReceiptLine, IRunReceipt, isReceiptWorthShowing, NO_CODE_IMPACT, receiptSummary } from '../common/harness/proofOfDone.js';
+import { PROOF_REVIEW_SYSTEM, parseProofReview, proofReviewRequest, reviewDiff } from '../common/harness/proofReview.js';
 import { decideContinuation, detectProjectChecks, ICheckReport, IProjectChecks, isSameCommand, ITodoEntry, mayMutateWorkspace, parseCheckOutput, regressionVerdict } from '../common/harness/verification.js';
 import { AgentPool, ISpareRequest } from './agentPool.js';
 import { RunTraceJournal } from './history/runTraceJournal.js';
+import { ProofCaseJournal } from './history/proofCases.js';
 import { isAcpTurnRestartable } from '../common/harness/sessionRetry.js';
 import { TaskLifecycle } from '../common/harness/lifecycle.js';
 import { IToolCall, IToolContext, IToolResult, IVoltTool, toolSchemas } from '../common/tools/tool.js';
 import { deepseekKnobs, resolveApproval } from '../common/deepseek/approval.js';
 import { VoltLlmAdapter } from './deepseek/voltLlmAdapter.js';
 import { buildSubagentPrompt, customSubagentPrompt, nativeModelTurn } from '../common/deepseek/prompt.js';
-import { ApprovalOutcome } from '../common/deepseek/protocol.js';
+import { ApprovalOutcome, StreamChunk } from '../common/deepseek/protocol.js';
+import { endToolRun, ITrajectoryRequest, ITrajectoryRequestInput, recordStream, startToolRun } from '../common/harness/trajectory.js';
+import { IVoltTrajectoryService } from '../common/trajectory.js';
+import './trajectoryService.js';
 import { turnWriteGate } from '../common/turnWriteGate.js';
 import { createBuiltinTools } from './tools/registry.js';
 import { loadProjectInstructions } from './prompt/projectInstructions.js';
@@ -143,17 +149,19 @@ const ACCESS_CHATS_LIMIT = 500;
 const TAB_PREDICTION_SESSION_ID = 'volt-tab-prediction';
 
 /** Bumped whenever the built-in profile list changes so existing installs pick it up. */
-const CLI_SEED_VERSION = 4;
+const CLI_SEED_VERSION = 5;
 
 /** Idle chat agents kept warm per window, most recently used first. */
 const MAX_IDLE_AGENTS = 3;
 /** An idle chat agent older than this is stopped even within the cap. */
 const IDLE_AGENT_TTL_MS = 15 * 60_000;
 const IDLE_AGENT_CHECK_MS = 60_000;
-/** Files whose change cannot fail the project's tests: the post-run check skips runs that touched only these. */
-const NO_TEST_IMPACT = /\.(?:md|mdx|markdown|txt|rst|css|scss|sass|less|styl|svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|otf)$/i;
 /** Appended to a native fast-lane request: a small change is edited, checked and answered without a test run or browser. */
 const FAST_LANE_NOTE = '[Volt] Small, well-scoped change: make the edit, check the files you changed for errors, and answer in a line or two. No test runs, builds, servers or browser unless the user asked for them.';
+/** The second opinion's wait: past it the run finishes with its items claimed, not reviewed. */
+const PROOF_REVIEW_TIMEOUT_MS = 90_000;
+/** A changed file larger than this is named in the review diff, not read. */
+const PROOF_REVIEW_FILE_BYTES = 512 * 1024;
 /** Native model transcripts kept in memory between runs (the most recently run chats). */
 const MAX_WARM_NATIVE = 4;
 /** A native transcript idle this long goes to disk only; its chat's next run reads it back. */
@@ -233,6 +241,16 @@ interface IRunState {
 	regressed?: boolean;
 	/** What the run did besides talking, kept with its reply for handoffs to other sessions. */
 	activity?: { readonly tools: IHandoffToolCall[]; readonly files: IHandoffFile[]; readonly calls: Map<string, { kind?: string; name: string; title?: string; input: string; paths: string[] }> };
+	/** Native runs: the proof keeper (evidence, contract, receipt); file changes reach it as they happen. */
+	proof?: EvidenceObserver;
+}
+
+/** The chat's model, which the second opinion asks with a clean context. */
+interface IProofModel {
+	readonly provider: IModelProvider;
+	readonly profile: IProviderProfile;
+	readonly apiKey: string | undefined;
+	readonly item: IVoltCatalogItem;
 }
 
 /** An agent session the chat moved away from (another model or provider), kept warm to switch back to. */
@@ -574,6 +592,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly nativeCuts = new Map<string, { readonly userTurns: number; readonly synced: number }>();
 	private readonly evalLedger = new EvalLedger();
 	private readonly traces: RunTraceJournal;
+	/** Every gated run's request, contract and receipt: the cases an eval replays. */
+	private readonly proofCases: ProofCaseJournal;
 	private readonly agentPool: AgentPool;
 	/** Spare agents start under an alias session id; this maps it to the chat that adopted the spare. */
 	private readonly sessionAliases = new Map<string, string>();
@@ -637,6 +657,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		@IVoltHooksService private readonly hooks: IVoltHooksService,
 		@IVoltCodeIndexService codeIndexService: IVoltCodeIndexService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IVoltTrajectoryService private readonly trajectory: IVoltTrajectoryService,
 	) {
 		super();
 		this.codeIntel = this._register(createRuntimeCodeIntel(markerService, textModelService, languageFeaturesService, fileService));
@@ -653,6 +674,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.mcpHost = this._register(new McpHost(fileService, stdio, requestService, logService));
 		this.journal = this._register(new NativeJournal(joinPath(environmentService.userRoamingDataHome, 'voltNative'), fileService, logService));
 		this.traces = this._register(new RunTraceJournal(joinPath(environmentService.userRoamingDataHome, 'voltTraces'), fileService, logService));
+		this.proofCases = new ProofCaseJournal(joinPath(environmentService.userRoamingDataHome, 'voltProofs', 'cases.jsonl'), fileService, logService);
 		this.appState = new AgentAppStateStore(joinPath(environmentService.userRoamingDataHome, 'voltState'), fileService, logService);
 		this.agentPool = this._register(new AgentPool({
 			maxSpares: MAX_SPARE_AGENTS,
@@ -2672,6 +2694,28 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		},
 	};
 
+	/** Records a native model request for the Trajectory panel; the stream itself passes through unchanged. */
+	private traceStream(stream: AsyncIterable<StreamChunk>, traced: { request?: ITrajectoryRequest }, input: Omit<ITrajectoryRequestInput, 'id' | 'index'>): AsyncIterable<StreamChunk> {
+		const request = this.trajectory.begin(input);
+		traced.request = request;
+		return request ? recordStream(stream, request, () => this.trajectory.changed(input.sessionId)) : stream;
+	}
+
+	/** Times a batch's tool calls against the request whose answer asked for them; returns the result hook. */
+	private traceTools(sessionId: string, request: ITrajectoryRequest | undefined, calls: readonly IToolCall[]): (result: IToolResult) => void {
+		if (!request) {
+			return () => { };
+		}
+		for (const call of calls) {
+			startToolRun(request, call);
+		}
+		this.trajectory.changed(sessionId);
+		return result => {
+			endToolRun(request, result);
+			this.trajectory.changed(sessionId);
+		};
+	}
+
 	/**
 	 * Native model path. DeepSeek owns the turn, the tool pipeline, and approval.
 	 * Volt streams the selected provider, paints `IVoltEvent`s, and owns what the loop cannot:
@@ -2697,6 +2741,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const apiKey = await apiKeyRead;
 		const root = this.executionRoot(session);
 		const cwd = root?.fsPath;
+		// The proof keeper (the run's contract, evidence and receipt) reads the project's checks meanwhile.
+		const evidence = this.evidenceObserver(session, run, request, root);
 		this.restoreReleasedNative(session);
 		await this.nativeRestores.get(session.sessionId);
 		this.nativeRestores.delete(session.sessionId);
@@ -2743,12 +2789,16 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		const retrieved = await retrieval;
+		const observer = await evidence;
 		if (!this.isCurrent(session, run)) {
 			return;
 		}
+		run.proof = observer;
 		// A small request says so in the message (the system prompt stays cached): edit, check, answer.
 		const laneNote = run.lane === 'fast' && modePolicy(request.mode).allowWrites ? FAST_LANE_NOTE : undefined;
-		const promptText = [request.text, pasted, hookNotes.length ? `<hook_context>\n${hookNotes.join('\n\n')}\n</hook_context>` : undefined, retrieved?.text, laneNote].filter(Boolean).join('\n\n');
+		// A run held to its proof from the start reads the contract with the request, so it plans the checks.
+		const proofNote = isVoltNote(request.text) ? undefined : observer?.contractNote();
+		const promptText = [request.text, pasted, hookNotes.length ? `<hook_context>\n${hookNotes.join('\n\n')}\n</hook_context>` : undefined, retrieved?.text, laneNote, proofNote].filter(Boolean).join('\n\n');
 		this.syncNativeTranscript(session, state, promptText, images);
 
 		// The root can only differ from the early read if the chat moved while the previous run settled.
@@ -2815,9 +2865,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.logService.info(`[volt] restarting the background ${agent.label} subagent of ${session.sessionId}`);
 			void this.runSubagent(session, state, agent.request, { callId: agent.callId, signal: new AbortController().signal, cwd, sessionId: session.sessionId, mode: request.mode }, true);
 		}
+		// The request on the wire now, for the Trajectory panel; its answer's tool calls are timed against it.
+		const traced: { request?: ITrajectoryRequest; step?: number } = {};
 		const emit = (event: IVoltEvent) => {
 			if (event.type === 'usage' && this.isCurrent(session, run)) {
 				state.promptTokens = event.used ?? event.input + (event.cache ?? 0) + (event.cacheWrite ?? 0);
+			}
+			if (event.type === 'usage' && event.costUsd !== undefined && traced.request) {
+				traced.request.costUsd = event.costUsd;
+				this.trajectory.changed(session.sessionId);
 			}
 			this.emitEngine(session, run, event);
 		};
@@ -2884,8 +2940,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		};
 		// Where this run's own messages start, for the reflection after it.
 		const runFrom = transcript.length;
-		// The evidence harness beside the loop: watches every step, judges the finish (gates it when the setting is on).
-		const evidence = this.evidenceObserver(session, run, request, root);
+		const proofModel: IProofModel = { provider, profile, apiKey, item };
 		run.metrics.mark('prompt');
 		try {
 			const openStream = (messages: readonly INativeLoopMessage[], streamOptions: IDeepseekStreamOptions | undefined) => linkedStream(cancel, streamOptions?.signal, token => new VoltLlmAdapter(provider).stream({
@@ -2898,8 +2953,21 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				...(streamOptions?.maxOutputTokens ? { maxOutputTokens: streamOptions.maxOutputTokens } : {}),
 			}, token));
 			const result = await runDeepseekLoop({
-				stream: (messages, _token, streamOptions) => openStream(messages, streamOptions),
+				stream: (messages, _token, streamOptions) => this.traceStream(openStream(messages, streamOptions), traced, {
+					sessionId: session.sessionId,
+					runId: run.runId,
+					...(traced.step !== undefined ? { step: traced.step } : {}),
+					provider: profile.providerId,
+					model: item.id,
+					modelLabel: item.label,
+					system: system.content,
+					messages,
+					tools: schemas,
+					options,
+					...(streamOptions?.maxOutputTokens ? { maxOutputTokens: streamOptions.maxOutputTokens } : {}),
+				}),
 				// Claude's prompt cache lasts five minutes: kept while a long tool or an approval holds the run.
+				// Not traced: the ping is aborted at its first chunk, so it is not a request of the run.
 				...(keepsPromptCacheBriefly(profile.providerId, item.id) && this.configurationService.getValue<boolean>(PROMPT_CACHE_KEEPALIVE_SETTING) !== false ? {
 					keepAlive: async (messages: readonly INativeLoopMessage[], streamOptions: IDeepseekStreamOptions) => {
 						const abort = new AbortController();
@@ -2918,6 +2986,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					for (const call of calls) {
 						dispatched.add(call.id);
 					}
+					const traceResult = this.traceTools(session.sessionId, traced.request, calls);
 					checkpoint();
 					return runToolBatch(registry, calls, {
 						cwd,
@@ -2929,6 +2998,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						authorize: async () => ({ allow: true }),
 						onResult: result => {
 							finished.set(result.callId, result);
+							traceResult(result);
 							checkpoint();
 							onResult?.(result);
 						},
@@ -2944,6 +3014,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				contextWindow,
 				maxOutputTokens: 128_000,
 				prepareTurn: async (messages, step) => {
+					traced.step = step;
 					if (!this.isCurrent(session, run)) {
 						return;
 					}
@@ -2991,7 +3062,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				claimInbox: () => this.isCurrent(session, run) ? claimInbox(state) : [],
 				controller: {
 					afterStep: async step => {
-						const sendBack = await this.observeEvidence(evidence, step);
+						const sendBack = await this.proveStep(session, run, observer, step, proofModel);
 						const directive = withSendBack(await this.afterNativeStep(session, run, state, step), sendBack);
 						if (directive.kind !== 'continue' || !step.wantsToFinish || cancel.isCancellationRequested) {
 							return directive;
@@ -3006,9 +3077,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			if (result.assistant) {
 				void this.hooks.run('afterAgentResponse', hookContext(), { text: result.assistant });
 			}
-			const observer = await evidence;
+			// The receipt goes on the transcript before run.end, so it sits under the answer it proves.
+			const receipt = observer && result.outcome === 'done' && !cancel.isCancellationRequested ? this.settleProof(session, run, observer, request, item) : undefined;
 			if (observer || result.lessons?.length) {
-				run.metrics.noteEvidence(observer ? observer.summary(result.lessons) : { complete: result.outcome === 'done', reason: '', changedFiles: 0, lessons: result.lessons ?? [] });
+				run.metrics.noteEvidence(observer ? observer.summary(result.lessons, receipt) : { complete: result.outcome === 'done', reason: '', changedFiles: 0, lessons: result.lessons ?? [] });
 			}
 			const nativeActivity = this.runActivity(run);
 			if (result.assistant || nativeActivity) {
@@ -3197,6 +3269,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			if (current && !state.changed.has(event.uri)) {
 				state.changed.set(event.uri, this.codeIntel.errorCounts(event.uri));
 			}
+			if (current && (event.kind === 'edit' || event.kind === 'create' || event.kind === 'delete')) {
+				run.proof?.noteFileChange(event.uri.fsPath, event.kind, typeof event.before === 'string' ? event.before : undefined, typeof event.existed === 'boolean' ? event.existed : undefined);
+			}
 			this.codeIntel.noteWrite(event.uri);
 		}
 		if (current && event.type === 'plan' && Array.isArray(event.entries)) {
@@ -3233,38 +3308,146 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/**
-	 * The evidence harness for a native run: built from the run's intent and the project's checks
-	 * (read once per folder and cached). A failure to build it leaves the run unobserved.
+	 * The proof keeper for a native run: built from the request (a continuation's is the one it
+	 * continues), the run's intent and the project's checks (read once per folder and cached). A
+	 * failure to build it leaves the run unobserved, never stopped.
 	 */
 	private evidenceObserver(session: ISessionState, run: IRunState, request: IVoltSendRequest, root: URI | undefined): Promise<EvidenceObserver | undefined> {
 		const intent = run.intent;
 		if (!intent) {
 			return Promise.resolve(undefined);
 		}
+		const typed = isVoltNote(request.text) ? findLastIdx(session.messages, message => message.role === 'user' && !!message.content.trim() && !isVoltNote(message.content)) : -1;
+		const text = typed >= 0 ? session.messages[typed].content : request.text;
 		const checks = root ? this.projectChecksFor(root).catch((): IProjectChecks => ({})) : Promise.resolve<IProjectChecks>({});
 		return checks.then(value => new EvidenceObserver({
-			text: request.text,
+			text,
 			intent,
 			checks: value,
 			readOnly: !modePolicy(request.mode).allowWrites,
 			hasPriorTurns: session.messages.filter(message => message.role === 'user').length > 1,
+			...(root ? { root: root.fsPath } : {}),
+			gate: resolveProofGate(this.configurationService.getValue<unknown>(EVIDENCE_GATE_SETTING)),
 		})).catch(err => {
-			this.logService.trace('[volt] the evidence harness could not start', err);
+			this.logService.trace('[volt] the proof keeper could not start', err);
 			return undefined;
 		});
 	}
 
-	/** One step through the evidence harness; with `volt.agent.evidenceGate` on, an unproven finish comes back as a send-back. */
-	private async observeEvidence(evidence: Promise<EvidenceObserver | undefined>, step: IDeepseekStep): Promise<string | undefined> {
-		const observer = await evidence;
-		let sendBack: string | undefined;
-		try {
-			sendBack = observer?.observe(step);
-		} catch (err) {
-			this.logService.trace('[volt] the evidence harness failed on a step', err);
+	/**
+	 * One step through the proof keeper. On a finishing step of a gated run: the receipt as it
+	 * stands, then (once its checks hold) the second opinion, and the message that sends the model
+	 * back when either does not hold. Never fatal: a failure here lets the run finish.
+	 */
+	private async proveStep(session: ISessionState, run: IRunState, observer: EvidenceObserver | undefined, step: IDeepseekStep, model: IProofModel): Promise<string | undefined> {
+		if (!observer) {
 			return undefined;
 		}
-		return sendBack && this.configurationService.getValue<boolean>(EVIDENCE_GATE_SETTING) === true ? sendBack : undefined;
+		try {
+			observer.observe(step);
+			if (!step.wantsToFinish || !this.isCurrent(session, run) || run.cancel.token.isCancellationRequested) {
+				return undefined;
+			}
+			let receipt = observer.receipt();
+			if (!receipt.gated) {
+				return undefined;
+			}
+			const items = observer.reviewDue(receipt);
+			if (items && this.configurationService.getValue<boolean>(PROOF_REVIEW_SETTING) !== false) {
+				this.emit(session, run.runId, { type: 'lifecycle', phase: 'verifying' });
+				observer.noteReview(await this.reviewProof(run, observer, receipt, items, model));
+				if (!this.isCurrent(session, run) || run.cancel.token.isCancellationRequested) {
+					return undefined;
+				}
+				receipt = observer.receipt();
+			}
+			const message = observer.sendBack(receipt);
+			if (message) {
+				run.metrics.noteContinuation();
+				this.logService.info(`[volt] run ${run.runId} goes back to work: ${receiptSummary(receipt)}`);
+				this.emit(session, run.runId, { type: 'notice', severity: 'info', title: localize('volt.proof.sentBack', "The finish is not proven yet. Asking the agent to close the gaps."), description: 'Volt check' });
+			}
+			return message;
+		} catch (err) {
+			this.logService.trace('[volt] the proof check failed on a step', err);
+			return undefined;
+		}
+	}
+
+	/**
+	 * The second opinion: one low-effort request on the chat's own model with a clean context (the
+	 * request, the run's diff, the checks that passed, its final answer; none of its reasoning).
+	 * Undefined when it could not run or gave no verdict: the items then stay claimed, never passed.
+	 */
+	private async reviewProof(run: IRunState, observer: EvidenceObserver, receipt: IRunReceipt, items: readonly IReceiptLine[], model: IProofModel): Promise<IProofReview | undefined> {
+		const files = await Promise.all(observer.reviewFiles().map(async change => ({
+			path: change.path,
+			before: change.before,
+			existed: change.existed,
+			after: await this.fileService.readFile(URI.file(change.fsPath), { limits: { size: PROOF_REVIEW_FILE_BYTES } }).then(content => content.value.toString(), () => undefined),
+		})));
+		const passed = receipt.lines.filter(line => line.status === 'proven' && line.command).map(line => `${line.command}: ${line.detail ?? 'passed'}`);
+		const cts = new CancellationTokenSource(run.cancel.token);
+		const timer = setTimeout(() => cts.cancel(), PROOF_REVIEW_TIMEOUT_MS);
+		let text = '';
+		try {
+			for await (const event of watchedStream(token => model.provider.stream({
+				modelId: model.item.id,
+				messages: [
+					{ role: 'system', content: PROOF_REVIEW_SYSTEM },
+					{ role: 'user', content: proofReviewRequest({ request: observer.request, items, passed, diff: reviewDiff(files), answer: observer.finalAnswer }) },
+				],
+				profile: model.profile,
+				apiKey: model.apiKey,
+				options: { ...this.resolvedOptions(model.item, undefined), [MODEL_OPTION_REASONING]: 'low' },
+				maxOutputTokens: 1_500,
+			}, token), cts.token)) {
+				if (event.type === 'text.delta' && event.delta) {
+					text += event.delta;
+				}
+			}
+		} catch (err) {
+			this.logService.info(`[volt] the second opinion on run ${run.runId} could not run: ${err instanceof Error ? err.message : String(err)}`);
+			return undefined;
+		} finally {
+			clearTimeout(timer);
+			cts.dispose();
+		}
+		const review = parseProofReview(text, items.length);
+		this.logService.info(`[volt] second opinion on run ${run.runId}: ${review ? `${review.verdict}${review.summary ? ` (${review.summary})` : ''}` : 'no verdict'}`);
+		return review;
+	}
+
+	/**
+	 * The run's receipt as it ends: on the transcript when it says something (a quick edit that
+	 * checked nothing gets no card), and kept as a replayable eval case when it was binding.
+	 */
+	private settleProof(session: ISessionState, run: IRunState, observer: EvidenceObserver, request: IVoltSendRequest, item: IVoltCatalogItem): IRunReceipt | undefined {
+		try {
+			const receipt = observer.receipt();
+			if (isReceiptWorthShowing(receipt)) {
+				this.emit(session, run.runId, { type: 'receipt', runId: run.runId, receipt });
+			}
+			if (receipt.gated) {
+				const root = this.executionRoot(session);
+				this.proofCases.record({
+					sessionId: session.sessionId,
+					runId: run.runId,
+					...(root ? { project: root.fsPath } : {}),
+					request: observer.request,
+					mode: request.mode,
+					model: item.id,
+					lane: run.lane ?? 'agent',
+					contract: [...observer.contract.items, ...(observer.contract.floor ? [observer.contract.floor] : [])].map(line => ({ text: line.text, kind: line.kind, ...(line.command ? { command: line.command } : {}) })),
+					receipt,
+				});
+			}
+			this.logService.info(`[volt] run ${run.runId} ${receiptSummary(receipt)}`);
+			return receipt;
+		} catch (err) {
+			this.logService.trace('[volt] the run receipt could not be written', err);
+			return undefined;
+		}
 	}
 
 	/**
@@ -3575,21 +3758,34 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				this.journal.log(journalId, childEntry, () => withRunningCalls(childEntry(), finishedCalls, startedCalls));
 			}
 		};
+		const traced: { request?: ITrajectoryRequest } = {};
 		const work = async (): Promise<{ text: string; isError?: boolean }> => {
 			try {
 				const result = await runDeepseekLoop({
-					stream: messages => new VoltLlmAdapter(provider).stream({
+					stream: messages => this.traceStream(new VoltLlmAdapter(provider).stream({
 						modelId: item.id,
 						messages: nativeToModelMessages([system, ...messages]),
 						profile,
 						apiKey,
 						options,
 						tools: toolSchemas(tools),
-					}, source.token),
+					}, source.token), traced, {
+						sessionId: session.sessionId,
+						runId,
+						provider: profile.providerId,
+						model: item.id,
+						modelLabel: item.label,
+						agent: label,
+						system: system.content,
+						messages,
+						tools: toolSchemas(tools),
+						options,
+					}),
 					execute: (calls, onResult) => {
 						for (const call of calls) {
 							startedCalls.add(call.id);
 						}
+						const traceResult = this.traceTools(session.sessionId, traced.request, calls);
 						save();
 						return runToolBatch(registry, calls, {
 							cwd: root?.fsPath,
@@ -3602,6 +3798,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 							authorize: async () => ({ allow: true }),
 							onResult: result => {
 								finishedCalls.set(result.callId, result);
+								traceResult(result);
 								save();
 								onResult?.(result);
 							},
@@ -5008,7 +5205,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		// Styles, docs and images cannot break a test suite: no background run (and no fans) for them.
 		const changed = run.engine === 'native' ? [...(session.deepseek?.changed.keys() ?? [])] : [...(run.changedFiles?.values() ?? [])].map(file => file.uri);
-		if (!run.shellMutated && changed.length && changed.every(uri => NO_TEST_IMPACT.test(uri.path))) {
+		if (!run.shellMutated && changed.length && changed.every(uri => NO_CODE_IMPACT.test(uri.path))) {
 			return;
 		}
 		const id = `volt-check-${generateUuid()}`;

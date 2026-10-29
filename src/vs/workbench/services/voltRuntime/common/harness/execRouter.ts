@@ -36,6 +36,7 @@ const ACP_PROVIDERS = new Set([
 	'agy',
 	'kimi',
 	'muse',
+	'fx',
 	'acp',
 ]);
 

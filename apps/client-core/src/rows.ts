@@ -8,7 +8,7 @@ import { basename, firstLine, pluralize } from './format';
 import type { IconName } from './icons';
 import type { ToolDensity } from './prefs';
 import { humanTerminalTitle, terminalCommandLabels } from './shell';
-import type { ActivityKind, AgentBlock, AgentMessage, AgentSegment, IActivityItem, IAssistantMessage, ICompaction, IPromptAttachment, ITodoStep, IUserMessage } from './types';
+import type { ActivityKind, AgentBlock, AgentMessage, AgentSegment, IActivityItem, IAssistantMessage, ICompaction, IPromptAttachment, IReceiptJson, ITodoStep, IUserMessage, ProofStatus } from './types';
 
 /**
  * The desktop's transcript model (voltAgent/browser/chrome/agentTranscript.ts): between two
@@ -101,6 +101,8 @@ export type TranscriptRow =
 	| { readonly kind: 'chart'; readonly key: string; readonly title?: string; readonly labels: readonly string[]; readonly values: readonly number[]; readonly unit?: string }
 	| { readonly kind: 'cards'; readonly key: string; readonly items: readonly { readonly title: string; readonly body: string; readonly meta?: string }[] }
 	| { readonly kind: 'visual'; readonly key: string; readonly title: string; readonly visual: 'chart' | 'html' }
+	/** Proof of done under a run's answer. */
+	| { readonly kind: 'receipt'; readonly key: string; readonly receipt: IReceiptJson }
 	/** The live line under a running reply: "Thinking · 12s". */
 	| { readonly kind: 'working'; readonly key: string; readonly status: string; readonly since?: number }
 	/** "Worked for 3m 3s": the fold over a finished turn's work; `turnKey` names it for {@link buildRows}' `openWorked`. */
@@ -516,7 +518,7 @@ interface IMessageRows {
 /** Rows that read as the turn's answer: they stay in view under a closed "Worked for". */
 function isAnswerRow(row: TranscriptRow): boolean {
 	return row.kind === 'markdown' || row.kind === 'code' || row.kind === 'table' || row.kind === 'plan' || row.kind === 'chart'
-		|| row.kind === 'cards' || row.kind === 'visual' || row.kind === 'answers' || row.kind === 'error';
+		|| row.kind === 'cards' || row.kind === 'visual' || row.kind === 'answers' || row.kind === 'error' || row.kind === 'receipt';
 }
 
 /** Tool work: a turn with any folds it behind "Worked for" (reasoning alone does not). */
@@ -719,6 +721,10 @@ function assistantRows(message: IAssistantMessage, mkey: string, index: number):
 					case 'visual':
 						flushSteps();
 						body.push({ kind: 'visual', key, title: block.title, visual: block.kind });
+						return;
+					case 'receipt':
+						flushSteps();
+						body.push({ kind: 'receipt', key, receipt: block.receipt });
 						return;
 				}
 			}
@@ -981,6 +987,40 @@ export function messageText(message: AgentMessage): string {
 		return message.text;
 	}
 	return message.segments.filter(s => s.kind === 'text').map(s => (s as { text: string }).text).join('\n\n');
+}
+
+//#endregion
+
+//#region Proof of done
+
+/** The receipt card's head, worded the same on every client: the verdict, then counts and how the run was held. */
+export function receiptHeadline(receipt: IReceiptJson): { readonly title: string; readonly meta: string; readonly icon: IconName; readonly tone: 'success' | 'danger' | 'muted' } {
+	const proven = receipt.lines.filter(line => line.status === 'proven').length;
+	const meta = [
+		`${proven} of ${receipt.lines.length} proven`,
+		...(receipt.review ? [receipt.review.verdict === 'pass' ? 'second opinion agrees' : 'second opinion disagrees'] : []),
+		...(receipt.sentBack ? [receipt.sentBack === 1 ? 'sent back once' : `sent back ${receipt.sentBack} times`] : []),
+	].join(' \u00b7 ');
+	if (receipt.verdict === 'proven') {
+		return { title: 'Proven done', meta, icon: 'shieldCheck', tone: 'success' };
+	}
+	if (receipt.verdict === 'failed') {
+		return { title: 'Not proven', meta, icon: 'shieldAlert', tone: 'danger' };
+	}
+	const checksHold = receipt.lines.every(line => line.status === 'proven' || line.status === 'unavailable' || line.status === 'claimed');
+	return { title: checksHold && !receipt.open.length ? 'Checks pass' : 'Partly proven', meta, icon: 'shield', tone: 'muted' };
+}
+
+/** One receipt line's mark and the words for it. */
+export function receiptStatus(status: ProofStatus): { readonly icon: IconName; readonly label: string; readonly tone: 'success' | 'danger' | 'warning' | 'muted' } {
+	switch (status) {
+		case 'proven': return { icon: 'checkCircle', label: 'Proven', tone: 'success' };
+		case 'failed': return { icon: 'xCircle', label: 'Failed', tone: 'danger' };
+		case 'stale': return { icon: 'history', label: 'Ran before the last edit', tone: 'warning' };
+		case 'missing': return { icon: 'circleDashed', label: 'Not run', tone: 'muted' };
+		case 'claimed': return { icon: 'circle', label: 'Claimed, not checked', tone: 'muted' };
+		case 'unavailable': return { icon: 'minus', label: 'No way to check it here', tone: 'muted' };
+	}
 }
 
 //#endregion

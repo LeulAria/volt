@@ -188,6 +188,7 @@ import './contrib/voltAgent/electron-browser/voltHostMcp.contribution.js';
 import './contrib/voltAgent/electron-browser/voltExternalMcp.contribution.js';
 import './contrib/voltAgent/electron-browser/agentVisuals.contribution.js';
 import './contrib/voltAgent/browser/pullRequests/agentPullRequests.contribution.js';
+import './contrib/voltAgent/browser/trajectory/agentTrajectory.contribution.js';
 import './contrib/voltAgent/browser/runGroups/agentRunGroups.contribution.js';
 import './contrib/voltAgent/browser/orchestration/agentThreadToolService.js';
 import './contrib/voltAgent/browser/orchestration/agentWorkspaceMover.js';

@@ -10244,43 +10244,7 @@ pre.volt-agent-searchable {
 	color: inherit;
 }
 
-/* Compare models: the toggle beside Settings, checkbox rows and a count footer (agentModelPicker.ts). */
-.volt-agent-picker-multi {
-	position: sticky;
-	right: 36px;
-	flex: 0 0 32px;
-	width: 32px;
-	height: 36px;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	border: 0;
-	border-radius: 0;
-	background: var(--vscode-editorWidget-background, var(--vscode-dropdown-background, #252526));
-	color: var(--vscode-foreground);
-	opacity: 0.72;
-	cursor: pointer;
-}
-
-.volt-agent-picker-multi:hover,
-.volt-agent-picker-multi.active {
-	opacity: 1;
-}
-
-.volt-agent-picker-multi.active {
-	color: var(--vscode-textLink-foreground, #3794ff);
-}
-
-.volt-agent-picker-multi.disabled {
-	opacity: 0.35;
-	cursor: default;
-}
-
-.volt-agent-picker-multi:focus-visible {
-	outline: 1px solid var(--vscode-focusBorder);
-	outline-offset: -2px;
-}
-
+/* Compare models (⇧-click a model): checkbox rows and a count footer (agentModelPicker.ts). */
 /* Model rows hide the leading slot; in multi mode it holds the checkbox. */
 .volt-agent-picker-list .monaco-list-row.model.multi .check {
 	display: inline-flex;

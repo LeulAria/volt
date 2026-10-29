@@ -29,6 +29,7 @@ const PROVIDER_FAMILIES: Record<string, string> = {
 	'gemini-acp': 'antigravity',
 	kimi: 'kimi',
 	muse: 'muse',
+	fx: 'fx',
 	ollama: 'local',
 	lmstudio: 'local',
 	'openai-compat': 'local',

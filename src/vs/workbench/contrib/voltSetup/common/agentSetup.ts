@@ -9,6 +9,7 @@
  * verify, the wizard links the install guide instead of running a script.
  */
 
+import { fxSignedIn, parseFxStatus } from '../../../services/voltRuntime/common/models/fxModels.js';
 import { parseOpenCodeAuthList } from '../../../services/voltRuntime/common/models/harnessCatalog.js';
 
 export type SetupPlatform = 'mac' | 'linux' | 'windows';
@@ -26,6 +27,8 @@ export type AgentAuthCheck =
 	 * `auth.json` no longer says; OpenCode 1 ignores the flag and prints "N credentials".
 	 */
 	| { readonly kind: 'opencodeStatus' }
+	/** `fx status --json`: `auth` names the login method, `missing` when signed out. */
+	| { readonly kind: 'fxStatus' }
 	/** A credentials file below the home folder; present means signed in, absent means signed out. */
 	| { readonly kind: 'file'; readonly path: string }
 	/** Nothing to ask: the CLI signs in inside its own UI and keeps the token where Volt cannot see it. */
@@ -117,6 +120,15 @@ export const AGENT_SETUP: readonly IAgentSetupInfo[] = [
 		loginHint: '/login',
 		authCheck: { kind: 'none' },
 	},
+	{
+		id: 'fx',
+		// fx ships for macOS and Linux only.
+		install: { mac: 'curl -fsSL https://fx.sh/setup.sh | bash', linux: 'curl -fsSL https://fx.sh/setup.sh | bash' },
+		docsUrl: 'https://fx.sh/docs',
+		// Vercel AI Gateway; `fx login codex` and `fx login grok` use those subscriptions instead.
+		login: 'fx login',
+		authCheck: { kind: 'fxStatus' },
+	},
 ];
 
 export function agentSetupInfo(id: string): IAgentSetupInfo | undefined {
@@ -134,6 +146,7 @@ export function authCheckCommand(check: AgentAuthCheck, command: string): string
 		case 'codexStatus': return `${command} login status`;
 		case 'cursorStatus': return `${command} status --format json`;
 		case 'opencodeStatus': return `${command} auth list --format json`;
+		case 'fxStatus': return `${command} status --json`;
 		default: return undefined;
 	}
 }
@@ -212,6 +225,14 @@ export function parseAuthCheck(check: AgentAuthCheck, exitCode: number | null, s
 				return { kind: 'unknown' };
 			}
 			return count > 0 ? { kind: 'signedIn', plan: `${count} provider${count === 1 ? '' : 's'}` } : { kind: 'signedOut' };
+		}
+		case 'fxStatus': {
+			const status = parseFxStatus(stdout);
+			const signedIn = fxSignedIn(status);
+			if (signedIn === undefined) {
+				return { kind: 'unknown' };
+			}
+			return signedIn ? { kind: 'signedIn', plan: status?.auth } : { kind: 'signedOut' };
 		}
 		default:
 			return { kind: 'unknown' };

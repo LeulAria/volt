@@ -4,8 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	basename, compactNumber, dirname, duration, formatWorkedTime, type IRowImage, type IStepItem, type ISubagentItem, liveVerb, money, pendingLabel, relativeTime,
-	shellTokenColor, tokenizeShell, type TranscriptRow, TYPE
+	basename, compactNumber, dirname, duration, formatWorkedTime, type IRowImage, type IStepItem, type ISubagentItem, liveVerb, money, pendingLabel, receiptHeadline,
+	receiptStatus, relativeTime, shellTokenColor, tokenizeShell, type TranscriptRow, TYPE
 } from '@volt/client-core';
 import { router } from 'expo-router';
 import { memo, type ReactNode, useMemo, useState } from 'react';
@@ -621,6 +621,68 @@ function TurnFilesCard({ row }: { readonly row: RowOf<'turnFiles'> }) {
 
 //#region Turn end
 
+/** Proof of done under the answer: the verdict, each item with its proof (commands copy on tap), what is left, the files changed. */
+function ReceiptRow({ row }: { readonly row: RowOf<'receipt'> }) {
+	const { p } = useTheme();
+	const receipt = row.receipt;
+	const head = receiptHeadline(receipt);
+	const tone = (name: 'success' | 'danger' | 'warning' | 'muted') => name === 'success' ? p.success : name === 'danger' ? p.danger : name === 'warning' ? p.warning : p.iconTertiary;
+	const section = { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderColor: p.strokeFaint, gap: 2 } as const;
+	const more = receipt.changedCount - receipt.changed.length;
+	return (
+		<View style={[styles.card, { backgroundColor: p.card, borderColor: p.stroke, paddingHorizontal: 12, paddingVertical: 10 }]} accessibilityRole="summary" accessibilityLabel={head.title}>
+			<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+				<Icon name={head.icon} size={14} color={tone(head.tone)} />
+				<Text style={{ fontSize: 14, lineHeight: 22, fontWeight: '500', color: head.tone === 'muted' ? p.fgSecondary : tone(head.tone) }}>{head.title}</Text>
+				<Text numberOfLines={1} style={{ flex: 1, textAlign: 'right', fontSize: 12, color: p.fgTertiary }}>{head.meta}</Text>
+			</View>
+			<View style={{ gap: 6 }}>
+				{receipt.lines.map((line, i) => {
+					const status = receiptStatus(line.status);
+					return (
+						<View key={i} style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
+							<View style={{ height: 20, justifyContent: 'center' }} accessibilityLabel={status.label}><Icon name={status.icon} size={13} color={tone(status.tone)} /></View>
+							<View style={{ flex: 1, gap: 2 }}>
+								<Text selectable style={{ fontSize: 13, lineHeight: 20, color: line.status === 'missing' || line.status === 'unavailable' ? p.fgTertiary : p.fg }}>{line.source === 'agent' ? `Agent: \u201c${line.text}\u201d` : line.text}</Text>
+								{line.command ? (
+									<Tap haptics="light" onPress={() => copyWithHaptic(line.command!)} accessibilityLabel={`Copy ${line.command}`} style={{ alignSelf: 'flex-start', maxWidth: '100%', borderRadius: 4, backgroundColor: p.fill, paddingHorizontal: 5 }}>
+										<Text numberOfLines={1} style={{ fontFamily: FONT.mono, fontSize: 11, lineHeight: 17, color: p.fg }}>{line.command}</Text>
+									</Tap>
+								) : null}
+								{line.detail ? <Text numberOfLines={2} style={{ fontSize: 12, lineHeight: 16, color: line.status === 'failed' ? p.fgSecondary : p.fgTertiary }}>{line.detail}</Text> : null}
+							</View>
+						</View>
+					);
+				})}
+			</View>
+			{receipt.review && (receipt.review.summary || receipt.review.gaps.length) ? (
+				<View style={section}>
+					<Text style={{ fontSize: 12, color: p.fgTertiary }}>Second opinion</Text>
+					{receipt.review.summary ? <Text selectable style={{ fontSize: 13, lineHeight: 20, color: p.fg }}>{receipt.review.summary}</Text> : null}
+					{receipt.review.gaps.map((gap, i) => <Text key={i} selectable style={{ fontSize: 13, lineHeight: 20, color: p.fg }}>{`\u2013 ${gap}`}</Text>)}
+				</View>
+			) : null}
+			{receipt.open.length ? (
+				<View style={section}>
+					<Text style={{ fontSize: 12, color: p.fgTertiary }}>Left open</Text>
+					{receipt.open.map((entry, i) => <Text key={i} selectable style={{ fontSize: 13, lineHeight: 20, color: p.fg }}>{entry}</Text>)}
+				</View>
+			) : null}
+			{receipt.changedCount ? (
+				<View style={[section, { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }]}>
+					<Text style={{ fontSize: 12, color: p.fgTertiary }}>{receipt.changedCount === 1 ? '1 file changed' : `${receipt.changedCount} files changed`}</Text>
+					{receipt.changed.map(path => (
+						<Tap key={path} haptics="selection" onPress={() => openFile(path)} style={{ borderRadius: 5, backgroundColor: p.fill, paddingHorizontal: 6, maxWidth: 200 }}>
+							<Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 20, color: p.fgSecondary }}>{basename(path)}</Text>
+						</Tap>
+					))}
+					{more > 0 ? <Text style={{ fontSize: 12, color: p.fgQuaternary }}>{`+${more} more`}</Text> : null}
+				</View>
+			) : null}
+		</View>
+	);
+}
+
 /** A reply's footer: Copy and Retry as 20px icon buttons, then when it ended and how. */
 function FooterRow({ row }: { readonly row: RowOf<'footer'> }) {
 	const { p } = useTheme();
@@ -749,6 +811,8 @@ export const RowView = memo(function RowView({ row, chatId }: { readonly row: Tr
 					{row.note ? <Text style={{ fontSize: 13, lineHeight: 18, color: p.fgSecondary }}>{row.note}</Text> : null}
 				</View>
 			);
+		case 'receipt':
+			return <ReceiptRow row={row} />;
 		case 'notice':
 			return <NoticeRow row={row} />;
 		case 'error':
