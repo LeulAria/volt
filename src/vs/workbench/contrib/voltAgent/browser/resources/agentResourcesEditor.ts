@@ -36,7 +36,7 @@ import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/
 import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 import { ITextEditorService } from '../../../../services/textfile/common/textEditorService.js';
-import { AgentResourceScopeKind, agentResourceScopeKind } from '../../common/agentResources.js';
+import { AGENT_RESOURCE_FILTER_ICON, AgentResourceScopeKind, agentResourceScopeKind } from '../../common/agentResources.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createAgentScrollable } from '../editor/agentScrollable.js';
 import { createHomeSearchIcon } from '../home/agentHomeIcons.js';
@@ -526,6 +526,7 @@ export class AgentResourcesEditor extends EditorPane {
 			ariaLabel: localize('agentResources.scopeFilter', "Scope"),
 			align: 'right',
 			width: 280,
+			leadingIcon: () => createSurfaceStrokeIcon(this.scopeHost.ownerDocument, AGENT_RESOURCE_FILTER_ICON),
 			onChange: value => {
 				this.scope = value;
 				this.storeState();
