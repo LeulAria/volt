@@ -229,8 +229,8 @@ export class WindowsStateHandler extends Disposable {
 			return; // during quit, many windows close in parallel so let it be handled in the before-quit handler
 		}
 
-		if (window.isBackgrounded) {
-			return; // a parked project session was never on screen, so it must not become the state we restore
+		if (window.isBackgrounded || window === this.windowsMainService.getSpareWindow()) {
+			return; // a parked project session (or the next New Window) was never on screen, so it must not become the state we restore
 		}
 
 		// On Window close, update our stored UI state of this window
