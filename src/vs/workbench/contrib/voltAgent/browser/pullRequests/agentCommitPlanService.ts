@@ -27,6 +27,7 @@ import {
 } from '../../common/agentCommitPlan.js';
 import { AGENT_COMMIT_ATTRIBUTION_SETTING, withCommitAttribution } from '../../common/agentGitSettings.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
+import { followWorktreeBranch } from './agentWorktreeBranch.js';
 
 export const IAgentCommitPlanService = createDecorator<IAgentCommitPlanService>('agentCommitPlanService');
 
@@ -362,12 +363,7 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 		}
 		const { previous, branch } = await this.pullRequests.api.renameBranch({ folder, name });
 		// Chats working in this checkout follow the branch (the worktree pill, cleanup, forks).
-		for (const meta of this.history.list()) {
-			if (meta.worktreePath && meta.worktreeBranch === previous && samePath(meta.worktreePath, status.root)) {
-				this.runtime.rememberWorktree(meta.id, meta.worktreePath, branch);
-				this.history.open(meta.id).setMeta({ worktreeBranch: branch });
-			}
-		}
+		followWorktreeBranch(this.history, this.runtime, status.root, branch);
 		const plan = this.pending(sessionId);
 		if (plan) {
 			(plan as { branch: string | undefined }).branch = branch;
@@ -380,11 +376,6 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 	}
 
 	//#endregion
-}
-
-function samePath(a: string, b: string): boolean {
-	const clean = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-	return clean(a) === clean(b);
 }
 
 export const COMMIT_PLAN_TOOLS: readonly IVoltHostToolInfo[] = [

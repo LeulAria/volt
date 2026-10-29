@@ -6,6 +6,7 @@
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableMap } from '../../../../../base/common/lifecycle.js';
 import { disposableTimeout } from '../../../../../base/common/async.js';
+import { isAbsolute } from '../../../../../base/common/path.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IHostService } from '../../../../services/host/browser/host.js';
@@ -38,7 +39,10 @@ import { isPlaceholderBranch, PROPOSE_COMMITS_TOOL_NAME } from '../../common/age
 import { IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { AGENT_BRANCH_PREFIX_SETTING, AGENT_COMMIT_ATTRIBUTION_SETTING, readBranchPrefix, withCommitAttribution } from '../../common/agentGitSettings.js';
+import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
+import { followWorktreeBranch } from './agentWorktreeBranch.js';
 import { openPullRequest } from './agentPullRequestUi.js';
 import { showAgentGitCommitDialog } from './agentGitCommitDialog.js';
 
@@ -101,6 +105,9 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 	/** The chat that last asked about a folder, for reads the folder's own changes start. */
 	private readonly sessions = new Map<string, string | undefined>();
 	private readonly rereads = this._register(new DisposableMap<string>());
+	/** A linked worktree's own git folder (HEAD, index) lives in the main repository: watched per folder. */
+	private readonly gitDirWatches = this._register(new DisposableMap<string>());
+	private readonly gitDirs = new Map<string, URI>();
 	/** Folders with an action under way (from the click on, prompts and dialogs included): one at a time. */
 	private readonly claimed = new Set<string>();
 	/** The newest read started per folder; an older one finishing later must not paint over it. */
@@ -115,10 +122,12 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@ILogService private readonly logService: ILogService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
-		@IFileService fileService: IFileService,
+		@IFileService private readonly fileService: IFileService,
 		@IHostService hostService: IHostService,
 		@IVoltHostToolService private readonly hostTools: IVoltHostToolService,
 		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
+		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 	) {
 		super();
 		// A pull request linked or created elsewhere changes what the quick action offers.
@@ -133,7 +142,8 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 		// waiting on Source Control: the folder's files and its .git index and refs are watched.
 		this._register(fileService.onDidFilesChange(e => {
 			for (const folder of this.states.keys()) {
-				if (e.affects(URI.file(folder))) {
+				const gitDir = this.gitDirs.get(folder);
+				if (e.affects(URI.file(folder)) || (gitDir && e.affects(gitDir))) {
 					this.rereadSoon(folder);
 				}
 			}
@@ -145,6 +155,32 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 				}
 			}
 		}));
+	}
+
+	/**
+	 * A linked worktree's `.git` is a file naming its git folder in the main repository, where a
+	 * rename, checkout (HEAD) or commit (index) from a terminal or the agent lands. Those are outside
+	 * the folder, so they are watched too. A plain checkout's `.git` is inside it already.
+	 */
+	private async watchWorktreeGitDir(folder: string): Promise<void> {
+		const dotGit = URI.joinPath(URI.file(folder), '.git');
+		try {
+			const stat = await this.fileService.stat(dotGit);
+			if (stat.isDirectory) {
+				return;
+			}
+			const content = (await this.fileService.readFile(dotGit)).value.toString();
+			const match = /^gitdir:\s*(.+)$/m.exec(content);
+			if (!match) {
+				return;
+			}
+			const target = match[1].trim();
+			const gitDir = isAbsolute(target) ? URI.file(target) : URI.joinPath(URI.file(folder), target);
+			this.gitDirs.set(folder, gitDir);
+			this.gitDirWatches.set(folder, this.fileService.watch(gitDir));
+		} catch (err) {
+			this.logService.trace('[volt-git] could not watch the git folder of', folder, err);
+		}
 	}
 
 	/** Reads a folder again shortly; a burst of file events is one read. */
@@ -168,6 +204,10 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 
 	state(folder: string, sessionId: string | undefined, force = false): Promise<IAgentGitControlState> {
 		this.sessions.set(folder, sessionId);
+		if (!this.gitDirWatches.has(folder)) {
+			this.gitDirWatches.set(folder, Disposable.None);
+			void this.watchWorktreeGitDir(folder);
+		}
 		const cached = this.states.get(folder);
 		if (!force && cached && Date.now() - cached.at < STATUS_TTL_MS) {
 			return Promise.resolve(this.withProgress(cached.state, folder));
@@ -199,6 +239,11 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 			status = await this.pullRequests.api.gitStatus(folder);
 		} catch (err) {
 			this.logService.trace('[volt-git] status failed for', folder, err);
+		}
+		// The chat's worktree may have been renamed or switched (by the agent, a terminal): its row and
+		// branch pill follow.
+		if (status?.branch) {
+			followWorktreeBranch(this.history, this.runtime, status.root, status.branch);
 		}
 		const pr = status?.branch ? await this.branchPr(folder, status.branch, sessionId) : undefined;
 		const hasOpenPr = !!pr && isOpenState(pr.state);

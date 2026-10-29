@@ -1517,6 +1517,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		landingObserver.observe(landing.element);
 		this._register(toDisposable(() => landingObserver.disconnect()));
 		this._register(this.landingChrome.onDidChangeBranch(() => this.contextUsageView.refreshBranch()));
+		// The chat's worktree branch was renamed or switched (followWorktreeBranch): the pill follows.
+		let shownBranch: string | undefined;
+		this._register(this.history.onDidChange(() => {
+			const branch = this.history.get(this.sessionKey)?.worktreeBranch;
+			if (branch !== shownBranch) {
+				shownBranch = branch;
+				this.contextUsageView.refreshBranch();
+			}
+		}));
 		// The first send in Worktree mode makes the checkout just before the run starts.
 		this._register(this.runtime.onDidEmit(e => {
 			if (e.sessionId === this.sessionKey && (e.event.type === 'run.start' || e.event.type === 'notice')) {
