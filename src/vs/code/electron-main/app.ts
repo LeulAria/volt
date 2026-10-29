@@ -171,6 +171,12 @@ import { IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME } from '../../platform/vol
 import { VoltSpeechMainService } from '../../platform/voltSpeech/electron-main/voltSpeechMainService.js';
 import ErrorTelemetry from '../../platform/telemetry/electron-main/errorTelemetry.js';
 
+/** The windows a request may come from: the ones open and the one loading for the next New Window. */
+function withSpareWindow(windowsMainService: IWindowsMainService): ICodeWindow[] {
+	const spare = windowsMainService.getSpareWindow();
+	return spare ? [...windowsMainService.getWindows(), spare] : windowsMainService.getWindows();
+}
+
 /**
  * The main VS Code application. There will only ever be one instance,
  * even if the user starts many instances (e.g. from the command line).
@@ -291,8 +297,8 @@ export class CodeApplication extends Disposable {
 				}
 			}
 
-			// Project sessions render into views of their own inside a browser window
-			for (const window of this.windowsMainService.getWindows()) {
+			// Project sessions (and the window kept for the next New Window) render into views of their own inside a browser window
+			for (const window of withSpareWindow(this.windowsMainService)) {
 				if (!window.webContents.isDestroyed() && frame.processId === window.webContents.mainFrame.processId) {
 					return true;
 				}
@@ -312,7 +318,7 @@ export class CodeApplication extends Disposable {
 			}
 
 			// Check to see if the request comes from one of the main editor windows.
-			for (const window of this.windowsMainService.getWindows()) {
+			for (const window of withSpareWindow(this.windowsMainService)) {
 				if (!window.webContents.isDestroyed() && frame.processId === window.webContents.mainFrame.processId) {
 					return true;
 				}

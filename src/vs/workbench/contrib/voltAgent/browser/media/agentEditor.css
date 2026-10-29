@@ -598,6 +598,14 @@
 	display: inline-flex;
 }
 
+/* A one-line prompt centers Stop (and Rewind) on its text line instead of the bottom corner. */
+.volt-agent-turn.user .volt-agent-bubble:not(.multiline) .volt-agent-user-stop,
+.volt-agent-turn.user .volt-agent-bubble:not(.multiline) .volt-agent-user-restore {
+	top: 50%;
+	bottom: auto;
+	transform: translateY(-50%);
+}
+
 .volt-agent-user-stop .volt-agent-svg-icon,
 .volt-agent-user-stop .volt-agent-svg-icon svg {
 	width: 10px;
@@ -4373,6 +4381,14 @@ pre.volt-agent-searchable {
 	font-size: 12px;
 }
 
+/* The pencil (agentHomeIcons.ts), drawn at the size of the arrow and trash codicons beside it. */
+.volt-agent-queue-remove .volt-agent-svg-icon,
+.volt-agent-queue-remove .volt-agent-svg-icon svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+}
+
 .volt-agent-queue-chips {
 	display: flex;
 	flex-wrap: wrap;
@@ -5617,7 +5633,7 @@ pre.volt-agent-searchable {
 	gap: 5px;
 	flex-shrink: 0;
 	height: 22px;
-	color: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
 	font-size: 12px;
 	font-weight: 300;
 	line-height: 22px;
@@ -5628,10 +5644,48 @@ pre.volt-agent-searchable {
 	display: inline-flex;
 }
 
-.volt-agent-status-env .icon svg {
+/* Every footer icon (access, branch, worktree, usage, context ring) is one 14px glyph in its item's
+ * color, centered on the label. The codicon rules need the workbench prefix to beat
+ * `.monaco-workbench .codicon[class*=codicon-]` (16px, icon foreground). */
+.volt-agent-composer-status .volt-agent-status-access .icon,
+.volt-agent-composer-status .volt-agent-status-env .icon {
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	flex: none;
+}
+
+.volt-agent-composer-status .volt-agent-status-access .icon .volt-agent-svg-icon,
+.volt-agent-composer-status .volt-agent-status-access .icon .volt-agent-svg-icon svg,
+.volt-agent-composer-status .volt-agent-status-env .icon svg,
+.volt-agent-composer-status .volt-agent-session-usage > svg,
+.volt-agent-composer-status .volt-agent-context-meter > svg {
 	display: block;
 	width: 14px;
 	height: 14px;
+	flex: none;
+	color: inherit;
+}
+
+/* One stroke weight for the line icons (the ring keeps its own). */
+.volt-agent-composer-status .volt-agent-status-access .icon svg :is(path, rect),
+.volt-agent-composer-status .volt-agent-status-env .icon svg :is(path, circle),
+.volt-agent-composer-status .volt-agent-session-usage > svg path {
+	stroke-width: 1.5;
+}
+
+.monaco-workbench .volt-agent-composer-status .volt-agent-status-branch > .codicon:not(.chevron) {
+	width: 14px;
+	height: 14px;
+	font-size: 14px;
+	line-height: 14px;
+	flex: none;
+	color: inherit;
+}
+
+.monaco-workbench .volt-agent-composer-status :is(.volt-agent-status-branch, .volt-agent-status-access) > .codicon.chevron {
+	color: inherit;
 }
 
 .volt-agent-status-env.hidden {
@@ -7077,6 +7131,7 @@ pre.volt-agent-searchable {
 	questions, a worktree's setup) they stay in flow. */
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-composer-stack.has-stack ~ .volt-agent-composer-chips.is-visible,
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-question-tray:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-commit-plan:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-clone-banner:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-worktree-setup:not(.hidden) ~ .volt-agent-composer-chips.is-visible {
 	margin-top: 0;
@@ -10384,5 +10439,49 @@ pre.volt-agent-searchable {
 }
 
 .monaco-workbench .volt-agent-composer-chip .volt-agent-composer-chip-close .codicon.codicon-close {
+	font-size: 12px;
+}
+
+/*
+ * The same count as a token in the composer's input: blue text, no pill. A line above the prompt in
+ * the new-chat and multiline composers; right after the + on the one-line follow-up.
+ */
+.volt-agent-multitask-token {
+	display: flex;
+	align-items: center;
+	align-self: flex-start;
+	flex: none;
+	gap: 6px;
+	margin: 8px 10px -6px;
+	color: #4c8dff;
+	font-size: 14px;
+	line-height: 22px;
+	white-space: nowrap;
+	cursor: default;
+}
+
+.volt-agent-multitask-token.hidden {
+	display: none;
+}
+
+.volt-agent-multitask-token.empty {
+	color: #9a9a9a;
+}
+
+.volt-agent-multitask-token > .volt-agent-svg-icon,
+.volt-agent-multitask-token > .volt-agent-svg-icon svg {
+	display: flex;
+	width: 14px;
+	height: 14px;
+}
+
+.volt-agent-input-box.follow-up:not(.multiline) .volt-agent-multitask-token {
+	order: 2;
+	align-self: center;
+	margin: 0 0 0 8px;
+}
+
+/* Four classes: `.monaco-workbench .codicon[class*='codicon-']` draws every codicon at 16px. */
+.monaco-workbench .volt-agent-multitask-token .volt-agent-composer-chip-close .codicon.codicon-close {
 	font-size: 12px;
 }

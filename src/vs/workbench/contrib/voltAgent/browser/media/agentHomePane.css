@@ -806,9 +806,18 @@
 	border: none !important;
 }
 
-/* Agent tab rows in flat lists start at the title (no glyph slot); the project is named on the
- * second line. Under a project the empty slot stays, so nested titles indent past their folder. */
+/* Agent tab rows start at the title (no glyph slot); a flat row names its project on the second line. */
 .volt-agent-home-row.is-session.no-glyph > .icon {
+	display: none;
+}
+
+/* Under a project the title steps in to where the folder's icon ends, short of the folder's name. Show more lines up. */
+.volt-agent-home-row.is-session.is-nested.no-glyph,
+.volt-agent-home-row.is-more.is-nested {
+	padding-left: calc(var(--volt-home-level, 0) * var(--volt-home-indent) + 10px);
+}
+
+.volt-agent-home-row.is-more.is-nested > .icon {
 	display: none;
 }
 
@@ -949,9 +958,11 @@
 	position: relative;
 }
 
+/* z-index: the chips paint over everything else in the row (unread dot, badge, age). */
 .volt-agent-home-row > .actions {
 	display: none;
 	position: absolute;
+	z-index: 1;
 	top: 50%;
 	right: 8px;
 	transform: translateY(-50%);
@@ -2032,10 +2043,18 @@ html.volt-layout-agent-window body {
 	display: none;
 }
 
-/* Under the hover actions the badge and age keep their space, so nothing shifts. */
+/* Under the hover actions the badge, age, settled row's PR pill and unread dot keep their space, so
+ * nothing shifts; the chips are see-through, so they would show through them. */
 .monaco-list-row:hover .volt-agent-home-row.is-session > .status-badge,
-.monaco-list-row:hover .volt-agent-home-row.is-session > .meta {
+.monaco-list-row:hover .volt-agent-home-row.is-session > .meta,
+.monaco-list-row:hover .volt-agent-home-row.is-session > .line-pr,
+.monaco-list-row:hover .volt-agent-home-row.is-session > .unread-dot {
 	visibility: hidden;
+}
+
+/* A dragged chat over a group that would take it (class set in agentHomePane.ts). */
+.volt-agent-home-tree .monaco-pane-view .pane.volt-agent-home-pane.drop-target {
+	background-color: var(--vscode-list-dropBackground);
 }
 
 .volt-agent-home-row > .status-badge.kind-input {

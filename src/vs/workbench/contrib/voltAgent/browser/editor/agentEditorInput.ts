@@ -33,6 +33,8 @@ export const NEW_AGENT_COMMAND_ID = 'workbench.action.newAgent';
 export const NEW_AGENT_TAB_COMMAND_ID = 'workbench.action.voltAgent.newAgentTab';
 export const REPLACE_AGENT_COMMAND_ID = 'workbench.action.voltAgent.replaceAgent';
 export const OPEN_AGENT_COMMAND_ID = 'workbench.action.voltAgent.openSession';
+/** Desktop only: a new window that lists the chat's project and shows the chat. */
+export const OPEN_AGENT_IN_NEW_WINDOW_COMMAND_ID = 'volt.agent.openChatInNewWindow';
 export const OPEN_AGENT_HISTORY_COMMAND_ID = 'workbench.action.voltAgent.showHistory';
 export const TOGGLE_AGENT_DRAWER_COMMAND_ID = 'workbench.action.voltAgent.toggleDrawer';
 export const EXPORT_AGENT_TRANSCRIPT_COMMAND_ID = 'workbench.action.voltAgent.exportTranscript';

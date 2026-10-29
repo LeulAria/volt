@@ -141,6 +141,8 @@ import { AGENT_TOOL_DENSITY_SETTING, readToolDensity } from '../../common/agentA
 import { AgentComposerQueue, IAgentComposerQueueState, QueuePause } from '../composer/agentComposerQueue.js';
 import { AgentTasksCard } from '../composer/agentTasksCard.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
+import { AgentCommitPlanTray } from '../pullRequests/agentCommitPlanTray.js';
+import { IAgentCommitPlanService } from '../pullRequests/agentCommitPlanService.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
 import { AgentLimitChip } from '../composer/agentLimitChip.js';
 import { AgentVoiceDictation } from '../composer/agentVoiceDictation.js';
@@ -676,6 +678,9 @@ function acceptGhostText(editor: ICodeEditor): boolean {
 /** Model silence (no tool running) after which the live line says the turn is taking longer than expected, as Cursor does. */
 const SLOW_TURN_MS = 90_000;
 
+/** Silence after reply text, with the turn still running, before the live line shows again under the text. */
+const TEXT_QUIET_MS = 1_500;
+
 /** Supervisor tray buttons. Cursor's looping tray has none; these give the user a way forward. */
 const SUPERVISION_ACTION_LABELS: Record<SupervisionAction, { readonly label: () => string; readonly tooltip: () => string }> = {
 	continueDifferently: {
@@ -765,6 +770,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	/** The agent's to-dos, above the chips like the Context Usage card. */
 	private tasksCard: AgentTasksCard | undefined;
 	private questionTray!: AgentQuestionTray;
+	/** The commits the agent proposed (propose_commits), docked above the composer while the user reviews them. */
+	private commitPlanTray: AgentCommitPlanTray | undefined;
 	private composerChips!: AgentComposerChips;
 	private pendingChanges!: AgentPendingChanges;
 	private readonly freshText = new FreshTextTracker();
@@ -851,6 +858,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private readonly userChipMentions = new WeakMap<HTMLElement, IAgentDisplayMention>();
 	/** Redraws a quiet, non-rotating live line when it should start reading "Taking longer than expected". */
 	private slowTurnTimer: IDisposable | undefined;
+	/** Redraws the live turn when its reply text has gone quiet, so the live line comes back. */
+	private textQuietTimer: IDisposable | undefined;
 	private dockSyncAt = 0;
 	private findWidget!: AgentFindWidget;
 	private findMatches: HTMLElement[] = [];
@@ -1218,6 +1227,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this._register(addDisposableListener(this.threadInner, 'click', e => this.onUserMessageClick(e)));
 		this._register(addDisposableListener(getWindow(this.container), 'keydown', e => {
 			if (e.key === 'Escape' && this.editingUserIndex !== undefined) {
+				// Escape in an image, video or "+N" grid dialog closes the dialog, not the edit.
+				if (isHTMLElement(e.target) && e.target.closest('.volt-agent-image-viewer-overlay')) {
+					return;
+				}
 				e.preventDefault();
 				this.cancelUserEdit();
 			}
@@ -1303,6 +1316,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			},
 			onAgentsClick: anchor => this.showAgentsMenu(anchor),
 			onMultitaskPickCancel: () => this.composerQueue?.stopPicking(),
+			multitaskInInput: true,
 			terminalRuns: this.terminalChips,
 			limitRun: this.limitChip,
 		}));
@@ -1332,6 +1346,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				prepare: source => answerFiles.prepare(source),
 			},
 		}));
+		// The commit review is opened and closed by the commit plan service (desktop only, like pull requests).
+		if (this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentCommitPlanService))) {
+			this.commitPlanTray = this._register(this.instantiationService.createInstance(AgentCommitPlanTray, { onLayout: () => this.layoutInputEditor() }));
+			append(this.composerEl, this.commitPlanTray.element);
+		}
 		append(this.composerEl, this.questionTray.element);
 		this._register(this.runtime.onDidChangeQuestions(sessionId => {
 			if (sessionId === this.sessionKey) {
@@ -1371,6 +1390,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this._register(this.voiceDictation.onDidCommit(text => this.endDictatedText(text)));
 		this._register(this.voiceDictation.onDidFail(message => this.notificationService.warn(message)));
 		this.inputBox = append(this.composerEl, $('.volt-agent-input-box'));
+		// Start Multitasking's "N to multitask" sits in the input, before the prompt.
+		const multitaskToken = this.composerChips?.multitaskToken;
+		if (multitaskToken) {
+			append(this.inputBox, multitaskToken);
+		}
 		this.monacoHost = append(this.inputBox, $('.volt-agent-monaco.show-file-icons'));
 		this.placeholderEl = append(this.monacoHost, $('.volt-agent-placeholder'));
 		this.placeholderEl.setAttribute('aria-hidden', 'true');
@@ -1500,6 +1524,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		landingObserver.observe(landing.element);
 		this._register(toDisposable(() => landingObserver.disconnect()));
 		this._register(this.landingChrome.onDidChangeBranch(() => this.contextUsageView.refreshBranch()));
+		// The chat's worktree branch was renamed or switched (followWorktreeBranch): the pill follows.
+		let shownBranch: string | undefined;
+		this._register(this.history.onDidChange(() => {
+			const branch = this.history.get(this.sessionKey)?.worktreeBranch;
+			if (branch !== shownBranch) {
+				shownBranch = branch;
+				this.contextUsageView.refreshBranch();
+			}
+		}));
 		// The first send in Worktree mode makes the checkout just before the run starts.
 		this._register(this.runtime.onDidEmit(e => {
 			if (e.sessionId === this.sessionKey && (e.event.type === 'run.start' || e.event.type === 'notice')) {
@@ -3860,6 +3893,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const main = append(clip, $('.volt-agent-user-main'));
 		const media = userMessageMedia(message);
 		if (media.length) {
+			// Pictures above the text: Stop keeps the corner rather than centering on one line.
+			bubble.classList.add('multiline');
 			const strip = this.threadListeners.add(new AgentImageStrip({ onOpen: i => this.openMessageMedia(message, i) }, 'in-message'));
 			main.appendChild(strip.element);
 			const stripItems = media.map((mention, i): IAgentImageStripItem => mention.video
@@ -3867,7 +3902,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				: { key: `${i}`, name: mention.label, bytes: mention.image!.bytes, mime: mention.image!.mime, size: mention.image!.bytes.byteLength });
 			strip.update(stripItems);
 			// One row; "+N" on the last tile opens them all.
-			this.threadListeners.add(fitImageStripToOneRow(strip, stripItems, i => this.openMessageMedia(message, i)));
+			this.threadListeners.add(fitImageStripToOneRow(strip, i => this.openMessageMedia(message, i)));
 		}
 		const text = append(main, $('.volt-agent-text'));
 		this.userMessageTexts.set(text, message);
@@ -4256,6 +4291,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (e.target.closest('.volt-agent-edit-slot')
 			|| e.target.closest('.volt-agent-edit-composer')
 			|| e.target.closest('.volt-agent-input-box.editing')
+			// The edit's own image, video or "+N" grid dialog.
+			|| e.target.closest('.volt-agent-image-viewer-overlay')
 			|| e.target.closest('.volt-agent-dropdown')
 			|| e.target.closest('.volt-agent-plus-menu')
 			|| e.target.closest('.monaco-context-view')
@@ -4544,13 +4581,42 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 		this.editEditor.layout({ width, height: 0 });
-		const contentHeight = Math.min(Math.max(this.editEditor.getContentHeight(), lineHeight), USER_EDIT_MAX_HEIGHT);
+		const contentHeight = Math.min(Math.max(this.editEditor.getContentHeight(), lineHeight), this.editTextMaxHeight(next, padY));
 		const nextHeight = `${contentHeight + padY}px`;
 		if (this.editMonacoHost.style.height !== nextHeight) {
 			this.editMonacoHost.style.height = nextHeight;
 		}
 		this.editEditor.layout({ width, height: contentHeight });
 		this.applyEditAnchor();
+	}
+
+	/**
+	 * The tallest the edit text may be: what the capped box has left after its padding, the image
+	 * row and the toolbar. Laid out any taller, the box clips the last lines and they can't be
+	 * scrolled to; at this height the editor scrolls them instead.
+	 */
+	private editTextMaxHeight(hostStyle: CSSStyleDeclaration, hostPadY: number): number {
+		const box = this.editInputBox;
+		const host = this.editMonacoHost;
+		let max = USER_EDIT_MAX_HEIGHT;
+		const hostMax = parseFloat(hostStyle.maxHeight);
+		if (hostMax > 0) {
+			max = Math.min(max, hostMax - hostPadY);
+		}
+		if (box && host) {
+			const style = getWindow(box).getComputedStyle(box);
+			const boxMax = parseFloat(style.maxHeight);
+			if (boxMax > 0) {
+				let rest = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth) + hostPadY;
+				for (const child of Array.from(box.children)) {
+					if (child !== host && isHTMLElement(child)) {
+						rest += child.offsetHeight;
+					}
+				}
+				max = Math.min(max, boxMax - rest);
+			}
+		}
+		return Math.max(max, 22);
 	}
 
 	/**
@@ -4805,9 +4871,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const message = live.message;
 		this.liveTurns.add(message);
 		const rows = buildTranscriptRows(message.segments, message.text, true, message.steers, readToolDensity(this.configurationService));
+		// Text that stopped growing while the turn runs on (the model plans its next step, or waits on
+		// a subagent): nothing on screen moves, so the live line shows again under the text.
+		const quietFor = Date.now() - (message.activity?.lastEventAt ?? message.startedAt ?? Date.now());
+		const textQuiet = quietFor >= TEXT_QUIET_MS;
+		this.textQuietTimer?.dispose();
+		this.textQuietTimer = textQuiet ? undefined : disposableTimeout(() => this.scheduleThreadRender(), TEXT_QUIET_MS - quietFor + 50);
 		const parts = live.transcript.render(rows, store => this.transcriptHost(message, this.blockRenderContext(message, store), store), {
 			streaming: true,
-			status: this.liveStatusPhrase(message),
+			status: this.liveStatusPhrase(message, textQuiet),
+			textQuiet,
 			workedOpenByDefault: true,
 			statusKey: String(message.startedAt ?? message.id ?? 'live'),
 			// A running turn's to-dos live in the Tasks card on the composer.
@@ -4836,14 +4909,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	}
 
 	/** The live tail's phrase: the current action, or "Thinking" / "Planning next moves" in turn while the model is quiet. */
-	private liveStatusPhrase(message: IAgentAssistantMessage): string {
+	private liveStatusPhrase(message: IAgentAssistantMessage, textQuiet = false): string {
 		const activity = message.activity;
 		if (activity) {
 			activity.shimmerStartedAt ??= Date.now();
 		}
 		const anchor = activity?.shimmerStartedAt ?? Date.now();
 		const now = Date.now();
-		const lines = streamingActivityLines('', activity?.status, activity?.items ?? [], now, anchor, activity?.statusPinned === true);
+		// "Writing" stays the status after the text stops; once it is quiet the model is thinking again.
+		const status = textQuiet && activity?.status === localize('voltAgent.writing', "Writing") ? undefined : activity?.status;
+		const lines = streamingActivityLines('', status, activity?.items ?? [], now, anchor, activity?.statusPinned === true);
 		if (lines.rotate) {
 			this.armStatusRotation(anchor);
 		} else {
@@ -5782,6 +5857,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	private setMultitaskPick(ids: readonly string[] | undefined): void {
 		this.multitaskPick = ids;
 		this.composerChips?.setMultitaskPick(ids?.length);
+		// The token in the input takes room from the editor: lay it out again.
+		this.layoutInputEditor();
 		this.updateSendButton();
 	}
 
@@ -7224,7 +7301,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			// Working or waiting to start: the New Chat plane, still (no spinner).
 			icon: view.state === 'running' || view.state === 'queued' ? createHomeNewChatIcon : subagentStateIcon(view.state),
 			disabled: !view.openable,
-			...(view.openable ? { trailingIcon: view.readOnly ? Codicon.eye : Codicon.commentDiscussion } : {}),
+			// What a pick does, on the hovered row: send follow-ups (the plane), or watch a read-only chat.
+			...(view.openable ? { trailingIcon: view.readOnly ? Codicon.eye : createHomeNewChatIcon, trailingOnHover: true } : {}),
 			tooltip: view.openable
 				? (view.readOnly ? localize('voltAgent.agentsMenu.watch', "Watch its chat (read only)") : localize('voltAgent.agentsMenu.open', "Open its chat to send follow-ups"))
 				: localize('voltAgent.agentsMenu.harness', "Runs inside the agent's turn"),
@@ -7723,6 +7801,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private syncQueueStack(): void {
 		this.syncQuestionTray();
+		this.commitPlanTray?.setSession(this.sessionKey);
 		if (!this.composerQueue) {
 			return;
 		}
@@ -8479,6 +8558,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this.statusRotateTimer?.dispose();
 		this.renderHandle?.dispose();
 		this.slowTurnTimer?.dispose();
+		this.textQuietTimer?.dispose();
 		this.contextUsageTimer?.dispose();
 		this.scrollSyncFrame?.dispose();
 		this.prewarmTimer?.dispose();

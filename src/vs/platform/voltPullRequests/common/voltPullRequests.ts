@@ -654,6 +654,11 @@ export interface IVoltPullRequestService {
 	pull(folder: string): Promise<{ readonly updated: boolean; readonly branch: string; readonly upstream: string }>;
 	/** Creates and checks out `name` at HEAD; uncommitted changes come along. */
 	checkoutNewBranch(request: { readonly folder: string; readonly name: string }): Promise<void>;
+	/**
+	 * Renames the checked out branch to `name`. An upstream under the old name is dropped (the
+	 * next push publishes the new name). Fails when `name` is taken.
+	 */
+	renameBranch(request: { readonly folder: string; readonly name: string }): Promise<{ readonly previous: string; readonly branch: string }>;
 	/** Forget cached accounts and tokens (after the user signed in or out in a terminal). */
 	refreshAccounts(): Promise<void>;
 	/** The tokens the user gave Volt, every host (replaces the previous set). */

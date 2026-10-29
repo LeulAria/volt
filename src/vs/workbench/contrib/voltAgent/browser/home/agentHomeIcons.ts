@@ -103,6 +103,26 @@ export function createSessionHoverFolderIcon(): HTMLElement {
 	return createHomeSvgIcon('session-folder', AGENT_SESSION_HOVER_FOLDER_ICON_PATH, { strokeWidth: '1.5' });
 }
 
+/** Git branch drawn like the hover card's folder (24 grid, round stroke) so the two rows match. */
+export const AGENT_SESSION_HOVER_BRANCH_ICON_PATHS = [
+	'M6 3v12',
+	'M21 6a3 3 0 1 1-6 0a3 3 0 0 1 6 0',
+	'M9 18a3 3 0 1 1-6 0a3 3 0 0 1 6 0',
+	'M18 9a9 9 0 0 1-9 9',
+] as const;
+
+/** Branch glyph for the chat-row hover card (stroke 1.5, round caps), the folder's twin. */
+export function createSessionHoverBranchIcon(): HTMLElement {
+	return createHomeStrokeIcon('session-branch', AGENT_SESSION_HOVER_BRANCH_ICON_PATHS, '1.5');
+}
+
+/** Pencil for Edit queued message; stroke follows currentColor. */
+export const AGENT_EDIT_ICON_PATH = 'M18 10L21 7L17 3L14 6M18 10L8 20H4V16L14 6M18 10L14 6';
+
+export function createEditIcon(): HTMLElement {
+	return createHomeSvgIcon('edit', AGENT_EDIT_ICON_PATH, { strokeWidth: '1' });
+}
+
 export function createHomeFilterIcon(): HTMLElement {
 	return createHomeSvgIcon('filter', AGENT_HOME_FILTER_ICON_PATH, { strokeWidth: '1.5' });
 }

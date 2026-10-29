@@ -25,16 +25,6 @@
 	background: var(--vscode-editorWarning-foreground, #cca700);
 }
 
-/* An agent tab with a reply you have not seen: a blue dot where the empty glyph sits under a project. */
-.volt-agent-home-row.is-session.unread > .icon > .glyph:empty::after {
-	content: '';
-	display: block;
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	background: var(--vscode-charts-blue, #3794ff);
-}
-
 /*
  * Compact list: one tight line per chat. The age, the second line's details and the status
  * labels go (status icons stay); text and gaps tighten. Row heights come from the list's delegate.

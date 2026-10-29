@@ -47,6 +47,8 @@ export interface IIntent {
 	readonly shape: IRequestShape;
 	/** Something long-running is involved: a server, a watcher, Docker. Managed terminals fit. */
 	readonly wantsServices?: boolean;
+	/** Committing, pushing, naming the branch or opening a pull request: Volt's commit review and branch naming. */
+	readonly wantsGit?: boolean;
 }
 
 export interface IIntentContext {
@@ -98,6 +100,8 @@ const WORKSPACE_REF = /\b(this|the|our|my) (repo|repository|code ?base|project|a
  * verb ("show me it", "open this"): "check it with a simulation" or "run this repo's tests" is not a preview.
  */
 /** Long-running things: containers, servers, watchers, daemons. */
+/** "commit this", "push it", "raise a PR", "rename the branch": the commit review and branch naming apply. */
+const GIT_INTENT = /\b(?:commit(?:s|ting)?|push(?:ed|ing)?|pull request|(?:raise|open|create|make|send) (?:a |the )?pr|pr to|(?:re)?name (?:the |this |my )?branch|branch name)\b/i;
 const SERVICE_INTENT = /\b(?:docker|compose|container|kubernetes|k8s|dev ?server|web ?server|(?:start|run|launch|boot|restart|spin up)\b[^.?!]{0,30}\b(?:server|service|api|backend|database|db|redis|postgres|mongo|stack|worker|queue|app)|watch mode|watcher|hot reload|localhost:\d+)\b/i;
 const PREVIEW_INTENT = /\b(?:preview|open|show|see|view|look at)\b[^.?!]{0,40}\b(?:app|site|website|page|server|project|frontend|front-end|ui|it|this|the (?:thing|result|game|demo)|in (?:the |a )?browser|locally|on localhost)\b|\b(?:run|start|launch|serve|spin up|boot)\b[^.?!]{0,30}\b(?:app|site|website|page|(?:dev |web |http )?server|frontend|front-end|ui|game|demo|locally|on localhost|in (?:the |a )?browser)\b|\b(?:check|test)\b[^.?!]{0,30}\b(?:in (?:the |a )?browser|on localhost|the (?:ui|page|site|website|frontend))\b|\b(?:dev server|localhost|live preview|hot reload|in the browser|show me (?:the|what|how it looks))\b|\bmake it (?:run|work)\b|\bcan i see\b|\blet'?s see it\b/i;
 
@@ -168,6 +172,8 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	if (wantsPreview) { signals.push('preview'); }
 	const wantsServices = wantsPreview || SERVICE_INTENT.test(raw);
 	if (wantsServices) { signals.push('services'); }
+	const wantsGit = hasWorkspace && GIT_INTENT.test(raw);
+	if (wantsGit) { signals.push('git'); }
 
 	const matchesDesign = hasWorkspace && mode !== 'ask' && DESIGN_VERB.test(raw)
 		&& (IMAGE_FILE.test(raw) || (context.attachments ?? []).some(name => IMAGE_FILE.test(name)));
@@ -279,6 +285,7 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 		...(wantsScratch ? { wantsScratch } : {}),
 		...(wantsDevice ? { wantsDevice } : {}),
 		...(wantsServices ? { wantsServices } : {}),
+		...(wantsGit ? { wantsGit } : {}),
 		shape,
 	};
 }

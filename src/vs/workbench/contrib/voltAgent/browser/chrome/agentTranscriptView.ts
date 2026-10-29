@@ -76,6 +76,8 @@ export interface ITranscriptRenderOptions {
 	readonly todos?: ITodoChecklist;
 	/** When the running turn started: the live line shows a ticking elapsed time. */
 	readonly elapsedSince?: number;
+	/** The reply's text stopped growing while the turn runs on: the live line shows under it again. */
+	readonly textQuiet?: boolean;
 	/**
 	 * Rows of this reply drawn by the last pass. With it, `parent` may still hold the last pass's
 	 * nodes: unchanged rows stay where they are (no move, no restyle), changed ones are drawn again,
@@ -180,6 +182,10 @@ function liveTailPhrase(rows: readonly TranscriptRow[], options: ITranscriptRend
 	if (!last || last.kind === 'steps' || last.kind === 'thought' || last.kind === 'subagent' || last.kind === 'subagents' || last.kind === 'steer'
 		|| (last.kind === 'compaction' && last.compaction.status !== 'running')
 		|| (last.kind === 'block' && last.block.type === 'visual' && !last.block.ref)) {
+		return tailPhrase(rows, options.status);
+	}
+	// Streaming text is its own progress; text that went quiet (the turn still running) is not.
+	if (options.textQuiet && !(last.kind === 'compaction' && last.compaction.status === 'running')) {
 		return tailPhrase(rows, options.status);
 	}
 	return undefined;

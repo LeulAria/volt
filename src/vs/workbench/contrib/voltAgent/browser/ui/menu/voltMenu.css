@@ -318,6 +318,23 @@
 	font-size: 14px;
 }
 
+/* A custom glyph (the New Chat plane) at the codicons' size. */
+.volt-menu-trailing svg {
+	display: block;
+	width: 14px;
+	height: 14px;
+}
+
+/* A hint at what picking the row does: kept in the layout, shown on the hovered or focused row. */
+.volt-menu-trailing.on-hover {
+	visibility: hidden;
+}
+
+.volt-menu-list .monaco-list-row:hover .volt-menu-trailing.on-hover,
+.volt-menu-list .monaco-list-row.focused .volt-menu-trailing.on-hover {
+	visibility: visible;
+}
+
 .volt-menu-action {
 	display: inline-flex;
 	align-items: center;

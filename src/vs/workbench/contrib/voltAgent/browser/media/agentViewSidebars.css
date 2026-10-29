@@ -594,19 +594,32 @@
 	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
 }
 
+/* Row icons are 14px, quieter than the labels beside them. Four classes: `.monaco-workbench .codicon[class*='codicon-']`
+ * sets 16px. The checks chevron keeps its own 12px. */
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon:not(.volt-pr-dock-chevron) {
+	font-size: 14px;
+	width: 14px;
+	height: 14px;
+}
+
 /* The pull-request glyph fills its box more than the other row icons. */
-.volt-agent-quick-open-actions .volt-agent-dock-row .codicon-git-pull-request {
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon.codicon-git-pull-request {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	font-size: 13px;
-	line-height: 13px;
+	font-size: 12px;
+	line-height: 12px;
 }
 
 .volt-agent-quick-open-actions .volt-agent-stroke-icon {
 	width: 15px;
 	height: 15px;
 	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+}
+
+.volt-agent-quick-open-actions .volt-agent-dock-row .volt-agent-stroke-icon {
+	width: 14px;
+	height: 14px;
 }
 
 .volt-agent-quick-open-actions .volt-agent-stroke-icon :is(path, circle) {

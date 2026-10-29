@@ -3,9 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Emitter } from '../../../../../base/common/event.js';
+import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
-import { applyWindowScopeClaim, EMPTY_WINDOW_SCOPE, IVoltWindowScopeClaim, IVoltWindowScopes, IVoltWindowScopesService } from '../../../../../platform/voltWindowScope/common/voltWindowScope.js';
+import { applyWindowScopeClaim, EMPTY_WINDOW_SCOPE, IVoltWindowScopeClaim, IVoltWindowScopes, IVoltWindowScopesService, IVoltWindowStart } from '../../../../../platform/voltWindowScope/common/voltWindowScope.js';
 
 /** The main process: scopes open with their window and end when it closes. */
 export class TestWindowScopesHost extends Disposable implements IVoltWindowScopesService {
@@ -14,6 +14,7 @@ export class TestWindowScopesHost extends Disposable implements IVoltWindowScope
 
 	private readonly _onDidChangeScopes = this._register(new Emitter<IVoltWindowScopes>());
 	readonly onDidChangeScopes = this._onDidChangeScopes.event;
+	readonly onDidStartWindow = Event.None;
 
 	scopes: IVoltWindowScopes = {};
 
@@ -34,6 +35,14 @@ export class TestWindowScopesHost extends Disposable implements IVoltWindowScope
 	async claim(scope: string | undefined, claim: IVoltWindowScopeClaim): Promise<void> {
 		this.set(applyWindowScopeClaim(this.scopes, scope, claim));
 	}
+
+	async prepareWindow(_start: IVoltWindowStart): Promise<void> { }
+
+	async takeWindowStart(_scope: string): Promise<string | undefined> {
+		return undefined;
+	}
+
+	async didShowWindowStart(_scope: string): Promise<void> { }
 
 	private set(next: IVoltWindowScopes): void {
 		if (next !== this.scopes) {

@@ -8,7 +8,7 @@ import { createDraw, createIcon, createLabel, createLinear, createNote, createSh
 import { escapeHtml } from './scratchHtml.js';
 import {
 	AGENT_DIAGRAM_STYLE, IScratchBinding, IScratchStyleDefaults, SCRATCH_FONT_SIZES, ScratchArrowhead, ScratchArrowType, ScratchElement, ScratchFillStyle,
-	ScratchFontFamily, ScratchPoint, ScratchShapeKind, ScratchStrokeStyle, ScratchTextAlign,
+	ScratchFontFamily, ScratchPoint, ScratchRoundness, ScratchShapeKind, ScratchStrokeStyle, ScratchTextAlign,
 } from './scratchTypes.js';
 
 /**
@@ -143,7 +143,7 @@ export function sketchToElements(value: unknown, options: ISketchOptions = {}): 
 			...(roughness !== undefined ? { roughness: Math.min(2, Math.max(0, roughness)) } : {}),
 			...(opacity !== undefined ? { opacity: Math.min(100, Math.max(5, opacity <= 1 ? opacity * 100 : opacity)) } : {}),
 			...(angle !== undefined ? { angle: angle * Math.PI / 180 } : {}),
-			...(v.roundness === 'sharp' || v.roundness === 'round' ? { roundness: v.roundness } : {}),
+			...(v.roundness === 'sharp' || v.roundness === 'round' ? { roundness: v.roundness as ScratchRoundness } : {}),
 			...(groupId ? { groupIds: [groupId] } : {}),
 		};
 		const fontFamily = fontOf(v.font ?? v.fontFamily) ?? style.fontFamily;

@@ -205,8 +205,10 @@
 	min-width: 12px;
 }
 
-/* Card: hover details for a sidebar row (title, then icon rows with a muted detail line). */
+/* Card: hover details for a sidebar row (title, then icon rows with a muted detail line).
+ * It sits under plain tooltips: a row button's label must not hide behind the row's card. */
 .volt-agent-tooltip.card {
+	z-index: 2650;
 	gap: 6px;
 	min-width: 220px;
 	max-width: min(300px, calc(100vw - 16px));
@@ -216,6 +218,12 @@
 	padding: 10px 12px;
 	border-radius: 10px;
 	white-space: normal;
+}
+
+/* A card holding a list (a chat's pull requests): list rows are absolutely placed and give the
+ * card no width, so it takes its widest size (the max-width above still caps it). */
+.volt-agent-tooltip.card.has-block {
+	width: 300px;
 }
 
 /* A card that opens something (a subagent's chat): the whole card is the target. */
@@ -237,6 +245,21 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+/* A block of text with its own line breaks (a commit message's body); the card scrolls past 450px. */
+.volt-agent-tooltip-card-body {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	opacity: 0.8;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+/* The first block is the heading (a commit's subject). */
+.volt-agent-tooltip-card-body:first-child {
+	font-weight: 600;
+	opacity: 1;
 }
 
 .volt-agent-tooltip-card-row {
@@ -313,10 +336,27 @@
 	font-variant-numeric: tabular-nums;
 }
 
+/* The hairline runs the card's full width, through its 12px side padding. */
 .volt-agent-tooltip-card-sep {
+	flex: none;
 	height: 1px;
-	margin: 2px 0;
+	margin: 2px -12px;
 	background: rgba(255, 255, 255, 0.08);
+}
+
+/* A drawn block (a list, agentPullRequestList.ts) sits right under its hairline and, last, on the
+ * card's bottom edge: its rows run edge to edge with no space above or below. */
+.volt-agent-tooltip-card-block {
+	flex: none;
+	min-width: 0;
+}
+
+.volt-agent-tooltip-card-sep + .volt-agent-tooltip-card-block {
+	margin-top: -8px;
+}
+
+.volt-agent-tooltip.card > .volt-agent-tooltip-card-block:last-child {
+	margin-bottom: -10px;
 }
 
 .monaco-workbench.vs .volt-agent-tooltip-card-sep,

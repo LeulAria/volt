@@ -61,6 +61,7 @@ import { formatLineCount, guessPastedLanguage, pastedFileName } from '../../comm
 import { AGENT_LARGE_PASTE_SETTING } from '../../common/agentComposerSettings.js';
 import { PastedTextPreview } from './agentPastedTextPreview.js';
 import { AgentImageStrip, formatImageSize, imageExtension, imageThumbClass } from './agentImageAttachments.js';
+import { fitImageStripToOneRow } from '../editor/agentMessageImageRow.js';
 import { AgentImageViewer, showAgentImageViewer } from './agentImageViewer.js';
 import { citationLabel, IAgentCitation, serializeChatSelection, withCitationComment } from './agentCitation.js';
 import { showCitationCommentEditor } from './agentCitationComment.js';
@@ -655,7 +656,8 @@ export class AgentMentionController extends Disposable {
 
 	/**
 	 * Square previews of the prompt's images and videos, inserted into `parent` before `before`.
-	 * Clicking an image opens it to mark up; clicking a video opens it to trim.
+	 * Clicking an image opens it to mark up; clicking a video opens it to trim. One row, so many
+	 * images never push the text out of the box: "+N" on the last tile opens them all.
 	 */
 	bindImageStrip(parent: HTMLElement, before: HTMLElement | null): void {
 		const strip = this._register(new AgentImageStrip({
@@ -669,6 +671,7 @@ export class AgentMentionController extends Disposable {
 		}));
 		parent.insertBefore(strip.element, before);
 		this.imageStrips.push(strip);
+		this._register(fitImageStripToOneRow(strip, index => this.openMedia(index)));
 		this.syncImageStrip(strip);
 	}
 

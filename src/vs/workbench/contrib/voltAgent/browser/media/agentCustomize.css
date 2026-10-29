@@ -949,6 +949,13 @@
 	font-size: 16px;
 }
 
+.volt-marketplace-icon .volt-agent-svg-icon,
+.volt-marketplace-icon .volt-agent-svg-icon svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+}
+
 .volt-marketplace .volt-customize-section-title {
 	font-size: 15px;
 }
@@ -1012,6 +1019,12 @@
 
 .volt-marketplace-icon.large .codicon {
 	font-size: 26px;
+}
+
+.volt-marketplace-icon.large .volt-agent-svg-icon,
+.volt-marketplace-icon.large .volt-agent-svg-icon svg {
+	width: 26px;
+	height: 26px;
 }
 
 .volt-marketplace-detail-title {
