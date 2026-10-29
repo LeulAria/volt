@@ -100,6 +100,13 @@ export interface ICodeWindow extends IBaseWindow {
 	 */
 	bringToFront(): void;
 
+	/**
+	 * Shows a window that booted hidden (the next New Window, kept ready) where a new window
+	 * would open, and focuses it. With `drawn` it stays see-through until that settles: it has to
+	 * be on screen to draw at full speed, but must not show what it is replacing.
+	 */
+	reveal(state: IWindowState, drawn?: Promise<unknown>): void;
+
 	addTabbedWindow(window: ICodeWindow): void;
 
 	load(config: INativeWindowConfiguration, options?: { isReload?: boolean }): void;
