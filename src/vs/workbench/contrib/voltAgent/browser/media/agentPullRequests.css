@@ -1483,7 +1483,7 @@
 	padding: 0 1px;
 	margin-bottom: -1px;
 	border: 0;
-	border-bottom: 2px solid transparent;
+	border-bottom: 1.5px solid transparent;
 	background: transparent;
 	color: var(--volt-pr-muted);
 	font: inherit;
@@ -1901,6 +1901,15 @@
 	flex-wrap: wrap;
 	gap: 6px;
 	font-size: 13px;
+}
+
+/* A commit opens in Source Control's Commits; its headline underlines on hover. */
+.volt-pr-rail-item.clickable {
+	cursor: pointer;
+}
+
+.volt-pr-rail-item.clickable:hover .volt-pr-rail-line strong {
+	text-decoration: underline;
 }
 
 .volt-pr-rail-line strong {

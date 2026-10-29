@@ -59,21 +59,22 @@
 	color: #ffffff;
 }
 
+/* The same box, icon size and muted colour as the files sidebar's tabs beside them. */
 .monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggle {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
 	box-sizing: border-box;
-	width: 20px;
-	height: 20px;
+	width: 22px;
+	height: 22px;
 	margin: 0;
-	padding: 2px;
+	padding: 0;
 	border: 0 !important;
 	box-shadow: none !important;
 	outline: none !important;
 	border-radius: 6px;
 	background: transparent;
-	color: var(--vscode-titleBar-activeForeground, var(--vscode-foreground));
+	color: var(--vscode-descriptionForeground);
 	cursor: pointer;
 	pointer-events: auto;
 	-webkit-app-region: no-drag;
@@ -169,12 +170,10 @@
 	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
-.monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggle:hover {
-	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
-}
-
+.monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggle:hover,
 .monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggle:focus-visible {
-	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
 }
 
 .volt-agent-quick-open-toggle,

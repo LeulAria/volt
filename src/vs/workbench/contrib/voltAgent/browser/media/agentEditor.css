@@ -3293,14 +3293,6 @@ pre.volt-agent-searchable {
 	display: none;
 }
 
-.volt-agent-composer-chip-dot {
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: var(--vscode-charts-green, #3fb950);
-	flex-shrink: 0;
-}
-
 .volt-agent-composer-chip.compact > svg {
 	flex-shrink: 0;
 	opacity: 0.85;

@@ -11,10 +11,12 @@ import { Model } from './model';
 import { OperationKind } from './operation';
 import { Repository, Resource } from './repository';
 import { toMultiFileDiffEditorUris } from './uri';
-import { dispose, fromNow, IDisposable, subject, truncate } from './util';
+import { dispose, fromNow, IDisposable, pathEquals, subject, truncate } from './util';
 
 /** Commits a page of the Commits view loads. */
 const COMMITS_PAGE = 50;
+/** How far back `git.volt.revealCommit` looks on the branch for a commit to show. */
+const REVEAL_COMMITS = 1000;
 
 interface RepositoryNode { readonly kind: 'repository'; readonly repository: Repository }
 interface CommitNode { readonly kind: 'commit'; readonly repository: Repository; readonly commit: Commit }
@@ -197,7 +199,7 @@ abstract class RepositoryTree implements TreeDataProvider<Node>, IDisposable {
 	protected abstract getItemChildren(node: Node): Promise<Node[]>;
 	protected abstract getItem(node: Node): TreeItem;
 
-	private repositories(): Repository[] {
+	protected repositories(): Repository[] {
 		const selected = this.model.repositories.filter(repository => repository.sourceControl.selected);
 		return selected.length > 0 ? selected : this.model.repositories.slice(0, 1);
 	}
@@ -222,6 +224,8 @@ abstract class RepositoryTree implements TreeDataProvider<Node>, IDisposable {
 	getTreeItem(node: Node): TreeItem {
 		if (node.kind === 'repository') {
 			const item = new TreeItem(path.basename(node.repository.root), TreeItemCollapsibleState.Expanded);
+			// A fresh node for the same repository finds this row again, for reveal.
+			item.id = `${node.repository.root}#repository`;
 			item.iconPath = new ThemeIcon('repo');
 			item.description = node.repository.HEAD?.name;
 			item.tooltip = node.repository.root;
@@ -284,6 +288,31 @@ class CommitsTree extends RepositoryTree {
 	loadMore(repository: Repository): void {
 		this.limits.set(repository, (this.limits.get(repository) ?? COMMITS_PAGE) + COMMITS_PAGE);
 		this.refresh();
+	}
+
+	/**
+	 * The row of `hash` (full or abbreviated), loading pages until it is listed. Undefined when the view
+	 * lists other repositories or the branch's last REVEAL_COMMITS commits don't hold it.
+	 */
+	async find(repository: Repository, hash: string): Promise<CommitNode | undefined> {
+		if (!this.repositories().includes(repository)) {
+			return undefined;
+		}
+		const commits = await repository.log({ maxEntries: REVEAL_COMMITS, silent: true }).catch(() => [] as Commit[]);
+		const index = commits.findIndex(commit => commit.hash.startsWith(hash));
+		if (index < 0) {
+			return undefined;
+		}
+		if (index >= (this.limits.get(repository) ?? COMMITS_PAGE)) {
+			this.limits.set(repository, Math.ceil((index + 1) / COMMITS_PAGE) * COMMITS_PAGE);
+			this.refresh();
+		}
+		return { kind: 'commit', repository, commit: commits[index] };
+	}
+
+	/** Only commits are revealed: under their repository's row when several are listed. */
+	getParent(node: Node): Node | undefined {
+		return node.kind === 'commit' && this.repositories().length > 1 ? { kind: 'repository', repository: node.repository } : undefined;
 	}
 
 	protected async getRepositoryChildren(repository: Repository): Promise<Node[]> {
@@ -629,6 +658,17 @@ export class VoltGitViews implements IDisposable {
 			commands.registerCommand('git.volt.refreshCommits', () => commitsTree.refresh()),
 			commands.registerCommand('git.volt.refreshStashes', () => stashesTree.refresh()),
 			commands.registerCommand('git.volt.loadMoreCommits', (node: MoreNode) => commitsTree.loadMore(node.repository)),
+			// The agent window's pull request timeline: a commit's row, selected and opened to its files.
+			commands.registerCommand('git.volt.revealCommit', async (root: string, hash: string): Promise<boolean> => {
+				// A chat's folder can differ from git's root in case alone on macOS, which `getRepository` misses.
+				const repository = this.model.repositories.find(candidate => pathEquals(candidate.root, root)) ?? this.model.getRepository(Uri.file(root));
+				const node = repository && await commitsTree.find(repository, hash);
+				if (!node) {
+					return false;
+				}
+				await commitsView.reveal(node, { select: true, focus: true, expand: true });
+				return true;
+			}),
 			commands.registerCommand('git.volt.openFileChange', (node: FileNode) => this.openFileChange(node)),
 			commands.registerCommand('git.volt.openCommitChanges', (node: CommitNode) =>
 				commands.executeCommand('git.viewCommit', node.repository.sourceControl, node.commit.hash)),

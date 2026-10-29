@@ -15,6 +15,7 @@ import { localize } from '../../../../../nls.js';
 import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -58,6 +59,7 @@ import { renderMarkdownInto } from '../blocks/agentBlockRenderers.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { createVoltSegmented } from '../ui/segmented/voltSegmented.js';
+import { showAgentFilesSidebar } from '../workspace/agentSurfaceHost.js';
 import { AgentPullRequestCodeDiff, canShowInCodeDiff } from './agentPullRequestCodeDiff.js';
 import { openPullRequestDiff } from './agentPullRequestDiff.js';
 import { AgentPullRequestEditorInput } from './agentPullRequestEditorInput.js';
@@ -1491,6 +1493,9 @@ export class AgentPullRequestView extends Disposable {
 					avatar(marker, event.commit.author, /^[\w-]+$/.test(event.commit.author) ? `https://${pr.repo.host}/${event.commit.author}.png` : undefined, 24);
 					append(line, $('strong')).textContent = event.commit.headline;
 					append(line, $('.volt-pr-spacer'));
+					item.classList.add('clickable');
+					setAgentTooltip(line.firstElementChild as HTMLElement, localize('voltPr.revealCommit', "Show in Source Control"));
+					this.onClick(item, () => this.revealCommit(event.commit.oid), true);
 					const sha = append(sub, $('button.volt-pr-sha')) as HTMLButtonElement;
 					sha.type = 'button';
 					sha.textContent = event.commit.oid.slice(0, 7);
@@ -1903,6 +1908,21 @@ export class AgentPullRequestView extends Disposable {
 	//#region Actions
 
 	/** The local clone the diff and agent prompts use: the chat's folder when it is this repository. */
+	/**
+	 * The commit's row in Source Control's Commits, in the files sidebar, opened to its files. A commit the
+	 * chat's checkout doesn't have on its branch shows its changes in the Code tab instead.
+	 */
+	private async revealCommit(oid: string): Promise<void> {
+		const folder = this.cloneFolder();
+		const revealed = folder && showAgentFilesSidebar('scm')
+			? await this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand<boolean>('git.volt.revealCommit', folder, oid)).catch(() => false)
+			: false;
+		if (!revealed) {
+			this.codeCommit = oid;
+			this.showTab('code');
+		}
+	}
+
 	private cloneFolder(): string | undefined {
 		const sessionId = this.sessionId;
 		const folder = sessionId ? this.pullRequests.folderFor(sessionId) : undefined;

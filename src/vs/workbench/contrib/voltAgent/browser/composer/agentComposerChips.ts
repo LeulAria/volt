@@ -308,9 +308,10 @@ export class AgentComposerChips extends Disposable {
 		this.changesDelEl = append(this.changesChip, $('span.volt-agent-composer-chip-del'));
 		this.changesFilesEl = append(this.changesChip, $('span.volt-agent-composer-chip-files'));
 
-		this.terminalsChip = append(this.element, $('button.volt-agent-composer-chip.terminals.volt-browser-dock-chip')) as HTMLButtonElement;
+		// Shown only while terminals run, so it always leads with the row's loader.
+		this.terminalsChip = append(this.element, $('button.volt-agent-composer-chip.terminals.volt-browser-dock-chip.working')) as HTMLButtonElement;
 		this.terminalsChip.type = 'button';
-		append(this.terminalsChip, $('span.volt-agent-composer-chip-dot'));
+		append(this.terminalsChip, createThinkingDots());
 		this.terminalsLabelEl = append(this.terminalsChip, $('span.volt-agent-composer-chip-label'));
 
 		this.pullRequests = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
