@@ -31,7 +31,7 @@ import { TestDialogService } from '../../../../../platform/dialogs/test/common/t
 import { workbenchInstantiationService } from '../../../../test/browser/workbenchTestServices.js';
 import { AgentEditsService, IAgentEditsService, mergeText3, sessionFromBaseline } from '../../browser/review/agentEditsService.js';
 import { IAgentCheckpointService, refSegment } from '../../browser/review/agentCheckpointService.js';
-import { agentTurnScope, IAgentSessionFileChange, mergeSnapshotChanges } from '../../browser/review/agentSessionChanges.js';
+import { agentTurnScope, IAgentSessionFileChange, IAgentSnapshotFileChange, mergeSnapshotChanges } from '../../browser/review/agentSessionChanges.js';
 import { AgentSessionChangesService } from '../../browser/review/agentSessionChangesService.js';
 import { createFileChangeBlock, FileChangeVerb } from '../../browser/blocks/agentBlocks.js';
 import { ISCMService } from '../../../scm/common/scm.js';
@@ -95,6 +95,28 @@ suite('Snapshot change helpers', () => {
 			{ path: 'src/a.ts', absolutePath: '/r/src/a.ts', kind: 'modified', binary: false, additions: 1, deletions: 0, repoRoot: '/r' },
 		]);
 		assert.strictEqual(merged.length, 1);
+	});
+
+	test('a few thousand files merge by path, as the scan did', () => {
+		const count = 5000;
+		const transcript: IAgentSessionFileChange[] = [];
+		const snapshot: IAgentSnapshotFileChange[] = [];
+		for (let i = 0; i < count; i++) {
+			// Every third file is in the transcript: half as written relative, half under the repo's folder name.
+			if (i % 3 === 0) {
+				transcript.push({ path: i % 2 ? `src/f${i}.ts` : `r/src/f${i}.ts`, kind: 'modified', additions: 1, deletions: 0 });
+			}
+			snapshot.push({ path: `src/f${i}.ts`, absolutePath: `/r/src/f${i}.ts`, kind: 'added', binary: false, additions: 1, deletions: 0, repoRoot: '/r' });
+		}
+		// A transcript entry longer than the snapshot path (an absolute path) and one the snapshot lists twice.
+		snapshot.push({ path: 'src/f0.ts', absolutePath: '/r/src/f0.ts', kind: 'modified', binary: false, additions: 1, deletions: 0, repoRoot: '/r' });
+		const started = Date.now();
+		const merged = mergeSnapshotChanges(transcript, snapshot);
+		const elapsed = Date.now() - started;
+		assert.strictEqual(merged.length, count);
+		assert.deepStrictEqual(merged.slice(0, 2).map(file => file.path), ['r/src/f0.ts', 'src/f3.ts']);
+		assert.strictEqual(merged.filter(file => file.snapshot).length, count - transcript.length);
+		assert.ok(elapsed < 1000, `took ${elapsed}ms`);
 	});
 
 	test('ref segments are always valid', () => {

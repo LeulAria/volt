@@ -3,17 +3,17 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { LazyStatefulPromise, raceTimeout } from '../../../../base/common/async.js';
+import { DeferredPromise, LazyStatefulPromise, Limiter, raceTimeout } from '../../../../base/common/async.js';
 import { BugIndicatingError, onUnexpectedError } from '../../../../base/common/errors.js';
 import { Event, ValueWithChangeEvent } from '../../../../base/common/event.js';
 import { IMarkdownString } from '../../../../base/common/htmlContent.js';
-import { Disposable, DisposableStore, IDisposable, IReference } from '../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, IDisposable, IReference, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { parse } from '../../../../base/common/marshalling.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { deepClone } from '../../../../base/common/objects.js';
 import { ObservableLazyPromise, ValueWithChangeEventFromObservable, autorun, constObservable, derived, mapObservableArrayCached, observableFromEvent, observableFromValueWithChangeEvent, observableValue, recomputeInitiallyAndOnChange } from '../../../../base/common/observable.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
-import { isDefined, isObject } from '../../../../base/common/types.js';
+import { isObject } from '../../../../base/common/types.js';
 import { URI } from '../../../../base/common/uri.js';
 import { RefCounted } from '../../../../editor/browser/widget/diffEditor/utils.js';
 import { IDocumentDiffItem, IMultiDiffEditorModel } from '../../../../editor/browser/widget/multiDiffEditor/model.js';
@@ -98,7 +98,8 @@ export class MultiDiffEditorInput extends EditorInput implements ILanguageSuppor
 			this._register(model);
 			const vm = new MultiDiffEditorViewModel(model, this._instantiationService);
 			this._register(vm);
-			await raceTimeout(vm.waitForDiffs(), 1000);
+			// Volt: the first files' diffs, briefly; the rest lay out as they arrive.
+			await raceTimeout(vm.waitForDiffs(), 300);
 			return vm;
 		});
 		this._resolvedSource = new ObservableLazyPromise(async () => {
@@ -184,6 +185,9 @@ export class MultiDiffEditorInput extends EditorInput implements ILanguageSuppor
 		const source = await this._resolvedSource.getPromise();
 		const textResourceConfigurationService = this._textResourceConfigurationService;
 
+		// Volt: a few files at a time, in list order, so the first ones are not queued behind thousands of reads.
+		const limiter = new Limiter<[IReference<IResolvedTextEditorModel> | undefined, IReference<IResolvedTextEditorModel> | undefined]>(MAX_CONCURRENT_DOCUMENT_RESOLVES);
+
 		const documentsWithPromises = mapObservableArrayCached(this, source.resources, async (r, store) => {
 			/** @description documentsWithPromises */
 			let original: IReference<IResolvedTextEditorModel> | undefined;
@@ -192,10 +196,10 @@ export class MultiDiffEditorInput extends EditorInput implements ILanguageSuppor
 			const multiDiffItemStore = new DisposableStore();
 
 			try {
-				[original, modified] = await Promise.all([
+				[original, modified] = await limiter.queue(() => Promise.all([
 					r.originalUri ? this._textModelService.createModelReference(r.originalUri) : undefined,
 					r.modifiedUri ? this._textModelService.createModelReference(r.modifiedUri) : undefined,
-				]);
+				]));
 				if (original) { multiDiffItemStore.add(original); }
 				if (modified) { multiDiffItemStore.add(modified); }
 			} catch (e) {
@@ -228,19 +232,27 @@ export class MultiDiffEditorInput extends EditorInput implements ILanguageSuppor
 
 		const documents = observableValue<readonly RefCounted<IDocumentDiffItem>[] | 'loading'>('documents', 'loading');
 
-		const updateDocuments = derived(async reader => {
+		// Volt: the documents show as they resolve (in list order, in batches) instead of after all of them.
+		const firstDocuments = new DeferredPromise<void>();
+		const publisher = new MutableDisposable();
+		const updateDocuments = derived(reader => {
 			/** @description Update documents */
 			const docsPromises = documentsWithPromises.read(reader);
-			const docs = await Promise.all(docsPromises);
-			const newDocuments = docs.filter(isDefined);
-			documents.set(newDocuments, undefined);
+			publisher.value = publishInOrder(docsPromises, docs => {
+				documents.set(docs, undefined);
+				void firstDocuments.complete();
+			});
 		});
 
 		const a = recomputeInitiallyAndOnChange(updateDocuments);
-		await updateDocuments.get();
+		await firstDocuments.p;
 
 		const result: IMultiDiffEditorModel & IDisposable = {
-			dispose: () => a.dispose(),
+			dispose: () => {
+				a.dispose();
+				publisher.dispose();
+				limiter.dispose();
+			},
 			documents: new ValueWithChangeEventFromObservable(documents),
 			contextKeys: source.source?.contextKeys,
 		};
@@ -303,6 +315,69 @@ export class MultiDiffEditorInput extends EditorInput implements ILanguageSuppor
 
 export interface IDocumentDiffItemWithMultiDiffEditorItem extends IDocumentDiffItem {
 	multiDiffEditorItem: MultiDiffEditorItem;
+}
+
+/** Volt: text model pairs resolved at once; the rest wait their turn in list order. */
+const MAX_CONCURRENT_DOCUMENT_RESOLVES = 12;
+/** Volt: how long the first documents wait for more before they show, then the wait between batches. */
+const FIRST_PUBLISH_DELAY_MS = 16;
+const PUBLISH_INTERVAL_MS = 150;
+
+/**
+ * Volt: hands `publish` the documents resolved so far, in list order, as they come in: at most
+ * every {@link PUBLISH_INTERVAL_MS} (each publish lays out every file) and all of them once every
+ * promise has settled. Nothing is published before the first document (or the end), so the editor
+ * says "Loading..." rather than "No Changed Files". Disposing it stops publishing.
+ */
+export function publishInOrder<T>(promises: readonly Promise<T | undefined>[], publish: (values: T[]) => void): IDisposable {
+	const results: (T | undefined)[] = new Array(promises.length);
+	let settled = 0;
+	let resolved = 0;
+	let publishedResolved = -1;
+	let disposed = false;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+
+	const flush = () => {
+		timer = undefined;
+		if (disposed || (resolved === publishedResolved && settled < promises.length)) {
+			return;
+		}
+		publishedResolved = resolved;
+		const values: T[] = [];
+		for (const value of results) {
+			if (value !== undefined) {
+				values.push(value);
+			}
+		}
+		publish(values);
+	};
+
+	const onSettled = (index: number, value: T | undefined) => {
+		if (disposed) {
+			return;
+		}
+		results[index] = value;
+		settled++;
+		if (value !== undefined) {
+			resolved++;
+		}
+		if (settled === promises.length) {
+			clearTimeout(timer);
+			flush();
+		} else if (timer === undefined && resolved > Math.max(publishedResolved, 0)) {
+			timer = setTimeout(flush, publishedResolved < 0 ? FIRST_PUBLISH_DELAY_MS : PUBLISH_INTERVAL_MS);
+		}
+	};
+
+	if (!promises.length) {
+		publish([]);
+	}
+	promises.forEach((promise, index) => promise.then(value => onSettled(index, value), () => onSettled(index, undefined)));
+
+	return toDisposable(() => {
+		disposed = true;
+		clearTimeout(timer);
+	});
 }
 
 /**

@@ -9,7 +9,7 @@ import { compareBy, numberComparator } from '../../../../base/common/arrays.js';
 import { findFirstMax } from '../../../../base/common/arraysFind.js';
 import { BugIndicatingError } from '../../../../base/common/errors.js';
 import { Disposable, IReference, toDisposable } from '../../../../base/common/lifecycle.js';
-import { IObservable, IReader, ITransaction, autorun, autorunWithStore, derived, disposableObservableValue, globalTransaction, observableFromEvent, observableValue, transaction } from '../../../../base/common/observable.js';
+import { IObservable, IReader, ITransaction, autorun, autorunWithStore, derived, disposableObservableValue, globalTransaction, mapObservableArrayCached, observableFromEvent, observableValue, transaction } from '../../../../base/common/observable.js';
 import { Scrollable, ScrollbarVisibility } from '../../../../base/common/scrollable.js';
 import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
@@ -105,27 +105,30 @@ export class MultiDiffEditorWidgetImpl extends Disposable {
 		}));
 		this.scrollTop = observableFromEvent(this, this._scrollableElement.onScroll, () => /** @description scrollTop */ this._scrollableElement.getScrollPosition().scrollTop);
 		this.scrollLeft = observableFromEvent(this, this._scrollableElement.onScroll, () => /** @description scrollLeft */ this._scrollableElement.getScrollPosition().scrollLeft);
+		// Volt: a file's view item lives as long as its view model, so files arriving in batches
+		// (or changing) do not tear down and re-render the ones already shown.
+		const viewItems = mapObservableArrayCached(this,
+			derived(this, reader => this._viewModel.read(reader)?.items.read(reader) ?? []),
+			(d, store) => {
+				const item = store.add(new VirtualizedViewItem(d, this._objectPool, this.scrollLeft, delta => {
+					this._scrollableElement.setScrollPosition({ scrollTop: this._scrollableElement.getScrollPosition().scrollTop + delta });
+				}));
+				const data = this._lastDocStates?.[item.getKey()];
+				if (data) {
+					transaction(tx => {
+						item.setViewState(data, tx);
+					});
+				}
+				return item;
+			}
+		);
 		this._viewItemsInfo = derived<{ items: readonly VirtualizedViewItem[]; getItem: (viewModel: DocumentDiffItemViewModel) => VirtualizedViewItem }>(this,
 			(reader) => {
-				const vm = this._viewModel.read(reader);
-				if (!vm) {
-					return { items: [], getItem: _d => { throw new BugIndicatingError(); } };
-				}
-				const viewModels = vm.items.read(reader);
+				const items = viewItems.read(reader);
 				const map = new Map<DocumentDiffItemViewModel, VirtualizedViewItem>();
-				const items = viewModels.map(d => {
-					const item = reader.store.add(new VirtualizedViewItem(d, this._objectPool, this.scrollLeft, delta => {
-						this._scrollableElement.setScrollPosition({ scrollTop: this._scrollableElement.getScrollPosition().scrollTop + delta });
-					}));
-					const data = this._lastDocStates?.[item.getKey()];
-					if (data) {
-						transaction(tx => {
-							item.setViewState(data, tx);
-						});
-					}
-					map.set(d, item);
-					return item;
-				});
+				for (const item of items) {
+					map.set(item.viewModel, item);
+				}
 				return { items, getItem: d => map.get(d)! };
 			}
 		);

@@ -266,21 +266,42 @@ function resolveChangeStats(
  * lists keep their transcript entry.
  */
 export function mergeSnapshotChanges(transcript: readonly IAgentSessionFileChange[], snapshot: readonly IAgentSnapshotFileChange[]): IAgentSessionFileChange[] {
-	const out = [...transcript];
+	const out: IAgentSessionFileChange[] = [];
+	// A listed path, and every tail of it after a slash: a lookup per path instead of a scan of
+	// every listed file, which took seconds for a few thousand files.
+	const paths = new Set<string>();
+	const tails = new Set<string>();
+	const push = (file: IAgentSessionFileChange) => {
+		out.push(file);
+		paths.add(file.path);
+		for (let slash = file.path.indexOf('/'); slash !== -1; slash = file.path.indexOf('/', slash + 1)) {
+			tails.add(file.path.slice(slash + 1));
+		}
+	};
+	transcript.forEach(push);
+	// Listed as `path` or `absolute`, as a longer path ending in `/path`, or as a tail of `absolute`.
 	const listed = (path: string, absolute: string) => {
 		const abs = normalizeAgentChangePath(absolute);
-		return out.some(file => file.path === path || file.path === abs || file.path.endsWith(`/${path}`) || abs.endsWith(`/${file.path}`));
+		if (paths.has(path) || paths.has(abs) || tails.has(path)) {
+			return true;
+		}
+		for (let slash = abs.indexOf('/'); slash !== -1; slash = abs.indexOf('/', slash + 1)) {
+			if (paths.has(abs.slice(slash + 1))) {
+				return true;
+			}
+		}
+		return false;
 	};
 	for (const change of snapshot) {
 		const source = { repoRoot: change.repoRoot, binary: change.binary };
 		if (change.kind === 'renamed' && change.oldPath && change.oldAbsolutePath && !listed(change.oldPath, change.oldAbsolutePath)) {
-			out.push({ path: change.oldPath, kind: 'deleted', additions: 0, deletions: change.binary ? 0 : change.deletions, turnId: change.turnId, snapshot: { ...source, oldBlob: change.oldBlob } });
+			push({ path: change.oldPath, kind: 'deleted', additions: 0, deletions: change.binary ? 0 : change.deletions, turnId: change.turnId, snapshot: { ...source, oldBlob: change.oldBlob } });
 		}
 		if (listed(change.path, change.absolutePath)) {
 			continue;
 		}
 		const renamed = change.kind === 'renamed';
-		out.push({
+		push({
 			path: change.path,
 			kind: renamed ? 'added' : change.kind,
 			additions: change.additions,
