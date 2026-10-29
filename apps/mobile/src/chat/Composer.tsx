@@ -307,7 +307,7 @@ export function Composer(props: IComposerProps) {
 	const actionSheet = sheet && sheet !== 'model' && sheet !== 'mcp' ? sheet : undefined;
 
 	return (
-		<View style={{ paddingHorizontal: 16 }}>
+		<View style={{ paddingHorizontal: 14 }}>
 			{props.banner}
 			{trigger && (trigger.kind === '/' ? !!props.chatId : true) ? (
 				<ComposerSuggest trigger={trigger} client={client} chatId={props.chatId} folder={props.folder} onPickFile={pickFile} onPickSlash={pickSlash} onPickMcp={pickMcp} />
@@ -346,7 +346,7 @@ export function Composer(props: IComposerProps) {
 					placeholderTextColor={p.fgQuaternary}
 					selectionColor={p.accent}
 					keyboardAppearance={p.scheme}
-					style={{ color: p.fg, fontSize: 16, lineHeight: 22, minHeight: 46, maxHeight: 150, paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 13 : 10, paddingBottom: 6 }}
+					style={{ color: p.fg, fontSize: 15, lineHeight: 22, minHeight: 44, maxHeight: 160, paddingHorizontal: 14, paddingTop: Platform.OS === 'ios' ? 12 : 9, paddingBottom: 4 }}
 				/>
 				<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8, paddingBottom: 8, paddingTop: 2 }}>
 					{props.allowImages !== false ? (
@@ -370,8 +370,9 @@ export function Composer(props: IComposerProps) {
 					{dictation.available ? <MicButton listening={dictation.listening} onPress={() => dictation.listening ? dictation.stop() : void dictation.start(text)} /> : null}
 					<Animated.View style={sendScale}>
 						{showStop ? (
-							<Tap haptics="medium" onPress={props.onStop} accessibilityLabel="Stop" style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: p.fillStrong, alignItems: 'center', justifyContent: 'center' }}>
-								<Icon name="stop" size={13} color={p.fg} />
+							// agentEditor.css `.volt-agent-send.stop`: the near-white circle with a dark square.
+							<Tap haptics="medium" hitSlop={8} onPress={props.onStop} accessibilityLabel="Stop" style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: p.primary, alignItems: 'center', justifyContent: 'center' }}>
+								<View style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: p.onPrimary }} />
 							</Tap>
 						) : (
 							<Tap
@@ -384,9 +385,10 @@ export function Composer(props: IComposerProps) {
 									}
 								}}
 								accessibilityLabel={props.running ? 'Queue' : 'Send'}
-								style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: sendable ? tint.send : p.fill, alignItems: 'center', justifyContent: 'center' }}
+								hitSlop={8}
+								style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: sendable ? tint.send : p.fill, alignItems: 'center', justifyContent: 'center' }}
 							>
-								{uploading ? <ActivityIndicator size="small" color={p.fgTertiary} /> : <Icon name={props.running && sendable ? 'queue' : 'arrowUp'} size={18} color={sendable ? tint.onSend : p.fgQuaternary} strokeWidth={2.2} />}
+								{uploading ? <ActivityIndicator size="small" color={p.fgTertiary} /> : <Icon name={props.running && sendable ? 'queue' : 'arrowUp'} size={16} color={sendable ? tint.onSend : p.fgQuaternary} strokeWidth={2.4} />}
 							</Tap>
 						)}
 					</Animated.View>

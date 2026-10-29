@@ -131,9 +131,9 @@ export const lightPalette: IVoltPalette = {
 	sidebar: '#E7E7E7',
 	surface: '#FFFFFF',
 	raised: '#FFFFFF',
-	// The desktop's rgba(236,236,236,0.82) over the canvas.
-	composer: '#EFEFEF',
-	bubble: '#EFEFEF',
+	// Volt Light's composer is white (rgba(255,255,255,0.94)); a sent prompt is rgba(236,236,236,0.82) over the chat.
+	composer: '#FFFFFF',
+	bubble: '#EDEDED',
 	bubbleBorder: 'rgba(0,0,0,0.12)',
 	fg: '#141414',
 	fgSecondary: 'rgba(20,20,20,0.74)',

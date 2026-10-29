@@ -96,6 +96,7 @@ function Root() {
 				<Stack.Screen name="settings/devices" options={{ title: 'Devices' }} />
 				<Stack.Screen name="settings/models" options={{ title: 'Models' }} />
 				<Stack.Screen name="changes/[id]" options={{ title: 'Changes' }} />
+				<Stack.Screen name="terminals/[id]" options={{ title: 'Terminals' }} />
 				<Stack.Screen name="diff" options={{ title: 'Diff', contentStyle: { backgroundColor: p.codeBg } }} />
 				<Stack.Screen name="files/index" options={{ title: 'Files' }} />
 				<Stack.Screen name="file" options={{ title: 'File', contentStyle: { backgroundColor: p.codeBg } }} />

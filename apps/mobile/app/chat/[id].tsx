@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	approvalsFor, attachmentsOf, chatStatus, type ComposerMode, COMPOSER_MODES, historyOf, type IPromptAttachment, isStreaming, projectOf, questionsFor, runtimeOf, sessionsOf,
+	approvalsFor, attachmentsOf, chatStatus, chatTerminals, isTerminalLive, type ComposerMode, COMPOSER_MODES, historyOf, type IPromptAttachment, isStreaming, projectOf, questionsFor, runtimeOf, sessionsOf,
 	statusColor, threadsOf, uriPath, uuid
 } from '@volt/client-core';
 import { BlurView } from 'expo-blur';
@@ -27,7 +27,7 @@ import { useTheme } from '../../src/theme/theme';
 import { haptic, Icon, IconButton, LiveTimer, T, Tap } from '../../src/ui/core';
 import { ActionSheet, type ISheetAction } from '../../src/ui/sheets';
 
-const CHAT_COLLECTIONS = ['history', 'orch.threads', 'orch.tasks', 'sessions', 'access', 'questions', 'projects', 'runtime'];
+const CHAT_COLLECTIONS = ['history', 'orch.threads', 'orch.tasks', 'sessions', 'access', 'questions', 'projects', 'runtime', 'terminals'];
 const HEADER_HEIGHT = 52;
 
 export default function ChatScreen() {
@@ -57,6 +57,8 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 	const messages = transcript?.messages ?? [];
 	const running = !!thread?.active || isStreaming(messages);
 	const status = chatStatus(meta, thread, approvals.length, questions.length);
+	const terminals = useMemo(() => chatTerminals(cols['terminals'], chatId), [cols, chatId]);
+	const liveTerminals = terminals.filter(t => isTerminalLive(t.status)).length;
 
 	const lastMode = useMemo(() => {
 		for (let i = messages.length - 1; i >= 0; i--) {
@@ -110,6 +112,10 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 		...(folder ? { folder } : {}),
 		onMessageMenu: row => setMenuRow(row),
 		onRetry: retry,
+		onStop: () => {
+			haptic.medium();
+			void client.stop(chatId);
+		},
 		...(redoTurnId && checkpoints?.canRedo ? { redoTurnId } : {}),
 		onRedo: () => {
 			haptic.medium();
@@ -314,6 +320,12 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, height: 26, paddingHorizontal: 9, borderRadius: 13, backgroundColor: `${p.info}22` }}>
 							<ActivityIndicator size="small" color={p.info} style={{ transform: [{ scale: 0.6 }], width: 12 }} />
 							<LiveTimer since={thread.active.at} color={p.info} />
+						</View>
+					) : null}
+					{terminals.length ? (
+						<View>
+							<IconButton icon="terminal" label={`Terminals, ${terminals.length}`} color={p.fg} onPress={() => router.push({ pathname: '/terminals/[id]', params: { id: chatId } })} />
+							{liveTerminals ? <View pointerEvents="none" style={{ position: 'absolute', top: 7, right: 6, width: 7, height: 7, borderRadius: 4, backgroundColor: p.info, borderWidth: 1.5, borderColor: p.canvas }} /> : null}
 						</View>
 					) : null}
 					<IconButton icon="fileDiff" label="Changes" color={p.fg} onPress={() => router.push({ pathname: '/changes/[id]', params: { id: chatId } })} />

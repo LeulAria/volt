@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { type IConnectionStatus, type IWebSocketLike, type IWelcomeEvent, VoltConnection } from './connection';
+import { TerminalStream } from './terminals';
 import { chooseRoute, type ISavedEnvironment, wsUrl } from './environments';
 import { KeyedNotifier, type Unsubscribe } from './events';
 import { fileUri } from './format';
@@ -781,6 +782,28 @@ export class VoltClient {
 			return undefined;
 		}
 	}
+
+	//#region Terminals
+
+	/** Follows a terminal's output (attach now, again after a reconnect); dispose to stop. */
+	openTerminal(id: string): TerminalStream {
+		return new TerminalStream(this.connection, id);
+	}
+
+	stopTerminal(id: string): Promise<unknown> {
+		return this.connection.call('terminals.stop', [id]);
+	}
+
+	restartTerminal(id: string): Promise<unknown> {
+		return this.connection.call('terminals.restart', [id]);
+	}
+
+	/** Closes a finished terminal's tab (it stays in the chat's record). */
+	dismissTerminal(id: string): Promise<unknown> {
+		return this.connection.call('terminals.dismiss', [id]);
+	}
+
+	//#endregion
 
 	stop(chatId: string): Promise<unknown> {
 		return this.run('orchestrator.cancel', [chatId], 'Couldn\'t stop');
