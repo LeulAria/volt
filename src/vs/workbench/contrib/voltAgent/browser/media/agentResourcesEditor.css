@@ -24,9 +24,12 @@
 	--volt-ares-global: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 58%, transparent);
 	--volt-ares-external: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 34%, transparent);
 	--volt-ares-managed: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 20%, transparent);
+	position: relative;
 	display: flex;
 	flex: 1;
 	min-height: 0;
+	/* The page's top edge, under the tab strip, as the nav's right edge. */
+	border-top: 1px solid var(--volt-ares-line);
 	font-size: 13px;
 	line-height: 1.4;
 	color: var(--volt-ares-fg);
@@ -41,7 +44,8 @@
 .volt-ares-nav {
 	display: flex;
 	flex-direction: column;
-	flex: 0 0 236px;
+	/* Set by the nav's sash (agentResourcesEditor.ts). */
+	flex: 0 0 var(--volt-ares-nav-width, 236px);
 	min-height: 0;
 	box-sizing: border-box;
 	padding: 22px 0 12px;
@@ -161,6 +165,23 @@
 	max-width: calc(var(--volt-ares-column) + 64px);
 	margin: 0 auto;
 	padding: 28px 32px 6px;
+}
+
+/* The section's title and lead, with Back at the top right. */
+.volt-ares-heading-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 16px;
+}
+
+.volt-ares-heading {
+	flex: 1;
+	min-width: 0;
+}
+
+.monaco-workbench .volt-ares-heading-row .volt-button.volt-ares-back {
+	flex: none;
+	margin-top: 1px;
 }
 
 .volt-ares-title {
@@ -1041,5 +1062,10 @@
 	.volt-ares-nav-row {
 		justify-content: center;
 		padding: 0;
+	}
+
+	/* Folded to icons, the nav has a fixed width: no sash (the page's only one). */
+	.volt-ares > .monaco-sash {
+		display: none;
 	}
 }

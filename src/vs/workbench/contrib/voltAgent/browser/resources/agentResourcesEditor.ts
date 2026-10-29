@@ -8,6 +8,7 @@ import '../media/agentResourcesEditor.css';
 import { $, addDisposableListener, append, clearNode, Dimension, EventType } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IListRenderer, IListVirtualDelegate } from '../../../../../base/browser/ui/list/list.js';
+import { Orientation, Sash } from '../../../../../base/browser/ui/sash/sash.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
@@ -18,6 +19,7 @@ import { basename } from '../../../../../base/common/resources.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -38,7 +40,9 @@ import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/e
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 import { ITextEditorService } from '../../../../services/textfile/common/textEditorService.js';
 import { AGENT_RESOURCE_FILTER_ICON, AgentResourceScopeKind, agentResourceScopeKind } from '../../common/agentResources.js';
+import { AGENT_NAV_BACK_COMMAND_ID, canAgentNavGoBack } from '../chrome/agentNav.contribution.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { createVoltButton } from '../chrome/voltButton.js';
 import { createAgentScrollable } from '../editor/agentScrollable.js';
 import { createHomeSearchIcon } from '../home/agentHomeIcons.js';
 import { AgentMarketplaceView, IAgentMarketplaceScope } from '../customize/agentMarketplaceView.js';
@@ -59,6 +63,11 @@ export const AGENT_RESOURCES_INPUT_ID = 'workbench.input.voltAgentResources';
 const AgentResourcesIcon = registerIcon('volt-agent-resources-editor-label-icon', Codicon.layers, localize('agentResources.editorIcon', "Icon of the Agent Resources tab."));
 
 const STATE_KEY = 'volt.agentResources.page';
+/** The left nav's width, as its sash last left it. */
+const NAV_WIDTH_KEY = 'volt.agentResources.navWidth';
+const NAV_WIDTH_DEFAULT = 236;
+const NAV_WIDTH_MIN = 180;
+const NAV_WIDTH_MAX = 420;
 /** The right panel's tabs are kept under this id, like a chat's. */
 const TOOLS_ID = 'volt-agent-resources';
 
@@ -193,6 +202,8 @@ export class AgentResourcesEditor extends EditorPane {
 	private rootEl!: HTMLElement;
 	private mainEl!: HTMLElement;
 	private navList!: WorkbenchList<INavRow>;
+	private navEl!: HTMLElement;
+	private navSash!: Sash;
 	private navHost!: HTMLElement;
 	private titleEl!: HTMLElement;
 	private leadEl!: HTMLElement;
@@ -240,6 +251,7 @@ export class AgentResourcesEditor extends EditorPane {
 		@ITextEditorService private readonly textEditorService: ITextEditorService,
 		@IOpenerService private readonly openerService: IOpenerService,
 		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(AgentResourcesEditor.ID, group, telemetryService, themeService, storage);
 		this.restoreState();
@@ -253,7 +265,7 @@ export class AgentResourcesEditor extends EditorPane {
 		this.mainEl = append(this.rootEl, $('.volt-ares-main.volt-customize-main'));
 		const page = append(this.mainEl, $('.volt-ares'));
 
-		const nav = append(page, $('nav.volt-ares-nav'));
+		const nav = this.navEl = append(page, $('nav.volt-ares-nav'));
 		const brand = append(nav, $('.volt-ares-brand'));
 		append(brand, $('.volt-ares-brand-title')).textContent = localize('agentResources.title', "Agent Resources");
 		append(brand, $('.volt-ares-brand-lead')).textContent = localize('agentResources.brandLead', "Inspect, configure and extend your agents.");
@@ -270,10 +282,17 @@ export class AgentResourcesEditor extends EditorPane {
 		this._register(this.navList.onDidOpen(e => e.element && this.setSection(e.element.section.id)));
 
 		const content = append(page, $('.volt-ares-content'));
+		this.createNavSash(page);
 		const header = append(content, $('.volt-ares-header'));
-		const heading = append(header, $('.volt-ares-heading'));
+		const headingRow = append(header, $('.volt-ares-heading-row'));
+		const heading = append(headingRow, $('.volt-ares-heading'));
 		this.titleEl = append(heading, $('h2.volt-ares-title'));
 		this.leadEl = append(heading, $('.volt-ares-lead'));
+		const back = this._register(createVoltButton(headingRow, 'secondary', { supportIcons: true }));
+		back.label = `$(${Codicon.arrowLeft.id}) ${localize('agentResources.back', "Back")}`;
+		back.element.classList.add('volt-ares-back');
+		setAgentTooltip(back.element, localize('agentResources.backTooltip', "Back to where you were"));
+		this._register(back.onDidClick(() => void this.goBack()));
 		this.toolbarEl = append(header, $('.volt-ares-toolbar'));
 		const search = append(this.toolbarEl, $('.volt-customize-search.volt-ares-search'));
 		// The agent sidebar's own magnifier, as on every Volt search field.
@@ -366,7 +385,37 @@ export class AgentResourcesEditor extends EditorPane {
 		this.rootEl.style.height = `${dimension.height}px`;
 		this.surfaceHost?.layout(dimension);
 		this.navList.layout(AGENT_RESOURCES_SECTIONS.length * 30);
+		this.navSash.layout();
 		this.scroll.scanDomNode();
+	}
+
+	/** The nav's right edge drags to resize it (double-click: back to the default); the width is kept. */
+	private createNavSash(page: HTMLElement): void {
+		this.setNavWidth(this.storage.getNumber(NAV_WIDTH_KEY, StorageScope.PROFILE, NAV_WIDTH_DEFAULT));
+		this.navSash = this._register(new Sash(page, { getVerticalSashLeft: () => this.navEl.offsetWidth }, { orientation: Orientation.VERTICAL }));
+		let startWidth = 0;
+		this._register(this.navSash.onDidStart(() => startWidth = this.navEl.offsetWidth));
+		this._register(this.navSash.onDidChange(e => this.setNavWidth(startWidth + e.currentX - e.startX)));
+		this._register(this.navSash.onDidReset(() => {
+			this.setNavWidth(NAV_WIDTH_DEFAULT);
+			this.storage.remove(NAV_WIDTH_KEY, StorageScope.PROFILE);
+		}));
+		this._register(this.navSash.onDidEnd(() => this.storage.store(NAV_WIDTH_KEY, this.navEl.offsetWidth, StorageScope.PROFILE, StorageTarget.USER)));
+	}
+
+	private setNavWidth(width: number): void {
+		const clamped = Math.round(Math.min(NAV_WIDTH_MAX, Math.max(NAV_WIDTH_MIN, width)));
+		this.navEl.style.setProperty('--volt-ares-nav-width', `${clamped}px`);
+		this.navSash?.layout();
+	}
+
+	/** Back through the agent window's history (the chat the page was opened from); with none, the page closes. */
+	private async goBack(): Promise<void> {
+		if (canAgentNavGoBack()) {
+			await this.commandService.executeCommand(AGENT_NAV_BACK_COMMAND_ID);
+		} else if (this.input) {
+			await this.group.closeEditor(this.input);
+		}
 	}
 
 	override focus(): void {

@@ -1166,6 +1166,7 @@
 		"--volt-ares-line-strong",
 		"--volt-ares-managed",
 		"--volt-ares-muted",
+		"--volt-ares-nav-width",
 		"--volt-ares-pill",
 		"--volt-ares-tile",
 		"--volt-ares-workspace",

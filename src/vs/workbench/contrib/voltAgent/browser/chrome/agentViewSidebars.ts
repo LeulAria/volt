@@ -53,8 +53,8 @@ import { boardDisplayTitle } from '../../common/scratchBoard/scratchIndex.js';
 import { OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, OPEN_SCRATCH_BOARD_COMMAND_ID } from '../scratchBoard/scratchBoardInput.js';
 import { IScratchBoardService } from '../scratchBoard/scratchBoardService.js';
 import { IScratchSessionLinks } from '../scratchBoard/scratchSessionLinks.js';
-import { AgentResourcesDock, SHOW_AGENT_RESOURCES_COMMAND_ID } from '../resources/agentResourcesDock.js';
-import { agentResourceGroup } from '../../common/agentResources.js';
+import { OPEN_AGENT_RESOURCES_COMMAND_ID } from '../resources/agentResourcesPage.js';
+import { IAgentResourcesService } from '../resources/agentResourcesService.js';
 
 /** Chevrons point right. Collapsed state rotates this 180deg. */
 const CHEVRON_RIGHT_PATH = 'M6 7L11 12L6 17M13 7L18 12L13 17';
@@ -267,8 +267,6 @@ class AgentViewSidebarsContribution extends Disposable {
 	private changesSessionId: string | undefined;
 	/** The agents of the chat on screen: running, previous, and its parent in a subagent's chat. */
 	private readonly lineage: AgentLineageDock;
-	/** "Agent Resources (N)": instructions, skills, subagents and the rest in the chat's folder. */
-	private readonly resources: AgentResourcesDock;
 	/** The collapsed toolbar's agents button: how many are live, and a click opens the list. */
 	private readonly agentsRail: HTMLButtonElement;
 	private readonly agentsBadge: HTMLElement;
@@ -324,6 +322,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		@IAgentSessionChangesService private readonly changesService: IAgentSessionChangesService,
 		@ISCMService private readonly scmService: ISCMService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IAgentResourcesService private readonly agentResources: IAgentResourcesService,
 	) {
 		super();
 		const root = layoutService.mainContainer;
@@ -457,7 +456,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		}
 
 		// Sections like Cursor's project menu: the project's tools, then git, then the agents.
-		const [changes, browser, terminal, files] = this.dockActions();
+		const [changes, browser, terminal, files, resources] = this.dockActions();
 		const workspaceSection = append(body, $('.volt-agent-dock-section.volt-agent-dock-workspace'));
 		// The same pane header as Pull requests and Previous agents: chevron, then the title.
 		this.workspaceHeading = append(workspaceSection, $('button.volt-agent-lineage-divider.volt-agent-dock-group-head')) as HTMLButtonElement;
@@ -477,10 +476,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.createActionRow(workspace, files);
 		this.createActionRow(workspace, terminal);
 		this.createActionRow(workspace, browser);
-
-		// The files that configure agents in the chat's folder, by group, under the project's tools.
-		this.resources = this._register(instantiationService.createInstance(AgentResourcesDock));
-		body.append(this.resources.element);
+		this.createActionRow(workspace, resources);
 
 		// Commit, Push & PR stays on the composer; the toolbar keeps the branch, the changes and the pull requests.
 		this.pullRequests = instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
@@ -523,7 +519,6 @@ class AgentViewSidebarsContribution extends Disposable {
 		for (const action of this.dockActions()) {
 			this.createRailButton(rail, action);
 		}
-		this.createRailButton(rail, { id: 'resources', label: localize('voltAgent.dock.agentResources', "Agent Resources"), iconPath: agentResourceGroup('skills').icon, command: SHOW_AGENT_RESOURCES_COMMAND_ID });
 		this._register(changesService.onDidChange(sessionId => {
 			if (!sessionId || sessionId === this.changesSessionId) {
 				this.renderChangesStats();
@@ -638,6 +633,11 @@ class AgentViewSidebarsContribution extends Disposable {
 			{ id: 'browser', label: localize('voltAgent.dock.browser', "Browser"), icon: Codicon.globe, command: OPEN_BROWSER_COMMAND_ID },
 			{ id: 'terminal', label: localize('voltAgent.dock.terminal', "Terminal"), icon: Codicon.terminal, command: 'workbench.action.terminal.toggleTerminal' },
 			{ id: 'files', label: localize('voltAgent.dock.explorer', "Explorer"), iconPath: EXPLORER_ICON_SHAPES, command: SHOW_AGENT_FILES_COMMAND_ID },
+			// The home sidebar footer's Customize icon. Opens the page on the chat's folder.
+			{
+				id: 'resources', label: localize('voltAgent.dock.agentResources', "Agent Resources"), icon: Codicon.extensions, command: OPEN_AGENT_RESOURCES_COMMAND_ID,
+				args: () => ['overview', this.changesSessionId ? this.agentResources.folderForSession(this.changesSessionId) : undefined],
+			},
 		];
 	}
 
@@ -755,7 +755,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		label.textContent = action.label;
 		this.appendActionIcon(button, action);
 		this._register(addDisposableListener(button, 'click', () => {
-			void this.commandService.executeCommand(action.command);
+			void this.commandService.executeCommand(action.command, ...(action.args?.() ?? []));
 		}));
 	}
 
@@ -953,8 +953,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		const doc = container.ownerDocument;
 		this.popupListeners.add(addDisposableListener(doc, 'mousedown', e => {
 			const target = e.target as Node | null;
-			// The Agent Resources card opens beside the popup; a click in it opens a file first.
-			if (target && !this.popup.contains(target) && !this.quickOpenToggle.contains(target) && !(isHTMLElement(target) && target.closest('.volt-agent-resources-card'))) {
+			if (target && !this.popup.contains(target) && !this.quickOpenToggle.contains(target)) {
 				this.setPopupOpen(false);
 			}
 		}, true));
@@ -1005,8 +1004,8 @@ class AgentViewSidebarsContribution extends Disposable {
 		const doc = this.quickOpen.ownerDocument;
 		this.overlayListeners.add(addDisposableListener(doc, 'mousedown', e => {
 			const target = e.target as Node | null;
-			// Menus a row opened (the branch list) and the Agent Resources card live outside the card.
-			if (target && !this.quickOpen.contains(target) && !(isHTMLElement(target) && target.closest('.context-view, .monaco-menu-container, .volt-menu, .volt-agent-resources-card'))) {
+			// Menus a row opened (the branch list) live outside the card.
+			if (target && !this.quickOpen.contains(target) && !(isHTMLElement(target) && target.closest('.context-view, .monaco-menu-container, .volt-menu'))) {
 				close();
 			}
 		}, true));
@@ -1244,7 +1243,6 @@ class AgentViewSidebarsContribution extends Disposable {
 		const sessionId = host ?? (active instanceof AgentEditorInput ? active.sessionId : undefined);
 		this.lineage.setSession(sessionId);
 		this.pullRequestControl.setSession(sessionId);
-		this.resources.setSession(sessionId);
 		if (sessionId !== this.designSession) {
 			this.designSession = sessionId;
 			this.renderDesigns();

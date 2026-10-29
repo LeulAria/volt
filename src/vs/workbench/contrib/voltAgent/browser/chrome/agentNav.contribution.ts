@@ -44,6 +44,11 @@ const agentNavWhen = ContextKeyExpr.and(
 
 let navigation: AgentNavContribution | undefined;
 
+/** The agent window's history has a page to go back to (what {@link AGENT_NAV_BACK_COMMAND_ID} would open). */
+export function canAgentNavGoBack(): boolean {
+	return !!navigation?.canBack;
+}
+
 /** ⌘[ / ⌘] on macOS, Alt+← / Alt+→ elsewhere (as the IDE's own back and forward). */
 function navShortcut(key: '[' | ']'): string {
 	return formatAgentTooltipShortcut(isMacintosh ? { meta: true, key } : { alt: true, key: key === '[' ? '\u2190' : '\u2192' });
@@ -104,6 +109,10 @@ class AgentNavContribution extends Disposable {
 
 		this.mount();
 		this.capture();
+	}
+
+	get canBack(): boolean {
+		return this.history.canBack;
 	}
 
 	back(): Promise<void> {
