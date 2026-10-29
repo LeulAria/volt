@@ -8,6 +8,7 @@ import { $, addDisposableListener, append, clearNode } from '../../../../../base
 import { createCSSRule } from '../../../../../base/browser/domStylesheets.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { Emitter } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, IDisposable } from '../../../../../base/common/lifecycle.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
@@ -130,6 +131,10 @@ export class AgentImageStrip extends Disposable {
 	readonly element: HTMLElement;
 	private readonly itemStore = this._register(new DisposableStore());
 	private keys = '';
+	private _items: readonly IAgentImageStripItem[] = [];
+	/** Fires after the tiles were rebuilt. */
+	private readonly _onDidUpdate = this._register(new Emitter<void>());
+	readonly onDidUpdate = this._onDidUpdate.event;
 
 	constructor(private readonly options: IAgentImageStripOptions, className = '') {
 		super();
@@ -141,12 +146,17 @@ export class AgentImageStrip extends Disposable {
 		return !this.keys;
 	}
 
+	get items(): readonly IAgentImageStripItem[] {
+		return this._items;
+	}
+
 	update(items: readonly IAgentImageStripItem[]): void {
 		const keys = items.map(item => item.key).join('|');
 		if (keys === this.keys) {
 			return;
 		}
 		this.keys = keys;
+		this._items = items;
 		this.itemStore.clear();
 		clearNode(this.element);
 		this.element.classList.toggle('hidden', !items.length);
@@ -195,5 +205,6 @@ export class AgentImageStrip extends Disposable {
 				}));
 			}
 		});
+		this._onDidUpdate.fire();
 	}
 }

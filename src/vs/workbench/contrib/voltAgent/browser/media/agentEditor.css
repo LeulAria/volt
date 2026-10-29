@@ -598,6 +598,14 @@
 	display: inline-flex;
 }
 
+/* A one-line prompt centers Stop (and Rewind) on its text line instead of the bottom corner. */
+.volt-agent-turn.user .volt-agent-bubble:not(.multiline) .volt-agent-user-stop,
+.volt-agent-turn.user .volt-agent-bubble:not(.multiline) .volt-agent-user-restore {
+	top: 50%;
+	bottom: auto;
+	transform: translateY(-50%);
+}
+
 .volt-agent-user-stop .volt-agent-svg-icon,
 .volt-agent-user-stop .volt-agent-svg-icon svg {
 	width: 10px;

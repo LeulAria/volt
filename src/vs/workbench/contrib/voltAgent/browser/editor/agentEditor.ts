@@ -1222,6 +1222,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		this._register(addDisposableListener(this.threadInner, 'click', e => this.onUserMessageClick(e)));
 		this._register(addDisposableListener(getWindow(this.container), 'keydown', e => {
 			if (e.key === 'Escape' && this.editingUserIndex !== undefined) {
+				// Escape in an image, video or "+N" grid dialog closes the dialog, not the edit.
+				if (isHTMLElement(e.target) && e.target.closest('.volt-agent-image-viewer-overlay')) {
+					return;
+				}
 				e.preventDefault();
 				this.cancelUserEdit();
 			}
@@ -3822,6 +3826,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		const main = append(clip, $('.volt-agent-user-main'));
 		const media = userMessageMedia(message);
 		if (media.length) {
+			// Pictures above the text: Stop keeps the corner rather than centering on one line.
+			bubble.classList.add('multiline');
 			const strip = this.threadListeners.add(new AgentImageStrip({ onOpen: i => this.openMessageMedia(message, i) }, 'in-message'));
 			main.appendChild(strip.element);
 			const stripItems = media.map((mention, i): IAgentImageStripItem => mention.video
@@ -4218,6 +4224,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		if (e.target.closest('.volt-agent-edit-slot')
 			|| e.target.closest('.volt-agent-edit-composer')
 			|| e.target.closest('.volt-agent-input-box.editing')
+			// The edit's own image, video or "+N" grid dialog.
+			|| e.target.closest('.volt-agent-image-viewer-overlay')
 			|| e.target.closest('.volt-agent-dropdown')
 			|| e.target.closest('.volt-agent-plus-menu')
 			|| e.target.closest('.monaco-context-view')
@@ -4506,13 +4514,42 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			return;
 		}
 		this.editEditor.layout({ width, height: 0 });
-		const contentHeight = Math.min(Math.max(this.editEditor.getContentHeight(), lineHeight), USER_EDIT_MAX_HEIGHT);
+		const contentHeight = Math.min(Math.max(this.editEditor.getContentHeight(), lineHeight), this.editTextMaxHeight(next, padY));
 		const nextHeight = `${contentHeight + padY}px`;
 		if (this.editMonacoHost.style.height !== nextHeight) {
 			this.editMonacoHost.style.height = nextHeight;
 		}
 		this.editEditor.layout({ width, height: contentHeight });
 		this.applyEditAnchor();
+	}
+
+	/**
+	 * The tallest the edit text may be: what the capped box has left after its padding, the image
+	 * row and the toolbar. Laid out any taller, the box clips the last lines and they can't be
+	 * scrolled to; at this height the editor scrolls them instead.
+	 */
+	private editTextMaxHeight(hostStyle: CSSStyleDeclaration, hostPadY: number): number {
+		const box = this.editInputBox;
+		const host = this.editMonacoHost;
+		let max = USER_EDIT_MAX_HEIGHT;
+		const hostMax = parseFloat(hostStyle.maxHeight);
+		if (hostMax > 0) {
+			max = Math.min(max, hostMax - hostPadY);
+		}
+		if (box && host) {
+			const style = getWindow(box).getComputedStyle(box);
+			const boxMax = parseFloat(style.maxHeight);
+			if (boxMax > 0) {
+				let rest = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth) + hostPadY;
+				for (const child of Array.from(box.children)) {
+					if (child !== host && isHTMLElement(child)) {
+						rest += child.offsetHeight;
+					}
+				}
+				max = Math.min(max, boxMax - rest);
+			}
+		}
+		return Math.max(max, 22);
 	}
 
 	/**
