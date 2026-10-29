@@ -46,8 +46,10 @@ export interface IVoltMenuItem<T> {
 	readonly keybinding?: string;
 	/** A small right-aligned count chip, e.g. how many filters a submenu has on. */
 	readonly badge?: string;
-	/** Right-aligned glyph, e.g. an arrow for items that leave the menu. */
-	readonly trailingIcon?: ThemeIcon;
+	/** Right-aligned glyph, e.g. an arrow for items that leave the menu. A factory draws a custom SVG. */
+	readonly trailingIcon?: ThemeIcon | (() => HTMLElement | SVGElement);
+	/** The trailing glyph shows only while the row is hovered or focused (a hint at what a pick does). */
+	readonly trailingOnHover?: boolean;
 	/** A small button at the row's end with an action of its own (Resume on a stopped agent); clicking it picks `data`. */
 	readonly action?: { readonly icon: ThemeIcon; readonly tooltip: string; readonly data: T; readonly keepOpen?: boolean };
 	readonly tooltip?: string;
@@ -1147,7 +1149,9 @@ function renderItem<T>(host: HTMLElement, item: IVoltMenuItem<T>, matches: IMatc
 	}
 	const trailing = item.submenu ? Codicon.chevronRight : item.checked ? Codicon.check : item.trailingIcon;
 	if (trailing) {
-		append(host, $('span.volt-menu-trailing')).appendChild(renderIcon(trailing));
+		const glyph = append(host, $('span.volt-menu-trailing'));
+		glyph.appendChild(typeof trailing === 'function' ? trailing() : renderIcon(trailing));
+		glyph.classList.toggle('on-hover', !!item.trailingOnHover && !item.submenu && !item.checked);
 	}
 	host.title = item.tooltip ?? '';
 }

@@ -2419,7 +2419,6 @@
 .volt-git-control.chip > .volt-git-control-chevron {
 	width: 22px;
 	border-radius: 0;
-	border-left: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
 .volt-git-control.chip .volt-git-control-icon .codicon {

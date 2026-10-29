@@ -7246,7 +7246,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			// Working or waiting to start: the New Chat plane, still (no spinner).
 			icon: view.state === 'running' || view.state === 'queued' ? createHomeNewChatIcon : subagentStateIcon(view.state),
 			disabled: !view.openable,
-			...(view.openable ? { trailingIcon: view.readOnly ? Codicon.eye : Codicon.commentDiscussion } : {}),
+			// What a pick does, on the hovered row: send follow-ups (the plane), or watch a read-only chat.
+			...(view.openable ? { trailingIcon: view.readOnly ? Codicon.eye : createHomeNewChatIcon, trailingOnHover: true } : {}),
 			tooltip: view.openable
 				? (view.readOnly ? localize('voltAgent.agentsMenu.watch', "Watch its chat (read only)") : localize('voltAgent.agentsMenu.open', "Open its chat to send follow-ups"))
 				: localize('voltAgent.agentsMenu.harness', "Runs inside the agent's turn"),
