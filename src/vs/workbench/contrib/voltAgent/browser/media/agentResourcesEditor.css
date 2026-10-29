@@ -235,6 +235,12 @@
 	margin: 0 auto;
 }
 
+/* Inside Customize (agentResourcesEmbed.ts): its column, under its search and chips. */
+.volt-ares-embedded .volt-ares-section {
+	max-width: none;
+	width: 100%;
+}
+
 /* Blocks: a section title (Customize's), its lead, and its buttons; they wrap rather than squeeze. */
 
 .volt-ares-block {
