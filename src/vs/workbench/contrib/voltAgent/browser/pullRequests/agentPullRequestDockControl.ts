@@ -264,20 +264,23 @@ export class AgentPullRequestDockControl extends Disposable {
 
 	/** The checks of the latest commit, from a fresh read; picking one opens its run. */
 	private async showChecks(): Promise<void> {
-		const link = this.link;
-		const pr = link?.snapshot;
-		if (!link || !pr || !this.pullRequests) {
+		const asked = this.link;
+		if (!asked?.snapshot || !this.pullRequests) {
 			return;
 		}
 		type Pick = { readonly url?: string; readonly open?: boolean };
 		let runs: readonly IVoltPrCheck[] = [];
 		let problem: string | undefined;
 		try {
-			runs = (await this.pullRequests.detail({ repo: link.repo, number: link.number })).checkRuns;
+			runs = (await this.pullRequests.detail({ repo: asked.repo, number: asked.number })).checkRuns;
 		} catch (err) {
 			problem = voltPrErrorMessage(err);
 		}
-		if (link !== this.link) {
+		// A fresh read re-renders the row with a new link object for the same pull request: only a
+		// different pull request (the chat switched) drops the menu.
+		const link = this.link;
+		const pr = link?.snapshot;
+		if (!link || !pr || link.key !== asked.key) {
 			return;
 		}
 		const items: IVoltMenuItem<Pick>[] = runs.map((check, index) => ({
