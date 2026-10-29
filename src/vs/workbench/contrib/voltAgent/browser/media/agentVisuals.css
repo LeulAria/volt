@@ -243,6 +243,26 @@
 	padding: 0;
 }
 
+/* A Scratch drawing: its picture as the board shows it; a click opens the board. */
+.volt-agent-visual-scratch {
+	display: block;
+	max-width: 100%;
+	height: auto;
+	object-fit: contain;
+	object-position: left top;
+	border-radius: 8px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.volt-agent-visual-scratch.opens {
+	cursor: pointer;
+}
+
+.volt-agent-visual-expanded.scratch > .volt-agent-visual-scratch {
+	margin: 0 auto;
+	max-height: calc(100vh - 170px);
+}
+
 /* The DeepSeek bar-list view, drawn by the chart engine. */
 .volt-agent-block.chart.volt-agent-chart.engine {
 	padding: 4px 0;

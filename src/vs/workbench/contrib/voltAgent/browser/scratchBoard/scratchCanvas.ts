@@ -5,14 +5,16 @@
 
 import '../media/scratchBoard.css';
 import { $, addDisposableListener, append, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
+import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, IReference, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
-import { isMacintosh } from '../../../../../base/common/platform.js';
+import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
 import { localize } from '../../../../../nls.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { SCRATCH_HIGHLIGHT_CONNECTIONS_SETTING } from '../../common/canvasScratchSettings.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { INativeHostService } from '../../../../../platform/native/common/native.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
@@ -22,9 +24,9 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { ILifecycleService } from '../../../../services/lifecycle/common/lifecycle.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { bindingCandidateAt, boundConnectors, IBindingCandidate, IScratchRouteContext, portPosition, rebindConnector, retypeConnector, routeContext, withLegs } from '../../common/scratchBoard/scratchBinding.js';
+import { parseScratchClipboard, SCRATCH_CLIPBOARD_MIME, serializeScratchClipboard } from '../../common/scratchBoard/scratchClipboard.js';
 import { darkModeColor } from '../../common/scratchBoard/scratchColor.js';
 import { mermaidToElements, readingOrder } from '../../common/scratchBoard/scratchDiagram.js';
-import { parseElement } from '../../common/scratchBoard/scratchDocument.js';
 import { createCard, createDraw, createFrame, createIcon, createImage, createLabel, createLinear, createNote, createShape, createText, duplicateElements, newElementId, ScratchPatch } from '../../common/scratchBoard/scratchFactory.js';
 import { freehandDrawing } from '../../common/scratchBoard/scratchDrawing.js';
 import { simplifyStroke } from '../../common/scratchBoard/scratchFreehand.js';
@@ -39,7 +41,7 @@ import { snapBounds, snapToGrid } from '../../common/scratchBoard/scratchSnappin
 import { alignMany, distributeMany, flipMany, moveMany, ResizeHandle, RESIZE_HANDLE_POSITIONS, resizeMany, resizeSingle, rotateMany, selectionBounds } from '../../common/scratchBoard/scratchTransform.js';
 import {
 	hasLabel, IScratchAgentRun, IScratchBounds, IScratchElementBase, IScratchLabel, IScratchLinearElement, IScratchStyleDefaults, isBindable, isLinear, isRichText,
-	ScratchElement, ScratchPoint, ScratchPressurePoint, ScratchShapeKind, SCRATCH_GRID_SIZE,
+	ScratchElement, ScratchPoint, ScratchPressurePoint, ScratchShapeKind, SCRATCH_FONT_SIZES, SCRATCH_GRID_SIZE,
 } from '../../common/scratchBoard/scratchTypes.js';
 import { IScratchAgentBridge } from './scratchAgentBridge.js';
 import { ScratchBoardModel, IScratchBoardService } from './scratchBoardService.js';
@@ -62,7 +64,8 @@ import { SHAPE_LABELS } from './scratchIcons.js';
 import { ScratchToolbar } from './scratchToolbar.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const CLIPBOARD_MIME = 'application/x-volt-scratch';
+/** The platform's name for PNG data on the system clipboard (what Electron's `clipboard.writeBuffer` takes). */
+const NATIVE_PNG_FORMAT = isMacintosh ? 'public.png' : isWindows ? 'PNG' : 'image/png';
 const DRAG_THRESHOLD = 3;
 const HIT_TOLERANCE = 6;
 const SNAP_THRESHOLD = 6;
@@ -957,9 +960,21 @@ export class ScratchCanvas extends Disposable {
 		this._register(addDisposableListener(stage, 'contextmenu', e => this.onContextMenu(e)));
 		this._register(addDisposableListener(this.element, 'keydown', e => this.onKeyDown(e)));
 		this._register(addDisposableListener(this.element, 'keyup', e => this.onKeyUp(e)));
-		this._register(addDisposableListener(this.element, 'copy', e => this.onCopy(e, false)));
-		this._register(addDisposableListener(this.element, 'cut', e => this.onCopy(e, true)));
-		this._register(addDisposableListener(this.element, 'paste', e => this.onPaste(e)));
+		// Clipboard events go to the element holding the page's text selection, or to the body when
+		// there is none (the usual case on the board), never to the focused board: listen on the document
+		// and take the ones that arrive while the board has focus (`ownsClipboardEvent`).
+		const doc = this.element.ownerDocument;
+		for (const before of ['beforecopy', 'beforecut', 'beforepaste']) {
+			// Cancelling these enables Copy, Cut and Paste with nothing selected as text.
+			this._register(addDisposableListener(doc, before, e => {
+				if (this.ownsClipboardEvent(e) && (before === 'beforepaste' || this.state.selection.size)) {
+					e.preventDefault();
+				}
+			}));
+		}
+		this._register(addDisposableListener(doc, 'copy', e => this.onCopy(e, false)));
+		this._register(addDisposableListener(doc, 'cut', e => this.onCopy(e, true)));
+		this._register(addDisposableListener(doc, 'paste', e => this.onPaste(e)));
 		this._register(addDisposableListener(stage, 'dragover', e => {
 			if (e.dataTransfer?.types.includes('Files') || e.dataTransfer?.types.includes(ScratchLibrary.DRAG_MIME)) {
 				e.preventDefault();
@@ -977,6 +992,21 @@ export class ScratchCanvas extends Disposable {
 
 	private isTextInput(target: EventTarget | null): boolean {
 		return isHTMLElement(target) && (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT');
+	}
+
+	/**
+	 * Whether a document clipboard event is the board's: one it asked for itself, or one that came
+	 * while the board (not its text editor or a field in its panels) has focus.
+	 */
+	private ownsClipboardEvent(e: { readonly target: EventTarget | null }): boolean {
+		if (this.clipboardRequest) {
+			return true;
+		}
+		if (this.textEditor.active || this.isTextInput(e.target)) {
+			return false;
+		}
+		const active = this.element.ownerDocument.activeElement;
+		return !!active && this.element.contains(active) && !this.isTextInput(active);
 	}
 
 	private onWheel(e: WheelEvent): void {
@@ -2480,7 +2510,28 @@ export class ScratchCanvas extends Disposable {
 			handled(() => this.nudge(dx, dy));
 			return;
 		}
+		// Shift+Cmd+arrow aligns the selection to that side, as in Excalidraw.
+		if (key.startsWith('Arrow') && mod && e.shiftKey && !e.altKey && this.state.selection.size > 1) {
+			const side = key === 'ArrowLeft' ? 'left' : key === 'ArrowRight' ? 'right' : key === 'ArrowUp' ? 'top' : 'bottom';
+			handled(() => this.align(side));
+			return;
+		}
 		if (mod) {
+			// Copy and cut write the clipboard here; paste asks for the paste event, which carries the
+			// board's own format and any image files (`onPaste`). Workbench keybindings would otherwise
+			// run them as a page copy with no target, which never reaches the board.
+			if ((lower === 'c' || lower === 'x') && !e.shiftKey && !e.altKey) {
+				if (this.state.selection.size) {
+					handled(() => this.copyToClipboard(lower === 'x'));
+				}
+				return;
+			}
+			if (lower === 'v' && !e.altKey) {
+				handled(() => e.shiftKey ? void this.pastePlainText() : this.pasteFromKeyboard());
+				return;
+			}
+			if (e.shiftKey && (key === '>' || e.code === 'Period')) { handled(() => this.stepFontSize(1)); return; }
+			if (e.shiftKey && (key === '<' || e.code === 'Comma')) { handled(() => this.stepFontSize(-1)); return; }
 			if (lower === 'z' && !e.shiftKey) { handled(() => this.undo()); return; }
 			if ((lower === 'z' && e.shiftKey) || lower === 'y') { handled(() => this.redo()); return; }
 			if (lower === 'a' && !e.shiftKey) { handled(() => this.selectAll()); return; }
@@ -2502,6 +2553,11 @@ export class ScratchCanvas extends Disposable {
 			if (lower === 'e' && e.shiftKey) { handled(() => void this.exporter.exportImage(this, 'png')); return; }
 			if (key === '\'') { handled(() => this.toggleGrid()); return; }
 			return;
+		}
+		// With Option held, macOS reports accented letters as the key: go by the physical key.
+		if (e.altKey && e.shiftKey) {
+			if (e.code === 'KeyC') { handled(() => void this.copySelectionAsPng()); return; }
+			if (e.code === 'KeyD') { handled(() => this.toggleBoardTheme()); return; }
 		}
 		if (e.altKey && !e.shiftKey) {
 			if (e.code === 'KeyS') { handled(() => this.setSnapToObjects(!scene.settings.snapToObjects)); return; }
@@ -2947,6 +3003,27 @@ export class ScratchCanvas extends Disposable {
 		return !!this.copiedStyle;
 	}
 
+	/** Shift+Cmd+> / <: the selected text one font size up or down (each element from its own size). */
+	stepFontSize(direction: 1 | -1): void {
+		const sizes = Object.values(SCRATCH_FONT_SIZES).sort((a, b) => a - b);
+		const step = (size: number) => direction > 0
+			? sizes.find(s => s > size) ?? sizes[sizes.length - 1]
+			: [...sizes].reverse().find(s => s < size) ?? sizes[0];
+		const selected = this.selectedElements();
+		if (!selected.some(el => isRichText(el) || (hasLabel(el) && el.label))) {
+			return;
+		}
+		this.applyStyle({}, el => isRichText(el)
+			? { fontSize: step(el.fontSize) }
+			: hasLabel(el) && el.label ? { label: { ...el.label, fontSize: step(el.label.fontSize) } } : undefined,
+			`fontSize:${[...this.state.selection].join(',')}`);
+	}
+
+	/** Shift+Alt+D: the board between light and dark (from what it shows now when it follows Volt). */
+	toggleBoardTheme(): void {
+		this.setSettings({ theme: this.dark ? 'light' : 'dark' });
+	}
+
 	resetZoom(): void {
 		this.camera.zoomAt(1, [this.width / 2, this.height / 2], true);
 	}
@@ -3084,12 +3161,39 @@ export class ScratchCanvas extends Disposable {
 		if (!blob) {
 			return;
 		}
+		if (await this.writePngToClipboard(blob)) {
+			this.notificationService.info(localize('voltScratch.copiedPng', "Copied as PNG"));
+		} else {
+			this.notificationService.info(localize('voltScratch.copyPngUnavailable', "Images can't be copied from here. Use Export as PNG in the board menu to save one instead."));
+		}
+	}
+
+	/**
+	 * Puts a PNG on the system clipboard. The workbench page may not write images itself (Electron
+	 * denies `navigator.clipboard.write` to it), so the main process writes it when there is one;
+	 * the web clipboard is the fallback. False when neither could.
+	 */
+	private async writePngToClipboard(blob: Blob): Promise<boolean> {
+		let nativeHost: INativeHostService | undefined;
+		try {
+			nativeHost = this.instantiationService.invokeFunction(accessor => accessor.get(INativeHostService));
+		} catch {
+			// Not in the desktop app.
+		}
+		if (nativeHost) {
+			try {
+				await nativeHost.writeClipboardBuffer(NATIVE_PNG_FORMAT, VSBuffer.wrap(new Uint8Array(await blob.arrayBuffer())));
+				return true;
+			} catch {
+				// Try the web clipboard.
+			}
+		}
 		try {
 			const win = getWindow(this.element) as Window & typeof globalThis;
 			await win.navigator.clipboard.write([new win.ClipboardItem({ 'image/png': blob })]);
-			this.notificationService.info(localize('voltScratch.copiedPng', "Copied as PNG"));
-		} catch (err) {
-			this.notificationService.error(localize('voltScratch.copyPngFailed', "Could not copy the image: {0}", String(err)));
+			return true;
+		} catch {
+			return false;
 		}
 	}
 
@@ -3355,8 +3459,18 @@ export class ScratchCanvas extends Disposable {
 
 	// ---- Clipboard and drop ----------------------------------------------------------------
 
+	/**
+	 * The last elements copied from any board in this window, with the text that went on the
+	 * clipboard: the menu's Paste reads the system clipboard as text, which drops the board's format.
+	 */
+	private static lastCopied: { readonly text: string; readonly elements: readonly ScratchElement[] } | undefined;
+	/** Set while the board runs its own copy command, whose event it takes wherever focus is. */
+	private clipboardRequest = false;
+	/** Whether the copy event of the board's own copy command came (and wrote the clipboard). */
+	private clipboardWritten = false;
+
 	private onCopy(e: ClipboardEvent, cut: boolean): void {
-		if (this.isTextInput(e.target) || this.textEditor.active) {
+		if (!this.ownsClipboardEvent(e)) {
 			return;
 		}
 		const selected = this.selectedWithContents();
@@ -3365,19 +3479,19 @@ export class ScratchCanvas extends Disposable {
 		}
 		e.preventDefault();
 		e.stopPropagation();
-		e.clipboardData.setData(CLIPBOARD_MIME, JSON.stringify({ type: 'volt-scratch/clipboard', version: 1, elements: selected }));
-		// Other apps get the words.
-		const text = readingOrder(selected).map(el => isRichText(el) ? htmlToMarkdown(el.html) : hasLabel(el) && el.label ? htmlToMarkdown(el.label.html) : el.type === 'frame' ? el.name : '').filter(Boolean).join('\n\n');
-		e.clipboardData.setData('text/plain', text || ' ');
-		// The menu's Paste reads the system clipboard, which drops our own format: remember it here.
-		this.lastCopied = { text: text || ' ', elements: selected };
+		// Boards (in any window) read the elements back from the private format; other apps get the words.
+		const text = clipboardWords(selected);
+		e.clipboardData.setData(SCRATCH_CLIPBOARD_MIME, serializeScratchClipboard(selected));
+		e.clipboardData.setData('text/plain', text);
+		ScratchCanvas.lastCopied = { text, elements: selected };
+		this.clipboardWritten = true;
 		if (cut) {
 			this.deleteElements(selected.filter(el => !el.locked).map(el => el.id), localize('voltScratch.cut', "Cut"));
 		}
 	}
 
 	private onPaste(e: ClipboardEvent): void {
-		if (this.isTextInput(e.target) || this.textEditor.active || !this.scene) {
+		if (!this.scene || !this.ownsClipboardEvent(e)) {
 			return;
 		}
 		const data = e.clipboardData;
@@ -3386,18 +3500,11 @@ export class ScratchCanvas extends Disposable {
 		}
 		e.preventDefault();
 		e.stopPropagation();
-		const own = data.getData(CLIPBOARD_MIME);
+		// Elements copied from a board: the private format, or the JSON as text when that is all the copy could write.
+		const own = parseScratchClipboard(data.getData(SCRATCH_CLIPBOARD_MIME)) ?? parseScratchClipboard(data.getData('text/plain'));
 		if (own) {
-			try {
-				const parsed = JSON.parse(own) as { elements?: unknown[] };
-				const elements = parseClipboardElements(parsed.elements);
-				if (elements.length) {
-					this.insertElements(elements, this.pasteTarget(), localize('voltScratch.paste', "Paste"));
-					return;
-				}
-			} catch {
-				// Fall through to text.
-			}
+			this.pasteElements(own);
+			return;
 		}
 		const files = Array.from(data.files ?? []).filter(f => f.type.startsWith('image/'));
 		if (files.length) {
@@ -3420,14 +3527,91 @@ export class ScratchCanvas extends Disposable {
 		}
 	}
 
-	/** Copy or cut from a menu: the browser's copy event carries our own format. */
+	/**
+	 * Copy or cut (Cmd+C / Cmd+X or a menu). The page's copy command fires a copy event that writes
+	 * the board's own format (`onCopy`); without one, the JSON goes on the clipboard as text, which a
+	 * board's paste reads back. Cut then deletes what was copied, as one more undo step.
+	 */
 	copyToClipboard(cut: boolean): void {
+		const selected = this.selectedWithContents();
+		if (!selected.length) {
+			return;
+		}
 		this.element.focus({ preventScroll: true });
-		this.element.ownerDocument.execCommand(cut ? 'cut' : 'copy');
+		this.clipboardRequest = true;
+		this.clipboardWritten = false;
+		try {
+			this.element.ownerDocument.execCommand('copy');
+		} catch {
+			// Written below.
+		} finally {
+			this.clipboardRequest = false;
+		}
+		if (!this.clipboardWritten) {
+			const json = serializeScratchClipboard(selected);
+			ScratchCanvas.lastCopied = { text: json, elements: selected };
+			void this.clipboardService.writeText(json);
+		}
+		if (cut) {
+			this.deleteElements(selected.filter(el => !el.locked).map(el => el.id), localize('voltScratch.cut', "Cut"));
+		}
+	}
+
+	/**
+	 * Cmd+V: asks the main process to paste into the page, which fires the paste event with every
+	 * format on the clipboard (`onPaste`); where it cannot, reads the clipboard instead.
+	 */
+	private pasteFromKeyboard(): void {
+		const trigger = this.clipboardService.triggerPaste(getWindow(this.element).vscodeWindowId);
+		if (!trigger) {
+			void this.pasteFromClipboard(this.pasteTarget());
+			return;
+		}
+		trigger.catch(() => this.pasteFromClipboard(this.pasteTarget()));
+	}
+
+	/** Shift+Cmd+V: the clipboard's text as one text element, without reading Markdown, Mermaid or links. */
+	async pastePlainText(): Promise<void> {
+		const text = await this.clipboardService.readText();
+		if (!text.trim()) {
+			return;
+		}
+		if (text.length > MAX_PASTE_TEXT_LENGTH) {
+			this.notificationService.info(localize('voltScratch.pasteTooLong', "That text is too long for a board. Paste it into a file and link it instead."));
+			return;
+		}
+		this.insertElements([createText({ x: 0, y: 0, html: plainTextAsRichHtml(text), autoSize: true }, this.state.style)], this.pasteTarget(), localize('voltScratch.pasteText', "Paste text"));
+	}
+
+	/** Copied elements as new ones (fresh ids, connections and groups kept among them) at the paste spot. */
+	private pasteElements(elements: readonly ScratchElement[], at: Vec = this.pasteTarget()): void {
+		const b = selectionBounds(elements);
+		// Right where the originals are, the copies would hide them: step off like Duplicate.
+		if (b && distance([(b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2], at) < 2) {
+			at = [at[0] + 16, at[1] + 16];
+		}
+		this.insertElements(elements, at, localize('voltScratch.paste', "Paste"));
 	}
 
 	/** Pastes from the system clipboard (the context menu has no paste event to read). */
 	async pasteFromClipboard(at: Vec): Promise<void> {
+		const text = await this.clipboardService.readText();
+		const lastCopied = ScratchCanvas.lastCopied;
+		const own = parseScratchClipboard(text) ?? (lastCopied && text === lastCopied.text ? lastCopied.elements : undefined);
+		if (own) {
+			this.pasteElements(own, at);
+			return;
+		}
+		try {
+			// The desktop app reads images in the main process (the page may not read the clipboard).
+			const png = await this.clipboardService.readImage();
+			if (png.byteLength) {
+				await this.insertImageFile(new Blob([new Uint8Array(png)], { type: 'image/png' }), at);
+				return;
+			}
+		} catch {
+			// No image: try the web clipboard, then text.
+		}
 		try {
 			const win = getWindow(this.element) as Window & typeof globalThis;
 			const items = await win.navigator.clipboard.read();
@@ -3441,17 +3625,10 @@ export class ScratchCanvas extends Disposable {
 		} catch {
 			// No permission or no images: try text.
 		}
-		const text = await this.clipboardService.readText();
-		if (this.lastCopied && text === this.lastCopied.text) {
-			this.insertElements(this.lastCopied.elements, at, localize('voltScratch.paste', "Paste"));
-			return;
-		}
 		if (text) {
 			this.insertText(text, undefined, at);
 		}
 	}
-
-	private lastCopied: { readonly text: string; readonly elements: readonly ScratchElement[] } | undefined;
 
 	private onDrop(e: DragEvent): void {
 		const data = e.dataTransfer;
@@ -3705,6 +3882,12 @@ function elementKindLabel(el: ScratchElement): string {
 	}
 }
 
+/** What copied elements say, in reading order: the text other apps paste (never empty, or the copy is dropped). */
+function clipboardWords(elements: readonly ScratchElement[]): string {
+	const words = readingOrder(elements).map(el => isRichText(el) ? htmlToMarkdown(el.html) : hasLabel(el) && el.label ? htmlToMarkdown(el.label.html) : el.type === 'frame' ? el.name : '').filter(Boolean).join('\n\n');
+	return words || ' ';
+}
+
 function escapeForHtml(text: string): string {
 	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -3718,13 +3901,5 @@ async function imageSize(file: Blob): Promise<{ width: number; height: number }>
 	} catch {
 		return { width: 400, height: 300 };
 	}
-}
-
-/** Elements from our own clipboard JSON, validated like a saved board. */
-function parseClipboardElements(raw: unknown[] | undefined): ScratchElement[] {
-	if (!Array.isArray(raw)) {
-		return [];
-	}
-	return raw.map(item => parseElement(item)).filter((el): el is ScratchElement => !!el);
 }
 

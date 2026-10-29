@@ -291,11 +291,15 @@ export const MANAGED_TERMINALS = `Start servers, watchers, \`docker compose up\`
  */
 export const INDEXED_SEARCH = 'This project is indexed: search code with instant_grep (regex or literal, the same results as rg), find symbol declarations with find_symbol, and find files by a fuzzy name with find_files, all from the volt MCP server. They answer in milliseconds where Grep, rg and find re-read every file.';
 
+/** The Scratch board's tools are registered in contrib/, which services/ cannot import. */
+const SCRATCH_READ_TOOL_NAME = 'scratch_read';
+const SCRATCH_DRAW_TOOL_NAME = 'scratch_draw';
+
 /**
  * Tool descriptions say what the visual tools do; this says when to reach for them unasked. Not
  * sent in the fast lane (small edits) or when the agent cannot reach the volt MCP server.
  */
-export const VISUAL_REPLIES = `When a visual helps explain the answer, render it proactively: call ${RENDER_CHART_TOOL_NAME} from the volt MCP server for numbers over time, comparisons, distributions, flows or hierarchies, including repo and usage analyses; use ${RENDER_HTML_TOOL_NAME} for diagrams, relationships, processes and custom layouts. Choose the chart type, variants and style controls to suit the data without asking the user to choose. Use observed data, or clearly label illustrative data. If your provider does not expose the visual tools, a fenced volt-chart block containing the same JSON chart spec renders natively in Volt; use a mermaid fence for diagrams. Render before your final text, then do not restate what it shows. Skip it for short or trivial answers.`;
+export const VISUAL_REPLIES = `When a visual helps explain the answer, render it proactively: call ${RENDER_CHART_TOOL_NAME} from the volt MCP server for numbers over time, comparisons, distributions, flows or hierarchies, including repo and usage analyses; use ${RENDER_HTML_TOOL_NAME} for diagrams, relationships, processes and custom layouts. When a hand-drawn sketch would read better than a page (a comparison table or scorecard with takeaways, an architecture picture, a flow), draw it with ${SCRATCH_DRAW_TOOL_NAME} instead (\`page\`, \`diagram\`, \`mermaid\`, or your own \`elements\` for anything else: an illustrated explainer, a timeline, a mind map, a hand-drawn chart; be inventive): it shows in the chat as a picture the user can open on their Scratch board. Choose the chart type, variants and style controls to suit the data without asking the user to choose. Use observed data, or clearly label illustrative data. If your provider does not expose the visual tools, a fenced volt-chart block containing the same JSON chart spec renders natively in Volt; use a mermaid fence for diagrams. Render before your final text, then do not restate what it shows. Skip it for short or trivial answers.`;
 
 /**
  * Only when the request asks for them: agents otherwise describe five sidebars in prose, or take
@@ -306,11 +310,7 @@ export const SCREENS_REPLIES = `To show the app's screens, call ${SCREENS_TOOL_N
 
 export const CANVAS_REPLIES = `To design screens or a flow, call ${CANVAS_RENDER_TOOL_NAME} from the volt MCP server once with every screen as a frame (iphone, android, tablet, browser, desktop or component; real copy and styling; shared markup in head, css and components; data-next on the element that leads to the next screen) instead of describing them or writing throwaway files: the user moves, plays and comments on it, and you change it afterwards with ${CANVAS_UPDATE_TOOL_NAME} edits rather than a new canvas.`;
 
-/** The Scratch board's tools are registered in contrib/, which services/ cannot import. */
-const SCRATCH_READ_TOOL_NAME = 'scratch_read';
-const SCRATCH_DRAW_TOOL_NAME = 'scratch_draw';
-
-export const SCRATCH_REPLIES = `For a sketch, a diagram, a plan or brainstormed points, call ${SCRATCH_DRAW_TOOL_NAME} from the volt MCP server to draw on the user's Scratch board (a Mermaid flowchart for diagrams, sticky notes for points, markdown cards for longer text; ${SCRATCH_READ_TOOL_NAME} first to build on what is there; \`replace\` with a frameId to redraw a frame) instead of a diagram in the reply: the user moves and edits it, so answer in a line or two.`;
+export const SCRATCH_REPLIES = `For a sketch, a diagram, a plan or brainstormed points, call ${SCRATCH_DRAW_TOOL_NAME} from the volt MCP server to draw on the user's Scratch board (a Mermaid flowchart for diagrams, a hand-lettered \`page\` for comparisons and takeaways, your own \`elements\` for anything you can draw better yourself, sticky notes for points, markdown cards for longer text; ${SCRATCH_READ_TOOL_NAME} first to build on what is there; \`replace\` with a frameId to redraw a frame) instead of a diagram in the reply: the user moves and edits it, so answer in a line or two.`;
 
 /** Agents otherwise screenshot the simulator and tap guessed coordinates, one call per tap. */
 export const DEVICE_REPLIES = 'For a native mobile app, use the iOS Simulator or Android Emulator through the volt MCP device tools: device_list and device_boot when none is running, device_launch_app, then device_snapshot to read the screen\'s accessibility tree and device_act to tap, type, scroll and verify by visible text in one call, instead of guessing coordinates or looping on device_screenshot and device_tap. One device_screenshot at the end shows the user the result.';

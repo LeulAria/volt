@@ -230,6 +230,8 @@ Create a hosted repository for the current project and push it.
 Answer on the user's Scratch board with **scratch_draw**. When you build on what is already there, read it first with **scratch_read**.
 
 - A diagram (flow, architecture, plan): a Mermaid flowchart.
+- A comparison, scorecard or summary with takeaways: a hand-lettered \`page\` (heading, table, footnote, bullets).
+- Anything else (an illustrated explainer, a timeline, a mind map, a hand-drawn chart, a wireframe): compose it yourself from \`elements\` (shapes, arrows, text, freehand strokes, icons, hachure fills). Be inventive, then check the returned image and polish it with \`replace\`.
 - Separate points or ideas: sticky notes.
 - Longer text: markdown cards.
 - To change a frame you drew before, redraw it with \`replace\` set to its frameId instead of adding a new one.

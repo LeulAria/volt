@@ -121,7 +121,7 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		this.codec = new AgentHistoryCodec(history);
 		this._register(orchestrator.setTurnHost({
 			startTurn: request => this.startTurn(request),
-			steer: (threadId, prompt) => this.steer(threadId, prompt),
+			steer: (threadId, prompt, steerId) => this.steer(threadId, prompt, steerId),
 			prepareChild: (childId, parentId) => this.prepareChild(childId, parentId),
 		}));
 	}
@@ -241,16 +241,18 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		}
 	}
 
-	private async steer(threadId: string, prompt: IOrchPrompt): Promise<boolean> {
+	private async steer(threadId: string, prompt: IOrchPrompt, steerId: string): Promise<boolean> {
 		if (!this.runtime.canSteer(threadId)) {
 			return false;
 		}
-		const display = prompt.display as { text?: unknown } | undefined;
-		const shown = typeof display?.text === 'string' && display.text.trim() ? display.text.trim() : prompt.text;
 		if (!await this.runtime.steerAsync(threadId, prompt.text)) {
 			return false;
 		}
-		AgentEditorInput.acquire(threadId, this.instantiationService).controller.recordSteer(shown);
+		// The steer id is the composer's turn id: its live display (a pasted image's bytes) is stashed
+		// under it, else the stored copy is read back. Without it the steer showed only the chip's name.
+		const display = takeTurnDisplay(steerId) ?? await this.thawDisplay(prompt.display);
+		const shown = display?.text.trim() ? display.text.trim() : prompt.text;
+		AgentEditorInput.acquire(threadId, this.instantiationService).controller.recordSteer(shown, display?.text.trim() ? display.mentions : undefined);
 		return true;
 	}
 

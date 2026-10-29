@@ -5623,8 +5623,15 @@ pre.volt-agent-searchable {
 	line-height: 22px;
 }
 
+/* Access, branch and environment icons share one 14px box (and the svgs one stroke) so the row reads even. */
 .volt-agent-status-env .icon {
 	display: inline-flex;
+}
+
+.volt-agent-status-env .icon svg {
+	display: block;
+	width: 14px;
+	height: 14px;
 }
 
 .volt-agent-status-env.hidden {
@@ -5668,8 +5675,8 @@ pre.volt-agent-searchable {
 .volt-agent-status-access .icon .volt-agent-svg-icon,
 .volt-agent-status-access .icon .volt-agent-svg-icon svg {
 	display: block;
-	width: 13px;
-	height: 13px;
+	width: 14px;
+	height: 14px;
 }
 
 .volt-agent-status-access .chevron {
@@ -5684,8 +5691,10 @@ pre.volt-agent-searchable {
 	height: 14px;
 }
 
-.volt-agent-status-branch .codicon {
-	font-size: 13px;
+/* (0,4,0): `.monaco-workbench .codicon[class*=codicon-]` would draw the git mark at 16px. */
+.monaco-workbench .volt-agent-status-branch .codicon[class*='codicon-']:not(.chevron) {
+	width: 14px;
+	font-size: 14px;
 }
 
 .volt-agent-status-branch .chevron {
@@ -9965,11 +9974,12 @@ pre.volt-agent-searchable {
 }
 
 /* End of a finished turn: every changed file once, as Cursor's "1 File Changed · Review" card. */
+/* The sent prompt's fill and border (.volt-agent-turn.user .volt-agent-bubble). */
 .volt-agent-turn-files {
 	margin: 10px 0 2px;
-	border: 1px solid rgba(240, 240, 241, 0.12);
+	border: 1px solid rgba(255, 255, 255, 0.1);
 	border-radius: 12px;
-	background: rgba(255, 255, 255, 0.015);
+	background: rgba(34, 34, 34, 0.78);
 	display: flex;
 	flex-direction: column;
 	font-size: 13px;
@@ -9977,8 +9987,8 @@ pre.volt-agent-searchable {
 
 .monaco-workbench.vs .volt-agent-turn-files,
 .monaco-workbench.hc-light .volt-agent-turn-files {
-	border-color: rgba(0, 0, 0, 0.1);
-	background: rgba(0, 0, 0, 0.015);
+	border-color: rgba(0, 0, 0, 0.12);
+	background: rgba(236, 236, 236, 0.82);
 }
 
 .volt-agent-turn-files-header {

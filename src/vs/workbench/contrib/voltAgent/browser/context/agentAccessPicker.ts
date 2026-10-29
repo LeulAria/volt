@@ -62,7 +62,8 @@ export class AgentAccessPicker extends Disposable {
 	render(): void {
 		const sessionId = this.host.sessionId();
 		const option = accessModeOption(this.runtime.getAccessMode(sessionId));
-		this.icon.replaceChildren(createAccessIcon(option.id, '1.3'));
+		// The branch and worktree icons' weight beside it (1.5 on the 24px grid, drawn at 14px).
+		this.icon.replaceChildren(createAccessIcon(option.id, '1.5'));
 		this.label.textContent = option.label;
 		this.element.dataset.mode = option.id;
 		const sandbox = this.runtime.getSandboxSettings(sessionId);

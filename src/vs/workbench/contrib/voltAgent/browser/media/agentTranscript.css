@@ -464,6 +464,17 @@ button.volt-tr-header:hover .volt-tr-chevron,
 	color: var(--volt-md-fg-secondary);
 }
 
+/* The icon and name open the file (agentTranscriptView.ts renderEditCard). */
+.volt-tr-edit-card .opens-file {
+	cursor: pointer;
+}
+
+.volt-tr-edit-name.opens-file:hover {
+	color: var(--volt-md-fg);
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
 .volt-tr-edit-card > .volt-tr-header .volt-tr-chevron {
 	margin-left: auto;
 }
@@ -545,10 +556,9 @@ button.volt-tr-header:hover .volt-tr-chevron,
 	color: var(--volt-md-fg-quaternary);
 }
 
-/* End-of-turn file card: solid card fill, 14px below the turn actions, Cursor's diff colours. */
+/* End-of-turn file card: the sent prompt's fill (agentEditor.css), 14px below the turn actions, Cursor's diff colours. */
 .volt-agent-turn.agent > .volt-agent-turn-files {
 	margin: 8px 0 0;
-	background: var(--volt-md-card-bg);
 }
 
 .volt-agent-turn-files-title {

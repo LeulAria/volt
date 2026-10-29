@@ -26,6 +26,7 @@ import { WebviewThemeDataProvider } from '../../../webview/browser/themeing.js';
 import { IWebviewElement, IWebviewService, WebviewContentPurpose } from '../../../webview/browser/webview.js';
 import type { IVisualBlock } from '../blocks/agentBlocks.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, OPEN_SCRATCH_BOARD_COMMAND_ID } from '../scratchBoard/scratchBoardInput.js';
 import { DotLoaderShape, renderDotLoader } from './agentDotLoader.js';
 import { themeKind, visualThemeCss } from './visualTheme.js';
 import { dispatchPageChannel, IPageChannelPort, pageHeightFor, PAGE_SEND_INTERVAL_MS, PageRequest, parsePageRequest, setPageContext } from './agentVisualBridge.js';
@@ -708,6 +709,10 @@ function placeActions(wrap: HTMLElement, body: HTMLElement): void {
  * Expand and Copy on hover. Loading holds the visual's own height, so nothing below it jumps.
  */
 export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx: IVisualHostContext & { readonly store: DisposableStore }): void {
+	if (block.kind === 'scratch') {
+		renderScratchVisual(parent, block, ctx);
+		return;
+	}
 	// A canvas_update still streaming in: a line saying so. Once applied, the canvas itself as it changed.
 	// In the canvas's own agent chat the canvas is right beside it: a line per change is enough there.
 	const besideCanvas = block.kind === 'canvas' && !!block.canvas && !!ctx.sessionId
@@ -841,6 +846,82 @@ export function renderVisualBlock(parent: HTMLElement, block: IVisualBlock, ctx:
 }
 
 /** The line above a page: a window glyph, its title, and "Building…" while the call streams in. */
+/**
+ * A scratch_draw drawing: its picture, as drawn on the board, under a caption with Open (the board
+ * beside the chat, the drawing in view) and Expand. Clicking the picture opens the board too.
+ */
+function renderScratchVisual(parent: HTMLElement, block: IVisualBlock, ctx: IVisualHostContext & { readonly store: DisposableStore }): void {
+	const wrap = append(parent, $('.volt-agent-block.volt-agent-visual.page.scratch'));
+	const title = block.title || localize('voltVisual.drawing', "Drawing");
+	const caption = append(wrap, $('.volt-agent-visual-caption'));
+	const label = append(caption, $('.volt-agent-visual-caption-label'));
+	label.appendChild(renderIcon(Codicon.notebook));
+	append(label, $('span.volt-agent-visual-caption-title')).textContent = title;
+	const actions = append(caption, $('.volt-agent-visual-actions'));
+	const body = append(wrap, $('.volt-agent-visual-body'));
+	const [width, height] = block.size ?? [0, 0];
+	const sized = (img: HTMLImageElement) => {
+		if (width && height) {
+			img.style.width = `${width}px`;
+			img.style.aspectRatio = `${width} / ${height}`;
+		}
+		img.alt = title;
+		img.draggable = false;
+		return img;
+	};
+	const board = block.board;
+	const open = () => {
+		if (!board) {
+			return;
+		}
+		const commands = ctx.instantiationService.invokeFunction(accessor => accessor.get(ICommandService));
+		// Beside the chat when it can show tabs, else the board on its own.
+		void (ctx.sessionId ? commands.executeCommand<boolean>(OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, ctx.sessionId, board, block.frame) : Promise.resolve(false))
+			.then(shown => shown ? undefined : commands.executeCommand(OPEN_SCRATCH_BOARD_COMMAND_ID, board, undefined, false, block.frame));
+	};
+	let url: string | undefined;
+	const picture = sized(append(body, $('img.volt-agent-visual-scratch')) as HTMLImageElement);
+	picture.classList.toggle('opens', !!board);
+	if (width && height) {
+		picture.style.maxHeight = `${VISUAL_MAX_HEIGHT}px`;
+	}
+	const load = () => void loadAttachment(ctx, block.ref).then(bytes => {
+		if (!bytes) {
+			body.replaceChildren();
+			append(body, $('.volt-agent-visual-missing')).textContent = localize('voltVisual.drawingMissing', "This picture is no longer stored.");
+			return;
+		}
+		if (ctx.store.isDisposed) {
+			return;
+		}
+		url = URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'image/png' }));
+		const own = url;
+		ctx.store.add(toDisposable(() => URL.revokeObjectURL(own)));
+		picture.src = own;
+	});
+	whenNearScreen(wrap, load, ctx.store);
+	if (board) {
+		ctx.store.add(addDisposableListener(picture, 'click', event => {
+			event.preventDefault();
+			open();
+		}));
+		setAgentTooltip(picture, localize('voltVisual.openDrawing', "Open on the Scratch Board"));
+		const button = toolbarButton(actions, Codicon.layoutSidebarRight, localize('voltVisual.openDrawing', "Open on the Scratch Board"), open, ctx.store);
+		button.classList.add('labeled');
+		append(button, $('span')).textContent = localize('voltVisual.open', "Open");
+	}
+	toolbarButton(actions, Codicon.screenFull, localize('voltVisual.expand', "Expand"), () => {
+		if (!url || !ctx.onExpandVisual) {
+			return;
+		}
+		const content = $('.volt-agent-visual-expanded.scratch');
+		const big = append(content, $('img.volt-agent-visual-scratch')) as HTMLImageElement;
+		big.src = url;
+		big.alt = title;
+		ctx.onExpandVisual(title, content, toDisposable(() => content.remove()));
+	}, ctx.store);
+}
+
 function renderPageCaption(wrap: HTMLElement, title: string, pending: boolean, canvas = false): HTMLElement {
 	const caption = append(wrap, $('.volt-agent-visual-caption'));
 	const label = append(caption, $('.volt-agent-visual-caption-label'));

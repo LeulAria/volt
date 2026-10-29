@@ -61,4 +61,36 @@ suite('Agent history codec', () => {
 		const thawed = await codec().thawUser(stored);
 		assert.deepStrictEqual(thawed?.mentions?.[0].citation, user.mentions![0].citation);
 	});
+
+	test('an image pasted into a steering message is stored by reference and comes back with its bytes', async () => {
+		const bytes = new Uint8Array([137, 80, 78, 71]);
+		const attachments = new Map<string, { bytes: Uint8Array; mime: string }>();
+		const history = {
+			putAttachment: async (data: Uint8Array, mime: string) => {
+				attachments.set('attachment:shot', { bytes: data, mime });
+				return 'attachment:shot';
+			},
+			getAttachment: async (ref: string) => attachments.get(ref),
+			attachmentResource: () => undefined,
+		} as unknown as IAgentHistoryService;
+		const reply: IAgentAssistantMessage = {
+			kind: 'agent',
+			id: 'turn-3',
+			title: '',
+			steps: [],
+			segments: [{ kind: 'text', text: 'Working.' }],
+			blockState: {},
+			steers: [
+				{ text: 'like this image.png', at: 1, mentions: [{ kind: 'image', label: 'image.png', image: { id: 'img-1', mime: 'image/png', bytes, name: 'image.png' } }] },
+				{ text: 'and keep going', at: 1 },
+			],
+		};
+		const stored = viaLog(await new AgentHistoryCodec(history).freezeAssistant(reply)) as { steers: { mentions?: { image?: { ref?: string; bytes?: unknown } }[] }[] };
+		assert.strictEqual(stored.steers[0].mentions?.[0].image?.ref, 'attachment:shot');
+		assert.strictEqual(stored.steers[0].mentions?.[0].image?.bytes, undefined, 'no bytes in the log');
+		const thawed = await new AgentHistoryCodec(history).thawAssistant(stored, true);
+		assert.deepStrictEqual(thawed?.steers?.map(steer => steer.text), ['like this image.png', 'and keep going']);
+		assert.deepStrictEqual(Array.from(thawed?.steers?.[0].mentions?.[0].image?.bytes ?? []), Array.from(bytes));
+		assert.strictEqual(thawed?.steers?.[1].mentions, undefined);
+	});
 });

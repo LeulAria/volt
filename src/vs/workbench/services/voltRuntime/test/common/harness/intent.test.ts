@@ -236,6 +236,13 @@ suite('Volt intent router', () => {
 		assert.strictEqual(classifyIntent('[/code-review skill] the auth flow', 'agent').wantsScratch, undefined);
 	});
 
+	test('asking for an explanation as a picture is not UI work', () => {
+		assert.ok(!classifyIntent('Explain visually how git rebase differs from git merge, for someone new to git.', 'agent').uiWork);
+		assert.ok(!classifyIntent('can you visually compare the three caching strategies', 'agent').uiWork);
+		assert.ok(classifyIntent('explain visually why the page layout breaks on mobile', 'agent').uiWork, 'the rest of the message still counts');
+		assert.ok(classifyIntent('fix the visual glitch in the header', 'agent').uiWork);
+	});
+
 	test('without a workspace everything is chat', () => {
 		assert.strictEqual(classifyIntent('add pagination to the users table', 'agent', { hasWorkspace: false }).lane, 'chat');
 	});

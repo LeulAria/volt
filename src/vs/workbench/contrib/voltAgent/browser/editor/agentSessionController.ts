@@ -113,7 +113,8 @@ export interface IAgentSessionControl extends IDisposable {
 	/** The turn is on screen from `showPendingTurn` and not started yet. */
 	isPendingTurn?(turnId: string): boolean;
 	endUnstartedTurn(turnId: string, failure: string | undefined): void;
-	recordSteer(text: string): boolean;
+	/** `mentions` are the composer's chips in `text` (a pasted image's bytes), shown as in a sent message. */
+	recordSteer(text: string, mentions?: IAgentPromptDisplay['mentions']): boolean;
 	/**
 	 * Where the transcript comes from when another process owns it (the agent server): the input
 	 * loads it through this instead of reading the history log.
@@ -502,12 +503,12 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 	}
 
 	/** A message steered into the running turn: the reply shows where it landed. False when nothing runs. */
-	recordSteer(text: string): boolean {
+	recordSteer(text: string, mentions?: IAgentPromptDisplay['mentions']): boolean {
 		const reply = this.host.messages.at(-1);
 		if (reply?.kind !== 'agent' || !reply.activity?.streaming) {
 			return false;
 		}
-		(reply.steers ??= []).push({ text, at: reply.segments.length });
+		(reply.steers ??= []).push({ text, at: reply.segments.length, ...(mentions?.length ? { mentions } : {}) });
 		this.host.recordAssistant(reply, false, 'running', agentMessagePlainText(reply));
 		this.fire({ kind: 'render' });
 		return true;
@@ -578,7 +579,14 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 		if (last.segments.some(segment => segment.kind === 'block' && segment.block.id === id)) {
 			return;
 		}
-		last.segments.push({ kind: 'block', block: { id, type: 'visual', status: 'complete', kind: visual.kind, title: visual.title, ref: visual.ref, ...(visual.height ? { height: visual.height } : {}), ...(visual.heights?.length ? { heights: visual.heights } : {}), ...(visual.cap ? { cap: visual.cap } : {}), ...(visual.canvas ? { canvas: visual.canvas } : {}), ...(visual.detail ? { detail: visual.detail } : {}) } });
+		// A Scratch redraw: the reply shows the drawing as it is now, not each version of it.
+		for (let i = visual.replaces ? last.segments.length - 1 : -1; i >= 0; i--) {
+			const segment = last.segments[i];
+			if (segment.kind === 'block' && segment.block.type === 'visual' && segment.block.frame === visual.replaces) {
+				last.segments.splice(i, 1);
+			}
+		}
+		last.segments.push({ kind: 'block', block: { id, type: 'visual', status: 'complete', kind: visual.kind, title: visual.title, ref: visual.ref, ...(visual.height ? { height: visual.height } : {}), ...(visual.heights?.length ? { heights: visual.heights } : {}), ...(visual.cap ? { cap: visual.cap } : {}), ...(visual.canvas ? { canvas: visual.canvas } : {}), ...(visual.detail ? { detail: visual.detail } : {}), ...(visual.board ? { board: visual.board } : {}), ...(visual.frame ? { frame: visual.frame } : {}), ...(visual.size ? { size: visual.size } : {}) } });
 		for (const segment of last.segments) {
 			if (segment.kind === 'activity' && segment.item.browserTool === tool && segment.item.input && segment.item.input.length > 2000) {
 				segment.item.input = JSON.stringify({ title: visual.title });
