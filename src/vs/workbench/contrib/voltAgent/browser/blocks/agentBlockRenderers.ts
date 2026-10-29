@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/agentMarkdown.css';
+import '../media/agentReceipt.css';
 import { $, addDisposableListener, append, clearNode, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { MarkdownString } from '../../../../../base/common/htmlContent.js';
@@ -13,6 +14,7 @@ import { IMouseWheelEvent } from '../../../../../base/browser/mouseEvent.js';
 import { CodeWindow } from '../../../../../base/browser/window.js';
 import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -25,6 +27,7 @@ import {
 	AgentBlock,
 	classifyTableCell,
 	IAnswersBlock,
+	IReceiptBlock,
 	IApprovalBlock, IPlanBlock,
 	ICardsBlock,
 	IChartBlock,
@@ -52,6 +55,7 @@ import type { IFreshTextPart } from '../chrome/agentFreshText.js';
 import { extractHttpUrl, extractLocalPreviewUrl, linkifyPreviewUrls } from '../preview/localPreview.js';
 import { AccessDecisionScope } from '../../../../services/voltRuntime/common/access/accessTypes.js';
 import { formatAttachmentSize } from '../../../../services/voltRuntime/common/fileAttachments.js';
+import type { ProofStatus } from '../../../../services/voltRuntime/common/harness/proofOfDone.js';
 import { FileChangePreview } from '../review/fileChangePreview.js';
 import { chooseFileChangeDiffStyle, formatChangeStats, type FileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
 import { fileChangeGroupTitle, fileChangeSource, ThreadPart } from '../chrome/agentTimeline.js';
@@ -153,6 +157,9 @@ export function renderAgentBlock(parent: HTMLElement, block: AgentBlock, ctx: IB
 			return;
 		case 'visual':
 			renderVisualBlock(parent, block, ctx);
+			return;
+		case 'receipt':
+			renderReceiptBlock(parent, block, ctx);
 	}
 }
 
@@ -323,6 +330,145 @@ function renderAnswersBlock(parent: HTMLElement, block: IAnswersBlock, ctx: IBlo
 			}
 		}
 	});
+}
+
+/** How each proof status reads on the receipt: its icon, and the word a screen reader and the tooltip use. */
+const RECEIPT_STATUS: Record<ProofStatus, { readonly icon: ThemeIcon; readonly label: string }> = {
+	proven: { icon: Codicon.passFilled, label: localize('voltAgent.receipt.proven', "Proven") },
+	failed: { icon: Codicon.error, label: localize('voltAgent.receipt.failed', "Failed") },
+	stale: { icon: Codicon.history, label: localize('voltAgent.receipt.stale', "Ran before the last edit") },
+	missing: { icon: Codicon.circleLargeOutline, label: localize('voltAgent.receipt.missing', "Not run") },
+	claimed: { icon: Codicon.circleLargeOutline, label: localize('voltAgent.receipt.claimed', "Claimed, not checked") },
+	unavailable: { icon: Codicon.dash, label: localize('voltAgent.receipt.unavailable', "No way to check it here") },
+};
+
+/**
+ * Proof of done, under the answer it proves: the verdict, then one line per item with its proof
+ * (the command that ran and its last line, or why it is not proven), what the agent left open,
+ * and the files it changed. Commands copy on click; files open.
+ */
+function renderReceiptBlock(parent: HTMLElement, block: IReceiptBlock, ctx: IBlockRenderContext): void {
+	const receipt = block.receipt;
+	const proven = receipt.lines.filter(line => line.status === 'proven').length;
+	const card = append(parent, $(`.volt-agent-receipt.${receipt.verdict}`));
+	card.setAttribute('role', 'group');
+
+	const header = append(card, $('.volt-agent-receipt-header'));
+	append(header, $('span.volt-agent-receipt-verdict')).appendChild(renderIcon(receipt.verdict === 'proven' ? Codicon.verifiedFilled : receipt.verdict === 'failed' ? Codicon.unverified : Codicon.verified));
+	const title = append(header, $('span.volt-agent-receipt-title'));
+	title.textContent = receiptTitle(receipt);
+	card.setAttribute('aria-label', title.textContent);
+	const meta = [
+		localize('voltAgent.receipt.count', "{0} of {1} proven", proven, receipt.lines.length),
+		...(receipt.review ? [receipt.review.verdict === 'pass' ? localize('voltAgent.receipt.reviewed', "second opinion agrees") : localize('voltAgent.receipt.reviewFailed', "second opinion disagrees")] : []),
+		...(receipt.sentBack ? [receipt.sentBack === 1 ? localize('voltAgent.receipt.sentBackOnce', "sent back once") : localize('voltAgent.receipt.sentBackTimes', "sent back {0} times", receipt.sentBack)] : []),
+	];
+	const metaNode = append(header, $('span.volt-agent-receipt-meta'));
+	metaNode.textContent = meta.join(' \u00b7 ');
+	if (receipt.gated) {
+		setAgentTooltip(metaNode, localize('voltAgent.receipt.gatedTip', "This run could only finish once its checks passed after its last edit."));
+	}
+
+	const list = append(card, $('ul.volt-agent-receipt-lines'));
+	for (const line of receipt.lines) {
+		const status = RECEIPT_STATUS[line.status];
+		const item = append(list, $(`li.volt-agent-receipt-line.${line.status}`));
+		const icon = append(item, $('span.volt-agent-receipt-status'));
+		icon.appendChild(renderIcon(status.icon));
+		icon.setAttribute('aria-label', status.label);
+		setAgentTooltip(icon, status.label);
+		const body = append(item, $('.volt-agent-receipt-body'));
+		const text = append(body, $('span.volt-agent-receipt-text.volt-agent-searchable'));
+		text.textContent = line.source === 'agent' ? localize('voltAgent.receipt.agentClaim', "Agent: \u201c{0}\u201d", line.text) : line.text;
+		if (!line.command && !line.detail) {
+			continue;
+		}
+		const proof = append(body, $('.volt-agent-receipt-proof'));
+		if (line.command) {
+			const command = append(proof, $('code.volt-agent-receipt-command')) as HTMLElement;
+			command.textContent = line.command;
+			if (ctx.onCopyText) {
+				const value = line.command;
+				command.classList.add('copyable');
+				command.tabIndex = 0;
+				setAgentTooltip(command, localize('voltAgent.receipt.copyCommand', "Copy command"));
+				const copy = () => ctx.onCopyText?.(value);
+				ctx.store.add(addDisposableListener(command, 'click', copy));
+				ctx.store.add(addDisposableListener(command, 'keydown', event => {
+					if (event.key === 'Enter' || event.key === ' ') {
+						event.preventDefault();
+						copy();
+					}
+				}));
+			}
+		}
+		if (line.detail) {
+			const detail = append(proof, $('span.volt-agent-receipt-detail.volt-agent-searchable'));
+			detail.textContent = line.detail;
+			ctx.store.add(bindTruncatedHoverTooltip(detail, line.detail));
+		}
+	}
+
+	if (receipt.review && (receipt.review.summary || receipt.review.gaps.length)) {
+		const review = append(card, $('.volt-agent-receipt-section'));
+		append(review, $('.volt-agent-receipt-label')).textContent = localize('voltAgent.receipt.secondOpinion', "Second opinion");
+		if (receipt.review.summary) {
+			append(review, $('.volt-agent-receipt-note.volt-agent-searchable')).textContent = receipt.review.summary;
+		}
+		for (const gap of receipt.review.gaps) {
+			append(review, $('.volt-agent-receipt-note.gap.volt-agent-searchable')).textContent = gap;
+		}
+	}
+
+	if (receipt.open.length) {
+		const open = append(card, $('.volt-agent-receipt-section'));
+		append(open, $('.volt-agent-receipt-label')).textContent = localize('voltAgent.receipt.open', "Left open");
+		for (const entry of receipt.open) {
+			append(open, $('.volt-agent-receipt-note.volt-agent-searchable')).textContent = entry;
+		}
+	}
+
+	if (receipt.changedCount) {
+		const files = append(card, $('.volt-agent-receipt-files'));
+		append(files, $('span.volt-agent-receipt-label')).textContent = receipt.changedCount === 1
+			? localize('voltAgent.receipt.oneFile', "1 file changed")
+			: localize('voltAgent.receipt.files', "{0} files changed", receipt.changedCount);
+		for (const path of receipt.changed) {
+			const chip = append(files, $('span.volt-agent-receipt-file'));
+			chip.textContent = path.split('/').pop() || path;
+			setAgentTooltip(chip, path);
+			if (ctx.onOpenPath) {
+				chip.classList.add('openable');
+				chip.tabIndex = 0;
+				const open = () => ctx.onOpenPath?.(path);
+				ctx.store.add(addDisposableListener(chip, 'click', open));
+				ctx.store.add(addDisposableListener(chip, 'keydown', event => {
+					if (event.key === 'Enter') {
+						event.preventDefault();
+						open();
+					}
+				}));
+			}
+		}
+		const more = receipt.changedCount - receipt.changed.length;
+		if (more > 0) {
+			append(files, $('span.volt-agent-receipt-more')).textContent = localize('voltAgent.receipt.moreFiles', "+{0} more", more);
+		}
+	}
+}
+
+function receiptTitle(receipt: IReceiptBlock['receipt']): string {
+	if (receipt.verdict === 'proven') {
+		return localize('voltAgent.receipt.titleProven', "Proven done");
+	}
+	if (receipt.verdict === 'failed') {
+		return localize('voltAgent.receipt.titleFailed', "Not proven");
+	}
+	// Every check passed and only what nothing could run is left: say that, not "partly".
+	const checksHold = receipt.lines.every(line => line.status === 'proven' || line.status === 'unavailable' || line.status === 'claimed');
+	return checksHold && !receipt.open.length
+		? localize('voltAgent.receipt.titleChecks', "Checks pass")
+		: localize('voltAgent.receipt.titlePartial', "Partly proven");
 }
 
 function codeCardOptions(ctx: IBlockRenderContext): ICodeCardOptions {

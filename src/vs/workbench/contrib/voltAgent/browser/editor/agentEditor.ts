@@ -181,7 +181,8 @@ import { NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID } from '../autom
 import { createModeIcon, ModeIconId } from '../chrome/agentModeIcons.js';
 import { showAgentPlusMenu } from '../composer/agentPlusMenu.js';
 import { IVoltMenuHandle, IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
-import { AgentMentionController, IAgentDisplayMention, IAgentImageAttachment, IAgentMentionHost, browserMentionColor, cloneDisplayMentions, imageAttachmentsFromMentions, mentionIconClasses, setComposerClipData, videoDetail } from '../composer/agentMentions.js';
+import { AgentMentionController, IAgentDisplayMention, IAgentImageAttachment, IAgentImagePayload, IAgentMentionHost, browserMentionColor, cloneDisplayMentions, imageAttachmentsFromMentions, mentionIconClasses, setComposerClipData, videoDetail } from '../composer/agentMentions.js';
+import { placeMessageMentions } from '../composer/agentMentionImages.js';
 import { AgentImageStrip, formatImageSize, IAgentImageStripItem, imageThumbClass } from '../composer/agentImageAttachments.js';
 import { AgentImageViewer, showAgentImageViewer } from '../composer/agentImageViewer.js';
 import { VIDEO_EXTENSIONS } from '../composer/agentVideoAttachments.js';
@@ -2498,17 +2499,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	private renderUserMessageText(parent: HTMLElement, message: IAgentUserMessage): void {
 		const mentions = message.mentions?.filter(mention => mention.label) ?? [];
-		if (!mentions.length) {
+		const { text, placed } = placeMessageMentions(message.text, mentions);
+		if (!placed.length) {
 			this.setUserMessageText(parent, message.text);
 			return;
 		}
 		let cursor = 0;
-		const text = message.text;
-		for (const mention of mentions) {
-			const index = text.indexOf(mention.label, cursor);
-			if (index < 0) {
-				continue;
-			}
+		for (const { index, mention } of placed) {
 			if (index > cursor) {
 				this.setUserMessageText(parent, text.slice(cursor, index));
 			}
@@ -2523,13 +2520,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			}
 			const icon = append(chip, $('span.volt-agent-mention-icon'));
 			icon.classList.add(mention.kind);
-			const iconClasses = mention.kind === 'image' && mention.image
-				? ['volt-agent-mention-thumb', imageThumbClass(mention.image.bytes, mention.image.mime)]
+			const imageBytes = mention.kind === 'image' && mention.image?.bytes?.byteLength ? mention.image.bytes : undefined;
+			const iconClasses = imageBytes
+				? ['volt-agent-mention-thumb', imageThumbClass(imageBytes, mention.image!.mime)]
 				: mention.kind === 'video' && mention.video?.poster
 					? ['volt-agent-mention-thumb', imageThumbClass(mention.video.poster, 'image/jpeg')]
 					: mentionIconClasses(mention, this.modelService, this.languageService);
 			if (iconClasses.length) {
 				icon.classList.add(...iconClasses);
+			}
+			if (mention.kind === 'image' && !imageBytes) {
+				this.loadMentionThumb(icon, mention, iconClasses);
 			}
 			if (mention.kind === 'browser') {
 				icon.classList.add(`c${mention.accent ?? 0}`);
@@ -2540,8 +2541,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				pill.classList.add(`c${mention.accent ?? 0}`);
 			}
 			this.setSearchableText(pill, mention.label);
-			if (mention.kind === 'image' && mention.image) {
-				append(chip, $('span.volt-agent-mention-size')).textContent = formatImageSize(mention.image.bytes.byteLength);
+			if (imageBytes) {
+				append(chip, $('span.volt-agent-mention-size')).textContent = formatImageSize(imageBytes.byteLength);
 			} else if (mention.kind === 'video' && mention.video) {
 				append(chip, $('span.volt-agent-mention-size')).textContent = videoDetail(mention.video);
 			} else if (mention.file) {
@@ -2561,7 +2562,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 					e.stopPropagation();
 					void this.mentionPreview?.reveal(mention);
 				}));
-			} else if ((mention.kind === 'image' && mention.image) || (mention.kind === 'video' && mention.video)) {
+			} else if (imageBytes || (mention.kind === 'video' && mention.video)) {
 				const mediaIndex = userMessageMedia(message).indexOf(mention);
 				chip.setAttribute('data-open', 'true');
 				this.threadListeners.add(addDisposableListener(chip, 'click', e => {
@@ -2605,6 +2606,28 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 		} else if (cursor === 0) {
 			this.setUserMessageText(parent, text);
 		}
+	}
+
+	/**
+	 * An image chip whose bytes were not kept, only its saved copy (an attachment reference or a
+	 * path): the picture once read back; the image icon stays when it cannot be.
+	 */
+	private loadMentionThumb(icon: HTMLElement, mention: IAgentDisplayMention, placeholder: readonly string[]): void {
+		const image = mention.image as (Partial<IAgentImagePayload> & { ref?: unknown }) | undefined;
+		const ref = typeof image?.ref === 'string' ? image.ref : undefined;
+		const path = typeof image?.path === 'string' ? image.path : undefined;
+		if (!image || (!ref && !path)) {
+			return;
+		}
+		const read: Promise<{ bytes: Uint8Array; mime: string } | undefined> = ref
+			? this.history.getAttachment(ref)
+			: this.fileService.readFile(URI.file(path!)).then(file => ({ bytes: file.value.buffer, mime: image.mime ?? 'image/png' }));
+		void read.then(loaded => {
+			if (loaded?.bytes.byteLength) {
+				icon.classList.remove(...placeholder);
+				icon.classList.add('volt-agent-mention-thumb', imageThumbClass(loaded.bytes, image.mime ?? loaded.mime));
+			}
+		}, () => undefined);
 	}
 
 	/**
@@ -2757,6 +2780,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 
 	/** `store` takes the cards' listeners: the thread's by default, a live row's own (LiveTranscript). */
 	private blockRenderContext(message: IAgentAssistantMessage, store: DisposableStore = this.threadListeners): IBlockRenderContext {
+		// The chat this reply belongs to: a page it showed talks to this chat, whatever the editor shows later.
+		const chat = this.sessionKey;
 		return {
 			markdownRenderer: this.markdownRenderer,
 			store,
@@ -2789,7 +2814,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 				this.snapshotStore.add(store);
 			},
 			sessionId: this.sessionKey,
-			onPagePrompt: (text, page, send) => this.promptFromPage(text, page, send),
+			onPagePrompt: (text, page, send) => this.promptFromPage(text, page, send, chat),
 		};
 	}
 
@@ -2797,14 +2822,32 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 	 * A page the agent showed (html_render) asked to talk to it: a button the user clicked sends the
 	 * message now; anything else lands in the composer for the user to send.
 	 */
-	private promptFromPage(text: string, page: string, send: boolean): void {
+	private promptFromPage(text: string, page: string, send: boolean, chat: string): void {
+		const message = `${text}\n\n[Sent from the page "${page.replace(/"/g, '\'')}" you showed in this chat, when the user clicked in it.]`;
+		if (chat !== this.sessionKey || !(this.input instanceof AgentEditorInput)) {
+			// The page outlived its chat in this editor (a full-screen gallery while another chat opened,
+			// or an emptied editor, whose key is then the window id): the pick goes to the page's own
+			// chat, which comes back on screen to continue, never to a chat made from that key. A draft
+			// has no composer here to land in.
+			if (send) {
+				const turnId = generateUuid();
+				stashTurnDisplay(turnId, { text });
+				void this.orchestrator.submit(chat, { text: message, display: { text } }, 'auto', turnId).then(result => {
+					if (result.outcome === 'rejected') {
+						this.logService.warn(`[volt agent] the orchestrator did not take the page's message: ${result.reason ?? 'rejected'}`);
+					}
+				}, err => this.logService.warn('[volt agent] sending the page\'s message failed', err));
+				void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, chat);
+			}
+			return;
+		}
 		if (!send || this.isReadOnlyTaskChat()) {
 			const existing = (this.input instanceof AgentEditorInput ? this.input.draft ?? '' : '').trim();
 			this.prefillDraft(existing ? `${existing}\n\n${text}` : text);
 			return;
 		}
 		this.stickToBottom = true;
-		void this.submitToOrchestrator(`${text}\n\n[Sent from the page "${page.replace(/"/g, '\'')}" you showed in this chat, when the user clicked in it.]`, { text }, this.currentMode, 'auto');
+		void this.submitToOrchestrator(message, { text }, this.currentMode, 'auto');
 	}
 
 	private flashTableCopyButton(anchor: HTMLElement): void {
@@ -4920,6 +4963,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost {
 			// Trays add their listeners through threadListeners: point it at this host's store meanwhile.
 			renderNotice: (parent, row) => this.withListeners(store, () => this.renderProviderNotice(parent, row, message)),
 			setSearchableText: (el, text) => this.setSearchableText(el, text),
+			// A message sent into the running turn draws its chips (a pasted image's thumbnail) as a sent prompt does.
+			renderSteerText: (el, row) => row.mentions?.length || /\[(Image|Video)/.test(row.text)
+				? this.withListeners(store, () => this.renderUserMessageText(el, { kind: 'user', id: row.id, text: row.text, ...(row.mentions?.length ? { mentions: row.mentions.slice() } : {}) }))
+				: this.setSearchableText(el, row.text),
 			bindSearchHits: (el, files) => store.add(this.exploreHitsTooltip.bind(el, () => files.map(path => ({
 				label: basename(path),
 				detail: tooltipDir(path),
@@ -8672,7 +8719,7 @@ function isAttachDrag(e: DragEvent): boolean {
 
 /** The pasted, dropped and picked images and videos of a sent prompt, in text order. */
 function userMessageMedia(message: IAgentUserMessage): IAgentDisplayMention[] {
-	return message.mentions?.filter(mention => (mention.kind === 'image' && !!mention.image?.bytes.byteLength) || (mention.kind === 'video' && !!mention.video)) ?? [];
+	return message.mentions?.filter(mention => (mention.kind === 'image' && !!mention.image?.bytes?.byteLength) || (mention.kind === 'video' && !!mention.video)) ?? [];
 }
 
 /** What the queue row shows: the text the user typed, not the agent-facing serialization. */

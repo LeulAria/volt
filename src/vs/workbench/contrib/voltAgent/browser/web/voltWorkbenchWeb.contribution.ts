@@ -72,6 +72,7 @@ import { AgentEditsJournalEntry } from '../../common/agentEditsJournal.js';
 
 // What the desktop also loads (its main file imports these after the agent services).
 import '../pullRequests/agentPullRequests.contribution.js';
+import '../trajectory/agentTrajectory.contribution.js';
 import '../runGroups/agentRunGroups.contribution.js';
 import '../orchestration/agentThreadToolService.js';
 import '../orchestration/agentWorkspaceMover.js';

@@ -669,6 +669,7 @@ function createLocalIcon(doc: Document): SVGSVGElement {
 /** The worktree mark the new chat's machine picker shows too. */
 function createWorktreeIcon(doc: Document): SVGSVGElement {
 	const svg = statusIcon(doc, [WORKTREE_ICON_PATH]);
+	svg.setAttribute('stroke-width', '1.5');
 	svg.style.transform = 'scaleX(-1)';
 	return svg;
 }

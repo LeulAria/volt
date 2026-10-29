@@ -1,0 +1,562 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Trajectory: the bottom panel's model request timeline and request detail. Solid surfaces only,
+ * no backdrop-filter (volt-transparent-window). */
+
+.volt-traj {
+	--volt-traj-border: var(--vscode-panel-border, rgba(255, 255, 255, 0.08));
+	--volt-traj-surface: rgba(127, 127, 127, 0.06);
+	--volt-traj-surface-strong: rgba(127, 127, 127, 0.12);
+	--volt-traj-muted: var(--vscode-descriptionForeground);
+	--volt-traj-model: var(--vscode-charts-blue, #4f8ff7);
+	--volt-traj-tool: var(--vscode-charts-purple, #a371f7);
+	--volt-traj-ok: var(--vscode-charts-green, #3fb950);
+	--volt-traj-warning: var(--vscode-charts-yellow, #d29922);
+	--volt-traj-error: var(--vscode-charts-red, #f85149);
+	--volt-traj-orange: var(--vscode-charts-orange, #db6d28);
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	font-size: 12px;
+	color: var(--vscode-foreground);
+}
+
+/* Header: chat, totals, actions */
+
+.volt-traj-head {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 4px 12px 6px;
+	border-bottom: 1px solid var(--volt-traj-border);
+	flex: 0 0 auto;
+	min-width: 0;
+}
+
+.volt-traj-stats {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.volt-traj-stat {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 5px;
+}
+
+.volt-traj-stat .label {
+	color: var(--volt-traj-muted);
+}
+
+.volt-traj-stat .value {
+	font-variant-numeric: tabular-nums;
+	font-weight: 600;
+}
+
+.volt-traj-stat.warning .value {
+	color: var(--volt-traj-warning);
+}
+
+.volt-traj-stat.error .value {
+	color: var(--volt-traj-error);
+}
+
+.volt-traj-actions {
+	display: flex;
+	gap: 2px;
+	flex: 0 0 auto;
+}
+
+.volt-traj .volt-traj-icon-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	min-width: 0;
+}
+
+/* Body: timeline left, detail right */
+
+.volt-traj-body {
+	display: flex;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+.volt-traj.narrow .volt-traj-body {
+	flex-direction: column;
+}
+
+.volt-traj-list {
+	flex: 0 0 44%;
+	min-width: 0;
+	overflow-y: auto;
+	border-right: 1px solid var(--volt-traj-border);
+	padding: 4px 0;
+	outline: none;
+}
+
+.volt-traj.narrow .volt-traj-list {
+	flex: 0 0 40%;
+	border-right: none;
+	border-bottom: 1px solid var(--volt-traj-border);
+}
+
+.volt-traj-row {
+	display: grid;
+	grid-template-columns: 16px 34px minmax(80px, 1fr) auto minmax(80px, 34%);
+	align-items: center;
+	gap: 6px;
+	height: 22px;
+	padding: 0 10px;
+	cursor: pointer;
+	white-space: nowrap;
+	outline: none;
+}
+
+.volt-traj-row:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.volt-traj-row.request.selected {
+	background: var(--vscode-list-inactiveSelectionBackground);
+}
+
+.volt-traj-list:focus-within .volt-traj-row.request.selected {
+	background: var(--vscode-list-activeSelectionBackground);
+	color: var(--vscode-list-activeSelectionForeground);
+}
+
+.volt-traj-row.tool {
+	grid-template-columns: 16px 34px minmax(80px, 1fr) auto minmax(80px, 34%);
+	height: 20px;
+	color: var(--volt-traj-muted);
+}
+
+.volt-traj-row.tool .volt-traj-status {
+	grid-column: 2;
+	justify-self: end;
+}
+
+.volt-traj-row.tool .volt-traj-name {
+	grid-column: 3;
+}
+
+.volt-traj-row.subagent .volt-traj-name {
+	color: var(--volt-traj-orange);
+}
+
+.volt-traj-index {
+	color: var(--volt-traj-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-traj-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-traj-meta {
+	color: var(--volt-traj-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-traj-status {
+	display: inline-flex;
+	align-items: center;
+}
+
+.volt-traj-status .codicon {
+	font-size: 13px;
+}
+
+.volt-traj-status.ok { color: var(--volt-traj-ok); }
+.volt-traj-status.tools { color: var(--volt-traj-tool); }
+.volt-traj-status.warning { color: var(--volt-traj-warning); }
+.volt-traj-status.error { color: var(--volt-traj-error); }
+.volt-traj-status.live { color: var(--volt-traj-model); }
+.volt-traj-status.muted { color: var(--volt-traj-muted); }
+
+/* Waterfall */
+
+.volt-traj-track {
+	position: relative;
+	height: 8px;
+	border-radius: 2px;
+	background: var(--volt-traj-surface);
+	overflow: hidden;
+}
+
+.volt-traj-bar {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	border-radius: 2px;
+	background: var(--volt-traj-model);
+	opacity: 0.85;
+}
+
+.volt-traj-bar.model.error { background: var(--volt-traj-error); }
+.volt-traj-bar.model.warning { background: var(--volt-traj-warning); }
+.volt-traj-bar.model.muted { background: var(--volt-traj-muted); }
+.volt-traj-bar.tool { background: var(--volt-traj-tool); opacity: 0.7; }
+.volt-traj-bar.tool.error { background: var(--volt-traj-error); }
+
+.volt-traj-wait {
+	height: 100%;
+	background: rgba(0, 0, 0, 0.35);
+}
+
+.volt-traj-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	padding: 32px 24px;
+	text-align: center;
+	color: var(--volt-traj-muted);
+}
+
+.volt-traj-empty .codicon {
+	font-size: 22px;
+}
+
+.volt-traj-empty .title {
+	color: var(--vscode-foreground);
+	font-weight: 600;
+}
+
+.volt-traj-empty .hint {
+	max-width: 420px;
+	line-height: 1.5;
+}
+
+/* Detail */
+
+.volt-traj-detail {
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.volt-traj-tabs {
+	display: flex;
+	gap: 2px;
+	padding: 4px 10px 0;
+	border-bottom: 1px solid var(--volt-traj-border);
+	flex: 0 0 auto;
+}
+
+.volt-traj-tab {
+	border: none;
+	background: none;
+	color: var(--volt-traj-muted);
+	font: inherit;
+	padding: 4px 8px 5px;
+	border-bottom: 2px solid transparent;
+	cursor: pointer;
+}
+
+.volt-traj-tab:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-traj-tab.active {
+	color: var(--vscode-foreground);
+	border-bottom-color: var(--vscode-focusBorder);
+}
+
+.volt-traj-tab:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-traj-pane {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	padding: 8px 14px 16px;
+	min-height: 0;
+}
+
+.volt-traj-section {
+	margin-bottom: 14px;
+}
+
+.volt-traj-section-title {
+	font-weight: 600;
+	margin-bottom: 6px;
+}
+
+.volt-traj-grid {
+	display: grid;
+	grid-template-columns: max-content 1fr;
+	gap: 3px 16px;
+}
+
+.volt-traj-grid .key {
+	color: var(--volt-traj-muted);
+}
+
+.volt-traj-grid .value {
+	font-variant-numeric: tabular-nums;
+	word-break: break-word;
+}
+
+.volt-traj-grid .value.ok,
+.volt-traj-grid .value.tools { color: var(--volt-traj-ok); }
+.volt-traj-grid .value.warning { color: var(--volt-traj-warning); }
+.volt-traj-grid .value.error { color: var(--volt-traj-error); }
+
+.volt-traj-note {
+	color: var(--volt-traj-muted);
+}
+
+.volt-traj-callout {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+	padding: 5px 8px;
+	margin-bottom: 6px;
+	border-radius: 4px;
+	background: var(--volt-traj-surface);
+	line-height: 1.45;
+}
+
+.volt-traj-callout .codicon { margin-top: 1px; }
+.volt-traj-callout.ok .codicon { color: var(--volt-traj-ok); }
+.volt-traj-callout.info .codicon { color: var(--volt-traj-model); }
+.volt-traj-callout.warning .codicon { color: var(--volt-traj-warning); }
+.volt-traj-callout.error .codicon { color: var(--volt-traj-error); }
+
+.volt-traj-tool-line {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 20px;
+	min-width: 0;
+}
+
+.volt-traj-tool-line .codicon.ok { color: var(--volt-traj-ok); }
+.volt-traj-tool-line .codicon.error { color: var(--volt-traj-error); }
+
+.volt-traj-tool-line .name {
+	font-family: var(--vscode-editor-font-family);
+}
+
+.volt-traj-tool-line .meta,
+.volt-traj-tool-line .index {
+	color: var(--volt-traj-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-traj-tool-line .preview {
+	color: var(--volt-traj-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
+}
+
+/* Folds: system prompt, messages, tool schemas, tool runs */
+
+.volt-traj-fold {
+	position: relative;
+	border: 1px solid var(--volt-traj-border);
+	border-radius: 4px;
+	margin-bottom: 4px;
+	background: var(--volt-traj-surface);
+}
+
+.volt-traj-fold > summary {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 8px;
+	cursor: pointer;
+	min-width: 0;
+	white-space: nowrap;
+	list-style: none;
+}
+
+.volt-traj-fold > summary::-webkit-details-marker {
+	display: none;
+}
+
+.volt-traj-fold > summary::before {
+	content: '';
+	flex: 0 0 auto;
+	width: 0;
+	height: 0;
+	border-left: 4px solid var(--volt-traj-muted);
+	border-top: 3.5px solid transparent;
+	border-bottom: 3.5px solid transparent;
+	transition: transform 0.1s;
+}
+
+.volt-traj-fold[open] > summary::before {
+	transform: rotate(90deg);
+}
+
+.volt-traj-fold > summary .index,
+.volt-traj-fold > summary .tokens {
+	color: var(--volt-traj-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-traj-fold > summary .role {
+	font-weight: 600;
+	font-family: var(--vscode-editor-font-family);
+}
+
+.volt-traj-fold.role-user > summary .role { color: var(--volt-traj-ok); }
+.volt-traj-fold.role-assistant > summary .role { color: var(--volt-traj-model); }
+.volt-traj-fold.role-tool > summary .role { color: var(--volt-traj-tool); }
+.volt-traj-fold.role-system > summary .role { color: var(--volt-traj-orange); }
+
+.volt-traj-fold > summary .preview {
+	color: var(--volt-traj-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+.volt-traj-fold > summary .badge {
+	flex: 0 0 auto;
+	padding: 0 5px;
+	border-radius: 8px;
+	font-size: 10px;
+	line-height: 15px;
+	background: var(--volt-traj-surface-strong);
+}
+
+.volt-traj-fold > summary .badge.new { color: var(--volt-traj-ok); }
+.volt-traj-fold > summary .badge.warning { color: var(--volt-traj-warning); }
+.volt-traj-fold > summary .badge.error { color: var(--volt-traj-error); }
+
+.volt-traj-fold > :not(summary) {
+	margin-left: 8px;
+	margin-right: 8px;
+}
+
+.volt-traj-fold > :last-child:not(summary) {
+	margin-bottom: 8px;
+}
+
+.volt-traj-call-name {
+	margin: 6px 0 3px;
+	font-family: var(--vscode-editor-font-family);
+	color: var(--volt-traj-tool);
+}
+
+.volt-traj-code {
+	margin: 4px 0 0;
+	padding: 8px 32px 8px 10px;
+	border-radius: 4px;
+	background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.1));
+	font-family: var(--vscode-editor-font-family);
+	font-size: 12px;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	word-break: break-word;
+	max-height: 480px;
+	overflow: auto;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+.volt-traj-code.reasoning {
+	color: var(--volt-traj-muted);
+	font-style: italic;
+}
+
+.volt-traj-code.error {
+	color: var(--volt-traj-error);
+}
+
+/* The copy button sits on the block before it. */
+.volt-traj-copy {
+	float: right;
+	position: relative;
+	margin-top: -30px;
+	margin-right: 4px;
+	opacity: 0.6;
+}
+
+.volt-traj-copy:hover {
+	opacity: 1;
+}
+
+.volt-traj-more {
+	margin-top: 4px;
+	font-size: 11px;
+}
+
+/* Context breakdown */
+
+.volt-traj-stack {
+	display: flex;
+	height: 14px;
+	border-radius: 3px;
+	overflow: hidden;
+	background: var(--volt-traj-surface);
+	margin: 4px 0 8px;
+}
+
+.volt-traj-stack .piece {
+	height: 100%;
+	min-width: 2px;
+}
+
+.volt-traj-stack .piece.system,
+.volt-traj-legend .swatch.system { background: var(--volt-traj-orange); }
+.volt-traj-stack .piece.tools,
+.volt-traj-legend .swatch.tools { background: var(--volt-traj-tool); }
+.volt-traj-stack .piece.user,
+.volt-traj-legend .swatch.user { background: var(--volt-traj-ok); }
+.volt-traj-stack .piece.assistant,
+.volt-traj-legend .swatch.assistant { background: var(--volt-traj-model); }
+.volt-traj-stack .piece.results,
+.volt-traj-legend .swatch.results { background: var(--volt-traj-warning); }
+.volt-traj-stack .piece.images,
+.volt-traj-legend .swatch.images { background: var(--volt-traj-error); }
+
+.volt-traj-legend {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+	gap: 4px 16px;
+}
+
+.volt-traj-legend .item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-traj-legend .swatch {
+	width: 9px;
+	height: 9px;
+	border-radius: 2px;
+	flex: 0 0 auto;
+}
+
+.volt-traj-legend .label {
+	color: var(--volt-traj-muted);
+}
+
+.volt-traj-legend .value {
+	margin-left: auto;
+	font-variant-numeric: tabular-nums;
+}

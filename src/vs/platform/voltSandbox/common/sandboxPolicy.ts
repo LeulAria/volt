@@ -150,6 +150,12 @@ const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 		homeDirs: ['.muse', '.config/muse'],
 		domains: [],
 	},
+	fx: {
+		// Sessions, settings and the shell-startup cache live in `.fx`; `fx login codex` and `fx login grok` reach those services too.
+		homeDirs: ['.fx'],
+		protectedHome: ['.fx/AGENTS.md', '.fx/skills'],
+		domains: ['fx.sh', '*.fx.sh', 'ai-gateway.vercel.sh', 'vercel.com', '*.vercel.com', 'chatgpt.com', '*.chatgpt.com', 'api.openai.com', 'auth.openai.com', 'x.ai', '*.x.ai', 'grok.com', '*.grok.com'],
+	},
 };
 
 /** The agent's API hosts: what stays reachable when the chat's network is off. */

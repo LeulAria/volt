@@ -91,10 +91,10 @@ const TOGGLE_TOOLS_PANEL_ID = 'workbench.action.voltAgentTools.togglePanel';
 export const SHOW_AGENT_FILES_COMMAND_ID = 'workbench.action.voltAgentTools.showFiles';
 /** The floating preview's gap to the chat's edges, and its smallest size. */
 const FLOAT_MARGIN = 12;
-const FLOAT_MIN_WIDTH = 260;
-const FLOAT_MIN_HEIGHT = 180;
+const FLOAT_MIN_WIDTH = 200;
+const FLOAT_MIN_HEIGHT = 125;
 /** A new preview's width: a small 16:10 screen. */
-const FLOAT_WIDTH = 320;
+const FLOAT_WIDTH = 256;
 /**
  * A browser window narrower than this (a phone, a tablet in split view) has no room for the chat
  * and the tools side by side: the tools lie over the chat, below its title bar, and close back to it.

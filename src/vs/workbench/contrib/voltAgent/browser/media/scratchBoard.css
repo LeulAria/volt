@@ -2521,7 +2521,8 @@
 }
 
 .sx-shortcuts-dialog.sx-modal {
-	width: 920px;
+	/* Five columns when there is room; they wrap below that. */
+	width: 1140px;
 	gap: 14px;
 }
 

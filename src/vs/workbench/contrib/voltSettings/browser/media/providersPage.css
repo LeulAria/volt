@@ -25,7 +25,8 @@
 	flex-direction: column;
 	min-width: 0;
 	min-height: 0;
-	overflow: hidden;
+	/* Not hidden: the scroller reaches past the pane to the window's right edge (reachRightEdge). */
+	overflow: visible;
 }
 
 .volt-pm-list {

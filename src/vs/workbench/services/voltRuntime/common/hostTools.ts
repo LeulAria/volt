@@ -108,9 +108,12 @@ export function canonicalHostToolName(name: string): string {
 
 /** A visual a render tool published: where its spec or page is stored, for the transcript to draw. */
 export interface IVoltVisualRef {
-	/** `canvas`: a design canvas update, drawn as a card that opens the canvas (its page is the canvas_render visual). */
-	readonly kind: 'chart' | 'html' | 'canvas';
-	/** `volt-attachment:<hash>.json` (chart spec) or `.html` (page); `volt-canvas:<id>@<version>` for an update. */
+	/**
+	 * `canvas`: a design canvas update, drawn as a card that opens the canvas (its page is the canvas_render visual).
+	 * `scratch`: a picture of a Scratch board drawing, with Open to see it on the board.
+	 */
+	readonly kind: 'chart' | 'html' | 'canvas' | 'scratch';
+	/** `volt-attachment:<hash>.json` (chart spec), `.html` (page) or `.png` (Scratch picture); `volt-canvas:<id>@<version>` for an update. */
 	readonly ref: string;
 	readonly title: string;
 	/** Pages: the height the page needed at the reply column's width, so the frame opens at its size. */
@@ -123,6 +126,12 @@ export interface IVoltVisualRef {
 	readonly canvas?: string;
 	/** Canvas updates: what changed, one line. */
 	readonly detail?: string;
+	/** A Scratch drawing: its board and frame, for Open, and the picture's `[width, height]` so it opens at its size. */
+	readonly board?: string;
+	readonly frame?: string;
+	readonly size?: readonly [number, number];
+	/** A redraw (`replace`): the frame it took the place of, whose picture it replaces in the reply. */
+	readonly replaces?: string;
 }
 export const BROWSER_NETWORK_TOOL_NAME = 'browser_network';
 export const BROWSER_DEVTOOLS_TOOL_NAME = 'browser_devtools';

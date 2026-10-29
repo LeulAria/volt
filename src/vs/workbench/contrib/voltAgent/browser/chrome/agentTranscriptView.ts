@@ -46,6 +46,8 @@ export interface ITranscriptHost {
 	renderBlock(parent: HTMLElement, block: AgentBlock): void;
 	renderNotice(parent: HTMLElement, row: Extract<TranscriptRow, { kind: 'notice' }>): void;
 	setSearchableText(el: HTMLElement, text: string): void;
+	/** A steered message's text with its chips (a pasted image's thumbnail and name), as a sent message draws them. */
+	renderSteerText?(el: HTMLElement, row: Extract<TranscriptRow, { kind: 'steer' }>): void;
 	/** Hovering a search row lists the files it hit. */
 	bindSearchHits?(el: HTMLElement, files: readonly string[]): void;
 	/** A subagent row as the orchestrator knows it (live state, model, clock); undefined draws it from the tool call alone. */
@@ -433,7 +435,7 @@ function rowSignature(row: TranscriptRow, host: ITranscriptHost): string {
 		case 'notice':
 			return `${host.isExpanded(`dismiss:${row.id}`)}|${shapeOf(row)}`;
 		case 'steer':
-			return row.text;
+			return steerSignature(row);
 		case 'compaction':
 			return `${host.isExpanded(row.id)}|${shapeOf(row.compaction)}`;
 		case 'block': {
@@ -542,7 +544,18 @@ function renderTodoChecklist(parent: HTMLElement, todos: ITodoChecklist, live: b
 /** A message the user steered the running agent with, drawn as a sent message where the agent picked it up. */
 function renderSteerRow(parent: HTMLElement, row: Extract<TranscriptRow, { kind: 'steer' }>, host: ITranscriptHost): void {
 	const el = append(parent, $('.volt-tr-steer'));
-	host.setSearchableText(append(el, $('span.volt-tr-steer-text')), row.text);
+	const text = append(el, $('span.volt-tr-steer-text'));
+	if (host.renderSteerText) {
+		host.renderSteerText(text, row);
+	} else {
+		host.setSearchableText(text, row.text);
+	}
+}
+
+/** What a steer row draws: its text and its chips (never their bytes, which only change with the chip). */
+function steerSignature(row: Extract<TranscriptRow, { kind: 'steer' }>): string {
+	const chips = row.mentions?.map(mention => `${mention.kind}:${mention.label}:${mention.image?.id ?? ''}:${mention.image?.bytes ? 1 : 0}`).join('|') ?? '';
+	return `${row.text}\u0000${chips}`;
 }
 
 /**
@@ -627,7 +640,7 @@ function cachedRowSignature(row: TranscriptRow, host: ITranscriptHost, options: 
 		case 'compaction':
 			return row.compaction.status === 'running' ? undefined : hashString(JSON.stringify([row, host.isExpanded(row.id) ?? null]));
 		case 'steer':
-			return hashString(JSON.stringify(row));
+			return hashString(steerSignature(row));
 		case 'block': {
 			const block = row.block;
 			if (block.type === 'visual' || isDiagramBlock(block)) {
@@ -964,6 +977,15 @@ function renderEditCard(parent: HTMLElement, row: Extract<TranscriptRow, { kind:
 		host.setExpanded(row.id, next);
 	};
 	host.store.add(addDisposableListener(header, 'click', toggle(!open)));
+	// The file's icon and name open the file; the rest of the header folds the diff.
+	for (const target of [icon, name]) {
+		target.classList.add('opens-file');
+		host.store.add(addDisposableListener(target, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			host.openFile(file.path);
+		}));
+	}
 	const body = append(card, $('.volt-tr-edit-body'));
 	renderInlineDiff(body, step, host, !open);
 	if (!open) {

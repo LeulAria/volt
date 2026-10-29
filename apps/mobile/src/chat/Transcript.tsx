@@ -4,14 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { applyToolDensity, buildRows, type TranscriptRow } from '@volt/client-core';
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { FlatList, type NativeScrollEvent, type NativeSyntheticEvent, Platform, StyleSheet, View, type ViewToken } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { usePending, useTranscript } from '../state/client';
 import { useConversationPrefs } from '../state/prefs';
 import { useTheme } from '../theme/theme';
 import { EmptyState, haptic, Icon, Tap } from '../ui/core';
-import { PinnedPrompt, RowView, rowGap } from './Rows';
+import { ChatContext, type IChatContext } from './context';
+import { PinnedPrompt, RowView, rowGap, rowInset } from './Rows';
 
 interface ICell {
 	readonly row: TranscriptRow;
@@ -20,7 +21,7 @@ interface ICell {
 
 const Cell = memo(function Cell({ cell, chatId }: { readonly cell: ICell; readonly chatId: string }) {
 	return (
-		<View style={{ paddingTop: cell.gap }}>
+		<View style={{ paddingTop: cell.gap, paddingHorizontal: rowInset(cell.row) }}>
 			<RowView row={cell.row} chatId={chatId} />
 		</View>
 	);
@@ -39,8 +40,41 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 	// A cell keeps its object while its row and spacing hold, so only the rows a patch touched re-render.
 	const cellCache = useRef(new WeakMap<TranscriptRow, ICell>());
 	const { toolDensity } = useConversationPrefs();
+	// "Worked for" folds: open ones, and turns watched while they ran (they start open, as on the desktop) unless folded.
+	const [openWorked, setOpenWorked] = useState<ReadonlySet<string>>(() => new Set());
+	const watched = useRef(new Set<string>());
+	const [closedWorked, setClosedWorked] = useState<ReadonlySet<string>>(() => new Set());
+	const parent = useContext(ChatContext);
+	const onToggleWorked = useCallback((turnKey: string, open: boolean) => {
+		haptic.selection();
+		setOpenWorked(prev => {
+			const next = new Set(prev);
+			if (open) {
+				next.add(turnKey);
+			} else {
+				next.delete(turnKey);
+			}
+			return next;
+		});
+		setClosedWorked(prev => {
+			const next = new Set(prev);
+			if (open) {
+				next.delete(turnKey);
+			} else {
+				next.add(turnKey);
+			}
+			return next;
+		});
+	}, []);
+	const ctx = useMemo<IChatContext | undefined>(() => parent ? { ...parent, onToggleWorked } : undefined, [parent, onToggleWorked]);
 	const cells = useMemo(() => {
-		const rows = applyToolDensity(buildRows(transcript?.messages ?? [], pending), toolDensity);
+		const messages = transcript?.messages ?? [];
+		const last = messages[messages.length - 1];
+		if (last?.kind === 'agent' && last.activity?.streaming) {
+			watched.current.add(`a:${last.id ?? `i${messages.length - 1}`}`);
+		}
+		const open = watched.current.size ? new Set([...watched.current, ...openWorked]) : openWorked;
+		const rows = applyToolDensity(buildRows(messages, pending, { openWorked: open, closedWorked }), toolDensity);
 		const out: ICell[] = new Array(rows.length);
 		for (let i = 0; i < rows.length; i++) {
 			const gap = rowGap(rows[i], rows[i - 1]);
@@ -52,7 +86,7 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 			out[rows.length - 1 - i] = cell;
 		}
 		return out;
-	}, [transcript?.messages, pending, toolDensity]);
+	}, [transcript?.messages, pending, toolDensity, openWorked, closedWorked]);
 
 	// For each cell, the prompt that opened its turn (the newest user row at or above it).
 	const owners = useMemo(() => {
@@ -107,6 +141,7 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 	}
 
 	return (
+		<ChatContext.Provider value={ctx}>
 		<View style={{ flex: 1 }}>
 			<FlatList
 				ref={list}
@@ -121,15 +156,16 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 				onScrollToIndexFailed={info => list.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: true })}
 				keyboardDismissMode="interactive"
 				keyboardShouldPersistTaps="handled"
-				initialNumToRender={14}
-				maxToRenderPerBatch={8}
-				windowSize={13}
+				initialNumToRender={16}
+				maxToRenderPerBatch={10}
+				updateCellsBatchingPeriod={32}
+				windowSize={11}
 				removeClippedSubviews={Platform.OS === 'android'}
-				contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: topInset + 12 }}
+				contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 16, paddingBottom: topInset + 8 }}
 				showsVerticalScrollIndicator={false}
 			/>
 			{pinnedRow?.kind === 'user' ? (
-				<Animated.View key={pinnedRow.key} entering={FadeIn.duration(140)} exiting={FadeOut.duration(120)} style={{ position: 'absolute', left: 16, right: 16, top: topInset + 6 }}>
+				<Animated.View key={pinnedRow.key} entering={FadeIn.duration(140)} exiting={FadeOut.duration(120)} style={{ position: 'absolute', left: 14, right: 14, top: topInset + 10 }}>
 					<PinnedPrompt row={pinnedRow} onPress={() => {
 						if (pinned !== undefined) {
 							list.current?.scrollToIndex({ index: pinned, animated: true, viewPosition: 1 });
@@ -148,6 +184,7 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 				</Animated.View>
 			) : null}
 		</View>
+		</ChatContext.Provider>
 	);
 }
 

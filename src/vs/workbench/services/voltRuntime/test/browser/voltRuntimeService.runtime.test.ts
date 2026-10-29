@@ -191,6 +191,8 @@ suite('Agent runtime orchestration', () => {
 			// No code index: searches use ripgrep.
 			new NullVoltCodeIndexService(),
 			stub({ executeCommand: async () => undefined }),
+			// The Trajectory panel's recorder, off.
+			stub({ begin: () => undefined, changed: () => { } }),
 		));
 		await service.refreshProviders();
 		const internals = service as unknown as IRuntimeInternals;

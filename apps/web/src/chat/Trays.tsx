@@ -3,10 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { clockTime, firstLine, type IAccessRequest, type IOrchThread, type IQuestionRequest } from '@volt/client-core';
+import { clockTime, firstLine, type IAccessRequest, type IOrchThread, type IQuestionRequest, questionApproval } from '@volt/client-core';
 import { useState } from 'react';
 import { useClient } from '../app/client';
 import { Button, Icon, IconButton } from '../ui/primitives';
+import { Markdown } from './Markdown';
 
 const ACTION_TITLES: Record<string, string> = {
 	shell: 'Run a command',
@@ -26,7 +27,36 @@ export function approvalTitle(request: IAccessRequest): string {
 	return request.preview?.title ?? ACTION_TITLES[request.action] ?? `Use ${request.action}`;
 }
 
-export function ApprovalCard({ request }: { readonly request: IAccessRequest }) {
+export function ApprovalCard({ request, onBuildPlan }: { readonly request: IAccessRequest; readonly onBuildPlan?: () => void }) {
+	const question = questionApproval(request);
+	return question ? <PlanCard request={request} question={question} onBuildPlan={onBuildPlan} /> : <PermissionCard request={request} />;
+}
+
+/** A plan waiting for Build (the chat goes on in Agent mode) or Keep planning; or a yes/no question (agentBlockRenderers.ts). */
+function PlanCard({ request, question, onBuildPlan }: { readonly request: IAccessRequest; readonly question: NonNullable<ReturnType<typeof questionApproval>>; readonly onBuildPlan?: () => void }) {
+	const client = useClient();
+	const [busy, setBusy] = useState(false);
+	const decide = async (effect: 'allow' | 'deny') => {
+		setBusy(true);
+		await client.respondToApproval(request.id, effect, 'once');
+		if (effect === 'allow' && question.plan) {
+			onBuildPlan?.();
+		}
+		setBusy(false);
+	};
+	return (
+		<div className="tray tray-approval tray-plan">
+			<div className="approval-line"><Icon name={question.plan ? 'book' : 'help'} size={14} /><span className="approval-action">{question.title}</span></div>
+			{question.markdown ? <div className="tray-plan-body"><Markdown text={question.markdown} /></div> : null}
+			<div className="tray-actions approval-footer">
+				<button type="button" className="approval-btn secondary" disabled={busy} onClick={() => void decide('deny')}>{question.plan ? 'Keep planning' : 'Decline'}</button>
+				<button type="button" className="approval-btn primary" disabled={busy} onClick={() => void decide('allow')}>{question.plan ? 'Build' : 'Approve'}</button>
+			</div>
+		</div>
+	);
+}
+
+function PermissionCard({ request }: { readonly request: IAccessRequest }) {
 	const client = useClient();
 	const [busy, setBusy] = useState<string | undefined>();
 	const answer = async (id: string, effect: 'allow' | 'deny', scope: 'once' | 'always') => {
@@ -38,15 +68,13 @@ export function ApprovalCard({ request }: { readonly request: IAccessRequest }) 
 	const risky = request.risk === 'high' || request.risk === 'critical';
 	return (
 		<div className={`tray tray-approval${risky ? ' risky' : ''}`}>
-			<div className="tray-eyebrow"><Icon name="shieldAlert" size={13} />Approval needed{request.risk && request.risk !== 'safe' ? <span className={`risk risk-${request.risk}`}>{request.risk} risk</span> : null}</div>
-			<div className="tray-title">{approvalTitle(request)}</div>
+			<div className="approval-line"><Icon name="shieldAlert" size={14} /><span className="approval-action">{approvalTitle(request)}</span>{request.risk && request.risk !== 'safe' ? <span className={`approval-detail risk-${request.risk}`}>{request.risk} risk</span> : null}</div>
 			{detail ? <pre className="tray-detail">{detail}</pre> : null}
 			{request.reason ? <div className="tray-reason">{request.reason}</div> : null}
-			<div className="tray-actions">
-				<Button variant="primary" size="sm" busy={busy === 'once'} onClick={() => void answer('once', 'allow', 'once')}>Allow once</Button>
-				<Button size="sm" busy={busy === 'always'} onClick={() => void answer('always', 'allow', 'always')}>Always allow</Button>
-				<span className="tray-spacer" />
-				<Button variant="danger" size="sm" busy={busy === 'deny'} onClick={() => void answer('deny', 'deny', 'once')}>Deny</Button>
+			<div className="tray-actions approval-footer">
+				<button type="button" className="approval-btn text" disabled={!!busy} onClick={() => void answer('deny', 'deny', 'once')}>Deny</button>
+				<button type="button" className="approval-btn secondary" disabled={!!busy} onClick={() => void answer('always', 'allow', 'always')}>Always allow</button>
+				<button type="button" className="approval-btn primary" disabled={!!busy} onClick={() => void answer('once', 'allow', 'once')}>Allow</button>
 			</div>
 		</div>
 	);
