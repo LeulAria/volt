@@ -62,7 +62,7 @@ export class VoltBrowserMainService implements IVoltBrowserService {
 				await browserSession.clearCodeCaches({});
 				return;
 			case 'siteData':
-				await browserSession.clearStorageData({ storages: ['localstorage', 'indexdb', 'serviceworkers', 'cachestorage', 'filesystem', 'shadercache', 'websql'] });
+				await browserSession.clearStorageData({ storages: ['localstorage', 'indexdb', 'serviceworkers', 'cachestorage', 'filesystem', 'shadercache'] });
 				return;
 		}
 	}
@@ -98,11 +98,11 @@ export class VoltBrowserMainService implements IVoltBrowserService {
 			return false;
 		}
 		const origin = /^https?:/i.test(url) ? new URL(url).origin : undefined;
-		const storages = new Set<'cookies' | 'localstorage' | 'indexdb' | 'cachestorage' | 'serviceworkers' | 'websql' | 'filesystem'>();
+		const storages = new Set<'cookies' | 'localstorage' | 'indexdb' | 'cachestorage' | 'serviceworkers' | 'filesystem'>();
 		for (const kind of kinds) {
 			switch (kind) {
 				case 'cookies': storages.add('cookies'); break;
-				case 'storage': storages.add('localstorage').add('websql').add('filesystem'); break;
+				case 'storage': storages.add('localstorage').add('filesystem'); break;
 				case 'indexeddb': storages.add('indexdb'); break;
 				case 'cache_storage': storages.add('cachestorage'); break;
 				case 'service_workers': storages.add('serviceworkers'); break;
