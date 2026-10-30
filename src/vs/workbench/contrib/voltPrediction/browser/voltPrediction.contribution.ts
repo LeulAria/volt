@@ -4,6 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
+import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
+import { ICodeEditorService } from '../../../../editor/browser/services/codeEditorService.js';
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
 import { localize2 } from '../../../../nls.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
@@ -26,6 +28,9 @@ import { TerminalCommandTracker } from './terminalCommandTracker.js';
 import { VoltComposerCompletionsProvider } from './voltComposerCompletionsProvider.js';
 import { VoltInlineCompletionsProvider } from './voltInlineCompletionsProvider.js';
 
+/** Typing re-warms the predictor at most this often (it may have stopped after sitting idle). */
+const WARM_ON_TYPE_INTERVAL_MS = 30_000;
+
 /** Read by the editor's Accept Next Word keybinding (inlineCompletions/browser/controller/commands.ts). */
 const TAB_PARTIAL_ACCEPTS_OFF = new RawContextKey<boolean>('voltTabPartialAcceptsOff', false);
 
@@ -45,10 +50,23 @@ class VoltPredictionContribution extends Disposable {
 		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService,
 		@IVoltPredictionService predictionService: IVoltPredictionService,
 		@IContextKeyService contextKeyService: IContextKeyService,
+		@ICodeEditorService codeEditorService: ICodeEditorService,
 	) {
 		super();
-		// The predictor agent starts with Volt, so the first keystroke and the first dictation find it ready.
-		predictionService.warmUp();
+		// The predictor agent starts on the first keystroke (a dictation warms it too), not with Volt:
+		// it is an agent process tree that a window nobody types in should not pay for.
+		let warmedAt = 0;
+		const warmOnType = (editor: ICodeEditor) => {
+			const typing = editor.onDidType(() => {
+				if (Date.now() - warmedAt > WARM_ON_TYPE_INTERVAL_MS) {
+					warmedAt = Date.now();
+					predictionService.warmUp();
+				}
+			});
+			editor.onDidDispose(() => typing.dispose());
+		};
+		codeEditorService.listCodeEditors().forEach(warmOnType);
+		this._register(codeEditorService.onCodeEditorAdd(warmOnType));
 		// Settings > Tab > Partial Accepts: off, Cmd+Right moves the cursor instead of taking the next word.
 		const partialAcceptsOff = TAB_PARTIAL_ACCEPTS_OFF.bindTo(contextKeyService);
 		const syncPartialAccepts = () => partialAcceptsOff.set(!predictionService.getSettings().partialAccepts);
