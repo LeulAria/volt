@@ -276,6 +276,8 @@ export interface IProvidersPageHost {
 	readonly store: DisposableStore;
 	search(): string;
 	rerender(): void;
+	/** The next render starts the page at the top (a new provider or model was picked). */
+	scrollToTop(): void;
 	/** Shows the window under the settings overlay, so a terminal the page opened can be used. */
 	revealWorkbench(): void;
 	switch(parent: HTMLElement, on: boolean, label: string, onClick: () => void): HTMLButtonElement;
@@ -500,7 +502,13 @@ export class ProvidersPage {
 		});
 	}
 
-	render(head: HTMLElement): void {
+	/**
+	 * The providers in `listPane` (the settings' list pane, edge to edge like every settings list,
+	 * under a head with the title and Check now) and the selection in `detailPane`, the page.
+	 */
+	render(listPane: HTMLElement, detailPane: HTMLElement): void {
+		const head = append(listPane, $('.volt-settings-side-head'));
+		append(head, $('span.volt-settings-side-title')).textContent = localize('voltSettings.providers', "Providers & Models");
 		this.renderHeadActions(head);
 		const all = this.runtime.listProviderStatuses();
 		this.validateSelection(all);
@@ -510,19 +518,20 @@ export class ProvidersPage {
 			|| status.providerId.includes(needle)
 			|| status.models.some(model => model.label.toLowerCase().includes(needle)));
 
-		const shell = append(this.host.target(), $('.volt-pm'));
-		const doc = shell.ownerDocument;
+		const doc = listPane.ownerDocument;
 		this.host.store.add(addDisposableListener(doc, 'pointerdown', () => this.pointerDown = true, true));
 		this.host.store.add(addDisposableListener(doc, 'pointerup', () => this.pointerDown = false, true));
 		this.host.store.add(addDisposableListener(doc, 'pointercancel', () => this.pointerDown = false, true));
-		this.renderList(append(shell, $('.volt-pm-list')), statuses);
-		this.renderDetail(append(shell, $('.volt-pm-detail')), all);
-		this.restoreFocus(shell);
+		this.renderList(append(listPane, $('.volt-pm-list')), statuses);
+		this.renderDetail(append(detailPane, $('.volt-pm-detail')), all);
+		this.restoreFocus(listPane);
+		this.restoreFocus(detailPane);
 	}
 
 	private select(selection: Selection): void {
 		this.selection = selection;
 		this.detailScrollTop = 0;
+		this.host.scrollToTop();
 		this.drafts.clear();
 		// A pick from the keyboard keeps the list focused, so arrows go on walking it.
 		this.focusKey = this.focusKey === 'list' ? 'list' : undefined;
@@ -542,17 +551,19 @@ export class ProvidersPage {
 	private renderHeadActions(head: HTMLElement): void {
 		const actions = append(head, $('.volt-settings-page-actions'));
 		const lastCheck = this.runtime.getLastProviderCheck();
-		append(actions, $('span.volt-settings-checked')).textContent = lastCheck
+		const checked = lastCheck
 			? localize('voltSettings.checkedAt', "Checked {0}", fromNow(lastCheck, true))
 			: localize('voltSettings.checking', "Checking...");
+		append(actions, $('span.volt-settings-checked')).textContent = checked;
 		const refresh = append(actions, $('button.volt-settings-icon-btn.volt-settings-refresh')) as HTMLButtonElement;
 		refresh.type = 'button';
 		refresh.appendChild(renderIcon(Codicon.refresh));
 		refresh.appendChild(createRefreshSpinner());
 		this.refreshButton = refresh;
 		this.syncRefresh();
-		refresh.setAttribute('aria-label', localize('voltSettings.refreshProviders', "Check providers now"));
-		setAgentTooltip(refresh, localize('voltSettings.refreshProviders', "Check providers now"));
+		const refreshLabel = localize('voltSettings.refreshProviders', "Check providers now");
+		refresh.setAttribute('aria-label', refreshLabel);
+		setAgentTooltip(refresh, lastCheck ? localize('voltSettings.refreshProvidersWhen', "{0}. {1}", refreshLabel, checked) : refreshLabel);
 		this.host.store.add(addDisposableListener(refresh, 'click', () => this.refresh()));
 	}
 

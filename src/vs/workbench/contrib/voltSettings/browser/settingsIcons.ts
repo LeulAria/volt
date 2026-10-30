@@ -33,6 +33,13 @@ const ICONS: Record<string, SvgNode[]> = {
 	'appearance-dark': [['path', { 'fill': 'none', 'stroke': 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '1.5', 'd': 'M21.5 14.078A8.557 8.557 0 0 1 9.922 2.5C5.668 3.497 2.5 7.315 2.5 11.873a9.627 9.627 0 0 0 9.627 9.627c4.558 0 8.376-3.168 9.373-7.422' }]],
 	// The search box's glyph, in the same family as the nav icons.
 	search: [['path', { 'fill': 'none', 'stroke': 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '1.5', 'd': 'm17 17l4 4m-2-10a8 8 0 1 0-16 0a8 8 0 0 0 16 0' }]],
+	// The Volt row: a filled bolt. Its grid is 22, not the 24 of the stroke icons.
+	'cat:volt': [['path', { 'fill': 'currentColor', 'd': 'M 10.951348,3.0000847 A 1.0001,1.0001 0 0 0 10.14666,3.4786003 L 4.6466606,12.478601 a 1.0001,1.0001 0 0 0 0.8535156,1.521484 h 3.5 v 4 a 1.0001,1.0001 0 0 0 1.8535158,0.521484 l 5.5,-9.0000003 a 1.0001,1.0001 0 0 0 -0.853516,-1.521484 h -3.5 v -4 A 1.0001,1.0001 0 0 0 11.27166,3.0371941 1.0001,1.0001 0 0 0 10.951348,3.0000847 Z m 0.04883,1 v 5 h 4.5 l -5.5,9.0000003 v -5 H 5.5001762 Z' }]],
+};
+
+/** Icons that are not drawn on the 24px stroke grid. */
+const VIEW_BOX: Record<string, string> = {
+	'cat:volt': '0 0 22 22',
 };
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -58,10 +65,10 @@ export function createSettingsIcon(section: string): SVGElement | undefined {
 	}
 	const svg = document.createElementNS(SVG_NS, 'svg');
 	svg.setAttribute('class', 'volt-settings-svg-icon');
-	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('viewBox', VIEW_BOX[section] ?? '0 0 24 24');
 	svg.setAttribute('width', '16');
 	svg.setAttribute('height', '16');
-	svg.setAttribute('fill', 'none');
+	svg.setAttribute('fill', VIEW_BOX[section] ? 'currentColor' : 'none');
 	svg.setAttribute('aria-hidden', 'true');
 	build(svg, nodes);
 	return svg;

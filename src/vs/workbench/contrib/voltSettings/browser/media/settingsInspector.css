@@ -1,0 +1,843 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Every list here is a workbench list or tree whose rows run edge to edge, square, in the theme's
+ * list colours. Titles inside a list (group headings) take no hover or selection. */
+.volt-settings .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-settings .monaco-list .monaco-list-row.volt-settings-nav-static,
+.volt-settings .monaco-list .monaco-list-row.volt-settings-list-static {
+	background: transparent !important;
+	outline: none !important;
+	cursor: default;
+}
+
+/* The search above the nav: a full-width field between hairlines, no rounded box. */
+.monaco-workbench .volt-settings-search {
+	margin: 0;
+	border-top: 1px solid var(--volt-settings-border);
+	border-bottom: 1px solid var(--volt-settings-border);
+}
+
+.monaco-workbench .volt-settings-search .monaco-inputbox {
+	height: 32px;
+	border-radius: 0;
+	background: transparent !important;
+}
+
+.monaco-workbench .volt-settings-search .monaco-inputbox.synthetic-focus {
+	outline-offset: -1px;
+}
+
+.volt-settings-search-icon {
+	left: 14px;
+}
+
+.monaco-workbench .volt-settings-search .monaco-inputbox > .ibwrapper > .input,
+.monaco-workbench .volt-settings-search .monaco-inputbox input {
+	padding-left: 41px !important;
+}
+
+/* Nav (settingsNav.ts). */
+
+.volt-settings-nav {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+}
+
+/* The chevron gets its own room instead of leaning on the row's icon. */
+.volt-settings-nav .monaco-tl-twistie {
+	transform: none;
+	padding-right: 0;
+	margin-right: 6px;
+}
+
+/* The open page is already lit; a focus box around it too is noise. Keyboard focus elsewhere keeps it. */
+.volt-settings-nav .monaco-list:focus .monaco-list-row.focused.selected {
+	outline: none !important;
+}
+
+/* The tree centers a row's contents; stretched, a heading can sit at the bottom of its taller row. */
+.volt-settings-nav .monaco-tl-contents {
+	align-self: stretch;
+}
+
+.volt-settings-nav-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 100%;
+	padding-right: 12px;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+/* Lists set each row's line-height to its height; headings sit at the bottom of a taller row. */
+.volt-settings-nav-row.heading,
+.volt-settings-theme-row.header,
+.volt-settings-inspect-heading,
+.volt-pm-item.group {
+	line-height: 16px;
+}
+
+.volt-settings-nav-row.heading {
+	align-items: flex-end;
+	padding-bottom: 6px;
+	box-sizing: border-box;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	cursor: default;
+}
+
+.volt-settings-nav-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	flex: none;
+	opacity: 0.85;
+}
+
+.volt-settings-nav-icon[hidden] {
+	display: none;
+}
+
+.volt-settings-nav-icon .codicon {
+	font-size: 16px;
+}
+
+.volt-settings-nav-icon .volt-settings-svg-icon {
+	display: block;
+	width: 17px;
+	height: 17px;
+}
+
+/* Home icons are a span around an svg. The row's line-height otherwise makes that span as tall
+ * as the row and sits the glyph above the label. */
+.volt-settings-nav-icon .volt-agent-svg-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	line-height: 0;
+}
+
+.volt-settings-nav-icon .volt-agent-svg-icon svg {
+	display: block;
+}
+
+.volt-settings-nav-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-settings-nav-count {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	font-variant-numeric: tabular-nums;
+}
+
+/* Back runs edge to edge like the rows under it. */
+.volt-settings-sidebar-head {
+	margin: 0;
+}
+
+.volt-settings-back {
+	border-radius: 0;
+	padding: 0 14px;
+}
+
+/* The body under the top bar: a list pane on some pages, then the page. */
+
+.volt-settings-body {
+	position: relative;
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	border-top: 1px solid var(--volt-settings-border);
+}
+
+.volt-settings-side {
+	display: none;
+	flex-direction: column;
+	width: clamp(280px, 36%, 400px);
+	flex: none;
+	min-height: 0;
+	border-right: 1px solid var(--volt-settings-border);
+}
+
+/* Provider names are short. The page beside the list gets the room; drag the edge to widen it. */
+.volt-settings-providers .volt-settings-side {
+	width: 240px;
+	container-type: inline-size;
+	container-name: volt-providers;
+}
+
+.volt-settings-providers .volt-settings-side-title {
+	flex: 0 0 auto;
+}
+
+.volt-settings-providers .volt-settings-side-head .volt-settings-page-actions {
+	flex: 1 1 auto;
+	min-width: 0;
+	margin-top: 0;
+	justify-content: flex-end;
+}
+
+/* The "Checked …" note needs the wide header. Narrow, the refresh button carries it. */
+.volt-settings-providers .volt-settings-checked {
+	display: none;
+}
+
+@container volt-providers (min-width: 320px) {
+	.volt-settings-providers .volt-settings-checked {
+		display: inline;
+	}
+}
+
+.volt-settings-side-open .volt-settings-side {
+	display: flex;
+}
+
+.volt-settings-side-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 40px;
+	padding: 0 8px 0 16px;
+	flex: none;
+	box-sizing: border-box;
+	border-bottom: 1px solid var(--volt-settings-border);
+}
+
+.volt-settings-side-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-settings-side-count {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	font-variant-numeric: tabular-nums;
+	padding-right: 8px;
+}
+
+.volt-settings-side-head .volt-settings-page-actions {
+	flex: none;
+}
+
+.volt-settings-theme-list,
+.volt-settings-side .volt-pm-list {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.volt-settings-side-list {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+}
+
+/* A page beside a list pane: one column, flush left like the inspector. */
+.volt-settings-content-inner.volt-settings-content-split {
+	width: min(760px, 100%);
+	margin-inline: 0;
+	padding: 6px 32px 80px;
+}
+
+/* Providers: the list fills the pane edge to edge under its filter; the selection is the page. */
+.volt-settings-side .volt-pm-list {
+	background: none;
+	border: none;
+	border-radius: 0;
+}
+
+.volt-settings-side .volt-pm-filter {
+	padding: 0;
+	border-bottom: 1px solid var(--volt-settings-border);
+}
+
+.volt-settings-side .volt-pm-filter-icon {
+	left: 16px;
+	top: 50%;
+	transform: translateY(-50%);
+}
+
+.monaco-workbench .volt-settings-side .volt-pm-filter .monaco-inputbox {
+	height: 32px;
+	border-radius: 0;
+	background: transparent !important;
+}
+
+.monaco-workbench .volt-settings-side .volt-pm-filter .monaco-inputbox input {
+	padding-left: 38px;
+}
+
+.volt-settings-side .volt-pm-scroll {
+	margin: 0;
+}
+
+.volt-settings-side .volt-pm-item {
+	padding: 0 16px;
+}
+
+.volt-settings-side .volt-pm-item.group {
+	padding: 0 16px 5px;
+}
+
+.volt-settings-content .volt-pm-detail,
+.volt-settings-content .volt-pm-detail-scroll {
+	display: block;
+	overflow: visible;
+}
+
+.volt-settings-content .volt-pm-detail-inner {
+	padding: 18px 0 0;
+}
+
+/* Appearance: color themes as VS Code's theme picker lists them. */
+
+.volt-settings-theme-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 100%;
+	padding: 0 16px;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.volt-settings-theme-row.header {
+	align-items: flex-end;
+	padding-bottom: 5px;
+	box-sizing: border-box;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	cursor: default;
+}
+
+.volt-settings-theme-row.header .volt-settings-theme-chip {
+	display: none;
+}
+
+.volt-settings-theme-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	flex: none;
+	width: 22px;
+	height: 14px;
+	padding: 0 3px;
+	box-sizing: border-box;
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+}
+
+.volt-settings-theme-chip > span {
+	flex: 1;
+	height: 4px;
+}
+
+.volt-settings-theme-row.browse {
+	justify-content: center;
+	line-height: 16px;
+}
+
+.volt-settings-theme-row.browse .volt-settings-theme-chip {
+	display: none;
+}
+
+.volt-settings-theme-row.browse .volt-settings-theme-name {
+	flex: none;
+	text-align: center;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-theme-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-settings-theme-tag {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-theme-check {
+	display: inline-flex;
+	flex: none;
+}
+
+.volt-settings-theme-check .codicon {
+	font-size: 14px;
+}
+
+/* A category: the list of its settings beside the inspector, in place of the page. */
+
+.volt-settings-inspect {
+	position: relative;
+	display: none;
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+}
+
+.volt-settings-inspect-open .volt-settings-inspect {
+	display: flex;
+}
+
+.volt-settings-inspect-open .volt-settings-content-scroll {
+	display: none;
+}
+
+/* A Volt page: Volt's list stays first, and the page draws where the inspector would. */
+.volt-settings-volt-page .volt-settings-inspect {
+	display: flex;
+	flex: none;
+	order: -1;
+}
+
+/* Page names are short; the page beside them gets the room. */
+.volt-settings-volt-page .volt-settings-inspect-list-pane {
+	width: 220px;
+}
+
+.volt-settings-volt-page .volt-settings-inspect-detail-host {
+	display: none;
+}
+
+.volt-settings-inspect-list-pane {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	/* Caps near 270px: the width the category list opens at. It still shrinks in a narrow window. */
+	width: clamp(220px, 36%, 270px);
+	flex: none;
+	min-height: 0;
+	border-right: 1px solid var(--volt-settings-border);
+}
+
+.volt-settings-inspect-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	height: 40px;
+	padding: 0 12px 0 16px;
+	flex: none;
+	border-bottom: 1px solid var(--volt-settings-border);
+}
+
+.volt-settings-inspect-title {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-settings-inspect-title .title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-settings-inspect-title .count {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.volt-settings-inspect-filter {
+	flex: none;
+	height: 24px;
+	padding: 0 8px;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	background: none;
+	color: var(--vscode-descriptionForeground);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-settings-inspect-filter:hover {
+	color: var(--vscode-foreground);
+	background: var(--volt-settings-hover);
+}
+
+.volt-settings-inspect-filter.on {
+	color: var(--vscode-foreground);
+	background: var(--volt-settings-selected);
+}
+
+.volt-settings-inspect-list {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+}
+
+.volt-settings-inspect-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-settings-inspect-empty {
+	position: absolute;
+	top: 64px;
+	left: 16px;
+	right: 16px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-inspect-empty[hidden] {
+	display: none;
+}
+
+.volt-settings-inspect-heading {
+	display: flex;
+	align-items: flex-end;
+	height: 100%;
+	padding: 0 16px 5px;
+	box-sizing: border-box;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-settings-inspect-list .monaco-list:focus .monaco-list-row.focused.selected {
+	outline: none !important;
+}
+
+/* A page link (icon, name) or a subsection (name, count). */
+.volt-settings-inspect-label {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 100%;
+	padding: 0 16px;
+	font-size: 13px;
+}
+
+.volt-settings-inspect-label .label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-settings-inspect-label .count {
+	flex: none;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* The picked subsection's settings. */
+
+.volt-settings-inspect-page-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	margin-bottom: 16px;
+}
+
+.volt-settings-inspect-page-title {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-settings-inspect-page-title .volt-settings-inspect-name {
+	margin: 0;
+}
+
+.volt-settings-inspect-page-title .count {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* A value set in the scope in view: the bar VS Code's settings editor draws. */
+.volt-settings-inspect-detail .volt-settings-row.volt-settings-inspect-setting {
+	position: relative;
+}
+
+.volt-settings-inspect-detail .volt-settings-row.volt-settings-inspect-setting.modified::before {
+	content: '';
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 2px;
+	background: var(--vscode-settings-modifiedItemIndicator, var(--vscode-focusBorder));
+	pointer-events: none;
+}
+
+/* The card's corners are rounded. The bar stops where the curve starts. */
+.volt-settings-group > .volt-settings-inspect-setting.modified:first-child::before {
+	top: var(--volt-settings-radius);
+}
+
+.volt-settings-group > .volt-settings-inspect-setting.modified:last-child::before {
+	bottom: var(--volt-settings-radius);
+}
+
+.volt-settings-inspect-setting-title {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}
+
+.volt-settings-inspect-setting-title .cat {
+	color: var(--vscode-descriptionForeground);
+}
+
+/* Copy Setting ID shows on the row under the pointer, or when tabbed to. */
+.volt-settings-inspect-setting .volt-settings-inspect-icon.copy {
+	width: 20px;
+	height: 20px;
+	opacity: 0;
+}
+
+.volt-settings-inspect-setting:hover .volt-settings-inspect-icon.copy,
+.volt-settings-inspect-setting .volt-settings-inspect-icon.copy:focus-visible {
+	opacity: 1;
+}
+
+.volt-settings-inspect-setting .desc {
+	white-space: pre-line;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+.volt-settings-inspect-setting .desc code {
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	padding: 0 4px;
+	border-radius: 4px;
+	background: var(--volt-settings-surface);
+	color: var(--vscode-foreground);
+}
+
+.volt-settings-inspect-note {
+	margin-top: 4px;
+	font-size: 12px;
+	color: var(--vscode-textLink-foreground);
+}
+
+/* The settings pane. */
+
+.volt-settings-inspect-detail-host {
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	position: relative;
+}
+
+.volt-settings-inspect-detail-scroll {
+	position: absolute;
+	inset: 0;
+}
+
+.volt-settings-inspect-detail {
+	max-width: 760px;
+	padding: 24px 32px 64px;
+}
+
+.volt-settings-inspect-placeholder {
+	padding-top: 40px;
+	font-size: 13px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-inspect-key {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+.volt-settings-inspect-name {
+	margin: 6px 0 8px;
+	font-size: 18px;
+	font-weight: 400;
+	letter-spacing: -0.01em;
+	line-height: 1.25;
+}
+
+.volt-settings-inspect-desc,
+.volt-settings-inspect-warning {
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--vscode-descriptionForeground);
+	white-space: pre-line;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+.volt-settings-inspect-warning {
+	margin-top: 10px;
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-settings-inspect-desc code,
+.volt-settings-inspect-warning code {
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	padding: 0 4px;
+	border-radius: 4px;
+	background: var(--volt-settings-surface);
+	color: var(--vscode-foreground);
+}
+
+.volt-settings-inspect-section {
+	margin: 24px 0 8px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* The scope whose value is in effect. */
+.volt-settings-inspect-detail .volt-settings-row.wins {
+	box-shadow: inset 2px 0 0 var(--vscode-settings-modifiedItemIndicator, var(--vscode-focusBorder));
+}
+
+.volt-settings-inspect-mono {
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	color: var(--vscode-foreground);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+.volt-settings-inspect-preview {
+	max-width: 260px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-settings-inspect-input {
+	width: 200px;
+}
+
+/* Number boxes: no native spin arrows; a themed stepper sits at the right edge instead. */
+.volt-settings input[type=number]::-webkit-inner-spin-button,
+.volt-settings input[type=number]::-webkit-outer-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}
+
+.volt-settings input[type=number] {
+	appearance: textfield;
+}
+
+.volt-settings-number .ibwrapper {
+	margin-right: 18px;
+}
+
+.volt-settings-number-stepper {
+	position: absolute;
+	top: 1px;
+	right: 1px;
+	bottom: 1px;
+	display: flex;
+	flex-direction: column;
+	width: 18px;
+	border-left: 1px solid var(--vscode-input-border, transparent);
+}
+
+.volt-settings-number-step {
+	display: flex;
+	flex: 1 1 0;
+	align-items: center;
+	justify-content: center;
+	min-height: 0;
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+}
+
+.volt-settings-number-step + .volt-settings-number-step {
+	border-top: 1px solid var(--vscode-input-border, transparent);
+}
+
+.volt-settings-number-step:hover {
+	color: var(--vscode-foreground);
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.monaco-workbench .volt-settings .volt-settings-number-step .codicon.codicon {
+	font-size: 12px;
+}
+
+.volt-settings-inspect-error {
+	margin-top: 4px;
+	font-size: 12px;
+	color: var(--vscode-errorForeground);
+}
+
+.volt-settings-inspect-error:empty {
+	display: none;
+}
+
+.volt-settings-inspect-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	flex: none;
+	padding: 0;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+}
+
+.volt-settings-inspect-icon:hover:not(:disabled) {
+	color: var(--vscode-foreground);
+	background: var(--volt-settings-hover);
+}
+
+.volt-settings-inspect-icon:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.volt-settings-inspect-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 20px;
+}
