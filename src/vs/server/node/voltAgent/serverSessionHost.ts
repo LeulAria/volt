@@ -14,6 +14,8 @@ import { AgentSessionStatus } from '../../../workbench/services/voltRuntime/comm
 import { AgentEditorInput, onDidCreateAgentEditorInput } from '../../../workbench/contrib/voltAgent/browser/editor/agentEditorInput.js';
 import { IAgentSessionChange } from '../../../workbench/contrib/voltAgent/browser/editor/agentSessionController.js';
 
+const NO_HOLDERS: ReadonlySet<number> = new Set();
+
 /** Streaming changes are sent at most this often per chat. */
 const PATCH_INTERVAL_MS = 50;
 /** Chats a client opened stay loaded on the server; idle ones beyond this are let go. */
@@ -198,6 +200,11 @@ export class ServerSessionHost extends Disposable {
 			...(input.contextWindow !== undefined ? { contextWindow: input.contextWindow } : {}),
 			running: last?.kind === 'agent' && !!last.activity?.streaming,
 		};
+	}
+
+	/** The connections that have the chat open now. */
+	holders(sessionId: string): ReadonlySet<number> {
+		return this.held.get(sessionId)?.holders ?? NO_HOLDERS;
 	}
 
 	close(sessionId: string, connectionId: number): void {

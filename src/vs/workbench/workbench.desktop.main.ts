@@ -188,6 +188,7 @@ import './contrib/voltAgent/electron-browser/voltHostMcp.contribution.js';
 import './contrib/voltAgent/electron-browser/voltExternalMcp.contribution.js';
 import './contrib/voltAgent/electron-browser/agentVisuals.contribution.js';
 import './contrib/voltAgent/browser/pullRequests/agentPullRequests.contribution.js';
+import './contrib/voltAgent/browser/trajectory/agentTrajectory.contribution.js';
 import './contrib/voltAgent/browser/runGroups/agentRunGroups.contribution.js';
 import './contrib/voltAgent/browser/orchestration/agentThreadToolService.js';
 import './contrib/voltAgent/browser/orchestration/agentWorkspaceMover.js';
@@ -201,6 +202,7 @@ import './services/voltRuntime/electron-browser/voltRelay.contribution.js';
 import './contrib/voltProjects/electron-browser/voltProjects.contribution.js';
 // Volt window scopes (a New Window keeps its chats and projects until it closes)
 import './services/voltWindowScope/electron-browser/voltWindowScopeService.js';
+import './contrib/voltAgent/electron-browser/agentOpenInNewWindow.contribution.js';
 // Volt agent server client (after the agent services it can replace)
 import './contrib/voltAgent/electron-browser/agentServerClient.contribution.js';
 import './contrib/voltAgent/electron-browser/agentComputerName.contribution.js';

@@ -14,11 +14,12 @@ import { AgentImageStrip, closeMediaDialog, formatImageSize, IAgentImageStripIte
 import { formatDuration } from '../composer/agentVideoAttachments.js';
 
 /**
- * Keeps a sent prompt's image strip to one row: as many tiles as the bubble's width holds, and
- * when some do not fit, the last one shows "+N" (N hidden) over its dimmed image. "+N" opens every
- * image in a grid, and a pick there opens it the way a tile does. Counted again on every resize.
+ * Keeps an image strip (a sent prompt's, or the composer's) to one row: as many tiles as the width
+ * holds, and when some do not fit, the last one shows "+N" (N hidden) over its dimmed image. "+N"
+ * opens every image in a grid, and a pick there opens it the way a tile does. Counted again on every
+ * resize and whenever the strip's images change.
  */
-export function fitImageStripToOneRow(strip: AgentImageStrip, items: readonly IAgentImageStripItem[], onOpen: (index: number) => void): IDisposable {
+export function fitImageStripToOneRow(strip: AgentImageStrip, onOpen: (index: number) => void): IDisposable {
 	const store = new DisposableStore();
 	const element = strip.element;
 	const win = getWindow(element);
@@ -31,7 +32,7 @@ export function fitImageStripToOneRow(strip: AgentImageStrip, items: readonly IA
 			moreTile.classList.remove('more');
 			moreBadge?.remove();
 			const index = tilesOf(element).indexOf(moreTile);
-			const item = items[index];
+			const item = strip.items[index];
 			if (item) {
 				moreTile.setAttribute('aria-label', localize('voltAgent.openImage', "Open {0}", item.name));
 				setAgentTooltip(moreTile, item.name, tileDetail(item));
@@ -77,10 +78,16 @@ export function fitImageStripToOneRow(strip: AgentImageStrip, items: readonly IA
 		if (moreTile && moreTile.contains(e.target as Node)) {
 			e.preventDefault();
 			e.stopPropagation();
-			showAgentMessageImageGallery(element, items, onOpen);
+			showAgentMessageImageGallery(element, strip.items, onOpen);
 		}
 	}, true));
 
+	// The tiles were rebuilt: the old "+N" tile is gone with them.
+	store.add(strip.onDidUpdate(() => {
+		moreTile = undefined;
+		moreBadge = undefined;
+		layout();
+	}));
 	const observer = new win.ResizeObserver(() => layout());
 	observer.observe(element);
 	store.add(toDisposable(() => observer.disconnect()));

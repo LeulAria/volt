@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	ACCESS_MODES, type AccessMode, catalogItem, COMPOSER_MODES, type ComposerMode, type Delivery, errorMessage, type IPromptAttachment, MODE_COLORS, modelLabel,
+	ACCESS_MODES, type AccessMode, catalogItem, COMPOSER_MODES, type ComposerMode, ComposerDraft, decodeCachedDraft, type Delivery, errorMessage, type IDraftStore, type IPromptAttachment, MODE_COLORS, modelLabel,
 	selectModelGroups, SENDABLE_IMAGE_MIMES, uuid
 } from '@volt/client-core';
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -12,7 +12,8 @@ import { useAttachment, useClient, useRuntime } from '../app/client';
 import { registerComposer } from '../ide/composerBridge';
 import { fuzzyPath, rank } from '../ide/fuzzy';
 import { FileIcon } from '../ide/icons';
-import { type IMenuItem, MenuButton } from '../ui/overlays';
+import { type IMenuItem, type IMenuModifiers, MenuButton } from '../ui/overlays';
+import { RUN_GROUP_MAX_MODELS, toggleRunModel } from '@volt/client-core';
 import { Icon, Kbd, Spinner } from '../ui/primitives';
 import { openLightbox } from './Lightbox';
 
@@ -20,30 +21,30 @@ const DRAFT_PREFIX = 'volt.web.draft.';
 const MAX_EDGE = 2048;
 const MAX_BYTES = 4.5 * 1024 * 1024;
 
-function loadDraft(key: string | undefined): string {
-	if (!key) {
-		return '';
-	}
-	try {
-		return window.localStorage.getItem(DRAFT_PREFIX + key) ?? '';
-	} catch {
-		return '';
-	}
-}
-
-function saveDraft(key: string | undefined, text: string): void {
-	if (!key) {
-		return;
-	}
-	try {
-		if (text) {
-			window.localStorage.setItem(DRAFT_PREFIX + key, text);
-		} else {
-			window.localStorage.removeItem(DRAFT_PREFIX + key);
+const DRAFT_STORE: IDraftStore = {
+	get: key => {
+		try {
+			return window.localStorage.getItem(key);
+		} catch {
+			return null;
 		}
-	} catch {
-		// private mode
-	}
+	},
+	set: (key, value) => {
+		try {
+			if (value === null) {
+				window.localStorage.removeItem(key);
+			} else {
+				window.localStorage.setItem(key, value);
+			}
+		} catch {
+			// private mode
+		}
+	},
+};
+
+/** This browser's copy of a draft, read at once (the computer's copy follows, see ComposerDraft). */
+function loadDraft(key: string | undefined): string {
+	return key ? decodeCachedDraft(DRAFT_STORE.get(DRAFT_PREFIX + key) as string | null)?.text ?? '' : '';
 }
 
 /** An image in the composer: its preview at once, its upload in the background. */
@@ -96,6 +97,8 @@ async function prepareImage(file: File): Promise<{ base64: string; mime: string;
 export interface IComposerProps {
 	/** Drafts are kept per chat (and `new` for the new chat page). */
 	readonly draftKey?: string;
+	/** The chat whose draft is shared with the desktop and other devices (when it is `draftKey`). */
+	readonly chatId?: string;
 	readonly running?: boolean;
 	readonly mode: ComposerMode;
 	readonly onModeChange: (mode: ComposerMode) => void;
@@ -113,6 +116,9 @@ export interface IComposerProps {
 	readonly disabledReason?: string;
 	/** Extra controls before the model picker (the new chat page's project picker). */
 	readonly leading?: ReactNode;
+	/** A new chat's "Compare models" (the desktop picker's multi mode): the ticked models, undefined while off. */
+	readonly multiModels?: readonly string[];
+	readonly onMultiModelsChange?: (refs: readonly string[] | undefined) => void;
 	readonly large?: boolean;
 	/** Editing a sent message: its text and images, a Cancel, and what the send button says. */
 	readonly edit?: { readonly text: string; readonly attachments: readonly IPromptAttachment[]; readonly onCancel: () => void; readonly label: string };
@@ -137,20 +143,38 @@ export function Composer(props: IComposerProps) {
 	const picker = useRef<HTMLInputElement>(null);
 	const editing = !!props.edit;
 
+	const draft = useRef<ComposerDraft | undefined>(undefined);
 	useEffect(() => {
-		if (!editing) {
-			setText(loadDraft(props.draftKey));
-		}
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [props.draftKey]);
-
-	useEffect(() => {
-		if (editing) {
+		const key = props.draftKey;
+		if (editing || !key) {
 			return;
 		}
-		const timer = setTimeout(() => saveDraft(props.draftKey, text), 250);
-		return () => clearTimeout(timer);
-	}, [props.draftKey, text, editing]);
+		const shared = !!props.chatId && props.chatId === key;
+		const current = new ComposerDraft(DRAFT_STORE, DRAFT_PREFIX + key, shared ? client : undefined, shared ? key : undefined, remote => {
+			if (draft.current === current) {
+				setText(remote);
+			}
+		});
+		draft.current = current;
+		void current.load().then(value => {
+			if (draft.current === current) {
+				setText(value);
+			}
+		});
+		return () => {
+			current.dispose();
+			if (draft.current === current) {
+				draft.current = undefined;
+			}
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [props.draftKey, props.chatId, editing, client]);
+
+	useEffect(() => {
+		if (!editing) {
+			draft.current?.change(text);
+		}
+	}, [text, editing]);
 
 	useLayoutEffect(() => {
 		const el = ref.current;
@@ -246,7 +270,7 @@ export function Composer(props: IComposerProps) {
 		setText('');
 		setImages([]);
 		if (!editing) {
-			saveDraft(props.draftKey, '');
+			draft.current?.clear();
 		}
 	};
 
@@ -254,8 +278,17 @@ export function Composer(props: IComposerProps) {
 
 	const groups = useMemo(() => selectModelGroups(runtime), [runtime]);
 	const model = catalogItem(runtime, props.modelRef);
+	const multi = props.multiModels;
+	const setMulti = props.onMultiModelsChange;
 	const modelItems: IMenuItem[] = [
-		{ id: 'auto', label: 'Auto', detail: 'Volt picks the model', icon: 'sparkles', checked: !props.modelRef, onSelect: () => props.onModelChange(undefined) },
+		...(setMulti ? [
+			{
+				id: 'compare', label: 'Compare models', icon: 'layers' as const, checked: !!multi, keepOpen: true,
+				detail: multi ? `${multi.length} of ${RUN_GROUP_MAX_MODELS} picked · each in its own worktree` : 'One prompt on 2–4 models (⇧-click a model)',
+				onSelect: () => setMulti(multi ? undefined : props.modelRef ? [props.modelRef] : []),
+			},
+		] : []),
+		...(multi ? [] : [{ id: 'auto', label: 'Auto', detail: 'Volt picks the model', icon: 'sparkles' as const, checked: !props.modelRef, onSelect: () => props.onModelChange(undefined) }]),
 		...groups.flatMap(group => [
 			{ id: `sep:${group.key}`, label: '', separator: true },
 			{ id: `h:${group.key}`, label: group.label, header: true },
@@ -263,8 +296,13 @@ export function Composer(props: IComposerProps) {
 				id: item.ref,
 				label: item.qualifier ? `${item.label} ${item.qualifier}` : item.label,
 				...(item.contextLabel || item.detail ? { detail: item.contextLabel ?? item.detail } : {}),
-				checked: item.ref === props.modelRef,
-				onSelect: () => props.onModelChange(item.ref),
+				checked: multi ? multi.includes(item.ref) : item.ref === props.modelRef,
+				disabled: !!multi && !multi.includes(item.ref) && multi.length >= RUN_GROUP_MAX_MODELS,
+				// Ticking models for a comparison keeps the menu open; ⇧-click starts one (as on the desktop).
+				keepOpen: (m: IMenuModifiers) => !!multi || (m.shiftKey && !!setMulti),
+				onSelect: (m: IMenuModifiers) => multi && setMulti ? setMulti(toggleRunModel(multi, item.ref))
+					: m.shiftKey && setMulti ? setMulti(toggleRunModel(props.modelRef ? [props.modelRef] : [], item.ref))
+						: props.onModelChange(item.ref),
 			})),
 		]),
 	];
@@ -381,7 +419,7 @@ export function Composer(props: IComposerProps) {
 				</MenuButton>
 				{props.leading}
 				<MenuButton className="pill" items={modelItems} placement="top-start" width={300} label="Model">
-					<Icon name="cpu" size={13} /><span className="pill-text">{modelLabel(runtime, props.modelRef)}</span><Icon name="chevronDown" size={11} />
+					<Icon name={multi ? 'layers' : 'cpu'} size={13} /><span className="pill-text">{multi ? `${multi.length} models` : modelLabel(runtime, props.modelRef)}</span><Icon name="chevronDown" size={11} />
 				</MenuButton>
 				{options.map(descriptor => {
 					const value = String(current[descriptor.id] ?? descriptor.options?.find(o => o.isDefault)?.value ?? descriptor.options?.[0]?.value ?? '');
@@ -445,13 +483,17 @@ function useMention(text: string, ref: React.RefObject<HTMLTextAreaElement | nul
 			return;
 		}
 		const update = () => setCaret(el.selectionStart ?? 0);
+		// Only after React has handled the input: a state update inside this native listener re-renders the
+		// textarea with the old text first, React then sees no change and the keystroke is undone. A
+		// microtask is too soon (it runs between listeners), so a task.
+		const updateAfterInput = () => setTimeout(update, 0);
 		el.addEventListener('keyup', update);
 		el.addEventListener('click', update);
-		el.addEventListener('input', update);
+		el.addEventListener('input', updateAfterInput);
 		return () => {
 			el.removeEventListener('keyup', update);
 			el.removeEventListener('click', update);
-			el.removeEventListener('input', update);
+			el.removeEventListener('input', updateAfterInput);
 		};
 	}, [ref]);
 

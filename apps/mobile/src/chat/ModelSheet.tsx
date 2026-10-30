@@ -3,12 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { catalogItem, type IModelOptionDescriptor, type IProviderStatus, PROVIDER_COLORS, selectModelGroups } from '@volt/client-core';
+import { catalogItem, type IModelOptionDescriptor, type IProviderStatus, modelLabel, PROVIDER_COLORS, RUN_GROUP_MAX_MODELS, RUN_GROUP_MIN_MODELS, selectModelGroups, toggleRunModel } from '@volt/client-core';
 import { useMemo, useState } from 'react';
 import { StyleSheet, Switch, TextInput, View } from 'react-native';
 import { useClient, useRuntime } from '../state/client';
 import { useTheme } from '../theme/theme';
-import { haptic, Icon, T, Tap } from '../ui/core';
+import { Button, haptic, Icon, T, Tap } from '../ui/core';
 import { Sheet } from '../ui/sheets';
 
 const STATE_LABEL: Record<IProviderStatus['state'], string> = {
@@ -29,12 +29,18 @@ function providerColor(providerId: string): string {
 /**
  * The model picker, as the desktop's: models grouped by provider account with the account's
  * state, a search, and the chosen model's options (reasoning effort, thinking...) below.
+ *
+ * With `onMultiChange` (a new chat), "Compare models" turns it into the desktop's multi mode: tick
+ * 2-4 models and the prompt runs on each in its own worktree and chat.
  */
-export function ModelSheet({ visible, onClose, modelRef, onPick }: {
+export function ModelSheet({ visible, onClose, modelRef, onPick, multi, onMultiChange }: {
 	readonly visible: boolean;
 	readonly onClose: () => void;
 	readonly modelRef: string | undefined;
 	readonly onPick: (ref: string | undefined) => void;
+	/** The models ticked for a comparison; undefined while comparing is off. */
+	readonly multi?: readonly string[];
+	readonly onMultiChange?: (refs: readonly string[] | undefined) => void;
 }) {
 	const { p } = useTheme();
 	const client = useClient();
@@ -55,13 +61,33 @@ export function ModelSheet({ visible, onClose, modelRef, onPick }: {
 		void client.setModelOptions(modelRef, { ...current, [descriptor.id]: value });
 	};
 
+	const comparing = !!multi && !!onMultiChange;
+	const subtitle = comparing
+		? multi.length ? `${multi.length} of ${RUN_GROUP_MAX_MODELS}: ${multi.map(ref => modelLabel(runtime, ref)).join(', ')}` : `Pick ${RUN_GROUP_MIN_MODELS} to ${RUN_GROUP_MAX_MODELS} models`
+		: model ? `${model.label}${model.qualifier ? ` ${model.qualifier}` : ''}` : 'Auto: Volt picks the model';
+	const toggleCompare = (on: boolean) => {
+		haptic.selection();
+		// Comparing starts from the model already chosen, as the desktop's picker does.
+		onMultiChange?.(on ? (modelRef ? [modelRef] : []) : undefined);
+	};
+
 	return (
-		<Sheet visible={visible} onClose={onClose} title="Model" subtitle={model ? `${model.label}${model.qualifier ? ` ${model.qualifier}` : ''}` : 'Auto: Volt picks the model'}>
+		<Sheet visible={visible} onClose={onClose} title={comparing ? 'Compare models' : 'Model'} subtitle={subtitle}>
+			{onMultiChange && !q ? (
+				<View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 14, backgroundColor: comparing ? p.fill : p.fillFaint, borderWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint }}>
+					<Icon name="layers" size={18} color={comparing ? p.accent : p.fgSecondary} />
+					<View style={{ flex: 1 }}>
+						<T variant="callout" weight="600">Compare models</T>
+						<T variant="footnote" color={p.fgTertiary}>Each model runs in its own worktree and chat.</T>
+					</View>
+					<Switch value={comparing} onValueChange={toggleCompare} trackColor={{ true: p.accent, false: p.fillStrong }} accessibilityLabel="Compare models" />
+				</View>
+			) : null}
 			<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, height: 38, marginHorizontal: 8, marginBottom: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: p.fill }}>
 				<Icon name="search" size={15} color={p.fgTertiary} />
 				<TextInput value={query} onChangeText={setQuery} placeholder="Search models" placeholderTextColor={p.fgQuaternary} style={{ flex: 1, color: p.fg, fontSize: 15 }} autoCorrect={false} autoCapitalize="none" keyboardAppearance={p.scheme} />
 			</View>
-			{descriptors.length && !q ? (
+			{descriptors.length && !q && !comparing ? (
 				<View style={{ marginHorizontal: 8, marginBottom: 8, padding: 10, gap: 10, borderRadius: 14, backgroundColor: p.fillFaint, borderWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint }}>
 					{descriptors.map(descriptor => descriptor.type === 'boolean' ? (
 						<View key={descriptor.id} style={{ flexDirection: 'row', alignItems: 'center', minHeight: 32 }}>
@@ -85,7 +111,7 @@ export function ModelSheet({ visible, onClose, modelRef, onPick }: {
 					))}
 				</View>
 			) : null}
-			{!q ? <Row label="Auto" detail="Volt picks the model" icon checked={!modelRef} onPress={() => {
+			{!q && !comparing ? <Row label="Auto" detail="Volt picks the model" icon checked={!modelRef} onPress={() => {
 				onPick(undefined);
 				onClose();
 			}} /> : null}
@@ -106,8 +132,13 @@ export function ModelSheet({ visible, onClose, modelRef, onPick }: {
 								key={item.ref}
 								label={item.qualifier ? `${item.label} ${item.qualifier}` : item.label}
 								detail={item.contextLabel ?? item.detail ?? item.description}
-								checked={item.ref === modelRef}
+								checked={comparing ? multi.includes(item.ref) : item.ref === modelRef}
+								disabled={comparing && !multi.includes(item.ref) && multi.length >= RUN_GROUP_MAX_MODELS}
 								onPress={() => {
+									if (comparing) {
+										onMultiChange(toggleRunModel(multi, item.ref));
+										return;
+									}
 									onPick(item.ref);
 									onClose();
 								}}
@@ -129,14 +160,25 @@ export function ModelSheet({ visible, onClose, modelRef, onPick }: {
 					<T variant="footnote" color={p.fgQuaternary}>Sign in to providers in Volt on your computer.</T>
 				</View>
 			) : null}
+			{comparing ? (
+				<View style={{ paddingHorizontal: 8, paddingTop: 14 }}>
+					<Button
+						variant="primary"
+						icon="layers"
+						label={multi.length >= RUN_GROUP_MIN_MODELS ? `Compare ${multi.length} models` : `Pick ${RUN_GROUP_MIN_MODELS - multi.length} more`}
+						disabled={multi.length < RUN_GROUP_MIN_MODELS}
+						onPress={onClose}
+					/>
+				</View>
+			) : null}
 		</Sheet>
 	);
 }
 
-function Row({ label, detail, checked, icon, onPress }: { readonly label: string; readonly detail?: string; readonly checked?: boolean; readonly icon?: boolean; readonly onPress: () => void }) {
+function Row({ label, detail, checked, icon, disabled, onPress }: { readonly label: string; readonly detail?: string; readonly checked?: boolean; readonly icon?: boolean; readonly disabled?: boolean; readonly onPress: () => void }) {
 	const { p } = useTheme();
 	return (
-		<Tap haptics="selection" onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 46, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, backgroundColor: checked ? p.fill : 'transparent' }}>
+		<Tap haptics="selection" onPress={onPress} disabled={disabled} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 46, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, backgroundColor: checked ? p.fill : 'transparent' }}>
 			{icon ? <Icon name="sparkles" size={17} color={p.fgSecondary} /> : null}
 			<View style={{ flex: 1, minWidth: 0 }}>
 				<T variant="callout" weight={checked ? '600' : '400'} numberOfLines={1}>{label}</T>

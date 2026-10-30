@@ -23,7 +23,7 @@
 	background: var(--vscode-editor-background, #1e1e1e);
 	color: var(--vscode-foreground);
 	box-shadow:
-		0 0 0 1px var(--vscode-widget-border, rgba(255, 255, 255, 0.1)),
+		0 0 0 1px var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)),
 		0 6px 20px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
 	font-size: 11.5px;
 	line-height: 15px;

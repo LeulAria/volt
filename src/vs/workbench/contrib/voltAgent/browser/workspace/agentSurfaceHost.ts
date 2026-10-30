@@ -60,9 +60,9 @@ import { BROWSER_PRESENT_EVENT, BROWSER_PRESENTATION_EVENT, BrowserPresentation,
 import { sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { AgentChangesEditorInput, isAgentChangesDiffFor, openAgentChangesDiff } from '../review/agentChangesEditor.js';
 import { AgentChangesScope } from '../review/agentSessionChanges.js';
-import { AgentFilesSidebar, AgentFilesSidebarView } from './agentFilesSidebar.js';
+import { AgentFilesSidebar, AgentFilesSidebarView, filesSidebarTabs, filesSidebarViewCommandId } from './agentFilesSidebar.js';
 import { AgentSurfaceAddMenu, IAgentSurfaceAddMenuHost, renderSurfaceOpenList, visibleSurfaceMenuItems } from './agentSurfaceAddMenu.js';
-import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
+import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
 import { AgentToolsEditorPart, AgentToolsPartContext, hasSavedAgentTools } from './agentToolsEditorPart.js';
 import { attachSessionToProject } from './agentShell.js';
 import { registerAgentFileEditorRouting } from './agentFileEditorRouting.js';
@@ -91,10 +91,10 @@ const TOGGLE_TOOLS_PANEL_ID = 'workbench.action.voltAgentTools.togglePanel';
 export const SHOW_AGENT_FILES_COMMAND_ID = 'workbench.action.voltAgentTools.showFiles';
 /** The floating preview's gap to the chat's edges, and its smallest size. */
 const FLOAT_MARGIN = 12;
-const FLOAT_MIN_WIDTH = 260;
-const FLOAT_MIN_HEIGHT = 180;
+const FLOAT_MIN_WIDTH = 200;
+const FLOAT_MIN_HEIGHT = 125;
 /** A new preview's width: a small 16:10 screen. */
-const FLOAT_WIDTH = 320;
+const FLOAT_WIDTH = 256;
 /**
  * A browser window narrower than this (a phone, a tablet in split view) has no room for the chat
  * and the tools side by side: the tools lie over the chat, below its title bar, and close back to it.
@@ -318,6 +318,24 @@ export function openInAgentTools(input: EditorInput, sessionId?: string, options
 	const candidates = [...hosts].filter(host => host.canOpenTools());
 	const host = (sessionId ? candidates.find(candidate => candidate.showsSession(sessionId)) : undefined) ?? candidates.find(isChatToolsHost);
 	return host?.openEditorInTools(input, options);
+}
+
+/**
+ * A new side chat in the tools of the chat on screen (preferring `sessionId`'s), bound to that
+ * chat's project. Undefined when no chat is on screen (the IDE layout, the home page).
+ */
+export function openSideChatOnScreen(sessionId?: string): Promise<IEditorPane | undefined> | undefined {
+	const candidates = [...hosts].filter(host => host.canOpenTools());
+	const host = (sessionId ? candidates.find(candidate => candidate.showsSession(sessionId)) : undefined) ?? candidates.find(isChatToolsHost);
+	return host?.openSideChat();
+}
+
+/**
+ * A new side chat in the tools area that holds `element` (a tab's content), bound to that chat's
+ * project. Works with the tools full screen, when the chat itself is not on screen.
+ */
+export function openSideChatBeside(element: HTMLElement): Promise<IEditorPane | undefined> | undefined {
+	return [...hosts].find(host => host.holdsInTools(element))?.openSideChat();
 }
 
 /** The chat whose tools are on screen, if any. */
@@ -610,12 +628,13 @@ export class AgentSurfaceHost extends Disposable {
 		return this.canOpenTools() && this.sessionId === sessionId;
 	}
 
-	/** Its right panel is open on `sessionId` with Source Control, or a tab of the chat's changes. */
+	/** Its right panel is open on `sessionId` with Source Control, or a tab of the chat's changes in front. */
 	showsChangesFor(sessionId: string): boolean {
 		const entry = this.shown;
 		return !!entry && entry.sessionId === sessionId && this.announcedOpen
+			// The tab in front, not any open tab: a file opened over the Changes tab brings the chip back.
 			&& (this.filesSidebar.showsScmFor(sessionId) || entry.part.groups.some(group => group.activeEditor instanceof AgentChangesEditorInput
-				|| group.editors.some(editor => isAgentChangesDiffFor(editor, sessionId))));
+				|| isAgentChangesDiffFor(group.activeEditor ?? undefined, sessionId)));
 	}
 
 	/** Its right panel is open on `sessionId` with Source Control: in the files sidebar, or the Changes tab in front. */
@@ -628,6 +647,11 @@ export class AgentSurfaceHost extends Disposable {
 	/** The chat this host shows. */
 	get currentSessionId(): string | undefined {
 		return this.sessionId;
+	}
+
+	/** Whether `element` lives in this host's tools area (one of its tabs). */
+	holdsInTools(element: HTMLElement): boolean {
+		return !this.disposed && !this.nested() && this.area.contains(element);
 	}
 
 	/** A chat the user can see, so a click in its dock can open the right panel. */
@@ -807,12 +831,14 @@ export class AgentSurfaceHost extends Disposable {
 		if (!owner || !owner.requireSession()) {
 			return Promise.resolve(undefined);
 		}
+		// Shows the tabs first: with them hidden (the files sidebar alone) or the panel closed, an
+		// existing tab coming to the front would change nothing on screen.
+		const group = owner.toolsGroup();
 		const resource = input.resource?.toString();
 		const existing = resource ? owner.findInShown(editor => editor.resource?.toString() === resource) : undefined;
 		if (existing) {
 			return existing.group.openEditor(existing.editor, { ...options, pinned: true });
 		}
-		const group = owner.toolsGroup();
 		return group ? group.openEditor(input, { ...options, pinned: true }) : Promise.resolve(undefined);
 	}
 
@@ -821,6 +847,20 @@ export class AgentSurfaceHost extends Disposable {
 		AgentFilesSidebar.show(this.storageService, view);
 		// Already open on that view: the tools may still be closed.
 		this.onDidChangeFilesSidebar();
+	}
+
+	/**
+	 * A tab's shortcut: opens the sidebar on `view` with the keyboard in it. Pressed again while the
+	 * keyboard is already there, it closes the sidebar.
+	 */
+	toggleFilesSidebarView(view: AgentFilesSidebarView): void {
+		if (this.filesSidebarOpen() && this.filesSidebar.showsView(view) && this.filesSidebar.hasFocus()) {
+			AgentFilesSidebar.setOpen(this.storageService, false);
+			return;
+		}
+		this.showFilesSidebar(view);
+		// The view is lent in and laid out by the tools' next layout pass.
+		getWindow(this.container).requestAnimationFrame(() => this.filesSidebar.focusView());
 	}
 
 	/** Opening the sidebar opens the tools beside the chat on screen, even with no tab in them. */
@@ -2395,6 +2435,9 @@ export class AgentSurfaceHost extends Disposable {
 			case 'changes':
 				this.openChanges();
 				return;
+			case 'gitGraph':
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, this.sessionId));
+				return;
 			case 'scratch':
 				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, this.sessionId));
 				return;
@@ -2598,6 +2641,37 @@ for (const item of agentSurfaceMenuItems()) {
 		}
 	});
 }
+
+// Ctrl+Option + 1 to 4: the right sidebar's tabs, left to right (Explorer, Source Control, Pull Requests,
+// Search). Same family as the letters above, one hand on the left; Ctrl+Alt+Shift off a Mac.
+const SIDEBAR_TAB_KEYS = [KeyCode.Digit1, KeyCode.Digit2, KeyCode.Digit3, KeyCode.Digit4];
+filesSidebarTabs().forEach((tab, index) => {
+	const key = SIDEBAR_TAB_KEYS[index];
+	if (key === undefined) {
+		return;
+	}
+	registerAction2(class extends Action2 {
+		constructor() {
+			super({
+				id: filesSidebarViewCommandId(tab.id),
+				title: localize2('voltAgent.tools.showSidebarTab', "Show {0} in Right Sidebar", tab.label),
+				category: localize2('voltAgent.category', "Agent"),
+				f1: true,
+				precondition: LayoutModeContext.isEqualTo('agent'),
+				keybinding: {
+					primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyMod.Shift | key,
+					mac: { primary: KeyMod.WinCtrl | KeyMod.Alt | key },
+					weight: KeybindingWeight.WorkbenchContrib + 50,
+					when: LayoutModeContext.isEqualTo('agent'),
+				},
+			});
+		}
+
+		override run(): void {
+			[...hosts].find(candidate => candidate.canOpenTools())?.toggleFilesSidebarView(tab.id);
+		}
+	});
+});
 
 registerAction2(class ToggleAgentToolsPanelAction extends Action2 {
 	constructor() {

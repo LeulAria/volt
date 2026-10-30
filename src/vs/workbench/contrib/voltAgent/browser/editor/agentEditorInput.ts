@@ -15,7 +15,7 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.js';
 import { EditorInputCapabilities, GroupIdentifier, IEditorSerializer, IRevertOptions, IUntypedEditorInput } from '../../../../common/editor.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
-import { AgentSessionStatus, IAgentHistoryService, IAgentSessionHandle } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { AgentSessionStatus, IAgentHistoryService, IAgentSessionHandle, IAgentSessionTranscript, IAgentSessionTurn } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService, IVoltSeedMessage } from '../../../../services/voltRuntime/common/runtime.js';
 import { isCompactCommand } from '../../../../services/voltRuntime/common/compaction.js';
 import { handoffActivityOf } from '../blocks/agentHandoffActivity.js';
@@ -33,6 +33,8 @@ export const NEW_AGENT_COMMAND_ID = 'workbench.action.newAgent';
 export const NEW_AGENT_TAB_COMMAND_ID = 'workbench.action.voltAgent.newAgentTab';
 export const REPLACE_AGENT_COMMAND_ID = 'workbench.action.voltAgent.replaceAgent';
 export const OPEN_AGENT_COMMAND_ID = 'workbench.action.voltAgent.openSession';
+/** Desktop only: a new window that lists the chat's project and shows the chat. */
+export const OPEN_AGENT_IN_NEW_WINDOW_COMMAND_ID = 'volt.agent.openChatInNewWindow';
 export const OPEN_AGENT_HISTORY_COMMAND_ID = 'workbench.action.voltAgent.showHistory';
 export const TOGGLE_AGENT_DRAWER_COMMAND_ID = 'workbench.action.voltAgent.toggleDrawer';
 export const EXPORT_AGENT_TRANSCRIPT_COMMAND_ID = 'workbench.action.voltAgent.exportTranscript';
@@ -56,6 +58,46 @@ export const AGENT_EDITOR_LINE_NUMBERS_SETTING = 'volt.agent.editor.lineNumbers'
  * alone (beside the chat's log), so a crash loses at most this much of a reply that was streaming.
  */
 const PARTIAL_SNAPSHOT_INTERVAL_MS = 10_000;
+
+/**
+ * One saved turn as the model saw it, added to `transcript`: the prompt, then what the reply said
+ * and did. A completed compaction starts the transcript over from its summary.
+ */
+function appendModelTurn(transcript: IVoltSeedMessage[], turn: IAgentSessionTurn, assistant: IAgentAssistantMessage | undefined, cwd: string | undefined): IVoltSeedMessage[] {
+	const compactCommand = isCompactCommand(turn.user.text);
+	if (!compactCommand) {
+		transcript.push({ role: 'user', content: turn.user.text });
+	}
+	if (!turn.assistant || !assistant) {
+		return transcript;
+	}
+	const compaction = findLast(assistant.segments, segment => segment.kind === 'compaction' && segment.compaction.status === 'completed' && !!segment.compaction.summary?.trim());
+	if (compaction?.kind === 'compaction') {
+		transcript = [{ role: 'assistant', content: compaction.compaction.summary!.trim(), compacted: true }];
+		if (compactCommand) {
+			return transcript;
+		}
+	}
+	// What the model said, not the saved plain text: that one also lists tool rows and
+	// their raw input, which a model handed this chat read back as part of the reply.
+	const reply = assistant.text?.trim() || turn.assistant.text;
+	const activity = handoffActivityOf(assistant.segments, cwd);
+	const model = (assistant as { model?: { label?: string } }).model?.label;
+	if (reply || activity) {
+		transcript.push({ role: 'assistant', content: reply ?? '', ...(model ? { model } : {}), ...(activity ? { activity } : {}) });
+	}
+	return transcript;
+}
+
+/** A saved chat's conversation as its model saw it (for another session to be briefed with). */
+export async function loadModelTranscript(codec: AgentHistoryCodec, transcript: IAgentSessionTranscript): Promise<IVoltSeedMessage[]> {
+	let messages: IVoltSeedMessage[] = [];
+	for (const turn of transcript.turns) {
+		const assistant = turn.assistant ? await codec.thawAssistant(turn.assistant.message, true, turn.assistant.at) : undefined;
+		messages = appendModelTurn(messages, turn, assistant, transcript.worktreePath);
+	}
+	return messages;
+}
 
 /**
  * Inputs closed while their agent was still running. They keep recording until
@@ -259,33 +301,12 @@ export class AgentEditorInput extends EditorInput {
 				}
 				user.id = turn.id;
 				messages.push(user);
-				const compactCommand = isCompactCommand(turn.user.text);
-				if (!compactCommand) {
-					modelTranscript.push({ role: 'user', content: turn.user.text });
+				const assistant = turn.assistant ? await this.codec.thawAssistant(turn.assistant.message, true, turn.assistant.at) : undefined;
+				if (assistant) {
+					assistant.id = turn.id;
+					messages.push(assistant);
 				}
-				if (turn.assistant) {
-					const assistant = await this.codec.thawAssistant(turn.assistant.message, true, turn.assistant.at);
-					if (assistant) {
-						assistant.id = turn.id;
-						messages.push(assistant);
-						// A completed compaction with its summary: the model's context starts over from it.
-						const compaction = findLast(assistant.segments, segment => segment.kind === 'compaction' && segment.compaction.status === 'completed' && !!segment.compaction.summary?.trim());
-						if (compaction?.kind === 'compaction') {
-							modelTranscript = [{ role: 'assistant', content: compaction.compaction.summary!.trim(), compacted: true }];
-							if (compactCommand) {
-								continue;
-							}
-						}
-						// What the model said, not the saved plain text: that one also lists tool rows and
-						// their raw input, which a model handed this chat read back as part of the reply.
-						const reply = assistant.text?.trim() || turn.assistant.text;
-						const activity = handoffActivityOf(assistant.segments, transcript.worktreePath);
-						const model = (assistant as { model?: { label?: string } }).model?.label;
-						if (reply || activity) {
-							modelTranscript.push({ role: 'assistant', content: reply ?? '', ...(model ? { model } : {}), ...(activity ? { activity } : {}) });
-						}
-					}
-				}
+				modelTranscript = appendModelTurn(modelTranscript, turn, assistant, transcript.worktreePath);
 			}
 			this.messages = messages;
 			this.runtime.seedSession(this.sessionId, modelTranscript);
@@ -509,6 +530,13 @@ export class AgentEditorInput extends EditorInput {
 		}
 	}
 
+	/**
+	 * In another chat's right panel this chat keeps its transcript instead of the compact
+	 * composer-only chrome: it was opened to be read (Explain / Review from the Git Graph).
+	 * Saved with the tab.
+	 */
+	showTranscriptInTools = false;
+
 	override getIcon(): ThemeIcon {
 		return AgentEditorIcon;
 	}
@@ -579,7 +607,8 @@ export class AgentEditorInputSerializer implements IEditorSerializer {
 		}
 		const resource = editorInput.resource.toString();
 		const title = editorInput.storedTitle;
-		return title ? JSON.stringify({ resource, title }) : resource;
+		const transcript = editorInput.showTranscriptInTools || undefined;
+		return title || transcript ? JSON.stringify({ resource, title, transcript }) : resource;
 	}
 
 	deserialize(instantiationService: IInstantiationService, serializedEditorInput: string): EditorInput | undefined {
@@ -587,16 +616,19 @@ export class AgentEditorInputSerializer implements IEditorSerializer {
 			// Older windows stored the bare resource.
 			let resource = serializedEditorInput;
 			let title: string | undefined;
+			let transcript = false;
 			if (serializedEditorInput.startsWith('{')) {
-				const parsed = JSON.parse(serializedEditorInput) as { resource?: unknown; title?: unknown };
+				const parsed = JSON.parse(serializedEditorInput) as { resource?: unknown; title?: unknown; transcript?: unknown };
 				if (typeof parsed.resource !== 'string') {
 					return undefined;
 				}
 				resource = parsed.resource;
 				title = typeof parsed.title === 'string' ? parsed.title : undefined;
+				transcript = parsed.transcript === true;
 			}
 			const input = instantiationService.createInstance(AgentEditorInput, URI.parse(resource));
 			input.seedTitle(title);
+			input.showTranscriptInTools = transcript;
 			return input;
 		} catch {
 			return undefined;

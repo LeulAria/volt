@@ -464,6 +464,17 @@ button.volt-tr-header:hover .volt-tr-chevron,
 	color: var(--volt-md-fg-secondary);
 }
 
+/* The icon and name open the file (agentTranscriptView.ts renderEditCard). */
+.volt-tr-edit-card .opens-file {
+	cursor: pointer;
+}
+
+.volt-tr-edit-name.opens-file:hover {
+	color: var(--volt-md-fg);
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
 .volt-tr-edit-card > .volt-tr-header .volt-tr-chevron {
 	margin-left: auto;
 }
@@ -545,10 +556,9 @@ button.volt-tr-header:hover .volt-tr-chevron,
 	color: var(--volt-md-fg-quaternary);
 }
 
-/* End-of-turn file card: solid card fill, 14px below the turn actions, Cursor's diff colours. */
+/* End-of-turn file card: the sent prompt's fill (agentEditor.css), 14px below the turn actions, Cursor's diff colours. */
 .volt-agent-turn.agent > .volt-agent-turn-files {
 	margin: 8px 0 0;
-	background: var(--volt-md-card-bg);
 }
 
 .volt-agent-turn-files-title {
@@ -897,6 +907,11 @@ button.volt-tr-header:hover .volt-tr-chevron,
 	background: #2a2a2a;
 }
 
+.monaco-workbench.vs .volt-agent-login-chip:active,
+.monaco-workbench.hc-light .volt-agent-login-chip:active {
+	background: #000000;
+}
+
 /* Live elapsed time after the tail phrase: "Running npm test · 42s". */
 
 .volt-tr-elapsed {
@@ -1164,7 +1179,7 @@ button.volt-tr-compaction-pill:hover .volt-tr-chevron,
 	padding: 8px 12px;
 	border: 1px solid rgba(255, 255, 255, 0.1);
 	border-radius: 8px;
-	background: rgba(34, 34, 34, 0.78);
+	background: var(--volt-surface-raised);
 	box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
 	box-sizing: border-box;
 }
@@ -1172,7 +1187,7 @@ button.volt-tr-compaction-pill:hover .volt-tr-chevron,
 .monaco-workbench.vs .volt-tr-steer,
 .monaco-workbench.hc-light .volt-tr-steer {
 	background: rgba(236, 236, 236, 0.82);
-	border-color: rgba(0, 0, 0, 0.12);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
 	box-shadow: none;
 }
 
@@ -1180,7 +1195,7 @@ button.volt-tr-compaction-pill:hover .volt-tr-chevron,
 	display: block;
 	min-width: 0;
 	min-height: 22px;
-	color: var(--vscode-editor-foreground);
+	color: var(--vscode-foreground);
 	font-size: 14px;
 	line-height: 22px;
 	font-weight: 300;

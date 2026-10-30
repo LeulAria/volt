@@ -14,6 +14,9 @@ import { createDecorator } from '../../instantiation/common/instantiation.js';
 export const IVoltWindowScopesService = createDecorator<IVoltWindowScopesService>('voltWindowScopesService');
 export const VOLT_WINDOW_SCOPES_CHANNEL_NAME = 'voltWindowScopes';
 
+/** Keep the next New Window loaded out of sight, so New Window and Open in New Window show at once. */
+export const KEEP_NEXT_WINDOW_READY_SETTING = 'volt.window.keepNextWindowReady';
+
 export type VoltWindowLayoutMode = 'agent' | 'ide';
 
 /** What one scoped window owns while it is open. */
@@ -37,10 +40,24 @@ export interface IVoltWindowScopeClaim {
 	readonly layoutMode?: VoltWindowLayoutMode;
 }
 
+/** A window opened for one chat (Open in New Window): what its scope starts with, and the chat it shows. */
+export interface IVoltWindowStart extends IVoltWindowScopeClaim {
+	readonly openSession: string;
+}
+
+/** A window kept ready for the next New Window was shown for one chat. */
+export interface IVoltWindowOpenedStart {
+	readonly scope: string;
+	readonly session: string;
+}
+
 export interface IVoltWindowScopesService {
 	readonly _serviceBrand: undefined;
 
 	readonly onDidChangeScopes: Event<IVoltWindowScopes>;
+
+	/** A window that was already loaded is to show a chat (after its scope took the chat in). */
+	readonly onDidStartWindow: Event<IVoltWindowOpenedStart>;
 
 	getScopes(): Promise<IVoltWindowScopes>;
 
@@ -49,6 +66,15 @@ export interface IVoltWindowScopesService {
 	 * a project the main window adds itself is no longer held back by the window that created it.
 	 */
 	claim(scope: string | undefined, claim: IVoltWindowScopeClaim): Promise<void>;
+
+	/** The next window opened with a scope of its own (for a few seconds) starts with `start`. */
+	prepareWindow(start: IVoltWindowStart): Promise<void>;
+
+	/** The chat a window was opened to show. Answered once, so a reload does not open it again. */
+	takeWindowStart(scope: string): Promise<string | undefined>;
+
+	/** A window that got its chat with `onDidStartWindow` shows it: the window can come to the front. */
+	didShowWindowStart(scope: string): Promise<void>;
 }
 
 export const EMPTY_WINDOW_SCOPE: IVoltWindowScopeState = { sessions: [], projects: [], createdProjects: [] };

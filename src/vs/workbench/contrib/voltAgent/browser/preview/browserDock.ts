@@ -17,7 +17,8 @@ import { revealAgentSidePanel } from '../../../../browser/parts/titlebar/layoutM
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import '../media/agentEditor.css';
 import { AgentComposerChips, createThinkingDots } from '../composer/agentComposerChips.js';
-import { AgentComposerQueue } from '../composer/agentComposerQueue.js';
+import { AgentComposerQueue, IAgentQueueEditSurface, queueRowActions } from '../composer/agentComposerQueue.js';
+import { cloneDisplayMentions } from '../composer/agentMentions.js';
 import { AgentEditor, IAgentDockState, IAgentPromptDisplay } from '../editor/agentEditor.js';
 import { AGENT_SIDE_PANEL_VIEW_ID, AgentEditorInput } from '../editor/agentEditorInput.js';
 import { AgentSidePanel } from '../chrome/agentSidePanel.js';
@@ -61,6 +62,7 @@ export class BrowserAgentDock extends Disposable {
 	private readonly hitEl: HTMLElement;
 	private readonly composer: BrowserAgentComposer;
 	private readonly composerQueue: AgentComposerQueue;
+	private readonly editSurface: IAgentQueueEditSurface;
 	/** The queued messages ticked while Start Multitasking is on; undefined when it is off. */
 	private multitaskPick: readonly string[] | undefined;
 	private readonly agentStore = this._register(new MutableDisposable<DisposableStore>());
@@ -155,11 +157,28 @@ export class BrowserAgentDock extends Disposable {
 			},
 			onStop: () => this.stopRun(),
 			onKeepExpanded: () => this.setExpanded(true),
+			onEscape: () => {
+				if (!this.editingQueued()) {
+					return false;
+				}
+				this.agentEditor?.cancelQueueEdit();
+				return true;
+			},
 			onMode: id => this.composerQueue.setMode(id),
 		}));
+		// A queued message is edited here, in the dock's own composer, as the chat edits it in its own.
+		this.editSurface = {
+			content: () => ({ text: this.composer.getDisplayText(), mentions: cloneDisplayMentions(this.composer.getDisplayMentions()) }),
+			setContent: (text, mentions) => {
+				this.setExpanded(true);
+				this.composer.setContent(text, mentions);
+				this.sync();
+			},
+			focus: () => this.composer.focus(),
+		};
 		this.composerQueue = this._register(instantiationService.createInstance(AgentComposerQueue, {
-			onRemove: id => this.removeQueued(id),
-			onClear: () => this.clearQueue(),
+			// The same rows as the chat's card: edit, send now, send in a new chat, resume, remove, reorder.
+			...queueRowActions(() => this.agentEditor, this.editSurface),
 			onMultitask: () => {
 				this.composer.setMode('Multitask');
 				this.composerQueue.setMode('Multitask');
@@ -168,7 +187,6 @@ export class BrowserAgentDock extends Disposable {
 				}
 			},
 			onMultitaskPick: ids => this.setMultitaskPick(ids),
-			onReorder: ids => this.reorderQueued(ids),
 		}));
 		this.hitEl.insertBefore(this.composerQueue.element, this.chips.element);
 		// The tab's comments waiting to go: a chip in the row, a blue line in the composer. Both open the list.
@@ -491,10 +509,25 @@ export class BrowserAgentDock extends Disposable {
 	private setMultitaskPick(ids: readonly string[] | undefined): void {
 		this.multitaskPick = ids;
 		this.chips.setMultitaskPick(ids?.length);
-		this.composer.setPendingSend(!!ids?.length);
+		this.syncPendingSend();
+	}
+
+	/** Send (over Stop while the agent works) starts the picked multitasks or saves the queued message being edited. */
+	private syncPendingSend(): void {
+		this.composer.setPendingSend(!!this.multitaskPick?.length || !!this.editingQueued());
 	}
 
 	private async submit(text: string, display?: IAgentPromptDisplay, openFloat = true, withComments = true): Promise<void> {
+		const owner = this.agentEditor;
+		if (owner && this.editingQueued()) {
+			// Send saves the queued message back into the queue, changed (empty: unchanged).
+			const agentText = text.trim();
+			const mentions = cloneDisplayMentions(display?.mentions ?? this.composer.getDisplayMentions());
+			const edited: IAgentPromptDisplay | undefined = mentions.length ? { text: display?.text ?? this.composer.getDisplayText(), mentions } : undefined;
+			// The composer clears itself once this returns; the draft it stood in for comes back after that.
+			void Promise.resolve().then(() => agentText ? owner.commitQueueEdit(agentText, edited) : owner.cancelQueueEdit());
+			return;
+		}
 		const picked = this.multitaskPick;
 		if (picked) {
 			// Send starts the ticked queued messages, each as its own agent; typed words still go to the chat.
@@ -608,23 +641,22 @@ export class BrowserAgentDock extends Disposable {
 			text: item.text,
 			preview: item.display?.text ?? item.text,
 		})));
+		this.composerQueue.setState(editor?.queueState() ?? { running: false, steer: false });
+		this.syncPendingSend();
 	}
 
-	private removeQueued(id: string): void {
-		this.agentEditor?.removeQueuedPrompt(id);
-	}
-
-	private clearQueue(): void {
-		this.agentEditor?.clearPromptQueue();
-	}
-
-	private reorderQueued(ids: readonly string[]): void {
-		this.agentEditor?.reorderQueuedPrompts(ids);
+	/** The queued message open for editing in this dock's composer, if any. */
+	private editingQueued(): string | undefined {
+		return this.agentEditor?.queueEditIn(this.editSurface);
 	}
 
 	private bindAgent(editor: AgentEditor): void {
 		if (this.agentEditor === editor) {
 			return;
+		}
+		// A queued message open here belongs to the chat being left: it goes back to its queue unchanged.
+		if (this.editingQueued()) {
+			this.agentEditor?.cancelQueueEdit();
 		}
 		this.agentEditor = editor;
 		this.chips.setSessionId(editor.sessionId);
@@ -693,9 +725,11 @@ export class BrowserAgentDock extends Disposable {
 		this.syncComments();
 		this.syncQueueStack();
 		this.composer.setWorking(working);
-		this.composer.setPlaceholder(hasTurns || working
-			? localize('voltBrowser.followUpPlaceholder', "Send follow-up")
-			: localize('voltBrowser.kickoffPlaceholder', "Let's kick something off"));
+		this.composer.setPlaceholder(this.editingQueued()
+			? localize('voltAgent.queue.editingPlaceholder', "Editing queued message...")
+			: hasTurns || working
+				? localize('voltBrowser.followUpPlaceholder', "Send follow-up")
+				: localize('voltBrowser.kickoffPlaceholder', "Let's kick something off"));
 		if (this.floatOpen) {
 			this.floatTitle.textContent = state?.title || localize('voltAgent.chat', "Agent");
 		}

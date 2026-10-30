@@ -96,11 +96,17 @@ export namespace Schemas {
 	/** Scheme used for the agent Customize (rules, skills, MCP) editor tab. */
 	export const voltCustomize = 'volt-customize';
 
+	/** Scheme used for the Agent Resources editor tab (instructions, skills, MCP, harness, by scope). */
+	export const voltAgentResources = 'volt-agent-resources';
+
 	/** Scheme used for the agent Usage (cost, tokens, limits) editor tab. */
 	export const voltUsage = 'volt-usage';
 
 	/** Scheme used for the agent Automations editor tab. */
 	export const voltAutomations = 'volt-automations';
+
+	/** Scheme used for a repository's Git Graph editor tab. */
+	export const voltGitGraph = 'volt-git-graph';
 
 	/** Scheme used for the Scratch whiteboard editor tab. */
 	export const voltScratchBoard = 'volt-scratchboard';

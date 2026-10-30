@@ -18,7 +18,9 @@ export type Route =
 	| { readonly name: 'file'; readonly path: string; readonly line?: number; readonly column?: number }
 	| { readonly name: 'diff'; readonly path: string; readonly base: DiffBase }
 	| { readonly name: 'changes'; readonly chatId: string }
-	| { readonly name: 'files' };
+	| { readonly name: 'files' }
+	/** A model comparison (run group): one prompt on several models, side by side. */
+	| { readonly name: 'compare'; readonly id: string };
 
 /**
  * The left side of a diff: the file as git's HEAD has it, or as it was before a chat's agent
@@ -90,6 +92,8 @@ export function parseRoute(path: string): Route {
 			return parts[1] ? { name: 'changes', chatId: parts[1] } : { name: 'home' };
 		case 'files':
 			return { name: 'files' };
+		case 'compare':
+			return parts[1] ? { name: 'compare', id: parts[1] } : { name: 'home' };
 		default:
 			return { name: 'home' };
 	}
@@ -142,6 +146,10 @@ export function diffPath(path: string, base: DiffBase = { kind: 'head' }): strin
 	return `/diff?${q.toString()}`;
 }
 
+export function comparePath(groupId: string): string {
+	return `/compare/${encodeURIComponent(groupId)}`;
+}
+
 export function changesPath(chatId: string): string {
 	return `/changes/${encodeURIComponent(chatId)}`;
 }
@@ -158,5 +166,6 @@ export function routePath(route: Route): string {
 		case 'diff': return diffPath(route.path, route.base);
 		case 'changes': return changesPath(route.chatId);
 		case 'files': return '/files';
+		case 'compare': return comparePath(route.id);
 	}
 }

@@ -40,7 +40,7 @@ import { turnWriteGate } from '../../common/turnWriteGate.js';
 import { accessBridgeFor } from './bridges/accessBridges.js';
 import { AcpJsonRpcClient, AcpRequestAbandonedError, IAcpIncomingRequest } from './acpJsonRpc.js';
 import { listClaudeModels } from './claudeCatalog.js';
-import { acpLaunchFor, cliAgentDefinition, forgetAcpAdapterBin, listAntigravityModels, listGrokModels, listOpenCodeModels, resolveAcpAdapterBin } from './cliAgents.js';
+import { acpLaunchFor, cliAgentDefinition, forgetAcpAdapterBin, listAntigravityModels, listFxModels, listGrokModels, listOpenCodeModels, resolveAcpAdapterBin } from './cliAgents.js';
 import { listCodexModels } from './codexAppServer.js';
 import { resolveAntigravityCliModelLabel } from '../../common/models/antigravityModels.js';
 import { IModelOptionDescriptor, MODEL_OPTION_REASONING, unionDescriptors } from '../../common/models/modelOptions.js';
@@ -496,6 +496,10 @@ export class AcpAgentProvider implements IAgentProvider {
 			const listed = await this.probeAcpModels(profile);
 			return listed.length ? listed : listGrokModels(this.stdio, profile.command || this.defaultCommand).catch(() => []);
 		}
+		if (this.id === 'fx') {
+			// Never an ACP probe: fx keeps every session it opens in ~/.fx/sessions.
+			return listFxModels(this.stdio, profile.command || this.defaultCommand).catch(() => []);
+		}
 		return this.probeAcpModels(profile);
 	}
 
@@ -818,7 +822,9 @@ export class AcpAgentProvider implements IAgentProvider {
 			processId,
 			configOptions: created.configOptions ?? initialized.configOptions,
 			modes: created.modes?.availableModes ?? initialized.agentCapabilities?.session?.modes?.availableModes,
-			currentModeId: created.modes?.currentModeId,
+			// fx reports `ask` on a new or loaded session but runs its saved permission mode until a
+			// client sets one, so its first mode write must not be skipped as already current.
+			currentModeId: this.id === 'fx' ? undefined : created.modes?.currentModeId,
 			promptImages: initialized.agentCapabilities?.promptCapabilities?.image === true,
 			promptEmbedded: initialized.agentCapabilities?.promptCapabilities?.embeddedContext === true,
 			setupKey: this.setupKey(req),
@@ -1732,16 +1738,22 @@ export class AcpAgentProvider implements IAgentProvider {
 	}
 
 	/** Puts `text` into the running turn. False when the agent refused (no turn, or it wants a new prompt). */
-	async steer(session: IAgentSessionHandle, text: string): Promise<boolean> {
+	async steer(session: IAgentSessionHandle, text: string, images?: readonly IModelImage[]): Promise<boolean> {
 		const live = this.sessions.get(session.id);
 		const turn = live?.turn;
 		if (!live?.steering || !turn || turn.ended) {
 			return false;
 		}
+		const blocks: IAcpPromptBlock[] = [{ type: 'text', text }];
+		if (live.promptImages) {
+			for (const image of images ?? []) {
+				blocks.push({ type: 'image', mimeType: image.mediaType, data: image.data });
+			}
+		}
 		try {
 			const result = await live.client.request<{ outcome?: string }>('_session/steering', {
 				sessionId: live.handle.providerSessionId ?? live.handle.id,
-				prompt: [{ type: 'text', text }],
+				prompt: blocks,
 				_meta: { steering: { idleBehavior: 'promptRequired' } },
 			}, 10_000);
 			if (result?.outcome === 'injected') {

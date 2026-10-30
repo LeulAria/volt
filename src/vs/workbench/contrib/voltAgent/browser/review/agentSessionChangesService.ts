@@ -5,6 +5,8 @@
 
 import { Emitter, Event, IValueWithChangeEvent } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { RunOnceScheduler } from '../../../../../base/common/async.js';
+import { ResourceMap } from '../../../../../base/common/map.js';
 import { Schemas } from '../../../../../base/common/network.js';
 import { basename, isAbsolute } from '../../../../../base/common/path.js';
 import { extUriIgnorePathCase, isEqual, isEqualOrParent, joinPath } from '../../../../../base/common/resources.js';
@@ -12,7 +14,7 @@ import { URI } from '../../../../../base/common/uri.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
 import { ITextModel } from '../../../../../editor/common/model.js';
-import { ITextModelContentProvider } from '../../../../../editor/common/services/resolverService.js';
+import { ITextModelContentProvider, ITextModelService } from '../../../../../editor/common/services/resolverService.js';
 import { localize } from '../../../../../nls.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
@@ -26,6 +28,8 @@ import { ISCMRepository, ISCMResource, ISCMService } from '../../../scm/common/s
 import {
 	AgentChangesScope,
 	agentScopeTurnId,
+	applyLiveChangeStats,
+	countLineChanges,
 	collectLastTurnFileChanges,
 	collectSessionFileChanges,
 	fileChangesSignature,
@@ -84,7 +88,17 @@ interface ISessionRecord {
 	signature?: string;
 	/** User message prompts by message id, to name turns. */
 	prompts: Map<string, string>;
+	/**
+	 * Counts read from the files since the last snapshot, by path: what Undo on a hunk, or the
+	 * user's typing in a file still in review, did to the agent's numbers.
+	 */
+	live: { uncommitted: Map<string, LineStats>; lastTurn: Map<string, LineStats> };
 }
+
+type LineStats = { additions: number; deletions: number };
+
+/** Staged and Unstaged are counted by reading both sides of each file; past this many files they show the count only. */
+const SCM_COUNT_LIMIT = 200;
 
 export function getAgentChangesSourceUri(sessionId: string, scope: AgentChangesScope): URI {
 	return URI.from({
@@ -120,18 +134,22 @@ export function parseAgentSnapshotUri(uri: URI): { sessionId: string; path: stri
 	const query = new URLSearchParams(uri.query);
 	const sessionId = query.get('session');
 	const side = query.get('side');
-	const path = normalizeAgentChangePath(uri.path);
+	const path = normalizeAgentChangePath(query.get('file') ?? uri.path);
 	if (!sessionId || !path || (side !== 'original' && side !== 'modified')) {
 		return undefined;
 	}
 	return { sessionId, path, side };
 }
 
-function snapshotUri(sessionId: string, path: string, side: 'original' | 'modified', blob?: { repoRoot: string; sha: string }): URI {
+/**
+ * `path` is the change's own (what the text is looked up by). `shownAt`, the file in the project:
+ * the URI's path then matches the other side's, so the diff reads as an edit, not a rename.
+ */
+function snapshotUri(sessionId: string, path: string, side: 'original' | 'modified', blob?: { repoRoot: string; sha: string }, shownAt?: URI): URI {
 	return URI.from({
 		scheme: Schemas.voltAgentSnapshot,
-		path: `/${path}`,
-		query: `session=${encodeURIComponent(sessionId)}&side=${side}${blob ? `&repo=${encodeURIComponent(blob.repoRoot)}&blob=${blob.sha}` : ''}`,
+		path: shownAt?.path ?? `/${path}`,
+		query: `session=${encodeURIComponent(sessionId)}&side=${side}${shownAt ? `&file=${encodeURIComponent(path)}` : ''}${blob ? `&repo=${encodeURIComponent(blob.repoRoot)}&blob=${blob.sha}` : ''}`,
 	});
 }
 
@@ -143,7 +161,7 @@ export function parseAgentBlobUri(uri: URI): { repoRoot: string; sha: string; pa
 	const query = new URLSearchParams(uri.query);
 	const repoRoot = query.get('repo');
 	const sha = query.get('blob');
-	return repoRoot && sha && /^[0-9a-f]{40,64}$/.test(sha) ? { repoRoot, sha, path: normalizeAgentChangePath(uri.path) } : undefined;
+	return repoRoot && sha && /^[0-9a-f]{40,64}$/.test(sha) ? { repoRoot, sha, path: normalizeAgentChangePath(query.get('file') ?? uri.path) } : undefined;
 }
 
 function toSnapshotFileChange(change: IAgentSnapshotChange, oldUri: URI | undefined): IAgentSnapshotFileChange {
@@ -171,6 +189,13 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 	/** One turn's changes per chat, by turn id; dropped when the chat's snapshots change. */
 	private readonly turnFiles = new Map<string, Map<string, { files?: IAgentSessionFileChange[]; load: Promise<IAgentSessionFileChange[]> }>>();
 	private readonly repoListeners = this._register(new DisposableStore());
+	/** Files whose live counts are due, with their chat. */
+	private readonly recount = new ResourceMap<string>();
+	private readonly recountScheduler = this._register(new RunOnceScheduler(() => void this.recountFiles(), 150));
+	/** Per chat: line counts of Staged (`index`) and Unstaged (`workingTree` + `untracked`), read in the background. */
+	private scmLines = new Map<string, Map<string, LineStats>>();
+	private scmGeneration = 0;
+	private readonly scmScheduler = this._register(new RunOnceScheduler(() => void this.countScm(), 300));
 	private readonly _onDidChange = this._register(new Emitter<string>());
 	readonly onDidChange = this._onDidChange.event;
 
@@ -183,6 +208,8 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentCheckpointService private readonly checkpoints: IAgentCheckpointService,
 		@ILogService private readonly logService: ILogService,
+		@IVoltGitService private readonly gitService: IVoltGitService,
+		@ITextModelService private readonly textModelService: ITextModelService,
 	) {
 		super();
 		this._register(this.checkpoints.onDidChange(sessionId => {
@@ -194,11 +221,14 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 		this._register(this.edits.onDidChange(uri => {
 			const owner = this.edits.getPendingFile(uri)?.sessionId;
 			if (owner) {
+				this.scheduleRecount(owner, uri);
 				this._onDidChange.fire(owner);
 			} else {
 				this.fireAll();
 			}
 		}));
+		// Kept or undone, the file's last state counts: an undone file leaves the list.
+		this._register(this.edits.onDidResolve(e => this.scheduleRecount(e.sessionId, e.uri)));
 		this._register(this.scmService.onDidAddRepository(() => this.bindRepositories()));
 		this._register(this.scmService.onDidRemoveRepository(() => this.bindRepositories()));
 		this.bindRepositories();
@@ -229,6 +259,7 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 			discarded: previous?.discarded ?? new Map<string, { modified?: string }>(),
 			signature,
 			prompts,
+			live: previous?.live ?? { uncommitted: new Map(), lastTurn: new Map() },
 		};
 		this.merge(record);
 		this.sessions.set(sessionId, record);
@@ -240,8 +271,76 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 	}
 
 	private merge(record: ISessionRecord): void {
-		record.uncommitted = this.applyDiscards(mergeSnapshotChanges(record.transcript.uncommitted, record.snapshot.uncommitted), record.discarded);
-		record.lastTurn = this.applyDiscards(mergeSnapshotChanges(record.transcript.lastTurn, record.snapshot.lastTurn), record.discarded);
+		record.uncommitted = applyLiveChangeStats(this.applyDiscards(mergeSnapshotChanges(record.transcript.uncommitted, record.snapshot.uncommitted), record.discarded), record.live.uncommitted);
+		record.lastTurn = applyLiveChangeStats(this.applyDiscards(mergeSnapshotChanges(record.transcript.lastTurn, record.snapshot.lastTurn), record.discarded), record.live.lastTurn);
+	}
+
+	private scheduleRecount(sessionId: string, uri: URI): void {
+		if (this.sessions.has(sessionId)) {
+			this.recount.set(this.edits.canonicalUri(uri), sessionId);
+			this.recountScheduler.schedule();
+		}
+	}
+
+	/**
+	 * Counts each due file against its snapshot from before the chat (and before the last turn)
+	 * as it is on disk now. Without a snapshot of the file the recorded counts stay.
+	 */
+	private async recountFiles(): Promise<void> {
+		const due = [...this.recount];
+		this.recount.clear();
+		const changed = new Set<string>();
+		for (const [uri, sessionId] of due) {
+			const record = this.sessions.get(sessionId);
+			if (!record) {
+				continue;
+			}
+			let current: string | undefined;
+			try {
+				current = (await this.fileService.readFile(uri)).value.toString();
+			} catch {
+				current = undefined;
+			}
+			for (const scope of ['uncommitted', 'lastTurn'] as const) {
+				const merged = mergeSnapshotChanges(record.transcript[scope], record.snapshot[scope]);
+				const file = this.matchFile(record, merged, uri);
+				const snapshot = file && this.snapshotChange(record.snapshot[scope], file, uri);
+				if (!file || !snapshot || snapshot.binary) {
+					continue;
+				}
+				const original = snapshot.oldBlob ? await this.readBlob(snapshot.repoRoot, snapshot.oldBlob, snapshot.oldPath ?? snapshot.path) : undefined;
+				if (snapshot.oldBlob && original === undefined) {
+					continue;
+				}
+				const counts = countLineChanges(original, current);
+				const previous = record.live[scope].get(file.path);
+				if (previous?.additions !== counts.additions || previous?.deletions !== counts.deletions) {
+					record.live[scope].set(file.path, counts);
+					changed.add(sessionId);
+				}
+			}
+		}
+		for (const sessionId of changed) {
+			const record = this.sessions.get(sessionId);
+			if (record) {
+				this.merge(record);
+				this._onDidChange.fire(sessionId);
+			}
+		}
+	}
+
+	private snapshotChange(changes: readonly IAgentSnapshotFileChange[], file: IAgentSessionFileChange, uri: URI): IAgentSnapshotFileChange | undefined {
+		const key = this.edits.canonicalUri(uri).toString();
+		return changes.find(change => this.edits.canonicalUri(URI.file(change.absolutePath)).toString() === key)
+			?? changes.find(change => change.path === file.path);
+	}
+
+	private async readBlob(repoRoot: string, sha: string, path: string): Promise<string | undefined> {
+		try {
+			return (await this.gitService.readBlob({ repoRoot, sha, path })).toString();
+		} catch {
+			return undefined;
+		}
 	}
 
 	/** Pulls the chat's snapshot diff, so changes no tool reported show up too. */
@@ -256,12 +355,14 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 				const oldUri = change.oldUri;
 				for (const [path, uri] of [[change.path, change.uri], [change.oldPath, oldUri]] as const) {
 					if (path && uri && !record.resolved.has(path)) {
-						record.resolved.set(path, uri);
+						record.resolved.set(path, this.edits.canonicalUri(uri));
 					}
 				}
 				return toSnapshotFileChange(change, oldUri);
 			});
 			record.snapshot = { uncommitted: map(uncommitted), lastTurn: map(lastTurn) };
+			// The new snapshots have the files as they are: what was read from disk is now in them.
+			record.live = { uncommitted: new Map(), lastTurn: new Map() };
 			this.merge(record);
 			this._onDidChange.fire(sessionId);
 		} catch (err) {
@@ -279,12 +380,14 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 			return true;
 		}
 		const roots = [this.sessionContext.rootFor(sessionId), ...this.workspaceContextService.getWorkspace().folders.map(folder => folder.uri)];
-		const file = URI.file(path);
+		// The project's own form: /private/tmp/app is the project opened as /tmp/app.
+		const file = this.edits.canonicalUri(URI.file(path));
 		return roots.some(root => !!root && isEqualOrParent(file, root));
 	}
 
 	clearSession(sessionId: string): void {
 		this.turnFiles.delete(sessionId);
+		this.scmLines.delete(sessionId);
 		if (!this.sessions.delete(sessionId)) {
 			return;
 		}
@@ -390,7 +493,7 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 					const resolved = this.sessions.get(sessionId)?.resolved;
 					for (const change of changes) {
 						if (resolved && !resolved.has(change.path)) {
-							resolved.set(change.path, change.uri);
+							resolved.set(change.path, this.edits.canonicalUri(change.uri));
 						}
 					}
 					created.files = mergeSnapshotChanges([], changes.map(change => toSnapshotFileChange(change, change.oldUri)));
@@ -498,10 +601,10 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 		const workspace = this.sessions.get(sessionId)?.resolved.get(file.path);
 		const blob = (sha: string | undefined) => sha && file.snapshot ? { repoRoot: file.snapshot.repoRoot, sha } : undefined;
 		const originalSnapshot = file.kind !== 'added'
-			? snapshotUri(sessionId, file.path, 'original', blob(file.snapshot?.oldBlob))
+			? snapshotUri(sessionId, file.path, 'original', blob(file.snapshot?.oldBlob), workspace)
 			: undefined;
 		const modifiedSnapshot = file.kind !== 'deleted'
-			? snapshotUri(sessionId, file.path, 'modified', blob(file.snapshot?.newBlob))
+			? snapshotUri(sessionId, file.path, 'modified', blob(file.snapshot?.newBlob), workspace)
 			: undefined;
 		const originalUri = file.kind === 'added' ? undefined : originalSnapshot;
 		const modifiedUri = file.kind === 'deleted' ? undefined : pinned ? modifiedSnapshot : (workspace ?? modifiedSnapshot);
@@ -558,7 +661,69 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 
 	private scmStats(sessionId: string, ...groupIds: string[]): IAgentSessionChangeStats {
 		const items = this.scmItems(sessionId, ...groupIds);
-		return { files: items.length, additions: 0, deletions: 0 };
+		const lines = this.scmLines.get(sessionId)?.get(groupIds.join('+'));
+		if (!lines && items.length && !this.scmLines.has(sessionId)) {
+			this.scmLines.set(sessionId, new Map());
+			this.scmScheduler.schedule();
+		}
+		return { files: items.length, additions: lines?.additions ?? 0, deletions: lines?.deletions ?? 0 };
+	}
+
+	/**
+	 * Reads both sides of each Staged and Unstaged file for their line counts, for every chat that
+	 * asked (each has its own repository); fires when they change.
+	 */
+	private async countScm(): Promise<void> {
+		const generation = ++this.scmGeneration;
+		const next = new Map<string, Map<string, LineStats>>();
+		for (const sessionId of this.scmLines.keys()) {
+			const counted = new Map<string, LineStats>();
+			for (const groupIds of [['index'], ['workingTree', 'untracked']]) {
+				const items = this.scmItems(sessionId, ...groupIds);
+				if (!items.length || items.length > SCM_COUNT_LIMIT) {
+					continue;
+				}
+				let additions = 0;
+				let deletions = 0;
+				for (const item of items) {
+					const [original, modified] = await Promise.all([this.readText(item.originalUri), this.readText(item.modifiedUri)]);
+					if (generation !== this.scmGeneration) {
+						return;
+					}
+					const counts = countLineChanges(original, modified);
+					additions += counts.additions;
+					deletions += counts.deletions;
+				}
+				counted.set(groupIds.join('+'), { additions, deletions });
+			}
+			next.set(sessionId, counted);
+		}
+		const serialize = (lines: Map<string, Map<string, LineStats>>) => JSON.stringify([...lines].map(([id, groups]) => [id, [...groups]]));
+		const before = serialize(this.scmLines);
+		this.scmLines = next;
+		if (serialize(next) !== before) {
+			this.fireAll();
+		}
+	}
+
+	private async readText(uri: URI | undefined): Promise<string | undefined> {
+		if (!uri) {
+			return undefined;
+		}
+		try {
+			// Files straight from disk; other sides (git's HEAD and index) from their providers.
+			if (uri.scheme === Schemas.file) {
+				return (await this.fileService.readFile(uri)).value.toString();
+			}
+			const reference = await this.textModelService.createModelReference(uri);
+			try {
+				return reference.object.textEditorModel.getValue();
+			} finally {
+				reference.dispose();
+			}
+		} catch {
+			return undefined;
+		}
 	}
 
 	private scmItems(sessionId: string, ...groupIds: string[]): MultiDiffEditorItem[] {
@@ -647,7 +812,7 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 		}
 		const candidates: URI[] = [];
 		if (isAbsolute(trimmed)) {
-			candidates.push(URI.file(trimmed));
+			candidates.push(this.edits.canonicalUri(URI.file(trimmed)));
 		}
 		for (const folder of this.workspaceContextService.getWorkspace().folders) {
 			candidates.push(joinPath(folder.uri, trimmed.replace(/^\.\//, '')));
@@ -675,10 +840,14 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 	}
 
 	private bindRepository(repository: ISCMRepository): void {
-		this.repoListeners.add(repository.provider.onDidChangeResources(() => this.fireAll()));
-		this.repoListeners.add(repository.provider.onDidChangeResourceGroups(() => this.fireAll()));
+		const changed = () => {
+			this.scmScheduler.schedule();
+			this.fireAll();
+		};
+		this.repoListeners.add(repository.provider.onDidChangeResources(changed));
+		this.repoListeners.add(repository.provider.onDidChangeResourceGroups(changed));
 		for (const group of repository.provider.groups) {
-			this.repoListeners.add(group.onDidChangeResources(() => this.fireAll()));
+			this.repoListeners.add(group.onDidChangeResources(changed));
 		}
 	}
 

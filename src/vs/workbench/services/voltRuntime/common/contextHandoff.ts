@@ -49,8 +49,11 @@ export interface IHandoffMessage {
 	readonly compacted?: boolean;
 }
 
-/** Why the agent is being briefed. Changes the opening line only. */
-export type HandoffReason = 'switch' | 'return' | 'fork' | 'resume' | 'compact';
+/**
+ * Why the agent is being briefed. Changes the opening line only. `continue`: the user sent a
+ * queued message to a new chat, which starts with the conversation it came from.
+ */
+export type HandoffReason = 'switch' | 'return' | 'fork' | 'resume' | 'compact' | 'continue';
 
 export interface IContextHandoffInput {
 	/** The messages the receiving session has not seen, oldest first (the prompt about to go out excluded). */
@@ -64,6 +67,10 @@ export interface IContextHandoffInput {
 	readonly toLabel?: string;
 	/** Lets the agent read what was left out (`thread_read`). */
 	readonly threadId?: string;
+	/** `continue`: the title of the chat the conversation comes from. */
+	readonly fromChat?: string;
+	/** The last turn was still running when the handoff was made (`continue` from a working chat). */
+	readonly lastTurnLive?: boolean;
 }
 
 export interface IContextHandoff {
@@ -243,7 +250,7 @@ export function summarizeFiles(files: readonly IHandoffFile[], maxItems = 8): st
 	return `${entries.slice(0, maxItems).join(', ')}${more > 0 ? ` +${more} more` : ''}`;
 }
 
-function renderVerbatim(turn: ITurn, maxMessageTokens: number): string {
+function renderVerbatim(turn: ITurn, maxMessageTokens: number, live?: boolean): string {
 	const lines: string[] = [`### Turn ${turn.number}`];
 	if (turn.user) {
 		lines.push(`User: ${clipTokens(turn.user, maxMessageTokens)}`);
@@ -261,7 +268,9 @@ function renderVerbatim(turn: ITurn, maxMessageTokens: number): string {
 	const model = replyModel(turn);
 	const reply = turn.replies.map(part => part.text).join('\n\n');
 	if (reply) {
-		lines.push(`Assistant${model ? ` (${model})` : ''}: ${clipTokens(reply, maxMessageTokens)}`);
+		lines.push(`Assistant${model ? ` (${model})` : ''}: ${clipTokens(reply, maxMessageTokens)}${live ? '\n(The other chat\'s agent was still working on this turn when this chat started.)' : ''}`);
+	} else if (live) {
+		lines.push('Assistant: (still working on this in the other chat when this chat started)');
 	} else if (!turn.user) {
 		lines.push('Assistant: (no reply text)');
 	} else {
@@ -295,6 +304,7 @@ function opening(input: IContextHandoffInput): string {
 		case 'return': return `[Volt] You were in this conversation earlier; the user then worked with another model${from}. Here is what happened since you were last active; continue from it.`;
 		case 'fork': return `[Volt] This chat is a fork of an earlier conversation. Here is that conversation up to the fork point; continue from it.`;
 		case 'compact': return `[Volt] The conversation so far was compacted into this handoff. It replaces the earlier history; continue from it.`;
+		case 'continue': return `[Volt] The user started this new chat from ${input.fromChat ? `the chat "${input.fromChat}"` : 'another chat'} to work on their next message with a fresh context. Here is that conversation, condensed; build on it.`;
 		default: return `[Volt] You are joining a conversation already in progress (an earlier session answered before). Here is what was said; continue from it.`;
 	}
 }
@@ -341,12 +351,13 @@ export function buildContextHandoff(input: IContextHandoffInput): IContextHandof
 	let used = 0;
 	let index = turns.length - 1;
 	for (; index >= 0; index--) {
-		let text = renderVerbatim(turns[index], maxMessageTokens);
+		const live = input.lastTurnLive && index === turns.length - 1;
+		let text = renderVerbatim(turns[index], maxMessageTokens, live);
 		let cost = estimateTokens(text) + 2;
 		if (!verbatim.length) {
 			// The latest exchange always goes in, clipped as hard as it takes.
 			for (let share = 3; cost > Math.max(verbatimShare, 60) && share <= 48; share *= 2) {
-				text = renderVerbatim(turns[index], Math.max(15, Math.floor(verbatimShare / share)));
+				text = renderVerbatim(turns[index], Math.max(15, Math.floor(verbatimShare / share)), live);
 				cost = estimateTokens(text) + 2;
 			}
 		} else if (used + cost > verbatimShare || used + cost > available) {

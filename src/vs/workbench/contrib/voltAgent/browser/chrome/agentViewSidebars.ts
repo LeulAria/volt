@@ -45,12 +45,16 @@ import { IAgentSessionChangesService } from '../review/agentSessionChangesServic
 import { autorun } from '../../../../../base/common/observable.js';
 import { ISCMRepository, ISCMService } from '../../../scm/common/scm.js';
 import { isEqual } from '../../../../../base/common/resources.js';
+import { URI } from '../../../../../base/common/uri.js';
+import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { OPEN_CANVAS_COMMAND_ID } from '../visuals/canvas/canvasCard.js';
 import { IVoltCanvasService } from '../visuals/canvas/canvasService.js';
 import { boardDisplayTitle } from '../../common/scratchBoard/scratchIndex.js';
 import { OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, OPEN_SCRATCH_BOARD_COMMAND_ID } from '../scratchBoard/scratchBoardInput.js';
 import { IScratchBoardService } from '../scratchBoard/scratchBoardService.js';
 import { IScratchSessionLinks } from '../scratchBoard/scratchSessionLinks.js';
+import { OPEN_AGENT_RESOURCES_COMMAND_ID } from '../resources/agentResourcesPage.js';
+import { IAgentResourcesService } from '../resources/agentResourcesService.js';
 
 /** Chevrons point right. Collapsed state rotates this 180deg. */
 const CHEVRON_RIGHT_PATH = 'M6 7L11 12L6 17M13 7L18 12L13 17';
@@ -240,8 +244,16 @@ class AgentViewSidebarsContribution extends Disposable {
 	private readonly branchLabel: HTMLElement;
 	private readonly branchRow: HTMLElement;
 	private readonly branchWatch = this._register(new DisposableStore());
-	/** The project's repository: the one at the window's folder, not an agent worktree. */
+	/** The repository the branch row shows: the chat's worktree when Source Control has it open, else the project's. */
 	private branchRepository: ISCMRepository | undefined;
+	/** The checkout the branch row shows and switches: the chat's worktree, else the window's folder. */
+	private branchRoot: URI | undefined;
+	/** The chat the branch row follows: in its own worktree, the row shows that worktree's branch, as the composer does. */
+	private branchSessionId: string | undefined;
+	/** That chat's worktree when the row was last pointed at a checkout. */
+	private branchWorktreePath: string | undefined;
+	/** Source Control's name for the repository's branch; a worktree without one uses its chat's stored branch. */
+	private repositoryBranch: string | undefined;
 	private readonly statsTimer = this._register(new MutableDisposable());
 	private statsGen = 0;
 	private readonly changesAdd: HTMLElement;
@@ -309,6 +321,8 @@ class AgentViewSidebarsContribution extends Disposable {
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IAgentSessionChangesService private readonly changesService: IAgentSessionChangesService,
 		@ISCMService private readonly scmService: ISCMService,
+		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IAgentResourcesService private readonly agentResources: IAgentResourcesService,
 	) {
 		super();
 		const root = layoutService.mainContainer;
@@ -442,7 +456,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		}
 
 		// Sections like Cursor's project menu: the project's tools, then git, then the agents.
-		const [changes, browser, terminal, files] = this.dockActions();
+		const [changes, browser, terminal, files, resources] = this.dockActions();
 		const workspaceSection = append(body, $('.volt-agent-dock-section.volt-agent-dock-workspace'));
 		// The same pane header as Pull requests and Previous agents: chevron, then the title.
 		this.workspaceHeading = append(workspaceSection, $('button.volt-agent-lineage-divider.volt-agent-dock-group-head')) as HTMLButtonElement;
@@ -462,6 +476,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.createActionRow(workspace, files);
 		this.createActionRow(workspace, terminal);
 		this.createActionRow(workspace, browser);
+		this.createActionRow(workspace, resources);
 
 		// Commit, Push & PR stays on the composer; the toolbar keeps the branch, the changes and the pull requests.
 		this.pullRequests = instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
@@ -479,8 +494,9 @@ class AgentViewSidebarsContribution extends Disposable {
 			command: 'git.checkout',
 			run: row => {
 				const repository = this.branchRepository;
-				if (repository?.provider.rootUri) {
-					instantiationService.invokeFunction(showAgentBranchMenu, { anchor: row, root: repository.provider.rootUri, repository });
+				const root = this.branchRoot ?? repository?.provider.rootUri;
+				if (root) {
+					instantiationService.invokeFunction(showAgentBranchMenu, { anchor: row, root, repository });
 				} else {
 					void this.commandService.executeCommand('git.checkout');
 				}
@@ -497,6 +513,8 @@ class AgentViewSidebarsContribution extends Disposable {
 		syncPullRequestsCount();
 		this._register(scmService.onDidAddRepository(() => this.watchBranch()));
 		this._register(scmService.onDidRemoveRepository(() => this.watchBranch()));
+		// A worktree's branch is stored on its chat and follows renames and checkouts (agentWorktreeBranch.ts).
+		this._register(this.history.onDidChange(() => this.onDidChangeHistory()));
 		this.watchBranch();
 		for (const action of this.dockActions()) {
 			this.createRailButton(rail, action);
@@ -615,6 +633,11 @@ class AgentViewSidebarsContribution extends Disposable {
 			{ id: 'browser', label: localize('voltAgent.dock.browser', "Browser"), icon: Codicon.globe, command: OPEN_BROWSER_COMMAND_ID },
 			{ id: 'terminal', label: localize('voltAgent.dock.terminal', "Terminal"), icon: Codicon.terminal, command: 'workbench.action.terminal.toggleTerminal' },
 			{ id: 'files', label: localize('voltAgent.dock.explorer', "Explorer"), iconPath: EXPLORER_ICON_SHAPES, command: SHOW_AGENT_FILES_COMMAND_ID },
+			// The home sidebar footer's Customize icon. Opens the page on the chat's folder.
+			{
+				id: 'resources', label: localize('voltAgent.dock.agentResources', "Agent Resources"), icon: Codicon.extensions, command: OPEN_AGENT_RESOURCES_COMMAND_ID,
+				args: () => ['overview', this.changesSessionId ? this.agentResources.folderForSession(this.changesSessionId) : undefined],
+			},
 		];
 	}
 
@@ -648,13 +671,23 @@ class AgentViewSidebarsContribution extends Disposable {
 		return label;
 	}
 
-	/** The project repository's branch; the row hides without a repository. */
+	/**
+	 * The branch of the checkout the chat works in, the one the composer's branch pill shows: its
+	 * own worktree's, else the project's. The row hides when there is no branch to show.
+	 */
 	private watchBranch(): void {
 		this.branchWatch.clear();
 		const repositories = [...this.scmService.repositories];
+		const worktreePath = this.branchSessionId ? this.history.get(this.branchSessionId)?.worktreePath : undefined;
+		this.branchWorktreePath = worktreePath;
+		const worktree = worktreePath ? URI.file(worktreePath) : undefined;
 		const folder = this.workspaceContextService.getWorkspace().folders[0]?.uri;
-		// The folder's own repository, or the one it sits in; never an unrelated one Git also opened.
-		const repository = folder ? repositories.find(candidate => !!candidate.provider.rootUri && isEqual(candidate.provider.rootUri, folder)) ?? this.scmService.getRepository(folder) : repositories[0];
+		this.branchRoot = worktree ?? folder;
+		// A worktree counts only as its own repository (Source Control rarely has one open); the
+		// project's folder takes its own repository or the one it sits in, never an unrelated one.
+		const repository = worktree
+			? repositories.find(candidate => !!candidate.provider.rootUri && isEqual(candidate.provider.rootUri, worktree))
+			: folder ? repositories.find(candidate => !!candidate.provider.rootUri && isEqual(candidate.provider.rootUri, folder)) ?? this.scmService.getRepository(folder) : repositories[0];
 		this.branchRepository = repository;
 		// The diff counts follow the working tree.
 		if (repository) {
@@ -663,9 +696,26 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.renderChangesStats();
 		this.branchWatch.add(autorun(reader => {
 			const name = repository?.provider.historyProvider.read(reader)?.historyItemRef.read(reader)?.name;
-			this.branchLabel.textContent = name ?? '';
-			this.branchRow.style.display = name ? '' : 'none';
+			this.repositoryBranch = name;
+			this.syncBranchLabel();
 		}));
+	}
+
+	/** A chat's first send makes its worktree: the row moves to it. Otherwise the stored branch may have changed. */
+	private onDidChangeHistory(): void {
+		const worktreePath = this.branchSessionId ? this.history.get(this.branchSessionId)?.worktreePath : undefined;
+		if (worktreePath !== this.branchWorktreePath) {
+			this.watchBranch();
+			return;
+		}
+		this.syncBranchLabel();
+	}
+
+	private syncBranchLabel(): void {
+		const meta = this.branchSessionId ? this.history.get(this.branchSessionId) : undefined;
+		const name = this.repositoryBranch ?? (meta?.worktreePath ? meta.worktreeBranch : undefined);
+		this.branchLabel.textContent = name ?? '';
+		this.branchRow.style.display = name ? '' : 'none';
 	}
 
 	/**
@@ -705,7 +755,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		label.textContent = action.label;
 		this.appendActionIcon(button, action);
 		this._register(addDisposableListener(button, 'click', () => {
-			void this.commandService.executeCommand(action.command);
+			void this.commandService.executeCommand(action.command, ...(action.args?.() ?? []));
 		}));
 	}
 
@@ -1201,6 +1251,10 @@ class AgentViewSidebarsContribution extends Disposable {
 		if (sessionId !== this.changesSessionId) {
 			this.changesSessionId = sessionId;
 			this.renderChangesStats();
+		}
+		if (sessionId !== this.branchSessionId) {
+			this.branchSessionId = sessionId;
+			this.watchBranch();
 		}
 	}
 

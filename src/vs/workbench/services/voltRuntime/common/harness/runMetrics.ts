@@ -52,6 +52,30 @@ export interface IRunRetrieval {
 	readonly partial: boolean;
 }
 
+/**
+ * A native run's evidence as the harness saw it when the model finished: whether the work is
+ * proven done (checks ran and passed, the files the task needs changed), and the recoveries the
+ * run tried with whether each worked. Kept with the run's metrics and trace, for evals.
+ */
+export interface IRunEvidence {
+	readonly complete: boolean;
+	readonly reason: string;
+	readonly proven?: boolean;
+	readonly confidence?: number;
+	readonly changedFiles: number;
+	/** `doom → nudge: worked (read_file)`, one per recovery. */
+	readonly lessons: readonly string[];
+	/** The run's proof-of-done receipt, reduced to what a benchmark compares. */
+	readonly receipt?: {
+		readonly verdict: 'proven' | 'partial' | 'failed';
+		readonly proven: number;
+		readonly total: number;
+		readonly gated: boolean;
+		readonly sentBack: number;
+		readonly review?: 'pass' | 'fail';
+	};
+}
+
 export interface IRunMetrics {
 	readonly runId: string;
 	readonly sessionId: string;
@@ -81,6 +105,7 @@ export interface IRunMetrics {
 	readonly tokens: { readonly input: number; readonly output: number; readonly cache: number };
 	readonly usage?: IRunTokenMeters;
 	readonly retrieval?: IRunRetrieval;
+	readonly evidence?: IRunEvidence;
 }
 
 const STALL = /stall|no activity|not responding|taking longer/i;
@@ -118,6 +143,7 @@ export class RunMetrics {
 	private maxRequestInput = 0;
 	private retrieval: { ms: number; tokens: number; files: readonly string[]; partial: boolean } | undefined;
 	private readonly usedFiles = new Set<string>();
+	private evidence: IRunEvidence | undefined;
 
 	constructor(
 		readonly runId: string,
@@ -141,6 +167,10 @@ export class RunMetrics {
 
 	noteContinuation(): void {
 		this.continuations++;
+	}
+
+	noteEvidence(evidence: IRunEvidence): void {
+		this.evidence = evidence;
 	}
 
 	/** The context retriever's block for this run; later tool calls that touch its files count as used. */
@@ -294,6 +324,7 @@ export class RunMetrics {
 				maxRequestInput: this.maxRequestInput,
 			},
 			...(this.retrieval ? { retrieval: { ms: this.retrieval.ms, tokens: this.retrieval.tokens, files: this.retrieval.files.length, used: this.usedFiles.size, partial: this.retrieval.partial } } : {}),
+			...(this.evidence ? { evidence: this.evidence } : {}),
 		};
 	}
 

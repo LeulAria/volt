@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { type IConnectionStatus, type IWebSocketLike, type IWelcomeEvent, VoltConnection } from './connection';
+import { TerminalStream } from './terminals';
 import { chooseRoute, type ISavedEnvironment, wsUrl } from './environments';
 import { KeyedNotifier, type Unsubscribe } from './events';
 import { fileUri } from './format';
@@ -15,7 +16,7 @@ import type { IPendingSend, PendingState } from './rows';
 import type { Collections } from './selectors';
 import { threadsOf } from './selectors';
 import type {
-	AccessMode, AgentMessage, ComposerMode, IAgentChange, ICheckpointState, IFileContent, IFileEntry, IFileRoot, IGitStatus, IGrepMatch, IGrepOptions, IOrchPrompt, IProjectRecord,
+	AccessMode, AgentMessage, ComposerMode, IAgentChange, ICheckpointState, IFileContent, IFileEntry, IFileRoot, IGitStatus, IGrepMatch, IGrepOptions, IOrchPrompt, IOrchQueueItem, IProjectRecord,
 	IMcpServerStatus, IPromptAttachment, IPromptFile, IPromptMention, IQuestionResponse, IRestorePreview, IUserMessage
 } from './types';
 import type { IGitCommitResult, IGitRepoStatus, IPullRequestCreate, IPullRequestDetail, IPullRequestFilePatch, IPullRequestMerge, IPullRequestSummary, ISlashCommand } from './git';
@@ -74,6 +75,12 @@ export interface ISendRequest {
 	readonly displayText?: string;
 }
 
+/** A chat's composer draft on the computer (shared with the desktop composer and other devices). */
+export interface IChatDraft {
+	readonly text: string;
+	readonly updatedAt: number;
+}
+
 /** A picked or pasted image before it is uploaded: base64 without a `data:` prefix. */
 export interface IAttachmentSource {
 	readonly base64: string;
@@ -119,7 +126,7 @@ export interface IClientStatus {
 	readonly baseUrl?: string;
 }
 
-const CACHED_COLLECTIONS = ['history', 'projects', 'orch.threads', 'runtime', 'sessions'];
+const CACHED_COLLECTIONS = ['history', 'projects', 'orch.threads', 'runtime', 'sessions', 'runGroups'];
 /** Images kept as data URLs; a phone keeps fewer. */
 const ATTACHMENT_CACHE_CHARS = 48 * 1024 * 1024;
 /** Images the model takes. */
@@ -163,6 +170,11 @@ export class VoltClient {
 	private attachmentChars = 0;
 	private readonly attachmentLoads = new Map<string, Promise<string | undefined>>();
 	private readonly checkpointStates = new Map<string, ICheckpointState>();
+	/** What a desktop draft carries besides its text (chips, a legacy queue), kept when a device rewrites the text. */
+	private readonly draftExtras = new Map<string, { readonly mentions?: readonly unknown[]; readonly queue?: readonly unknown[] }>();
+	/** Draft text that could not be written (offline): written on the next welcome. */
+	private readonly unsentDrafts = new Map<string, string>();
+	private readonly draftWrites = new Map<string, Promise<unknown>>();
 
 	private readonly dirtyKeys = new Set<string>();
 	private notifyTimer: ReturnType<typeof setTimeout> | undefined;
@@ -321,6 +333,9 @@ export class VoltClient {
 		}
 		// After a resume the missed events follow the welcome: let them land before deciding what was delivered.
 		setTimeout(() => this.drainOutbox(), welcome.resumed ? 400 : 0);
+		for (const [chatId, text] of [...this.unsentDrafts]) {
+			void this.saveDraft(chatId, text);
+		}
 		this.scheduleCache();
 	}
 
@@ -782,6 +797,28 @@ export class VoltClient {
 		}
 	}
 
+	//#region Terminals
+
+	/** Follows a terminal's output (attach now, again after a reconnect); dispose to stop. */
+	openTerminal(id: string): TerminalStream {
+		return new TerminalStream(this.connection, id);
+	}
+
+	stopTerminal(id: string): Promise<unknown> {
+		return this.connection.call('terminals.stop', [id]);
+	}
+
+	restartTerminal(id: string): Promise<unknown> {
+		return this.connection.call('terminals.restart', [id]);
+	}
+
+	/** Closes a finished terminal's tab (it stays in the chat's record). */
+	dismissTerminal(id: string): Promise<unknown> {
+		return this.connection.call('terminals.dismiss', [id]);
+	}
+
+	//#endregion
+
 	stop(chatId: string): Promise<unknown> {
 		return this.run('orchestrator.cancel', [chatId], 'Couldn\'t stop');
 	}
@@ -816,6 +853,111 @@ export class VoltClient {
 
 	clearQueue(chatId: string): Promise<unknown> {
 		return this.run('orchestrator.dispatch', [{ type: 'queue.clear', threadId: chatId }], 'Couldn\'t clear the queue');
+	}
+
+	/**
+	 * Holds a queued prompt while it is being edited, as the desktop does when it loads one into its
+	 * composer: the queue waits at it instead of sending it mid-edit. {@link updateQueued} lets go.
+	 */
+	holdQueued(chatId: string, itemId: string, held: boolean): Promise<unknown> {
+		return this.run('orchestrator.dispatch', [{ type: 'queue.hold', threadId: chatId, itemId, held }], held ? 'Couldn\'t hold the queued message' : 'Couldn\'t release the queued message');
+	}
+
+	/** Replaces a queued prompt's text (keeping its images, mode and model) and releases its hold. */
+	updateQueued(chatId: string, item: IOrchQueueItem, text: string): Promise<unknown> {
+		const display = item.prompt.display as { readonly text?: string; readonly mentions?: readonly unknown[] } | undefined;
+		const prompt: IOrchPrompt = { ...item.prompt, text, display: display?.mentions?.length ? { ...display, text } : { text } };
+		return this.run('orchestrator.dispatch', [{ type: 'queue.update', threadId: chatId, itemId: item.id, prompt }], 'Couldn\'t update the queued message');
+	}
+
+	/**
+	 * Saves an edited queued prompt. When it left the queue meanwhile (sent, removed), the new text
+	 * is queued again, as the desktop does.
+	 */
+	saveQueuedEdit(chatId: string, item: IOrchQueueItem, text: string): Promise<unknown> {
+		if (threadsOf(this.cols)[chatId]?.queue.some(candidate => candidate.id === item.id)) {
+			return this.updateQueued(chatId, item, text);
+		}
+		const { mode, modelRef, options } = item.prompt;
+		this.send({ threadId: chatId, text, delivery: 'queue', ...(mode ? { mode: mode as ComposerMode } : {}), ...(modelRef ? { modelRef } : {}), ...(options ? { options } : {}) });
+		return Promise.resolve(undefined);
+	}
+
+	/** Puts the queue in this order (ids of its items, first to send first). */
+	reorderQueue(chatId: string, ids: readonly string[]): Promise<unknown> {
+		return this.run('orchestrator.dispatch', [{ type: 'queue.reorder', threadId: chatId, ids }], 'Couldn\'t reorder the queue');
+	}
+
+	/** Moves one queued prompt a place up (-1) or down (+1). */
+	moveQueued(chatId: string, queue: readonly IOrchQueueItem[], itemId: string, by: -1 | 1): Promise<unknown> {
+		const ids = queue.map(item => item.id);
+		const from = ids.indexOf(itemId);
+		const to = from + by;
+		if (from < 0 || to < 0 || to >= ids.length) {
+			return Promise.resolve(undefined);
+		}
+		[ids[from], ids[to]] = [ids[to], ids[from]];
+		return this.reorderQueue(chatId, ids);
+	}
+
+	/**
+	 * The chat's composer draft as Volt on the computer keeps it (the desktop composer reads and
+	 * writes the same one), or undefined when it has none. Rejects when the server can't be reached.
+	 */
+	async loadDraft(chatId: string): Promise<IChatDraft | undefined> {
+		const unsent = this.unsentDrafts.get(chatId);
+		if (unsent !== undefined) {
+			return unsent.trim() ? { text: unsent, updatedAt: Date.now() } : undefined;
+		}
+		await this.draftWrites.get(chatId);
+		const stored = await this.connection.call<{ text?: unknown; mentions?: unknown; queue?: unknown; updatedAt?: unknown } | null | undefined>('history.handle.loadDraft', [chatId], { requireOpen: true, timeoutMs: 15_000 });
+		const mentions = Array.isArray(stored?.mentions) ? stored.mentions as unknown[] : undefined;
+		const queue = Array.isArray(stored?.queue) ? stored.queue as unknown[] : undefined;
+		this.draftExtras.set(chatId, { ...(mentions?.length ? { mentions } : {}), ...(queue?.length ? { queue } : {}) });
+		if (!stored || typeof stored.text !== 'string') {
+			return undefined;
+		}
+		return { text: stored.text, updatedAt: typeof stored.updatedAt === 'number' ? stored.updatedAt : 0 };
+	}
+
+	/**
+	 * Writes the chat's draft where every device and the desktop find it; empty text clears it.
+	 * Callers debounce. Resolves true once this text is stored; offline it is kept and written on the
+	 * next connection (false).
+	 */
+	saveDraft(chatId: string, text: string): Promise<boolean> {
+		this.unsentDrafts.set(chatId, text);
+		const previous = this.draftWrites.get(chatId) ?? Promise.resolve();
+		const next = previous.then(async () => {
+			if (this.unsentDrafts.get(chatId) !== text) {
+				return false; // a newer text follows
+			}
+			const extras = this.draftExtras.get(chatId);
+			// The desktop's chips stay while their label is still in the text.
+			const mentions = extras?.mentions?.filter(mention => {
+				const label = (mention as { label?: unknown } | null)?.label;
+				return typeof label === 'string' && !!label && text.includes(label);
+			});
+			const queue = extras?.queue;
+			const draft = text.trim() || queue?.length ? { text, ...(mentions?.length ? { mentions } : {}), ...(queue?.length ? { queue } : {}) } : undefined;
+			try {
+				await this.connection.call('history.handle.saveDraft', [chatId, draft], { requireOpen: true, timeoutMs: 15_000 });
+			} catch {
+				return false;
+			}
+			if (this.unsentDrafts.get(chatId) === text) {
+				this.unsentDrafts.delete(chatId);
+			}
+			return true;
+		});
+		const settled = next.catch(() => false);
+		this.draftWrites.set(chatId, settled);
+		void settled.then(() => {
+			if (this.draftWrites.get(chatId) === settled) {
+				this.draftWrites.delete(chatId);
+			}
+		});
+		return settled;
 	}
 
 	cancelTask(taskId: string): Promise<unknown> {
@@ -993,6 +1135,65 @@ export class VoltClient {
 	/** Re-runs the failed jobs of the head commit; resolves how many runs restarted. */
 	rerunFailedChecks(root: string, number: number): Promise<number> {
 		return this.connection.call<number>('pullRequests.rerunFailedChecks', [root, number], { requireOpen: true, timeoutMs: 60_000 });
+	}
+
+	//#endregion
+
+	//#region Rendering (serverRender.ts)
+
+	private readonly renders = new Map<string, Promise<IRenderedPage>>();
+
+	/** Where this client reaches the server over HTTP (`http://host:port`), once connected. */
+	get origin(): string | undefined {
+		return this.baseUrl?.replace(/\/+$/, '');
+	}
+
+	private cachedRender(key: string, load: () => Promise<IRenderedPage>): Promise<IRenderedPage> {
+		const hit = this.renders.get(key);
+		if (hit) {
+			// Most recently used last: the first one is dropped when the cache is full.
+			this.renders.delete(key);
+			this.renders.set(key, hit);
+			return hit;
+		}
+		const result = load();
+		result.catch(() => this.renders.delete(key));
+		this.renders.set(key, result);
+		while (this.renders.size > MAX_RENDERS) {
+			this.renders.delete(this.renders.keys().next().value!);
+		}
+		return result;
+	}
+
+	/** An agent's html_render page or render_chart dashboard as one HTML document, in the app's colors. */
+	renderVisual(ref: string, kind: 'html' | 'chart', options: IRenderOptions = {}): Promise<IRenderedPage> {
+		return this.cachedRender(`v\u0000${ref}\u0000${kind}\u0000${renderKey(options)}`, () => this.connection.call<IRenderedPage>('render.visual', [ref, kind, options], { timeoutMs: 30_000 }));
+	}
+
+	/** A chart spec from a ```volt-chart fence, drawn by Volt's chart engine. */
+	renderChart(spec: string, options: IRenderOptions = {}): Promise<IRenderedPage> {
+		return this.cachedRender(`c\u0000${spec}\u0000${renderKey(options)}`, () => this.connection.call<IRenderedPage>('render.chart', [spec, options], { timeoutMs: 30_000 }));
+	}
+
+	/** A mermaid diagram drawn as the desktop draws it (beautiful-mermaid), as a page and as SVG. */
+	renderMermaid(source: string, options: IRenderOptions = {}): Promise<IRenderedPage> {
+		return this.cachedRender(`m\u0000${source}\u0000${renderKey(options)}`, () => this.connection.call<IRenderedPage>('render.mermaid', [source, options], { timeoutMs: 30_000 }));
+	}
+
+	/** A formula typeset with KaTeX, as a page (and its markup for clients that draw HTML). */
+	renderMath(tex: string, display: boolean, options: IRenderOptions = {}): Promise<IRenderedPage> {
+		const withOrigin = { ...options, origin: options.origin ?? this.origin };
+		return this.cachedRender(`x\u0000${display ? 1 : 0}\u0000${tex}\u0000${renderKey(withOrigin)}`, () => this.connection.call<IRenderedPage>('render.math', [tex, display, withOrigin], { timeoutMs: 15_000 }));
+	}
+
+	/** Inline math as KaTeX markup (the stylesheet is at {@link katexStylesheet}). */
+	renderMathInline(tex: string): Promise<IRenderedPage> {
+		return this.cachedRender(`i\u0000${tex}`, () => this.connection.call<IRenderedPage>('render.mathInline', [tex], { timeoutMs: 15_000 }));
+	}
+
+	/** KaTeX's stylesheet on the server, for pages that typeset math themselves. */
+	get katexStylesheet(): string | undefined {
+		return this.origin ? `${this.origin}/vendor/katex/katex.min.css` : undefined;
 	}
 
 	//#endregion
@@ -1365,4 +1566,41 @@ function reconcileMessages(previous: readonly AgentMessage[], next: AgentMessage
 /** The state a pending prompt is in, for labels. */
 export function pendingLabel(state: PendingState): string {
 	return state === 'failed' ? 'Not sent' : state === 'queued' ? 'Queued' : 'Sending…';
+}
+
+const MAX_RENDERS = 120;
+
+/** The app's colors, so a page drawn on the server matches the app showing it. */
+export interface IRenderTheme {
+	readonly kind: 'light' | 'dark';
+	readonly background?: string;
+	readonly foreground?: string;
+	readonly muted?: string;
+	readonly border?: string;
+	readonly accent?: string;
+	readonly surface?: string;
+	readonly code?: string;
+	readonly font?: string;
+	readonly mono?: string;
+}
+
+export interface IRenderOptions {
+	readonly theme?: IRenderTheme;
+	/** Echoed in every message the page posts (height, links), to tell frames apart. */
+	readonly frame?: string;
+	readonly origin?: string;
+}
+
+/** A complete HTML document for a WebView or an iframe's `srcdoc`. */
+export interface IRenderedPage {
+	readonly html: string;
+	readonly height?: number;
+	/** Diagrams: the SVG alone. */
+	readonly svg?: string;
+	/** Math: KaTeX's markup alone. */
+	readonly markup?: string;
+}
+
+function renderKey(options: IRenderOptions): string {
+	return JSON.stringify([options.theme ?? null, options.frame ?? '', options.origin ?? '']);
 }

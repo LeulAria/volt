@@ -9,7 +9,7 @@ import { SequencerByKey } from '../../../base/common/async.js';
 import { Emitter } from '../../../base/common/event.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
 import { ILogService } from '../../log/common/log.js';
-import { withWorkingGitOnPath } from '../../voltGit/node/gitExecutable.js';
+import { withCliDirsOnPath, withWorkingGitOnPath } from '../../voltGit/node/gitExecutable.js';
 import {
 	apiHost,
 	classifyGhError,
@@ -1502,6 +1502,34 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		}
 	}
 
+	async renameBranch(request: { readonly folder: string; readonly name: string }): Promise<{ readonly previous: string; readonly branch: string }> {
+		const name = request.name.trim();
+		validateBranchName(name);
+		const git = (args: string[]) => this.run('git', args, { cwd: request.folder, timeoutMs: 30_000 });
+		const current = await git(['symbolic-ref', '--short', '-q', 'HEAD']);
+		const previous = current.code === 0 ? current.stdout.trim() : '';
+		if (!previous) {
+			throw new VoltPrError('failed', 'Check out a branch before renaming it (HEAD is detached).');
+		}
+		if (previous === name) {
+			return { previous, branch: name };
+		}
+		const top = await git(['rev-parse', '--show-toplevel']);
+		return this.gitQueue.queue(top.code === 0 ? top.stdout.trim() : request.folder, async () => {
+			// Without -M: a branch already called `name` stays, and the rename fails with git's message.
+			const renamed = await git(['branch', '-m', previous, name]);
+			if (renamed.code !== 0) {
+				throw new VoltPrError('failed', `git branch -m ${previous} ${name} failed: ${ghErrorText(renamed.stderr)}`);
+			}
+			// The upstream still names the old branch on the remote: pushing would update that one.
+			const upstream = await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', `${name}@{upstream}`]);
+			if (upstream.code === 0 && upstream.stdout.trim()) {
+				await git(['branch', '--unset-upstream', name]);
+			}
+			return { previous, branch: name };
+		});
+	}
+
 	//#endregion
 
 	//#region Stacks
@@ -1830,7 +1858,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 
 	private async env(extra: Record<string, string> | undefined): Promise<NodeJS.ProcessEnv> {
 		this.baseEnv ??= this.resolveEnv().then(withWorkingGitOnPath).then(resolved => {
-			const env: NodeJS.ProcessEnv = { ...resolved };
+			const env: NodeJS.ProcessEnv = { ...resolved, PATH: withCliDirsOnPath(resolved.PATH) };
 			for (const key of [...SCRUBBED_ENV, ...SCRUBBED_GH_ENV]) {
 				delete env[key];
 			}

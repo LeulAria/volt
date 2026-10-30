@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type { IconName } from '@volt/client-core';
-import { Children, type ReactNode } from 'react';
+import { Children, type ReactNode, useEffect, useRef } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useTheme } from '../theme/theme';
 import { Icon, T, Tap } from './core';
@@ -92,12 +92,26 @@ export function NavRow({ icon, color, tile, label, detail, count, countTone, rig
 /** A horizontal row of filter chips (the Inbox's and Chats' filters). */
 export function Chips<V extends string>({ value, options, onChange }: { readonly value: V; readonly options: readonly { readonly id: V; readonly label: string; readonly count?: number; readonly attention?: boolean }[]; readonly onChange: (value: V) => void }) {
 	const { p } = useTheme();
+	// The picked chip stays in view (a filter opened from Home may sit past the screen's edge).
+	const scroller = useRef<ScrollView>(null);
+	const offsets = useRef<Record<string, number>>({});
+	const reveal = (x: number | undefined, animated: boolean) => x !== undefined && scroller.current?.scrollTo({ x: Math.max(0, x - 16), animated });
+	useEffect(() => {
+		reveal(offsets.current[value], true);
+	}, [value]);
 	return (
-		<ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 16, paddingVertical: 6 }}>
+		<ScrollView ref={scroller} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 16, paddingVertical: 6 }}>
 			{options.map(option => {
 				const on = option.id === value;
 				return (
 					<Tap key={option.id} haptics="selection" onPress={() => onChange(option.id)} accessibilityRole="button" accessibilityState={{ selected: on }}
+						onLayout={e => {
+							const first = offsets.current[option.id] === undefined;
+							offsets.current[option.id] = e.nativeEvent.layout.x;
+							if (on && first) {
+								reveal(e.nativeEvent.layout.x, false);
+							}
+						}}
 						style={{ flexDirection: 'row', alignItems: 'center', gap: 6, height: 34, paddingHorizontal: 13, borderRadius: 17, backgroundColor: on ? p.fillStrong : 'transparent', borderWidth: StyleSheet.hairlineWidth, borderColor: on ? p.stroke : p.strokeFaint }}>
 						<T variant="small" weight={on ? '600' : '500'} color={on ? p.fg : p.fgSecondary}>{option.label}</T>
 						{option.count ? (

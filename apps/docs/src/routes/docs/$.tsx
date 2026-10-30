@@ -67,6 +67,24 @@ const loader = createServerFn({
     };
   });
 
+function LaunchLoopBadge() {
+  return (
+    <a
+      href="https://www.launchandloop.com/product/volt"
+      target="_blank"
+      rel="dofollow noopener"
+      className="mt-8 inline-block"
+    >
+      <img
+        src="https://www.launchandloop.com/api/badge/volt?theme=dark"
+        alt="Volt on Launch & Loop"
+        width={170}
+        height={46}
+      />
+    </a>
+  );
+}
+
 const clientLoader = browserCollections.docs.createClientLoader({
   component(
     { toc, frontmatter, default: MDX },
@@ -80,7 +98,7 @@ const clientLoader = browserCollections.docs.createClientLoader({
     },
   ) {
     return (
-      <DocsPage toc={toc}>
+      <DocsPage toc={toc} footer={{ children: <LaunchLoopBadge /> }}>
         <DocsTitle>{frontmatter.title}</DocsTitle>
         <DocsDescription>{frontmatter.description}</DocsDescription>
         <div className="flex flex-row gap-2 items-center border-b -mt-4 pb-6">

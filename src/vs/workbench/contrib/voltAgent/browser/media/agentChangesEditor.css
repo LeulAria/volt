@@ -13,7 +13,7 @@
 .volt-agent-review-diff {
 	--volt-changes-add: var(--vscode-chat-linesAddedForeground, var(--vscode-gitDecoration-addedResourceForeground, #3fb950));
 	--volt-changes-del: var(--vscode-chat-linesRemovedForeground, var(--vscode-gitDecoration-deletedResourceForeground, #f85149));
-	--volt-changes-border: rgba(255, 255, 255, 0.08);
+	--volt-changes-border: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 	--volt-changes-bg: var(--vscode-editor-background);
 }
 
@@ -30,7 +30,7 @@
 .monaco-workbench.hc-light .volt-agent-changes-editor,
 .monaco-workbench.vs .volt-agent-review-diff,
 .monaco-workbench.hc-light .volt-agent-review-diff {
-	--volt-changes-border: rgba(0, 0, 0, 0.08);
+	--volt-changes-border: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
 }
 
 .volt-agent-changes-widget {
@@ -275,8 +275,61 @@
 	display: none;
 }
 
-.monaco-workbench .volt-agent-changes-header .volt-agent-changes-resolve + .volt-agent-changes-commit {
-	margin-left: 4px;
+/* Find Issues with a chevron: an outlined split button, Cursor's, before the git action. */
+.volt-agent-changes-find {
+	display: inline-flex;
+	align-items: stretch;
+	flex: none;
+	height: 24px;
+	margin: 0 4px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+	border-radius: 6px;
+	overflow: hidden;
+}
+
+.volt-agent-changes-find-main,
+.volt-agent-changes-find-chevron {
+	display: inline-flex;
+	align-items: center;
+	border: 0;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 12px;
+	font-weight: 400;
+	cursor: pointer;
+}
+
+.volt-agent-changes-find-main {
+	padding: 0 8px;
+	white-space: nowrap;
+}
+
+.volt-agent-changes-find-chevron {
+	justify-content: center;
+	width: 22px;
+	border-left: 1px solid color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+}
+
+.volt-agent-changes-find-chevron .codicon {
+	font-size: 12px;
+	color: inherit !important;
+}
+
+.volt-agent-changes-find-main:hover,
+.volt-agent-changes-find-chevron:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.volt-agent-changes-find-main:focus-visible,
+.volt-agent-changes-find-chevron:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+/* Commit & Push to Source Control, where the chat's git action control has nothing to show. */
+.volt-agent-changes-commit.hidden {
+	display: none;
 }
 
 .volt-agent-changes-commit {
@@ -319,6 +372,11 @@
 .monaco-workbench.vs .volt-agent-changes-commit:hover,
 .monaco-workbench.hc-light .volt-agent-changes-commit:hover {
 	background: #2a2a2a;
+}
+
+.monaco-workbench.vs .volt-agent-changes-commit:active,
+.monaco-workbench.hc-light .volt-agent-changes-commit:active {
+	background: #000000;
 }
 
 /* ---- File blocks ----------------------------------------------------------------------- */

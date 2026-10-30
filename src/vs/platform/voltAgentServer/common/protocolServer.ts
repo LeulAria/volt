@@ -76,6 +76,13 @@ interface IClient {
 	lastSent: number;
 }
 
+export interface IClientCallOptions {
+	/** Clients it accepts (the window that has the chat open) come before the others. */
+	readonly prefer?: (connectionId: number) => boolean;
+	/** Rejects with code `Timeout` when the client has not answered by then. */
+	readonly timeoutMs?: number;
+}
+
 interface IPendingClientCall {
 	readonly resolve: (value: unknown) => void;
 	readonly reject: (err: unknown) => void;
@@ -154,11 +161,24 @@ export class AgentServerProtocol extends Disposable {
 		return stored.event.seq;
 	}
 
-	/** The newest connected client that can do `capability`, preferring desktop windows. */
-	clientWith(capability: AgentServerCapability): IAgentServerClientInfo | undefined {
+	/**
+	 * The newest connected client that can do `capability`, preferring desktop windows. With
+	 * `prefer`, a client it accepts (the window that has the chat open) comes before the others.
+	 */
+	clientWith(capability: AgentServerCapability, prefer?: (connectionId: number) => boolean): IAgentServerClientInfo | undefined {
+		if (prefer) {
+			const preferred = this.bestClient(capability, prefer);
+			if (preferred) {
+				return preferred;
+			}
+		}
+		return this.bestClient(capability);
+	}
+
+	private bestClient(capability: AgentServerCapability, filter?: (connectionId: number) => boolean): IAgentServerClientInfo | undefined {
 		let best: IAgentServerClientInfo | undefined;
 		for (const { info } of this.clients.values()) {
-			if (!info.capabilities.includes(capability)) {
+			if (!info.capabilities.includes(capability) || (filter && !filter(info.connectionId))) {
 				continue;
 			}
 			if (!best || (info.kind === 'desktop' && best.kind !== 'desktop') || (info.kind === best.kind && info.connectedAt >= best.connectedAt)) {
@@ -169,20 +189,32 @@ export class AgentServerProtocol extends Disposable {
 	}
 
 	/** Calls a client that advertised `capability`. Rejects when none is connected or it drops. */
-	callClient<T>(capability: AgentServerCapability, method: string, params: readonly unknown[]): Promise<T> {
-		const target = this.clientWith(capability);
-		return this.callConnection<T>(target?.connectionId ?? -1, method, params);
+	callClient<T>(capability: AgentServerCapability, method: string, params: readonly unknown[], options?: IClientCallOptions): Promise<T> {
+		const target = this.clientWith(capability, options?.prefer);
+		return this.callConnection<T>(target?.connectionId ?? -1, method, params, options?.timeoutMs);
 	}
 
-	/** Calls one connected client (the one that offered what is being asked for). */
-	callConnection<T>(connectionId: number, method: string, params: readonly unknown[]): Promise<T> {
+	/**
+	 * Calls one connected client (the one that offered what is being asked for). With `timeoutMs`,
+	 * a window that never answers (a hung renderer) rejects with code `Timeout` instead of waiting forever.
+	 */
+	callConnection<T>(connectionId: number, method: string, params: readonly unknown[], timeoutMs?: number): Promise<T> {
 		const client = this.clients.get(connectionId);
 		if (!client) {
 			return Promise.reject(new AgentServerRemoteError('NoClient', `No Volt window is connected that can handle ${method}. Open Volt and try again.`));
 		}
 		return new Promise<T>((resolve, reject) => {
 			const id = this.nextClientCallId++;
-			this.pendingClientCalls.set(id, { resolve: resolve as (value: unknown) => void, reject, connectionId: client.info.connectionId });
+			const timer = timeoutMs === undefined ? undefined : setTimeout(() => {
+				if (this.pendingClientCalls.delete(id)) {
+					reject(new AgentServerRemoteError('Timeout', `The Volt window did not answer ${method} within ${Math.round(timeoutMs / 1000)}s.`));
+				}
+			}, timeoutMs);
+			const settle = <A>(fn: (arg: A) => void) => (arg: A) => {
+				clearTimeout(timer);
+				fn(arg);
+			};
+			this.pendingClientCalls.set(id, { resolve: settle(resolve as (value: unknown) => void), reject: settle(reject), connectionId: client.info.connectionId });
 			const frame: IAgentServerCall = { t: 'call', id, method, params };
 			this.sendText(client, JSON.stringify(frame));
 		});

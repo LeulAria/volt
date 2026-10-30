@@ -181,7 +181,7 @@
 
 .monaco-workbench.vs .volt-file-preview-body,
 .monaco-workbench.hc-light .volt-file-preview-body {
-	border-color: rgba(0, 0, 0, 0.1);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
 }
 
 .volt-file-preview.expanded.has-diff .volt-file-preview-body {
@@ -291,7 +291,7 @@
 .monaco-workbench.vs .volt-file-preview.card,
 .monaco-workbench.hc-light .volt-file-preview.card {
 	--volt-file-preview-fade: var(--vscode-editor-background, #ffffff);
-	border-color: rgba(0, 0, 0, 0.1);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
 }
 
 .volt-file-preview.card .volt-file-preview-head {
@@ -320,7 +320,7 @@
 
 .monaco-workbench.vs .volt-file-preview.card.has-diff .volt-file-preview-head,
 .monaco-workbench.hc-light .volt-file-preview.card.has-diff .volt-file-preview-head {
-	border-bottom-color: rgba(0, 0, 0, 0.08);
+	border-bottom-color: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
 .volt-file-preview.card .volt-file-preview-verb,

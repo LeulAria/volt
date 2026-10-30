@@ -51,6 +51,8 @@ export interface IContextPackInput {
 	readonly codeIndexed?: boolean;
 	/** The agent gets Volt's browser test tools (browser_run, browser_mock, playgrounds…) through the volt MCP server. */
 	readonly browserTools?: boolean;
+	/** The agent gets Volt's commit review (propose_commits, rename_branch) through the volt MCP server. */
+	readonly commitReview?: boolean;
 }
 
 export interface IEnvironmentFacts {
@@ -226,6 +228,10 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	if (input.intent.wantsServices && modePolicy(input.mode).allowTerminal) {
 		parts.push(`[Volt] ${MANAGED_TERMINALS}`);
 	}
+	// Agents asked to "commit and push" ran git themselves and renamed the worktree's branch behind Volt's back.
+	if (input.intent.wantsGit && input.commitReview && modePolicy(input.mode).allowTerminal) {
+		parts.push(`[Volt] ${COMMIT_REVIEW}`);
+	}
 	if (input.codeIndexed && input.intent.lane !== 'chat' && input.intent.lane !== 'fast') {
 		parts.push(`[Volt] ${INDEXED_SEARCH}`);
 	}
@@ -289,13 +295,20 @@ export const MANAGED_TERMINALS = `Start servers, watchers, \`docker compose up\`
  * Volt's index answers the same search in milliseconds. Their MCP tools sit behind tool search,
  * so name them. Sent once per agent session, and only for large indexed projects.
  */
+/** Committing and naming the branch go through the user: Volt's commit review, then a question for the branch name. */
+export const COMMIT_REVIEW = 'To commit, split the changes into meaningful commits with Conventional Commits messages (type(scope): summary, e.g. feat(cart): apply discount at checkout) and call propose_commits from the volt MCP server instead of running git commit: the user reviews them (files, diffs, messages) and Volt makes the commits. A worktree starts on a placeholder branch (volt/ and 8 hex characters). Before pushing it or opening a pull request from it, ask the user what to call it with ask_question (one question, 4 names you suggest as type/short-kebab-summary, e.g. feat/cart-discounts or fix/login-redirect; they can type their own), then call rename_branch with the answer; never rename it with git yourself. Push with git as usual afterwards.';
+
 export const INDEXED_SEARCH = 'This project is indexed: search code with instant_grep (regex or literal, the same results as rg), find symbol declarations with find_symbol, and find files by a fuzzy name with find_files, all from the volt MCP server. They answer in milliseconds where Grep, rg and find re-read every file.';
+
+/** The Scratch board's tools are registered in contrib/, which services/ cannot import. */
+const SCRATCH_READ_TOOL_NAME = 'scratch_read';
+const SCRATCH_DRAW_TOOL_NAME = 'scratch_draw';
 
 /**
  * Tool descriptions say what the visual tools do; this says when to reach for them unasked. Not
  * sent in the fast lane (small edits) or when the agent cannot reach the volt MCP server.
  */
-export const VISUAL_REPLIES = `When a visual helps explain the answer, render it proactively: call ${RENDER_CHART_TOOL_NAME} from the volt MCP server for numbers over time, comparisons, distributions, flows or hierarchies, including repo and usage analyses; use ${RENDER_HTML_TOOL_NAME} for diagrams, relationships, processes and custom layouts. Choose the chart type, variants and style controls to suit the data without asking the user to choose. Use observed data, or clearly label illustrative data. If your provider does not expose the visual tools, a fenced volt-chart block containing the same JSON chart spec renders natively in Volt; use a mermaid fence for diagrams. Render before your final text, then do not restate what it shows. Skip it for short or trivial answers.`;
+export const VISUAL_REPLIES = `When a visual helps explain the answer, render it proactively: call ${RENDER_CHART_TOOL_NAME} from the volt MCP server for numbers over time, comparisons, distributions, flows or hierarchies, including repo and usage analyses; use ${RENDER_HTML_TOOL_NAME} for diagrams, relationships, processes and custom layouts. When a hand-drawn sketch would read better than a page (a comparison table or scorecard with takeaways, an architecture picture, a flow), draw it with ${SCRATCH_DRAW_TOOL_NAME} instead (\`page\`, \`diagram\`, \`mermaid\`, or your own \`elements\` for anything else: an illustrated explainer, a timeline, a mind map, a hand-drawn chart; be inventive): it shows in the chat as a picture the user can open on their Scratch board. Choose the chart type, variants and style controls to suit the data without asking the user to choose. Use observed data, or clearly label illustrative data. If your provider does not expose the visual tools, a fenced volt-chart block containing the same JSON chart spec renders natively in Volt; use a mermaid fence for diagrams. Render before your final text, then do not restate what it shows. Skip it for short or trivial answers.`;
 
 /**
  * Only when the request asks for them: agents otherwise describe five sidebars in prose, or take
@@ -306,11 +319,7 @@ export const SCREENS_REPLIES = `To show the app's screens, call ${SCREENS_TOOL_N
 
 export const CANVAS_REPLIES = `To design screens or a flow, call ${CANVAS_RENDER_TOOL_NAME} from the volt MCP server once with every screen as a frame (iphone, android, tablet, browser, desktop or component; real copy and styling; shared markup in head, css and components; data-next on the element that leads to the next screen) instead of describing them or writing throwaway files: the user moves, plays and comments on it, and you change it afterwards with ${CANVAS_UPDATE_TOOL_NAME} edits rather than a new canvas.`;
 
-/** The Scratch board's tools are registered in contrib/, which services/ cannot import. */
-const SCRATCH_READ_TOOL_NAME = 'scratch_read';
-const SCRATCH_DRAW_TOOL_NAME = 'scratch_draw';
-
-export const SCRATCH_REPLIES = `For a sketch, a diagram, a plan or brainstormed points, call ${SCRATCH_DRAW_TOOL_NAME} from the volt MCP server to draw on the user's Scratch board (a Mermaid flowchart for diagrams, sticky notes for points, markdown cards for longer text; ${SCRATCH_READ_TOOL_NAME} first to build on what is there; \`replace\` with a frameId to redraw a frame) instead of a diagram in the reply: the user moves and edits it, so answer in a line or two.`;
+export const SCRATCH_REPLIES = `For a sketch, a diagram, a plan or brainstormed points, call ${SCRATCH_DRAW_TOOL_NAME} from the volt MCP server to draw on the user's Scratch board (a Mermaid flowchart for diagrams, a hand-lettered \`page\` for comparisons and takeaways, your own \`elements\` for anything you can draw better yourself, sticky notes for points, markdown cards for longer text; ${SCRATCH_READ_TOOL_NAME} first to build on what is there; \`replace\` with a frameId to redraw a frame) instead of a diagram in the reply: the user moves and edits it, so answer in a line or two.`;
 
 /** Agents otherwise screenshot the simulator and tap guessed coordinates, one call per tap. */
 export const DEVICE_REPLIES = 'For a native mobile app, use the iOS Simulator or Android Emulator through the volt MCP device tools: device_list and device_boot when none is running, device_launch_app, then device_snapshot to read the screen\'s accessibility tree and device_act to tap, type, scroll and verify by visible text in one call, instead of guessing coordinates or looping on device_screenshot and device_tap. One device_screenshot at the end shows the user the result.';

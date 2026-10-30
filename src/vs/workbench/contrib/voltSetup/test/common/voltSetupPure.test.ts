@@ -9,7 +9,7 @@ import { AGENT_SETUP, agentSetupInfo, authCheckCommand, installCommand, parseAut
 import { formatEnvText, normalizeProjectSettings, parseEnvText, projectForPath, readWorktreeSetup, stepsFromText, withProjectSettings, writeWorktreeSetup } from '../../common/projectSettings.js';
 
 /** `CLI_AGENT_DEFINITIONS` ids (browser code, so listed here). */
-const CLI_AGENT_IDS_FOR_TEST = ['codex', 'claude-code', 'cursor-acp', 'grok', 'opencode', 'antigravity', 'kimi', 'muse'];
+const CLI_AGENT_IDS_FOR_TEST = ['codex', 'claude-code', 'cursor-acp', 'grok', 'opencode', 'antigravity', 'kimi', 'muse', 'fx'];
 
 suite('Volt setup: agent CLIs', () => {
 
@@ -56,6 +56,12 @@ suite('Volt setup: agent CLIs', () => {
 		assert.deepStrictEqual(parseAuthCheck(check, 0, '{"status":"unauthenticated","isAuthenticated":false,"message":"Not logged in"}', ''), { kind: 'signedOut' });
 		assert.deepStrictEqual(parseAuthCheck(check, 0, '\u2713 Logged in as me@x.io', ''), { kind: 'signedIn', account: 'me@x.io' });
 		assert.deepStrictEqual(parseCredentialsFile(true), { kind: 'signedIn' });
+		// `fx status --json` from fx 0.0.13, trimmed.
+		const fx = { kind: 'fxStatus' } as const;
+		assert.strictEqual(authCheckCommand(fx, 'fx'), 'fx status --json');
+		assert.deepStrictEqual(parseAuthCheck(fx, 0, '{"kind":"status","model":"anthropic/claude-opus-5.5","auth":"fx login","permission_mode":"ask"}', ''), { kind: 'signedIn', plan: 'fx login' });
+		assert.deepStrictEqual(parseAuthCheck(fx, 0, '{"kind":"status","model":"spacexai/grok-4.7","auth":"missing","auth_refreshable":false}', ''), { kind: 'signedOut' });
+		assert.deepStrictEqual(parseAuthCheck(fx, 2, 'not json', ''), { kind: 'unknown' });
 		assert.deepStrictEqual(parseCredentialsFile(false), { kind: 'signedOut' });
 		assert.deepStrictEqual(parseCredentialsFile(undefined), { kind: 'unknown' });
 	});

@@ -28,7 +28,7 @@ export class ServerAgentWorkspaceService extends AgentWorkspaceService {
 	override openSurface(sessionId: string, draft: IAgentSurfaceDraft, reuse: boolean): IAgentSurface {
 		const surface = super.openSurface(sessionId, draft, reuse);
 		if (this.clients.has('surface')) {
-			this.clients.call('surface', 'surface.open', sessionId, toWire(draft), reuse)
+			this.clients.callForChat('surface', sessionId, 'surface.open', sessionId, toWire(draft), reuse)
 				.catch(err => this.logService.trace('[volt agent server] no window opened the surface', err));
 		}
 		return surface;

@@ -47,8 +47,15 @@ function code() {
 		DISABLE_TEST_EXTENSION=""
 	fi
 
-	# macOS: run as its own app so the mic and speech permissions are Volt's, not the terminal's
-	if [[ "$OSTYPE" == "darwin"* ]]; then
+	# macOS: run as its own app so the mic and speech permissions are Volt's, not the terminal's.
+	# Not from Desktop, Documents or Downloads: there a disclaimed Volt has no folder access of its
+	# own and dies with "EPERM: operation not permitted, uv_cwd". VOLT_DISCLAIM=1 forces it anyway
+	# (give VOLT.app Full Disk Access first).
+	PROTECTED_FOLDER=""
+	case "$ROOT/" in
+		"$HOME/Desktop/"*|"$HOME/Documents/"*|"$HOME/Downloads/"*|"$HOME/Library/Mobile Documents/"*) PROTECTED_FOLDER=1 ;;
+	esac
+	if [[ "$OSTYPE" == "darwin"* && ( -z "$PROTECTED_FOLDER" || -n "$VOLT_DISCLAIM" ) ]]; then
 		DISCLAIM=".build/volt-disclaim"
 		if [[ ! -x "$DISCLAIM" || "build/volt/disclaim.c" -nt "$DISCLAIM" ]]; then
 			cc -O2 -o "$DISCLAIM" build/volt/disclaim.c 2>/dev/null || rm -f "$DISCLAIM"

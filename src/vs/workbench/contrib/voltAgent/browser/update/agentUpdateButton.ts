@@ -9,8 +9,9 @@ import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { disposableTimeout } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { safeIntl } from '../../../../../base/common/date.js';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
-import { isLinux } from '../../../../../base/common/platform.js';
+import { isLinux, language } from '../../../../../base/common/platform.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize, localize2 } from '../../../../../nls.js';
 import { Categories } from '../../../../../platform/action/common/actionCommonCategories.js';
@@ -25,6 +26,7 @@ import { IQuickInputService } from '../../../../../platform/quickinput/common/qu
 import { IUpdateService, State, StateType } from '../../../../../platform/update/common/update.js';
 import { IVoltUpdate, voltReleaseTag } from '../../../../../platform/update/common/voltUpdateFeed.js';
 import { IWorkbenchContribution } from '../../../../common/contributions.js';
+import { onDidChangeLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { summarizeReleaseNotes } from '../../common/agentUpdateNotes.js';
 import { createRefreshSpinner, setRefreshSpinnerRunning } from '../usage/agentUsageIcons.js';
@@ -79,11 +81,21 @@ function createUpdateGlyph(): { readonly root: SVGSVGElement; readonly progress:
 	return { root: svg, progress };
 }
 
+/** The title bar entry: VS Code's "Downloading..." over a thin progress line. */
+interface ITitleEntry {
+	readonly root: HTMLButtonElement;
+	readonly label: HTMLElement;
+	readonly fill: HTMLElement;
+}
+
 /**
- * The update button in the agent sidebar footer, next to Settings and Usage. It shows while an
- * update is available, downloading or ready, with the download progress as a ring, and opens a
- * popover with the state, "What's changed" from the release notes, and the next step
- * (Download, Install or Restart to Update).
+ * Updates in two places. While one is available, downloading or ready, the title bar shows it in
+ * words ("Downloading…" over its progress, "Restart to Update") and opens a popover below: the
+ * product and its current version, what is happening, "What's changed" from the release notes,
+ * and the next step (Download, Install or Restart to Update). The update button in the agent
+ * sidebar footer, next to Settings and Usage, checks for updates; it shows the update itself
+ * (a progress ring, the same popover above it) only where the title bar has no room for it,
+ * such as a native title bar.
  */
 export class AgentUpdateButtonContribution extends Disposable implements IWorkbenchContribution {
 
@@ -107,6 +119,7 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 	/** Refresh glyph, the Usage page's spinner and a check, built once; the spinner's SMIL clock runs only while checking. */
 	private idleGlyph: Element[] | undefined;
 	private readonly attachment = this._register(new MutableDisposable<DisposableStore>());
+	private titleEntry: ITitleEntry | undefined;
 	private renderPopover: (() => void) | undefined;
 	private hidePopover: (() => void) | undefined;
 
@@ -125,6 +138,9 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 			this.state = state;
 			this.sync();
 		}));
+		// The title bar's right column is rebuilt with the layout; the entry finds its place again.
+		this._register(layoutService.onDidLayoutMainContainer(() => this.mountTitleEntry()));
+		this._register(onDidChangeLayoutMode(() => this.sync()));
 		this.sync();
 	}
 
@@ -158,8 +174,76 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 		if (!this.attachment.value) {
 			this.attach();
 		}
+		this.mountTitleEntry();
+		this.renderTitleEntry();
 		this.renderButton();
 		this.renderPopover?.();
+	}
+
+	/** Left of the agent window's title bar toggles (agentViewSidebars), else first in the bar's right column. */
+	private mountTitleEntry(): void {
+		const right = this.layoutService.mainContainer.querySelector<HTMLElement>('.part.titlebar > .titlebar-container > .titlebar-right');
+		if (!right) {
+			return;
+		}
+		const entry = this.titleEntry ??= this.createTitleEntry();
+		const toggles = right.querySelector<HTMLElement>(':scope > .volt-agent-titlebar-toggles');
+		if (toggles) {
+			if (entry.root.nextElementSibling !== toggles) {
+				toggles.before(entry.root);
+			}
+		} else if (right.firstElementChild !== entry.root) {
+			right.prepend(entry.root);
+		}
+	}
+
+	private createTitleEntry(): ITitleEntry {
+		const root = $('button.volt-update-titlebar-entry.volt-titlebar-control') as HTMLButtonElement;
+		root.type = 'button';
+		root.hidden = true;
+		root.setAttribute('aria-haspopup', 'dialog');
+		root.setAttribute('aria-expanded', 'false');
+		const label = append(root, $('span.volt-update-titlebar-label'));
+		const fill = append(append(root, $('span.volt-update-titlebar-line')), $('span.volt-update-titlebar-fill'));
+		this._register(addDisposableListener(root, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			if (this.hidePopover) {
+				this.hidePopover();
+			} else if (isActionable(this.current)) {
+				this.showPopover(root, 'below');
+			}
+		}));
+		this._register(toDisposable(() => root.remove()));
+		return { root, label, fill };
+	}
+
+	private renderTitleEntry(): void {
+		const entry = this.titleEntry;
+		if (!entry) {
+			return;
+		}
+		const state = this.current;
+		entry.root.hidden = !isActionable(state);
+		if (entry.root.hidden) {
+			return;
+		}
+		const progress = state.type === StateType.Downloading ? state.progress : undefined;
+		const busy = state.type === StateType.Downloading || state.type === StateType.Updating;
+		entry.root.classList.toggle('busy', busy);
+		entry.root.classList.toggle('indeterminate', busy && progress === undefined);
+		entry.root.classList.toggle('ready', !busy);
+		entry.label.textContent = this.titleBarLabel(state);
+		entry.fill.style.width = progress !== undefined ? `${Math.round(progress * 100)}%` : '';
+		const label = this.title(state);
+		entry.root.setAttribute('aria-label', label);
+		setAgentTooltip(entry.root, label, undefined, undefined, 'below');
+	}
+
+	/** The title bar shows the update: the footer button stays a plain Check for Updates. */
+	private titleEntryShown(): boolean {
+		const root = this.titleEntry?.root;
+		return !!root && root.isConnected && !root.hidden && root.getClientRects().length > 0;
 	}
 
 	/**
@@ -206,7 +290,7 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 				if (this.hidePopover) {
 					this.hidePopover();
 				} else {
-					this.showPopover(button);
+					this.showPopover(button, 'above');
 				}
 			} else if (!this.checking && this.current.type !== StateType.CheckingForUpdates) {
 				this.checking = true;
@@ -232,6 +316,8 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 			return;
 		}
 		const state = this.current;
+		// The title bar shows the update: nothing to check for meanwhile, so the footer drops the button.
+		button.style.display = isActionable(state) && this.titleEntryShown() ? 'none' : '';
 		// Nothing pending: a round refresh button that checks for the latest release.
 		if (!isActionable(state)) {
 			const checking = this.checking || state.type === StateType.CheckingForUpdates;
@@ -317,15 +403,77 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 		}
 	}
 
-	private showPopover(anchor: HTMLButtonElement): void {
+	/** A few words for the title bar, as VS Code's: what is happening, or the step to take. */
+	private titleBarLabel(state: State): string {
+		const other = updateOf(state)?.voltChannel;
+		switch (state.type) {
+			case StateType.AvailableForDownload:
+				return other
+					? localize('voltUpdate.titlebar.otherAvailable', "{0} Available", channelName(other))
+					: localize('voltUpdate.titlebar.available', "Update Available");
+			case StateType.Downloading:
+				return localize('voltUpdate.titlebar.downloading', "Downloading…");
+			case StateType.Downloaded:
+				return localize('voltUpdate.titlebar.downloaded', "Install Update");
+			case StateType.Updating:
+				return localize('voltUpdate.titlebar.installing', "Installing…");
+			case StateType.Ready:
+				return other
+					? localize('voltUpdate.titlebar.openOther', "Open {0}", channelName(other))
+					: localize('voltUpdate.titlebar.restart', "Restart to Update");
+			default:
+				return '';
+		}
+	}
+
+	/** The popover's heading. */
+	private heading(state: State): string {
+		const other = updateOf(state)?.voltChannel;
+		switch (state.type) {
+			case StateType.AvailableForDownload:
+				return other
+					? localize('voltUpdate.heading.otherAvailable', "{0} Available", channelName(other))
+					: localize('voltUpdate.heading.available', "Update Available");
+			case StateType.Downloading:
+				return localize('voltUpdate.heading.downloading', "Downloading Update");
+			case StateType.Downloaded:
+				return localize('voltUpdate.heading.downloaded', "Update Downloaded");
+			case StateType.Updating:
+				return localize('voltUpdate.heading.installing', "Installing Update");
+			case StateType.Ready:
+				return other
+					? localize('voltUpdate.heading.otherInstalled', "{0} Installed", channelName(other))
+					: localize('voltUpdate.heading.ready', "Update Ready");
+			default:
+				return '';
+		}
+	}
+
+	/** This build: "0.0.2 (41dd792)" and the day it was built, as the About sheet says. */
+	private currentBuild(): { readonly version: string; readonly released: string | undefined } {
+		const product = this.productService;
+		const commit = product.commit?.slice(0, 7);
+		const version = `${product.voltVersion ?? product.version}${commit ? ` (${commit})` : ''}`;
+		const date = product.date ? new Date(product.date) : undefined;
+		const released = date && !isNaN(date.getTime())
+			? safeIntl.DateTimeFormat(language, { year: 'numeric', month: 'short', day: 'numeric' }).value.format(date)
+			: undefined;
+		return { version, released };
+	}
+
+	/**
+	 * `below` the title bar entry, aligned to its right edge (it sits near the window's right side);
+	 * `above` the footer button, aligned to its left.
+	 */
+	private showPopover(anchor: HTMLButtonElement, side: 'below' | 'above'): void {
 		this.contextViewService.showContextView({
 			getAnchor: () => anchor,
-			anchorPosition: AnchorPosition.ABOVE,
-			anchorAlignment: AnchorAlignment.LEFT,
+			anchorPosition: side === 'below' ? AnchorPosition.BELOW : AnchorPosition.ABOVE,
+			anchorAlignment: side === 'below' ? AnchorAlignment.RIGHT : AnchorAlignment.LEFT,
 			canRelayout: true,
 			render: container => {
 				const store = new DisposableStore();
-				const root = append(container, $('.volt-menu.volt-update-popover'));
+				const root = append(container, $(`.volt-menu.volt-update-popover.${side}`));
 				root.setAttribute('role', 'dialog');
 				root.tabIndex = -1;
 				const content = new DisposableStore();
@@ -370,11 +518,21 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 		const state = this.current;
 		const update = updateOf(state);
 
+		// VS Code's card: the heading, the product with this build's version and date, then what is happening.
 		const head = append(root, $('.volt-update-popover-head'));
-		append(head, $('.volt-update-popover-title')).textContent = this.title(state);
-		const detail = this.detail(state, update);
-		if (detail) {
-			append(head, $('.volt-update-popover-detail')).textContent = detail;
+		append(head, $('.volt-update-popover-title')).textContent = this.heading(state);
+		const product = append(head, $('.volt-update-popover-product'));
+		append(product, $('.volt-update-popover-icon')).setAttribute('aria-hidden', 'true');
+		const about = append(product, $('.volt-update-popover-about'));
+		append(about, $('.volt-update-popover-name')).textContent = this.productService.nameLong;
+		const build = this.currentBuild();
+		append(about, $('.volt-update-popover-meta')).textContent = localize('voltUpdate.currentVersion', "Current Version: {0}", build.version);
+		if (build.released) {
+			append(about, $('.volt-update-popover-meta')).textContent = localize('voltUpdate.released', "Released {0}", build.released);
+		}
+		const status = this.status(state, update);
+		if (status) {
+			append(head, $('.volt-update-popover-detail')).textContent = status;
 		}
 		if (state.type === StateType.Downloading || state.type === StateType.Updating) {
 			const bar = append(head, $('.volt-update-popover-bar'));
@@ -431,18 +589,29 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 		}
 	}
 
-	private detail(state: State, update: IVoltUpdate | undefined): string | undefined {
+	/** What is happening, in a sentence under the product. */
+	private status(state: State, update: IVoltUpdate | undefined): string | undefined {
 		const version = update?.productVersion;
 		const other = update?.voltChannel ? channelName(update.voltChannel) : undefined;
+		const name = other ?? this.productService.nameLong;
 		switch (state.type) {
 			case StateType.AvailableForDownload:
-				return other
-					? localize('voltUpdate.otherChannelDetail2', "Installs next to {0} with its own settings, and keeps itself up to date.", this.productService.nameLong)
+				if (other) {
+					return localize('voltUpdate.otherChannelDetail2', "Installs next to {0} with its own settings, and keeps itself up to date.", this.productService.nameLong);
+				}
+				return version
+					? localize('voltUpdate.availableVersion', "{0} {1} is ready to download.", name, version)
 					: localize('voltUpdate.availableDetail', "Download the new version from GitHub.");
 			case StateType.Downloading:
+				return state.progress !== undefined && version
+					? localize('voltUpdate.downloadingVersion', "Downloading {0} {1}… {2}%", name, version, Math.round(state.progress * 100))
+					: localize('voltUpdate.downloadingWait', "Downloading update, please wait…");
 			case StateType.Downloaded:
+				return version
+					? localize('voltUpdate.downloadedVersion', "{0} {1} is downloaded and ready to install.", name, version)
+					: localize('voltUpdate.downloadedDetail', "The update is downloaded and ready to install.");
 			case StateType.Updating:
-				return version ? localize('voltUpdate.toVersion', "{0} {1}", other ?? this.productService.nameLong, version) : undefined;
+				return localize('voltUpdate.installingWait', "Installing update, please wait…");
 			case StateType.Ready:
 				if (other) {
 					return localize('voltUpdate.installedOtherDetail', "It runs next to {0} with its own settings, and keeps itself up to date.", this.productService.nameLong);
@@ -521,10 +690,12 @@ registerAction2(class SimulateUpdateStateAction extends Action2 {
 			{ label: 'Another channel available', state: State.AvailableForDownload(otherChannel) },
 			{ label: 'Downloading (no progress)', state: State.DownloadingUpdate(update) },
 			{ label: 'Downloading 42%', state: State.DownloadingUpdate(update, 0.42) },
+			{ label: 'Downloaded (Windows)', state: State.Downloaded(update) },
+			{ label: 'Installing', state: State.Updating(update) },
 			{ label: 'Ready to restart', state: State.Ready(update) },
 			{ label: 'Clear', state: undefined },
 		];
-		const pick = await quickInputService.pick(states.map(s => ({ label: s.label, state: s.state })), { placeHolder: 'Update state to show in the agent sidebar' });
+		const pick = await quickInputService.pick(states.map(s => ({ label: s.label, state: s.state })), { placeHolder: 'Update state to show in the title bar and the agent sidebar' });
 		if (pick) {
 			AgentUpdateButtonContribution.simulate(pick.state);
 		}

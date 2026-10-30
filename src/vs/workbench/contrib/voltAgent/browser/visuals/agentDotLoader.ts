@@ -25,6 +25,8 @@ export interface IDotLoaderOptions {
 
 /** Grid pitch in CSS px: dense enough to read as a halftone, sparse enough to draw every frame. */
 const PITCH = 13;
+/** Every dot is 2px across, always: the field moves by brightness alone. */
+const DOT_RADIUS = 1;
 /** Dots are batched by brightness, one fill per step instead of one per dot. */
 const LEVELS = 12;
 const TAU = Math.PI * 2;
@@ -36,8 +38,8 @@ const FALLBACK_HIGHLIGHT = new Color(new RGBA(170, 192, 255));
 
 /**
  * A halftone placeholder for a picture on its way (chart, page, diagram, mockup, image): a grid of
- * dots whose size and brightness follow slow drifting blobs, a diagonal sweep of light and a
- * per-dot shiver, inside the shape of what is coming, with 8px corners.
+ * 2px dots that light up under slow drifting blobs, a diagonal sweep of light and a per-dot
+ * shiver, inside the shape of what is coming, with 8px corners. Only their brightness changes.
  *
  * The phase comes from the page clock, not the element's age: a transcript that redraws a streaming
  * block every frame makes a new loader each time, and it carries on exactly where the last one
@@ -101,7 +103,7 @@ interface IDotGrid {
 	/** Position in half-short-side units from the center, so blobs stay round in any shape. */
 	readonly u: Float32Array;
 	readonly v: Float32Array;
-	/** 0 at the rim, 1 well inside: dots shrink toward the edge, so the shape reads softly. */
+	/** 0 at the rim, 1 well inside: dots dim toward the edge, so the shape reads softly. */
 	readonly edge: Float32Array;
 	/** 0..1 per dot, the same for the same cell every time (a redraw must not reshuffle). */
 	readonly seed: Float32Array;
@@ -111,7 +113,6 @@ interface IDotGrid {
 	readonly spanU: number;
 	readonly spanV: number;
 	/** Per-frame scratch. */
-	readonly radius: Float32Array;
 	readonly level: Uint8Array;
 	readonly order: Uint32Array;
 }
@@ -129,8 +130,9 @@ function cellSeed(column: number, row: number): number {
 function layoutGrid(width: number, height: number, round: boolean): IDotGrid {
 	const columns = Math.max(1, Math.floor(width / PITCH));
 	const rows = Math.max(1, Math.floor(height / PITCH));
-	const offsetX = (width - (columns - 1) * PITCH) / 2;
-	const offsetY = (height - (rows - 1) * PITCH) / 2;
+	// Whole pixels, so a 2px dot stays crisp instead of smearing over three.
+	const offsetX = Math.round((width - (columns - 1) * PITCH) / 2);
+	const offsetY = Math.round((height - (rows - 1) * PITCH) / 2);
 	const half = Math.max(1, Math.min(width, height) / 2);
 	const centerX = width / 2;
 	const centerY = height / 2;
@@ -173,7 +175,6 @@ function layoutGrid(width: number, height: number, round: boolean): IDotGrid {
 		width, height, count, x, y, u, v, edge, seed, rate,
 		spanU: centerX / half,
 		spanV: centerY / half,
-		radius: new Float32Array(count),
 		level: new Uint8Array(count),
 		order: new Uint32Array(count),
 	};
@@ -184,25 +185,25 @@ function readColor(style: CSSStyleDeclaration, name: string, fallback: Color): C
 	return (value && Color.Format.CSS.parse(value)) || fallback;
 }
 
-/** One fill style per brightness step: from faint base color to bright highlight. */
+/** One fill style per brightness step: from faint base color to full highlight (the only thing that moves). */
 function levelStyles(base: Color, highlight: Color): string[] {
 	const styles: string[] = [];
 	for (let level = 0; level < LEVELS; level++) {
 		const t = level / (LEVELS - 1);
-		const mix = Math.pow(t, 1.8) * 0.85;
+		const mix = Math.pow(t, 1.6);
 		const r = Math.round(base.rgba.r + (highlight.rgba.r - base.rgba.r) * mix);
 		const g = Math.round(base.rgba.g + (highlight.rgba.g - base.rgba.g) * mix);
 		const b = Math.round(base.rgba.b + (highlight.rgba.b - base.rgba.b) * mix);
-		const alpha = (0.2 + 0.8 * Math.pow(t, 0.8)) * base.rgba.a;
+		const alpha = (0.14 + 0.86 * Math.pow(t, 0.9)) * base.rgba.a;
 		styles.push(`rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`);
 	}
 	return styles;
 }
 
-/** Sizes each dot for time `t` (seconds) and draws them, batched by brightness; `dotScale` shrinks or grows every dot. */
-function paint(context: CanvasRenderingContext2D, grid: IDotGrid, styles: readonly string[], t: number, dotScale = 1): void {
+/** Lights each dot for time `t` (seconds) and draws them, batched by brightness. */
+function paint(context: CanvasRenderingContext2D, grid: IDotGrid, styles: readonly string[], t: number): void {
 	context.clearRect(0, 0, grid.width, grid.height);
-	const { count, u, v, edge, seed, rate, radius, level, order, spanU, spanV } = grid;
+	const { count, u, v, edge, seed, rate, level, order, spanU, spanV } = grid;
 	// Three soft blobs drift on slow Lissajous paths; wide fields get larger ones to fill them.
 	const spread = Math.min(1.9, 1 + 0.24 * (Math.max(spanU, spanV) - 1));
 	const ax = Math.max(0.15, spanU - 0.35);
@@ -213,8 +214,6 @@ function paint(context: CanvasRenderingContext2D, grid: IDotGrid, styles: readon
 	const k1 = 1 / Math.pow(0.95 * spread, 2), k2 = 1 / Math.pow(0.75 * spread, 2), k3 = 1 / Math.pow(0.6 * spread, 2);
 	// A band of light crossing corner to corner, then a short rest off the field.
 	const sweep = -1.6 + 3.2 * ((t % SWEEP) / SWEEP);
-	const maxRadius = PITCH * 0.32 * dotScale;
-	const minRadius = 0.55 * dotScale;
 	const counts = new Uint32Array(LEVELS);
 	for (let i = 0; i < count; i++) {
 		const du1 = u[i] - b1x, dv1 = v[i] - b1y;
@@ -233,7 +232,6 @@ function paint(context: CanvasRenderingContext2D, grid: IDotGrid, styles: readon
 		const shiver = Math.sin(t * rate[i] + seed[i] * TAU);
 		value = edge[i] * (0.07 + 0.93 * value) * (1 + 0.16 * shiver);
 		value = value < 0 ? 0 : value > 1 ? 1 : value;
-		radius[i] = minRadius + (maxRadius - minRadius) * Math.pow(value, 1.25);
 		const step = Math.min(LEVELS - 1, Math.floor(value * LEVELS));
 		level[i] = step;
 		counts[step]++;
@@ -254,12 +252,8 @@ function paint(context: CanvasRenderingContext2D, grid: IDotGrid, styles: readon
 		context.beginPath();
 		for (let n = starts[step], end = starts[step] + counts[step]; n < end; n++) {
 			const i = order[n];
-			// A hair of positional tremble on top of the size pulse.
-			const dx = 0.3 * Math.sin(t * rate[i] * 1.37 + seed[i] * 11);
-			const dy = 0.3 * Math.cos(t * rate[i] * 1.11 + seed[i] * 17);
-			const r = radius[i];
-			context.moveTo(x[i] + dx + r, y[i] + dy);
-			context.arc(x[i] + dx, y[i] + dy, r, 0, TAU);
+			context.moveTo(x[i] + DOT_RADIUS, y[i]);
+			context.arc(x[i], y[i], DOT_RADIUS, 0, TAU);
 		}
 		context.fillStyle = styles[step];
 		context.fill();
@@ -274,8 +268,6 @@ function animateDots(field: HTMLElement, canvas: HTMLCanvasElement, round: boole
 	let grid: IDotGrid | undefined;
 	let styles: string[] = [];
 	let colorKey = '';
-	/** `--volt-dot-loader-dot-scale`: a placeholder can ask for smaller dots (pages do). */
-	let dotScale = 1;
 	let frame = 0;
 	let frames = 0;
 	let visible = true;
@@ -286,8 +278,6 @@ function animateDots(field: HTMLElement, canvas: HTMLCanvasElement, round: boole
 		const style = getWindow(field).getComputedStyle(field);
 		const base = readColor(style, '--volt-dot-loader-color', FALLBACK_COLOR);
 		const highlight = readColor(style, '--volt-dot-loader-highlight', FALLBACK_HIGHLIGHT);
-		const scale = parseFloat(style.getPropertyValue('--volt-dot-loader-dot-scale'));
-		dotScale = scale > 0 ? scale : 1;
 		const key = `${base}|${highlight}`;
 		if (key !== colorKey) {
 			colorKey = key;
@@ -313,7 +303,7 @@ function animateDots(field: HTMLElement, canvas: HTMLCanvasElement, round: boole
 			readColors();
 		}
 		if (visible) {
-			paint(context, grid, styles, now(), dotScale);
+			paint(context, grid, styles, now());
 		}
 		frame = getWindow(canvas).requestAnimationFrame(tick);
 	};
@@ -336,7 +326,7 @@ function animateDots(field: HTMLElement, canvas: HTMLCanvasElement, round: boole
 		readColors();
 		visible = true;
 		// Reduced motion: one still frame of the same field.
-		paint(context, grid, styles, still ? 2.2 : now(), dotScale);
+		paint(context, grid, styles, still ? 2.2 : now());
 		if (!still && !frame) {
 			frame = view.requestAnimationFrame(tick);
 		}

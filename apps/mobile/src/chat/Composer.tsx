@@ -5,7 +5,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
-	ACCESS_MODES, type AccessMode, catalogItem, COMPOSER_MODES, type ComposerMode, type Delivery, type IconName, type IMcpServerStatus, type IPromptAttachment, type IPromptMention, modelLabel
+	ACCESS_MODES, type AccessMode, catalogItem, compactNumber, COMPOSER_MODES, type ComposerMode, ComposerDraft, type Delivery, type IconName, type IDraftStore, type IMcpServerStatus, type IPromptAttachment, type IPromptMention, modelLabel
 } from '@volt/client-core';
 import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Platform, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -15,6 +15,7 @@ import { useAttachment, useClient, useRuntime } from '../state/client';
 import { useTheme } from '../theme/theme';
 import { haptic, Icon, Pill, T, Tap } from '../ui/core';
 import { ActionSheet, type ISheetAction } from '../ui/sheets';
+import Svg, { Circle } from 'react-native-svg';
 import { type IComposerImage, imageKey, imageOnlyPrompt, pickImages, uploadImage } from './attachments';
 import { fileFacts, fileKey, type IComposerFile, type IComposerMention, isSendableImage, MAX_FILES, pickFiles, promptParts, uploadFile } from './composerFiles';
 import { ComposerSuggest, type ISlashItem, type ITrigger, triggerAt } from './ComposerSuggest';
@@ -23,6 +24,10 @@ import { McpSheet } from './McpSheet';
 import { ModelSheet } from './ModelSheet';
 
 const DRAFT_PREFIX = 'volt.draft.';
+const DRAFT_STORE: IDraftStore = {
+	get: key => AsyncStorage.getItem(key),
+	set: (key, value) => value === null ? AsyncStorage.removeItem(key) : AsyncStorage.setItem(key, value),
+};
 
 export interface IComposerProps {
 	readonly draftKey?: string;
@@ -48,12 +53,18 @@ export interface IComposerProps {
 	readonly disabled?: boolean;
 	/** Controls before the model pill (the new chat sheet's project picker). */
 	readonly leading?: ReactNode;
+	/** A new chat's "Compare models": the ticked models (undefined while off); the model sheet turns it on. */
+	readonly multiModels?: readonly string[];
+	readonly onMultiModelsChange?: (refs: readonly string[] | undefined) => void;
 	/** Replaces the composer's text and images whenever `key` changes (edit, rewind, clear). */
 	readonly prefill?: { readonly key: number; readonly text: string; readonly attachments: readonly IPromptAttachment[] };
 	/** Above the box (the "Editing message" banner). */
 	readonly banner?: ReactNode;
 	/** Images can be attached (default true). */
 	readonly allowImages?: boolean;
+	/** The chat's context: tokens in use and the model's window (the desktop's context meter). */
+	readonly contextUsed?: number;
+	readonly contextWindow?: number;
 }
 
 export interface IComposerSendExtra {
@@ -188,6 +199,8 @@ export function Composer(props: IComposerProps) {
 		}
 	};
 
+	// The device's copy at once; a chat's draft then follows the computer's (shared with the desktop).
+	const draft = useRef<ComposerDraft | undefined>(undefined);
 	useEffect(() => {
 		loadedKey.current = undefined;
 		if (!props.draftKey) {
@@ -195,19 +208,33 @@ export function Composer(props: IComposerProps) {
 			return;
 		}
 		const key = props.draftKey;
-		void AsyncStorage.getItem(DRAFT_PREFIX + key).then(value => {
-			loadedKey.current = key;
-			setText(value ?? '');
+		const shared = !!props.chatId && props.chatId === key;
+		const current = new ComposerDraft(DRAFT_STORE, DRAFT_PREFIX + key, shared ? client : undefined, shared ? key : undefined, remote => {
+			if (draft.current === current) {
+				setText(remote);
+			}
 		});
-	}, [props.draftKey]);
+		draft.current = current;
+		void current.load().then(value => {
+			if (draft.current === current) {
+				loadedKey.current = key;
+				setText(value);
+			}
+		});
+		return () => {
+			current.dispose();
+			if (draft.current === current) {
+				draft.current = undefined;
+			}
+		};
+	}, [props.draftKey, props.chatId, client]);
 
 	useEffect(() => {
 		const key = props.draftKey;
 		if (!key || loadedKey.current !== key) {
 			return;
 		}
-		const timer = setTimeout(() => void (text ? AsyncStorage.setItem(DRAFT_PREFIX + key, text) : AsyncStorage.removeItem(DRAFT_PREFIX + key)), 300);
-		return () => clearTimeout(timer);
+		draft.current?.change(text);
 	}, [text, props.draftKey]);
 
 	const trimmed = text.trim();
@@ -251,9 +278,7 @@ export function Composer(props: IComposerProps) {
 		setFiles([]);
 		setMentions([]);
 		setSlash(undefined);
-		if (props.draftKey) {
-			void AsyncStorage.removeItem(DRAFT_PREFIX + props.draftKey);
-		}
+		draft.current?.clear();
 	};
 
 	const tint = modeColors(props.mode);
@@ -307,7 +332,7 @@ export function Composer(props: IComposerProps) {
 	const actionSheet = sheet && sheet !== 'model' && sheet !== 'mcp' ? sheet : undefined;
 
 	return (
-		<View style={{ paddingHorizontal: 16 }}>
+		<View style={{ paddingHorizontal: 14 }}>
 			{props.banner}
 			{trigger && (trigger.kind === '/' ? !!props.chatId : true) ? (
 				<ComposerSuggest trigger={trigger} client={client} chatId={props.chatId} folder={props.folder} onPickFile={pickFile} onPickSlash={pickSlash} onPickMcp={pickMcp} />
@@ -346,7 +371,7 @@ export function Composer(props: IComposerProps) {
 					placeholderTextColor={p.fgQuaternary}
 					selectionColor={p.accent}
 					keyboardAppearance={p.scheme}
-					style={{ color: p.fg, fontSize: 16, lineHeight: 22, minHeight: 46, maxHeight: 150, paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 13 : 10, paddingBottom: 6 }}
+					style={{ color: p.fg, fontSize: 15, lineHeight: 22, minHeight: 44, maxHeight: 160, paddingHorizontal: 14, paddingTop: Platform.OS === 'ios' ? 12 : 9, paddingBottom: 4 }}
 				/>
 				<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8, paddingBottom: 8, paddingTop: 2 }}>
 					{props.allowImages !== false ? (
@@ -358,7 +383,7 @@ export function Composer(props: IComposerProps) {
 					<ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={{ flex: 1 }} contentContainerStyle={{ alignItems: 'center', gap: 6, paddingRight: 4 }}>
 						<Pill label={props.mode} color={props.mode === 'Agent' ? p.fgSecondary : tint.fg} bg={tint.bg} onPress={() => setSheet('mode')} />
 						{props.leading}
-						<Pill label={modelLabel(runtime, props.modelRef)} icon="cpu" onPress={() => setSheet('model')} maxWidth={props.leading ? 110 : 150} bg="transparent" />
+						<Pill label={props.multiModels ? `${props.multiModels.length} models` : modelLabel(runtime, props.modelRef)} icon={props.multiModels ? 'layers' : 'cpu'} onPress={() => setSheet('model')} maxWidth={props.leading ? 110 : 150} bg="transparent" />
 						{options.map(descriptor => {
 							const value = String(current[descriptor.id] ?? descriptor.options?.find(o => o.isDefault)?.value ?? '');
 							return <Pill key={descriptor.id} label={descriptor.options?.find(o => o.value === value)?.label ?? descriptor.label} onPress={() => setSheet(`option:${descriptor.id}`)} bg="transparent" maxWidth={90} />;
@@ -367,11 +392,13 @@ export function Composer(props: IComposerProps) {
 							<Icon name={accessIcon(access.id)} size={16} color={access.id === 'full-access' ? p.warning : p.fgTertiary} />
 						</Tap>
 					</ScrollView>
+					{props.contextUsed && props.contextWindow ? <ContextRing used={props.contextUsed} size={props.contextWindow} /> : null}
 					{dictation.available ? <MicButton listening={dictation.listening} onPress={() => dictation.listening ? dictation.stop() : void dictation.start(text)} /> : null}
 					<Animated.View style={sendScale}>
 						{showStop ? (
-							<Tap haptics="medium" onPress={props.onStop} accessibilityLabel="Stop" style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: p.fillStrong, alignItems: 'center', justifyContent: 'center' }}>
-								<Icon name="stop" size={13} color={p.fg} />
+							// agentEditor.css `.volt-agent-send.stop`: the near-white circle with a dark square.
+							<Tap haptics="medium" hitSlop={8} onPress={props.onStop} accessibilityLabel="Stop" style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: p.primary, alignItems: 'center', justifyContent: 'center' }}>
+								<View style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: p.onPrimary }} />
 							</Tap>
 						) : (
 							<Tap
@@ -384,16 +411,17 @@ export function Composer(props: IComposerProps) {
 									}
 								}}
 								accessibilityLabel={props.running ? 'Queue' : 'Send'}
-								style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: sendable ? tint.send : p.fill, alignItems: 'center', justifyContent: 'center' }}
+								hitSlop={8}
+								style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: sendable ? tint.send : p.fill, alignItems: 'center', justifyContent: 'center' }}
 							>
-								{uploading ? <ActivityIndicator size="small" color={p.fgTertiary} /> : <Icon name={props.running && sendable ? 'queue' : 'arrowUp'} size={18} color={sendable ? tint.onSend : p.fgQuaternary} strokeWidth={2.2} />}
+								{uploading ? <ActivityIndicator size="small" color={p.fgTertiary} /> : <Icon name={props.running && sendable ? 'queue' : 'arrowUp'} size={16} color={sendable ? tint.onSend : p.fgQuaternary} strokeWidth={2.4} />}
 							</Tap>
 						)}
 					</Animated.View>
 				</View>
 			</View>
 			<ActionSheet visible={!!actionSheet} onClose={() => setSheet(undefined)} title={sheetTitle} actions={actionSheet ? sheetActions() : []} />
-			<ModelSheet visible={sheet === 'model'} onClose={() => setSheet(undefined)} modelRef={props.modelRef} onPick={props.onModelChange} />
+			<ModelSheet visible={sheet === 'model'} onClose={() => setSheet(undefined)} modelRef={props.modelRef} onPick={props.onModelChange} multi={props.multiModels} onMultiChange={props.onMultiModelsChange} />
 			<McpSheet visible={sheet === 'mcp'} onClose={() => setSheet(undefined)} folder={props.folder} onMention={pickMcp} />
 		</View>
 	);
@@ -421,6 +449,27 @@ const ComposerThumb = memo(function ComposerThumb({ image, onRemove }: { readonl
 		</Animated.View>
 	);
 });
+
+/**
+ * How full the chat's context is (agentEditor.css `.volt-agent-context-meter`): a ring that fills
+ * as the context does, amber past 80% and red past 95%; tap for the numbers.
+ */
+function ContextRing({ used, size }: { readonly used: number; readonly size: number }) {
+	const { p } = useTheme();
+	const client = useClient();
+	const share = Math.min(1, used / size);
+	const r = 6.5;
+	const c = 2 * Math.PI * r;
+	const color = share > 0.95 ? p.danger : share > 0.8 ? p.warning : p.fgTertiary;
+	return (
+		<Tap hitSlop={8} haptics="selection" onPress={() => client.toast('info', `Context: ${compactNumber(used)} of ${compactNumber(size)} tokens (${Math.round(share * 100)}%)`)} accessibilityLabel={`Context ${Math.round(share * 100)} percent full`} style={{ width: 26, height: 30, alignItems: 'center', justifyContent: 'center' }}>
+			<Svg width={16} height={16} viewBox="0 0 16 16">
+				<Circle cx={8} cy={8} r={r} stroke={p.fillStrong} strokeWidth={2} fill="none" />
+				<Circle cx={8} cy={8} r={r} stroke={color} strokeWidth={2} fill="none" strokeDasharray={`${c * share} ${c}`} strokeLinecap="round" transform="rotate(-90 8 8)" />
+			</Svg>
+		</Tap>
+	);
+}
 
 /** The mic: dictates into the box; red and pulsing while it listens (tap again to stop). */
 function MicButton({ listening, onPress }: { readonly listening: boolean; readonly onPress: () => void }) {

@@ -3,10 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { type AccessMode, type ComposerMode, type IPromptAttachment, selectProjects, shortPath } from '@volt/client-core';
+import { type AccessMode, type ComposerMode, errorMessage, type IPromptAttachment, runSelectionProblem, selectProjects, shortPath, startRunGroup } from '@volt/client-core';
 import { useEffect, useMemo, useState } from 'react';
 import { useChatItems, useClient, useCollections, useRuntime, useStatus } from '../app/client';
-import { chatPath, navigate } from '../app/router';
+import { chatPath, comparePath, navigate } from '../app/router';
 import { Composer } from '../chat/Composer';
 import { Dialog, type IMenuItem, MenuButton } from '../ui/overlays';
 import { Button, Icon, IconButton, StatusIcon, VoltMark } from '../ui/primitives';
@@ -31,6 +31,8 @@ export function NewChat({ initialProjectId, compact, onStarted }: { readonly ini
 	const [mode, setMode] = useState<ComposerMode>('Agent');
 	const [modelRef, setModelRef] = useState<string | undefined>(undefined);
 	const [modelTouched, setModelTouched] = useState(false);
+	const [multi, setMulti] = useState<readonly string[] | undefined>();
+	const [starting, setStarting] = useState(false);
 	const [access, setAccess] = useState<AccessMode | undefined>(undefined);
 	const [adding, setAdding] = useState(false);
 
@@ -64,12 +66,31 @@ export function NewChat({ initialProjectId, compact, onStarted }: { readonly ini
 		} catch {
 			// private mode
 		}
+		if (multi) {
+			return compare(projectId, text, attachments);
+		}
 		const id = client.startChat({ projectId, text, mode, ...(effectiveModel ? { modelRef: effectiveModel } : {}), ...(access ? { accessMode: access } : {}), ...(attachments.length ? { attachments } : {}) });
 		if (onStarted) {
 			onStarted(id);
 		} else {
 			navigate(chatPath(id));
 		}
+		return true;
+	};
+
+	/** One prompt on every ticked model: a chat, branch and worktree each, then the comparison opens. */
+	const compare = (project: string, text: string, attachments: readonly IPromptAttachment[]) => {
+		const problem = runSelectionProblem(multi ?? []);
+		if (problem || starting) {
+			if (problem) {
+				client.toast('info', problem);
+			}
+			return false;
+		}
+		setStarting(true);
+		void startRunGroup(client, { projectId: project, text, mode, models: multi!, ...(access ? { accessMode: access } : {}), ...(attachments.length ? { attachments } : {}) })
+			.then(group => navigate(comparePath(group.id)), err => client.toast('error', `Could not start the runs: ${errorMessage(err)}`))
+			.finally(() => setStarting(false));
 		return true;
 	};
 
@@ -92,12 +113,14 @@ export function NewChat({ initialProjectId, compact, onStarted }: { readonly ini
 						setModelTouched(true);
 						setModelRef(ref);
 					}}
+					multiModels={multi}
+					onMultiModelsChange={setMulti}
 					accessMode={access ?? runtime.accessMode}
 					onAccessChange={setAccess}
 					onSend={(text, _delivery, attachments) => start(text, attachments)}
 					mentionRoot={project?.path}
 					acceptsInserts
-					placeholder={project ? `Ask Volt to work in ${project.name}… @ to mention a file` : 'Add a project to start'}
+					placeholder={!project ? 'Add a project to start' : multi ? `One prompt for ${multi.length} models in ${project.name}: each gets its own worktree` : `Ask Volt to work in ${project.name}… @ to mention a file`}
 					compact={compact}
 					disabled={!status.live && !status.ready}
 					leading={

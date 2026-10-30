@@ -1,0 +1,156 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Agent Resources: the resource tree and the files sidebar filter. */
+
+/* The tree: Explorer rows (file icons, indent guides), square. */
+.volt-agent-resource-tree .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-agent-resource-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	height: 22px;
+	min-width: 0;
+	padding-right: 10px;
+	font-size: 13px;
+}
+
+.volt-agent-resource-row > .monaco-icon-label {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-agent-resource-status {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+}
+
+.monaco-workbench .volt-agent-resource-status .codicon[class*='codicon-'] {
+	font-size: 13px;
+	width: 13px;
+	height: 13px;
+}
+
+.volt-agent-resource-status.warning .codicon {
+	color: var(--vscode-editorWarning-foreground, #e5a33a);
+}
+
+.volt-agent-resource-status.error .codicon {
+	color: var(--vscode-editorError-foreground, #e5534b);
+}
+
+/* Files sidebar: the spacer pushes the filter and the buttons after it to the far end. */
+.volt-agent-files-sidebar-spacer {
+	flex: 1;
+	align-self: stretch;
+}
+
+.monaco-workbench .volt-agent-files-sidebar-tab.filter {
+	position: relative;
+}
+
+/* A dot while a filter is on. */
+.volt-agent-files-sidebar-filter-dot {
+	display: none;
+	position: absolute;
+	top: 3px;
+	right: 3px;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	/* The page's ink, not an accent: a filter that is on reads like the white pills. */
+	background: var(--vscode-foreground);
+	box-shadow: 0 0 0 1.5px var(--volt-agent-window-bg-base, #161616);
+	pointer-events: none;
+}
+
+.volt-agent-files-sidebar-tab.filter.filtered > .volt-agent-files-sidebar-filter-dot {
+	display: block;
+}
+
+.monaco-workbench .volt-agent-files-sidebar-tab.filter.filtered {
+	color: var(--vscode-foreground);
+}
+
+/* The filtered Explorer covers the lent one, which stays lent underneath. */
+.volt-agent-files-resources {
+	display: none;
+}
+
+.volt-agent-files-sidebar-body.resource-filtered > :not(.volt-agent-files-resources) {
+	display: none !important;
+}
+
+.volt-agent-files-sidebar-body.resource-filtered > .volt-agent-files-resources {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	/* Opaque, like the tools area under it: a list scrolls here. */
+	background: var(--volt-agent-window-bg-base, var(--vscode-sideBar-background));
+}
+
+.volt-agent-files-resources-bar {
+	display: flex;
+	flex: 0 0 28px;
+	align-items: center;
+	gap: 6px;
+	box-sizing: border-box;
+	height: 28px;
+	padding: 0 6px 0 12px;
+	color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-foreground));
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+}
+
+.volt-agent-files-resources-icon {
+	display: inline-flex;
+	flex: none;
+}
+
+.volt-agent-files-resources-icon > svg {
+	width: 14px;
+	height: 14px;
+}
+
+.volt-agent-files-resources-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-files-resources-count {
+	flex: 1;
+	font-weight: 400;
+	font-variant-numeric: tabular-nums;
+	color: var(--vscode-descriptionForeground);
+}
+
+.monaco-workbench .volt-agent-files-resources-clear .codicon[class*='codicon-'] {
+	font-size: 14px;
+	width: 14px;
+	height: 14px;
+}
+
+.volt-agent-files-resources-empty {
+	padding: 8px 12px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-agent-files-resources-empty:empty {
+	display: none;
+}
+
+.volt-agent-files-resources-tree {
+	flex: 1 1 auto;
+	min-height: 0;
+}

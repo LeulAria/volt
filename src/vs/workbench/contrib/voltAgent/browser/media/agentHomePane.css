@@ -806,9 +806,18 @@
 	border: none !important;
 }
 
-/* Agent tab rows in flat lists start at the title (no glyph slot); the project is named on the
- * second line. Under a project the empty slot stays, so nested titles indent past their folder. */
+/* Agent tab rows start at the title (no glyph slot); a flat row names its project on the second line. */
 .volt-agent-home-row.is-session.no-glyph > .icon {
+	display: none;
+}
+
+/* Under a project the title steps in to where the folder's icon ends, short of the folder's name. Show more lines up. */
+.volt-agent-home-row.is-session.is-nested.no-glyph,
+.volt-agent-home-row.is-more.is-nested {
+	padding-left: calc(var(--volt-home-level, 0) * var(--volt-home-indent) + 10px);
+}
+
+.volt-agent-home-row.is-more.is-nested > .icon {
 	display: none;
 }
 
@@ -949,9 +958,11 @@
 	position: relative;
 }
 
+/* z-index: the chips paint over everything else in the row (unread dot, badge, age). */
 .volt-agent-home-row > .actions {
 	display: none;
 	position: absolute;
+	z-index: 1;
 	top: 50%;
 	right: 8px;
 	transform: translateY(-50%);
@@ -1042,7 +1053,7 @@
 	min-width: 200px;
 	padding: 0;
 	border-radius: 8px;
-	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	border: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 	background: var(--vscode-editor-background, #1e1e1e);
 	color: var(--vscode-menu-foreground, var(--vscode-foreground));
 	box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
@@ -1056,7 +1067,7 @@
 .monaco-workbench.hc-light .volt-agent-home-filter-menu,
 .monaco-workbench.vs .volt-agent-home-filter-flyout,
 .monaco-workbench.hc-light .volt-agent-home-filter-flyout {
-	border-color: var(--vscode-widget-border, rgba(0, 0, 0, 0.1));
+	border-color: var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
 }
 
 .volt-agent-home-filter-flyout.hidden {
@@ -1200,11 +1211,17 @@ html.volt-layout-agent-window body {
 	--volt-agent-window-bg-base: var(--vscode-sideBar-background, var(--vscode-titleBar-activeBackground, #141414));
 	/* 85% of the window shows; the desktop comes through the rest, like the sidebar. */
 	--volt-agent-window-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 85%, transparent);
-	--volt-agent-sidebar-bg: color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000) 55%, transparent);
-	--volt-agent-chat-bg: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
+	--volt-agent-sidebar-bg: color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000) 74%, transparent);
+	--volt-agent-chat-bg:var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
 	--volt-agent-titlebar-height: 35px;
 	background: transparent !important;
 	background-color: transparent !important;
+}
+
+/* High contrast themes draw a window border (window.activeBorder); the see-through window has its
+ * own native edge, and the extra line read as a frame around the glass. */
+.monaco-workbench.volt-layout-agent.border:not(.fullscreen) {
+	border: 0;
 }
 
 /* Full screen has no desktop behind the window, only the vibrancy material: the see-through
@@ -1212,6 +1229,36 @@ html.volt-layout-agent-window body {
 .monaco-workbench.volt-layout-agent.fullscreen {
 	--volt-agent-window-bg: var(--volt-agent-window-bg-base);
 	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000);
+}
+
+/* Light themes: the sidebar is a shade under the chat, not 22% black (that turned it a muddy grey),
+ * and the window fill is denser so the light glass does not wash the chat out. */
+.monaco-workbench.volt-layout-agent.vs,
+.monaco-workbench.volt-layout-agent.hc-light {
+	--volt-agent-window-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 92%, transparent);
+	--volt-agent-sidebar-bg: color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base) 95%, #000) 72%, transparent);
+}
+
+.monaco-workbench.volt-layout-agent.vs.fullscreen,
+.monaco-workbench.volt-layout-agent.hc-light.fullscreen {
+	--volt-agent-window-bg: var(--volt-agent-window-bg-base);
+	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 95%, #000);
+}
+
+/* Window transparency is opt-in (volt.appearance.windowTransparency, off by default: the material
+ * costs GPU memory). voltAgentWindowChrome.contribution.ts sets `volt-window-transparent` only while
+ * the native window is see-through; without it the window under the page is the opaque theme color,
+ * so the translucent fills above paint solid, as in full screen. Kept after the light-theme rules,
+ * whose specificity the dark rule shares. */
+.monaco-workbench.volt-layout-agent:not(.volt-window-transparent) {
+	--volt-agent-window-bg: var(--volt-agent-window-bg-base);
+	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000);
+}
+
+.monaco-workbench.volt-layout-agent.vs:not(.volt-window-transparent),
+.monaco-workbench.volt-layout-agent.hc-light:not(.volt-window-transparent) {
+	--volt-agent-window-bg: var(--volt-agent-window-bg-base);
+	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 95%, #000);
 }
 
 .monaco-workbench.volt-layout-agent .monaco-grid-view,
@@ -1612,6 +1659,12 @@ html.volt-layout-agent-window body {
 	color: #fff;
 }
 
+/* The bolt is a white bitmap: on light themes the mark and the wordmark flip to near black together. */
+.monaco-workbench.vs .volt-agent-brand-logo,
+.monaco-workbench.hc-light .volt-agent-brand-logo {
+	filter: invert(0.86);
+}
+
 .monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle:hover {
 	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 }
@@ -2006,10 +2059,18 @@ html.volt-layout-agent-window body {
 	display: none;
 }
 
-/* Under the hover actions the badge and age keep their space, so nothing shifts. */
+/* Under the hover actions the badge, age, settled row's PR pill and unread dot keep their space, so
+ * nothing shifts; the chips are see-through, so they would show through them. */
 .monaco-list-row:hover .volt-agent-home-row.is-session > .status-badge,
-.monaco-list-row:hover .volt-agent-home-row.is-session > .meta {
+.monaco-list-row:hover .volt-agent-home-row.is-session > .meta,
+.monaco-list-row:hover .volt-agent-home-row.is-session > .line-pr,
+.monaco-list-row:hover .volt-agent-home-row.is-session > .unread-dot {
 	visibility: hidden;
+}
+
+/* A dragged chat over a group that would take it (class set in agentHomePane.ts). */
+.volt-agent-home-tree .monaco-pane-view .pane.volt-agent-home-pane.drop-target {
+	background-color: var(--vscode-list-dropBackground);
 }
 
 .volt-agent-home-row > .status-badge.kind-input {

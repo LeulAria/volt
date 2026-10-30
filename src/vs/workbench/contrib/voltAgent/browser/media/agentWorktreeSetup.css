@@ -21,7 +21,7 @@
 .monaco-workbench.vs .volt-worktree-setup,
 .monaco-workbench.hc-light .volt-worktree-setup {
 	background: #ececec;
-	border: 1px solid rgba(0, 0, 0, 0.1);
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
 }
 
 .volt-worktree-setup.hidden {
@@ -89,7 +89,7 @@
 	height: 24px;
 	padding: 0 10px;
 	border-radius: 6px;
-	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.12));
+	border: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
 	background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
 	color: var(--vscode-foreground);
 	font: inherit;

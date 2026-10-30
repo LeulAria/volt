@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { IRenderTheme } from './client';
 import type { ComposerMode } from './types';
 import type { TokenKind } from './markdown/highlight';
 
@@ -14,8 +15,10 @@ import type { TokenKind } from './markdown/highlight';
  */
 export interface IVoltPalette {
 	readonly scheme: 'dark' | 'light';
-	/** The chat canvas (editor background). */
+	/** The chat canvas (the desktop's `--volt-agent-chat-bg`: the title bar's colour). */
 	readonly canvas: string;
+	/** Cards on the chat: edits, commands, diffs, code (`--volt-md-card-bg`: the editor background). */
+	readonly card: string;
 	/** Sidebars, headers, the home list. */
 	readonly sidebar: string;
 	/** Cards and rows on the canvas. */
@@ -31,6 +34,8 @@ export interface IVoltPalette {
 	readonly fgSecondary: string;
 	readonly fgTertiary: string;
 	readonly fgQuaternary: string;
+	/** Icons beside tertiary text (agentMarkdown.css `--volt-md-icon-tertiary`, 52%). */
+	readonly iconTertiary: string;
 	readonly stroke: string;
 	readonly strokeFaint: string;
 	readonly fill: string;
@@ -46,6 +51,9 @@ export interface IVoltPalette {
 	/** Primary buttons: the near-white (light: near-black) fill of Volt's setup steps. */
 	readonly primary: string;
 	readonly onPrimary: string;
+	/** An approval's Allow button (agentTranscript.css `.volt-approval-btn.primary`). */
+	readonly approve: string;
+	readonly onApprove: string;
 	readonly codeBg: string;
 	readonly diffAdded: string;
 	readonly diffRemoved: string;
@@ -58,8 +66,9 @@ export interface IVoltPalette {
 
 export const darkPalette: IVoltPalette = {
 	scheme: 'dark',
-	canvas: '#181818',
-	sidebar: '#141414',
+	canvas: '#141414',
+	card: '#181818',
+	sidebar: '#101010',
 	surface: '#1E1E1E',
 	raised: '#232323',
 	// The desktop's rgba(34,34,34,0.78) over the canvas: the composer and a sent prompt share it.
@@ -68,10 +77,11 @@ export const darkPalette: IVoltPalette = {
 	bubbleBorder: 'rgba(255,255,255,0.10)',
 	fg: '#F0F0F0',
 	fgSecondary: 'rgba(240,240,240,0.74)',
-	fgTertiary: 'rgba(240,240,240,0.56)',
+	fgTertiary: 'rgba(240,240,240,0.60)',
 	fgQuaternary: 'rgba(240,240,240,0.36)',
+	iconTertiary: 'rgba(240,240,240,0.52)',
 	stroke: 'rgba(240,240,240,0.12)',
-	strokeFaint: 'rgba(240,240,240,0.075)',
+	strokeFaint: 'rgba(240,240,240,0.08)',
 	fill: 'rgba(240,240,240,0.08)',
 	fillFaint: 'rgba(240,240,240,0.04)',
 	fillStrong: 'rgba(240,240,240,0.14)',
@@ -84,9 +94,11 @@ export const darkPalette: IVoltPalette = {
 	violet: '#AAA0FA',
 	primary: '#F0F0F0',
 	onPrimary: '#141414',
-	codeBg: '#141414',
-	diffAdded: 'rgba(63,162,102,0.18)',
-	diffRemoved: 'rgba(227,70,113,0.18)',
+	approve: '#599CE7',
+	onApprove: '#191C22',
+	codeBg: '#181818',
+	diffAdded: 'rgba(63,162,102,0.20)',
+	diffRemoved: 'rgba(184,0,73,0.20)',
 	diffAddedFg: '#70B489',
 	diffRemovedFg: '#FC6B83',
 	overlay: 'rgba(0,0,0,0.55)',
@@ -115,22 +127,24 @@ export const darkPalette: IVoltPalette = {
 
 export const lightPalette: IVoltPalette = {
 	scheme: 'light',
-	canvas: '#FCFCFC',
-	sidebar: '#F3F3F3',
+	canvas: '#F3F3F3',
+	card: '#FCFCFC',
+	sidebar: '#E7E7E7',
 	surface: '#FFFFFF',
 	raised: '#FFFFFF',
-	// The desktop's rgba(236,236,236,0.82) over the canvas.
-	composer: '#EFEFEF',
-	bubble: '#EFEFEF',
+	// Volt Light's composer is white (rgba(255,255,255,0.94)); a sent prompt is rgba(236,236,236,0.82) over the chat.
+	composer: '#FFFFFF',
+	bubble: '#EDEDED',
 	bubbleBorder: 'rgba(0,0,0,0.12)',
 	fg: '#141414',
 	fgSecondary: 'rgba(20,20,20,0.74)',
-	fgTertiary: 'rgba(20,20,20,0.56)',
+	fgTertiary: 'rgba(20,20,20,0.60)',
 	fgQuaternary: 'rgba(20,20,20,0.36)',
+	iconTertiary: 'rgba(20,20,20,0.52)',
 	stroke: 'rgba(20,20,20,0.12)',
-	strokeFaint: 'rgba(20,20,20,0.07)',
-	fill: 'rgba(20,20,20,0.06)',
-	fillFaint: 'rgba(20,20,20,0.03)',
+	strokeFaint: 'rgba(20,20,20,0.08)',
+	fill: 'rgba(20,20,20,0.08)',
+	fillFaint: 'rgba(20,20,20,0.04)',
 	fillStrong: 'rgba(20,20,20,0.10)',
 	accent: '#2778C1',
 	link: '#0064B0',
@@ -141,9 +155,11 @@ export const lightPalette: IVoltPalette = {
 	violet: '#654DC0',
 	primary: '#141414',
 	onPrimary: '#FCFCFC',
-	codeBg: '#F5F5F5',
-	diffAdded: 'rgba(0,112,65,0.12)',
-	diffRemoved: 'rgba(190,23,68,0.10)',
+	approve: '#2778C1',
+	onApprove: '#FFFFFF',
+	codeBg: '#FCFCFC',
+	diffAdded: 'rgba(0,175,102,0.14)',
+	diffRemoved: 'rgba(255,97,123,0.22)',
 	diffAddedFg: '#007041',
 	diffRemovedFg: '#BE1744',
 	overlay: 'rgba(0,0,0,0.30)',
@@ -173,17 +189,19 @@ export const lightPalette: IVoltPalette = {
 /** Volt Dark Midnight: the Nord-blue dark theme (cursor-dark-midnight-color-theme.json). */
 export const midnightPalette: IVoltPalette = {
 	...darkPalette,
-	canvas: '#1E2127',
-	sidebar: '#191C22',
+	canvas: '#191C22',
+	card: '#1E2127',
+	sidebar: '#14161B',
 	surface: '#232730',
 	raised: '#272C36',
-	composer: '#242832',
-	bubble: '#242832',
-	bubbleBorder: 'rgba(216,222,233,0.10)',
-	fg: '#D8DEE9',
-	fgSecondary: 'rgba(216,222,233,0.76)',
-	fgTertiary: 'rgba(216,222,233,0.56)',
-	fgQuaternary: 'rgba(216,222,233,0.36)',
+	composer: '#23262C',
+	bubble: '#23262C',
+	bubbleBorder: 'rgba(201,209,222,0.10)',
+	fg: '#C9D1DE',
+	fgSecondary: 'rgba(201,209,222,0.74)',
+	fgTertiary: 'rgba(201,209,222,0.60)',
+	fgQuaternary: 'rgba(201,209,222,0.36)',
+	iconTertiary: 'rgba(201,209,222,0.52)',
 	stroke: 'rgba(255,255,255,0.09)',
 	strokeFaint: 'rgba(255,255,255,0.05)',
 	fill: 'rgba(216,222,233,0.07)',
@@ -198,7 +216,7 @@ export const midnightPalette: IVoltPalette = {
 	violet: '#B48EAD',
 	primary: '#88C0D0',
 	onPrimary: '#191C22',
-	codeBg: '#191C22',
+	codeBg: '#1E2127',
 	diffAddedFg: '#A3BE8C',
 	diffRemovedFg: '#BF616A',
 	diffAdded: 'rgba(163,190,140,0.16)',
@@ -209,15 +227,17 @@ export const midnightPalette: IVoltPalette = {
 export const contrastPalette: IVoltPalette = {
 	...darkPalette,
 	canvas: '#0A0A0A',
-	sidebar: '#0A0A0A',
+	card: '#0A0A0A',
+	sidebar: '#000000',
 	surface: '#141414',
 	raised: '#1A1A1A',
-	composer: '#161616',
-	bubble: '#161616',
+	composer: '#171717',
+	bubble: '#171717',
 	bubbleBorder: 'rgba(240,240,240,0.22)',
 	fgSecondary: 'rgba(240,240,240,0.86)',
 	fgTertiary: 'rgba(240,240,240,0.70)',
 	fgQuaternary: 'rgba(240,240,240,0.50)',
+	iconTertiary: 'rgba(240,240,240,0.66)',
 	stroke: 'rgba(240,240,240,0.24)',
 	strokeFaint: 'rgba(240,240,240,0.14)',
 	fill: 'rgba(240,240,240,0.10)',
@@ -297,13 +317,18 @@ export function statusColor(tone: StatusTone, palette: IVoltPalette): string {
 	}
 }
 
-/** Type scale (size / line height), one step larger on phones than the desktop's 14/22 body. */
+/**
+ * Type scale (size / line height). The transcript uses the desktop's own: replies and prompts at
+ * 14/22 (agentMarkdown.css `.volt-agent-reply`), work log rows at 13/22 (agentTranscript.css).
+ */
 export const TYPE = {
 	caption: { size: 11, line: 14 },
 	footnote: { size: 12, line: 16 },
 	small: { size: 13, line: 18 },
+	/** A work log row: "Explored 3 files". */
+	step: { size: 13, line: 22 },
 	body: { size: 14, line: 22 },
-	reading: { size: 15, line: 23 },
+	reading: { size: 14, line: 22 },
 	callout: { size: 16, line: 22 },
 	title3: { size: 17, line: 22 },
 	title2: { size: 20, line: 25 },
@@ -319,3 +344,8 @@ export const MOTION = { fast: 120, base: 180, entrance: 220, pane: 260 } as cons
 
 export const FONT_MONO_STACK = '"Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
 export const FONT_UI_STACK = '-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, Roboto, sans-serif';
+
+/** The colors a page drawn on the server (a diagram, a formula, an agent's page) takes to match the app. */
+export function renderThemeFor(p: IVoltPalette): IRenderTheme {
+	return { kind: p.scheme, background: p.canvas, foreground: p.fg, muted: p.fgSecondary, border: p.stroke, accent: p.link, surface: p.surface, code: p.codeBg };
+}

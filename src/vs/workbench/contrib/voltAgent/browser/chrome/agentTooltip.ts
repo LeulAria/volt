@@ -25,6 +25,13 @@ export interface IAgentTooltipRow {
 	value?: string;
 	/** Card rows only: a hairline above the row. */
 	separator?: boolean;
+	/** Card rows only, without an icon: the label is a block of text that keeps its line breaks (a commit body). */
+	body?: boolean;
+	/**
+	 * Card rows only: a block the caller draws in place of the row (a list widget, such as a
+	 * chat's pull requests). Disposed when the card hides or draws again.
+	 */
+	render?: (parent: HTMLElement) => IDisposable;
 	onClick?: () => void;
 }
 
@@ -41,6 +48,13 @@ export interface IAgentTooltipShowOptions {
 	delay?: number;
 	/** A click anywhere on the tooltip runs this; it stays open while the pointer crosses to it. */
 	onClick?: () => void;
+	/**
+	 * It stays open while the pointer crosses to it, to scroll or select its text. A function is
+	 * asked when the pointer leaves (whether a row has pull requests is known only once they load).
+	 */
+	interactive?: boolean | (() => boolean);
+	/** Long text stops at 300px and ends in an ellipsis (a whole queued prompt, say). */
+	clamp?: boolean;
 }
 
 export interface IAgentTooltipShortcut {
@@ -103,6 +117,10 @@ export class AgentTooltip extends Disposable {
 	private anchor: HTMLElement | undefined;
 	/** What a click on the shown tooltip runs ({@link IAgentTooltipShowOptions.onClick}). */
 	private click: (() => void) | undefined;
+	/** The options the tooltip on screen was shown with; undefined while hidden. */
+	private shownOptions: IAgentTooltipShowOptions | undefined;
+	/** Blocks drawn by card rows ({@link IAgentTooltipRow.render}). */
+	private readonly rendered = this._register(new DisposableStore());
 
 	constructor() {
 		super();
@@ -136,14 +154,19 @@ export class AgentTooltip extends Disposable {
 
 	show(anchor: HTMLElement, rows: readonly IAgentTooltipRow[], options?: IAgentTooltipShowOptions): void {
 		this.anchor = anchor;
+		this.shownOptions = options ?? {};
+		this.rendered.clear();
 		this.domNode.replaceChildren();
 		this.domNode.classList.toggle('pill', options?.variant === 'pill');
 		this.domNode.classList.toggle('files', options?.variant === 'files');
 		this.domNode.classList.toggle('card', options?.variant === 'card');
 		this.domNode.classList.toggle('beside', options?.placement === 'start' || options?.placement === 'end');
 		this.domNode.classList.toggle('compact', anchor.getAttribute('data-volt-tooltip-compact') === '1');
+		this.domNode.classList.toggle('clamped', !!options?.clamp);
 		this.click = options?.onClick;
 		this.domNode.classList.toggle('clickable', !!this.click);
+		// A drawn block (a list) has no width of its own: the card takes its full width instead.
+		this.domNode.classList.toggle('has-block', options?.variant === 'card' && rows.some(row => !!row.render));
 		for (const row of rows) {
 			if (options?.variant === 'card') {
 				this.renderCardRow(row);
@@ -230,7 +253,9 @@ export class AgentTooltip extends Disposable {
 	hide(): void {
 		this.cancelScheduledShow();
 		this.anchor = undefined;
+		this.shownOptions = undefined;
 		this.domNode.classList.add('hidden');
+		this.rendered.clear();
 	}
 
 	bind(anchor: HTMLElement, getRows: () => readonly IAgentTooltipRow[], options?: IAgentTooltipShowOptions): IDisposable {
@@ -241,7 +266,10 @@ export class AgentTooltip extends Disposable {
 			clearTimer();
 			this.cancelScheduledShow();
 			// Room to cross the gap to a tooltip the pointer can use (a file list, a clickable card).
-			if (options?.variant === 'files' || options?.onClick) {
+			// The card on screen decides: crossing another row on the way to it must not close it.
+			const shown = this.shownOptions ?? options;
+			const interactive = typeof shown?.interactive === 'function' ? shown.interactive() : shown?.interactive;
+			if (shown?.variant === 'files' || shown?.onClick || interactive) {
 				this.hideWindow = win;
 				this.hideHandle = win.setTimeout(() => {
 					this.hideHandle = undefined;
@@ -299,6 +327,14 @@ export class AgentTooltip extends Disposable {
 	private renderCardRow(row: IAgentTooltipRow): void {
 		if (row.separator) {
 			append(this.domNode, $('.volt-agent-tooltip-card-sep'));
+		}
+		if (row.render) {
+			this.rendered.add(row.render(append(this.domNode, $('.volt-agent-tooltip-card-block'))));
+			return;
+		}
+		if (row.body && !row.icon) {
+			append(this.domNode, $('.volt-agent-tooltip-card-body')).textContent = row.label;
+			return;
 		}
 		if (!row.icon && (row.value !== undefined || row.shortcut)) {
 			const line = append(this.domNode, $('.volt-agent-tooltip-card-line'));
@@ -396,7 +432,7 @@ function ensureTooltipDelegate(doc: Document): ITooltipDelegate {
 		if (target === delegate!.current) {
 			return;
 		}
-		if (!target && (e.target as Element | null)?.closest?.('.volt-agent-tooltip')) {
+		if (!target && (e.target as Element | null)?.closest?.('.volt-agent-tooltip') === delegate!.tooltip.domNode) {
 			return;
 		}
 		delegate!.current = target ?? undefined;
@@ -407,7 +443,8 @@ function ensureTooltipDelegate(doc: Document): ITooltipDelegate {
 		}
 	}, true);
 	doc.addEventListener('mousedown', e => {
-		const onTooltip = (e.target as Element | null)?.closest?.('.volt-agent-tooltip');
+		// Only this delegate's tooltip: a click on another card (a chat's pull requests) is that card's own.
+		const onTooltip = (e.target as Element | null)?.closest?.('.volt-agent-tooltip') === delegate!.tooltip.domNode;
 		if (onTooltip && delegate!.current) {
 			e.preventDefault();
 			e.stopPropagation();
@@ -427,6 +464,9 @@ function ensureTooltipDelegate(doc: Document): ITooltipDelegate {
  * Show the shared tooltip only when `element` is ellipsis-truncated, and only
  * after the pointer has stayed on it for `delayMs`.
  */
+/** More than a 300px clamped tooltip can show. */
+const TRUNCATED_HOVER_MAX_CHARS = 1500;
+
 export function bindTruncatedHoverTooltip(element: HTMLElement, text: string, delayMs = 1000): IDisposable {
 	const store = new DisposableStore();
 	const win = getWindow(element);
@@ -457,7 +497,8 @@ export function bindTruncatedHoverTooltip(element: HTMLElement, text: string, de
 			element.setAttribute(TOOLTIP_ATTR, text);
 			element.removeAttribute('title');
 			delegate.current = element;
-			delegate.tooltip.show(element, [{ label: text }]);
+			// The box shows at most 300px of it; no need to lay out a whole pasted document.
+			delegate.tooltip.show(element, [{ label: text.length > TRUNCATED_HOVER_MAX_CHARS ? `${text.slice(0, TRUNCATED_HOVER_MAX_CHARS)}…` : text }], { clamp: true });
 		}, delayMs);
 	}));
 	store.add(addDisposableListener(element, 'mouseleave', hide));

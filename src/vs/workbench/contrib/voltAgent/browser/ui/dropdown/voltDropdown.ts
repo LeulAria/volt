@@ -32,6 +32,8 @@ export interface IVoltDropdownOptions<T extends string> {
 	readonly align?: 'left' | 'right';
 	/** Menu width; defaults to the trigger's width, at least 220. */
 	readonly width?: number;
+	/** A fixed glyph at the start of the trigger, whatever is picked (a filter's funnel). */
+	readonly leadingIcon?: IVoltDropdownOption<string>['icon'];
 }
 
 export interface IVoltDropdown<T extends string> {
@@ -64,7 +66,7 @@ export function createVoltDropdown<T extends string>(parent: HTMLElement, contex
 		element.replaceChildren();
 		const option = options.options.find(o => o.id === current) ?? options.options[0];
 		element.classList.toggle('danger', !!option?.danger);
-		drawIcon(element, option?.icon);
+		drawIcon(element, options.leadingIcon ?? option?.icon);
 		append(element, $('span.volt-dropdown-label')).textContent = option?.label ?? '';
 		const chevron = renderIcon(Codicon.chevronDown);
 		chevron.classList.add('volt-dropdown-chevron');

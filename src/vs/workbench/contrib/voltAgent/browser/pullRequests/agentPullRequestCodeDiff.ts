@@ -5,10 +5,12 @@
 
 import { $, addDisposableListener, append, Dimension } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Limiter } from '../../../../../base/common/async.js';
+import { Limiter, RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Emitter, ValueWithChangeEvent } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { transaction } from '../../../../../base/common/observable.js';
+import { isDefined } from '../../../../../base/common/types.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { RefCounted } from '../../../../../editor/browser/widget/diffEditor/utils.js';
 import { IDocumentDiffItem, IMultiDiffEditorModel } from '../../../../../editor/browser/widget/multiDiffEditor/model.js';
@@ -36,6 +38,9 @@ export const PR_CODE_SCHEME = 'volt-agent-pr-code';
 const LARGE_FILE_LINES = 400;
 /** Blob reads running at once. */
 const READ_CONCURRENCY = 6;
+/** How long the first files read wait for more before they show, then the wait between batches. */
+const FIRST_PUBLISH_DELAY_MS = 16;
+const PUBLISH_INTERVAL_MS = 150;
 
 export type PrCodeFile = Pick<IVoltPrFilePatch, 'path' | 'previousPath' | 'change' | 'additions' | 'deletions' | 'patch' | 'blob'>;
 
@@ -88,8 +93,12 @@ export class AgentPullRequestCodeDiff extends Disposable {
 	private readonly modifiedModels = new Map<string, ITextModel>();
 	private readonly markerIds = new Map<ITextModel, string[]>();
 	private findings: readonly IReviewFinding[] = [];
+	/** Files of the current source are still being read. */
+	private reading = false;
+	/** A file asked for by {@link reveal} before it was read. */
+	private pendingReveal: string | undefined;
 	private readonly _onDidLoad = this._register(new Emitter<void>());
-	/** Fires when the files of a new source are read (or failed to). */
+	/** Fires as files of a new source show (they come in batches) and once all are read (or failed to). */
 	readonly onDidLoad = this._onDidLoad.event;
 
 	constructor(
@@ -134,6 +143,7 @@ export class AgentPullRequestCodeDiff extends Disposable {
 		this.loadStore.clear();
 		this.modifiedModels.clear();
 		this.markerIds.clear();
+		this.pendingReveal = undefined;
 		void this.load(source, ++this.loadSeq);
 	}
 
@@ -143,8 +153,13 @@ export class AgentPullRequestCodeDiff extends Disposable {
 		this.markFindings();
 	}
 
-	private markFindings(): void {
-		for (const [path, model] of this.modifiedModels) {
+	/** Marks the new side of `paths` (default: every loaded file). */
+	private markFindings(paths: Iterable<string> = this.modifiedModels.keys()): void {
+		for (const path of paths) {
+			const model = this.modifiedModels.get(path);
+			if (!model) {
+				continue;
+			}
 			const decorations = this.findings
 				.filter(finding => finding.file === path && finding.state === 'open' && finding.line >= 1 && finding.line <= model.getLineCount())
 				.map(finding => ({
@@ -186,9 +201,11 @@ export class AgentPullRequestCodeDiff extends Disposable {
 		item?.collapsed.set(collapsed, undefined);
 	}
 
+	/** Scrolls to `path`, once it is read if it is not yet. */
 	reveal(path: string): void {
 		const item = this.itemFor(path);
 		if (!item) {
+			this.pendingReveal = this.reading ? path : undefined;
 			return;
 		}
 		item.collapsed.set(false, undefined);
@@ -199,25 +216,69 @@ export class AgentPullRequestCodeDiff extends Disposable {
 		return this.viewModel.value?.items.get().find(item => (item.modifiedUri ?? item.originalUri)?.path === `/${path}`);
 	}
 
+	/**
+	 * Reads every file, a few at a time in the list's order, and shows them as they come: the first
+	 * ones at once, the rest in batches (each batch lays out every file again).
+	 */
 	private async load(source: IPrCodeDiffSource, seq: number): Promise<void> {
 		const store = this.loadStore;
 		const limiter = new Limiter<string | undefined>(READ_CONCURRENCY);
 		const files = source.files.filter(canShowInCodeDiff);
-		const texts = await Promise.all(files.map(file => file.blob
-			? limiter.queue(() => this.pullRequests.api.readBlob({ repo: source.repo, sha: file.blob!, ...(source.folder ? { folder: source.folder } : {}) }).catch(() => undefined))
-			: Promise.resolve(file.change === 'deleted' ? '' : undefined)));
-		limiter.dispose();
-		if (seq !== this.loadSeq) {
-			return;
-		}
-		const documents: RefCounted<IDocumentDiffItem>[] = [];
-		const failed: string[] = [];
-		files.forEach((file, index) => {
-			const modifiedText = texts[index];
+		const documents: (RefCounted<IDocumentDiffItem> | undefined)[] = new Array(files.length);
+		const failed: boolean[] = new Array(files.length).fill(false);
+		const shown: boolean[] = new Array(files.length).fill(false);
+		let published = false;
+		const publish = () => {
+			if (seq !== this.loadSeq) {
+				return;
+			}
+			const fold = new Set<string>();
+			const added: string[] = [];
+			files.forEach((file, index) => {
+				if (shown[index] || !documents[index]) {
+					return;
+				}
+				shown[index] = true;
+				// Viewed files and long ones start folded, as on GitHub.
+				if (this.delegate.viewed(file.path) || file.additions + file.deletions > LARGE_FILE_LINES) {
+					fold.add(file.path);
+				}
+				added.push(file.path);
+			});
+			this.failed = files.filter((_, index) => failed[index]).map(file => file.path);
+			this.documents.value = documents.filter(isDefined);
+			published = true;
+			this.markFindings(added);
+			if (fold.size) {
+				transaction(tx => {
+					for (const item of this.viewModel.value?.items.get() ?? []) {
+						const path = (item.modifiedUri ?? item.originalUri)?.path.slice(1);
+						if (path && fold.has(path)) {
+							item.collapsed.set(true, tx);
+						}
+					}
+				});
+			}
+			if (this.pendingReveal && this.itemFor(this.pendingReveal)) {
+				const path = this.pendingReveal;
+				this.pendingReveal = undefined;
+				this.reveal(path);
+			}
+			this._onDidLoad.fire();
+		};
+		const batches = store.add(new RunOnceScheduler(publish, PUBLISH_INTERVAL_MS));
+		this.reading = true;
+		await Promise.all(files.map(async (file, index) => {
+			const modifiedText = file.blob
+				? await limiter.queue(() => this.pullRequests.api.readBlob({ repo: source.repo, sha: file.blob!, ...(source.folder ? { folder: source.folder } : {}) }).catch(() => undefined))
+				: file.change === 'deleted' ? '' : undefined;
+			if (seq !== this.loadSeq) {
+				return;
+			}
 			const originalText = modifiedText === undefined ? undefined
 				: file.patch ? originalFromPatch(modifiedText, file.patch) : modifiedText;
 			if (modifiedText === undefined || originalText === undefined) {
-				failed.push(file.path);
+				failed[index] = true;
 				return;
 			}
 			const original = file.change === 'added' ? undefined : this.createModel(source, file.previousPath ?? file.path, 'original', originalText, store);
@@ -230,18 +291,20 @@ export class AgentPullRequestCodeDiff extends Disposable {
 				modified,
 				renderHeaderExtras: container => this.renderHeaderExtras(container, file),
 			};
-			documents.push(RefCounted.createOfNonDisposable(item, toDisposable(() => { /* the models live in loadStore */ }), this));
-		});
-		this.failed = failed;
-		this.documents.value = documents;
-		this.markFindings();
-		// Viewed files and long ones start folded, as on GitHub.
-		for (const file of files) {
-			if (this.delegate.viewed(file.path) || file.additions + file.deletions > LARGE_FILE_LINES) {
-				this.setCollapsed(file.path, true);
+			documents[index] = RefCounted.createOfNonDisposable(item, toDisposable(() => { /* the models live in loadStore */ }), this);
+			if (!batches.isScheduled()) {
+				batches.schedule(published ? PUBLISH_INTERVAL_MS : FIRST_PUBLISH_DELAY_MS);
 			}
+		}));
+		limiter.dispose();
+		if (seq !== this.loadSeq) {
+			return;
 		}
-		this._onDidLoad.fire();
+		batches.cancel();
+		this.reading = false;
+		publish();
+		// A file that was not read (or not in this source) is not coming.
+		this.pendingReveal = undefined;
 	}
 
 	private createModel(source: IPrCodeDiffSource, path: string, side: 'original' | 'modified', text: string, store: DisposableStore): ITextModel {

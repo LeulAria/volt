@@ -489,6 +489,36 @@ code, pre, kbd { font-family: var(--font-mono); }
 .todo-current .todo-mark { border-color: var(--info); }
 .todo-pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--info); animation: pulse 1.2s ease-in-out infinite; }
 
+/* Proof of done: the receipt card under a run's answer. */
+.row-receipt { display: flex; flex-direction: column; gap: 2px; }
+.receipt-head { margin-bottom: 4px; }
+.receipt-meta { margin-left: auto; min-width: 0; color: var(--fg3); font-weight: 400; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-receipt .tone-success { color: var(--success); }
+.row-receipt .tone-danger { color: var(--danger); }
+.row-receipt .tone-warning { color: var(--warning); }
+.row-receipt .tone-muted { color: var(--fg4); }
+.receipt-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.receipt-line { display: flex; align-items: flex-start; gap: 8px; min-width: 0; font-size: 13px; line-height: 19px; }
+.receipt-mark { display: grid; place-items: center; width: 15px; height: 19px; flex: none; }
+.receipt-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.receipt-text { color: var(--fg); overflow-wrap: anywhere; }
+.status-missing .receipt-text, .status-unavailable .receipt-text { color: var(--fg3); }
+.receipt-proof { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12px; color: var(--fg3); }
+.receipt-command { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 5px; border: 0; border-radius: 4px; background: var(--fill); color: var(--fg); font: 11px/17px var(--font-mono, ui-monospace, monospace); cursor: pointer; }
+.receipt-command:hover { background: var(--fill-strong); }
+.receipt-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-failed .receipt-detail { color: var(--fg2); }
+.receipt-section { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--stroke-faint); font-size: 13px; }
+.receipt-label { color: var(--fg3); font-size: 12px; }
+.receipt-note { color: var(--fg); overflow-wrap: anywhere; }
+.receipt-gap::before { content: '\2013\00a0'; color: var(--fg3); }
+.receipt-files { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--stroke-faint); }
+.receipt-files .receipt-label { margin-right: 2px; }
+.receipt-file { max-width: 220px; height: 20px; padding: 0 6px; border: 0; border-radius: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 20px; color: var(--fg3); background: var(--fill); }
+button.receipt-file { cursor: pointer; }
+button.receipt-file:hover { color: var(--fg); }
+.receipt-more { font-size: 12px; color: var(--fg4); }
+
 .row-chart { display: flex; flex-direction: column; gap: 6px; }
 .bar { display: grid; grid-template-columns: minmax(60px, 140px) 1fr auto; gap: 10px; align-items: center; font-size: 12px; }
 .bar-label { color: var(--fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -599,6 +629,16 @@ code, pre, kbd { font-family: var(--font-mono); }
 .queue-item .icon-btn { width: 26px; height: 26px; }
 .queue-clear { width: 100%; height: 28px; font-size: 12px; color: var(--fg3); border-radius: 7px; }
 .queue-clear:hover { color: var(--danger); background: var(--fill-faint); }
+.queue-text { text-align: left; color: var(--fg); padding: 5px 0; cursor: text; }
+.queue-held { margin-left: 8px; font-size: 11px; color: var(--info, var(--accent)); }
+.queue-item.held .queue-text { color: var(--fg3); }
+.queue-item .icon-btn:disabled { opacity: 0.3; pointer-events: none; }
+.queue-edit { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px; background: var(--fill-faint); }
+.queue-edit-label { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--accent); }
+.queue-edit-input { width: 100%; resize: none; border-radius: 8px; border: 1px solid var(--stroke); background: var(--surface); color: var(--fg); font: inherit; font-size: 13px; line-height: 1.45; padding: 7px 9px; outline: none; }
+.queue-edit-input:focus { border-color: var(--accent); }
+.queue-edit-actions { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.queue-edit-hint { flex: 1; font-size: 11px; color: var(--fg4); }
 
 /* The composer (agentComposerInput.css): 12px box on the canvas, mode-tinted send button. */
 .composer {
@@ -954,3 +994,24 @@ code, pre, kbd { font-family: var(--font-mono); }
 @media (hover: none) {
 	.density-preview { position: static; width: auto; margin-top: 10px; opacity: 1; transform: none; box-shadow: none; }
 }
+
+/* Server-drawn visuals (Visuals.tsx): agents' pages and charts, diagrams, math. */
+.rich-card { margin: 8px 0 12px; border-radius: 12px; border: 1px solid var(--stroke); background: var(--canvas); overflow: hidden; }
+.rich-card-code { background: var(--code-bg); }
+.rich-head { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--stroke-faint); color: var(--fg3); }
+.rich-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 500; color: var(--fg2); }
+.rich-action { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--fg3); cursor: pointer; }
+.rich-action:hover { background: var(--fill); color: var(--fg); }
+.rich-body { padding: 8px 10px; }
+.rich-frame { display: block; width: 100%; border: 0; background: transparent; }
+.rich-full { height: min(78vh, 900px); }
+.rich-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--fg3); font-size: 12.5px; }
+.rich-note { display: flex; flex-direction: column; gap: 4px; padding: 4px 2px; font-size: 13px; }
+.rich-muted { color: var(--fg3); }
+.rich-more { display: block; width: 100%; height: 34px; margin-top: 4px; border: 0; border-top: 1px solid var(--stroke-faint); background: transparent; color: var(--fg2); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.md-math-block { margin: 6px 0 10px; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.md-math-block .katex-display { margin: 0.4em 0; }
+.md-math-inline .katex { font-size: 1.05em; }
+.md-math-text { font-family: "Times New Roman", serif; }
+.md-image-missing { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--stroke-faint); background: var(--fill-faint); color: var(--fg2); font-size: 12.5px; text-decoration: none; }
+.md-image-missing:hover { color: var(--fg); background: var(--fill); }

@@ -1,0 +1,58 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Compare models (run groups): one column per run, stacked on narrow screens. */
+
+.compare { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: auto; background: var(--canvas); }
+.compare-header { display: flex; align-items: center; gap: 8px; padding: 14px 20px 10px; position: sticky; top: 0; z-index: 1; background: var(--canvas); border-bottom: 1px solid var(--stroke-faint); }
+.compare-heading { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.compare-title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compare-sub { display: flex; align-items: center; gap: 12px; color: var(--fg3); font-size: 12px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.compare-sub > span { display: inline-flex; align-items: center; gap: 5px; }
+.compare-winner { display: flex; align-items: center; gap: 8px; margin: 14px 20px 0; padding: 10px 12px; border-radius: 10px; font-size: 13px; font-weight: 600; color: var(--success); background: color-mix(in srgb, var(--success) 10%, transparent); border: 1px solid color-mix(in srgb, var(--success) 30%, transparent); }
+.compare-runs { display: grid; grid-template-columns: repeat(var(--runs), minmax(260px, 1fr)); gap: 12px; padding: 14px 20px 20px; align-items: start; overflow-x: auto; }
+.compare-note { padding: 0 20px 20px; color: var(--fg4); font-size: 12px; text-align: center; }
+
+.compare-run { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--stroke); min-width: 0; }
+.compare-run.winner { border-color: color-mix(in srgb, var(--success) 70%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--success) 40%, transparent); }
+.run-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.run-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.run-model { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-winner-tag { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+.run-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.run-branch { display: flex; align-items: center; gap: 5px; color: var(--fg3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-metrics { display: grid; grid-template-columns: repeat(5, 1fr); margin: 0; padding: 8px 4px; border-radius: 9px; background: var(--fill-faint); }
+.run-metrics > div { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
+.run-metrics dt { color: var(--fg4); font-size: 11px; }
+.run-metrics dd { margin: 0; font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.run-metrics .add { color: var(--diff-add-fg); }
+.run-metrics .del { color: var(--diff-del-fg); }
+.run-reply { color: var(--fg2); font-size: 13px; line-height: 19px; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.run-reply.empty { color: var(--fg4); }
+.run-error { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 9px; font-size: 12.5px; color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, transparent); }
+.run-error pre { margin: 0; color: var(--fg3); font-size: 11px; white-space: pre-wrap; max-height: 90px; overflow: auto; }
+.run-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.run-actions .spacer { flex: 1; }
+
+.winner-actions { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.winner-action { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 10px; border-radius: 8px; color: var(--fg2); font-size: 13px; text-align: left; }
+.winner-action:hover { background: var(--fill-faint); color: var(--fg); }
+.winner-action.checked { background: var(--fill); color: var(--fg); font-weight: 600; }
+.winner-action > span { flex: 1; }
+.winner-check { color: var(--accent); }
+.winner-remove { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: var(--fg2); cursor: pointer; }
+
+/* A chat that is one run of a comparison. */
+.compare-chip { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 6px; background: var(--fill); color: var(--fg2); font-size: 11.5px; font-weight: 500; cursor: pointer; }
+.compare-chip:hover { background: var(--fill-strong); color: var(--fg); }
+
+@media (max-width: 899px) {
+	.compare-header { padding: 10px 12px; }
+	.compare-runs { grid-template-columns: 1fr; padding: 12px; }
+	.compare-winner { margin: 12px 12px 0; }
+}
+@media (min-width: 900px) {
+	.compare-header .back-btn { display: none; }
+}

@@ -61,6 +61,7 @@ import { formatLineCount, guessPastedLanguage, pastedFileName } from '../../comm
 import { AGENT_LARGE_PASTE_SETTING } from '../../common/agentComposerSettings.js';
 import { PastedTextPreview } from './agentPastedTextPreview.js';
 import { AgentImageStrip, formatImageSize, imageExtension, imageThumbClass } from './agentImageAttachments.js';
+import { fitImageStripToOneRow } from '../editor/agentMessageImageRow.js';
 import { AgentImageViewer, showAgentImageViewer } from './agentImageViewer.js';
 import { citationLabel, IAgentCitation, serializeChatSelection, withCitationComment } from './agentCitation.js';
 import { showCitationCommentEditor } from './agentCitationComment.js';
@@ -75,6 +76,7 @@ import { boardDisplayTitle } from '../../common/scratchBoard/scratchIndex.js';
 import { IScratchBoardService } from '../scratchBoard/scratchBoardService.js';
 import { OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, OPEN_SCRATCH_BOARD_COMMAND_ID } from '../scratchBoard/scratchBoardInput.js';
 import { OPEN_CANVAS_COMMAND_ID } from '../visuals/canvas/canvasCard.js';
+import { REVEAL_BROWSER_ELEMENT_COMMAND_ID } from '../preview/browserCommentStore.js';
 import { IVoltCanvasService } from '../visuals/canvas/canvasService.js';
 import type { ICanvasDoc } from '../visuals/canvas/canvasModel.js';
 import { IPathService } from '../../../../services/path/common/pathService.js';
@@ -655,7 +657,8 @@ export class AgentMentionController extends Disposable {
 
 	/**
 	 * Square previews of the prompt's images and videos, inserted into `parent` before `before`.
-	 * Clicking an image opens it to mark up; clicking a video opens it to trim.
+	 * Clicking an image opens it to mark up; clicking a video opens it to trim. One row, so many
+	 * images never push the text out of the box: "+N" on the last tile opens them all.
 	 */
 	bindImageStrip(parent: HTMLElement, before: HTMLElement | null): void {
 		const strip = this._register(new AgentImageStrip({
@@ -669,6 +672,7 @@ export class AgentMentionController extends Disposable {
 		}));
 		parent.insertBefore(strip.element, before);
 		this.imageStrips.push(strip);
+		this._register(fitImageStripToOneRow(strip, index => this.openMedia(index)));
 		this.syncImageStrip(strip);
 	}
 
@@ -1318,6 +1322,9 @@ export class AgentMentionController extends Disposable {
 				this.openVideoViewer(mention);
 			} else if (mention.kind === 'file' || mention.kind === 'folder' || mention.kind === 'scratch' || mention.kind === 'canvas') {
 				void this.openMention(mention);
+			} else if (mention.kind === 'browser' && mention.value) {
+				// A picked element: the browser scrolls to it.
+				void this.commandService.executeCommand(REVEAL_BROWSER_ELEMENT_COMMAND_ID, mention.value);
 			} else if (mention.citation) {
 				this.host.openCitation?.(mention.citation, e.target.element ?? undefined);
 			} else if (mention.kind === 'skill' && mention.resource) {

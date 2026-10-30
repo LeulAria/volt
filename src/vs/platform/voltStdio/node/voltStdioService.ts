@@ -16,6 +16,7 @@ import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
 import { isPathInside, planAllowsWrite } from '../../voltSandbox/common/sandboxPolicy.js';
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
+import { ChildLedger } from './childLedger.js';
 import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxEvent, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
 
 const execFileAsync = promisify(execFile);
@@ -77,6 +78,8 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		protected readonly logService: ILogService,
 		private readonly configurationService: IConfigurationService,
 		userDataPath: string,
+		/** The agent server's: what it started, so its next start can stop what a crash orphaned. */
+		private readonly ledger?: ChildLedger,
 	) {
 		super();
 		this.sandbox = this._register(new VoltSandboxLauncher(userDataPath, logService));
@@ -86,6 +89,13 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 				this._onSandboxEvent.fire({ id, denial: e.denial });
 			}
 		}));
+	}
+
+	private track(child: ChildProcess, command: string): void {
+		if (this.ledger && child.pid) {
+			this.ledger.add(child.pid, command);
+			child.once('exit', () => this.ledger?.delete(child.pid));
+		}
 	}
 
 	async spawn(options: IVoltStdioSpawnOptions): Promise<string> {
@@ -125,6 +135,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			setTimeout(() => warnings.forEach(warning => this._onSandboxEvent.fire({ id, warning })), 250);
 		}
 		this.processes.set(id, child);
+		this.track(child, command);
 		if (owner) {
 			this.owners.set(id, owner);
 		}
@@ -323,6 +334,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			detached: process.platform !== 'win32',
 			windowsVerbatimArguments: process.platform === 'win32',
 		});
+		this.track(child, shell.file);
 		const run = new ExecRun(request.id, request.command, child, started, owner);
 		this.runs.set(request.id, run);
 		this.pruneFinishedJobs();

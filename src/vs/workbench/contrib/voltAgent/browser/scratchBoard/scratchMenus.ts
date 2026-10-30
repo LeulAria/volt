@@ -197,14 +197,18 @@ export function showScratchContextMenu(accessor: ServicesAccessor, canvas: Scrat
 					}),
 					...(selected.length > 1 ? [item('align', localize('voltScratch.alignMenu', "Align"), () => undefined, {
 						icon: icon('align-center-vertical'), submenu: {
-							width: 220, sections: [{
+							width: 250, sections: [{
 								id: 'align', items: [
-									item('l', localize('voltScratch.alignLeftEdges', "Align left"), () => canvas.align('left')),
+									// allow-any-unicode-next-line
+									item('l', localize('voltScratch.alignLeftEdges', "Align left"), () => canvas.align('left'), { keybinding: `${SHIFT}${MOD}←` }),
 									item('c', localize('voltScratch.alignCenters', "Center horizontally"), () => canvas.align('center')),
-									item('r', localize('voltScratch.alignRightEdges', "Align right"), () => canvas.align('right')),
-									item('t', localize('voltScratch.alignTop', "Align top"), () => canvas.align('top')),
+									// allow-any-unicode-next-line
+									item('r', localize('voltScratch.alignRightEdges', "Align right"), () => canvas.align('right'), { keybinding: `${SHIFT}${MOD}→` }),
+									// allow-any-unicode-next-line
+									item('t', localize('voltScratch.alignTop', "Align top"), () => canvas.align('top'), { keybinding: `${SHIFT}${MOD}↑` }),
 									item('m', localize('voltScratch.alignMiddle', "Center vertically"), () => canvas.align('middle')),
-									item('b', localize('voltScratch.alignBottom', "Align bottom"), () => canvas.align('bottom')),
+									// allow-any-unicode-next-line
+									item('b', localize('voltScratch.alignBottom', "Align bottom"), () => canvas.align('bottom'), { keybinding: `${SHIFT}${MOD}↓` }),
 									...(selected.length > 2 ? [
 										item('dh', localize('voltScratch.distributeH', "Distribute horizontally"), () => canvas.distribute('horizontal')),
 										item('dv', localize('voltScratch.distributeV', "Distribute vertically"), () => canvas.distribute('vertical')),

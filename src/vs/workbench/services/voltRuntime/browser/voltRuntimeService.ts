@@ -5,7 +5,7 @@
 
 import { inlineResourceContext } from '../common/fileAttachments.js';
 import { findLast, findLastIdx } from '../../../../base/common/arraysFind.js';
-import { DeferredPromise, IntervalTimer, raceTimeout, RunOnceScheduler } from '../../../../base/common/async.js';
+import { DeferredPromise, disposableTimeout, IntervalTimer, raceTimeout, RunOnceScheduler } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { stringHash } from '../../../../base/common/hash.js';
@@ -44,7 +44,7 @@ import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKe
 import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IModelRequest, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { cheapestReasoningLevel, resolveTabModel } from '../common/models/modelAccess.js';
-import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltTaskModels } from '../common/runtime.js';
+import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../common/runtime.js';
 import { countUserTurns, IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
@@ -65,7 +65,7 @@ import { AgentQuestionDraft, answeredQuestions, IAgentQuestionRequest, IAgentQue
 import { AcpAgentProvider, IAcpBackgroundTask, IAcpFileWrite, IAcpSupervisionOptions } from './agents/acpProvider.js';
 import { AcpLoopDetector } from '../common/harness/acpLoopDetector.js';
 import { LOOP_NOTICE_TITLE } from '../common/harness/supervisor.js';
-import { DeepseekDirective, IDeepseekStep, runDeepseekLoop, watchedStream } from '../common/deepseek/loop.js';
+import { DeepseekDirective, IDeepseekStep, IDeepseekStreamOptions, PROMPT_CACHE_KEEPALIVE_SETTING, runDeepseekLoop, watchedStream } from '../common/deepseek/loop.js';
 import { EditBaselineTracker } from './editBaselines.js';
 import './host/hostToolService.js';
 import './memory/voltMemoryService.js';
@@ -85,15 +85,16 @@ import { FileLedger } from '../common/harness/fileLedger.js';
 import { alwaysRules, findInstruction, instructionsIndex, ISubagentDoc, rulesForPath } from '../common/harness/instructions.js';
 import { IVoltHookRunContext, IVoltHooksService } from '../common/hooks/voltHooks.js';
 import './hooks/voltHooksService.js';
+import { EVIDENCE_GATE_SETTING, EvidenceObserver, PROOF_REVIEW_SETTING, resolveProofGate } from '../common/harness/evidenceObserver.js';
 import { EXPERIENCE_SYSTEM, experienceRecord, experienceRequest, LEARN_FROM_RUNS_SETTING, lessonMemory, parseExperience, shouldReflect } from '../common/harness/experience.js';
 import { searchArchivedHistory } from '../common/harness/historySearch.js';
 import { parseStateOps, renderStateRead } from '../common/harness/appState.js';
 import { AgentAppStateStore } from './state/agentAppState.js';
 import { applyCompaction, clearOldToolResults, COMPACTION_SYSTEM, compactionBoundary, compactionRequest, DEFAULT_COMPACTION, dropBoundReasoning, effectiveWindow, ICarryForward, inContextCompactionRequest, isClearedToolResult, isVoltNote, mechanicalSummary, MIN_IN_CONTEXT_SUMMARY_CHARS, promptPrefixKey, pruneImages, serializeForSummary, shouldCompact, shouldCompactEarly } from '../common/harness/nativeCompaction.js';
 import { chooseEffort, EffortLevel, higherEffort } from '../common/deepseek/effort.js';
-import { IToolDocuments } from './tools/fileTools.js';
+import { IToolDocuments, runtimeToolDocuments } from './tools/fileTools.js';
 import { ISubagentRequest, NATIVE_ASK_QUESTION_TOOL_NAME } from './tools/metaTools.js';
-import { CodeIntelHost } from './host/codeIntelHost.js';
+import { createRuntimeCodeIntel, IRuntimeCodeIntel } from './host/codeIntelHost.js';
 import { McpHost } from './host/mcpHost.js';
 import { INativeBackgroundAgent, INativeJournalEntry, NativeJournal } from './history/nativeJournal.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
@@ -113,16 +114,22 @@ import { CapabilityGroup, VoltLane } from '../common/harness/lanes.js';
 import { applyHumanAction, IHumanAction } from '../common/harness/humanLoop.js';
 import { EvalLedger, evalSampleFromMetrics } from '../common/harness/eval.js';
 import { formatRunMetrics, IRunMetrics, RunMetrics } from '../common/harness/runMetrics.js';
+import { IProofReview, IReceiptLine, IRunReceipt, isReceiptWorthShowing, NO_CODE_IMPACT, receiptSummary } from '../common/harness/proofOfDone.js';
+import { PROOF_REVIEW_SYSTEM, parseProofReview, proofReviewRequest, reviewDiff } from '../common/harness/proofReview.js';
 import { decideContinuation, detectProjectChecks, ICheckReport, IProjectChecks, isSameCommand, ITodoEntry, mayMutateWorkspace, parseCheckOutput, regressionVerdict } from '../common/harness/verification.js';
 import { AgentPool, ISpareRequest } from './agentPool.js';
 import { RunTraceJournal } from './history/runTraceJournal.js';
+import { ProofCaseJournal } from './history/proofCases.js';
 import { isAcpTurnRestartable } from '../common/harness/sessionRetry.js';
 import { TaskLifecycle } from '../common/harness/lifecycle.js';
 import { IToolCall, IToolContext, IToolResult, IVoltTool, toolSchemas } from '../common/tools/tool.js';
 import { deepseekKnobs, resolveApproval } from '../common/deepseek/approval.js';
 import { VoltLlmAdapter } from './deepseek/voltLlmAdapter.js';
 import { buildSubagentPrompt, customSubagentPrompt, nativeModelTurn } from '../common/deepseek/prompt.js';
-import { ApprovalOutcome } from '../common/deepseek/protocol.js';
+import { ApprovalOutcome, StreamChunk } from '../common/deepseek/protocol.js';
+import { endToolRun, ITrajectoryRequest, ITrajectoryRequestInput, recordStream, startToolRun } from '../common/harness/trajectory.js';
+import { IVoltTrajectoryService } from '../common/trajectory.js';
+import './trajectoryService.js';
 import { turnWriteGate } from '../common/turnWriteGate.js';
 import { createBuiltinTools } from './tools/registry.js';
 import { loadProjectInstructions } from './prompt/projectInstructions.js';
@@ -142,17 +149,19 @@ const ACCESS_CHATS_LIMIT = 500;
 const TAB_PREDICTION_SESSION_ID = 'volt-tab-prediction';
 
 /** Bumped whenever the built-in profile list changes so existing installs pick it up. */
-const CLI_SEED_VERSION = 4;
+const CLI_SEED_VERSION = 5;
 
 /** Idle chat agents kept warm per window, most recently used first. */
 const MAX_IDLE_AGENTS = 3;
 /** An idle chat agent older than this is stopped even within the cap. */
 const IDLE_AGENT_TTL_MS = 15 * 60_000;
 const IDLE_AGENT_CHECK_MS = 60_000;
-/** Files whose change cannot fail the project's tests: the post-run check skips runs that touched only these. */
-const NO_TEST_IMPACT = /\.(?:md|mdx|markdown|txt|rst|css|scss|sass|less|styl|svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|otf)$/i;
 /** Appended to a native fast-lane request: a small change is edited, checked and answered without a test run or browser. */
 const FAST_LANE_NOTE = '[Volt] Small, well-scoped change: make the edit, check the files you changed for errors, and answer in a line or two. No test runs, builds, servers or browser unless the user asked for them.';
+/** The second opinion's wait: past it the run finishes with its items claimed, not reviewed. */
+const PROOF_REVIEW_TIMEOUT_MS = 90_000;
+/** A changed file larger than this is named in the review diff, not read. */
+const PROOF_REVIEW_FILE_BYTES = 512 * 1024;
 /** Native model transcripts kept in memory between runs (the most recently run chats). */
 const MAX_WARM_NATIVE = 4;
 /** A native transcript idle this long goes to disk only; its chat's next run reads it back. */
@@ -165,6 +174,13 @@ const SETTLE_WAIT_AGENT_MS = 3_000;
 const SETTLE_WAIT_NATIVE_MS = 1_500;
 /** A deferred health check runs this long after the last run ends, not on top of a follow-up. */
 const HEALTH_AFTER_RUN_MS = 15_000;
+/** A health tick lists the CLIs' models again only this often (each list starts a throwaway agent). */
+const MODEL_RELIST_MS = 6 * 60 * 60_000;
+/** With saved detections, the startup check of every CLI runs this long after launch. */
+const STARTUP_DETECT_DELAY_MS = 60_000;
+/** CLI detections (`--version`, auth status for every CLI) this fresh are not repeated by a health tick or a relaunch. */
+const DETECT_TTL_MS = 30 * 60_000;
+const VOLT_DETECTIONS_STORAGE_KEY = 'volt.runtime.detections';
 /** Project checks Volt runs itself (the regression gate) are stopped after this. */
 const CHECK_TIMEOUT_MS = 120_000;
 /** A baseline slower than this is not started again for that folder; the gate needs a fast suite. */
@@ -208,6 +224,8 @@ interface IRunState {
 	/** run.end was emitted; later engine events are dropped (file changes excepted). */
 	ended: boolean;
 	lane?: VoltLane;
+	/** How the request was classified (lane, budget, signals). */
+	intent?: IIntent;
 	/** Native: the transcript this run appends to. Detached from the session when the run is cancelled. */
 	transcript?: INativeLoopMessage[];
 	/** The latest to-do list the engine reported. */
@@ -230,6 +248,16 @@ interface IRunState {
 	regressed?: boolean;
 	/** What the run did besides talking, kept with its reply for handoffs to other sessions. */
 	activity?: { readonly tools: IHandoffToolCall[]; readonly files: IHandoffFile[]; readonly calls: Map<string, { kind?: string; name: string; title?: string; input: string; paths: string[] }> };
+	/** Native runs: the proof keeper (evidence, contract, receipt); file changes reach it as they happen. */
+	proof?: EvidenceObserver;
+}
+
+/** The chat's model, which the second opinion asks with a clean context. */
+interface IProofModel {
+	readonly provider: IModelProvider;
+	readonly profile: IProviderProfile;
+	readonly apiKey: string | undefined;
+	readonly item: IVoltCatalogItem;
 }
 
 /** An agent session the chat moved away from (another model or provider), kept warm to switch back to. */
@@ -304,6 +332,8 @@ interface ISessionState extends IVoltSession {
 	parkedAgents?: IParkedAgent[];
 	/** The chat was forked from another: its first agent is briefed as a fork. */
 	forkedFrom?: string;
+	/** The chat started from another chat's queued message: its first agent gets that chat as a condensed handoff. */
+	continuedFrom?: IVoltSeedOptions['continuedFrom'];
 	/** What the agent last heard about the window around the chat (see workspaceLead). */
 	workspaceSent?: { readonly handle: IAgentSessionHandle; readonly key: string };
 }
@@ -512,6 +542,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly detectionsInFlight = new Map<string, Promise<IDetectResult>>();
 	private readonly agentModels = new Map<string, IModelInfo[]>();
 	private lastProviderCheck: number | undefined;
+	/** When the model lists were last fetched (see healthCheck). */
+	private modelsListedAt = 0;
 	private readonly healthTimer = this._register(new IntervalTimer());
 	private providerRefresh: Promise<void> | undefined;
 	private providerRefreshAgain = false;
@@ -545,7 +577,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly hookStartedSessions = new Set<string>();
 	/** Times a `stop` hook sent the agent back to work in the current run, per chat. */
 	private readonly hookFollowups = new Map<string, number>();
-	private readonly codeIntel: CodeIntelHost;
+	private readonly codeIntel: IRuntimeCodeIntel;
 	private readonly searchIndex: ISearchIndex;
 	/** Every search Volt runs: the agent's tools and the context retriever (index, FFF, ripgrep). */
 	private readonly search: VoltSearch;
@@ -571,6 +603,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly nativeCuts = new Map<string, { readonly userTurns: number; readonly synced: number }>();
 	private readonly evalLedger = new EvalLedger();
 	private readonly traces: RunTraceJournal;
+	/** Every gated run's request, contract and receipt: the cases an eval replays. */
+	private readonly proofCases: ProofCaseJournal;
 	private readonly agentPool: AgentPool;
 	/** Spare agents start under an alias session id; this maps it to the chat that adopted the spare. */
 	private readonly sessionAliases = new Map<string, string>();
@@ -634,9 +668,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		@IVoltHooksService private readonly hooks: IVoltHooksService,
 		@IVoltCodeIndexService codeIndexService: IVoltCodeIndexService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IVoltTrajectoryService private readonly trajectory: IVoltTrajectoryService,
 	) {
 		super();
-		this.codeIntel = this._register(new CodeIntelHost(markerService, textModelService, languageFeaturesService, fileService));
+		this.codeIntel = this._register(createRuntimeCodeIntel(markerService, textModelService, languageFeaturesService, fileService));
 		// Worktrees are outside the workspace folders; their language servers are opt-in (Settings > Code Intelligence).
 		this.codeIntel.setLspPolicy(uri => lspAllowedFor(this.configurationService, !this.workspace.isInsideWorkspace(uri)));
 		this.searchIndex = {
@@ -650,6 +685,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.mcpHost = this._register(new McpHost(fileService, stdio, requestService, logService));
 		this.journal = this._register(new NativeJournal(joinPath(environmentService.userRoamingDataHome, 'voltNative'), fileService, logService));
 		this.traces = this._register(new RunTraceJournal(joinPath(environmentService.userRoamingDataHome, 'voltTraces'), fileService, logService));
+		this.proofCases = new ProofCaseJournal(joinPath(environmentService.userRoamingDataHome, 'voltProofs', 'cases.jsonl'), fileService, logService);
 		this.appState = new AgentAppStateStore(joinPath(environmentService.userRoamingDataHome, 'voltState'), fileService, logService);
 		this.agentPool = this._register(new AgentPool({
 			maxSpares: MAX_SPARE_AGENTS,
@@ -685,12 +721,23 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this._register(this.hostTools.onDidInvokeTool(call => this.onHostToolResult(call)));
 		this.loadState();
 		this.watchSharedModelChoice();
-		// One detection pass at startup feeds the catalog too (refreshing both separately probed
-		// every CLI twice), and the model lists hydrated from storage are kept so a restart does
-		// not respawn each CLI to list models again; the periodic health check refreshes them.
-		this.providerRefresh = this.executeProviderRefresh(true).finally(() => {
-			this.providerRefresh = undefined;
-		});
+		// One detection pass feeds the catalog too (refreshing both separately probed every CLI
+		// twice), and the model lists hydrated from storage are kept so a restart does not respawn
+		// each CLI to list models again. With the last run's detections and catalog saved, the
+		// pass waits until launch is over: it spawns every CLI (`--version`, auth status).
+		const startRefresh = () => {
+			this.providerRefresh ??= this.executeProviderRefresh(true).finally(() => {
+				this.providerRefresh = undefined;
+			});
+		};
+		if (this.detections.size && this.catalog.length) {
+			// Saved detections younger than DETECT_TTL_MS are as good as a fresh check: the health tick takes over.
+			if (Date.now() - (this.lastProviderCheck ?? 0) >= DETECT_TTL_MS) {
+				this._register(disposableTimeout(startRefresh, STARTUP_DETECT_DELAY_MS));
+			}
+		} else {
+			startRefresh();
+		}
 		this.scheduleHealthChecks();
 		this.predictor = this._register(new PredictorAgent(ref => this.launchPredictor(ref), this.logService));
 	}
@@ -821,13 +868,16 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return session;
 	}
 
-	seedSession(key: string, messages: readonly IVoltSeedMessage[], options?: { readonly forkedFrom?: string }): void {
+	seedSession(key: string, messages: readonly IVoltSeedMessage[], options?: IVoltSeedOptions): void {
 		const session = this.getOrCreateSession(key) as ISessionState;
 		if (options?.forkedFrom) {
 			session.forkedFrom = options.forkedFrom;
 		}
 		if (session.messages.length || session.activeRun) {
 			return;
+		}
+		if (options?.continuedFrom) {
+			session.continuedFrom = options.continuedFrom;
 		}
 		session.messages = messages.filter(message => message.content.trim() || message.activity?.tools.length || message.activity?.files.length).map(message => ({
 			role: message.role,
@@ -979,8 +1029,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return this.agentProviders.get(session.agentProviderId)?.canSteer?.(session.agentHandle) ?? false;
 	}
 
-	async steerAsync(sessionId: string, text: string): Promise<boolean> {
-		if (this.steer(sessionId, text)) {
+	async steerAsync(sessionId: string, text: string, images?: readonly IVoltImageAttachment[]): Promise<boolean> {
+		if (!images?.length && this.steer(sessionId, text)) {
 			return true;
 		}
 		const session = this.sessions.get(sessionId);
@@ -989,7 +1039,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return false;
 		}
 		const provider = this.agentProviders.get(session.agentProviderId!);
-		const delivered = await provider?.steer?.(session.agentHandle!, text).catch(() => false) ?? false;
+		const delivered = await provider?.steer?.(session.agentHandle!, text, this.modelImages(images)).catch(() => false) ?? false;
 		if (delivered && this.isCurrent(session, run)) {
 			session.messages.push({ role: 'user', content: text, steer: true });
 			// The agent saw it in this turn; the next recap must not send it again.
@@ -1071,6 +1121,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		});
 		session.lastLane = intent.lane;
 		run.lane = intent.lane;
+		run.intent = intent;
 		if (session.activeRun?.runId === run.runId) {
 			session.activeRun = { ...session.activeRun, lane: intent.lane };
 		}
@@ -1130,19 +1181,26 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		const definition = cliAgentDefinition(profile.providerId);
 		const command = profile.command && definition?.commands.includes(profile.command) ? profile.command : undefined;
-		const argv = titleCommandFor(profile.providerId, command, prompt, pinned && item ? titleAgentModel(item) : undefined);
-		if (!argv) {
-			return undefined;
-		}
-		const result = await this.stdio.exec({
-			id: `title-${generateUuid().slice(0, 8)}`,
-			command: argv.map(quoteShellArg).join(' '),
-			// Away from the project, so the CLI loads no project instructions for a one-liner.
-			cwd: isWindows ? undefined : '/tmp',
-			timeoutMs,
-			inlineChars: maxChars,
-		});
-		return result.exitCode === 0 ? result.stdout : undefined;
+		const run = async (model: string | undefined) => {
+			const argv = titleCommandFor(profile.providerId, command, prompt, model);
+			if (!argv) {
+				return undefined;
+			}
+			const result = await this.stdio.exec({
+				id: `title-${generateUuid().slice(0, 8)}`,
+				command: argv.map(quoteShellArg).join(' '),
+				// Away from the project, so the CLI loads no project instructions for a one-liner.
+				cwd: isWindows ? undefined : '/tmp',
+				timeoutMs,
+				inlineChars: maxChars,
+			});
+			return result.exitCode === 0 ? result.stdout : undefined;
+		};
+		const chatModel = item ? titleAgentModel(item) : undefined;
+		const text = await run(pinned ? chatModel : undefined);
+		// The CLI's own default can be a model the account may not use (Codex on a ChatGPT plan):
+		// the chat's model is one it runs.
+		return text === undefined && !pinned && chatModel ? run(chatModel) : text;
 	}
 
 	async generateText(prompt: string, options?: { readonly sessionId?: string; readonly timeoutMs?: number; readonly slot?: 'title' | 'git' }): Promise<string | undefined> {
@@ -1909,7 +1967,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}));
 		this.detections = new Map(results.filter((entry): entry is readonly [string, IDetectResult] => !!entry[1]));
 		this.lastProviderCheck = Date.now();
+		this.storageService.store(VOLT_DETECTIONS_STORAGE_KEY, JSON.stringify({ at: this.lastProviderCheck, detections: [...this.detections] }), StorageScope.APPLICATION, StorageTarget.MACHINE);
 		await this.refreshCatalog();
+		// A startup refresh lists only what storage had no lists for; both count as listed now.
+		this.modelsListedAt = Date.now();
 		this._onDidChangeProviderStatus.fire();
 		if (this.providerRefreshAgain) {
 			this.providerRefreshAgain = false;
@@ -2435,8 +2496,27 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			if (doc && !doc.hasFocus()) {
 				return;
 			}
-			void this.refreshProviders();
+			void this.healthCheck();
 		}, seconds * 1000);
+	}
+
+	/**
+	 * A health tick checks each CLI is still there and signed in at most every {@link DETECT_TTL_MS}
+	 * (each check spawns every CLI), and lists models again only every {@link MODEL_RELIST_MS}:
+	 * listing starts a throwaway agent per CLI (Cursor's loads the user's MCP servers and a
+	 * language server). The Providers page's Refresh does both at once.
+	 */
+	private healthCheck(): Promise<void> {
+		if (this.providerRefresh) {
+			return this.providerRefresh;
+		}
+		if (Date.now() - (this.lastProviderCheck ?? 0) < DETECT_TTL_MS) {
+			return Promise.resolve();
+		}
+		this.providerRefresh = this.executeProviderRefresh(Date.now() - this.modelsListedAt < MODEL_RELIST_MS).finally(() => {
+			this.providerRefresh = undefined;
+		});
+		return this.providerRefresh;
 	}
 
 	private beginRun(session: ISessionState, mode: VoltMode, engine: 'native' | 'agent', sendAt: number): IRunState {
@@ -2645,10 +2725,18 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	/** Open editors: agent edits go into the buffer the user sees when it has unsaved changes. */
 	private readonly toolDocuments: IToolDocuments = {
 		dirtyText: uri => {
+			const host = runtimeToolDocuments();
+			if (host) {
+				return host.dirtyText(uri);
+			}
 			const model = this.textFileService.files.get(uri);
 			return model?.isDirty() ? model.textEditorModel?.getValue() : undefined;
 		},
 		writeOpen: async (uri, text) => {
+			const host = runtimeToolDocuments();
+			if (host) {
+				return host.writeOpen(uri, text);
+			}
 			const model = this.textFileService.files.get(uri);
 			const editor = model?.textEditorModel;
 			if (!model || !editor) {
@@ -2659,6 +2747,28 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return true;
 		},
 	};
+
+	/** Records a native model request for the Trajectory panel; the stream itself passes through unchanged. */
+	private traceStream(stream: AsyncIterable<StreamChunk>, traced: { request?: ITrajectoryRequest }, input: Omit<ITrajectoryRequestInput, 'id' | 'index'>): AsyncIterable<StreamChunk> {
+		const request = this.trajectory.begin(input);
+		traced.request = request;
+		return request ? recordStream(stream, request, () => this.trajectory.changed(input.sessionId)) : stream;
+	}
+
+	/** Times a batch's tool calls against the request whose answer asked for them; returns the result hook. */
+	private traceTools(sessionId: string, request: ITrajectoryRequest | undefined, calls: readonly IToolCall[]): (result: IToolResult) => void {
+		if (!request) {
+			return () => { };
+		}
+		for (const call of calls) {
+			startToolRun(request, call);
+		}
+		this.trajectory.changed(sessionId);
+		return result => {
+			endToolRun(request, result);
+			this.trajectory.changed(sessionId);
+		};
+	}
 
 	/**
 	 * Native model path. DeepSeek owns the turn, the tool pipeline, and approval.
@@ -2685,6 +2795,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const apiKey = await apiKeyRead;
 		const root = this.executionRoot(session);
 		const cwd = root?.fsPath;
+		// The proof keeper (the run's contract, evidence and receipt) reads the project's checks meanwhile.
+		const evidence = this.evidenceObserver(session, run, request, root);
 		this.restoreReleasedNative(session);
 		await this.nativeRestores.get(session.sessionId);
 		this.nativeRestores.delete(session.sessionId);
@@ -2731,13 +2843,22 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		const retrieved = await retrieval;
+		const observer = await evidence;
 		if (!this.isCurrent(session, run)) {
 			return;
 		}
+		run.proof = observer;
 		// A small request says so in the message (the system prompt stays cached): edit, check, answer.
 		const laneNote = run.lane === 'fast' && modePolicy(request.mode).allowWrites ? FAST_LANE_NOTE : undefined;
-		const promptText = [request.text, pasted, hookNotes.length ? `<hook_context>\n${hookNotes.join('\n\n')}\n</hook_context>` : undefined, retrieved?.text, laneNote].filter(Boolean).join('\n\n');
-		this.syncNativeTranscript(session, state, promptText, images);
+		// A run held to its proof from the start reads the contract with the request, so it plans the checks.
+		const proofNote = isVoltNote(request.text) ? undefined : observer?.contractNote();
+		const promptText = [request.text, pasted, hookNotes.length ? `<hook_context>\n${hookNotes.join('\n\n')}\n</hook_context>` : undefined, retrieved?.text, laneNote, proofNote].filter(Boolean).join('\n\n');
+		// A chat started from another chat's queued message reads that chat condensed, not mirrored whole.
+		const continued = session.continuedFrom && !state.messages.length ? this.contextHandoff(session, item, false) : undefined;
+		this.syncNativeTranscript(session, state, promptText, images, continued?.text);
+		if (continued) {
+			this.emitContextHandoff(session, run, item, continued, false);
+		}
 
 		// The root can only differ from the early read if the chat moved while the previous run settled.
 		const { projectInstructions, instructions, mcpTools, memoryContext } = await (isEqual(early.root, root) ? early : this.nativeTurnInputs(root, allowMcp)).read();
@@ -2803,9 +2924,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.logService.info(`[volt] restarting the background ${agent.label} subagent of ${session.sessionId}`);
 			void this.runSubagent(session, state, agent.request, { callId: agent.callId, signal: new AbortController().signal, cwd, sessionId: session.sessionId, mode: request.mode }, true);
 		}
+		// The request on the wire now, for the Trajectory panel; its answer's tool calls are timed against it.
+		const traced: { request?: ITrajectoryRequest; step?: number } = {};
 		const emit = (event: IVoltEvent) => {
 			if (event.type === 'usage' && this.isCurrent(session, run)) {
 				state.promptTokens = event.used ?? event.input + (event.cache ?? 0) + (event.cacheWrite ?? 0);
+			}
+			if (event.type === 'usage' && event.costUsd !== undefined && traced.request) {
+				traced.request.costUsd = event.costUsd;
+				this.trajectory.changed(session.sessionId);
 			}
 			this.emitEngine(session, run, event);
 		};
@@ -2872,23 +2999,53 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		};
 		// Where this run's own messages start, for the reflection after it.
 		const runFrom = transcript.length;
+		const proofModel: IProofModel = { provider, profile, apiKey, item };
 		run.metrics.mark('prompt');
 		try {
+			const openStream = (messages: readonly INativeLoopMessage[], streamOptions: IDeepseekStreamOptions | undefined) => linkedStream(cancel, streamOptions?.signal, token => new VoltLlmAdapter(provider).stream({
+				modelId: item.id,
+				messages: nativeToModelMessages([system, ...messages]),
+				profile,
+				apiKey,
+				options,
+				tools: schemas,
+				...(streamOptions?.maxOutputTokens ? { maxOutputTokens: streamOptions.maxOutputTokens } : {}),
+			}, token));
 			const result = await runDeepseekLoop({
-				stream: (messages, _token, streamOptions) => linkedStream(cancel, streamOptions?.signal, token => new VoltLlmAdapter(provider).stream({
-					modelId: item.id,
-					messages: nativeToModelMessages([system, ...messages]),
-					profile,
-					apiKey,
-					options,
+				stream: (messages, _token, streamOptions) => this.traceStream(openStream(messages, streamOptions), traced, {
+					sessionId: session.sessionId,
+					runId: run.runId,
+					...(traced.step !== undefined ? { step: traced.step } : {}),
+					provider: profile.providerId,
+					model: item.id,
+					modelLabel: item.label,
+					system: system.content,
+					messages,
 					tools: schemas,
+					options,
 					...(streamOptions?.maxOutputTokens ? { maxOutputTokens: streamOptions.maxOutputTokens } : {}),
-				}, token)),
+				}),
+				// Claude's prompt cache lasts five minutes: kept while a long tool or an approval holds the run.
+				// Not traced: the ping is aborted at its first chunk, so it is not a request of the run.
+				...(keepsPromptCacheBriefly(profile.providerId, item.id) && this.configurationService.getValue<boolean>(PROMPT_CACHE_KEEPALIVE_SETTING) !== false ? {
+					keepAlive: async (messages: readonly INativeLoopMessage[], streamOptions: IDeepseekStreamOptions) => {
+						const abort = new AbortController();
+						const iterator = openStream(messages, { ...streamOptions, signal: abort.signal })[Symbol.asyncIterator]();
+						try {
+							// The first chunk means the prompt was read, and with it the cached prefix.
+							await iterator.next();
+						} finally {
+							abort.abort();
+							await iterator.return?.().catch(() => undefined);
+						}
+					},
+				} : {}),
 				execute: (calls, onResult) => {
 					// The model's calls are on disk before they run, and each result as it lands.
 					for (const call of calls) {
 						dispatched.add(call.id);
 					}
+					const traceResult = this.traceTools(session.sessionId, traced.request, calls);
 					checkpoint();
 					return runToolBatch(registry, calls, {
 						cwd,
@@ -2900,6 +3057,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						authorize: async () => ({ allow: true }),
 						onResult: result => {
 							finished.set(result.callId, result);
+							traceResult(result);
 							checkpoint();
 							onResult?.(result);
 						},
@@ -2915,6 +3073,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				contextWindow,
 				maxOutputTokens: 128_000,
 				prepareTurn: async (messages, step) => {
+					traced.step = step;
 					if (!this.isCurrent(session, run)) {
 						return;
 					}
@@ -2962,7 +3121,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				claimInbox: () => this.isCurrent(session, run) ? claimInbox(state) : [],
 				controller: {
 					afterStep: async step => {
-						const directive = await this.afterNativeStep(session, run, state, step);
+						const sendBack = await this.proveStep(session, run, observer, step, proofModel);
+						const directive = withSendBack(await this.afterNativeStep(session, run, state, step), sendBack);
 						if (directive.kind !== 'continue' || !step.wantsToFinish || cancel.isCancellationRequested) {
 							return directive;
 						}
@@ -2975,6 +3135,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			}
 			if (result.assistant) {
 				void this.hooks.run('afterAgentResponse', hookContext(), { text: result.assistant });
+			}
+			// The receipt goes on the transcript before run.end, so it sits under the answer it proves.
+			const receipt = observer && result.outcome === 'done' && !cancel.isCancellationRequested ? this.settleProof(session, run, observer, request, item) : undefined;
+			if (observer || result.lessons?.length) {
+				run.metrics.noteEvidence(observer ? observer.summary(result.lessons, receipt) : { complete: result.outcome === 'done', reason: '', changedFiles: 0, lessons: result.lessons ?? [] });
 			}
 			const nativeActivity = this.runActivity(run);
 			if (result.assistant || nativeActivity) {
@@ -3125,8 +3290,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * a native model and an ACP agent. Turns the native transcript has not seen are mirrored in as
 	 * plain text before the new message, so a model switch never loses the conversation.
 	 */
-	private syncNativeTranscript(session: ISessionState, state: INativeState, text: string, images?: IModelImage[]): void {
-		const unseen = session.messages.slice(state.synced, -1);
+	private syncNativeTranscript(session: ISessionState, state: INativeState, text: string, images?: IModelImage[], handoff?: string): void {
+		if (handoff) {
+			// The unseen turns arrive as this condensed handoff, ahead of the new message.
+			text = `${handoff}\n\n${text}`;
+		}
+		const unseen = handoff ? [] : session.messages.slice(state.synced, -1);
 		for (const message of unseen) {
 			if (!message.content.trim() || message.role === 'system') {
 				continue;
@@ -3163,6 +3332,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			if (current && !state.changed.has(event.uri)) {
 				state.changed.set(event.uri, this.codeIntel.errorCounts(event.uri));
 			}
+			if (current && (event.kind === 'edit' || event.kind === 'create' || event.kind === 'delete')) {
+				run.proof?.noteFileChange(event.uri.fsPath, event.kind, typeof event.before === 'string' ? event.before : undefined, typeof event.existed === 'boolean' ? event.existed : undefined);
+			}
 			this.codeIntel.noteWrite(event.uri);
 		}
 		if (current && event.type === 'plan' && Array.isArray(event.entries)) {
@@ -3196,6 +3368,149 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const gate = await this.qualityContinuation(session, run);
 		const message = [...steered, ...(gate ? [gate] : [])].join('\n\n');
 		return message ? { kind: 'inject', message } : { kind: 'continue' };
+	}
+
+	/**
+	 * The proof keeper for a native run: built from the request (a continuation's is the one it
+	 * continues), the run's intent and the project's checks (read once per folder and cached). A
+	 * failure to build it leaves the run unobserved, never stopped.
+	 */
+	private evidenceObserver(session: ISessionState, run: IRunState, request: IVoltSendRequest, root: URI | undefined): Promise<EvidenceObserver | undefined> {
+		const intent = run.intent;
+		if (!intent) {
+			return Promise.resolve(undefined);
+		}
+		const typed = isVoltNote(request.text) ? findLastIdx(session.messages, message => message.role === 'user' && !!message.content.trim() && !isVoltNote(message.content)) : -1;
+		const text = typed >= 0 ? session.messages[typed].content : request.text;
+		const checks = root ? this.projectChecksFor(root).catch((): IProjectChecks => ({})) : Promise.resolve<IProjectChecks>({});
+		return checks.then(value => new EvidenceObserver({
+			text,
+			intent,
+			checks: value,
+			readOnly: !modePolicy(request.mode).allowWrites,
+			hasPriorTurns: session.messages.filter(message => message.role === 'user').length > 1,
+			...(root ? { root: root.fsPath } : {}),
+			gate: resolveProofGate(this.configurationService.getValue<unknown>(EVIDENCE_GATE_SETTING)),
+		})).catch(err => {
+			this.logService.trace('[volt] the proof keeper could not start', err);
+			return undefined;
+		});
+	}
+
+	/**
+	 * One step through the proof keeper. On a finishing step of a gated run: the receipt as it
+	 * stands, then (once its checks hold) the second opinion, and the message that sends the model
+	 * back when either does not hold. Never fatal: a failure here lets the run finish.
+	 */
+	private async proveStep(session: ISessionState, run: IRunState, observer: EvidenceObserver | undefined, step: IDeepseekStep, model: IProofModel): Promise<string | undefined> {
+		if (!observer) {
+			return undefined;
+		}
+		try {
+			observer.observe(step);
+			if (!step.wantsToFinish || !this.isCurrent(session, run) || run.cancel.token.isCancellationRequested) {
+				return undefined;
+			}
+			let receipt = observer.receipt();
+			if (!receipt.gated) {
+				return undefined;
+			}
+			const items = observer.reviewDue(receipt);
+			if (items && this.configurationService.getValue<boolean>(PROOF_REVIEW_SETTING) !== false) {
+				this.emit(session, run.runId, { type: 'lifecycle', phase: 'verifying' });
+				observer.noteReview(await this.reviewProof(run, observer, receipt, items, model));
+				if (!this.isCurrent(session, run) || run.cancel.token.isCancellationRequested) {
+					return undefined;
+				}
+				receipt = observer.receipt();
+			}
+			const message = observer.sendBack(receipt);
+			if (message) {
+				run.metrics.noteContinuation();
+				this.logService.info(`[volt] run ${run.runId} goes back to work: ${receiptSummary(receipt)}`);
+				this.emit(session, run.runId, { type: 'notice', severity: 'info', title: localize('volt.proof.sentBack', "The finish is not proven yet. Asking the agent to close the gaps."), description: 'Volt check' });
+			}
+			return message;
+		} catch (err) {
+			this.logService.trace('[volt] the proof check failed on a step', err);
+			return undefined;
+		}
+	}
+
+	/**
+	 * The second opinion: one low-effort request on the chat's own model with a clean context (the
+	 * request, the run's diff, the checks that passed, its final answer; none of its reasoning).
+	 * Undefined when it could not run or gave no verdict: the items then stay claimed, never passed.
+	 */
+	private async reviewProof(run: IRunState, observer: EvidenceObserver, receipt: IRunReceipt, items: readonly IReceiptLine[], model: IProofModel): Promise<IProofReview | undefined> {
+		const files = await Promise.all(observer.reviewFiles().map(async change => ({
+			path: change.path,
+			before: change.before,
+			existed: change.existed,
+			after: await this.fileService.readFile(URI.file(change.fsPath), { limits: { size: PROOF_REVIEW_FILE_BYTES } }).then(content => content.value.toString(), () => undefined),
+		})));
+		const passed = receipt.lines.filter(line => line.status === 'proven' && line.command).map(line => `${line.command}: ${line.detail ?? 'passed'}`);
+		const cts = new CancellationTokenSource(run.cancel.token);
+		const timer = setTimeout(() => cts.cancel(), PROOF_REVIEW_TIMEOUT_MS);
+		let text = '';
+		try {
+			for await (const event of watchedStream(token => model.provider.stream({
+				modelId: model.item.id,
+				messages: [
+					{ role: 'system', content: PROOF_REVIEW_SYSTEM },
+					{ role: 'user', content: proofReviewRequest({ request: observer.request, items, passed, diff: reviewDiff(files), answer: observer.finalAnswer }) },
+				],
+				profile: model.profile,
+				apiKey: model.apiKey,
+				options: { ...this.resolvedOptions(model.item, undefined), [MODEL_OPTION_REASONING]: 'low' },
+				maxOutputTokens: 1_500,
+			}, token), cts.token)) {
+				if (event.type === 'text.delta' && event.delta) {
+					text += event.delta;
+				}
+			}
+		} catch (err) {
+			this.logService.info(`[volt] the second opinion on run ${run.runId} could not run: ${err instanceof Error ? err.message : String(err)}`);
+			return undefined;
+		} finally {
+			clearTimeout(timer);
+			cts.dispose();
+		}
+		const review = parseProofReview(text, items.length);
+		this.logService.info(`[volt] second opinion on run ${run.runId}: ${review ? `${review.verdict}${review.summary ? ` (${review.summary})` : ''}` : 'no verdict'}`);
+		return review;
+	}
+
+	/**
+	 * The run's receipt as it ends: on the transcript when it says something (a quick edit that
+	 * checked nothing gets no card), and kept as a replayable eval case when it was binding.
+	 */
+	private settleProof(session: ISessionState, run: IRunState, observer: EvidenceObserver, request: IVoltSendRequest, item: IVoltCatalogItem): IRunReceipt | undefined {
+		try {
+			const receipt = observer.receipt();
+			if (isReceiptWorthShowing(receipt)) {
+				this.emit(session, run.runId, { type: 'receipt', runId: run.runId, receipt });
+			}
+			if (receipt.gated) {
+				const root = this.executionRoot(session);
+				this.proofCases.record({
+					sessionId: session.sessionId,
+					runId: run.runId,
+					...(root ? { project: root.fsPath } : {}),
+					request: observer.request,
+					mode: request.mode,
+					model: item.id,
+					lane: run.lane ?? 'agent',
+					contract: [...observer.contract.items, ...(observer.contract.floor ? [observer.contract.floor] : [])].map(line => ({ text: line.text, kind: line.kind, ...(line.command ? { command: line.command } : {}) })),
+					receipt,
+				});
+			}
+			this.logService.info(`[volt] run ${run.runId} ${receiptSummary(receipt)}`);
+			return receipt;
+		} catch (err) {
+			this.logService.trace('[volt] the run receipt could not be written', err);
+			return undefined;
+		}
 	}
 
 	/**
@@ -3506,21 +3821,34 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				this.journal.log(journalId, childEntry, () => withRunningCalls(childEntry(), finishedCalls, startedCalls));
 			}
 		};
+		const traced: { request?: ITrajectoryRequest } = {};
 		const work = async (): Promise<{ text: string; isError?: boolean }> => {
 			try {
 				const result = await runDeepseekLoop({
-					stream: messages => new VoltLlmAdapter(provider).stream({
+					stream: messages => this.traceStream(new VoltLlmAdapter(provider).stream({
 						modelId: item.id,
 						messages: nativeToModelMessages([system, ...messages]),
 						profile,
 						apiKey,
 						options,
 						tools: toolSchemas(tools),
-					}, source.token),
+					}, source.token), traced, {
+						sessionId: session.sessionId,
+						runId,
+						provider: profile.providerId,
+						model: item.id,
+						modelLabel: item.label,
+						agent: label,
+						system: system.content,
+						messages,
+						tools: toolSchemas(tools),
+						options,
+					}),
 					execute: (calls, onResult) => {
 						for (const call of calls) {
 							startedCalls.add(call.id);
 						}
+						const traceResult = this.traceTools(session.sessionId, traced.request, calls);
 						save();
 						return runToolBatch(registry, calls, {
 							cwd: root?.fsPath,
@@ -3533,6 +3861,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 							authorize: async () => ({ allow: true }),
 							onResult: result => {
 								finishedCalls.set(result.callId, result);
+								traceResult(result);
 								save();
 								onResult?.(result);
 							},
@@ -4155,6 +4484,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			visuals: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.group === 'visuals'),
 			...(withMemory && await this.largeIndexedProject(root) ? { codeIndexed: true } : {}),
 			browserTools: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'browser_run'),
+			...(intent.wantsGit && this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'propose_commits') ? { commitReview: true } : {}),
 		};
 	}
 
@@ -4310,22 +4640,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						return;
 					}
 					if (handoff) {
-						this.emit(session, run.runId, {
-							type: 'context.handoff',
-							reason: handoff.reason,
-							...(handoff.fromLabel ? { fromLabel: handoff.fromLabel } : {}),
-							toLabel: item.label,
-							tokens: handoff.tokens,
-							budget: handoff.budget,
-							reused,
-							turns: handoff.turns,
-							verbatimTurns: handoff.verbatimTurns,
-							condensedTurns: handoff.condensedTurns,
-							omittedTurns: handoff.omittedTurns,
-							toolCalls: handoff.toolCalls,
-							files: handoff.files.length,
-							text: handoff.text,
-						});
+						this.emitContextHandoff(session, run, item, handoff, reused);
 					}
 					const images = this.modelImages(request.images);
 					// An agent with no /compact of its own writes a hand-off summary that replaces the history.
@@ -4495,7 +4810,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const fromLabel = findLast(reused ? unseen : earlier, message => message.role === 'assistant' && message.model && message.model !== item.label)?.model;
 		const forked = !!session.forkedFrom;
 		session.forkedFrom = undefined;
-		const reason: HandoffReason = reused ? 'return' : forked ? 'fork' : fromLabel ? 'switch' : 'resume';
+		const continued = reused ? undefined : session.continuedFrom;
+		session.continuedFrom = undefined;
+		const reason: HandoffReason = reused ? 'return' : continued ? 'continue' : forked ? 'fork' : fromLabel ? 'switch' : 'resume';
 		const handoff = buildContextHandoff({
 			messages: unseen,
 			budget: this.handoffBudgetFor(item),
@@ -4503,9 +4820,31 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			firstTurn: countUserTurns(session.messages.slice(0, synced)) + 1,
 			...(fromLabel ? { fromLabel } : {}),
 			toLabel: item.label,
-			threadId: session.sessionId,
+			// Turns left out are read from the chat they happened in.
+			threadId: continued?.id ?? session.sessionId,
+			...(continued ? { fromChat: continued.title, ...(continued.live ? { lastTurnLive: true } : {}) } : {}),
 		});
 		return handoff && { ...handoff, ...(fromLabel ? { fromLabel } : {}) };
+	}
+
+	/** The divider over the turn: what was handed to the agent, and how the budget was spent. */
+	private emitContextHandoff(session: ISessionState, run: IRunState, item: IVoltCatalogItem, handoff: IContextHandoff & { readonly fromLabel?: string }, reused: boolean): void {
+		this.emit(session, run.runId, {
+			type: 'context.handoff',
+			reason: handoff.reason,
+			...(handoff.fromLabel ? { fromLabel: handoff.fromLabel } : {}),
+			toLabel: item.label,
+			tokens: handoff.tokens,
+			budget: handoff.budget,
+			reused,
+			turns: handoff.turns,
+			verbatimTurns: handoff.verbatimTurns,
+			condensedTurns: handoff.condensedTurns,
+			omittedTurns: handoff.omittedTurns,
+			toolCalls: handoff.toolCalls,
+			files: handoff.files.length,
+			text: handoff.text,
+		});
 	}
 
 	private handoffBudgetFor(item: IVoltCatalogItem): number {
@@ -4681,7 +5020,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				this.healthAfterRun = undefined;
 				if (this.healthDeferred && !this.anyRunLive()) {
 					this.healthDeferred = false;
-					void this.refreshProviders();
+					void this.healthCheck();
 				}
 			}, HEALTH_AFTER_RUN_MS);
 		}
@@ -4939,7 +5278,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		// Styles, docs and images cannot break a test suite: no background run (and no fans) for them.
 		const changed = run.engine === 'native' ? [...(session.deepseek?.changed.keys() ?? [])] : [...(run.changedFiles?.values() ?? [])].map(file => file.uri);
-		if (!run.shellMutated && changed.length && changed.every(uri => NO_TEST_IMPACT.test(uri.path))) {
+		if (!run.shellMutated && changed.length && changed.every(uri => NO_CODE_IMPACT.test(uri.path))) {
 			return;
 		}
 		const id = `volt-check-${generateUuid()}`;
@@ -5201,6 +5540,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		this.activeCatalogRef = this.storageService.get(VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, StorageScope.APPLICATION) || undefined;
 		this.hydrateAgentModelsFromCatalog();
+		// The last run's CLI detections, so the Providers page and the catalog have them before this run checks again.
+		const saved = this.readJson<{ at?: number; detections?: [string, IDetectResult][] }>(VOLT_DETECTIONS_STORAGE_KEY, {});
+		if (Array.isArray(saved.detections) && typeof saved.at === 'number') {
+			this.detections = new Map(saved.detections.filter(([id, detect]) => enabledIds.has(id) && typeof detect?.available === 'boolean'));
+			this.lastProviderCheck = saved.at;
+		}
 	}
 
 	/**
@@ -5406,10 +5751,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (session?.activeRun) {
 			session.activeRun = { ...session.activeRun, status: 'waiting' };
 		}
-		this.emitAccess(request, { type: 'access.ask', request });
-		return new Promise<IAccessDecision>(resolve => {
+		const answer = new Promise<IAccessDecision>(resolve => {
 			this.pendingApprovals.set(request.id, { resolve, request: { ...request, reason: decision.policySource ?? request.reason } });
 		});
+		// Pending first: listeners read the pending list when the event fires (the agent server publishes it then).
+		this.emitAccess(request, { type: 'access.ask', request });
+		return answer;
 	}
 
 	private emitAccess(request: IAccessRequest, event: IVoltEvent): void {
@@ -5686,3 +6033,16 @@ function asToolEvent(event: { type: string;[key: string]: unknown }): IVoltEvent
 
 registerSingleton(IAgentRuntimeService, AgentRuntimeService, InstantiationType.Delayed);
 registerSingleton(IVoltStdioService, NullVoltStdioService, InstantiationType.Delayed);
+
+/** The controller's directive with the evidence harness's send-back added (a finish it does not accept). */
+function withSendBack(directive: DeepseekDirective, sendBack: string | undefined): DeepseekDirective {
+	if (!sendBack || directive.kind === 'stop') {
+		return directive;
+	}
+	return directive.kind === 'inject' ? { kind: 'inject', message: `${directive.message}\n\n${sendBack}` } : { kind: 'inject', message: sendBack };
+}
+
+/** Providers whose prompt cache Volt writes with the five-minute lifetime: Claude, direct or through OpenRouter. */
+function keepsPromptCacheBriefly(providerId: string, modelId: string): boolean {
+	return providerId === 'anthropic' || (providerId === 'openrouter' && /(?:^|[/~])anthropic\/|claude/i.test(modelId));
+}

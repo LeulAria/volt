@@ -53,6 +53,16 @@ const ORDERED = /^( {0,3})(\d{1,9})([.)])([ \t]+|$)/;
 const TABLE_DELIM = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
 const SETEXT = /^ {0,3}(={2,}|-{2,})[ \t]*$/;
 const MATH_FENCE = /^ {0,3}\$\$[ \t]*$/;
+/** `\[` … `\]` on lines of their own, as LaTeX writes display math. */
+const MATH_OPEN_BRACKET = /^ {0,3}\\\[[ \t]*$/;
+const MATH_CLOSE_BRACKET = /^ {0,3}\\\][ \t]*$/;
+/** `$$ x^2 $$` on one line. */
+const MATH_LINE = /^ {0,3}\$\$(.+?)\$\$[ \t]*$/;
+/**
+ * Inline math the way the desktop reads it (markedKatexExtension): `$x$` or `$$x$$`, the opening
+ * `$` not after a letter or digit, the closing one not before one, nothing on either side but the formula.
+ */
+const MATH_INLINE = /^(\${1,2})(?!\$)((?:\\.|[^\\\n])*?(?:\\.|[^\\\n$]))\1(?![a-zA-Z0-9])/;
 const HTML_START = /^ {0,3}<(?:!--|\/?(?:div|details|summary|p|table|thead|tbody|tr|td|th|pre|section|article|aside|header|footer|nav|ul|ol|li|h[1-6]|blockquote|figure|picture|video|center|dl|dt|dd)\b)/i;
 const CALLOUT = /^\[!(note|tip|important|warning|caution)\][ \t]*$/i;
 const TASK = /^\[([ xX])\][ \t]+/;
@@ -119,7 +129,7 @@ function isTableStart(line: string, next: string | undefined): boolean {
 
 /** Lines that end a paragraph without a blank line between. */
 function interruptsParagraph(line: string, next: string | undefined): boolean {
-	if (FENCE.test(line) || HEADING.test(line) || HR.test(line) || QUOTE.test(line) || MATH_FENCE.test(line) || HTML_START.test(line)) {
+	if (FENCE.test(line) || HEADING.test(line) || HR.test(line) || QUOTE.test(line) || MATH_FENCE.test(line) || MATH_LINE.test(line) || MATH_OPEN_BRACKET.test(line) || HTML_START.test(line)) {
 		return true;
 	}
 	const marker = listMarker(line);
@@ -217,10 +227,17 @@ function parseBlocks(lines: readonly string[], prefix: string, lineOffset = 0): 
 			continue;
 		}
 
-		if (MATH_FENCE.test(line)) {
+		if ((m = MATH_LINE.exec(line))) {
+			i++;
+			push({ type: 'math', key, text: m[1].trim() }, start);
+			continue;
+		}
+
+		if (MATH_FENCE.test(line) || MATH_OPEN_BRACKET.test(line)) {
+			const closer = MATH_FENCE.test(line) ? MATH_FENCE : MATH_CLOSE_BRACKET;
 			const body: string[] = [];
 			i++;
-			while (i < lines.length && !MATH_FENCE.test(lines[i])) {
+			while (i < lines.length && !closer.test(lines[i])) {
 				body.push(lines[i]);
 				i++;
 			}
@@ -464,6 +481,7 @@ export type MdInline =
 	| { readonly t: 'del'; readonly c: readonly MdInline[] }
 	| { readonly t: 'link'; readonly href: string; readonly c: readonly MdInline[] }
 	| { readonly t: 'image'; readonly src: string; readonly alt: string }
+	| { readonly t: 'math'; readonly v: string }
 	| { readonly t: 'br' };
 
 const PUNCT = '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~';
@@ -615,6 +633,16 @@ function inlines(s: string, openEnded: boolean): MdInline[] {
 	while (i < s.length) {
 		const ch = s[i];
 
+		if (ch === '\\' && s[i + 1] === '(') {
+			const close = s.indexOf('\\)', i + 2);
+			if (close > i + 2 && !s.slice(i + 2, close).includes('\n')) {
+				flush();
+				out.push({ t: 'math', v: s.slice(i + 2, close).trim() });
+				i = close + 2;
+				continue;
+			}
+		}
+
 		if (ch === '\\') {
 			const next = s[i + 1];
 			if (next === '\n') {
@@ -649,6 +677,17 @@ function inlines(s: string, openEnded: boolean): MdInline[] {
 			text += s.slice(i, i + run);
 			i += run;
 			continue;
+		}
+
+		if (ch === '$' && !isWordChar(s[i - 1])) {
+			const math = MATH_INLINE.exec(s.slice(i, i + 2000));
+			// "$5 and $10" is money, not math: the formula must not start or end with a space.
+			if (math && !/^\s|\s$/.test(math[2])) {
+				flush();
+				out.push({ t: 'math', v: math[2] });
+				i += math[0].length;
+				continue;
+			}
 		}
 
 		if (ch === '!' && s[i + 1] === '[') {
@@ -765,6 +804,7 @@ export function inlineText(nodes: readonly MdInline[]): string {
 		switch (node.t) {
 			case 'text':
 			case 'code':
+			case 'math':
 				out += node.v;
 				break;
 			case 'br':

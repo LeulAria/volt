@@ -68,6 +68,68 @@ export function resourceAttachmentsFromMentions(mentions: readonly IAgentDisplay
 	return resources;
 }
 
+/** A chip's place in a sent message's text: `index` is where its label starts. */
+export interface IPlacedMention {
+	readonly index: number;
+	readonly mention: IAgentDisplayMention;
+}
+
+/** The composer's agent-facing tag for a pasted picture or clip: `[Image #1: image.png]`. */
+const MEDIA_TAG = /\[(Image|Video)(?: #\d+)?: ([^\]\n]+)\]/g;
+
+/**
+ * Where a sent message's chips go. Each mention takes the first copy of its label after the last
+ * one. A message that holds the agent-facing `[Image #1: image.png]` tags (its display text was
+ * lost) shows each as its name: on the attached image's chip when the message has it, else on an
+ * image chip without a picture. Never raw tags.
+ */
+export function placeMessageMentions(text: string, mentions: readonly IAgentDisplayMention[] | undefined): { text: string; placed: IPlacedMention[] } {
+	const list = mentions?.filter(mention => mention.label) ?? [];
+	const placed: IPlacedMention[] = [];
+	const tagged = new Set<IAgentDisplayMention>();
+	const tagRanges: [number, number][] = [];
+	let shown = text;
+	if (/\[(Image|Video)/.test(text)) {
+		shown = '';
+		let last = 0;
+		for (const match of text.matchAll(MEDIA_TAG)) {
+			const kind = match[1] === 'Image' ? 'image' : 'video';
+			const label = match[2].trim();
+			if (!label) {
+				continue;
+			}
+			const attached = list.find(mention => mention.kind === kind && mention.label === label && !tagged.has(mention));
+			if (attached) {
+				tagged.add(attached);
+			}
+			shown += text.slice(last, match.index);
+			placed.push({ index: shown.length, mention: attached ?? { kind, label } });
+			tagRanges.push([shown.length, shown.length + label.length]);
+			shown += label;
+			last = match.index + match[0].length;
+		}
+		shown += text.slice(last);
+	}
+	const overlapsTag = (start: number, end: number) => tagRanges.some(([from, to]) => start < to && end > from);
+	let cursor = 0;
+	for (const mention of list) {
+		if (tagged.has(mention)) {
+			continue;
+		}
+		let index = shown.indexOf(mention.label, cursor);
+		while (index >= 0 && overlapsTag(index, index + mention.label.length)) {
+			index = shown.indexOf(mention.label, index + 1);
+		}
+		if (index < 0) {
+			continue;
+		}
+		placed.push({ index, mention });
+		cursor = index + mention.label.length;
+	}
+	placed.sort((a, b) => a.index - b.index);
+	return { text: shown, placed };
+}
+
 /** `screen.mov @ 0:03.5`: the name a video still is sent under. */
 export function videoFrameName(label: string, time: number): string {
 	return `${label} @ ${formatDuration(time, true)}`;

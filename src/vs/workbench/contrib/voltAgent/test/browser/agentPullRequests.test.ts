@@ -43,6 +43,7 @@ import {
 	startWatch,
 	watchSummary,
 } from '../../common/agentPullRequests.js';
+import { compilePrSearch, IPrSearch, normalizeMatches, rankBySearch } from '../../common/agentPullRequestSearch.js';
 
 const REPO = { host: 'github.com', owner: 'LeulAria', name: 'Agent-Git-Test' };
 
@@ -378,6 +379,64 @@ suite('Volt agent pull requests', () => {
 		assert.strictEqual(blockedReason(ready), 'Ready to merge');
 		assert.strictEqual(blockedReason(merged), 'Merged');
 		assert.strictEqual(blockedReason(pr(12, { reviewDecision: 'reviewRequired' })), 'Awaiting review');
+	});
+
+	test('search: ranks by how well every word matches, fuzzy and with swapped letters, by field, negated and as a regular expression', () => {
+		const failing = { state: 'failure', total: 1, passed: 0, failed: 1, pending: 0, skipped: 0, failing: [] } as const;
+		const list = [
+			pr(31, { title: 'perf: Volt lighter than T3', headRefName: 'volt/fbefa38e', author: { login: 'LeulAria' }, viewer: 'LeulAria' }),
+			pr(30, { title: 'fix(chat, browser): scroll while editing a streaming prompt', headRefName: 'fix/edit-scroll-and-annotation-chips', author: { login: 'LeulAria' }, viewer: 'LeulAria' }),
+			pr(10, { title: 'docs: refresh README top section', headRefName: 'readme-refresh', author: { login: 'arialus' }, viewer: 'LeulAria', reviewRequests: ['LeulAria'], checks: failing }),
+			pr(8, { title: 'build(deps): bump actions/checkout', headRefName: 'dependabot/github_actions/checkout-5', author: { login: 'dependabot' }, viewer: 'LeulAria', labels: [{ name: 'dependencies', color: '0366d6' }, { name: 'github_actions', color: '000000' }] }),
+		];
+		const found = (query: string, regex = false) => rankBySearch(list, compilePrSearch(query, regex), item => item).map(({ item }) => item.number);
+
+		assert.strictEqual(compilePrSearch('   ').empty, true);
+		assert.deepStrictEqual(found(''), [31, 30, 10, 8], 'nothing typed keeps the list order');
+		assert.deepStrictEqual(found('scroll'), [30]);
+		assert.deepStrictEqual(found('scorll'), [30], 'two swapped letters still find it');
+		assert.deepStrictEqual(found('rdme'), [10], 'fuzzy: letters in order');
+		assert.deepStrictEqual(found('fix scroll'), [30], 'every word must match');
+		assert.deepStrictEqual(found('fix nothing'), []);
+
+		// Numbers: the number itself first, then numbers starting with it; never digits inside a number.
+		assert.deepStrictEqual(found('30')[0], 30);
+		assert.deepStrictEqual(found('#3'), [31, 30]);
+		assert.deepStrictEqual(found('#1'), [10]);
+
+		// Fields, status words and negation.
+		assert.deepStrictEqual(found('@depend'), [8]);
+		assert.deepStrictEqual(found('author:arial'), [10]);
+		assert.deepStrictEqual(found('label:github'), [8]);
+		assert.deepStrictEqual(found('is:failing'), [10]);
+		assert.deepStrictEqual(found('is:mine'), [31, 30]);
+		assert.deepStrictEqual(found('-is:failing -@dependabot'), [31, 30]);
+		assert.deepStrictEqual(found('"edit scroll"'), [], 'quoted words match only as typed');
+		assert.deepStrictEqual(found('"while editing"'), [30]);
+		assert.deepStrictEqual(found('author:'), [31, 30, 10, 8], 'a half-typed qualifier does not empty the list');
+
+		// How well, then where: a whole branch beats letters inside a title word; a title start beats a branch start.
+		const rank = (items: typeof list, query: string) => rankBySearch(items, compilePrSearch(query), item => item).map(({ item }) => item.number);
+		assert.deepStrictEqual(rank([pr(1, { title: 'microchips row', headRefName: 'a' }), pr(2, { title: 'other', headRefName: 'chips' })], 'chips'), [2, 1]);
+		assert.deepStrictEqual(rank([pr(1, { title: 'other', headRefName: 'chips-x' }), pr(2, { title: 'chips row', headRefName: 'a' })], 'chips'), [2, 1]);
+
+		// Regular expressions: /pattern/flags, the toggle, smart case, half-typed patterns.
+		assert.deepStrictEqual(found('/^fix\\(/'), [30]);
+		assert.deepStrictEqual(found('^(perf|docs):', true), [31, 10]);
+		assert.deepStrictEqual(found('/volt'), [31], 'the closing slash is optional');
+		assert.deepStrictEqual(found('/^Perf/'), [], 'a capital makes it case sensitive');
+		assert.deepStrictEqual(found('/^Perf/i'), [31]);
+		const broken: IPrSearch = compilePrSearch('/fix(');
+		assert.ok(broken.error);
+		assert.strictEqual(broken.match(list[1]), undefined);
+
+		// Highlights: what the row shows, merged where words overlap.
+		const hit = compilePrSearch('scroll edit').match(list[1])!;
+		const title = list[1].title;
+		assert.deepStrictEqual(hit.title, [{ start: title.indexOf('scroll'), end: title.indexOf('scroll') + 6 }, { start: title.indexOf('editing'), end: title.indexOf('editing') + 4 }]);
+		assert.deepStrictEqual(compilePrSearch('#3').match(list[0])!.number, [{ start: 0, end: 2 }]);
+		assert.deepStrictEqual(compilePrSearch('31').match(list[0])!.number, [{ start: 1, end: 3 }]);
+		assert.deepStrictEqual(normalizeMatches([{ start: 4, end: 6 }, { start: 0, end: 2 }, { start: 1, end: 3 }, { start: 6, end: 7 }]), [{ start: 0, end: 3 }, { start: 4, end: 7 }]);
 	});
 
 	test('ready to merge: open, mergeable, a clean merge box, and no failing, running or rejecting gate', () => {

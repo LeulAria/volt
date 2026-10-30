@@ -9,6 +9,7 @@ import { Icon } from '../ui/primitives';
 import { DiffLines } from './DiffLines';
 import { openLightbox } from './Lightbox';
 import { parseFileRef, useChatRow } from './rowContext';
+import { ChartFenceBlock, MathBlock, MathInline, MermaidBlock } from './Visuals';
 
 /** A link or code span naming a file in the project: opens it in the editor. */
 function FileRef({ target, children, className }: { readonly target: string; readonly children: ReactNode; readonly className: string }) {
@@ -35,8 +36,9 @@ function renderInlines(nodes: readonly MdInline[], key = ''): ReactNode[] {
 			case 'em': return <em key={k}>{renderInlines(node.c, `${k}.`)}</em>;
 			case 'del': return <del key={k}>{renderInlines(node.c, `${k}.`)}</del>;
 			case 'br': return <br key={k} />;
+			case 'math': return <MathInline key={k} tex={node.v} />;
 			case 'image': return /^(https?:|data:image\/)/i.test(node.src)
-				? <img key={k} className="md-image" src={node.src} alt={node.alt} loading="lazy" referrerPolicy="no-referrer" onClick={() => openLightbox(node.src, node.alt || 'image')} />
+				? <MdImage key={k} src={node.src} alt={node.alt} />
 				: <span key={k} className="md-link md-link-local"><Icon name="image" size={13} /> {node.alt || 'image'}</span>;
 			case 'link': {
 				const safe = /^(https?:|mailto:)/i.test(node.href) ? node.href : undefined;
@@ -46,6 +48,14 @@ function renderInlines(nodes: readonly MdInline[], key = ''): ReactNode[] {
 			}
 		}
 	});
+}
+
+/** A picture in a reply; when it can't load, what it was and a link to it. */
+function MdImage({ src, alt }: { readonly src: string; readonly alt: string }) {
+	const [failed, setFailed] = useState(false);
+	return failed
+		? <a className="md-image-missing" href={src} target="_blank" rel="noreferrer noopener" title={src}><Icon name="image" size={14} /><span>{alt || 'Image'}</span></a>
+		: <img className="md-image" src={src} alt={alt} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} onClick={() => openLightbox(src, alt || 'image')} />;
 }
 
 export function Inline({ text, open }: { readonly text: string; readonly open?: boolean }) {
@@ -67,7 +77,7 @@ const BlockView = memo(function BlockView({ block, open }: { readonly block: MdB
 				? <div className="code-card"><div className="code-head"><span className="code-lang">DIFF</span></div><DiffLines diff={block.code} /></div>
 				: <CodeBlock code={block.code} lang={block.lang} streaming={open && !block.closed} />;
 		case 'math':
-			return <pre className="md-math">{block.text}</pre>;
+			return open ? <pre className="md-math">{block.text}</pre> : <MathBlock tex={block.text} />;
 		case 'hr':
 			return <hr />;
 		case 'html':
@@ -126,7 +136,19 @@ export const Markdown = memo(function Markdown({ text, docKey, streaming = false
 	);
 });
 
-export const CodeBlock = memo(function CodeBlock({ code, lang, path, streaming }: { readonly code: string; readonly lang?: string; readonly path?: string; readonly streaming?: boolean }) {
+/** A fenced block: a diagram or chart once a mermaid / volt-chart fence has streamed in, else highlighted code. */
+export const CodeBlock = memo(function CodeBlock(props: { readonly code: string; readonly lang?: string; readonly path?: string; readonly streaming?: boolean }) {
+	const lang = props.lang?.toLowerCase();
+	if (!props.streaming && !props.path && props.code.trim() && lang === 'mermaid') {
+		return <MermaidBlock source={props.code} fallback={<CodeCard {...props} />} />;
+	}
+	if (!props.streaming && !props.path && props.code.trim() && lang === 'volt-chart') {
+		return <ChartFenceBlock spec={props.code} fallback={<CodeCard {...props} />} />;
+	}
+	return <CodeCard {...props} />;
+});
+
+const CodeCard = memo(function CodeCard({ code, lang, path, streaming }: { readonly code: string; readonly lang?: string; readonly path?: string; readonly streaming?: boolean }) {
 	const lines = useMemo(() => highlight(code, lang), [code, lang]);
 	const [copied, setCopied] = useState(false);
 	const copy = () => {

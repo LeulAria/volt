@@ -10,13 +10,15 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useCheckpoints, useClient, useCollections, usePending, useTranscript } from '../app/client';
 import { useConversationPrefs } from '../app/prefs';
-import { changesPath, chatPath, filePath, navigate } from '../app/router';
+import { changesPath, chatPath, comparePath, filePath, navigate } from '../app/router';
+import { runGroupOfChat } from '@volt/client-core';
 import { revealInFile } from '../ide/workbench';
 import { ConfirmDialog, type IMenuItem, MenuButton, PromptDialog } from '../ui/overlays';
 import { Button, EmptyState, Icon, IconButton, LiveTimer, Spinner, StatusIcon } from '../ui/primitives';
 import { Composer } from './Composer';
 import { TranscriptRowView } from './Rows';
-import { ChatRowContext, type IChatRowContext } from './rowContext';
+import { ChatRowContext, type IChatRowContext, WorkedToggleContext } from './rowContext';
+import { TerminalsButton } from './Terminals';
 import { ApprovalCard, LimitTray, PausedTray, QuestionCard, QueueTray } from './Trays';
 
 const CHAT_COLLECTIONS = ['history', 'orch.threads', 'orch.tasks', 'sessions', 'access', 'questions', 'projects', 'runtime'];
@@ -26,7 +28,32 @@ function Transcript({ chatId }: { readonly chatId: string }) {
 	const transcript = useTranscript(chatId);
 	const pending = usePending(chatId);
 	const { toolDensity } = useConversationPrefs();
-	const rows = useMemo(() => applyToolDensity(buildRows(transcript?.messages ?? [], pending), toolDensity), [transcript?.messages, pending, toolDensity]);
+	// "Worked for" folds: turns watched while they ran start open (as on the desktop) unless folded.
+	const [openWorked, setOpenWorked] = useState<ReadonlySet<string>>(() => new Set());
+	const [closedWorked, setClosedWorked] = useState<ReadonlySet<string>>(() => new Set());
+	const watched = useRef(new Set<string>());
+	const toggleWorked = useCallback((turnKey: string, open: boolean) => {
+		const flip = (set: ReadonlySet<string>, add: boolean) => {
+			const next = new Set(set);
+			if (add) {
+				next.add(turnKey);
+			} else {
+				next.delete(turnKey);
+			}
+			return next;
+		};
+		setOpenWorked(prev => flip(prev, open));
+		setClosedWorked(prev => flip(prev, !open));
+	}, []);
+	const rows = useMemo(() => {
+		const messages = transcript?.messages ?? [];
+		const last = messages[messages.length - 1];
+		if (last?.kind === 'agent' && last.activity?.streaming) {
+			watched.current.add(`a:${last.id ?? `i${messages.length - 1}`}`);
+		}
+		const open = watched.current.size ? new Set([...watched.current, ...openWorked]) : openWorked;
+		return applyToolDensity(buildRows(messages, pending, { openWorked: open, closedWorked }), toolDensity);
+	}, [transcript?.messages, pending, toolDensity, openWorked, closedWorked]);
 	const scroller = useRef<HTMLDivElement>(null);
 	const content = useRef<HTMLDivElement>(null);
 	const stuck = useRef(true);
@@ -82,11 +109,13 @@ function Transcript({ chatId }: { readonly chatId: string }) {
 					</div>
 				) : null}
 				{transcript?.status === 'error' && !rows.length ? <EmptyState icon="alertCircle" title="Couldn't open this chat" body={transcript.error} /> : null}
-				{rows.map(row => (
-					<div key={row.key} className={`trow trow-${row.kind}`}>
-						<TranscriptRowView row={row} chatId={chatId} />
-					</div>
-				))}
+				<WorkedToggleContext.Provider value={toggleWorked}>
+					{rows.map(row => (
+						<div key={row.key} className={`trow trow-${row.kind}`}>
+							<TranscriptRowView row={row} chatId={chatId} />
+						</div>
+					))}
+				</WorkedToggleContext.Provider>
 			</div>
 			{!atBottom ? <button type="button" className="jump" onClick={jump} aria-label="Jump to latest"><Icon name="arrowDown" size={15} /></button> : null}
 		</div>
@@ -118,6 +147,8 @@ export function openPathInEditor(path: string, line?: number): void {
 	}
 }
 
+const RUN_GROUP_COLLECTIONS = ['runGroups'];
+
 export function ChatView({ chatId, variant = 'page', openPath }: IChatViewProps) {
 	const client = useClient();
 	const cols = useCollections(CHAT_COLLECTIONS);
@@ -132,6 +163,8 @@ export function ChatView({ chatId, variant = 'page', openPath }: IChatViewProps)
 	const messages = transcript?.messages ?? [];
 	const running = !!thread?.active || isStreaming(messages);
 	const status = chatStatus(meta, thread, approvals.length, questions.length);
+	// One of a comparison's runs: the header leads back to the comparison.
+	const runGroup = runGroupOfChat(useCollections(RUN_GROUP_COLLECTIONS), chatId);
 
 	const lastMode = useMemo(() => {
 		for (let i = messages.length - 1; i >= 0; i--) {
@@ -257,10 +290,12 @@ export function ChatView({ chatId, variant = 'page', openPath }: IChatViewProps)
 								<div className="chat-sub">
 									{project?.displayName || meta?.workspaceLabel ? <span className="sub-item"><Icon name="folder" size={12} />{project?.displayName ?? meta?.workspaceLabel}</span> : null}
 									{branch ? <span className="sub-item mono"><Icon name="branch" size={12} />{branch}</span> : null}
+									{runGroup ? <button type="button" className="compare-chip" title="Open the comparison" onClick={() => navigate(comparePath(runGroup.id))}><Icon name="layers" size={11} />Compare · {runGroup.runs.length} models</button> : null}
 									{status.status !== 'idle' ? <span className={`sub-item status-text status-${status.status}`}>{status.label}</span> : meta?.updatedAt ? <span className="sub-item">{relativeTime(meta.updatedAt)}</span> : null}
 								</div>
 							</div>
 							{running && thread?.active ? <span className="header-timer"><Spinner size={11} /><LiveTimer since={thread.active.at} /></span> : null}
+							<TerminalsButton chatId={chatId} />
 							<IconButton icon="fileDiff" label="Review changes" onClick={() => navigate(changesPath(chatId))} />
 							<IconButton icon="sidebar" label="Details" active={detailsOpen} onClick={toggleDetails} />
 							<MenuButton className="icon-btn" items={menu} placement="bottom-end" width={220} label="Chat actions"><Icon name="more" size={16} /></MenuButton>
@@ -269,7 +304,7 @@ export function ChatView({ chatId, variant = 'page', openPath }: IChatViewProps)
 					<Transcript chatId={chatId} />
 					<div className="chat-bottom">
 						<div className="trays">
-							{approvals.map(request => <ApprovalCard key={request.id} request={request} />)}
+							{approvals.map(request => <ApprovalCard key={request.id} request={request} onBuildPlan={() => setMode('Agent')} />)}
 							{questions[0] ? <QuestionCard key={questions[0].id} request={questions[0]} /> : null}
 							{thread?.limit ? <LimitTray chatId={chatId} thread={thread} /> : null}
 							{thread && !thread.active && thread.pause && thread.pause !== 'limit' && thread.queue.length ? <PausedTray chatId={chatId} thread={thread} /> : null}
@@ -277,6 +312,7 @@ export function ChatView({ chatId, variant = 'page', openPath }: IChatViewProps)
 						</div>
 						<Composer
 							draftKey={chatId}
+							chatId={chatId}
 							running={running}
 							mode={mode}
 							onModeChange={setMode}

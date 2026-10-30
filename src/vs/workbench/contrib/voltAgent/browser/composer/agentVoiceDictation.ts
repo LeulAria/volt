@@ -181,6 +181,8 @@ export class AgentVoiceDictation extends Disposable {
 		this._partial = '';
 		this._level = 0;
 		this.setState('starting');
+		// The cleanup agent boots while the user speaks, so the first dictation is polished too.
+		this.prediction.warmUp();
 		try {
 			await this.speech.start({ sessionId: session.id, locale: navigator.language || 'en-US', endpoint: this.endpoint() });
 			if (generation !== this.generation) {

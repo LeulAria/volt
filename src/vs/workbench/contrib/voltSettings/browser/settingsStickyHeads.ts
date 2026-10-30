@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { $, append, getWindow, isHTMLElement, scheduleAtNextAnimationFrame } from '../../../../base/browser/dom.js';
+import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { Disposable, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 
 const BLOCK = 'volt-settings-block';
@@ -13,6 +14,8 @@ const BACKDROP = 'volt-settings-head-backdrop';
 const MIRROR = 'volt-settings-head-mirror';
 /** The band under a stuck title where the blur gives way to the real rows; the same length in voltSettings.css. */
 const ROWS_FADE_PX = 20;
+/** How long the page must stay unchanged before its copy is rebuilt. */
+const MUTATION_SETTLE_MS = 200;
 
 /** One titled run of the settings page: its title sticks while the rest of the block scrolls under it. */
 export function appendSettingsBlock(page: HTMLElement, headClass: string): { readonly head: HTMLElement; readonly body: HTMLElement } {
@@ -44,10 +47,16 @@ export class SettingsStickyHeads extends Disposable {
 		private readonly page: HTMLElement,
 	) {
 		super();
+		// The copy is rebuilt once the page stops changing, not on every change: a chart's hover
+		// rewrites its tooltip on each pointer move, and cloning and laying out the whole page per
+		// move made hovering crawl. Until then the backdrop keeps the previous copy.
+		const settle = this._register(new RunOnceScheduler(() => {
+			this.mirror = undefined;
+			this.schedule();
+		}, MUTATION_SETTLE_MS));
 		const observer = new MutationObserver(records => {
 			if (records.some(record => !isOwnMutation(record))) {
-				this.mirror = undefined;
-				this.schedule();
+				settle.schedule();
 			}
 		});
 		observer.observe(page, { childList: true, subtree: true, characterData: true });
@@ -129,6 +138,10 @@ export class SettingsStickyHeads extends Disposable {
 		}
 		for (const el of copy.querySelectorAll('[id]')) {
 			el.removeAttribute('id');
+		}
+		// A chart's hover (tooltip, cursor) is the pointer's, not the page's: the copy shows the chart at rest.
+		for (const el of copy.querySelectorAll('.vc-tip, .vc-cursor, .vc-crosshair')) {
+			el.remove();
 		}
 		return copy;
 	}

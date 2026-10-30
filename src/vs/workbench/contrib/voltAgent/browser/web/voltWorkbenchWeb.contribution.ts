@@ -64,12 +64,17 @@ import { RemoteAgentSessionControl } from '../editor/remoteAgentSessionControl.j
 import { IAgentCheckpointService } from '../review/agentCheckpointService.js';
 import { IAgentEditsService } from '../review/agentEditsService.js';
 import { RemoteAgentCheckpointService } from '../review/remoteAgentCheckpointService.js';
+import { IAgentTerminalsService } from '../terminals/agentTerminals.js';
+import { RemoteAgentTerminalsService } from '../terminals/remoteAgentTerminals.js';
+import { RemoteAgentRunGroupService } from '../runGroups/remoteAgentRunGroupService.js';
+import { IAgentRunGroupService } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { IVoltCanvasService, VoltCanvasService } from '../visuals/canvas/canvasService.js';
 import { IAgentSurfaceDraft, IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { AgentEditsJournalEntry } from '../../common/agentEditsJournal.js';
 
 // What the desktop also loads (its main file imports these after the agent services).
 import '../pullRequests/agentPullRequests.contribution.js';
+import '../trajectory/agentTrajectory.contribution.js';
 import '../runGroups/agentRunGroups.contribution.js';
 import '../orchestration/agentThreadToolService.js';
 import '../orchestration/agentWorkspaceMover.js';
@@ -143,6 +148,9 @@ registerSingleton(IAgentHistoryService, RemoteAgentHistoryService, Instantiation
 registerSingleton(IVoltSessionContextService, RemoteVoltSessionContextService, InstantiationType.Delayed);
 registerSingleton(IVoltHostToolService, RemoteVoltHostToolService, InstantiationType.Delayed);
 registerSingleton(IAgentCheckpointService, RemoteAgentCheckpointService, InstantiationType.Delayed);
+// The agents' terminals run in the agent server too; this page shows them attached to it.
+registerSingleton(IAgentTerminalsService, RemoteAgentTerminalsService, InstantiationType.Delayed);
+registerSingleton(IAgentRunGroupService, RemoteAgentRunGroupService, InstantiationType.Delayed);
 setAgentSessionControlFactory((input, instantiationService) => instantiationService.createInstance(RemoteAgentSessionControl, input));
 
 //#endregion

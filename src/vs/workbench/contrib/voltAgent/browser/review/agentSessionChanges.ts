@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { LcsDiff } from '../../../../../base/common/diff/diff.js';
 import { AgentSegment, FileChangeVerb, IFileChangeBlock, isPhantomFileBlock } from '../blocks/agentBlocks.js';
 import { computeChangeStats, netFileEdit } from './fileChangePreviewModel.js';
 
@@ -105,6 +106,41 @@ export function sumAgentChangeStats(changes: readonly IAgentSessionFileChange[])
 		deletions += change.deletions;
 	}
 	return { files: changes.length, additions, deletions };
+}
+
+/** Lines added and removed going from `original` to `modified`; undefined is no file. */
+export function countLineChanges(original: string | undefined, modified: string | undefined): { additions: number; deletions: number } {
+	const lines = (text: string | undefined) => text ? text.split(/\r?\n/).filter((line, index, all) => index < all.length - 1 || line !== '') : [];
+	const before = lines(original);
+	const after = lines(modified);
+	let additions = 0;
+	let deletions = 0;
+	for (const change of new LcsDiff({ getElements: () => before }, { getElements: () => after }).ComputeDiff(false).changes) {
+		additions += change.modifiedLength;
+		deletions += change.originalLength;
+	}
+	return { additions, deletions };
+}
+
+/**
+ * Line counts read from the files as they are now (after the user undid some of the agent's
+ * hunks, say), over the counts the transcript and snapshots recorded, by path. A file back to
+ * where it started is no change and leaves the list.
+ */
+export function applyLiveChangeStats(files: readonly IAgentSessionFileChange[], live: ReadonlyMap<string, { additions: number; deletions: number }>): IAgentSessionFileChange[] {
+	if (!live.size) {
+		return [...files];
+	}
+	const out: IAgentSessionFileChange[] = [];
+	for (const file of files) {
+		const counts = live.get(file.path);
+		if (!counts) {
+			out.push(file);
+		} else if (counts.additions || counts.deletions) {
+			out.push({ ...file, additions: counts.additions, deletions: counts.deletions });
+		}
+	}
+	return out;
 }
 
 /**
@@ -266,21 +302,42 @@ function resolveChangeStats(
  * lists keep their transcript entry.
  */
 export function mergeSnapshotChanges(transcript: readonly IAgentSessionFileChange[], snapshot: readonly IAgentSnapshotFileChange[]): IAgentSessionFileChange[] {
-	const out = [...transcript];
+	const out: IAgentSessionFileChange[] = [];
+	// A listed path, and every tail of it after a slash: a lookup per path instead of a scan of
+	// every listed file, which took seconds for a few thousand files.
+	const paths = new Set<string>();
+	const tails = new Set<string>();
+	const push = (file: IAgentSessionFileChange) => {
+		out.push(file);
+		paths.add(file.path);
+		for (let slash = file.path.indexOf('/'); slash !== -1; slash = file.path.indexOf('/', slash + 1)) {
+			tails.add(file.path.slice(slash + 1));
+		}
+	};
+	transcript.forEach(push);
+	// Listed as `path` or `absolute`, as a longer path ending in `/path`, or as a tail of `absolute`.
 	const listed = (path: string, absolute: string) => {
 		const abs = normalizeAgentChangePath(absolute);
-		return out.some(file => file.path === path || file.path === abs || file.path.endsWith(`/${path}`) || abs.endsWith(`/${file.path}`));
+		if (paths.has(path) || paths.has(abs) || tails.has(path)) {
+			return true;
+		}
+		for (let slash = abs.indexOf('/'); slash !== -1; slash = abs.indexOf('/', slash + 1)) {
+			if (paths.has(abs.slice(slash + 1))) {
+				return true;
+			}
+		}
+		return false;
 	};
 	for (const change of snapshot) {
 		const source = { repoRoot: change.repoRoot, binary: change.binary };
 		if (change.kind === 'renamed' && change.oldPath && change.oldAbsolutePath && !listed(change.oldPath, change.oldAbsolutePath)) {
-			out.push({ path: change.oldPath, kind: 'deleted', additions: 0, deletions: change.binary ? 0 : change.deletions, turnId: change.turnId, snapshot: { ...source, oldBlob: change.oldBlob } });
+			push({ path: change.oldPath, kind: 'deleted', additions: 0, deletions: change.binary ? 0 : change.deletions, turnId: change.turnId, snapshot: { ...source, oldBlob: change.oldBlob } });
 		}
 		if (listed(change.path, change.absolutePath)) {
 			continue;
 		}
 		const renamed = change.kind === 'renamed';
-		out.push({
+		push({
 			path: change.path,
 			kind: renamed ? 'added' : change.kind,
 			additions: change.additions,

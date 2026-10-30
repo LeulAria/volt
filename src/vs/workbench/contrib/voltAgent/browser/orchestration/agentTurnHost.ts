@@ -46,13 +46,14 @@ export interface IAgentPromptHostOptions {
 /**
  * A prompt another chat's agent sent (thread_send), started (thread_launch) or forked into
  * (thread_fork), or a fork's changes merged back into it (thread_merge_back), carried as `host`: the
- * transcript shows it as that chat's message, not the user's.
+ * transcript shows it as that chat's message, not the user's. `continue`: the user's own queued
+ * message, moved out of that chat into a new one.
  */
 export interface IAgentThreadSourceHost {
 	readonly fromThread: {
 		readonly id: string;
 		readonly title: string;
-		readonly kind: 'message' | 'launch' | 'fork' | 'merge';
+		readonly kind: 'message' | 'launch' | 'fork' | 'merge' | 'continue';
 		/** An agent outside Volt (OAuth MCP): `title` is its name and `id` is no chat. */
 		readonly external?: boolean;
 	};
@@ -61,7 +62,7 @@ export interface IAgentThreadSourceHost {
 export function threadSourceOf(host: unknown): IAgentThreadSourceHost['fromThread'] | undefined {
 	const from = (host as Partial<IAgentThreadSourceHost> | undefined)?.fromThread;
 	return from && typeof from.id === 'string' && typeof from.title === 'string'
-		? { id: from.id, title: from.title, kind: from.kind === 'launch' || from.kind === 'fork' || from.kind === 'merge' ? from.kind : 'message', ...(from.external === true ? { external: true } : {}) }
+		? { id: from.id, title: from.title, kind: from.kind === 'launch' || from.kind === 'fork' || from.kind === 'merge' || from.kind === 'continue' ? from.kind : 'message', ...(from.external === true ? { external: true } : {}) }
 		: undefined;
 }
 
@@ -121,7 +122,7 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		this.codec = new AgentHistoryCodec(history);
 		this._register(orchestrator.setTurnHost({
 			startTurn: request => this.startTurn(request),
-			steer: (threadId, prompt) => this.steer(threadId, prompt),
+			steer: (threadId, prompt, steerId) => this.steer(threadId, prompt, steerId),
 			prepareChild: (childId, parentId) => this.prepareChild(childId, parentId),
 		}));
 	}
@@ -241,16 +242,19 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		}
 	}
 
-	private async steer(threadId: string, prompt: IOrchPrompt): Promise<boolean> {
+	private async steer(threadId: string, prompt: IOrchPrompt, steerId: string): Promise<boolean> {
 		if (!this.runtime.canSteer(threadId)) {
 			return false;
 		}
-		const display = prompt.display as { text?: unknown } | undefined;
-		const shown = typeof display?.text === 'string' && display.text.trim() ? display.text.trim() : prompt.text;
-		if (!await this.runtime.steerAsync(threadId, prompt.text)) {
+		// The steer id is the composer's turn id: its live display (a pasted image's bytes) is stashed
+		// under it, else the stored copy is read back. Without it the steer showed only the chip's name.
+		const display = takeTurnDisplay(steerId) ?? await this.thawDisplay(prompt.display);
+		const images = imageAttachmentsFromMentions(display?.mentions);
+		if (!await this.runtime.steerAsync(threadId, prompt.text, images)) {
 			return false;
 		}
-		AgentEditorInput.acquire(threadId, this.instantiationService).controller.recordSteer(shown);
+		const shown = display?.text.trim() ? display.text.trim() : prompt.text;
+		AgentEditorInput.acquire(threadId, this.instantiationService).controller.recordSteer(shown, display?.text.trim() ? display.mentions : undefined);
 		return true;
 	}
 

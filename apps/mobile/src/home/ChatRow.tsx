@@ -9,6 +9,7 @@ import { View } from 'react-native';
 import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { interpolate, type SharedValue, useAnimatedStyle } from 'react-native-reanimated';
 import { useClient } from '../state/client';
+import { useRunGroupOfChat } from './RunGroups';
 import { useTheme } from '../theme/theme';
 import { haptic, Icon, LiveTimer, StatusIcon, T, Tap } from '../ui/core';
 
@@ -39,6 +40,7 @@ export const ChatRow = memo(function ChatRow({ item, onPress, onLongPress }: { r
 	const statusTone = item.status === 'idle' ? undefined : statusColor(item.status, p);
 	const close = () => swipe.current?.close();
 	const dim = item.settled || item.snoozed;
+	const runGroup = useRunGroupOfChat(item.id);
 	return (
 		<ReanimatedSwipeable
 			ref={swipe}
@@ -95,9 +97,11 @@ export const ChatRow = memo(function ChatRow({ item, onPress, onLongPress }: { r
 					</View>
 					<T variant="callout" weight={item.unread ? '700' : '600'} numberOfLines={2} style={{ letterSpacing: -0.2 }}>{item.title}</T>
 					{item.error || (item.preview && item.preview !== item.title) ? <T variant="small" color={item.error ? p.danger : p.fgTertiary} numberOfLines={1}>{item.error ?? item.preview}</T> : null}
-					{item.queued || item.subagents || item.model ? (
+					{item.draft || item.queued || item.subagents || item.model || runGroup ? (
 						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 3 }}>
+							{item.draft ? <Badge icon="pencil" text="Draft" /> : null}
 							{item.queued ? <Badge icon="queue" text={`${item.queued} queued`} /> : null}
+							{runGroup ? <Badge icon="layers" text={`Compare · ${runGroup.runs.length} models`} /> : null}
 							{item.subagents ? <Badge icon="agents" text={`${item.subagents} ${item.subagents === 1 ? 'subagent' : 'subagents'}`} /> : null}
 							{item.model ? (
 								<View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 }}>

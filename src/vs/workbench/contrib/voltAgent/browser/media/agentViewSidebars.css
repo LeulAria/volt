@@ -59,30 +59,37 @@
 	color: #ffffff;
 }
 
+/* The same box, icon size and muted colour as the files sidebar's tabs beside them. */
 .monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggle {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
 	box-sizing: border-box;
-	width: 20px;
-	height: 20px;
+	width: 22px;
+	height: 22px;
 	margin: 0;
-	padding: 3px;
+	padding: 0;
 	border: 0 !important;
 	box-shadow: none !important;
 	outline: none !important;
 	border-radius: 6px;
 	background: transparent;
-	color: var(--vscode-titleBar-activeForeground, var(--vscode-foreground));
+	color: var(--vscode-descriptionForeground);
 	cursor: pointer;
 	pointer-events: auto;
 	-webkit-app-region: no-drag;
 }
 
-.volt-agent-titlebar-toggle > svg,
 .volt-agent-tools-close-panel > svg {
 	width: 14px;
 	height: 14px;
+}
+
+/* The files sidebar's tab row (agentChangesEditor.css) draws the same glyphs at 16px. */
+.volt-agent-titlebar-toggle > svg {
+	flex: none;
+	width: 16px;
+	height: 16px;
 }
 
 .volt-agent-right-panel-toggle > svg {
@@ -94,9 +101,15 @@
 	transform: rotate(-90deg);
 }
 
+/* The folder's open shape reads small and light beside the framed glyphs: larger, with a 1.4px line. */
 .volt-agent-files-panel-toggle > svg {
-	width: 15px;
-	height: 15px;
+	width: 18px;
+	height: 18px;
+}
+
+.volt-agent-files-panel-toggle > svg > * {
+	vector-effect: non-scaling-stroke;
+	stroke-width: 1.4px;
 }
 
 .volt-agent-quick-open-visibility > svg {
@@ -157,12 +170,10 @@
 	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
-.monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggle:hover {
-	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
-}
-
+.monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggle:hover,
 .monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggle:focus-visible {
-	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
 }
 
 .volt-agent-quick-open-toggle,
@@ -364,10 +375,15 @@
 	overflow-y: auto;
 	overscroll-behavior: contain;
 	scrollbar-width: thin;
-	border-color: var(--vscode-menu-border, var(--vscode-widget-border, rgba(255, 255, 255, 0.1)));
+	border-color: var(--vscode-menu-border, var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)));
 	border-radius: 10px;
 	background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
 	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
+}
+
+.monaco-workbench.vs.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element > .volt-agent-quick-open-actions.expanded.overlay > .volt-agent-quick-open-body,
+.monaco-workbench.hc-light.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element > .volt-agent-quick-open-actions.expanded.overlay > .volt-agent-quick-open-body {
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
 }
 
 /* The collapse chevron stays on top of the card, at the corner where the rail's chevron was. */
@@ -577,19 +593,32 @@
 	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
 }
 
+/* Row icons are 14px, quieter than the labels beside them. Four classes: `.monaco-workbench .codicon[class*='codicon-']`
+ * sets 16px. The checks chevron keeps its own 12px. */
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon:not(.volt-pr-dock-chevron) {
+	font-size: 14px;
+	width: 14px;
+	height: 14px;
+}
+
 /* The pull-request glyph fills its box more than the other row icons. */
-.volt-agent-quick-open-actions .volt-agent-dock-row .codicon-git-pull-request {
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon.codicon-git-pull-request {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	font-size: 13px;
-	line-height: 13px;
+	font-size: 12px;
+	line-height: 12px;
 }
 
 .volt-agent-quick-open-actions .volt-agent-stroke-icon {
 	width: 15px;
 	height: 15px;
 	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+}
+
+.volt-agent-quick-open-actions .volt-agent-dock-row .volt-agent-stroke-icon {
+	width: 14px;
+	height: 14px;
 }
 
 .volt-agent-quick-open-actions .volt-agent-stroke-icon :is(path, circle) {
@@ -635,12 +664,17 @@
 	max-height: calc(100% - 60px);
 	overflow-y: auto;
 	box-sizing: border-box;
-	border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, rgba(255, 255, 255, 0.1)));
+	border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)));
 	border-radius: 10px;
 	background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
 	color: var(--vscode-menu-foreground, var(--vscode-foreground));
 	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
 	-webkit-app-region: no-drag;
+}
+
+.monaco-workbench.vs .volt-agent-quick-open-actions.volt-agent-quick-open-popup,
+.monaco-workbench.hc-light .volt-agent-quick-open-actions.volt-agent-quick-open-popup {
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
 }
 
 .monaco-workbench .volt-agent-quick-open-actions.volt-agent-quick-open-popup.hidden {

@@ -21,7 +21,7 @@ import { matchesHistoryListOptions } from '../../../../services/voltRuntime/comm
 import { IVoltExternalCaller, IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentOrchestratorService, IOrchPrompt, IOrchThread, readOrchLimits } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
-import { isTerminalTaskState } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
+import { isTerminalTaskState, titleFromBrief } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import {
 	agentMessagePrompt, branchSlug, clip, describeModelCatalog, describeThreadLine, forkPrompt, formatTurns, IThreadLineInfo, IThreadTurnText, isSettledStatus, MAX_LAUNCH_MODELS,
 	matchCatalogModel, numberArg, parseBranchStatus, parseHandoffArgs, parseWorkspace, parseWorktreeList, sendModeArg, stringArg, stringList, THREAD_MESSAGE_CHARS, THREAD_READ_CHARS,
@@ -33,14 +33,15 @@ import { threadStatus } from '../../../../services/voltRuntime/common/orchestrat
 import { IAgentRunGroupService } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { canonicalProjectRoot, IVoltProjectRecord, IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
-import { OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
+import { loadModelTranscript, OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
+import { AgentHistoryCodec } from '../history/agentHistoryCodec.js';
 import { IAgentChatSearchService } from '../search/agentChatSearchService.js';
 import { AGENT_DEFAULT_MODEL_SETTING } from '../../common/agentComposerSettings.js';
 import { AGENT_BRANCH_PREFIX_SETTING, readBranchPrefix } from '../../common/agentGitSettings.js';
 import { externalCallerId, externalSpendWindow } from './agentExternalCaller.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
-import { IAgentChatForkService, IAgentForkChatOptions, IAgentForkChatResult, IAgentMergeBackResult } from './agentChatFork.js';
+import { IAgentChatForkService, IAgentContinueInNewChatResult, IAgentForkChatOptions, IAgentForkChatResult, IAgentMergeBackResult } from './agentChatFork.js';
 import { IAgentThreadSourceHost, modeLabel, threadSourceOf } from './agentTurnHost.js';
 
 /** Chats an agent may start (launch or fork) in one of its turns: a runaway loop stops here. */
@@ -794,6 +795,55 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			model: model?.label,
 			refused,
 		};
+	}
+
+	async continueInNewChat(sourceId: string, itemId: string, options?: { readonly open?: boolean }): Promise<IAgentContinueInNewChatResult> {
+		await Promise.all([this.orchestrator.whenReady, this.history.whenReady]);
+		const source = this.orchestrator.getThread(sourceId);
+		const item = source?.queue.find(entry => entry.id === itemId && (entry.kind ?? 'prompt') === 'prompt');
+		if (!item) {
+			throw new Error('That message is no longer queued.');
+		}
+		// Off the source's queue first, so the source can never send it too.
+		await this.orchestrator.dispatch({ type: 'queue.remove', threadId: sourceId, itemId });
+		try {
+			const sourceTitle = this.titleOf(sourceId);
+			const sourceMeta = this.history.get(sourceId);
+			const display = item.prompt.display as { readonly text?: unknown } | undefined;
+			const shown = typeof display?.text === 'string' && display.text.trim() ? display.text.trim() : item.prompt.text;
+			const title = titleFromBrief(shown);
+			const queued = item.prompt.modelRef ? this.runtime.listCatalog().find(entry => entry.ref === item.prompt.modelRef) : undefined;
+			const model = queued ? { ref: queued.ref, label: queued.label } : this.modelOf(sourceId);
+			const mode = modeLabel(item.prompt.mode ?? sourceMeta?.mode);
+			const threadId = `${CHILD_ID_PREFIX}${generateUuid()}`;
+			const project = this.projectOf(sourceId);
+			if (project) {
+				attachSessionToProject(this.sessionContext, this.workspace, this.history, threadId, project);
+			}
+			this.history.open(threadId).setMeta({ title, ...(model ? { model: model.label } : {}), mode });
+			// The source conversation as its model saw it: the new chat's first agent gets it condensed.
+			const transcript = await loadModelTranscript(new AgentHistoryCodec(this.history), await this.history.open(sourceId).load());
+			this.runtime.seedSession(threadId, transcript, { continuedFrom: { id: sourceId, title: sourceTitle, ...(source?.active ? { live: true } : {}) } });
+			await this.orchestrator.dispatch({ type: 'thread.upsert', threadId, title, ...(model ? { modelRef: model.ref, modelLabel: model.label } : {}) });
+			if (sourceMeta?.worktreePath && sourceMeta.worktreeBranch) {
+				// The same checkout as the source: the work it builds on is there.
+				this.runtime.rememberWorktree(threadId, sourceMeta.worktreePath, sourceMeta.worktreeBranch);
+				this.history.open(threadId).setMeta({ worktreePath: sourceMeta.worktreePath, worktreeBranch: sourceMeta.worktreeBranch });
+			}
+			const host = { ...(item.prompt.host && typeof item.prompt.host === 'object' ? item.prompt.host : {}), fromThread: { id: sourceId, title: sourceTitle, kind: 'continue' } } satisfies IAgentThreadSourceHost;
+			const result = await this.orchestrator.submit(threadId, { ...item.prompt, mode, ...(model ? { modelRef: model.ref } : {}), host }, 'auto');
+			if (result.outcome === 'rejected') {
+				throw new Error(result.reason || 'The new chat refused the message.');
+			}
+			if (options?.open !== false) {
+				this.open(threadId);
+			}
+			return { threadId, title };
+		} catch (err) {
+			// Back on the source's queue, at its end: nothing the user wrote is lost.
+			await this.orchestrator.submit(sourceId, item.prompt, 'queue').catch(() => undefined);
+			throw err;
+		}
 	}
 
 	async mergeBack(forkId: string, options: { readonly apply: boolean; readonly callerId?: string }): Promise<IAgentMergeBackResult> {

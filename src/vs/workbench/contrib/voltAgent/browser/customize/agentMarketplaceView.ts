@@ -16,7 +16,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
-import { createModeIcon } from '../chrome/agentModeIcons.js';
+import { createCustomizationKindIcon } from '../chrome/agentModeIcons.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { AgentCustomizationKind, kindInfo, safeItemName } from './agentCustomize.js';
@@ -451,8 +451,8 @@ export class AgentMarketplaceView extends Disposable {
 		};
 		add(localize('voltMarketplace.all', "All"), { kind: 'all' });
 		add('skills.sh', { kind: 'skills' });
-		for (const marketplace of (this.marketplaces ?? []).filter(candidate => candidate.registry === 'claude')) {
-			add(marketplace.displayName, { kind: 'marketplace', name: marketplace.name });
+		for (const marketplace of (this.marketplaces ?? []).filter(candidate => candidate.registry !== 'volt')) {
+			add(marketplace.shortName ?? marketplace.displayName, { kind: 'marketplace', name: marketplace.name });
 		}
 		add(localize('voltMarketplace.personal', "Personal"), { kind: 'personal' });
 		const addMarketplace = append(chips, $('button.volt-customize-chip.add')) as HTMLButtonElement;
@@ -648,8 +648,7 @@ export class AgentMarketplaceView extends Disposable {
 
 	private renderSearch(): void {
 		const query = this.query;
-		const plugins = (this.marketplaces ?? []).flatMap(marketplace => marketplace.plugins.filter(plugin =>
-			`${plugin.name} ${plugin.description} ${plugin.author} ${plugin.category ?? ''}`.toLowerCase().includes(query.toLowerCase())));
+		const plugins = rankPlugins((this.marketplaces ?? []).flatMap(marketplace => marketplace.plugins), query);
 		if (query.length < 2) {
 			this.message(localize('voltMarketplace.typeMore', "Type at least two characters to search skills.sh."));
 		} else if (!this.searchResults) {
@@ -743,7 +742,7 @@ export class AgentMarketplaceView extends Disposable {
 			return;
 		}
 		const plugin = this.pluginOf(detail);
-		append(head, $('.volt-marketplace-icon.box.large')).appendChild(renderIcon(Codicon.package));
+		append(head, $('.volt-marketplace-icon.box.large')).appendChild(createCustomizationKindIcon('plugin'));
 		append(head, $('h2.volt-marketplace-detail-title')).textContent = detail.name;
 		this.pageLink(head, detail);
 		if (!plugin) {
@@ -882,11 +881,7 @@ export class AgentMarketplaceView extends Disposable {
 			row.tabIndex = 0;
 			row.setAttribute('role', 'link');
 			const tile = append(row, $('.volt-customize-tile'));
-			if (content.kind === 'subagent') {
-				tile.appendChild(createModeIcon('agent'));
-			} else {
-				tile.appendChild(renderIcon(contentIcon(content.kind)));
-			}
+			tile.appendChild(createCustomizationKindIcon(content.kind));
 			append(append(row, $('.volt-customize-row-copy')), $('span.name')).textContent = content.name;
 			append(row, $('.volt-marketplace-open-arrow')).appendChild(renderIcon(Codicon.arrowRight));
 			setAgentTooltip(row, content.link.kind === 'url' ? content.link.url : content.link.resource.fsPath);
@@ -916,10 +911,10 @@ export class AgentMarketplaceView extends Disposable {
 			image.src = url;
 			this.renderStore.add(addDisposableListener(image, 'error', () => {
 				image.remove();
-				tile.appendChild(renderIcon(Codicon.zap));
+				tile.appendChild(createCustomizationKindIcon('skill'));
 			}));
 		} else {
-			tile.appendChild(renderIcon(Codicon.zap));
+			tile.appendChild(createCustomizationKindIcon('skill'));
 		}
 	}
 
@@ -968,7 +963,7 @@ export class AgentMarketplaceView extends Disposable {
 		for (const plugin of plugins) {
 			const id = `${plugin.marketplace}/${plugin.name}`;
 			const row = append(grid, $('.volt-marketplace-row'));
-			append(row, $('.volt-marketplace-icon.box')).appendChild(renderIcon(Codicon.package));
+			append(row, $('.volt-marketplace-icon.box')).appendChild(createCustomizationKindIcon('plugin'));
 			const copy = append(row, $('.volt-marketplace-row-copy'));
 			append(copy, $('.name')).textContent = plugin.name;
 			append(copy, $('.description')).textContent = plugin.description || plugin.author;
@@ -1112,6 +1107,19 @@ export class AgentMarketplaceView extends Disposable {
 	}
 
 	private showMarketplaceMenu(anchor: HTMLElement, marketplace: IMarketplace): void {
+		if (marketplace.registry === 'builtin') {
+			// Read from GitHub, nothing on disk: its repository is the only place to go.
+			showVoltMenu<string>(this.contextViewService, {
+				anchor,
+				align: 'right',
+				gap: 4,
+				className: 'volt-customize-menu',
+				ariaLabel: marketplace.displayName,
+				sections: [{ id: 'actions', items: [{ id: 'github', label: localize('voltMarketplace.openGithub', "Open on GitHub"), icon: Codicon.github, data: 'github' }] }],
+				onPick: () => this.host.openUrl(marketplace.root.toString(true)),
+			});
+			return;
+		}
 		const items: IVoltMenuItem<string>[] = [
 			{ id: 'reveal', label: localize('voltMarketplace.revealFolder', "Reveal in Finder"), icon: Codicon.folderOpened, data: 'reveal' },
 			{ id: 'manifest', label: localize('voltMarketplace.openManifest', "Open marketplace.json"), icon: Codicon.json, data: 'manifest' },
@@ -1236,17 +1244,42 @@ export class AgentMarketplaceView extends Disposable {
 	//#endregion
 }
 
-function contentIcon(kind: AgentCustomizationKind | 'file'): ThemeIcon {
-	switch (kind) {
-		case 'mcp': return Codicon.mcp;
-		case 'skill': return Codicon.zap;
-		case 'rule': return Codicon.listUnordered;
-		case 'command': return Codicon.terminal;
-		case 'hook': return Codicon.file;
-		default: return Codicon.file;
-	}
-}
-
 function sameFilter(a: MarketplaceFilter, b: MarketplaceFilter): boolean {
 	return a.kind === b.kind && (a.kind !== 'marketplace' || a.name === (b as { name: string }).name);
+}
+
+/**
+ * The plugins that match `query`, best first: the name itself, a name that starts with it, a name
+ * that holds it, then the category, then the description or author. A marketplace of 300 plugins
+ * mentions "review" in dozens of descriptions; code-review and pr-review-toolkit come first.
+ */
+export function rankPlugins(plugins: readonly IMarketplacePlugin[], query: string): IMarketplacePlugin[] {
+	const q = query.trim().toLowerCase();
+	if (!q) {
+		return [];
+	}
+	const score = (plugin: IMarketplacePlugin): number => {
+		const name = plugin.name.toLowerCase();
+		if (name === q) {
+			return 0;
+		}
+		if (name.startsWith(q)) {
+			return 1;
+		}
+		if (name.split(/[-_\s]+/).some(word => word.startsWith(q))) {
+			return 2;
+		}
+		if (name.includes(q)) {
+			return 3;
+		}
+		if ((plugin.category ?? '').toLowerCase().includes(q)) {
+			return 4;
+		}
+		return `${plugin.description} ${plugin.author}`.toLowerCase().includes(q) ? 5 : -1;
+	};
+	return plugins
+		.map((plugin, index) => ({ plugin, index, score: score(plugin) }))
+		.filter(entry => entry.score >= 0)
+		.sort((a, b) => a.score - b.score || a.index - b.index)
+		.map(entry => entry.plugin);
 }

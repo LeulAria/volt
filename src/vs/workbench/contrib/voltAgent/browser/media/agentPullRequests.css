@@ -10,10 +10,12 @@
 .volt-pr-list-view,
 .volt-pr-hover-card,
 .volt-pr-dock,
+.volt-pr-dock-links,
+.volt-pr-link-list,
 .volt-pr-checks-menu {
-	--volt-pr-border: rgba(255, 255, 255, 0.08);
-	--volt-pr-surface: rgba(255, 255, 255, 0.03);
-	--volt-pr-surface-strong: rgba(255, 255, 255, 0.06);
+	--volt-pr-border: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	--volt-pr-surface: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+	--volt-pr-surface-strong: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
 	--volt-pr-muted: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
 	--volt-pr-open: #3fb950;
 	--volt-pr-draft: #8b949e;
@@ -32,11 +34,15 @@
 .monaco-workbench.hc-light .volt-pr-hover-card,
 .monaco-workbench.vs .volt-pr-dock,
 .monaco-workbench.hc-light .volt-pr-dock,
+.monaco-workbench.vs .volt-pr-dock-links,
+.monaco-workbench.hc-light .volt-pr-dock-links,
+.monaco-workbench.vs .volt-pr-link-list,
+.monaco-workbench.hc-light .volt-pr-link-list,
 .monaco-workbench.vs .volt-pr-checks-menu,
 .monaco-workbench.hc-light .volt-pr-checks-menu {
-	--volt-pr-border: rgba(0, 0, 0, 0.09);
-	--volt-pr-surface: rgba(0, 0, 0, 0.025);
-	--volt-pr-surface-strong: rgba(0, 0, 0, 0.05);
+	--volt-pr-border: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	--volt-pr-surface: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+	--volt-pr-surface-strong: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
 	--volt-pr-open: #1a7f37;
 	--volt-pr-draft: #6e7781;
 	--volt-pr-merged: #8250df;
@@ -364,6 +370,11 @@
 	color: #f5f5f5;
 }
 
+.monaco-workbench.vs .volt-pr-button.primary:hover:not(:disabled),
+.monaco-workbench.hc-light .volt-pr-button.primary:hover:not(:disabled) {
+	background: #3a3a3a;
+}
+
 .volt-pr-button.secondary {
 	border-color: var(--volt-pr-border);
 	background: var(--volt-pr-surface-strong);
@@ -415,6 +426,11 @@
 	background: #1a1a1a;
 	color: #f5f5f5;
 	border-left-color: rgba(255, 255, 255, 0.2);
+}
+
+.monaco-workbench.vs .volt-pr-split > .volt-pr-icon-button.primary:hover,
+.monaco-workbench.hc-light .volt-pr-split > .volt-pr-icon-button.primary:hover {
+	background: #3a3a3a;
 }
 
 .volt-pr-icon-button {
@@ -764,7 +780,7 @@
 	padding: 7px 10px;
 	border: 1px solid var(--volt-pr-border);
 	border-radius: 8px;
-	background: var(--vscode-input-background, rgba(255, 255, 255, 0.04));
+	background: var(--vscode-input-background, color-mix(in srgb, var(--vscode-foreground) 4%, transparent));
 	color: var(--vscode-input-foreground, var(--vscode-foreground));
 	font: inherit;
 	font-size: 13px;
@@ -992,13 +1008,100 @@
 	border-bottom: 1px solid var(--volt-pr-border);
 }
 
-.volt-pr-list-repo {
-	min-width: 0;
+/* The search where the repository's name was: the sidebar's magnifier and a bare field, with the regex toggle and clear button at its end. */
+.volt-pr-search {
+	display: flex;
+	flex: 1;
+	align-items: center;
+	gap: 6px;
+	min-width: 72px;
+	height: 24px;
+	margin: 0 4px 0 -6px;
+	padding: 0 2px 0 6px;
+	border-radius: 6px;
 	color: var(--volt-pr-muted);
-	font-size: 12px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+}
+
+.volt-pr-search:focus-within {
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-pr-search.invalid {
+	box-shadow: inset 0 0 0 1px var(--vscode-inputValidation-errorBorder, #be1100);
+}
+
+.volt-pr-search-icon {
+	display: inline-flex;
+	flex: none;
+}
+
+.volt-pr-search-input {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	padding: 0;
+	border: 0;
+	outline: none;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 12.5px;
+}
+
+.volt-pr-search-input::placeholder {
+	color: var(--volt-pr-muted);
+	opacity: 1;
+}
+
+.volt-pr-search-button {
+	display: none;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 1px solid transparent;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	cursor: pointer;
+}
+
+.volt-pr-search-button .codicon {
+	font-size: 14px;
+	color: inherit;
+}
+
+.volt-pr-search-button:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-foreground);
+}
+
+.volt-pr-search.has-value .volt-pr-search-clear,
+.volt-pr-search:hover .volt-pr-search-regex,
+.volt-pr-search:focus-within .volt-pr-search-regex,
+.volt-pr-search-regex.on {
+	display: inline-flex;
+}
+
+.volt-pr-search-regex.on,
+.volt-pr-search-regex.on:hover {
+	border-color: var(--vscode-inputOption-activeBorder);
+	background: var(--vscode-inputOption-activeBackground);
+	color: var(--vscode-inputOption-activeForeground);
+}
+
+/* Rows stay direct flex items of the view, as before the search. */
+.volt-pr-list-body {
+	display: contents;
+}
+
+/* The letters a search matched, as VS Code's lists light them. */
+.volt-pr-hit {
+	color: var(--vscode-list-highlightForeground);
+	font-weight: 600;
 }
 
 .volt-pr-list-section {
@@ -1198,6 +1301,16 @@
 }
 
 .volt-agent-composer-chip-pr-checks.hidden {
+	display: none;
+}
+
+/* "+2": the chat's other pull requests (the hover card lists them all). */
+.volt-agent-composer-chip-pr-more {
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-composer-chip-pr-more.hidden {
 	display: none;
 }
 
@@ -1457,7 +1570,7 @@
 	padding: 0 1px;
 	margin-bottom: -1px;
 	border: 0;
-	border-bottom: 2px solid transparent;
+	border-bottom: 1.5px solid transparent;
 	background: transparent;
 	color: var(--volt-pr-muted);
 	font: inherit;
@@ -1875,6 +1988,15 @@
 	flex-wrap: wrap;
 	gap: 6px;
 	font-size: 13px;
+}
+
+/* A commit opens in Source Control's Commits; its headline underlines on hover. */
+.volt-pr-rail-item.clickable {
+	cursor: pointer;
+}
+
+.volt-pr-rail-item.clickable:hover .volt-pr-rail-line strong {
+	text-decoration: underline;
 }
 
 .volt-pr-rail-line strong {
@@ -2408,7 +2530,6 @@
 .volt-git-control.chip > .volt-git-control-chevron {
 	width: 22px;
 	border-radius: 0;
-	border-left: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
 .volt-git-control.chip .volt-git-control-icon .codicon {
@@ -2417,6 +2538,78 @@
 
 .volt-git-control.chip.busy > .volt-git-control-main {
 	cursor: default;
+}
+
+/* The Changes tab's bar: a white split pill, the action and a chevron (Cursor's Commit & Push with its chevron). */
+.volt-git-control.header {
+	display: inline-flex;
+	align-items: stretch;
+	flex: none;
+	height: 24px;
+	border-radius: 8px;
+	overflow: hidden;
+	/* White, like the login chip; the theme's foreground can be tinted (blue-grey). */
+	background: #f3f3f3;
+	color: #171717;
+	font-size: 12px;
+}
+
+.volt-git-control.header.hidden {
+	display: none;
+}
+
+.volt-git-control.header > .volt-git-control-main {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+	padding: 0 8px 0 8px;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-weight: 400;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-git-control.header > .volt-git-control-main:hover:not(.disabled),
+.volt-git-control.header > .volt-git-control-chevron:hover:not(:disabled) {
+	background: #ffffff;
+	color: inherit;
+}
+
+.volt-git-control.header > .volt-git-control-chevron {
+	width: 22px;
+	border-radius: 0;
+	border-left: 1px solid rgba(0, 0, 0, 0.12);
+	color: inherit;
+}
+
+.volt-git-control.header .volt-git-control-icon .codicon {
+	font-size: 12px;
+}
+
+.volt-git-control.header .volt-git-control-elapsed {
+	color: rgba(0, 0, 0, 0.55);
+}
+
+.monaco-workbench.vs .volt-git-control.header,
+.monaco-workbench.hc-light .volt-git-control.header {
+	background: #1a1a1a;
+	color: #f5f5f5;
+}
+
+.monaco-workbench.vs .volt-git-control.header > .volt-git-control-main:hover:not(.disabled),
+.monaco-workbench.vs .volt-git-control.header > .volt-git-control-chevron:hover:not(:disabled),
+.monaco-workbench.hc-light .volt-git-control.header > .volt-git-control-main:hover:not(.disabled),
+.monaco-workbench.hc-light .volt-git-control.header > .volt-git-control-chevron:hover:not(:disabled) {
+	background: #000000;
+}
+
+.monaco-workbench.vs .volt-git-control.header > .volt-git-control-chevron,
+.monaco-workbench.hc-light .volt-git-control.header > .volt-git-control-chevron {
+	border-left-color: rgba(255, 255, 255, 0.16);
 }
 
 /* The commit dialog: a solid card over a dimmed layer. */
@@ -2437,9 +2630,9 @@
 }
 
 .volt-git-dialog {
-	--volt-pr-border: rgba(255, 255, 255, 0.09);
-	--volt-pr-surface: rgba(255, 255, 255, 0.03);
-	--volt-pr-surface-strong: rgba(255, 255, 255, 0.07);
+	--volt-pr-border: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+	--volt-pr-surface: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+	--volt-pr-surface-strong: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
 	--volt-pr-muted: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
 	--volt-pr-add: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
 	--volt-pr-del: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
@@ -2462,9 +2655,15 @@
 
 .monaco-workbench.vs .volt-git-dialog,
 .monaco-workbench.hc-light .volt-git-dialog {
-	--volt-pr-border: rgba(0, 0, 0, 0.1);
-	--volt-pr-surface: rgba(0, 0, 0, 0.025);
-	--volt-pr-surface-strong: rgba(0, 0, 0, 0.05);
+	--volt-pr-border: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	--volt-pr-surface: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+	--volt-pr-surface-strong: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.monaco-workbench.vs .volt-git-dialog-backdrop,
+.monaco-workbench.hc-light .volt-git-dialog-backdrop {
+	background: rgba(0, 0, 0, 0.2);
 }
 
 @keyframes volt-git-dialog-in {
@@ -2690,15 +2889,77 @@
 	box-sizing: border-box;
 	padding: 12px;
 	border-radius: 10px;
-	background: var(--vscode-editor-background, #1e1e1e);
+	/* The sidebar row's hover card surface (agentTooltip.css), not the darker editor background. */
+	background: #1c1c1c;
 	color: var(--vscode-foreground);
 	box-shadow:
-		0 0 0 1px var(--vscode-widget-border, rgba(255, 255, 255, 0.1)),
-		0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+		0 0 0 1px rgba(255, 255, 255, 0.08),
+		0 4px 16px rgba(0, 0, 0, 0.3);
 	font-size: 12px;
 	font-weight: 400;
 	line-height: 18px;
 	cursor: default;
+}
+
+.monaco-workbench.vs .volt-pr-hover-card,
+.monaco-workbench.hc-light .volt-pr-hover-card {
+	background: var(--vscode-editor-background, #ffffff);
+	box-shadow:
+		0 0 0 1px rgba(0, 0, 0, 0.1),
+		0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+/* Several pull requests: only the list (below), edge to edge on all four sides; the rounded
+ * corners clip the first and last row's highlight. */
+.volt-pr-hover-card.list {
+	padding: 0 12px;
+	overflow: hidden;
+}
+
+/* A chat's pull requests in a hover card (agentPullRequestList.ts): a VS Code list whose rows run
+ * to the card's edges with square corners, like Previous agents. The card's 12px side padding
+ * moves into the rows so the icons line up with the card's other rows. */
+.volt-pr-link-list {
+	margin: 0 -12px;
+}
+
+.volt-pr-link-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-pr-link-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 26px;
+	padding: 0 12px;
+	min-width: 0;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+/* Four classes: `.monaco-workbench .codicon[class*='codicon-']` draws every codicon at 16px. */
+.volt-pr-link-list .volt-pr-link-icon .codicon[class*='codicon-'] {
+	font-size: 14px;
+}
+
+.volt-pr-link-icon {
+	display: flex;
+	flex: none;
+}
+
+.volt-pr-link-number {
+	flex: none;
+	color: var(--volt-pr-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-pr-link-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .volt-pr-hover-head {
@@ -2975,6 +3236,14 @@
 	padding: 0 12px;
 	min-width: 0;
 	cursor: pointer;
+}
+
+/* The same 14px as the toolbar's other row icons, in the state's color. */
+.volt-agent-quick-open-actions .volt-pr-dock-link .volt-pr-icon .codicon {
+	font-size: 14px;
+	width: 14px;
+	height: 14px;
+	color: inherit;
 }
 
 .volt-pr-dock {

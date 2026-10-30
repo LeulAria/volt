@@ -951,15 +951,18 @@ function clip(text: string, max: number): string {
 	return text.length > max ? `${text.slice(0, max)}\n… (${text.length - max} more characters left out)` : text;
 }
 
-export function buildCommitMessagePrompt(branch: string | undefined, files: string, patch: string, recentSubjects: readonly string[] = []): string {
+export function buildCommitMessagePrompt(branch: string | undefined, files: string, patch: string, recentSubjects: readonly string[] = [], previous?: string): string {
 	return [
 		'You write concise git commit messages.',
 		'Return a JSON object with keys: subject, body.',
 		'Rules:',
-		'- subject must be imperative, at most 72 characters, no trailing period',
+		'- subject follows Conventional Commits: type(scope): summary, with type one of feat, fix, refactor, perf, docs, test, style, build, ci, chore and a short scope for the area changed (e.g. feat(cart): apply discount at checkout)',
+		'- the summary is imperative, lower case, at most 72 characters in all, no trailing period',
 		'- body can be an empty string or short bullet points',
 		'- capture the primary user-visible or developer-visible change',
-		...(recentSubjects.length ? ['- match the style of these recent commits:', ...recentSubjects.slice(0, 8).map(subject => `  ${subject}`)] : []),
+		...(recentSubjects.length ? ['- recent commits, for the scopes and wording this repository uses:', ...recentSubjects.slice(0, 8).map(subject => `  ${subject}`)] : []),
+		// Regenerate: the user saw this one and asked for another.
+		...(previous?.trim() ? ['- the user asked for a new message instead of this one, so write a different subject (other wording, the most important change first), not a copy:', ...previous.trim().split('\n').slice(0, 6).map(line => `  ${line}`)] : []),
 		'',
 		`Branch: ${branch ?? '(detached)'}`,
 		'Changed files:',

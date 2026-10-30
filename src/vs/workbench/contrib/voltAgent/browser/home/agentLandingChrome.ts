@@ -31,7 +31,7 @@ import { VOLT_RELAY_CONNECT_COMMAND_ID } from '../automations/automationHooks.js
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { ISCMRepository, ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
 import { IVoltProjectsService } from '../../../voltProjects/common/projects.js';
-import { createThisMacIcon } from '../chrome/accessIcons.js';
+import { createThisMacIcon, createWorktreeIcon } from '../chrome/accessIcons.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { showAgentBranchMenu } from '../picker/agentBranchMenu.js';
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
@@ -370,7 +370,7 @@ export class AgentLandingChrome extends Disposable {
 		const cloud = this.runOn === 'cloud';
 		const blocked = this.worktreeNeedsCommit();
 		this.envLabel.textContent = worktree ? localize('voltAgent.env.worktree', "Worktree") : cloud ? localize('voltAgent.env.cloud', "Cloud") : THIS_MACHINE;
-		this.envIcon.replaceChildren(blocked || worktree || cloud ? renderIcon(blocked ? Codicon.warning : worktree ? Codicon.repoForked : Codicon.cloud) : createThisMacIcon());
+		this.envIcon.replaceChildren(blocked ? renderIcon(Codicon.warning) : worktree ? createWorktreeIcon() : cloud ? renderIcon(Codicon.cloud) : createThisMacIcon());
 		this.envButton.classList.toggle('worktree', worktree);
 		this.envButton.classList.toggle('cloud', cloud);
 		this.envButton.classList.toggle('blocked', blocked);

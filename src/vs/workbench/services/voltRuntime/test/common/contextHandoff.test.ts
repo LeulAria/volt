@@ -169,4 +169,24 @@ suite('Volt context handoff', () => {
 		assert.strictEqual(next.text.match(/<conversation_handoff>/g)?.length, 1);
 		assert.ok(next.text.includes('Question 1: what about part 1?'));
 	});
+
+	test('a queued message sent to a new chat names the chat it came from, and where to read what was left out', () => {
+		const handoff = buildContextHandoff({ messages: chat(60, 2_000), budget: 4_000, reason: 'continue', fromChat: 'Booking form', threadId: 'agent-source' })!;
+		assert.strictEqual(handoff.reason, 'continue');
+		assert.ok(handoff.text.includes('from the chat "Booking form"'));
+		assert.ok(handoff.omittedTurns > 0);
+		assert.ok(handoff.text.includes('thread_id agent-source'));
+		assert.ok(handoff.tokens <= 4_000);
+	});
+
+	test('a source chat still working on its last turn says so instead of calling it stopped', () => {
+		const messages: IHandoffMessage[] = [...chat(2), { role: 'user', content: 'Negotiated price: handle the UI' }];
+		const live = buildContextHandoff({ messages, budget: 8_000, reason: 'continue', fromChat: 'Booking form', lastTurnLive: true })!;
+		assert.ok(live.text.includes('still working on this in the other chat'));
+		assert.ok(!live.text.includes('the turn was stopped or failed'));
+		const replying = buildContextHandoff({ messages: [...messages, { role: 'assistant', content: 'Halfway there' }], budget: 8_000, reason: 'continue', lastTurnLive: true })!;
+		assert.ok(replying.text.includes('Halfway there\n(The other chat\'s agent was still working on this turn'));
+		const stopped = buildContextHandoff({ messages, budget: 8_000, reason: 'continue' })!;
+		assert.ok(stopped.text.includes('the turn was stopped or failed'));
+	});
 });
