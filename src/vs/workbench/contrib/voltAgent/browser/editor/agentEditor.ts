@@ -121,7 +121,7 @@ import { IAction } from '../../../../../base/common/actions.js';
 import { IActionViewItem } from '../../../../../base/browser/ui/actionbar/actionbar.js';
 import { IBaseActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { getSimpleCodeEditorWidgetOptions } from '../../../codeEditor/browser/simpleEditorOptions.js';
-import { IVoltBrowserComments } from '../preview/browserCommentStore.js';
+import { IVoltBrowserComments, REVEAL_BROWSER_ELEMENT_COMMAND_ID } from '../preview/browserCommentStore.js';
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { completeStreamingBlocks } from './agentSessionController.js';
 import { AgentSurfaceHost, agentSideChatParents } from '../workspace/agentSurfaceHost.js';
@@ -2577,6 +2577,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 						this.openCitation(citation, chip);
 					}));
 				}
+			} else if (mention.kind === 'browser' && mention.value) {
+				// A picked element: the browser beside the chat scrolls to it.
+				const payload = mention.value;
+				chip.setAttribute('data-open', 'true');
+				this.threadListeners.add(addDisposableListener(chip, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					void this.commandService.executeCommand(REVEAL_BROWSER_ELEMENT_COMMAND_ID, payload);
+				}));
 			} else if (mention.kind === 'skill') {
 				this.bindSkillChip(chip, mention);
 			} else if (mention.resource && (mention.kind === 'file' || mention.kind === 'image')) {

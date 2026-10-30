@@ -76,6 +76,7 @@ import { boardDisplayTitle } from '../../common/scratchBoard/scratchIndex.js';
 import { IScratchBoardService } from '../scratchBoard/scratchBoardService.js';
 import { OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, OPEN_SCRATCH_BOARD_COMMAND_ID } from '../scratchBoard/scratchBoardInput.js';
 import { OPEN_CANVAS_COMMAND_ID } from '../visuals/canvas/canvasCard.js';
+import { REVEAL_BROWSER_ELEMENT_COMMAND_ID } from '../preview/browserCommentStore.js';
 import { IVoltCanvasService } from '../visuals/canvas/canvasService.js';
 import type { ICanvasDoc } from '../visuals/canvas/canvasModel.js';
 import { IPathService } from '../../../../services/path/common/pathService.js';
@@ -1321,6 +1322,9 @@ export class AgentMentionController extends Disposable {
 				this.openVideoViewer(mention);
 			} else if (mention.kind === 'file' || mention.kind === 'folder' || mention.kind === 'scratch' || mention.kind === 'canvas') {
 				void this.openMention(mention);
+			} else if (mention.kind === 'browser' && mention.value) {
+				// A picked element: the browser scrolls to it.
+				void this.commandService.executeCommand(REVEAL_BROWSER_ELEMENT_COMMAND_ID, mention.value);
 			} else if (mention.citation) {
 				this.host.openCitation?.(mention.citation, e.target.element ?? undefined);
 			} else if (mention.kind === 'skill' && mention.resource) {

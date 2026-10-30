@@ -11,6 +11,9 @@ import { createDecorator } from '../../../../../platform/instantiation/common/in
 import type { IAgentDisplayMention } from '../composer/agentMentions.js';
 import type { VoltCommentStatus } from '../chrome/voltCommentsPane.js';
 
+/** `(payload)`: scrolls the browser tab showing a picked element (a chip's browser_element block) to it. */
+export const REVEAL_BROWSER_ELEMENT_COMMAND_ID = 'volt.browser.revealElement';
+
 export interface IBrowserCommentBounds {
 	readonly x: number;
 	readonly y: number;
