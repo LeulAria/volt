@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { runWhenWindowIdle } from '../../../../../base/browser/dom.js';
+import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { Disposable, IDisposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -370,6 +371,47 @@ class NewWindowAgentContribution {
 
 // Before the restore finishes: from AfterRestored the window had already painted its empty watermark.
 registerWorkbenchContribution2(NewWindowAgentContribution.ID, NewWindowAgentContribution, WorkbenchPhase.BlockRestore);
+
+/**
+ * The agent window's main panel is never the IDE's empty editor (bolt and shortcuts): closing the
+ * last chat, or switching to Agent mode with nothing open, lands on the New Agent composer.
+ */
+class AgentEmptyPanelContribution extends Disposable {
+
+	static readonly ID = 'workbench.contrib.voltAgentEmptyPanel';
+
+	// Moving or swapping editors empties the panel for a moment; only an emptiness that lasts counts.
+	private readonly check = this._register(new RunOnceScheduler(() => this.fillIfEmpty(), 0));
+	private opening = false;
+
+	constructor(
+		@IEditorService editorService: IEditorService,
+		@IEditorGroupsService private readonly editorGroups: IEditorGroupsService,
+		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
+		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
+		@IAgentWorkspaceService private readonly workspace: IAgentWorkspaceService,
+		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IInstantiationService private readonly instantiation: IInstantiationService,
+	) {
+		super();
+		this._register(editorService.onDidEditorsChange(() => this.check.schedule()));
+		this._register(onDidChangeLayoutMode(() => this.check.schedule()));
+		this.check.schedule();
+	}
+
+	private fillIfEmpty(): void {
+		if (this.opening
+			|| getLayoutMode(this.layoutService) !== 'agent'
+			|| this.editorGroups.mainPart.groups.some(group => !group.isEmpty)) {
+			return;
+		}
+		this.opening = true;
+		void startAgentChat(this.sessionContext, this.workspace, this.history, this.editorGroups, this.instantiation, { kind: 'active' })
+			.finally(() => this.opening = false);
+	}
+}
+
+registerWorkbenchContribution2(AgentEmptyPanelContribution.ID, AgentEmptyPanelContribution, WorkbenchPhase.AfterRestored);
 
 /**
  * The main panel is one agent, never a tab strip, whether or not the agent list is open. A file,
