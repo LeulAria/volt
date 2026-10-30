@@ -19,7 +19,7 @@ import { IAgentDetectResult, IModelMessage, IVoltCatalogItem, IVoltProviderStatu
 import type { IAgentQuestionRequest, IAgentQuestionResponse } from '../../voltRuntime/common/questions.js';
 import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../../voltRuntime/common/runtime.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
-import { IVoltSendRequest, IVoltSession } from '../../voltRuntime/common/session.js';
+import { IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../../voltRuntime/common/session.js';
 import { IAgentServerClientService } from './agentServerClient.js';
 
 /** What the server publishes per chat in the `sessions` collection. */
@@ -248,8 +248,8 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 		return true;
 	}
 
-	steerAsync(sessionId: string, text: string): Promise<boolean> {
-		return this.client.call('runtime.steerAsync', sessionId, text);
+	steerAsync(sessionId: string, text: string, images?: readonly IVoltImageAttachment[]): Promise<boolean> {
+		return this.client.call('runtime.steerAsync', sessionId, text, images);
 	}
 
 	cancel(sessionId: string): Promise<void> {

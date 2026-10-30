@@ -16,7 +16,7 @@ import { VoltMode } from './modes.js';
 import { IVoltModelOptions } from './models/modelOptions.js';
 import { IAgentDetectResult, IVoltCatalogItem, IVoltProviderStatus } from './providers.js';
 import { IProviderProfile, IProviderProfileDraft } from './profiles.js';
-import { IVoltSendRequest, IVoltSession } from './session.js';
+import { IVoltImageAttachment, IVoltSendRequest, IVoltSession } from './session.js';
 import { IVoltModelAccess } from './models/modelAccess.js';
 import type { IHumanAction } from './harness/humanLoop.js';
 import type { IAgentQuestionRequest, IAgentQuestionResponse } from './questions.js';
@@ -161,9 +161,10 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	steer(sessionId: string, text: string): boolean;
 	/**
 	 * Like `steer`, for any agent that takes messages mid-turn: the native loop's inbox, or an ACP
-	 * agent's `_session/steering` (Claude, Codex). Resolves false when nothing took it.
+	 * agent's `_session/steering` (Claude, Codex). Resolves false when nothing took it. The native
+	 * loop's inbox takes text only, so a steer with images is refused there.
 	 */
-	steerAsync(sessionId: string, text: string): Promise<boolean>;
+	steerAsync(sessionId: string, text: string, images?: readonly IVoltImageAttachment[]): Promise<boolean>;
 	cancel(sessionId: string): Promise<void>;
 	pause(sessionId: string): Promise<void>;
 	resume(sessionId: string): Promise<void>;

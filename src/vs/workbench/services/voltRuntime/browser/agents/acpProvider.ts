@@ -1738,16 +1738,22 @@ export class AcpAgentProvider implements IAgentProvider {
 	}
 
 	/** Puts `text` into the running turn. False when the agent refused (no turn, or it wants a new prompt). */
-	async steer(session: IAgentSessionHandle, text: string): Promise<boolean> {
+	async steer(session: IAgentSessionHandle, text: string, images?: readonly IModelImage[]): Promise<boolean> {
 		const live = this.sessions.get(session.id);
 		const turn = live?.turn;
 		if (!live?.steering || !turn || turn.ended) {
 			return false;
 		}
+		const blocks: IAcpPromptBlock[] = [{ type: 'text', text }];
+		if (live.promptImages) {
+			for (const image of images ?? []) {
+				blocks.push({ type: 'image', mimeType: image.mediaType, data: image.data });
+			}
+		}
 		try {
 			const result = await live.client.request<{ outcome?: string }>('_session/steering', {
 				sessionId: live.handle.providerSessionId ?? live.handle.id,
-				prompt: [{ type: 'text', text }],
+				prompt: blocks,
 				_meta: { steering: { idleBehavior: 'promptRequired' } },
 			}, 10_000);
 			if (result?.outcome === 'injected') {

@@ -1029,8 +1029,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return this.agentProviders.get(session.agentProviderId)?.canSteer?.(session.agentHandle) ?? false;
 	}
 
-	async steerAsync(sessionId: string, text: string): Promise<boolean> {
-		if (this.steer(sessionId, text)) {
+	async steerAsync(sessionId: string, text: string, images?: readonly IVoltImageAttachment[]): Promise<boolean> {
+		if (!images?.length && this.steer(sessionId, text)) {
 			return true;
 		}
 		const session = this.sessions.get(sessionId);
@@ -1039,7 +1039,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return false;
 		}
 		const provider = this.agentProviders.get(session.agentProviderId!);
-		const delivered = await provider?.steer?.(session.agentHandle!, text).catch(() => false) ?? false;
+		const delivered = await provider?.steer?.(session.agentHandle!, text, this.modelImages(images)).catch(() => false) ?? false;
 		if (delivered && this.isCurrent(session, run)) {
 			session.messages.push({ role: 'user', content: text, steer: true });
 			// The agent saw it in this turn; the next recap must not send it again.
