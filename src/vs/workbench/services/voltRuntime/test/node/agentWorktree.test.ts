@@ -5,11 +5,11 @@
 
 import assert from 'assert';
 import { spawn } from 'child_process';
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
+import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from '../../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { AgentWorktreeError, GitRunner, IGitRunResult, IWorktreeFiles, createAgentWorktree } from '../../common/git/agentWorktree.js';
+import { AgentWorktreeError, GitRunner, IGitRunResult, IWorktreeFiles, branchNameFromTitle, createAgentWorktree, releaseWorktreeBranch } from '../../common/git/agentWorktree.js';
 
 suite('Agent worktrees on git', () => {
 
@@ -96,6 +96,51 @@ suite('Agent worktrees on git', () => {
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
+	});
+
+	test('a branch a chat worktree holds is freed: the worktree moves to a branch named after the chat, changes unstaged', async () => {
+		const root = await realpath(await mkdtemp(join(tmpdir(), 'volt-release-')));
+		const repo = join(root, 'repo');
+		const worktreesRoot = join(root, 'wt');
+		try {
+			await mkdir(repo);
+			await git(repo, ['init', '-b', 'main']);
+			await git(repo, ['config', 'user.email', 'test@volt.local']);
+			await git(repo, ['config', 'user.name', 'Volt Test']);
+			await writeFile(join(repo, 'README'), 'hello\n');
+			await git(repo, ['add', 'README']);
+			await git(repo, ['commit', '-m', 'init']);
+			await git(repo, ['switch', '-c', 'other']);
+			const created = await createAgentWorktree({ run: git, files: files(), repoRoot: repo, worktreesRoot, target: { kind: 'branch', name: 'main' } });
+			assert.strictEqual(created.branch, 'main');
+			await writeFile(join(created.path, 'README'), 'changed\n');
+			await git(created.path, ['add', 'README']);
+			assert.match((await git(repo, ['switch', 'main'])).stderr, /already used by worktree/);
+
+			const released = await releaseWorktreeBranch({ run: git, repoRoot: repo, worktreesRoot, branch: 'main', nameHint: () => branchNameFromTitle('Fix the login bug!') });
+			assert.deepStrictEqual(released, { path: created.path, branch: 'volt/fix-the-login-bug' });
+			assert.strictEqual((await git(created.path, ['branch', '--show-current'])).stdout.trim(), 'volt/fix-the-login-bug');
+			assert.strictEqual(await readFile(join(created.path, 'README'), 'utf8'), 'changed\n');
+			assert.strictEqual((await git(created.path, ['diff', '--cached', '--name-only'])).stdout.trim(), '');
+			assert.strictEqual((await git(created.path, ['diff', '--name-only'])).stdout.trim(), 'README');
+			assert.strictEqual((await git(repo, ['switch', 'main'])).exitCode, 0);
+			assert.strictEqual(await releaseWorktreeBranch({ run: git, repoRoot: repo, worktreesRoot, branch: 'main' }), undefined, 'the asking checkout already has it');
+
+			// A worktree the user made is theirs to move.
+			const own = join(root, 'own');
+			await git(repo, ['worktree', 'add', own, 'other']);
+			await assert.rejects(() => releaseWorktreeBranch({ run: git, repoRoot: repo, worktreesRoot, branch: 'other' }), (err: unknown) => err instanceof AgentWorktreeError);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test('branch names from chat titles', () => {
+		assert.strictEqual(branchNameFromTitle('Fix login bug'), 'volt/fix-login-bug');
+		assert.strictEqual(branchNameFromTitle('Café: déjà vu?'), 'volt/cafe-deja-vu');
+		assert.strictEqual(branchNameFromTitle('New chat'), undefined);
+		assert.strictEqual(branchNameFromTitle('…'), undefined);
+		assert.ok(branchNameFromTitle('a very long chat title that keeps going and going past the limit')!.length <= 'volt/'.length + 40);
 	});
 
 	test('says a repo with no commits needs one, not that it is not a repo', async () => {
