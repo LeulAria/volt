@@ -246,12 +246,13 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 		if (!this.runtime.canSteer(threadId)) {
 			return false;
 		}
-		if (!await this.runtime.steerAsync(threadId, prompt.text)) {
-			return false;
-		}
 		// The steer id is the composer's turn id: its live display (a pasted image's bytes) is stashed
 		// under it, else the stored copy is read back. Without it the steer showed only the chip's name.
 		const display = takeTurnDisplay(steerId) ?? await this.thawDisplay(prompt.display);
+		const images = imageAttachmentsFromMentions(display?.mentions);
+		if (!await this.runtime.steerAsync(threadId, prompt.text, images)) {
+			return false;
+		}
 		const shown = display?.text.trim() ? display.text.trim() : prompt.text;
 		AgentEditorInput.acquire(threadId, this.instantiationService).controller.recordSteer(shown, display?.text.trim() ? display.mentions : undefined);
 		return true;
