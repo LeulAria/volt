@@ -8,20 +8,53 @@ Volt is built on VS Code (Code - OSS 1.105). Changes to that base come from upst
 Download a build from [Releases](https://github.com/LeulAria/volt/releases). From 0.0.4, Mac builds are signed with an Apple
 Developer ID and notarized.
 
-## [0.0.4] - 2026-10-30
+## [0.0.4] - 2026-10-31
 
-Signed on Mac, lighter, and agents that prove they are done. Volt for Mac is now signed with an Apple Developer ID and
-notarized, so it opens like any other app and updates itself. This release also brings Agent Resources, Claude's plugin
-marketplace, a Git Graph, commit review and proof of done.
+Signed on Mac, much lighter, and agents that prove they are done. Volt for Mac is now signed with an Apple Developer ID and
+notarized, so it opens like any other app and updates itself. Volt uses about a third of the memory it did, New Window opens
+at once, and agents keep running in an agent server when windows close. This release also brings Agent Resources, Claude's
+plugin marketplace, a Git Graph, commit review and proof of done.
 
 ### Highlights
 
 - **Signed, notarized and self-updating on Mac.** No Open Anyway step. Updates download in the background and install with
-  Restart to Update.
-- **Lighter and faster to start.** Agents, the Tab predictor and the code index start when first used instead of at launch.
-- **Agent Resources.** One page for every agent's instructions, skills, MCP servers and Volt's own harness settings.
+  Restart to Update in the title bar.
+- **About a third of the memory.** Volt went from about 1.9 GB to about 700 MB and from 16 to 23 processes to 7, and it uses
+  a fraction of the CPU at startup and idle (see Performance).
+- **New Window in about a tenth of a second.** New Window and Open in New Window used to take about 4 s; Volt now keeps the
+  next window loaded once you have used one.
+- **Agents outside the window.** Agents, terminals and automations run in the agent server, so they keep going when a
+  window closes or reloads.
+- **Agent Resources.** One page for every agent's instructions, skills, MCP servers and plugins, and Volt's own harness
+  settings, with Claude's official plugin marketplace built in.
 - **Proof of done.** An agent's "done" is checked against what ran after its last edit, with a receipt under the answer.
-- **Git Graph** with agent attribution, and inline blame on by default.
+- **Git Graph and commit review.** A graph tab with agent attribution and inline blame on by default, and agent-proposed
+  commits you check before Volt makes them.
+
+### Performance
+
+| | 0.0.3 | 0.0.4 |
+| --- | ---: | ---: |
+| Memory, whole app | about 1,940 MB | about 700 MB |
+| Processes | 16 to 23 | 7 |
+| New Window / Open in New Window, click to chat on screen | about 4 s | about 0.1 s |
+
+Memory is the macOS footprint of all of Volt's processes, the figure Activity Monitor shows, as the median of benchmark
+rounds on an Apple silicon Mac with a fresh profile and a small project. New Window was timed from the click to the chat
+drawn in the new window. Your numbers depend on your projects, extensions and agents.
+
+What changed:
+- Agents, the chat agent prewarm, the Tab and dictation predictor, the code index and the usage scan start when first needed
+  instead of at launch. The predictor stops again after 10 idle minutes.
+- The file watcher runs in the shared process, one per window, instead of a process per window.
+- Window transparency is opt-in (`volt.appearance.windowTransparency`, in Settings > Appearance). Off, the agent window is
+  solid and uses less GPU memory.
+- Volt keeps the next window loaded out of sight (`volt.window.keepNextWindowReady`), but only once you have used New Window,
+  and remembers that across restarts.
+- CLI version and sign-in checks are reused for 30 minutes and model lists refresh every 6 hours. Refresh on the Providers
+  page still does both right away.
+- Agent Resources render only what changed, nothing while hidden, and watch only the files they list.
+- The Settings page rebuilds its sticky headers' backdrop once, after the page settles.
 
 ### Added
 
@@ -29,7 +62,10 @@ marketplace, a Git Graph, commit review and proof of done.
 - Proof of done: each native run gets a short contract from its request (your criteria, the project's own check, the change
   itself). Substantial runs that finish with a gap go back with the command that closes it (`volt.agent.evidenceGate`), an
   optional second opinion settles what nothing could run (`volt.agent.proofReview`), and a receipt card shows each item on
-  desktop, web and mobile.
+  desktop, web and mobile. Live runs also keep lessons, evidence checks and the prompt cache warm.
+- Agents run in the agent server by default. Terminals, automations (webhooks included) and editor state live there and
+  survive restarts; windows answer approval checks, serve code intelligence and can cancel forwarded tools. The server shuts
+  down when idle.
 - Commit review: the agent splits changes into Conventional Commits with `propose_commits`. Check, rename or regenerate each
   one and open its diff before Commit, Commit & Push, or Commit, Push & PR. Placeholder worktree branches get a real name
   first (`rename_branch`).
@@ -37,51 +73,79 @@ marketplace, a Git Graph, commit review and proof of done.
   this conversation, and a "Continued from" pill links back.
 - Trajectory panel next to the Terminal: each model request of a native run on a waterfall, with what was sent and returned,
   usage, cache hits, time to first token and why a prompt-cache prefix broke.
-- Vercel fx as an agent provider (Early Access), with its own tab in the model picker.
-- Agents can run outside the main window.
+- Vercel fx as an agent provider (Early Access), with its own tab in the model picker, install and sign-in setup, and Volt
+  answering its permission requests.
+- `/scratch` in a chat that already has turns starts a new chat; Start Multitasking's count sits in the input.
 
 **Agent Resources**
 - An Agent Resources page and side toolbar section for instructions, skills, MCP servers and plugins across every scope and
-  harness, found by what they are and where they live. Also under Manage.
+  harness, found by what they are and where they live, with a hover file tree and a files sidebar filter. Also under Manage.
 - Harness control center for Volt's own agent settings.
-- Claude's official plugin marketplace, built in.
+- Claude's official plugin marketplace, built in. Search ranks names first, and Added shows right after install.
 
-**Git**
+**Scratch**
+- `scratch_draw` draws icon-card architecture diagrams: groups, cards and numbered links routed around boxes.
+- Agents draw pages and free-form sketches, shown in the chat.
+- Cmd+C, Cmd+X and Cmd+V copy, cut and paste shapes, and Copy as PNG works.
+
+**Git and pull requests**
 - Git Graph tab (Ctrl+Option+G): VS Code's graph in a table with branch, message, agent, changes, author, date and SHA;
-  filters, search (`author:`, `path:`, `after:`, `before:`), and an activity strip you can drag to pick a date range.
-- Agent logos from `Co-authored-by` trailers in the graph and blame. Inline blame is on by default.
-- Pull requests view: search ranked by match as you type, a sort menu and keyboard navigation.
-- Find Issues in the Changes header, and exact edit counts.
+  filters, search (`author:`, `path:`, `after:`, `before:`), an activity strip you can drag to pick a date range, and Revert
+  Commit.
+- Agent logos from `Co-authored-by` trailers in the graph and blame. Inline blame is on by default, with agent, branch and
+  history links in its hover.
+- Pull requests view: search ranked by match as you type, a sort menu and keyboard navigation. Both hover cards list a
+  chat's pull requests.
+- Find Issues in the Changes header, exact edit counts, and pending changes listed first.
 
 **Workbench**
-- Settings lists VS Code's own settings categories beside Volt's pages, and Appearance lists installed themes.
+- Settings lists VS Code's own settings categories beside Volt's pages, and Appearance lists installed themes. An empty agent
+  window opens New Agent instead of the editor watermark.
 - The title bar shows an available update: Downloading over a progress line, then Restart to Update.
 - Ctrl+Option+1 to 4 open Explorer, Source Control, Pull Requests and Search in the files sidebar.
-- Drag a chat into Settled, Working, Pinned or Snoozed in the sidebar. Open in New Window shows only that chat's project.
+- Drag a chat into Settled, Working, Pinned or Snoozed in the sidebar, and open a project's chats in a new window.
+- Clicking a browser annotation chip scrolls the page to its element, and every chat's browser-access choice can be read and
+  replaced.
+
+**Web and mobile**
+- The web and mobile chats draw like the desktop transcript, with streamed replies that settle the same way.
+- Mobile gets agent terminals, the desktop's approval card and composer, and the context meter; the web app shows the chat's
+  live terminals from its header.
+- A plan waiting for approval reads as the plan, with Build and Keep planning.
 
 ### Changed
 
 - Mac builds are signed with an Apple Developer ID and notarized, and install updates by themselves.
-- Agents, the Tab and dictation predictor, the code index, the usage scan and the spare window start when first needed. The
-  file watcher runs in the shared process and window transparency is opt-in, so Volt runs far fewer processes and uses much
-  less memory and CPU at startup and idle.
 - Light, Midnight and Abyss themes polished, with theme dropdowns in Appearance.
 - The dot loader draws crisp 2px dots and animates by brightness only.
+- Search matches in Volt menus are blue instead of bold. Slash menu rows are VS Code list rows, and skills show as inline
+  tokens.
+- The model picker drops its compare toggle from the provider bar; Shift-click still compares models.
+- Side chats are listed as normal rows in the sidebar, with less indent under a project.
 - The website and docs drop the step-by-step Mac install guide.
 
 ### Fixed
 
-- Two agent server crashes.
-- A message sent into a running turn carries its pictures to the agent.
-- Editing a prompt while its reply streams no longer stops scrolling; annotation chips scroll to their element.
-- Checking out a branch a chat worktree holds moves that worktree to its own branch.
-- Model picker compare toggle, Providers scrollbar and question-card input.
-- Scratch copy and paste, steered image chips, and page picks that stay in their chat.
+- The agent server crashed at launch, so no agent ran in it, and packaged builds could not load `cookie`.
+- A message sent into a running turn carries its pictures to the agent, and steered images show their chip.
+- Editing a prompt while its reply streams no longer stops scrolling or jumps to the top.
+- Checking out a branch a chat worktree holds moves that worktree to its own branch, and chats follow their worktree's branch
+  after a rename or checkout.
+- Approval requests reach web and mobile from the first one.
+- Title and commit-message generation retry with the chat's own model, and a title that is only a tag is refused and repaired.
+- Codex calls to Volt's tools show as tool rows, not shell commands, and the live line comes back when reply text goes quiet.
+- Pull requests find `gh` when Volt is opened from the Dock, and the checks menu opens on every click.
+- The agent title bar hides items as it narrows instead of overlapping them.
+- Images in the composer stay on one row so the text stays editable, and composer icons line up.
+- The right panel's empty tab bar no longer starts a window drag.
+- The Providers detail pane scrolls at the window's edge, and question cards keep a steady Other row while you type.
+- Scratch copy and paste, and page picks that stay in their chat.
+- Processes started by agents are recorded, so orphans are stopped after a crash.
 
 ### Known limitations
 
-- Volt 0.0.3 and older were not signed, so they cannot install 0.0.4 by themselves: they offer the download. Replace the app
-  once; settings and chats stay.
+- Volt 0.0.3 and older were not signed, so they cannot install 0.0.4 by themselves: they show the update and open the
+  download. Replace the app once; settings and chats stay.
 - Windows installers are not code-signed yet.
 
 ## [0.0.3] - 2026-10-25
@@ -336,6 +400,7 @@ mode, Git views for branches and worktrees, several Claude accounts, and a good 
 The first tagged build of Volt, which added the release pipeline with Stable, Beta and Nightly channels. It was never published to
 GitHub Releases.
 
+[0.0.4]: https://github.com/LeulAria/volt/releases/tag/v0.0.4
 [0.0.3]: https://github.com/LeulAria/volt/releases/tag/v0.0.3
 [0.0.2]: https://github.com/LeulAria/volt/releases/tag/v0.0.2
 [0.0.1]: https://github.com/LeulAria/volt/commit/7cc39172
