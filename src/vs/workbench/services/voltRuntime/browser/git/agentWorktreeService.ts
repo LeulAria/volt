@@ -5,7 +5,7 @@
 
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { isWindows } from '../../../../../base/common/platform.js';
-import { join } from '../../../../../base/common/path.js';
+import { join, normalize } from '../../../../../base/common/path.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { FileOperationError, FileOperationResult, IFileService } from '../../../../../platform/files/common/files.js';
@@ -20,10 +20,13 @@ import {
 	IAgentWorktreeService,
 	ICreatedAgentWorktree,
 	IGitRunResult,
+	IReleasedWorktreeBranch,
 	IWorktreeFiles,
 	archivedWorktreeCandidates,
+	branchNameFromTitle,
 	createAgentWorktree,
 	ensureAgentWorktree,
+	releaseWorktreeBranch,
 	removeAgentWorktree,
 	serializeForRepo,
 	WorktreeRemoval,
@@ -132,6 +135,29 @@ export class AgentWorktreeService implements IAgentWorktreeService {
 			branch,
 			...options,
 		});
+	}
+
+	async releaseBranch(repoRoot: string, branch: string): Promise<(IReleasedWorktreeBranch & { readonly sessionId?: string }) | undefined> {
+		await this.history.whenReady;
+		const ownerOf = (path: string) => this.history.list({ includeArchived: true })
+			.filter(meta => meta.worktreePath && normalize(meta.worktreePath) === normalize(path))
+			.sort((a, b) => Number(!!a.archived) - Number(!!b.archived) || b.updatedAt - a.updatedAt)[0];
+		const released = await releaseWorktreeBranch({
+			run: (cwd, args) => this.git(cwd, args),
+			repoRoot,
+			worktreesRoot: this.worktreesRoot(),
+			branch,
+			nameHint: path => branchNameFromTitle(ownerOf(path)?.title),
+		});
+		if (!released) {
+			return undefined;
+		}
+		const owner = ownerOf(released.path);
+		if (owner) {
+			this.history.open(owner.id).setMeta({ worktreeBranch: released.branch });
+		}
+		this.logService.info(`[agent worktree] ${released.path} moved from ${branch} to ${released.branch} so ${repoRoot} can check it out`);
+		return { ...released, sessionId: owner?.id };
 	}
 
 	serialize<T>(repoRoot: string, work: () => Promise<T>): Promise<T> {

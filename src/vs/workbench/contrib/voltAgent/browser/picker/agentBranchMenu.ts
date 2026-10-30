@@ -15,7 +15,8 @@ import { ServicesAccessor } from '../../../../../platform/instantiation/common/i
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IVoltGitBranches, IVoltGitBranchRef, IVoltGitService } from '../../../../../platform/voltGit/common/voltGit.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
-import { AgentWorktreeTarget } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
+import { AgentWorktreeTarget, IAgentWorktreeService } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
+import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { ISCMRepository } from '../../../scm/common/scm.js';
 import { INIT_TIMEOUT_MS, runGit } from '../home/agentHomeWorkspaceActions.js';
 import { IVoltMenuHandle, IVoltMenuItem, IVoltMenuPrompt, IVoltSubmenu, showVoltMenu } from '../ui/menu/voltMenu.js';
@@ -66,6 +67,8 @@ export function showAgentBranchMenu(accessor: ServicesAccessor, options: IAgentB
 	const commandService = accessor.get(ICommandService);
 	const notificationService = accessor.get(INotificationService);
 	const stdio = accessor.get(IVoltStdioService);
+	const worktrees = accessor.get(IAgentWorktreeService);
+	const runtime = accessor.get(IAgentRuntimeService);
 	const { root, repository, worktree } = options;
 	const repoRoot = root?.scheme === 'file' ? root.fsPath : undefined;
 	/** The checked-out branch, as of the last load. */
@@ -136,6 +139,12 @@ export function showAgentBranchMenu(accessor: ServicesAccessor, options: IAgentB
 			if (data.kind !== 'ref' || (data.ref === 'local' && data.name === head)) {
 				return;
 			}
+			// Git checks a branch out in one place: a chat worktree holding it moves to a branch of its own first.
+			const local = data.ref === 'local' ? data.name : data.ref === 'remote' ? data.name.slice(data.name.indexOf('/') + 1) : undefined;
+			const released = local ? await worktrees.releaseBranch(root.fsPath, local) : undefined;
+			if (released?.sessionId) {
+				runtime.rememberWorktree(released.sessionId, released.path, released.branch);
+			}
 			if (repository?.provider.rootUri && data.ref !== 'remote') {
 				// The git extension's checkout: same errors and dirty-tree handling as the SCM view.
 				await commandService.executeCommand('git.checkout', repository.provider.rootUri, data.ref === 'tag' ? `refs/tags/${data.name}` : data.name);
@@ -143,6 +152,9 @@ export function showAgentBranchMenu(accessor: ServicesAccessor, options: IAgentB
 				await gitService.checkout({ repoRoot: root.fsPath, ref: data.name, kind: data.ref });
 			}
 			await options.onDidChange?.('checkout');
+			if (released && local) {
+				notificationService.info(localize('voltAgent.branchReleased', "{0} was checked out in a chat's worktree. That worktree is now on {1}, with its changes unstaged.", local, released.branch));
+			}
 		} catch (err) {
 			notificationService.error(err instanceof Error ? err.message : String(err));
 		}
