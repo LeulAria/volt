@@ -1,4 +1,4 @@
-import { ArrowDownToLine, BookOpenText, X } from "lucide-react";
+import { ArrowDownToLine, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { focusRing, OsIcon } from "@/components/landing/install";
@@ -11,12 +11,11 @@ import {
   platformOf,
   type ReleaseAsset,
 } from "@/lib/releases";
-import { openInstallGuide } from "./macInstallGuide";
 
-/** What happens after the file lands, per platform: the first launch is the only surprise. */
+/** What happens after the file lands, per platform. */
 const NEXT_STEPS: Record<ReleaseAsset["os"], string> = {
   darwin:
-    "Volt is not signed with an Apple Developer ID yet. The first time you open it, macOS asks you to allow it once in System Settings, Privacy & Security. After that it opens normally.",
+    "Open the .dmg and drag Volt to Applications. Volt is signed and notarized, and it updates itself. Coming from 0.0.3 or older? Replace the old app once; your settings and chats stay.",
   win32:
     "The installer is not code-signed yet, so Windows shows Windows protected your PC: click More info, then Run anyway.",
   linux:
@@ -25,8 +24,8 @@ const NEXT_STEPS: Record<ReleaseAsset["os"], string> = {
 
 /**
  * The confirmation before a download starts: which build is about to download (version,
- * processor, package, size) and what the first launch asks, with the Mac install guide one
- * click away. Download starts the file and closes the dialog.
+ * processor, package, size) and what to do once it lands. Download starts the file and
+ * closes the dialog.
  */
 export function DownloadDialog({
   asset,
@@ -156,19 +155,6 @@ export function DownloadDialog({
         </p>
 
         <div className="mt-6 flex flex-col-reverse gap-2 border-t border-white/10 px-6 py-4 sm:flex-row sm:items-center sm:justify-end">
-          {asset.os === "darwin" ? (
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                openInstallGuide();
-              }}
-              className={`mr-auto inline-flex h-10 items-center justify-center gap-2 rounded-[6px] px-3 text-[13px] font-medium text-white/70 transition-colors hover:bg-white/5 hover:text-white max-sm:w-full ${focusRing}`}
-            >
-              <BookOpenText className="size-4 opacity-80" />
-              How to install on Mac
-            </button>
-          ) : null}
           <button
             type="button"
             onClick={onClose}

@@ -5,8 +5,84 @@ All notable changes to Volt are listed here, newest first. The format follows
 while it is below 1.0: expect the minor version to carry breaking changes.
 
 Volt is built on VS Code (Code - OSS 1.105). Changes to that base come from upstream and are not listed here.
-Download a build from [Releases](https://github.com/LeulAria/volt/releases). On a Mac, read the
-[macOS install guide](docs/install/macos.md) first: the builds are not signed with an Apple Developer ID.
+Download a build from [Releases](https://github.com/LeulAria/volt/releases). From 0.0.4, Mac builds are signed with an Apple
+Developer ID and notarized.
+
+## [0.0.4] - 2026-10-30
+
+Signed on Mac, lighter, and agents that prove they are done. Volt for Mac is now signed with an Apple Developer ID and
+notarized, so it opens like any other app and updates itself. This release also brings Agent Resources, Claude's plugin
+marketplace, a Git Graph, commit review and proof of done.
+
+### Highlights
+
+- **Signed, notarized and self-updating on Mac.** No Open Anyway step. Updates download in the background and install with
+  Restart to Update.
+- **Lighter and faster to start.** Agents, the Tab predictor and the code index start when first used instead of at launch.
+- **Agent Resources.** One page for every agent's instructions, skills, MCP servers and Volt's own harness settings.
+- **Proof of done.** An agent's "done" is checked against what ran after its last edit, with a receipt under the answer.
+- **Git Graph** with agent attribution, and inline blame on by default.
+
+### Added
+
+**Agents**
+- Proof of done: each native run gets a short contract from its request (your criteria, the project's own check, the change
+  itself). Substantial runs that finish with a gap go back with the command that closes it (`volt.agent.evidenceGate`), an
+  optional second opinion settles what nothing could run (`volt.agent.proofReview`), and a receipt card shows each item on
+  desktop, web and mobile.
+- Commit review: the agent splits changes into Conventional Commits with `propose_commits`. Check, rename or regenerate each
+  one and open its diff before Commit, Commit & Push, or Commit, Push & PR. Placeholder worktree branches get a real name
+  first (`rename_branch`).
+- Send a queued message to a new chat: it starts in the same project, checkout, model and mode with a condensed handoff of
+  this conversation, and a "Continued from" pill links back.
+- Trajectory panel next to the Terminal: each model request of a native run on a waterfall, with what was sent and returned,
+  usage, cache hits, time to first token and why a prompt-cache prefix broke.
+- Vercel fx as an agent provider (Early Access), with its own tab in the model picker.
+- Agents can run outside the main window.
+
+**Agent Resources**
+- An Agent Resources page and side toolbar section for instructions, skills, MCP servers and plugins across every scope and
+  harness, found by what they are and where they live. Also under Manage.
+- Harness control center for Volt's own agent settings.
+- Claude's official plugin marketplace, built in.
+
+**Git**
+- Git Graph tab (Ctrl+Option+G): VS Code's graph in a table with branch, message, agent, changes, author, date and SHA;
+  filters, search (`author:`, `path:`, `after:`, `before:`), and an activity strip you can drag to pick a date range.
+- Agent logos from `Co-authored-by` trailers in the graph and blame. Inline blame is on by default.
+- Pull requests view: search ranked by match as you type, a sort menu and keyboard navigation.
+- Find Issues in the Changes header, and exact edit counts.
+
+**Workbench**
+- Settings lists VS Code's own settings categories beside Volt's pages, and Appearance lists installed themes.
+- The title bar shows an available update: Downloading over a progress line, then Restart to Update.
+- Ctrl+Option+1 to 4 open Explorer, Source Control, Pull Requests and Search in the files sidebar.
+- Drag a chat into Settled, Working, Pinned or Snoozed in the sidebar. Open in New Window shows only that chat's project.
+
+### Changed
+
+- Mac builds are signed with an Apple Developer ID and notarized, and install updates by themselves.
+- Agents, the Tab and dictation predictor, the code index, the usage scan and the spare window start when first needed. The
+  file watcher runs in the shared process and window transparency is opt-in, so Volt runs far fewer processes and uses much
+  less memory and CPU at startup and idle.
+- Light, Midnight and Abyss themes polished, with theme dropdowns in Appearance.
+- The dot loader draws crisp 2px dots and animates by brightness only.
+- The website and docs drop the step-by-step Mac install guide.
+
+### Fixed
+
+- Two agent server crashes.
+- A message sent into a running turn carries its pictures to the agent.
+- Editing a prompt while its reply streams no longer stops scrolling; annotation chips scroll to their element.
+- Checking out a branch a chat worktree holds moves that worktree to its own branch.
+- Model picker compare toggle, Providers scrollbar and question-card input.
+- Scratch copy and paste, steered image chips, and page picks that stay in their chat.
+
+### Known limitations
+
+- Volt 0.0.3 and older were not signed, so they cannot install 0.0.4 by themselves: they offer the download. Replace the app
+  once; settings and chats stay.
+- Windows installers are not code-signed yet.
 
 ## [0.0.3] - 2026-10-25
 
@@ -110,7 +186,7 @@ the web and mobile apps catching up with the desktop.
 ### Known limitations
 
 - macOS builds are still not signed with an Apple Developer ID or notarized, and Windows installers are not code-signed. See
-  the [macOS install guide](docs/install/macos.md).
+  the [install guide](docs/install/README.md).
 - Windows and Linux builds have had little testing. Scratch, the web and mobile apps and the agent server are new and may change.
 
 ## [0.0.2] - 2026-10-18
@@ -250,7 +326,7 @@ mode, Git views for branches and worktrees, several Claude accounts, and a good 
 ### Known limitations
 
 - **macOS builds are not signed with an Apple Developer ID or notarized.** macOS asks you to approve the first launch, and Volt cannot
-  install updates by itself on macOS; it offers the new download instead. See the [macOS install guide](docs/install/macos.md).
+  install updates by itself on macOS; it offers the new download instead. See the [install guide](docs/install/README.md).
 - Windows installers are not code-signed, so SmartScreen shows a warning.
 - macOS is the platform Volt is developed and tested on. Windows and Linux builds are produced by CI but have had little testing.
 - The agent server, web, mobile, Relay and Govern pieces are early and may change.

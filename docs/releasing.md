@@ -84,7 +84,7 @@ update is available, downloading or ready, the agent sidebar footer shows an upd
 2. Add the version to [`CHANGELOG.md`](../CHANGELOG.md): what was added, changed and fixed, and any known limitation.
 3. Write `docs/release-notes/<version>.md`. `build/volt/release/publish.mjs` puts it at the top of the GitHub Release (a shorter
    version of the changelog, with the install steps). Image links in it must be absolute, pinned to the tag, for example
-   `https://raw.githubusercontent.com/LeulAria/volt/v<version>/docs/install/images/01-blocked.png`.
+   `https://raw.githubusercontent.com/LeulAria/volt/v<version>/docs/<folder>/<image>.png`.
 4. Merge to `main`, then tag the commit and push the tag. A `v*` tag without a suffix starts `volt-stable.yml`; `v*-beta*` starts the beta:
 
    ```sh
@@ -116,5 +116,5 @@ warning in the run.
 `GITHUB_TOKEN` is provided by Actions (contents: write for releases and the feed branch). Add the rest with
 `gh secret set MACOS_CERTIFICATE < cert.p12.b64` and so on. Unsigned macOS builds need **Open Anyway**
 in System Settings > Privacy & Security (or `xattr -dr com.apple.quarantine /Applications/Volt.app`) on first launch,
-and in-place updates on macOS need the Developer ID signature. The steps users follow are in
-[install/macos.md](install/macos.md).
+and in-place updates on macOS need the Developer ID signature. The install steps users follow are in
+[install/README.md](install/README.md).

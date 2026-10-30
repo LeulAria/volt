@@ -3,9 +3,9 @@ contact_links:
   - name: Report a security vulnerability
     url: https://github.com/LeulAria/volt/security/advisories/new
     about: Please report vulnerabilities privately. Do not open a public issue.
-  - name: Installing Volt on a Mac
-    url: https://github.com/LeulAria/volt/blob/main/docs/install/macos.md
-    about: macOS blocks the first launch because the build is not signed with an Apple Developer ID. The guide shows how to open it.
+  - name: Installing Volt
+    url: https://github.com/LeulAria/volt/blob/main/docs/install/README.md
+    about: Downloads and install steps for macOS, Windows and Linux.
   - name: Documentation
     url: https://volt.leularia.com/docs
     about: Guides and reference for using Volt.
