@@ -13,6 +13,7 @@ import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { ConfigurationTarget, IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
@@ -52,6 +53,11 @@ import { showVoltMenu } from '../ui/menu/voltMenu.js';
 
 export type AgentFilesSidebarView = 'explorer' | 'scm' | 'search' | 'pullRequests';
 
+/** The command behind each tab's Ctrl+Option+digit (agentSurfaceHost.ts registers them); tooltips show its keybinding. */
+export function filesSidebarViewCommandId(view: AgentFilesSidebarView): string {
+	return `workbench.action.voltAgentTools.filesSidebar.${view}`;
+}
+
 const OPEN_KEY = 'volt.agent.filesSidebar.open';
 const VIEW_KEY = 'volt.agent.filesSidebar.view';
 /** Renamed when the default width went up, so a width saved under the old default does not stick. */
@@ -61,6 +67,7 @@ const MIN_WIDTH = 200;
 /** Room the tabs beside the sidebar always keep. */
 const MIN_TABS_WIDTH = 320;
 
+/** The tabs left to right, which is also their shortcut's digit (Explorer 1 … Search 4). */
 const VIEWS: readonly { readonly id: AgentFilesSidebarView; readonly container: string; readonly icon: SvgIconShapes; readonly label: string }[] = [
 	{
 		id: 'explorer', container: EXPLORER_VIEWLET_ID, label: localize('voltAgent.filesSidebar.explorer', "Explorer"), icon: EXPLORER_ICON_SHAPES
@@ -90,6 +97,11 @@ const VIEWS: readonly { readonly id: AgentFilesSidebarView; readonly container: 
 		]
 	},
 ];
+
+/** The tabs in order, for their shortcuts: Ctrl+Option+1 is the first. */
+export function filesSidebarTabs(): readonly { readonly id: AgentFilesSidebarView; readonly label: string }[] {
+	return VIEWS;
+}
 
 /** Open, view and width are the window's, not a chat's: every chat's tools show the same sidebar. */
 interface ISidebarState {
@@ -196,6 +208,7 @@ export class AgentFilesSidebar extends Disposable {
 		@IAgentResourcesService private readonly resources: IAgentResourcesService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@IEditorService private readonly editorService: IEditorService,
+		@IKeybindingService private readonly keybindingService: IKeybindingService,
 	) {
 		super();
 		this.scmRepository = this._register(instantiationService.createInstance(AgentScmRepositoryFocus));
@@ -215,11 +228,12 @@ export class AgentFilesSidebar extends Disposable {
 			const button = append(this.header, $('button.volt-agent-files-sidebar-tab')) as HTMLButtonElement;
 			button.type = 'button';
 			button.setAttribute('aria-label', view.label);
-			setAgentTooltip(button, view.label);
 			button.appendChild(createTabIcon(button.ownerDocument, view.icon));
 			this._register(addDisposableListener(button, 'click', () => AgentFilesSidebar.show(this.storageService, view.id)));
 			this.buttons.set(view.id, button);
 		}
+		this.labelTabs();
+		this._register(this.keybindingService.onDidUpdateKeybindings(() => this.labelTabs()));
 		// Takes the free space, so the filter and the buttons after it sit at the far end.
 		append(this.header, $('span.volt-agent-files-sidebar-spacer'));
 		// The Explorer's filter: every file, or only the agent resources of one group. A dot says it is on.
@@ -382,6 +396,35 @@ export class AgentFilesSidebar extends Disposable {
 	/** Shows Source Control for this chat now. */
 	showsScmFor(sessionId: string): boolean {
 		return this.shown && this.sessionId === sessionId && this.lentView === 'scm';
+	}
+
+	/** On screen with `view` in it. */
+	showsView(view: AgentFilesSidebarView): boolean {
+		return this.shown && this.lentView === view && !!this.lent.value;
+	}
+
+	hasFocus(): boolean {
+		return this.element.contains(this.element.ownerDocument.activeElement);
+	}
+
+	/** Moves the keyboard into the view shown: the Explorer's tree, the commit message, Search's field, the pull requests' search. */
+	focusView(): void {
+		const view = this.lentView && this.lent.value ? VIEWS.find(candidate => candidate.id === this.lentView) : undefined;
+		const container = view ? this.viewDescriptorService.getViewContainerById(view.container) : undefined;
+		const location = container ? this.viewDescriptorService.getViewContainerLocation(container) : null;
+		if (location !== null) {
+			this.paneCompositeService.getActivePaneComposite(location)?.focus();
+		}
+	}
+
+	/** Each tab's tooltip: its name and its shortcut, as the user has it bound. */
+	private labelTabs(): void {
+		for (const view of VIEWS) {
+			const button = this.buttons.get(view.id);
+			if (button) {
+				setAgentTooltip(button, view.label, this.keybindingService.lookupKeybinding(filesSidebarViewCommandId(view.id))?.getLabel() ?? undefined);
+			}
+		}
 	}
 
 	private setShown(shown: boolean): void {

@@ -4,9 +4,100 @@
  *--------------------------------------------------------------------------------------------*/
 
 /*
- * Update button in the agent sidebar footer (beside Settings and Usage) and its popover.
+ * Updates: the title bar entry ("Downloading…" over its progress), the update button in the agent
+ * sidebar footer (beside Settings and Usage), and the popover both open.
  * The popover is an opaque .volt-menu surface: it floats over the see-through agent window.
  */
+
+/* Title bar entry, as VS Code's: words over a thin line that fills as the download goes. */
+.monaco-workbench .part.titlebar .volt-update-titlebar-entry {
+	position: relative;
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	height: 24px;
+	margin: 0 6px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-titleBar-activeForeground, var(--vscode-foreground));
+	font: inherit;
+	font-size: 12px;
+	white-space: nowrap;
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+}
+
+.monaco-workbench .part.titlebar .volt-update-titlebar-entry[hidden] {
+	display: none !important;
+}
+
+.monaco-workbench .part.titlebar .volt-update-titlebar-entry:hover,
+.monaco-workbench .part.titlebar .volt-update-titlebar-entry.open {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.monaco-workbench .part.titlebar .volt-update-titlebar-entry:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+/* A step to take (Restart to Update, Update Available): the accent color, no line. */
+.volt-update-titlebar-entry.ready .volt-update-titlebar-label {
+	color: var(--vscode-textLink-foreground);
+}
+
+.volt-update-titlebar-line {
+	display: none;
+	position: absolute;
+	left: 6px;
+	right: 6px;
+	bottom: 1px;
+	height: 2px;
+	border-radius: 1px;
+	overflow: hidden;
+	background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
+.volt-update-titlebar-entry.busy .volt-update-titlebar-line {
+	display: block;
+}
+
+.volt-update-titlebar-fill {
+	display: block;
+	height: 100%;
+	width: 0;
+	border-radius: 1px;
+	background: var(--vscode-progressBar-background, var(--vscode-button-background, #0078d4));
+	transition: width 240ms ease;
+}
+
+/* No size known: a light that runs along the line. */
+.volt-update-titlebar-entry.indeterminate .volt-update-titlebar-fill {
+	width: 40%;
+	background: linear-gradient(90deg, transparent, var(--vscode-progressBar-background, var(--vscode-button-background, #0078d4)));
+	animation: volt-update-titlebar-run 1.4s ease-in-out infinite;
+}
+
+@keyframes volt-update-titlebar-run {
+	from { transform: translateX(-100%); }
+	to { transform: translateX(250%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-update-titlebar-entry.indeterminate .volt-update-titlebar-fill {
+		width: 100%;
+		opacity: 0.6;
+		animation: none;
+	}
+}
+
+.monaco-workbench.reduce-motion .volt-update-titlebar-entry.indeterminate .volt-update-titlebar-fill {
+	width: 100%;
+	opacity: 0.6;
+	animation: none;
+}
 .volt-agent-update-button {
 	position: relative;
 	opacity: 1;
@@ -89,11 +180,15 @@
 	}
 }
 
-/* Popover */
+/* Popover: above the footer button, below the title bar entry. */
 .volt-update-popover {
 	width: 340px;
 	margin-bottom: 8px;
 	font-weight: 400;
+}
+
+.volt-update-popover.below {
+	margin: 6px 0 0;
 }
 
 .volt-update-popover-head {
@@ -104,9 +199,47 @@
 }
 
 .volt-update-popover-title {
-	font-size: 15px;
-	font-weight: 500;
+	font-size: 14px;
+	font-weight: 600;
 	color: var(--vscode-foreground);
+}
+
+/* The product, as VS Code's card: its icon, name, this build's version and the day it was built. */
+.volt-update-popover-product {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	margin: 10px 0 8px;
+}
+
+.volt-update-popover-icon {
+	flex: none;
+	width: 52px;
+	height: 52px;
+	background: url('../../../../browser/media/code-icon.svg') center / contain no-repeat;
+}
+
+.volt-update-popover-about {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+}
+
+.volt-update-popover-name {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--vscode-foreground);
+}
+
+.volt-update-popover-meta {
+	font-size: 12px;
+	line-height: 1.4;
+	color: var(--vscode-descriptionForeground);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	user-select: text;
 }
 
 .volt-update-popover-detail {
@@ -198,12 +331,11 @@
 	color: var(--vscode-textLink-foreground);
 }
 
+/* Release Notes and the next step, under the text as in VS Code's card. */
 .volt-update-popover-actions {
 	display: flex;
-	justify-content: flex-end;
 	gap: 8px;
-	padding: 10px 16px 12px;
-	border-top: 1px solid var(--vscode-menu-separatorBackground, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
+	padding: 4px 16px 14px;
 }
 
 .volt-update-popover-actions .monaco-button {

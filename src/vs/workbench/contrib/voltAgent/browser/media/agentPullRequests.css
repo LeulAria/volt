@@ -1008,13 +1008,100 @@
 	border-bottom: 1px solid var(--volt-pr-border);
 }
 
-.volt-pr-list-repo {
-	min-width: 0;
+/* The search where the repository's name was: the sidebar's magnifier and a bare field, with the regex toggle and clear button at its end. */
+.volt-pr-search {
+	display: flex;
+	flex: 1;
+	align-items: center;
+	gap: 6px;
+	min-width: 72px;
+	height: 24px;
+	margin: 0 4px 0 -6px;
+	padding: 0 2px 0 6px;
+	border-radius: 6px;
 	color: var(--volt-pr-muted);
-	font-size: 12px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+}
+
+.volt-pr-search:focus-within {
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-pr-search.invalid {
+	box-shadow: inset 0 0 0 1px var(--vscode-inputValidation-errorBorder, #be1100);
+}
+
+.volt-pr-search-icon {
+	display: inline-flex;
+	flex: none;
+}
+
+.volt-pr-search-input {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	padding: 0;
+	border: 0;
+	outline: none;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 12.5px;
+}
+
+.volt-pr-search-input::placeholder {
+	color: var(--volt-pr-muted);
+	opacity: 1;
+}
+
+.volt-pr-search-button {
+	display: none;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 1px solid transparent;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--volt-pr-muted);
+	cursor: pointer;
+}
+
+.volt-pr-search-button .codicon {
+	font-size: 14px;
+	color: inherit;
+}
+
+.volt-pr-search-button:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-foreground);
+}
+
+.volt-pr-search.has-value .volt-pr-search-clear,
+.volt-pr-search:hover .volt-pr-search-regex,
+.volt-pr-search:focus-within .volt-pr-search-regex,
+.volt-pr-search-regex.on {
+	display: inline-flex;
+}
+
+.volt-pr-search-regex.on,
+.volt-pr-search-regex.on:hover {
+	border-color: var(--vscode-inputOption-activeBorder);
+	background: var(--vscode-inputOption-activeBackground);
+	color: var(--vscode-inputOption-activeForeground);
+}
+
+/* Rows stay direct flex items of the view, as before the search. */
+.volt-pr-list-body {
+	display: contents;
+}
+
+/* The letters a search matched, as VS Code's lists light them. */
+.volt-pr-hit {
+	color: var(--vscode-list-highlightForeground);
+	font-weight: 600;
 }
 
 .volt-pr-list-section {

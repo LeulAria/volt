@@ -60,7 +60,7 @@ import { BROWSER_PRESENT_EVENT, BROWSER_PRESENTATION_EVENT, BrowserPresentation,
 import { sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { AgentChangesEditorInput, isAgentChangesDiffFor, openAgentChangesDiff } from '../review/agentChangesEditor.js';
 import { AgentChangesScope } from '../review/agentSessionChanges.js';
-import { AgentFilesSidebar, AgentFilesSidebarView } from './agentFilesSidebar.js';
+import { AgentFilesSidebar, AgentFilesSidebarView, filesSidebarTabs, filesSidebarViewCommandId } from './agentFilesSidebar.js';
 import { AgentSurfaceAddMenu, IAgentSurfaceAddMenuHost, renderSurfaceOpenList, visibleSurfaceMenuItems } from './agentSurfaceAddMenu.js';
 import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
 import { AgentToolsEditorPart, AgentToolsPartContext, hasSavedAgentTools } from './agentToolsEditorPart.js';
@@ -847,6 +847,20 @@ export class AgentSurfaceHost extends Disposable {
 		AgentFilesSidebar.show(this.storageService, view);
 		// Already open on that view: the tools may still be closed.
 		this.onDidChangeFilesSidebar();
+	}
+
+	/**
+	 * A tab's shortcut: opens the sidebar on `view` with the keyboard in it. Pressed again while the
+	 * keyboard is already there, it closes the sidebar.
+	 */
+	toggleFilesSidebarView(view: AgentFilesSidebarView): void {
+		if (this.filesSidebarOpen() && this.filesSidebar.showsView(view) && this.filesSidebar.hasFocus()) {
+			AgentFilesSidebar.setOpen(this.storageService, false);
+			return;
+		}
+		this.showFilesSidebar(view);
+		// The view is lent in and laid out by the tools' next layout pass.
+		getWindow(this.container).requestAnimationFrame(() => this.filesSidebar.focusView());
 	}
 
 	/** Opening the sidebar opens the tools beside the chat on screen, even with no tab in them. */
@@ -2627,6 +2641,37 @@ for (const item of agentSurfaceMenuItems()) {
 		}
 	});
 }
+
+// Ctrl+Option + 1 to 4: the right sidebar's tabs, left to right (Explorer, Source Control, Pull Requests,
+// Search). Same family as the letters above, one hand on the left; Ctrl+Alt+Shift off a Mac.
+const SIDEBAR_TAB_KEYS = [KeyCode.Digit1, KeyCode.Digit2, KeyCode.Digit3, KeyCode.Digit4];
+filesSidebarTabs().forEach((tab, index) => {
+	const key = SIDEBAR_TAB_KEYS[index];
+	if (key === undefined) {
+		return;
+	}
+	registerAction2(class extends Action2 {
+		constructor() {
+			super({
+				id: filesSidebarViewCommandId(tab.id),
+				title: localize2('voltAgent.tools.showSidebarTab', "Show {0} in Right Sidebar", tab.label),
+				category: localize2('voltAgent.category', "Agent"),
+				f1: true,
+				precondition: LayoutModeContext.isEqualTo('agent'),
+				keybinding: {
+					primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyMod.Shift | key,
+					mac: { primary: KeyMod.WinCtrl | KeyMod.Alt | key },
+					weight: KeybindingWeight.WorkbenchContrib + 50,
+					when: LayoutModeContext.isEqualTo('agent'),
+				},
+			});
+		}
+
+		override run(): void {
+			[...hosts].find(candidate => candidate.canOpenTools())?.toggleFilesSidebarView(tab.id);
+		}
+	});
+});
 
 registerAction2(class ToggleAgentToolsPanelAction extends Action2 {
 	constructor() {
