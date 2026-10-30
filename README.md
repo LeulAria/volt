@@ -41,10 +41,8 @@ Get the latest build from **[GitHub Releases](https://github.com/LeulAria/volt/r
 | Windows | `volt-stable-<version>-win32-<x64 or arm64>-user-setup.exe` |
 | Linux | `volt-stable-<version>-linux-<x64, arm64 or armhf>` as `.deb`, `.rpm` or `.tar.gz` |
 
-**The builds are not code-signed yet**, because Volt is an independent project without a signing certificate. Your system warns you the first time you open one. That is expected:
-
-- **macOS:** open **System Settings > Privacy & Security** and click **Open Anyway**, or install from the Terminal and skip the dialogs. The [macOS install guide](docs/install/macos.md) walks through it with a screenshot for every step, and shows how to use Volt from the command line (`volt .`).
-- **Windows:** when SmartScreen says *Windows protected your PC*, click **More info**, then **Run anyway**.
+- **macOS:** open the `.dmg` and drag **Volt** to Applications. From 0.0.4 the builds are signed with an Apple Developer ID and notarized, and they update themselves. Volt 0.0.3 and older cannot update themselves: download the new version once and replace the app. Your settings and chats stay.
+- **Windows:** the installers are not code-signed yet. When SmartScreen says *Windows protected your PC*, click **More info**, then **Run anyway**.
 - **Linux:** `sudo apt install ./volt-stable-<version>-linux-x64.deb`, or `sudo dnf install ./volt-stable-<version>-linux-x64.rpm`.
 
 There is also a **Beta** and a **Nightly** channel, each its own app that installs next to Volt (see [Releasing Volt](docs/releasing.md)). macOS is the platform Volt is developed and tested on; Windows and Linux builds come from the same pipeline but have had little testing. Everything about installing is in [docs/install](docs/install/README.md).

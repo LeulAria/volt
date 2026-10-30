@@ -1,8 +1,8 @@
 ---
 title: Install Volt
 description: >-
-  Download and install Volt on macOS, Windows or Linux, open it past the first-launch warning, use it from the
-  terminal, and update or remove it. Step by step, with screenshots.
+  Download and install Volt on macOS, Windows or Linux, use it from the terminal, and update or
+  remove it.
 icon: ArrowDownToLine
 ---
 
@@ -19,144 +19,17 @@ Volt is in public beta. Get the latest build from the [download page](/download)
 | Windows 10 or 11 | `volt-stable-<version>-win32-x64-user-setup.exe` (Arm PCs: `win32-arm64`) |
 | Linux | `volt-stable-<version>-linux-<x64, arm64 or armhf>` as `.deb`, `.rpm` or `.tar.gz` |
 
-<Callout type="warn" title="The builds are not code-signed yet">
-  Volt is an independent open-source project and does not have an Apple or Windows signing certificate yet. Your system
-  warns you the first time you open it. That is expected, and the steps below get you past it. The source is public, and
-  you can [build Volt yourself](https://github.com/LeulAria/volt#build-from-source) if you prefer.
-</Callout>
+From 0.0.4, the Mac builds are signed with an Apple Developer ID and notarized by Apple, so they install like any Mac app
+and update themselves. The Windows installers are not code-signed yet, so Windows warns you the first time you run one; the
+[Windows](#windows) steps show how to get past it. The source is public, and you can
+[build Volt yourself](https://github.com/LeulAria/volt#build-from-source) if you prefer.
 
 ## macOS
 
-You need macOS 11 or later. The screenshots are from macOS 26; older versions look a little different, but the steps are the same.
+Download the `.dmg` (arm64 for Apple silicon, x64 for Intel), open it and drag **Volt** to Applications. You need macOS 11 or later.
 
-<Callout title="Prefer no dialogs?">
-  Skip to [Install from the Terminal](#install-from-the-terminal). A file downloaded with `curl` is not quarantined, so macOS
-  never shows the warning.
-</Callout>
-
-<Steps>
-<Step>
-
-### Find the download
-
-Open the `.dmg` you downloaded. It is in your Downloads folder, or wherever your browser saves files. To check which
-Mac you have, open the Apple menu, then **About This Mac**: a chip named *Apple M…* means Apple silicon.
-
-![The downloaded Volt disk image selected in Finder](/install/01-download.jpg)
-
-</Step>
-<Step>
-
-### Open the disk image
-
-Double-click it. A window opens with **Volt** and an **Applications** shortcut.
-
-![The Volt disk image window with the Volt app and an Applications shortcut](/install/02-open-dmg.jpg)
-
-</Step>
-<Step>
-
-### Drag Volt onto Applications
-
-Drag **Volt** onto the **Applications** shortcut. Then eject the disk image: in the Finder sidebar, or by dragging it to the Trash.
-
-![Dragging Volt onto the Applications shortcut](/install/03-drag-to-applications.jpg)
-
-</Step>
-<Step>
-
-### Open Volt
-
-Open it from Applications, Launchpad or Spotlight (<kbd>⌘</kbd> <kbd>Space</kbd>, then type *volt*).
-
-![Spotlight showing the Volt app](/install/04-open-volt.jpg)
-
-</Step>
-<Step>
-
-### macOS says "Volt" Not Opened
-
-macOS could not verify that Volt is free of malware. That is the warning for any app without an Apple Developer ID.
-Click **Done**. The **?** in the corner opens Apple's own page about this, which is the quickest way to the next step.
-
-![The "Volt" Not Opened dialog with the question mark and Done button highlighted](/install/05-not-opened.jpg)
-
-</Step>
-<Step>
-
-### Open the Privacy & Security settings
-
-On Apple's help page, click **Open Privacy & Security settings for me**. You can also open **System Settings** yourself.
-
-![Apple's help page with the Open Privacy and Security settings link highlighted](/install/06-help-link.jpg)
-
-</Step>
-<Step>
-
-### Go to Privacy & Security
-
-In System Settings, choose **Privacy & Security** in the sidebar, or search for it.
-
-![System Settings with Privacy and Security highlighted](/install/07-privacy-and-security.jpg)
-
-</Step>
-<Step>
-
-### Scroll to Security and click Open Anyway
-
-Next to *"Volt" was blocked to protect your Mac* there is an **Open Anyway** button.
-
-![Privacy and Security, Security section, with the Open Anyway button highlighted](/install/08-open-anyway.jpg)
-
-<Callout title="No Open Anyway button?">
-  The button shows for about an hour after you try to open the app. If you do not see it, open Volt again (the *Open Volt* step)
-  and come straight back.
-</Callout>
-
-</Step>
-<Step>
-
-### Confirm with Open Anyway again
-
-A dialog asks *Open "Volt"?* The **blue** button is **Move to Trash**: do not click that one, and do not press <kbd>Return</kbd>.
-Click **Open Anyway**.
-
-![The Open Volt dialog with Open Anyway highlighted; Move to Trash is the blue default](/install/09-confirm-open.jpg)
-
-</Step>
-<Step>
-
-### Verify it is you
-
-Use Touch ID, or click **Use Password…** and type your Mac password.
-
-![The Touch ID or password prompt](/install/10-authenticate.jpg)
-
-</Step>
-<Step>
-
-### Volt opens
-
-macOS may ask whether Volt can access files in a folder such as Documents. Click **Allow** so Volt can open your projects.
-You do all of this once; Volt opens normally from now on.
-
-![Volt's first window with a folder access prompt and Allow highlighted](/install/11-first-launch.jpg)
-
-</Step>
-</Steps>
-
-On macOS 14 and earlier there is a shortcut: Control-click (or right-click) **Volt** in Applications, choose **Open**, then
-click **Open** in the dialog.
-
-### "Volt is damaged and can't be opened"
-
-The app is not damaged. macOS shows this when the quarantine flag and the app's ad-hoc signature disagree, most often after
-a download was unpacked by a tool that changed the app. Remove the flag in Terminal and open it again:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/Volt.app
-open -a Volt
-```
+Volt 0.0.3 and older were not signed and cannot update themselves. Download the new version once and replace the app in
+Applications. Your settings and chats stay.
 
 ## Install from the Terminal
 
@@ -174,7 +47,7 @@ To do the same by hand on a Mac:
 
 ```bash
 ARCH=arm64          # use x64 on an Intel Mac
-VERSION=0.0.3
+VERSION=0.0.4
 
 curl -fL -o ~/Downloads/Volt.dmg \
   "https://github.com/LeulAria/volt/releases/download/v${VERSION}/volt-stable-${VERSION}-darwin-${ARCH}.dmg"
@@ -265,13 +138,13 @@ trying Nightly never touches your Stable install. Pick a channel on the [downloa
 | Beta | Volt Beta | `volt-beta` | `~/.volt-beta` | `volt-beta-` |
 | Nightly | Volt Nightly | `volt-nightly` | `~/.volt-nightly` | `volt-nightly-` |
 
-The first-launch steps are the same for every channel; the dialogs just say *Volt Beta* or *Volt Nightly*.
+The install steps are the same for every channel; the dialogs just say *Volt Beta* or *Volt Nightly*.
 
 ## Updating
 
 Volt checks for new versions and tells you when one is out.
 
-- **macOS:** because the build is not signed with a Developer ID, macOS will not let Volt replace itself. Volt opens the download; install it the same way as above and choose **Replace**. You may need to confirm **Open Anyway** again for the new build.
+- **macOS:** Volt downloads and installs updates by itself. When one is ready, click **Restart to Update**. On 0.0.3 or older, download the new version once and replace the app.
 - **Windows:** setup installs download in the background and update in place. A zip install shows the download instead.
 - **Linux:** Volt opens the download page.
 
@@ -293,10 +166,7 @@ On Windows, remove Volt in **Settings > Apps**. On Linux, remove the package wit
 
 | What you see | What to do |
 | --- | --- |
-| *"Volt" Not Opened* / *Apple could not verify "Volt"* | Use **Open Anyway** in System Settings > Privacy & Security, as in the steps above. |
-| **Open Anyway** is not in Privacy & Security | Try to open Volt again first; the button only shows after a blocked attempt, and only for about an hour. |
-| The *Open "Volt"?* dialog has a blue **Move to Trash** button | Click **Open Anyway** below it instead. Pressing <kbd>Return</kbd> would choose Move to Trash. |
-| *"Volt" is damaged and can't be opened* | Run `xattr -dr com.apple.quarantine /Applications/Volt.app`. |
+| *"Volt" Not Opened* or no **Restart to Update** on a Mac | You have 0.0.3 or older, which was not signed. Download the new version once and replace the app. |
 | The icon bounces and nothing opens | You may have the wrong build. Use `arm64` on Apple silicon and `x64` on Intel (check with `uname -m`). |
 | *You do not have permission to open the application* | A managed Mac (work or school) can block apps from outside the App Store. Ask your administrator, or run Volt from source. |
 | `volt: command not found` | Run **Shell Command: Install 'volt' command in PATH** in Volt, then open a new terminal. |

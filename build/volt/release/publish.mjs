@@ -86,7 +86,7 @@ function releaseNotesHeader() {
 	}
 	lines.push('', '**Downloads:** https://volt.leularia.com/download');
 	if (!hasNotes) {
-		lines.push('', `Mac builds are not signed with an Apple Developer ID: read the [macOS install guide](https://github.com/${repo}/blob/${tag}/docs/install/macos.md) before you open the app.`);
+		lines.push('', 'Mac builds are signed with an Apple Developer ID and notarized. Volt 0.0.3 and older cannot update themselves: download this build once and replace the app.');
 	}
 	return lines.join('\n') + '\n';
 }

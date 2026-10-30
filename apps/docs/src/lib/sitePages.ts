@@ -204,7 +204,7 @@ ${appName} doesn't sell tokens. Plug in Claude Code, Codex, OpenCode, Cursor, Gr
 
 ## Get started with ${appName}
 
-macOS, Windows and Linux. Get the latest build from the [download page](/download.md) or [GitHub Releases](${SITE_REPO_URL}/releases/latest), and follow the [install guide](/docs/install) on a Mac.
+macOS, Windows and Linux. Get the latest build from the [download page](/download.md) or [GitHub Releases](${SITE_REPO_URL}/releases/latest), The [install guide](/docs/install) covers every platform.
 
 ${SITE_LINKS_MARKDOWN}
 `;
@@ -217,7 +217,7 @@ export function downloadMarkdown(): string {
 ${appName} is available for macOS (Apple silicon and Intel), Windows (x64 and Arm) and Linux (x64, arm64, armhf).
 
 - **Latest release:** [GitHub Releases](${SITE_REPO_URL}/releases/latest) lists every file of the newest Stable build with its checksum.
-- **macOS:** \`volt-stable-<version>-darwin-arm64.dmg\` for Apple silicon, \`-darwin-x64.dmg\` for Intel. The build is not signed with an Apple Developer ID yet; the [install guide](/docs/install) shows how to open it the first time.
+- **macOS:** \`volt-stable-<version>-darwin-arm64.dmg\` for Apple silicon, \`-darwin-x64.dmg\` for Intel. Open it and drag Volt to Applications. The build is signed with an Apple Developer ID and notarized, and it updates itself. Builds 0.0.3 and older were not signed and cannot update themselves: download the new version once and replace the app. Your settings and chats stay.
 - **Windows:** \`volt-stable-<version>-win32-<arch>-user-setup.exe\` (or the system setup and \`.zip\`).
 - **Linux:** \`.deb\`, \`.rpm\` or \`.tar.gz\` for your architecture.
 

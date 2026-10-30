@@ -351,7 +351,7 @@ export function ClosingCta() {
             params={{ _splat: "install" }}
             className="mt-4 inline-block text-[13px] text-white/50 underline underline-offset-4 transition-colors hover:text-white"
           >
-            Step-by-step install guide
+            Install guide
           </Link>
         </div>
       </div>

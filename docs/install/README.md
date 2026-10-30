@@ -5,19 +5,26 @@ Files are named `volt-<channel>-<version>-<os>-<arch>.<ext>`, for example `volt-
 
 | Platform | Download | Guide |
 | --- | --- | --- |
-| macOS, Apple silicon | `darwin-arm64.dmg` | [macOS install guide](macos.md) |
-| macOS, Intel | `darwin-x64.dmg` | [macOS install guide](macos.md) |
-| macOS, both | `darwin-universal.dmg` | [macOS install guide](macos.md) |
+| macOS, Apple silicon | `darwin-arm64.dmg` | [macOS](#macos) |
+| macOS, Intel | `darwin-x64.dmg` | [macOS](#macos) |
+| macOS, both | `darwin-universal.dmg` | [macOS](#macos) |
 | Windows 10 and 11, x64 or Arm | `win32-<arch>-user-setup.exe` (no admin rights), `win32-<arch>-system-setup.exe`, or `win32-<arch>.zip` | [Windows](#windows) |
 | Linux, x64, Arm64 or armhf | `linux-<arch>.deb`, `linux-<arch>.rpm`, or `linux-<arch>.tar.gz` | [Linux](#linux) |
 
-These builds are **not code-signed**, because Volt is an independent open-source project and has no signing certificate yet. Your operating system
-warns you the first time you run one. That is expected. Each guide shows how to get past it, and you can always build Volt from source:
-see [Run from source](../../README.md#run-from-source).
+**Windows installers are not code-signed yet**, so Windows warns you the first time you run one. That is expected, and the
+[Windows](#windows) steps show how to get past it. You can always build Volt from source: see [Run from source](../../README.md#run-from-source).
 
-**Macs need one extra step**, so read the [macOS install guide](macos.md) before you open the app.
+The same guide is on the website at [volt.leularia.com/docs/install](https://volt.leularia.com/docs/install).
 
-The same guide, with screenshots, is on the website at [volt.leularia.com/docs/install](https://volt.leularia.com/docs/install).
+## macOS
+
+Download the `.dmg` (arm64 for Apple silicon, x64 for Intel), open it and drag **Volt** to Applications. Mac builds are signed
+with an Apple Developer ID and notarized from 0.0.4, and they update themselves.
+
+Volt 0.0.3 and older were not signed and cannot update themselves. Download the new version once and replace the app in
+Applications. Your settings and chats stay.
+
+To use `volt .` in a terminal, run **Shell Command: Install 'volt' command in PATH** from the Command Palette (<kbd>⇧</kbd><kbd>⌘</kbd><kbd>P</kbd>).
 
 ## Install from the Terminal
 
