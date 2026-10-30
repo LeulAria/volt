@@ -81,6 +81,8 @@ import { VoltBrowserAccessService } from '../../../workbench/services/voltRuntim
 import { VoltMemoryService } from '../../../workbench/services/voltRuntime/browser/memory/voltMemoryService.js';
 import { IVoltBrowserAccessService } from '../../../workbench/services/voltRuntime/common/browserAccess.js';
 import { IVoltMemoryService } from '../../../workbench/services/voltRuntime/common/memory/voltMemory.js';
+import { VoltTrajectoryService } from '../../../workbench/services/voltRuntime/browser/trajectoryService.js';
+import { IVoltTrajectoryService } from '../../../workbench/services/voltRuntime/common/trajectory.js';
 import { VoltHooksService } from '../../../workbench/services/voltRuntime/browser/hooks/voltHooksService.js';
 import { IVoltHooksService } from '../../../workbench/services/voltRuntime/common/hooks/voltHooks.js';
 import { IWorkspaceTrustManagementService } from '../../../platform/workspace/common/workspaceTrust.js';
@@ -329,6 +331,8 @@ export async function main(argv: string[]): Promise<void> {
 	services.set(IAgentWorktreeSetupService, new SyncDescriptor(AgentWorktreeSetupService));
 	services.set(IVoltBrowserAccessService, new SyncDescriptor(VoltBrowserAccessService));
 	services.set(IVoltMemoryService, new SyncDescriptor(VoltMemoryService));
+	// The runtime records each model request's timeline here.
+	services.set(IVoltTrajectoryService, new SyncDescriptor(VoltTrajectoryService));
 	// Scheduled automations fire here, so they run with no window open (windows claim the same slots, so each runs once).
 	services.set(IAutomationService, new SyncDescriptor(AutomationService));
 

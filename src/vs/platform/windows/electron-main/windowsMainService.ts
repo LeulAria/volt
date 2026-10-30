@@ -126,6 +126,8 @@ interface IOpenBrowserWindowOptions {
 
 /** How long after a window finished restoring the next New Window starts loading, so it does not slow that window. */
 const SPARE_WINDOW_DELAY = 3000;
+/** Set once the user opened a New Window; from then on one is kept ready (see keepsSpareWindow). */
+const USED_NEW_WINDOW_STATE_KEY = 'volt.window.usedNewWindow';
 
 /** How long the next New Window may take to show its chat before it comes to the front anyway. */
 const SPARE_WINDOW_SHOW_TIMEOUT = 500;
@@ -275,7 +277,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		private readonly initialUserEnv: IProcessEnvironment,
 		@ILogService private readonly logService: ILogService,
 		@ILoggerMainService private readonly loggerService: ILoggerMainService,
-		@IStateService stateService: IStateService,
+		@IStateService private readonly stateService: IStateService,
 		@IPolicyService private readonly policyService: IPolicyService,
 		@IEnvironmentMainService private readonly environmentMainService: IEnvironmentMainService,
 		@IUserDataProfilesMainService private readonly userDataProfilesMainService: IUserDataProfilesMainService,
@@ -1931,8 +1933,13 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		this._onDidDestroyWindow.fire(window);
 	}
 
+	/**
+	 * A spare is a whole hidden workbench (renderer, extension host, file watcher), so it is kept
+	 * only for people who open New Windows: from the first one on, and after restarts.
+	 */
 	private keepsSpareWindow(): boolean {
 		return this.configurationService.getValue<boolean>(KEEP_NEXT_WINDOW_READY_SETTING) !== false
+			&& this.stateService.getItem<boolean>(USED_NEW_WINDOW_STATE_KEY, false)
 			&& !this.environmentMainService.args.extensionDevelopmentPath
 			&& !this.environmentMainService.extensionTestsLocationURI;
 	}
@@ -1966,13 +1973,14 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 	 * Anything a loaded empty window cannot become (files, a remote, another profile) boots as before.
 	 */
 	private takeSpareWindow(options: IOpenBrowserWindowOptions, profile: IUserDataProfile): ICodeWindow | undefined {
-		const spare = this.spareWindow;
-		if (!spare || !this.spareRestored || !spare.config || spare.profile?.id !== profile.id) {
-			return undefined;
-		}
 		const plainNewWindow = options.ownScope && !options.spare && !options.windowToUse && !options.userEnv && !options.remoteAuthority && !options.filesToOpen
 			&& !options.emptyWindowBackupInfo && !options.forceNewTabbedWindow && !options.forceProfile && !options.forceTempProfile;
-		if (!plainNewWindow) {
+		if (plainNewWindow && !this.stateService.getItem<boolean>(USED_NEW_WINDOW_STATE_KEY, false)) {
+			// The first New Window boots as usual; once it has restored, the next one is kept ready.
+			this.stateService.setItem(USED_NEW_WINDOW_STATE_KEY, true);
+		}
+		const spare = this.spareWindow;
+		if (!plainNewWindow || !spare || !this.spareRestored || !spare.config || spare.profile?.id !== profile.id) {
 			return undefined;
 		}
 

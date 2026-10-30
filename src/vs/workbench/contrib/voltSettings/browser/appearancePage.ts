@@ -11,14 +11,14 @@ import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle
 import { isMacintosh } from '../../../../base/common/platform.js';
 import { localize } from '../../../../nls.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { ConfigurationTarget, IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { IExtensionResourceLoaderService } from '../../../../platform/extensionResourceLoader/common/extensionResourceLoader.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ColorScheme, isDark } from '../../../../platform/theme/common/theme.js';
 import { ColorThemeData } from '../../../services/themes/common/colorThemeData.js';
 import { IWorkbenchColorTheme, IWorkbenchThemeService, ThemeSettings } from '../../../services/themes/common/workbenchThemeService.js';
-import { AGENT_CODE_WRAP_SETTING, AGENT_THEMED_DIFFS_SETTING, AGENT_TOOL_DENSITIES, AGENT_TOOL_DENSITY_SETTING, AgentToolDensity, readToolDensity, VOLT_REDUCE_TRANSPARENCY_SETTING, VOLT_TINT_HUE_SETTING, VOLT_TINT_INTENSITY_SETTING, VOLT_UI_FONT_FAMILY_SETTING } from '../../voltAgent/common/agentAppearanceSettings.js';
+import { AGENT_CODE_WRAP_SETTING, AGENT_THEMED_DIFFS_SETTING, AGENT_TOOL_DENSITIES, AGENT_TOOL_DENSITY_SETTING, AgentToolDensity, readToolDensity, VOLT_REDUCE_TRANSPARENCY_SETTING, VOLT_TINT_HUE_SETTING, VOLT_TINT_INTENSITY_SETTING, VOLT_UI_FONT_FAMILY_SETTING, VOLT_WINDOW_TRANSPARENCY_SETTING } from '../../voltAgent/common/agentAppearanceSettings.js';
 import { mixTint, tintAmount, tintColor } from '../common/voltTint.js';
 import { createVoltDropdown } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
 import { createSettingsIcon } from './settingsIcons.js';
@@ -313,6 +313,7 @@ export class AppearancePage {
 			},
 		);
 		this.toggleRow(kit, group, localize('voltSettings.reduceTransparency', "Reduce Transparency"), localize('voltSettings.reduceTransparencyDesc', "Replace translucent surfaces with opaque backgrounds"), VOLT_REDUCE_TRANSPARENCY_SETTING, false);
+		this.syncedToggleRow(kit, group, localize('voltSettings.windowTransparency', "Window Transparency"), localize('voltSettings.windowTransparencyDesc', "Show the desktop through the agent window's sidebar (macOS vibrancy, Windows acrylic). Uses more GPU memory."), VOLT_WINDOW_TRANSPARENCY_SETTING, false);
 	}
 
 	/** Sizes and families for the interface and for code, a diff drawn in the code font, and font smoothing. */
@@ -400,8 +401,21 @@ export class AppearancePage {
 		kit.settingRow(group, title, desc, host => this.toggle(host, this.configuration.getValue<boolean>(key) ?? defaultValue, title, on => void this.configuration.updateValue(key, on)));
 	}
 
-	/** A switch that flips itself: the page does not redraw for these settings. */
-	private toggle(host: HTMLElement, initial: boolean, label: string, onChange: (on: boolean) => void): void {
+	/** A switch that follows its setting when it changes elsewhere (settings.json, another window), without redrawing the page. */
+	private syncedToggleRow(kit: ISettingsPageKit, group: HTMLElement, title: string, desc: string, key: string, defaultValue: boolean): void {
+		const read = () => this.configuration.getValue<boolean>(key) ?? defaultValue;
+		kit.settingRow(group, title, desc, host => {
+			const set = this.toggle(host, read(), title, on => void this.configuration.updateValue(key, on, ConfigurationTarget.USER));
+			this.store.add(this.configuration.onDidChangeConfiguration(e => {
+				if (e.affectsConfiguration(key)) {
+					set(read());
+				}
+			}));
+		});
+	}
+
+	/** A switch that flips itself: the page does not redraw for these settings. Returns a setter for outside changes. */
+	private toggle(host: HTMLElement, initial: boolean, label: string, onChange: (on: boolean) => void): (on: boolean) => void {
 		let on = initial;
 		const toggle = append(host, $('button.volt-settings-toggle')) as HTMLButtonElement;
 		toggle.type = 'button';
@@ -417,6 +431,10 @@ export class AppearancePage {
 			paint();
 			onChange(on);
 		}));
+		return next => {
+			on = next;
+			paint();
+		};
 	}
 
 	/** A range slider: `onInput` follows the drag, `onCommit` gets the value where it was let go. */

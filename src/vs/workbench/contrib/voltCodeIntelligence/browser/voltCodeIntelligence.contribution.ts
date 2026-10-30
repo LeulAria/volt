@@ -3,9 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { URI } from '../../../../base/common/uri.js';
+import { ICodeEditor } from '../../../../editor/browser/editorBrowser.js';
+import { ICodeEditorService } from '../../../../editor/browser/services/codeEditorService.js';
 import { localize } from '../../../../nls.js';
 import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
@@ -115,18 +117,35 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 	},
 });
 
-/** Indexes the open project's folders in the background, so the first agent search is already fast. */
+/**
+ * Indexes the open project's folders in the background once the user starts typing (a prompt, a
+ * file), so the first agent search is already fast. Not at launch: the index process holds its
+ * memory for 20 minutes after a warm, which a window nobody works in should not pay for.
+ */
 class CodeIndexWarmup extends Disposable implements IWorkbenchContribution {
 
 	static readonly ID = 'workbench.contrib.voltCodeIndexWarmup';
+
+	private started = false;
+	private readonly typing = this._register(new DisposableStore());
 
 	constructor(
 		@IVoltCodeIndexService private readonly codeIndex: IVoltCodeIndexService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IWorkspaceContextService private readonly workspace: IWorkspaceContextService,
+		@ICodeEditorService codeEditorService: ICodeEditorService,
 	) {
 		super();
-		this.warm();
+		const start = () => {
+			if (!this.started) {
+				this.started = true;
+				this.typing.clear();
+				this.warm();
+			}
+		};
+		const watch = (editor: ICodeEditor) => this.typing.add(editor.onDidType(start));
+		codeEditorService.listCodeEditors().forEach(watch);
+		this.typing.add(codeEditorService.onCodeEditorAdd(watch));
 		this._register(this.workspace.onDidChangeWorkspaceFolders(() => this.warm()));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(CODE_INDEX_ENABLED_SETTING) || e.affectsConfiguration(CODE_INDEX_HIERARCHICAL_IGNORE_SETTING) || e.affectsConfiguration(CODE_INDEX_IGNORE_SYMLINKS_SETTING)) {
@@ -136,7 +155,7 @@ class CodeIndexWarmup extends Disposable implements IWorkbenchContribution {
 	}
 
 	private warm(): void {
-		if (!codeIndexEnabled(this.configurationService)) {
+		if (!this.started || !codeIndexEnabled(this.configurationService)) {
 			return;
 		}
 		const options = readCodeIndexOptions(this.configurationService);
