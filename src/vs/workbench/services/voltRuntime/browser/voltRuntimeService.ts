@@ -5,7 +5,7 @@
 
 import { inlineResourceContext } from '../common/fileAttachments.js';
 import { findLast, findLastIdx } from '../../../../base/common/arraysFind.js';
-import { DeferredPromise, IntervalTimer, raceTimeout, RunOnceScheduler } from '../../../../base/common/async.js';
+import { DeferredPromise, disposableTimeout, IntervalTimer, raceTimeout, RunOnceScheduler } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { stringHash } from '../../../../base/common/hash.js';
@@ -174,6 +174,13 @@ const SETTLE_WAIT_AGENT_MS = 3_000;
 const SETTLE_WAIT_NATIVE_MS = 1_500;
 /** A deferred health check runs this long after the last run ends, not on top of a follow-up. */
 const HEALTH_AFTER_RUN_MS = 15_000;
+/** A health tick lists the CLIs' models again only this often (each list starts a throwaway agent). */
+const MODEL_RELIST_MS = 6 * 60 * 60_000;
+/** With saved detections, the startup check of every CLI runs this long after launch. */
+const STARTUP_DETECT_DELAY_MS = 60_000;
+/** CLI detections (`--version`, auth status for every CLI) this fresh are not repeated by a health tick or a relaunch. */
+const DETECT_TTL_MS = 30 * 60_000;
+const VOLT_DETECTIONS_STORAGE_KEY = 'volt.runtime.detections';
 /** Project checks Volt runs itself (the regression gate) are stopped after this. */
 const CHECK_TIMEOUT_MS = 120_000;
 /** A baseline slower than this is not started again for that folder; the gate needs a fast suite. */
@@ -535,6 +542,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly detectionsInFlight = new Map<string, Promise<IDetectResult>>();
 	private readonly agentModels = new Map<string, IModelInfo[]>();
 	private lastProviderCheck: number | undefined;
+	/** When the model lists were last fetched (see healthCheck). */
+	private modelsListedAt = 0;
 	private readonly healthTimer = this._register(new IntervalTimer());
 	private providerRefresh: Promise<void> | undefined;
 	private providerRefreshAgain = false;
@@ -712,12 +721,23 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this._register(this.hostTools.onDidInvokeTool(call => this.onHostToolResult(call)));
 		this.loadState();
 		this.watchSharedModelChoice();
-		// One detection pass at startup feeds the catalog too (refreshing both separately probed
-		// every CLI twice), and the model lists hydrated from storage are kept so a restart does
-		// not respawn each CLI to list models again; the periodic health check refreshes them.
-		this.providerRefresh = this.executeProviderRefresh(true).finally(() => {
-			this.providerRefresh = undefined;
-		});
+		// One detection pass feeds the catalog too (refreshing both separately probed every CLI
+		// twice), and the model lists hydrated from storage are kept so a restart does not respawn
+		// each CLI to list models again. With the last run's detections and catalog saved, the
+		// pass waits until launch is over: it spawns every CLI (`--version`, auth status).
+		const startRefresh = () => {
+			this.providerRefresh ??= this.executeProviderRefresh(true).finally(() => {
+				this.providerRefresh = undefined;
+			});
+		};
+		if (this.detections.size && this.catalog.length) {
+			// Saved detections younger than DETECT_TTL_MS are as good as a fresh check: the health tick takes over.
+			if (Date.now() - (this.lastProviderCheck ?? 0) >= DETECT_TTL_MS) {
+				this._register(disposableTimeout(startRefresh, STARTUP_DETECT_DELAY_MS));
+			}
+		} else {
+			startRefresh();
+		}
 		this.scheduleHealthChecks();
 		this.predictor = this._register(new PredictorAgent(ref => this.launchPredictor(ref), this.logService));
 	}
@@ -1947,7 +1967,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}));
 		this.detections = new Map(results.filter((entry): entry is readonly [string, IDetectResult] => !!entry[1]));
 		this.lastProviderCheck = Date.now();
+		this.storageService.store(VOLT_DETECTIONS_STORAGE_KEY, JSON.stringify({ at: this.lastProviderCheck, detections: [...this.detections] }), StorageScope.APPLICATION, StorageTarget.MACHINE);
 		await this.refreshCatalog();
+		// A startup refresh lists only what storage had no lists for; both count as listed now.
+		this.modelsListedAt = Date.now();
 		this._onDidChangeProviderStatus.fire();
 		if (this.providerRefreshAgain) {
 			this.providerRefreshAgain = false;
@@ -2473,8 +2496,27 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			if (doc && !doc.hasFocus()) {
 				return;
 			}
-			void this.refreshProviders();
+			void this.healthCheck();
 		}, seconds * 1000);
+	}
+
+	/**
+	 * A health tick checks each CLI is still there and signed in at most every {@link DETECT_TTL_MS}
+	 * (each check spawns every CLI), and lists models again only every {@link MODEL_RELIST_MS}:
+	 * listing starts a throwaway agent per CLI (Cursor's loads the user's MCP servers and a
+	 * language server). The Providers page's Refresh does both at once.
+	 */
+	private healthCheck(): Promise<void> {
+		if (this.providerRefresh) {
+			return this.providerRefresh;
+		}
+		if (Date.now() - (this.lastProviderCheck ?? 0) < DETECT_TTL_MS) {
+			return Promise.resolve();
+		}
+		this.providerRefresh = this.executeProviderRefresh(Date.now() - this.modelsListedAt < MODEL_RELIST_MS).finally(() => {
+			this.providerRefresh = undefined;
+		});
+		return this.providerRefresh;
 	}
 
 	private beginRun(session: ISessionState, mode: VoltMode, engine: 'native' | 'agent', sendAt: number): IRunState {
@@ -4978,7 +5020,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				this.healthAfterRun = undefined;
 				if (this.healthDeferred && !this.anyRunLive()) {
 					this.healthDeferred = false;
-					void this.refreshProviders();
+					void this.healthCheck();
 				}
 			}, HEALTH_AFTER_RUN_MS);
 		}
@@ -5498,6 +5540,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		this.activeCatalogRef = this.storageService.get(VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, StorageScope.APPLICATION) || undefined;
 		this.hydrateAgentModelsFromCatalog();
+		// The last run's CLI detections, so the Providers page and the catalog have them before this run checks again.
+		const saved = this.readJson<{ at?: number; detections?: [string, IDetectResult][] }>(VOLT_DETECTIONS_STORAGE_KEY, {});
+		if (Array.isArray(saved.detections) && typeof saved.at === 'number') {
+			this.detections = new Map(saved.detections.filter(([id, detect]) => enabledIds.has(id) && typeof detect?.available === 'boolean'));
+			this.lastProviderCheck = saved.at;
+		}
 	}
 
 	/**

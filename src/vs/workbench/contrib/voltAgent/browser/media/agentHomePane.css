@@ -1245,6 +1245,22 @@ html.volt-layout-agent-window body {
 	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 95%, #000);
 }
 
+/* Window transparency is opt-in (volt.appearance.windowTransparency, off by default: the material
+ * costs GPU memory). voltAgentWindowChrome.contribution.ts sets `volt-window-transparent` only while
+ * the native window is see-through; without it the window under the page is the opaque theme color,
+ * so the translucent fills above paint solid, as in full screen. Kept after the light-theme rules,
+ * whose specificity the dark rule shares. */
+.monaco-workbench.volt-layout-agent:not(.volt-window-transparent) {
+	--volt-agent-window-bg: var(--volt-agent-window-bg-base);
+	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000);
+}
+
+.monaco-workbench.volt-layout-agent.vs:not(.volt-window-transparent),
+.monaco-workbench.volt-layout-agent.hc-light:not(.volt-window-transparent) {
+	--volt-agent-window-bg: var(--volt-agent-window-bg-base);
+	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 95%, #000);
+}
+
 .monaco-workbench.volt-layout-agent .monaco-grid-view,
 .monaco-workbench.volt-layout-agent .monaco-grid-branch-node,
 .monaco-workbench.volt-layout-agent .monaco-split-view2,

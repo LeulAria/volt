@@ -35,6 +35,12 @@ export const VOLT_TINT_INTENSITY_SETTING = 'volt.appearance.tintIntensity';
 /** Translucent surfaces (the see-through agent window, its sidebar) paint opaque. */
 export const VOLT_REDUCE_TRANSPARENCY_SETTING = 'volt.appearance.reduceTransparency';
 
+/**
+ * The agent window shows the desktop through its sidebar (macOS vibrancy, Windows acrylic). Off by
+ * default: the see-through material costs GPU memory. Off, the window and its sidebar paint opaque.
+ */
+export const VOLT_WINDOW_TRANSPARENCY_SETTING = 'volt.appearance.windowTransparency';
+
 export function readToolDensity(configurationService: IConfigurationService): AgentToolDensity {
 	const value = configurationService.getValue<string>(AGENT_TOOL_DENSITY_SETTING);
 	return AGENT_TOOL_DENSITIES.find(density => density === value) ?? 'compact';
@@ -89,6 +95,11 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			type: 'boolean',
 			default: false,
 			description: localize('voltAppearance.reduceTransparency', "Replace translucent surfaces with opaque backgrounds."),
+		},
+		[VOLT_WINDOW_TRANSPARENCY_SETTING]: {
+			type: 'boolean',
+			default: false,
+			description: localize('voltAppearance.windowTransparency', "Show the desktop through the agent window's sidebar (macOS vibrancy, Windows acrylic). Uses more GPU memory."),
 		},
 	},
 });

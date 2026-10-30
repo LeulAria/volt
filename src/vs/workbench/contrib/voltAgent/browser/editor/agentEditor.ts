@@ -826,6 +826,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** Arrow Up/Down through earlier prompts. */
 	private readonly promptHistory = new AgentPromptHistoryNavigator();
 	private prewarmTimer: IDisposable | undefined;
+	/** The chat whose agent typing already started; the next keystrokes there do not ask again. */
+	private prewarmedFor: string | undefined;
 	/** An edited prompt is waiting on the "Revert files to this message?" dialog. */
 	private committingEdit = false;
 	private readonly _onDidChangeQueue = this._register(new Emitter<void>());
@@ -929,8 +931,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private headExchanges = 0;
 	private headUsers = 0;
 	private headGeneration = 0;
-	/** setInput is focusing the composer of the chat it shows: not a sign a message is coming. */
-	private focusingForSwitch = false;
 	/** How the last shown chat's thread came back, for the switch timing line. */
 	private threadRestore: 'stashed' | 'stale tail' | 'tail first' | 'full' = 'full';
 	private readonly headScrollDraw = this._register(new MutableDisposable());
@@ -6089,16 +6089,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.updateSendButton();
 		}));
 
-		this.editorDisposables.add(this.inputEditor.onDidFocusEditorText(() => {
-			this.inputBox.classList.add('focused');
-			// Focus means a message is coming: start a CLI agent now so the first send skips its cold start.
-			// A switch focuses the composer too; then the open timer decides (see schedulePrewarm).
-			if (!this.focusingForSwitch) {
-				this.prewarmAgent();
-			}
-		}));
+		this.editorDisposables.add(this.inputEditor.onDidFocusEditorText(() => this.inputBox.classList.add('focused')));
 		this.editorDisposables.add(this.inputEditor.onDidBlurEditorText(() => this.inputBox.classList.remove('focused')));
 		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(() => {
+			// Typing means a message is coming: start a CLI agent now so the first send skips its cold
+			// start. Not on focus: the composer is focused at launch, and an agent is a process tree of
+			// a few hundred MB that a window nobody writes in should not hold.
+			if (this.prewarmedFor !== this.sessionKey && this.inputEditor?.getModel()?.getValueLength()) {
+				this.prewarmedFor = this.sessionKey;
+				this.prewarmAgent();
+			}
 			this.layoutInputEditor();
 			this.updateInputPlaceholder();
 			this.updateSendButton();
@@ -8339,12 +8339,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.updateSendButton();
 		this.layoutInputEditor();
 		if (!options?.preserveFocus) {
-			this.focusingForSwitch = true;
-			try {
-				this.inputEditor?.focus();
-			} finally {
-				this.focusingForSwitch = false;
-			}
+			this.inputEditor?.focus();
 		}
 		this.schedulePrewarm();
 		this.revealRequestedTurn(input.sessionId);
@@ -8394,15 +8389,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	}
 
 	/**
-	 * Opening a chat starts its CLI agent shortly after, not only when the composer is focused, so a
-	 * send from a driver or a quick click skips the cold start (spawn, initialize, session/new).
-	 * No-op for native models; the runtime caps idle agents.
+	 * Opening a chat with a draft in its composer starts its CLI agent shortly after, so the send
+	 * skips the cold start (spawn, initialize, session/new). An empty composer waits for the first
+	 * keystroke instead. No-op for native models; the runtime caps idle agents.
 	 */
 	private schedulePrewarm(): void {
 		this.prewarmTimer?.dispose();
+		this.prewarmedFor = undefined;
 		this.prewarmTimer = disposableTimeout(() => {
 			this.prewarmTimer = undefined;
-			if (this.isVisible() && !this.isStreaming() && this.composerCanSend()) {
+			if (this.isVisible() && !this.isStreaming() && this.composerCanSend() && this.inputEditor?.getModel()?.getValueLength()) {
+				this.prewarmedFor = this.sessionKey;
 				this.prewarmAgent();
 			}
 		}, PREWARM_ON_OPEN_MS);
