@@ -5,7 +5,7 @@
 
 import * as fs from 'fs';
 import { exec, execFile } from 'child_process';
-import { app, BrowserWindow, clipboard, ClipboardItem, contentTracing, Display, Menu, MessageBoxOptions, MessageBoxReturnValue, nativeImage, OpenDevToolsOptions, OpenDialogOptions, OpenDialogReturnValue, powerMonitor, SaveDialogOptions, SaveDialogReturnValue, screen, shell, webContents } from 'electron';
+import { app, BrowserWindow, clipboard, contentTracing, Display, Menu, MessageBoxOptions, MessageBoxReturnValue, OpenDevToolsOptions, OpenDialogOptions, OpenDialogReturnValue, powerMonitor, SaveDialogOptions, SaveDialogReturnValue, screen, shell, webContents } from 'electron';
 import { arch, cpus, freemem, hostname, loadavg, platform, release, totalmem, type } from 'os';
 import { promisify } from 'util';
 import { memoize } from '../../../base/common/decorators.js';
@@ -51,14 +51,6 @@ import { randomPath } from '../../../base/common/extpath.js';
 export interface INativeHostMainService extends AddFirstParameterToFunctions<ICommonNativeHostService, Promise<unknown> /* only methods, not events */, number | undefined /* window ID */> { }
 
 export const INativeHostMainService = createDecorator<INativeHostMainService>('nativeHostMainService');
-
-/** macOS's find pasteboard (Cmd+E), as a type of Electron's W3C-style clipboard (Electron 44+). */
-const CLIPBOARD_FIND_TEXT = 'electron application/findtext';
-
-/** A raw platform clipboard format (e.g. `code/file-list`) as a type of Electron's clipboard. */
-function osClipboardFormat(format: string): string {
-	return `electron application/osclipboard;format="${format}"`;
-}
 
 export class NativeHostMainService extends Disposable implements INativeHostMainService {
 
@@ -871,24 +863,9 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 
 	//#region Clipboard
 
-	/** Linux keeps a separate selection clipboard (`clipboard.selection`); elsewhere there is one. */
-	private clipboardFor(type?: 'selection' | 'clipboard'): Electron.Clipboard {
-		return type === 'selection' && clipboard.selection ? clipboard.selection : clipboard;
-	}
-
-	/** The payload of `mimeType` in the clipboard's first entry that carries it, if any. */
-	private async readClipboardType(mimeType: string, from: Electron.Clipboard = clipboard): Promise<Blob | undefined> {
-		for (const item of await from.read()) {
-			if (item.types.includes(mimeType)) {
-				return await item.getType(mimeType) as Blob;
-			}
-		}
-		return undefined;
-	}
-
 	async readClipboardText(windowId: number | undefined, type?: 'selection' | 'clipboard'): Promise<string> {
 		this.logService.trace(`readClipboardText in window ${windowId} with type:`, type);
-		const clipboardText = await this.clipboardFor(type).readText();
+		const clipboardText = clipboard.readText(type);
 		this.logService.trace(`clipboardText.length :`, clipboardText.length);
 		return clipboardText;
 	}
@@ -899,50 +876,32 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		return window?.webContents.paste() ?? Promise.resolve();
 	}
 
-	/**
-	 * The clipboard's image as PNG bytes (empty when it holds none). `image/png` came back empty for a
-	 * tiny image on Electron 45 while the platform's own PNG type held it, so that is the fallback.
-	 */
 	async readImage(): Promise<Uint8Array> {
-		for (const item of await clipboard.read()) {
-			const candidates = [
-				...item.types.filter(type => type.startsWith('image/')),
-				...item.types.filter(type => type.startsWith('electron application/osclipboard') && /png/i.test(type)),
-			];
-			for (const imageType of candidates) {
-				const bytes = Buffer.from(await (await item.getType(imageType) as Blob).arrayBuffer());
-				if (!bytes.length) {
-					continue;
-				}
-				return imageType === 'image/png' || imageType.startsWith('electron application/osclipboard') ? bytes : nativeImage.createFromBuffer(bytes).toPNG();
-			}
-		}
-		return new Uint8Array();
+		return clipboard.readImage().toPNG();
 	}
 
 	async writeClipboardText(windowId: number | undefined, text: string, type?: 'selection' | 'clipboard'): Promise<void> {
-		return this.clipboardFor(type).writeText(text);
+		return clipboard.writeText(text, type);
 	}
 
 	async readClipboardFindText(windowId: number | undefined,): Promise<string> {
-		return await (await this.readClipboardType(CLIPBOARD_FIND_TEXT))?.text() ?? '';
+		return clipboard.readFindText();
 	}
 
 	async writeClipboardFindText(windowId: number | undefined, text: string): Promise<void> {
-		return clipboard.write([new ClipboardItem({ [CLIPBOARD_FIND_TEXT]: text })]);
+		return clipboard.writeFindText(text);
 	}
 
 	async writeClipboardBuffer(windowId: number | undefined, format: string, buffer: VSBuffer, type?: 'selection' | 'clipboard'): Promise<void> {
-		return this.clipboardFor(type).write([new ClipboardItem({ [osClipboardFormat(format)]: new Blob([Buffer.from(buffer.buffer)]) })]);
+		return clipboard.writeBuffer(format, Buffer.from(buffer.buffer), type);
 	}
 
 	async readClipboardBuffer(windowId: number | undefined, format: string): Promise<VSBuffer> {
-		const blob = await this.readClipboardType(osClipboardFormat(format));
-		return VSBuffer.wrap(blob ? new Uint8Array(await blob.arrayBuffer()) : new Uint8Array());
+		return VSBuffer.wrap(clipboard.readBuffer(format));
 	}
 
 	async hasClipboard(windowId: number | undefined, format: string, type?: 'selection' | 'clipboard'): Promise<boolean> {
-		return this.clipboardFor(type).has(osClipboardFormat(format));
+		return clipboard.has(format, type);
 	}
 
 	//#endregion
