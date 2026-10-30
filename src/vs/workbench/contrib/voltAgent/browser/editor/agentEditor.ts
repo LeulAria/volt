@@ -121,7 +121,7 @@ import { IAction } from '../../../../../base/common/actions.js';
 import { IActionViewItem } from '../../../../../base/browser/ui/actionbar/actionbar.js';
 import { IBaseActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { getSimpleCodeEditorWidgetOptions } from '../../../codeEditor/browser/simpleEditorOptions.js';
-import { IVoltBrowserComments } from '../preview/browserCommentStore.js';
+import { IVoltBrowserComments, REVEAL_BROWSER_ELEMENT_COMMAND_ID } from '../preview/browserCommentStore.js';
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { completeStreamingBlocks } from './agentSessionController.js';
 import { AgentSurfaceHost, agentSideChatParents } from '../workspace/agentSurfaceHost.js';
@@ -2577,6 +2577,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 						this.openCitation(citation, chip);
 					}));
 				}
+			} else if (mention.kind === 'browser' && mention.value) {
+				// A picked element: the browser beside the chat scrolls to it.
+				const payload = mention.value;
+				chip.setAttribute('data-open', 'true');
+				this.threadListeners.add(addDisposableListener(chip, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					void this.commandService.executeCommand(REVEAL_BROWSER_ELEMENT_COMMAND_ID, payload);
+				}));
 			} else if (mention.kind === 'skill') {
 				this.bindSkillChip(chip, mention);
 			} else if (mention.resource && (mention.kind === 'file' || mention.kind === 'image')) {
@@ -3582,15 +3591,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	 */
 	private canRenderTail(): boolean {
 		const exchange = this.tailExchange;
-		return !!exchange && exchange.isConnected && this.renderedCount === this.messages.length && this.editAboveTail() && this.tailFrom === this.lastExchangeStart() && this.tailFrom >= 0;
+		return !!exchange && exchange.isConnected && this.renderedCount === this.messages.length && this.editHoldsStill() && this.tailFrom === this.lastExchangeStart() && this.tailFrom >= 0;
 	}
 
 	/**
-	 * No prompt is open for editing, or the one open sits above the live exchange: a reply streaming
+	 * No prompt is open for editing, or the one open is drawn: above the live exchange, or the live
+	 * exchange's own prompt, whose turn the tail redraw keeps (redrawExchange). A reply streaming
 	 * below then patches only its own exchange, so the edit and the thread around it hold still.
+	 * Rebuilding the whole thread on every chunk instead moved the chat under the edit box and took
+	 * the reader's scroll away.
 	 */
-	private editAboveTail(): boolean {
-		return this.editingUserIndex === undefined || (this.tailFrom >= 0 && this.editingUserIndex < this.tailFrom);
+	private editHoldsStill(): boolean {
+		return this.editingUserIndex === undefined || this.tailFrom >= 0;
 	}
 
 	private renderThreadTail(scrollToEnd: boolean): void {
@@ -3633,7 +3645,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private canAppendThread(): boolean {
 		const exchange = this.tailExchange;
 		const from = this.tailFrom;
-		return !!exchange && exchange.parentNode === this.threadInner && !exchange.nextSibling && this.editAboveTail()
+		return !!exchange && exchange.parentNode === this.threadInner && !exchange.nextSibling && this.editHoldsStill()
 			&& from >= 0 && from < this.messages.length && (from === 0 || startsExchange(this.messages[from]))
 			&& this.settledMessages.length === from && this.settledMessages.every((message, index) => this.messages[index] === message);
 	}
@@ -3700,10 +3712,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (origin && from === 0) {
 			desired.push(origin);
 		}
+		// The prompt open for editing keeps its turn: the edit composer, its caret and its place stay.
+		const editing = this.editingUserIndex !== undefined && this.editingUserIndex >= from && this.editingUserIndex < to
+			? exchange.querySelector<HTMLElement>(':scope > .volt-agent-turn.user.editing')
+			: null;
 		this.tailStale = stale;
 		try {
 			for (let index = from; index < to; index++) {
 				const message = this.messages[index];
+				if (editing && index === this.editingUserIndex) {
+					desired.push(editing);
+					continue;
+				}
 				const turn = message.kind === 'agent' ? this.tailTurns.get(message) : undefined;
 				if (message.kind === 'agent' && turn?.parentNode === exchange) {
 					this.renderAgentTurn(turn, message);
@@ -3729,6 +3749,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		adoptVisualFrames(exchange);
 		for (const node of stale) {
 			node.parentNode?.removeChild(node);
+		}
+		// An edit turn drawn fresh (none was on screen to keep) takes the composer into its slot.
+		if (this.editingUserIndex !== undefined && !editing && this.editingUserIndex >= from && this.editingUserIndex < to) {
+			this.syncComposerPlacement();
 		}
 	}
 

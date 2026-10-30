@@ -15,13 +15,13 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { Emitter, Event as BaseEvent } from '../../../../../base/common/event.js';
-import { Disposable, DisposableMap, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableMap, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextMenuService, IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
@@ -37,7 +37,7 @@ import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/
 import { IHostService } from '../../../../services/host/browser/host.js';
 import { IAgentDisplayMention, IAgentMention, browserMentionColor, cloneDisplayMentions } from '../composer/agentMentions.js';
 import { BrowserCommentCard } from './browserCommentCard.js';
-import { IBrowserComment, IBrowserCommentInit, IBrowserCommentMessage, IBrowserCommentRef, IVoltBrowserComments } from './browserCommentStore.js';
+import { IBrowserComment, IBrowserCommentInit, IBrowserCommentMessage, IBrowserCommentRef, IVoltBrowserComments, REVEAL_BROWSER_ELEMENT_COMMAND_ID } from './browserCommentStore.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { buildTaskPrompt, newTaskId, titleFromBrief } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import { BATCH_EDITS_STORAGE_KEY, IVoltAnnotationItem, VoltAnnotationsSendButton } from '../chrome/voltAnnotations.js';
@@ -193,6 +193,63 @@ const READ_TRACKED_SCRIPT = `(() => {
 
 /** How often tracked marks re-read their elements while nothing moves; each move reads again the next frame. */
 const TRACK_IDLE_MS = 120;
+
+/**
+ * Scrolls the element a chip points at into the middle of the view: the tracked one (`track`, see
+ * {@link trackScript}) when the page still has it, else the one with `id`, else the one at `domPath`
+ * (the probe's `tag#id`, `tag.class`, `tag[n]` steps). Answers its box (a drawn area's own box) once
+ * the scroll settles, or null.
+ */
+function revealElementScript(track: string | undefined, domPath: string | undefined, id: string | undefined): string {
+	return `(async () => {
+		const t = window.__voltTracked && window.__voltTracked.get(${JSON.stringify(track ?? '')});
+		let el = t ? t.el.deref() : undefined;
+		const tracked = !!el && el.isConnected;
+		if (!tracked) {
+			el = ${JSON.stringify(id ?? '')} ? document.getElementById(${JSON.stringify(id ?? '')}) : null;
+		}
+		const path = ${JSON.stringify(domPath ?? '')};
+		if (!el && path && document.body) {
+			el = document.body;
+			for (const step of path.split(' > ')) {
+				const m = /^([a-z0-9-]+)(?:#(.+)|\\.(.+)|\\[(\\d+)\\])?$/i.exec(step);
+				const kids = m ? Array.from(el.children).filter(kid => kid.tagName.toLowerCase() === m[1].toLowerCase()) : [];
+				el = !m ? null
+					: m[2] ? kids.find(kid => kid.id === m[2])
+					: m[3] ? kids.find(kid => m[3].split('.').every(name => kid.classList.contains(name)))
+					: m[4] ? kids[Number(m[4])]
+					: kids[0];
+				if (!el) {
+					break;
+				}
+			}
+		}
+		if (!el || !el.isConnected) {
+			return null;
+		}
+		await new Promise(resolve => {
+			let quiet;
+			const done = () => {
+				clearTimeout(quiet);
+				removeEventListener('scroll', moved, true);
+				resolve();
+			};
+			const moved = () => {
+				clearTimeout(quiet);
+				quiet = setTimeout(done, 150);
+			};
+			addEventListener('scroll', moved, { capture: true, passive: true });
+			addEventListener('scrollend', done, { capture: true, once: true });
+			quiet = setTimeout(done, 150);
+			setTimeout(done, 1500);
+			el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+		});
+		const r = el.getBoundingClientRect();
+		return tracked
+			? { x: r.x + t.dx, y: r.y + t.dy, w: t.w < 0 ? r.width : t.w, h: t.h < 0 ? r.height : t.h }
+			: { x: r.x, y: r.y, w: r.width, h: r.height };
+	})()`;
+}
 
 interface IVoltNativeImage {
 	isEmpty?(): boolean;
@@ -573,6 +630,9 @@ export class VoltBrowserView extends Disposable {
 	/** Cuts the idle wait short: the user is scrolling the page. */
 	private followWake: (() => void) | undefined;
 	private disposed = false;
+	/** Each picked element's tracking key by its chip's block, so a chip clicked in the chat finds it again. */
+	private readonly payloadTracks = new Map<string, string>();
+	private readonly revealFlash = this._register(new MutableDisposable());
 	private drawing: { startX: number; startY: number; currentX: number; currentY: number } | undefined;
 	private probeHandle: number | undefined;
 	private lastProbe = '';
@@ -660,6 +720,38 @@ export class VoltBrowserView extends Disposable {
 		const area = slot.closest('.volt-agent-tools-area');
 		this.setPresentation(area?.classList.contains('fullscreen') ? 'fullscreen' : area?.classList.contains('floating') ? 'floating' : area ? 'split' : undefined);
 		this.layoutOver(slot);
+	}
+
+	/** Whether a pane shows this tab now. */
+	get shown(): boolean {
+		return !!this.owner;
+	}
+
+	/** Whether an annotation chip with `payload` was picked in this tab. */
+	pickedHere(payload: string): boolean {
+		return this.payloadTracks.has(payload);
+	}
+
+	/**
+	 * Scrolls the page to the element a chip points at (`payload`, its browser_element block) and
+	 * flashes its outline. False when the page has no such element.
+	 */
+	async revealElement(payload: string): Promise<boolean> {
+		const field = (name: string) => payload.match(new RegExp(`^${name}: (.+)$`, 'm'))?.[1].trim();
+		const rect = await this.runGuest<{ x: number; y: number; w: number; h: number } | null>(revealElementScript(this.payloadTracks.get(payload), field('dom_path'), field('id')));
+		if (!rect) {
+			return false;
+		}
+		// Marks and pins catch up now rather than at the next idle read.
+		this.followWake?.();
+		const box = append(this.overlay, $('div.volt-browser-box.mark.glow'));
+		this.placeBox(box, this.pageRectToStage(rect));
+		const timer = disposableTimeout(() => box.remove(), 1200);
+		this.revealFlash.value = toDisposable(() => {
+			timer.dispose();
+			box.remove();
+		});
+		return true;
 	}
 
 	/** Hide the view if `slot` still shows it. A pane that lost the tab to another group leaves it alone. */
@@ -2443,6 +2535,9 @@ export class VoltBrowserView extends Disposable {
 		this.hoverBox.classList.add('hidden');
 		this.hintEl.classList.add('hidden');
 		const ref = this.selectionRef(selection);
+		if (ref.track) {
+			this.payloadTracks.set(ref.payload, ref.track);
+		}
 		// A comment open on the page takes the element as one more chip: one comment can point at several.
 		const openPin = this.openPin();
 		const pinComposer = openPin?.card.input;
@@ -3613,6 +3708,8 @@ export const IVoltBrowserViews = createDecorator<IVoltBrowserViews>('voltBrowser
 export interface IVoltBrowserViews {
 	readonly _serviceBrand: undefined;
 	viewFor(input: VoltBrowserEditorInput): VoltBrowserView;
+	/** Scrolls a shown tab to the element a chip points at, the tab it was picked in first. False when none has it. */
+	revealElement(payload: string): Promise<boolean>;
 }
 
 class VoltBrowserViews extends Disposable implements IVoltBrowserViews {
@@ -3635,9 +3732,22 @@ class VoltBrowserViews extends Disposable implements IVoltBrowserViews {
 		}
 		return view;
 	}
+
+	async revealElement(payload: string): Promise<boolean> {
+		const shown = [...this.views.values()].filter(view => view.shown);
+		shown.sort((a, b) => Number(b.pickedHere(payload)) - Number(a.pickedHere(payload)));
+		for (const view of shown) {
+			if (await view.revealElement(payload)) {
+				return true;
+			}
+		}
+		return false;
+	}
 }
 
 registerSingleton(IVoltBrowserViews, VoltBrowserViews, InstantiationType.Delayed);
+
+CommandsRegistry.registerCommand(REVEAL_BROWSER_ELEMENT_COMMAND_ID, (accessor, payload: string) => accessor.get(IVoltBrowserViews).revealElement(payload));
 
 /** The editor pane for a browser tab: a slot the tab's `VoltBrowserView` is laid over. */
 export class VoltBrowserEditor extends EditorPane {
