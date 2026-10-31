@@ -1,14 +1,13 @@
 {
 	"channel": "stable",
-	"version": "0.0.4",
-	"commit": "27b5126bde18f1c420393d2483d9cd927cfcf03f",
-	"tag": "v0.0.4",
-	"releaseUrl": "https://github.com/LeulAria/volt/releases/tag/v0.0.4",
-	"publishedAt": "2026-10-30T21:09:56Z",
+	"version": "0.0.5",
+	"commit": "58a45b6ad7d40d8d458487088e515b4c041ba332",
+	"tag": "v0.0.5",
+	"releaseUrl": "https://github.com/LeulAria/volt/releases/tag/v0.0.5",
+	"publishedAt": "2026-10-31T11:30:57Z",
 	"platforms": [
 		"darwin",
 		"darwin-arm64",
-		"darwin-universal",
 		"win32-x64",
 		"win32-x64-user",
 		"win32-x64-archive",
@@ -21,130 +20,118 @@
 	],
 	"assets": [
 		{
-			"name": "volt-stable-0.0.4-darwin-arm64.dmg",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-darwin-arm64.dmg",
-			"size": 115731350,
-			"sha256": "c21b1405e742c15cdf9aed15a119bfb17de094b0902e1ae123985d10b230f393"
+			"name": "volt-stable-0.0.5-darwin-arm64.dmg",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-darwin-arm64.dmg",
+			"size": 115848215,
+			"sha256": "0d863ad38b17078228373a6274e8c90845d0534846ab393ab579fe168337c394"
 		},
 		{
-			"name": "volt-stable-0.0.4-darwin-arm64.zip",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-darwin-arm64.zip",
-			"size": 155202086,
-			"sha256": "589d6fc9c552cdeca15229b4d958822e8725f89062fc7228b7f9f3c233b648ec"
+			"name": "volt-stable-0.0.5-darwin-arm64.zip",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-darwin-arm64.zip",
+			"size": 155230186,
+			"sha256": "af599d87a39b32db97e584c9f146fc291c2081542b30f2622fe02f000fcbfc6a"
 		},
 		{
-			"name": "volt-stable-0.0.4-darwin-universal.dmg",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-darwin-universal.dmg",
-			"size": 191454915,
-			"sha256": "572bb9e8dfd7ac5a7c110f9109a01fcc41c9ec3580dc7abf433d17a552527bad"
+			"name": "volt-stable-0.0.5-darwin-x64.dmg",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-darwin-x64.dmg",
+			"size": 126672898,
+			"sha256": "45098a6f6e10f53cfd0491eff73b3f6747356d5127f821a8a51b7ec7fb6d5e4c"
 		},
 		{
-			"name": "volt-stable-0.0.4-darwin-universal.zip",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-darwin-universal.zip",
-			"size": 250884991,
-			"sha256": "b2c358992cf4d4b1f8853dc21bfefd3099c227ee54af4faf688028799e8c9e29"
+			"name": "volt-stable-0.0.5-darwin-x64.zip",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-darwin-x64.zip",
+			"size": 162090276,
+			"sha256": "25dcad407a05aef64c1069bd80e7db827b0cb99f7d1162792f02dec1ae4aacdf"
 		},
 		{
-			"name": "volt-stable-0.0.4-darwin-x64.dmg",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-darwin-x64.dmg",
-			"size": 126745155,
-			"sha256": "a259041ce222d341f044d71cfb1945db5734149a2144bb232d7932954419619d"
+			"name": "volt-stable-0.0.5-linux-arm64.deb",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-linux-arm64.deb",
+			"size": 104106700,
+			"sha256": "398943056cca4818ea55e2b624f30b3c7ac2095d03b0f823dd17eded4162780f"
 		},
 		{
-			"name": "volt-stable-0.0.4-darwin-x64.zip",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-darwin-x64.zip",
-			"size": 162062170,
-			"sha256": "8f0b47ed63bb7cc717fb5c85447c8897540340c4b5c8b290deb9e827601db7b4"
+			"name": "volt-stable-0.0.5-linux-arm64.rpm",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-linux-arm64.rpm",
+			"size": 104879125,
+			"sha256": "9ef06e650f83b4eef85b6add1e2cc25a5130f729f138538969b55a67f76930a9"
 		},
 		{
-			"name": "volt-stable-0.0.4-linux-arm64.deb",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-linux-arm64.deb",
-			"size": 104064040,
-			"sha256": "4be9ea5aba83de72d6f3a20622449edc6c8e5f7206a76a031acc9bc96e5bc6d2"
+			"name": "volt-stable-0.0.5-linux-arm64.tar.gz",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-linux-arm64.tar.gz",
+			"size": 153221585,
+			"sha256": "4c0be733fc801667082703ece783654e57f9bba65e78d4ecf077538450c8fffa"
 		},
 		{
-			"name": "volt-stable-0.0.4-linux-arm64.rpm",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-linux-arm64.rpm",
-			"size": 104858017,
-			"sha256": "d3170a4a445d22dadc1d60f8dad14a9237c75df006d5d73b8b1b8fbed0a8226b"
+			"name": "volt-stable-0.0.5-linux-armhf.deb",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-linux-armhf.deb",
+			"size": 102781092,
+			"sha256": "0a8e7f413d5534b28bb0e1af444648e250c25957605e800140ae98aa4a538fef"
 		},
 		{
-			"name": "volt-stable-0.0.4-linux-arm64.tar.gz",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-linux-arm64.tar.gz",
-			"size": 153196194,
-			"sha256": "da92a0baf3d401342ac722db66e8590336f0dc7e6e67ef43b6f10c4476a9b219"
+			"name": "volt-stable-0.0.5-linux-armhf.rpm",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-linux-armhf.rpm",
+			"size": 103569681,
+			"sha256": "9d4b9b41b6d5352b472986a6b03f132d0e318bf248868413384f202dd4f2c840"
 		},
 		{
-			"name": "volt-stable-0.0.4-linux-armhf.deb",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-linux-armhf.deb",
-			"size": 102760900,
-			"sha256": "b8befc0f7c44132ef0658967387aa80b4e3aedce9c3edb328a7fca32120739d9"
+			"name": "volt-stable-0.0.5-linux-armhf.tar.gz",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-linux-armhf.tar.gz",
+			"size": 142127178,
+			"sha256": "b7696728d4beeaf459a73bb5426378a2c67428227dce210dee7c6174296cfcae"
 		},
 		{
-			"name": "volt-stable-0.0.4-linux-armhf.rpm",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-linux-armhf.rpm",
-			"size": 103552417,
-			"sha256": "9d65d4842a765dc4b68d117ea962492c0f4ff8a82349abe1d18e395df91e9420"
+			"name": "volt-stable-0.0.5-linux-x64.deb",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-linux-x64.deb",
+			"size": 111304004,
+			"sha256": "05fe6922681a59cfbd1c942f164bee559bdc3e097c9e40663abbb15df5b9b299"
 		},
 		{
-			"name": "volt-stable-0.0.4-linux-armhf.tar.gz",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-linux-armhf.tar.gz",
-			"size": 142104301,
-			"sha256": "e8d042e12cf73a5d5ffe836e7a8ccd90f06ae165b12913b97cbf80aed75c0ffb"
+			"name": "volt-stable-0.0.5-linux-x64.rpm",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-linux-x64.rpm",
+			"size": 111774365,
+			"sha256": "bea1bdc19d6faa5eee5c500c33ccf70662b3b5a727ea311c00765c4eea7b97d4"
 		},
 		{
-			"name": "volt-stable-0.0.4-linux-x64.deb",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-linux-x64.deb",
-			"size": 111278868,
-			"sha256": "36b813628e3f51e7e1241c51c62c95e7e961ddae7a61c9540e51681cf97e3cbb"
+			"name": "volt-stable-0.0.5-linux-x64.tar.gz",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-linux-x64.tar.gz",
+			"size": 155405813,
+			"sha256": "afee9db9229b5886c3faa67f9867d5f7f9dc03b6e7bf1a1162f505b5d3fd7fe8"
 		},
 		{
-			"name": "volt-stable-0.0.4-linux-x64.rpm",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-linux-x64.rpm",
-			"size": 111764825,
-			"sha256": "ec0e45f2931d8fa3447db55c8386f26b83d88c2014859d87cb9c3e7230460c0a"
+			"name": "volt-stable-0.0.5-win32-arm64-system-setup.exe",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-win32-arm64-system-setup.exe",
+			"size": 113060078,
+			"sha256": "528b0002fbb03c20d11e0cb8d2d86408edacd7739397d96b0e46615ccf997581"
 		},
 		{
-			"name": "volt-stable-0.0.4-linux-x64.tar.gz",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-linux-x64.tar.gz",
-			"size": 155377571,
-			"sha256": "d0b488f786c0dcd0f95b4157c2eead997024b0956d99be5f1f1c5a726bf25b00"
+			"name": "volt-stable-0.0.5-win32-arm64-user-setup.exe",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-win32-arm64-user-setup.exe",
+			"size": 113060511,
+			"sha256": "18a3b796cd78b06042685751d05a754f7c59ed1067ac46fd824539e30dc551f5"
 		},
 		{
-			"name": "volt-stable-0.0.4-win32-arm64-system-setup.exe",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-win32-arm64-system-setup.exe",
-			"size": 113042723,
-			"sha256": "3a0f680fd6fd4ed0365edb51212bf442f2bfd9d3b95365c773ee2b84e10b385e"
+			"name": "volt-stable-0.0.5-win32-arm64.zip",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-win32-arm64.zip",
+			"size": 161439864,
+			"sha256": "51db24aa804119a0c6ffe52837926fc04e8158090598de25808513f8826daac1"
 		},
 		{
-			"name": "volt-stable-0.0.4-win32-arm64-user-setup.exe",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-win32-arm64-user-setup.exe",
-			"size": 113043161,
-			"sha256": "915cf754d5dbc9486bd027e8c016bb946ef20bc4291303f791d2f99dd0b2e8a2"
+			"name": "volt-stable-0.0.5-win32-x64-system-setup.exe",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-win32-x64-system-setup.exe",
+			"size": 118184716,
+			"sha256": "ac05d347ccfc499ff9f9b570bff70f0bbf75bf9fdda1a2b220f012872a49fa15"
 		},
 		{
-			"name": "volt-stable-0.0.4-win32-arm64.zip",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-win32-arm64.zip",
-			"size": 161414001,
-			"sha256": "9bb6e26faa6ae132a84d30e93ea3d40dd43284f7b1267034854fe10a56b4bdf9"
+			"name": "volt-stable-0.0.5-win32-x64-user-setup.exe",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-win32-x64-user-setup.exe",
+			"size": 118185148,
+			"sha256": "9c2514fd46084a5e8fcf85fb60b69ccb30d102a84bc5341a11d121802c73b17f"
 		},
 		{
-			"name": "volt-stable-0.0.4-win32-x64-system-setup.exe",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-win32-x64-system-setup.exe",
-			"size": 118164656,
-			"sha256": "924cc63e4ed6f84dabde1e0eb3c08010127fb503301124e66797879db8116c8b"
-		},
-		{
-			"name": "volt-stable-0.0.4-win32-x64-user-setup.exe",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-win32-x64-user-setup.exe",
-			"size": 118165101,
-			"sha256": "2e747e284a1681940deb7506d54b8866fa5df2cbdec3fb47b62797250a66fe45"
-		},
-		{
-			"name": "volt-stable-0.0.4-win32-x64.zip",
-			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.4/volt-stable-0.0.4-win32-x64.zip",
-			"size": 162769664,
-			"sha256": "d622ffa0eed80726210eb717aeee7f790a64211161d739d2d38464bb203fa7a2"
+			"name": "volt-stable-0.0.5-win32-x64.zip",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-win32-x64.zip",
+			"size": 162795525,
+			"sha256": "600858970c0369ee5a6eea8a17c695782b9725ba4c33ed33122ac637e760c454"
 		}
 	]
 }
