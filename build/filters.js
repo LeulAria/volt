@@ -201,6 +201,8 @@ module.exports.copyrightFilter = [
 	'!src/vs/workbench/contrib/voltAgent/browser/ui/vendor/dayjs.js',
 	'!src/vs/workbench/contrib/voltAgent/browser/devices/vendor/voltDeviceViewer.js',
 	'!build/volt/deviceViewer/src/**',
+	// Script helpers: their comment syntax cannot hold the /* */ header (they carry it as # lines).
+	'!src/vs/platform/voltDesktop/node/helper/*.{py,ps1}',
 ];
 
 module.exports.tsFormattingFilter = [

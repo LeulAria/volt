@@ -3,6 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { DrawStroke, parseShapes } from './desktopDraw.js';
+
 /**
  * The agent's model of a page in the in-app browser: the accessibility tree flattened in document
  * order, rendered compactly, and diffed against what the agent saw last so an action reports only
@@ -32,6 +34,8 @@ export interface IPageView {
 	readonly title: string;
 	readonly nodes: readonly IPageNode[];
 	readonly truncated?: boolean;
+	/** Lines start with the ref and states go bare (`- d3 button "Save" disabled`): about a third fewer tokens. Desktop windows use it. */
+	readonly compact?: boolean;
 }
 
 export interface IPageNodeChange {
@@ -49,9 +53,19 @@ export interface IPageDiff {
 }
 
 /** `button "Save" [disabled] [ref=e12]`, `textbox "Email" [ref=e3]: "a@b.co"`, `text: Saved`. */
-export function formatPageNode(node: IPageNode): string {
+export function formatPageNode(node: IPageNode, compact?: boolean): string {
 	if (node.role === 'text') {
 		return `text: ${node.name ?? ''}`;
+	}
+	if (compact) {
+		let short = `${node.ref ? `${node.ref} ` : ''}${node.role}${node.name ? ` ${JSON.stringify(node.name)}` : ''}${node.level ? ` level=${node.level}` : ''}`;
+		for (const state of node.states ?? []) {
+			short += ` ${state}`;
+		}
+		if (node.url) {
+			short += ` -> ${node.url}`;
+		}
+		return node.value !== undefined && node.value !== '' ? `${short}: ${JSON.stringify(node.value)}` : short;
 	}
 	let line = node.role;
 	if (node.name) {
@@ -145,7 +159,7 @@ function foldPlan(nodes: readonly IPageNode[]): IFoldPlan {
 }
 
 /** Indented outline lines for nodes in document order, with long runs folded unless `unfold`. */
-function outline(nodes: readonly IPageNode[], unfold: boolean | undefined, prefix = '', base = 0): string[] {
+function outline(nodes: readonly IPageNode[], unfold: boolean | undefined, prefix = '', base = 0, compact?: boolean): string[] {
 	const plan = unfold ? undefined : foldPlan(nodes);
 	const lines: string[] = [];
 	for (let i = 0; i < nodes.length; i++) {
@@ -159,14 +173,14 @@ function outline(nodes: readonly IPageNode[], unfold: boolean | undefined, prefi
 			continue;
 		}
 		const parent = i + 1 < nodes.length && nodes[i + 1].depth > node.depth && nodes[i + 1].parent === node.ref;
-		lines.push(`${prefix}${indent}- ${formatPageNode(node)}${parent ? ':' : ''}`);
+		lines.push(`${prefix}${indent}- ${formatPageNode(node, compact)}${parent ? ':' : ''}`);
 	}
 	return lines;
 }
 
 /** The whole page as an indented outline, one node per line (Playwright's aria snapshot shape). */
 export function renderPage(view: IPageView, options?: { readonly unfold?: boolean }): string[] {
-	const lines = outline(view.nodes, options?.unfold);
+	const lines = outline(view.nodes, options?.unfold, '', 0, view.compact);
 	if (!lines.length) {
 		lines.push('- (the page shows nothing yet)');
 	}
@@ -261,7 +275,7 @@ export function formatPageDiff(diff: IPageDiff, after: IPageView): string[] {
 		}
 	}
 	for (const change of diff.changed.slice(0, MAX_CHANGED_LISTED)) {
-		lines.push(`~ ${formatPageNode(change.after)}${describeChange(change)}`);
+		lines.push(`~ ${formatPageNode(change.after, after.compact)}${describeChange(change)}`);
 	}
 	if (diff.changed.length > MAX_CHANGED_LISTED) {
 		lines.push(`~ …${diff.changed.length - MAX_CHANGED_LISTED} more changed`);
@@ -273,7 +287,7 @@ export function formatPageDiff(diff: IPageDiff, after: IPageView): string[] {
 		let context: string | undefined;
 		const flush = () => {
 			if (run.length) {
-				lines.push(...outline(run, false, '+   ', run[0].depth));
+				lines.push(...outline(run, false, '+   ', run[0].depth, after.compact));
 				run = [];
 			}
 		};
@@ -281,7 +295,7 @@ export function formatPageDiff(diff: IPageDiff, after: IPageView): string[] {
 			const top = !node.parent || !addedRefs.has(node.parent);
 			if (top) {
 				const container = node.parent && node.parent !== 'root' ? byRef.get(node.parent) : undefined;
-				const where = container ? `in ${formatPageNode(container)}` : 'at the top level';
+				const where = container ? `in ${formatPageNode(container, after.compact)}` : 'at the top level';
 				if (where !== context || (run.length && node.depth !== run[0].depth)) {
 					flush();
 					if (where !== context) {
@@ -295,7 +309,7 @@ export function formatPageDiff(diff: IPageDiff, after: IPageView): string[] {
 		flush();
 	}
 	if (diff.removed.length) {
-		const listed = diff.removed.slice(0, MAX_REMOVED_LISTED).map(formatPageNode);
+		const listed = diff.removed.slice(0, MAX_REMOVED_LISTED).map(node => formatPageNode(node, after.compact));
 		const more = diff.removed.length - listed.length;
 		lines.push(`- removed: ${listed.join('; ')}${more > 0 ? `; …${more} more` : ''}`);
 	}
@@ -518,7 +532,7 @@ export function describeExpectation(expectation: IPageExpectation): string {
 	return parts.join(' and ');
 }
 
-export type ActStepAction = 'navigate' | 'click' | 'type' | 'press' | 'select' | 'check' | 'uncheck' | 'hover' | 'scroll' | 'wait' | 'expect' | 'back' | 'reload' | 'flow' | 'menu' | 'window';
+export type ActStepAction = 'navigate' | 'click' | 'type' | 'press' | 'select' | 'check' | 'uncheck' | 'hover' | 'scroll' | 'wait' | 'expect' | 'back' | 'reload' | 'flow' | 'menu' | 'window' | 'draw' | 'drag';
 
 /** What a desktop `window` step does to the window (`key`); `values[0]` is (part of) its title. */
 export const WINDOW_OPS = ['raise', 'minimize', 'restore', 'close', 'zoom', 'fullscreen'] as const;
@@ -533,7 +547,7 @@ const ACTION_ALIASES: Readonly<Record<string, ActStepAction>> = {
 	go_back: 'back', navigate_back: 'back', refresh: 'reload',
 };
 
-const ACTIONS: readonly ActStepAction[] = ['navigate', 'click', 'type', 'press', 'select', 'check', 'uncheck', 'hover', 'scroll', 'wait', 'expect', 'back', 'reload', 'flow', 'menu', 'window'];
+const ACTIONS: readonly ActStepAction[] = ['navigate', 'click', 'type', 'press', 'select', 'check', 'uncheck', 'hover', 'scroll', 'wait', 'expect', 'back', 'reload', 'flow', 'menu', 'window', 'draw', 'drag'];
 
 export interface IActStep {
 	readonly action: ActStepAction;
@@ -560,6 +574,12 @@ export interface IActStep {
 	/** flow: the saved flow to run here, and the values of its `${name}` placeholders. */
 	readonly flow?: string;
 	readonly vars?: Readonly<Record<string, string>>;
+	/** draw and drag (desktop): strokes in a 0-100 square over `target` (or the window); see `desktopDraw.ts`. */
+	readonly strokes?: readonly DrawStroke[];
+	/** drag (desktop): drop on this element. */
+	readonly to?: IPageLocator;
+	/** click, draw and drag (desktop): keys held meanwhile, e.g. "shift" or "cmd+alt". */
+	readonly modifiers?: string;
 }
 
 export const MAX_ACT_STEPS = 30;
@@ -625,7 +645,18 @@ function parseStep(value: unknown): IActStep | string {
 		optional: raw.optional === true ? true : undefined,
 		flow: action === 'flow' ? str(raw.flow ?? raw.name) : undefined,
 		vars: action === 'flow' && raw.vars && typeof raw.vars === 'object' ? Object.fromEntries(Object.entries(raw.vars as Record<string, unknown>).map(([key, value]) => [key, String(value)])) : undefined,
+		to: action === 'drag' ? parseLocator(raw.to) : undefined,
+		modifiers: str(raw.modifiers),
 	});
+	if (action === 'draw' || (action === 'drag' && !step.to)) {
+		try {
+			const points = Array.isArray(raw.points) ? raw.points.map(item => Array.isArray(item) ? `${num(item[0])},${num(item[1])}` : '').join(' ') : '';
+			const shapes = action === 'drag' ? `polyline ${points}` : str(raw.shapes ?? raw.shape ?? raw.path) ?? '';
+			return { ...step, strokes: parseShapes(shapes), values: [shapes] };
+		} catch (err) {
+			return action === 'drag' ? 'drag needs `to` (an element) or `points` ([[x, y], …] in 0-100 across `target`).' : `draw needs \`shapes\`: ${err instanceof Error ? err.message : String(err)}`;
+		}
+	}
 	switch (action) {
 		case 'flow':
 			return step.flow ? step : 'flow needs `flow` (the saved flow\'s name).';
@@ -669,6 +700,8 @@ function parseStep(value: unknown): IActStep | string {
 export function describeStep(step: IActStep): string {
 	switch (step.action) {
 		case 'navigate': return `navigate ${step.url}`;
+		case 'draw': return `draw ${step.strokes?.length ?? 0} stroke${step.strokes?.length === 1 ? '' : 's'}${step.target ? ` in ${describeLocator(step.target)}` : ''}`;
+		case 'drag': return step.to ? `drag ${describeLocator(step.target!)} to ${describeLocator(step.to)}` : `drag through ${step.strokes?.[0]?.length ?? 0} points${step.target ? ` in ${describeLocator(step.target)}` : ''}`;
 		case 'click': return `${step.double ? 'double-click' : step.button === 'right' ? 'right-click' : 'click'} ${describeLocator(step.target!)}`;
 		case 'type': return `type into ${describeLocator(step.target!)}`;
 		case 'press': return `press ${step.key}${step.target ? ` in ${describeLocator(step.target)}` : ''}`;

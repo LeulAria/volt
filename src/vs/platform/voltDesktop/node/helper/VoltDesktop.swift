@@ -19,6 +19,9 @@ import ApplicationServices
 
 setvbuf(stdout, nil, _IOLBF, 0)
 
+// A background helper can be napped, which delays its timers; Volt waits on every request, so opt out.
+let activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .latencyCritical], reason: "Volt is driving apps for an agent")
+
 struct Failure: Error {
 	let message: String
 	init(_ message: String) { self.message = message }
@@ -55,12 +58,29 @@ func requireTrust() throws {
 
 //#region Reading
 
+// AXFocused is not read: cells in outlines and tables all say they are focused. The one element
+// with keyboard focus comes from the app's AXFocusedUIElement instead.
 let attributeNames: [String] = [
 	kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute,
-	kAXHelpAttribute, "AXPlaceholderValue", "AXIdentifier", kAXEnabledAttribute, kAXFocusedAttribute,
+	kAXHelpAttribute, "AXPlaceholderValue", "AXIdentifier", kAXEnabledAttribute,
 	kAXSelectedAttribute, kAXExpandedAttribute, kAXPositionAttribute, kAXSizeAttribute, kAXChildrenAttribute,
 	"AXVisibleRows",
 ]
+let attributeIndex: [String: Int] = Dictionary(uniqueKeysWithValues: attributeNames.enumerated().map { ($1, $0) })
+
+/// Window chrome that never helps an agent: neither it nor anything inside it is read.
+let skippedRoles: Set<String> = ["AXScrollBar", "AXGrowArea", "AXValueIndicator", "AXSplitter", "AXMenuBar"]
+
+/// Elements the current read has reached already.
+var visited = Set<AXUIElement>()
+
+/// The element with keyboard focus in the app being read, if any.
+var focusedElement: AXUIElement?
+
+/// Identifiers AppKit makes up (`_NS:123`) say nothing about the element.
+func meaningfulIdentifier(_ id: String) -> Bool {
+	return !id.hasPrefix("_NS:") && !id.hasPrefix("NS:")
+}
 
 func string(_ value: AnyObject?) -> String? {
 	guard let value = value else { return nil }
@@ -98,22 +118,34 @@ func attribute(_ element: AXUIElement, _ name: String) -> AnyObject? {
 	return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
 }
 
-/// One element and its subtree, with every attribute fetched in one round trip to the app.
-func read(_ element: AXUIElement, depth: Int, budget: inout Int) -> [String: Any]? {
-	if budget <= 0 { return nil }
-	budget -= 1
+/**
+ * One element and its subtree, with every attribute fetched in one round trip to the app. `clip`
+ * is the part of the screen the element can show in (its window, narrowed by each scroll area it is
+ * in): an element entirely outside it is scrolled away, so neither it nor its subtree is read.
+ */
+func read(_ element: AXUIElement, depth: Int, budget: inout Int, clip: CGRect?) -> [String: Any]? {
+	// Chromium hands out the same element under several parents: read each once.
+	if budget <= 0 || !visited.insert(element).inserted { return nil }
 	var raw: CFArray?
 	guard AXUIElementCopyMultipleAttributeValues(element, attributeNames as CFArray, AXCopyMultipleAttributeOptions(rawValue: 0), &raw) == .success, let values = raw as [AnyObject]? else {
 		return nil
 	}
 	func value(_ name: String) -> AnyObject? {
-		guard let i = attributeNames.firstIndex(of: name), i < values.count else { return nil }
+		guard let i = attributeIndex[name], i < values.count else { return nil }
 		let v = values[i]
 		if CFGetTypeID(v) == AXValueGetTypeID() && AXValueGetType(v as! AXValue) == .axError { return nil }
 		return v
 	}
-	var node: [String: Any] = ["h": handle(for: element)]
 	let role = string(value(kAXRoleAttribute)) ?? "AXUnknown"
+	if skippedRoles.contains(role) { return nil }
+	var frame: CGRect?
+	if let p = point(value(kAXPositionAttribute)), let s = size(value(kAXSizeAttribute)) {
+		frame = CGRect(origin: p, size: s)
+		if depth > 0 && (s.width <= 0 || s.height <= 0) { return nil }
+		if let clip = clip, depth > 0, !clip.intersects(frame!) { return nil }
+	}
+	budget -= 1
+	var node: [String: Any] = ["h": handle(for: element)]
 	node["role"] = role
 	if let v = string(value(kAXSubroleAttribute)) { node["sub"] = v }
 	if let v = string(value(kAXTitleAttribute)) { node["title"] = v }
@@ -121,13 +153,17 @@ func read(_ element: AXUIElement, depth: Int, budget: inout Int) -> [String: Any
 	if let v = string(value(kAXValueAttribute)) { node["value"] = String(v.prefix(500)) }
 	if let v = string(value(kAXHelpAttribute)) { node["help"] = v }
 	if let v = string(value("AXPlaceholderValue")) { node["ph"] = v }
-	if let v = string(value("AXIdentifier")) { node["id"] = v }
+	if let v = string(value("AXIdentifier")), meaningfulIdentifier(v) { node["id"] = v }
 	if bool(value(kAXEnabledAttribute)) == false { node["disabled"] = true }
-	if bool(value(kAXFocusedAttribute)) == true { node["focused"] = true }
+	if let focused = focusedElement, CFEqual(focused, element) { node["focused"] = true }
 	if bool(value(kAXSelectedAttribute)) == true { node["selected"] = true }
 	if let expanded = bool(value(kAXExpandedAttribute)) { node["expanded"] = expanded }
-	if let p = point(value(kAXPositionAttribute)), let s = size(value(kAXSizeAttribute)) {
-		node["f"] = [Int(p.x.rounded()), Int(p.y.rounded()), Int(s.width.rounded()), Int(s.height.rounded())]
+	if let frame = frame {
+		node["f"] = [Int(frame.minX.rounded()), Int(frame.minY.rounded()), Int(frame.width.rounded()), Int(frame.height.rounded())]
+	}
+	var inner = clip
+	if role == kAXScrollAreaRole, let frame = frame {
+		inner = clip.map { $0.intersection(frame) } ?? frame
 	}
 	// Long tables and outlines: only the rows on screen (and the header), not thousands of rows.
 	let visibleRows = elements(value("AXVisibleRows"))
@@ -142,7 +178,7 @@ func read(_ element: AXUIElement, depth: Int, budget: inout Int) -> [String: Any
 		var kids: [[String: Any]] = []
 		for child in children {
 			if budget <= 0 { break }
-			if let kid = read(child, depth: depth + 1, budget: &budget) { kids.append(kid) }
+			if let kid = read(child, depth: depth + 1, budget: &budget, clip: inner) { kids.append(kid) }
 		}
 		if !kids.isEmpty { node["c"] = kids }
 	}
@@ -189,7 +225,12 @@ func tree(_ request: [String: Any]) throws -> [String: Any] {
 	let app = try runningApp(request)
 	let appElement = AXUIElementCreateApplication(app.processIdentifier)
 	AXUIElementSetMessagingTimeout(appElement, 1.5)
+	exposeTree(appElement, pid: app.processIdentifier)
+	// Listening starts with the first read, so the action that follows it is heard by `settle`.
+	observe(app.processIdentifier)
 	handles.removeAll(keepingCapacity: true)
+	visited.removeAll(keepingCapacity: true)
+	focusedElement = attribute(appElement, kAXFocusedUIElementAttribute).flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
 	let windows = elements(attribute(appElement, kAXWindowsAttribute))
 	var window: AXUIElement? = attribute(appElement, kAXFocusedWindowAttribute).flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
 	if let wanted = (request["window"] as? String)?.lowercased(), !wanted.isEmpty {
@@ -205,10 +246,10 @@ func tree(_ request: [String: Any]) throws -> [String: Any] {
 	]
 	if let window = window {
 		result["window"] = string(attribute(window, kAXTitleAttribute)) ?? ""
-		if var root = read(window, depth: 0, budget: &budget) {
+		if var root = read(window, depth: 0, budget: &budget, clip: screensFrame()) {
 			// A context menu or a popup opens as the app's own child, not the window's: read it too.
 			let menus = elements(attribute(appElement, kAXChildrenAttribute)).filter { string(attribute($0, kAXRoleAttribute)) == kAXMenuRole }
-			let opened = menus.compactMap { read($0, depth: 1, budget: &budget) }
+			let opened = menus.compactMap { read($0, depth: 1, budget: &budget, clip: nil) }
 			if !opened.isEmpty {
 				root["c"] = ((root["c"] as? [[String: Any]]) ?? []) + opened
 			}
@@ -219,6 +260,105 @@ func tree(_ request: [String: Any]) throws -> [String: Any] {
 	if !minimized.isEmpty { result["minimized"] = minimized }
 	result["truncated"] = budget <= 0
 	return result
+}
+
+/**
+ * All displays together, in the same top-left coordinates as element frames. Not the window's frame:
+ * some apps report one that leaves out their own toolbar (Chrome in full screen).
+ */
+func screensFrame() -> CGRect? {
+	var count: UInt32 = 0
+	var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+	guard CGGetActiveDisplayList(16, &ids, &count) == .success, count > 0 else { return nil }
+	return ids.prefix(Int(count)).map { CGDisplayBounds($0) }.reduce(CGRect.null) { $0.union($1) }
+}
+
+/// Apps whose tree was asked for already.
+var exposed: Set<pid_t> = []
+
+/**
+ * Electron and Chromium apps build their accessibility tree only for assistive tech that asks:
+ * AXManualAccessibility turns it on without the side effects of AXEnhancedUserInterface (which
+ * breaks window animations). Native apps ignore it.
+ */
+func exposeTree(_ appElement: AXUIElement, pid: pid_t) {
+	if exposed.insert(pid).inserted {
+		AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+	}
+}
+
+//#endregion
+
+//#region Settling
+
+/**
+ * Change notifications per app, so `settle` can wait until an app has stopped changing after an
+ * action instead of re-reading its tree until two reads match. The observers stay registered: the
+ * notifications an action causes queue up until `settle` pumps the run loop.
+ */
+var observers: [pid_t: AXObserver] = [:]
+var changeEvents = 0
+var lastChange = Date.distantPast
+/// When the last acting command started: changes after it are the action's.
+var actedAt = Date()
+var eventsAtAction = 0
+
+let changeNotifications: [String] = [
+	kAXFocusedUIElementChangedNotification, kAXValueChangedNotification, kAXUIElementDestroyedNotification,
+	kAXCreatedNotification, kAXSelectedChildrenChangedNotification, kAXSelectedTextChangedNotification,
+	kAXTitleChangedNotification, kAXWindowCreatedNotification, kAXMenuOpenedNotification, kAXMenuClosedNotification,
+	kAXLayoutChangedNotification, kAXRowCountChangedNotification, kAXSelectedRowsChangedNotification,
+	kAXFocusedWindowChangedNotification, kAXMainWindowChangedNotification, kAXSheetCreatedNotification,
+	kAXWindowMiniaturizedNotification, kAXWindowDeminiaturizedNotification, kAXExpandedChangedNotification,
+]
+
+func observe(_ pid: pid_t) {
+	if observers[pid] != nil { return }
+	var observer: AXObserver?
+	guard AXObserverCreate(pid, { _, _, _, _ in
+		changeEvents += 1
+		lastChange = Date()
+	}, &observer) == .success, let created = observer else { return }
+	let appElement = AXUIElementCreateApplication(pid)
+	var any = false
+	for name in changeNotifications {
+		if AXObserverAddNotification(created, appElement, name as CFString, nil) == .success { any = true }
+	}
+	if !any { return }
+	CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(created), .defaultMode)
+	observers[pid] = created
+}
+
+func markAction() {
+	pump(0)
+	actedAt = Date()
+	eventsAtAction = changeEvents
+}
+
+/**
+ * Returns once the app has gone quiet after the last action: no change for `quietMs` after the
+ * last one, or no change at all within `startMs` of the action, or after `maxMs`.
+ */
+func settle(_ request: [String: Any]) throws -> [String: Any] {
+	try requireTrust()
+	let app = try runningApp(request)
+	observe(app.processIdentifier)
+	guard observers[app.processIdentifier] != nil else {
+		return ["supported": false, "changed": false, "events": 0, "ms": 0]
+	}
+	let quiet = (request["quietMs"] as? Double ?? 60) / 1000
+	let start = (request["startMs"] as? Double ?? 250) / 1000
+	let maxWait = (request["maxMs"] as? Double ?? 2000) / 1000
+	let began = Date()
+	while true {
+		pump(0.01)
+		let now = Date()
+		let events = changeEvents - eventsAtAction
+		if events == 0 && now.timeIntervalSince(actedAt) >= start { break }
+		if events > 0 && now.timeIntervalSince(lastChange) >= quiet { break }
+		if now.timeIntervalSince(began) >= maxWait { break }
+	}
+	return ["supported": true, "changed": changeEvents > eventsAtAction, "events": changeEvents - eventsAtAction, "ms": Int(Date().timeIntervalSince(began) * 1000)]
 }
 
 //#endregion
@@ -262,20 +402,156 @@ func post(_ event: CGEvent?) {
 	event?.post(tap: .cghidEventTap)
 }
 
+func modifierFlags(_ combo: String?) throws -> CGEventFlags {
+	var flags: CGEventFlags = []
+	for part in (combo ?? "").lowercased().split(separator: "+").map({ String($0).trimmingCharacters(in: .whitespaces) }) where !part.isEmpty {
+		switch part {
+		case "cmd", "command", "meta", "super": flags.insert(.maskCommand)
+		case "ctrl", "control": flags.insert(.maskControl)
+		case "alt", "option", "opt": flags.insert(.maskAlternate)
+		case "shift": flags.insert(.maskShift)
+		case "fn": flags.insert(.maskSecondaryFn)
+		default: throw Failure("Unknown modifier \(part).")
+		}
+	}
+	return flags
+}
+
+func location(_ request: [String: Any]) -> CGPoint {
+	return CGPoint(x: (request["x"] as? NSNumber)?.doubleValue ?? 0, y: (request["y"] as? NSNumber)?.doubleValue ?? 0)
+}
+
 func click(_ request: [String: Any]) throws {
 	try requireTrust()
-	let at = CGPoint(x: request["x"] as? Double ?? 0, y: request["y"] as? Double ?? 0)
+	let at = location(request)
 	let right = request["button"] as? String == "right"
 	let count = max(1, request["count"] as? Int ?? 1)
+	let flags = try modifierFlags(request["modifiers"] as? String)
 	let (down, up, button): (CGEventType, CGEventType, CGMouseButton) = right ? (.rightMouseDown, .rightMouseUp, .right) : (.leftMouseDown, .leftMouseUp, .left)
 	post(CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: at, mouseButton: button))
 	for n in 1...count {
 		for type in [down, up] {
 			let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: at, mouseButton: button)
 			event?.setIntegerValueField(.mouseEventClickState, value: Int64(n))
+			if !flags.isEmpty { event?.flags = flags }
 			post(event)
 		}
 	}
+}
+
+func move(_ request: [String: Any]) throws {
+	try requireTrust()
+	post(CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: location(request), mouseButton: .left))
+}
+
+/**
+ * Draws or drags: for each stroke, presses at its first point, moves through the rest with dragged
+ * events no more than 3 points apart (apps draw what the pointer passes through, so long jumps make
+ * jagged lines), and releases at its last point. The pause per event (`stepMs`, default 1.5) adds
+ * up and is slept in batches, so a 300-point curve takes about half a second, not 300 sleeps.
+ */
+func drag(_ request: [String: Any]) throws {
+	try requireTrust()
+	guard let strokes = request["strokes"] as? [[[NSNumber]]], !strokes.isEmpty else {
+		throw Failure("drag needs strokes: [[[x, y], [x, y], ...], ...].")
+	}
+	let right = request["button"] as? String == "right"
+	let (down, dragged, up, button): (CGEventType, CGEventType, CGEventType, CGMouseButton) = right ? (.rightMouseDown, .rightMouseDragged, .rightMouseUp, .right) : (.leftMouseDown, .leftMouseDragged, .leftMouseUp, .left)
+	let flags = try modifierFlags(request["modifiers"] as? String)
+	let stepMs = max(0, min(20, (request["stepMs"] as? NSNumber)?.doubleValue ?? 0.5))
+	func send(_ type: CGEventType, _ at: CGPoint) {
+		let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: at, mouseButton: button)
+		event?.setIntegerValueField(.mouseEventClickState, value: 1)
+		if !flags.isEmpty { event?.flags = flags }
+		post(event)
+	}
+	// Each event has a due time on one schedule: sleeping overshoots by milliseconds, and overshoots
+	// would add up over hundreds of events. Sleep while far from the next one, spin the last bit.
+	var due = DispatchTime.now().uptimeNanoseconds
+	func wait(_ ms: Double) {
+		due += UInt64(ms * 1_000_000)
+		let now = DispatchTime.now().uptimeNanoseconds
+		if due > now + 2_000_000 { usleep(useconds_t((due - now - 1_500_000) / 1000)) }
+		while DispatchTime.now().uptimeNanoseconds < due {}
+	}
+	for stroke in strokes {
+		let points = stroke.compactMap { pair in pair.count >= 2 ? CGPoint(x: pair[0].doubleValue, y: pair[1].doubleValue) : nil }
+		guard let first = points.first else { continue }
+		send(.mouseMoved, first)
+		due = DispatchTime.now().uptimeNanoseconds; wait(8)
+		send(down, first)
+		// The app starts its stroke on the press; drags queued meanwhile get merged into one.
+		due = DispatchTime.now().uptimeNanoseconds; wait(30)
+		var last = first
+		var heading: CGFloat?
+		for next in points.dropFirst() {
+			let distance = hypot(next.x - last.x, next.y - last.y)
+			// A busy app merges queued drag events into the latest, cutting straight across a corner:
+			// at a sharp turn, give it time to take the corner point before moving on.
+			let direction = atan2(next.y - last.y, next.x - last.x)
+			if let before = heading, distance > 0 {
+				var turn = abs(direction - before)
+				if turn > .pi { turn = 2 * .pi - turn }
+				if turn > 0.45 { due = DispatchTime.now().uptimeNanoseconds; wait(12) }
+			}
+			if distance > 0 { heading = direction }
+			let steps = max(1, Int((distance / 3).rounded(.up)))
+			for i in 1...steps {
+				let t = CGFloat(i) / CGFloat(steps)
+				send(dragged, CGPoint(x: last.x + (next.x - last.x) * t, y: last.y + (next.y - last.y) * t))
+				wait(stepMs)
+			}
+			last = next
+		}
+		// A press without movement is a tap: still give the app a dragged event so tools that draw dots draw one.
+		if points.count == 1 { send(dragged, first) }
+		due = DispatchTime.now().uptimeNanoseconds; wait(12)
+		send(up, last)
+		due = DispatchTime.now().uptimeNanoseconds; wait(16)
+	}
+}
+
+/**
+ * Pastes text through the clipboard (one keystroke instead of hundreds), then puts back what the
+ * clipboard held, every type of it, once the app has had time to read it.
+ */
+func paste(_ request: [String: Any]) throws {
+	try requireTrust()
+	let board = NSPasteboard.general
+	let saved: [[NSPasteboard.PasteboardType: Data]] = (board.pasteboardItems ?? []).map { item in
+		var data: [NSPasteboard.PasteboardType: Data] = [:]
+		for type in item.types { if let d = item.data(forType: type) { data[type] = d } }
+		return data
+	}
+	board.clearContents()
+	board.setString(request["text"] as? String ?? "", forType: .string)
+	try key(["combo": "cmd+v"])
+	pump(0.25)
+	board.clearContents()
+	if !saved.isEmpty {
+		board.writeObjects(saved.map { data in
+			let item = NSPasteboardItem()
+			for (type, d) in data { item.setData(d, forType: type) }
+			return item
+		})
+	}
+}
+
+/// A screenshot of a screen rectangle in points (needs the Screen Recording permission for other apps' pixels).
+func capture(_ request: [String: Any]) throws -> [String: Any] {
+	let x = (request["x"] as? NSNumber)?.intValue ?? 0, y = (request["y"] as? NSNumber)?.intValue ?? 0
+	let w = max(1, (request["w"] as? NSNumber)?.intValue ?? 1), h = max(1, (request["h"] as? NSNumber)?.intValue ?? 1)
+	let file = NSTemporaryDirectory() + "volt-desktop-\(getpid())-\(Int(Date().timeIntervalSince1970 * 1000)).png"
+	defer { try? FileManager.default.removeItem(atPath: file) }
+	let process = Process()
+	process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+	process.arguments = ["-x", "-t", "png", "-R", "\(x),\(y),\(w),\(h)", file]
+	try process.run()
+	process.waitUntilExit()
+	guard process.terminationStatus == 0, let data = FileManager.default.contents(atPath: file), let image = NSBitmapImageRep(data: data) else {
+		throw Failure("Could not capture the screen. Volt needs the Screen Recording permission (System Settings > Privacy & Security > Screen & System Audio Recording).")
+	}
+	return ["png": data.base64EncodedString(), "width": image.pixelsWide, "height": image.pixelsHigh]
 }
 
 func typeText(_ request: [String: Any]) throws {
@@ -399,6 +675,21 @@ func activate(_ request: [String: Any]) throws -> [String: Any] {
 		let ready = waitUntilReady(target, timeout: min(wait, 2)) != nil
 		return ["app": app.localizedName ?? target, "ready": ready]
 	}
+	// A file opens in its default app: wait for whichever app comes to the front with a window.
+	let path = (target as NSString).expandingTildeInPath
+	if (target.hasPrefix("/") || target.hasPrefix("~")) && !path.hasSuffix(".app") {
+		guard FileManager.default.fileExists(atPath: path) else { throw Failure("There is no file at \(target).") }
+		let before = NSWorkspace.shared.frontmostApplication?.processIdentifier
+		if !(try openWith([path])) { throw Failure("Could not open \(target).") }
+		let started = Date()
+		while Date().timeIntervalSince(started) < wait {
+			if let front = NSWorkspace.shared.frontmostApplication, front.processIdentifier != getppid(), front.processIdentifier != before || Date().timeIntervalSince(started) > 1, !windowsOf(front, timeout: 0.5).1.isEmpty {
+				return ["app": front.localizedName ?? "", "ready": true]
+			}
+			pump(0.05)
+		}
+		return ["ready": false]
+	}
 	let arguments = target.contains("://") ? [target] : target.contains(".") && !target.contains(" ") && !target.hasSuffix(".app") ? ["-b", target] : ["-a", target]
 	if !(try openWith(arguments)) {
 		throw Failure("Could not open \(target).")
@@ -517,6 +808,9 @@ func apps() -> [[String: Any]] {
 	}
 }
 
+/// Commands that change the app: `settle` waits for the changes the latest of them caused.
+let actingCommands: Set<String> = ["press", "setValue", "focus", "click", "move", "drag", "type", "paste", "key", "scroll", "activate", "window", "menu"]
+
 func respond(_ id: Any, _ body: [String: Any]) {
 	var reply = body
 	reply["id"] = id
@@ -535,16 +829,23 @@ func handleLine(_ line: String) {
 	let id = request["id"] ?? 0
 	do {
 		var result: Any = true
-		switch request["cmd"] as? String ?? "" {
+		let cmd = request["cmd"] as? String ?? ""
+		if actingCommands.contains(cmd) { markAction() }
+		switch cmd {
 		case "status":
-			result = ["trusted": trusted(prompt: request["prompt"] as? Bool ?? false), "screen": CGPreflightScreenCaptureAccess()]
+			result = ["trusted": trusted(prompt: request["prompt"] as? Bool ?? false), "screen": CGPreflightScreenCaptureAccess(), "events": true]
 		case "apps": result = apps()
 		case "tree": result = try tree(request)
+		case "settle": result = try settle(request)
+		case "capture": result = try capture(request)
 		case "press": try perform(request)
 		case "setValue": try setValue(request)
 		case "focus": try focus(request)
 		case "click": try click(request)
+		case "move": try move(request)
+		case "drag": try drag(request)
 		case "type": try typeText(request)
+		case "paste": try paste(request)
 		case "key": try key(request)
 		case "scroll": try scroll(request)
 		case "activate": result = try activate(request)

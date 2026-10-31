@@ -11,7 +11,7 @@ import { FileAccess } from '../../../base/common/network.js';
 import { join } from '../../../base/common/path.js';
 import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
 import { ILogService } from '../../log/common/log.js';
-import { IVoltDesktopActResult, IVoltDesktopApp, IVoltDesktopService, IVoltDesktopStatus, IVoltDesktopTree, VoltDesktopAction } from '../common/voltDesktop.js';
+import { IVoltDesktopActResult, IVoltDesktopApp, IVoltDesktopCapture, IVoltDesktopService, IVoltDesktopSettle, IVoltDesktopStatus, IVoltDesktopTree, VoltDesktopAction } from '../common/voltDesktop.js';
 
 interface IPending {
 	readonly resolve: (value: unknown) => void;
@@ -19,12 +19,24 @@ interface IPending {
 	readonly timer: ReturnType<typeof setTimeout>;
 }
 
-const TIMEOUT_MS: Partial<Record<string, number>> = { tree: 20_000, activate: 40_000, window: 10_000, menu: 10_000, type: 30_000 };
+const TIMEOUT_MS: Partial<Record<string, number>> = { tree: 20_000, activate: 40_000, window: 10_000, menu: 10_000, type: 30_000, drag: 60_000, settle: 12_000, capture: 15_000, paste: 10_000 };
+
+type Backend = 'mac' | 'windows' | 'linux';
+
+/** The helper for this OS: macOS accessibility (Swift), Windows UI Automation (C# run by PowerShell), Linux AT-SPI (Python). */
+function backendFor(platform: NodeJS.Platform): Backend | undefined {
+	return platform === 'darwin' ? 'mac' : platform === 'win32' ? 'windows' : platform === 'linux' ? 'linux' : undefined;
+}
+
+const UNSUPPORTED = 'Desktop control works on macOS, Windows and Linux.';
 
 /**
- * Runs `VoltDesktop.swift` (compiled on first use with the system's Swift compiler and cached by
- * the source's hash in Volt's data folder) and sends it one JSON request per line. A request that
- * does not answer in time restarts the helper, so one stuck app never blocks the next call.
+ * Runs the desktop helper for this OS and sends it one JSON request per line; every helper speaks
+ * the same protocol (see `VoltDesktop.swift`). On macOS that is `VoltDesktop.swift`, compiled on
+ * first use with the system's Swift compiler and cached by the source's hash in Volt's data folder;
+ * on Windows `VoltDesktop.windows.ps1`, which compiles `VoltDesktop.windows.cs` the same way; on
+ * Linux `volt_desktop_linux.py`. A request that does not answer in time restarts the helper, so one
+ * stuck app never blocks the next call.
  */
 export class VoltDesktopMainService extends Disposable implements IVoltDesktopService {
 
@@ -44,15 +56,17 @@ export class VoltDesktopMainService extends Disposable implements IVoltDesktopSe
 		this._register(toDisposable(() => this.stop(new Error('Volt is closing.'))));
 	}
 
+	private readonly backend = backendFor(process.platform);
+
 	async status(prompt = false): Promise<IVoltDesktopStatus> {
-		if (process.platform !== 'darwin') {
-			return { supported: false, trusted: false, screen: false, error: 'Desktop control works on macOS for now.' };
+		if (!this.backend) {
+			return { supported: false, trusted: false, screen: false, error: UNSUPPORTED };
 		}
 		try {
-			const result = await this.request('status', { prompt }) as { trusted: boolean; screen: boolean };
-			return { supported: true, trusted: result.trusted, screen: result.screen };
+			const result = await this.request('status', { prompt }) as { trusted: boolean; screen: boolean; events?: boolean };
+			return { supported: true, backend: this.backend, trusted: result.trusted, screen: result.screen, events: result.events };
 		} catch (err) {
-			return { supported: true, trusted: false, screen: false, error: err instanceof Error ? err.message : String(err) };
+			return { supported: true, backend: this.backend, trusted: false, screen: false, error: err instanceof Error ? err.message : String(err) };
 		}
 	}
 
@@ -70,9 +84,17 @@ export class VoltDesktopMainService extends Disposable implements IVoltDesktopSe
 		return result && typeof result === 'object' ? result as IVoltDesktopActResult : {};
 	}
 
+	async settle(target: { readonly app?: string; readonly pid?: number; readonly quietMs?: number; readonly startMs?: number; readonly maxMs?: number }): Promise<IVoltDesktopSettle> {
+		return await this.request('settle', { ...target }) as IVoltDesktopSettle;
+	}
+
+	async capture(rect: { readonly x: number; readonly y: number; readonly w: number; readonly h: number }): Promise<IVoltDesktopCapture> {
+		return await this.request('capture', { ...rect }) as IVoltDesktopCapture;
+	}
+
 	private async request(cmd: string, args: Record<string, unknown>): Promise<unknown> {
-		if (process.platform !== 'darwin') {
-			throw new Error('Desktop control works on macOS for now.');
+		if (!this.backend) {
+			throw new Error(UNSUPPORTED);
 		}
 		const child = await this.running();
 		const id = this.nextId++;
@@ -115,12 +137,18 @@ export class VoltDesktopMainService extends Disposable implements IVoltDesktopSe
 	}
 
 	private async launch(): Promise<ChildProcess> {
-		const binary = await this.helperBinary();
-		const child = spawn(binary, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+		const [command, args] = await this.helperCommand(this.backend!);
+		const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
 		child.stdout?.setEncoding('utf8');
-		child.stderr?.on('data', chunk => this.logService.trace('[volt-desktop] helper:', String(chunk)));
+		// What the helper says before it is up (a missing Python module, say) explains a failed start.
+		let stderr = '';
+		child.stderr?.on('data', chunk => {
+			stderr = `${stderr}${chunk}`.slice(-2000);
+			this.logService.trace('[volt-desktop] helper:', String(chunk));
+		});
 		await new Promise<void>((resolve, reject) => {
-			const timer = setTimeout(() => reject(new Error('The desktop helper did not start.')), 10_000);
+			// Windows compiles its helper on the first start, which takes PowerShell a while.
+			const timer = setTimeout(() => reject(new Error(`The desktop helper did not start.${stderr ? ` ${stderr.trim().split('\n').slice(-2).join(' ')}` : ''}`)), this.backend === 'windows' ? 60_000 : 10_000);
 			child.stdout?.on('data', (chunk: string) => {
 				this.buffer += chunk;
 				for (let at = this.buffer.indexOf('\n'); at >= 0; at = this.buffer.indexOf('\n')) {
@@ -151,11 +179,13 @@ export class VoltDesktopMainService extends Disposable implements IVoltDesktopSe
 			});
 			child.on('error', err => {
 				clearTimeout(timer);
-				reject(err);
+				reject((err as NodeJS.ErrnoException).code === 'ENOENT' && this.backend === 'linux'
+					? new Error('Desktop control on Linux needs python3 with AT-SPI: install python3-gi and gir1.2-atspi-2.0 (Debian/Ubuntu) or python3-gobject and at-spi2-core (Fedora), plus xdotool.')
+					: err);
 			});
 			child.on('exit', () => {
 				clearTimeout(timer);
-				reject(new Error('The desktop helper exited.'));
+				reject(new Error(`The desktop helper exited.${stderr ? ` ${stderr.trim().split('\n').slice(-2).join(' ')}` : ''}`));
 				if (this.child === child) {
 					this.stop(new Error('The desktop helper exited.'));
 				}
@@ -165,9 +195,28 @@ export class VoltDesktopMainService extends Disposable implements IVoltDesktopSe
 		return child;
 	}
 
+	private helperSource(name: string): string {
+		return FileAccess.asFileUri(`vs/platform/voltDesktop/node/helper/${name}`).fsPath;
+	}
+
+	/** How to start this OS's helper. */
+	private async helperCommand(backend: Backend): Promise<[string, string[]]> {
+		const folder = join(this.environmentService.userDataPath, 'volt-desktop');
+		switch (backend) {
+			case 'mac':
+				return [await this.helperBinary(), []];
+			case 'windows':
+				// The script compiles the C# into this folder once per version of the source.
+				await fs.mkdir(folder, { recursive: true });
+				return [join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', this.helperSource('VoltDesktop.windows.ps1'), folder, String(process.pid)]];
+			case 'linux':
+				return ['python3', [this.helperSource('volt_desktop_linux.py')]];
+		}
+	}
+
 	/** The compiled helper for the current source, building it when the source changed. */
 	private async helperBinary(): Promise<string> {
-		const source = FileAccess.asFileUri('vs/platform/voltDesktop/node/helper/VoltDesktop.swift').fsPath;
+		const source = this.helperSource('VoltDesktop.swift');
 		const code = await fs.readFile(source);
 		const hash = createHash('sha256').update(code).digest('hex').slice(0, 16);
 		const folder = join(this.environmentService.userDataPath, 'volt-desktop');

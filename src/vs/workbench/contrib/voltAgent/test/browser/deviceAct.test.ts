@@ -257,6 +257,53 @@ suite('Device act', function () {
 		assert.match(missing.results[0].detail, /No menu item "Window"/);
 	});
 
+	test('draws on a canvas in one call, mapped onto its box, and settles on the app\'s events', async () => {
+		const strokes: (readonly (readonly [number, number])[])[][] = [];
+		let reads = 0;
+		const canvas: IDeviceDriver = {
+			platform: 'desktop',
+			read: async () => {
+				reads++;
+				return readDesktopScreen({ app: 'Paint', root: { h: 'h0', role: 'AXWindow', title: 'Paint', f: [0, 0, 1000, 800], c: [{ h: 'h1', role: 'AXImage', desc: 'Canvas', f: [100, 100, 800, 400] }, { h: 'h2', role: 'AXButton', title: 'Trash', f: [900, 700, 50, 50] }, { h: 'h3', role: 'AXImage', desc: 'Report', f: [100, 600, 40, 40] }] } }, new DeviceRefs())!;
+			},
+			tap: async () => { }, swipe: async () => { }, type: async () => { }, clear: async () => { }, press: async () => { },
+			launch: async () => { },
+			drag: async s => { strokes.push(s.map(stroke => [...stroke])); },
+			settle: async () => ({ changed: true }),
+		};
+		const runner = new DeviceActRunner(canvas, CancellationToken.None);
+		const run = await runner.run(script('draw in "Canvas" line 0,0 100,100 | circle 50,50 10\ndrag "Report" to "Trash"'));
+		assert.ok(run.ok, formatActRun(run, 'desktop_act').join('\n'));
+		assert.match(run.results[0].detail, /drew 2 strokes .* in img "Canvas"/);
+		assert.deepStrictEqual(strokes[0][0], [[100, 100], [900, 500]], 'the line spans the canvas box');
+		const xs = strokes[0][1].map(p => p[0]);
+		const ys = strokes[0][1].map(p => p[1]);
+		assert.ok(Math.abs((Math.max(...xs) - Math.min(...xs)) - (Math.max(...ys) - Math.min(...ys))) < 2, 'the circle is round on the 2:1 canvas');
+		assert.deepStrictEqual(strokes[1][0][0], [120, 620], 'the drag starts on the item');
+		assert.deepStrictEqual(strokes[1][0][strokes[1][0].length - 1], [925, 725], 'and ends on the drop target');
+		assert.deepStrictEqual(runner.lastDrawn, [100, 100, 800, 400]);
+		assert.strictEqual(reads, 3, 'one read up front and one per step: settling waits on events, not on re-reads');
+	});
+
+	test('open works when the app is not running yet', async () => {
+		let running = false;
+		const app: IDeviceDriver = {
+			platform: 'desktop',
+			read: async () => {
+				if (!running) {
+					throw new Error('Notes is not running. Open it with an open step first.');
+				}
+				return readDesktopScreen({ app: 'Notes', root: { h: 'h0', role: 'AXWindow', title: 'Notes', f: [0, 0, 400, 300], c: [{ h: 'h1', role: 'AXButton', title: 'New Note', f: [10, 10, 80, 24] }] } }, new DeviceRefs())!;
+			},
+			tap: async () => { }, swipe: async () => { }, type: async () => { }, clear: async () => { }, press: async () => { },
+			launch: async () => { running = true; },
+			activate: async () => true,
+		};
+		const run = await new DeviceActRunner(app, CancellationToken.None).run(script('open Notes\nclick button "New Note"'));
+		assert.ok(run.ok, formatActRun(run, 'desktop_act').join('\n'));
+		assert.match(run.results[0].detail, /launched Notes · now in Notes/);
+	});
+
 	test('check does nothing when the switch is already on', async () => {
 		const app = new FakeApp();
 		app.screen = 'signin';

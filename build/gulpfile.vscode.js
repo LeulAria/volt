@@ -76,8 +76,8 @@ const vscodeResourceIncludes = [
 	// Node Scripts
 	'out-build/vs/base/node/{terminateProcess.sh,cpuUsage.sh,ps.sh}',
 
-	// Volt: the desktop helper's source (compiled on first use) and the Android UI reader
-	'out-build/vs/platform/voltDesktop/node/helper/VoltDesktop.swift',
+	// Volt: the desktop helpers' sources (macOS and Windows compile theirs on first use) and the Android UI reader
+	'out-build/vs/platform/voltDesktop/node/helper/{VoltDesktop.swift,VoltDesktop.windows.cs,VoltDesktop.windows.ps1,volt_desktop_linux.py}',
 	'out-build/vs/platform/voltDevices/node/android/volt-ui.jar',
 
 	// Scratch board hand-drawn font (loaded at runtime with FontFace)
