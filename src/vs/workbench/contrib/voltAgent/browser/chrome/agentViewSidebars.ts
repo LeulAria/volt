@@ -55,6 +55,14 @@ import { IScratchBoardService } from '../scratchBoard/scratchBoardService.js';
 import { IScratchSessionLinks } from '../scratchBoard/scratchSessionLinks.js';
 import { OPEN_AGENT_RESOURCES_COMMAND_ID } from '../resources/agentResourcesPage.js';
 import { IAgentResourcesService } from '../resources/agentResourcesService.js';
+import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
+import { AgentDockAutomations, AgentDockUsage, DockGroup, DockSectionId, DockSectionPrefs, showDockSectionsMenu } from './agentDockSections.js';
+import { createHomeAutomationsIcon } from '../home/agentHomeIcons.js';
+import { AgentUsageHoverCard } from '../usage/agentUsageHoverCard.js';
+import { createUsageIcon } from '../usage/agentUsageIcons.js';
+
+/** The tune button stays this long after the pointer leaves the chevron, to cross over to it. */
+const TUNE_HIDE_DELAY_MS = 250;
 
 /** Chevrons point right. Collapsed state rotates this 180deg. */
 const CHEVRON_RIGHT_PATH = 'M6 7L11 12L6 17M13 7L18 12L13 17';
@@ -150,51 +158,6 @@ export function mountAgentQuickOpenActions(host: HTMLElement, quickOpen: HTMLEle
 	}
 }
 
-/**
- * A folding group of the toolbar (Open Tabs, Designs, Pull requests), headed like "Previous agents
- * (N)" in {@link AgentLineageDock}: a pane header with a chevron, the title in capitals, the count.
- * Folding lasts while the window is open, as it does for Previous agents.
- */
-class DockGroup extends Disposable {
-
-	/** The group's rows go here; folding hides it. */
-	readonly body: HTMLElement;
-	private readonly head: HTMLButtonElement;
-	private open = true;
-	private count: number | undefined;
-
-	constructor(section: HTMLElement, private readonly title: string) {
-		super();
-		// The lineage divider's class: the same header as Previous agents (agentSubagents.css).
-		this.head = append(section, $('button.volt-agent-lineage-divider.volt-agent-dock-group-head')) as HTMLButtonElement;
-		this.head.type = 'button';
-		this.body = append(section, $('.volt-agent-dock-group-body'));
-		this._register(addDisposableListener(this.head, 'click', () => {
-			this.open = !this.open;
-			this.render();
-		}));
-		this.render();
-	}
-
-	/** Undefined drops the count from the title. */
-	setCount(count: number | undefined): void {
-		if (count === this.count) {
-			return;
-		}
-		this.count = count;
-		this.render();
-	}
-
-	private render(): void {
-		this.head.setAttribute('aria-expanded', String(this.open));
-		this.head.replaceChildren(renderIcon(this.open ? Codicon.chevronDown : Codicon.chevronRight));
-		append(this.head, $('span.label')).textContent = this.count === undefined
-			? this.title
-			: localize('voltAgent.dock.groupTitle', "{0} ({1})", this.title, this.count);
-		this.body.classList.toggle('hidden', !this.open);
-	}
-}
-
 function createStrokeIcon(owner: HTMLElement, pathD: string, strokeWidth = '1.5'): SVGElement {
 	const svg = owner.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
 	svg.setAttribute('viewBox', '0 0 24 24');
@@ -229,6 +192,17 @@ class AgentViewSidebarsContribution extends Disposable {
 	private readonly filesToggle: HTMLButtonElement;
 	private readonly chevron: HTMLButtonElement;
 	private readonly chevronLabel: HTMLElement;
+	/** Under the chevron while it is hovered: opens the menu of which sections show. */
+	private readonly tuneButton: HTMLButtonElement;
+	private readonly tuneHide = this._register(new MutableDisposable());
+	private readonly tuneMenu = this._register(new MutableDisposable());
+	private readonly sectionPrefs: DockSectionPrefs;
+	/** Each section the user can hide, by its id in the tune menu. */
+	private readonly sections = new Map<DockSectionId, HTMLElement>();
+	/** The collapsed rail's buttons for the sections it has one for (Automations, Usage), by id. */
+	private readonly sectionRails = new Map<DockSectionId, HTMLElement>();
+	private readonly automations: AgentDockAutomations;
+	private readonly usage: AgentDockUsage;
 	private readonly tabsSection: HTMLElement;
 	/** The rows under the rail; they move into the popup while it is open. */
 	private readonly body: HTMLElement;
@@ -390,6 +364,39 @@ class AgentViewSidebarsContribution extends Disposable {
 		chevronIcon.setAttribute('width', '16');
 		chevronIcon.setAttribute('height', '16');
 		this.chevron.appendChild(chevronIcon);
+		// Hovering the chevron brings a round tune button under it; it opens "Show in side toolbar".
+		this.tuneButton = append(this.quickOpen, $('button.volt-agent-dock-tune')) as HTMLButtonElement;
+		this.tuneButton.type = 'button';
+		this.tuneButton.appendChild(renderIcon(Codicon.settings));
+		const tuneLabel = localize('voltAgent.dock.tune', "Choose what the side toolbar shows");
+		this.tuneButton.setAttribute('aria-label', tuneLabel);
+		this.tuneButton.setAttribute('aria-haspopup', 'menu');
+		setAgentTooltip(this.tuneButton, tuneLabel);
+		this.sectionPrefs = this._register(new DockSectionPrefs(storageService));
+		const showTune = () => {
+			this.tuneHide.clear();
+			this.quickOpen.classList.add('tune-shown');
+		};
+		const hideTuneSoon = () => {
+			this.tuneHide.value = disposableTimeout(() => {
+				if (!this.tuneMenu.value) {
+					this.quickOpen.classList.remove('tune-shown');
+				}
+			}, TUNE_HIDE_DELAY_MS);
+		};
+		for (const target of [this.chevron, this.tuneButton]) {
+			this._register(addDisposableListener(target, 'mouseenter', showTune));
+			this._register(addDisposableListener(target, 'mouseleave', hideTuneSoon));
+		}
+		const contextViewService = instantiationService.invokeFunction(accessor => accessor.get(IContextViewService));
+		this._register(addDisposableListener(this.tuneButton, 'click', () => {
+			this.tuneButton.classList.add('open');
+			this.tuneMenu.value = showDockSectionsMenu(contextViewService, this.tuneButton, this.sectionPrefs, () => {
+				this.tuneButton.classList.remove('open');
+				this.tuneMenu.clear();
+				hideTuneSoon();
+			});
+		}));
 
 		const rail = append(this.quickOpen, $('.volt-agent-quick-open-rail'));
 		// First on the rail while agents run: the collapsed toolbar still says how many.
@@ -398,7 +405,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		append(this.agentsRail, $('span.volt-agent-dock-label'));
 		this.agentsRail.appendChild(createModeIcon('multitask'));
 		this.agentsBadge = append(this.agentsRail, $('span.volt-agent-rail-badge'));
-		this._register(addDisposableListener(this.agentsRail, 'click', () => this.revealAgents()));
+		this._register(addDisposableListener(this.agentsRail, 'click', () => this.revealInToolbar(this.lineage.element)));
 		const body = this.body = append(this.quickOpen, $('.volt-agent-quick-open-body'));
 		// The toolbar sits inside the chat's scrollable, whose wheel listener scrolls the chat and cancels the
 		// event. A body taller than its room keeps the wheel so it scrolls itself.
@@ -456,7 +463,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		}
 
 		// Sections like Cursor's project menu: the project's tools, then git, then the agents.
-		const [changes, browser, terminal, files, resources] = this.dockActions();
+		const [files, terminal, browser, resources, changes] = this.dockActions();
 		const workspaceSection = append(body, $('.volt-agent-dock-section.volt-agent-dock-workspace'));
 		// The same pane header as Pull requests and Previous agents: chevron, then the title.
 		this.workspaceHeading = append(workspaceSection, $('button.volt-agent-lineage-divider.volt-agent-dock-group-head')) as HTMLButtonElement;
@@ -480,7 +487,8 @@ class AgentViewSidebarsContribution extends Disposable {
 
 		// Commit, Push & PR stays on the composer; the toolbar keeps the branch, the changes and the pull requests.
 		this.pullRequests = instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
-		this.pullRequestsGroup = this._register(new DockGroup(append(body, $('.volt-agent-dock-section.volt-agent-dock-pull-requests')), localize('voltAgent.dock.pullRequests', "Pull requests")));
+		const pullRequestsSection = append(body, $('.volt-agent-dock-section.volt-agent-dock-pull-requests'));
+		this.pullRequestsGroup = this._register(new DockGroup(pullRequestsSection, localize('voltAgent.dock.pullRequests', "Pull requests")));
 		// Changes lead the Pull requests group: what the next pull request would carry, then the branch it goes from.
 		const git = append(this.pullRequestsGroup.body, $('.volt-agent-dock-actions'));
 		const changesLabel = this.createActionRow(git, changes);
@@ -511,6 +519,9 @@ class AgentViewSidebarsContribution extends Disposable {
 		const syncPullRequestsCount = () => this.pullRequestsGroup.setCount(this.pullRequestControl.linkCount || undefined);
 		this._register(this.pullRequestControl.onDidRender(syncPullRequestsCount));
 		syncPullRequestsCount();
+		// Off until picked in the tune menu: the chat's and its project's automations, then every account's usage.
+		this.automations = this._register(instantiationService.createInstance(AgentDockAutomations, body));
+		this.usage = this._register(instantiationService.createInstance(AgentDockUsage, body));
 		this._register(scmService.onDidAddRepository(() => this.watchBranch()));
 		this._register(scmService.onDidRemoveRepository(() => this.watchBranch()));
 		// A worktree's branch is stored on its chat and follows renames and checkouts (agentWorktreeBranch.ts).
@@ -519,6 +530,11 @@ class AgentViewSidebarsContribution extends Disposable {
 		for (const action of this.dockActions()) {
 			this.createRailButton(rail, action);
 		}
+		this.createSectionRail(rail, 'automations', localize('voltAgent.dock.automations', "Automations"), createHomeAutomationsIcon(), () => this.revealInToolbar(this.automations.section));
+		// Hovering the usage icon opens the limits card beside the rail, as hovering the bars does in the toolbar.
+		const usageRail = this.createSectionRail(rail, 'usage', localize('voltAgent.dock.usage', "Usage"), createUsageIcon(14), () => this.revealInToolbar(this.usage.section));
+		usageRail.classList.add('volt-agent-dock-usage-rail');
+		this._register(instantiationService.createInstance(AgentUsageHoverCard, usageRail, 'start'));
 		this._register(changesService.onDidChange(sessionId => {
 			if (!sessionId || sessionId === this.changesSessionId) {
 				this.renderChangesStats();
@@ -529,8 +545,19 @@ class AgentViewSidebarsContribution extends Disposable {
 		// Finished agents go last, under the tools and git.
 		body.prepend(this.lineage.element);
 		body.append(this.lineage.previousElement);
+		this.sections.set('agents', this.lineage.element);
+		this.sections.set('tabs', this.tabsSection);
+		this.sections.set('designs', this.designsSection);
+		this.sections.set('scratch', this.scratchSection);
+		this.sections.set('workspace', workspaceSection);
+		this.sections.set('pullRequests', pullRequestsSection);
+		this.sections.set('automations', this.automations.section);
+		this.sections.set('usage', this.usage.section);
+		this.sections.set('previous', this.lineage.previousElement);
+		this._register(this.sectionPrefs.onDidChange(() => this.applySectionPrefs()));
+		this.applySectionPrefs();
 		this._register(this.lineage.onDidChangeSummary(summary => this.syncAgentsRail(summary)));
-		this._register(CommandsRegistry.registerCommand(SHOW_AGENTS_IN_SIDE_TOOLBAR_COMMAND_ID, () => this.revealAgents()));
+		this._register(CommandsRegistry.registerCommand(SHOW_AGENTS_IN_SIDE_TOOLBAR_COMMAND_ID, () => this.revealInToolbar(this.lineage.element)));
 
 		this.chatResize = new ResizeObserver(() => {
 			this.syncDockToWindow();
@@ -585,10 +612,10 @@ class AgentViewSidebarsContribution extends Disposable {
 	}
 
 	/**
-	 * Shows the agents list: the toolbar expands beside the chat, or opens as a popup under its
+	 * Shows a part of the toolbar: it expands beside the chat, or opens as a popup under its
 	 * title bar button when it has no room there (narrow, hidden by the user, tools open beside the chat).
 	 */
-	private revealAgents(): void {
+	private revealInToolbar(section: HTMLElement): void {
 		const inline = !this.usesPopup() && !this.quickOpenHidden && !!this.quickOpenEditor;
 		if (!inline) {
 			this.setPopupOpen(true);
@@ -597,7 +624,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		if (this.collapsed) {
 			this.toggleDock();
 		}
-		this.lineage.element.scrollIntoView({ block: 'nearest' });
+		section.scrollIntoView({ block: 'nearest' });
 	}
 
 	/** Watch the editor part once it exists. Observing the whole workbench during startup would run on every node. */
@@ -629,15 +656,15 @@ class AgentViewSidebarsContribution extends Disposable {
 
 	private dockActions(): IDockAction[] {
 		return [
-			{ id: 'changes', label: localize('voltAgent.dock.changes', "Changes"), iconPath: CHANGES_ICON_PATH, command: OPEN_AGENT_CHANGES_COMMAND_ID },
-			{ id: 'browser', label: localize('voltAgent.dock.browser', "Browser"), icon: Codicon.globe, command: OPEN_BROWSER_COMMAND_ID },
-			{ id: 'terminal', label: localize('voltAgent.dock.terminal', "Terminal"), icon: Codicon.terminal, command: 'workbench.action.terminal.toggleTerminal' },
 			{ id: 'files', label: localize('voltAgent.dock.explorer', "Explorer"), iconPath: EXPLORER_ICON_SHAPES, command: SHOW_AGENT_FILES_COMMAND_ID },
+			{ id: 'terminal', label: localize('voltAgent.dock.terminal', "Terminal"), icon: Codicon.terminal, command: 'workbench.action.terminal.toggleTerminal' },
+			{ id: 'browser', label: localize('voltAgent.dock.browser', "Browser"), icon: Codicon.globe, command: OPEN_BROWSER_COMMAND_ID },
 			// The home sidebar footer's Customize icon. Opens the page on the chat's folder.
 			{
 				id: 'resources', label: localize('voltAgent.dock.agentResources', "Agent Resources"), icon: Codicon.extensions, command: OPEN_AGENT_RESOURCES_COMMAND_ID,
 				args: () => ['overview', this.changesSessionId ? this.agentResources.folderForSession(this.changesSessionId) : undefined],
 			},
+			{ id: 'changes', label: localize('voltAgent.dock.changes', "Changes"), iconPath: CHANGES_ICON_PATH, command: OPEN_AGENT_CHANGES_COMMAND_ID },
 		];
 	}
 
@@ -757,6 +784,18 @@ class AgentViewSidebarsContribution extends Disposable {
 		this._register(addDisposableListener(button, 'click', () => {
 			void this.commandService.executeCommand(action.command, ...(action.args?.() ?? []));
 		}));
+	}
+
+	private createSectionRail(parent: HTMLElement, id: DockSectionId, label: string, icon: HTMLElement, reveal: () => void): HTMLElement {
+		const button = append(parent, $('button.volt-agent-rail-btn')) as HTMLButtonElement;
+		button.type = 'button';
+		button.setAttribute('aria-label', label);
+		append(button, $('span.volt-agent-dock-label')).textContent = label;
+		icon.classList.add('volt-agent-stroke-icon');
+		button.appendChild(icon);
+		this._register(addDisposableListener(button, 'click', reveal));
+		this.sectionRails.set(id, button);
+		return button;
 	}
 
 	private onEditorMutation(mutations: MutationRecord[]): void {
@@ -1235,6 +1274,15 @@ class AgentViewSidebarsContribution extends Disposable {
 		void group?.closeEditor(editor);
 	}
 
+	/** Hides the sections the user unticked in the tune menu; Automations and Usage only read while shown. */
+	private applySectionPrefs(): void {
+		for (const [id, element] of [...this.sections, ...this.sectionRails]) {
+			element.classList.toggle('volt-agent-dock-user-hidden', !this.sectionPrefs.isShown(id));
+		}
+		this.automations.setShown(this.sectionPrefs.isShown('automations'));
+		this.usage.setShown(this.sectionPrefs.isShown('usage'));
+	}
+
 	/** The lineage follows the chat in the main panel. */
 	private syncLineage(): void {
 		// Agent chats live in their own editor part: the chat the dock sits in says which one it is.
@@ -1243,6 +1291,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		const sessionId = host ?? (active instanceof AgentEditorInput ? active.sessionId : undefined);
 		this.lineage.setSession(sessionId);
 		this.pullRequestControl.setSession(sessionId);
+		this.automations.setSession(sessionId, sessionId ? this.agentResources.folderForSession(sessionId) : undefined);
 		if (sessionId !== this.designSession) {
 			this.designSession = sessionId;
 			this.renderDesigns();

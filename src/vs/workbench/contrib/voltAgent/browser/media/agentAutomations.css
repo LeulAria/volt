@@ -67,6 +67,11 @@
 	container-type: inline-size;
 }
 
+/* The detail page's back arrow: the one thing on the bar's left. */
+.volt-automations-bar > .volt-auto-back {
+	margin-right: auto;
+}
+
 .volt-auto-bar-actions {
 	display: flex;
 	align-items: center;
@@ -681,9 +686,9 @@
 	background: transparent;
 	color: var(--volt-auto-fg);
 	font: inherit;
-	font-size: 18px;
-	line-height: 26px;
-	font-weight: 400;
+	font-size: 22px;
+	line-height: 30px;
+	font-weight: 500;
 }
 
 .volt-auto-detail-title::placeholder {

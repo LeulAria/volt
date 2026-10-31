@@ -1581,17 +1581,17 @@ html.volt-layout-agent-window body {
 	pointer-events: auto;
 }
 
-/* The toggle sits after the bolt and its "VOLT" wordmark. */
+/* The toggle comes first, then the bolt and its "VOLT" wordmark (22px on: the toggle and a 2px gap). */
 .monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle {
-	left: calc(30px + var(--volt-agent-brand-wordmark-width));
+	left: 8px;
 }
 
 .monaco-workbench.volt-layout-agent.mac:not(.web):not(.fullscreen) .part.auxiliarybar > .volt-primary-sidebar-toggle {
-	left: calc(100px + var(--volt-agent-brand-wordmark-width));
+	left: 78px;
 }
 
 .monaco-workbench.volt-layout-agent.fullscreen .part.auxiliarybar > .volt-primary-sidebar-toggle {
-	left: calc(35px + var(--volt-agent-brand-wordmark-width));
+	left: 13px;
 }
 
 /* The app icon's bolt (brand/volt-icon.svg without its tile, transparent) before the sidebar toggle: in the sidebar while it is open, in the title bar once it is closed. */
@@ -1608,7 +1608,7 @@ html.volt-layout-agent-window body {
 .monaco-workbench.volt-layout-agent:not(.volt-primary-sidebar-toggle-in-titlebar):not(.noauxiliarybar):not(.volt-agent-left-collapsed) .part.auxiliarybar > .volt-agent-brand-logo {
 	position: absolute;
 	top: calc((var(--volt-agent-titlebar-height, 35px) - 20px) / 2);
-	left: 8px;
+	left: 30px;
 	z-index: 20;
 	display: inline-flex;
 	align-items: center;
@@ -1622,15 +1622,20 @@ html.volt-layout-agent-window body {
 }
 
 .monaco-workbench.volt-layout-agent.mac:not(.web):not(.fullscreen):not(.volt-primary-sidebar-toggle-in-titlebar):not(.noauxiliarybar):not(.volt-agent-left-collapsed) .part.auxiliarybar > .volt-agent-brand-logo {
-	left: 78px;
+	left: 100px;
 }
 
-/* Full screen has no traffic lights before the logo: give it 5px off the window edge. */
+/* Full screen has no traffic lights before the toggle: it sits 5px off the window edge, the logo after it. */
 .monaco-workbench.volt-layout-agent.fullscreen:not(.volt-primary-sidebar-toggle-in-titlebar):not(.noauxiliarybar):not(.volt-agent-left-collapsed) .part.auxiliarybar > .volt-agent-brand-logo {
-	left: 13px;
+	left: 35px;
 }
 
-.monaco-workbench.volt-layout-agent.fullscreen .titlebar-left > .volt-agent-brand-logo.in-titlebar {
+/* Sidebar closed: the title bar keeps the same order, the toggle first, then the logo. */
+.monaco-workbench.volt-layout-agent .titlebar-left > .action-toolbar-container.left {
+	order: -1;
+}
+
+.monaco-workbench.volt-layout-agent.fullscreen .titlebar-left > .action-toolbar-container.left {
 	margin-left: 5px;
 }
 
@@ -1687,10 +1692,11 @@ html.volt-layout-agent-window body {
 	pointer-events: none;
 }
 
+/* The solid glyph of the right panel's toggle: a filled frame and bar, no outline. */
 .monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle svg rect,
 .monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle svg path {
-	fill: none;
-	stroke: currentColor;
+	fill: currentColor;
+	stroke: none;
 }
 
 .monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar > .volt-primary-sidebar-toggle {
@@ -2192,4 +2198,92 @@ html.volt-layout-agent-window body {
 
 .volt-agent-home-row.is-cloud.cloud-failed > .meta {
 	color: var(--vscode-testing-iconFailed, var(--vscode-charts-red, #f14c4c));
+}
+
+/* Chrome icons, one look on both sides of the agent window: the left sidebar's title bar (sidebar
+ * toggle, back, forward), its search row, its footer, the right title bar's toggles, the files
+ * sidebar's tabs and the right panel's header buttons. Each is 16px with a 0.9px line however
+ * its SVG is drawn (non-scaling-stroke measures the stroke on screen, not in the viewBox). */
+.monaco-workbench.volt-layout-agent :is(
+	.volt-primary-sidebar-toggle,
+	.volt-agent-nav-button,
+	.volt-agent-home-row.is-action > .icon,
+	.volt-agent-home-nav-action,
+	.volt-agent-home-settings,
+	.volt-agent-titlebar-toggles > button,
+	.volt-agent-files-sidebar-tab,
+	.volt-agent-tools-files-toggle,
+	.volt-agent-tools-fullscreen,
+	.volt-agent-tools-close-panel
+) svg :is(path, line, polyline, polygon, rect, circle, ellipse) {
+	stroke-width: 0.9px;
+	vector-effect: non-scaling-stroke;
+}
+
+.monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle svg,
+.monaco-workbench.volt-layout-agent .volt-agent-nav-button svg,
+.monaco-workbench.volt-layout-agent .volt-agent-home-row.is-action > .icon .volt-agent-svg-icon :is(svg, &),
+.monaco-workbench.volt-layout-agent .volt-agent-home-nav-action .volt-agent-svg-icon :is(svg, &),
+.monaco-workbench.volt-layout-agent .volt-agent-home-footer .volt-agent-home-settings :is(.volt-agent-svg-icon, .volt-agent-svg-icon svg, .volt-usage-icon, .volt-usage-icon svg, svg),
+.monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggles > .volt-agent-titlebar-toggle:not(.volt-agent-files-panel-toggle) svg,
+.monaco-workbench.volt-layout-agent .volt-agent-files-sidebar-tab > svg {
+	flex-shrink: 0;
+	width: 15px;
+	height: 15px;
+}
+
+/* Drawn with more room around it, so a step larger than the rest. */
+.monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggles > .volt-agent-files-panel-toggle svg {
+	width: 17px;
+	height: 17px;
+}
+
+.monaco-workbench.volt-layout-agent :is(.volt-agent-tools-files-toggle, .volt-agent-tools-fullscreen) svg {
+	width: 14px;
+	height: 14px;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-tools-close-panel svg {
+	width: 13px;
+	height: 13px;
+}
+
+/* Back and forward are 20px around a 15px icon. */
+.monaco-workbench.volt-layout-agent .volt-agent-nav-button {
+	padding: 2px;
+}
+
+/* Near white in dark themes, full white on hover; a disabled back or forward stays faint. */
+.monaco-workbench.volt-layout-agent:is(.vs-dark, .hc-black) :is(
+	.volt-primary-sidebar-toggle,
+	.volt-agent-nav-button,
+	.volt-agent-home-row.is-action > .icon,
+	.volt-agent-home-nav-action,
+	.volt-agent-home-settings,
+	.volt-agent-titlebar-toggles > button,
+	.volt-agent-files-sidebar-tab,
+	.volt-agent-tools-files-toggle,
+	.volt-agent-tools-fullscreen,
+	.volt-agent-tools-close-panel
+) {
+	color: rgba(255, 255, 255, 0.88);
+}
+
+/* The footer dimmed its icons with opacity; the color does that now. */
+.monaco-workbench.volt-layout-agent:is(.vs-dark, .hc-black) .volt-agent-home-footer .volt-agent-home-settings {
+	opacity: 1;
+}
+
+.monaco-workbench.volt-layout-agent:is(.vs-dark, .hc-black) :is(
+	.volt-primary-sidebar-toggle,
+	.volt-agent-nav-button,
+	.volt-agent-home-nav-action,
+	.volt-agent-home-settings,
+	.volt-agent-titlebar-toggles > button,
+	.volt-agent-files-sidebar-tab,
+	.volt-agent-tools-files-toggle,
+	.volt-agent-tools-fullscreen,
+	.volt-agent-tools-close-panel
+):is(:hover, :focus-visible, .active) {
+	color: #fff;
 }

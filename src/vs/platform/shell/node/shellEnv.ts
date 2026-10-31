@@ -64,7 +64,7 @@ export async function getResolvedShellEnv(configurationService: IConfigurationSe
 		// subsequent calls since this operation can be
 		// expensive (spawns a process).
 		if (!unixShellEnvPromise) {
-			unixShellEnvPromise = Promises.withAsyncBody<NodeJS.ProcessEnv>(async (resolve, reject) => {
+			const promise = unixShellEnvPromise = Promises.withAsyncBody<NodeJS.ProcessEnv>(async (resolve, reject) => {
 				const cts = new CancellationTokenSource();
 
 				let timeoutValue = 10000; // default to 10 seconds
@@ -91,6 +91,13 @@ export async function getResolvedShellEnv(configurationService: IConfigurationSe
 				} finally {
 					clearTimeout(timeout);
 					cts.dispose();
+				}
+			});
+			// Volt: only a result is kept. A failure (a slow shell during a busy launch) is tried
+			// again next time instead of failing every later caller (agents, terminals) until restart.
+			promise.catch(() => {
+				if (unixShellEnvPromise === promise) {
+					unixShellEnvPromise = undefined;
 				}
 			});
 		}

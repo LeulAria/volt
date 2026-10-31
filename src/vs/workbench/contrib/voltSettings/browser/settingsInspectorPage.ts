@@ -26,6 +26,7 @@ import { IPreferencesService, ISetting } from '../../../services/preferences/com
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { createVoltDropdown } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
 import { catalogSettings, ISettingsCatalogCategory, ISettingsCatalogGroup, ISettingsCatalogSetting, searchWords, settingMatches } from './settingsCatalog.js';
+import { createSettingsIcon } from './settingsIcons.js';
 
 const ROW_HEIGHT = 30;
 
@@ -113,6 +114,9 @@ export class SettingsInspectorPage extends Disposable {
 	/** Set while the list is rebuilt, so its own focus and selection changes are not picks. */
 	private updating = false;
 	private words: string[] = [];
+	/** The column's own search: narrows its pages and subsections by name, leaving the settings alone. */
+	private readonly listFilter: InputBox;
+	private listWords: string[] = [];
 	private modifiedOnly = false;
 	/** Which settings the controls show and write: the user's, or the open project's. */
 	private target: ConfigurationTarget.USER_LOCAL | ConfigurationTarget.WORKSPACE = ConfigurationTarget.USER_LOCAL;
@@ -142,6 +146,18 @@ export class SettingsInspectorPage extends Disposable {
 			this.modifiedOnly = !this.modifiedOnly;
 			this.modifiedButton.classList.toggle('on', this.modifiedOnly);
 			this.modifiedButton.setAttribute('aria-pressed', String(this.modifiedOnly));
+			this.refresh();
+		}));
+
+		const filterHost = append(pane, $('.volt-settings-search.volt-settings-inspect-search'));
+		append(filterHost, $('span.volt-settings-search-icon')).appendChild(createSettingsIcon('search') ?? renderIcon(Codicon.search));
+		this.listFilter = this._register(new InputBox(filterHost, this.contextViewService, {
+			placeholder: localize('voltSettings.inspect.search', "Search this list"),
+			ariaLabel: localize('voltSettings.inspect.search', "Search this list"),
+			inputBoxStyles: this.inputBoxStyles(),
+		}));
+		this._register(this.listFilter.onDidChange(value => {
+			this.listWords = searchWords(value);
 			this.refresh();
 		}));
 
@@ -201,6 +217,10 @@ export class SettingsInspectorPage extends Disposable {
 			// The editor re-renders for many reasons; the panes already show this.
 			return;
 		}
+		if (this.category !== category && this.listWords.length) {
+			this.listWords = [];
+			this.listFilter.value = '';
+		}
 		this.category = category;
 		this.pages = pages;
 		this.activePage = activePage;
@@ -229,6 +249,10 @@ export class SettingsInspectorPage extends Disposable {
 		return groups;
 	}
 
+	private listed(label: string): boolean {
+		return this.listWords.every(word => label.toLowerCase().includes(word));
+	}
+
 	private keep(entry: ISettingsCatalogSetting): boolean {
 		return settingMatches(entry, this.words) && (!this.modifiedOnly || isModified(this.configurationService.inspect(entry.setting.key)));
 	}
@@ -241,13 +265,13 @@ export class SettingsInspectorPage extends Disposable {
 		// A list of pages only (Volt) has no count and nothing to filter by modified.
 		const pagesOnly = category.count === 0 && this.pages.length > 0;
 		this.modifiedButton.hidden = pagesOnly;
-		const pages = this.modifiedOnly && !pagesOnly ? [] : this.pages.filter(page => this.words.every(word => page.label.toLowerCase().includes(word)));
+		const pages = this.modifiedOnly && !pagesOnly ? [] : this.pages.filter(page => this.words.every(word => page.label.toLowerCase().includes(word)) && this.listed(page.label));
 		const groups: ListRow[] = [];
 		let shown = 0;
 		for (const group of this.groups(category)) {
 			const count = catalogSettings(group.children).filter(entry => this.keep(entry)).length;
 			shown += count;
-			if (count) {
+			if (count && this.listed(group.label)) {
 				groups.push({ kind: 'group', id: group.id, group, count });
 			}
 		}

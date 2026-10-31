@@ -29,6 +29,10 @@
 	background: transparent !important;
 }
 
+.monaco-workbench .volt-settings-search .monaco-inputbox > .ibwrapper {
+	height: 100%;
+}
+
 .monaco-workbench .volt-settings-search .monaco-inputbox.synthetic-focus {
 	outline-offset: -1px;
 }
@@ -444,6 +448,10 @@
 	padding: 0 12px 0 16px;
 	flex: none;
 	border-bottom: 1px solid var(--volt-settings-border);
+}
+
+.volt-settings-search.volt-settings-inspect-search {
+	margin: 8px 10px;
 }
 
 .volt-settings-inspect-title {

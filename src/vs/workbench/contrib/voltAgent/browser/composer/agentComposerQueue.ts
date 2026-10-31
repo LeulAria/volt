@@ -13,13 +13,16 @@ import { AgentTooltip, bindTruncatedHoverTooltip, setAgentTooltip } from '../chr
 import { groupSummary, isLiveSubagentState, ISubagentView, renderCursorCardRow, tickSubagentClocks } from '../chrome/agentSubagents.js';
 import { ITasksCard } from '../chrome/agentTimeline.js';
 import { AgentTasksCard, closeOnOutsideClick } from './agentTasksCard.js';
-import { createEditIcon } from '../home/agentHomeIcons.js';
+import { createQueueSendIcon } from '../home/agentHomeIcons.js';
 import type { IAgentDisplayMention } from './agentMentions.js';
 
 export interface IQueuedPrompt {
 	id: string;
 	text: string;
 	preview?: string;
+	/** The model a multitask agent for this message runs with; undefined is the chat's default. */
+	modelRef?: string;
+	modelLabel?: string;
 }
 
 export interface IAgentComposerQueueOptions {
@@ -32,6 +35,8 @@ export interface IAgentComposerQueueOptions {
 	 * turns off. Without it, Start Multitasking starts the whole queue at once (`onMultitask`).
 	 */
 	onMultitaskPick?(ids: readonly string[] | undefined): void;
+	/** Configure: the picked row's model, chosen from a menu anchored on its trigger. */
+	onPickModel?(id: string, anchor: HTMLElement): void;
 	onReorder(ids: readonly string[]): void;
 	/** Load a queued prompt into the composer to change it (Cursor's "Edit queued message"). */
 	onEdit?(id: string): void;
@@ -190,6 +195,8 @@ export class AgentComposerQueue extends Disposable {
 	/** Start Multitasking is on: the rows are checkboxes; `unpicked` holds the ones unticked. */
 	private picking = false;
 	private readonly unpicked = new Set<string>();
+	/** Configure is on while multitasking: each picked row shows its model trigger. */
+	private configuring = false;
 	/** True while a row is being dragged; re-renders are deferred until the drop lands. */
 	private dragging = false;
 	private renderPending = false;
@@ -261,6 +268,7 @@ export class AgentComposerQueue extends Disposable {
 			return;
 		}
 		this.picking = false;
+		this.configuring = false;
 		this.unpicked.clear();
 		this.emitPick();
 		this.render();
@@ -299,7 +307,7 @@ export class AgentComposerQueue extends Disposable {
 		}
 		return items.every((item, index) => {
 			const current = this.items[index];
-			return current.id === item.id && current.text === item.text && current.preview === item.preview;
+			return current.id === item.id && current.text === item.text && current.preview === item.preview && current.modelRef === item.modelRef && current.modelLabel === item.modelLabel;
 		});
 	}
 
@@ -525,6 +533,20 @@ export class AgentComposerQueue extends Disposable {
 			}));
 		}
 		if (!editing) {
+			if (picking && this.options.onPickModel) {
+				const configure = append(actions, $('button.volt-agent-queue-text-btn')) as HTMLButtonElement;
+				configure.type = 'button';
+				configure.textContent = localize('voltAgent.queue.configure', "Configure");
+				configure.classList.toggle('active', this.configuring);
+				configure.setAttribute('aria-pressed', String(this.configuring));
+				setAgentTooltip(configure, localize('voltAgent.queue.configureHint', "Choose the model each picked message runs with"));
+				this.listeners.add(addDisposableListener(configure, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					this.configuring = !this.configuring;
+					this.render();
+				}));
+			}
 			const multi = append(actions, $('button.volt-agent-queue-multitask')) as HTMLButtonElement;
 			multi.type = 'button';
 			multi.textContent = localize('voltAgent.startMultitasking', "Start Multitasking");
@@ -539,6 +561,7 @@ export class AgentComposerQueue extends Disposable {
 					e.preventDefault();
 					e.stopPropagation();
 					this.picking = !this.picking;
+					this.configuring = false;
 					this.unpicked.clear();
 					this.queueCollapsed = false;
 					this.emitPick();
@@ -614,14 +637,27 @@ export class AgentComposerQueue extends Disposable {
 			const preview = (item.preview ?? item.text).trim().replace(/\s+/g, ' ');
 			text.textContent = preview;
 			this.listeners.add(bindTruncatedHoverTooltip(text, preview));
+			const pickModel = this.options.onPickModel;
+			if (picking && this.configuring && pickModel && !this.unpicked.has(item.id)) {
+				const model = append(row, $('button.volt-agent-queue-model')) as HTMLButtonElement;
+				model.type = 'button';
+				model.textContent = item.modelLabel ?? localize('voltAgent.queue.defaultModel', "Default model");
+				setAgentTooltip(model, localize('voltAgent.queue.modelHint', "The model this message's agent runs with"));
+				this.listeners.add(addDisposableListener(model, 'keydown', e => e.stopPropagation()));
+				this.listeners.add(addDisposableListener(model, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					pickModel(item.id, model);
+				}));
+			}
 			const onEdit = this.options.onEdit;
 			const onSendNow = this.options.onSendNow;
 			const onSendToNewChat = this.options.onSendToNewChat;
 			if (!isEditing && onEdit) {
-				this.appendRowAction(row, createEditIcon(), localize('voltAgent.queue.edit', "Edit queued message"), () => onEdit(item.id));
+				this.appendRowAction(row, Codicon.edit, localize('voltAgent.queue.edit', "Edit queued message"), () => onEdit(item.id));
 			}
 			if (!isEditing && !picking && onSendToNewChat) {
-				this.appendRowAction(row, Codicon.export, localize('voltAgent.queue.newChatHint', "Send in a new chat, with this conversation handed over condensed"), () => onSendToNewChat(item.id), 'new-chat', localize('voltAgent.queue.newChat', "Send in new chat"));
+				this.appendRowAction(row, createQueueSendIcon(), localize('voltAgent.queue.newChatHint', "Send in a new chat, with this conversation handed over condensed"), () => onSendToNewChat(item.id), 'new-chat', localize('voltAgent.queue.newChat', "Send in new chat"));
 			}
 			if (!isEditing && onSendNow) {
 				this.appendRowAction(row, Codicon.arrowUp, sendNow.tooltip, () => onSendNow(item.id), 'send-now', sendNow.label);

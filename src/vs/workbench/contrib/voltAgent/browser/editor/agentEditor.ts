@@ -57,6 +57,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { WORKSPACE_SNAPSHOT_COMMAND_ID } from '../../../../services/voltRuntime/common/harness/workspaceContext.js';
 import { IDialogService, IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -603,7 +604,11 @@ const CHECKPOINT_HAS_CHANGES_COMMAND = 'voltAgent.checkpoint.hasChangesSince';
  * A chat that stays open this long gets its agent started, so the first send skips the cold start.
  * Clicking through chats and projects faster than this starts (and stops) no agent process.
  */
-const PREWARM_ON_OPEN_MS = 1500;
+const PREWARM_ON_OPEN_MS = 300;
+/** A model picked in the composer gets its agent started this soon (stepping through models starts none). */
+const PREWARM_ON_MODEL_MS = 100;
+/** Typing asks the runtime for a warm agent at most this often (it may have been taken or stopped since). */
+const PREWARM_ON_TYPE_MS = 5000;
 
 export type IAgentMessage = IAgentUserMessage | IAgentAssistantMessage;
 
@@ -826,8 +831,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** Arrow Up/Down through earlier prompts. */
 	private readonly promptHistory = new AgentPromptHistoryNavigator();
 	private prewarmTimer: IDisposable | undefined;
-	/** The chat whose agent typing already started; the next keystrokes there do not ask again. */
-	private prewarmedFor: string | undefined;
+	/** When this editor last asked the runtime for a warm agent (see PREWARM_ON_TYPE_MS). */
+	private prewarmedAt = 0;
 	/** An edited prompt is waiting on the "Revert files to this message?" dialog. */
 	private committingEdit = false;
 	private readonly _onDidChangeQueue = this._register(new Emitter<void>());
@@ -923,6 +928,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private tailExchange: HTMLElement | undefined;
 	private tailFrom = -1;
 	private renderedCount = 0;
+	private forkedTurnIds: Set<string> | undefined;
 	/**
 	 * Messages before this index are not drawn yet (see HEAD_KEEP_EXCHANGES); 0 when the whole thread
 	 * is. DOM ordinals of exchanges and user turns skip the `headExchanges` and `headUsers` above it.
@@ -931,6 +937,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private headExchanges = 0;
 	private headUsers = 0;
 	private headGeneration = 0;
+	/** setInput is focusing the composer of the chat it shows: not a sign a message is coming. */
+	private focusingForSwitch = false;
 	/** How the last shown chat's thread came back, for the switch timing line. */
 	private threadRestore: 'stashed' | 'stale tail' | 'tail first' | 'full' = 'full';
 	private readonly headScrollDraw = this._register(new MutableDisposable());
@@ -1039,6 +1047,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 					this.updateModelButton();
 					this.contextUsageView?.refresh();
 				}
+				// Another model is another agent: start it now, so the send after picking it is warm.
+				this.schedulePrewarm(PREWARM_ON_MODEL_MS);
 			},
 			multi: { unavailableReason: () => this.runGroupUnavailableReason() },
 		}));
@@ -1250,6 +1260,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			...queueRowActions(() => this),
 			onMultitask: () => this.startMultitasking(),
 			onMultitaskPick: ids => this.setMultitaskPick(ids),
+			onPickModel: (id, anchor) => this.openQueuedModelMenu(id, anchor),
 			onOpenAgent: view => this.openSubagent(view.key),
 			onStopAgent: view => this.stopSubagentNow(view),
 			onResumeAgent: view => this.resumeSubagent(view.key),
@@ -1527,6 +1538,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				shownBranch = branch;
 				this.contextUsageView.refreshBranch();
 			}
+		}));
+		this._register(this.history.onDidChange(() => {
+			this.forkedTurnIds = undefined;
+			this.syncForkButtons();
 		}));
 		// The first send in Worktree mode makes the checkout just before the run starts.
 		this._register(this.runtime.onDidEmit(e => {
@@ -3082,6 +3097,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.captureEditAnchor(editing);
 		}
 		this.renderThreadNow(scrollToEnd, deferHead && !editing);
+		this.syncForkButtons();
 		if (editHadFocus && this.editingUserIndex !== undefined) {
 			this.focusEditEditor();
 		}
@@ -3481,6 +3497,32 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private forkFromTurn(turnId: string): void {
 		this.forkService.forkChat(this.sessionKey, { throughTurnId: turnId, workspace: 'worktree', open: true })
 			.catch(err => this.notificationService.error(localize('voltAgent.forkFailed', "Could not fork this chat: {0}", err instanceof Error ? err.message : String(err))));
+	}
+
+	/** The last turn of each fork cut from this chat. */
+	private forkedTurns(): Set<string> {
+		if (!this.forkedTurnIds) {
+			this.forkedTurnIds = new Set();
+			for (const session of this.history.list()) {
+				const origin = session.forkOf;
+				if (origin?.id === this.sessionKey && origin.lastTurn) {
+					this.forkedTurnIds.add(origin.lastTurn);
+				}
+			}
+		}
+		return this.forkedTurnIds;
+	}
+
+	/** Once a fork is cut at the chat's last turn, its fork button hides until a new message follows it. */
+	private forkHidden(turnId: string): boolean {
+		return this.messages.at(-1)?.id === turnId && this.forkedTurns().has(turnId);
+	}
+
+	private syncForkButtons(): void {
+		for (const button of this.threadInner.querySelectorAll<HTMLElement>('[data-fork-turn]')) {
+			const turnId = button.dataset.forkTurn;
+			button.classList.toggle('hidden', turnId !== undefined && this.forkHidden(turnId));
+		}
 	}
 
 	/** On a forked chat's first turn: where it came from, and a way to merge its changes back. */
@@ -5631,6 +5673,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (message.id) {
 			const turnId = message.id;
 			const forkButton = append(footer, $('button.volt-agent-footer-btn')) as HTMLButtonElement;
+			forkButton.dataset.forkTurn = turnId;
+			forkButton.classList.toggle('hidden', this.forkHidden(turnId));
 			forkButton.setAttribute('aria-label', forkLabel);
 			setAgentTooltip(forkButton, forkLabel);
 			forkButton.appendChild(createForkIcon());
@@ -5920,6 +5964,45 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.updateSendButton();
 	}
 
+	/** Configure: the model a picked queued message's agent runs with; the default follows this chat's model. */
+	private openQueuedModelMenu(itemId: string, anchor: HTMLElement): void {
+		const current = this.queuedItems.find(item => item.id === itemId)?.prompt.modelRef;
+		showVoltMenu<string | undefined>(this.contextViewService, {
+			anchor,
+			position: 'above',
+			align: 'left',
+			width: 260,
+			ariaLabel: localize('voltAgent.queue.modelMenu', "Model for this queued message"),
+			sections: [{
+				id: 'models',
+				items: [
+					{ id: 'default', label: localize('voltAgent.queue.defaultModel', "Default model"), checked: !current, data: undefined },
+					...this.catalog.map(model => ({ id: model.ref, label: this.queuedModelLabel(model.ref) ?? model.ref, checked: model.ref === current, data: model.ref })),
+				],
+			}],
+			onPick: picked => this.setQueuedModel(itemId, picked.data),
+		});
+	}
+
+	private setQueuedModel(itemId: string, ref: string | undefined): void {
+		const item = this.queuedItems.find(queued => queued.id === itemId);
+		if (!item || item.prompt.modelRef === ref) {
+			return;
+		}
+		const threadId = this.sessionKey;
+		this.submitChain = this.submitChain.then(async () => {
+			await this.orchestrator.dispatch({ type: 'queue.update', threadId, itemId, prompt: { ...item.prompt, modelRef: ref } });
+		}).catch(err => this.logService.warn('[volt agent] changing the queued prompt model failed', err));
+	}
+
+	private queuedModelLabel(ref: string | undefined): string | undefined {
+		if (!ref) {
+			return undefined;
+		}
+		const model = this.catalog.find(candidate => candidate.ref === ref);
+		return model ? [this.modelPicker.modelProviderLabel(model), splitModelDisplayName(model.name).name].filter(Boolean).join(' ') : ref;
+	}
+
 	getPromptQueue(): readonly { id: string; text: string; display?: IAgentPromptDisplay }[] {
 		return this.queuedItems.map(item => ({ id: item.id, text: item.prompt.text, display: { text: queuedPreview(item) } }));
 	}
@@ -6113,14 +6196,19 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.updateSendButton();
 		}));
 
-		this.editorDisposables.add(this.inputEditor.onDidFocusEditorText(() => this.inputBox.classList.add('focused')));
+		this.editorDisposables.add(this.inputEditor.onDidFocusEditorText(() => {
+			this.inputBox.classList.add('focused');
+			// Focus means a message is coming: start a CLI agent now so the first send skips its cold start.
+			// A switch focuses the composer too; then the open timer decides (see schedulePrewarm).
+			if (!this.focusingForSwitch) {
+				this.prewarmAgent();
+			}
+		}));
 		this.editorDisposables.add(this.inputEditor.onDidBlurEditorText(() => this.inputBox.classList.remove('focused')));
 		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(() => {
-			// Typing means a message is coming: start a CLI agent now so the first send skips its cold
-			// start. Not on focus: the composer is focused at launch, and an agent is a process tree of
-			// a few hundred MB that a window nobody writes in should not hold.
-			if (this.prewarmedFor !== this.sessionKey && this.inputEditor?.getModel()?.getValueLength()) {
-				this.prewarmedFor = this.sessionKey;
+			// Typing is the surest sign a message is coming: make sure an agent is (still) warm. Cheap
+			// when one is: the runtime returns at once for a live or pooled agent.
+			if (Date.now() - this.prewarmedAt > PREWARM_ON_TYPE_MS && !this.isStreaming() && this.inputEditor?.getModel()?.getValueLength()) {
 				this.prewarmAgent();
 			}
 			this.layoutInputEditor();
@@ -7924,6 +8012,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			id: item.id,
 			text: item.prompt.text,
 			preview: queuedPreview(item),
+			modelRef: item.prompt.modelRef,
+			modelLabel: this.queuedModelLabel(item.prompt.modelRef),
 		})));
 		this.renderSubagentBar();
 		const dock = dockModel(this.orchestrator.getState(), this.sessionKey);
@@ -8363,7 +8453,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.updateSendButton();
 		this.layoutInputEditor();
 		if (!options?.preserveFocus) {
-			this.inputEditor?.focus();
+			this.focusingForSwitch = true;
+			try {
+				this.inputEditor?.focus();
+			} finally {
+				this.focusingForSwitch = false;
+			}
 		}
 		this.schedulePrewarm();
 		this.revealRequestedTurn(input.sessionId);
@@ -8413,23 +8508,24 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	}
 
 	/**
-	 * Opening a chat with a draft in its composer starts its CLI agent shortly after, so the send
-	 * skips the cold start (spawn, initialize, session/new). An empty composer waits for the first
-	 * keystroke instead. No-op for native models; the runtime caps idle agents.
+	 * Opening a chat starts its CLI agent shortly after, not only when the composer is focused, so a
+	 * send from a driver or a quick click skips the cold start (spawn, initialize, session/new).
+	 * No-op for native models; the runtime caps idle agents.
 	 */
-	private schedulePrewarm(): void {
+	private schedulePrewarm(delay = PREWARM_ON_OPEN_MS): void {
 		this.prewarmTimer?.dispose();
-		this.prewarmedFor = undefined;
 		this.prewarmTimer = disposableTimeout(() => {
 			this.prewarmTimer = undefined;
-			if (this.isVisible() && !this.isStreaming() && this.composerCanSend() && this.inputEditor?.getModel()?.getValueLength()) {
-				this.prewarmedFor = this.sessionKey;
+			if (this.isVisible() && !this.isStreaming() && this.composerCanSend()) {
 				this.prewarmAgent();
 			}
-		}, PREWARM_ON_OPEN_MS);
+		}, delay);
 	}
 
 	private prewarmAgent(): void {
+		this.prewarmedAt = Date.now();
+		// The turn's workspace summary (its git status) is read now too, so the send finds it ready.
+		void this.commandService.executeCommand(WORKSPACE_SNAPSHOT_COMMAND_ID, this.sessionKey).catch(() => undefined);
 		this.runtime.prewarmAgent(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode);
 	}
 

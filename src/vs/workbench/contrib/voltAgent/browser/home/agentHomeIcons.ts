@@ -116,11 +116,11 @@ export function createSessionHoverBranchIcon(): HTMLElement {
 	return createHomeStrokeIcon('session-branch', AGENT_SESSION_HOVER_BRANCH_ICON_PATHS, '1.5');
 }
 
-/** Pencil for Edit queued message; stroke follows currentColor. */
-export const AGENT_EDIT_ICON_PATH = 'M18 10L21 7L17 3L14 6M18 10L8 20H4V16L14 6M18 10L14 6';
+/** Navigation arrow for Send in new chat; stroke follows currentColor. */
+export const AGENT_QUEUE_SEND_ICON_PATH = 'M3 11L22 2L13 21L11 13L3 11Z';
 
-export function createEditIcon(): HTMLElement {
-	return createHomeSvgIcon('edit', AGENT_EDIT_ICON_PATH, { strokeWidth: '1' });
+export function createQueueSendIcon(): HTMLElement {
+	return createHomeSvgIcon('queue-send', AGENT_QUEUE_SEND_ICON_PATH, { strokeWidth: '1.5' });
 }
 
 export function createHomeFilterIcon(): HTMLElement {
@@ -218,9 +218,9 @@ export function createHomeOpenWorkspaceIcon(): HTMLElement {
 	return createHomeStrokeIcon('open-workspace', AGENT_HOME_OPEN_WORKSPACE_ICON_PATHS, '1');
 }
 
-/** Lucide settings gear for the sidebar footer: rounded petals around a ring. */
+/** Settings gear for the sidebar footer: a toothed outline around a ring. */
 export const AGENT_HOME_SETTINGS_ICON_PATHS = [
-	'M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915',
+	'M14 21h-4l-.551-2.48a6.991 6.991 0 0 1-1.819-1.05l-2.424.763-2-3.464 1.872-1.718a7.055 7.055 0 0 1 0-2.1L3.206 9.232l2-3.464 2.424.763A6.992 6.992 0 0 1 9.45 5.48L10 3h4l.551 2.48a6.992 6.992 0 0 1 1.819 1.05l2.424-.763 2 3.464-1.872 1.718a7.05 7.05 0 0 1 0 2.1l1.872 1.718-2 3.464-2.424-.763a6.99 6.99 0 0 1-1.819 1.052L14 21z',
 	'M15 12a3 3 0 1 1-6 0a3 3 0 0 1 6 0',
 ] as const;
 
@@ -232,7 +232,17 @@ export function createHomeAutomationsIcon(): HTMLElement {
 }
 
 export function createHomeSettingsIcon(): HTMLElement {
-	return createHomeStrokeIcon('settings', AGENT_HOME_SETTINGS_ICON_PATHS, '1.5');
+	return createHomeStrokeIcon('settings', AGENT_HOME_SETTINGS_ICON_PATHS, '1');
+}
+
+/** Lucide blocks for Customize: the extensions mark as an outline, so it strokes like the footer's other icons. */
+export const AGENT_HOME_CUSTOMIZE_ICON_PATHS = [
+	'M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2',
+	'M15 2h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z',
+] as const;
+
+export function createHomeCustomizeIcon(): HTMLElement {
+	return createHomeStrokeIcon('customize', AGENT_HOME_CUSTOMIZE_ICON_PATHS, '1.5');
 }
 
 /** Laptop outline for On This Mac. */

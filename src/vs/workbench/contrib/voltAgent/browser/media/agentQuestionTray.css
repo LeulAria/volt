@@ -22,7 +22,8 @@
 	--vq-on-accent: #181818;
 	box-sizing: border-box;
 	width: 100%;
-	max-width: 760px;
+	/* The chat column's width (.volt-agent-input-box), never wider than the prompt below it. */
+	max-width: 728px;
 	margin: 0 auto 8px;
 	display: flex;
 	flex-direction: column;

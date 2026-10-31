@@ -1183,6 +1183,27 @@ button.volt-agent-work-agent:hover .volt-agent-work-agent-title { color: var(--v
 .volt-agent-queue-item.pickable:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 .volt-agent-queue-head .volt-agent-queue-multitask.active,
 .volt-agent-queue-head .volt-agent-queue-multitask.active:hover { color: #4c8dff; }
+.volt-agent-queue-head .volt-agent-queue-text-btn.active { color: #4c8dff; }
+
+.volt-agent-queue-model {
+	flex-shrink: 0;
+	max-width: 45%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	border: 0;
+	background: transparent;
+	color: color-mix(in srgb, var(--vscode-foreground) 60%, transparent);
+	font: inherit;
+	font-size: 12px;
+	padding: 1px 6px;
+	border-radius: 4px;
+	cursor: pointer;
+}
+.volt-agent-queue-model:hover {
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
 
 .volt-agent-notification-list { gap: 2px; margin: 2px 0 0; }
 
