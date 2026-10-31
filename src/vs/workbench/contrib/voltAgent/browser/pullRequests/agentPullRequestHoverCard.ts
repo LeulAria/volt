@@ -15,6 +15,7 @@ import { blockedReason, IAgentPrLink, isOpenState, isReadyToMerge, visibleLinks 
 import { OPEN_PULL_REQUEST_COMMAND_ID } from './agentPullRequestCommands.js';
 import { orderPullRequestLinks, renderPullRequestList } from './agentPullRequestList.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { voltButtonClasses } from '../chrome/voltButton.js';
 import { CHANGES_ICON_PATH, createSurfaceStrokeIcon } from '../workspace/agentSurfaceMenu.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
 import { checkIcon, checksLabel, iconSpan, mergePullRequest, prStateIcon, prStateLabel } from './agentPullRequestUi.js';
@@ -213,8 +214,8 @@ export class AgentPullRequestHoverCard extends Disposable {
 			const actions = append(card, $('.volt-pr-hover-actions'));
 			const merge = append(actions, $('button.volt-pr-hover-merge')) as HTMLButtonElement;
 			merge.type = 'button';
-			merge.appendChild(renderIcon(Codicon.gitMerge));
-			append(merge, $('span')).textContent = localize('voltPr.hoverMerge', "Merge");
+			merge.classList.add(...voltButtonClasses('ghost'), 'volt-button-small');
+			merge.textContent = localize('voltPr.hoverMerge', "Merge");
 			setAgentTooltip(merge, localize('voltPr.hoverMergeTip', "Merge into {0}. Hold Shift to skip the confirmation.", pr.baseRefName));
 			this.content.add(addDisposableListener(merge, 'click', e => {
 				e.preventDefault();

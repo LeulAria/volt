@@ -245,6 +245,16 @@ export function createHomeCustomizeIcon(): HTMLElement {
 	return createHomeStrokeIcon('customize', AGENT_HOME_CUSTOMIZE_ICON_PATHS, '1.5');
 }
 
+/** Lucide rotate-cw for the footer's Check for Updates, stroked like the icons beside it. */
+export const AGENT_HOME_REFRESH_ICON_PATHS = [
+	'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8',
+	'M21 3v5h-5',
+] as const;
+
+export function createHomeRefreshIcon(): HTMLElement {
+	return createHomeStrokeIcon('refresh', AGENT_HOME_REFRESH_ICON_PATHS, '1.5');
+}
+
 /** Laptop outline for On This Mac. */
 export const AGENT_HOME_LAPTOP_ICON_PATHS = [
 	'M5 5h14a1 1 0 0 1 1 1v10H4V6a1 1 0 0 1 1 -1',
