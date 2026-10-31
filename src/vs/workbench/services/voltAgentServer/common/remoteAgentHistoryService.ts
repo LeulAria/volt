@@ -9,7 +9,7 @@ import { joinPath } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
-import { AgentSessionAttention, IAgentForkOrigin, IAgentHistoryListOptions, IAgentHistoryService, IAgentSessionAppendAssistant, IAgentSessionDraft, IAgentSessionHandle, IAgentSessionLifecycle, IAgentSessionMeta, IAgentSessionTranscript, IAgentSessionTruncation, IAgentSessionWorkspace } from '../../voltRuntime/common/history/agentHistory.js';
+import { AgentSessionAttention, AgentSessionStatus, IAgentForkOrigin, IAgentHistoryListOptions, IAgentHistoryService, IAgentSessionAppendAssistant, IAgentSessionDraft, IAgentSessionHandle, IAgentSessionLifecycle, IAgentSessionMeta, IAgentSessionTranscript, IAgentSessionTruncation, IAgentSessionWorkspace } from '../../voltRuntime/common/history/agentHistory.js';
 import { describeWorkspace, matchesHistoryListOptions, parseAttachmentRef, searchSessions, sortSessions } from '../../voltRuntime/common/history/agentHistoryLog.js';
 import { IVoltWindowScopeService } from '../../voltWindowScope/common/voltWindowScope.js';
 import { IAgentServerClientService } from './agentServerClient.js';
@@ -139,6 +139,7 @@ export class RemoteAgentHistoryService extends Disposable implements IAgentHisto
 	clearWoke(id: string): Promise<void> { return this.client.call('history.clearWoke', id); }
 	markAllRead(): Promise<void> { return this.client.call('history.markAllRead'); }
 	setAttention(id: string, attention: AgentSessionAttention | undefined): Promise<void> { return this.client.call('history.setAttention', id, attention); }
+	settleRunning(id: string, status: Exclude<AgentSessionStatus, 'running' | 'idle'>): Promise<void> { return this.client.call('history.settleRunning', id, status); }
 	rename(id: string, title: string | undefined): Promise<void> { return this.client.call('history.rename', id, title); }
 	setAgentTitle(id: string, title: string): Promise<void> { return this.client.call('history.setAgentTitle', id, title); }
 

@@ -403,7 +403,9 @@ export class AgentEditorInput extends EditorInput {
 		this.lastPartialAt = Date.now();
 		const summary = assistantSummary(message, plainText);
 		const handle = this.history;
-		const frozen = this.codec.freezeAssistant(message);
+		// A snapshot that cannot be frozen (an attachment that failed to store) still records the reply:
+		// dropped, the chat's record would read "running" after its turn ended.
+		const frozen = this.codec.freezeAssistant(message).catch(() => undefined);
 		this.sequence(async () => handle.appendAssistant({ turn, final, status, text: plainText, summary, message: await frozen }));
 	}
 
