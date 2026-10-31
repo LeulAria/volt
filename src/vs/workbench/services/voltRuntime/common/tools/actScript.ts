@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { parseShapes } from './desktopDraw.js';
 import { IActStep, IPageExpectation, IPageLocator, MAX_ACT_STEPS, PageElementState, REF_RE, WINDOW_OPS } from './pageModel.js';
 
 /**
@@ -24,6 +25,8 @@ import { IActStep, IPageExpectation, IPageLocator, MAX_ACT_STEPS, PageElementSta
  *   ? click "Accept cookies"        (optional: keep going if it is not there)
  *   run login email=ada@example.com (a saved flow)
  *   window "Inbox" minimize         (desktop: raise, minimize, restore, close, zoom, fullscreen)
+ *   draw in "Canvas" circle 50,40 20 | line 50,60 50,90   (desktop: 0-100 across the target)
+ *   drag "Report.pdf" to "Archive"  (desktop; or drag in "Canvas" 10,10 90,90)
  */
 
 const ROLES = new Set(['button', 'link', 'textbox', 'searchbox', 'checkbox', 'radio', 'switch', 'combobox', 'listbox', 'option', 'slider', 'spinbutton', 'tab', 'menuitem', 'treeitem', 'listitem', 'row', 'cell', 'heading', 'img', 'dialog', 'alertdialog', 'list', 'table', 'navigation', 'form', 'region', 'menu', 'tablist', 'text', 'group', 'alert', 'status', 'banner', 'main', 'article']);
@@ -272,6 +275,7 @@ const VERBS: Readonly<Record<string, string>> = {
 	wait: 'wait', expect: 'expect', assert: 'expect', verify: 'expect',
 	back: 'back', reload: 'reload', refresh: 'reload', run: 'flow', flow: 'flow', menu: 'menu',
 	window: 'window', win: 'window',
+	draw: 'draw', sketch: 'draw', drag: 'drag',
 };
 
 function parseLine(line: string): IActStep {
@@ -289,7 +293,7 @@ function parseLine(line: string): IActStep {
 	const verbWord = c.word().toLowerCase();
 	const verb = VERBS[verbWord];
 	if (!verb) {
-		throw new ScriptError(`unknown step ${JSON.stringify(verbWord)}: use goto, click, type, submit, press, select, check, uncheck, hover, scroll, wait, expect, back, reload, run, menu or window`);
+		throw new ScriptError(`unknown step ${JSON.stringify(verbWord)}: use goto, click, type, submit, press, select, check, uncheck, hover, scroll, wait, expect, back, reload, run, menu, window, draw or drag`);
 	}
 	const extra: { -readonly [K in keyof IActStep]?: IActStep[K] } = optional ? { optional } : {};
 	if (arrow !== undefined) {
@@ -414,6 +418,29 @@ function parseLine(line: string): IActStep {
 				throw new ScriptError(`window ${JSON.stringify(title ?? '')}: then one of ${WINDOW_OPS.join(', ')}`);
 			}
 			return { action: 'window', key: op, ...(title ? { values: [title] } : {}), ...extra };
+		}
+		case 'draw':
+		case 'drag': {
+			// draw [in <target>] <shapes> · drag [in <target>] x,y x,y … · drag <target> to <target>
+			let t: IPageLocator | undefined;
+			if (c.peek().toLowerCase() === 'in') {
+				c.word();
+				t = target(c, 'text');
+			} else if (verb === 'drag' && !/^-?[\d.]+,-?[\d.]+$/.test(c.peek())) {
+				const from = target(c, 'text');
+				if (c.peek().toLowerCase() !== 'to') {
+					throw new ScriptError('drag <target> to <target>, or drag in <target> x,y x,y …');
+				}
+				c.word();
+				return { action: 'drag', target: from, to: target(c, 'text'), ...extra };
+			}
+			const rest = c.rest();
+			try {
+				const shapes = verb === 'drag' ? `polyline ${rest}` : rest;
+				return { action: verb, ...(t ? { target: t } : {}), strokes: parseShapes(shapes), values: [shapes], ...extra };
+			} catch (err) {
+				throw new ScriptError(err instanceof Error ? err.message : String(err));
+			}
 		}
 		case 'flow': {
 			const name = c.word();
@@ -601,6 +628,19 @@ export function formatActScript(steps: readonly IActStep[]): string {
 			case 'flow': return `${head}run ${step.flow}${Object.entries(step.vars ?? {}).map(([key, value]) => ` ${key}=${value}`).join('')}`;
 			case 'menu': return `${head}menu ${step.values!.join(' > ')}${arrow}`;
 			case 'window': return `${head}window${step.values?.[0] ? ` ${q(step.values[0])}` : ''}${step.key && step.key !== 'raise' ? ` ${step.key}` : ''}${arrow}`;
+			case 'draw':
+			case 'drag': {
+				if (step.to) {
+					return `${head}drag ${formatTarget(step.target!)} to ${formatTarget(step.to)}${arrow}`;
+				}
+				// The shapes as written (a circle stays a circle on any target); without them, the strokes as polylines.
+				const points = (stroke: readonly (readonly [number, number])[]) => stroke.map(([x, y]) => `${Math.round(x * 10) / 10},${Math.round(y * 10) / 10}`).join(' ');
+				const where = step.target ? ` in ${formatTarget(step.target)}` : '';
+				const shapes = step.values?.[0] ?? (step.strokes ?? []).map(stroke => stroke.length === 1 ? `dot ${points(stroke)}` : `polyline ${points(stroke)}`).join(' | ');
+				return step.action === 'drag'
+					? `${head}drag${where} ${shapes.replace(/^polyline\s+/, '')}${arrow}`
+					: `${head}draw${where} ${shapes}${arrow}`;
+			}
 		}
 	}).join('\n');
 }

@@ -7,7 +7,8 @@ import { timeout } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import type { VoltDesktopWindowOp } from '../../../../../platform/voltDesktop/common/voltDesktop.js';
 import type { VoltDeviceButton } from '../../../../../platform/voltDevices/common/voltDevices.js';
-import { checkOnDevice, deviceView, IDeviceElement, IDeviceScreen, locateOnDevice } from '../../../../services/voltRuntime/common/tools/deviceUi.js';
+import { parseShapes, placeStrokes } from '../../../../services/voltRuntime/common/tools/desktopDraw.js';
+import { checkOnDevice, DeviceBox, deviceView, IDeviceElement, IDeviceScreen, locateOnDevice } from '../../../../services/voltRuntime/common/tools/deviceUi.js';
 import { describeExpectation, describeLocator, diffPage, IActStep, IPageExpectation, IPageLocator, isActingStep } from '../../../../services/voltRuntime/common/tools/pageModel.js';
 import type { ActFailure, IActRunResult, IActStepResult } from '../preview/browserAct.js';
 
@@ -43,6 +44,15 @@ export interface IDeviceDriver {
 	menu?(path: readonly string[]): Promise<void>;
 	/** Desktop: raises, minimizes, restores, closes, zooms or fullscreens a window by (part of) its title. Resolves the window's title. */
 	window?(title: string | undefined, op: VoltDesktopWindowOp): Promise<string | undefined>;
+	/**
+	 * Desktop: waits on the app's own change events until it goes quiet after the last input.
+	 * Undefined when the app sends none; the runner then polls the tree.
+	 */
+	settle?(): Promise<{ readonly changed: boolean } | undefined>;
+	/** Desktop: drags through each stroke's points with the button held (drawing, sliders, selections). */
+	drag?(strokes: readonly (readonly (readonly [number, number])[])[], options?: { readonly modifiers?: string; readonly button?: 'left' | 'right' }): Promise<void>;
+	/** Desktop: moves the pointer over a point (hover). */
+	hover?(x: number, y: number): Promise<void>;
 }
 
 /** After input, the screen needs a moment before its tree says what the input did. */
@@ -148,6 +158,9 @@ export class DeviceActRunner {
 
 	constructor(private readonly driver: IDeviceDriver, private readonly token: CancellationToken) { }
 
+	/** The box the last draw or drag step worked in, for a screenshot of the result. */
+	lastDrawn: DeviceBox | undefined;
+
 	/** The last screen read: the agent sees it at the end of the run. */
 	get last(): IDeviceScreen | undefined {
 		return this.screen;
@@ -175,6 +188,11 @@ export class DeviceActRunner {
 	 */
 	private async afterInput(): Promise<IDeviceScreen> {
 		const before = this.screen ? signature(this.screen) : undefined;
+		// The app says when it has stopped changing: one read after that, not a read every 90ms.
+		const settled = this.driver.settle ? await this.driver.settle().catch(() => undefined) : undefined;
+		if (settled) {
+			return this.read();
+		}
 		if (this.readMs > FAST_READ_MS) {
 			await timeout(SETTLE_MS);
 			return this.read();
@@ -273,13 +291,15 @@ export class DeviceActRunner {
 		const locateMs = step.timeoutMs ?? LOCATE_TIMEOUT_MS;
 		switch (step.action) {
 			case 'navigate': {
-				const before = await this.current();
+				// The app may not be running yet: then there is nothing to read before it opens.
+				const before = await this.current().catch(() => undefined);
 				await this.driver.launch(step.url!);
 				// The desktop helper returns once the app has a window: settle on the tree, not a fixed pause.
-				if (this.readMs > FAST_READ_MS) {
+				if (before && this.readMs > FAST_READ_MS) {
 					await timeout(LAUNCH_SETTLE_MS);
 				}
-				return `launched ${step.url} · ${describeScreenChange(before, this.readMs > FAST_READ_MS ? await this.read() : await this.afterInput())}`;
+				const after = before && this.readMs <= FAST_READ_MS ? await this.afterInput() : await this.read();
+				return `launched ${step.url} · ${before ? describeScreenChange(before, after) : `now in ${after.app || step.url}`}`;
 			}
 			case 'back':
 			case 'reload': {
@@ -294,8 +314,16 @@ export class DeviceActRunner {
 				const element = await this.find(step.target!, locateMs);
 				return `${label(element)} · ${await this.tapOn(element)}`;
 			}
-			case 'hover':
-				throw new StepError('NOT_FOUND', 'touch screens have no hover; tap instead');
+			case 'hover': {
+				if (!this.driver.hover) {
+					throw new StepError('NOT_FOUND', 'touch screens have no hover; tap instead');
+				}
+				const element = await this.find(step.target!, locateMs);
+				const before = await this.current();
+				const at = center(element);
+				await this.driver.hover(at.x, at.y);
+				return `${label(element)} · ${describeScreenChange(before, await this.afterInput())}`;
+			}
 			case 'check':
 			case 'uncheck': {
 				const want = step.action === 'check';
@@ -487,6 +515,29 @@ export class DeviceActRunner {
 					throw new StepError('NOT_FOUND', err instanceof Error ? err.message : String(err));
 				}
 				return `${step.values!.join(' > ')} · ${describeScreenChange(before, await this.afterInput())}`;
+			}
+			case 'draw':
+			case 'drag': {
+				if (!this.driver.drag) {
+					throw new StepError('NOT_FOUND', `${step.action} is for desktop apps`);
+				}
+				const before = await this.current();
+				if (step.to) {
+					const from = await this.find(step.target!, locateMs);
+					const to = await this.find(step.to, locateMs);
+					const [a, b] = [center(from), center(to)];
+					// A short first move starts the app's drag; the pause over the target lets it accept the drop.
+					await this.driver.drag([[[a.x, a.y], [a.x + 6, a.y + 6], [b.x, b.y], [b.x, b.y]]], { modifiers: step.modifiers });
+					return `${label(from)} → ${label(to)} · ${describeScreenChange(before, await this.afterInput())}`;
+				}
+				const area = step.target ? await this.find(step.target, locateMs) : undefined;
+				const box = area?.box ?? before.frame ?? [0, 0, before.width, before.height];
+				// The script was checked with a square target; shapes are laid out again for this one, so circles stay round.
+				const strokes = placeStrokes(step.values?.[0] && box[3] > 0 ? parseShapes(step.values[0], box[2] / box[3]) : step.strokes ?? [], box);
+				await this.driver.drag(strokes, { modifiers: step.modifiers, button: step.button === 'right' ? 'right' : undefined });
+				this.lastDrawn = box;
+				const points = strokes.reduce((sum, stroke) => sum + stroke.length, 0);
+				return `${step.action === 'draw' ? 'drew' : 'dragged through'} ${strokes.length} stroke${strokes.length === 1 ? '' : 's'} (${points} points) ${area ? `in ${label(area)}` : 'over the window'} · ${describeScreenChange(before, await this.afterInput())}`;
 			}
 			case 'window': {
 				if (!this.driver.window) {
