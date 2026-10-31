@@ -4384,7 +4384,8 @@ pre.volt-agent-searchable {
 	border: 0;
 	border-radius: 4px;
 	background: transparent;
-	color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
+	/* Full strength at rest, not dimmed: the row's actions read as clearly as its text. */
+	color: var(--vscode-foreground);
 	cursor: pointer;
 	display: inline-flex;
 	align-items: center;
@@ -4393,7 +4394,6 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-queue-remove:hover {
-	color: var(--vscode-foreground);
 	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 }
 

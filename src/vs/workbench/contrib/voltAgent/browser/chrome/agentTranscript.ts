@@ -17,7 +17,7 @@ import { classifySupervisionNotice, fileChangeSource, partitionAssistantText } f
 import { CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, RENDER_CHART_TOOL_NAME, SILENT_VISUAL_TOOL_NAMES, VISUAL_TOOL_NAMES } from '../../../../services/voltRuntime/common/hostTools.js';
 import { peekCanvasInput } from '../visuals/canvas/canvasModel.js';
 import { chartLoaderShape } from '../visuals/agentDotLoader.js';
-import { friendlyToolTitle } from '../blocks/agentHostToolActivity.js';
+import { friendlyToolTitle, hostToolStepKind } from '../blocks/agentHostToolActivity.js';
 import type { IAgentDisplayMention } from '../composer/agentMentions.js';
 
 /**
@@ -452,7 +452,8 @@ function activityStep(id: string, item: IAgentActivityItem): ITranscriptStep {
 		return { id, kind: 'visual', action: item.label, detail: item.detail, item };
 	}
 	if (item.browserTool) {
-		return { id, kind: 'browser', action: item.label, detail: item.detail, item };
+		// Commit review, pull request, thread and memory tools are Volt tools too, but no browser actions.
+		return { id, kind: hostToolStepKind(item.browserTool) ?? 'browser', action: item.label, detail: item.detail, item };
 	}
 	if (item.kind === 'browser') {
 		// Web search and fetch are lookups, counted with searches as Cursor does; only the in-app browser counts as browser actions.

@@ -493,6 +493,8 @@ export interface IVoltGitCommitRequest {
 	readonly contents?: readonly { readonly path: string; readonly content: string }[];
 	/** Create and check out this branch first; the changes come along. */
 	readonly newBranch?: string;
+	/** Commit with `--no-verify`: the user chose to skip a commit hook that failed. */
+	readonly skipHooks?: boolean;
 }
 
 export interface IVoltGitCommitResult {
@@ -514,6 +516,8 @@ export type VoltPrErrorCode =
 	| 'stale'
 	| 'network'
 	| 'rateLimited'
+	/** A commit hook (pre-commit, commit-msg) stopped the commit; committing with `skipHooks` gets past it. */
+	| 'hookFailed'
 	| 'failed';
 
 /**

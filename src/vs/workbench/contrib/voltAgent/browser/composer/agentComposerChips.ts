@@ -871,6 +871,16 @@ export class AgentComposerChips extends Disposable {
 		return [...(limit ? [limit] : []), ...(agentRun ? [agentRun] : []), this.statusChip, this.agentsChip, ...(runs ? [runs] : []), this.commentsChip, ...multitask, this.compactChip, this.changesChip, this.terminalsChip, ...(commitReview ? [commitReview] : []), this.gitControl.element, this.prChip];
 	}
 
+	/**
+	 * Which chips fold first when the row is short: from the end of the row, except the chat's pull
+	 * request, a limit and a run or review waiting on the user, which stay while anything else can go.
+	 */
+	private foldOrder(shown: readonly HTMLElement[]): HTMLElement[] {
+		const keep = new Set<HTMLElement | undefined>([this.prChip, this.options.limitRun?.element, this.options.agentRun?.element, this.options.commitReview?.element]);
+		const fromEnd = [...shown].reverse();
+		return [...fromEnd.filter(chip => !keep.has(chip)), ...fromEnd.filter(chip => keep.has(chip))];
+	}
+
 	private scheduleLayout(): void {
 		if (this.layoutHandle !== undefined) {
 			return;
@@ -904,13 +914,20 @@ export class AgentComposerChips extends Disposable {
 			if (total > available) {
 				// Measured while hidden it would be 0: the chip's round 30px.
 				const room = available - arrow - 30;
-				let used = 0;
-				kept = 0;
-				while (kept < widths.length && used + widths[kept] <= room) {
-					used += widths[kept++];
+				let used = total - arrow + gap;
+				const folded = new Set<HTMLElement>();
+				for (const chip of this.foldOrder(shown)) {
+					if (used <= room) {
+						break;
+					}
+					folded.add(chip);
+					used -= widths[shown.indexOf(chip)];
 				}
+				kept = shown.length - folded.size;
+				shown.sort((a, b) => Number(folded.has(a)) - Number(folded.has(b)));
 			}
 		}
+		// The kept chips first (in row order), then the folded ones (in row order too).
 		const overflowed = new Set(shown.slice(kept));
 		for (let index = 0; index < chips.length; index++) {
 			const chip = chips[index];

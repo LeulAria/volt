@@ -341,6 +341,11 @@ export interface IAgentHistoryService {
 	markAllRead(): Promise<void>;
 	/** Recorded by the session controller from harness events (`access.ask`, `clarify`). */
 	setAttention(id: string, attention: AgentSessionAttention | undefined): Promise<void>;
+	/**
+	 * The run is over but the record still says `running` (its final reply was never saved): the
+	 * record takes the run's outcome, so the chat stops reading "Working" in the sidebar.
+	 */
+	settleRunning(id: string, status: Exclude<AgentSessionStatus, 'running' | 'idle'>): Promise<void>;
 	rename(id: string, title: string | undefined): Promise<void>;
 	/** The agent named the chat. Shown unless the user renamed it. */
 	setAgentTitle(id: string, title: string): Promise<void>;

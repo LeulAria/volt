@@ -37,13 +37,14 @@
 	outline-offset: -1px;
 }
 
+/* The glass and the placeholder sit in the nav rows' icon and label columns (22px and 48px). */
 .volt-settings-search-icon {
-	left: 14px;
+	left: 22px;
 }
 
 .monaco-workbench .volt-settings-search .monaco-inputbox > .ibwrapper > .input,
 .monaco-workbench .volt-settings-search .monaco-inputbox input {
-	padding-left: 41px !important;
+	padding-left: 47px !important;
 }
 
 /* Nav (settingsNav.ts). */
@@ -151,14 +152,15 @@
 	font-variant-numeric: tabular-nums;
 }
 
-/* Back runs edge to edge like the rows under it. */
+/* Back runs edge to edge like the rows under it, its arrow and label in their icon and label columns. */
 .volt-settings-sidebar-head {
 	margin: 0;
 }
 
 .volt-settings-back {
+	gap: 10px;
 	border-radius: 0;
-	padding: 0 14px;
+	padding: 0 14px 0 22px;
 }
 
 /* The body under the top bar: a list pane on some pages, then the page. */
