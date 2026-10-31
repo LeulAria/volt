@@ -1,10 +1,10 @@
 {
 	"channel": "nightly",
-	"version": "0.0.4-nightly.202610302110",
-	"commit": "27b5126bde18f1c420393d2483d9cd927cfcf03f",
+	"version": "0.0.5-nightly.202610311222",
+	"commit": "58a45b6ad7d40d8d458487088e515b4c041ba332",
 	"tag": "nightly",
 	"releaseUrl": "https://github.com/LeulAria/volt/releases/tag/nightly",
-	"publishedAt": "2026-10-30T22:02:13Z",
+	"publishedAt": "2026-10-31T12:54:08Z",
 	"platforms": [
 		"darwin",
 		"darwin-arm64",
@@ -20,118 +20,118 @@
 	],
 	"assets": [
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-darwin-arm64.dmg",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-darwin-arm64.dmg",
-			"size": 116847577,
-			"sha256": "de4fc29751b6d0c26ccb427bfb9356b04ac4be8c5ddee40172137d3c81dd2f5e"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-darwin-arm64.dmg",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-darwin-arm64.dmg",
+			"size": 116829313,
+			"sha256": "ec344319801ddf0e8bb872a0edf9041923a3c936f445d82799658d595bf1c533"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-darwin-arm64.zip",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-darwin-arm64.zip",
-			"size": 156496206,
-			"sha256": "3f610e4e5ea89664d223a03120a997e1d73b38769b5a2318f7b1c13928e318b1"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-darwin-arm64.zip",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-darwin-arm64.zip",
+			"size": 156524064,
+			"sha256": "08e7e3e52ae4b0acadd3c6e254c2471a4652f020770f2776e41a5dad1f7a9e8f"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-darwin-x64.dmg",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-darwin-x64.dmg",
-			"size": 127697864,
-			"sha256": "1797d72cd2aeec469747d29b4827d0a7a32d64e5b4b7a1bb642d6c56238941b4"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-darwin-x64.dmg",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-darwin-x64.dmg",
+			"size": 127727231,
+			"sha256": "d88f07f394b5f453665653e2daee171b7f1588eab0865ef8cb556f482a243f18"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-darwin-x64.zip",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-darwin-x64.zip",
-			"size": 163356682,
-			"sha256": "45afc1da1b953424ea5457a6ce614d2eafb712b6f494910fc11ae30350f9fa01"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-darwin-x64.zip",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-darwin-x64.zip",
+			"size": 163385117,
+			"sha256": "0fab7da03315b1b69d33cd30e499ad1058b10f43e17807b27313c339c50756b9"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-linux-arm64.deb",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-linux-arm64.deb",
-			"size": 105137572,
-			"sha256": "acfbe7959e627f9f2dc9f2e8afa30056d0fe9cd64f6ccbd5f76b53b41044e959"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-linux-arm64.deb",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-linux-arm64.deb",
+			"size": 105121716,
+			"sha256": "d250d0aa4809bd8c3071f82004f56f962018fda10354136d990c39c86ead7b84"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-linux-arm64.rpm",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-linux-arm64.rpm",
-			"size": 105909033,
-			"sha256": "cb87b0a254e3ebfb101dc1ff0c29eb729eee391fa6a82dd9fc03c11d9f8a80d7"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-linux-arm64.rpm",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-linux-arm64.rpm",
+			"size": 105931665,
+			"sha256": "a01ff33eb85d7e52051e2c50868813f04375acc17ce46a551d73ae7ddc8d3d06"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-linux-arm64.tar.gz",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-linux-arm64.tar.gz",
-			"size": 153717794,
-			"sha256": "a3420214db8d232cbe873c36cf840e60281cc11aad3bea4818d51f8c7e7c3655"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-linux-arm64.tar.gz",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-linux-arm64.tar.gz",
+			"size": 153749164,
+			"sha256": "4aaaf572ec4f02cbaa37dd519b01b2e2e9ddc24c564824b2f5a4cf194abd7062"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-linux-armhf.deb",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-linux-armhf.deb",
-			"size": 103824228,
-			"sha256": "af56b88659ef037fed700cdcb3e2759a1402da287856de21e56434fb1987600c"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-linux-armhf.deb",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-linux-armhf.deb",
+			"size": 103836324,
+			"sha256": "2462a899abd49e06516e0ebca4b0024757d1dc608849895282d0d24be1dd0696"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-linux-armhf.rpm",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-linux-armhf.rpm",
-			"size": 104604141,
-			"sha256": "076e46b7e14630bbd8014e80d50971cec7d0c3844c3e3376d2fac6fe36f21406"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-linux-armhf.rpm",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-linux-armhf.rpm",
+			"size": 104630405,
+			"sha256": "59b02d112076b48d6dd9a9ebfd583e5fb517f13886e3d66e1ab851b8fe3ae9ff"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-linux-armhf.tar.gz",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-linux-armhf.tar.gz",
-			"size": 142639145,
-			"sha256": "26ca61f2359ce23aed73ff3d75d0006d1e4a239290bfff676236a43dd687b3bc"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-linux-armhf.tar.gz",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-linux-armhf.tar.gz",
+			"size": 142669132,
+			"sha256": "318d1cf42d833a82437e2db38948f3c098d54b623b59438c58fa8ff196263bb1"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-linux-x64.deb",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-linux-x64.deb",
-			"size": 112321720,
-			"sha256": "5a8ab543d8e67a4e92a43199507862c74276539774617b387b02bb4a594d358a"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-linux-x64.deb",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-linux-x64.deb",
+			"size": 112339304,
+			"sha256": "a8e38c822a421b821b65664fb591cfca3dc166fed28073e3e5fcd5e1994ffc17"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-linux-x64.rpm",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-linux-x64.rpm",
-			"size": 112806017,
-			"sha256": "23b94c06e6bde31b4ec3238fe3c3117e82b9635734af47fd8541382c2d78623c"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-linux-x64.rpm",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-linux-x64.rpm",
+			"size": 112845345,
+			"sha256": "bfdd8f2e5b78c87d2270aaa11fddb5792a06d0c26ebc24cf2a3a94f7c9f3e9af"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-linux-x64.tar.gz",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-linux-x64.tar.gz",
-			"size": 155908804,
-			"sha256": "2727ba4e98be236da5877f3ec1d47564e3c9b04155bffe1898f29013e8a1e5b9"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-linux-x64.tar.gz",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-linux-x64.tar.gz",
+			"size": 155937101,
+			"sha256": "1d6ff561e6eea91862842395a79c0faf6502de73654a43c817b517c01ca2ef76"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-win32-arm64-system-setup.exe",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-win32-arm64-system-setup.exe",
-			"size": 113288945,
-			"sha256": "fa73c1d473b50535af026203ded673253c2fb04baf24a75aae050dd897a713f1"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-win32-arm64-system-setup.exe",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-win32-arm64-system-setup.exe",
+			"size": 113310131,
+			"sha256": "42e9bfa2f9ba5b25791992fb17e20f74b6efa13d43cc96b8043d512578eb2a6f"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-win32-arm64-user-setup.exe",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-win32-arm64-user-setup.exe",
-			"size": 113289371,
-			"sha256": "9bab275b475b7f9f03f4ad9b9997cf1c0d8cfa410643bab14aa3f10174509ae2"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-win32-arm64-user-setup.exe",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-win32-arm64-user-setup.exe",
+			"size": 113310533,
+			"sha256": "a530dcf5f16bf7327dd289d03aabd16c3588bf60584b8a27437be25efdd7d5e1"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-win32-arm64.zip",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-win32-arm64.zip",
-			"size": 161539012,
-			"sha256": "195f28a511b23fc98c0b46ef5ec3cbc9eaad2d6df23a5bb302bf0d1dc02a0f37"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-win32-arm64.zip",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-win32-arm64.zip",
+			"size": 161564887,
+			"sha256": "a0d2520a0453fdb55b2a0a3b066f40b3b36e872b4568b49c5786fbe7a137d013"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-win32-x64-system-setup.exe",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-win32-x64-system-setup.exe",
-			"size": 118416377,
-			"sha256": "f2056fd876eb2298926f38b76105c112bf94b58eeb09b23c3b1d3909e2b44e86"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-win32-x64-system-setup.exe",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-win32-x64-system-setup.exe",
+			"size": 118436662,
+			"sha256": "6e13a4429caf0f5bfd131145fe0bead25983efc60a43e11ccda6cdb9be2e5f81"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-win32-x64-user-setup.exe",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-win32-x64-user-setup.exe",
-			"size": 118416744,
-			"sha256": "ca3b8acf76908860986caa031e5cad8f7ab6f6925b2990d914c87662169adbd7"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-win32-x64-user-setup.exe",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-win32-x64-user-setup.exe",
+			"size": 118437076,
+			"sha256": "92b89b06522101fb060981f1556908401bf1fba2ffcc374e9185f70e70e15013"
 		},
 		{
-			"name": "volt-nightly-0.0.4-nightly.202610302110-win32-x64.zip",
-			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.4-nightly.202610302110-win32-x64.zip",
-			"size": 162894645,
-			"sha256": "a89fb1d69000d2cd7e26772a382c3301c36b2ad2857d6f05d2967171d18c64c7"
+			"name": "volt-nightly-0.0.5-nightly.202610311222-win32-x64.zip",
+			"url": "https://github.com/LeulAria/volt/releases/download/nightly/volt-nightly-0.0.5-nightly.202610311222-win32-x64.zip",
+			"size": 162920550,
+			"sha256": "72240c6ead1a9ae19895e24af8bbf10e049c871796979efc53013e9130eee692"
 		}
 	]
 }
