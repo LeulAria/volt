@@ -1,10 +1,13 @@
-import math
+import math, sys
 
 # `python3 volt-icon-fold.py` writes the release icon (volt-icon.svg): a white
 # folded-paper bolt on a black squircle, with two grey facets where the upper blade
 # tucks under the lower one. It prints the bolt path; the in-app marks (letterpress-*.svg,
-# code-icon*.svg) cut that path out of their squircle. volt-icon.py --beta still draws
-# the beta galaxy icon.
+# code-icon*.svg) cut that path out of their squircle. `--ios` writes volt-icon-ios.svg,
+# the full-bleed square the mobile app icon is rendered from (the OS masks the corners),
+# with the bolt scaled so it fills the mask the way it fills the desktop squircle.
+# volt-icon.py --beta still draws the beta galaxy icon.
+IOS = "--ios" in sys.argv
 def squircle(cx, cy, r, n=5.0, steps=720):
     pts=[]
     for i in range(steps):
@@ -80,15 +83,17 @@ svg=f'''<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewB
   </filter>
   <clipPath id="glyphClip"><path d="{glyph}"/></clipPath>
 </defs>
-<path d="{body}" fill="#000" filter="url(#iconShadow)"/>
+{'<rect width="1024" height="1024" fill="url(#bodyFill)"/>' if IOS else f"""<path d="{body}" fill="#000" filter="url(#iconShadow)"/>
 <path d="{body}" fill="url(#bodyFill)"/>
-<path d="{body}" fill="none" stroke="url(#rim)" stroke-width="4"/>
+<path d="{body}" fill="none" stroke="url(#rim)" stroke-width="4"/>"""}
+<g{f' transform="translate(512 512) scale({1024/824:.4f}) translate(-512 -512)"' if IOS else ""}>
 <path d="{glyph}" fill="#FFFFFF"/>
 <g clip-path="url(#glyphClip)">
   <path d="{shadow_face}" fill="url(#shadowFace)"/>
   <path d="{light_face}" fill="url(#lightFace)"/>
 </g>
+</g>
 </svg>'''
-open("volt-icon.svg","w").write(svg)
+open("volt-icon-ios.svg" if IOS else "volt-icon.svg","w").write(svg)
 
 print(glyph)
