@@ -21,7 +21,29 @@ export const CLAUDE_MAIN_RULES = [
 	'- Read and change files with Read, Edit, Write, Grep and Glob; keep Bash for commands (tests, builds, git). Volt tracks and shows changes made with Edit and Write; sed or script rewrites are invisible to it.',
 	'- Wait for a long command by running it in the background and reading its output when you need it, not with sleep or until loops.',
 	'- When you hand work to subagents: give each one the files to change and what to change in each (paths, symbols, facts you already found) so it starts editing at once instead of exploring again, and start independent subagents together in one message.',
+	'- Tasks (TaskCreate/TaskUpdate) show in the user\'s Tasks card. Mark a task in_progress when you start it and completed as soon as it is done, not all at the end. Before you end a turn, every task is completed, deleted (status "deleted") if it no longer applies, or left open only because it waits on the user. When the user moves on to unrelated work, delete the old leftover tasks first.',
 ].join('\n');
+
+/** Why the Stop hook keeps a turn going: sent to Claude as the reason. No single quotes (see {@link stopHookCommand}). */
+export const CLAUDE_OPEN_TASKS_REASON = '[Volt] Your task list still has open tasks, and the user sees them as unfinished. Use TaskList, then TaskUpdate each one: completed if it is done, deleted if it no longer applies or was superseded. Leave a task open only if it waits on the user, and say which. Do not start new work.';
+
+/**
+ * A Stop hook (POSIX sh) that keeps the turn going once while Claude's task list has open tasks, so
+ * finished work does not stay "in progress" in the Tasks card and come back next turn. Claude Code
+ * keeps the list in `<config dir>/tasks/<session id>/<n>.json`. The second stop (`stop_hook_active`)
+ * always ends the turn.
+ */
+export function stopHookCommand(reason: string = CLAUDE_OPEN_TASKS_REASON): string {
+	const output = JSON.stringify({ decision: 'block', reason });
+	return [
+		'input=$(cat)',
+		'case "$input" in *\'"stop_hook_active":true\'*|*\'"stop_hook_active": true\'*) exit 0;; esac',
+		'sid=$(printf \'%s\' "$input" | sed -n \'s/.*"session_id" *: *"\\([^"]*\\)".*/\\1/p\' | head -n 1)',
+		'[ -n "$sid" ] || exit 0',
+		'grep -qE \'"status" *: *"(pending|in_progress)"\' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/tasks/$sid/"*.json 2>/dev/null || exit 0',
+		`printf '%s' '${output.replace(/'/g, `'\\''`)}'`,
+	].join('\n');
+}
 
 /** Given to every subagent Claude Code starts (its SubagentStart hook's additional context). */
 export const CLAUDE_SUBAGENT_RULES = [
@@ -54,6 +76,7 @@ export function claudeWorkRulesMeta(model?: string): Record<string, unknown> {
 				settings: {
 					hooks: {
 						SubagentStart: [{ hooks: [{ type: 'command', command: subagentStartHookCommand(), timeout: 10 }] }],
+						Stop: [{ hooks: [{ type: 'command', command: stopHookCommand(), timeout: 10 }] }],
 					},
 				},
 			},
