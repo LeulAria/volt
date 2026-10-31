@@ -22,12 +22,15 @@ suite('Volt context pack', () => {
 		assert.ok(!/http\.server/.test(prompt));
 		assert.ok(!/Start servers/.test(prompt));
 		assert.ok(/web_search|Look up current facts/.test(prompt));
-		assert.ok(/Do not modify the workspace/.test(prompt));
+		// A question in Agent mode stays an Agent turn: only Ask and Plan forbid edits.
+		assert.ok(!/Do not modify the workspace/.test(prompt));
+		assert.ok(/Do not modify the workspace|Read-only/.test(buildSystemPrompt({ mode: 'ask', intent: classifyIntent('how much does this cost right now', 'ask') })));
 		assert.ok(!/one or two lines/.test(prompt));
 		const lead = buildAcpLead({ mode: 'agent', intent, runPlan: { kind: 'static', start: 'python3 -m http.server 8080' } });
 		assert.ok(lead);
 		assert.ok(!/http\.server/.test(lead));
-		assert.ok(/question/i.test(lead));
+		assert.ok(/look them up/i.test(lead));
+		assert.ok(!/Do not modify the workspace/.test(lead));
 	});
 
 	test('an enumerated table asks for research, not a one-liner', () => {
