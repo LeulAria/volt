@@ -189,7 +189,7 @@ export function SiteMenu({
                       <Link to="/donors" onClick={close} className={ROW}>
                         <MenuRow
                           icon={<Heart />}
-                          label="Donate"
+                          label="Support"
                           hint="Keep Volt free and moving fast"
                         />
                       </Link>

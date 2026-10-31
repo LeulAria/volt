@@ -134,7 +134,7 @@ function DonorsPage() {
         >
           <div className={cn(HEADING_INSET, "max-w-2xl")}>
             <h2 id="donors-title" className={H2}>
-              Donors.
+              Supporters.
             </h2>
             <p className={LEAD}>The people keeping Volt's agents fed.</p>
           </div>
