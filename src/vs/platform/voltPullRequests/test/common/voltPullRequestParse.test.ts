@@ -11,6 +11,7 @@ import {
 	parseNumstat,
 	classifyGhError,
 	ghErrorText,
+	hookFailureText,
 	latestChecks,
 	parseCheckRun,
 	parsePullRequest,
@@ -202,6 +203,23 @@ suite('Volt pull requests: parsing', () => {
 		assert.strictEqual(classifyGhError('something odd', 1), 'failed');
 		assert.strictEqual(ghErrorText('gh: Not Found (HTTP 404)\nUsage: gh api <endpoint>\n'), 'Not Found (HTTP 404)');
 		assert.strictEqual(ghErrorText(''), 'The GitHub CLI failed.');
+		// A husky hook in a checkout without node_modules: nvm's banner first, the reason after it.
+		assert.strictEqual(hookFailureText([
+			'This is not the package you are looking for: please go to http://nvm.sh',
+			'Found \'/repo/.nvmrc\' with version <22.19.0>',
+			'Now using node v22.19.0 (npm v10.9.3)',
+			'> husky - npm run -s precommit',
+			'node:internal/modules/cjs/loader:1423',
+			'  throw err;',
+			'  ^',
+			'Error: Cannot find module \'gulp-filter\'',
+			'Require stack:',
+			'- /repo/build/hygiene.js',
+			'    at Module._resolveFilename (node:internal/modules/cjs/loader:1420:15)',
+			'> husky - pre-commit hook failed (add --no-verify to bypass)',
+		].join('\n')), 'Error: Cannot find module \'gulp-filter\'');
+		assert.strictEqual(hookFailureText('\x1b[31mlint\x1b[0m\n3 problems\n'), 'lint 3 problems');
+		assert.strictEqual(hookFailureText(''), '');
 
 		const err = new VoltPrError('stale', 'Someone pushed since you looked.');
 		const overIpc = Object.assign(new Error(err.message), { name: err.name });

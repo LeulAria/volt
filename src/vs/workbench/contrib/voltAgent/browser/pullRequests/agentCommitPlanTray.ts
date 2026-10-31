@@ -29,6 +29,7 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../../pla
 import { defaultCheckboxStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
 import { IVoltGitStatusFile } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { ResourceLabels } from '../../../../browser/labels.js';
+import { EditorsOrder } from '../../../../common/editor.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { MultiDiffEditorInput } from '../../../multiDiffEditor/browser/multiDiffEditorInput.js';
@@ -616,6 +617,7 @@ export class AgentCommitPlanTray extends Disposable {
 	private readonly treeHost: HTMLElement;
 	private readonly tree: WorkbenchObjectTree<CommitPlanNode, void>;
 	private readonly status: HTMLElement;
+	private readonly errorRow: HTMLElement;
 	private readonly viewButton;
 	private readonly collapseButton;
 	private readonly minimizeButton;
@@ -708,7 +710,19 @@ export class AgentCommitPlanTray extends Disposable {
 				void this.orchestrator.cancel(sessionId);
 			}
 		}));
-		this._register(this.commitButton.onDidClick(() => this.plan && void this.plans.commit(this.plan.id)));
+		// Why the last Commit stopped, under the head and in full: the head has no room for a reason.
+		this.errorRow = append(this.element, $('.volt-commit-plan-error.hidden'));
+		this.errorRow.setAttribute('role', 'alert');
+		this._register(this.commitButton.onDidClick(() => {
+			const plan = this.plan;
+			if (!plan || plan.busy || !this.commitButton.enabled) {
+				return;
+			}
+			// Off at once: a second click before the service says it is busy commits nothing twice.
+			this.commitButton.enabled = false;
+			this.cancelButton.enabled = false;
+			void this.plans.commit(plan.id, plan.hookFailed ? { skipHooks: true } : undefined);
+		}));
 
 		this.editor = append(this.element, $('.volt-commit-plan-editor.hidden'));
 		this.editorLabel = append(this.editor, $('.volt-commit-plan-editor-label'));
@@ -800,6 +814,9 @@ export class AgentCommitPlanTray extends Disposable {
 		const drafting = !plan && !!this.sessionId && this.plans.drafting(this.sessionId);
 		const was = !!this.plan || this.element.classList.contains('drafting');
 		const samePlan = plan && plan.id === this.plan?.id;
+		if (this.plan && !samePlan) {
+			this.closeDiffs(this.plan.sessionId);
+		}
 		this.plan = plan;
 		const minimized = !!plan && this.minimized.has(plan.id);
 		this.element.classList.toggle('hidden', (!plan && !drafting) || minimized);
@@ -820,8 +837,8 @@ export class AgentCommitPlanTray extends Disposable {
 			this.editing = undefined;
 			this.editor.classList.add('hidden');
 			this.element.classList.remove('busy');
-			this.status.classList.remove('error');
 			this.status.textContent = '';
+			this.errorRow.classList.add('hidden');
 			// Asked for, not proposed yet (drafting): the title and the glow say the agent is on it.
 			this.summary.replaceChildren();
 			if (was || drafting) {
@@ -854,18 +871,25 @@ export class AgentCommitPlanTray extends Disposable {
 		})));
 
 		this.element.classList.toggle('busy', !!plan.busy);
-		this.status.classList.toggle('error', !!plan.error && !plan.busy);
-		this.status.textContent = plan.busy ?? plan.error ?? plan.notice ?? (plan.done.length
+		const error = !plan.busy ? plan.error : undefined;
+		this.status.textContent = plan.busy ?? (error ? '' : plan.notice) ?? (plan.done.length
 			? localize('voltCommitPlan.madeSome', "{0} committed. The rest is still here.", plan.done.length)
 			: '');
+		this.errorRow.textContent = error ?? '';
+		this.errorRow.classList.toggle('hidden', !error);
 		this.chipCount.textContent = String(commits.length);
 		// A new label replaces the button's content, an unchanged one keeps it: one icon in front either way.
-		this.commitButton.label = chosen.length === 1
-			? localize('voltCommitPlan.commitOne', "Commit")
-			: localize('voltCommitPlan.commitMany', "Commit {0}", chosen.length);
-		if (!this.commitButton.element.querySelector('.volt-commit-plan-commit-icon')) {
-			this.commitButton.element.prepend(commitIcon(this.element.ownerDocument));
-		}
+		this.commitButton.label = plan.busy
+			? localize('voltCommitPlan.committingButton', "Committing…")
+			: plan.hookFailed
+				? localize('voltCommitPlan.commitSkipHooks', "Commit Without Hooks")
+				: chosen.length === 1
+					? localize('voltCommitPlan.commitOne', "Commit")
+					: localize('voltCommitPlan.commitMany', "Commit {0}", chosen.length);
+		this.commitButton.setTitle(plan.hookFailed && !plan.busy ? localize('voltCommitPlan.commitSkipHooksTitle', "Commit again with git commit --no-verify, skipping the hook that failed") : '');
+		this.commitButton.element.querySelector('.volt-commit-plan-commit-icon, .volt-commit-plan-busy-icon')?.remove();
+		this.commitButton.element.prepend(plan.busy ? renderIcon(ThemeIcon.modify(Codicon.loading, 'spin')) : commitIcon(this.element.ownerDocument));
+		this.commitButton.element.firstElementChild?.classList.add(plan.busy ? 'volt-commit-plan-busy-icon' : 'volt-commit-plan-commit-icon');
 		this.commitButton.enabled = !plan.busy && chosen.length > 0 && !plan.commits.some(commit => commit.generating);
 		this.cancelButton.enabled = !plan.busy;
 		this.layout();
@@ -949,6 +973,16 @@ export class AgentCommitPlanTray extends Disposable {
 			true,
 		);
 		await this.editorService.openEditor(input, { pinned: true, preserveFocus });
+	}
+
+	/** The review ended (committed, closed or replaced): its diffs would only say "No Changed Files". */
+	private closeDiffs(sessionId: string): void {
+		const prefix = `/${sessionId}/`;
+		const stale = this.editorService.getEditors(EditorsOrder.SEQUENTIAL)
+			.filter(({ editor }) => editor.resource?.scheme === COMMIT_PLAN_DIFF_SCHEME && editor.resource.path.startsWith(prefix));
+		if (stale.length) {
+			void this.editorService.closeEditors(stale, { preserveFocus: true });
+		}
 	}
 
 	private layout(): void {

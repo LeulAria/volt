@@ -18,10 +18,10 @@
 	/* The hover cards' surface (#1c1c1c, agentTooltip.css), a little see-through. */
 	--vcp-bg: rgba(28, 28, 28, 0.96);
 	--vcp-input: rgba(240, 240, 241, 0.04);
-	--vcp-check-border: rgba(240, 240, 241, 0.3);
-	--vcp-check-border-hover: rgba(240, 240, 241, 0.55);
-	--vcp-check-fill: #4c8dff;
-	--vcp-check-mark: #ffffff;
+	--vcp-check-border: rgba(240, 240, 241, 0.2);
+	--vcp-check-border-hover: rgba(240, 240, 241, 0.38);
+	--vcp-check-on: rgba(240, 240, 241, 0.32);
+	--vcp-check-mark: rgba(240, 240, 241, 0.88);
 	box-sizing: border-box;
 	width: 100%;
 	/* The chat column's width (.volt-agent-input-box), never wider than the prompt below it. */
@@ -38,6 +38,7 @@
 	letter-spacing: -0.08px;
 	isolation: isolate;
 	contain: paint;
+	container: volt-commit-plan / inline-size;
 	overflow: hidden;
 	animation: volt-commit-plan-in 140ms ease-out;
 }
@@ -51,10 +52,10 @@
 	--vcp-line: rgba(0, 0, 0, 0.08);
 	--vcp-bg: rgba(255, 255, 255, 0.95);
 	--vcp-input: rgba(20, 20, 20, 0.03);
-	--vcp-check-border: rgba(20, 20, 20, 0.28);
-	--vcp-check-border-hover: rgba(20, 20, 20, 0.5);
-	--vcp-check-fill: #2f6fe0;
-	--vcp-check-mark: #ffffff;
+	--vcp-check-border: rgba(20, 20, 20, 0.2);
+	--vcp-check-border-hover: rgba(20, 20, 20, 0.38);
+	--vcp-check-on: rgba(20, 20, 20, 0.32);
+	--vcp-check-mark: rgba(20, 20, 20, 0.86);
 	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 
@@ -89,7 +90,12 @@
 	font-size: 14px;
 }
 
+/* In a narrow chat column the title gives way first; Commit and Don't Commit always fit. */
 .volt-commit-plan-title {
+	flex: 0 1 auto;
+	min-width: 48px;
+	overflow: hidden;
+	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
@@ -279,7 +285,10 @@
 	padding-right: 12px;
 }
 
-/* Checkboxes: 14px squares, filled when on, a dash when part of what is under them is in. */
+/*
+ * Checkboxes: 14px square outlines with the check (or a dash, when part of what is under them is
+ * in) drawn in the text colour. No fill, no rounding: ticked and unticked rows read the same weight.
+ */
 .volt-commit-plan-check {
 	flex: none;
 	display: flex;
@@ -296,12 +305,12 @@
 	margin: 0;
 	padding: 0;
 	border: 1px solid var(--vcp-check-border);
-	border-radius: 4px;
+	border-radius: 0;
 	background: transparent;
 	color: var(--vcp-check-mark);
 	opacity: 1;
 	cursor: pointer;
-	transition: background-color 80ms ease, border-color 80ms ease;
+	transition: border-color 80ms ease;
 }
 
 .volt-commit-plan .volt-commit-plan-check .monaco-checkbox:hover {
@@ -310,13 +319,12 @@
 
 .volt-commit-plan .volt-commit-plan-check .monaco-checkbox.checked,
 .volt-commit-plan .volt-commit-plan-check .monaco-checkbox.partial {
-	border-color: var(--vcp-check-fill);
-	background: var(--vcp-check-fill);
+	border-color: var(--vcp-check-on);
+	background: transparent;
 }
 
 .volt-commit-plan .volt-commit-plan-check .monaco-checkbox.codicon::before {
-	font-size: 11px;
-	font-weight: 600;
+	font-size: 12px;
 	line-height: 1;
 }
 
@@ -497,8 +505,14 @@
 	display: none;
 }
 
-.volt-commit-plan-status-text.error {
+/* Why the last Commit stopped: its own line under the head, wrapping, never cut short. */
+.volt-commit-plan-error {
+	padding: 0 12px 10px 34px;
 	color: var(--vscode-errorForeground);
+	font-size: 12px;
+	line-height: 17px;
+	overflow-wrap: anywhere;
+	user-select: text;
 }
 
 .volt-commit-plan-head-actions {
@@ -515,6 +529,14 @@
 	align-items: center;
 	gap: 2px;
 	margin-right: 4px;
+}
+
+/* A narrow card keeps Commit and Don't Commit; View as List and Collapse All step out. */
+@container volt-commit-plan (max-width: 520px) {
+	.volt-commit-plan-tools,
+	.volt-commit-plan-summary {
+		display: none;
+	}
 }
 
 .monaco-workbench .volt-commit-plan .volt-button.volt-commit-plan-tool {
@@ -554,6 +576,13 @@
 	flex: none;
 	width: 14px;
 	height: 14px;
+	margin-right: 6px;
+}
+
+/* Committing: a spinner in its place, and the button stays off until the commits are made. */
+.monaco-workbench .volt-commit-plan .volt-button.volt-button-primary .volt-commit-plan-busy-icon.codicon[class*='codicon-'] {
+	flex: none;
+	font-size: 14px;
 	margin-right: 6px;
 }
 

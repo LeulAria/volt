@@ -114,6 +114,24 @@ export function describeTerminalToolActivity(name: string | undefined, title: st
 	}
 }
 
+/**
+ * How a Volt tool that is no browser action counts in the trail: the commit review is waiting on
+ * the user (`wait`), pull request, thread and memory tools are plain steps (`tool`). Undefined for
+ * the browser, device and design tools, which count as browser actions.
+ */
+export function hostToolStepKind(tool: string | undefined): 'wait' | 'tool' | undefined {
+	if (!tool) {
+		return undefined;
+	}
+	if ((COMMIT_PLAN_TOOL_NAMES as readonly string[]).includes(tool)) {
+		return tool === 'rename_branch' ? 'tool' : 'wait';
+	}
+	if ((PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(tool) || (THREAD_TOOL_NAMES as readonly string[]).includes(tool) || isMemoryToolName(tool)) {
+		return 'tool';
+	}
+	return undefined;
+}
+
 export function describeHostToolActivity(name: string | undefined, title: string | undefined, input: string | undefined): IHostToolActivity | undefined {
 	const call = hostToolCall(name, title, input);
 	if (!call) {
