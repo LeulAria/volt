@@ -18,7 +18,8 @@ jobs:
   # The job MUST be called `copilot-setup-steps` or it will not be picked up by Copilot.
   copilot-setup-steps:
     # vscode-large-runners exists only in microsoft/vscode; here it queued forever.
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest is 26.04 now, and Playwright can't install Chromium there yet.
+    runs-on: ubuntu-24.04
 
     # Set the permissions to the lowest permissions possible needed for your steps.
     # Copilot will be given its own token for its operations.

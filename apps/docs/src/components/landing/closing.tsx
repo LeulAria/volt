@@ -404,7 +404,7 @@ export function SiteFooter() {
             Privacy
           </Link>
           <Link to="/donors" className="transition-colors hover:text-white">
-            Donate
+            Support
           </Link>
           <a href="/llms.txt" className="transition-colors hover:text-white">
             llms.txt

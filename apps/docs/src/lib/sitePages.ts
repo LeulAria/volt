@@ -206,7 +206,7 @@ export function tierUrl(tier: DonationTier): string {
 
 export const DONORS_PAGE = {
   path: "/donors",
-  eyebrow: "Donate",
+  eyebrow: "Supporters",
   title: "Support Volt.",
   subtitle: "Keep it free, open and moving fast.",
   description:
@@ -237,7 +237,7 @@ export function donorsMarkdown(): string {
     ? DONORS.map((d) => `- ${d.url ? `[${d.name}](${d.url})` : d.name}`).join(
         "\n",
       )
-    : "No donors listed yet. Yours could be the first name here.";
+    : "No supporters listed yet. Yours could be the first name here.";
   return `# ${DONORS_PAGE.title.replace(/\.$/, "")}
 
 ${DONORS_PAGE.subtitle} ${DONORS_PAGE.description}
@@ -250,7 +250,7 @@ Donations go through [GitHub Sponsors](${SPONSOR_URL}).
 
 ${tiers}
 
-## Donors
+## Supporters
 
 ${donors}
 
@@ -280,7 +280,7 @@ export function infoPageMarkdown(page: InfoPage): string {
 
 const SITE_LINKS_MARKDOWN = `## More
 
-- [Home](/index.md) · [Download](/download.md) · [Changelog](/changelog.md) · [Docs](/docs) · [About](/about.md) · [Contact](/contact.md) · [Privacy](/privacy.md) · [Donate](/donors.md)
+- [Home](/index.md) · [Download](/download.md) · [Changelog](/changelog.md) · [Docs](/docs) · [About](/about.md) · [Contact](/contact.md) · [Privacy](/privacy.md) · [Support](/donors.md)
 - Every docs page as Markdown: [/llms.txt](/llms.txt), or all of them in one file: [/llms-full.txt](/llms-full.txt)
 - MCP server for agents: \`POST /api/mcp\` (Streamable HTTP)`;
 
