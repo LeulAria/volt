@@ -8,6 +8,7 @@
 	"platforms": [
 		"darwin",
 		"darwin-arm64",
+		"darwin-universal",
 		"win32-x64",
 		"win32-x64-user",
 		"win32-x64-archive",
@@ -30,6 +31,18 @@
 			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-darwin-arm64.zip",
 			"size": 155230186,
 			"sha256": "af599d87a39b32db97e584c9f146fc291c2081542b30f2622fe02f000fcbfc6a"
+		},
+		{
+			"name": "volt-stable-0.0.5-darwin-universal.dmg",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-darwin-universal.dmg",
+			"size": 191516579,
+			"sha256": "a1207bdcc7101ef3bf62df9290feeddd7d7a94eab74b2d8566f5e33dd0906104"
+		},
+		{
+			"name": "volt-stable-0.0.5-darwin-universal.zip",
+			"url": "https://github.com/LeulAria/volt/releases/download/v0.0.5/volt-stable-0.0.5-darwin-universal.zip",
+			"size": 250913797,
+			"sha256": "1edc38f16fe54d645fea5a54cbc220d6efd3a5e5d9f10ac3398dd3ef131d5294"
 		},
 		{
 			"name": "volt-stable-0.0.5-darwin-x64.dmg",
