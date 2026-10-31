@@ -289,6 +289,15 @@ suite('Agent transcript run controls', () => {
 		assert.deepStrictEqual(mixed.placed.map(item => [item.index, item.mention.label]), [[0, 'a.ts'], [10, 'shot.png']]);
 	});
 
+	test('supervisor findings the run carried on from stay out of the chat', () => {
+		const rows = buildTranscriptRows([
+			{ kind: 'notice', severity: 'info', title: 'Agent looping detected', description: 'The agent was running npm test 4 times in a row with the same result.', supervision: 'loop' },
+			{ kind: 'notice', severity: 'warning', title: 'Agent looping detected' },
+			{ kind: 'notice', severity: 'warning', title: 'Rate limit: 90% used' },
+		], undefined, false);
+		assert.deepStrictEqual(rows.map(row => row.kind === 'notice' ? row.title : row.kind), ['Rate limit: 90% used']);
+	});
+
 	test('a failed turn shows its error once, but keeps supervisor trays', () => {
 		const rows = buildTranscriptRows([
 			{ kind: 'notice', severity: 'error', title: 'The same tools were called three times', supervision: 'loop' },
@@ -296,8 +305,9 @@ suite('Agent transcript run controls', () => {
 			{ kind: 'notice', severity: 'warning', title: 'Retrying in 2s' },
 		], undefined, false);
 		const kept = withoutFailureNotice(rows, 'Provider returned 529 overloaded');
-		assert.deepStrictEqual(kept.map(row => row.kind === 'notice' ? row.title : row.kind), ['The same tools were called three times', 'Retrying in 2s']);
-		assert.strictEqual(withoutFailureNotice(rows, undefined).length, 3);
+		// Retries show in the status line, never as a row.
+		assert.deepStrictEqual(kept.map(row => row.kind === 'notice' ? row.title : row.kind), ['The same tools were called three times']);
+		assert.strictEqual(withoutFailureNotice(rows, undefined).length, 2);
 		const stop = buildTranscriptRows([{ kind: 'notice', severity: 'error', title: 'Stopped: the agent kept looping', supervision: 'loop' }], undefined, false);
 		assert.strictEqual(withoutFailureNotice(stop, 'Stopped: the agent kept looping').length, 0, 'the stop that failed the run shows only in the end tray');
 		const signIn = buildTranscriptRows([
