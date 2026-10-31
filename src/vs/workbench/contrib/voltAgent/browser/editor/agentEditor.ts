@@ -707,7 +707,7 @@ const SUPERVISION_ACTION_LABELS: Record<SupervisionAction, { readonly label: () 
 };
 
 const MODE_OPTIONS: IModeOption[] = [
-	{ id: 'Agent', label: 'Agent', icon: 'agent' },
+	{ id: 'Agent', label: 'Agent', icon: 'agent', description: 'Plan, build and edit end to end' },
 	{ id: 'Plan', label: 'Plan', icon: 'plan', keybinding: 'Tab', description: 'Generate an implementation plan' },
 	{ id: 'Debug', label: 'Debug', icon: 'debug', description: 'Pinpoint the root cause of an issue' },
 	{ id: 'Multitask', label: 'Multitask', icon: 'multitask', description: 'Orchestrate multiple subagents in parallel' },
@@ -1310,7 +1310,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// A subagent's chat says whose it is and how it is doing: a chip at the start of the row above the composer.
 		const subagentChip = this.subagentBar = $('button.volt-agent-composer-chip.volt-agent-subagent-bar.hidden');
 		(subagentChip as HTMLButtonElement).type = 'button';
+		// The commit review is opened and closed by the commit plan service (desktop only, like pull requests);
+		// shrunk, it is a chip in the row above the composer.
+		if (this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentCommitPlanService))) {
+			this.commitPlanTray = this._register(this.instantiationService.createInstance(AgentCommitPlanTray, { onLayout: () => this.layoutInputEditor() }));
+		}
 		this.composerChips = this._register(this.instantiationService.createInstance(AgentComposerChips, {
+			...(this.commitPlanTray ? { commitReview: this.commitPlanTray.rowChip } : {}),
 			agentRun: { element: subagentChip, get visible() { return !subagentChip.classList.contains('hidden'); }, onDidChange: this.onDidChangeSubagentChip.event },
 			onChangesClick: () => void this.openSessionChanges(),
 			onTerminalClick: () => this.surfaceHost.openTerminal(),
@@ -1352,9 +1358,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				prepare: source => answerFiles.prepare(source),
 			},
 		}));
-		// The commit review is opened and closed by the commit plan service (desktop only, like pull requests).
-		if (this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentCommitPlanService))) {
-			this.commitPlanTray = this._register(this.instantiationService.createInstance(AgentCommitPlanTray, { onLayout: () => this.layoutInputEditor() }));
+		if (this.commitPlanTray) {
 			append(this.composerEl, this.commitPlanTray.element);
 		}
 		append(this.composerEl, this.questionTray.element);
@@ -2289,7 +2293,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			anchor,
 			// The chips float just above the prompt; the menu opens over them, not on them.
 			above: () => !edit && this.composerChips.element.classList.contains('is-visible') && this.composerChips.element.offsetHeight ? this.composerChips.element : undefined,
-			modes: MODE_OPTIONS.filter(option => option.id !== 'Agent'),
+			modes: MODE_OPTIONS,
 			currentMode: this.currentMode,
 			actions: edit ? ['files', 'attachFile', 'image', 'video', 'openFile', 'terminal', 'browser', 'model', 'mcp'] : ['files', 'attachFile', 'image', 'video', 'openFile', 'terminal', 'browser', 'model', 'mcp', 'schedule'],
 			modelName: this.modelAuto
@@ -2603,6 +2607,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				}));
 			} else if (mention.kind === 'skill') {
 				this.bindSkillChip(chip, mention);
+			} else if (mention.kind === 'action' && mention.value) {
+				// A button's prompt (Generate Draft Commits): the chip, and on hover what the agent was asked.
+				setAgentTooltip(chip, mention.value);
 			} else if (mention.resource && (mention.kind === 'file' || mention.kind === 'image')) {
 				const resource = URI.revive(mention.resource);
 				// An attached PDF or archive opens in its own app; text and project files beside the chat.
@@ -5421,6 +5428,24 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	}
 
 	/** Cursor's "Try again": the newest prompt runs again in place of the turn that failed or stopped. */
+	/** A Draft Commits turn the user stopped leaves no trace: its prompt and its stopped reply go too. */
+	private removeStoppedDraft(): void {
+		const commitPlans = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentCommitPlanService));
+		if (!commitPlans?.takeStoppedDraft(this.sessionKey)) {
+			return;
+		}
+		const index = findLastIdx(this.messages, message => message.kind === 'user');
+		const user = this.messages[index];
+		if (user?.kind !== 'user' || !user.mentions?.some(mention => mention.kind === 'action')) {
+			return;
+		}
+		this.messages.splice(index);
+		if (this.input instanceof AgentEditorInput) {
+			this.input.recordTruncate(user);
+		}
+		this.runtime.truncateSession(this.sessionKey, this.messages.filter(message => message.kind === 'user').length);
+	}
+
 	private retryLastTurn(): void {
 		if (this.isStreaming()) {
 			return;
@@ -8140,6 +8165,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 					this.compactRequested = false;
 					this.compactRequestTimeout.clear();
 					this.syncCompactChip();
+					if (change.aborted) {
+						this.removeStoppedDraft();
+					}
 					// The orchestrator sends the next queued prompt itself; after an error the queue waits.
 					if (this.fullRenderAfterStream && !this.isStreaming()) {
 						this.renderThread(this.stickToBottom);

@@ -3297,6 +3297,30 @@ pre.volt-agent-searchable {
 	display: none;
 }
 
+/* Changes' arrow: the Commit chip's menu, at the pill's right end like Commit's own chevron. */
+.volt-agent-composer-chip-menu {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	align-self: stretch;
+	width: 26px;
+	margin: 0 -12px 0 0;
+	border-left: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	border-radius: 0 999px 999px 0;
+	color: color-mix(in srgb, var(--vscode-foreground) 80%, transparent);
+	cursor: pointer;
+}
+
+.volt-agent-composer-chip-menu:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.monaco-workbench .volt-agent-composer-chip-menu .codicon[class*='codicon-'] {
+	font-size: 14px;
+	color: inherit;
+}
+
 .volt-agent-composer-chip.compact > svg {
 	flex-shrink: 0;
 	opacity: 0.85;
@@ -8284,6 +8308,8 @@ pre.volt-agent-searchable {
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.branch:not(.file-icon):not(.folder-icon)::before { content: '\ea68'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.scratch:not(.file-icon):not(.folder-icon)::before { content: '\ebaf'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.canvas:not(.file-icon):not(.folder-icon)::before { content: '\eb5c'; }
+/* A button's prompt (Generate Draft Commits): the commit icon. */
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.action:not(.file-icon):not(.folder-icon)::before { content: '\eafc'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.browser::before {
 	content: '' !important;
 	background-color: var(--volt-mention-accent, #89b4fa) !important;

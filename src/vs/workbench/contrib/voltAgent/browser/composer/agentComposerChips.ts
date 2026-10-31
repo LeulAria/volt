@@ -100,6 +100,8 @@ export interface IAgentComposerChipsOptions {
 	limitRun?: IAgentComposerTerminalRuns;
 	/** In a multitask agent's or subagent's chat: whose it is and how it runs ("Multitask · Running 50s", Stop), right after the limit. */
 	agentRun?: IAgentComposerTerminalRuns;
+	/** The commit review shrunk to a chip ("Draft Commits 4"), just before Commit. */
+	commitReview?: IAgentComposerTerminalRuns;
 	dock?: boolean;
 }
 
@@ -307,12 +309,29 @@ export class AgentComposerChips extends Disposable {
 		this.changesAddEl = append(this.changesChip, $('span.volt-agent-composer-chip-add'));
 		this.changesDelEl = append(this.changesChip, $('span.volt-agent-composer-chip-del'));
 		this.changesFilesEl = append(this.changesChip, $('span.volt-agent-composer-chip-files'));
+		// The Commit chip's menu (Generate Draft Commits, Push, Open Source Control): Changes takes its place.
+		const changesMenu = append(this.changesChip, $('span.volt-agent-composer-chip-menu'));
+		changesMenu.setAttribute('role', 'button');
+		changesMenu.setAttribute('aria-label', localize('voltGit.options', "Git Action Options"));
+		changesMenu.appendChild(renderIcon(Codicon.chevronDown));
+		setAgentTooltip(changesMenu, localize('voltGit.options', "Git Action Options"));
+		this._register(addDisposableListener(changesMenu, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			void this.gitControl.showMenuAt(changesMenu);
+		}));
 
 		// Shown only while terminals run, so it always leads with the row's loader.
 		this.terminalsChip = append(this.element, $('button.volt-agent-composer-chip.terminals.volt-browser-dock-chip.working')) as HTMLButtonElement;
 		this.terminalsChip.type = 'button';
 		append(this.terminalsChip, createThinkingDots());
 		this.terminalsLabelEl = append(this.terminalsChip, $('span.volt-agent-composer-chip-label'));
+
+		const commitReview = options.commitReview;
+		if (commitReview) {
+			this.element.appendChild(commitReview.element);
+			this._register(commitReview.onDidChange(() => this.render()));
+		}
 
 		this.pullRequests = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
 		this.gitControl = this._register(this.instantiationService.createInstance(AgentGitActionsControl, this.element, {
@@ -791,7 +810,8 @@ export class AgentComposerChips extends Disposable {
 		this.toggleChip(this.prChip, showPr, this.prExit);
 		const showLimit = !!this.options.limitRun?.visible;
 		const showAgentRun = !!this.options.agentRun?.visible;
-		const visible = this.hostOpen && !this.newChat && (showLimit || showAgentRun || showStatus || showComments || showMultitaskChip || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
+		const showCommitReview = !!this.options.commitReview?.visible;
+		const visible = this.hostOpen && !this.newChat && (showLimit || showAgentRun || showCommitReview || showStatus || showComments || showMultitaskChip || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
 		this.element.classList.toggle('is-visible', visible);
 		// A chat hosted in another chat's tools hides the row but keeps its terminals (agentEditor.css).
 		this.element.classList.toggle('has-terminal-runs', showRuns);
@@ -845,9 +865,10 @@ export class AgentComposerChips extends Disposable {
 		const runs = this.options.terminalRuns?.element;
 		const limit = this.options.limitRun?.element;
 		const agentRun = this.options.agentRun?.element;
+		const commitReview = this.options.commitReview?.element;
 		// A multitask token in the input is not the row's: folding it would move it back into the row.
 		const multitask = this.options.multitaskInInput ? [] : [this.multitaskChip];
-		return [...(limit ? [limit] : []), ...(agentRun ? [agentRun] : []), this.statusChip, this.agentsChip, ...(runs ? [runs] : []), this.commentsChip, ...multitask, this.compactChip, this.changesChip, this.terminalsChip, this.gitControl.element, this.prChip];
+		return [...(limit ? [limit] : []), ...(agentRun ? [agentRun] : []), this.statusChip, this.agentsChip, ...(runs ? [runs] : []), this.commentsChip, ...multitask, this.compactChip, this.changesChip, this.terminalsChip, ...(commitReview ? [commitReview] : []), this.gitControl.element, this.prChip];
 	}
 
 	private scheduleLayout(): void {
