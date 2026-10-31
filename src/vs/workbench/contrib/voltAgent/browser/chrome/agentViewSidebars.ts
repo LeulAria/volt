@@ -29,7 +29,6 @@ import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { showAgentBranchMenu } from '../picker/agentBranchMenu.js';
 import { OPEN_BROWSER_COMMAND_ID, VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
 import { AgentChangesEditorInput, OPEN_AGENT_CHANGES_COMMAND_ID } from '../review/agentChangesEditor.js';
-import { createPrimarySidebarToggleIcon } from '../../../../browser/parts/titlebar/sidebarToggleIcon.js';
 import { SHOW_PULL_REQUESTS_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { AgentPullRequestDockControl } from '../pullRequests/agentPullRequestDockControl.js';
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
@@ -66,6 +65,18 @@ const TUNE_HIDE_DELAY_MS = 250;
 
 /** Chevrons point right. Collapsed state rotates this 180deg. */
 const CHEVRON_RIGHT_PATH = 'M6 7L11 12L6 17M13 7L18 12L13 17';
+/** Lucide panel-bottom, folder and panel-right: one outline set for the title bar's toggles. */
+const PANEL_BOTTOM_ICON_SHAPES: SvgIconShapes = [
+	['rect', { x: '3', y: '3', width: '18', height: '18', rx: '2' }],
+	['path', { d: 'M3 15h18' }],
+];
+const FOLDER_ICON_SHAPES: SvgIconShapes = [
+	['path', { d: 'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z' }],
+];
+const PANEL_RIGHT_ICON_SHAPES: SvgIconShapes = [
+	['rect', { x: '3', y: '3', width: '18', height: '18', rx: '2' }],
+	['path', { d: 'M15 3v18' }],
+];
 /** A bar over three lines: the Quick Open Actions list. Drawn at 16px, so a 1.5 stroke is 1px. */
 const QUICK_OPEN_ICON_PATH = 'M3.75 12H20.25M3.75 15.75H20.25M3.75 19.5H20.25M5.625 4.5H18.375C19.4105 4.5 20.25 5.33947 20.25 6.375C20.25 7.41053 19.4105 8.25 18.375 8.25H5.625C4.58947 8.25 3.75 7.41053 3.75 6.375C3.75 5.33947 4.58947 4.5 5.625 4.5Z';
 /** The user hid Quick Open Actions with the title bar button. */
@@ -342,7 +353,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		// The files sidebar's own toggle, beside the right panel's: each opens on its own.
 		this.filesToggle = append(this.titlebarToggles, $('button.volt-agent-titlebar-toggle.volt-agent-files-panel-toggle.volt-titlebar-control')) as HTMLButtonElement;
 		this.filesToggle.type = 'button';
-		this.filesToggle.appendChild(createSurfaceStrokeIcon(this.filesToggle.ownerDocument, EXPLORER_ICON_SHAPES));
+		this.filesToggle.appendChild(createSurfaceStrokeIcon(this.filesToggle.ownerDocument, FOLDER_ICON_SHAPES));
 		const filesLabel = localize('voltAgent.filesSidebar.show', "Show Files Sidebar");
 		this.filesToggle.setAttribute('aria-label', filesLabel);
 		setAgentTooltip(this.filesToggle, filesLabel);
@@ -1081,7 +1092,9 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.rightToggle.setAttribute('aria-label', label);
 		this.rightToggle.setAttribute('aria-expanded', String(open));
 		setAgentTooltip(this.rightToggle, label);
-		this.rightToggle.replaceChildren(createPrimarySidebarToggleIcon(this.rightToggle, open ? 'open' : 'closed'));
+		if (!this.rightToggle.firstChild) {
+			this.rightToggle.appendChild(createSurfaceStrokeIcon(this.rightToggle.ownerDocument, PANEL_RIGHT_ICON_SHAPES));
+		}
 	}
 
 	private get quickOpenHidden(): boolean {
@@ -1122,7 +1135,9 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.panelToggle.setAttribute('aria-label', label);
 		this.panelToggle.setAttribute('aria-expanded', String(open));
 		setAgentTooltip(this.panelToggle, label);
-		this.panelToggle.replaceChildren(createPrimarySidebarToggleIcon(this.panelToggle, open ? 'open' : 'closed'));
+		if (!this.panelToggle.firstChild) {
+			this.panelToggle.appendChild(createSurfaceStrokeIcon(this.panelToggle.ownerDocument, PANEL_BOTTOM_ICON_SHAPES));
+		}
 	}
 
 	private updateWorkspaceHeading(): void {

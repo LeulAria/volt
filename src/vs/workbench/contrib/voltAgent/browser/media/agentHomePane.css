@@ -2225,17 +2225,11 @@ html.volt-layout-agent-window body {
 .monaco-workbench.volt-layout-agent .volt-agent-home-row.is-action > .icon .volt-agent-svg-icon :is(svg, &),
 .monaco-workbench.volt-layout-agent .volt-agent-home-nav-action .volt-agent-svg-icon :is(svg, &),
 .monaco-workbench.volt-layout-agent .volt-agent-home-footer .volt-agent-home-settings :is(.volt-agent-svg-icon, .volt-agent-svg-icon svg, .volt-usage-icon, .volt-usage-icon svg, svg),
-.monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggles > .volt-agent-titlebar-toggle:not(.volt-agent-files-panel-toggle) svg,
+.monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggles > .volt-agent-titlebar-toggle svg,
 .monaco-workbench.volt-layout-agent .volt-agent-files-sidebar-tab > svg {
 	flex-shrink: 0;
 	width: 15px;
 	height: 15px;
-}
-
-/* Drawn with more room around it, so a step larger than the rest. */
-.monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggles > .volt-agent-files-panel-toggle svg {
-	width: 17px;
-	height: 17px;
 }
 
 .monaco-workbench.volt-layout-agent :is(.volt-agent-tools-files-toggle, .volt-agent-tools-fullscreen) svg {

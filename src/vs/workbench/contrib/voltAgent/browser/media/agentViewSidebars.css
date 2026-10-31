@@ -92,26 +92,6 @@
 	height: 16px;
 }
 
-.volt-agent-right-panel-toggle > svg {
-	transform: scaleX(-1);
-}
-
-/* The sidebar glyph's bar is on the left; a quarter turn counterclockwise puts it at the bottom. */
-.volt-agent-bottom-panel-toggle > svg {
-	transform: rotate(-90deg);
-}
-
-/* The folder's open shape reads small and light beside the framed glyphs: larger, with a 1.4px line. */
-.volt-agent-files-panel-toggle > svg {
-	width: 18px;
-	height: 18px;
-}
-
-.volt-agent-files-panel-toggle > svg > * {
-	vector-effect: non-scaling-stroke;
-	stroke-width: 1.4px;
-}
-
 .volt-agent-quick-open-visibility > svg {
 	width: 16px;
 	height: 16px;
