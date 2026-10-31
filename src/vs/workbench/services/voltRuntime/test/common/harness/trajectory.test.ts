@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import { StreamChunk } from '../../../common/deepseek/protocol.js';
-import { cacheHitRatio, closeOpenToolRuns, diffRequests, endToolRun, ITrajectoryRequestInput, newTrajectoryRequest, recordStream, startToolRun, summarize } from '../../../common/harness/trajectory.js';
+import { applyTrajectorySync, cacheHitRatio, closeOpenToolRuns, diffRequests, endToolRun, ITrajectoryRequestInput, newTrajectoryRequest, recordStream, startToolRun, summarize, syncTrajectory } from '../../../common/harness/trajectory.js';
 
 function input(overrides: Partial<ITrajectoryRequestInput> = {}): ITrajectoryRequestInput {
 	return {
@@ -100,5 +100,31 @@ suite('Trajectory', () => {
 		const summary = summarize([request]);
 		assert.strictEqual(summary.toolCalls, 2);
 		assert.strictEqual(summary.toolErrors, 1);
+	});
+
+	test('sync: a window gets new requests whole, then only what grew, and ends up with the same requests', () => {
+		const first = newTrajectoryRequest(input());
+		const second = newTrajectoryRequest(input({ id: 'r2', index: 2 }));
+		const initial = syncTrajectory([first, second], {});
+		assert.deepStrictEqual(initial.ids, ['r1', 'r2']);
+		assert.strictEqual(initial.requests.length, 2);
+		// Over the wire, as the agent server sends it.
+		let held = applyTrajectorySync([], JSON.parse(JSON.stringify(initial)));
+		assert.deepStrictEqual(held, JSON.parse(JSON.stringify([first, second])));
+
+		second.response.text = 'streamed';
+		startToolRun(second, { id: 'c', name: 'read', args: { path: 'a' } }, 10);
+		const grown = syncTrajectory([first, second], initial.revisions);
+		assert.deepStrictEqual(grown.requests.map(request => request.id), ['r2']);
+		assert.strictEqual(grown.requests[0].messages, undefined, 'the messages it went out with are not sent again');
+		held = applyTrajectorySync(held, JSON.parse(JSON.stringify(grown)));
+		assert.strictEqual(held[1].response.text, 'streamed');
+		assert.strictEqual(held[1].toolRuns.length, 1);
+		assert.deepStrictEqual(held[1].messages, second.messages);
+
+		// Nothing changed: nothing sent. Dropped from the server (cap, clear): dropped here.
+		assert.strictEqual(syncTrajectory([first, second], grown.revisions).requests.length, 0);
+		const trimmed = syncTrajectory([second], grown.revisions);
+		assert.deepStrictEqual(applyTrajectorySync(held, trimmed).map(request => request.id), ['r2']);
 	});
 });

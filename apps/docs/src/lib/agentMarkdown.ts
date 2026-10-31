@@ -8,6 +8,7 @@
 import changelogSource from "virtual:changelog";
 import { resolveChangelogHref } from "./changelog";
 import {
+  donorsMarkdown,
   downloadMarkdown,
   homeMarkdown,
   INFO_PAGES,
@@ -26,6 +27,7 @@ export const MARKDOWN_PAGES = [
   "/about",
   "/contact",
   "/privacy",
+  "/donors",
 ] as const;
 
 /** Where a page's Markdown lives: /index.md, /download.md, or the docs' content.md. */
@@ -58,6 +60,8 @@ export async function pageMarkdown(
       return downloadMarkdown();
     case "/changelog":
       return changelogMarkdown();
+    case "/donors":
+      return donorsMarkdown();
   }
   const info = INFO_PAGES.find((page) => page.path === path);
   if (info) return infoPageMarkdown(info);

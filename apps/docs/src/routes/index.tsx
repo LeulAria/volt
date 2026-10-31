@@ -13,7 +13,7 @@ import { SiteHeader } from "@/components/landing/siteHeader";
 import { WaveField } from "@/components/waveField";
 import { gsap, REDUCED, SplitText, useGSAP } from "@/lib/gsap";
 import { homeRouteLinks, homeRouteMeta } from "@/lib/seo";
-import { latestVersion, useReleases } from "@/lib/useReleases";
+import { downloadsLabel, latestVersion, useReleases } from "@/lib/useReleases";
 
 export const Route = createFileRoute("/")({
   component: Home,
@@ -28,7 +28,9 @@ export const Route = createFileRoute("/")({
 
 function Home() {
   const root = useRef<HTMLDivElement>(null);
-  const version = latestVersion(useReleases());
+  const releases = useReleases();
+  const version = latestVersion(releases);
+  const downloads = downloadsLabel(releases);
 
   // Opening sequence: chrome settles, the wordmark rises letter by letter, then the rest follows.
   useGSAP(
@@ -169,6 +171,7 @@ function Home() {
                     <span className="relative size-1.5 rounded-full bg-[#3ecf8e]" />
                   </span>
                   {version ? `Public beta • Volt v${version}` : "Public beta"}
+                  {downloads ? ` • ${downloads}` : null}
                 </p>
               </div>
             </div>

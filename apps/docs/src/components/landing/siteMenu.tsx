@@ -4,6 +4,7 @@ import {
   ArrowUpRight,
   BookOpen,
   ChevronRight,
+  Heart,
   Info,
   Menu,
   ScrollText,
@@ -181,6 +182,15 @@ export function SiteMenu({
                           icon={<Info />}
                           label="About"
                           hint="Who builds Volt, and why"
+                        />
+                      </Link>
+                    </li>
+                    <li>
+                      <Link to="/donors" onClick={close} className={ROW}>
+                        <MenuRow
+                          icon={<Heart />}
+                          label="Support"
+                          hint="Keep Volt free and moving fast"
                         />
                       </Link>
                     </li>

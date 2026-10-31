@@ -16,6 +16,8 @@ import { Route as ChangelogRouteImport } from './routes/changelog'
 import { Route as ChangelogDotmdRouteImport } from './routes/changelog[.]md'
 import { Route as ContactRouteImport } from './routes/contact'
 import { Route as ContactDotmdRouteImport } from './routes/contact[.]md'
+import { Route as DonorsRouteImport } from './routes/donors'
+import { Route as DonorsDotmdRouteImport } from './routes/donors[.]md'
 import { Route as DownloadRouteImport } from './routes/download'
 import { Route as DownloadDotmdRouteImport } from './routes/download[.]md'
 import { Route as IndexDotmdRouteImport } from './routes/index[.]md'
@@ -63,6 +65,16 @@ const ContactRoute = ContactRouteImport.update({
 const ContactDotmdRoute = ContactDotmdRouteImport.update({
   id: '/contact.md',
   path: '/contact.md',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DonorsRoute = DonorsRouteImport.update({
+  id: '/donors',
+  path: '/donors',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DonorsDotmdRoute = DonorsDotmdRouteImport.update({
+  id: '/donors.md',
+  path: '/donors.md',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DownloadRoute = DownloadRouteImport.update({
@@ -139,6 +151,8 @@ export interface FileRoutesByFullPath {
   '/changelog.md': typeof ChangelogDotmdRoute
   '/contact': typeof ContactRoute
   '/contact.md': typeof ContactDotmdRoute
+  '/donors': typeof DonorsRoute
+  '/donors.md': typeof DonorsDotmdRoute
   '/download': typeof DownloadRoute
   '/download.md': typeof DownloadDotmdRoute
   '/index.md': typeof IndexDotmdRoute
@@ -161,6 +175,8 @@ export interface FileRoutesByTo {
   '/changelog.md': typeof ChangelogDotmdRoute
   '/contact': typeof ContactRoute
   '/contact.md': typeof ContactDotmdRoute
+  '/donors': typeof DonorsRoute
+  '/donors.md': typeof DonorsDotmdRoute
   '/download': typeof DownloadRoute
   '/download.md': typeof DownloadDotmdRoute
   '/index.md': typeof IndexDotmdRoute
@@ -184,6 +200,8 @@ export interface FileRoutesById {
   '/changelog.md': typeof ChangelogDotmdRoute
   '/contact': typeof ContactRoute
   '/contact.md': typeof ContactDotmdRoute
+  '/donors': typeof DonorsRoute
+  '/donors.md': typeof DonorsDotmdRoute
   '/download': typeof DownloadRoute
   '/download.md': typeof DownloadDotmdRoute
   '/index.md': typeof IndexDotmdRoute
@@ -208,6 +226,8 @@ export interface FileRouteTypes {
     | '/changelog.md'
     | '/contact'
     | '/contact.md'
+    | '/donors'
+    | '/donors.md'
     | '/download'
     | '/download.md'
     | '/index.md'
@@ -230,6 +250,8 @@ export interface FileRouteTypes {
     | '/changelog.md'
     | '/contact'
     | '/contact.md'
+    | '/donors'
+    | '/donors.md'
     | '/download'
     | '/download.md'
     | '/index.md'
@@ -252,6 +274,8 @@ export interface FileRouteTypes {
     | '/changelog.md'
     | '/contact'
     | '/contact.md'
+    | '/donors'
+    | '/donors.md'
     | '/download'
     | '/download.md'
     | '/index.md'
@@ -275,6 +299,8 @@ export interface RootRouteChildren {
   ChangelogDotmdRoute: typeof ChangelogDotmdRoute
   ContactRoute: typeof ContactRoute
   ContactDotmdRoute: typeof ContactDotmdRoute
+  DonorsRoute: typeof DonorsRoute
+  DonorsDotmdRoute: typeof DonorsDotmdRoute
   DownloadRoute: typeof DownloadRoute
   DownloadDotmdRoute: typeof DownloadDotmdRoute
   IndexDotmdRoute: typeof IndexDotmdRoute
@@ -339,6 +365,20 @@ declare module '@tanstack/react-router' {
       path: '/contact.md'
       fullPath: '/contact.md'
       preLoaderRoute: typeof ContactDotmdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/donors': {
+      id: '/donors'
+      path: '/donors'
+      fullPath: '/donors'
+      preLoaderRoute: typeof DonorsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/donors.md': {
+      id: '/donors.md'
+      path: '/donors.md'
+      fullPath: '/donors.md'
+      preLoaderRoute: typeof DonorsDotmdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/download': {
@@ -443,6 +483,8 @@ const rootRouteChildren: RootRouteChildren = {
   ChangelogDotmdRoute: ChangelogDotmdRoute,
   ContactRoute: ContactRoute,
   ContactDotmdRoute: ContactDotmdRoute,
+  DonorsRoute: DonorsRoute,
+  DonorsDotmdRoute: DonorsDotmdRoute,
   DownloadRoute: DownloadRoute,
   DownloadDotmdRoute: DownloadDotmdRoute,
   IndexDotmdRoute: IndexDotmdRoute,

@@ -53,6 +53,8 @@ import { RemoteAgentOrchestratorService } from '../../../../services/voltAgentSe
 import { RemoteAgentRuntimeService } from '../../../../services/voltAgentServer/common/remoteAgentRuntimeService.js';
 import { RemoteVoltHostToolService } from '../../../../services/voltAgentServer/common/remoteVoltHostToolService.js';
 import { RemoteVoltSessionContextService } from '../../../../services/voltAgentServer/common/remoteVoltSessionContextService.js';
+import { RemoteVoltTrajectoryService } from '../../../../services/voltAgentServer/common/remoteVoltTrajectoryService.js';
+import { IVoltTrajectoryService } from '../../../../services/voltRuntime/common/trajectory.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
@@ -151,6 +153,7 @@ registerSingleton(IAgentCheckpointService, RemoteAgentCheckpointService, Instant
 // The agents' terminals run in the agent server too; this page shows them attached to it.
 registerSingleton(IAgentTerminalsService, RemoteAgentTerminalsService, InstantiationType.Delayed);
 registerSingleton(IAgentRunGroupService, RemoteAgentRunGroupService, InstantiationType.Delayed);
+registerSingleton(IVoltTrajectoryService, RemoteVoltTrajectoryService, InstantiationType.Delayed);
 setAgentSessionControlFactory((input, instantiationService) => instantiationService.createInstance(RemoteAgentSessionControl, input));
 
 //#endregion
