@@ -45,6 +45,9 @@ import { RemoteAgentOrchestratorService } from '../../../services/voltAgentServe
 import { RemoteAgentRuntimeService } from '../../../services/voltAgentServer/common/remoteAgentRuntimeService.js';
 import { RemoteVoltHostToolService } from '../../../services/voltAgentServer/common/remoteVoltHostToolService.js';
 import { RemoteVoltSessionContextService } from '../../../services/voltAgentServer/common/remoteVoltSessionContextService.js';
+import { RemoteVoltTrajectoryService } from '../../../services/voltAgentServer/common/remoteVoltTrajectoryService.js';
+import { VoltTrajectoryService } from '../../../services/voltRuntime/browser/trajectoryService.js';
+import { IVoltTrajectoryService } from '../../../services/voltRuntime/common/trajectory.js';
 import { AgentHistoryService } from '../../../services/voltRuntime/browser/history/agentHistoryService.js';
 import { VoltHostToolService } from '../../../services/voltRuntime/browser/host/hostToolService.js';
 import { AgentOrchestratorService } from '../../../services/voltRuntime/browser/orchestration/agentOrchestratorService.js';
@@ -151,6 +154,8 @@ registerSingleton(IVoltHostToolService, <never>eitherLocalOrRemote(VoltHostToolS
 registerSingleton(IAgentCheckpointService, <never>eitherLocalOrRemote(AgentCheckpointService, RemoteAgentCheckpointService), InstantiationType.Delayed);
 // Agents' terminals run where the agents do: in the server they outlive this window, which shows them attached.
 registerSingleton(IAgentTerminalsService, <never>eitherLocalOrRemote(AgentTerminalsService, RemoteAgentTerminalsService), InstantiationType.Delayed);
+// Runs record their model requests where they run: the Trajectory panel reads the server's.
+registerSingleton(IVoltTrajectoryService, <never>eitherLocalOrRemote(VoltTrajectoryService, RemoteVoltTrajectoryService), InstantiationType.Delayed);
 
 /** The main process's relay, for windows that run their agents themselves. */
 class MainProcessRelayService {

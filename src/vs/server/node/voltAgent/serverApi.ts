@@ -30,6 +30,7 @@ import { IServerFileRoot, ServerFiles } from './serverFiles.js';
 import { ServerComposer } from './serverComposer.js';
 import { ServerGit } from './serverGit.js';
 import { ServerRunGroups } from './serverRunGroups.js';
+import { ServerTrajectory } from './serverTrajectory.js';
 import { IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
 import { IVoltPullRequestService } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { basename } from '../../../base/common/path.js';
@@ -126,6 +127,7 @@ export class AgentServerApi extends Disposable {
 		this._register(new ServerGit(protocol, allowed, pullRequests, logService));
 		this._register(new ServerComposer(protocol, allowed, instantiationService));
 		this._register(instantiationService.createInstance(ServerRunGroups, protocol, this.col('runGroups')));
+		this._register(instantiationService.createInstance(ServerTrajectory, protocol));
 		this.registerMethods();
 		this.observe();
 		this.publishRuntime();
