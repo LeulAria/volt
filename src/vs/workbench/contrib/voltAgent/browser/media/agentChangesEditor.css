@@ -505,11 +505,12 @@
 	background: transparent;
 }
 
-/* Line numbers: small and dim, tinted on changed lines. */
+/* Line numbers: small and secondary, tinted on changed lines. Brighter than the theme's own gutter color, moved toward the editor text (in light and dark themes alike). */
 .volt-agent-changes-widget .monaco-editor .margin-view-overlays .line-numbers {
 	box-sizing: border-box;
 	padding-right: 8px;
 	font-size: 11px;
+	color: color-mix(in srgb, var(--vscode-editorLineNumber-foreground, #6e7681) 70%, var(--vscode-editor-foreground, #cccccc));
 }
 
 .volt-agent-changes-widget .monaco-editor .margin-view-overlays .line-numbers.active-line-number {
@@ -651,6 +652,50 @@
 
 .volt-agent-changes-widget .monaco-editor .delete-sign::before {
 	content: '-';
+}
+
+/* Undo This Change (agentReviewRevert.ts): left of the line numbers, on each hunk's first row, in every diff. */
+.monaco-editor .volt-review-reverts {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 0;
+	height: 0;
+	overflow: visible;
+}
+
+.monaco-editor .volt-review-revert {
+	position: absolute;
+	left: 6px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--vscode-icon-foreground, #c5c5c5);
+	opacity: 0.6;
+	cursor: pointer;
+}
+
+.monaco-editor .volt-review-revert:hover {
+	opacity: 1;
+	background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
+}
+
+.monaco-editor .volt-review-revert:focus-visible {
+	opacity: 1;
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 0;
+}
+
+.monaco-editor .volt-review-revert .codicon[class*='codicon-'] {
+	font-size: 12px;
 }
 
 /* Folded unchanged lines: Better Hub's blue hunk bar, the unfold button in the number column. */
