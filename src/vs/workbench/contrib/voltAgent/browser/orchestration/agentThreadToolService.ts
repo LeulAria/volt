@@ -746,7 +746,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			title,
 			...(model ? { model: model.label } : {}),
 			...(mode ? { mode } : {}),
-			forkOf: { id: sourceId, title: sourceTitle, turns: turns.length, ...(base ? { base } : {}) },
+			forkOf: { id: sourceId, title: sourceTitle, turns: turns.length, lastTurn: turns[turns.length - 1].id, ...(base ? { base } : {}) },
 		});
 		await handle.flush();
 		await this.history.rename(forkId, title);

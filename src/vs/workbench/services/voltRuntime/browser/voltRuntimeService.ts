@@ -143,6 +143,22 @@ import { createCompatProvider, createLMStudioProvider, createOpenAIProvider, cre
 const RECEIPT_LIMIT = 500;
 /** Below this many files ripgrep is quick enough that CLI agents need no hint about instant_grep. */
 const LARGE_INDEXED_PROJECT_FILES = 2_000;
+// What a CLI agent's prompt may wait for once the agent is ready. Each is extra context; none may
+// hold the prompt back for long, and a part that hangs (a stuck index, a busy window) costs only this.
+/** How long a send waits for the code index to say whether it is ready (see largeIndexedProject). */
+const INDEX_STATUS_WAIT_MS = 250;
+/** A folder's index status is asked again behind a send once the last answer is this old. */
+const INDEX_STATUS_TTL_MS = 60_000;
+/** The files a message names (see retrieveContext). CLI agents search for themselves; this is a head start. */
+const AGENT_RETRIEVAL_DEADLINE_MS = 50;
+/** The first turn's primer: the project's likely files, and the app in the chat's browser. */
+const PRIMER_WAIT_MS = 600;
+/** What the user has open beside the chat (see workspaceLead). */
+const WORKSPACE_LEAD_WAIT_MS = 300;
+/** The user's and the project's memory notes, read from disk (cached). */
+const MEMORY_WAIT_MS = 1_000;
+/** A lead that took this long is logged with what each part took. */
+const SLOW_LEAD_MS = 100;
 /** Per-chat access picks kept; the oldest fall back to the default. */
 const ACCESS_CHATS_LIMIT = 500;
 /** Access-broker session id for the predictor agent (Tab, composer ghost text, dictation). */
@@ -223,6 +239,10 @@ interface IRunState {
 	readonly settled: DeferredPromise<void>;
 	/** run.end was emitted; later engine events are dropped (file changes excepted). */
 	ended: boolean;
+	/** Agent runs: the agent has the prompt ('running' was emitted). */
+	prompted?: boolean;
+	/** Agent runs: an agent had to start for this run ('planning' was emitted, see emitStarting). */
+	startingShown?: boolean;
 	lane?: VoltLane;
 	/** How the request was classified (lane, budget, signals). */
 	intent?: IIntent;
@@ -584,6 +604,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly retriever: ContextRetriever;
 	/** `git status` per root, briefly cached: the retriever ranks changed files up. */
 	private readonly workingTreeChangesByRoot = new Map<string, { readonly at: number; readonly value: Promise<ReadonlySet<string>> }>();
+	/** Whether a folder is a large indexed project, last answer (see largeIndexedProject); and the reads in flight. */
+	private readonly indexedByRoot = new Map<string, { readonly at: number; readonly value: boolean }>();
+	private readonly indexedReads = new Map<string, Promise<boolean>>();
 	private readonly mcpHost: McpHost;
 	private readonly journal: NativeJournal;
 	private readonly nativeRestores = new Map<string, Promise<void>>();
@@ -1125,11 +1148,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (session.activeRun?.runId === run.runId) {
 			session.activeRun = { ...session.activeRun, lane: intent.lane };
 		}
-		if (engine === 'agent') {
-			this.emit(session, run.runId, { type: 'lifecycle', phase: 'planning' });
-		}
+		// An agent run says 'planning' only if its agent has to start (emitStarting), and 'running'
+		// once the agent has the prompt (agentTurn).
 		this.emit(session, run.runId, { type: 'lane', lane: intent.lane, signals: intent.signals, wantsPreview: intent.wantsPreview, wantsWeb: intent.wantsWeb });
-		this.emit(session, run.runId, { type: 'lifecycle', phase: 'running' });
+		if (engine !== 'agent') {
+			this.emit(session, run.runId, { type: 'lifecycle', phase: 'running' });
+		}
 		run.metrics.mark('prepared');
 		this.startQualityGate(session, run);
 		void this.execute(session, run, request, intent, previous)
@@ -1273,6 +1297,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (session.agentHandle && session.agentRef === item.ref && session.agentCwd === cwd && session.agentSandboxKey === this.sandboxKey(session.sessionId) && (provider.isLive?.(session.agentHandle) ?? true)) {
 			return;
 		}
+		// A new agent's first prompt says whether the project is indexed: ask now, not on the send.
+		void this.largeIndexedProject(this.executionRoot(session));
 		const sandbox = this.sandboxStart(session.sessionId, cwd);
 		const spare = this.spareRequest(provider, profile, item, cwd, undefined, sandbox);
 		if (this.agentPool.has(spare.key)) {
@@ -4392,12 +4418,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		const started = Date.now();
 		const browserTools = this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'browser_run');
+		// The prompt waits for the primer, so it gets PRIMER_WAIT_MS: what is not ready by then the
+		// agent finds itself (a dev server the browser check started keeps starting meanwhile).
 		const [files, browser] = await Promise.all([
-			plan.files ? raceTimeout(this.primerFiles(root, request.text, !!intent.uiWork).catch(() => undefined), 5000) : undefined,
+			plan.files ? raceTimeout(this.primerFiles(root, request.text, !!intent.uiWork).catch(() => undefined), PRIMER_WAIT_MS) : undefined,
 			plan.browser && browserTools ? raceTimeout(this.browserPreflight(session, run, request.mode, root, plan).catch(err => {
 				this.logService.warn('[volt] browser preflight failed', err);
 				return undefined;
-			}), 25_000) : undefined,
+			}), PRIMER_WAIT_MS) : undefined,
 		]);
 		if (!this.isCurrent(session, run)) {
 			return undefined;
@@ -4458,7 +4486,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * window answers within a bounded time or the turn goes without.
 	 */
 	private async workspaceLead(session: ISessionState, handle: IAgentSessionHandle): Promise<string | undefined> {
-		const snapshot = await this.commandService.executeCommand<IWorkspaceSnapshot | undefined>(WORKSPACE_SNAPSHOT_COMMAND_ID, session.sessionId).catch(() => undefined);
+		// A busy window answers late: this turn goes without, and the next one sends it (nothing was marked sent).
+		const snapshot = await raceTimeout(this.commandService.executeCommand<IWorkspaceSnapshot | undefined>(WORKSPACE_SNAPSHOT_COMMAND_ID, session.sessionId).catch(() => undefined), WORKSPACE_LEAD_WAIT_MS);
 		if (!snapshot) {
 			return undefined;
 		}
@@ -4471,10 +4500,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/** What `buildAcpLead` reads, and nothing else: the lead is built on every turn's critical path. */
-	private async contextPackInput(session: ISessionState, mode: VoltMode, intent: IIntent, withMemory: boolean): Promise<IContextPackInput> {
+	private async contextPackInput(session: ISessionState, mode: VoltMode, intent: IIntent, withMemory: boolean, indexed: Promise<boolean>): Promise<IContextPackInput> {
 		const root = this.executionRoot(session);
 		return {
-			...(withMemory ? { memory: await this.memory.context() } : {}),
+			...(withMemory ? { memory: await raceTimeout(this.memory.context().catch(() => undefined), MEMORY_WAIT_MS) } : {}),
 			mode,
 			intent: { ...intent, groups: this.effectiveGroups(session, intent) },
 			runPlan: intent.wantsPreview ? await this.workspaceRunPlan(root) : undefined,
@@ -4482,7 +4511,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			...(intent.shape ? { shape: intent.shape } : {}),
 			...(mode === 'multitask' ? { taskModels: [...new Set(this.listCatalog().filter(item => item.enabled).map(item => item.label))] } : {}),
 			visuals: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.group === 'visuals'),
-			...(withMemory && await this.largeIndexedProject(root) ? { codeIndexed: true } : {}),
+			...(withMemory && await indexed ? { codeIndexed: true } : {}),
 			browserTools: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'browser_run'),
 			...(intent.wantsGit && this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'propose_commits') ? { commitReview: true } : {}),
 		};
@@ -4501,7 +4530,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		try {
 			const result = await this.retriever.retrieve(root, text, {
 				budgetTokens: forAgent ? 400 : 1_500,
-				deadlineMs: forAgent ? 300 : 500,
+				// A warm agent is ready within milliseconds and the prompt waits for this: keep it short.
+				deadlineMs: forAgent ? AGENT_RETRIEVAL_DEADLINE_MS : 500,
 				snippets: !forAgent,
 				...(session.retrievalSeen ? { seen: session.retrievalSeen } : {}),
 				changed: () => this.workingTreeChanges(root),
@@ -4546,13 +4576,35 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return value;
 	}
 
-	/** Worth telling a CLI agent about instant_grep: a big project whose index is ready. */
+	/**
+	 * Worth telling a CLI agent about instant_grep: a big project whose index is ready. Asked on the
+	 * send path, so it waits {@link INDEX_STATUS_WAIT_MS} at most: an index process still starting
+	 * (or stuck) answers "no" instead of holding the prompt back.
+	 */
 	private async largeIndexedProject(root: URI | undefined): Promise<boolean> {
 		if (!root || root.scheme !== Schemas.file || !this.searchIndex.enabled() || !this.hostTools.getMcpServers().length || !this.hostTools.listTools().some(tool => tool.name === INSTANT_GREP_TOOL_NAME)) {
 			return false;
 		}
-		const [status] = await this.searchIndex.service.status([root.fsPath]).catch(() => []);
-		return status?.state === 'ready' && status.files >= LARGE_INDEXED_PROJECT_FILES;
+		// The last answer for this folder is used at once (an index does not shrink below the size
+		// that matters between turns) and refreshed behind the send when it is old.
+		const cached = this.indexedByRoot.get(root.fsPath);
+		const fresh = this.readIndexed(root.fsPath, cached);
+		return cached ? cached.value : (await raceTimeout(fresh, INDEX_STATUS_WAIT_MS) ?? false);
+	}
+
+	private readIndexed(folder: string, cached: { at: number; value: boolean } | undefined): Promise<boolean> {
+		if (cached && Date.now() - cached.at < INDEX_STATUS_TTL_MS) {
+			return Promise.resolve(cached.value);
+		}
+		return this.indexedReads.get(folder) ?? (() => {
+			const read = this.searchIndex.service.status([folder]).catch(() => []).then(([status]) => {
+				const value = status?.state === 'ready' && status.files >= LARGE_INDEXED_PROJECT_FILES;
+				this.indexedByRoot.set(folder, { at: Date.now(), value });
+				return value;
+			}).finally(() => this.indexedReads.delete(folder));
+			this.indexedReads.set(folder, read);
+			return read;
+		})();
 	}
 
 	private async executeAgent(session: ISessionState, run: IRunState, request: IVoltSendRequest, profile: IProviderProfile, item: IVoltCatalogItem, intent: IIntent, previous: IRunState | undefined): Promise<void> {
@@ -4565,6 +4617,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const token = run.cancel.token;
 		// A short list of the files the message names, found while the agent starts.
 		const retrieval = isCompactCommand(request.text) || isVoltNote(request.text) ? undefined : this.retrieveContext(session, run, request.text, true);
+		// Asked now, so its wait overlaps the agent's start instead of following it (only a new agent's lead uses it).
+		const indexed = this.largeIndexedProject(this.executionRoot(session));
 		// Another model from the same CLI is another agent session: restart it; the recap carries the thread over.
 		const hasLiveAgent = () => !!session.agentHandle && session.agentProviderId === provider.id && session.agentRef === item.ref
 			&& session.agentCwd === this.executionRoot(session)?.fsPath && session.agentSandboxKey === this.sandboxKey(session.sessionId) && (provider.isLive?.(session.agentHandle) ?? true);
@@ -4629,10 +4683,23 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					}
 					// After a move: the conversation so far happened in the old folder.
 					const moved = session.moved?.model;
-					// The turn primer (first turn only): the relevant files and the app open in the chat's browser.
-					const primer = attempt === 0 ? await this.turnPrimer(session, run, request, intent) : undefined;
-					const [pack, workspace] = await Promise.all([this.contextPackInput(session, request.mode, intent, !reusedAgent && !reused), this.workspaceLead(session, handle)]);
-					const lead = [handoff?.text, moved, buildAcpLead(pack), (await retrieval)?.text, primer, workspace].filter(Boolean).join('\n\n') || undefined;
+					// Everything the lead carries is gathered at once, each part within its own wait (see
+					// PRIMER_WAIT_MS and the others): the prompt goes out when the slowest is in.
+					const leadStarted = Date.now();
+					const leadParts: string[] = [];
+					const timed = <T>(name: string, promise: Promise<T>) => promise.finally(() => leadParts.push(`${name} ${Date.now() - leadStarted}ms`));
+					const [primer, pack, workspace, retrieved] = await Promise.all([
+						// The turn primer (first turn only): the relevant files and the app open in the chat's browser.
+						attempt === 0 ? timed('primer', this.turnPrimer(session, run, request, intent)) : undefined,
+						timed('context', this.contextPackInput(session, request.mode, intent, !reusedAgent && !reused, indexed)),
+						timed('workspace', this.workspaceLead(session, handle)),
+						// The retriever's deadline is soft (searches already running finish): cut it here.
+						retrieval ? timed('retrieval', raceTimeout(retrieval, AGENT_RETRIEVAL_DEADLINE_MS)) : undefined,
+					]);
+					if (Date.now() - leadStarted >= SLOW_LEAD_MS) {
+						this.logService.info(`[volt] lead for run ${run.runId} took ${Date.now() - leadStarted}ms (${leadParts.join(', ')})`);
+					}
+					const lead = [handoff?.text, moved, buildAcpLead(pack), retrieved?.text, primer, workspace].filter(Boolean).join('\n\n') || undefined;
 					if (moved && session.moved?.model === moved) {
 						session.moved = undefined;
 					}
@@ -4732,6 +4799,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		let reason: 'done' | 'abort' | 'fail' | undefined;
 		let incomplete: 'steps' | undefined;
 		run.metrics.mark('prompt');
+		if (!run.prompted) {
+			// The agent is up and has the prompt: the chat stops saying it is starting.
+			run.prompted = true;
+			this.emit(session, run.runId, { type: 'lifecycle', phase: 'running' });
+		}
 		for await (const event of provider.send(handle, message, profile, token)) {
 			if (!this.isCurrent(session, run)) {
 				continue;
@@ -4922,7 +4994,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const spareRequest = this.spareRequest(provider, profile, item, cwd, request.options, sandbox);
 		run.spare = spareRequest;
 		// A spare's browser tools reach this chat only when the host tool service maps its alias.
-		if (this.aliasHost() || !(intent.wantsPreview || intent.matchesDesign)) {
+		const usePool = this.aliasHost() || !(intent.wantsPreview || intent.matchesDesign);
+		// The provider may hold a spare it parked for this chat (prewarmAgent without alias support).
+		const parked = (provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'hasSpare'>>).hasSpare?.(this.agentStartRequest(session.sessionId, profile, item, cwd, request.options, request.mode, sandbox));
+		if (!(usePool && this.agentPool.isReady(spareRequest.key)) && !parked) {
+			// No agent is up for this chat: one starts now, and the chat says so until it has the prompt.
+			this.emitStarting(session, run);
+		}
+		if (usePool) {
 			const spare = await this.agentPool.take(spareRequest.key);
 			if (spare) {
 				if (!this.isCurrent(session, run) && session.agentHandle) {
@@ -4936,10 +5015,20 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				return;
 			}
 		}
-		// The provider may hold a spare it parked for this chat (prewarmAgent without alias support).
-		const parked = (provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'hasSpare'>>).hasSpare?.(this.agentStartRequest(session.sessionId, profile, item, cwd, request.options, request.mode, sandbox));
 		await this.startAgentSession(session, run, provider, profile, item, request.mode, request.options);
 		run.metrics.setAgentSource(restart ? 'restart' : parked ? 'pool' : 'cold');
+	}
+
+	/**
+	 * The run's agent has to start (spawn, initialize, session/new): 'planning' puts "Starting
+	 * <model>" on the chat's live line until 'running' says the agent has the prompt. A run whose
+	 * agent is already up never shows it.
+	 */
+	private emitStarting(session: ISessionState, run: IRunState): void {
+		if (!run.startingShown && !run.prompted) {
+			run.startingShown = true;
+			this.emit(session, run.runId, { type: 'lifecycle', phase: 'planning' });
+		}
 	}
 
 	private finish(session: ISessionState, run: IRunState, reason: 'done' | 'abort' | 'fail', incomplete?: 'steps'): void {

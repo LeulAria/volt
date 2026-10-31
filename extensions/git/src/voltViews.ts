@@ -583,9 +583,11 @@ class WorktreesTree extends RefsTree {
 		const open = workspace.workspaceFolders?.some(folder => path.relative(folder.uri.fsPath, worktree.path) === '') ?? false;
 		const item = new TreeItem(path.basename(worktree.path), TreeItemCollapsibleState.None);
 		item.id = `${repository.root}#worktree#${worktree.path}`;
-		item.iconPath = new ThemeIcon(open ? 'check' : worktree.main ? 'repo' : 'worktree');
+		// No icon: these are one repository's checkouts, like the rows of Changes or the Explorer. With
+		// several repositories open, each one's row above its worktrees carries the repository icon.
 		item.description = [
 			worktree.branch ?? (worktree.head ? shortHash(repository, worktree.head) : undefined),
+			open ? l10n.t('open') : undefined,
 			worktree.main ? l10n.t('main') : undefined,
 			worktree.locked ? l10n.t('locked') : undefined,
 			worktree.prunable ? l10n.t('prunable') : undefined,

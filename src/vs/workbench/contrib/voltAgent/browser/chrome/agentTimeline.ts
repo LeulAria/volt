@@ -943,26 +943,20 @@ export function tasksCard(steps: readonly IAgentTodoStep[], live: boolean): ITas
 }
 
 /**
- * Which to-dos the composer's Tasks card shows: the latest list in the chat, while its turn (or a
- * later one) runs, or after it if some are still open. A finished list leaves the card.
+ * Which to-dos the composer's Tasks card shows: the latest reply's list while it runs, or after it if
+ * some are still open. A finished list leaves the card, and an older reply's list stays in its turn:
+ * a new run brings it back only by updating it (its first update carries the list over).
  */
 export function composerTasks(messages: readonly { readonly kind: string; readonly steps?: readonly IAgentTodoStep[]; readonly activity?: { readonly streaming?: boolean } }[]): ITasksCard | undefined {
-	const agents = messages.filter(message => message.kind === 'agent');
-	const last = agents.at(-1);
-	const owner = findLast(agents, message => !!message.steps?.length);
-	if (!last || !owner?.steps) {
+	const last = findLast(messages, message => message.kind === 'agent');
+	if (!last?.steps?.length) {
 		return undefined;
 	}
 	const live = !!last.activity?.streaming;
-	const open = owner.steps.some(step => step.state !== 'done');
-	if (owner !== last && !(live && open)) {
-		// An older turn's list: only a run that is still working through it brings it back.
+	if (!live && last.steps.every(step => step.state === 'done')) {
 		return undefined;
 	}
-	if (!live && !open) {
-		return undefined;
-	}
-	return tasksCard(owner.steps, live);
+	return tasksCard(last.steps, live);
 }
 
 /** "42s", "3m 05s", "1h 02m": a live turn's elapsed time, steady width so it does not jitter. */

@@ -4,8 +4,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { $, addDisposableListener, append } from '../../../../../base/browser/dom.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -17,7 +15,7 @@ import { OPEN_AGENT_USAGE_COMMAND_ID } from '../usage/agentUsageEditor.js';
 import { createUsageIcon } from '../usage/agentUsageIcons.js';
 import { AgentUsageHoverCard } from '../usage/agentUsageHoverCard.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { createHomeAutomationsIcon, createHomeSettingsIcon } from './agentHomeIcons.js';
+import { createHomeAutomationsIcon, createHomeCustomizeIcon, createHomeSettingsIcon } from './agentHomeIcons.js';
 
 export type AgentFooterAction = 'settings' | 'usage' | 'automations' | 'customize';
 
@@ -34,7 +32,7 @@ export function appendAgentFooterActions(footer: HTMLElement, commandService: IC
 		button.setAttribute('aria-label', label);
 		if (id === 'usage' && instantiationService) {
 			// Every account's limits on hover, instead of a plain "Usage" tooltip.
-			store.add(instantiationService.createInstance(AgentUsageHoverCard, button));
+			store.add(instantiationService.createInstance(AgentUsageHoverCard, button, 'above'));
 		} else {
 			setAgentTooltip(button, label);
 		}
@@ -50,6 +48,6 @@ export function appendAgentFooterActions(footer: HTMLElement, commandService: IC
 		settings: action('settings', localize('voltAgent.home.settings', "Settings"), () => createHomeSettingsIcon(), OPEN_VOLT_SETTINGS_COMMAND_ID),
 		usage: action('usage', localize('voltAgent.home.usage', "Usage"), () => createUsageIcon(14), OPEN_AGENT_USAGE_COMMAND_ID, '.volt-agent-home-usage'),
 		automations: action('automations', localize('voltAgent.home.automations', "Automations"), () => createHomeAutomationsIcon(), OPEN_AUTOMATIONS_COMMAND_ID),
-		customize: action('customize', localize('voltAgent.home.customize', "Customize"), () => renderIcon(Codicon.extensions), OPEN_AGENT_CUSTOMIZE_COMMAND_ID),
+		customize: action('customize', localize('voltAgent.home.customize', "Customize"), () => createHomeCustomizeIcon(), OPEN_AGENT_CUSTOMIZE_COMMAND_ID),
 	};
 }

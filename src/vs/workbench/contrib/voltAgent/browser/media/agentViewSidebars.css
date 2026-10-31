@@ -92,26 +92,6 @@
 	height: 16px;
 }
 
-.volt-agent-right-panel-toggle > svg {
-	transform: scaleX(-1);
-}
-
-/* The sidebar glyph's bar is on the left; a quarter turn counterclockwise puts it at the bottom. */
-.volt-agent-bottom-panel-toggle > svg {
-	transform: rotate(-90deg);
-}
-
-/* The folder's open shape reads small and light beside the framed glyphs: larger, with a 1.4px line. */
-.volt-agent-files-panel-toggle > svg {
-	width: 18px;
-	height: 18px;
-}
-
-.volt-agent-files-panel-toggle > svg > * {
-	vector-effect: non-scaling-stroke;
-	stroke-width: 1.4px;
-}
-
 .volt-agent-quick-open-visibility > svg {
 	width: 16px;
 	height: 16px;
@@ -251,6 +231,11 @@
 .volt-agent-quick-open-toggle:focus-visible .volt-agent-dock-label,
 .volt-agent-rail-btn:focus-visible .volt-agent-dock-label {
 	display: block;
+}
+
+/* The usage card opens beside this icon on hover; a label would sit under it. */
+.volt-agent-rail-btn.volt-agent-dock-usage-rail .volt-agent-dock-label {
+	display: none !important;
 }
 
 /* Same scroller as the chat scrollbar. In-flow width pushes the transcript. */
@@ -692,4 +677,152 @@
 /* Settings > Canvas & Scratch turned Scratch off: no way into a chat's board either. */
 .volt-scratch-disabled .volt-agent-dock-section.volt-agent-dock-scratch {
 	display: none;
+}
+
+/* Unticked in the tune menu. Wins over the display the lineage sets on its own sections. */
+.volt-agent-quick-open-actions .volt-agent-dock-user-hidden {
+	display: none !important;
+}
+
+/* The tune button: round, under the chevron, while the chevron (or the button, or its menu) is in use.
+ * Opaque like the menus it opens (volt-transparent-window). */
+.volt-agent-quick-open-actions > .volt-agent-dock-tune {
+	position: absolute;
+	top: 36px;
+	right: 2px;
+	z-index: 2;
+	display: none;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+	color: var(--vscode-descriptionForeground);
+	box-shadow:
+		0 0 0 1px var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent)),
+		0 2px 8px rgba(0, 0, 0, 0.28);
+	cursor: pointer;
+}
+
+.volt-agent-quick-open-actions.expanded.tune-shown > .volt-agent-dock-tune {
+	display: inline-flex;
+}
+
+.volt-agent-quick-open-actions.expanded.tune-shown > .volt-agent-quick-open-toggle {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.volt-agent-quick-open-actions > .volt-agent-dock-tune:hover,
+.volt-agent-quick-open-actions > .volt-agent-dock-tune.open,
+.monaco-workbench .volt-agent-quick-open-actions > .volt-agent-dock-tune:focus-visible {
+	color: var(--vscode-foreground);
+	outline: none;
+}
+
+.monaco-workbench .volt-agent-quick-open-actions > .volt-agent-dock-tune .codicon[class*='codicon-'] {
+	font-size: 14px;
+	color: inherit;
+}
+
+/* Usage: a brand mark and a thin bar per account; the full card opens on hover. */
+.volt-agent-dock-usage-bars {
+	display: flex;
+	flex-direction: column;
+	gap: 7px;
+	padding: 4px 12px 8px;
+	cursor: default;
+}
+
+.volt-agent-dock-usage-line {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 12px;
+}
+
+.volt-agent-dock-usage-line > .volt-brand-icon {
+	flex: none;
+	opacity: 0.8;
+}
+
+.volt-agent-dock-usage-line.active > .volt-brand-icon {
+	opacity: 1;
+}
+
+.volt-agent-dock-usage-bar {
+	flex: 1;
+	display: block;
+	height: 3px;
+	overflow: hidden;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.volt-agent-dock-usage-fill {
+	display: block;
+	height: 100%;
+	border-radius: inherit;
+	background: var(--vscode-textLink-foreground, #4c8dff);
+}
+
+.volt-agent-dock-usage-line.high .volt-agent-dock-usage-fill {
+	background: var(--vscode-editorWarning-foreground, #e5a50a);
+}
+
+.volt-agent-dock-usage-empty {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* Automations: VS Code list rows, edge to edge and square, like Previous agents. */
+.volt-agent-dock-automation-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-agent-dock-automation-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 26px;
+	padding: 0 12px;
+	font-size: 13px;
+	cursor: pointer;
+	min-width: 0;
+}
+
+.volt-agent-dock-automation-icon {
+	display: inline-flex;
+	flex: none;
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+}
+
+.monaco-workbench .volt-agent-dock-automation-row .volt-agent-dock-automation-icon .codicon[class*='codicon-'] {
+	font-size: 14px;
+}
+
+.volt-agent-dock-automation-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-dock-automation-when {
+	flex: none;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-agent-dock-automation-row.off .volt-agent-dock-automation-title {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-dock-automation-new {
+	color: var(--vscode-descriptionForeground);
 }

@@ -42,9 +42,11 @@ import { AGENT_BRANCH_PREFIX_SETTING, AGENT_COMMIT_ATTRIBUTION_SETTING, readBran
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
+import { IAgentCommitPlanService } from './agentCommitPlanService.js';
 import { followWorktreeBranch } from './agentWorktreeBranch.js';
 import { openPullRequest } from './agentPullRequestUi.js';
 import { showAgentGitCommitDialog } from './agentGitCommitDialog.js';
+import { resolveRunModelRef } from '../../../../services/voltRuntime/common/models/modelAccess.js';
 
 export const IAgentGitActionsService = createDecorator<IAgentGitActionsService>('agentGitActionsService');
 
@@ -128,6 +130,7 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+		@IAgentCommitPlanService private readonly commitPlans: IAgentCommitPlanService,
 	) {
 		super();
 		// A pull request linked or created elsewhere changes what the quick action offers.
@@ -353,12 +356,36 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 			return false;
 		}
 		const base = status.defaultBranch ?? 'main';
+		const push = actionIncludesPush(action);
+		const pr = actionIncludesPr(action);
 		const steps = [
-			commits ? 'Commit the uncommitted changes: split them into meaningful commits with conventional messages and show them to me with propose_commits.' : undefined,
-			actionIncludesPush(action) && placeholder ? `Before pushing, ask me what to call the branch (it is still ${status.branch}) and rename it.` : undefined,
-			actionIncludesPr(action) ? `Then push the branch and open a pull request into ${base}.` : actionIncludesPush(action) ? 'Then push the branch.' : undefined,
+			commits ? 'Commit the uncommitted changes with conventional messages and show them to me with propose_commits. Split them into several commits only where they are separate changes; changes that belong together, or one change, go in a single commit.' : undefined,
+			push && placeholder ? `Before pushing, ask me what to call the branch (it is still ${status.branch}) and rename it.` : undefined,
+			pr ? `Then push the branch and open a pull request into ${base}.` : push ? 'Then push the branch.' : undefined,
 		].filter(Boolean);
-		void this.orchestrator.submit(sessionId, { text: steps.join(' ') }, 'auto').catch(err => {
+		// A quick, quiet errand: the review shows the commits, so the agent neither explores nor recaps them.
+		const rules = [
+			commits ? 'Be quick: read `git status` and `git diff` once, nothing else (no exploring, no tests, no task list), then call propose_commits right away.' : undefined,
+			commits ? 'I review the commits in Volt\'s commit review, so do not list or explain them.' : undefined,
+			'When it is over, reply with one short line ("Done.", or what went wrong).',
+		].filter(Boolean);
+		const text = `${steps.join(' ')}\n\n${rules.join(' ')}`;
+		// The chat shows a chip for the button, not the prompt; its hover has the prompt.
+		const label = commits
+			? pr ? localize('voltGit.chipCommitsPr', "Draft Commits and Open PR") : push ? localize('voltGit.chipCommitsPush', "Draft Commits and Push") : localize('voltGit.chipCommits', "Draft Commits")
+			: pr ? localize('voltGit.chipPr', "Push and Open PR") : localize('voltGit.chipPush', "Push Branch");
+		const display = { text: label, mentions: [{ kind: 'action', label, value: text }] };
+		if (commits) {
+			// The review appears at once, generating, instead of only when the agent gets to it.
+			this.commitPlans.startDrafting(sessionId);
+		}
+		// The chat's model: without one the turn falls back to the native agent, not what the chat runs on.
+		const modelRef = resolveRunModelRef({
+			chat: this.orchestrator.getThread(sessionId)?.modelRef,
+			lastUsed: this.runtime.getActiveCatalogRef(),
+		}, this.runtime.listCatalog());
+		void this.orchestrator.submit(sessionId, { text, display, ...(modelRef ? { modelRef } : {}) }, 'auto').catch(err => {
+			this.commitPlans.stopDrafting(sessionId);
 			this.notificationService.error(localize('voltGit.askFailed', "Could not ask the agent: {0}", err instanceof Error ? err.message : String(err)));
 		});
 		return true;

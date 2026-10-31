@@ -489,6 +489,8 @@ export interface IVoltGitCommitRequest {
 	readonly message: string;
 	/** Commit only these paths; every change when undefined. */
 	readonly paths?: readonly string[];
+	/** What these paths hold in the commit, for a file committed by some of its hunks; the worktree keeps the rest. */
+	readonly contents?: readonly { readonly path: string; readonly content: string }[];
 	/** Create and check out this branch first; the changes come along. */
 	readonly newBranch?: string;
 }

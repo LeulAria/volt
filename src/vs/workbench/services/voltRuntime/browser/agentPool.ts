@@ -75,6 +75,12 @@ export class AgentPool extends Disposable {
 		return this.entries.has(key);
 	}
 
+	/** A spare for `key` is up and can take a prompt now (not one still starting). */
+	isReady(key: string): boolean {
+		const entry = this.entries.get(key);
+		return !!entry?.handle && entry.request.isLive(entry.handle);
+	}
+
 	get size(): number {
 		return this.entries.size;
 	}

@@ -62,6 +62,7 @@ import { VoltHostMcpService } from '../../../platform/voltHostMcp/node/voltHostM
 import { IVoltStdioService } from '../../../platform/voltStdio/common/voltStdio.js';
 import { VoltStdioService } from '../../../platform/voltStdio/node/voltStdioService.js';
 import { AgentTurnHostContribution } from '../../../workbench/contrib/voltAgent/browser/orchestration/agentTurnHost.js';
+import { HarnessSubagentChats } from '../../../workbench/contrib/voltAgent/browser/orchestration/harnessSubagentChats.js';
 import { AgentThreadToolService } from '../../../workbench/contrib/voltAgent/browser/orchestration/agentThreadToolService.js';
 import { IAgentChatForkService } from '../../../workbench/contrib/voltAgent/browser/orchestration/agentChatFork.js';
 import { AgentChatSearchService, IAgentChatSearchService } from '../../../workbench/contrib/voltAgent/browser/search/agentChatSearchService.js';
@@ -360,6 +361,9 @@ export async function main(argv: string[]): Promise<void> {
 	await history.whenReady;
 	await orchestrator.whenReady;
 	disposables.add(instantiationService.createInstance(AgentTurnHostContribution));
+	// Harness subagents' chats are written here, where their parent's run streams and the transcripts live.
+	const subagentChats = disposables.add(instantiationService.createInstance(HarnessSubagentChats));
+	disposables.add(protocol.registerMethod('subagents.draw', (_ctx, taskId) => subagentChats.draw(String(taskId))));
 	// Moves to another checkout run here: a window's mover does not reach the server's orchestrator.
 	disposables.add(instantiationService.createInstance(AgentWorkspaceMover));
 	instantiationService.invokeFunction(accessor => accessor.get(IAgentChatForkService));

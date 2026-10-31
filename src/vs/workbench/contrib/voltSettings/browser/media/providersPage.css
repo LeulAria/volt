@@ -732,18 +732,14 @@ code.volt-pm-value {
 }
 
 .volt-settings-models {
-	padding: 0 6px;
+	padding: 0;
 }
 
-/* A workbench list sized by the page to its rows; hover, focus and selection are the theme's list
- * colours on the row, rounded like the providers list. */
+/* A workbench list sized by the page to its rows, edge to edge in the card; hover, focus and
+ * selection are the theme's list colours, square like every list. */
 .volt-settings-models-list {
 	position: relative;
 	overflow: hidden;
-}
-
-.volt-settings-models-list .monaco-list-row {
-	border-radius: 6px;
 }
 
 /* The hidden-models title and the no-match line are not items: no hover, no focus ring. */
@@ -775,7 +771,7 @@ code.volt-pm-value {
 	gap: 12px;
 	box-sizing: border-box;
 	height: 100%;
-	padding: 0 4px 0 8px;
+	padding: 0 12px 0 14px;
 	cursor: pointer;
 }
 

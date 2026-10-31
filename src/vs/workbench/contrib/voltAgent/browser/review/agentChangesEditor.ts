@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/agentChangesEditor.css';
+import './agentReviewRevert.js';
 import { $, append, Dimension, getWindow } from '../../../../../base/browser/dom.js';
 import { PixelRatio } from '../../../../../base/browser/pixelRatio.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';

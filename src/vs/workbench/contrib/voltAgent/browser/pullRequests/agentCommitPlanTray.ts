@@ -5,14 +5,15 @@
 
 import '../media/agentCommitPlan.css';
 import { $, addDisposableListener, append, EventHelper, EventType } from '../../../../../base/browser/dom.js';
+import { Button } from '../../../../../base/browser/ui/button/button.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IIdentityProvider, IListVirtualDelegate } from '../../../../../base/browser/ui/list/list.js';
 import { TriStateCheckbox } from '../../../../../base/browser/ui/toggle/toggle.js';
 import { ITreeElement, ITreeNode, ITreeRenderer } from '../../../../../base/browser/ui/tree/tree.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { Event } from '../../../../../base/common/event.js';
+import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
-import { basename } from '../../../../../base/common/path.js';
+import { basename, dirname } from '../../../../../base/common/path.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
@@ -24,16 +25,18 @@ import { FileKind } from '../../../../../platform/files/common/files.js';
 import { IVoltGitService } from '../../../../../platform/voltGit/common/voltGit.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { WorkbenchObjectTree } from '../../../../../platform/list/browser/listService.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { defaultCheckboxStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
 import { IVoltGitStatusFile } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { ResourceLabels } from '../../../../browser/labels.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
-import { IMultiDiffEditorOptions } from '../../../../../editor/browser/widget/multiDiffEditor/multiDiffEditorWidgetImpl.js';
+import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { MultiDiffEditorInput } from '../../../multiDiffEditor/browser/multiDiffEditorInput.js';
-import { MultiDiffEditorItem } from '../../../multiDiffEditor/browser/multiDiffSourceResolverService.js';
+import { IMultiDiffSourceResolver, IResolvedMultiDiffSource, MultiDiffEditorItem } from '../../../multiDiffEditor/browser/multiDiffSourceResolverService.js';
 import { splitCommitMessage } from '../../common/agentCommitPlan.js';
 import { AgentTooltip, IAgentTooltipRow, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createVoltButton } from '../chrome/voltButton.js';
+import { IAgentComposerTerminalRuns } from '../composer/agentComposerChips.js';
 import { IAgentCommitPlan, IAgentCommitPlanService, IAgentPlannedCommit } from './agentCommitPlanService.js';
 
 const ROW_HEIGHT = 24;
@@ -63,6 +66,8 @@ interface IFileNode {
 	readonly commit: IAgentPlannedCommit;
 	readonly path: string;
 	readonly file: IVoltGitStatusFile | undefined;
+	/** Shown as a list, not a tree: the row names its folder. */
+	readonly flat?: boolean;
 }
 
 type CommitPlanNode = ICommitNode | IFolderNode | IFileNode;
@@ -134,6 +139,13 @@ function fileTree(plan: IAgentCommitPlan, commit: IAgentPlannedCommit): ITreeEle
 	return build(top, '');
 }
 
+/** A commit's files as one list by path, each row naming its folder (View as List). */
+function fileList(plan: IAgentCommitPlan, commit: IAgentPlannedCommit): ITreeElement<CommitPlanNode>[] {
+	return [...commit.paths].sort((a, b) => a.localeCompare(b)).map((path): ITreeElement<CommitPlanNode> => ({
+		element: { kind: 'file', plan, commit, path, file: plan.files.get(path), flat: true },
+	}));
+}
+
 interface ITrayHost {
 	toggle(node: CommitPlanNode, value: boolean): void;
 	regenerate(node: ICommitNode): void;
@@ -157,6 +169,42 @@ function outlineIcon(doc: Document, d: string, linecap: 'round' | 'square'): SVG
 	path.setAttribute('stroke-width', '1.5');
 	path.setAttribute('stroke-linecap', linecap);
 	path.setAttribute('stroke-linejoin', 'round');
+	svg.appendChild(path);
+	return svg;
+}
+
+/** The composer's Stop square (agentEditor.ts createStopIcon). */
+function stopIcon(doc: Document): SVGElement {
+	const svg = doc.createElementNS(SVG_NS, 'svg');
+	svg.setAttribute('viewBox', '0 0 384 512');
+	svg.setAttribute('aria-hidden', 'true');
+	const path = doc.createElementNS(SVG_NS, 'path');
+	path.setAttribute('d', 'M0 128c0-35.3 28.7-64 64-64h256c35.3 0 64 28.7 64 64v256c0 35.3-28.7 64-64 64H64c-35.3 0-64-28.7-64-64z');
+	path.setAttribute('fill', 'currentColor');
+	svg.appendChild(path);
+	return svg;
+}
+
+/** Commit's icon: two commits and the line joining them. */
+function commitIcon(doc: Document): SVGElement {
+	const svg = doc.createElementNS(SVG_NS, 'svg');
+	svg.classList.add('volt-commit-plan-svg', 'volt-commit-plan-commit-icon');
+	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('fill', 'none');
+	svg.setAttribute('stroke', 'currentColor');
+	svg.setAttribute('stroke-width', '1.2');
+	svg.setAttribute('stroke-linecap', 'round');
+	svg.setAttribute('stroke-linejoin', 'round');
+	svg.setAttribute('aria-hidden', 'true');
+	for (const [cx, cy] of [[18, 18], [6, 6]]) {
+		const circle = doc.createElementNS(SVG_NS, 'circle');
+		circle.setAttribute('cx', String(cx));
+		circle.setAttribute('cy', String(cy));
+		circle.setAttribute('r', '3');
+		svg.appendChild(circle);
+	}
+	const path = doc.createElementNS(SVG_NS, 'path');
+	path.setAttribute('d', 'M6 21V9a9 9 0 0 0 9 9');
 	svg.appendChild(path);
 	return svg;
 }
@@ -303,6 +351,7 @@ interface IFileTemplate {
 	readonly checkbox: TriStateCheckbox;
 	readonly label: ReturnType<ResourceLabels['create']>;
 	readonly status: HTMLElement;
+	readonly hunks: HTMLElement;
 	readonly stats: HTMLElement;
 	readonly store: DisposableStore;
 	readonly ref: { current?: IFolderNode | IFileNode };
@@ -323,7 +372,8 @@ class FileRenderer implements ITreeRenderer<CommitPlanNode, void, IFileTemplate>
 		const label = store.add(this.labels.create(append(row, $('.volt-commit-plan-file-label')), { supportHighlights: false, supportIcons: true }));
 		const status = append(row, $('span.volt-commit-plan-status'));
 		const statsEl = append(row, $('span.volt-commit-plan-stats'));
-		return { row, checkbox, label, status, stats: statsEl, store, ref };
+		const hunks = append(row, $('span.volt-commit-plan-hunks'));
+		return { row, checkbox, label, status, hunks, stats: statsEl, store, ref };
 	}
 
 	renderElement(node: ITreeNode<CommitPlanNode, void>, _index: number, template: IFileTemplate): void {
@@ -342,17 +392,21 @@ class FileRenderer implements ITreeRenderer<CommitPlanNode, void, IFileTemplate>
 		if (element.kind === 'folder') {
 			template.label.setResource({ resource: URI.joinPath(root, element.path), name: element.label }, { fileKind: FileKind.FOLDER });
 			template.status.textContent = '';
+			template.hunks.textContent = '';
 			renderStats(template.stats, { additions: 0, deletions: 0 });
 			return;
 		}
 		const file = element.file;
-		template.label.setResource({ resource: URI.joinPath(root, element.path), name: basename(element.path) }, {
+		const folder = element.flat ? dirname(element.path) : '.';
+		template.label.setResource({ resource: URI.joinPath(root, element.path), name: basename(element.path), description: folder === '.' ? undefined : folder }, {
 			fileKind: FileKind.FILE,
 			strikethrough: file?.status === 'deleted',
 			title: file?.previousPath ? `${file.previousPath} → ${element.path}` : element.path,
 		});
 		template.status.textContent = statusLetter(file);
 		template.status.className = `volt-commit-plan-status status-${file?.status ?? 'modified'}`;
+		const split: readonly number[] | undefined = element.commit.parts[element.path];
+		template.hunks.textContent = split ? localize('voltCommitPlan.hunkCount', "{0} of {1} hunks", split.length, element.plan.hunks.get(element.path)?.length ?? split.length) : '';
 		renderStats(template.stats, { additions: file?.additions ?? 0, deletions: file?.deletions ?? 0 });
 	}
 
@@ -379,8 +433,13 @@ function statusLetter(file: IVoltGitStatusFile | undefined): string {
 /** A file as HEAD has it, read by Volt's own git: the Git extension may not have the worktree open, or not run. */
 export const COMMIT_PLAN_HEAD_SCHEME = 'volt-commit-head';
 
+/** The file's HEAD version. Its path is the working tree file's, so the diff does not read it as a rename. */
 function headUri(root: string, path: string): URI {
-	return URI.from({ scheme: COMMIT_PLAN_HEAD_SCHEME, path: `/${path}`, query: new URLSearchParams({ repo: root }).toString() });
+	return URI.from({
+		scheme: COMMIT_PLAN_HEAD_SCHEME,
+		path: URI.joinPath(URI.file(root), path).path,
+		query: new URLSearchParams({ repo: root, file: path }).toString(),
+	});
 }
 
 export class CommitPlanHeadContentProvider implements ITextModelContentProvider {
@@ -392,16 +451,143 @@ export class CommitPlanHeadContentProvider implements ITextModelContentProvider 
 	) { }
 
 	async provideTextContent(resource: URI): Promise<ITextModel | null> {
+		const params = new URLSearchParams(resource.query);
+		const repoRoot = params.get('repo');
+		const path = params.get('file') ?? '';
+		const text = repoRoot && path ? (await this.git.readBlob({ repoRoot, sha: `HEAD:${path}`, path }).catch(() => undefined))?.toString() ?? '' : '';
 		const existing = this.modelService.getModel(resource);
 		if (existing && !existing.isDisposed()) {
+			if (existing.getValue() !== text) {
+				existing.setValue(text);
+			}
 			return existing;
 		}
-		const repoRoot = new URLSearchParams(resource.query).get('repo');
-		const path = resource.path.replace(/^\//, '');
-		const text = repoRoot && path ? (await this.git.readBlob({ repoRoot, sha: `HEAD:${path}`, path }).catch(() => undefined))?.toString() ?? '' : '';
-		const language = this.languageService.createByFilepathOrFirstLine(URI.file(`/${path || 'file'}`), text.split(/\r?\n/, 1)[0]);
+		const language = this.languageService.createByFilepathOrFirstLine(URI.file(path || '/file'), text.split(/\r?\n/, 1)[0]);
 		return this.modelService.createModel(text, language, resource);
 	}
+}
+
+/** A file split by hunks as one commit of the plan leaves it: before that commit, or after it. */
+export const COMMIT_PLAN_CONTENT_SCHEME = 'volt-commit-content';
+
+function hunkContentUri(planId: string, commitId: string, path: string, side: 'before' | 'after'): URI {
+	return URI.from({
+		scheme: COMMIT_PLAN_CONTENT_SCHEME,
+		path: `/${planId}/${commitId}`,
+		query: new URLSearchParams({ file: path, side }).toString(),
+	});
+}
+
+export class CommitPlanContentProvider extends Disposable implements ITextModelContentProvider {
+
+	constructor(
+		@IAgentCommitPlanService private readonly plans: IAgentCommitPlanService,
+		@IModelService private readonly modelService: IModelService,
+		@ILanguageService private readonly languageService: ILanguageService,
+	) {
+		super();
+		this._register(plans.onDidChange(() => this.refresh()));
+	}
+
+	async provideTextContent(resource: URI): Promise<ITextModel | null> {
+		const text = this.textOf(resource);
+		const existing = this.modelService.getModel(resource);
+		if (existing && !existing.isDisposed()) {
+			if (existing.getValue() !== text) {
+				existing.setValue(text);
+			}
+			return existing;
+		}
+		const file = new URLSearchParams(resource.query).get('file') ?? '';
+		const language = this.languageService.createByFilepathOrFirstLine(URI.file(file || '/file'), text.split(/\r?\n/, 1)[0]);
+		return this.modelService.createModel(text, language, resource);
+	}
+
+	private textOf(resource: URI): string {
+		const [, planId, commitId] = resource.path.split('/');
+		const params = new URLSearchParams(resource.query);
+		return this.plans.hunkContent(planId, commitId, params.get('file') ?? '', params.get('side') === 'after' ? 'after' : 'before') ?? '';
+	}
+
+	/** Open diffs follow the review: a commit's hunks leave the diff when another commit takes them. */
+	private refresh(): void {
+		for (const model of this.modelService.getModels()) {
+			if (model.uri.scheme === COMMIT_PLAN_CONTENT_SCHEME && !model.isDisposed()) {
+				model.setValue(this.textOf(model.uri));
+			}
+		}
+	}
+}
+
+export const COMMIT_PLAN_DIFF_SCHEME = 'volt-commit-plan';
+
+/** A commit's diff, or with `file`, that one file's diff alone. */
+function commitDiffUri(sessionId: string, commitId: string, file?: string): URI {
+	return URI.from({
+		scheme: COMMIT_PLAN_DIFF_SCHEME,
+		path: `/${sessionId}/${commitId}`,
+		query: file === undefined ? undefined : new URLSearchParams({ file }).toString(),
+	});
+}
+
+function commitDiffItem(plan: IAgentCommitPlan, item: string, commit?: IAgentPlannedCommit): MultiDiffEditorItem {
+	const file = plan.files.get(item);
+	const uri = URI.joinPath(URI.file(plan.root), item);
+	if (commit?.parts[item]) {
+		return new MultiDiffEditorItem(hunkContentUri(plan.id, commit.id, item, 'before'), hunkContentUri(plan.id, commit.id, item, 'after'), uri);
+	}
+	const added = file?.status === 'added' || file?.status === 'untracked';
+	return new MultiDiffEditorItem(
+		added ? undefined : headUri(plan.root, file?.previousPath ?? item),
+		file?.status === 'deleted' ? undefined : uri,
+		uri,
+	);
+}
+
+/** A commit's diff editor follows its checkboxes: the files left in are listed as they change. */
+export class CommitPlanDiffSourceResolver extends Disposable implements IMultiDiffSourceResolver {
+
+	private readonly _onDidChange = this._register(new Emitter<void>());
+
+	constructor(@IAgentCommitPlanService private readonly plans: IAgentCommitPlanService) {
+		super();
+		this._register(plans.onDidChange(() => this._onDidChange.fire()));
+	}
+
+	canHandleUri(uri: URI): boolean {
+		return uri.scheme === COMMIT_PLAN_DIFF_SCHEME;
+	}
+
+	async resolveDiffSource(uri: URI): Promise<IResolvedMultiDiffSource> {
+		const [, sessionId, commitId] = uri.path.split('/');
+		const file = new URLSearchParams(uri.query).get('file') ?? undefined;
+		const plans = this.plans;
+		return {
+			resources: {
+				onDidChange: this._onDidChange.event,
+				get value(): readonly MultiDiffEditorItem[] {
+					const plan = plans.pending(sessionId);
+					if (!plan) {
+						return [];
+					}
+					if (file !== undefined) {
+						return plan.files.has(file) ? [commitDiffItem(plan, file, plan.commits.find(item => item.id === commitId))] : [];
+					}
+					const commit = plan.commits.find(item => item.id === commitId);
+					return commit ? commit.paths.filter(item => !commit.excluded.has(item)).map(item => commitDiffItem(plan, item, commit)) : [];
+				},
+			},
+		};
+	}
+}
+
+const VIEW_AS_TREE_KEY = 'volt.commitPlan.viewAsTree';
+
+/** An icon-only header button: the icon, and its name as the hover and for screen readers. */
+function setIconButton(button: Button, icon: ThemeIcon, label: string): void {
+	button.label = `$(${icon.id})`;
+	button.setTitle(label);
+	button.element.setAttribute('aria-label', label);
 }
 
 export interface IAgentCommitPlanTrayOptions {
@@ -430,9 +616,22 @@ export class AgentCommitPlanTray extends Disposable {
 	private readonly treeHost: HTMLElement;
 	private readonly tree: WorkbenchObjectTree<CommitPlanNode, void>;
 	private readonly status: HTMLElement;
+	private readonly viewButton;
+	private readonly collapseButton;
+	private readonly minimizeButton;
 	private readonly cancelButton;
 	private readonly commitButton;
+	private readonly stopButton: HTMLButtonElement;
+	private readonly chip: HTMLButtonElement;
+	private readonly chipCount: HTMLElement;
+	private readonly onDidChangeChip = this._register(new Emitter<void>());
+	/** The review shrunk to a chip, for the row above the composer (AgentComposerChips). */
+	readonly rowChip: IAgentComposerTerminalRuns;
 	private readonly tooltip = this._register(new AgentTooltip());
+	/** Files as folders (the default) or one list by path; kept for the next review too. */
+	private viewAsTree: boolean;
+	/** Reviews the user shrank to the "Draft Commits" chip; a new review opens full again. */
+	private readonly minimized = new Set<string>();
 	private height = 0;
 
 	constructor(
@@ -440,16 +639,76 @@ export class AgentCommitPlanTray extends Disposable {
 		@IAgentCommitPlanService private readonly plans: IAgentCommitPlanService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IEditorService private readonly editorService: IEditorService,
+		@IStorageService private readonly storageService: IStorageService,
+		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
 	) {
 		super();
+		this.viewAsTree = storageService.getBoolean(VIEW_AS_TREE_KEY, StorageScope.PROFILE, true);
 		this.element = $('.volt-commit-plan.hidden');
 		this.element.setAttribute('role', 'region');
-		this.element.setAttribute('aria-label', localize('voltCommitPlan.aria', "Review commits"));
+		this.element.setAttribute('aria-label', localize('voltCommitPlan.aria', "Review Draft Commits"));
+
+		// Shrunk: a chip in the row above the composer (rowChip); a click opens the review again.
+		this.chip = $('button.volt-agent-composer-chip.volt-commit-plan-chip.hidden') as HTMLButtonElement;
+		this.chip.type = 'button';
+		append(this.chip, $('span.volt-commit-plan-chip-icon')).appendChild(renderIcon(Codicon.gitCommit));
+		append(this.chip, $('span.volt-agent-composer-chip-label')).textContent = localize('voltCommitPlan.chip', "Draft Commits");
+		this.chipCount = append(this.chip, $('span.volt-commit-plan-chip-count'));
+		append(this.chip, $('span.volt-commit-plan-chip-icon')).appendChild(renderIcon(Codicon.chevronUp));
+		setAgentTooltip(this.chip, localize('voltCommitPlan.expand', "Show Draft Commits"));
+		this._register(addDisposableListener(this.chip, EventType.CLICK, () => this.setMinimized(false)));
+		const chip = this.chip;
+		this.rowChip = { element: chip, get visible() { return !chip.classList.contains('hidden'); }, onDidChange: this.onDidChangeChip.event };
+
+		// While the agent drafts: the composer's dictation glow, moving along the bottom of the card.
+		append(append(this.element, $('.volt-commit-plan-glow')), $('.volt-commit-plan-aurora'));
 
 		const head = append(this.element, $('.volt-commit-plan-head'));
 		append(head, $('span.volt-commit-plan-head-icon')).appendChild(renderIcon(Codicon.gitCommit));
 		this.title = append(head, $('span.volt-commit-plan-title'));
 		this.summary = append(head, $('span.volt-commit-plan-summary'));
+		this.status = append(head, $('span.volt-commit-plan-status-text'));
+		const headActions = append(head, $('span.volt-commit-plan-head-actions'));
+		const tools = append(headActions, $('span.volt-commit-plan-tools'));
+		const iconButton = (parent: HTMLElement) => {
+			const button = this._register(createVoltButton(parent, 'ghost', { supportIcons: true }));
+			button.element.classList.add('volt-commit-plan-tool');
+			return button;
+		};
+		this.viewButton = iconButton(tools);
+		this.collapseButton = iconButton(tools);
+		setIconButton(this.collapseButton, Codicon.collapseAll, localize('voltCommitPlan.collapseAll', "Collapse All"));
+		this.renderViewButton();
+		this._register(this.viewButton.onDidClick(() => {
+			this.viewAsTree = !this.viewAsTree;
+			this.storageService.store(VIEW_AS_TREE_KEY, this.viewAsTree, StorageScope.PROFILE, StorageTarget.USER);
+			this.renderViewButton();
+			this.render();
+		}));
+		this._register(this.collapseButton.onDidClick(() => this.tree.collapseAll()));
+		this.cancelButton = this._register(createVoltButton(headActions, 'secondary'));
+		this.cancelButton.label = localize('voltCommitPlan.dismiss', "Don't Commit");
+		this.commitButton = this._register(createVoltButton(headActions, 'primary'));
+		// Last in the row, after Commit.
+		this.minimizeButton = iconButton(headActions);
+		setIconButton(this.minimizeButton, Codicon.chevronDown, localize('voltCommitPlan.minimize', "Minimize"));
+		this._register(this.minimizeButton.onDidClick(() => this.setMinimized(true)));
+		this._register(this.cancelButton.onDidClick(() => this.plan && this.plans.dismiss(this.plan.id)));
+		// Drafting: the composer's round Stop, which stops the agent's turn too.
+		this.stopButton = append(headActions, $('button.volt-commit-plan-stop')) as HTMLButtonElement;
+		this.stopButton.type = 'button';
+		this.stopButton.appendChild(stopIcon(this.element.ownerDocument));
+		const stopLabel = localize('voltCommitPlan.stop', "Stop Generating");
+		this.stopButton.setAttribute('aria-label', stopLabel);
+		setAgentTooltip(this.stopButton, stopLabel);
+		this._register(addDisposableListener(this.stopButton, EventType.CLICK, () => {
+			const sessionId = this.sessionId;
+			if (sessionId) {
+				this.plans.cancelDrafting(sessionId);
+				void this.orchestrator.cancel(sessionId);
+			}
+		}));
+		this._register(this.commitButton.onDidClick(() => this.plan && void this.plans.commit(this.plan.id)));
 
 		this.editor = append(this.element, $('.volt-commit-plan-editor.hidden'));
 		this.editorLabel = append(this.editor, $('.volt-commit-plan-editor-label'));
@@ -516,15 +775,6 @@ export class AgentCommitPlanTray extends Disposable {
 		}));
 		this._register(this.tree.onDidChangeContentHeight(() => this.layout()));
 
-		const foot = append(this.element, $('.volt-commit-plan-foot'));
-		this.status = append(foot, $('span.volt-commit-plan-status-text'));
-		append(foot, $('span.volt-commit-plan-spacer'));
-		this.cancelButton = this._register(createVoltButton(foot, 'ghost'));
-		this.cancelButton.label = localize('voltCommitPlan.dismiss', "Don't Commit");
-		this.commitButton = this._register(createVoltButton(foot, 'primary'));
-		this._register(this.cancelButton.onDidClick(() => this.plan && this.plans.dismiss(this.plan.id)));
-		this._register(this.commitButton.onDidClick(() => this.plan && void this.plans.commit(this.plan.id)));
-
 		this._register(this.plans.onDidChange(sessionId => {
 			if (sessionId === this.sessionId) {
 				this.render();
@@ -547,15 +797,34 @@ export class AgentCommitPlanTray extends Disposable {
 
 	private render(): void {
 		const plan = this.sessionId ? this.plans.pending(this.sessionId) : undefined;
-		const was = !!this.plan;
+		const drafting = !plan && !!this.sessionId && this.plans.drafting(this.sessionId);
+		const was = !!this.plan || this.element.classList.contains('drafting');
 		const samePlan = plan && plan.id === this.plan?.id;
 		this.plan = plan;
-		this.element.classList.toggle('hidden', !plan);
+		const minimized = !!plan && this.minimized.has(plan.id);
+		this.element.classList.toggle('hidden', (!plan && !drafting) || minimized);
+		this.element.classList.toggle('drafting', drafting);
+		if (this.chip.classList.contains('hidden') === minimized) {
+			this.chip.classList.toggle('hidden', !minimized);
+			this.onDidChangeChip.fire();
+		}
+		for (const button of [this.commitButton, this.cancelButton, this.viewButton, this.collapseButton, this.minimizeButton]) {
+			button.element.classList.toggle('hidden', drafting);
+		}
+		this.stopButton.classList.toggle('hidden', !drafting);
+		this.treeHost.classList.toggle('hidden', !plan);
+		this.title.textContent = drafting ? localize('voltCommitPlan.generating', "Generating Drafts…") : localize('voltCommitPlan.title', "Review Draft Commits");
 		if (!plan) {
 			this.tooltip.hide();
 			this.tree.setChildren(null, []);
 			this.editing = undefined;
-			if (was) {
+			this.editor.classList.add('hidden');
+			this.element.classList.remove('busy');
+			this.status.classList.remove('error');
+			this.status.textContent = '';
+			// Asked for, not proposed yet (drafting): the title and the glow say the agent is on it.
+			this.summary.replaceChildren();
+			if (was || drafting) {
 				this.layout();
 			}
 			return;
@@ -563,7 +832,6 @@ export class AgentCommitPlanTray extends Disposable {
 		const commits = plan.commits.filter(commit => !commit.leftover);
 		const chosen = plan.commits.filter(commit => commit.paths.some(path => !commit.excluded.has(path)));
 		const total = stats(plan, plan.commits.flatMap(commit => commit.paths.filter(path => !commit.excluded.has(path))));
-		this.title.textContent = localize('voltCommitPlan.title', "Review commits");
 		this.summary.replaceChildren();
 		append(this.summary, $('span')).textContent = [
 			commits.length === 1 ? localize('voltCommitPlan.oneCommit', "1 commit") : localize('voltCommitPlan.commits', "{0} commits", commits.length),
@@ -581,7 +849,7 @@ export class AgentCommitPlanTray extends Disposable {
 		let number = 0;
 		this.tree.setChildren(null, plan.commits.map((commit): ITreeElement<CommitPlanNode> => ({
 			element: { kind: 'commit', plan, commit, number: commit.leftover ? 0 : ++number },
-			children: fileTree(plan, commit),
+			children: this.viewAsTree ? fileTree(plan, commit) : fileList(plan, commit),
 			collapsed: samePlan ? undefined : true,
 		})));
 
@@ -590,12 +858,42 @@ export class AgentCommitPlanTray extends Disposable {
 		this.status.textContent = plan.busy ?? plan.error ?? plan.notice ?? (plan.done.length
 			? localize('voltCommitPlan.madeSome', "{0} committed. The rest is still here.", plan.done.length)
 			: '');
+		this.chipCount.textContent = String(commits.length);
+		// A new label replaces the button's content, an unchanged one keeps it: one icon in front either way.
 		this.commitButton.label = chosen.length === 1
 			? localize('voltCommitPlan.commitOne', "Commit")
 			: localize('voltCommitPlan.commitMany', "Commit {0}", chosen.length);
+		if (!this.commitButton.element.querySelector('.volt-commit-plan-commit-icon')) {
+			this.commitButton.element.prepend(commitIcon(this.element.ownerDocument));
+		}
 		this.commitButton.enabled = !plan.busy && chosen.length > 0 && !plan.commits.some(commit => commit.generating);
 		this.cancelButton.enabled = !plan.busy;
 		this.layout();
+	}
+
+	/** The button offers the other view: a list while the files show as folders, and back. */
+	private renderViewButton(): void {
+		setIconButton(this.viewButton, this.viewAsTree ? Codicon.listFlat : Codicon.listTree, this.viewAsTree
+			? localize('voltCommitPlan.viewAsList', "View as List")
+			: localize('voltCommitPlan.viewAsTree', "View as Tree"));
+	}
+
+	private setMinimized(value: boolean): void {
+		if (!this.plan) {
+			return;
+		}
+		if (value) {
+			this.minimized.add(this.plan.id);
+			this.tooltip.hide();
+		} else {
+			this.minimized.delete(this.plan.id);
+		}
+		this.render();
+		if (value) {
+			this.chip.focus();
+		} else {
+			this.tree.domFocus();
+		}
 	}
 
 	private toggle(node: CommitPlanNode, value: boolean): void {
@@ -643,37 +941,14 @@ export class AgentCommitPlanTray extends Disposable {
 	 * are), like a commit opened from Agent Turns or the history. Scrolled to `path` when given.
 	 */
 	private async openDiff(plan: IAgentCommitPlan, commit: IAgentPlannedCommit, path: string | undefined, preserveFocus: boolean): Promise<void> {
-		const root = URI.file(plan.root);
-		const sides = (item: string) => {
-			const file = plan.files.get(item);
-			const uri = URI.joinPath(root, item);
-			const added = file?.status === 'added' || file?.status === 'untracked';
-			return {
-				original: added ? undefined : headUri(plan.root, file?.previousPath ?? item),
-				modified: file?.status === 'deleted' ? undefined : uri,
-				goTo: uri,
-			};
-		};
-		const left = commit.paths.filter(item => !commit.excluded.has(item));
-		const paths = path && !left.includes(path) ? [...left, path] : left.length ? left : commit.paths;
-		const items = paths.map(item => {
-			const side = sides(item);
-			return new MultiDiffEditorItem(side.original, side.modified, side.goTo);
-		});
 		const input = this.instantiationService.createInstance(
 			MultiDiffEditorInput,
-			URI.from({ scheme: 'volt-commit-plan', path: `/${plan.id}/${commit.id}` }),
-			splitCommitMessage(commit.message).subject || localize('voltCommitPlan.leftover', "Not in any commit"),
-			items,
+			commitDiffUri(plan.sessionId, commit.id, path),
+			path ? basename(path) : splitCommitMessage(commit.message).subject || localize('voltCommitPlan.leftover', "Not in any commit"),
+			undefined,
 			true,
 		);
-		const target = path ? sides(path) : undefined;
-		const options: IMultiDiffEditorOptions = {
-			pinned: true,
-			preserveFocus,
-			...(target ? { viewState: { revealData: { resource: { original: target.original, modified: target.modified } } } } : {}),
-		};
-		await this.editorService.openEditor(input, options);
+		await this.editorService.openEditor(input, { pinned: true, preserveFocus });
 	}
 
 	private layout(): void {

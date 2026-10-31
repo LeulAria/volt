@@ -3078,52 +3078,30 @@
 .volt-pr-hover-stats .add { color: var(--volt-pr-add); }
 .volt-pr-hover-stats .del { color: var(--volt-pr-del); }
 
+/* A footer under its own hairline, the action at the trailing edge. */
 .volt-pr-hover-actions {
 	display: flex;
+	justify-content: flex-end;
+	margin: 0 -12px -6px;
+	padding: 6px 6px 0;
+	border-top: 1px solid var(--volt-pr-border);
 }
 
-/* Ready to merge: a white button with the merge glyph (dark on a light theme). */
-.volt-pr-hover-merge {
-	flex: 1;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	gap: 6px;
-	height: 28px;
+/* Ready to merge: an outlined button in the "ready" green, tinted on hover (voltButton.css ghost). */
+.monaco-workbench .volt-pr-hover-actions .volt-button.volt-pr-hover-merge {
+	height: 26px;
 	padding: 0 12px;
-	border: 0;
-	border-radius: 7px;
-	background: #ffffff;
-	color: #0d0d0d;
-	font: inherit;
+	border: 1px solid color-mix(in srgb, var(--volt-pr-open) 55%, transparent);
+	color: var(--volt-pr-open);
+	background: transparent;
 	font-size: 12.5px;
 	font-weight: 500;
-	cursor: pointer;
 }
 
-.volt-pr-hover-merge:hover {
-	background: #e6e6e6;
-}
-
-.volt-pr-hover-merge:focus-visible {
-	outline: 1px solid var(--vscode-focusBorder);
-	outline-offset: 2px;
-}
-
-.volt-pr-hover-merge .codicon[class*='codicon-'] {
-	font-size: 14px;
-	color: inherit;
-}
-
-.monaco-workbench.vs .volt-pr-hover-merge,
-.monaco-workbench.hc-light .volt-pr-hover-merge {
-	background: #1f1f1f;
-	color: #ffffff;
-}
-
-.monaco-workbench.vs .volt-pr-hover-merge:hover,
-.monaco-workbench.hc-light .volt-pr-hover-merge:hover {
-	background: #3a3a3a;
+.monaco-workbench .volt-pr-hover-actions .volt-button.volt-pr-hover-merge:hover {
+	color: var(--volt-pr-open);
+	border-color: var(--volt-pr-open);
+	background: color-mix(in srgb, var(--volt-pr-open) 12%, transparent);
 }
 
 /* ---- The chat's pull request in the side panel (Quick Open Actions) ------------------------ */

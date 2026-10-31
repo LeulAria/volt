@@ -603,9 +603,9 @@ function selectionEditor(accessor: ServicesAccessor, editor?: ICodeEditor): ICod
 	return isCodeEditor(control) ? control : undefined;
 }
 
-/** The diffs in the Changes tab: Add to Chat works there, inline Comment does not. */
+/** The Changes tab and the review diffs: Add to Chat works there, inline Comment does not. */
 function isInChangesEditor(editor: ICodeEditor): boolean {
-	return !!editor.getDomNode()?.closest('.volt-agent-changes-editor');
+	return !!editor.getDomNode()?.closest('.volt-agent-changes-editor, .volt-agent-review-diff');
 }
 
 async function addEditorSelectionToAgent(accessor: ServicesAccessor, editor?: ICodeEditor): Promise<boolean> {
@@ -626,6 +626,15 @@ async function addEditorSelectionToAgent(accessor: ServicesAccessor, editor?: IC
 
 	const layoutService = accessor.get(IWorkbenchLayoutService);
 	const viewsService = accessor.get(IViewsService);
+	// The Changes tab and review diffs add to the chat that is there without opening a closed sidebar.
+	if (isInChangesEditor(control)) {
+		const agent = getActiveAgentEditor(accessor);
+		if (agent) {
+			agent.addSelectionMention(model.uri, selection);
+			return true;
+		}
+	}
+
 	revealAgentSidePanel(layoutService);
 	const view = await viewsService.openView<AgentSidePanel>(AGENT_SIDE_PANEL_VIEW_ID, true);
 	if (!view) {
@@ -983,9 +992,13 @@ class AddSelectionToChatWidget extends Disposable implements IOverlayWidget {
 		}
 		this.domNode.style.visibility = 'visible';
 		this.comment.style.display = isInChangesEditor(this.editor) ? 'none' : '';
-		const top = visible.top + Math.max(0, (visible.height - this.domNode.offsetHeight) / 2);
+		const height = this.domNode.offsetHeight;
+		let top = visible.top + Math.max(0, (visible.height - height) / 2);
+		if (top + height > editorDom.clientHeight) {
+			top = visible.top - height;
+		}
 		this.domNode.style.left = `${Math.round(visible.left + 8)}px`;
-		this.domNode.style.top = `${Math.round(top)}px`;
+		this.domNode.style.top = `${Math.round(Math.max(0, top))}px`;
 	}
 }
 

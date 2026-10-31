@@ -83,7 +83,8 @@ import { IPathService } from '../../../../services/path/common/pathService.js';
 import { AgentSlashMenu, rankSlashItems } from './agentSlashMenu.js';
 import { AgentSkillHoverCard } from './agentSkillHoverCard.js';
 
-export type AgentMentionKind = 'file' | 'folder' | 'terminal' | 'chat' | 'branch' | 'browser' | 'image' | 'video' | 'mcp' | 'selection' | 'skill' | 'scratch' | 'canvas';
+/** `action`: a prompt Volt sent for a button (Generate Draft Commits); the chip stands for it and `value` holds the prompt. */
+export type AgentMentionKind = 'file' | 'folder' | 'terminal' | 'chat' | 'branch' | 'browser' | 'image' | 'video' | 'mcp' | 'selection' | 'skill' | 'scratch' | 'canvas' | 'action';
 
 export interface IAgentImagePayload {
 	id: string;
@@ -407,7 +408,8 @@ export function mentionIconClasses(
 							: mention.kind === 'browser' ? Codicon.inspect
 								: mention.kind === 'scratch' ? Codicon.notebook
 									: mention.kind === 'canvas' ? Codicon.symbolColor
-										: Codicon.globe;
+										: mention.kind === 'action' ? Codicon.gitCommit
+											: Codicon.globe;
 	return ['codicon', `codicon-${icon.id}`];
 }
 

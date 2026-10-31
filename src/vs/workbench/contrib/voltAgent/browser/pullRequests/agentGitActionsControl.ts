@@ -160,7 +160,15 @@ export class AgentGitActionsControl extends Disposable {
 		void this.service.runQuick(folder, sessionId);
 	}
 
-	private showMenu(): void {
+	/** The same menu from another chip's arrow (Changes, which takes this chip's place): read first if never read. */
+	async showMenuAt(anchor: HTMLElement): Promise<void> {
+		if (!this.state) {
+			await this.refresh();
+		}
+		this.showMenu(anchor);
+	}
+
+	private showMenu(anchor: HTMLElement = this.chevron): void {
 		const { sessionId, folder } = this.options.target();
 		const service = this.service;
 		if (!service || !folder) {
@@ -169,7 +177,8 @@ export class AgentGitActionsControl extends Disposable {
 		type Pick = { kind: 'git'; id: IAgentGitMenuItem['id'] } | { kind: 'scm' };
 		const items: IVoltMenuItem<Pick>[] = (this.state?.menu ?? []).map(item => ({
 			id: item.id,
-			label: item.label,
+			// In a chat, Commit asks the agent for draft commits to review (agentGitActionsService.reviewInChat).
+			label: item.id === 'commit' && sessionId ? localize('voltGit.generateDraftCommits', "Generate Draft Commits") : item.label,
 			icon: iconFor(item.id === 'commit' ? 'commit' : item.id === 'push' ? 'push' : 'createPr'),
 			disabled: item.disabled,
 			...(item.hint ? { tooltip: item.hint } : {}),
@@ -182,7 +191,7 @@ export class AgentGitActionsControl extends Disposable {
 				: status.branch
 			: undefined;
 		showVoltMenu<Pick>(this.contextViewService, {
-			anchor: this.chevron,
+			anchor,
 			align: 'right',
 			ariaLabel: localize('voltGit.options', "Git Action Options"),
 			width: 260,

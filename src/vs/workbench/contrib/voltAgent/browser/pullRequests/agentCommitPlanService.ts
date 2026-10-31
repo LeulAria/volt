@@ -13,17 +13,23 @@ import { IConfigurationService } from '../../../../../platform/configuration/com
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IVoltGitStatusFile, voltPrErrorMessage } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
+import { IVoltGitService } from '../../../../../platform/voltGit/common/voltGit.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import {
 	AWAIT_COMMITS_TOOL_NAME,
 	commitPlanOutcomeText,
+	hunkFilesOf,
 	ICommitPlanOutcome,
+	IPlanHunk,
 	normalizeBranchName,
+	normalizePlanPath,
 	parseCommitPlan,
+	parseHunks,
 	PROPOSE_COMMITS_TOOL_NAME,
 	RENAME_BRANCH_TOOL_NAME,
+	spliceHunks,
 } from '../../common/agentCommitPlan.js';
 import { AGENT_COMMIT_ATTRIBUTION_SETTING, withCommitAttribution } from '../../common/agentGitSettings.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
@@ -38,6 +44,8 @@ export interface IAgentPlannedCommit {
 	readonly paths: readonly string[];
 	/** Files of this commit the user left out. */
 	readonly excluded: Set<string>;
+	/** For files split by hunks: the hunks (their `start`) this commit takes. */
+	readonly parts: Readonly<Record<string, readonly number[]>>;
 	/** A new message is being written for it. */
 	generating: boolean;
 	/** The changed files no commit took: left out until the user ticks them. */
@@ -54,6 +62,12 @@ export interface IAgentCommitPlan {
 	/** The commits as the agent proposed them, to recognize the same call again. */
 	readonly proposal: string;
 	readonly commits: IAgentPlannedCommit[];
+	/** The hunks of each file split by hunks, as the diff against HEAD showed them when proposed. */
+	readonly hunks: ReadonlyMap<string, readonly IPlanHunk[]>;
+	/** Each such file's HEAD text when proposed: the hunks apply to it. */
+	readonly bases: ReadonlyMap<string, string>;
+	/** The hunks (their `start`) of each file already committed by earlier commits of the plan. */
+	readonly applied: Map<string, Set<number>>;
 	/** Committing is under way: the review shows progress and takes no edits. */
 	busy?: string;
 	/** Why the last Commit stopped; the commits before it are in and gone from the plan. */
@@ -69,6 +83,15 @@ export interface IAgentCommitPlanService {
 	/** A chat's plan appeared, changed or ended. */
 	readonly onDidChange: Event<string>;
 	pending(sessionId: string): IAgentCommitPlan | undefined;
+	/** The chat asked its agent for draft commits and none have come yet: the review shows that it is coming. */
+	drafting(sessionId: string): boolean;
+	/** Shows the review in its "generating" state until the agent proposes commits or its turn ends. */
+	startDrafting(sessionId: string): void;
+	stopDrafting(sessionId: string): void;
+	/** The user stopped the drafting: the chat's turn goes with it (see `takeStoppedDraft`). */
+	cancelDrafting(sessionId: string): void;
+	/** True once, when the user stopped a draft whose turn has now ended. */
+	takeStoppedDraft(sessionId: string): boolean;
 	setIncluded(planId: string, commitId: string, path: string | undefined, included: boolean): void;
 	setMessage(planId: string, commitId: string, message: string): void;
 	/** Writes a new message for the commit's files (the ones left in, or all when none are). */
@@ -77,6 +100,8 @@ export interface IAgentCommitPlanService {
 	commit(planId: string): Promise<void>;
 	/** Closes the review without committing what is left. */
 	dismiss(planId: string): void;
+	/** The text of a file split by hunks before or after one commit of the plan (its diff in the review). */
+	hunkContent(planId: string, commitId: string, path: string, side: 'before' | 'after'): string | undefined;
 }
 
 /** Under the 60s default MCP request timeout of the agents' SDK clients (as ask_question). */
@@ -94,6 +119,9 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 	private readonly outcomes = new Map<string, DeferredPromise<string>>();
 	/** How each chat's last review ended, for an agent that asks about it late. */
 	private readonly lastOutcomes = new Map<string, string>();
+	/** Chats waiting for their agent's draft commits, with the run that was asked once it starts. */
+	private readonly drafts = new Map<string, { runId?: string }>();
+	private readonly stoppedDrafts = new Set<string>();
 
 	constructor(
 		@IAgentPullRequestService private readonly pullRequests: IAgentPullRequestService,
@@ -101,6 +129,7 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@ILogService private readonly logService: ILogService,
+		@IVoltGitService private readonly git: IVoltGitService,
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 	) {
 		super();
@@ -108,6 +137,51 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 			tools: COMMIT_PLAN_TOOLS,
 			invoke: (name, args, call) => this.invokeTool(name, args, call),
 		}));
+		// The asked turn ended without proposing commits (it failed, was stopped, or the agent declined).
+		this._register(runtime.onDidEmit(({ sessionId, event }) => {
+			if (event.type !== 'run.start' && event.type !== 'run.end') {
+				return;
+			}
+			const chat = runtime.chatFor(sessionId);
+			const draft = this.drafts.get(chat);
+			if (!draft) {
+				return;
+			}
+			if (event.type === 'run.start') {
+				draft.runId ??= event.runId;
+			} else if (draft.runId === event.runId) {
+				this.stopDrafting(chat);
+			}
+		}));
+	}
+
+	drafting(sessionId: string): boolean {
+		return this.drafts.has(sessionId);
+	}
+
+	startDrafting(sessionId: string): void {
+		if (this.pending(sessionId)) {
+			return;
+		}
+		this.drafts.set(sessionId, {});
+		this._onDidChange.fire(sessionId);
+	}
+
+	stopDrafting(sessionId: string): void {
+		if (this.drafts.delete(sessionId)) {
+			this._onDidChange.fire(sessionId);
+		}
+	}
+
+	cancelDrafting(sessionId: string): void {
+		if (this.drafts.has(sessionId)) {
+			this.stoppedDrafts.add(sessionId);
+		}
+		this.stopDrafting(sessionId);
+	}
+
+	takeStoppedDraft(sessionId: string): boolean {
+		return this.stoppedDrafts.delete(sessionId);
 	}
 
 	pending(sessionId: string): IAgentCommitPlan | undefined {
@@ -123,6 +197,26 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 		const plan = this.plans.get(planId);
 		const commit = plan?.commits.find(candidate => candidate.id === commitId);
 		return plan && commit && !plan.busy ? { plan, commit } : undefined;
+	}
+
+	hunkContent(planId: string, commitId: string, path: string, side: 'before' | 'after'): string | undefined {
+		const plan = this.plans.get(planId);
+		const index = plan?.commits.findIndex(commit => commit.id === commitId) ?? -1;
+		const base = plan?.bases.get(path);
+		if (!plan || index < 0 || base === undefined) {
+			return undefined;
+		}
+		const taken = new Set(plan.applied.get(path));
+		for (const commit of plan.commits.slice(0, index)) {
+			if (!commit.excluded.has(path)) {
+				commit.parts[path]?.forEach(start => taken.add(start));
+			}
+		}
+		const current = plan.commits[index];
+		if (side === 'after' && !current.excluded.has(path)) {
+			current.parts[path]?.forEach(start => taken.add(start));
+		}
+		return spliceHunks(base, (plan.hunks.get(path) ?? []).filter(hunk => taken.has(hunk.start)));
 	}
 
 	setIncluded(planId: string, commitId: string, path: string | undefined, included: boolean): void {
@@ -208,7 +302,13 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 					message = (await this.pullRequests.generateCommitMessage(plan.root, plan.sessionId, paths).catch(() => undefined))?.trim()
 						|| localize('voltCommitPlan.fallbackMessage', "Update {0}", paths.map(path => path.split('/').pop()).slice(0, 3).join(', '));
 				}
-				const result = await this.pullRequests.api.commit({ folder: plan.root, message: attribute ? withCommitAttribution(message) : message, paths });
+				const contents = await this.hunkContents(plan, commit, paths);
+				const result = await this.pullRequests.api.commit({ folder: plan.root, message: attribute ? withCommitAttribution(message) : message, paths, ...(contents.length ? { contents } : {}) });
+				for (const path of paths) {
+					if (commit.parts[path]) {
+						plan.applied.set(path, new Set([...(plan.applied.get(path) ?? []), ...commit.parts[path]]));
+					}
+				}
 				const files = commit.paths.filter(path => !commit.excluded.has(path)).length;
 				plan.done.push({ sha: result.sha, subject: result.subject, files });
 				// What it committed leaves the plan; files left out of it stay, as their own leftovers.
@@ -228,11 +328,34 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 		this.finish(plan, false);
 	}
 
+	/**
+	 * What a commit holds of each file split by hunks: the hunks already in HEAD from earlier commits
+	 * plus its own. HEAD must still hold exactly the earlier ones, or the file moved and nothing is made.
+	 */
+	private async hunkContents(plan: IAgentCommitPlan, commit: IAgentPlannedCommit, paths: readonly string[]): Promise<{ path: string; content: string }[]> {
+		const contents: { path: string; content: string }[] = [];
+		for (const path of paths) {
+			const parts = commit.parts[path];
+			if (!parts) {
+				continue;
+			}
+			const base = plan.bases.get(path);
+			const hunks = plan.hunks.get(path) ?? [];
+			const applied = plan.applied.get(path) ?? new Set<number>();
+			const head = await this.git.readBlob({ repoRoot: plan.root, sha: `HEAD:${path}`, path }).then(text => text.toString(), () => undefined);
+			if (base === undefined || head !== spliceHunks(base, hunks.filter(hunk => applied.has(hunk.start)))) {
+				throw new Error(localize('voltCommitPlan.headMoved', "{0} changed since the commits were proposed; nothing of this commit was made.", path));
+			}
+			contents.push({ path, content: spliceHunks(base, hunks.filter(hunk => applied.has(hunk.start) || parts.includes(hunk.start))) });
+		}
+		return contents;
+	}
+
 	/** Adds files to the plan's leftover group (made when first needed), unticked: they stay uncommitted. */
 	private addLeftovers(plan: IAgentCommitPlan, paths: readonly string[]): void {
 		let group = plan.commits.find(commit => commit.leftover);
 		if (!group) {
-			group = { id: generateUuid(), message: '', paths: [], excluded: new Set(), generating: false, leftover: true };
+			group = { id: generateUuid(), message: '', paths: [], excluded: new Set(), parts: {}, generating: false, leftover: true };
 			plan.commits.push(group);
 		}
 		const list = group.paths as string[];
@@ -295,7 +418,9 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 		if (status.files.some(file => file.status === 'conflicted')) {
 			return { error: 'Resolve the merge conflicts first; nothing can be committed while files conflict.' };
 		}
-		const parsed = parseCommitPlan(args, status.root, status.files);
+		const hunkFiles = [...new Set(hunkFilesOf(args).map(name => normalizePlanPath(name, status.root)))];
+		const { hunks, bases } = await this.readHunks(status.root, hunkFiles);
+		const parsed = parseCommitPlan(args, status.root, status.files, hunks);
 		if ('error' in parsed) {
 			return { error: parsed.error };
 		}
@@ -317,16 +442,38 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 			branch: status.branch,
 			files: new Map(status.files.map(file => [file.path, file])),
 			proposal,
-			commits: parsed.commits.map(commit => ({ id: generateUuid(), message: commit.message, paths: [...commit.paths], excluded: new Set<string>(), generating: false, leftover: false })),
+			commits: parsed.commits.map(commit => ({ id: generateUuid(), message: commit.message, paths: [...commit.paths], excluded: new Set<string>(), parts: commit.parts, generating: false, leftover: false })),
+			hunks,
+			bases,
+			applied: new Map(),
 			done: [],
 		};
 		if (parsed.leftover.length) {
-			plan.commits.push({ id: generateUuid(), message: '', paths: [...parsed.leftover], excluded: new Set(parsed.leftover), generating: false, leftover: true });
+			plan.commits.push({ id: generateUuid(), message: '', paths: [...parsed.leftover], excluded: new Set(parsed.leftover), parts: {}, generating: false, leftover: true });
 		}
+		this.drafts.delete(sessionId);
 		this.plans.set(plan.id, plan);
 		this.outcomes.set(plan.id, new DeferredPromise<string>());
 		this._onDidChange.fire(sessionId);
 		return this.await(sessionId, plan.id, token);
+	}
+
+	/** The hunks of the named files against HEAD, and each file's HEAD text; a file without text hunks is left out. */
+	private async readHunks(root: string, names: readonly string[]): Promise<{ hunks: Map<string, IPlanHunk[]>; bases: Map<string, string> }> {
+		const hunks = new Map<string, IPlanHunk[]>();
+		const bases = new Map<string, string>();
+		if (!names.length) {
+			return { hunks, bases };
+		}
+		const summary = await this.pullRequests.api.describeChanges({ folder: root, paths: names });
+		await Promise.all([...parseHunks(summary.patch)].map(async ([path, list]) => {
+			const base = list.length ? await this.git.readBlob({ repoRoot: root, sha: `HEAD:${path}`, path }).then(text => text.toString(), () => undefined) : undefined;
+			if (base !== undefined) {
+				hunks.set(path, list);
+				bases.set(path, base);
+			}
+		}));
+		return { hunks, bases };
 	}
 
 	/** Waits a little under the agents' MCP timeout, then tells the agent to call again. */
@@ -383,7 +530,7 @@ export const COMMIT_PLAN_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: PROPOSE_COMMITS_TOOL_NAME,
 		title: 'Proposed commits',
 		group: 'pullRequests',
-		description: 'Commit the working tree as a series of meaningful commits that the user reviews first. Use it whenever the user asks you to commit (instead of running git commit yourself). Read `git status` and the diff, then group the changed files into commits that each do one thing, in the order they should land, each with a Conventional Commits message: type(scope): summary, type one of feat, fix, refactor, perf, docs, test, style, build, ci, chore (e.g. feat(cart): apply discount at checkout), under 72 characters, with a body after a blank line when it helps. Volt shows the commits above the composer: the user opens each one\'s files and diffs, ticks commits or files out, edits or regenerates messages, and commits them. Volt makes the commits and the call returns what was committed. A file can be in one commit only; changed files you leave out of every commit are offered unticked. The call waits for the user; if it returns STILL WAITING, call await_commits with the plan_id and keep calling it until the review ends. Never end your turn while the review is open.',
+		description: 'Commit the working tree as commits the user reviews first. Use it whenever the user asks you to commit (instead of running git commit yourself). Read `git status` and the diff, then group the changed files into commits that each do one thing, in the order they should land; when the changes are one change or belong together, propose a single commit, and split only where they really are separate changes. Each commit gets a Conventional Commits message: type(scope): summary, type one of feat, fix, refactor, perf, docs, test, style, build, ci, chore (e.g. feat(cart): apply discount at checkout), under 72 characters, with a body after a blank line when it helps. Volt shows the commits above the composer: the user opens each one\'s files and diffs, ticks commits or files out, edits or regenerates messages, and commits them. Volt makes the commits and the call returns what was committed. A file can be in one commit only (whole, or split by hunks as above); changed files you leave out of every commit are offered unticked. A file that holds changes for two commits can be split by hunks: list it under `hunks` in each commit with the hunk numbers (the N of each `@@ -a,b +N,c @@` header of `git diff HEAD -- file`). Every hunk of it must be listed in some commit or it stays uncommitted. Only tracked files with text changes can be split that way; new, untracked, renamed and deleted files go whole under `files`. The call waits for the user; if it returns STILL WAITING, call await_commits with the plan_id and keep calling it until the review ends. Never end your turn while the review is open.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -395,6 +542,18 @@ export const COMMIT_PLAN_TOOLS: readonly IVoltHostToolInfo[] = [
 						properties: {
 							message: { type: 'string', description: 'The commit message: a subject line, then optionally a blank line and a body.' },
 							files: { type: 'array', items: { type: 'string' }, description: 'Changed files of this commit, relative to the repository root as `git status` lists them.' },
+							hunks: {
+								type: 'array',
+								description: 'Files split by hunks: the hunks of each file this commit takes.',
+								items: {
+									type: 'object',
+									properties: {
+										file: { type: 'string', description: 'The file, relative to the repository root.' },
+										lines: { type: 'array', items: { type: 'number' }, description: 'The N of each hunk header (`@@ -a,b +N,c @@`) of `git diff HEAD -- file` that this commit takes.' },
+									},
+									required: ['file', 'lines'],
+								},
+							},
 						},
 						required: ['message', 'files'],
 					},

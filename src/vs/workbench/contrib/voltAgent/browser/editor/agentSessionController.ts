@@ -314,8 +314,10 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 	private mirroredRun = false;
 	/** Turns on screen since the user sent them that have not started yet ({@link showPendingTurn}). */
 	private readonly pendingTurns = new Set<string>();
-	/** The CLI agent the current run is starting, named on the live line until its first step. */
+	/** The CLI agent the current run is starting, named on the live line until it has the prompt. */
 	private startingAgent: string | undefined;
+	/** The "Starting …" line now on screen, replaced by "Thinking" once the agent has the prompt. */
+	private startingStatus: string | undefined;
 
 	constructor(
 		private host: IAgentSessionHost,
@@ -933,15 +935,22 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 				activity.status = localize('voltAgent.thinking', "Thinking");
 				this.runWantsPreview = false;
 				this.startingAgent = this.agentLabel(event.providerRef);
+				this.startingStatus = undefined;
 				break;
 			case 'lane':
 				this.runWantsPreview = event.wantsPreview;
 				break;
 			case 'lifecycle':
 				if (event.phase === 'planning' && this.startingAgent) {
-					// A CLI agent's run plans while its process starts and connects: say that, until it speaks.
-					activity.status = localize('voltAgent.startingAgent', "Starting {0}", this.startingAgent);
+					// A CLI agent's run plans while its process starts and connects: say that, until it has the prompt.
+					activity.status = this.startingStatus = localize('voltAgent.startingAgent', "Starting {0}", this.startingAgent);
 					this.startingAgent = undefined;
+				} else if (event.phase === 'running') {
+					// The agent has the prompt: what follows is the model thinking, not the agent starting.
+					if (this.startingStatus !== undefined && activity.status === this.startingStatus) {
+						activity.status = localize('voltAgent.thinking', "Thinking");
+					}
+					this.startingStatus = undefined;
 				} else if (event.phase === 'planning') {
 					activity.status = localize('voltAgent.planning', "Planning");
 				} else if (event.phase === 'verifying') {

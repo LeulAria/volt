@@ -100,11 +100,12 @@
 }
 .volt-agent-update-button {
 	position: relative;
-	opacity: 1;
-	color: var(--vscode-foreground);
 }
 
-.volt-agent-update-glyph {
+/* Drawn on the whole 28px button, so its arrow comes out the size of the footer's 15px icons;
+ * outranks the footer's 15px svg rule in agentHomePane.css. */
+.volt-agent-update-glyph,
+.monaco-workbench.volt-layout-agent .volt-agent-home-footer .volt-agent-home-settings.volt-agent-update-button svg.volt-agent-update-glyph {
 	display: block;
 	width: 28px;
 	height: 28px;
@@ -345,11 +346,6 @@
 	white-space: nowrap;
 }
 
-/* Round, like the Usage page's refresh button, so its hover fill and focus ring are circles too. */
-.volt-agent-home-settings.volt-agent-update-button {
-	border-radius: 999px;
-}
-
 /* A click should not leave a ring behind; the keyboard still gets one. */
 .monaco-workbench .volt-agent-update-button:focus:not(:focus-visible) {
 	outline: none;
@@ -361,16 +357,19 @@
 }
 
 /* Nothing pending: a plain refresh button that checks GitHub for the latest release. */
-.volt-agent-update-button.idle {
-	color: var(--vscode-descriptionForeground);
+/* Same colour and dimming as the other sidebar footer icons, in every state. */
+.volt-agent-home-settings.volt-agent-update-button {
+	color: inherit;
+	opacity: 0.8;
 }
 
-.volt-agent-update-button.idle:hover {
-	color: var(--vscode-foreground);
+.volt-agent-home-settings.volt-agent-update-button:hover,
+.volt-agent-home-settings.volt-agent-update-button:focus-visible,
+.volt-agent-home-settings.volt-agent-update-button.open {
+	opacity: 1;
 }
 
-.volt-agent-update-button.idle .codicon {
-	/* Matches the other sidebar footer icons. */
+.volt-agent-update-button.idle .volt-agent-update-done {
 	font-size: 14px;
 }
 
@@ -391,8 +390,8 @@
 	color: var(--vscode-foreground);
 }
 
-.volt-agent-update-button.checking .codicon-refresh,
-.volt-agent-update-button.up-to-date .codicon-refresh {
+.volt-agent-update-button.checking .volt-agent-svg-icon.refresh,
+.volt-agent-update-button.up-to-date .volt-agent-svg-icon.refresh {
 	visibility: hidden;
 }
 

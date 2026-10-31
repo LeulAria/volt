@@ -20,11 +20,12 @@
 	--vcp-input: rgba(240, 240, 241, 0.04);
 	--vcp-check-border: rgba(240, 240, 241, 0.3);
 	--vcp-check-border-hover: rgba(240, 240, 241, 0.55);
-	--vcp-check-fill: rgba(240, 240, 241, 0.92);
-	--vcp-check-mark: #1c1c1c;
+	--vcp-check-fill: #4c8dff;
+	--vcp-check-mark: #ffffff;
 	box-sizing: border-box;
 	width: 100%;
-	max-width: 760px;
+	/* The chat column's width (.volt-agent-input-box), never wider than the prompt below it. */
+	max-width: 728px;
 	margin: 0 auto 8px;
 	display: flex;
 	flex-direction: column;
@@ -52,7 +53,7 @@
 	--vcp-input: rgba(20, 20, 20, 0.03);
 	--vcp-check-border: rgba(20, 20, 20, 0.28);
 	--vcp-check-border-hover: rgba(20, 20, 20, 0.5);
-	--vcp-check-fill: rgba(20, 20, 20, 0.88);
+	--vcp-check-fill: #2f6fe0;
 	--vcp-check-mark: #ffffff;
 	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 8px 24px rgba(0, 0, 0, 0.08);
 }
@@ -105,6 +106,108 @@
 .volt-commit-plan-summary > span:first-child {
 	overflow: hidden;
 	text-overflow: ellipsis;
+}
+
+/*
+ * Asked for, not proposed yet ("Generating Drafts…"): the composer's dictation glow slides along the
+ * card's bottom (agentComposerInput.css). A blurred layer (filter, never backdrop-filter: the window
+ * is transparent) under the head, clipped by the card.
+ */
+.volt-commit-plan-glow {
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 360ms ease;
+	-webkit-mask-image: radial-gradient(70% 160% at 50% 100%, #000 10%, transparent 75%);
+	mask-image: radial-gradient(70% 160% at 50% 100%, #000 10%, transparent 75%);
+}
+
+.volt-commit-plan {
+	position: relative;
+}
+
+.volt-commit-plan.drafting .volt-commit-plan-glow {
+	opacity: 0.55;
+}
+
+.monaco-workbench.vs .volt-commit-plan.drafting .volt-commit-plan-glow,
+.monaco-workbench.hc-light .volt-commit-plan.drafting .volt-commit-plan-glow {
+	opacity: 0.35;
+}
+
+/* Twice as wide with the colors repeated, so sliding it by half loops without a seam. */
+.volt-commit-plan-aurora {
+	position: absolute;
+	left: 0;
+	bottom: -60%;
+	width: 200%;
+	height: 100%;
+	background: linear-gradient(90deg,
+		#2dd4bf 0%, #6366f1 7%, #ec4899 14%, #f97316 21%, #facc15 28%, #a855f7 36%, #22d3ee 43%, #2dd4bf 50%,
+		#6366f1 57%, #ec4899 64%, #f97316 71%, #facc15 78%, #a855f7 86%, #22d3ee 93%, #2dd4bf 100%);
+	filter: blur(16px);
+	animation: volt-commit-plan-aurora 9s linear infinite;
+	animation-play-state: paused;
+}
+
+.volt-commit-plan.drafting .volt-commit-plan-aurora {
+	will-change: transform;
+	animation-play-state: running;
+}
+
+@keyframes volt-commit-plan-aurora {
+	from { transform: translateX(0); }
+	to { transform: translateX(-50%); }
+}
+
+.monaco-workbench.reduce-motion .volt-commit-plan-aurora {
+	animation: none;
+}
+
+/* Drafting: the composer's round Stop (agentEditor.css .volt-agent-send.stop). */
+.volt-commit-plan-stop {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 26px;
+	height: 26px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: #f4f4f5;
+	color: #111;
+	cursor: pointer;
+	transition: background-color 200ms ease;
+}
+
+.volt-commit-plan-stop:hover {
+	background: #d8d8da;
+}
+
+.volt-commit-plan-stop:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+.volt-commit-plan-stop svg {
+	display: block;
+	width: 12px;
+	height: 12px;
+}
+
+.monaco-workbench.vs .volt-commit-plan-stop,
+.monaco-workbench.hc-light .volt-commit-plan-stop {
+	background: var(--vscode-foreground);
+	color: var(--vscode-editor-background, #fff);
+}
+
+.monaco-workbench.vs .volt-commit-plan-stop:hover,
+.monaco-workbench.hc-light .volt-commit-plan-stop:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 82%, var(--vscode-editor-background, #fff));
 }
 
 /* The message editor opens between the head and the commits: a square field, no shadow. */
@@ -369,15 +472,19 @@
 	text-decoration: line-through;
 }
 
-.volt-commit-plan-foot {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	height: 44px;
-	padding: 0 10px 0 12px;
+.volt-commit-plan-hunks {
+	flex: none;
+	color: var(--vcp-fg-muted);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.volt-commit-plan-hunks:empty {
+	display: none;
 }
 
 .volt-commit-plan-status-text {
+	flex: 0 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -386,13 +493,85 @@
 	font-size: 12px;
 }
 
-.volt-commit-plan-status-text.error {
-	color: var(--vscode-errorForeground);
-	white-space: normal;
+.volt-commit-plan-status-text:empty {
+	display: none;
 }
 
-.volt-commit-plan-spacer {
-	flex: 1;
+.volt-commit-plan-status-text.error {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-commit-plan-head-actions {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-left: auto;
+}
+
+/* View as List/Tree, Collapse All and Minimize: icon buttons like the Source Control view's title bar. */
+.volt-commit-plan-tools {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	margin-right: 4px;
+}
+
+.monaco-workbench .volt-commit-plan .volt-button.volt-commit-plan-tool {
+	box-sizing: border-box;
+	width: 24px;
+	min-width: 24px;
+	height: 24px;
+	padding: 0;
+	border-radius: 6px;
+	color: var(--vcp-fg-icon);
+}
+
+.monaco-workbench .volt-commit-plan .volt-button.volt-commit-plan-tool:hover {
+	background: var(--vcp-hover);
+	color: var(--vcp-fg);
+}
+
+.monaco-workbench .volt-commit-plan .volt-button.volt-commit-plan-tool .codicon[class*='codicon-'] {
+	margin: 0;
+	font-size: 14px;
+	color: inherit;
+}
+
+/* Don't Commit: a see-through fill (the rows' hover tint), a little stronger on hover. */
+.monaco-workbench .volt-commit-plan-head-actions > .volt-button.volt-button-secondary {
+	background: var(--vcp-hover);
+	border-color: transparent;
+	color: var(--vcp-fg);
+}
+
+.monaco-workbench .volt-commit-plan-head-actions > .volt-button.volt-button-secondary:hover {
+	background: color-mix(in srgb, var(--vcp-fg) 14%, transparent);
+}
+
+/* Commit N: the commit icon before the label. */
+.volt-commit-plan .volt-button.volt-button-primary .volt-commit-plan-commit-icon {
+	flex: none;
+	width: 14px;
+	height: 14px;
+	margin-right: 6px;
+}
+
+/*
+ * Shrunk: "Draft Commits 4" in the row above the composer, styled by the row's own chip rule
+ * (.volt-agent-composer-chip); only its icons and count are set here.
+ */
+.volt-commit-plan-chip-icon {
+	display: flex;
+}
+
+.monaco-workbench .volt-commit-plan-chip-icon .codicon[class*='codicon-'] {
+	font-size: 14px;
+}
+
+.volt-commit-plan-chip-count {
+	opacity: 0.7;
+	font-variant-numeric: tabular-nums;
 }
 
 .volt-commit-plan.busy .volt-commit-plan-tree {

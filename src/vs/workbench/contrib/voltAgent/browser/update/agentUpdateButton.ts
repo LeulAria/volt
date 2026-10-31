@@ -31,6 +31,7 @@ import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { summarizeReleaseNotes } from '../../common/agentUpdateNotes.js';
 import { createRefreshSpinner, setRefreshSpinnerRunning } from '../usage/agentUsageIcons.js';
 import { createVoltButton } from '../chrome/voltButton.js';
+import { createHomeRefreshIcon } from '../home/agentHomeIcons.js';
 
 /** States worth a button in the agent sidebar footer. */
 function isActionable(state: State): boolean {
@@ -74,10 +75,16 @@ function createUpdateGlyph(): { readonly root: SVGSVGElement; readonly progress:
 	ring('volt-agent-update-track');
 	const progress = ring('volt-agent-update-progress');
 	progress.setAttribute('stroke-dasharray', String(RING_LENGTH));
-	const path = document.createElementNS(SVG_NS, 'path');
-	path.setAttribute('d', 'M14 8.5v7.5M10.75 12.75 14 16l3.25-3.25M9 17.5v1.25c0 .69.56 1.25 1.25 1.25h7.5c.69 0 1.25-.56 1.25-1.25V17.5');
-	path.classList.add('volt-agent-update-arrow');
-	svg.appendChild(path);
+	// Lucide download on the 24px grid, scaled to the 15px the footer's other icons draw at and centered.
+	const arrow = document.createElementNS(SVG_NS, 'g');
+	arrow.setAttribute('transform', 'translate(6.5 6.5) scale(0.625)');
+	arrow.classList.add('volt-agent-update-arrow');
+	for (const d of ['M12 15V3', 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4', 'm7 10 5 5 5-5']) {
+		const path = document.createElementNS(SVG_NS, 'path');
+		path.setAttribute('d', d);
+		arrow.appendChild(path);
+	}
+	svg.appendChild(arrow);
 	return { root: svg, progress };
 }
 
@@ -322,7 +329,7 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 		if (!isActionable(state)) {
 			const checking = this.checking || state.type === StateType.CheckingForUpdates;
 			const result = !checking && Date.now() < this.resultUntil ? this.result : undefined;
-			this.idleGlyph ??= [renderIcon(Codicon.refresh), createRefreshSpinner(), renderIcon(Codicon.check)];
+			this.idleGlyph ??= [createHomeRefreshIcon(), createRefreshSpinner(), renderIcon(Codicon.check)];
 			this.idleGlyph[2].classList.add('volt-agent-update-done');
 			if (this.idleGlyph[0].parentElement !== button) {
 				button.replaceChildren(...this.idleGlyph);

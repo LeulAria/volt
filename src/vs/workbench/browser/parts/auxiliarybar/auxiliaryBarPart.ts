@@ -201,7 +201,8 @@ export class AuxiliaryBarPart extends AbstractPaneCompositePart {
 	private installPrimarySidebarToggle(parent: HTMLElement): void {
 		const button = append(parent, $('button.volt-primary-sidebar-toggle')) as HTMLButtonElement;
 		button.type = 'button';
-		button.appendChild(createPrimarySidebarToggleIcon(button, 'open'));
+		// The solid glyph, the same as the right panel's toggle (mirrored there).
+		button.appendChild(createPrimarySidebarToggleIcon(button, 'closed'));
 		this.primarySidebarToggle = button;
 		this.updatePrimarySidebarToggleLabel();
 

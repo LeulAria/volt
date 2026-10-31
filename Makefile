@@ -46,7 +46,7 @@ watch:
 		echo "Watcher started (pid $$(cat "$(WATCH_PID)")). Log: $(WATCH_LOG)"; \
 		echo "Waiting for first compile..."; \
 		for i in $$(seq 1 180); do \
-			if grep -aE -q "Finished compilation with " "$(WATCH_LOG)" 2>/dev/null && [ -f out/vs/code/electron-browser/workbench/workbench.js ] && [ -f out/vs/platform/files/node/watcher/nodejs/nodejsClient.js ]; then \
+			if grep -aE -q "Finished .*compilation.* with " "$(WATCH_LOG)" 2>/dev/null && [ -f out/vs/code/electron-browser/workbench/workbench.js ] && [ -f out/vs/platform/files/node/watcher/nodejs/nodejsClient.js ]; then \
 				break; \
 			fi; \
 			sleep 1; \

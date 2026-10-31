@@ -94,6 +94,8 @@ export interface IAgentForkOrigin {
 	readonly title: string;
 	readonly turns: number;
 	readonly base?: string;
+	/** The last turn the fork copied: the source hides its fork button there until it moves on. */
+	readonly lastTurn?: string;
 }
 
 /** Session-level metadata changes. */

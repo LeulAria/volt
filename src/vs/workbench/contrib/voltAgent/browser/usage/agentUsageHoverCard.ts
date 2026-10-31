@@ -49,7 +49,7 @@ function shortIn(ms: number): string {
 	return days < 14 ? localize('voltUsageHover.days', "{0}d", days) : localize('voltUsageHover.weeks', "{0}w", Math.round(days / 7));
 }
 
-interface IAccountRow {
+export interface IUsageAccountRow {
 	readonly provider: VoltUsageProvider;
 	readonly name: string;
 	readonly plan?: string;
@@ -57,6 +57,34 @@ interface IAccountRow {
 	readonly limits?: IVoltUsageLimitGroup;
 	readonly expired?: boolean;
 }
+
+/** Claude's saved accounts (the one in use reads its live limits), then every other account a limit was read for. */
+export function usageAccountRows(groups: readonly IVoltUsageLimitGroup[] | undefined, accountsState: IVoltClaudeAccountsState | undefined): IUsageAccountRow[] {
+	const read = groups ?? [];
+	const claude = accountsState?.accounts ?? [];
+	const rows: IUsageAccountRow[] = [];
+	for (const account of [...claude].sort((a, b) => Number(b.active) - Number(a.active))) {
+		const live = account.active ? read.find(group => group.provider === 'claude' && (group.account?.id === account.id || group.account?.label === account.email)) : undefined;
+		rows.push({
+			provider: 'claude',
+			name: account.email,
+			plan: account.plan,
+			active: account.active,
+			limits: live ?? account.limits,
+			expired: account.needsSignIn && !account.limits,
+		});
+	}
+	for (const group of read) {
+		if (group.provider === 'claude' && claude.length) {
+			continue;
+		}
+		rows.push({ provider: group.provider, name: group.account?.label ?? ACCOUNT_NAMES[group.provider], plan: group.plan, active: false, limits: group });
+	}
+	return rows;
+}
+
+/** Where the card opens: above its button (the home footer), or beside it toward the window (the side toolbar). */
+export type UsageHoverPlacement = 'above' | 'start';
 
 /**
  * Every account's limits at a glance over the Usage button: each account (Claude's saved ones
@@ -79,6 +107,7 @@ export class AgentUsageHoverCard extends Disposable {
 
 	constructor(
 		private readonly anchor: HTMLElement,
+		private readonly placement: UsageHoverPlacement,
 		@IInstantiationService instantiationService: IInstantiationService,
 		@ICommandService private readonly commandService: ICommandService,
 		@IStorageService private readonly storage: IStorageService,
@@ -196,38 +225,13 @@ export class AgentUsageHoverCard extends Disposable {
 		}
 	}
 
-	/** Claude's saved accounts (the one in use reads its live limits), then every other account a limit was read for. */
-	private rows(): IAccountRow[] {
-		const groups = this.groups ?? [];
-		const claude = this.accountsState?.accounts ?? [];
-		const rows: IAccountRow[] = [];
-		for (const account of [...claude].sort((a, b) => Number(b.active) - Number(a.active))) {
-			const live = account.active ? groups.find(group => group.provider === 'claude' && (group.account?.id === account.id || group.account?.label === account.email)) : undefined;
-			rows.push({
-				provider: 'claude',
-				name: account.email,
-				plan: account.plan,
-				active: account.active,
-				limits: live ?? account.limits,
-				expired: account.needsSignIn && !account.limits,
-			});
-		}
-		for (const group of groups) {
-			if (group.provider === 'claude' && claude.length) {
-				continue;
-			}
-			rows.push({ provider: group.provider, name: group.account?.label ?? ACCOUNT_NAMES[group.provider], plan: group.plan, active: false, limits: group });
-		}
-		return rows;
-	}
-
 	private render(): void {
 		const card = this.card;
 		this.renderStore.clear();
 		card.replaceChildren();
 		const now = Date.now();
 
-		const rows = this.rows();
+		const rows = usageAccountRows(this.groups, this.accountsState);
 		const head = append(card, $('.volt-usage-hover-head'));
 		append(head, $('span.volt-usage-hover-title')).textContent = localize('voltUsageHover.title', "Usage limits");
 		const checked = Math.max(0, ...rows.map(row => row.limits?.checkedAt ?? 0));
@@ -315,13 +319,21 @@ export class AgentUsageHoverCard extends Disposable {
 			: passed ? localize('voltUsageHover.reset', "Reset just now") : localize('voltUsageHover.notStarted', "Starts with your next message")}`;
 	}
 
-	/** Above the button, its left edge on the button's, inside the window; below when there is no room above. */
+	/**
+	 * Above the button, its left edge on the button's, inside the window; below when there is no
+	 * room above. 'start': to the left of the anchor, top edges level, inside the window.
+	 */
 	private place(): void {
 		const win = getWindow(this.anchor);
 		const rect = this.anchor.getBoundingClientRect();
 		const width = this.card.offsetWidth;
 		const height = this.card.offsetHeight;
 		const gap = 6;
+		if (this.placement === 'start') {
+			this.card.style.left = `${Math.max(8, rect.left - width - gap)}px`;
+			this.card.style.top = `${Math.max(8, Math.min(rect.top - 8, win.innerHeight - height - 8))}px`;
+			return;
+		}
 		const left = Math.max(8, Math.min(rect.left, win.innerWidth - width - 8));
 		const above = rect.top - height - gap;
 		this.card.style.left = `${left}px`;

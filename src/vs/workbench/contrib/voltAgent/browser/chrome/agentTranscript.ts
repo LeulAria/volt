@@ -13,7 +13,7 @@ import { AgentBlock, AgentSegment, createPlanBlock, humanTerminalTitle, IAgentAc
 import type { AgentToolDensity } from '../../common/agentAppearanceSettings.js';
 import { computeChangeStats } from '../review/fileChangePreviewModel.js';
 import { isRetryNotice, isSignInNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
-import { fileChangeSource, partitionAssistantText } from './agentTimeline.js';
+import { classifySupervisionNotice, fileChangeSource, partitionAssistantText } from './agentTimeline.js';
 import { CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, RENDER_CHART_TOOL_NAME, SILENT_VISUAL_TOOL_NAMES, VISUAL_TOOL_NAMES } from '../../../../services/voltRuntime/common/hostTools.js';
 import { peekCanvasInput } from '../visuals/canvas/canvasModel.js';
 import { chartLoaderShape } from '../visuals/agentDotLoader.js';
@@ -188,6 +188,11 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 			case 'notice':
 				// Chats saved before retries moved to the status line.
 				if (isRetryNotice(segment.title)) {
+					break;
+				}
+				// Supervisor findings the run carried on from (loop, stall, budget) are for the trajectory;
+				// the chat shows one only when it ended the run.
+				if (segment.severity !== 'error' && (segment.supervision ?? classifySupervisionNotice(segment.title))) {
 					break;
 				}
 				flushReply();

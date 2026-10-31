@@ -33,6 +33,10 @@ import { agentSessionToolTabs } from './agentSurfaceHost.js';
 
 /** The turn waits at most this long for the snapshot (git, the device's app); then it goes without. */
 const SNAPSHOT_BUDGET_MS = 1200;
+/** A turn's summary reuses a git result this fresh as it is; an older one is refreshed behind the turn. */
+const GIT_FRESH_MS = 2_000;
+/** Past this a git result is too old to show: the turn waits for a new one. */
+const GIT_STALE_MS = 60_000;
 const OUTPUT_LINES = 30;
 /** CanvasEditorInput.TypeID and CANVAS_SCHEME (visuals/canvas/canvasEditor.ts), not imported for its weight. */
 const CANVAS_INPUT_TYPE_ID = 'workbench.input.voltCanvas';
@@ -45,6 +49,9 @@ const CANVAS_SCHEME = 'volt-canvas';
 export class AgentWorkspaceContextContribution extends Disposable implements IWorkbenchContribution {
 
 	static readonly ID = 'workbench.contrib.voltAgentWorkspaceContext';
+
+	/** The last `git status` summary per folder (see git). */
+	private readonly gitByFolder = new Map<string, { at: number; settled?: { value: IWorkspaceGit | undefined }; refreshing: boolean }>();
 
 	constructor(
 		@IAgentDevicesService private readonly devices: IAgentDevicesService,
@@ -166,7 +173,37 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 		};
 	}
 
-	private async git(folder: string, detail: boolean): Promise<IWorkspaceGit | undefined> {
+	/**
+	 * A turn's summary takes the folder's last git result at once and refreshes it behind the turn:
+	 * `git status` in a big repository takes a few hundred ms, and every prompt would wait for it.
+	 * workspace_status (`detail`) always runs it.
+	 */
+	private git(folder: string, detail: boolean): Promise<IWorkspaceGit | undefined> {
+		const cached = this.gitByFolder.get(folder);
+		const age = cached ? Date.now() - cached.at : Infinity;
+		if (!detail && cached?.settled && age < GIT_STALE_MS) {
+			if (age >= GIT_FRESH_MS && !cached.refreshing) {
+				cached.refreshing = true;
+				void this.readGit(folder, false);
+			}
+			return Promise.resolve(cached.settled.value);
+		}
+		return this.readGit(folder, detail);
+	}
+
+	private async readGit(folder: string, detail: boolean): Promise<IWorkspaceGit | undefined> {
+		const at = Date.now();
+		const value = await this.gitStatus(folder, detail);
+		const current = this.gitByFolder.get(folder);
+		if (!current || current.at <= at) {
+			// Kept as a turn's summary has it: the counts, not workspace_status's file list.
+			const summary = value && detail ? (({ files: _files, ...rest }) => rest)(value) : value;
+			this.gitByFolder.set(folder, { at, settled: { value: summary }, refreshing: false });
+		}
+		return value;
+	}
+
+	private async gitStatus(folder: string, detail: boolean): Promise<IWorkspaceGit | undefined> {
 		const status = await this.worktrees.git(folder, ['status', '--porcelain=v1', '-b']).catch(() => undefined);
 		if (!status || status.exitCode !== 0) {
 			return undefined;
