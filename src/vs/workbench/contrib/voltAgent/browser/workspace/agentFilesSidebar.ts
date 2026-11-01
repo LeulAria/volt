@@ -513,6 +513,10 @@ export class AgentFilesSidebar extends Disposable {
 				message = localize('voltAgent.filesSidebar.gitFailed', "Git could not run: {0}", firstLine(state.detail));
 				action = { label: localize('voltAgent.filesSidebar.retry', "Try Again"), run: async () => this.reopenRepository() };
 				break;
+			case 'folderMissing':
+				message = localize('voltAgent.filesSidebar.folderMissing', "This chat's folder is not on disk: {0}", state.path);
+				action = { label: localize('voltAgent.filesSidebar.retry', "Try Again"), run: async () => this.reopenRepository() };
+				break;
 			case 'gitDisabled':
 				message = localize('voltAgent.filesSidebar.gitDisabled', "Git is turned off in settings (git.enabled).");
 				action = {

@@ -24,6 +24,9 @@ import { ISCMRepository, ISCMService, ISCMViewService } from '../../../scm/commo
 const GIT_EXTENSION_ID = 'vscode.git';
 /** How long a stopped Git extension gets to come back (the extension host restarts when the window moves folders). */
 const GIT_RESTART_WAIT_MS = 15_000;
+/** How long a chat's missing folder gets to appear (a worktree is made after the chat opens). */
+const FOLDER_WAIT_MS = 15_000;
+const FOLDER_POLL_MS = 500;
 
 /**
  * Where a chat's repository stands in Source Control. Anything but `loading` and `ready` says
@@ -39,6 +42,8 @@ export type AgentScmRepositoryState =
 	| { readonly kind: 'notRepository' }
 	/** Git could not run: not installed, or a broken shim (an unaccepted Xcode license). */
 	| { readonly kind: 'gitFailed'; readonly detail: string }
+	/** The chat's folder is not on disk: its worktree was removed, or never finished. */
+	| { readonly kind: 'folderMissing'; readonly path: string }
 	/** A repository, with `git.enabled` off. */
 	| { readonly kind: 'gitDisabled'; readonly repoRoot: string }
 	/**
@@ -164,6 +169,16 @@ export class AgentScmRepositoryFocus extends Disposable {
 				return false;
 			}
 			if (typeof repo === 'string') {
+				// Git reports a missing folder as "spawn git ENOENT": a worktree still being made, or removed.
+				if (!await this.folderExists(root)) {
+					if (await this.waitForFolder(root, current)) {
+						return true;
+					}
+					if (current()) {
+						setState({ kind: 'folderMissing', path: repoRoot });
+					}
+					return false;
+				}
 				setState({ kind: 'gitFailed', detail: repo });
 				return false;
 			}
@@ -256,6 +271,28 @@ export class AgentScmRepositoryFocus extends Disposable {
 		} catch {
 			// The Git extension is not running, or failed: the caller asks git why.
 		}
+	}
+
+	private async folderExists(root: URI): Promise<boolean> {
+		try {
+			return await this.fileService.exists(root);
+		} catch {
+			return true;
+		}
+	}
+
+	/** True once the folder shows up within {@link FOLDER_WAIT_MS}; false when it does not or the request moved on. */
+	private async waitForFolder(root: URI, current: () => boolean): Promise<boolean> {
+		for (let waited = 0; waited < FOLDER_WAIT_MS; waited += FOLDER_POLL_MS) {
+			await timeout(FOLDER_POLL_MS);
+			if (!current()) {
+				return false;
+			}
+			if (await this.folderExists(root)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private isGitRunning(): boolean {

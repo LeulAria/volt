@@ -761,6 +761,11 @@ export class VoltGitService extends Disposable implements IVoltGitService {
 			child.stderr.on('data', (chunk: Buffer) => stderr += chunk.toString('utf8'));
 			child.on('error', err => {
 				clearTimeout(timer);
+				// Node says "spawn git ENOENT" for a missing working folder too, not only a missing git.
+				if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+					void exists(run.cwd).then(found => reject(new VoltGitError(run.args, null, found ? err.message : `the folder ${run.cwd} does not exist`)));
+					return;
+				}
 				reject(new VoltGitError(run.args, null, err.message));
 			});
 			child.on('close', code => {
