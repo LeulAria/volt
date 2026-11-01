@@ -23,6 +23,7 @@ import { ITerminalInstance } from '../../../terminal/browser/terminal.js';
 import { TerminalEditorInput } from '../../../terminal/browser/terminalEditorInput.js';
 import { IAgentDevicesService } from '../devices/agentDevicesService.js';
 import { DevicePreviewEditorInput } from '../devices/deviceEditor.js';
+import { devicePreviews } from '../devices/devicePreview.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
 import { AgentChangesEditorInput } from '../review/agentChangesEditor.js';
@@ -127,6 +128,8 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 				...(device.runtime ? { runtime: device.runtime } : {}),
 				...(foreground ? { foreground } : {}),
 				...(target.host.ssh ? { host: target.host.label } : {}),
+				id: device.id,
+				...(devicePreviews.get(input)?.floating ? { floating: true } : {}),
 			};
 			return { kind: 'device', title, focused, device: info };
 		}

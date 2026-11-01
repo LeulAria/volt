@@ -40,6 +40,14 @@ suite('Volt workspace context', () => {
 		assert.ok(text.includes('panel closed'));
 	});
 
+	test('a device floating over the chat is in front while the panel is closed', () => {
+		const floating: IWorkspaceTab = { ...iphone, focused: false, device: { ...iphone.device!, id: 'U1', floating: true } };
+		const text = formatWorkspaceContext({ panelOpen: false, tabs: [floating, browser] })!;
+		assert.ok(text.includes('- In front: Device preview: iPhone 16 (iOS 18.5 simulator, booted, device: "U1"), floating over the chat as a mini device'));
+		assert.ok(text.includes('mean this device. Use the device_* tools'));
+		assert.ok(text.includes('device_install_app'));
+	});
+
 	test('nothing open and no git: no block', () => {
 		assert.strictEqual(formatWorkspaceContext({ panelOpen: false, tabs: [] }), undefined);
 	});

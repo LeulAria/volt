@@ -111,3 +111,61 @@ export function mountDuoViewport(options: {
 	label: string;
 	onUnavailable: (cause?: unknown) => void;
 }): DuoViewport;
+
+export type DeviceModelId = 'iphone-18-pro' | 'iphone-18-pro-max' | 'ipad-pro-13-m5' | 'iphone-duo';
+export type DeviceAssetId = DeviceModelId | 'ipad-pro-13-m5-magic-keyboard';
+
+/** The device's .glb model, matched by exact simulator name (iOS only); null: procedural body. */
+export function resolveDeviceModelId(platform: 'ios' | 'android', name: string): DeviceModelId | null;
+
+/**
+ * The .glb files (`~/.volt/device-models/<id>.glb`) the device's 3D view can use: its model and,
+ * for the iPad Pro 13 (M5), the Magic Keyboard. Empty: the procedural body. "iphone-duo" belongs
+ * to `mountDuoViewport`.
+ */
+export function deviceModelIdsFor(platform: 'ios' | 'android', name: string): DeviceAssetId[];
+
+/** The hinge angle to show for an Android fold reading: the reported angle, else closed 0 / open 180. */
+export function androidFoldAngle(fold: { readonly hingeAngle: number | null; readonly posture: string | null }): number;
+
+export interface PhoneViewport {
+	readonly setScreen: (screen: DeviceScreenSize | null) => void;
+	/** Android foldables: the hinge angle (0 closed, 180 open), or null for a slab phone. */
+	readonly setFoldAngle: (angle: number | null) => void;
+	/** Attaches the Magic Keyboard; does nothing unless `hasKeyboard`. */
+	readonly setKeyboardAttached: (attached: boolean) => void;
+	/** The device has a keyboard accessory (iPad Pro 13 (M5) with both .glb files given). */
+	readonly hasKeyboard: boolean;
+	/** The source canvas drew a new frame (a stream frame or a polled screenshot). */
+	readonly frame: () => void;
+	readonly resetPose: () => void;
+	readonly cancelInput: () => void;
+	readonly dispose: () => void;
+}
+
+/**
+ * The 3D phone or tablet over `host` for every device but the iPhone Duo: drag the screen to
+ * touch it, drag outside it (or swipe two fingers) to turn it. iPhone 18 Pro / Pro Max and iPad
+ * Pro 13 (M5) use their .glb model when its bytes are in `models`; every other device (or a model
+ * that fails to load) gets the procedural body for its platform and size, and Android foldables
+ * with a `foldAngle` the folding body. `source` stays owned by the caller, which must call
+ * `frame()` after each draw into it (decoded stream frame or polled screenshot).
+ */
+export function mountPhoneViewport(options: {
+	host: HTMLElement;
+	source: HTMLCanvasElement;
+	platform: 'ios' | 'android';
+	name: string;
+	/** .glb bytes by model id (the workbench CSP blocks fetching blob: URLs). */
+	models: Partial<Record<DeviceModelId, ArrayBuffer>>;
+	/** ipad-pro-13-m5-magic-keyboard.glb. */
+	keyboard?: ArrayBuffer;
+	keyboardAttached?: boolean;
+	/** Normalized 0..1 point in the displayed frame, as `DeviceStreamClient.sendTouch` takes. */
+	touch: (phase: 'begin' | 'move' | 'end', x: number, y: number) => void;
+	screen: DeviceScreenSize | null;
+	foldAngle: number | null;
+	label: string;
+	/** WebGL is unavailable or the context was lost: show the flat view. */
+	onUnavailable: (cause?: unknown) => void;
+}): PhoneViewport;

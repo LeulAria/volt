@@ -1,5 +1,14 @@
 // @effect-diagnostics globalFetch:off - This browser-only renderer owns abortable asset requests without an Effect runtime, like the live stream.
-import { Box3, Group, Mesh, MeshBasicMaterial, Texture, type Material, type Object3D } from "three";
+import {
+  Box3,
+  Group,
+  Mesh,
+  MeshBasicMaterial,
+  Texture,
+  TextureLoader,
+  type Material,
+  type Object3D,
+} from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import type { DeviceAssetSource } from "./model.ts";
 import { createDisplayProjection, updateDisplayUv, type PhoneDisplayLayout } from "./phoneScene.ts";
@@ -118,7 +127,13 @@ export async function loadDeviceModel(source: DeviceAssetSource, signal: AbortSi
     data = await response.arrayBuffer();
   }
   signal.throwIfAborted();
-  const gltf = await new GLTFLoader().parseAsync(
+  // Volt: three's ImageBitmapLoader fetches the embedded textures as blob: URLs, which the
+  // workbench CSP (connect-src) blocks, leaving the model untextured. Image elements are allowed.
+  const loader = new GLTFLoader().register((parser) => {
+    parser.textureLoader = new TextureLoader(parser.options.manager);
+    return { name: "volt_image_textures" };
+  });
+  const gltf = await loader.parseAsync(
     data,
     provided ? "" : new URL(".", new URL(source.url, globalThis.location.href)).href,
   );
