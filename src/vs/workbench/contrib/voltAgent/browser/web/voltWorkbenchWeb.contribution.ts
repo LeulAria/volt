@@ -20,6 +20,7 @@ import { IChannel, ProxyChannel } from '../../../../../base/parts/ipc/common/ipc
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize, localize2 } from '../../../../../nls.js';
 import { Action2, registerAction2 } from '../../../../../platform/actions/common/actions.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { BrandedService, IInstantiationService, ServiceIdentifier, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
@@ -59,7 +60,7 @@ import { IAgentHistoryService } from '../../../../services/voltRuntime/common/hi
 import { IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { ProjectEnvVoltStdioService } from '../../../../services/voltRuntime/common/projectEnvStdio.js';
-import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { IAgentRuntimeService, OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { setAgentSessionControlFactory } from '../editor/agentEditorInput.js';
 import { RemoteAgentSessionControl } from '../editor/remoteAgentSessionControl.js';
@@ -86,30 +87,16 @@ import '../orchestration/agentMoveChat.contribution.js';
 interface IVoltPageConfiguration {
 	readonly environmentId?: string;
 	readonly wsPath?: string;
+	/** The device token this page signed in with (the server reads it from the session cookie). */
+	readonly deviceToken?: string;
+	/** The computer's home folder: the path service's home in the browser (see BrowserPathService). */
+	readonly userHome?: string;
 }
-
-/** The web app's saved environments (it paired this browser; the page shares its origin). */
-const CATALOG_KEY = 'volt.web.catalog';
 
 function pageConfiguration(environmentService: IBrowserWorkbenchEnvironmentService): IVoltPageConfiguration {
 	return (environmentService.options as { voltAgentServer?: IVoltPageConfiguration } | undefined)?.voltAgentServer ?? {};
 }
 
-/** This browser's device token for the agent server that served the page. */
-function savedDeviceToken(environmentId: string | undefined): string | undefined {
-	try {
-		const catalog = JSON.parse(mainWindow.localStorage.getItem(CATALOG_KEY) ?? 'null') as { environments?: { environmentId?: string; token?: string; routes?: { baseUrl?: string }[] }[] } | null;
-		const environments = Array.isArray(catalog?.environments) ? catalog.environments : [];
-		const origin = mainWindow.location.origin;
-		const match = environments.find(env => environmentId && env.environmentId === environmentId)
-			?? environments.find(env => env.routes?.some(route => route.baseUrl === origin));
-		return typeof match?.token === 'string' ? match.token : undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-/** The web app signs this browser in, then sends it back here. */
 function signInUrl(): string {
 	const here = mainWindow.location.pathname + mainWindow.location.search;
 	return `/?next=${encodeURIComponent(here)}`;
@@ -125,7 +112,7 @@ class WebAgentServerClient extends AgentServerClient {
 		const config = pageConfiguration(environmentService);
 		super({
 			endpoint: async () => {
-				const token = savedDeviceToken(config.environmentId);
+				const token = config.deviceToken;
 				if (!token) {
 					return undefined;
 				}
@@ -257,7 +244,7 @@ class WebAgentServerClientContribution extends Disposable implements IWorkbenchC
 		accessor.get(IAgentRuntimeService);
 		accessor.get(IVoltHostToolService);
 
-		if (!savedDeviceToken(pageConfiguration(environmentService).environmentId)) {
+		if (!pageConfiguration(environmentService).deviceToken) {
 			notifications.notify({
 				severity: Severity.Warning,
 				message: localize('volt.web.signIn', "This browser isn't signed in to Volt yet, so chats can't load."),
@@ -381,24 +368,37 @@ class WebPageChromeContribution extends Disposable implements IWorkbenchContribu
 
 registerWorkbenchContribution2(WebPageChromeContribution.ID, WebPageChromeContribution, WorkbenchPhase.BlockStartup);
 
-registerAction2(class extends Action2 {
-	constructor() {
-		super({ id: 'volt.web.openLiteApp', title: localize2('volt.web.openLiteApp', "Open the Lightweight Web App"), category: localize2('volt', "Volt"), f1: true });
-	}
-	override run(): void {
-		mainWindow.location.assign('/?lite=1');
-	}
-});
-
-// The desktop's command, for the same entry points: pairing happens on the web app's Devices page.
+// The desktop's command, for the same entry points: Volt Settings > Devices.
 registerAction2(class extends Action2 {
 	constructor() {
 		super({ id: 'volt.agentServer.pairDevice', title: localize2('voltAgentServer.pairDevice', "Pair a Phone or Browser..."), category: localize2('volt', "Volt"), f1: true });
 	}
-	override run(): void {
-		mainWindow.open(new URL('/devices', mainWindow.location.origin).toString(), '_blank', 'noopener');
+	override run(accessor: ServicesAccessor): Promise<unknown> {
+		return accessor.get(ICommandService).executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID, 'devices');
 	}
 });
+
+/**
+ * `?voltSettings=<page>` opens Volt Settings on that page once the workbench is up (the desktop
+ * sends its Devices links here when it is not the agent server's client), then leaves the address.
+ */
+class WebSettingsLinkContribution implements IWorkbenchContribution {
+
+	static readonly ID = 'workbench.contrib.voltWebSettingsLink';
+
+	constructor(@ICommandService commandService: ICommandService) {
+		const url = new URL(mainWindow.location.href);
+		const page = url.searchParams.get('voltSettings');
+		if (!page) {
+			return;
+		}
+		url.searchParams.delete('voltSettings');
+		mainWindow.history.replaceState(mainWindow.history.state, '', url.pathname + url.search + url.hash);
+		void commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID, page);
+	}
+}
+
+registerWorkbenchContribution2(WebSettingsLinkContribution.ID, WebSettingsLinkContribution, WorkbenchPhase.Eventually);
 
 registerAction2(class extends Action2 {
 	constructor() {

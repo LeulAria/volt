@@ -261,12 +261,10 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 
 		const extensions = gulp.src(['.build/extensions/**', ...platformSpecificBuiltInExtensionsExclusions], { base: '.build', dot: true });
 
-		// Volt's web app (apps/web, built into out-volt-web), served by the agent server to browsers and phones.
-		const voltWeb = gulp.src('out-volt-web/**', { base: '.', dot: true });
 		// The browser workbench's icon and manifest.
 		const serverResources = gulp.src('resources/server/*.{png,ico,json}', { base: '.' });
 
-		const sources = es.merge(src, extensions, voltWeb, serverResources)
+		const sources = es.merge(src, extensions, serverResources)
 			.pipe(filter(['**', '!**/*.{js,mjs,cjs,css}.map'], { dot: true }));
 
 		let version = packageJson.version;

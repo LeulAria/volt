@@ -29,6 +29,17 @@ export class BrowserPathService extends AbstractPathService {
 
 function guessLocalUserHome(environmentService: IWorkbenchEnvironmentService, contextService: IWorkspaceContextService): URI {
 
+	// Volt's browser workbench is served by the computer the agents run on: its home is the one
+	// "local" home there is (`~/.volt`, @-mentions of `~/…`, the agents' config folders).
+	const voltHome = (environmentService as IWorkbenchEnvironmentService & { readonly options?: { readonly voltAgentServer?: { readonly userHome?: string } } }).options?.voltAgentServer?.userHome;
+	if (voltHome) {
+		return URI.from({
+			scheme: AbstractPathService.findDefaultUriScheme(environmentService, contextService),
+			authority: environmentService.remoteAuthority,
+			path: voltHome
+		});
+	}
+
 	// In web we do not really have the concept of a "local" user home
 	// but we still require it in many places as a fallback. As such,
 	// we have to come up with a synthetic location derived from the
