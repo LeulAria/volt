@@ -1,0 +1,724 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Add Device (addDeviceModal.ts), on the Remote Control modal's frame (voltRemoteIntro.css): the
+ * dark dotted panel on the left holds the QR code and the code to type; on the right, the ways to
+ * connect (a VS Code list, rows edge to edge) and the picked one's steps. Spacing is on a 4px grid.
+ * No backdrop-filter (volt-transparent-window skill). */
+
+.volt-remote-intro-layer {
+	container-type: size;
+}
+
+.volt-remote-intro.volt-add-device {
+	--add-device-pad: 24px;
+	/* One height for every connection, so switching never moves the card: the steps scroll inside. */
+	--add-device-height: 720px;
+	width: min(820px, 100%);
+	height: min(var(--add-device-height), 100%);
+	overflow: hidden;
+	display: grid;
+	grid-template-columns: 300px minmax(0, 1fr);
+}
+
+/* Left: the code */
+
+.volt-remote-intro.volt-add-device .hero {
+	height: auto;
+	border-bottom: none;
+	border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.volt-remote-intro.volt-add-device .hero::after {
+	display: none;
+}
+
+.volt-remote-intro.volt-add-device .stage {
+	position: absolute;
+	inset: 0;
+	z-index: 2;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 16px;
+	padding: 32px 24px;
+}
+
+.volt-remote-intro.volt-add-device .qr-tile {
+	position: relative;
+	box-sizing: border-box;
+	width: 200px;
+	height: 200px;
+	padding: 10px;
+	border-radius: 16px;
+	background: #fff;
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 24px 60px rgba(0, 0, 0, 0.7), 0 0 80px rgba(255, 255, 255, 0.05);
+	animation: volt-add-device-pop 280ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+@keyframes volt-add-device-pop {
+	from { opacity: 0; transform: scale(0.94); }
+}
+
+.volt-remote-intro.volt-add-device .volt-qr {
+	position: relative;
+}
+
+.volt-remote-intro.volt-add-device .volt-qr svg {
+	display: block;
+}
+
+.volt-remote-intro.volt-add-device .volt-qr-logo {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #fff;
+}
+
+/* Before the connection works: the tile stays, dimmed, with a lock on it. */
+
+.volt-remote-intro.volt-add-device .qr-tile.placeholder {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #151517;
+	border: 1px solid #2c2c2e;
+	box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+	animation: none;
+}
+
+.volt-remote-intro.volt-add-device .qr-tile .ghost {
+	position: absolute;
+	inset: 16px;
+	border-radius: 8px;
+	opacity: 0.5;
+	background:
+		radial-gradient(circle at 18px 18px, transparent 9px, #2a2a2d 9px, #2a2a2d 14px, transparent 14px),
+		radial-gradient(circle at calc(100% - 18px) 18px, transparent 9px, #2a2a2d 9px, #2a2a2d 14px, transparent 14px),
+		radial-gradient(circle at 18px calc(100% - 18px), transparent 9px, #2a2a2d 9px, #2a2a2d 14px, transparent 14px),
+		radial-gradient(circle, #232326 1.4px, transparent 1.8px) 0 0 / 7px 7px;
+}
+
+.volt-remote-intro.volt-add-device .qr-tile .badge {
+	position: relative;
+	width: 44px;
+	height: 44px;
+	border-radius: 22px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #1f1f22;
+	border: 1px solid #3a3a3c;
+	box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+}
+
+/* Four classes: `.monaco-workbench .codicon[class*=codicon-]` sets size and colour otherwise. */
+.volt-remote-intro.volt-add-device .qr-tile .badge .codicon {
+	font-size: 20px;
+	color: #e5e5ea;
+}
+
+.volt-remote-intro.volt-add-device .caption {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 28px;
+	box-sizing: border-box;
+	padding: 0 12px;
+	border-radius: 14px;
+	background: #1c1c1e;
+	border: 1px solid #2c2c2e;
+	font-size: 12px;
+	font-weight: 500;
+	color: #e5e5ea;
+	white-space: nowrap;
+}
+
+.volt-remote-intro.volt-add-device .hero-code {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 4px;
+	margin-top: 8px;
+}
+
+.volt-remote-intro.volt-add-device .hero-code-label,
+.volt-remote-intro.volt-add-device .hero-code .expiry {
+	font-size: 11px;
+	color: #8e8e93;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-remote-intro.volt-add-device .hero-code-value {
+	font-family: var(--monaco-monospace-font);
+	font-size: 18px;
+	line-height: 24px;
+	font-weight: 600;
+	letter-spacing: 0.12em;
+	color: #f5f5f7;
+}
+
+/* Paired: a green check where the code was. */
+
+.volt-remote-intro.volt-add-device .stage.paired {
+	gap: 4px;
+}
+
+.volt-remote-intro.volt-add-device .paired-mark {
+	width: 72px;
+	height: 72px;
+	margin-bottom: 16px;
+	box-sizing: border-box;
+	border-radius: 36px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: 2px solid #30d158;
+	animation: volt-add-device-pop 320ms cubic-bezier(0.2, 1.3, 0.4, 1) both;
+}
+
+.volt-remote-intro.volt-add-device .paired-mark .codicon.codicon-check {
+	font-size: 36px;
+	color: #30d158;
+}
+
+.volt-remote-intro.volt-add-device .paired-name {
+	font-size: 16px;
+	font-weight: 600;
+	color: #f5f5f7;
+	text-align: center;
+}
+
+.volt-remote-intro.volt-add-device .paired-detail {
+	font-size: 12px;
+	color: #8e8e93;
+	text-align: center;
+}
+
+/* Right: the choice and its steps */
+
+.volt-remote-intro.volt-add-device > .close {
+	position: absolute;
+	top: 16px;
+	right: 16px;
+	z-index: 5;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+}
+
+.volt-remote-intro.volt-add-device > .close:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-foreground);
+}
+
+.volt-remote-intro.volt-add-device > .close:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+}
+
+.volt-remote-intro.volt-add-device .body {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	padding: 24px var(--add-device-pad) 0;
+}
+
+.volt-remote-intro.volt-add-device .head {
+	padding-right: 32px;
+}
+
+.volt-remote-intro.volt-add-device h2 {
+	font-size: 18px;
+	line-height: 24px;
+	letter-spacing: -0.01em;
+}
+
+.volt-remote-intro.volt-add-device .subtitle {
+	margin: 4px 0 0;
+	font-size: 12.5px;
+	line-height: 18px;
+}
+
+.volt-remote-intro.volt-add-device .section-label {
+	margin: 20px 0 8px;
+	font-size: 11px;
+	line-height: 16px;
+	font-weight: 600;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* The list: rows edge to edge across the column (volt-lists skill), hairlines to both edges. */
+
+.volt-remote-intro.volt-add-device .volt-connect-list {
+	flex: none;
+	margin: 0 calc(-1 * var(--add-device-pad));
+	border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	box-sizing: content-box;
+}
+
+.volt-remote-intro.volt-add-device .volt-connect-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-remote-intro.volt-add-device .volt-connect-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: 100%;
+	padding: 0 var(--add-device-pad);
+}
+
+.volt-remote-intro.volt-add-device .volt-connect-icon {
+	flex: none;
+	width: 28px;
+	height: 28px;
+	box-sizing: border-box;
+	border-radius: 7px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.volt-remote-intro.volt-add-device .volt-connect-icon .codicon {
+	font-size: 16px;
+	color: inherit;
+}
+
+.volt-remote-intro.volt-add-device .volt-connect-text {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.volt-remote-intro.volt-add-device .volt-connect-label {
+	font-size: 13px;
+	line-height: 18px;
+	font-weight: 500;
+}
+
+.volt-remote-intro.volt-add-device .volt-connect-desc {
+	font-size: 11.5px;
+	line-height: 16px;
+	opacity: 0.7;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-remote-intro.volt-add-device .volt-connect-status {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 11.5px;
+	opacity: 0.8;
+}
+
+.volt-remote-intro.volt-add-device .volt-connect-status .dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 3px;
+	background: currentColor;
+	opacity: 0.5;
+}
+
+.volt-remote-intro.volt-add-device .volt-connect-status.ready {
+	opacity: 1;
+}
+
+.volt-remote-intro.volt-add-device .volt-connect-status.ready .dot {
+	background: #30d158;
+	opacity: 1;
+}
+
+.volt-remote-intro.volt-add-device .volt-connect-status.error .dot {
+	background: var(--vscode-errorForeground);
+	opacity: 1;
+}
+
+.volt-remote-intro.volt-add-device .volt-connect-status .codicon {
+	font-size: 12px;
+	color: inherit;
+}
+
+/* The picked connection: its fields, then its steps */
+
+.volt-remote-intro.volt-add-device .detail {
+	flex: 1;
+	min-height: 0;
+	overflow: hidden auto;
+	margin: 0 calc(-1 * var(--add-device-pad));
+	padding: 20px var(--add-device-pad) 24px;
+}
+
+.volt-remote-intro.volt-add-device .connect-form.empty {
+	display: none;
+}
+
+.volt-remote-intro.volt-add-device .connect-form {
+	display: grid;
+	gap: 8px;
+	margin-bottom: 20px;
+}
+
+.volt-remote-intro.volt-add-device .field {
+	display: grid;
+	grid-template-columns: 88px minmax(0, 1fr);
+	align-items: center;
+	gap: 12px;
+}
+
+.volt-remote-intro.volt-add-device .field-label {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-remote-intro.volt-add-device .field-control {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-remote-intro.volt-add-device .field-control.pair .volt-add-device-input:first-child {
+	flex: 0 0 88px;
+}
+
+/* Dropdowns in the form are fields like the inputs beside them: same height, border and corners,
+ * not the composer's pill. */
+.volt-remote-intro.volt-add-device .field-control > .volt-dropdown {
+	flex: none;
+	height: 28px;
+	padding: 0 6px 0 8px;
+	border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border, color-mix(in srgb, var(--vscode-foreground) 14%, transparent)));
+	border-radius: 6px;
+	background: var(--vscode-dropdown-background, var(--vscode-input-background));
+	color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+	font-size: 12.5px;
+}
+
+.volt-remote-intro.volt-add-device .field-control > .volt-dropdown:hover,
+.volt-remote-intro.volt-add-device .field-control > .volt-dropdown.open {
+	background: var(--vscode-dropdown-background, var(--vscode-input-background));
+	border-color: color-mix(in srgb, var(--vscode-foreground) 28%, transparent);
+}
+
+.volt-remote-intro.volt-add-device .field-control > .volt-dropdown:focus-visible,
+.volt-remote-intro.volt-add-device .field-control > .volt-dropdown.open {
+	outline: none;
+	border-color: var(--vscode-focusBorder);
+}
+
+.volt-remote-intro.volt-add-device .field-control > .volt-dropdown:only-child {
+	flex: 1;
+	width: 100%;
+	justify-content: flex-start;
+}
+
+.volt-remote-intro.volt-add-device .field-control > .volt-dropdown:only-child .volt-dropdown-chevron {
+	margin-left: auto;
+}
+
+.volt-remote-intro.volt-add-device .volt-add-device-input {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-remote-intro.volt-add-device .volt-add-device-input .monaco-inputbox {
+	box-sizing: border-box;
+	height: 28px;
+	border-radius: 6px;
+}
+
+.volt-remote-intro.volt-add-device .volt-add-device-input .monaco-inputbox .ibwrapper,
+.volt-remote-intro.volt-add-device .volt-add-device-input .monaco-inputbox .input {
+	height: 100%;
+}
+
+.volt-remote-intro.volt-add-device .volt-add-device-input input {
+	font-size: 12.5px;
+}
+
+/* Steps: a numbered checklist with a line between the markers. */
+
+.volt-remote-intro.volt-add-device .volt-connect-steps {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.volt-remote-intro.volt-add-device .step {
+	position: relative;
+	display: grid;
+	grid-template-columns: 22px minmax(0, 1fr) auto;
+	column-gap: 12px;
+	padding-bottom: 16px;
+}
+
+.volt-remote-intro.volt-add-device .step:last-child {
+	padding-bottom: 0;
+}
+
+.volt-remote-intro.volt-add-device .step:not(:last-child)::before {
+	content: '';
+	position: absolute;
+	left: 10.5px;
+	top: 26px;
+	bottom: 4px;
+	width: 1px;
+	background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
+.volt-remote-intro.volt-add-device .step.done:not(:last-child)::before {
+	background: color-mix(in srgb, #30d158 50%, transparent);
+}
+
+.volt-remote-intro.volt-add-device .step-marker {
+	box-sizing: border-box;
+	width: 22px;
+	height: 22px;
+	border-radius: 11px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 11px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	border: 1.5px solid color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-remote-intro.volt-add-device .step.current .step-marker {
+	border-color: var(--vscode-button-background);
+	color: var(--vscode-foreground);
+}
+
+.volt-remote-intro.volt-add-device .step.done .step-marker {
+	border-color: #30d158;
+}
+
+.volt-remote-intro.volt-add-device .step.error .step-marker {
+	border-color: var(--vscode-errorForeground);
+	color: var(--vscode-errorForeground);
+}
+
+.volt-remote-intro.volt-add-device .step.done .step-marker .codicon {
+	font-size: 14px;
+	color: #30d158;
+}
+
+.volt-remote-intro.volt-add-device .step.current .step-marker .codicon {
+	font-size: 13px;
+	color: var(--vscode-foreground);
+}
+
+.volt-remote-intro.volt-add-device .step-body {
+	min-width: 0;
+}
+
+.volt-remote-intro.volt-add-device .step-title {
+	font-size: 13px;
+	line-height: 22px;
+	font-weight: 600;
+}
+
+.volt-remote-intro.volt-add-device .step.done .step-title {
+	font-weight: 500;
+}
+
+.volt-remote-intro.volt-add-device .step.todo .step-title {
+	font-weight: 500;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-remote-intro.volt-add-device .step-detail {
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--vscode-descriptionForeground);
+	overflow-wrap: anywhere;
+}
+
+.volt-remote-intro.volt-add-device .step.error .step-detail {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-remote-intro.volt-add-device .step-warning {
+	display: flex;
+	gap: 6px;
+	margin-top: 4px;
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-remote-intro.volt-add-device .step-warning .codicon {
+	flex: none;
+	margin-top: 2px;
+	font-size: 14px;
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-remote-intro.volt-add-device .step-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+.volt-remote-intro.volt-add-device .step-side {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+}
+
+.volt-remote-intro.volt-add-device .step-command {
+	margin-top: 8px;
+}
+
+/* The link */
+
+.volt-remote-intro.volt-add-device .connect-link.empty {
+	display: none;
+}
+
+.volt-remote-intro.volt-add-device .connect-link {
+	margin-top: 20px;
+}
+
+/* A value to copy, dotted like a password until its eye is clicked. */
+
+.volt-remote-intro.volt-add-device .volt-secret-field {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 36px;
+	box-sizing: border-box;
+	padding: 0 4px 0 12px;
+	border-radius: 6px;
+	border: 1px solid var(--vscode-input-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
+	background: var(--vscode-input-background);
+}
+
+.volt-remote-intro.volt-add-device .secret-icon {
+	display: flex;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-remote-intro.volt-add-device .secret-value {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--monaco-monospace-font);
+	font-size: 11.5px;
+}
+
+.volt-remote-intro.volt-add-device .secret-value.masked {
+	letter-spacing: 0.08em;
+	color: var(--vscode-descriptionForeground);
+	user-select: none;
+}
+
+.volt-remote-intro.volt-add-device .secret-eye {
+	flex: none;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+}
+
+.volt-remote-intro.volt-add-device .secret-eye:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-foreground);
+}
+
+.volt-remote-intro.volt-add-device .secret-eye:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+}
+
+/* Addresses, host names and the account in the steps stay blurred until hovered. */
+.volt-remote-intro.volt-add-device .volt-private {
+	filter: blur(4px);
+	transition: filter 120ms ease;
+}
+
+.volt-remote-intro.volt-add-device .volt-private:hover {
+	filter: none;
+}
+
+/* Footer, under a hairline to both edges */
+
+.volt-remote-intro.volt-add-device .actions {
+	margin: 0 calc(-1 * var(--add-device-pad));
+	padding: 16px var(--add-device-pad);
+	border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+/* Narrow windows: the code goes back on top. */
+
+@container (max-width: 860px) {
+	.volt-remote-intro.volt-add-device {
+		--add-device-height: 860px;
+		width: min(560px, 100%);
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: auto minmax(0, 1fr);
+	}
+
+	.volt-remote-intro.volt-add-device .hero {
+		border-right: none;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+	}
+
+	/* The hero grows with its content (QR, caption, code) instead of a fixed height. */
+	.volt-remote-intro.volt-add-device .stage {
+		position: relative;
+		inset: auto;
+		min-height: 360px;
+		padding: 28px 24px 24px;
+	}
+
+	.volt-remote-intro.volt-add-device > .close {
+		color: #a1a1a6;
+		background: rgba(255, 255, 255, 0.08);
+		border-radius: 13px;
+		width: 26px;
+		height: 26px;
+		top: 12px;
+		right: 12px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-remote-intro.volt-add-device .qr-tile,
+	.volt-remote-intro.volt-add-device .paired-mark {
+		animation: none;
+	}
+}

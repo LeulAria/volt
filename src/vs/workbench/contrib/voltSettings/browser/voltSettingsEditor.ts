@@ -65,6 +65,7 @@ import { CanvasScratchPage } from './canvasScratchPage.js';
 import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
 import { DevicesPage } from './devicesPage.js';
+import type { VoltConnectionKind } from './addDeviceModal.js';
 import { createSettingsIcon } from './settingsIcons.js';
 import { AgentUsagePage } from '../../voltAgent/browser/usage/agentUsagePage.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
@@ -581,6 +582,16 @@ export class VoltSettingsEditor extends EditorPane {
 
 	/** Opens a page by id, e.g. `storage` from Volt: Manage Storage. */
 	showSection(section: string): void {
+		// `devices:add` (or `devices:add:cloudflare`) opens Devices with Add Device on top.
+		const add = /^devices:add(?::(lan|tailscale|cloudflare|ssh))?$/.exec(section);
+		if (add) {
+			this.devices.requestAddDevice(add[1] as VoltConnectionKind | undefined);
+			section = 'devices';
+			if (this.section === 'devices') {
+				this.renderContent();
+				return;
+			}
+		}
 		const id = SECTION_ALIASES[section] ?? section;
 		// `ext:<id>` opens Extensions on that extension's settings.
 		if (id.startsWith('ext:') && this.catalog.some(entry => entry.id === EXTENSIONS_CATEGORY)) {
