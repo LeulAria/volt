@@ -452,8 +452,10 @@
 	border-bottom: 1px solid var(--volt-settings-border);
 }
 
-.volt-settings-search.volt-settings-inspect-search {
-	margin: 8px 10px;
+/* Edge to edge under the head, which already draws the line above it. */
+.monaco-workbench .volt-settings-search.volt-settings-inspect-search {
+	flex: none;
+	border-top: none;
 }
 
 .volt-settings-inspect-title {
@@ -509,9 +511,10 @@
 	border-radius: 0;
 }
 
+/* Inside the list's own box, so it starts below the search whatever the head and search measure. */
 .volt-settings-inspect-empty {
 	position: absolute;
-	top: 64px;
+	top: 12px;
 	left: 16px;
 	right: 16px;
 	font-size: 12px;
