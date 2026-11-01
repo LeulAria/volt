@@ -1109,6 +1109,7 @@
 		"--volt-pr-pending",
 		"--volt-pr-surface",
 		"--volt-pr-surface-strong",
+		"--volt-prs-sidebar-width",
 		"--volt-agent-banner-height",
 		"--volt-agent-nav-drag-clearance",
 		"--volt-agent-window-radius",

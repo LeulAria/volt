@@ -250,6 +250,19 @@ export function createHomeCustomizeIcon(): HTMLElement {
 	return createHomeStrokeIcon('customize', AGENT_HOME_CUSTOMIZE_ICON_PATHS, '1.5');
 }
 
+/** Lucide git-pull-request-arrow for the footer's Pull Requests, stroked like Customize beside it. */
+export const AGENT_HOME_PULL_REQUESTS_ICON_PATHS = [
+	'M8 6a3 3 0 1 1-6 0a3 3 0 0 1 6 0',
+	'M5 9v12',
+	'M22 18a3 3 0 1 1-6 0a3 3 0 0 1 6 0',
+	'm15 9-3-3 3-3',
+	'M12 6h5a2 2 0 0 1 2 2v7',
+] as const;
+
+export function createHomePullRequestsIcon(): HTMLElement {
+	return createHomeStrokeIcon('pull-requests', AGENT_HOME_PULL_REQUESTS_ICON_PATHS, '1.5');
+}
+
 /** Lucide rotate-cw for the footer's Check for Updates, stroked like the icons beside it. */
 export const AGENT_HOME_REFRESH_ICON_PATHS = [
 	'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8',

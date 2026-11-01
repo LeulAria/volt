@@ -12,7 +12,8 @@
 .volt-pr-dock,
 .volt-pr-dock-links,
 .volt-pr-link-list,
-.volt-pr-checks-menu {
+.volt-pr-checks-menu,
+.volt-prs-page {
 	--volt-pr-border: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 	--volt-pr-surface: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
 	--volt-pr-surface-strong: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
@@ -39,7 +40,9 @@
 .monaco-workbench.vs .volt-pr-link-list,
 .monaco-workbench.hc-light .volt-pr-link-list,
 .monaco-workbench.vs .volt-pr-checks-menu,
-.monaco-workbench.hc-light .volt-pr-checks-menu {
+.monaco-workbench.hc-light .volt-pr-checks-menu,
+.monaco-workbench.vs .volt-prs-page,
+.monaco-workbench.hc-light .volt-prs-page {
 	--volt-pr-border: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
 	--volt-pr-surface: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
 	--volt-pr-surface-strong: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
