@@ -3,40 +3,29 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { isImagePath, languageForPath } from '@volt/client-core';
+import { languageForPath } from '@volt/client-core';
 import { memo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { useTheme } from '../theme/theme';
-import { Icon } from '../ui/core';
+import { SvgXml } from 'react-native-svg';
+import { MATERIAL_EXTENSIONS, MATERIAL_FILE_NAMES, MATERIAL_LANGUAGES, MATERIAL_SVGS } from './materialIcons';
 
-/** Seti's colours (the desktop's file icons) for the languages people open most. */
-const COLORS: Record<string, readonly [string, string]> = {
-	typescript: ['TS', '#519aba'], typescriptreact: ['TSX', '#519aba'], javascript: ['JS', '#cbcb41'], javascriptreact: ['JSX', '#519aba'],
-	json: ['{}', '#cbcb41'], jsonc: ['{}', '#cbcb41'], markdown: ['MD', '#519aba'], mdx: ['MDX', '#519aba'], html: ['<>', '#e37933'], vue: ['V', '#8dc149'], svelte: ['S', '#cc3e44'],
-	css: ['#', '#519aba'], scss: ['#', '#f55385'], less: ['#', '#519aba'], python: ['PY', '#519aba'], go: ['GO', '#519aba'], rust: ['RS', '#e37933'],
-	java: ['J', '#cc3e44'], kotlin: ['K', '#a074c4'], swift: ['SW', '#e37933'], c: ['C', '#519aba'], cpp: ['C++', '#519aba'], csharp: ['C#', '#519aba'],
-	ruby: ['RB', '#cc3e44'], php: ['PHP', '#a074c4'], shellscript: ['$', '#8dc149'], yaml: ['YML', '#a074c4'], toml: ['TML', '#6d8086'], xml: ['XML', '#e37933'],
-	sql: ['SQL', '#f55385'], dockerfile: ['DKR', '#519aba'], graphql: ['GQL', '#f55385'], dart: ['DRT', '#519aba'], lua: ['LUA', '#519aba'],
-	ignore: ['GIT', '#41535b'], dotenv: ['ENV', '#cbcb41'], makefile: ['MK', '#e37933'], diff: ['±', '#8dc149'], plaintext: ['TXT', '#6d8086'],
-};
-
-export const FileIcon = memo(function FileIcon({ path, kind = 'file', open, size = 22 }: { readonly path: string; readonly kind?: 'file' | 'dir'; readonly open?: boolean; readonly size?: number }) {
-	const { p } = useTheme();
-	if (kind === 'dir') {
-		return <Icon name="folder" size={size - 2} color={open ? p.fgSecondary : p.fgTertiary} />;
+/** The desktop's icon for a file name: exact names first, then the longest extension (`test.ts` before `ts`), then its language. */
+function iconFor(path: string): string {
+	const name = (path.split(/[\\/]/).pop() ?? path).toLowerCase();
+	const byName = MATERIAL_FILE_NAMES[name];
+	if (byName) {
+		return byName;
 	}
-	if (isImagePath(path)) {
-		return <Icon name="image" size={size - 3} color="#a074c4" />;
+	for (let dot = name.indexOf('.'); dot >= 0; dot = name.indexOf('.', dot + 1)) {
+		const icon = MATERIAL_EXTENSIONS[name.slice(dot + 1)];
+		if (icon) {
+			return icon;
+		}
 	}
-	const [label, color] = COLORS[languageForPath(path).id] ?? COLORS.plaintext;
-	return (
-		<View style={[styles.badge, { width: size, height: size, backgroundColor: `${color}22`, borderColor: `${color}55` }]}>
-			<Text style={[styles.label, { color, fontSize: label.length > 2 ? 7.5 : 9 }]} numberOfLines={1}>{label}</Text>
-		</View>
-	);
-});
+	return MATERIAL_LANGUAGES[languageForPath(path).id] ?? 'file';
+}
 
-const styles = StyleSheet.create({
-	badge: { borderRadius: 5, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center' },
-	label: { fontWeight: '800', letterSpacing: -0.3 },
+/** A file or folder's icon from the Material Icon Theme, the same one the desktop's explorer and change lists show. */
+export const FileIcon = memo(function FileIcon({ path, kind = 'file', open, size = 18 }: { readonly path: string; readonly kind?: 'file' | 'dir'; readonly open?: boolean; readonly size?: number }) {
+	const icon = kind === 'dir' ? (open ? 'folder-open' : 'folder') : iconFor(path);
+	return <SvgXml xml={MATERIAL_SVGS[icon] ?? MATERIAL_SVGS.file} width={size} height={size} />;
 });

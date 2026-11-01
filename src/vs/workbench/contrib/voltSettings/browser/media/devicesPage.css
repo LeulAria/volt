@@ -1,0 +1,87 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Volt Settings > Devices: the pairing code beside its QR code, then the links to open on a device. */
+
+.volt-devices-code-card {
+	display: flex;
+	gap: 20px;
+	align-items: flex-start;
+	margin: 12px 0 8px;
+	padding: 16px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	border-radius: 12px;
+}
+
+.volt-devices-qr {
+	flex: none;
+	line-height: 0;
+}
+
+.volt-devices-code-side {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.volt-devices-code {
+	font-family: var(--monaco-monospace-font);
+	font-size: 26px;
+	line-height: 34px;
+	font-weight: 500;
+	letter-spacing: .12em;
+	color: var(--vscode-foreground);
+	user-select: all;
+}
+
+.volt-devices-expiry,
+.volt-devices-note {
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-devices-note {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-devices-links {
+	display: flex;
+	flex-direction: column;
+	margin-top: 8px;
+}
+
+.volt-devices-link {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 30px;
+	font-size: 12px;
+}
+
+.volt-devices-link > .kind {
+	flex: none;
+	width: 96px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-devices-link > .url {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--monaco-monospace-font);
+	color: var(--vscode-foreground);
+	user-select: all;
+}
+
+.volt-devices-error {
+	margin: 8px 0;
+	font-size: 12px;
+	color: var(--vscode-errorForeground);
+}

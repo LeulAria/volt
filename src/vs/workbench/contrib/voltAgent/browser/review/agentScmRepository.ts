@@ -53,17 +53,35 @@ export type AgentScmRepositoryState =
 const openingRepositories = new WeakMap<ICommandService, Map<string, Promise<unknown>>>();
 
 /**
- * The repository at this folder. `getRepository` only matches paths inside a repository, never its root.
- * Compared the way the disk does: a chat's root can differ from git's in case alone on macOS.
+ * The path on the computer: in the browser workbench Git runs on the server and registers its
+ * repositories as `vscode-remote:` URIs, while chats name their folders as `file:` paths.
+ */
+function onDisk(uri: URI): URI {
+	return uri.scheme === Schemas.vscodeRemote ? uri.with({ scheme: Schemas.file, authority: '' }) : uri;
+}
+
+/**
+ * The repository at this folder, or the innermost one it is inside. Compared as paths on the
+ * computer (see {@link onDisk}) and the way the disk does: a chat's root can differ from git's in
+ * case alone on macOS.
  */
 export function findAgentScmRepository(scmService: ISCMService, uriIdentityService: IUriIdentityService, root: URI): ISCMRepository | undefined {
+	const target = onDisk(root);
+	let containing: { readonly repository: ISCMRepository; readonly depth: number } | undefined;
 	for (const repository of scmService.repositories) {
 		const repositoryRoot = repository.provider.rootUri;
-		if (repositoryRoot && uriIdentityService.extUri.isEqual(repositoryRoot, root)) {
+		if (!repositoryRoot) {
+			continue;
+		}
+		const candidate = onDisk(repositoryRoot);
+		if (uriIdentityService.extUri.isEqual(candidate, target)) {
 			return repository;
 		}
+		if (uriIdentityService.extUri.isEqualOrParent(target, candidate) && (!containing || candidate.path.length > containing.depth)) {
+			containing = { repository, depth: candidate.path.length };
+		}
 	}
-	return scmService.getRepository(root);
+	return containing?.repository ?? scmService.getRepository(root);
 }
 
 /**

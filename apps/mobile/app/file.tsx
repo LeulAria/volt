@@ -6,8 +6,10 @@
 import { basename, errorMessage, highlight, type HighlightedLine, type IFileContent, languageForPath, shortPath } from '@volt/client-core';
 import * as Clipboard from 'expo-clipboard';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
-import { memo, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Image, ScrollView, Share, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, FlatList, Image, ScrollView, Share, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { type IMonacoView, type MonacoEvent, MonacoView } from '../src/files/MonacoView';
 import { useClient, useOptionalClient } from '../src/state/client';
 import { FONT, useTheme } from '../src/theme/theme';
 import { EmptyState, haptic, IconButton, T, Tap } from '../src/ui/core';
@@ -37,9 +39,16 @@ const CodeLine = memo(function CodeLine({ index, tokens, text, gutter, current, 
 	);
 });
 
-/** A file from the computer, read-only: code with line numbers and colours, or the picture. */
+/** Monaco ships in the app and starts in well under a second; past this the built-in viewer shows. */
+const MONACO_TIMEOUT = 8_000;
+
+/**
+ * A file from the computer: text in Monaco (VS Code's editor, read-only until Edit, Save writes it
+ * back), or the picture. If Monaco fails to start, text falls back to a native viewer with line
+ * numbers and colours.
+ */
 function FileView({ path, line }: { readonly path: string; readonly line?: number }) {
-	const { p } = useTheme();
+	const { p, dark } = useTheme();
 	const client = useClient();
 	const { width: screen } = useWindowDimensions();
 	const [content, setContent] = useState<IFileContent | undefined>();
@@ -47,6 +56,47 @@ function FileView({ path, line }: { readonly path: string; readonly line?: numbe
 	const [wrap, setWrap] = useState(false);
 	const [menu, setMenu] = useState(false);
 	const language = languageForPath(path);
+	const editor = useRef<IMonacoView>(null);
+	const [monaco, setMonaco] = useState<'loading' | 'ready' | 'failed'>('loading');
+	const [editing, setEditing] = useState(false);
+	const [dirty, setDirty] = useState(false);
+	const [saving, setSaving] = useState(false);
+	// The version on disk the edits start from: a newer one there makes Save fail instead of overwriting it.
+	const mtime = useRef<number | undefined>(undefined);
+	useEffect(() => {
+		mtime.current = content?.mtime;
+	}, [content]);
+	useEffect(() => {
+		if (monaco !== 'loading' || content?.kind !== 'text') {
+			return;
+		}
+		const timer = setTimeout(() => setMonaco(state => state === 'loading' ? 'failed' : state), MONACO_TIMEOUT);
+		return () => clearTimeout(timer);
+	}, [monaco, content]);
+	const onEditorEvent = (event: MonacoEvent) => {
+		if (event.type === 'ready') {
+			setMonaco('ready');
+		} else if (event.type === 'error') {
+			setMonaco(state => state === 'ready' ? state : 'failed');
+		} else if (event.type === 'dirty') {
+			setDirty(event.dirty);
+		} else if (event.type === 'text') {
+			setSaving(true);
+			client.writeFile(path, event.text, { mtime: mtime.current }).then(result => {
+				mtime.current = result.mtime;
+				editor.current?.markSaved(event.version);
+				haptic.success();
+			}, err => {
+				haptic.error();
+				Alert.alert('Couldn\'t save', errorMessage(err));
+			}).finally(() => setSaving(false));
+		}
+	};
+	const toggleEditing = () => {
+		haptic.selection();
+		editor.current?.setReadOnly(editing);
+		setEditing(e => !e);
+	};
 
 	useEffect(() => {
 		let live = true;
@@ -58,7 +108,7 @@ function FileView({ path, line }: { readonly path: string; readonly line?: numbe
 
 	const text = content?.kind === 'text' ? content.text : '';
 	const lines = useMemo(() => text ? text.replace(/\r?\n$/, '').split(/\r?\n/) : [], [text]);
-	const highlighted = useMemo(() => text && text.length <= HIGHLIGHT_LIMIT ? highlight(text, language.fence) : undefined, [text, language.fence]);
+	const highlighted = useMemo(() => text && monaco === 'failed' && text.length <= HIGHLIGHT_LIMIT ? highlight(text, language.fence) : undefined, [text, language.fence, monaco]);
 	const gutter = String(Math.max(lines.length, 1)).length * 7.5 + 14;
 	const width = useMemo(() => {
 		let longest = 0;
@@ -89,8 +139,18 @@ function FileView({ path, line }: { readonly path: string; readonly line?: numbe
 			<Stack.Screen options={{
 				title,
 				headerRight: () => (
-					<View style={{ flexDirection: 'row' }}>
-						{content?.kind === 'text' ? <IconButton icon={wrap ? 'minimize' : 'expand'} label={wrap ? 'Don\'t wrap lines' : 'Wrap lines'} color={p.fg} onPress={() => setWrap(w => !w)} /> : null}
+					<View style={{ flexDirection: 'row', alignItems: 'center' }}>
+						{monaco === 'ready' && dirty ? (
+							<Tap haptics="light" disabled={saving} onPress={() => editor.current?.requestText()} accessibilityRole="button" accessibilityLabel="Save" hitSlop={8}
+								style={{ height: 30, paddingHorizontal: 12, borderRadius: 15, justifyContent: 'center', backgroundColor: p.primary, marginRight: 4, opacity: saving ? 0.6 : 1 }}>
+								<T variant="small" weight="600" color={p.onPrimary}>{saving ? 'Saving' : 'Save'}</T>
+							</Tap>
+						) : null}
+						{monaco === 'ready' ? <IconButton icon={editing ? 'check' : 'pencil'} label={editing ? 'Done editing' : 'Edit'} color={editing ? p.accent : p.fg} onPress={toggleEditing} /> : null}
+						{content?.kind === 'text' ? <IconButton icon={wrap ? 'minimize' : 'expand'} label={wrap ? 'Don\'t wrap lines' : 'Wrap lines'} color={p.fg} onPress={() => {
+							editor.current?.setWrap(!wrap);
+							setWrap(w => !w);
+						}} /> : null}
 						<IconButton icon="more" label="File actions" color={p.fg} onPress={() => setMenu(true)} />
 					</View>
 				),
@@ -107,7 +167,13 @@ function FileView({ path, line }: { readonly path: string; readonly line?: numbe
 						</Tap>
 					)
 						: content.kind !== 'text' ? <EmptyState icon="file" title={content.kind === 'tooLarge' ? 'Too large to show' : 'Not a text file'} body={`${title} is ${Math.round(content.size / 1024)} KB.`} />
-							: wrap ? list : <ScrollView horizontal bounces={false} showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>{list}</ScrollView>}
+							: monaco !== 'failed' ? (
+								<KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
+									<MonacoView ref={editor} text={text} language={language.monaco} dark={dark} background={p.codeBg} lineColor={`${p.info}2E`} wrap={wrap} line={line} onEvent={onEditorEvent} />
+									{monaco === 'loading' ? <View style={[StyleSheet.absoluteFill, { backgroundColor: p.codeBg, paddingTop: 60 }]}><ActivityIndicator color={p.fgTertiary} /></View> : null}
+								</KeyboardAvoidingView>
+							)
+								: wrap ? list : <ScrollView horizontal bounces={false} showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>{list}</ScrollView>}
 			<ActionSheet visible={menu} onClose={() => setMenu(false)} title={title} subtitle={shortPath(path, 48)} actions={[
 				{ label: 'Copy path', icon: 'link', onPress: () => {
 					void Clipboard.setStringAsync(path);

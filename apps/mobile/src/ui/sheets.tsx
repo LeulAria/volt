@@ -13,13 +13,17 @@ import { useTheme } from '../theme/theme';
 import { Button, haptic, Icon, T, Tap } from './core';
 
 /** A bottom sheet in Volt's raised surface, for pickers and action lists. */
-export function Sheet({ visible, onClose, title, subtitle, children, scroll = true }: {
+export function Sheet({ visible, onClose, title, subtitle, children, scroll = true, header, footer }: {
 	readonly visible: boolean;
 	readonly onClose: () => void;
 	readonly title?: string;
 	readonly subtitle?: string;
 	readonly children: ReactNode;
 	readonly scroll?: boolean;
+	/** Pinned under the title while the rest scrolls (a search field). */
+	readonly header?: ReactNode;
+	/** Pinned at the bottom (a confirm button). */
+	readonly footer?: ReactNode;
 }) {
 	const { p } = useTheme();
 	const insets = useSafeAreaInsets();
@@ -37,7 +41,9 @@ export function Sheet({ visible, onClose, title, subtitle, children, scroll = tr
 							{subtitle ? <T variant="small" color={p.fgTertiary} style={{ marginTop: 2 }}>{subtitle}</T> : null}
 						</View>
 					) : null}
-					{scroll ? <ScrollView bounces={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 8 }}>{children}</ScrollView> : <View style={{ paddingHorizontal: 12 }}>{children}</View>}
+					{header ? <View style={{ paddingHorizontal: 12, paddingBottom: 6 }}>{header}</View> : null}
+					{scroll ? <ScrollView bounces={false} keyboardShouldPersistTaps="handled" style={{ flexShrink: 1 }} contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 8 }}>{children}</ScrollView> : <View style={{ paddingHorizontal: 12 }}>{children}</View>}
+					{footer ? <View style={{ paddingHorizontal: 20, paddingTop: 10 }}>{footer}</View> : null}
 				</Animated.View>
 			</KeyboardAvoidingView>
 		</Modal>

@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 /**
- * Wire protocol between the Volt agent server and its clients (the desktop agent window, the web app,
+ * Wire protocol between the Volt agent server and its clients (the desktop agent window, the browser workbench,
  * tests). JSON text frames over one WebSocket at `/ws`.
  *
  * Ordering: the server numbers every event it publishes with `seq`, contiguous within one server

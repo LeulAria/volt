@@ -12,7 +12,7 @@ import minimist from 'minimist';
 import { Emitter } from '../../../base/common/event.js';
 import { DisposableStore, toDisposable } from '../../../base/common/lifecycle.js';
 import { FileAccess, Schemas } from '../../../base/common/network.js';
-import { extname, join, normalize, sep } from '../../../base/common/path.js';
+import { extname, join } from '../../../base/common/path.js';
 import { joinPath } from '../../../base/common/resources.js';
 import { URI } from '../../../base/common/uri.js';
 import { ITextModelService } from '../../../editor/common/services/resolverService.js';
@@ -127,6 +127,7 @@ import { AutomationService } from '../../../workbench/contrib/voltAgent/browser/
 import { IAutomationService } from '../../../workbench/services/voltRuntime/common/automations/automations.js';
 import { ServerAgentRunGroupService } from './serverRunGroups.js';
 import { IPairingHttpContext, machineLabel, ServerPairing } from './serverPairing.js';
+import { handleSignIn } from './serverSignIn.js';
 import { ServerWorkbench } from './serverWorkbench.js';
 import { ServerRender } from './serverRender.js';
 import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
@@ -143,11 +144,10 @@ interface IServerArgs {
 	readonly host: string;
 	readonly port: number | undefined;
 	readonly logLevel: LogLevel;
-	readonly webRoot: string | undefined;
 }
 
 function parseArgs(argv: string[]): IServerArgs {
-	const args = minimist(argv, { string: ['user-data-dir', 'host', 'port', 'log', 'web-root'] });
+	const args = minimist(argv, { string: ['user-data-dir', 'host', 'port', 'log'] });
 	const userDataDir = args['user-data-dir'] || process.env['VOLT_AGENT_SERVER_USER_DATA_DIR'];
 	if (!userDataDir) {
 		throw new Error('--user-data-dir is required');
@@ -157,7 +157,6 @@ function parseArgs(argv: string[]): IServerArgs {
 		host: args.host || process.env['VOLT_AGENT_SERVER_HOST'] || '127.0.0.1',
 		port: args.port ? Number(args.port) : undefined,
 		logLevel: parseLogLevel(args.log || process.env['VOLT_AGENT_SERVER_LOG'] || 'info') ?? LogLevel.Info,
-		webRoot: args['web-root'] || undefined,
 	};
 }
 
@@ -453,7 +452,6 @@ export async function main(argv: string[]): Promise<void> {
 
 	// The checkout in dev, the app's Resources/app when packaged (where this module is bundled into out/).
 	const appRoot = FileAccess.asFileUri('').fsPath.replace(/[\\/]out[\\/]?$/, '');
-	const webRoot = args.webRoot ?? join(appRoot, 'out-volt-web');
 	// Usage and limits: the browser workbench's Usage page, and other machines reading this one's (`/api/usage`).
 	const usage = new VoltUsageService(resolveEnv, logService, join(args.userDataDir, 'volt-usage'));
 	// Volt's workbench for browsers (VS Code's server, started with the first page load).
@@ -473,7 +471,7 @@ export async function main(argv: string[]): Promise<void> {
 	httpContext = { ...httpContext, workbench: workbench.available };
 	// Pages, diagrams and formulas for the phone and browser apps, and KaTeX's files for them.
 	const render = disposables.add(new ServerRender(protocol, history, logService));
-	const server = http.createServer((req, res) => void serveHttp(req, res, webRoot, token, epoch, pairing, workbench, render, httpContext, usage, logService));
+	const server = http.createServer((req, res) => void serveHttp(req, res, token, epoch, pairing, workbench, render, httpContext, usage, logService));
 	server.on('upgrade', (req, socket: Socket) => {
 		const url = new URL(req.url ?? '/', 'http://localhost');
 		if (url.pathname !== '/ws' && workbench.handleUpgrade(req, socket)) {
@@ -570,7 +568,7 @@ function listen(server: http.Server, host: string, preferred: number, fallback: 
 }
 
 /**
- * The socket accepts the desktop renderer, the web app served here, and Node clients (no Origin).
+ * The socket accepts the desktop renderer, the browser workbench served here, the phone app, and Node clients (no Origin).
  * Every connection still has to present the token; this only stops other web pages from trying.
  */
 function originAllowed(origin: string | undefined, host: string | undefined): boolean {
@@ -636,7 +634,7 @@ function compressedCopy(file: string, mtime: number, data: Buffer, encoding: 'br
 	return result;
 }
 
-async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, webRoot: string, token: string, epoch: string, pairing: ServerPairing, workbench: ServerWorkbench, render: ServerRender, ctx: IPairingHttpContext, usage: VoltUsageService, logService: ILogService): Promise<void> {
+async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, token: string, epoch: string, pairing: ServerPairing, workbench: ServerWorkbench, render: ServerRender, ctx: IPairingHttpContext, usage: VoltUsageService, logService: ILogService): Promise<void> {
 	if (await pairing.handleHttp(req, res, ctx)) {
 		return;
 	}
@@ -658,18 +656,11 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, we
 		res.end(JSON.stringify(ok ? { ok: true, pid: process.pid, epoch } : { ok: false }));
 		return;
 	}
-	const relative = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
-	const file = normalize(join(webRoot, relative));
-	if (!file.startsWith(webRoot + sep)) {
-		res.writeHead(403).end();
+	// The browser's way in: `/` and pairing links sign it in, then it continues to the workbench.
+	if (handleSignIn(req, res, { label: machineLabel(), workbench: workbench.available, signedIn: request => workbench.signedIn(request) })) {
 		return;
 	}
-	// The web app routes on the client (/pair, /t/<chat>): a path without an extension is the app.
-	// Hashed bundles never change under their name: cached for good. Everything else (the page,
-	// the manifest) revalidates, so a rebuilt app never mixes with an older bundle.
-	if (!await sendFile(req, res, extname(file) ? file : join(webRoot, 'index.html'), relative.startsWith('assets/'))) {
-		res.writeHead(404, { 'Content-Type': 'text/plain' }).end(`Not found. The web app is built into ${webRoot}.`);
-	}
+	res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
 }
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {

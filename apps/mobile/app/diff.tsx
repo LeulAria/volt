@@ -5,10 +5,11 @@
 
 import { basename, diffText, errorMessage, type IFileDiff, languageForPath } from '@volt/client-core';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { openFile } from '../src/chat/context';
 import { DiffList, diffItems } from '../src/chat/Diff';
+import { type IMonacoView, MonacoView } from '../src/files/MonacoView';
 import { useClient, useOptionalClient } from '../src/state/client';
 import { useTheme } from '../src/theme/theme';
 import { EmptyState, IconButton, T } from '../src/ui/core';
@@ -31,15 +32,33 @@ export default function DiffScreen() {
 	return client && params.file ? <Diff params={params} /> : null;
 }
 
-/** One file's diff, both sides loaded from the computer: checkpoint blobs, or the last commit and the file now. */
+/** Past this without Monaco starting, the built-in diff list shows instead. */
+const MONACO_TIMEOUT = 8_000;
+
+/**
+ * One file's diff, both sides loaded from the computer: checkpoint blobs, or the last commit and
+ * the file now. Shown in Monaco's diff editor (inline, unchanged stretches folded), or in the
+ * built-in list if Monaco can't start.
+ */
 function Diff({ params }: { readonly params: IParams }) {
-	const { p } = useTheme();
+	const { p, dark } = useTheme();
 	const client = useClient();
 	const [diff, setDiff] = useState<IFileDiff | undefined>();
+	const [sides, setSides] = useState<{ readonly before: string; readonly after: string } | undefined>();
 	const [error, setError] = useState<string | undefined>();
 	const [wrap, setWrap] = useState(false);
+	const [monaco, setMonaco] = useState<'loading' | 'ready' | 'failed'>('loading');
+	const editor = useRef<IMonacoView>(null);
 	const file = params.file!;
-	const fence = languageForPath(file).fence;
+	const language = languageForPath(file);
+	const fence = language.fence;
+	useEffect(() => {
+		if (monaco !== 'loading' || !sides) {
+			return;
+		}
+		const timer = setTimeout(() => setMonaco(state => state === 'loading' ? 'failed' : state), MONACO_TIMEOUT);
+		return () => clearTimeout(timer);
+	}, [monaco, sides]);
 
 	useEffect(() => {
 		let live = true;
@@ -60,15 +79,20 @@ function Diff({ params }: { readonly params: IParams }) {
 			const [before, after] = params.mode === 'git'
 				? await Promise.all([client.gitShow(file).then(r => r.text), side(undefined, true).catch(() => '')])
 				: await Promise.all([side(params.oldBlob, false), side(params.newBlob, params.kind !== 'deleted')]);
-			return diffText(before, after, 3);
+			return { before, after, diff: diffText(before, after, 3) };
 		};
-		load().then(result => live && setDiff(result), err => live && setError(errorMessage(err)));
+		load().then(result => {
+			if (live) {
+				setSides({ before: result.before, after: result.after });
+				setDiff(result.diff);
+			}
+		}, err => live && setError(errorMessage(err)));
 		return () => {
 			live = false;
 		};
 	}, [client, file, params.repoRoot, params.oldBlob, params.newBlob, params.kind, params.mode]);
 
-	const items = useMemo(() => diff ? diffItems(diff.hunks) : [], [diff]);
+	const items = useMemo(() => diff && monaco === 'failed' ? diffItems(diff.hunks) : [], [diff, monaco]);
 	const title = basename(params.title ?? file);
 
 	return (
@@ -77,7 +101,10 @@ function Diff({ params }: { readonly params: IParams }) {
 				title,
 				headerRight: () => (
 					<View style={{ flexDirection: 'row' }}>
-						<IconButton icon={wrap ? 'minimize' : 'expand'} label={wrap ? 'Don\'t wrap lines' : 'Wrap lines'} color={p.fg} onPress={() => setWrap(w => !w)} />
+						<IconButton icon={wrap ? 'minimize' : 'expand'} label={wrap ? 'Don\'t wrap lines' : 'Wrap lines'} color={p.fg} onPress={() => {
+							editor.current?.setWrap(!wrap);
+							setWrap(w => !w);
+						}} />
 						{params.kind !== 'deleted' ? <IconButton icon="file" label="Open file" color={p.fg} onPress={() => openFile(file)} /> : null}
 					</View>
 				),
@@ -90,9 +117,16 @@ function Diff({ params }: { readonly params: IParams }) {
 				</View>
 			) : null}
 			{error ? <EmptyState icon="alertCircle" title="Couldn't load the diff" body={error} />
-				: !diff ? <View style={{ paddingTop: 60 }}><ActivityIndicator color={p.fgTertiary} /></View>
-					: !items.length ? <EmptyState icon="checkCircle" title="No differences" body="Both sides are the same." />
-						: <DiffList items={items} wrap={wrap} fence={fence} />}
+				: !diff || !sides ? <View style={{ paddingTop: 60 }}><ActivityIndicator color={p.fgTertiary} /></View>
+					: !diff.hunks.length ? <EmptyState icon="checkCircle" title="No differences" body="Both sides are the same." />
+						: monaco !== 'failed' ? (
+							<View style={{ flex: 1 }}>
+								<MonacoView ref={editor} original={sides.before} text={sides.after} language={language.monaco} dark={dark} background={p.codeBg} lineColor={`${p.info}2E`} wrap={wrap}
+									onEvent={event => event.type === 'ready' ? setMonaco('ready') : event.type === 'error' ? setMonaco(state => state === 'ready' ? state : 'failed') : undefined} />
+								{monaco === 'loading' ? <View style={[StyleSheet.absoluteFill, { backgroundColor: p.codeBg, paddingTop: 60 }]}><ActivityIndicator color={p.fgTertiary} /></View> : null}
+							</View>
+						)
+							: <DiffList items={items} wrap={wrap} fence={fence} />}
 		</View>
 	);
 }
