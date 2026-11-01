@@ -12,7 +12,7 @@ import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
-import { IVoltGitStatusFile, voltPrErrorMessage } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
+import { IVoltGitStatusFile, voltPrErrorCode, voltPrErrorMessage } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { IVoltGitService } from '../../../../../platform/voltGit/common/voltGit.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
@@ -72,6 +72,8 @@ export interface IAgentCommitPlan {
 	busy?: string;
 	/** Why the last Commit stopped; the commits before it are in and gone from the plan. */
 	error?: string;
+	/** The last Commit was stopped by a commit hook: the review offers to commit without hooks. */
+	hookFailed?: boolean;
 	/** A passing note for the footer (a regenerate that brought nothing new). */
 	notice?: string;
 	/** What was committed so far, for the agent's answer. */
@@ -96,8 +98,8 @@ export interface IAgentCommitPlanService {
 	setMessage(planId: string, commitId: string, message: string): void;
 	/** Writes a new message for the commit's files (the ones left in, or all when none are). */
 	regenerate(planId: string, commitId: string): Promise<void>;
-	/** Commits every commit with a file left in, in order, then tells the agent. */
-	commit(planId: string): Promise<void>;
+	/** Commits every commit with a file left in, in order, then tells the agent. `skipHooks` commits with `--no-verify`. */
+	commit(planId: string, options?: { readonly skipHooks?: boolean }): Promise<void>;
 	/** Closes the review without committing what is left. */
 	dismiss(planId: string): void;
 	/** The text of a file split by hunks before or after one commit of the plan (its diff in the review). */
@@ -279,7 +281,7 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 		});
 	}
 
-	async commit(planId: string): Promise<void> {
+	async commit(planId: string, options?: { readonly skipHooks?: boolean }): Promise<void> {
 		const plan = this.plans.get(planId);
 		if (!plan || plan.busy) {
 			return;
@@ -289,6 +291,8 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 			return;
 		}
 		plan.error = undefined;
+		plan.hookFailed = undefined;
+		plan.notice = undefined;
 		const attribute = this.configurationService.getValue<boolean>(AGENT_COMMIT_ATTRIBUTION_SETTING) !== false;
 		try {
 			for (const [index, commit] of todo.entries()) {
@@ -303,7 +307,7 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 						|| localize('voltCommitPlan.fallbackMessage', "Update {0}", paths.map(path => path.split('/').pop()).slice(0, 3).join(', '));
 				}
 				const contents = await this.hunkContents(plan, commit, paths);
-				const result = await this.pullRequests.api.commit({ folder: plan.root, message: attribute ? withCommitAttribution(message) : message, paths, ...(contents.length ? { contents } : {}) });
+				const result = await this.pullRequests.api.commit({ folder: plan.root, message: attribute ? withCommitAttribution(message) : message, paths, ...(contents.length ? { contents } : {}), ...(options?.skipHooks ? { skipHooks: true } : {}) });
 				for (const path of paths) {
 					if (commit.parts[path]) {
 						plan.applied.set(path, new Set([...(plan.applied.get(path) ?? []), ...commit.parts[path]]));
@@ -321,6 +325,8 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 		} catch (err) {
 			plan.busy = undefined;
 			plan.error = voltPrErrorMessage(err);
+			plan.hookFailed = voltPrErrorCode(err) === 'hookFailed';
+			this.logService.warn('[volt-git] commit review stopped', plan.error);
 			this._onDidChange.fire(plan.sessionId);
 			return;
 		}

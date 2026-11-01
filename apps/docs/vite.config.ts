@@ -45,7 +45,7 @@ const WANTS_MARKDOWN = [
 const MARKDOWN_ROUTES = [
   { src: "^/$", has: WANTS_MARKDOWN, dest: "/index.md" },
   {
-    src: "^/(download|changelog|about|contact|privacy)/?$",
+    src: "^/(download|changelog|about|contact|privacy|donors)/?$",
     has: WANTS_MARKDOWN,
     dest: "/$1.md",
   },
@@ -101,6 +101,7 @@ export default defineConfig({
         { path: "/about" },
         { path: "/contact" },
         { path: "/privacy" },
+        { path: "/donors" },
         // Markdown versions of the site's pages, for agents (src/lib/agentMarkdown.ts). Not /index.md:
         // the home page has no prerendered index.html, so a static index.md would be what Vercel serves
         // at `/` to browsers too. The server function answers /index.md instead.
@@ -109,6 +110,7 @@ export default defineConfig({
         { path: "/about.md" },
         { path: "/contact.md" },
         { path: "/privacy.md" },
+        { path: "/donors.md" },
         { path: "/sitemap.xml" },
         { path: "/openapi.json" },
       ],

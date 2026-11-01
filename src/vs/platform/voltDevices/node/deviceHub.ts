@@ -8,11 +8,11 @@ import { promises as fs } from 'fs';
 import { createServer as createHttpServer, IncomingMessage, request } from 'http';
 import { connect, createServer, Socket } from 'net';
 import { generateUuid } from '../../../base/common/uuid.js';
-import { join } from '../../../base/common/path.js';
+import { delimiter, join } from '../../../base/common/path.js';
 import { ILogService } from '../../log/common/log.js';
 
 export const DEVICE_HUB_PACKAGE = 'expo-device-hub';
-export const DEVICE_HUB_VERSION = '0.15.3';
+export const DEVICE_HUB_VERSION = '0.19.1';
 const READY_TIMEOUT = 30_000;
 const INSTALL_TIMEOUT = 240_000;
 const ATTACH_TIMEOUT = 60_000;
@@ -43,8 +43,15 @@ export class DeviceHub {
 		private readonly env: () => Promise<NodeJS.ProcessEnv>,
 		private readonly which: (name: string) => Promise<string | undefined>,
 		private readonly logService: ILogService,
+		/** Folders to put first on the hub's PATH: serve-emu runs `adb` by name, which the SDK does not put on PATH. */
+		private readonly extraPath: () => Promise<readonly string[]> = async () => [],
 	) {
 		process.once('exit', () => this.dispose());
+	}
+
+	/** Installs and starts the hub ahead of the first attach. */
+	async prewarm(): Promise<void> {
+		await this.origin();
 	}
 
 	/**
@@ -86,8 +93,25 @@ export class DeviceHub {
 		if (!response.ok || body?.ok === false) {
 			throw new Error(`The device hub could not stream ${udid}: ${body?.error ?? body?.message ?? response.status}`);
 		}
-		if (boot) {
-			this.boots.set(udid, boot);
+		// Attached right after `simctl boot`, launchd_sim may not have been up yet.
+		const captured = boot ?? await this.bootOf(udid);
+		if (captured) {
+			this.boots.set(udid, captured);
+		}
+		return window;
+	}
+
+	/**
+	 * The window's base URL for a running Android device's stream. serve-emu starts its capture
+	 * when the window's socket opens (`/vendor/serve-emu/ws?device=<serial>`); asking for its
+	 * stream mode here starts it a little earlier.
+	 */
+	async attachAndroid(serial: string): Promise<string> {
+		const { hub, window } = await this.origin();
+		const response = await fetch(`${hub}/vendor/serve-emu/api/stream-mode?device=${encodeURIComponent(serial)}`, { signal: AbortSignal.timeout(ATTACH_TIMEOUT) }).catch(() => undefined);
+		const body = await response?.json().catch(() => undefined) as { ok?: boolean; error?: string } | undefined;
+		if (body?.ok === false) {
+			throw new Error(`The device hub could not stream ${serial}: ${body.error ?? response?.status}`);
 		}
 		return window;
 	}
@@ -166,7 +190,11 @@ export class DeviceHub {
 		// The hub's native modules (serve-sim, node-datachannel) are built for Node, not Electron.
 		const node = await this.which('node');
 		const command = node ?? process.execPath;
+		const extra = await this.extraPath().catch(() => []);
 		const childEnv: NodeJS.ProcessEnv = { ...env, FORCE_COLOR: '0', NO_COLOR: '1' };
+		if (extra.length) {
+			childEnv.PATH = [...extra, env.PATH].filter(Boolean).join(delimiter);
+		}
 		if (node) {
 			delete childEnv['ELECTRON_RUN_AS_NODE'];
 		} else {
@@ -194,19 +222,22 @@ export class DeviceHub {
 			}
 		});
 		const origin = `http://127.0.0.1:${port}`;
-		const deadline = Date.now() + READY_TIMEOUT;
+		const started = Date.now();
+		const deadline = started + READY_TIMEOUT;
 		while (Date.now() < deadline) {
 			if (exited) {
 				throw new Error(`The device hub stopped while starting: ${output.trim().split('\n').slice(-3).join(' ') || 'no output'}`);
 			}
-			const ready = await fetch(`${origin}/api/devices`, { signal: AbortSignal.timeout(2000) }).then(r => r.ok, () => false);
+			// Its page, not /api/devices: that lists every simulator and emulator (8 s with an emulator running).
+			const ready = await fetch(`${origin}/`, { signal: AbortSignal.timeout(2000) }).then(r => r.ok, () => false);
 			if (ready) {
-				this.logService.info(`[volt-devices] device hub ${DEVICE_HUB_VERSION} on ${origin} (pid ${child.pid})`);
+				this.logService.info(`[volt-devices] device hub ${DEVICE_HUB_VERSION} on ${origin} (pid ${child.pid}, ready in ${Date.now() - started} ms)`);
 				this.hubPort = port;
 				this.proxyBase ??= this.startProxy();
 				return { hub: origin, window: await this.proxyBase };
 			}
-			await new Promise(resolve => setTimeout(resolve, 250));
+			// It usually answers within a second: look often until then.
+			await new Promise(resolve => setTimeout(resolve, Date.now() - started < 1000 ? 50 : 250));
 		}
 		child.kill();
 		throw new Error('The device hub did not answer within 30 seconds.');

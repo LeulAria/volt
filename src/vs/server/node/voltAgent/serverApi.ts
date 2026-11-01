@@ -30,6 +30,7 @@ import { IServerFileRoot, ServerFiles } from './serverFiles.js';
 import { ServerComposer } from './serverComposer.js';
 import { ServerGit } from './serverGit.js';
 import { ServerRunGroups } from './serverRunGroups.js';
+import { ServerTrajectory } from './serverTrajectory.js';
 import { IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
 import { IVoltPullRequestService } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { basename } from '../../../base/common/path.js';
@@ -82,7 +83,7 @@ const RUNTIME_METHODS = [
 const ORCHESTRATOR_METHODS = ['submit', 'move', 'resumeLimit', 'configureLimit', 'notify', 'multitaskQueue', 'cancel', 'dispatch', 'ensureThreadLoaded'] as const;
 const HISTORY_METHODS = [
 	'search', 'rename', 'setAgentTitle', 'delete', 'setPinned', 'setArchived', 'setSettled', 'setAutoSettle', 'setSnoozed', 'restoreLifecycle',
-	'setUnread', 'clearWoke', 'markAllRead', 'setAttention', 'pinSessionWorkspace', 'pinSessionParent', 'putAttachment', 'getAttachment',
+	'setUnread', 'clearWoke', 'markAllRead', 'setAttention', 'settleRunning', 'pinSessionWorkspace', 'pinSessionParent', 'putAttachment', 'getAttachment',
 	'attachmentResource', 'flushAll', 'readTranscript',
 ] as const;
 const HANDLE_METHODS = ['load', 'loadDraft', 'saveDraft', 'setMeta', 'appendUser', 'appendAssistant', 'truncate', 'flush'] as const;
@@ -126,6 +127,7 @@ export class AgentServerApi extends Disposable {
 		this._register(new ServerGit(protocol, allowed, pullRequests, logService));
 		this._register(new ServerComposer(protocol, allowed, instantiationService));
 		this._register(instantiationService.createInstance(ServerRunGroups, protocol, this.col('runGroups')));
+		this._register(instantiationService.createInstance(ServerTrajectory, protocol));
 		this.registerMethods();
 		this.observe();
 		this.publishRuntime();

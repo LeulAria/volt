@@ -39,15 +39,15 @@ export const ChangeRow = memo(function ChangeRow({ change, first, last }: { read
 			onPress={() => openChangeDiff(change)}
 			style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 11, backgroundColor: p.surface, borderTopLeftRadius: first ? 14 : 0, borderTopRightRadius: first ? 14 : 0, borderBottomLeftRadius: last ? 14 : 0, borderBottomRightRadius: last ? 14 : 0 }}
 		>
-			<FileIcon path={change.path} />
+			<FileIcon path={change.path} size={20} />
 			<View style={{ flex: 1, minWidth: 0 }}>
 				<T variant="body" weight="500" numberOfLines={1}>{basename(change.path)}</T>
 				<T variant="caption" mono color={p.fgQuaternary} numberOfLines={1} ellipsizeMode="head">{change.kind === 'renamed' && change.oldPath ? `${change.oldPath} → ${dir || '.'}` : dir || '.'}</T>
 			</View>
 			{change.binary ? <T variant="footnote" color={p.fgTertiary}>binary</T> : (
-				<View style={{ alignItems: 'flex-end' }}>
-					{change.additions ? <T variant="footnote" mono color={p.diffAddedFg}>+{change.additions}</T> : null}
-					{change.deletions ? <T variant="footnote" mono color={p.diffRemovedFg}>{'−'}{change.deletions}</T> : null}
+				<View style={{ flexDirection: 'row', gap: 6 }}>
+					{change.additions ? <T variant="footnote" color={p.diffAddedFg} style={{ fontVariant: ['tabular-nums'] }}>+{change.additions}</T> : null}
+					{change.deletions ? <T variant="footnote" color={p.diffRemovedFg} style={{ fontVariant: ['tabular-nums'] }}>-{change.deletions}</T> : null}
 				</View>
 			)}
 			<View style={{ width: 20, height: 20, borderRadius: 5, backgroundColor: `${color}22`, alignItems: 'center', justifyContent: 'center' }} accessibilityLabel={KIND[change.kind].label}>

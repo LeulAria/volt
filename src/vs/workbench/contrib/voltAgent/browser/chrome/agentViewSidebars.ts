@@ -60,9 +60,6 @@ import { createHomeAutomationsIcon } from '../home/agentHomeIcons.js';
 import { AgentUsageHoverCard } from '../usage/agentUsageHoverCard.js';
 import { createUsageIcon } from '../usage/agentUsageIcons.js';
 
-/** The tune button stays this long after the pointer leaves the chevron, to cross over to it. */
-const TUNE_HIDE_DELAY_MS = 250;
-
 /** Chevrons point right. Collapsed state rotates this 180deg. */
 const CHEVRON_RIGHT_PATH = 'M6 7L11 12L6 17M13 7L18 12L13 17';
 /** Lucide panel-bottom, folder and panel-right: one outline set for the title bar's toggles. */
@@ -205,7 +202,6 @@ class AgentViewSidebarsContribution extends Disposable {
 	private readonly chevronLabel: HTMLElement;
 	/** Under the chevron while it is hovered: opens the menu of which sections show. */
 	private readonly tuneButton: HTMLButtonElement;
-	private readonly tuneHide = this._register(new MutableDisposable());
 	private readonly tuneMenu = this._register(new MutableDisposable());
 	private readonly sectionPrefs: DockSectionPrefs;
 	/** Each section the user can hide, by its id in the tune menu. */
@@ -375,7 +371,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		chevronIcon.setAttribute('width', '16');
 		chevronIcon.setAttribute('height', '16');
 		this.chevron.appendChild(chevronIcon);
-		// Hovering the chevron brings a round tune button under it; it opens "Show in side toolbar".
+		// Under the chevron, shown with it while the toolbar is hovered; it opens "Show in side toolbar".
 		this.tuneButton = append(this.quickOpen, $('button.volt-agent-dock-tune')) as HTMLButtonElement;
 		this.tuneButton.type = 'button';
 		this.tuneButton.appendChild(renderIcon(Codicon.settings));
@@ -384,28 +380,15 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.tuneButton.setAttribute('aria-haspopup', 'menu');
 		setAgentTooltip(this.tuneButton, tuneLabel);
 		this.sectionPrefs = this._register(new DockSectionPrefs(storageService));
-		const showTune = () => {
-			this.tuneHide.clear();
-			this.quickOpen.classList.add('tune-shown');
-		};
-		const hideTuneSoon = () => {
-			this.tuneHide.value = disposableTimeout(() => {
-				if (!this.tuneMenu.value) {
-					this.quickOpen.classList.remove('tune-shown');
-				}
-			}, TUNE_HIDE_DELAY_MS);
-		};
-		for (const target of [this.chevron, this.tuneButton]) {
-			this._register(addDisposableListener(target, 'mouseenter', showTune));
-			this._register(addDisposableListener(target, 'mouseleave', hideTuneSoon));
-		}
 		const contextViewService = instantiationService.invokeFunction(accessor => accessor.get(IContextViewService));
 		this._register(addDisposableListener(this.tuneButton, 'click', () => {
+			// The menu sits outside the toolbar: both buttons stay while it is open.
 			this.tuneButton.classList.add('open');
+			this.quickOpen.classList.add('tune-shown');
 			this.tuneMenu.value = showDockSectionsMenu(contextViewService, this.tuneButton, this.sectionPrefs, () => {
 				this.tuneButton.classList.remove('open');
+				this.quickOpen.classList.remove('tune-shown');
 				this.tuneMenu.clear();
-				hideTuneSoon();
 			});
 		}));
 

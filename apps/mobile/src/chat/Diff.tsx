@@ -5,10 +5,11 @@
 
 import { highlight, type IDiffHunk, type IDiffLine, type IVoltPalette, parseUnifiedDiff, wordChanges } from '@volt/client-core';
 import { memo, type ReactElement, type ReactNode, useMemo, useState } from 'react';
-import { FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FlatList, StyleSheet, Text, View } from 'react-native';
 import { useConversationPrefs } from '../state/prefs';
 import { FONT, useTheme } from '../theme/theme';
 import { T, Tap } from '../ui/core';
+import { StickyX, StickyXScroll } from '../ui/stickyX';
 
 /**
  * Diffs drawn like the desktop's review editor, in one column: a hunk header, old and new line
@@ -104,14 +105,18 @@ export const DiffRow = memo(function DiffRow({ item, gutter, wrap, fence, plain 
 	if (item.type === 'hunk') {
 		return (
 			<View style={[styles.hunk, { backgroundColor: `${p.info}14`, borderColor: p.strokeFaint }]}>
-				<Text numberOfLines={1} style={[styles.mono, { color: p.info, paddingLeft: 10, opacity: 0.85 }]}>{item.text}</Text>
+				<StickyX style={{ alignSelf: 'flex-start' }}>
+					<Text numberOfLines={1} style={[styles.mono, { color: p.info, paddingLeft: 10, opacity: 0.85 }]}>{item.text}</Text>
+				</StickyX>
 			</View>
 		);
 	}
 	if (item.type === 'gap') {
 		return (
 			<View style={[styles.gap, { backgroundColor: p.fillFaint }]}>
-				<Text style={[styles.mono, { color: p.fgQuaternary, paddingLeft: 10, fontSize: 11 }]}>{`⋯ ${item.count} unchanged ${item.count === 1 ? 'line' : 'lines'}`}</Text>
+				<StickyX style={{ alignSelf: 'flex-start' }}>
+					<Text style={[styles.mono, { color: p.fgQuaternary, paddingLeft: 10, fontSize: 11 }]}>{`⋯ ${item.count} unchanged ${item.count === 1 ? 'line' : 'lines'}`}</Text>
+				</StickyX>
 			</View>
 		);
 	}
@@ -138,9 +143,14 @@ export const DiffRow = memo(function DiffRow({ item, gutter, wrap, fence, plain 
 	}
 	return (
 		<View style={[styles.line, { backgroundColor: colors.bg }]}>
-			<Text style={[styles.mono, styles.num, { width: gutter, color: p.fgQuaternary }]}>{line.oldLine ?? ''}</Text>
-			<Text style={[styles.mono, styles.num, { width: gutter, color: p.fgQuaternary }]}>{line.newLine ?? ''}</Text>
-			<Text style={[styles.mono, styles.sign, { color: colors.sign }]}>{line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '}</Text>
+			{/* Opaque under the row's tint, so the code scrolling sideways passes under the numbers. */}
+			<StickyX style={{ backgroundColor: p.codeBg }}>
+				<View style={{ flex: 1, flexDirection: 'row', backgroundColor: colors.bg }}>
+					<Text style={[styles.mono, styles.num, { width: gutter, color: p.fgQuaternary }]}>{line.oldLine ?? ''}</Text>
+					<Text style={[styles.mono, styles.num, { width: gutter, color: p.fgQuaternary }]}>{line.newLine ?? ''}</Text>
+					<Text style={[styles.mono, styles.sign, { color: colors.sign }]}>{line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '}</Text>
+				</View>
+			</StickyX>
 			<Text selectable numberOfLines={wrap ? undefined : 1} style={[styles.mono, styles.text, { color: line.kind === 'context' ? p.fgSecondary : p.fg }, wrap ? styles.wrap : null]}>{body}</Text>
 		</View>
 	);
@@ -168,9 +178,9 @@ export function DiffList({ items, wrap, fence, header }: { readonly items: reado
 		return list;
 	}
 	return (
-		<ScrollView horizontal bounces={false} style={{ flex: 1, backgroundColor: p.codeBg }} contentContainerStyle={{ minWidth: '100%' }}>
+		<StickyXScroll bounces={false} style={{ flex: 1, backgroundColor: p.codeBg }} contentContainerStyle={{ minWidth: '100%' }}>
 			{list}
-		</ScrollView>
+		</StickyXScroll>
 	);
 }
 
@@ -191,11 +201,11 @@ export const InlineDiff = memo(function InlineDiff({ diff, fence }: { readonly d
 	const shown = long && !expanded ? items.slice(0, COLLAPSED_LINES - 15) : items.slice(0, 1500);
 	return (
 		<View style={{ backgroundColor: p.codeBg }}>
-			<ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
+			<StickyXScroll showsHorizontalScrollIndicator={false} bounces={false}>
 				<View style={{ minWidth: width, paddingVertical: 4 }}>
 					{shown.map(item => <DiffRow key={item.key} item={item} gutter={gutter} wrap={false} fence={fence} plain={!themedDiffs} />)}
 				</View>
-			</ScrollView>
+			</StickyXScroll>
 			{long ? (
 				<Tap haptics="selection" onPress={() => setExpanded(e => !e)} style={{ height: 38, alignItems: 'center', justifyContent: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint }}>
 					<T variant="footnote" weight="600" color={p.fgSecondary}>{expanded ? 'Show less' : `Show all ${items.filter(i => i.type === 'line').length} lines`}</T>

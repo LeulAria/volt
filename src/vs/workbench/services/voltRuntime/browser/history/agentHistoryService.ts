@@ -25,6 +25,7 @@ import {
 	AgentHistoryEntry,
 	AgentHistoryRecord,
 	AgentSessionAttention,
+	AgentSessionStatus,
 	IAgentAssistantEntry,
 	IAgentForkOrigin,
 	IAgentHistoryIndex,
@@ -374,6 +375,12 @@ class SessionHandle implements IAgentSessionHandle {
 	}
 
 	setMeta(meta: { title?: string; agentTitle?: string; mode?: string; model?: string; worktreePath?: string; worktreeBranch?: string; forkOf?: IAgentForkOrigin }): void {
+		// A stored chat nobody has opened yet (a branch rename reaching every chat in the worktree):
+		// read its log first, or its record is worked out from no turns and reads as a draft.
+		if (this.materialized && !this.loaded) {
+			void this.load().then(() => this.append({ type: 'meta', at: Date.now(), ...meta }), () => undefined);
+			return;
+		}
 		this.append({ type: 'meta', at: Date.now(), ...meta });
 	}
 
@@ -1221,6 +1228,14 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		const meta = this.sessions.get(id);
 		if (meta && meta.attention !== attention) {
 			this.updateMeta({ ...meta, attention });
+		}
+	}
+
+	async settleRunning(id: string, status: Exclude<AgentSessionStatus, 'running' | 'idle'>): Promise<void> {
+		const meta = this.sessions.get(id);
+		if (meta?.status === 'running') {
+			this.logService.warn(`[agent history] ${id} still read running after its run ended; recording it as ${status}`);
+			this.updateMeta({ ...meta, status });
 		}
 	}
 

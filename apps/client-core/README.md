@@ -1,6 +1,6 @@
 # @volt/client-core
 
-The client half of the Volt agent server protocol, shared by `apps/web` and `apps/mobile`. Plain
+The client half of the Volt agent server protocol, used by the phone app (`apps/mobile`). Plain
 TypeScript with no runtime dependencies: anything platform specific (WebSocket, storage) is passed in.
 
 - `connection.ts`: one WebSocket at `/ws` with hello/welcome, resume from the last event `seq`,

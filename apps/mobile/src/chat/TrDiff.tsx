@@ -5,11 +5,12 @@
 
 import { type IDiffLine, parseUnifiedDiff } from '@volt/client-core';
 import { memo, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { useConversationPrefs } from '../state/prefs';
 import { FONT, useTheme } from '../theme/theme';
 import { T, Tap } from '../ui/core';
+import { StickyX, StickyXScroll } from '../ui/stickyX';
 
 /** A diff line, or the hairline between two hunks. */
 type Line = IDiffLine | { readonly kind: 'gap' };
@@ -54,7 +55,7 @@ export const TrDiff = memo(function TrDiff({ diff, peek, framed, streaming }: { 
 	);
 	return (
 		<View style={[{ backgroundColor: p.canvas, overflow: 'hidden' }, framed ? { borderWidth: 1, borderColor: p.stroke, borderRadius: 6 } : null, peek ? { height: Math.min(shown.length, 4) * LINE } : null]}>
-			{codeWrap ? body : <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false} scrollEnabled={!peek}>{body}</ScrollView>}
+			{codeWrap ? body : <StickyXScroll showsHorizontalScrollIndicator={false} bounces={false} scrollEnabled={!peek}>{body}</StickyXScroll>}
 			{peek ? <Fade color={p.canvas} /> : null}
 			{!peek && !all && lines.length > OPEN_LIMIT ? (
 				<Tap haptics="selection" onPress={() => setAll(true)} style={{ height: 32, alignItems: 'center', justifyContent: 'center', borderTopWidth: 1, borderColor: p.strokeFaint }}>
@@ -70,13 +71,19 @@ const DiffLine = memo(function DiffLine({ line, themed, wrap }: { readonly line:
 	const insert = line.kind === 'add';
 	const del = line.kind === 'del';
 	const fg = insert ? p.diffAddedFg : del ? p.diffRemovedFg : p.fgQuaternary;
+	const tint = themed ? (insert ? p.diffAdded : del ? p.diffRemoved : 'transparent') : 'transparent';
 	return (
-		<View style={{ flexDirection: 'row', minHeight: LINE, backgroundColor: themed ? (insert ? p.diffAdded : del ? p.diffRemoved : 'transparent') : 'transparent' }}>
-			<View style={{ width: 4, backgroundColor: insert || del ? fg : 'transparent', opacity: 0.6 }} />
-			<View style={{ width: 52, flexDirection: 'row', paddingRight: 4 }}>
-				<Text style={[styles.num, { color: fg, fontFamily: FONT.mono }]}>{line.newLine ?? line.oldLine ?? ''}</Text>
-				<Text style={[styles.ind, { color: fg, fontFamily: FONT.mono }]}>{insert ? '+' : del ? '-' : ''}</Text>
-			</View>
+		<View style={{ flexDirection: 'row', minHeight: LINE, backgroundColor: tint }}>
+			{/* The gutter holds still while the code scrolls sideways under it (opaque, with the row's tint). */}
+			<StickyX style={{ backgroundColor: p.canvas }}>
+				<View style={{ flex: 1, flexDirection: 'row', backgroundColor: tint }}>
+					<View style={{ width: 4, backgroundColor: insert || del ? fg : 'transparent', opacity: 0.6 }} />
+					<View style={{ width: 52, flexDirection: 'row', paddingRight: 4 }}>
+						<Text style={[styles.num, { color: fg, fontFamily: FONT.mono }]}>{line.newLine ?? line.oldLine ?? ''}</Text>
+						<Text style={[styles.ind, { color: fg, fontFamily: FONT.mono }]}>{insert ? '+' : del ? '-' : ''}</Text>
+					</View>
+				</View>
+			</StickyX>
 			<Text selectable numberOfLines={wrap ? undefined : 1} style={[styles.text, { color: p.fg, fontFamily: FONT.mono }]}>{line.text || ' '}</Text>
 		</View>
 	);

@@ -28,6 +28,7 @@ export interface GhAsset {
   name: string;
   browser_download_url: string;
   size: number;
+  download_count?: number;
 }
 
 export interface GhRelease {
@@ -94,8 +95,27 @@ export function trimReleases(raw: unknown): GhRelease[] {
         name: a.name,
         browser_download_url: a.browser_download_url,
         size: a.size,
+        download_count: a.download_count,
       })),
     }));
+}
+
+/**
+ * How many times an installer was downloaded, over every release GitHub returned. Counts only Volt's
+ * own build files, and not the macOS .zip: that is what the auto-updater downloads, so it counts
+ * updates, not people. The rolling nightly release replaces its files, so its counts start over.
+ */
+export function totalDownloads(releases: GhRelease[]): number {
+  let total = 0;
+  for (const release of releases) {
+    if (release.draft) continue;
+    for (const a of release.assets) {
+      const parsed = parseAssetName(a.name);
+      if (!parsed || (parsed.os === "darwin" && parsed.pkg === "zip")) continue;
+      total += a.download_count ?? 0;
+    }
+  }
+  return total;
 }
 
 /** The newest published release per channel (by `published_at`). Drafts are skipped. */

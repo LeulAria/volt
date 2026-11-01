@@ -439,6 +439,9 @@ async function runStep(driver: IActDriver, step: IActStep, token: CancellationTo
 			throw new StepError('NOT_FOUND', 'menu is for desktop apps (desktop_act); on a web page click the menu instead');
 		case 'window':
 			throw new StepError('NOT_FOUND', 'window is for desktop apps (desktop_act); the in-app browser has one page per chat');
+		case 'draw':
+		case 'drag':
+			throw new StepError('NOT_FOUND', `${step.action} is for desktop apps (desktop_act); on a web page use browser_run or browser_evaluate`);
 	}
 }
 

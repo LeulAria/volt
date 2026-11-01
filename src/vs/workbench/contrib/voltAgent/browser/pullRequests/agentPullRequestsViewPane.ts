@@ -49,7 +49,7 @@ const LIST_POLL_MS = 60_000;
  * last read (this window's, or IndexedDB's after a restart) and reads again behind it when stale,
  * with the refresh button spinning meanwhile. `null` is a folder with no remote Volt can read.
  */
-function repoQuery(pullRequests: IAgentPullRequestService, folder: string): IVoltQuery<IVoltPrRepo | null> {
+export function repoQuery(pullRequests: IAgentPullRequestService, folder: string): IVoltQuery<IVoltPrRepo | null> {
 	return { key: `pr.repo:${folder}`, fetch: async force => await pullRequests.repoForFolder(folder, force) ?? null, staleTime: 30_000 };
 }
 
@@ -57,13 +57,13 @@ function listKey(repo: IVoltPrRepo, state: StateFilter): string {
 	return `pr.list:${repo.host}/${repo.owner}/${repo.name}:${state}`.toLowerCase();
 }
 
-function listQuery(pullRequests: IAgentPullRequestService, repo: IVoltPrRepo, state: StateFilter): IVoltQuery<readonly IVoltPullRequest[]> {
+export function listQuery(pullRequests: IAgentPullRequestService, repo: IVoltPrRepo, state: StateFilter): IVoltQuery<readonly IVoltPullRequest[]> {
 	return { key: listKey(repo, state), fetch: () => pullRequests.api.list({ repo, state, limit: 100 }), staleTime: 30_000 };
 }
 
-const SORT_ORDER: readonly AgentPrSort[] = ['ready', 'blocked', 'updated', 'newest', 'oldest', 'largest', 'smallest'];
+export const SORT_ORDER: readonly AgentPrSort[] = ['ready', 'blocked', 'updated', 'newest', 'oldest', 'largest', 'smallest'];
 
-const SORT_LABELS: Record<AgentPrSort, string> = {
+export const SORT_LABELS: Record<AgentPrSort, string> = {
 	ready: localize('voltPr.sort.ready', "Merge readiness"),
 	blocked: localize('voltPr.sort.blocked', "Blocked on me"),
 	updated: localize('voltPr.sort.updated', "Recently updated"),
@@ -75,7 +75,7 @@ const SORT_LABELS: Record<AgentPrSort, string> = {
 
 /** Line icons (Lucide's shapes, 24-unit box) for the sort button and its menu. */
 const SORT_BUTTON_ICON = ['m3 16 4 4 4-4', 'M7 20V4', 'm21 8-4-4-4 4', 'M17 4v16'];
-const SORT_ICONS: Record<AgentPrSort, readonly string[]> = {
+export const SORT_ICONS: Record<AgentPrSort, readonly string[]> = {
 	ready: ['M13 5h8', 'M13 12h8', 'M13 19h8', 'm3 17 2 2 4-4', 'm3 7 2 2 4-4'],
 	blocked: ['M14 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0', 'M10.3 15H7a4 4 0 0 0-4 4v2', 'M15 15.5V14a2 2 0 0 1 4 0v1.5', 'M13.9 16h6.2a.9.9 0 0 1 .9.9v3.2a.9.9 0 0 1-.9.9h-6.2a.9.9 0 0 1-.9-.9v-3.2a.9.9 0 0 1 .9-.9z'],
 	updated: ['M12 6v6l4 2', 'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0'],
@@ -87,7 +87,7 @@ const SORT_ICONS: Record<AgentPrSort, readonly string[]> = {
 
 const SEARCH_HELP = localize('voltPr.list.searchHelp', "Fuzzy search over numbers, titles, branches, authors, labels and status.\nauthor: (or @), label:, branch:, base:, title: and is: keep a word to one field; \"quotes\" match as typed; -word leaves matches out.\n/pattern/ or the .* toggle searches with a regular expression.\n{0} focuses the search, Enter opens the top match.", isMacintosh ? '⌘F' : 'Ctrl+F');
 
-type StateFilter = 'open' | 'closed' | 'all';
+export type StateFilter = 'open' | 'closed' | 'all';
 
 type ListGroup = 'thisChat' | AgentPrInvolvement;
 
@@ -112,7 +112,7 @@ interface IListEntry {
 }
 
 /** A stroked line icon at `size` px from 24-unit path data, drawn like the sidebar's header icons. */
-function lineIcon(doc: Document, paths: readonly string[], size: number): SVGElement {
+export function lineIcon(doc: Document, paths: readonly string[], size: number): SVGElement {
 	const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
 	svg.setAttribute('viewBox', '0 0 24 24');
 	svg.setAttribute('width', String(size));
@@ -132,7 +132,7 @@ function lineIcon(doc: Document, paths: readonly string[], size: number): SVGEle
 }
 
 /** `text` with its matched ranges wrapped for highlighting; plain text when there are none. */
-function paintMatches(element: HTMLElement, text: string, matches: readonly IMatch[] | undefined): void {
+export function paintMatches(element: HTMLElement, text: string, matches: readonly IMatch[] | undefined): void {
 	if (!matches?.length) {
 		element.textContent = text;
 		return;
@@ -661,57 +661,8 @@ export class AgentPullRequestsViewPane extends ViewPane {
 	 * the size on the right; then the author, branch, labels and what it waits on, with its age.
 	 */
 	private row(pr: IVoltPullRequest, link: IAgentPrLink | undefined, group: ListGroup): IListEntry {
-		const row = $('.volt-pr-list-row');
-		row.tabIndex = 0;
-		row.setAttribute('role', 'button');
+		const { row, number, title, author, branch } = buildPullRequestRow(pr, !!link?.watch);
 		row.classList.toggle('busy', this.busyKey === pr.key);
-		const glyph = append(row, $('.volt-pr-list-glyph'));
-		iconSpan(glyph, prStateIcon(pr.state), `state-${pr.state}`);
-		if (pr.mergeable === 'conflicting' && isOpenState(pr.state)) {
-			const conflict = iconSpan(glyph, Codicon.warning, 'conflict');
-			setAgentTooltip(conflict, localize('voltPr.list.conflicts', "Has conflicts with {0}", pr.baseRefName));
-		}
-		const lines = append(row, $('.volt-pr-list-lines'));
-		const line1 = append(lines, $('.volt-pr-list-line'));
-		const number = append(line1, $('span.volt-pr-list-number'));
-		number.textContent = `#${pr.number}`;
-		const title = append(line1, $('span.volt-pr-list-title'));
-		title.textContent = pr.title;
-		if (pr.checks.state !== 'none' && isOpenState(pr.state)) {
-			const checks = iconSpan(line1, checkIcon(pr.checks.state), `check-${pr.checks.state}`);
-			setAgentTooltip(checks, checksLabel(pr));
-		}
-		if (link?.watch) {
-			const eye = iconSpan(line1, Codicon.eye, 'watching');
-			setAgentTooltip(eye, localize('voltPr.list.watched', "This chat's agent is watching it"));
-		}
-		append(line1, $('.volt-pr-spacer'));
-		const size = append(line1, $('span.volt-pr-stats'));
-		append(size, $('span.add')).textContent = `+${pr.additions}`;
-		append(size, $('span.del')).textContent = `\u2212${pr.deletions}`;
-
-		const line2 = append(lines, $('.volt-pr-list-line.sub'));
-		avatar(line2, pr.author.login, pr.author.avatarUrl, 14);
-		const author = append(line2, $('span.volt-pr-list-author'));
-		author.textContent = pr.author.login;
-		const branch = append(line2, $('span.volt-pr-list-branch'));
-		branch.textContent = pr.headRefName;
-		for (const label of pr.labels.slice(0, 2)) {
-			const chip = append(line2, $('span.volt-pr-label.small'));
-			chip.style.setProperty('--volt-pr-label', `#${/^[0-9a-f]{6}$/i.test(label.color) ? label.color : '888888'}`);
-			chip.textContent = label.name;
-		}
-		if (pr.unresolvedThreads) {
-			const threads = append(line2, $('span.volt-pr-list-threads'));
-			threads.appendChild(renderIcon(Codicon.commentUnresolved));
-			append(threads, $('span')).textContent = String(pr.unresolvedThreads);
-		}
-		const reason = blockedReason(pr);
-		if (reason) {
-			append(line2, $(`span.volt-pr-list-reason.reason-${reasonClass(pr)}`)).textContent = reason;
-		}
-		append(line2, $('.volt-pr-spacer'));
-		append(line2, $('span.volt-pr-list-age')).textContent = ago(pr.updatedAt);
 		this.quickActions(row, pr);
 
 		const open = () => void this.instantiationService.invokeFunction(accessor => openPullRequest(accessor, { kind: 'pr', repo: pr.repo, number: pr.number }, this.sessionId()));
@@ -799,7 +750,75 @@ export class AgentPullRequestsViewPane extends ViewPane {
 	}
 }
 
-function reasonClass(pr: IVoltPullRequest): string {
+export interface IPullRequestRowParts {
+	readonly row: HTMLElement;
+	readonly number: HTMLElement;
+	readonly title: HTMLElement;
+	readonly author: HTMLElement;
+	readonly branch: HTMLElement;
+}
+
+/**
+ * T3 Code's two lines: state glyph (a conflict marks its corner), #number, title and checks, with
+ * the size on the right; then the author, branch, labels and what it waits on, with its age.
+ * Shared by the sidebar's list and the Pull Requests page's own sidebar.
+ */
+export function buildPullRequestRow(pr: IVoltPullRequest, watching: boolean): IPullRequestRowParts {
+	const row = $('.volt-pr-list-row');
+	row.tabIndex = 0;
+	row.setAttribute('role', 'button');
+	const glyph = append(row, $('.volt-pr-list-glyph'));
+	iconSpan(glyph, prStateIcon(pr.state), `state-${pr.state}`);
+	if (pr.mergeable === 'conflicting' && isOpenState(pr.state)) {
+		const conflict = iconSpan(glyph, Codicon.warning, 'conflict');
+		setAgentTooltip(conflict, localize('voltPr.list.conflicts', "Has conflicts with {0}", pr.baseRefName));
+	}
+	const lines = append(row, $('.volt-pr-list-lines'));
+	const line1 = append(lines, $('.volt-pr-list-line'));
+	const number = append(line1, $('span.volt-pr-list-number'));
+	number.textContent = `#${pr.number}`;
+	const title = append(line1, $('span.volt-pr-list-title'));
+	title.textContent = pr.title;
+	if (pr.checks.state !== 'none' && isOpenState(pr.state)) {
+		const checks = iconSpan(line1, checkIcon(pr.checks.state), `check-${pr.checks.state}`);
+		setAgentTooltip(checks, checksLabel(pr));
+	}
+	if (watching) {
+		const eye = iconSpan(line1, Codicon.eye, 'watching');
+		setAgentTooltip(eye, localize('voltPr.list.watched', "This chat's agent is watching it"));
+	}
+	append(line1, $('.volt-pr-spacer'));
+	const size = append(line1, $('span.volt-pr-stats'));
+	append(size, $('span.add')).textContent = `+${pr.additions}`;
+	// allow-any-unicode-next-line
+	append(size, $('span.del')).textContent = `−${pr.deletions}`;
+
+	const line2 = append(lines, $('.volt-pr-list-line.sub'));
+	avatar(line2, pr.author.login, pr.author.avatarUrl, 14);
+	const author = append(line2, $('span.volt-pr-list-author'));
+	author.textContent = pr.author.login;
+	const branch = append(line2, $('span.volt-pr-list-branch'));
+	branch.textContent = pr.headRefName;
+	for (const label of pr.labels.slice(0, 2)) {
+		const chip = append(line2, $('span.volt-pr-label.small'));
+		chip.style.setProperty('--volt-pr-label', `#${/^[0-9a-f]{6}$/i.test(label.color) ? label.color : '888888'}`);
+		chip.textContent = label.name;
+	}
+	if (pr.unresolvedThreads) {
+		const threads = append(line2, $('span.volt-pr-list-threads'));
+		threads.appendChild(renderIcon(Codicon.commentUnresolved));
+		append(threads, $('span')).textContent = String(pr.unresolvedThreads);
+	}
+	const reason = blockedReason(pr);
+	if (reason) {
+		append(line2, $(`span.volt-pr-list-reason.reason-${reasonClass(pr)}`)).textContent = reason;
+	}
+	append(line2, $('.volt-pr-spacer'));
+	append(line2, $('span.volt-pr-list-age')).textContent = ago(pr.updatedAt);
+	return { row, number, title, author, branch };
+}
+
+export function reasonClass(pr: IVoltPullRequest): string {
 	if (pr.mergeable === 'conflicting' || pr.checks.state === 'failure' || pr.reviewDecision === 'changesRequested') {
 		return 'bad';
 	}

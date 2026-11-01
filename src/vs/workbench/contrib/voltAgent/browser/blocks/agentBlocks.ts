@@ -10,7 +10,7 @@ import { planProposalFromArgs, PROPOSE_PLAN_TOOL_NAME } from '../../../../servic
 import type { IVoltRateLimitReading, IVoltToolView } from '../../../../services/voltRuntime/common/events.js';
 import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/sandboxDenials.js';
 import { presentOutput, type OutputView } from '../../../../services/voltRuntime/common/harness/adaptiveOutput.js';
-import { describeHostToolActivity, describeTerminalToolActivity, friendlyToolTitle, hostToolCall } from './agentHostToolActivity.js';
+import { describeHostToolActivity, describeTerminalToolActivity, friendlyToolTitle, hostToolCall, hostToolStepKind } from './agentHostToolActivity.js';
 import type { IWorkCounts, ToolKind } from '../../../../services/voltRuntime/common/harness/workLog.js';
 import type { IRunReceipt } from '../../../../services/voltRuntime/common/harness/proofOfDone.js';
 
@@ -1482,10 +1482,12 @@ const DETAIL_MAX = 56;
 export function describeExploreActivity(name: string, title: string | undefined, input?: string): IExploreActivity {
 	const host = describeHostToolActivity(name, title, input);
 	if (host) {
+		// Only the browser, device and design tools are browser actions ("Browsing", "1 browser action").
+		const stepKind = hostToolStepKind(host.tool);
 		return {
 			label: host.label,
 			detail: host.detail,
-			kind: host.hidden ? 'note' : 'browser',
+			kind: host.hidden ? 'note' : stepKind === 'wait' ? 'wait' : stepKind ? 'note' : 'browser',
 			browserTool: host.hidden ? undefined : host.tool,
 			hostArgs: hostToolCall(name, title, input)?.args,
 			hidden: host.hidden,

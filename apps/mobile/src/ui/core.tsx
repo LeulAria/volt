@@ -5,9 +5,9 @@
 
 import { type ChatStatus, type IconName, ICONS, RADIUS, statusColor, timer, TYPE } from '@volt/client-core';
 import * as Haptics from 'expo-haptics';
-import { memo, type ReactNode, useEffect } from 'react';
+import { memo, type ReactNode, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, type PressableProps, type StyleProp, StyleSheet, Text, type TextProps, type TextStyle, View, type ViewStyle } from 'react-native';
-import Animated, { cancelAnimation, Easing, interpolateColor, makeMutable, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import Animated, { cancelAnimation, Easing, interpolate, makeMutable, type SharedValue, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import Svg, { Path } from 'react-native-svg';
 import { useNow } from '../state/client';
 import { FONT, useTheme } from '../theme/theme';
@@ -208,9 +208,16 @@ function useShimmerClock(active: boolean): void {
 	}, [active]);
 }
 
+/** Layout keys that belong on the shimmer's wrapper, so it sits in a row as the bare text did. */
+const OUTER_KEYS = ['flex', 'flexGrow', 'flexShrink', 'flexBasis', 'alignSelf', 'margin', 'marginTop', 'marginBottom', 'marginLeft', 'marginRight', 'marginHorizontal', 'marginVertical', 'minWidth', 'maxWidth', 'width'] as const;
+
+/** The band's soft edge: three widths of the bright copy, each faint, stacked so the middle is brightest. */
+const SHIMMER_BANDS = [{ width: 0.55, opacity: 0.35 }, { width: 0.35, opacity: 0.45 }, { width: 0.18, opacity: 0.6 }] as const;
+
 /**
- * Text that sweeps from the quaternary to the secondary tone and back while it is live
- * (agentTranscript.css `.volt-tr-action.shimmer`); still, it takes `color`.
+ * Text with a light band sweeping across it while it is live (agentTranscript.css
+ * `.volt-tr-action.shimmer`): the text sits in the quiet tone and a bright copy shows through a
+ * window that slides left to right. Still, it takes `color`.
  */
 export const ShimmerText = memo(function ShimmerText({ active, color, from, to, style, children, numberOfLines }: {
 	readonly active: boolean;
@@ -223,13 +230,44 @@ export const ShimmerText = memo(function ShimmerText({ active, color, from, to, 
 }) {
 	const { p } = useTheme();
 	useShimmerClock(active);
-	const low = from ?? p.fgQuaternary;
+	const [width, setWidth] = useState(0);
+	if (!active) {
+		return <Text numberOfLines={numberOfLines} maxFontSizeMultiplier={1.6} style={[style, { color }]}>{children}</Text>;
+	}
+	const flat = StyleSheet.flatten(style) ?? {};
+	const outer: Record<string, unknown> = {};
+	const inner: Record<string, unknown> = { ...flat };
+	for (const key of OUTER_KEYS) {
+		if (key in inner) {
+			outer[key] = inner[key];
+			delete inner[key];
+		}
+	}
 	const high = to ?? p.fgSecondary;
-	const animated = useAnimatedStyle(() => active
-		? { color: interpolateColor(shimmerClock.value, [0, 0.5, 1], [low, high, low]) }
-		: { color }, [active, low, high, color]);
-	return <Animated.Text numberOfLines={numberOfLines} maxFontSizeMultiplier={1.6} style={[style, animated]}>{children}</Animated.Text>;
+	return (
+		<View style={outer as ViewStyle}>
+			<Text numberOfLines={numberOfLines} maxFontSizeMultiplier={1.6} onLayout={e => setWidth(e.nativeEvent.layout.width)} style={[inner as TextStyle, { color: from ?? p.fgQuaternary }]}>{children}</Text>
+			{width ? SHIMMER_BANDS.map((band, i) => (
+				<ShimmerBand key={i} width={width} band={band.width * width} opacity={band.opacity} clock={shimmerClock}>
+					<Text numberOfLines={numberOfLines} maxFontSizeMultiplier={1.6} style={[inner as TextStyle, { color: high, width }]}>{children}</Text>
+				</ShimmerBand>
+			)) : null}
+		</View>
+	);
 });
+
+/** One window onto the bright copy, sliding across; the copy moves the other way so it stays in register. */
+function ShimmerBand({ width, band, opacity, clock, children }: { readonly width: number; readonly band: number; readonly opacity: number; readonly clock: SharedValue<number>; readonly children: ReactNode }) {
+	// Every band shares one centre, which runs from past the left edge to past the right.
+	const reach = width * SHIMMER_BANDS[0].width;
+	const windowStyle = useAnimatedStyle(() => ({ transform: [{ translateX: interpolate(clock.value, [0, 1], [-reach, width + reach]) - band / 2 }] }), [width, band, reach]);
+	const copyStyle = useAnimatedStyle(() => ({ transform: [{ translateX: band / 2 - interpolate(clock.value, [0, 1], [-reach, width + reach]) }] }), [width, band, reach]);
+	return (
+		<Animated.View pointerEvents="none" style={[{ position: 'absolute', top: 0, bottom: 0, left: 0, width: band, overflow: 'hidden', opacity }, windowStyle]}>
+			<Animated.View style={[{ position: 'absolute', top: 0, left: 0 }, copyStyle]}>{children}</Animated.View>
+		</Animated.View>
+	);
+}
 
 /** A codicon-style spinner: a three-quarter ring that turns (the desktop's `codicon-loading`). */
 export function Spinner({ size = 13, color }: { readonly size?: number; readonly color?: string }) {
@@ -273,9 +311,11 @@ export function EmptyState({ icon, title, body, action }: { readonly icon: IconN
 	);
 }
 
-export function Pill({ label, icon, color, bg, onPress, onLongPress, maxWidth = 180 }: {
+export function Pill({ label, icon, glyph, color, bg, onPress, onLongPress, maxWidth = 180 }: {
 	readonly label: string;
 	readonly icon?: IconName;
+	/** Drawn in place of `icon` (a brand mark). */
+	readonly glyph?: ReactNode;
 	readonly color?: string;
 	readonly bg?: string;
 	readonly onPress?: () => void;
@@ -285,25 +325,55 @@ export function Pill({ label, icon, color, bg, onPress, onLongPress, maxWidth = 
 	const { p } = useTheme();
 	return (
 		<Tap onPress={onPress} onLongPress={onLongPress} haptics="selection" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, height: 30, paddingHorizontal: 10, borderRadius: 15, backgroundColor: bg ?? p.fill, maxWidth }}>
-			{icon ? <Icon name={icon} size={14} color={color ?? p.fgSecondary} /> : null}
+			{glyph ?? (icon ? <Icon name={icon} size={14} color={color ?? p.fgSecondary} /> : null)}
 			<T variant="small" weight="500" color={color ?? p.fgSecondary} numberOfLines={1} style={{ flexShrink: 1 }}>{label}</T>
 		</Tap>
 	);
 }
 
-export function Segmented<V extends string>({ value, options, onChange }: { readonly value: V; readonly options: readonly { readonly id: V; readonly label: string; readonly icon?: IconName }[]; readonly onChange: (value: V) => void }) {
+/**
+ * Tabs in Material's manner: equal-width labels over a hairline, the picked one bright with an
+ * indicator under it that slides across when the pick changes.
+ */
+export function Tabs<V extends string>({ value, options, onChange }: { readonly value: V; readonly options: readonly { readonly id: V; readonly label: string; readonly icon?: IconName }[]; readonly onChange: (value: V) => void }) {
 	const { p } = useTheme();
+	const [width, setWidth] = useState(0);
+	const index = Math.max(0, options.findIndex(option => option.id === value));
+	const slot = options.length ? width / options.length : 0;
+	const x = useSharedValue(0);
+	const placed = useRef(false);
+	useEffect(() => {
+		if (!slot) {
+			return;
+		}
+		// The first placement jumps; later picks slide.
+		x.value = placed.current ? withTiming(index * slot, { duration: 240, easing: Easing.out(Easing.cubic) }) : index * slot;
+		placed.current = true;
+	}, [index, slot, x]);
+	const indicator = useAnimatedStyle(() => ({ transform: [{ translateX: x.value }] }));
 	return (
-		<View style={{ flexDirection: 'row', backgroundColor: p.fill, borderRadius: 10, padding: 2, gap: 2 }}>
+		<View accessibilityRole="tablist" onLayout={e => setWidth(e.nativeEvent.layout.width)} style={{ flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: p.stroke }}>
 			{options.map(option => {
 				const on = option.id === value;
 				return (
-					<Tap key={option.id} haptics="selection" onPress={() => onChange(option.id)} style={{ flex: 1, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6, backgroundColor: on ? p.raised : 'transparent', ...(on ? { shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 1 } : {}) }}>
-						{option.icon ? <Icon name={option.icon} size={14} color={on ? p.fg : p.fgTertiary} /> : null}
-						<T variant="small" weight={on ? '600' : '500'} color={on ? p.fg : p.fgTertiary}>{option.label}</T>
-					</Tap>
+					<Pressable key={option.id} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={option.label}
+						onPress={() => {
+							if (!on) {
+								haptic.selection();
+								onChange(option.id);
+							}
+						}}
+						style={({ pressed }) => [styles.tab, pressed ? { backgroundColor: p.fillFaint } : null]}>
+						{option.icon ? <Icon name={option.icon} size={15} color={on ? p.fg : p.fgTertiary} /> : null}
+						<T variant="small" weight={on ? '600' : '500'} color={on ? p.fg : p.fgTertiary} numberOfLines={1}>{option.label}</T>
+					</Pressable>
 				);
 			})}
+			{slot ? (
+				<Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, bottom: -StyleSheet.hairlineWidth, width: slot, height: 2, alignItems: 'center' }, indicator]}>
+					<View style={{ width: '62%', height: 2, borderTopLeftRadius: 2, borderTopRightRadius: 2, backgroundColor: p.fg }} />
+				</Animated.View>
+			) : null}
 		</View>
 	);
 }
@@ -311,4 +381,5 @@ export function Segmented<V extends string>({ value, options, onChange }: { read
 const styles = StyleSheet.create({
 	pressed: { opacity: 0.6, transform: [{ scale: 0.985 }] },
 	disabled: { opacity: 0.4 },
+	tab: { flex: 1, height: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 6 },
 });

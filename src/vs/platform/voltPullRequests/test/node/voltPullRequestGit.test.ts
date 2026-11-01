@@ -10,7 +10,7 @@ import { tmpdir } from 'os';
 import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { getRandomTestPath } from '../../../../base/test/node/testUtils.js';
-import { voltPrErrorMessage } from '../../common/voltPullRequests.js';
+import { voltPrErrorCode, voltPrErrorMessage } from '../../common/voltPullRequests.js';
 import { VoltPullRequestService } from '../../node/voltPullRequestService.js';
 
 /**
@@ -203,6 +203,29 @@ suite('Volt pull requests: local git', function () {
 		assert.strictEqual(git(work, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
 		assert.strictEqual(git(work, 'branch', '--list', 'volt/blocked'), '');
 		assert.ok(git(work, 'status', '--porcelain').includes('a.txt'), 'the change is still there');
+	});
+
+	test('a failing commit hook says why, and skipHooks commits past it', async () => {
+		writeFileSync(join(work, 'a.txt'), 'a\n');
+		mkdirSync(join(work, '.git', 'hooks'), { recursive: true });
+		const hook = [
+			'#!/bin/sh',
+			'echo "This is not the package you are looking for: please go to http://nvm.sh" >&2',
+			'echo "> husky - npm run -s precommit"',
+			'echo "Error: Cannot find module \'gulp-filter\'" >&2',
+			'echo "    at Module._resolveFilename (node:internal/modules/cjs/loader:1420:15)" >&2',
+			'exit 1',
+		].join('\n');
+		writeFileSync(join(work, '.git', 'hooks', 'pre-commit'), `${hook}\n`, { mode: 0o755 });
+		await assert.rejects(service.commit({ folder: work, message: 'Hooked', paths: ['a.txt'] }), (err: unknown) => {
+			assert.strictEqual(voltPrErrorCode(err), 'hookFailed');
+			assert.strictEqual(voltPrErrorMessage(err), 'git commit failed in the pre-commit hook: Error: Cannot find module \'gulp-filter\'');
+			return true;
+		});
+		assert.ok(git(work, 'status', '--porcelain').includes('a.txt'), 'nothing was committed');
+		const result = await service.commit({ folder: work, message: 'Hooked', paths: ['a.txt'], skipHooks: true });
+		assert.strictEqual(result.subject, 'Hooked');
+		assert.strictEqual(git(work, 'status', '--porcelain'), '');
 	});
 
 	test('an empty remote: a new branch counts its commits as ahead', async () => {

@@ -146,6 +146,122 @@ export const INFO_PAGES: readonly InfoPage[] = [
   PRIVACY_PAGE,
 ];
 
+/** Every donation goes through GitHub Sponsors; tiers link here with `frequency` and `amount`. */
+export const SPONSOR_URL = `https://github.com/sponsors/${gitConfig.user}`;
+
+export interface DonationTier {
+  name: string;
+  /** US dollars; undefined for a one-time gift of any amount. */
+  amount?: number;
+  frequency: "recurring" | "one-time";
+  blurb: string;
+  perks: string[];
+}
+
+export interface Donor {
+  name: string;
+  url?: string;
+  /** Top donors (Sponsor tier, or a one-time gift of $49 or more) are listed first and larger. */
+  top?: boolean;
+}
+
+export const DONATION_TIERS: readonly DonationTier[] = [
+  {
+    name: "Supporter",
+    amount: 5,
+    frequency: "recurring",
+    blurb: "A coffee's worth of tokens, every month.",
+    perks: ["Keeps Volt free and open source", "Our thanks, every month"],
+  },
+  {
+    name: "Backer",
+    amount: 15,
+    frequency: "recurring",
+    blurb: "Tokens for a new feature, every month.",
+    perks: ["Everything in Supporter", "Your name on the donor wall"],
+  },
+  {
+    name: "Sponsor",
+    amount: 49,
+    frequency: "recurring",
+    blurb: "The big refactors and real test machines.",
+    perks: ["Everything in Backer", "Your name and link at the top"],
+  },
+  {
+    name: "One-time",
+    frequency: "one-time",
+    blurb: "Any amount, once. No subscription.",
+    perks: ["Every token counts", "$49 or more puts you at the top"],
+  },
+];
+
+/** The donor wall, newest last. Add a name when someone asks to be listed. */
+export const DONORS: readonly Donor[] = [];
+
+export function tierUrl(tier: DonationTier): string {
+  return tier.amount === undefined
+    ? `${SPONSOR_URL}?frequency=${tier.frequency}`
+    : `${SPONSOR_URL}?frequency=${tier.frequency}&amount=${tier.amount}`;
+}
+
+export const DONORS_PAGE = {
+  path: "/donors",
+  eyebrow: "Supporters",
+  title: "Support Volt.",
+  subtitle: "Keep it free, open and moving fast.",
+  description:
+    "Volt is free and open source, and it's built with the same agents it runs. Sponsorships pay for the tokens, test machines and time behind every release.",
+  updated: "2026-10-31",
+  faq: [
+    {
+      q: "Is Volt still free?",
+      a: "Yes, always. Donations never unlock features; everyone gets the same Volt.",
+    },
+    {
+      q: "How do I get on the wall?",
+      a: "Sponsor publicly on GitHub as a Backer or above, and your name goes up with the next site update.",
+    },
+    {
+      q: "Can I cancel?",
+      a: "Anytime, from your GitHub Sponsors settings. No questions asked.",
+    },
+  ],
+} as const;
+
+export function donorsMarkdown(): string {
+  const tiers = DONATION_TIERS.map(
+    (tier) =>
+      `- **[${tier.name}${tier.amount === undefined ? "" : ` · $${tier.amount}/month`}](${tierUrl(tier)}).** ${tier.blurb} ${tier.perks.join(". ")}.`,
+  ).join("\n");
+  const donors = DONORS.length
+    ? DONORS.map((d) => `- ${d.url ? `[${d.name}](${d.url})` : d.name}`).join(
+        "\n",
+      )
+    : "No supporters listed yet. Yours could be the first name here.";
+  return `# ${DONORS_PAGE.title.replace(/\.$/, "")}
+
+${DONORS_PAGE.subtitle} ${DONORS_PAGE.description}
+
+_Last updated ${DONORS_PAGE.updated}._
+
+## Pick a tier
+
+Donations go through [GitHub Sponsors](${SPONSOR_URL}).
+
+${tiers}
+
+## Supporters
+
+${donors}
+
+## Questions
+
+${DONORS_PAGE.faq.map((item) => `- **${item.q}** ${item.a}`).join("\n")}
+
+${SITE_LINKS_MARKDOWN}
+`;
+}
+
 export function infoPageMarkdown(page: InfoPage): string {
   const parts = [
     `# ${page.title.replace(/\.$/, "")}`,
@@ -164,7 +280,7 @@ export function infoPageMarkdown(page: InfoPage): string {
 
 const SITE_LINKS_MARKDOWN = `## More
 
-- [Home](/index.md) · [Download](/download.md) · [Changelog](/changelog.md) · [Docs](/docs) · [About](/about.md) · [Contact](/contact.md) · [Privacy](/privacy.md)
+- [Home](/index.md) · [Download](/download.md) · [Changelog](/changelog.md) · [Docs](/docs) · [About](/about.md) · [Contact](/contact.md) · [Privacy](/privacy.md) · [Support](/donors.md)
 - Every docs page as Markdown: [/llms.txt](/llms.txt), or all of them in one file: [/llms-full.txt](/llms-full.txt)
 - MCP server for agents: \`POST /api/mcp\` (Streamable HTTP)`;
 
