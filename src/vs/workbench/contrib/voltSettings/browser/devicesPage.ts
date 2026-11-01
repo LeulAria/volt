@@ -181,7 +181,7 @@ export class DevicesPage {
 		const links = append(side, $('.volt-devices-links'));
 		for (const url of code.urls) {
 			const row = append(links, $('.volt-devices-link'));
-			append(row, $('span.kind')).textContent = url.kind === 'loopback' ? localize('devices.thisComputer', "This computer") : url.kind === 'tailscale' ? 'Tailscale' : localize('devices.network', "Network");
+			append(row, $('span.kind')).textContent = url.kind === 'loopback' ? localize('devices.thisComputer', "This computer") : url.kind === 'tailnet' ? 'Tailscale' : localize('devices.network', "Network");
 			append(row, $('span.url')).textContent = url.url;
 			const copy = host.store.add(createVoltButton(row, 'secondary'));
 			copy.label = localize('devices.copy', "Copy");
