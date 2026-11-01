@@ -493,7 +493,7 @@ export interface IVoltGitCommitRequest {
 	readonly contents?: readonly { readonly path: string; readonly content: string }[];
 	/** Create and check out this branch first; the changes come along. */
 	readonly newBranch?: string;
-	/** Skip the repository's pre-commit and commit-msg hooks (`--no-verify`). */
+	/** Commit with `--no-verify`: the user chose to skip a commit hook that failed. */
 	readonly skipHooks?: boolean;
 }
 
@@ -516,7 +516,7 @@ export type VoltPrErrorCode =
 	| 'stale'
 	| 'network'
 	| 'rateLimited'
-	/** A git hook (pre-commit, commit-msg) refused the commit; nothing was committed. */
+	/** A commit hook (pre-commit, commit-msg) stopped the commit; committing with `skipHooks` gets past it. */
 	| 'hookFailed'
 	| 'failed';
 

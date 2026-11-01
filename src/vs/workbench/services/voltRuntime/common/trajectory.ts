@@ -5,9 +5,14 @@
 
 import { Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
-import { ITrajectoryRequest, ITrajectoryRequestInput } from './harness/trajectory.js';
+import { ITrajectoryRequest, ITrajectoryRequestInput, ITrajectorySync } from './harness/trajectory.js';
 
 export const VOLT_TRAJECTORY_ENABLED_SETTING = 'volt.agent.trajectory.enabled';
+
+/** What the agent server's `trajectory.sync(sessionId, known)` returns: the chat's changed requests and every chat's summary. */
+export interface IVoltTrajectorySyncResult extends ITrajectorySync {
+	readonly chats: readonly IVoltTrajectoryChat[];
+}
 
 export const IVoltTrajectoryService = createDecorator<IVoltTrajectoryService>('voltTrajectoryService');
 

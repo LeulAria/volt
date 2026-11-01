@@ -684,8 +684,8 @@
 	display: none !important;
 }
 
-/* The tune button: round, under the chevron, while the chevron (or the button, or its menu) is in use.
- * Opaque like the menus it opens (volt-transparent-window). */
+/* The tune button: the chevron's look, under it, shown with it while the toolbar is hovered
+ * (or its menu is open, tune-shown). */
 .volt-agent-quick-open-actions > .volt-agent-dock-tune {
 	position: absolute;
 	top: 36px;
@@ -698,28 +698,39 @@
 	height: 28px;
 	padding: 0;
 	border: 0;
-	border-radius: 50%;
-	background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
-	color: var(--vscode-descriptionForeground);
-	box-shadow:
-		0 0 0 1px var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent)),
-		0 2px 8px rgba(0, 0, 0, 0.28);
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-foreground);
 	cursor: pointer;
+	opacity: 0;
+	pointer-events: none;
 }
 
-.volt-agent-quick-open-actions.expanded.tune-shown > .volt-agent-dock-tune {
+.volt-agent-quick-open-actions.expanded > .volt-agent-dock-tune {
 	display: inline-flex;
 }
 
+.volt-agent-quick-open-actions.expanded:hover > .volt-agent-dock-tune,
+.volt-agent-quick-open-actions.expanded.tune-shown > .volt-agent-dock-tune,
+.volt-agent-quick-open-actions.expanded > .volt-agent-dock-tune:focus-visible,
 .volt-agent-quick-open-actions.expanded.tune-shown > .volt-agent-quick-open-toggle {
 	opacity: 1;
 	pointer-events: auto;
 }
 
+.monaco-workbench.volt-layout-agent .volt-agent-thread > .monaco-scrollable-element > .volt-agent-quick-open-actions.expanded.overlay > .volt-agent-dock-tune {
+	top: 32px;
+	right: 0;
+}
+
 .volt-agent-quick-open-actions > .volt-agent-dock-tune:hover,
 .volt-agent-quick-open-actions > .volt-agent-dock-tune.open,
 .monaco-workbench .volt-agent-quick-open-actions > .volt-agent-dock-tune:focus-visible {
-	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	outline: none;
+}
+
+.monaco-workbench .volt-agent-quick-open-actions > .volt-agent-dock-tune:focus {
 	outline: none;
 }
 

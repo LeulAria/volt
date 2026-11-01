@@ -46,6 +46,8 @@ import { orchIsTurnCurrent, orchTaskForToolCall, orchTasksOf } from '../../commo
 const MAX_FAN_OUT = 4;
 /** A cancelled run that does not report its end within this long is settled by Volt. */
 const CANCEL_SETTLE_MS = 6_000;
+/** How long a run's final save gets to mark the chat's record done before Volt settles it itself. */
+const STALE_RECORD_MS = 8_000;
 /** A Volt chat id for a subagent's chat; the agent editor reads session ids from this shape. */
 const CHILD_ID_PREFIX = 'agent-';
 /** How often Volt checks that what it believes is running really is (lost run ends, stuck starts and stops). */
@@ -108,6 +110,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	private suspects = new Map<string, number>();
 	/** The last sign of life of each live run, and its tool calls still open (see `silence`). */
 	private readonly pulses = new Map<string, { at: number; readonly tools: Set<string> }>();
+	private readonly staleRecordTimers = new Set<ReturnType<typeof setTimeout>>();
 	/** Runs the watchdog restarted for going silent: their end settles as a transient failure. */
 	private readonly silentRuns = new Set<string>();
 	private lastWatchdogTick = Date.now();
@@ -172,6 +175,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 	) {
 		super();
+		this._register(toDisposable(() => this.staleRecordTimers.forEach(timer => clearTimeout(timer))));
 		this.store = new OrchestratorStore(joinPath(environmentService.userRoamingDataHome, 'voltOrchestrator'), fileService, logService);
 		this.claims = new DurableClaims(joinPath(environmentService.userRoamingDataHome, 'voltJobs', 'claims'), fileService, logService);
 		this.limitTimer = this._register(new DeadlineTimer(() => this.limitTick()));
@@ -1418,6 +1422,24 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		if (stop) {
 			this.stopClaudeWork(threadId);
 		}
+		this.settleStaleRecord(threadId, outcome);
+	}
+
+	/**
+	 * The run is over; its final reply saves the chat's record as done (or failed). Should that save
+	 * never land (a dropped write, a log handle another holder closed), the sidebar would read
+	 * "Working" for good: once the save had its time and nothing runs, the record takes the outcome.
+	 */
+	private settleStaleRecord(threadId: string, outcome: OrchOutcome): void {
+		const timer = setTimeout(() => {
+			this.staleRecordTimers.delete(timer);
+			if (this.state.threads[threadId]?.active || this.history.get(threadId)?.status !== 'running') {
+				return;
+			}
+			const status = outcome === 'done' ? 'done' : outcome === 'failed' ? 'error' : outcome === 'cancelled' ? 'cancelled' : 'interrupted';
+			void this.history.settleRunning(threadId, status).catch(err => this.logService.warn('[volt orchestrator] could not settle a stale record', err));
+		}, STALE_RECORD_MS);
+		this.staleRecordTimers.add(timer);
 	}
 
 	/** The chat's active turn resumes a usage-limit park that has not heard back from the provider. */

@@ -75,8 +75,8 @@ suite('Agent repository switching', () => {
 			{} as IFileService,
 			{} as IProductService,
 		));
-		const add = (path: string) => {
-			const repo = { provider: { rootUri: URI.file(path) } } as ISCMRepository;
+		const add = (path: string, rootUri = URI.file(path)) => {
+			const repo = { provider: { rootUri } } as ISCMRepository;
 			repositories.push(repo);
 			added.fire(repo);
 			return repo;
@@ -100,6 +100,17 @@ suite('Agent repository switching', () => {
 			assert.ok(!states.includes('loading'));
 			await result;
 		}
+		assert.deepStrictEqual(opened, []);
+	});
+
+	test('in the browser workbench, finds the repository Git registered as a remote URI by its path', async () => {
+		const { focus, opened, view, add } = setup();
+		// Git runs on the server there and names repositories `vscode-remote://host/path`; chats name `file:` paths.
+		const remote = add('/projects/a', URI.from({ scheme: 'vscode-remote', authority: '127.0.0.1:9931', path: '/projects/a' }));
+		const states: AgentScmRepositoryState['kind'][] = [];
+		await focus.show('a', () => true, undefined, state => states.push(state.kind));
+		assert.deepStrictEqual(view.visibleRepositories, [remote]);
+		assert.deepStrictEqual(states, ['ready']);
 		assert.deepStrictEqual(opened, []);
 	});
 

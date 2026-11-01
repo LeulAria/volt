@@ -8,9 +8,16 @@ import { createDecorator } from '../../instantiation/common/instantiation.js';
 export const IVoltDesktopService = createDecorator<IVoltDesktopService>('voltDesktopService');
 export const VOLT_DESKTOP_CHANNEL_NAME = 'voltDesktop';
 
+/** The setting that turns desktop control (the desktop_* tools and their helper) on or off. */
+export const VOLT_COMPUTER_USE_ENABLED_SETTING = 'volt.computerUse.enabled';
+
 export interface IVoltDesktopStatus {
-	/** Desktop control works on this OS (macOS for now). */
+	/** Desktop control works on this OS (macOS, Windows, and Linux with AT-SPI). */
 	readonly supported: boolean;
+	/** Which helper runs: `mac` (Swift, AX), `windows` (UI Automation), `linux` (AT-SPI). */
+	readonly backend?: 'mac' | 'windows' | 'linux';
+	/** The helper can wait for the app's own change events instead of polling (see `settle`). */
+	readonly events?: boolean;
 	/** Volt has the Accessibility permission (needed to read and drive other apps). */
 	readonly trusted: boolean;
 	/** Volt has the Screen Recording permission (only screenshots of other apps need it). */
@@ -72,14 +79,48 @@ export interface IVoltDesktopActResult {
 
 export type VoltDesktopWindowOp = 'raise' | 'minimize' | 'restore' | 'close' | 'zoom' | 'fullscreen';
 
+/** A point in screen points (top-left origin), as `[x, y]`. */
+export type VoltDesktopPoint = readonly [number, number];
+
+/** What `settle` saw: whether the app reported any change after the last action, and when it went quiet. */
+export interface IVoltDesktopSettle {
+	/** False when this helper cannot listen for the app's events; the caller polls the tree instead. */
+	readonly supported: boolean;
+	/** The app reported at least one change. */
+	readonly changed: boolean;
+	/** Change events seen. */
+	readonly events: number;
+	/** How long the wait took. */
+	readonly ms: number;
+}
+
+/** A screenshot of part of the screen, as PNG. */
+export interface IVoltDesktopCapture {
+	readonly png: string;
+	/** Pixel size of the image (retina screens give twice the point size). */
+	readonly width: number;
+	readonly height: number;
+}
+
 export type VoltDesktopAction =
 	/** An accessibility action on an element: AXPress (default), AXIncrement, AXShowMenu, AXConfirm, … */
 	| { readonly kind: 'press'; readonly h: string; readonly action?: string }
 	/** Sets a text field's value directly (and focuses it). */
 	| { readonly kind: 'setValue'; readonly h: string; readonly value: string }
 	| { readonly kind: 'focus'; readonly h: string }
-	| { readonly kind: 'click'; readonly x: number; readonly y: number; readonly button?: 'left' | 'right'; readonly count?: number }
+	/** `modifiers` like "shift" or "cmd+alt" are held during the click. */
+	| { readonly kind: 'click'; readonly x: number; readonly y: number; readonly button?: 'left' | 'right'; readonly count?: number; readonly modifiers?: string }
+	/** Moves the pointer there (hover). */
+	| { readonly kind: 'move'; readonly x: number; readonly y: number }
+	/**
+	 * Presses at each stroke's first point, moves through its points (the helper fills in the gaps
+	 * so lines come out smooth) and releases at its last: drawing, dragging, selecting a range.
+	 * Many strokes in one request draw a whole picture in one round trip.
+	 */
+	| { readonly kind: 'drag'; readonly strokes: readonly (readonly VoltDesktopPoint[])[]; readonly button?: 'left' | 'right'; readonly modifiers?: string; readonly stepMs?: number }
 	| { readonly kind: 'type'; readonly text: string }
+	/** Puts the text on the clipboard, pastes it into the app in front and puts the clipboard back: fast for long text. */
+	| { readonly kind: 'paste'; readonly text: string }
 	/** A key chord, e.g. "cmd+s", "enter", "shift+tab". */
 	| { readonly kind: 'key'; readonly combo: string }
 	| { readonly kind: 'scroll'; readonly x: number; readonly y: number; readonly dx: number; readonly dy: number }
@@ -105,4 +146,12 @@ export interface IVoltDesktopService {
 	/** The accessibility tree of an app's focused window (or the frontmost app's). */
 	tree(target: { readonly app?: string; readonly pid?: number; readonly window?: string; readonly max?: number }): Promise<IVoltDesktopTree>;
 	act(action: VoltDesktopAction): Promise<IVoltDesktopActResult>;
+	/**
+	 * Waits until the app stops reporting changes after an action: returns once no change event came
+	 * for `quietMs` (default 60), or none came at all within `startMs` (default 250), or after `maxMs`
+	 * (default 2000). One call replaces polling the tree until two reads match.
+	 */
+	settle(target: { readonly app?: string; readonly pid?: number; readonly quietMs?: number; readonly startMs?: number; readonly maxMs?: number }): Promise<IVoltDesktopSettle>;
+	/** A screenshot of a screen rectangle (points), e.g. an element or a window, for checking a drawing. */
+	capture(rect: { readonly x: number; readonly y: number; readonly w: number; readonly h: number }): Promise<IVoltDesktopCapture>;
 }

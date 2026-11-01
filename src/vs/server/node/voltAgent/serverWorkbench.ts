@@ -36,7 +36,7 @@ import type { IServerAPI, IServerEmbedder } from '../remoteExtensionHostAgentSer
 import { ServerParsedArgs, serverOptions } from '../serverEnvironmentService.js';
 import type { SocketServer } from '../serverServices.js';
 
-/** Where the workbench lives on the agent server's port (the web app keeps `/`). */
+/** Where the workbench lives on the agent server's port (`/` is the sign-in page, serverSignIn.ts). */
 export const WORKBENCH_BASE_PATH = '/code';
 /** `POST` with the device token as a bearer: the cookies that open the workbench. `DELETE` signs out. */
 export const WORKBENCH_SESSION_PATH = '/api/workbench/session';
@@ -118,7 +118,7 @@ export class ServerWorkbench extends Disposable {
 			return true;
 		}
 		if (!this.signedIn(req)) {
-			// A page load goes through the web app, which signs in (pairing or the local session) and comes back.
+			// A page load goes through the sign-in page (pairing or the local session), which comes back here.
 			if (req.method === 'GET' && /text\/html/.test(req.headers.accept ?? '')) {
 				res.writeHead(302, { Location: `/?next=${encodeURIComponent(url.pathname + url.search)}`, 'Cache-Control': 'no-store' }).end();
 			} else {
@@ -169,9 +169,15 @@ export class ServerWorkbench extends Disposable {
 		return true;
 	}
 
-	private signedIn(req: http.IncomingMessage): boolean {
+	/** Whether the request carries a paired device's session cookie (the sign-in page sends it on). */
+	signedIn(req: http.IncomingMessage): boolean {
+		return !!this.signedInToken(req);
+	}
+
+	/** The paired device's token from the session cookie, while that device is still paired. */
+	private signedInToken(req: http.IncomingMessage): string | undefined {
 		const token = readCookie(req, SESSION_COOKIE);
-		return !!token && !!this.options.authorize(token);
+		return token && this.options.authorize(token) ? token : undefined;
 	}
 
 	private async handleSession(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -294,7 +300,7 @@ export class ServerWorkbench extends Disposable {
 		const { createServer } = await import('../remoteExtensionHostAgentServer.js');
 		const embedder: IServerEmbedder = {
 			registerChannels: socketServer => this.registerChannels(socketServer),
-			webConfiguration: () => this.webConfiguration(),
+			webConfiguration: req => this.webConfiguration(req),
 		};
 		const server = await createServer(null, args, dataDir, embedder);
 		this._register(toDisposable(() => server.dispose()));
@@ -340,9 +346,11 @@ export class ServerWorkbench extends Disposable {
 
 	/**
 	 * What the page starts with: the desktop's settings as defaults (theme, fonts, editor), the
-	 * agent layout, Volt's product identity, and which paired environment this is.
+	 * agent layout, Volt's product identity, and which paired environment this is, with the device
+	 * token the page signed in with (its session cookie), so the agent UI connects without a
+	 * second sign-in.
 	 */
-	private async webConfiguration(): Promise<Record<string, unknown>> {
+	private async webConfiguration(req: http.IncomingMessage): Promise<Record<string, unknown>> {
 		const settings = await this.desktopSettings();
 		const defaults: Record<string, unknown> = {};
 		for (const [key, value] of Object.entries(settings)) {
@@ -352,6 +360,8 @@ export class ServerWorkbench extends Disposable {
 		}
 		// The agent window: the agent list on the left, the primary side bar on the right.
 		defaults['workbench.sideBar.location'] = 'right';
+		// Volt Dark, as on the desktop (VS Code's web default is the light theme).
+		defaults['workbench.colorTheme'] ??= 'Volt Dark';
 		// The desktop's title (a browser's adds the server's address).
 		defaults['window.title'] ??= '${dirty}${activeEditorShort}${separator}${rootName}${separator}${profileName}${separator}${appName}';
 		return {
@@ -361,7 +371,7 @@ export class ServerWorkbench extends Disposable {
 			productConfiguration: productForWeb(),
 			// The desktop's remote button: the icon alone, the computer in its tooltip.
 			windowIndicator: { label: '$(remote)', tooltip: `Volt on ${this.options.label}` },
-			voltAgentServer: { environmentId: this.options.environmentId(), wsPath: '/ws' },
+			voltAgentServer: { environmentId: this.options.environmentId(), wsPath: '/ws', deviceToken: this.signedInToken(req), userHome: homedir() },
 		};
 	}
 

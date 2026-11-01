@@ -52,6 +52,23 @@ else
 fi
 codesign --verify --deep --strict --verbose=2 "$APP" || echo "::warning::codesign --verify reported problems"
 
+# Stapling fetches the ticket from Apple's CloudKit, which drops connections now and then
+# ("The network connection was lost", exit 68) or doesn't have a fresh ticket yet (exit 65), so it
+# gets a few tries before the build fails.
+staple() {
+	for ATTEMPT in 1 2 3 4 5; do
+		if xcrun stapler staple "$1"; then
+			return 0
+		fi
+		if [ "$ATTEMPT" -eq 5 ]; then
+			echo "stapler staple failed $ATTEMPT times for $1" >&2
+			return 1
+		fi
+		echo "stapler staple failed (attempt $ATTEMPT), retrying"
+		sleep $((ATTEMPT * 15))
+	done
+}
+
 NOTARIZE=""
 if [ -n "$IDENTITY" ] && [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
 	NOTARIZE=1
@@ -61,7 +78,7 @@ ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT/$BASE.zip"
 if [ -n "$NOTARIZE" ]; then
 	echo "Notarizing the app"
 	xcrun notarytool submit "$OUT/$BASE.zip" --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
-	xcrun stapler staple "$APP"
+	staple "$APP"
 	rm "$OUT/$BASE.zip"
 	ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT/$BASE.zip"
 elif [ -n "$IDENTITY" ]; then
@@ -97,7 +114,7 @@ fi
 if [ -n "$NOTARIZE" ]; then
 	echo "Notarizing the dmg"
 	xcrun notarytool submit "$OUT/$BASE.dmg" --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
-	xcrun stapler staple "$OUT/$BASE.dmg"
+	staple "$OUT/$BASE.dmg"
 fi
 
 ls -la "$OUT"

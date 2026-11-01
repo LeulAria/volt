@@ -14,7 +14,7 @@ import { Markdown } from '../src/chat/Markdown';
 import { ChecksBadge, PullRequestStatePill } from '../src/git/PullRequestBits';
 import { useClient, useOptionalClient } from '../src/state/client';
 import { useTheme } from '../src/theme/theme';
-import { Button, EmptyState, haptic, Icon, IconButton, Segmented, T, Tap } from '../src/ui/core';
+import { Button, EmptyState, haptic, Icon, IconButton, Tabs, T, Tap } from '../src/ui/core';
 import { ActionSheet, ConfirmSheet, InputSheet, type ISheetAction } from '../src/ui/sheets';
 
 type Tab = 'conversation' | 'checks' | 'files';
@@ -97,7 +97,7 @@ function Pull({ root, number }: { readonly root: string; readonly number: number
 				</View>
 				<MergeBox pr={pr} />
 				<View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
-					<Segmented value={tab} onChange={setTab} options={[{ id: 'conversation', label: 'Conversation' }, { id: 'checks', label: `Checks${pr.checks.total ? ` ${pr.checks.total}` : ''}` }, { id: 'files', label: `Files ${pr.changedFiles}` }]} />
+					<Tabs value={tab} onChange={setTab} options={[{ id: 'conversation', label: 'Conversation' }, { id: 'checks', label: `Checks${pr.checks.total ? ` ${pr.checks.total}` : ''}` }, { id: 'files', label: `Files ${pr.changedFiles}` }]} />
 				</View>
 				{tab === 'conversation' ? (
 					<View style={{ paddingHorizontal: 16, paddingTop: 14, gap: 14 }}>

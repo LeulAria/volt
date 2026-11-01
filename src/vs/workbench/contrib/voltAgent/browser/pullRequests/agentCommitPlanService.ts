@@ -72,7 +72,7 @@ export interface IAgentCommitPlan {
 	busy?: string;
 	/** Why the last Commit stopped; the commits before it are in and gone from the plan. */
 	error?: string;
-	/** The last Commit stopped because a git hook refused it: the review offers to commit without hooks. */
+	/** The last Commit was stopped by a commit hook: the review offers to commit without hooks. */
 	hookFailed?: boolean;
 	/** A passing note for the footer (a regenerate that brought nothing new). */
 	notice?: string;
@@ -98,7 +98,7 @@ export interface IAgentCommitPlanService {
 	setMessage(planId: string, commitId: string, message: string): void;
 	/** Writes a new message for the commit's files (the ones left in, or all when none are). */
 	regenerate(planId: string, commitId: string): Promise<void>;
-	/** Commits every commit with a file left in, in order, then tells the agent. `skipHooks` passes `--no-verify`. */
+	/** Commits every commit with a file left in, in order, then tells the agent. `skipHooks` commits with `--no-verify`. */
 	commit(planId: string, options?: { readonly skipHooks?: boolean }): Promise<void>;
 	/** Closes the review without committing what is left. */
 	dismiss(planId: string): void;
@@ -292,6 +292,7 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 		}
 		plan.error = undefined;
 		plan.hookFailed = undefined;
+		plan.notice = undefined;
 		const attribute = this.configurationService.getValue<boolean>(AGENT_COMMIT_ATTRIBUTION_SETTING) !== false;
 		try {
 			for (const [index, commit] of todo.entries()) {
@@ -324,7 +325,8 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 		} catch (err) {
 			plan.busy = undefined;
 			plan.error = voltPrErrorMessage(err);
-			plan.hookFailed = voltPrErrorCode(err) === 'hookFailed' || undefined;
+			plan.hookFailed = voltPrErrorCode(err) === 'hookFailed';
+			this.logService.warn('[volt-git] commit review stopped', plan.error);
 			this._onDidChange.fire(plan.sessionId);
 			return;
 		}

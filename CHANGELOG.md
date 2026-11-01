@@ -8,6 +8,51 @@ Volt is built on VS Code (Code - OSS 1.105). Changes to that base come from upst
 Download a build from [Releases](https://github.com/LeulAria/volt/releases). From 0.0.4, Mac builds are signed with an Apple
 Developer ID and notarized.
 
+## [0.0.5] - 2026-10-31
+
+Commits by the hunk, a model for each multitask, and a working Trajectory panel. Draft commits can now split one file
+across commits, review diffs can undo a single hunk, Start Multitasking can give each queued message its own model, and the
+Trajectory panel shows runs from the agent server again.
+
+### Highlights
+
+- **Hunk-level draft commits.** The agent can split one file across commits by hunk, and Review Draft Commits opens at once
+  with a live spinner and Cancel.
+- **Revert a hunk.** An undo button beside each hunk in a review diff puts it back and saves the file.
+- **A model for each multitask.** Start Multitasking's Configure toggle picks the model each picked queued message starts on.
+- **Trajectory works with the agent server.** The Trajectory panel shows the model requests of runs in the agent server,
+  and it updates while a reply streams.
+
+### Added
+
+- Start Multitasking has a Configure toggle that picks a model for each picked queued message.
+- Generate Draft Commits starts the review right away (spinner, Cancel), and the agent can split one file across commits
+  by hunk. The review is now called Review Draft Commits, with blue checkboxes, header buttons, per-commit diffs and a
+  composer chip.
+- An undo button beside each hunk in review diffs reverts that hunk and saves the file.
+- Settings lists have a search for each column.
+
+### Changed
+
+- The title bar's panel, files and right panel toggles use one outline icon set at the same size as the other title bar
+  icons.
+- The side toolbar's settings button looks like Collapse and shows whenever the toolbar is hovered. It stays while its
+  menu is open.
+- The footer update button, the outlined PR Merge button and square Models rows match the rest of Volt. Tab & Prediction
+  no longer shows a sparkle icon.
+- Review diffs have brighter line numbers, and Add to Chat from them no longer opens a closed sidebar.
+
+### Fixed
+
+- The Trajectory panel said "No model requests recorded" for every chat while agents ran in the agent server (the
+  default). Windows and the web client now read the agent server's trajectories.
+- In Agent mode, a message phrased as a question could not edit files or run commands, so the agent replied that it could
+  only answer. Only Ask and Plan are read-only now.
+- Claude turns close their finished tasks before they end, and the Tasks card no longer brings back an older reply's list.
+- Waiting tools (`await_commits`, `await_answers`, `terminal_wait` and the others) can repeat without being stopped as a
+  loop. Loop, stall and budget findings a run recovered from stay in the trajectory; the chat shows one only when it ended
+  the run.
+
 ## [0.0.4] - 2026-10-31
 
 Signed on Mac, much lighter, and agents that prove they are done. Volt for Mac is now signed with an Apple Developer ID and
@@ -400,6 +445,7 @@ mode, Git views for branches and worktrees, several Claude accounts, and a good 
 The first tagged build of Volt, which added the release pipeline with Stable, Beta and Nightly channels. It was never published to
 GitHub Releases.
 
+[0.0.5]: https://github.com/LeulAria/volt/releases/tag/v0.0.5
 [0.0.4]: https://github.com/LeulAria/volt/releases/tag/v0.0.4
 [0.0.3]: https://github.com/LeulAria/volt/releases/tag/v0.0.3
 [0.0.2]: https://github.com/LeulAria/volt/releases/tag/v0.0.2

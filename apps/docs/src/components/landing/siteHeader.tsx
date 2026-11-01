@@ -15,7 +15,7 @@ const PILL =
 const TEXT_LINK =
   "inline-flex h-6 items-center justify-center rounded-md px-2 leading-none text-[12px] font-medium text-white/65 transition-colors duration-150 hover:text-white";
 
-/** Logo, the beta label with the newest GitHub release, Changelog / Download as text links, and the Discord / GitHub pills (GitHub with its live star count). Below md the text links move into the menu sheet. */
+/** Logo, the beta label with the newest GitHub release, Changelog / Download / Support as text links, and the Discord / GitHub pills (GitHub with its live star count). Below md the text links move into the menu sheet. */
 export function SiteHeader({
   animate = false,
   className,
@@ -89,6 +89,13 @@ export function SiteHeader({
         className={`${TEXT_LINK} max-md:hidden ${focusRing}`}
       >
         Download
+      </Link>
+      <Link
+        {...hero}
+        to="/donors"
+        className={`${TEXT_LINK} max-md:hidden ${focusRing}`}
+      >
+        Support
       </Link>
       <a
         {...hero}

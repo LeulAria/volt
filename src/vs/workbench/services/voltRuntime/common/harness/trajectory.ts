@@ -193,6 +193,62 @@ export function closeOpenToolRuns(request: ITrajectoryRequest, now = Date.now())
 	}
 }
 
+// --- syncing to a window -------------------------------------------------------------------
+
+/** Changes whenever a recorded request grows (stream chunk, usage, tool result); compared by value. */
+export function trajectoryRevision(request: ITrajectoryRequest): string {
+	const ended = request.toolRuns.filter(run => run.endedAt !== undefined).length;
+	return [
+		request.firstChunkAt ?? '', request.endedAt ?? '', request.response.text.length, request.response.reasoning.length, request.response.toolCalls.length,
+		request.usage ? JSON.stringify(request.usage) : '', request.costUsd ?? '', request.finish ?? '', request.error ?? '',
+		request.notes.length, request.toolRuns.length, ended,
+	].join('|');
+}
+
+/** The parts of a request fixed when it went out, sent to a window only the first time. */
+type TrajectoryRequestHead = 'system' | 'messages' | 'tools' | 'options';
+
+export type ITrajectoryRequestUpdate = Omit<ITrajectoryRequest, TrajectoryRequestHead> & Partial<Pick<ITrajectoryRequest, TrajectoryRequestHead>>;
+
+/** A chat's requests as a window that already holds some of them needs them. */
+export interface ITrajectorySync {
+	/** Every request id of the chat, oldest first. */
+	readonly ids: readonly string[];
+	/** Requests the window did not have, whole, and ones that changed, without their head. */
+	readonly requests: readonly ITrajectoryRequestUpdate[];
+	readonly revisions: Readonly<Record<string, string>>;
+}
+
+/** What a window holding `known` (request id to revision) is missing of `requests`. */
+export function syncTrajectory(requests: readonly ITrajectoryRequest[], known: Readonly<Record<string, string>>): ITrajectorySync {
+	const revisions: Record<string, string> = {};
+	const updates: ITrajectoryRequestUpdate[] = [];
+	for (const request of requests) {
+		const revision = revisions[request.id] = trajectoryRevision(request);
+		if (!Object.prototype.hasOwnProperty.call(known, request.id)) {
+			updates.push(request);
+		} else if (known[request.id] !== revision) {
+			const { system: _system, messages: _messages, tools: _tools, options: _options, ...rest } = request;
+			updates.push(rest);
+		}
+	}
+	return { ids: requests.map(request => request.id), requests: updates, revisions };
+}
+
+/** `previous` brought up to date with a {@link syncTrajectory} result. */
+export function applyTrajectorySync(previous: readonly ITrajectoryRequest[], sync: ITrajectorySync): ITrajectoryRequest[] {
+	const byId = new Map(previous.map(request => [request.id, request]));
+	for (const update of sync.requests) {
+		const old = byId.get(update.id);
+		if (old) {
+			byId.set(update.id, { ...old, ...update, system: update.system ?? old.system, messages: update.messages ?? old.messages, tools: update.tools ?? old.tools });
+		} else if (update.messages && update.tools && update.system !== undefined) {
+			byId.set(update.id, update as ITrajectoryRequest);
+		}
+	}
+	return sync.ids.map(id => byId.get(id)).filter((request): request is ITrajectoryRequest => !!request);
+}
+
 // --- reading -------------------------------------------------------------------------------
 
 /** Whole prompt the provider counted: uncached input plus cache reads and writes. */

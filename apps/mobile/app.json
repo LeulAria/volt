@@ -86,7 +86,8 @@
 					]
 				}
 			],
-			"expo-document-picker"
+			"expo-document-picker",
+			"./plugins/withSceneLifecycle"
 		],
 		"experiments": {
 			"typedRoutes": true

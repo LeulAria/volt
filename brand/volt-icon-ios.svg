@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+  <!-- body: near-black, a breath lighter at the top -->
+  <linearGradient id="bodyFill" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#141415"/>
+    <stop offset="1" stop-color="#050505"/>
+  </linearGradient>
+  <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#fff" stop-opacity="0.22"/>
+    <stop offset="0.25" stop-color="#fff" stop-opacity="0.06"/>
+    <stop offset="1" stop-color="#fff" stop-opacity="0.1"/>
+  </linearGradient>
+  <linearGradient id="shadowFace" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#C9C9CC"/>
+    <stop offset="1" stop-color="#ADADB1"/>
+  </linearGradient>
+  <linearGradient id="lightFace" x1="0.2" y1="0" x2="0.5" y2="1">
+    <stop offset="0" stop-color="#E2E2E5"/>
+    <stop offset="1" stop-color="#CFCFD3"/>
+  </linearGradient>
+  <filter id="iconShadow" x="-20%" y="-20%" width="140%" height="140%">
+    <feGaussianBlur in="SourceAlpha" stdDeviation="8"/><feOffset dy="5"/>
+    <feComponentTransfer><feFuncA type="linear" slope="0.2"/></feComponentTransfer>
+    <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <clipPath id="glyphClip"><path d="M561.9,243.1 L336.4,525.2 A13,13 0 0 0 345.0,546.2 L476.0,561.9 A8,8 0 0 1 482.9,571.6 L439.2,770.0 A13,13 0 0 0 462.1,780.9 L687.6,498.8 A13,13 0 0 0 679.0,477.8 L548.0,462.1 A8,8 0 0 1 541.1,452.4 L584.8,254.0 A13,13 0 0 0 561.9,243.1 Z"/></clipPath>
+</defs>
+<rect width="1024" height="1024" fill="url(#bodyFill)"/>
+<g transform="translate(512 512) scale(1.2427) translate(-512 -512)">
+<path d="M561.9,243.1 L336.4,525.2 A13,13 0 0 0 345.0,546.2 L476.0,561.9 A8,8 0 0 1 482.9,571.6 L439.2,770.0 A13,13 0 0 0 462.1,780.9 L687.6,498.8 A13,13 0 0 0 679.0,477.8 L548.0,462.1 A8,8 0 0 1 541.1,452.4 L584.8,254.0 A13,13 0 0 0 561.9,243.1 Z" fill="#FFFFFF"/>
+<g clip-path="url(#glyphClip)">
+  <path d="M321.8,543.4 L539.2,461.0 L500.6,563.0 L484.8,563.0 Z" fill="url(#shadowFace)"/>
+  <path d="M539.2,461.0 L702.2,480.6 L462.9,662.4 Z" fill="url(#lightFace)"/>
+</g>
+</g>
+</svg>

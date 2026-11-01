@@ -189,37 +189,27 @@ export function ghErrorText(stderr: string): string {
 	return lines.slice(0, 3).join(' ').replace(/^gh:\s*/i, '').slice(0, 400) || 'The GitHub CLI failed.';
 }
 
-/** Lines a hook prints around its real complaint: version managers, husky, node's stack and banners. */
+/** Lines a hook prints that say nothing about why it failed: version managers, husky's banner, stacks. */
 const HOOK_NOISE = [
-	/^>\s*husky\b/i,
+	/^this is not the package you are looking for/i,
 	/^found '.*' with version/i,
-	/^now using node\b/i,
-	/^this is not the .* you are looking for/i,
-	/^reading git index versions/i,
-	/^\(node:\d+\)/,
-	/^\(use `node --trace/i,
+	/^now using node/i,
+	/^>\s*husky\b/i,
 	/^at\s/,
-	/^node\.js v\d/i,
-	/^node:internal\//,
-	/^throw\s/,
+	/^node:internal/,
 	/^\^+$/,
-	/^\{$|^\}$/,
-	/^(code|requirestack|errno|syscall|path):/i,
-	/^'.*',?$/,
-	/^\]$/,
+	/^throw\s/,
+	/^require stack:?$/i,
+	/^-\s+\//,
+	/^\d+\s*\|/,
+	/^node\.js v\d/i,
 ];
 
-/**
- * Why a commit hook refused, from its output: the lines left after the noise, an error line first.
- * Undefined when nothing useful is left.
- */
-export function hookFailureText(output: string): string | undefined {
-	const lines = output.split(/\r?\n/).map(line => line.trim()).filter(line => line && !HOOK_NOISE.some(noise => noise.test(line)));
-	if (!lines.length) {
-		return undefined;
-	}
-	const first = lines.findIndex(line => /error|cannot|failed|not formatted|unexpected|missing|bad /i.test(line));
-	return lines.slice(first < 0 ? 0 : first, (first < 0 ? 0 : first) + 3).join(' ').slice(0, 400);
+/** What a failed commit hook printed that says why: the error lines first, else its last lines. */
+export function hookFailureText(output: string): string {
+	const lines = output.replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/).map(line => line.trim()).filter(line => line && !HOOK_NOISE.some(noise => noise.test(line)));
+	const errors = lines.filter(line => /error|fail|cannot|can't|not found|denied|invalid|missing/i.test(line));
+	return (errors.length ? errors.slice(0, 2) : lines.slice(-2)).join(' ').slice(0, 300);
 }
 
 //#endregion
