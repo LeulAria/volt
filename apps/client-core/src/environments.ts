@@ -97,7 +97,8 @@ export function formatCode(code: string): string {
  * (a LAN server has no certificate); other host names are HTTPS (Tailscale Serve, a tunnel).
  */
 export function normalizeBaseUrl(input: string): string | undefined {
-	let text = input.trim();
+	// Phone keyboards slip in spaces ("100. 68"), commas or ideographic dots for dots, and trailing punctuation.
+	let text = input.replace(/\s+/g, '').replace(/[,，。、]/g, '.').replace(/[./]+$/, '');
 	if (!text) {
 		return undefined;
 	}
