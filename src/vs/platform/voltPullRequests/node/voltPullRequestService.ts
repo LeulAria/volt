@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
-import { unlink } from 'fs/promises';
+import { access, constants as fsConstants, unlink } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from '../../../base/common/path.js';
 import { SequencerByKey } from '../../../base/common/async.js';
@@ -17,6 +17,7 @@ import {
 	apiHost,
 	classifyGhError,
 	ghErrorText,
+	hookFailureText,
 	IGhBranchRefJson,
 	IGhConnection,
 	IGhFileJson,
@@ -1446,7 +1447,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 				// leading `:` is a file name, not a pattern.
 				const paths = request.paths?.filter(path => !!path);
 				if (request.contents?.length) {
-					await this.commitThroughIndex(root, message, paths ?? [], request.contents);
+					await this.commitThroughIndex(root, message, paths ?? [], request.contents, !!request.skipHooks);
 				} else {
 					const pathInput = paths ? `${paths.join('\0')}\0` : undefined;
 					const pathArgs = paths ? ['--pathspec-from-file=-', '--pathspec-file-nul'] : [];
@@ -1454,10 +1455,9 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 					if (added.code !== 0) {
 						throw fail('git add', added);
 					}
-					const committed = await git(['--literal-pathspecs', 'commit', '-m', message, ...pathArgs], pathInput);
+					const committed = await git(['--literal-pathspecs', 'commit', '-m', message, ...(request.skipHooks ? ['--no-verify'] : []), ...pathArgs], pathInput);
 					if (committed.code !== 0) {
-						const text = `${committed.stdout}\n${committed.stderr}`;
-						throw new VoltPrError('failed', /nothing (added )?to commit|no changes added/i.test(text) ? 'There is nothing to commit.' : `git commit failed: ${ghErrorText(committed.stderr || committed.stdout)}`);
+						throw await this.commitFailure(root, committed, !!request.skipHooks);
 					}
 				}
 			} catch (err) {
@@ -1484,7 +1484,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	 * what the commit holds of files split by hunks. The real index only drops what it staged for
 	 * these paths, so it matches the new HEAD again.
 	 */
-	private async commitThroughIndex(root: string, message: string, paths: readonly string[], contents: readonly { readonly path: string; readonly content: string }[]): Promise<void> {
+	private async commitThroughIndex(root: string, message: string, paths: readonly string[], contents: readonly { readonly path: string; readonly content: string }[], skipHooks: boolean): Promise<void> {
 		const indexFile = join(tmpdir(), `volt-commit-${generateUuid()}.index`);
 		const git = (args: string[], input?: string) => this.run('git', args, { cwd: root, timeoutMs: GIT_TIMEOUT_MS, ...(input !== undefined ? { input } : {}) });
 		const indexed = (args: string[], input?: string) => this.run('git', args, { cwd: root, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_INDEX_FILE: indexFile }, ...(input !== undefined ? { input } : {}) });
@@ -1517,10 +1517,9 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 					throw fail('git update-index', updated);
 				}
 			}
-			const committed = await indexed(['commit', '-m', message]);
+			const committed = await indexed(['commit', '-m', message, ...(skipHooks ? ['--no-verify'] : [])]);
 			if (committed.code !== 0) {
-				const text = `${committed.stdout}\n${committed.stderr}`;
-				throw new VoltPrError('failed', /nothing (added )?to commit|no changes added/i.test(text) ? 'There is nothing to commit.' : `git commit failed: ${ghErrorText(committed.stderr || committed.stdout)}`);
+				throw await this.commitFailure(root, committed, skipHooks);
 			}
 			if (paths.length) {
 				const synced = await git(['--literal-pathspecs', 'reset', '-q', '--', ...paths]);
@@ -1531,6 +1530,37 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		} finally {
 			await unlink(indexFile).catch(() => undefined);
 		}
+	}
+
+	/**
+	 * Why `git commit` failed. git prints nothing of its own when a hook refuses, so output that is
+	 * not git's (`error:`/`fatal:`) with a pre-commit or commit-msg hook in place is the hook's.
+	 */
+	private async commitFailure(root: string, result: IRunResult, skippedHooks: boolean): Promise<VoltPrError> {
+		const text = `${result.stdout}\n${result.stderr}`;
+		if (/nothing (added )?to commit|no changes added/i.test(text)) {
+			return new VoltPrError('failed', 'There is nothing to commit.');
+		}
+		if (!skippedHooks && !/^(error|fatal):/m.test(result.stderr)) {
+			const hook = await this.commitHook(root);
+			if (hook) {
+				const why = hookFailureText(text);
+				return new VoltPrError('hookFailed', why ? `git commit failed in the ${hook} hook: ${why}` : `git commit failed in the ${hook} hook.`);
+			}
+		}
+		return new VoltPrError('failed', `git commit failed: ${ghErrorText(result.stderr || result.stdout)}`);
+	}
+
+	/** The commit hook the repository runs (core.hooksPath or .git/hooks), if any. */
+	private async commitHook(root: string): Promise<string | undefined> {
+		for (const hook of ['pre-commit', 'commit-msg']) {
+			const located = await this.run('git', ['rev-parse', '--path-format=absolute', '--git-path', `hooks/${hook}`], { cwd: root, timeoutMs: 15_000 });
+			const file = located.stdout.trim();
+			if (located.code === 0 && file && await access(file, fsConstants.X_OK).then(() => true, () => false)) {
+				return hook;
+			}
+		}
+		return undefined;
 	}
 
 	async pull(folder: string): Promise<{ readonly updated: boolean; readonly branch: string; readonly upstream: string }> {

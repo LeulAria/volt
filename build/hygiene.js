@@ -4,6 +4,28 @@
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 
+// A git worktree has no node_modules of its own: link the main checkout's (it is git-ignored), or
+// the pre-commit hook dies on `Cannot find module` and no commit can be made there. A link, not
+// NODE_PATH: eslint.config.js is ESM, which ignores NODE_PATH.
+(function useMainCheckoutModules() {
+	const fs = require('fs');
+	const path = require('path');
+	const own = path.join(__dirname, '..', 'node_modules');
+	if (fs.existsSync(own)) {
+		return;
+	}
+	try {
+		const commonDir = require('child_process').execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: __dirname, encoding: 'utf8' }).trim();
+		const modules = path.join(path.dirname(commonDir), 'node_modules');
+		if (fs.existsSync(modules) && path.resolve(modules) !== path.resolve(own)) {
+			fs.rmSync(own, { force: true }); // a dangling link
+			fs.symlinkSync(modules, own, 'junction');
+		}
+	} catch {
+		// Not in git, or the link failed: the requires below report what is missing.
+	}
+})();
+
 const filter = require('gulp-filter');
 const es = require('event-stream');
 const VinylFile = require('vinyl');

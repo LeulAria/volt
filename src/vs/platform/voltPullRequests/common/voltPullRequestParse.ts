@@ -189,6 +189,39 @@ export function ghErrorText(stderr: string): string {
 	return lines.slice(0, 3).join(' ').replace(/^gh:\s*/i, '').slice(0, 400) || 'The GitHub CLI failed.';
 }
 
+/** Lines a hook prints around its real complaint: version managers, husky, node's stack and banners. */
+const HOOK_NOISE = [
+	/^>\s*husky\b/i,
+	/^found '.*' with version/i,
+	/^now using node\b/i,
+	/^this is not the .* you are looking for/i,
+	/^reading git index versions/i,
+	/^\(node:\d+\)/,
+	/^\(use `node --trace/i,
+	/^at\s/,
+	/^node\.js v\d/i,
+	/^node:internal\//,
+	/^throw\s/,
+	/^\^+$/,
+	/^\{$|^\}$/,
+	/^(code|requirestack|errno|syscall|path):/i,
+	/^'.*',?$/,
+	/^\]$/,
+];
+
+/**
+ * Why a commit hook refused, from its output: the lines left after the noise, an error line first.
+ * Undefined when nothing useful is left.
+ */
+export function hookFailureText(output: string): string | undefined {
+	const lines = output.split(/\r?\n/).map(line => line.trim()).filter(line => line && !HOOK_NOISE.some(noise => noise.test(line)));
+	if (!lines.length) {
+		return undefined;
+	}
+	const first = lines.findIndex(line => /error|cannot|failed|not formatted|unexpected|missing|bad /i.test(line));
+	return lines.slice(first < 0 ? 0 : first, (first < 0 ? 0 : first) + 3).join(' ').slice(0, 400);
+}
+
 //#endregion
 
 //#region GraphQL

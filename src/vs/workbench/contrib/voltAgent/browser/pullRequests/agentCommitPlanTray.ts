@@ -708,7 +708,7 @@ export class AgentCommitPlanTray extends Disposable {
 				void this.orchestrator.cancel(sessionId);
 			}
 		}));
-		this._register(this.commitButton.onDidClick(() => this.plan && void this.plans.commit(this.plan.id)));
+		this._register(this.commitButton.onDidClick(() => this.plan && void this.plans.commit(this.plan.id, { skipHooks: !!this.plan.hookFailed })));
 
 		this.editor = append(this.element, $('.volt-commit-plan-editor.hidden'));
 		this.editorLabel = append(this.editor, $('.volt-commit-plan-editor-label'));
@@ -858,11 +858,16 @@ export class AgentCommitPlanTray extends Disposable {
 		this.status.textContent = plan.busy ?? plan.error ?? plan.notice ?? (plan.done.length
 			? localize('voltCommitPlan.madeSome', "{0} committed. The rest is still here.", plan.done.length)
 			: '');
+		// The status line is cut to one line; the whole reason shows on hover.
+		this.status.title = plan.error && !plan.busy ? plan.error : '';
 		this.chipCount.textContent = String(commits.length);
 		// A new label replaces the button's content, an unchanged one keeps it: one icon in front either way.
-		this.commitButton.label = chosen.length === 1
-			? localize('voltCommitPlan.commitOne', "Commit")
-			: localize('voltCommitPlan.commitMany', "Commit {0}", chosen.length);
+		// After a hook refused, the button commits past it (`--no-verify`); the hook's reason is beside it.
+		this.commitButton.label = plan.hookFailed && !plan.busy
+			? localize('voltCommitPlan.commitWithoutHooks', "Commit Without Hooks")
+			: chosen.length === 1
+				? localize('voltCommitPlan.commitOne', "Commit")
+				: localize('voltCommitPlan.commitMany', "Commit {0}", chosen.length);
 		if (!this.commitButton.element.querySelector('.volt-commit-plan-commit-icon')) {
 			this.commitButton.element.prepend(commitIcon(this.element.ownerDocument));
 		}
