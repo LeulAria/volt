@@ -1,0 +1,284 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * The Pull Requests page (agentPullRequestsPage.ts) is drawn with Customize's classes
+ * (agentCustomize.css); this only fits its rows into a WorkbenchList inside Customize's card.
+ * State colors come from agentPullRequests.css (--volt-pr-*).
+ */
+
+.volt-prs-page {
+	outline: none;
+}
+
+.volt-prs-page .volt-customize-card {
+	padding: 0;
+}
+
+/* The list owns hover and focus; rows are split by Customize's hairline. */
+.volt-prs-list .monaco-list-row:not(:first-child) .volt-prs-row {
+	border-top: 1px solid var(--volt-customize-line);
+}
+
+/* The list sets each row's line-height to the row height; Customize's rows read at 1.4. */
+.volt-prs-row {
+	height: 50px;
+	line-height: 1.4;
+	cursor: pointer;
+}
+
+.volt-prs-row .volt-customize-tile .volt-pr-icon .codicon[class*='codicon-'] {
+	font-size: 15px;
+}
+
+.volt-prs-row.is-closed .name {
+	color: var(--volt-customize-muted);
+}
+
+.volt-prs-labels {
+	flex: none;
+	display: inline-flex;
+	gap: 4px;
+}
+
+.volt-prs-row .description .sep {
+	opacity: 0.6;
+}
+
+.volt-prs-trailing {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	color: var(--volt-customize-muted);
+	font-size: 12.5px;
+}
+
+.volt-prs-reason {
+	white-space: nowrap;
+}
+
+.volt-prs-reason.reason-bad {
+	color: var(--volt-pr-closed);
+}
+
+.volt-prs-reason.reason-good {
+	color: var(--volt-pr-open);
+}
+
+.volt-prs-count {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+}
+
+.volt-prs-trailing .codicon[class*='codicon-'] {
+	font-size: 14px;
+}
+
+.volt-prs-synced {
+	color: var(--volt-customize-muted);
+	font-size: 12.5px;
+}
+
+.volt-prs-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+/* A group's name in the card, as the files sidebar sections its list. */
+.volt-prs-group {
+	display: flex;
+	align-items: flex-end;
+	gap: 6px;
+	height: 32px;
+	padding: 0 14px 6px;
+	box-sizing: border-box;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	line-height: 1.4;
+	text-transform: uppercase;
+	color: var(--volt-customize-muted);
+}
+
+.volt-prs-list .monaco-list-row.volt-prs-group-row {
+	cursor: default;
+	background: transparent !important;
+}
+
+.volt-prs-list .monaco-list-row.volt-prs-group-row:not(:first-child) .volt-prs-group {
+	border-top: 1px solid var(--volt-customize-line);
+}
+
+.volt-prs-list .monaco-list-row.volt-prs-group-row + .monaco-list-row .volt-prs-row {
+	border-top: 0;
+}
+
+.volt-customize-icon-button.filter.active {
+	color: var(--vscode-textLink-foreground, #75beff);
+}
+
+.volt-customize-icon-button .volt-agent-svg-icon,
+.volt-customize-icon-button .volt-agent-svg-icon svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+}
+
+/* An open pull request covers the window like Settings (voltSettings.css): its own sidebar, then the pull request. */
+.volt-prs-detail {
+	position: absolute;
+	inset: 0;
+	z-index: 250;
+	display: flex;
+	background: var(--vscode-editor-background);
+	-webkit-app-region: no-drag;
+}
+
+.monaco-workbench.volt-prs-detail-open > .monaco-grid-view,
+.monaco-workbench.volt-prs-detail-open > .volt-agent-tools-area,
+.monaco-workbench.volt-prs-detail-open > .volt-agent-drawer-scrim {
+	visibility: hidden !important;
+}
+
+/* The window's drag strip, above the traffic lights' row. */
+.volt-prs-detail::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 28px;
+	-webkit-app-region: drag;
+	z-index: 2;
+}
+
+.volt-prs-sidebar {
+	flex: 0 0 var(--volt-prs-sidebar-width, 252px);
+	width: var(--volt-prs-sidebar-width, 252px);
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	padding-top: 52px;
+	box-sizing: border-box;
+	background: var(--volt-agent-sidebar-bg, color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base, #141414) 78%, #000) 55%, transparent));
+	border-right: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
+}
+
+.volt-prs-sidebar-head {
+	flex: none;
+	display: flex;
+	margin: 0 10px 8px;
+}
+
+/* Settings' Back (voltSettings.css). */
+.volt-prs-back {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	align-items: center;
+	gap: 8px;
+	height: 32px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+	outline: none;
+	-webkit-app-region: no-drag;
+}
+
+.volt-prs-back:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.volt-prs-back:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-prs-back .codicon {
+	font-size: 14px;
+	opacity: 0.85;
+}
+
+/* The files sidebar's "PULL REQUESTS" heading. */
+.volt-prs-sidebar-title {
+	flex: none;
+	padding: 6px 20px 8px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--volt-pr-muted);
+}
+
+.volt-prs-sidebar .volt-pr-list-toolbar {
+	position: static;
+	flex: none;
+	background: transparent;
+}
+
+.volt-prs-filter-button .volt-agent-svg-icon,
+.volt-prs-filter-button .volt-agent-svg-icon svg {
+	display: block;
+	width: 14px;
+	height: 14px;
+}
+
+.volt-prs-filter-button.active {
+	color: var(--vscode-textLink-foreground, #75beff);
+}
+
+.volt-prs-sidebar-scroll {
+	flex: 1;
+	min-height: 0;
+}
+
+.volt-prs-sidebar-scroll > .volt-prs-sidebar-list {
+	height: 100%;
+	overflow: visible;
+	padding-bottom: 8px;
+	box-sizing: border-box;
+}
+
+.volt-prs-sidebar .volt-pr-list-row.selected {
+	background: var(--vscode-list-inactiveSelectionBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+}
+
+/* The agent list's footer row (agentHomePane.css styles the buttons). */
+.volt-prs-sidebar-footer {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: 44px;
+	padding: 0 10px 6px 12px;
+}
+
+.volt-prs-sidebar-footer .volt-agent-home-settings.active {
+	opacity: 1;
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.volt-prs-detail-main {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	padding-top: 28px;
+}
+
+.volt-prs-detail-view {
+	flex: 1;
+	min-height: 0;
+}

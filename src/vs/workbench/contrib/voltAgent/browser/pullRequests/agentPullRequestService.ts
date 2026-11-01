@@ -114,6 +114,8 @@ export interface IAgentPullRequestService {
 	links(sessionId: string): readonly IAgentPrLink[];
 	/** Chats a pull request is linked to. */
 	sessionsFor(key: string): string[];
+	/** Every chat with at least one linked pull request. */
+	linkedChats(): string[];
 	snapshot(key: string): IVoltPullRequest | undefined;
 	link(sessionId: string, target: IAgentPrTarget, source: AgentPrLinkSource): Promise<IAgentPrLink>;
 	unlink(sessionId: string, key: string): void;
@@ -511,6 +513,10 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 			}
 		}
 		return out;
+	}
+
+	linkedChats(): string[] {
+		return [...this.chats].filter(([, links]) => visibleLinks(links).length).map(([sessionId]) => sessionId);
 	}
 
 	snapshot(key: string): IVoltPullRequest | undefined {
