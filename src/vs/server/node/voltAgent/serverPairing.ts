@@ -13,7 +13,7 @@ import { ILogService } from '../../../platform/log/common/log.js';
 import { writeFileAtomic } from '../../../platform/voltAgentServer/node/agentServerFiles.js';
 import {
 	AGENT_SERVER_PROTOCOL_VERSION, IVoltEnvironmentDescriptor, IVoltPairedDevice, IVoltPairingCode, IVoltPairRequest, IVoltPairResponse,
-	VOLT_ENVIRONMENT_PATH, VOLT_LOCAL_SESSION_PATH, VOLT_PAIR_PATH, VoltPairingClientKind, VoltRouteKind
+	IVoltPairingUrl, VOLT_ENVIRONMENT_PATH, VOLT_LOCAL_SESSION_PATH, VOLT_PAIR_PATH, VoltPairingClientKind, VoltRouteKind, VoltTunnelKind
 } from '../../../platform/voltAgentServer/common/protocol.js';
 import { IAgentServerAuth } from '../../../platform/voltAgentServer/common/protocolServer.js';
 
@@ -57,6 +57,13 @@ export interface IPairingHttpContext {
 	readonly serverVersion: string;
 	/** This build serves Volt's workbench to browsers. */
 	readonly workbench?: boolean;
+	/**
+	 * The request came in on the tunnel listener (cloudflared, an SSH forward). Those arrive from
+	 * loopback too, so they never get the local session: anyone with the tunnel's address would.
+	 */
+	readonly viaTunnel?: boolean;
+	/** Base URLs of the tunnels that are up, added to pairing links. */
+	readonly tunnelUrls?: () => readonly { readonly via: VoltTunnelKind; readonly url: string }[];
 }
 
 function hashToken(token: string): string {
@@ -217,9 +224,12 @@ export class ServerPairing extends Disposable {
 		const expiresAt = Date.now() + CODE_TTL_MS;
 		this.codes.set(code, expiresAt);
 		const pairPath = `/pair#code=${code}`;
-		const urls = ctx.network
+		const urls: IVoltPairingUrl[] = ctx.network
 			? reachableAddresses().filter(a => a.kind !== 'loopback').map(a => ({ kind: a.kind, url: `http://${a.ip}:${ctx.port}${pairPath}` }))
 			: [];
+		for (const tunnel of ctx.tunnelUrls?.() ?? []) {
+			urls.push({ kind: 'public', url: `${tunnel.url}${pairPath}`, via: tunnel.via });
+		}
 		return { code, expiresAt, urls: [...urls, { kind: 'loopback' as const, url: `http://127.0.0.1:${ctx.port}${pairPath}` }], network: ctx.network };
 	}
 
@@ -334,7 +344,7 @@ export class ServerPairing extends Disposable {
 			// Same machine, addressed as loopback (not a rebound DNS name), from this server's own page.
 			const origin = req.headers.origin;
 			const sameOrigin = !origin || origin === `http://${req.headers.host}`;
-			if (req.method !== 'POST' || !isLoopbackAddress(req.socket.remoteAddress) || !isLoopbackHost(req.headers.host, ctx.port) || !sameOrigin) {
+			if (req.method !== 'POST' || ctx.viaTunnel || !isLoopbackAddress(req.socket.remoteAddress) || !isLoopbackHost(req.headers.host, ctx.port) || !sameOrigin) {
 				sendJson(res, 403, { error: 'forbidden', message: 'Open this page from the computer Volt runs on, or pair with a code.' });
 				return true;
 			}

@@ -49,7 +49,7 @@ import { ISecretStorageService } from '../../../platform/secrets/common/secrets.
 import { getResolvedShellEnv } from '../../../platform/shell/node/shellEnv.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../platform/workspace/common/workspace.js';
-import { AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo } from '../../../platform/voltAgentServer/common/protocol.js';
+import { AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo, IVoltSshTunnelOptions } from '../../../platform/voltAgentServer/common/protocol.js';
 import { AgentServerProtocol, IClientCallOptions, tokensEqual } from '../../../platform/voltAgentServer/common/protocolServer.js';
 import { agentServerPaths, clearAgentServerRuntime, ensureAgentServerToken, isProcessAlive, preferredAgentServerPort, writeAgentServerRuntime } from '../../../platform/voltAgentServer/node/agentServerFiles.js';
 import { acceptWebSocket } from '../../../platform/voltAgentServer/node/webSocket.js';
@@ -128,6 +128,7 @@ import { IAutomationService } from '../../../workbench/services/voltRuntime/comm
 import { ServerAgentRunGroupService } from './serverRunGroups.js';
 import { IPairingHttpContext, machineLabel, ServerPairing } from './serverPairing.js';
 import { handleSignIn } from './serverSignIn.js';
+import { ServerTunnels } from './serverTunnels.js';
 import { ServerWorkbench } from './serverWorkbench.js';
 import { ServerRender } from './serverRender.js';
 import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
@@ -471,8 +472,7 @@ export async function main(argv: string[]): Promise<void> {
 	httpContext = { ...httpContext, workbench: workbench.available };
 	// Pages, diagrams and formulas for the phone and browser apps, and KaTeX's files for them.
 	const render = disposables.add(new ServerRender(protocol, history, logService));
-	const server = http.createServer((req, res) => void serveHttp(req, res, token, epoch, pairing, workbench, render, httpContext, usage, logService));
-	server.on('upgrade', (req, socket: Socket) => {
+	const onUpgrade = (req: http.IncomingMessage, socket: Socket) => {
 		const url = new URL(req.url ?? '/', 'http://localhost');
 		if (url.pathname !== '/ws' && workbench.handleUpgrade(req, socket)) {
 			return;
@@ -485,9 +485,64 @@ export async function main(argv: string[]): Promise<void> {
 		if (ws) {
 			protocol.accept(ws);
 		}
-	});
+	};
+	const server = http.createServer((req, res) => void serveHttp(req, res, token, epoch, pairing, workbench, render, httpContext, usage, logService));
+	server.on('upgrade', onUpgrade);
+	// Cloudflare and SSH tunnels forward to a second listener on loopback, opened with the first
+	// tunnel: the same routes, but its requests never count as this computer's own browser.
+	let tunnelListener: Promise<number> | undefined;
+	const tunnels = disposables.add(new ServerTunnels({
+		dir: paths.dir,
+		environmentId: () => pairing.environmentId,
+		resolveEnv,
+		port: () => httpContext.port,
+		network: httpContext.network,
+		childLedger,
+		logService,
+		listen: () => tunnelListener ??= (async () => {
+			const tunnelServer = http.createServer((req, res) => void serveHttp(req, res, token, epoch, pairing, workbench, render, { ...httpContext, viaTunnel: true }, usage, logService));
+			tunnelServer.on('upgrade', onUpgrade);
+			disposables.add(toDisposable(() => tunnelServer.close()));
+			const tunnelPort = await listen(tunnelServer, '127.0.0.1', httpContext.port + 1, true);
+			logService.info(`[volt agent server] tunnels forward to http://127.0.0.1:${tunnelPort}`);
+			return tunnelPort;
+		})().catch(err => {
+			tunnelListener = undefined;
+			throw err;
+		}),
+	}));
+	httpContext = { ...httpContext, tunnelUrls: () => tunnels.urls() };
+	disposables.add(protocol.registerMethods('connect', {
+		status: ctx => {
+			ownerOnly(ctx.client.role);
+			return tunnels.status();
+		},
+		listener: ctx => {
+			ownerOnly(ctx.client.role);
+			return tunnels.ensureListener();
+		},
+		start: (ctx, kind, options) => {
+			ownerOnly(ctx.client.role);
+			if (kind !== 'cloudflare' && kind !== 'ssh') {
+				throw new Error(`Unknown tunnel: ${String(kind)}`);
+			}
+			return tunnels.start(kind, options as IVoltSshTunnelOptions | undefined);
+		},
+		stop: async (ctx, kind) => {
+			ownerOnly(ctx.client.role);
+			if (kind === 'cloudflare' || kind === 'ssh') {
+				await tunnels.stop(kind);
+			}
+			return true;
+		},
+		installCloudflared: ctx => {
+			ownerOnly(ctx.client.role);
+			return tunnels.installCloudflared();
+		},
+	}));
 	const port = await listen(server, args.host, args.port ?? preferredAgentServerPort(args.userDataDir), args.port === undefined);
 	httpContext = { ...httpContext, port };
+	void tunnels.resume().catch(err => logService.warn('[volt agent server] could not start the saved tunnels', err));
 	const info: IAgentServerRuntimeInfo = {
 		version: 1,
 		pid: process.pid,
@@ -537,11 +592,13 @@ export async function main(argv: string[]): Promise<void> {
 	}
 	const busy = () => terminals.hasLive()
 		? 'an agent terminal is running'
-		: automations.list().some(automation => automation.enabled && automation.triggers.some(trigger => trigger.provider === 'schedule'))
-			? 'an automation is scheduled'
-			: hookedTriggers(automations.list()).some(({ automation }) => automation.enabled)
-				? 'an automation waits for webhooks'
-				: undefined;
+		: tunnels.active
+			? 'a tunnel is open for other devices'
+			: automations.list().some(automation => automation.enabled && automation.triggers.some(trigger => trigger.provider === 'schedule'))
+				? 'an automation is scheduled'
+				: hookedTriggers(automations.list()).some(({ automation }) => automation.enabled)
+					? 'an automation waits for webhooks'
+					: undefined;
 	disposables.add(stopWhenIdle({ clients: () => protocol.listClients().length, runsIdle, orchestrator, network: args.host !== '127.0.0.1' && args.host !== 'localhost', busy, stop: () => void stop(0), logService }));
 	process.on('uncaughtException', err => logService.error('[volt agent server] uncaught exception', err));
 	process.on('unhandledRejection', err => logService.error('[volt agent server] unhandled rejection', err));

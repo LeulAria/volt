@@ -184,12 +184,71 @@ export interface IVoltPairResponse {
 
 export type VoltRouteKind = 'loopback' | 'lan' | 'tailnet' | 'public';
 
+/** A tunnel the agent server runs so devices off this network can reach it. */
+export type VoltTunnelKind = 'cloudflare' | 'ssh';
+
+export interface IVoltPairingUrl {
+	readonly kind: VoltRouteKind;
+	readonly url: string;
+	/** Reached through this tunnel rather than one of the machine's own addresses. */
+	readonly via?: VoltTunnelKind;
+}
+
 export interface IVoltPairingCode {
 	readonly code: string;
 	readonly expiresAt: number;
 	/** Pairing links for each address the server can be reached at, best first. */
-	readonly urls: readonly { readonly kind: VoltRouteKind; readonly url: string }[];
+	readonly urls: readonly IVoltPairingUrl[];
 	readonly network: boolean;
+}
+
+/** `ssh -R` from this computer to a server of the user's, which then forwards its port here. */
+export interface IVoltSshTunnelOptions {
+	/** `user@host`, `host:2222` or a `Host` from ~/.ssh/config. */
+	readonly target: string;
+	/** The port on the server that devices open. */
+	readonly remotePort: number;
+	/** What devices open when it is not `http://<host>:<remotePort>` (a proxy with HTTPS in front). */
+	readonly publicUrl?: string;
+}
+
+export interface IVoltTunnelStatus {
+	readonly kind: VoltTunnelKind;
+	readonly state: 'off' | 'starting' | 'on' | 'error';
+	/** The base URL devices open (no path). */
+	readonly url?: string;
+	readonly error?: string;
+	/** Whether this computer could reach itself through the tunnel; undefined until checked. */
+	readonly reachable?: boolean;
+	/** A note to show beside it (why it is not reachable, what to change). */
+	readonly note?: string;
+	readonly ssh?: IVoltSshTunnelOptions;
+}
+
+/** Everything the Add Device dialog needs to offer each way of connecting. */
+export interface IVoltConnectStatus {
+	/** The server listens on the network (Wi-Fi and Tailscale need it; tunnels do not). */
+	readonly network: boolean;
+	readonly port: number;
+	/** The loopback port tunnels forward to (and `ssh -L` from another computer). */
+	readonly tunnelPort?: number;
+	readonly lanAddress?: string;
+	readonly tailscale: {
+		readonly installed: boolean;
+		readonly running: boolean;
+		readonly ip?: string;
+		/** MagicDNS name, without the trailing dot. */
+		readonly dnsName?: string;
+		readonly tailnet?: string;
+	};
+	readonly cloudflared: { readonly installed: boolean; readonly installing?: boolean; readonly installError?: string; readonly canInstall: boolean };
+	/** Whether something answers on this computer's SSH port (Remote Login is on). */
+	readonly remoteLogin: boolean;
+	readonly user: string;
+	readonly hostname: string;
+	/** `Host` entries from ~/.ssh/config, without patterns. */
+	readonly sshHosts: readonly string[];
+	readonly tunnels: readonly IVoltTunnelStatus[];
 }
 
 export interface IVoltPairedDevice {
