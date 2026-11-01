@@ -162,7 +162,7 @@ export class SettingsInspectorPage extends Disposable {
 		}));
 
 		const listHost = append(pane, $('.volt-settings-inspect-list'));
-		this.empty = append(pane, $('.volt-settings-inspect-empty'));
+		this.empty = append(listHost, $('.volt-settings-inspect-empty'));
 		this.list = this._register(instantiationService.createInstance(WorkbenchList<ListRow>, 'VoltSettingsInspector', listHost, new RowDelegate(), [new RowRenderer()], {
 			identityProvider: { getId: (row: ListRow) => `${row.kind}:${row.id}` },
 			multipleSelectionSupport: false,
