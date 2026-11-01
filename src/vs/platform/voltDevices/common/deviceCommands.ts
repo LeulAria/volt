@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { IVoltDevice, IVoltSshTarget, VoltDeviceAppearance, VoltDeviceButton, VoltDevicePosture, VoltDeviceState } from './voltDevices.js';
+import { IVoltDevice, IVoltSshTarget, VoltDeviceAppearance, VoltDeviceButton, VoltDevicePosture, VoltDeviceState, VoltDeviceTextSize } from './voltDevices.js';
 
 /** A program and its arguments, run without a shell. */
 export interface ICommand {
@@ -186,6 +186,46 @@ export function isAlreadyShutdown(stderr: string): boolean {
  * touches and keys to a simulator; Volt uses whichever is installed.
  */
 export type IosInputTool = 'axe' | 'idb';
+
+export const IOS_INPUT_TOOL_FORMULA = 'cameroncooke/axe/axe';
+/** What `installIosInputTool` runs, for the user to copy when Volt cannot. */
+export const IOS_INPUT_TOOL_INSTALL_COMMAND = `brew install ${IOS_INPUT_TOOL_FORMULA}`;
+const IOS_INPUT_TOOL_MISSING = 'Touches and typing on iOS simulators need AXe or idb';
+
+/** The error when neither AXe nor idb is installed; `isIosInputToolMissing` recognises it. */
+export function iosInputToolMissingMessage(hostLabel?: string): string {
+	return `${IOS_INPUT_TOOL_MISSING}${hostLabel ? ` on ${hostLabel}` : ''}: \`${IOS_INPUT_TOOL_INSTALL_COMMAND}\` (simctl itself has no touch input). Screenshots, boot, install and launch work without it.`;
+}
+
+/** Whether an error (as the window sees it, maybe behind "Error: ") says AXe is missing, so it can offer to install it. */
+export function isIosInputToolMissing(message: string): boolean {
+	return message.replace(/^(Error:\s*)+/, '').startsWith(IOS_INPUT_TOOL_MISSING);
+}
+
+/** Installs AXe over SSH (run through `remoteScript`, whose PATH has Homebrew's folders); exits 127 without brew. */
+export function iosInputToolInstallScript(): string {
+	return `b=$(command -v brew) || { echo 'Homebrew is not installed' >&2; exit 127; }; HOMEBREW_NO_AUTO_UPDATE=1 "$b" install ${IOS_INPUT_TOOL_FORMULA}`;
+}
+
+/** `simctl ui <udid> content_size` categories; iOS's own default is "large". */
+export function iosContentSize(size: VoltDeviceTextSize): string {
+	switch (size) {
+		case 'small': return 'small';
+		case 'default': return 'large';
+		case 'large': return 'extra-large';
+		case 'extra-large': return 'extra-extra-large';
+	}
+}
+
+/** Android's `font_scale` setting. */
+export function androidFontScale(size: VoltDeviceTextSize): string {
+	switch (size) {
+		case 'small': return '0.85';
+		case 'default': return '1.0';
+		case 'large': return '1.15';
+		case 'extra-large': return '1.3';
+	}
+}
 
 /** HID usage codes for keys the tools send by number. */
 const HID_ENTER = 40;

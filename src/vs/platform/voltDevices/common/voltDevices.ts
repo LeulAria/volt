@@ -17,6 +17,8 @@ export type VoltDeviceState = 'booted' | 'booting' | 'shutdown' | 'offline' | 'u
 export type VoltDevicePosture = 'folded' | 'halfOpen' | 'open';
 /** The system's light or dark mode, which apps that follow it draw in. */
 export type VoltDeviceAppearance = 'light' | 'dark';
+/** The system text size apps that follow it draw in (iOS Dynamic Type, Android font scale). */
+export type VoltDeviceTextSize = 'small' | 'default' | 'large' | 'extra-large';
 export type VoltDeviceButton = 'home' | 'back' | 'appSwitch' | 'lock' | 'volumeUp' | 'volumeDown' | 'siri' | 'enter' | 'delete';
 
 /** How to reach another machine's simulators: `ssh [-p port] [-i identity] [user@]host`. Keys only; never a password. */
@@ -93,8 +95,29 @@ export interface IVoltDeviceUi {
 	readonly format: 'uiautomator' | 'axe' | 'idb';
 	readonly data: string;
 }
-/** A 3D body for the live preview, converted offline to glTF; see `readDeviceModel`. */
-export type VoltDeviceModelId = 'iphone-duo';
+/** 3D bodies for the live preview, converted offline to glTF; see `readDeviceModel`. */
+export const VOLT_DEVICE_MODEL_IDS = ['iphone-duo', 'iphone-18-pro', 'iphone-18-pro-max', 'ipad-pro-13-m5', 'ipad-pro-13-m5-magic-keyboard'] as const;
+export type VoltDeviceModelId = typeof VOLT_DEVICE_MODEL_IDS[number];
+
+export function isVoltDeviceModelId(value: unknown): value is VoltDeviceModelId {
+	return typeof value === 'string' && (VOLT_DEVICE_MODEL_IDS as readonly string[]).includes(value);
+}
+
+export interface IVoltDeviceBootOptions {
+	/**
+	 * False returns as soon as the boot started (iOS: `simctl boot` succeeded) with 'booting', so a
+	 * live stream can show the boot itself. Default true: wait until the device is ready.
+	 */
+	readonly waitUntilReady?: boolean;
+}
+
+/** Where the window reads a live stream: the hub's base URL and the id its stream client takes. */
+export interface IVoltDeviceStream {
+	/** `http://127.0.0.1:<port>/<token>`: the hub's routes (`/vendor/serve-sim/...`, `/vendor/serve-emu/...`) go after it. */
+	readonly origin: string;
+	/** iOS: the simulator's UDID. Android: the adb serial (emulator-5554), which serve-emu takes as `device`. */
+	readonly streamId: string;
+}
 
 export interface IVoltDevicePostures {
 	readonly supported: readonly VoltDevicePosture[];
@@ -109,8 +132,8 @@ export interface IVoltDevicesService {
 	readonly _serviceBrand: undefined;
 
 	listDevices(host: IVoltDeviceHost): Promise<IVoltDeviceList>;
-	/** Boots the device and waits until it is ready, up to `timeoutMs`. Resolves with its state then. */
-	boot(host: IVoltDeviceHost, device: IVoltDeviceRef, timeoutMs?: number): Promise<VoltDeviceState>;
+	/** Boots the device and waits until it is ready, up to `timeoutMs` (see `options`). Resolves with its state then. */
+	boot(host: IVoltDeviceHost, device: IVoltDeviceRef, timeoutMs?: number, options?: IVoltDeviceBootOptions): Promise<VoltDeviceState>;
 	shutdown(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<void>;
 	/** `maxSide` > 0 asks for a JPEG no bigger than that, which is much cheaper to make and to send than the full-size PNG. */
 	screenshot(host: IVoltDeviceHost, device: IVoltDeviceRef, maxSide?: number): Promise<IVoltDeviceScreen>;
@@ -128,12 +151,24 @@ export interface IVoltDevicesService {
 	getAppearance(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<VoltDeviceAppearance | undefined>;
 	/** Switches the system to light or dark mode (simctl ui appearance, cmd uimode night); apps that follow it redraw. */
 	setAppearance(host: IVoltDeviceHost, device: IVoltDeviceRef, appearance: VoltDeviceAppearance): Promise<void>;
+	/** Sets the system text size (simctl ui content_size, Android's font_scale); apps that follow it redraw. */
+	setTextSize(host: IVoltDeviceHost, device: IVoltDeviceRef, size: VoltDeviceTextSize): Promise<void>;
 	/**
-	 * Streams a booted iOS simulator on this machine through Expo's device hub, installed and
-	 * started on first use. Resolves with the hub's loopback origin (`http://127.0.0.1:<port>`);
-	 * the window reads video and sends touches there itself.
+	 * Streams an iOS simulator (booted or booting) or a booted Android emulator on this machine
+	 * through Expo's device hub, installed and started on first use. The window reads video and
+	 * sends touches there itself.
 	 */
-	attachStream(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<string>;
+	attachStream(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<IVoltDeviceStream>;
+	/**
+	 * Installs (once) and starts the device hub without attaching anything, so the first
+	 * `attachStream` does not wait for it. Only on a Mac; never rejects.
+	 */
+	prewarmStream(): Promise<void>;
+	/**
+	 * Installs AXe with Homebrew on the host (`brew install cameroncooke/axe/axe`), for touches and
+	 * typing on iOS simulators. Rejects when Homebrew is missing.
+	 */
+	installIosInputTool(host: IVoltDeviceHost): Promise<void>;
 	/** A 3D model's glTF binary as base64, or undefined when it is not on this machine. */
 	readDeviceModel(id: VoltDeviceModelId): Promise<string | undefined>;
 	/**
