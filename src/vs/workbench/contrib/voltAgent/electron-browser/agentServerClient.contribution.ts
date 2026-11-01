@@ -57,7 +57,7 @@ import { IAgentHistoryService } from '../../../services/voltRuntime/common/histo
 import { AGENT_SERVER_WINDOW_COMMANDS, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
 import { IAgentOrchestratorService } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IProviderProfile, secretKeyForProfile } from '../../../services/voltRuntime/common/profiles.js';
-import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
+import { IAgentRuntimeService, OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../services/voltRuntime/common/sessionContext.js';
 import { setAgentSessionControlFactory } from '../browser/editor/agentEditorInput.js';
 import { RemoteAgentSessionControl } from '../browser/editor/remoteAgentSessionControl.js';
@@ -477,10 +477,13 @@ registerAction2(class extends Action2 {
 	}
 });
 
-/** The web app on this machine. It signs itself in over loopback, so no token goes in the URL. */
+/** Volt in the browser on this machine. It signs itself in over loopback, so no token goes in the URL. */
 function localWebUrl(port: number, path = '/'): string {
 	return `http://127.0.0.1:${port}${path}`;
 }
+
+/** The browser workbench opened on Volt Settings > Devices (for when this window is not the agent server's client). */
+const DEVICES_PAGE_PATH = `/?next=${encodeURIComponent('/code/?voltSettings=devices')}`;
 
 /** Turns the agent server on (it needs a restart) when it is off. Resolves whether it is on. */
 async function ensureServerMode(configurationService: IConfigurationService, dialogs: IDialogService, host: IHostService): Promise<boolean> {
@@ -507,7 +510,7 @@ registerAction2(class extends Action2 {
 		const mainService = accessor.get(IVoltAgentServerMainService);
 		const configurationService = accessor.get(IConfigurationService);
 		const dialogs = accessor.get(IDialogService);
-		const nativeHost = accessor.get(INativeHostService);
+		const commands = accessor.get(ICommandService);
 		const notifications = accessor.get(INotificationService);
 		const host = accessor.get(IHostService);
 		if (!await ensureServerMode(configurationService, dialogs, host)) {
@@ -525,7 +528,7 @@ registerAction2(class extends Action2 {
 					endpoint = await mainService.setNetworkAccess(true);
 				}
 			}
-			await nativeHost.openExternal(localWebUrl(endpoint.port, '/devices'));
+			await commands.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID, 'devices');
 		} catch (err) {
 			notifications.error(localize('voltAgentServer.pairFailed', "Could not open pairing: {0}", err instanceof Error ? err.message : String(err)));
 		}
@@ -550,7 +553,7 @@ registerAction2(class extends Action2 {
 			const endpoint = await mainService.ensureRunning();
 			await nativeHost.openExternal(localWebUrl(endpoint.port));
 		} catch (err) {
-			notifications.error(localize('voltAgentServer.openWebFailed', "Could not open the web app: {0}", err instanceof Error ? err.message : String(err)));
+			notifications.error(localize('voltAgentServer.openWebFailed', "Could not open Volt in the browser: {0}", err instanceof Error ? err.message : String(err)));
 		}
 	}
 });
@@ -603,7 +606,7 @@ registerAction2(class extends Action2 {
 				}
 				endpoint = await mainService.setNetworkAccess(true);
 			}
-			await nativeHost.openExternal(localWebUrl(endpoint.port, '/devices'));
+			await nativeHost.openExternal(localWebUrl(endpoint.port, DEVICES_PAGE_PATH));
 			notifications.notify({
 				severity: Severity.Info,
 				message: localize('voltUsage.shareNext', "Make a pairing code on the Devices page and copy its link. On your other computer, open Settings > Usage, choose Add Machine and paste it."),
