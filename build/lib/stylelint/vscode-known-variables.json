@@ -919,6 +919,8 @@
 		"--vgg-ref",
 		"--vgg-removed",
 		"--vgg-soft",
+		"--add-device-height",
+		"--add-device-pad",
 		"--volt-agent-drawer-width",
 		"--volt-agent-quick-open-reserve",
 		"--volt-agent-right-dock-width",

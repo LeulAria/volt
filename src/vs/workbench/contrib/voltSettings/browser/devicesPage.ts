@@ -3,21 +3,19 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import './media/devicesPage.css';
-import { $, append } from '../../../../base/browser/dom.js';
-import { mainWindow } from '../../../../base/browser/window.js';
 import { fromNow } from '../../../../base/common/date.js';
 import { toErrorMessage } from '../../../../base/common/errorMessage.js';
-import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
+import { DisposableStore } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
-import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
+import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
-import { IVoltPairedDevice, IVoltPairingCode } from '../../../../platform/voltAgentServer/common/protocol.js';
+import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
+import { IVoltConnectStatus, IVoltPairedDevice, IVoltTunnelStatus } from '../../../../platform/voltAgentServer/common/protocol.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { IAgentServerClientService } from '../../../services/voltAgentServer/common/agentServerClient.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
-import { qrcode } from './vendor/qrcode.js';
+import { kindLabel, showAddDeviceModal, VoltConnectionKind } from './addDeviceModal.js';
 
 export interface IDevicesPageHost {
 	readonly store: DisposableStore;
@@ -29,76 +27,44 @@ export interface IDevicesPageHost {
 	rerender(): void;
 }
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
-/** A QR code as one SVG path, black on a white tile with a quiet zone (any camera, or Volt's phone app). */
-function renderQrCode(parent: HTMLElement, value: string, size: number): void {
-	const qr = qrcode(0, 'M');
-	qr.addData(value);
-	qr.make();
-	const count = qr.getModuleCount();
-	let d = '';
-	for (let row = 0; row < count; row++) {
-		for (let col = 0; col < count; col++) {
-			if (qr.isDark(row, col)) {
-				d += `M${col} ${row}h1v1h-1z`;
-			}
-		}
-	}
-	const quiet = 2;
-	const svg = mainWindow.document.createElementNS(SVG_NS, 'svg');
-	svg.setAttribute('width', String(size));
-	svg.setAttribute('height', String(size));
-	svg.setAttribute('viewBox', `${-quiet} ${-quiet} ${count + quiet * 2} ${count + quiet * 2}`);
-	svg.setAttribute('shape-rendering', 'crispEdges');
-	svg.setAttribute('role', 'img');
-	svg.setAttribute('aria-label', localize('devices.qr', "Pairing QR code"));
-	const tile = mainWindow.document.createElementNS(SVG_NS, 'rect');
-	tile.setAttribute('x', String(-quiet));
-	tile.setAttribute('y', String(-quiet));
-	tile.setAttribute('width', String(count + quiet * 2));
-	tile.setAttribute('height', String(count + quiet * 2));
-	tile.setAttribute('rx', '2');
-	tile.setAttribute('fill', '#fff');
-	const path = mainWindow.document.createElementNS(SVG_NS, 'path');
-	path.setAttribute('d', d);
-	path.setAttribute('fill', '#111');
-	svg.append(tile, path);
-	append(parent, svg);
-}
-
-function kindLabel(device: IVoltPairedDevice): string {
-	const kind = device.kind === 'web' ? localize('devices.kindWeb', "Browser") : device.kind === 'tablet' ? localize('devices.kindTablet', "Tablet") : localize('devices.kindPhone', "Phone");
-	return [kind, device.model, device.os].filter(Boolean).join(' · ');
-}
+/** Desktop only (electron-browser): stops listening on the network. */
+const STOP_NETWORK_COMMAND_ID = 'volt.agentServer.stopNetwork';
 
 /**
- * Volt Settings > Devices: pair a phone or a browser with a one-time code (typed, scanned from the
- * QR code, or opened as a link), and see, rename or remove the devices that can reach this
+ * Volt Settings > Devices: add a phone or browser (Add Device picks how it connects and shows the
+ * QR code), see which ways in are on, and rename or remove the devices that can reach this
  * computer's agents. It talks to the agent server, so it works the same on the desktop and in the
- * browser workbench; making codes is for the computer's owner, a paired device sees the list.
+ * browser workbench; connecting devices is for the computer's owner, a paired device sees the list.
  */
 export class DevicesPage {
 
 	private readonly client: IAgentServerClientService | undefined;
-	private readonly clipboard: IClipboardService;
 	private readonly dialogs: IDialogService;
 	private readonly quickInput: IQuickInputService;
-	/** The code on screen, kept across renders until it expires. */
-	private code: IVoltPairingCode | undefined;
-	private codeError: string | undefined;
+	private readonly commands: ICommandService;
+	private readonly layout: ILayoutService;
+	/** Add Device opens on the next render (Remote Control's introduction asks for it). */
+	private pendingAdd: VoltConnectionKind | true | undefined;
+	private modalOpen = false;
 
-	constructor(instantiationService: IInstantiationService, private readonly host: IDevicesPageHost) {
+	constructor(private readonly instantiationService: IInstantiationService, private readonly host: IDevicesPageHost) {
 		const services = instantiationService.invokeFunction(accessor => ({
 			client: accessor.getIfExists(IAgentServerClientService),
-			clipboard: accessor.get(IClipboardService),
 			dialogs: accessor.get(IDialogService),
 			quickInput: accessor.get(IQuickInputService),
+			commands: accessor.get(ICommandService),
+			layout: accessor.get(ILayoutService),
 		}));
 		this.client = services.client;
-		this.clipboard = services.clipboard;
 		this.dialogs = services.dialogs;
 		this.quickInput = services.quickInput;
+		this.commands = services.commands;
+		this.layout = services.layout;
+	}
+
+	/** Opens Add Device once the page is on screen. */
+	requestAddDevice(kind?: VoltConnectionKind): void {
+		this.pendingAdd = kind ?? true;
 	}
 
 	async render(isCurrent: () => boolean): Promise<void> {
@@ -109,83 +75,145 @@ export class DevicesPage {
 		}
 		let devices: readonly IVoltPairedDevice[] = [];
 		let listError: string | undefined;
+		let status: IVoltConnectStatus | undefined;
 		try {
 			await client.whenReady;
-			devices = await client.call<readonly IVoltPairedDevice[]>('pairing.devices');
+			[devices, status] = await Promise.all([
+				client.call<readonly IVoltPairedDevice[]>('pairing.devices'),
+				// Only the computer's owner may connect devices; others get an error here and see the list.
+				client.call<IVoltConnectStatus>('connect.status').catch(() => undefined),
+			]);
 		} catch (err) {
 			listError = toErrorMessage(err);
 		}
 		if (!isCurrent()) {
 			return;
 		}
-		this.renderPairing(client);
+		if (status) {
+			this.renderConnect();
+			this.renderConnections(client, status);
+		}
 		this.renderDevices(client, devices, listError);
+		if (this.pendingAdd && status) {
+			const kind = this.pendingAdd === true ? undefined : this.pendingAdd;
+			this.pendingAdd = undefined;
+			this.openAddDevice(kind);
+		}
 	}
 
-	private renderPairing(client: IAgentServerClientService): void {
-		const { host } = this;
-		host.sectionLabel(localize('devices.pair', "Pair a phone or browser"));
-		const group = host.settingsGroup();
-		const code = this.code && this.code.expiresAt > Date.now() ? this.code : undefined;
-		host.settingRow(
-			group,
-			localize('devices.code', "Pairing code"),
-			code
-				? localize('devices.codeDesc', "Scan the QR code with Volt on your phone or any camera, open a link on the device, or type the code where Volt asks for it. It works once.")
-				: localize('devices.codeNone', "A one-time code lets a phone or another browser reach your chats, files and terminals here. Each device gets its own key, which you can remove below."),
-			control => {
-				const make = host.store.add(createVoltButton(control, code ? 'secondary' : 'primary'));
-				make.label = code ? localize('devices.newCode', "New Code") : localize('devices.makeCode', "Make a Code");
-				host.store.add(make.onDidClick(async () => {
-					make.enabled = false;
-					try {
-						this.code = await client.call<IVoltPairingCode>('pairing.createCode');
-						this.codeError = undefined;
-					} catch (err) {
-						this.codeError = toErrorMessage(err);
-					}
-					host.rerender();
-				}));
-			},
-		);
-		if (this.codeError) {
-			append(host.target(), $('.volt-devices-error')).textContent = this.codeError;
-		}
-		if (!code) {
+	private openAddDevice(kind?: VoltConnectionKind): void {
+		if (this.modalOpen) {
 			return;
 		}
-		const card = append(host.target(), $('.volt-devices-code-card'));
-		const best = code.urls.find(u => u.kind !== 'loopback') ?? code.urls[0];
-		if (best) {
-			renderQrCode(append(card, $('.volt-devices-qr')), best.url, 168);
-		}
-		const side = append(card, $('.volt-devices-code-side'));
-		append(side, $('.volt-devices-code')).textContent = code.code.replace(/(.{4})(?=.)/g, '$1 ');
-		const expiry = append(side, $('.volt-devices-expiry'));
-		const tick = () => {
-			const left = Math.max(0, code.expiresAt - Date.now());
-			if (!left) {
-				host.rerender();
-				return;
-			}
-			const minutes = Math.floor(left / 60_000);
-			const seconds = Math.floor((left % 60_000) / 1000);
-			expiry.textContent = localize('devices.expires', "Expires in {0}:{1}", minutes, String(seconds).padStart(2, '0'));
+		this.modalOpen = true;
+		showAddDeviceModal(this.layout.activeContainer, this.instantiationService, {
+			kind,
+			onDidPair: () => this.host.rerender(),
+			onDidClose: () => {
+				this.modalOpen = false;
+				this.host.rerender();
+			},
+		});
+	}
+
+	private renderConnect(): void {
+		const { host } = this;
+		host.sectionLabel(localize('devices.connect', "Connect"));
+		const group = host.settingsGroup();
+		host.settingRow(
+			group,
+			localize('devices.add', "Add a phone or browser"),
+			localize('devices.addDesc', "Scan a QR code with your phone or open a link in any browser. Connect over this Wi-Fi, Tailscale, a Cloudflare tunnel or SSH."),
+			control => {
+				const add = host.store.add(createVoltButton(control, 'primary'));
+				add.label = localize('devices.addButton', "Add Device");
+				host.store.add(add.onDidClick(() => this.openAddDevice()));
+			},
+		);
+	}
+
+	private renderConnections(client: IAgentServerClientService, status: IVoltConnectStatus): void {
+		const { host } = this;
+		host.sectionLabel(localize('devices.connections', "Connections"));
+		const group = host.settingsGroup();
+		const setUp = (control: HTMLElement, kind: VoltConnectionKind, label = localize('devices.setUp', "Set Up")) => {
+			const button = host.store.add(createVoltButton(control, 'secondary'));
+			button.label = label;
+			host.store.add(button.onDidClick(() => this.openAddDevice(kind)));
 		};
-		tick();
-		const timer = mainWindow.setInterval(tick, 1000);
-		host.store.add(toDisposable(() => mainWindow.clearInterval(timer)));
-		if (!code.network) {
-			append(side, $('.volt-devices-note')).textContent = localize('devices.loopbackOnly', "Only this computer can reach Volt right now. Allow network access (Volt: Pair a Phone or Browser… on the computer) to pair devices on your Wi-Fi or Tailscale.");
+
+		const wifi = status.network
+			? localize('devices.wifiOn', "On. Devices on this network reach {0}.", status.lanAddress ? `${status.lanAddress}:${status.port}` : localize('devices.thisComputer', "this computer"))
+			: localize('devices.wifiOff', "Off. Volt only listens on this computer.");
+		host.settingRow(group, localize('devices.wifi', "Same Wi-Fi"), wifi, control => {
+			if (status.network && CommandsRegistry.getCommand(STOP_NETWORK_COMMAND_ID)) {
+				const off = host.store.add(createVoltButton(control, 'secondary'));
+				off.label = localize('devices.turnOff', "Turn Off");
+				host.store.add(off.onDidClick(async () => {
+					const { confirmed } = await this.dialogs.confirm({
+						message: localize('devices.wifiOffConfirm', "Stop listening on your network?"),
+						detail: localize('devices.wifiOffDetail', "Devices on Wi-Fi and Tailscale lose their connection until you allow it again. Tunnels keep working. Volt's server restarts; running chats pause and can be resumed."),
+						primaryButton: localize('devices.turnOffButton', "Turn Off"),
+					});
+					if (confirmed) {
+						await this.commands.executeCommand(STOP_NETWORK_COMMAND_ID);
+						await client.whenReady;
+						host.rerender();
+					}
+				}));
+			} else {
+				setUp(control, 'lan');
+			}
+		});
+
+		const tailscale = status.tailscale;
+		const tailscaleText = !tailscale.installed
+			? localize('devices.tsMissing', "Not installed on this computer.")
+			: !tailscale.running
+				? localize('devices.tsOff', "Installed, not connected.")
+				: status.network
+					? localize('devices.tsOn', "On. Your tailnet reaches {0}.", tailscale.dnsName ?? tailscale.ip ?? '')
+					: localize('devices.tsReady', "Connected as {0}. Allow tailnet connections to use it.", tailscale.dnsName ?? tailscale.ip ?? '');
+		host.settingRow(group, 'Tailscale', tailscaleText, control => setUp(control, 'tailscale'));
+
+		for (const tunnel of status.tunnels) {
+			const title = tunnel.kind === 'cloudflare' ? localize('devices.cloudflare', "Cloudflare Tunnel") : localize('devices.ssh', "SSH Tunnel");
+			host.settingRow(group, title, this.tunnelText(tunnel, status), control => {
+				if (tunnel.state === 'off') {
+					setUp(control, tunnel.kind);
+					return;
+				}
+				if (tunnel.state === 'error') {
+					setUp(control, tunnel.kind, localize('devices.fix', "Fix"));
+				}
+				const stop = host.store.add(createVoltButton(control, 'secondary'));
+				stop.label = localize('devices.stop', "Stop");
+				host.store.add(stop.onDidClick(async () => {
+					await client.call('connect.stop', tunnel.kind).catch(err => this.dialogs.error(toErrorMessage(err)));
+					host.rerender();
+				}));
+			});
 		}
-		const links = append(side, $('.volt-devices-links'));
-		for (const url of code.urls) {
-			const row = append(links, $('.volt-devices-link'));
-			append(row, $('span.kind')).textContent = url.kind === 'loopback' ? localize('devices.thisComputer', "This computer") : url.kind === 'tailnet' ? 'Tailscale' : localize('devices.network', "Network");
-			append(row, $('span.url')).textContent = url.url;
-			const copy = host.store.add(createVoltButton(row, 'secondary'));
-			copy.label = localize('devices.copy', "Copy");
-			host.store.add(copy.onDidClick(() => void this.clipboard.writeText(url.url)));
+	}
+
+	private tunnelText(tunnel: IVoltTunnelStatus, status: IVoltConnectStatus): string {
+		switch (tunnel.state) {
+			case 'on':
+				return tunnel.reachable === false && tunnel.note
+					? localize('devices.tunnelOnWarn', "On at {0}. {1}", tunnel.url ?? '', tunnel.note)
+					: localize('devices.tunnelOn', "On at {0}.", tunnel.url ?? '');
+			case 'starting':
+				return tunnel.note ?? localize('devices.tunnelStarting', "Starting…");
+			case 'error':
+				return tunnel.error ?? localize('devices.tunnelError', "Stopped with an error.");
+			default:
+				return tunnel.kind === 'cloudflare'
+					? status.cloudflared.installed
+						? localize('devices.cfOff', "Off. An https link from anywhere, no account needed.")
+						: localize('devices.cfMissing', "Off. Needs cloudflared, which Add Device can install.")
+					: tunnel.ssh
+						? localize('devices.sshOffLast', "Off. Last used with {0}.", tunnel.ssh.target)
+						: localize('devices.sshOff', "Off. Reach this computer through a server you can SSH into.");
 		}
 	}
 

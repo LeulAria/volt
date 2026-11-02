@@ -14,6 +14,9 @@ export const VOLT_AGENT_SERVER_CHANNEL_NAME = 'voltAgentServer';
  */
 export const VOLT_AGENT_SERVER_ENABLED_SETTING = 'volt.agentServer.enabled';
 
+/** Desktop only: lets the agent server listen on the network (it restarts). Add Device runs it. */
+export const VOLT_ALLOW_NETWORK_COMMAND_ID = 'volt.agentServer.allowNetwork';
+
 /** Where a window finds this profile's agent server. */
 export interface IVoltAgentServerEndpoint {
 	/** `ws://127.0.0.1:<port>/ws` */
