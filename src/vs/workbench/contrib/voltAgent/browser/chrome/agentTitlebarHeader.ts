@@ -34,6 +34,7 @@ import { AutomationsEditorInput } from '../automations/automationsEditor.js';
 import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js';
 import { IAgentPageCrumb } from '../customize/agentMarketplaceView.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
+import { onDidChangeShownAgentChat, shownAgentChat } from '../editor/agentShownChat.js';
 import { localEnvironmentLabel } from '../home/agentHomeFilter.js';
 import { ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
 import { getComputerName, onDidChangeComputerName } from '../usage/agentComputerName.js';
@@ -481,6 +482,10 @@ class AgentTitlebarHeaderContribution extends Disposable {
 			this.bindActiveEditor();
 			this.scheduleRender();
 		}));
+		this._register(onDidChangeShownAgentChat(() => {
+			this.bindActiveEditor();
+			this.scheduleRender();
+		}));
 		this._register(this.history.onDidChange(() => this.scheduleRender()));
 		this._register(this.sessionContext.onDidChangeActiveProject(() => this.scheduleRender()));
 		this._register(this.sessionContext.onDidChangeProjects(() => this.scheduleRender()));
@@ -599,7 +604,14 @@ class AgentTitlebarHeaderContribution extends Disposable {
 	/** The chat in the main editor area. A tab focused in the chat's tools does not retitle the bar. */
 	private mainEditor(): EditorInput | undefined {
 		// No group yet while the workbench restores; the header renders again once there is one.
-		return this.editorGroupsService.mainPart.activeGroup?.activeEditor ?? undefined;
+		const group = this.editorGroupsService.mainPart.activeGroup;
+		const active = group?.activeEditor ?? undefined;
+		// A picked chat still loading: the bar names the chat on screen until the new one is drawn.
+		const shown = shownAgentChat();
+		if (active instanceof AgentEditorInput && shown !== undefined && active.sessionId !== shown) {
+			return group?.editors.find(editor => editor instanceof AgentEditorInput && editor.sessionId === shown) ?? active;
+		}
+		return active;
 	}
 
 	private sidebarClosed(): boolean {

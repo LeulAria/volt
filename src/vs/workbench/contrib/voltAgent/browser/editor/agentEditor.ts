@@ -162,6 +162,7 @@ import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
 import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitation, revealCitationInChats } from './agentCitationSource.js';
 import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
 import { formatAgentSwitch, takeAgentSwitchStart } from './agentSwitchTiming.js';
+import { setShownAgentChat, shownAgentChat } from './agentShownChat.js';
 import { deferredHeadStart } from './agentThreadWindow.js';
 import { AgentTurnNav, IAgentTurnNavTurn, turnNavPreview } from './agentTurnNav.js';
 import { IAgentSessionChangesService } from '../review/agentSessionChangesService.js';
@@ -281,8 +282,14 @@ function isUnmodifiedEnter(e: IKeyboardEvent): boolean {
 
 /** Max monaco content height while editing a prior prompt. Extra lines scroll. */
 const USER_EDIT_MAX_HEIGHT = 220;
-/** Rendered threads kept for chats you switched away from, so switching back skips the rebuild. */
-const MAX_STASHED_THREADS = 8;
+/**
+ * Rendered threads kept for chats you switched away from, so switching back skips the rebuild.
+ * Running chats are never closed, so with ten or more at work the user cycles through more chats
+ * than the eight background panels: each would be evicted before its turn came round again.
+ */
+const MAX_STASHED_THREADS = 16;
+/** Elements all parked threads may hold together; the least recently shown go first past it. */
+const STASHED_ELEMENTS_BUDGET = 150_000;
 /**
  * A chat shown by a switch draws its last few exchanges at once. The ones above are drawn as the
  * reader scrolls toward them (or for find, an edit, a turn jump), never all in the background, so a
@@ -328,6 +335,8 @@ interface IStashedThread {
 	readonly headUsers: number;
 	/** Cached rows of the parked tail; their listeners live with them. */
 	readonly reuse: TranscriptReuse;
+	/** Elements in `nodes`, counted against {@link STASHED_ELEMENTS_BUDGET}. */
+	readonly elements: number;
 	/** The chat changed while parked (a run kept going); its last exchange needs a redraw. */
 	stale: boolean;
 	readonly watch: DisposableStore;
@@ -901,6 +910,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private clearTeardownPending = false;
 	/** The chat whose turns are in `threadInner`. */
 	private threadInput: AgentEditorInput | undefined;
+	/**
+	 * The chat whose messages, draft and composer the pane holds. Only it is written back: a chat
+	 * handed the last chat's messages array would share it, and both chats' runs would patch it.
+	 */
+	private stateInput: AgentEditorInput | undefined;
+	/** The chat in `threadInner` changed while another chat loaded, so its drawn turns are behind. */
+	private threadBehind = false;
+	/** The chat this pane told the Agents list and the title bar it shows (see agentShownChat.ts). */
+	private shownSessionId: string | undefined;
 	/** Least recently shown first. */
 	private readonly stashedThreads = new Map<string, IStashedThread>();
 	private renderingTail = false;
@@ -2076,7 +2094,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 
 	private persistInputState(): void {
 		const input = this.input;
-		if (!(input instanceof AgentEditorInput)) {
+		if (!(input instanceof AgentEditorInput) || input !== this.stateInput) {
 			return;
 		}
 		input.messages = this.messages;
@@ -2099,6 +2117,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.stashThread();
 		this.thinkingStore.clear();
 		this.messages = input.messages;
+		this.stateInput = input;
 		this.sessionTokensUsed = input.contextUsed;
 		this.sessionTokensWindow = input.contextWindow;
 		this.editingUserIndex = undefined;
@@ -2198,7 +2217,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 
 	private syncUnsavedState(): void {
 		const input = this.input;
-		if (!(input instanceof AgentEditorInput)) {
+		if (!(input instanceof AgentEditorInput) || input !== this.stateInput) {
 			return;
 		}
 		const draft = this.inputModel?.getValue() ?? '';
@@ -3820,7 +3839,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** Parks the shown chat's thread (nodes and listeners) so showing it again is a DOM move, not a rebuild. */
 	private stashThread(): void {
 		const input = this.threadInput;
+		const behind = this.threadBehind;
 		this.threadInput = undefined;
+		this.threadBehind = false;
 		if (!input || input.isDisposed() || this.editingUserIndex !== undefined || !this.threadInner.firstChild || this.renderedCount !== this.messages.length) {
 			this.resetDeferredHead();
 			return;
@@ -3833,6 +3854,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.resetDeferredHead();
 		this.dropStashedThread(input.sessionId);
 		parkVisualFrames(this.threadInner, this.visualParking);
+		const elements = this.threadInner.getElementsByTagName('*').length;
 		const nodes = this.threadInner.ownerDocument.createDocumentFragment();
 		nodes.append(...this.threadInner.childNodes);
 		// Re-attached nodes restart their CSS animations; drop the fade so parked text does not fade in again.
@@ -3852,8 +3874,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			settledMessages: this.settledMessages,
 			...head,
 			reuse: this.reuse,
-			// A redraw still queued means the nodes are behind the messages.
-			stale: this.renderHandle !== undefined,
+			elements,
+			// A redraw still queued, or a run event while another chat loaded, means the nodes are behind the messages.
+			stale: this.renderHandle !== undefined || behind,
 			watch: new DisposableStore(),
 		};
 		// The parked reply is drawn afresh when it comes back (its fades were dropped above).
@@ -3869,10 +3892,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.renderedCount = 0;
 		this.settledMessages = [];
 		this.tailTurns = new Map();
-		for (const sessionId of this.stashedThreads.keys()) {
-			if (this.stashedThreads.size <= MAX_STASHED_THREADS) {
+		let parked = 0;
+		for (const stashed of this.stashedThreads.values()) {
+			parked += stashed.elements;
+		}
+		for (const [sessionId, stashed] of this.stashedThreads) {
+			if (stashed === entry || (this.stashedThreads.size <= MAX_STASHED_THREADS && parked <= STASHED_ELEMENTS_BUDGET)) {
 				break;
 			}
+			parked -= stashed.elements;
 			this.dropStashedThread(sessionId);
 		}
 	}
@@ -8140,6 +8168,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const controller = input.controller;
 		this.eventDisposable = controller.onDidChange(change => {
 			if (this.input !== input) {
+				// Another chat is loading: this one stays on screen until then, and is parked as behind its run.
+				this.threadBehind ||= this.threadInput === input;
 				return;
 			}
 			switch (change.kind) {
@@ -8239,7 +8269,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				this.input.controller.flushStreamedInput?.();
 			}
 			const now = Date.now();
-			const syncDock = !this.isStreaming() || now - this.dockSyncAt >= DOCK_SYNC_STREAM_MS;
+			// While another chat loads the pane still holds this one: nothing is saved or synced to the dock.
+			const syncDock = this.input === this.stateInput && (!this.isStreaming() || now - this.dockSyncAt >= DOCK_SYNC_STREAM_MS);
 			if (syncDock) {
 				this.dockSyncAt = now;
 				this.persistInputState();
@@ -8451,35 +8482,41 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const started = performance.now();
 		const clickedAt = takeAgentSwitchStart(started);
 		this.clearTeardownPending = false;
-		// The dock beside the chat finds the chat it sits in by this.
-		this.container.dataset.sessionId = input.sessionId;
 		// A queued prompt open for editing goes back untouched; the composer keeps the chat's own draft.
 		this.cancelQueueEdit();
 		this.persistInputState();
-		this.surfaceHost.present(input.sessionId);
-		if (this.input !== input) {
-			this.landingChrome?.resetWorktreeTarget();
-		}
-		await super.setInput(input, options, context, token);
-		// One pane shows every agent tab: the banner follows the tab's project.
-		this.renderCloneBanner();
-		this.worktreeSetupCard?.setChat(this.sessionKey);
-		this.limitChip?.render();
+		// The chat's history is read before the pane takes it. Until then the last chat stays whole
+		// (thread, composer, tools, its row in the Agents list), and none of it is written into this one.
 		try {
 			await input.ensureLoaded();
 		} catch (err) {
 			// A broken history entry must never block opening the editor.
 			this.logService.warn('[volt agent] failed to load session history', err);
 		}
-		if (token.isCancellationRequested || this.input !== input) {
+		if (token.isCancellationRequested) {
 			return;
 		}
 		const loaded = performance.now();
+		if (this.input !== input) {
+			this.landingChrome?.resetWorktreeTarget();
+		}
+		// The dock beside the chat finds the chat it sits in by this.
+		this.container.dataset.sessionId = input.sessionId;
+		this.surfaceHost.present(input.sessionId);
+		await super.setInput(input, options, context, token);
+		if (token.isCancellationRequested || this.input !== input) {
+			return;
+		}
+		// One pane shows every agent tab: the banner follows the tab's project.
+		this.renderCloneBanner();
+		this.worktreeSetupCard?.setChat(this.sessionKey);
+		this.limitChip?.render();
 		this.ensureInputEditor();
 		this.restoreInputState(input);
 		const drawn = performance.now();
 		this.followThreadModel();
 		this.container.classList.remove('restoring');
+		this.publishShownChat(input.sessionId);
 		this.composerChips.setSessionId(this.sessionKey);
 		this.composerChips.setNewChat(this.messages.length === 0);
 		this.renderRunGroupBar();
@@ -8503,6 +8540,24 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.schedulePrewarm();
 		this.revealRequestedTurn(input.sessionId);
 		this.logSwitchTiming(input, clickedAt ?? started, clickedAt !== undefined, started, loaded, drawn);
+	}
+
+	/**
+	 * Tells the Agents list and the title bar which chat is on screen, in the same task that drew it.
+	 * Only the agent panel's own pane does: not a chat docked in a board, a canvas or a browser.
+	 */
+	private publishShownChat(sessionId: string | undefined): void {
+		const group = this.group;
+		const panel = !!group && group.activeEditorPane === this && this.editorGroupsService.mainPart.getGroup(group.id) === group;
+		if (sessionId !== undefined && !panel) {
+			return;
+		}
+		if (sessionId === undefined && (this.shownSessionId === undefined || shownAgentChat() !== this.shownSessionId)) {
+			this.shownSessionId = undefined;
+			return;
+		}
+		this.shownSessionId = sessionId;
+		setShownAgentChat(sessionId);
 	}
 
 	/** One line per chat shown: where the time went, to the frame after it was drawn. */
@@ -8591,6 +8646,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.clearTeardownPending = false;
 			this.surfaceHost.present(undefined);
 			this.setComposerZoomed(false);
+			this.publishShownChat(undefined);
 		});
 	}
 
@@ -8794,6 +8850,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	}
 
 	override dispose(): void {
+		this.publishShownChat(undefined);
 		for (const sessionId of [...this.stashedThreads.keys()]) {
 			this.dropStashedThread(sessionId);
 		}
