@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useRef } from "react";
 import { ComposerPrompt } from "@/components/composerPrompt";
 import { DynamicText } from "@/components/dynamicText";
+import { AgentFlow } from "@/components/landing/agentFlow";
 import { AgentIde } from "@/components/landing/agentIde";
 import { AgentShowcase } from "@/components/landing/agentShowcase";
 import { ClosingCta, SiteFooter } from "@/components/landing/closing";
@@ -178,6 +179,7 @@ function Home() {
 
       <main className="relative">
         <Guides />
+        <AgentFlow />
         <AgentShowcase />
         <AgentIde />
         <Models />

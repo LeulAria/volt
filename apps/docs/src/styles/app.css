@@ -222,6 +222,505 @@ html:has(body[data-scroll-locked]) {
   }
 }
 
+/* Agent flow drawing (agentFlow.tsx). Mostly monochrome: orange is work moving, green is work shipped.
+   Cards sit a step above the page, hairlines join them, and small device drawings stand for the clients. */
+.fl-svg {
+  --fl-orange: #ff8a5a;
+  --fl-green: #3ecf8e;
+  --fl-red: #f47067;
+  --fl-ink: #fff;
+  --fl-soft: rgba(255, 255, 255, 0.55);
+  --fl-faint: rgba(255, 255, 255, 0.38);
+}
+
+.fl-svg text {
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+/* column captions, in the site's "01 — Label" style */
+.fl-index {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--fl-orange);
+}
+
+.fl-index-rule {
+  stroke: rgba(255, 255, 255, 0.2);
+}
+
+.fl-header {
+  font-size: 13px;
+  font-weight: 500;
+  fill: rgba(255, 255, 255, 0.5);
+}
+
+.fl-line {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.13);
+  stroke-width: 1;
+  transition: stroke 0.4s;
+}
+
+.fl-line.is-live {
+  stroke: rgba(255, 138, 90, 0.55);
+}
+
+.fl-line.is-ship {
+  stroke: rgba(62, 207, 142, 0.6);
+}
+
+.fl-joint {
+  fill: #0a0d0c;
+  stroke: rgba(255, 255, 255, 0.3);
+}
+
+/* cards are outlines only: no fill, sheen or shadow */
+.fl-card {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.13);
+  transition: stroke 0.4s;
+}
+
+.fl-node.is-hit .fl-card {
+  stroke: rgba(255, 255, 255, 0.34);
+}
+
+/* an agent row: running, its next task on the way, or just finished */
+.fl-agent-state {
+  font-size: 11px;
+  font-weight: 500;
+  fill: var(--fl-faint);
+}
+
+.fl-agent.is-done .fl-agent-state {
+  fill: var(--fl-green);
+}
+
+.fl-agent.is-done .fl-bar {
+  fill: var(--fl-green);
+}
+
+.fl-tile {
+  fill: rgba(255, 255, 255, 0.05);
+  stroke: rgba(255, 255, 255, 0.06);
+}
+
+.fl-tile-icon,
+.fl-brand {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.fl-mark {
+  fill: #fff;
+}
+
+.fl-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  fill: var(--fl-ink);
+}
+
+.fl-sub {
+  font-size: 12px;
+  fill: var(--fl-soft);
+}
+
+.fl-label {
+  font-size: 12px;
+  font-weight: 500;
+  fill: rgba(255, 255, 255, 0.7);
+}
+
+.fl-meta {
+  font-size: 11px;
+  fill: var(--fl-faint);
+}
+
+.fl-meta.is-hot {
+  fill: var(--fl-orange);
+}
+
+.fl-foot {
+  font-size: 11.5px;
+  fill: var(--fl-faint);
+  transition: fill 0.4s;
+}
+
+.fl-foot.is-news {
+  fill: var(--fl-orange);
+}
+
+.fl-divider {
+  stroke: rgba(255, 255, 255, 0.09);
+}
+
+.fl-track {
+  fill: rgba(255, 255, 255, 0.08);
+}
+
+.fl-bar {
+  fill: var(--fl-orange);
+}
+
+/* devices */
+.fl-bezel {
+  fill: #151918;
+  stroke: rgba(255, 255, 255, 0.14);
+}
+
+.fl-screen {
+  fill: #0b0e0d;
+}
+
+.fl-base {
+  fill: #1b201f;
+  stroke: rgba(255, 255, 255, 0.12);
+}
+
+.fl-notch,
+.fl-ui-dot {
+  fill: rgba(255, 255, 255, 0.14);
+}
+
+.fl-island {
+  fill: #000;
+}
+
+.fl-ui-pane {
+  fill: rgba(255, 255, 255, 0.025);
+}
+
+.fl-ui-line {
+  fill: rgba(255, 255, 255, 0.13);
+}
+
+.fl-ui-line.is-strong {
+  fill: rgba(255, 255, 255, 0.3);
+}
+
+.fl-ui-line.is-accent {
+  fill: rgba(255, 138, 90, 0.7);
+}
+
+.fl-ui-bubble,
+.fl-ui-url,
+.fl-ui-card {
+  fill: rgba(255, 255, 255, 0.07);
+}
+
+.fl-ui-tool,
+.fl-ui-composer {
+  fill: rgba(255, 255, 255, 0.03);
+  stroke: rgba(255, 255, 255, 0.1);
+}
+
+.fl-ui-live {
+  fill: var(--fl-orange);
+}
+
+.fl-ui-send {
+  fill: rgba(255, 255, 255, 0.75);
+}
+
+.fl-ui-btn {
+  fill: rgba(255, 255, 255, 0.16);
+}
+
+.fl-ui-btn.is-approve {
+  fill: rgba(255, 255, 255, 0.85);
+  transition: fill 0.3s;
+}
+
+.fl-device.is-hit .fl-ui-btn.is-approve {
+  fill: var(--fl-green);
+}
+
+.fl-ui-home {
+  fill: rgba(255, 255, 255, 0.3);
+}
+
+.fl-device .fl-bezel {
+  transition: stroke 0.4s;
+}
+
+.fl-device.is-hit .fl-bezel {
+  stroke: rgba(255, 138, 90, 0.6);
+}
+
+.fl-chip {
+  fill: #0a0d0c;
+  stroke: rgba(255, 255, 255, 0.16);
+}
+
+.fl-chip-icon {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.6);
+  stroke-width: 1.3;
+  stroke-linejoin: round;
+}
+
+.fl-chip-text {
+  font-size: 10.5px;
+  font-weight: 500;
+  fill: rgba(255, 255, 255, 0.7);
+}
+
+/* the agent server */
+.fl-hub-card {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.18);
+  transition: stroke 0.4s;
+}
+
+.fl-hub.is-hit .fl-hub-card {
+  stroke: rgba(255, 138, 90, 0.5);
+}
+
+.fl-hub-title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  fill: #fff;
+}
+
+/* every agent the server can route to; lit while it runs or a task is on its way */
+.fl-pool .fl-tile {
+  transition: stroke 0.3s;
+}
+
+.fl-pool .fl-brand {
+  opacity: 0.35;
+  transition: opacity 0.3s;
+}
+
+.fl-pool.is-on .fl-brand,
+.fl-pool.is-routing .fl-brand {
+  opacity: 1;
+}
+
+.fl-pool.is-on .fl-tile {
+  stroke: rgba(255, 255, 255, 0.22);
+}
+
+.fl-pool.is-routing .fl-tile {
+  stroke: var(--fl-orange);
+}
+
+.fl-status {
+  fill: rgba(62, 207, 142, 0.08);
+  stroke: rgba(62, 207, 142, 0.18);
+}
+
+.fl-status-text {
+  font-size: 11.5px;
+  font-weight: 500;
+  fill: rgba(255, 255, 255, 0.75);
+}
+
+.fl-live-dot,
+.fl-live-pulse {
+  fill: var(--fl-green);
+}
+
+.fl-live-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: fl-pulse 2s ease-out infinite;
+}
+
+@keyframes fl-pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  to {
+    transform: scale(3);
+    opacity: 0;
+  }
+}
+
+.fl-qrow-bg {
+  fill: rgba(255, 255, 255, 0.035);
+  transition: fill 0.3s;
+}
+
+.fl-qrow.is-empty .fl-qrow-bg {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.06);
+  stroke-dasharray: 3 4;
+}
+
+.fl-qrow-icon {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.fl-qrow-text {
+  font-size: 12.5px;
+  fill: rgba(255, 255, 255, 0.85);
+}
+
+/* usage: one row per Claude login */
+.fl-toggle {
+  fill: var(--fl-green);
+}
+
+.fl-toggle-knob {
+  fill: #fff;
+}
+
+.fl-avatar {
+  fill: rgba(255, 255, 255, 0.08);
+}
+
+.fl-account.is-active .fl-avatar {
+  fill: rgba(217, 119, 87, 0.22);
+}
+
+.fl-avatar-text {
+  font-size: 11px;
+  font-weight: 600;
+  fill: rgba(255, 255, 255, 0.85);
+}
+
+.fl-account-name {
+  font-size: 13px;
+  font-weight: 500;
+  fill: var(--fl-soft);
+  transition: fill 0.4s;
+}
+
+.fl-account.is-active .fl-account-name {
+  fill: #fff;
+}
+
+.fl-usage {
+  fill: rgba(255, 255, 255, 0.55);
+  transition: fill 0.4s;
+}
+
+.fl-usage.is-hot {
+  fill: var(--fl-orange);
+}
+
+/* review */
+.fl-diff {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.fl-diff.is-small {
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.fl-diff .is-add {
+  fill: var(--fl-green);
+}
+
+.fl-diff .is-del {
+  fill: var(--fl-red);
+}
+
+.fl-proof {
+  fill: rgba(62, 207, 142, 0.08);
+  stroke: rgba(62, 207, 142, 0.2);
+}
+
+.fl-proof-icon {
+  color: var(--fl-green);
+}
+
+.fl-proof-text {
+  font-size: 11px;
+  font-weight: 500;
+  fill: rgba(255, 255, 255, 0.8);
+}
+
+.fl-svg .fl-file {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  fill: rgba(255, 255, 255, 0.6);
+}
+
+.fl-btn {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.16);
+}
+
+.fl-btn-text {
+  font-size: 11px;
+  font-weight: 500;
+  fill: rgba(255, 255, 255, 0.8);
+}
+
+.fl-btn-primary {
+  fill: #fff;
+  transition: fill 0.2s;
+}
+
+.fl-btn-primary.is-pressed {
+  fill: rgba(255, 255, 255, 0.7);
+}
+
+.fl-btn-primary-text {
+  font-size: 11px;
+  font-weight: 600;
+  fill: #0a0d0c;
+}
+
+.fl-open-chip {
+  fill: rgba(62, 207, 142, 0.12);
+}
+
+.fl-open-text {
+  font-size: 10.5px;
+  font-weight: 600;
+  fill: var(--fl-green);
+}
+
+.fl-log-icon {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.fl-log-text {
+  font-size: 12.5px;
+  fill: rgba(255, 255, 255, 0.55);
+}
+
+.fl-log.is-new .fl-log-text {
+  fill: #fff;
+}
+
+.fl-log.is-new .fl-log-icon {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.fl-packet {
+  opacity: 0;
+  fill: var(--fl-orange);
+}
+
+.fl-packet[data-kind='ship'] {
+  fill: var(--fl-green);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fl-line,
+  .fl-card,
+  .fl-hub-card,
+  .fl-qrow-bg,
+  .fl-usage,
+  .fl-foot {
+    transition: none;
+  }
+  .fl-live-pulse {
+    animation: none;
+    opacity: 0;
+  }
+}
+
 /* SplitText line masks need a little room so descenders aren't clipped. */
 .split-line-mask {
   padding-bottom: 0.08em;
