@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ISessionPatch, ISessionState, reconcile, SessionTopicData } from '../../../../../platform/voltAgentServer/common/sessionPatch.js';
 import { fromWire } from '../../../../../platform/voltAgentServer/common/wire.js';
 import { IAgentServerClientService } from '../../../../services/voltAgentServer/common/agentServerClient.js';
@@ -33,6 +33,54 @@ export function reconcileKeepingViewState(target: IAgentMessage, source: IAgentM
 	return result;
 }
 
+type SessionEventRoutes = Map<string, Set<(data: SessionTopicData) => void>>;
+
+/** Per client: one listener on its session events, and the chats it hands each event to. */
+const sessionRoutes = new WeakMap<IAgentServerClientService, { readonly routes: SessionEventRoutes; readonly listener: IDisposable }>();
+
+/**
+ * Hands a client's session events for one chat to `handler`. One listener per client looks the
+ * chat up: a listener per chat would give every streamed chunk to every open chat, which with
+ * fifty chats at work is fifty calls per chunk.
+ */
+function onSessionEventFor(client: IAgentServerClientService, sessionId: string, handler: (data: SessionTopicData) => void): IDisposable {
+	let entry = sessionRoutes.get(client);
+	if (!entry) {
+		const routes: SessionEventRoutes = new Map();
+		entry = {
+			routes,
+			listener: client.onSessionEvent(data => {
+				const handlers = routes.get(data.id);
+				if (handlers) {
+					for (const route of [...handlers]) {
+						route(data);
+					}
+				}
+			}),
+		};
+		sessionRoutes.set(client, entry);
+	}
+	const { routes } = entry;
+	let handlers = routes.get(sessionId);
+	if (!handlers) {
+		handlers = new Set();
+		routes.set(sessionId, handlers);
+	}
+	const own = handlers;
+	own.add(handler);
+	return toDisposable(() => {
+		own.delete(handler);
+		if (!own.size && routes.get(sessionId) === own) {
+			routes.delete(sessionId);
+		}
+		const current = sessionRoutes.get(client);
+		if (!routes.size && current?.routes === routes) {
+			current.listener.dispose();
+			sessionRoutes.delete(client);
+		}
+	});
+}
+
 /** A chat's transcript as the server last sent it. */
 export interface IRemoteTranscript {
 	readonly messages: IAgentMessage[];
@@ -59,13 +107,14 @@ export class RemoteAgentSessionControl extends Disposable implements IAgentSessi
 	private opening: Promise<IRemoteTranscript> | undefined;
 	/** Patches that arrived while the chat was being opened. */
 	private early: ISessionPatch[] = [];
+	private readonly route = this._register(new MutableDisposable());
 
 	constructor(
 		private host: IAgentSessionHost,
 		@IAgentServerClientService private readonly client: IAgentServerClientService,
 	) {
 		super();
-		this._register(client.onSessionEvent(data => this.onSessionEvent(data)));
+		this.route.value = onSessionEventFor(client, host.sessionId, data => this.onSessionEvent(data));
 		this._register(client.onDidResync(() => {
 			if (this.rev >= 0) {
 				void this.reopen();
@@ -81,6 +130,9 @@ export class RemoteAgentSessionControl extends Disposable implements IAgentSessi
 	}
 
 	setHost(host: IAgentSessionHost): void {
+		if (host.sessionId !== this.host.sessionId) {
+			this.route.value = onSessionEventFor(this.client, host.sessionId, data => this.onSessionEvent(data));
+		}
 		this.host = host;
 	}
 

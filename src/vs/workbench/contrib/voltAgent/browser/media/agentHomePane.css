@@ -2091,8 +2091,14 @@ html.volt-layout-agent-window body {
 	color: var(--vscode-charts-blue, #3794ff);
 }
 
-.volt-agent-home-row > .status-badge.kind-working .status-icon svg,
-.volt-agent-tooltip-card-icon.volt-agent-svg-icon.status-working svg {
+/*
+ * The ring's square box spins, not its <svg>: Chromium runs an animation on an SVG element on the
+ * main thread (a restyle and repaint every frame per ring, about a fifth of the main thread with
+ * ten agents at work), and one on an HTML box on the compositor. The box is the svg's size and
+ * centered on it, so the turn looks the same.
+ */
+.volt-agent-home-row > .status-badge.kind-working > .status-icon,
+.volt-agent-tooltip-card-icon.volt-agent-svg-icon.status-working {
 	animation: volt-agent-home-spin 2.4s linear infinite;
 }
 

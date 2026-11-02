@@ -290,6 +290,16 @@ const USER_EDIT_MAX_HEIGHT = 220;
 const MAX_STASHED_THREADS = 16;
 /** Elements all parked threads may hold together; the least recently shown go first past it. */
 const STASHED_ELEMENTS_BUDGET = 150_000;
+/** A thread parked this long is let go at the next switch: a chat left that long redraws when it comes back. */
+const STASHED_THREAD_MAX_AGE_MS = 15 * 60_000;
+
+/** On a machine with 4 GB or less, half as many parked threads and elements. */
+function stashLimits(navigator: Navigator): { readonly threads: number; readonly elements: number } {
+	const memory = (navigator as Navigator & { readonly deviceMemory?: number }).deviceMemory;
+	return memory !== undefined && memory <= 4
+		? { threads: MAX_STASHED_THREADS / 2, elements: STASHED_ELEMENTS_BUDGET / 2 }
+		: { threads: MAX_STASHED_THREADS, elements: STASHED_ELEMENTS_BUDGET };
+}
 /**
  * A chat shown by a switch draws its last few exchanges at once. The ones above are drawn as the
  * reader scrolls toward them (or for find, an edit, a turn jump), never all in the background, so a
@@ -337,6 +347,8 @@ interface IStashedThread {
 	readonly reuse: TranscriptReuse;
 	/** Elements in `nodes`, counted against {@link STASHED_ELEMENTS_BUDGET}. */
 	readonly elements: number;
+	/** When it was parked, for {@link STASHED_THREAD_MAX_AGE_MS}. */
+	readonly parkedAt: number;
 	/** The chat changed while parked (a run kept going); its last exchange needs a redraw. */
 	stale: boolean;
 	readonly watch: DisposableStore;
@@ -3875,6 +3887,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			...head,
 			reuse: this.reuse,
 			elements,
+			parkedAt: Date.now(),
 			// A redraw still queued, or a run event while another chat loaded, means the nodes are behind the messages.
 			stale: this.renderHandle !== undefined || behind,
 			watch: new DisposableStore(),
@@ -3896,8 +3909,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		for (const stashed of this.stashedThreads.values()) {
 			parked += stashed.elements;
 		}
+		const limits = stashLimits(getWindow(this.container).navigator);
+		const now = Date.now();
+		// Least recently shown first, so also oldest first.
 		for (const [sessionId, stashed] of this.stashedThreads) {
-			if (stashed === entry || (this.stashedThreads.size <= MAX_STASHED_THREADS && parked <= STASHED_ELEMENTS_BUDGET)) {
+			const expired = now - stashed.parkedAt > STASHED_THREAD_MAX_AGE_MS;
+			if (stashed === entry || (!expired && this.stashedThreads.size <= limits.threads && parked <= limits.elements)) {
 				break;
 			}
 			parked -= stashed.elements;

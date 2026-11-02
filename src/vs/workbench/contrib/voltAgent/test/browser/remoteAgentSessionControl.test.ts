@@ -118,6 +118,36 @@ suite('RemoteAgentSessionControl', () => {
 		assert.deepStrictEqual(changes, ['render']);
 	});
 
+	test('chats on one client share one listener, and each hears only its own events', async () => {
+		const server = new FakeServer();
+		store.add({ dispose: () => server.dispose() });
+		let subscriptions = 0;
+		const client = {
+			...server.client(),
+			onSessionEvent: (listener: (data: SessionTopicData) => void) => {
+				subscriptions++;
+				return server.onSessionEvent.event(listener);
+			},
+		} as IAgentServerClientService;
+		const hostOf = (sessionId: string) => ({ sessionId, messages: [] as IAgentMessage[], contextUsed: undefined, contextWindow: undefined, recordAssistant: () => { } });
+		const first = new RemoteAgentSessionControl(hostOf('s1') as never, client);
+		const second = new RemoteAgentSessionControl(hostOf('s2') as never, client);
+		const heard: string[] = [];
+		const listeners = new DisposableStore();
+		listeners.add(first.onDidChange(() => heard.push('s1')));
+		listeners.add(second.onDidChange(() => heard.push('s2')));
+		await first.loadTranscript();
+		server.messages.push(reply('t1', 'Hi'));
+		server.publish();
+		assert.deepStrictEqual(heard, ['s1']);
+		assert.strictEqual(subscriptions, 1);
+		first.dispose();
+		assert.ok(server.onSessionEvent.hasListeners(), 'the other chat still listens');
+		second.dispose();
+		listeners.dispose();
+		assert.ok(!server.onSessionEvent.hasListeners(), 'the listener goes with the last chat');
+	});
+
 	test('a missed patch reopens the chat and catches up', async () => {
 		const { server, host, control } = setUp(store);
 		await control.loadTranscript();
