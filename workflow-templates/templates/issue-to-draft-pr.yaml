@@ -1,0 +1,124 @@
+# Label a GitHub issue "volt" and get a draft pull request that implements it.
+version: 1
+id: issue-to-draft-pr
+name: Issue to draft PR
+description: >-
+  Starts when an issue gets the volt label. On a new branch an agent implements the
+  issue and the tests run (two more tries when they fail). The work is pushed as a draft
+  pull request that closes the issue, and the issue gets a comment with the link.
+tags: [github, issues, coding, pull-request]
+trigger:
+  type: event
+  provider: github
+  event: label_changed
+  option: volt
+  samplePayload:
+    action: labeled
+    label:
+      name: volt
+    issue:
+      number: 7
+      title: Show the last sign-in time on the profile page
+      body: The profile page should show when the user last signed in, in their own time zone.
+nodes:
+  - id: start
+    type: start
+    position: [0, 0]
+  - id: branch
+    type: git_branch
+    name: New branch
+    position: [352, 0]
+    config:
+      name: 'volt/issue-{{ trigger.payload.issue.number }}'
+  - id: implement
+    type: agent
+    name: Implement the issue
+    position: [688, 0]
+    config:
+      prompt: |
+        Resolve GitHub issue #{{ trigger.payload.issue.number }}: {{ trigger.payload.issue.title }}
+
+        {{ trigger.payload.issue.body }}
+
+        Implement it in this repository with tests, and keep the change focused.
+        Output of the last test run, if there was one:
+        {{ nodes.test.stderr }}
+      mode: Agent
+  - id: test
+    type: package_script
+    name: Run tests
+    position: [1024, 0]
+    config:
+      script: test
+  - id: commit
+    type: git_commit
+    name: Commit
+    position: [1360, -76]
+    config:
+      message: 'feat: {{ trigger.payload.issue.title }} (#{{ trigger.payload.issue.number }})'
+  - id: push
+    type: git_push
+    name: Push
+    position: [1696, -76]
+  - id: pr
+    type: github_pr
+    name: Draft pull request
+    position: [2032, -76]
+    config:
+      title: '{{ trigger.payload.issue.title }}'
+      body: |
+        Closes #{{ trigger.payload.issue.number }}
+
+        {{ nodes.implement.summary }}
+      draft: true
+  - id: link
+    type: github_issue_comment
+    name: Link the PR
+    position: [2368, -76]
+    config:
+      issue: '{{ trigger.payload.issue.number }}'
+      body: 'Volt opened a draft pull request for this issue: {{ nodes.pr.url }}'
+  - id: done
+    type: end
+    position: [2704, -24]
+    config:
+      status: success
+      output: '{{ nodes.pr.url }}'
+  - id: retry
+    type: loop
+    name: Two more tries
+    position: [1360, 100]
+    config:
+      max: 2
+  - id: stuck
+    type: github_issue_comment
+    name: Say it is stuck
+    position: [1696, 124]
+    config:
+      issue: '{{ trigger.payload.issue.number }}'
+      body: |
+        Volt could not get the tests passing for this issue. Last test output:
+
+        {{ nodes.test.stderr }}
+  - id: failed
+    type: end
+    name: Not done
+    position: [2032, 176]
+    config:
+      status: failure
+      output: The tests still fail
+edges:
+  - { from: start.next, to: branch }
+  - { from: branch.created, to: implement }
+  - { from: implement.done, to: test }
+  - { from: test.passed, to: commit }
+  - { from: test.failed, to: retry, label: tests failed }
+  - { from: retry.repeat, to: implement }
+  - { from: retry.exhausted, to: stuck }
+  - { from: stuck.done, to: failed }
+  - { from: stuck.failed, to: failed }
+  - { from: commit.committed, to: push }
+  - { from: push.pushed, to: pr }
+  - { from: pr.opened, to: link }
+  - { from: link.done, to: done }
+  - { from: link.failed, to: done }

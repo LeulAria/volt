@@ -1,0 +1,100 @@
+# Every night: update dependencies on a branch, run the tests, and open a draft pull request.
+version: 1
+id: nightly-dependency-update
+name: Nightly dependency update
+description: >-
+  Runs every night at 03:00. On a new branch an agent upgrades dependencies to the newest
+  versions that keep the project working (patch and minor releases; major ones only when
+  the upgrade needs no code changes), the test script runs, and passing updates become a
+  draft pull request. When the tests fail you get a notification instead.
+tags: [dependencies, maintenance, schedule]
+trigger:
+  type: schedule
+  cron: '0 3 * * *'
+nodes:
+  - id: start
+    type: start
+    position: [0, 0]
+  - id: branch
+    type: git_branch
+    name: New branch
+    position: [352, 0]
+    config:
+      name: 'deps/nightly-{{ run.id }}'
+  - id: update
+    type: agent
+    name: Update dependencies
+    position: [688, 0]
+    config:
+      prompt: |
+        Update this project's dependencies with its package manager. Take patch and minor
+        releases; take a major release only when the upgrade needs no code changes.
+        Update the lockfile, keep the existing version range style, and do not touch
+        unrelated files. Finish with a list of what changed (name: old -> new).
+      mode: Agent
+  - id: test
+    type: package_script
+    name: Run tests
+    position: [1024, 0]
+    config:
+      script: test
+  - id: commit
+    type: git_commit
+    name: Commit
+    position: [1360, -89]
+    config:
+      message: 'chore(deps): nightly dependency update'
+  - id: push
+    type: git_push
+    name: Push
+    position: [1696, -133]
+  - id: pr
+    type: github_pr
+    name: Draft pull request
+    position: [2032, -133]
+    config:
+      title: 'chore(deps): nightly dependency update'
+      body: |
+        Automated dependency update by Volt. The test script passed.
+
+        {{ nodes.update.summary }}
+      draft: true
+  - id: done
+    type: end
+    position: [2368, -93]
+    config:
+      status: success
+      output: '{{ nodes.pr.url }}'
+  - id: current
+    type: end
+    name: Already current
+    position: [1696, 19]
+    config:
+      status: success
+      output: Every dependency is already up to date
+  - id: broken
+    type: notify
+    name: Tests failed
+    position: [1360, 113]
+    config:
+      title: The nightly dependency update breaks the tests
+      message: '{{ nodes.test.stderr }}'
+      severity: warning
+  - id: failed
+    type: end
+    name: Not updated
+    position: [1696, 153]
+    config:
+      status: failure
+      output: The updated dependencies fail the tests
+edges:
+  - { from: start.next, to: branch }
+  - { from: branch.created, to: update }
+  - { from: update.done, to: test }
+  - { from: test.passed, to: commit }
+  - { from: test.failed, to: broken }
+  - { from: broken.next, to: failed }
+  - { from: commit.committed, to: push }
+  - { from: commit.nothing, to: current }
+  - { from: push.pushed, to: pr }
+  - { from: pr.opened, to: done }

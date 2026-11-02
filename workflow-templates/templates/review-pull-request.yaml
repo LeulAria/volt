@@ -1,0 +1,80 @@
+# Review every new pull request: a read-only agent reads the diff and posts its review.
+version: 1
+id: review-pull-request
+name: Review a pull request
+description: >-
+  Starts when a pull request is opened on GitHub. A read-only agent reviews the diff for
+  bugs, missing tests and risky changes, and posts the review as a comment. Approved pull
+  requests also get the volt-approved label.
+tags: [review, github, pull-request]
+trigger:
+  type: event
+  provider: github
+  event: pr.opened
+  samplePayload:
+    pull_request:
+      number: 42
+      title: Add rate limiting to the login endpoint
+      html_url: https://github.com/acme/app/pull/42
+      base:
+        ref: main
+      head:
+        ref: feature/rate-limit
+nodes:
+  - id: start
+    type: start
+    position: [0, 0]
+  - id: review
+    type: agent
+    name: Review the diff
+    position: [352, 0]
+    config:
+      prompt: |
+        Review pull request #{{ trigger.payload.pull_request.number }}: {{ trigger.payload.pull_request.title }}
+        {{ trigger.payload.pull_request.html_url }}
+
+        Read the diff (gh pr diff {{ trigger.payload.pull_request.number }}) and the code
+        around it. Look for bugs, missing tests, security problems and confusing names.
+        Do not change any files. Write the review as a short list of findings with file
+        and line, most important first, then end with one verdict: approve when it can
+        be merged as it is, or changes when something must be fixed.
+      mode: Ask
+      verdicts: [approve, changes]
+  - id: approval
+    type: github_pr_comment
+    name: Post the approval
+    position: [688, -77]
+    config:
+      body: |
+        **Volt review: looks good.**
+
+        {{ nodes.review.summary }}
+  - id: label
+    type: github_update_pr
+    name: Label it approved
+    position: [1024, -49]
+    config:
+      labels: [volt-approved]
+  - id: done
+    type: end
+    position: [1360, 39]
+    config:
+      status: success
+      output: '{{ nodes.review.verdict }}'
+  - id: feedback
+    type: github_pr_comment
+    name: Post the review
+    position: [688, 75]
+    config:
+      body: |
+        **Volt review**
+
+        {{ nodes.review.summary }}
+edges:
+  - { from: start.next, to: review }
+  - { from: review.approve, to: approval }
+  - { from: review.changes, to: feedback }
+  - { from: review.done, to: feedback }
+  - { from: approval.done, to: label }
+  - { from: label.done, to: done }
+  - { from: feedback.done, to: done }

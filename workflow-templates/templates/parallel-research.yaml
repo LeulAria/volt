@@ -1,0 +1,115 @@
+# Research a question from three angles at once, then merge the findings into one report.
+version: 1
+id: parallel-research
+name: Parallel research with fork/join
+description: >-
+  Three read-only agents work at the same time: one studies how this codebase handles it
+  today, one compares approaches and libraries, one looks for risks. A join waits for all
+  three, a model merges their findings, and the report is saved under research/.
+tags: [research, parallel, agents]
+trigger:
+  type: manual
+inputs:
+  - name: question
+    type: string
+    description: What to research
+    required: true
+nodes:
+  - id: start
+    type: start
+    position: [0, 0]
+  - id: fork
+    type: fork
+    name: Three angles
+    position: [352, 0]
+    config:
+      branches: 3
+  - id: codebase
+    type: agent
+    name: The codebase today
+    position: [688, -128]
+    config:
+      prompt: |
+        Research this question in the current codebase: {{ inputs.question }}
+
+        How is it handled today? Which files and modules are involved, and what
+        constraints do they set? Do not change files. Answer with findings and paths.
+      mode: Ask
+  - id: options
+    type: agent
+    name: Approaches
+    position: [688, 24]
+    config:
+      prompt: |
+        Research this question: {{ inputs.question }}
+
+        Compare two to four ways to solve it (approaches or libraries) with their
+        trade-offs for a project like this one. Do not change files.
+      mode: Ask
+  - id: risks
+    type: agent
+    name: Risks
+    position: [688, 176]
+    config:
+      prompt: |
+        Research the risks of this question: {{ inputs.question }}
+
+        What could go wrong (security, performance, migration, maintenance)? How would
+        we notice, and how would we limit the damage? Do not change files.
+      mode: Ask
+  - id: join
+    type: join
+    name: All three
+    position: [1024, 36]
+    config:
+      mode: all
+  - id: report
+    type: summarize
+    name: Merge the findings
+    position: [1360, 36]
+    config:
+      text: |
+        Question: {{ inputs.question }}
+
+        Codebase:
+        {{ nodes.codebase.summary }}
+
+        Approaches:
+        {{ nodes.options.summary }}
+
+        Risks:
+        {{ nodes.risks.summary }}
+      instructions: |
+        Merge these findings into one research report in Markdown: a two-sentence
+        answer first, then the sections Current state, Options (with a recommendation)
+        and Risks.
+  - id: save
+    type: write_file
+    name: Save the report
+    position: [1696, 36]
+    config:
+      path: 'research/{{ run.id }}.md'
+      content: |
+        # {{ inputs.question }}
+
+        {{ nodes.report.summary }}
+  - id: done
+    type: end
+    position: [2032, 76]
+    config:
+      status: success
+      output: '{{ nodes.save.path }}'
+edges:
+  - { from: start.next, to: fork }
+  - { from: fork.branch1, to: codebase }
+  - { from: fork.branch2, to: options }
+  - { from: fork.branch3, to: risks }
+  - { from: codebase.done, to: join }
+  - { from: codebase.failed, to: join }
+  - { from: options.done, to: join }
+  - { from: options.failed, to: join }
+  - { from: risks.done, to: join }
+  - { from: risks.failed, to: join }
+  - { from: join.next, to: report }
+  - { from: report.done, to: save }
+  - { from: save.written, to: done }
