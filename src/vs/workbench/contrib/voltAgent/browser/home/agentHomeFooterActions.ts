@@ -20,36 +20,53 @@ import { createHomeAutomationsIcon, createHomeCustomizeIcon, createHomePullReque
 
 export type AgentFooterAction = 'settings' | 'usage' | 'pullRequests' | 'automations' | 'customize';
 
+export interface IAgentFooterActionSpec {
+	readonly label: string;
+	readonly icon: () => Element;
+	readonly command: string;
+	/** Extra class in the footer (Usage keeps its own). */
+	readonly className?: string;
+}
+
+export const AGENT_FOOTER_ACTIONS: Readonly<Record<AgentFooterAction, IAgentFooterActionSpec>> = {
+	settings: { label: localize('voltAgent.home.settings', "Settings"), icon: () => createHomeSettingsIcon(), command: OPEN_VOLT_SETTINGS_COMMAND_ID },
+	usage: { label: localize('voltAgent.home.usage', "Usage"), icon: () => createUsageIcon(14), command: OPEN_AGENT_USAGE_COMMAND_ID, className: 'volt-agent-home-usage' },
+	pullRequests: { label: localize('voltAgent.home.pullRequests', "Pull Requests"), icon: () => createHomePullRequestsIcon(), command: OPEN_PULL_REQUESTS_PAGE_COMMAND_ID },
+	automations: { label: localize('voltAgent.home.automations', "Automations"), icon: () => createHomeAutomationsIcon(), command: OPEN_AUTOMATIONS_COMMAND_ID },
+	customize: { label: localize('voltAgent.home.customize', "Customize"), icon: () => createHomeCustomizeIcon(), command: OPEN_AGENT_CUSTOMIZE_COMMAND_ID },
+};
+
+/** Runs the action's command on click; Usage shows every account's limits on hover instead of a tooltip. */
+export function wireAgentFooterAction(button: HTMLButtonElement, id: AgentFooterAction, commandService: ICommandService, store: DisposableStore, instantiationService?: IInstantiationService): void {
+	const spec = AGENT_FOOTER_ACTIONS[id];
+	button.setAttribute('aria-label', spec.label);
+	if (id === 'usage' && instantiationService) {
+		store.add(instantiationService.createInstance(AgentUsageHoverCard, button, 'above'));
+	} else {
+		setAgentTooltip(button, spec.label);
+	}
+	store.add(addDisposableListener(button, 'click', e => {
+		e.preventDefault();
+		e.stopPropagation();
+		void commandService.executeCommand(spec.command);
+		button.blur();
+	}));
+}
+
 /**
- * Settings, Usage, Pull Requests, Automations and Customize: the icon row at the foot of the agent list, also
- * at the foot of the Settings nav. Each runs its command; the buttons come back by id.
+ * Settings, Usage, Pull Requests, Automations and Customize: the icon row at the foot of the Settings
+ * nav and the Pull Requests page (the agent list's own footer places them by slot, agentHomePane.ts).
+ * The buttons come back by id.
  */
 export function appendAgentFooterActions(footer: HTMLElement, commandService: ICommandService, store: DisposableStore, instantiationService?: IInstantiationService): Record<AgentFooterAction, HTMLButtonElement> {
-	const action = (id: AgentFooterAction, label: string, icon: () => Element, command: string, className = '') => {
-		const button = append(footer, $(`button.volt-agent-home-settings${className}`)) as HTMLButtonElement;
+	const action = (id: AgentFooterAction) => {
+		const spec = AGENT_FOOTER_ACTIONS[id];
+		const button = append(footer, $(`button.volt-agent-home-settings${spec.className ? `.${spec.className}` : ''}`)) as HTMLButtonElement;
 		button.type = 'button';
 		button.dataset.action = id;
-		button.appendChild(icon());
-		button.setAttribute('aria-label', label);
-		if (id === 'usage' && instantiationService) {
-			// Every account's limits on hover, instead of a plain "Usage" tooltip.
-			store.add(instantiationService.createInstance(AgentUsageHoverCard, button, 'above'));
-		} else {
-			setAgentTooltip(button, label);
-		}
-		store.add(addDisposableListener(button, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			void commandService.executeCommand(command);
-			button.blur();
-		}));
+		button.appendChild(spec.icon());
+		wireAgentFooterAction(button, id, commandService, store, instantiationService);
 		return button;
 	};
-	return {
-		settings: action('settings', localize('voltAgent.home.settings', "Settings"), () => createHomeSettingsIcon(), OPEN_VOLT_SETTINGS_COMMAND_ID),
-		usage: action('usage', localize('voltAgent.home.usage', "Usage"), () => createUsageIcon(14), OPEN_AGENT_USAGE_COMMAND_ID, '.volt-agent-home-usage'),
-		pullRequests: action('pullRequests', localize('voltAgent.home.pullRequests', "Pull Requests"), () => createHomePullRequestsIcon(), OPEN_PULL_REQUESTS_PAGE_COMMAND_ID),
-		automations: action('automations', localize('voltAgent.home.automations', "Automations"), () => createHomeAutomationsIcon(), OPEN_AUTOMATIONS_COMMAND_ID),
-		customize: action('customize', localize('voltAgent.home.customize', "Customize"), () => createHomeCustomizeIcon(), OPEN_AGENT_CUSTOMIZE_COMMAND_ID),
-	};
+	return { settings: action('settings'), usage: action('usage'), pullRequests: action('pullRequests'), automations: action('automations'), customize: action('customize') };
 }

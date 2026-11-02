@@ -162,8 +162,8 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 28px;
-	height: 28px;
+	width: var(--volt-look-toolbar-button-size, 28px);
+	height: var(--volt-look-toolbar-button-size, 28px);
 	padding: 0;
 	border: 0;
 	border-radius: 6px;
@@ -173,8 +173,8 @@
 }
 
 .volt-agent-quick-open-toggle {
-	width: 28px;
-	height: 28px;
+	width: var(--volt-look-toolbar-button-size, 28px);
+	height: var(--volt-look-toolbar-button-size, 28px);
 }
 
 .volt-agent-sidebar-toggle.right {

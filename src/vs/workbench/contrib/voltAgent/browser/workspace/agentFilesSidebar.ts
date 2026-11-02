@@ -51,7 +51,7 @@ import { AgentResourceFilter, IAgentResourcesService } from '../resources/agentR
 import { agentResourcesSectionFor, OPEN_AGENT_RESOURCES_COMMAND_ID } from '../resources/agentResourcesPage.js';
 import { showVoltMenu } from '../ui/menu/voltMenu.js';
 
-export type AgentFilesSidebarView = 'explorer' | 'scm' | 'search' | 'pullRequests';
+export type AgentFilesSidebarView = 'explorer' | 'scm' | 'search' | 'pullRequests' | 'debug' | 'extensions';
 
 /** The command behind each tab's Ctrl+Option+digit (agentSurfaceHost.ts registers them); tooltips show its keybinding. */
 export function filesSidebarViewCommandId(view: AgentFilesSidebarView): string {
@@ -67,8 +67,11 @@ const MIN_WIDTH = 200;
 /** Room the tabs beside the sidebar always keep. */
 const MIN_TABS_WIDTH = 320;
 
-/** The tabs left to right, which is also their shortcut's digit (Explorer 1 … Search 4). */
-const VIEWS: readonly { readonly id: AgentFilesSidebarView; readonly container: string; readonly icon: SvgIconShapes; readonly label: string }[] = [
+/**
+ * The views the sidebar can lend in. The tabs left to right, which is also their shortcut's digit
+ * (Explorer 1 … Search 4); `tab: false` views have no tab and open from the activity bar slot.
+ */
+const VIEWS: readonly { readonly id: AgentFilesSidebarView; readonly container: string; readonly icon: SvgIconShapes; readonly label: string; readonly tab?: false }[] = [
 	{
 		id: 'explorer', container: EXPLORER_VIEWLET_ID, label: localize('voltAgent.filesSidebar.explorer', "Explorer"), icon: EXPLORER_ICON_SHAPES
 	},
@@ -96,11 +99,34 @@ const VIEWS: readonly { readonly id: AgentFilesSidebarView; readonly container: 
 			['path', { d: 'M3 11C3 15.4183 6.58172 19 11 19C13.213 19 15.2161 18.1015 16.6644 16.6493C18.1077 15.2022 19 13.2053 19 11C19 6.58172 15.4183 3 11 3C6.58172 3 3 6.58172 3 11Z' }],
 		]
 	},
+	{
+		// VIEWLET_ID in debug/common/debug.ts.
+		id: 'debug', container: 'workbench.view.debug', label: localize('voltAgent.filesSidebar.debug', "Run and Debug"), tab: false, icon: [
+			['path', { d: 'M13 4l8 6-8 6V4z' }],
+			['path', { d: 'M7 11a3 3 0 0 1 3 3v3a3 3 0 0 1-6 0v-3a3 3 0 0 1 3-3z' }],
+			['path', { d: 'M4 15H2M12 15h-2M4 18.5l-1.5 1M10 18.5l1.5 1M5.5 11.5 4.5 10M8.5 11.5l1-1.5' }],
+		]
+	},
+	{
+		// VIEWLET_ID in extensions/common/extensions.ts.
+		id: 'extensions', container: 'workbench.view.extensions', label: localize('voltAgent.filesSidebar.extensions', "Extensions"), tab: false, icon: [
+			['rect', { x: 3, y: 11, width: 5, height: 5 }],
+			['rect', { x: 8, y: 11, width: 5, height: 5 }],
+			['rect', { x: 3, y: 16, width: 5, height: 5 }],
+			['rect', { x: 14, y: 3, width: 6, height: 6, transform: 'rotate(15 17 6)' }],
+		]
+	},
 ];
 
 /** The tabs in order, for their shortcuts: Ctrl+Option+1 is the first. */
 export function filesSidebarTabs(): readonly { readonly id: AgentFilesSidebarView; readonly label: string }[] {
-	return VIEWS;
+	return VIEWS.filter(view => view.tab !== false);
+}
+
+/** A view's name and icon, for buttons elsewhere that open it (the activity bar slot). */
+export function filesSidebarViewInfo(view: AgentFilesSidebarView): { readonly label: string; readonly icon: (doc: Document) => SVGSVGElement } {
+	const entry = VIEWS.find(candidate => candidate.id === view)!;
+	return { label: entry.label, icon: doc => createTabIcon(doc, entry.icon) };
 }
 
 /** Open, view and width are the window's, not a chat's: every chat's tools show the same sidebar. */
@@ -224,7 +250,7 @@ export class AgentFilesSidebar extends Disposable {
 		this.sash = append(this.element, $('.volt-agent-files-sidebar-sash'));
 		this.sash.title = localize('voltAgent.filesSidebar.resize', "Resize sidebar");
 		this.header = append(this.element, $('.volt-agent-files-sidebar-header'));
-		for (const view of VIEWS) {
+		for (const view of VIEWS.filter(candidate => candidate.tab !== false)) {
 			const button = append(this.header, $('button.volt-agent-files-sidebar-tab')) as HTMLButtonElement;
 			button.type = 'button';
 			button.setAttribute('aria-label', view.label);

@@ -72,7 +72,7 @@
 	flex-direction: column;
 	min-height: 0;
 	padding: 52px 0 0;
-	background: var(--volt-agent-sidebar-bg, color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base, #141414) 78%, #000) 55%, transparent));
+	background: var(--vscode-voltAgent-sidebarBackground, var(--volt-agent-sidebar-bg, color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base, #141414) 78%, #000) 55%, transparent)));
 	border-right: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
 }
 

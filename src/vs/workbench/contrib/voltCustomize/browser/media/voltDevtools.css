@@ -1,0 +1,356 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* What a hovered layer stands for, outlined in place (no layer over the window). */
+.monaco-workbench .volt-devtools-highlight {
+	outline: 2px solid var(--vscode-focusBorder) !important;
+	outline-offset: -2px !important;
+}
+
+.volt-devtools {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-foreground);
+	font-size: 13px;
+}
+
+.volt-devtools .hidden {
+	display: none !important;
+}
+
+.volt-devtools-tabs {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: 32px;
+	padding: 0 8px;
+	border-bottom: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.2));
+	flex-shrink: 0;
+}
+
+.volt-devtools-tabs .spacer {
+	flex: 1;
+	min-width: 8px;
+}
+
+.volt-devtools-tabs > * {
+	flex-shrink: 0;
+}
+
+.volt-devtools-tab {
+	height: 24px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	font: inherit;
+	cursor: pointer;
+}
+
+.volt-devtools-tab:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-devtools-tab.active {
+	background: var(--vscode-toolbar-activeBackground, rgba(127, 127, 127, 0.18));
+	color: var(--vscode-foreground);
+}
+
+/* Relative: the sash between the layers and the inspector is placed inside it. */
+.volt-devtools-layers {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.volt-devtools-layers.side {
+	flex-direction: row;
+}
+
+.volt-devtools-layers.side .volt-devtools-tree {
+	flex: none;
+	border-right: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.2));
+}
+
+.volt-devtools-layers:not(.side) .volt-devtools-tree {
+	border-bottom: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.2));
+}
+
+/* Rows edge to edge, square (volt-lists). */
+.volt-devtools .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-devtools-layer {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 100%;
+	min-width: 0;
+	padding-right: 10px;
+}
+
+.volt-devtools-layer .icon {
+	display: inline-flex;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-devtools-layer .label {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-devtools-layer.group .label {
+	font-weight: 600;
+}
+
+.volt-devtools-layer .detail {
+	flex: 1;
+	min-width: 0;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-devtools-inspector {
+	flex: 1;
+	min-width: 0;
+	overflow-y: auto;
+	padding: 10px 12px;
+	box-sizing: border-box;
+	background: var(--vscode-editor-background);
+}
+
+.volt-devtools-inspector-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 6px;
+}
+
+.volt-devtools-inspector-head .title {
+	font-weight: 600;
+}
+
+.volt-devtools-inspector-head .detail {
+	flex: 1;
+	min-width: 0;
+	color: var(--vscode-descriptionForeground);
+	font-family: var(--vscode-editor-font-family);
+	font-size: 11px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-devtools-desc,
+.volt-devtools-empty {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	line-height: 1.5;
+	margin-bottom: 8px;
+}
+
+.volt-devtools-section {
+	margin: 12px 0 4px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.volt-devtools-prop {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 30px;
+}
+
+.volt-devtools-prop .name {
+	flex: 0 0 42%;
+	min-width: 0;
+	font-family: var(--vscode-editor-font-family);
+	font-size: 12px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-devtools-prop .input {
+	flex: 1;
+	min-width: 60px;
+}
+
+.volt-devtools-prop .unit,
+.volt-devtools-prop .readonly {
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+}
+
+.volt-devtools-prop .swatch {
+	width: 16px;
+	height: 16px;
+	border-radius: 4px;
+	border: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.35));
+	flex-shrink: 0;
+}
+
+/* Variables: a grid, like a spreadsheet: square cells, a line under every row and between columns. */
+.volt-devtools-variables {
+	--volt-devtools-grid: var(--vscode-tree-tableColumnsBorder, var(--vscode-widget-border, rgba(127, 127, 127, 0.22)));
+	min-height: 0;
+}
+
+.volt-devtools-variables .monaco-table-th,
+.volt-devtools-variables .monaco-table-td {
+	box-sizing: border-box;
+	padding: 0 10px;
+	border-right: 1px solid var(--volt-devtools-grid);
+}
+
+.volt-devtools-variables .monaco-table-th {
+	border-bottom: 1px solid var(--volt-devtools-grid);
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.volt-devtools-variables .monaco-list-row {
+	box-sizing: border-box;
+	border-bottom: 1px solid var(--volt-devtools-grid);
+}
+
+/* The value cell is all input: no padding of its own, so every input is as wide as its column. */
+.volt-devtools-variables .monaco-table-td[data-col-index="2"] {
+	padding: 0;
+}
+
+.volt-devtools-cell {
+	display: flex;
+	align-items: center;
+	height: 100%;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.volt-devtools-cell.name {
+	font-family: var(--vscode-editor-font-family);
+	font-size: 12px;
+}
+
+.volt-devtools-cell.default {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.volt-devtools-cell.value input {
+	width: 100%;
+	height: 100%;
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0 10px;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 12px;
+}
+
+.volt-devtools-cell.value.changed input {
+	color: var(--vscode-textLink-foreground);
+}
+
+.volt-devtools-cell.value input:focus {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+	background: var(--vscode-input-background);
+}
+
+/* Number inputs: Volt's chevrons over the right end instead of Chromium's spinner. */
+.volt-devtools-stepper-host {
+	position: relative;
+}
+
+.volt-devtools-stepper-host input[type="number"] {
+	padding-right: 22px;
+	-moz-appearance: textfield;
+}
+
+.volt-devtools-stepper-host input[type="number"]::-webkit-inner-spin-button,
+.volt-devtools-stepper-host input[type="number"]::-webkit-outer-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}
+
+.volt-devtools-stepper {
+	position: absolute;
+	top: 1px;
+	right: 1px;
+	bottom: 1px;
+	display: flex;
+	flex-direction: column;
+	width: 18px;
+	opacity: 0;
+}
+
+.volt-devtools-stepper-host:hover > .volt-devtools-stepper,
+.volt-devtools-stepper-host:focus-within > .volt-devtools-stepper,
+.monaco-list-row:hover .volt-devtools-stepper {
+	opacity: 1;
+}
+
+.volt-devtools-step {
+	display: flex;
+	flex: 1;
+	align-items: center;
+	justify-content: center;
+	min-height: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+}
+
+.volt-devtools-step:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-foreground);
+}
+
+.volt-devtools-step .codicon {
+	font-size: 12px;
+	line-height: 1;
+}
+
+/* The playground's title bar beaker: the warning color while the draft has problems. */
+.monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggles > button.volt-playground-entry.has-problems {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+/* Inspect element: the icon button left of the tabs, and a crosshair over the window while picking. */
+.volt-devtools-tab.icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	padding: 0;
+}
+
+.monaco-workbench.volt-devtools-picking,
+.monaco-workbench.volt-devtools-picking * {
+	cursor: crosshair !important;
+}

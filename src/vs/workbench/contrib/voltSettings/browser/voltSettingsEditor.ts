@@ -61,6 +61,7 @@ import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js'
 import { AppearancePage, ISettingsPageKit } from './appearancePage.js';
 import { CodeIntelligencePage } from './codeIntelligencePage.js';
 import { GitPage } from './gitPage.js';
+import { CustomizeVoltPage } from './customizeVoltPage.js';
 import { CanvasScratchPage } from './canvasScratchPage.js';
 import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
@@ -89,7 +90,7 @@ import { SettingsThemeList } from './settingsThemeList.js';
 type TabToggle = 'enabled' | 'partialAccepts' | 'inComments' | 'whitespaceOnly' | 'autoImport' | 'autoImportPython';
 
 /** Volt's own pages, then every registered setting by category (`cat:`), Extensions included. */
-type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'connected' | 'devices' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
+type SettingsSection = 'general' | 'appearance' | 'customizeVolt' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'connected' | 'devices' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
 type CatalogSection = `cat:${string}`;
 
 function isCatalogSection(section: string): section is CatalogSection {
@@ -117,6 +118,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: nu
 	{ id: 'usage', label: localize('voltSettings.usage', "Usage"), icon: Codicon.graph, group: 0 },
 	{ id: 'providers', label: localize('voltSettings.providers', "Providers & Models"), icon: Codicon.plug, group: 0 },
 	{ id: 'appearance', label: localize('voltSettings.appearance', "Appearance"), icon: Codicon.symbolColor, group: 0 },
+	{ id: 'customizeVolt', label: localize('voltSettings.customizeVolt', "Customize Volt"), icon: Codicon.layout, group: 0 },
 	{ id: 'modes', label: localize('voltSettings.modes', "Modes"), icon: Codicon.sparkle, group: 1 },
 	{ id: 'composer', label: localize('voltSettings.composer', "Composer"), icon: Codicon.commentDiscussion, group: 1 },
 	{ id: 'tab', label: localize('voltSettings.tab', "Tab & Prediction"), icon: Codicon.keyboard, group: 1 },
@@ -133,7 +135,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: nu
 ];
 
 /** Pages that sit in the nav above Volt, not inside Volt's list. */
-const NAV_ABOVE_VOLT = new Set<string>(['providers', 'appearance']);
+const NAV_ABOVE_VOLT = new Set<string>(['providers', 'appearance', 'customizeVolt']);
 
 /** Volt's own pages (Modes … Storage), listed in Volt's list rather than the nav. */
 function isVoltPage(section: string): boolean {
@@ -714,6 +716,9 @@ export class VoltSettingsEditor extends EditorPane {
 				break;
 			case 'appearance':
 				pending = this.renderAppearance();
+				break;
+			case 'customizeVolt':
+				pending = this.renderCustomizeVolt();
 				break;
 			case 'providers':
 				this.providers.render(this.side, this.content);
@@ -1401,6 +1406,23 @@ export class VoltSettingsEditor extends EditorPane {
 			rerender: () => this.renderContent(),
 			isCurrent: () => this.section === 'canvas',
 		}).render();
+	}
+
+	/** Layout, look, every look token, the Playground and ~/.volt/customize (customizeVoltPage.ts). */
+	private renderCustomizeVolt(): Promise<void> {
+		return this.instantiationService.createInstance(CustomizeVoltPage, {
+			store: this.renderStore,
+			pageHead: (title, lead) => void this.pageHead(title, lead),
+			sectionLabel: label => this.sectionLabel(label),
+			sectionHint: text => void (append(this.target, $('.volt-settings-section-hint')).textContent = text),
+			settingsGroup: () => this.settingsGroup(),
+			settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
+			toggle: (parent, on, label, onClick) => void this.switch(parent, on, label, onClick),
+			stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
+			dropdown: (host, options, value, ariaLabel, onChange, width) => this.dropdown(host, options, value, ariaLabel, onChange, width),
+			rerender: () => this.renderContent(),
+			isCurrent: () => this.section === 'customizeVolt',
+		}).render().finally(() => this.scheduleScrollSync());
 	}
 
 	/** Pull request links and reviews, attribution, branch names and code hosts (gitPage.ts). */

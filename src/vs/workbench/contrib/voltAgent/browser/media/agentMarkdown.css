@@ -263,12 +263,12 @@
 /* Inline code is in the editor's font (VS Code's monospace); highlighted when it reads as code. */
 .volt-agent-markdown code {
 	font-family: var(--vscode-editor-font-family, var(--monaco-monospace-font, var(--volt-md-mono)));
-	font-size: 12.5px;
+	font-size: var(--volt-look-chat-inline-code-font-size, 12.5px);
 	font-weight: 400;
 	color: var(--volt-md-fg);
 	background: var(--volt-md-fill);
 	padding: 1.5px 2px;
-	border-radius: 5px;
+	border-radius: var(--volt-look-chat-inline-code-radius, 5px);
 	white-space: pre-wrap;
 }
 
@@ -354,7 +354,7 @@
 .volt-agent-markdown .volt-agent-table-wrap {
 	margin: 12px 0;
 	border: 1px solid var(--volt-md-stroke);
-	border-radius: 12px;
+	border-radius: var(--volt-look-chat-table-radius, 12px);
 	overflow-x: auto;
 	overflow-y: hidden;
 }
@@ -468,7 +468,7 @@
 	position: relative;
 	background: var(--volt-md-card-bg);
 	border: 1px solid var(--volt-md-stroke);
-	border-radius: 12px;
+	border-radius: var(--volt-look-chat-code-block-radius, 12px);
 	overflow: hidden;
 	font-size: 15px;
 	line-height: 24px;

@@ -11,6 +11,7 @@ import { IConfigurationService } from '../../../../platform/configuration/common
 import * as colorRegistry from '../../../../platform/theme/common/colorRegistry.js';
 import { ColorScheme } from '../../../../platform/theme/common/theme.js';
 import { IWorkbenchColorTheme, IWorkbenchThemeService } from '../../../services/themes/common/workbenchThemeService.js';
+import { voltLookAllCssVariables } from '../../voltCustomize/common/voltLookTokens.js';
 import { WebviewStyles } from './webview.js';
 
 interface WebviewThemeData {
@@ -37,7 +38,8 @@ export class WebviewThemeDataProvider extends Disposable {
 			this._reset();
 		}));
 
-		const webviewConfigurationKeys = ['editor.fontFamily', 'editor.fontWeight', 'editor.fontSize', 'editor.fontLigatures', 'accessibility.underlineLinks'];
+		// Volt: `volt.look` tokens are webview CSS variables too (--volt-look-*), so extension panels follow the person's look.
+		const webviewConfigurationKeys = ['editor.fontFamily', 'editor.fontWeight', 'editor.fontSize', 'editor.fontLigatures', 'accessibility.underlineLinks', 'volt.look'];
 		this._register(this._configurationService.onDidChangeConfiguration(e => {
 			if (webviewConfigurationKeys.some(key => e.affectsConfiguration(key))) {
 				this._reset();
@@ -76,6 +78,7 @@ export class WebviewThemeDataProvider extends Disposable {
 				'vscode-editor-font-size': editorFontSize + 'px',
 				'text-link-decoration': linkUnderlines ? 'underline' : 'none',
 				...exportedColors,
+				...voltLookAllCssVariables(id => this._configurationService.getValue(id)),
 				'vscode-editor-font-feature-settings': editorFontLigatures,
 			};
 
