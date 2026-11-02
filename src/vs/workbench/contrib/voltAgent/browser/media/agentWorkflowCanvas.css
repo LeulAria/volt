@@ -1,0 +1,1440 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * The workflow canvas (workflowCanvas.ts). Theme colours only: surfaces mix the foreground into
+ * the editor background (opaque, so nothing is see-through over the window), node colours map to
+ * the charts / terminal palette and show in the icon tile (never a one-sided stripe). Sizes that
+ * edges depend on (node boxes, header, port rows, handles) come from workflowCanvasGeometry.ts;
+ * the numbers here match it. No :has() and no attribute selectors on containers: every state is a
+ * class the canvas sets on the one element it concerns.
+ */
+
+/* Node colours: one variable per class, read by nodes, groups, swatches and ghost buttons. */
+.volt-wf-c-default { --wf-c: var(--vscode-descriptionForeground, #8b8b8b); }
+.volt-wf-c-blue { --wf-c: var(--vscode-charts-blue, #3794ff); }
+.volt-wf-c-green { --wf-c: var(--vscode-charts-green, #89d185); }
+.volt-wf-c-yellow { --wf-c: var(--vscode-charts-yellow, #cca700); }
+.volt-wf-c-orange { --wf-c: var(--vscode-charts-orange, #d18616); }
+.volt-wf-c-red { --wf-c: var(--vscode-charts-red, #f14c4c); }
+.volt-wf-c-pink { --wf-c: var(--vscode-terminal-ansiMagenta, #d670d6); }
+.volt-wf-c-purple { --wf-c: var(--vscode-charts-purple, #b180d7); }
+.volt-wf-c-teal { --wf-c: var(--vscode-terminal-ansiCyan, #29b8db); }
+
+.volt-wf-swatch {
+	display: inline-block;
+	flex: none;
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	background: var(--wf-c);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+}
+
+/* The type's own colour: the same dot with a dashed ring, so "automatic" reads as such. */
+.volt-wf-swatch.auto {
+	outline: 1px dashed color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+	outline-offset: 2px;
+	width: 10px;
+	height: 10px;
+}
+
+.volt-wf-canvas {
+	--wf-bg: var(--vscode-editor-background, #1e1e1e);
+	--wf-fg: var(--vscode-foreground, #cccccc);
+	--wf-muted: color-mix(in srgb, var(--wf-fg) 62%, var(--wf-bg));
+	--wf-faint: color-mix(in srgb, var(--wf-fg) 40%, var(--wf-bg));
+	--wf-card: color-mix(in srgb, var(--wf-fg) 4%, var(--wf-bg));
+	--wf-line: color-mix(in srgb, var(--wf-fg) 12%, var(--wf-bg));
+	--wf-line-strong: color-mix(in srgb, var(--wf-fg) 24%, var(--wf-bg));
+	--wf-hair: color-mix(in srgb, var(--wf-fg) 8%, var(--wf-bg));
+	--wf-accent: var(--vscode-focusBorder, #3b82f6);
+	--wf-green: var(--vscode-charts-green, #49b46b);
+	--wf-red: var(--vscode-charts-red, #ee5d6c);
+	--wf-amber: var(--vscode-charts-yellow, #e2a33b);
+	--wf-edge: color-mix(in srgb, var(--wf-fg) 34%, var(--wf-bg));
+	--wf-dot: color-mix(in srgb, var(--wf-fg) 16%, var(--wf-bg));
+	--wf-panel: var(--wf-bg);
+	--wf-hover: color-mix(in srgb, var(--wf-fg) 9%, var(--wf-bg));
+	--wf-radius: 8px;
+	--wf-shadow: 0 0 0 1px color-mix(in srgb, var(--wf-fg) 12%, var(--wf-bg)), 0 2px 10px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
+
+	position: relative;
+	overflow: hidden;
+	outline: none;
+	box-sizing: border-box;
+	width: 100%;
+	height: 100%;
+	color: var(--wf-fg);
+	font-size: 13px;
+	line-height: 18px;
+	user-select: none;
+	-webkit-user-select: none;
+	touch-action: none;
+	cursor: default;
+	background-color: var(--wf-bg);
+}
+
+/*
+ * The dot grid: a layer 64px larger than the view on the right and bottom (GRID_LAYER_PAD) that
+ * paintCamera moves by less than one tile; its tile size follows the zoom.
+ */
+.volt-wf-grid {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: calc(100% + 64px);
+	height: calc(100% + 64px);
+	background-image: radial-gradient(circle at 1px 1px, var(--wf-dot) 1px, transparent 1.5px);
+	background-size: 16px 16px;
+	pointer-events: none;
+}
+
+.volt-wf-canvas .hidden {
+	display: none !important;
+}
+
+.volt-wf-canvas.read-only {
+	cursor: grab;
+}
+
+.volt-wf-canvas.read-only .volt-wf-node * {
+	cursor: inherit;
+}
+
+/*
+ * During a gesture one empty layer covers the canvas and carries the cursor: it keeps hover
+ * effects from flickering under a drag, and a class on the root restyles only this element
+ * (a `.panning *` rule would restyle every node when a drag starts).
+ */
+.volt-wf-shield {
+	position: absolute;
+	inset: 0;
+	display: none;
+	pointer-events: auto;
+}
+
+.volt-wf-canvas.space-pan .volt-wf-shield,
+.volt-wf-canvas.panning .volt-wf-shield,
+.volt-wf-canvas.moving .volt-wf-shield,
+.volt-wf-canvas.marquee .volt-wf-shield,
+.volt-wf-canvas.connecting .volt-wf-shield {
+	display: block;
+}
+
+.volt-wf-canvas.space-pan .volt-wf-shield {
+	cursor: grab;
+}
+
+.volt-wf-canvas.panning .volt-wf-shield,
+.volt-wf-canvas.moving .volt-wf-shield {
+	cursor: grabbing;
+}
+
+.volt-wf-canvas.connecting .volt-wf-shield {
+	cursor: crosshair;
+}
+
+.volt-wf-canvas.connect-invalid .volt-wf-shield {
+	cursor: not-allowed;
+}
+
+.volt-wf-world {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 0;
+	height: 0;
+	transform-origin: 0 0;
+}
+
+/* Only while the camera moves: composited layers for the plane and the grid, crisp again after. */
+.volt-wf-canvas.gesturing .volt-wf-world,
+.volt-wf-canvas.gesturing .volt-wf-grid {
+	will-change: transform;
+}
+
+.volt-wf-groups,
+.volt-wf-nodes,
+.volt-wf-edge-badges {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 0;
+	height: 0;
+}
+
+/* ---- Edges ------------------------------------------------------------------------------- */
+
+.volt-wf-edges {
+	position: absolute;
+	left: 0;
+	top: 0;
+	overflow: visible;
+	pointer-events: none;
+}
+
+.volt-wf-edge {
+	color: var(--wf-edge);
+}
+
+.volt-wf-edge.k-success {
+	color: color-mix(in srgb, var(--wf-green) 70%, var(--wf-bg));
+}
+
+.volt-wf-edge.k-failure {
+	color: color-mix(in srgb, var(--wf-red) 70%, var(--wf-bg));
+}
+
+.volt-wf-edge .line {
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.5;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.volt-wf-edge .arrow {
+	fill: currentColor;
+}
+
+/* A wide invisible stroke to hover and click, the same width on screen at any zoom. */
+.volt-wf-edge .hit {
+	fill: none;
+	stroke: transparent;
+	stroke-width: 14;
+	vector-effect: non-scaling-stroke;
+	pointer-events: stroke;
+	cursor: pointer;
+}
+
+.volt-wf-edge.related {
+	color: color-mix(in srgb, var(--wf-fg) 62%, var(--wf-bg));
+}
+
+.volt-wf-edge.related.k-success {
+	color: var(--wf-green);
+}
+
+.volt-wf-edge.related.k-failure {
+	color: var(--wf-red);
+}
+
+.volt-wf-edge.hover .line {
+	stroke-width: 2.25;
+}
+
+.volt-wf-edge.traversed {
+	color: var(--wf-green);
+}
+
+.volt-wf-edge.traversed.k-failure {
+	color: var(--wf-red);
+}
+
+.volt-wf-edge.traversed .line {
+	stroke-width: 2;
+}
+
+.volt-wf-edge.selected {
+	color: var(--wf-accent);
+}
+
+.volt-wf-edge.selected .line {
+	stroke-width: 2;
+}
+
+.volt-wf-edge.issue-error {
+	color: var(--wf-red);
+}
+
+.volt-wf-edge.issue-warning {
+	color: var(--wf-amber);
+}
+
+.volt-wf-edge.issue-error .line,
+.volt-wf-edge.issue-warning .line {
+	stroke-dasharray: 4 3;
+}
+
+/* Being re-routed from its input handle: the old line stays faintly where it was. */
+.volt-wf-edge.detached {
+	opacity: 0.22;
+}
+
+/* At most as wide as the gap between two columns (96px), so it never sits on a card; the whole label is in its tooltip. */
+.volt-wf-edge-label {
+	position: absolute;
+	left: 0;
+	top: 0;
+	max-width: 84px;
+	box-sizing: border-box;
+	padding: 0 6px;
+	height: 18px;
+	line-height: 16px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	border-radius: 6px;
+	border: 1px solid var(--wf-line);
+	background: var(--wf-bg);
+	color: var(--wf-muted);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+/* An issue on a connection: a small dot at its middle, the message in its tooltip. */
+.volt-wf-badge.edge-issue {
+	position: absolute;
+	left: 0;
+	top: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	color: var(--wf-bg);
+	box-shadow: 0 0 0 2px var(--wf-bg);
+}
+
+.volt-wf-badge.edge-issue.error {
+	background: var(--wf-red);
+}
+
+.volt-wf-badge.edge-issue.warning {
+	background: var(--wf-amber);
+}
+
+.monaco-workbench .volt-wf-canvas .volt-wf-edge-badges .volt-wf-badge .codicon {
+	font-size: 11px;
+	color: inherit;
+}
+
+/* The connection being drawn: above the nodes, no transitions (it follows the pointer exactly). */
+.volt-wf-live {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 1px;
+	height: 1px;
+	overflow: visible;
+	pointer-events: none;
+	color: var(--wf-accent);
+}
+
+.volt-wf-live.k-success {
+	color: var(--wf-green);
+}
+
+.volt-wf-live.k-failure {
+	color: var(--wf-red);
+}
+
+.volt-wf-live .line {
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.volt-wf-live .arrow {
+	fill: currentColor;
+}
+
+.volt-wf-live .end {
+	fill: var(--wf-bg);
+	stroke: currentColor;
+	stroke-width: 2;
+}
+
+.volt-wf-live.snapped .end {
+	display: none;
+}
+
+/* Dropped on empty canvas, waiting for the block picker. */
+.volt-wf-live.pending .line {
+	stroke-dasharray: 6 5;
+	opacity: 0.85;
+}
+
+.volt-wf-live.pending .end {
+	fill: currentColor;
+	animation: volt-wf-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes volt-wf-pulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.35; }
+}
+
+/* ---- Groups ------------------------------------------------------------------------------ */
+
+.volt-wf-group {
+	position: absolute;
+	left: 0;
+	top: 0;
+	box-sizing: border-box;
+	border-radius: 12px;
+	border: 1px solid color-mix(in srgb, var(--wf-c) 30%, var(--wf-bg));
+	background: color-mix(in srgb, var(--wf-c) 5%, var(--wf-bg));
+	pointer-events: none;
+}
+
+.volt-wf-group.selected {
+	border-color: color-mix(in srgb, var(--wf-accent) 70%, var(--wf-bg));
+}
+
+.volt-wf-group-title {
+	position: absolute;
+	left: 8px;
+	top: 4px;
+	max-width: calc(100% - 16px);
+	height: 22px;
+	line-height: 22px;
+	padding: 0 6px;
+	border-radius: 6px;
+	box-sizing: border-box;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	font-weight: 600;
+	color: color-mix(in srgb, var(--wf-c) 80%, var(--wf-fg));
+	pointer-events: auto;
+	cursor: grab;
+}
+
+.volt-wf-group-title:hover {
+	background: color-mix(in srgb, var(--wf-c) 14%, var(--wf-bg));
+}
+
+/* ---- Nodes ------------------------------------------------------------------------------- */
+
+.volt-wf-node {
+	position: absolute;
+	left: 0;
+	top: 0;
+	box-sizing: border-box;
+	contain: layout style;
+	color: var(--wf-fg);
+}
+
+.volt-wf-node.selected {
+	z-index: 1;
+}
+
+.volt-wf-node.dragging {
+	z-index: 3;
+	will-change: transform;
+}
+
+/* The card: one hairline border all round, the same 8px radius everywhere. */
+.volt-wf-node-box {
+	position: absolute;
+	inset: 0;
+	box-sizing: border-box;
+	border-radius: var(--wf-radius);
+	border: 1px solid var(--wf-line);
+	background: var(--wf-card);
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+	overflow: hidden;
+	transition: border-color 100ms ease, box-shadow 120ms ease;
+}
+
+.volt-wf-node:hover .volt-wf-node-box {
+	border-color: var(--wf-line-strong);
+}
+
+.volt-wf-node.selected .volt-wf-node-box {
+	border-color: var(--wf-accent);
+	box-shadow: 0 0 0 1px var(--wf-accent), 0 6px 18px rgba(0, 0, 0, 0.16);
+}
+
+.volt-wf-node.dragging .volt-wf-node-box {
+	box-shadow: 0 0 0 1px var(--wf-accent), 0 12px 28px rgba(0, 0, 0, 0.26);
+}
+
+/* Header: 48px (HEAD_HEIGHT); a 28px tile, then the name over its summary. */
+.volt-wf-node-head {
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 0 12px;
+	box-sizing: border-box;
+	min-width: 0;
+}
+
+.volt-wf-node-tile {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--wf-c) 16%, var(--wf-card));
+	color: var(--wf-c);
+}
+
+.monaco-workbench .volt-wf-canvas .volt-wf-node .volt-wf-node-tile .codicon {
+	font-size: 16px;
+	color: inherit;
+}
+
+.volt-wf-node-text {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	justify-content: center;
+	min-width: 0;
+}
+
+.volt-wf-node-title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13px;
+	line-height: 18px;
+	font-weight: 600;
+}
+
+.volt-wf-node-sub {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11.5px;
+	line-height: 16px;
+	color: var(--wf-muted);
+}
+
+/* The start node's trigger: its subtitle, a quiet link that opens the trigger menu. */
+.volt-wf-trigger {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	max-width: 100%;
+	height: 16px;
+	margin: 0;
+	padding: 0;
+	border: none;
+	background: none;
+	font-family: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-wf-trigger-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-wf-trigger:hover,
+.volt-wf-trigger.open {
+	color: var(--wf-fg);
+}
+
+.volt-wf-trigger:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+	border-radius: 2px;
+}
+
+.monaco-workbench .volt-wf-canvas .volt-wf-node .volt-wf-trigger .codicon {
+	flex: none;
+	font-size: 12px;
+	color: inherit;
+}
+
+/* Status marks in the header, right-aligned: issue dot, run count, disabled, run state. */
+.volt-wf-node-status {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-wf-status-dot {
+	position: relative;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+}
+
+/* A larger hover target than the dot itself, for its tooltip. */
+.volt-wf-status-dot::after {
+	content: '';
+	position: absolute;
+	inset: -5px;
+}
+
+.volt-wf-status-dot.error {
+	background: var(--wf-red);
+}
+
+.volt-wf-status-dot.warning {
+	background: var(--wf-amber);
+}
+
+.volt-wf-status-count {
+	font-size: 11px;
+	line-height: 16px;
+	color: var(--wf-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-wf-status-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	color: var(--wf-bg);
+}
+
+.monaco-workbench .volt-wf-canvas .volt-wf-node .volt-wf-status-icon .codicon {
+	font-size: 11px;
+	color: inherit;
+}
+
+.volt-wf-status-icon.success {
+	background: var(--wf-green);
+}
+
+.volt-wf-status-icon.failed {
+	background: var(--wf-red);
+}
+
+.volt-wf-status-icon.waiting {
+	background: var(--wf-amber);
+	animation: volt-wf-pulse 1.4s ease-in-out infinite;
+}
+
+.volt-wf-status-icon.disabled {
+	width: auto;
+	color: var(--wf-muted);
+}
+
+.monaco-workbench .volt-wf-canvas .volt-wf-node .volt-wf-status-icon.disabled .codicon {
+	font-size: 13px;
+}
+
+.volt-wf-node-divider {
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 1px;
+	background: var(--wf-hair);
+}
+
+/* Port rows: 24px (PORT_ROW), the label right-aligned next to its dot on the card's edge. */
+.volt-wf-port-row {
+	position: absolute;
+	right: 0;
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	height: 24px;
+	max-width: calc(100% - 16px);
+	padding: 0 14px 0 8px;
+	box-sizing: border-box;
+	font-size: 11.5px;
+	line-height: 16px;
+	color: var(--wf-muted);
+	cursor: crosshair;
+	white-space: nowrap;
+}
+
+.volt-wf-port-row .label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-wf-port-row:hover,
+.volt-wf-port-row.active {
+	color: var(--wf-fg);
+}
+
+/* Output dots centred on the right edge; the ring in the canvas colour cuts the border. */
+.volt-wf-port-dot {
+	position: absolute;
+	width: 10px;
+	height: 10px;
+	margin: -5px 0 0 -5px;
+	box-sizing: border-box;
+	border-radius: 50%;
+	background: var(--wf-edge);
+	box-shadow: 0 0 0 2px var(--wf-bg);
+	cursor: crosshair;
+	transition: transform 80ms ease;
+}
+
+.volt-wf-port-dot::after {
+	content: '';
+	position: absolute;
+	inset: -7px;
+	border-radius: 50%;
+}
+
+.volt-wf-port-dot.k-success {
+	background: var(--wf-green);
+}
+
+.volt-wf-port-dot.k-failure {
+	background: var(--wf-card);
+	border: 2px solid var(--wf-red);
+}
+
+.volt-wf-port-dot.k-loop {
+	background: var(--wf-card);
+	border: 2px solid var(--wf-edge);
+}
+
+.volt-wf-port-dot:hover,
+.volt-wf-port-dot.active {
+	transform: scale(1.25);
+}
+
+.volt-wf-port-dot.active {
+	box-shadow: 0 0 0 2px var(--wf-bg), 0 0 0 4px color-mix(in srgb, var(--wf-accent) 45%, transparent);
+}
+
+/* The "+" after an unwired port, on a short stub (cezar.run). */
+.volt-wf-plus {
+	position: absolute;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	margin-top: -9px;
+	box-sizing: border-box;
+	border-radius: 50%;
+	border: 1px solid var(--wf-line-strong);
+	background: var(--wf-bg);
+	color: var(--wf-muted);
+	opacity: 0;
+	cursor: pointer;
+	transition: opacity 100ms ease, color 100ms ease, border-color 100ms ease, background-color 100ms ease;
+}
+
+.volt-wf-plus::before {
+	content: '';
+	position: absolute;
+	right: 100%;
+	top: 50%;
+	width: 9px;
+	height: 1px;
+	background: var(--wf-line-strong);
+}
+
+.volt-wf-node:hover .volt-wf-plus,
+.volt-wf-node.selected .volt-wf-plus {
+	opacity: 1;
+}
+
+.volt-wf-plus:hover {
+	color: var(--wf-bg);
+	background: var(--wf-accent);
+	border-color: var(--wf-accent);
+}
+
+.monaco-workbench .volt-wf-canvas .volt-wf-node .volt-wf-plus .codicon {
+	font-size: 12px;
+	color: inherit;
+}
+
+/* The input handle: a small bar centred on the left edge, on the first port row's line. */
+.volt-wf-node-in {
+	position: absolute;
+	left: -2px;
+	width: 4px;
+	height: 14px;
+	margin-top: -7px;
+	border-radius: 2px;
+	background: var(--wf-edge);
+	box-shadow: 0 0 0 2px var(--wf-bg);
+	transition: height 80ms ease, margin-top 80ms ease, background-color 80ms ease;
+}
+
+.volt-wf-node-in::after {
+	content: '';
+	position: absolute;
+	inset: -8px;
+}
+
+.volt-wf-canvas.connecting .volt-wf-node-in {
+	height: 20px;
+	margin-top: -10px;
+	background: color-mix(in srgb, var(--wf-accent) 55%, var(--wf-bg));
+}
+
+.volt-wf-node.connect-target .volt-wf-node-in {
+	background: var(--wf-accent);
+	box-shadow: 0 0 0 2px var(--wf-bg), 0 0 0 5px color-mix(in srgb, var(--wf-accent) 35%, transparent);
+}
+
+.volt-wf-node.connect-target .volt-wf-node-box {
+	border-color: var(--wf-accent);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--wf-accent) 24%, transparent);
+}
+
+.volt-wf-node.connect-invalid .volt-wf-node-box {
+	border-color: color-mix(in srgb, var(--wf-red) 60%, var(--wf-bg));
+}
+
+/* Pill: one line, icon and name. */
+.volt-wf-node.shape-pill .volt-wf-node-box {
+	border-radius: 18px;
+}
+
+.volt-wf-node.shape-pill .volt-wf-node-head {
+	gap: 8px;
+	padding-left: 7px;
+}
+
+.volt-wf-node.shape-pill .volt-wf-node-tile {
+	width: 22px;
+	height: 22px;
+	border-radius: 11px;
+}
+
+/* Round: the end node, its name and summary centred underneath (cezar.run). */
+.volt-wf-node.shape-round .volt-wf-node-box {
+	border-radius: 50%;
+	border-color: color-mix(in srgb, var(--wf-c) 45%, var(--wf-line));
+	background: color-mix(in srgb, var(--wf-c) 12%, var(--wf-card));
+}
+
+.volt-wf-node.shape-round .volt-wf-node-tile {
+	position: absolute;
+	inset: 0;
+	width: auto;
+	height: auto;
+	border-radius: 50%;
+	background: transparent;
+}
+
+.monaco-workbench .volt-wf-canvas .volt-wf-node.shape-round .volt-wf-node-tile .codicon {
+	font-size: 20px;
+}
+
+.volt-wf-round-label {
+	position: absolute;
+	left: 50%;
+	width: 180px;
+	margin-left: -90px;
+	text-align: center;
+}
+
+.volt-wf-round-line {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.volt-wf-round-line .volt-wf-node-title {
+	min-width: 0;
+}
+
+.volt-wf-node.unknown .volt-wf-node-box {
+	border-style: dashed;
+}
+
+/* ---- Run states -------------------------------------------------------------------------- */
+
+.volt-wf-node.s-queued .volt-wf-node-box {
+	border-color: color-mix(in srgb, var(--wf-accent) 40%, var(--wf-line));
+}
+
+/* The turning dashes outside the card mark the step in progress; the card keeps its own border. */
+.volt-wf-node.s-running .volt-wf-node-box {
+	border-color: var(--wf-line-strong);
+	box-shadow: 0 0 14px color-mix(in srgb, var(--wf-accent) 22%, transparent);
+}
+
+/* The running outline: a ring 4px outside the card, masked to 1.25px (thin, so the turning */
+/* dashes cross it nearly square), with dashes (a conic */
+/* gradient) turning inside it. Only a transform animates, so it stays on the compositor. */
+.volt-wf-node-run {
+	position: absolute;
+	inset: -4px;
+	display: none;
+	padding: 1.25px;
+	box-sizing: border-box;
+	border-radius: calc(var(--wf-radius) + 4px);
+	overflow: hidden;
+	pointer-events: none;
+	mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+
+.volt-wf-node.shape-pill .volt-wf-node-run {
+	border-radius: 22px;
+}
+
+.volt-wf-node.shape-round .volt-wf-node-run {
+	border-radius: 50%;
+}
+
+/* The step in progress: running (accent), or waiting on a timer, an approval or CI (amber). */
+.volt-wf-node.s-running .volt-wf-node-run,
+.volt-wf-node.s-waiting .volt-wf-node-run {
+	display: block;
+}
+
+.volt-wf-node.s-waiting .volt-wf-node-run {
+	--wf-run-dash: var(--wf-amber);
+}
+
+.volt-wf-node-run::before {
+	content: '';
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 200%;
+	aspect-ratio: 1;
+	background: repeating-conic-gradient(var(--wf-run-dash, var(--wf-accent)) 0deg 7deg, transparent 7deg 12deg);
+	transform: translate(-50%, -50%);
+	animation: volt-wf-run-turn 9s linear infinite;
+	will-change: transform;
+}
+
+@keyframes volt-wf-run-turn {
+	to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+/* One transform animation on a pseudo-element: composited, no repaint per frame. */
+.volt-wf-node.s-running .volt-wf-node-box::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: 45%;
+	background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--wf-accent) 16%, transparent), transparent);
+	animation: volt-wf-sweep 1.5s linear infinite;
+	will-change: transform;
+}
+
+@keyframes volt-wf-sweep {
+	from { transform: translateX(-100%); }
+	to { transform: translateX(320%); }
+}
+
+.volt-wf-node.s-success .volt-wf-node-box {
+	border-color: color-mix(in srgb, var(--wf-green) 60%, var(--wf-line));
+}
+
+.volt-wf-node.s-failed .volt-wf-node-box {
+	border-color: var(--wf-red);
+	box-shadow: 0 0 0 1px var(--wf-red);
+}
+
+.volt-wf-node.s-waiting .volt-wf-node-box {
+	border-color: var(--wf-line-strong);
+	box-shadow: 0 0 14px color-mix(in srgb, var(--wf-amber) 18%, transparent);
+}
+
+.volt-wf-node.s-skipped {
+	opacity: 0.45;
+}
+
+.volt-wf-node.s-skipped .volt-wf-node-box {
+	border-style: dashed;
+}
+
+.volt-wf-node.s-cancelled {
+	opacity: 0.6;
+}
+
+.volt-wf-node.s-cancelled .volt-wf-node-tile {
+	filter: grayscale(1);
+}
+
+/* Disabled: the card dims and dashes; its status marks stay readable. */
+.volt-wf-node.disabled .volt-wf-node-box,
+.volt-wf-node.disabled .volt-wf-node-tile,
+.volt-wf-node.disabled .volt-wf-node-text,
+.volt-wf-node.disabled .volt-wf-port-row,
+.volt-wf-node.disabled .volt-wf-port-dot,
+.volt-wf-node.disabled .volt-wf-node-in,
+.volt-wf-node.disabled .volt-wf-round-label .volt-wf-node-title {
+	opacity: 0.5;
+}
+
+.volt-wf-node.disabled .volt-wf-node-box {
+	border-style: dashed;
+}
+
+.volt-wf-node-below {
+	position: absolute;
+	left: 0;
+	right: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px;
+}
+
+.volt-wf-node.shape-round .volt-wf-node-below {
+	left: 50%;
+	right: auto;
+	width: 220px;
+	margin-left: -110px;
+	align-items: center;
+}
+
+.volt-wf-chip {
+	max-width: 100%;
+	height: 20px;
+	line-height: 20px;
+	padding: 0 8px;
+	box-sizing: border-box;
+	border-radius: 6px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11px;
+}
+
+.volt-wf-chip.error {
+	background: color-mix(in srgb, var(--wf-red) 14%, var(--wf-bg));
+	color: var(--wf-red);
+}
+
+.volt-wf-chip.waiting {
+	background: color-mix(in srgb, var(--wf-amber) 14%, var(--wf-bg));
+	color: var(--wf-amber);
+}
+
+.volt-wf-chip.duration {
+	padding: 0 2px;
+	color: var(--wf-faint);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-wf-rename {
+	box-sizing: border-box;
+	width: 100%;
+	height: 20px;
+	margin: -1px 0;
+	padding: 0 4px;
+	border: 1px solid var(--wf-accent);
+	border-radius: 4px;
+	outline: none;
+	background: var(--wf-bg);
+	color: var(--wf-fg);
+	font: inherit;
+	font-size: inherit;
+	font-weight: inherit;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+/* ---- Level of detail (one class on the root, set when the zoom crosses a threshold) -------- */
+
+/*
+ * Below 45% labels and summaries are too small to read: each becomes a bar as wide as its text,
+ * so rows still read as labelled (a zoomed-out n8n or Figma board), not as empty boxes. Below 25%
+ * the titles do too.
+ */
+.volt-wf-canvas.lod-low .volt-wf-node-text .volt-wf-node-sub,
+.volt-wf-canvas.lod-low .volt-wf-port-row .label,
+.volt-wf-canvas.lod-min .volt-wf-node-title {
+	align-self: flex-start;
+	max-width: 100%;
+	color: transparent;
+	background: linear-gradient(var(--wf-line-strong), var(--wf-line-strong)) left center / 100% 50% no-repeat;
+	border-radius: 3px;
+}
+
+.volt-wf-canvas.lod-min .volt-wf-node-title {
+	background-size: 100% 60%;
+}
+
+.volt-wf-canvas.lod-low .volt-wf-trigger .codicon,
+.volt-wf-canvas.lod-low .volt-wf-plus,
+.volt-wf-canvas.lod-low .volt-wf-edge-label,
+.volt-wf-canvas.lod-low .volt-wf-node-below,
+.volt-wf-canvas.lod-low .volt-wf-status-count,
+.volt-wf-canvas.lod-min .volt-wf-group-title {
+	visibility: hidden;
+}
+
+.volt-wf-canvas.lod-low .volt-wf-round-label .volt-wf-node-sub {
+	visibility: hidden;
+}
+
+/* ---- Empty state: three ghost branches from the start port (Postman Flows) ----------------- */
+
+.volt-wf-empty {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 0;
+	height: 0;
+}
+
+.volt-wf-empty-lines {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 1px;
+	height: 1px;
+	overflow: visible;
+	pointer-events: none;
+}
+
+.volt-wf-empty-branch .base {
+	fill: none;
+	stroke: var(--wf-line-strong);
+	stroke-width: 1.5;
+	stroke-linecap: round;
+	stroke-dasharray: 0.5 5;
+}
+
+/* pathLength=1: offset 1 hides the highlight, 0 draws it all the way to the button. */
+.volt-wf-empty-branch .glow {
+	fill: none;
+	stroke: var(--wf-c);
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-dasharray: 1 1;
+	stroke-dashoffset: 1;
+	opacity: 0;
+	transition: stroke-dashoffset 240ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 120ms ease;
+}
+
+.volt-wf-empty-branch.hot .glow {
+	stroke-dashoffset: 0;
+	opacity: 1;
+}
+
+.volt-wf-ghost {
+	position: absolute;
+	left: 0;
+	top: 0;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 32px;
+	padding: 0 12px 0 5px;
+	box-sizing: border-box;
+	border-radius: var(--wf-radius);
+	border: 1px dashed color-mix(in srgb, var(--wf-c) 45%, var(--wf-line));
+	background: var(--wf-card);
+	color: var(--wf-muted);
+	font: inherit;
+	font-size: 12.5px;
+	white-space: nowrap;
+	cursor: pointer;
+	outline: none;
+	transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.volt-wf-ghost.hot {
+	border-style: solid;
+	border-color: var(--wf-c);
+	background: color-mix(in srgb, var(--wf-c) 10%, var(--wf-card));
+	color: var(--wf-fg);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--wf-c) 16%, transparent);
+}
+
+.volt-wf-ghost-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--wf-c) 16%, var(--wf-card));
+	color: var(--wf-c);
+}
+
+.monaco-workbench .volt-wf-canvas .volt-wf-empty .volt-wf-ghost .codicon {
+	font-size: 13px;
+	color: inherit;
+}
+
+/* ---- Screen-space chrome: toolbar, I/O chip, edge tools, marquee, zoom, minimap ------------ */
+
+.volt-wf-overlay {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	pointer-events: none;
+}
+
+.volt-wf-marquee {
+	position: absolute;
+	left: 0;
+	top: 0;
+	box-sizing: border-box;
+	border: 1px solid var(--wf-accent);
+	border-radius: 2px;
+	background: color-mix(in srgb, var(--wf-accent) 10%, transparent);
+}
+
+.volt-wf-icon-button {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--wf-muted);
+	cursor: pointer;
+	transition: background-color 90ms ease, color 90ms ease;
+}
+
+.volt-wf-icon-button:hover,
+.volt-wf-icon-button.active,
+.volt-wf-icon-button.open {
+	background: var(--wf-hover);
+	color: var(--wf-fg);
+}
+
+.volt-wf-icon-button.on {
+	color: var(--wf-amber);
+}
+
+.volt-wf-icon-button:focus-visible,
+.volt-wf-io:focus-visible,
+.volt-wf-zoom-value:focus-visible,
+.volt-wf-ghost:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.monaco-workbench .volt-wf-canvas .volt-wf-chrome .volt-wf-icon-button .codicon {
+	font-size: 15px;
+	color: inherit;
+}
+
+/* The toolbar box itself paints nothing; each row is an opaque bar. */
+.volt-wf-toolbar {
+	position: absolute;
+	left: 0;
+	top: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-wf-toolbar-row {
+	display: flex;
+	align-items: center;
+	gap: 1px;
+	height: 34px;
+	padding: 0 3px;
+	box-sizing: border-box;
+	border-radius: var(--wf-radius);
+	background: var(--wf-panel);
+	box-shadow: var(--wf-shadow);
+	pointer-events: auto;
+}
+
+.volt-wf-toolbar-row.colors {
+	display: none;
+}
+
+.volt-wf-toolbar.colors-open .volt-wf-toolbar-row.colors {
+	display: flex;
+}
+
+.volt-wf-icon-button.swatch {
+	width: 26px;
+	height: 26px;
+}
+
+.volt-wf-icon-button.swatch.checked {
+	box-shadow: inset 0 0 0 1.5px var(--wf-accent);
+}
+
+.volt-wf-toolbar-divider,
+.volt-wf-zoom-divider {
+	flex: none;
+	width: 1px;
+	height: 16px;
+	margin: 0 3px;
+	background: var(--wf-line);
+}
+
+.volt-wf-io-chip {
+	position: absolute;
+	left: 0;
+	top: 0;
+	display: flex;
+	align-items: center;
+	height: 26px;
+	padding: 0 3px;
+	box-sizing: border-box;
+	border-radius: var(--wf-radius);
+	background: var(--wf-panel);
+	box-shadow: var(--wf-shadow);
+	pointer-events: auto;
+}
+
+.volt-wf-io {
+	height: 20px;
+	padding: 0 8px;
+	border: none;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--wf-muted);
+	font: inherit;
+	font-size: 11.5px;
+	cursor: pointer;
+}
+
+.volt-wf-io:hover {
+	background: var(--wf-hover);
+	color: var(--wf-fg);
+}
+
+.volt-wf-io-divider {
+	width: 1px;
+	height: 12px;
+	margin: 0 2px;
+	background: var(--wf-line);
+}
+
+.volt-wf-edge-tools {
+	position: absolute;
+	left: 0;
+	top: 0;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: 30px;
+	padding: 0 3px;
+	box-sizing: border-box;
+	border-radius: var(--wf-radius);
+	background: var(--wf-panel);
+	box-shadow: var(--wf-shadow);
+	pointer-events: auto;
+}
+
+.volt-wf-edge-tools .volt-wf-icon-button {
+	width: 24px;
+	height: 24px;
+}
+
+.volt-wf-edge-tools .volt-wf-icon-button.insert:hover {
+	background: var(--wf-accent);
+	color: var(--wf-bg);
+}
+
+.volt-wf-edge-tools .volt-wf-icon-button.delete:hover {
+	background: color-mix(in srgb, var(--wf-red) 18%, var(--wf-bg));
+	color: var(--wf-red);
+}
+
+.volt-wf-zoom {
+	position: absolute;
+	left: 12px;
+	bottom: 12px;
+	display: flex;
+	align-items: center;
+	gap: 1px;
+	height: 32px;
+	padding: 0 3px;
+	box-sizing: border-box;
+	border-radius: var(--wf-radius);
+	background: var(--wf-panel);
+	box-shadow: var(--wf-shadow);
+}
+
+.volt-wf-zoom .volt-wf-icon-button {
+	width: 26px;
+	height: 26px;
+}
+
+.volt-wf-zoom-value {
+	min-width: 46px;
+	height: 26px;
+	padding: 0 4px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--wf-muted);
+	font: inherit;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	cursor: pointer;
+}
+
+.volt-wf-zoom-value:hover {
+	background: var(--wf-hover);
+	color: var(--wf-fg);
+}
+
+.volt-wf-minimap {
+	position: absolute;
+	right: 12px;
+	bottom: 12px;
+	width: 168px;
+	height: 104px;
+	overflow: hidden;
+	border-radius: var(--wf-radius);
+	background: var(--wf-panel);
+	box-shadow: var(--wf-shadow);
+	cursor: pointer;
+}
+
+.volt-wf-minimap.dragging {
+	cursor: grabbing;
+}
+
+.volt-wf-minimap canvas {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 168px;
+	height: 104px;
+}
+
+.volt-wf-minimap-view {
+	position: absolute;
+	left: 0;
+	top: 0;
+	box-sizing: border-box;
+	border: 1.5px solid var(--wf-accent);
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--wf-accent) 8%, transparent);
+	pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-wf-canvas .volt-wf-node-run::before,
+	.volt-wf-canvas .volt-wf-node-box::after,
+	.volt-wf-canvas .volt-wf-status-icon.waiting,
+	.volt-wf-canvas .volt-wf-live .end {
+		animation: none !important;
+	}
+
+	.volt-wf-canvas .volt-wf-empty-branch .glow,
+	.volt-wf-canvas .volt-wf-ghost,
+	.volt-wf-canvas .volt-wf-node-box,
+	.volt-wf-canvas .volt-wf-port-dot,
+	.volt-wf-canvas .volt-wf-node-in,
+	.volt-wf-canvas .volt-wf-plus {
+		transition: none !important;
+	}
+}
