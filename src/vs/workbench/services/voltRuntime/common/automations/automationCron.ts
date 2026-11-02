@@ -3,12 +3,14 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { civilDay, wallClock } from './automationTime.js';
+
 /**
- * Five-field cron (`minute hour day-of-month month day-of-week`) in local time: lists, ranges,
- * steps, month and weekday names, `7` for Sunday, and the `@hourly`-style macros. Day-of-month
- * and day-of-week combine as in Vixie cron: when both are restricted, either one matching is
- * enough. The next run walks days, then the allowed hours and minutes of a matching day, so a
- * yearly expression costs a few hundred cheap checks, not half a million minutes.
+ * Five-field cron (`minute hour day-of-month month day-of-week`) in local time or an IANA zone:
+ * lists, ranges, steps, month and weekday names, `7` for Sunday, and the `@hourly`-style macros.
+ * Day-of-month and day-of-week combine as in Vixie cron: when both are restricted, either one
+ * matching is enough. The next run walks days, then the allowed hours and minutes of a matching
+ * day, so a yearly expression costs a few hundred cheap checks, not half a million minutes.
  */
 
 export interface ICronSchedule {
@@ -120,12 +122,12 @@ function fieldValue(text: string | undefined, rule: IFieldRule): number | undefi
 	return Number.isInteger(value) && value >= rule.min && value <= rule.max ? value : undefined;
 }
 
-function dayMatches(schedule: ICronSchedule, date: Date): boolean {
-	if (!schedule.months.has(date.getMonth() + 1)) {
+function dayMatches(schedule: ICronSchedule, month: number, day: number, weekday: number): boolean {
+	if (!schedule.months.has(month)) {
 		return false;
 	}
-	const byDay = schedule.days.has(date.getDate());
-	const byWeekday = schedule.weekdays.has(date.getDay());
+	const byDay = schedule.days.has(day);
+	const byWeekday = schedule.weekdays.has(weekday);
 	if (schedule.anyDay && schedule.anyWeekday) {
 		return true;
 	}
@@ -138,19 +140,30 @@ function dayMatches(schedule: ICronSchedule, date: Date): boolean {
 	return byDay || byWeekday;
 }
 
-/** The first minute strictly after `after` the schedule allows, or undefined within ~5 years. */
-export function nextCronRun(schedule: ICronSchedule, after: number): number | undefined {
-	const start = new Date(after);
+/**
+ * The first minute strictly after `after` the schedule allows, or undefined within ~5 years.
+ * `zone` is the IANA zone the fields are read in; local time when absent.
+ */
+export function nextCronRun(schedule: ICronSchedule, after: number, zone?: string): number | undefined {
+	const clock = wallClock(zone);
+	const start = clock.parts(after);
 	for (let offset = 0; offset < 366 * 5; offset++) {
-		const day = new Date(start.getFullYear(), start.getMonth(), start.getDate() + offset);
-		if (!dayMatches(schedule, day)) {
+		const day = civilDay(start.year, start.month, start.day + offset);
+		if (!dayMatches(schedule, day.month, day.day, day.weekday)) {
 			continue;
 		}
 		for (const hour of schedule.hours) {
+			// Hours and minutes before `after` on its own day cannot be later than it.
+			if (offset === 0 && hour < start.hour) {
+				continue;
+			}
 			for (const minute of schedule.minutes) {
-				const at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour, minute, 0, 0).getTime();
+				if (offset === 0 && hour === start.hour && minute < start.minute) {
+					continue;
+				}
+				const at = clock.epoch(day.year, day.month, day.day, hour, minute);
 				// Daylight saving can move a wall-clock time; the hour check drops the skipped one.
-				if (at > after && new Date(at).getHours() === hour) {
+				if (at > after && clock.parts(at).hour === hour) {
 					return at;
 				}
 			}
@@ -159,33 +172,172 @@ export function nextCronRun(schedule: ICronSchedule, after: number): number | un
 	return undefined;
 }
 
-/** "Every 15 minutes", "At 09:00 on weekdays", else the expression itself. */
+/** A day the schedule runs on, in its zone, and how many runs it has there. */
+export interface ICronDay {
+	readonly year: number;
+	readonly month: number;
+	readonly day: number;
+	/** Hours × minutes: a dense schedule shows without listing its runs (a day that skips an hour for daylight saving has fewer). */
+	readonly count: number;
+}
+
+/** The days in [from, to) the schedule runs on, read in `zone`. Walks days, never minutes. */
+export function cronDaysBetween(schedule: ICronSchedule, from: number, to: number, zone?: string): ICronDay[] {
+	const clock = wallClock(zone);
+	const first = clock.parts(from);
+	const last = clock.parts(Math.max(from, to - 1));
+	const end = Date.UTC(last.year, last.month - 1, last.day);
+	const perDay = schedule.hours.length * schedule.minutes.length;
+	const days: ICronDay[] = [];
+	for (let offset = 0; offset < 366 * 5; offset++) {
+		const day = civilDay(first.year, first.month, first.day + offset);
+		if (Date.UTC(day.year, day.month - 1, day.day) > end) {
+			break;
+		}
+		if (dayMatches(schedule, day.month, day.day, day.weekday)) {
+			days.push({ year: day.year, month: day.month, day: day.day, count: perDay });
+		}
+	}
+	return days;
+}
+
+/** The runs of one day (from `cronDaysBetween`) in [from, to), at most `cap`. */
+export function cronRunsOn(schedule: ICronSchedule, day: Pick<ICronDay, 'year' | 'month' | 'day'>, from: number, to: number, zone?: string, cap = Number.POSITIVE_INFINITY): number[] {
+	const clock = wallClock(zone);
+	const runs: number[] = [];
+	for (const hour of schedule.hours) {
+		for (const minute of schedule.minutes) {
+			const at = clock.epoch(day.year, day.month, day.day, hour, minute);
+			if (at >= from && at < to && clock.parts(at).hour === hour) {
+				runs.push(at);
+				if (runs.length >= cap) {
+					return runs;
+				}
+			}
+		}
+	}
+	return runs;
+}
+
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const WEEKDAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function pad(value: number): string {
+	return String(value).padStart(2, '0');
+}
+
+/** " on weekdays", " on Mondays", " on Mon, Wed, Fri", "" for every day; undefined when it cannot be said simply. */
+function weekdayPhrase(field: string, schedule: ICronSchedule): string | undefined {
+	if (field === '*' || field === '?') {
+		return '';
+	}
+	const days = [...schedule.weekdays].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
+	const key = [...days].sort((a, b) => a - b).join(',');
+	if (key === '1,2,3,4,5') {
+		return ' on weekdays';
+	}
+	if (key === '0,6') {
+		return ' on weekends';
+	}
+	if (days.length === 7) {
+		return '';
+	}
+	return days.length === 1 ? ` on ${WEEKDAYS[days[0]]}s` : ` on ${days.map(day => WEEKDAYS_SHORT[day]).join(', ')}`;
+}
+
+/** "09:00", "09:00 and 17:00", "09:00, 12:00 and 15:00"; undefined past four times. */
+function timeList(hours: readonly number[], minutes: readonly number[]): string | undefined {
+	if (hours.length * minutes.length > 4) {
+		return undefined;
+	}
+	const times = hours.flatMap(hour => minutes.map(minute => `${pad(hour)}:${pad(minute)}`));
+	return times.length === 1 ? times[0] : `${times.slice(0, -1).join(', ')} and ${times[times.length - 1]}`;
+}
+
+/** "9:00-17:59" for an hour range, "9:00-9:59" for one hour; undefined for anything else. */
+function hourWindow(field: string, lastMinute: number): string | undefined {
+	const range = /^(\d{1,2})-(\d{1,2})$/.exec(field);
+	if (range) {
+		return `${Number(range[1])}:00\u2013${Number(range[2])}:${pad(lastMinute)}`;
+	}
+	return /^\d{1,2}$/.test(field) ? `${Number(field)}:00\u2013${Number(field)}:${pad(lastMinute)}` : undefined;
+}
+
+/**
+ * Plain words for the usual shapes: "Every 5 minutes", "Every 15 minutes, 9:00-17:59 on
+ * weekdays", "At :30 every hour", "Every 2 hours", "Weekdays at 09:00", "Monthly on day 1 at
+ * 09:00"; else "Cron <expression>". An invalid expression comes back as typed.
+ */
 export function describeCron(expression: string): string {
 	const text = expression.trim();
-	const parsed = parseCron(text);
-	if (!parsed.schedule) {
+	const parsed = parseCron(text).schedule;
+	if (!parsed) {
 		return text;
 	}
-	const parts = (MACROS[text.toLowerCase()] ?? text).split(/\s+/);
-	const [minute, hour, dom, month, dow] = parts;
-	const everyMinute = /^\*\/(\d+)$/.exec(minute);
-	if (everyMinute && hour === '*' && dom === '*' && month === '*' && dow === '*') {
-		return everyMinute[1] === '1' ? 'Every minute' : `Every ${everyMinute[1]} minutes`;
+	const [minute, hour, dom, month, dow] = (MACROS[text.toLowerCase()] ?? text).split(/\s+/);
+	const fallback = `Cron ${text}`;
+	const days = weekdayPhrase(dow, parsed);
+	if (month !== '*' || days === undefined) {
+		return fallback;
 	}
-	if (/^\d+$/.test(minute) && hour === '*' && dom === '*' && month === '*' && dow === '*') {
-		return `Every hour at :${minute.padStart(2, '0')}`;
+	const domPhrase = dom === '*' || dom === '?' ? '' : /^\d{1,2}$/.test(dom) && days === '' ? ` on day ${Number(dom)} of the month` : undefined;
+	if (domPhrase === undefined) {
+		return fallback;
 	}
-	if (/^\d+$/.test(minute) && /^\d+$/.test(hour) && dom === '*' && month === '*') {
-		const time = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
-		if (dow === '*') {
-			return `Every day at ${time}`;
+	const step = /^\*\/(\d+)$/.exec(minute);
+	if (minute === '*' || step) {
+		const every = step && step[1] !== '1' ? `Every ${step[1]} minutes` : 'Every minute';
+		if (hour === '*') {
+			return `${every}${days}${domPhrase}`;
 		}
-		if (dow === '1-5') {
-			return `Weekdays at ${time}`;
+		const window = hourWindow(hour, 59);
+		return window ? `${every}, ${window}${days}${domPhrase}` : fallback;
+	}
+	if (/^\d{1,2}$/.test(minute)) {
+		const at = Number(minute);
+		if (hour === '*') {
+			return `${at === 0 ? 'Every hour' : `At :${pad(at)} every hour`}${days}${domPhrase}`;
 		}
-		if (dow === '0,6' || dow === '6,0') {
-			return `Weekends at ${time}`;
+		const hourStep = /^\*\/(\d+)$/.exec(hour);
+		if (hourStep) {
+			return `Every ${hourStep[1]} hours${at ? ` at :${pad(at)}` : ''}${days}${domPhrase}`;
+		}
+		const window = /^\d{1,2}-\d{1,2}$/.test(hour) ? hourWindow(hour, at) : undefined;
+		if (window) {
+			return `At :${pad(at)} every hour, ${window}${days}${domPhrase}`;
 		}
 	}
-	return `Cron ${text}`;
+	const times = /^[\d,]+$/.test(minute) && /^[\d,-]+$/.test(hour) ? timeList(parsed.hours, parsed.minutes) : undefined;
+	if (!times) {
+		return fallback;
+	}
+	if (domPhrase) {
+		return `Monthly on day ${Number(dom)} at ${times}`;
+	}
+	switch (days) {
+		case '': return `Every day at ${times}`;
+		case ' on weekdays': return `Weekdays at ${times}`;
+		case ' on weekends': return `Weekends at ${times}`;
+	}
+	return parsed.weekdays.size === 1 ? `Every ${WEEKDAYS[[...parsed.weekdays][0]]} at ${times}` : `${[...parsed.weekdays].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map(day => WEEKDAYS_SHORT[day]).join(', ')} at ${times}`;
+}
+
+/**
+ * The parts of a plain `m h * * dow` expression (single minute and hour, every day of the month
+ * and month), which the calendar can move by dragging; undefined for anything else.
+ */
+export function simpleCronParts(expression: string): { readonly minute: number; readonly hour: number; readonly weekdays: readonly number[] | undefined } | undefined {
+	const text = expression.trim();
+	const parsed = parseCron(text).schedule;
+	const fields = (MACROS[text.toLowerCase()] ?? text).split(/\s+/);
+	if (!parsed || fields.length !== 5 || !/^\d{1,2}$/.test(fields[0]) || !/^\d{1,2}$/.test(fields[1]) || !parsed.anyDay || fields[3] !== '*') {
+		return undefined;
+	}
+	return { minute: Number(fields[0]), hour: Number(fields[1]), weekdays: parsed.anyWeekday ? undefined : [...parsed.weekdays].sort((a, b) => a - b) };
+}
+
+/** `m h * * dow` back to text; weekdays Monday to Friday as "1-5". */
+export function formatSimpleCron(minute: number, hour: number, weekdays: readonly number[] | undefined): string {
+	const days = !weekdays || weekdays.length === 7 ? '*' : [...new Set(weekdays)].sort((a, b) => a - b).join(',');
+	return `${minute} ${hour} * * ${days === '1,2,3,4,5' ? '1-5' : days}`;
 }

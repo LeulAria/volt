@@ -12,13 +12,15 @@ import { AutomationProvider } from './automationTriggers.js';
  * job does not report the same finding every day.
  */
 
-export type AutomationTemplateCategory = 'popular' | 'review' | 'security' | 'incidents' | 'research' | 'environment';
+export type AutomationTemplateCategory = 'popular' | 'review' | 'security' | 'incidents' | 'monitoring' | 'release' | 'research' | 'environment';
 
 export const AUTOMATION_TEMPLATE_CATEGORIES: readonly { readonly id: AutomationTemplateCategory; readonly label: string }[] = [
 	{ id: 'popular', label: 'Popular' },
 	{ id: 'review', label: 'Code Review' },
 	{ id: 'security', label: 'Security' },
 	{ id: 'incidents', label: 'Incidents & Triage' },
+	{ id: 'monitoring', label: 'Monitoring' },
+	{ id: 'release', label: 'Releases' },
 	{ id: 'research', label: 'Data & Research' },
 	{ id: 'environment', label: 'Environment' },
 ];
@@ -46,6 +48,8 @@ export interface IAutomationTemplate {
 const DAILY_15: IAutomationTemplateTrigger = { provider: 'schedule', event: 'daily', schedule: { type: 'daily', time: '15:00' } };
 const DAILY_9: IAutomationTemplateTrigger = { provider: 'schedule', event: 'daily', schedule: { type: 'daily', time: '09:00' } };
 const WEEKLY_MON: IAutomationTemplateTrigger = { provider: 'schedule', event: 'weekly', schedule: { type: 'weekly', weekdays: [1], time: '09:00' } };
+const WEEKDAYS_9: IAutomationTemplateTrigger = { provider: 'schedule', event: 'weekly', schedule: { type: 'weekly', weekdays: [1, 2, 3, 4, 5], time: '09:00' } };
+const EVERY_5_MIN: IAutomationTemplateTrigger = { provider: 'schedule', event: 'minutes', schedule: { type: 'interval', everyMs: 5 * 60_000 } };
 const PR_OPENED: IAutomationTemplateTrigger = { provider: 'github', event: 'pr.opened' };
 
 const MEMORY_RULES = `Before doing anything else, read MEMORIES.md from your persistent memory. It tracks what you have already reported across runs, one line each with the location, the PR or issue URL, a status, and the date. Do not investigate or re-report anything that already has an open PR. Drop entries whose PR merged or closed more than 30 days ago.`;
@@ -410,6 +414,197 @@ Do not delete anything. Send the list to Slack with the last author of each.`,
 - Pick the most frequent one not already in MEMORIES.md.
 - Find why it is non-deterministic (timing, order, shared state, network) and fix the cause, not the symptom.
 - Open a PR that explains the cause. ${MEMORY_CLOSE}`,
+	},
+	{
+		id: 'uptime-check',
+		categories: ['popular', 'monitoring'],
+		title: 'Check uptime every 5 minutes',
+		description: 'Ping your health endpoints and alert only when one goes down or comes back',
+		icon: 'pulse',
+		triggers: [EVERY_5_MIN],
+		tools: ['slack_send'],
+		instructions: `You watch the service's health endpoints. Be fast: this runs every 5 minutes.
+
+1. Read MEMORIES.md. It lists the URLs to check (one per line, "URL expected-status") and each one's last state. If it has no URLs yet, look for health or status routes in the repository, write the ones you find to MEMORIES.md, and stop.
+2. Request each URL with curl (10 second timeout). Note the status code and the response time.
+3. Compare with the last state:
+	- Up → down (wrong status, timeout, or slower than 5 seconds twice in a row): send a Slack alert with the URL, what failed and since when.
+	- Down → up: send one "recovered" message with how long it was down.
+	- No change: send nothing.
+4. Write each URL's state and the time to MEMORIES.md.
+
+Finish with one line per URL. Never change code from this automation.`,
+	},
+	{
+		id: 'main-ci-watch',
+		categories: ['monitoring', 'environment'],
+		title: 'Watch CI on main during work hours',
+		description: 'Every 15 minutes on weekdays, check the default branch and flag a red build at once',
+		icon: 'rocket',
+		triggers: [{ provider: 'schedule', event: 'cron', schedule: { type: 'cron', expr: '*/15 9-17 * * 1-5' } }],
+		tools: ['slack_send'],
+		instructions: `Check the latest CI runs on the default branch (gh run list --branch <default> --limit 5).
+
+- If the newest finished run failed and MEMORIES.md does not already record that run id, find the failing job and the commit that broke it (gh run view --log-failed), and send a Slack message: the workflow, the commit and its author, the first error line, and the run URL.
+- Record the run id in MEMORIES.md so the same failure is reported once.
+- When main turns green again after a failure, send a one-line "main is green again".
+
+Stay silent otherwise. Do not push fixes from this automation.`,
+	},
+	{
+		id: 'nightly-build-health',
+		categories: ['monitoring'],
+		title: 'Nightly build health',
+		description: 'Build and test the whole project every night and report what broke since yesterday',
+		icon: 'check',
+		triggers: [{ provider: 'schedule', event: 'cron', schedule: { type: 'cron', expr: '0 2 * * *' } }],
+		tools: ['slack_send'],
+		instructions: `Run the project's full build and test suite from a clean checkout of the default branch.
+
+${MEMORY_RULES}
+
+- Compare with last night's result in MEMORIES.md: list new failures, fixed tests, and a build time change beyond 20%.
+- For each new failure, name the most likely commit since yesterday (git log, blame on the failing code).
+- Record tonight's result (passed/failed counts, build time, failing test names) in MEMORIES.md, keeping 14 nights.
+
+Send a Slack summary only when something changed; otherwise finish with "Nightly build unchanged."`,
+	},
+	{
+		id: 'standup-digest',
+		categories: ['popular', 'research'],
+		title: 'Daily standup digest',
+		description: 'Every weekday morning, summarize yesterday\'s merges, reviews waiting and red builds',
+		icon: 'chat',
+		triggers: [WEEKDAYS_9],
+		tools: ['slack_send'],
+		instructions: `Write the team's standup digest for the repository, covering the last working day.
+
+- Shipped: pull requests merged, one line each with the author and link.
+- Waiting: open pull requests with no review for more than a day, and who is requested.
+- Broken: failing CI on the default branch, and flaky tests seen in more than one run.
+- Today: issues or pull requests labeled urgent or blocking.
+
+Send it to Slack in under 200 words. Skip empty sections.`,
+	},
+	{
+		id: 'stale-pr-nudge',
+		categories: ['review'],
+		title: 'Nudge stale pull requests',
+		description: 'Find pull requests waiting on review or on their author, and ask the right person',
+		icon: 'review',
+		triggers: [{ provider: 'schedule', event: 'weekly', schedule: { type: 'weekly', weekdays: [2, 4], time: '10:00' } }],
+		tools: ['slack_send'],
+		instructions: `List open pull requests with no activity for 3 days or more (gh pr list).
+
+${MEMORY_RULES}
+
+For each one, decide who it is waiting on:
+- No review yet, or changes were pushed after the last review: the requested reviewers.
+- Changes requested and not addressed: the author.
+- Approved but not merged: the author (or say what blocks the merge: checks, conflicts).
+
+Post one comment per pull request (gh pr comment) that names that person and what is needed, unless MEMORIES.md shows you already nudged it this week. Send a Slack summary of the list. Record each nudge in MEMORIES.md with the date.`,
+	},
+	{
+		id: 'release-notes',
+		categories: ['release', 'popular'],
+		title: 'Write release notes on a new tag',
+		description: 'When a version tag is pushed, draft release notes from the merged pull requests',
+		icon: 'rocket',
+		triggers: [{ provider: 'github', event: 'push' }],
+		tools: ['slack_send'],
+		instructions: `If the push in the event above is not a tag (its ref does not start with refs/tags/), finish with "Not a release tag."
+
+Otherwise, write the release notes for that tag:
+1. Find the previous tag (git describe --tags --abbrev=0 <tag>^) and list the pull requests merged between the two.
+2. Group them: Features, Fixes, Performance, Breaking changes (with migration steps), Internal (one line in total).
+3. Write each entry for users, not for the team: what changed for them, with the PR link.
+4. Create or update the GitHub release for the tag with these notes (gh release edit, or gh release create --draft when there is none).
+
+Send a Slack message with the highlights and the release link.`,
+	},
+	{
+		id: 'changelog-on-merge',
+		categories: ['release'],
+		title: 'Keep the changelog current',
+		description: 'Add an entry to CHANGELOG.md for each merged pull request that users would notice',
+		icon: 'book',
+		triggers: [{ provider: 'github', event: 'pr.merged' }],
+		tools: [],
+		instructions: `A pull request was merged (see the event above).
+
+- If it changes nothing users would notice (tests, refactors, CI, docs typos), finish with "No changelog entry needed."
+- Otherwise add one line under "Unreleased" in CHANGELOG.md, in the section that fits (Added, Changed, Fixed, Removed), in the file's existing style, with the PR number.
+- Open a small pull request titled "changelog: #<number>" (or push to an open changelog PR if there is one).`,
+	},
+	{
+		id: 'security-audit-weekly',
+		categories: ['security'],
+		title: 'Weekly security audit',
+		description: 'Every Friday, audit dependencies, secrets, CI permissions and exposed endpoints',
+		icon: 'shield',
+		triggers: [{ provider: 'schedule', event: 'weekly', schedule: { type: 'weekly', weekdays: [5], time: '16:00' } }],
+		tools: ['slack_send'],
+		instructions: `Run a weekly security audit of the repository.
+
+${MEMORY_RULES}
+
+Check:
+- Dependencies: run the ecosystem's audit (npm audit, pip-audit, cargo audit, govulncheck…) and keep high and critical advisories that reach code we use.
+- Secrets: committed keys or tokens in this week's commits (git log --since="1 week ago" -p).
+- CI: workflows with write-all permissions, pull_request_target on untrusted code, unpinned third-party actions.
+- Endpoints: new routes this week without authentication or input validation.
+
+Fix only what is small and certain, in one PR. Send a Slack report ranked by severity, or "No new security findings this week." ${MEMORY_CLOSE}`,
+	},
+	{
+		id: 'license-check',
+		categories: ['security', 'review'],
+		title: 'Check licenses of new dependencies',
+		description: 'Flag pull requests that add dependencies with incompatible or unknown licenses',
+		icon: 'package',
+		triggers: [PR_OPENED],
+		tools: [],
+		instructions: `If the pull request in the event above adds no dependency (manifests and lock files unchanged), finish with "No new dependencies."
+
+For each added dependency (direct and new transitive ones), find its license. Flag copyleft licenses (GPL, AGPL, LGPL for static linking), missing or unknown licenses, and licenses the repository's LICENSE or policy files forbid.
+
+Comment on the PR (pr_comment) with a table: package, version, license, OK or why not. Keep it short when everything is fine.`,
+	},
+	{
+		id: 'docs-drift',
+		categories: ['environment', 'research'],
+		title: 'Catch docs that drifted from the code',
+		description: 'Find commands, options and APIs in the docs that no longer match the code',
+		icon: 'book',
+		triggers: [{ provider: 'schedule', event: 'weekly', schedule: { type: 'weekly', weekdays: [3], time: '11:00' } }],
+		tools: [],
+		instructions: `Find documentation that no longer matches the code.
+
+${MEMORY_RULES}
+
+- Collect what the docs promise: CLI commands and flags, config keys, environment variables, API routes and function signatures in README files, docs/ and code comments on public APIs.
+- Check each one against the code. A renamed flag, a removed option, a changed default or a wrong example is drift.
+- Fix the docs (never the code) in one PR titled "docs: fix drift", listing each mismatch and where the truth lives in the code.
+
+If everything matches, finish with "Docs match the code." ${MEMORY_CLOSE}`,
+	},
+	{
+		id: 'incident-postmortem',
+		categories: ['incidents'],
+		title: 'Draft a postmortem when an incident resolves',
+		description: 'Collect the timeline, the cause and the fix into a postmortem draft',
+		icon: 'flame',
+		triggers: [{ provider: 'pagerduty', event: 'incident.resolved' }],
+		tools: ['slack_send'],
+		instructions: `A PagerDuty incident was resolved (see the event above). Draft its postmortem.
+
+- Timeline: when it triggered, was acknowledged, escalated and resolved (from the event), plus the deploys and merges around that time (git log, gh run list).
+- Impact: the service, the urgency, and how long it lasted.
+- Cause: the most likely change or condition, with evidence. Say clearly when it is a hypothesis.
+- Follow-ups: concrete actions (a test, an alert, a rollback switch), each with a suggested owner from the code's history.
+
+Write it to docs/postmortems/<date>-<incident>.md on a branch, open a draft PR, and send the link to Slack. Blameless tone throughout.`,
 	},
 ];
 
