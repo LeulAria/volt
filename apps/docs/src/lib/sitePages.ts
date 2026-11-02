@@ -100,7 +100,7 @@ export const PRIVACY_PAGE: InfoPage = {
   title: "Privacy.",
   description:
     "What this website and the Volt app collect: no cookies or ads on the site, aggregated page-view counts, and no telemetry from the app.",
-  updated: "2026-10-25",
+  updated: "2026-11-02",
   sections: [
     {
       heading: "In short",
@@ -116,7 +116,6 @@ export const PRIVACY_PAGE: InfoPage = {
       ],
       items: [
         "**GitHub.** The download page and the header ask GitHub's public API for the latest releases and the star count, straight from your browser, so GitHub sees that request. The release list is kept in your browser's session storage for 10 minutes. Downloads and the install script come from GitHub Releases and raw.githubusercontent.com. See [GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement).",
-        "**Google Fonts.** The monospaced font (Geist Mono) loads from Google Fonts, so Google receives the request for it. See [Google's privacy policy](https://policies.google.com/privacy).",
       ],
     },
     {

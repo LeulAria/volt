@@ -109,7 +109,7 @@ function Home() {
                         </div>
                         <span
                           data-hero-word
-                          className="inline-flex shrink-0 items-center font-mono text-4xl font-semibold tracking-wide text-white sm:text-5xl md:text-7xl"
+                          className="inline-flex shrink-0 items-center font-sans text-4xl font-semibold tracking-[0.01em] text-white sm:text-5xl md:text-7xl"
                         >
                           volt
                         </span>
