@@ -1837,7 +1837,15 @@ export class AgentHomePane extends Disposable {
 		return shownAgentChat() === sessionId;
 	}
 
-	/** Moves the highlight on the rows drawn now; rows scrolled into view later render it themselves. */
+	/** The chat on screen a build was asked to add a row for (see syncShownRows). */
+	private rowBuiltFor: string | undefined;
+	/** That build scrolls the new row into view. */
+	private revealAfterBuild: string | undefined;
+
+	/**
+	 * Moves the highlight on the rows drawn now, in the task that drew the chat. A chat whose row is
+	 * scrolled out of its list is scrolled into view, so the highlight is always there to see.
+	 */
 	private syncShownRows(): void {
 		const shown = shownAgentChat();
 		for (const row of this.element.querySelectorAll<HTMLElement>('.volt-agent-home-row.active-chat')) {
@@ -1845,13 +1853,46 @@ export class AgentHomePane extends Disposable {
 				row.classList.remove('active-chat');
 			}
 		}
-		if (shown) {
-			for (const row of this.element.querySelectorAll<HTMLElement>('.volt-agent-home-row[data-chat-id]')) {
-				if (row.dataset.chatId === shown) {
-					row.classList.add('active-chat');
-				}
+		if (!shown) {
+			return;
+		}
+		let drawn = false;
+		for (const row of this.element.querySelectorAll<HTMLElement>('.volt-agent-home-row[data-chat-id]')) {
+			if (row.dataset.chatId === shown) {
+				row.classList.add('active-chat');
+				drawn = true;
 			}
 		}
+		if (drawn) {
+			return;
+		}
+		if (this.findSession(shown)) {
+			this.revealShownRow(shown);
+			return;
+		}
+		// Past its group's Show more the chat has no row yet: a build now adds one (see `keep`), before
+		// this frame paints, rather than when the window is next idle. Once per chat: one a filter
+		// hides has no row after the build either.
+		if (this.rowBuiltFor !== shown && this.history.get(shown)) {
+			this.rowBuiltFor = shown;
+			this.revealAfterBuild = shown;
+			void this.refresh();
+		}
+	}
+
+	/** Scrolls the chat's row into view in its group's list. A group the user folded stays folded. */
+	private revealShownRow(sessionId: string): void {
+		const found = this.findSession(sessionId);
+		const tree = found?.pane.isExpanded() ? found.pane.tree : undefined;
+		if (!found || !tree?.hasElement(found.element)) {
+			return;
+		}
+		for (let parent = tree.getParentElement(found.element); parent; parent = tree.getParentElement(parent)) {
+			if (tree.isCollapsed(parent)) {
+				return;
+			}
+		}
+		tree.reveal(found.element);
 	}
 
 	/** Where a session lives, as far as the row can tell: repository or folder name, branch, short project name. */
@@ -2339,13 +2380,18 @@ export class AgentHomePane extends Disposable {
 		}
 		const runGroups = this.homeRunGroups(sessions);
 		this.live = agentHomeLiveWork(this.orchestrator.getState());
-		const tree = [...buildCloudHomeNodes(this.cloud.tasks), ...buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, prTags, runGroups, workingShelf: this.workingSection, live: this.live })];
+		const tree = [...buildCloudHomeNodes(this.cloud.tasks), ...buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, keep: shownAgentChat(), prTags, runGroups, workingShelf: this.workingSection, live: this.live })];
 		const reinsert = this.builtTwoLine !== undefined && this.builtTwoLine !== this.twoLine;
 		this.builtTwoLine = this.twoLine;
 		this.setPanes(tree, reinsert);
 		this.revealActiveNewChat();
 		this.syncFilterButton();
 		this.layout();
+		const reveal = this.revealAfterBuild;
+		this.revealAfterBuild = undefined;
+		if (reveal !== undefined && reveal === shownAgentChat()) {
+			this.revealShownRow(reveal);
+		}
 	}
 
 	/**

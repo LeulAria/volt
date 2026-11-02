@@ -367,6 +367,22 @@ suite('Agent home list model', () => {
 		assert.strictEqual(all.find(node => node.element.type === 'bucket')?.children?.length, AGENT_HOME_GROUP_LIMIT + 3);
 	});
 
+	test('the chat on screen keeps its row past Show more', () => {
+		const sessions = Array.from({ length: AGENT_HOME_GROUP_LIMIT + 3 }, (_, i) => session(`s${i}`, { updatedAt: 100 - i }));
+		const kept = `s${AGENT_HOME_GROUP_LIMIT + 1}`;
+		const bucket = buildAgentHomeTree([], sessions, view({ grouping: 'environment' }), { keep: kept }).find(node => node.element.type === 'bucket');
+		const rows = bucket?.children?.map(child => child.element) ?? [];
+		// Its row goes last, above Show more, which counts one chat fewer behind it.
+		assert.strictEqual(rows.length, AGENT_HOME_GROUP_LIMIT + 2);
+		const last = rows.at(-2);
+		assert.ok(last?.type === 'session' && last.session.id === kept);
+		const more = rows.at(-1);
+		assert.ok(more?.type === 'more' && more.hidden === 2);
+		// A chat already on the first page is not added twice.
+		const shownFirst = buildAgentHomeTree([], sessions, view({ grouping: 'environment' }), { keep: 's0' }).find(node => node.element.type === 'bucket');
+		assert.strictEqual(shownFirst?.children?.length, AGENT_HOME_GROUP_LIMIT + 1);
+	});
+
 	test('group-header + starts a project for folders and none for flat buckets', () => {
 		const project = buildAgentHomeTree([folder('/tmp/volt')], [session('a', { workspaceFolder: '/tmp/volt' })], view()).find(node => node.element.type === 'section')?.children?.[0]?.element;
 		assert.ok(project?.type === 'folder');
