@@ -3,6 +3,7 @@ name: Volt Build
 # Reusable release pipeline, called by volt-nightly.yml, volt-beta.yml and volt-stable.yml.
 # Mirrors VS Code's product build: one Linux job compiles and minifies the platform-independent
 # output, then each platform/arch job installs native node_modules, packages, signs and uploads.
+# The mobile app builds alongside, from the start (volt-mobile-build.yml).
 # The publish job creates the GitHub Release and updates the update feed (branch volt-update-feed).
 
 on:
@@ -17,7 +18,7 @@ on:
         type: string
         default: ''
       platforms:
-        description: 'Comma-separated targets or "all": darwin-x64,darwin-arm64,darwin-universal,linux-x64,linux-arm64,linux-armhf,win32-x64,win32-arm64'
+        description: 'Comma-separated targets or "all": darwin-x64,darwin-arm64,darwin-universal,linux-x64,linux-arm64,linux-armhf,win32-x64,win32-arm64,android-arm64,ios-arm64'
         type: string
         default: all
       publish:
@@ -45,6 +46,8 @@ jobs:
       linux: ${{ steps.meta.outputs.linux }}
       win32: ${{ steps.meta.outputs.win32 }}
       universal: ${{ steps.meta.outputs.universal }}
+      android: ${{ steps.meta.outputs.android }}
+      ios: ${{ steps.meta.outputs.ios }}
     steps:
       - uses: actions/checkout@v7
 
@@ -587,9 +590,21 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+  mobile:
+    name: Mobile
+    needs: prepare
+    if: needs.prepare.outputs.android == 'true' || needs.prepare.outputs.ios == 'true'
+    uses: ./.github/workflows/volt-mobile-build.yml
+    secrets: inherit
+    with:
+      channel: ${{ inputs.channel }}
+      version: ${{ needs.prepare.outputs.version }}
+      android: ${{ needs.prepare.outputs.android == 'true' }}
+      ios: ${{ needs.prepare.outputs.ios == 'true' }}
+
   publish:
     name: Publish
-    needs: [prepare, compile, darwin, darwin-universal, linux, win32]
+    needs: [prepare, compile, darwin, darwin-universal, linux, win32, mobile]
     if: ${{ !cancelled() && inputs.publish && needs.compile.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
@@ -621,7 +636,7 @@ jobs:
           ASSETS_DIR: assets
 
       - name: Fail if a platform failed
-        if: needs.darwin.result == 'failure' || needs.darwin-universal.result == 'failure' || needs.linux.result == 'failure' || needs.win32.result == 'failure'
+        if: needs.darwin.result == 'failure' || needs.darwin-universal.result == 'failure' || needs.linux.result == 'failure' || needs.win32.result == 'failure' || needs.mobile.result == 'failure'
         run: |
           echo "Published the platforms that built; at least one platform failed." >&2
           exit 1

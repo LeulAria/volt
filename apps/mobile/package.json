@@ -13,6 +13,8 @@
 		"prebuild": "expo prebuild",
 		"build:ios": "node scripts/fastBuild.mjs ios",
 		"build:android": "node scripts/fastBuild.mjs android",
+		"release:ios": "node scripts/releaseBuild.mjs ios",
+		"release:android": "node scripts/releaseBuild.mjs android",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"postinstall": "npm --prefix ../mobile-widgets install --omit=peer --no-package-lock --no-audit --no-fund --loglevel=error"
 	},
