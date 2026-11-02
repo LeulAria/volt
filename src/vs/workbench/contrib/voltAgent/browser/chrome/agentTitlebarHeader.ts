@@ -43,7 +43,7 @@ import { displayComputerName, IUsageEnvironmentSelection, showUsageEnvironmentMe
 import { setAgentTooltip } from './agentTooltip.js';
 
 const QUICK_OPEN_COMMAND_ID = 'workbench.action.quickOpenWithModes';
-const HEADER_TITLE_WORD_LIMIT = 3;
+const HEADER_TITLE_WORD_LIMIT = 6;
 const HEADER_PATH_MAX_LENGTH = 37;
 /** Grace period so the pointer can cross the gap between the title and the card. */
 const HEADER_HOVER_HIDE_DELAY = 150;
@@ -100,7 +100,7 @@ export interface IPrimaryHeaderSidebarFlags {
 	readonly leftCollapsed: boolean;
 }
 
-/** First three words of the active tab title. A shorter title stays whole. */
+/** First six words of the active tab title, enough for a generated title. A shorter title stays whole. */
 export function shortTabTitle(title: string, maxWords = HEADER_TITLE_WORD_LIMIT): string {
 	const words = title.trim().split(/\s+/).filter(word => word.length > 0);
 	return words.slice(0, Math.max(0, maxWords)).join(' ');
