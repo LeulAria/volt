@@ -1,0 +1,201 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * The Automations list page around the calendar (summary strip, view tabs, workflows promo) and
+ * the schedule row's zone, once and cron parts. The calendar itself is agentAutomationsCalendar.css.
+ * Theme colours only; plain classes on small elements, no :has() or attribute-substring selectors.
+ */
+
+/* Run outcomes on the summary strip (menus render outside the page, so they get them too). */
+.volt-automations,
+.volt-auto-menu {
+	--volt-auto-cal-running: var(--vscode-charts-blue, var(--volt-auto-blue));
+	--volt-auto-cal-succeeded: var(--vscode-charts-green, var(--volt-auto-green));
+	--volt-auto-cal-failed: var(--vscode-charts-red, var(--volt-auto-red));
+}
+
+/* List page. */
+.volt-auto-page.list.calendar-view {
+	max-width: 1240px;
+}
+
+.volt-auto-head-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-shrink: 0;
+}
+
+.volt-auto-head-actions .volt-auto-outline-button {
+	height: 28px;
+	border-radius: 999px;
+	padding: 0 12px;
+}
+
+.volt-auto-stats.volt-auto-summary {
+	margin: 26px 0 0;
+}
+
+.volt-auto-summary .volt-auto-stat .value {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	min-width: 0;
+}
+
+.volt-auto-summary .volt-auto-stat .value .of {
+	font-size: 12.5px;
+	white-space: nowrap;
+}
+
+.volt-auto-summary .volt-auto-stat .label {
+	display: flex;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-auto-summary .volt-auto-stat .label .when {
+	margin-left: auto;
+	color: var(--volt-auto-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-auto-summary .volt-auto-stat .value .name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
+}
+
+.volt-auto-summary .volt-auto-stat .split {
+	display: inline-flex;
+	gap: 9px;
+	margin-left: 4px;
+	font-size: 12.5px;
+}
+
+.volt-auto-summary .volt-auto-stat .split .part {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	color: var(--volt-auto-muted);
+}
+
+.volt-auto-summary .split .part .codicon[class*='codicon-'] {
+	font-size: 12px;
+}
+
+.volt-auto-summary .split .part.ok .codicon[class*='codicon-'] {
+	color: var(--volt-auto-cal-succeeded);
+}
+
+.volt-auto-summary .split .part.bad .codicon[class*='codicon-'] {
+	color: var(--volt-auto-cal-failed);
+}
+
+.volt-auto-summary .split .part.live .codicon[class*='codicon-'] {
+	color: var(--volt-auto-cal-running);
+	animation: codicon-spin 1.5s steps(30) infinite;
+}
+
+.volt-auto-summary .volt-auto-stat.clickable {
+	cursor: pointer;
+}
+
+.volt-auto-summary .volt-auto-stat.clickable:hover {
+	background: var(--volt-auto-hover);
+}
+
+.volt-auto-calendar-host {
+	min-width: 0;
+}
+
+.volt-auto-workflow-promo {
+	display: flex;
+	align-items: center;
+	gap: 13px;
+	margin-top: 12px;
+	padding: 14px 16px;
+	border: 1px dashed color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+	border-radius: 12px;
+}
+
+.volt-auto-workflow-promo .text {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-auto-workflow-promo .description {
+	color: var(--volt-auto-muted);
+}
+
+.volt-auto-workflow-promo .actions {
+	display: flex;
+	gap: 8px;
+	flex-shrink: 0;
+}
+
+/* Schedule rows in the editor: the zone chip, the once fields, the cron preview. */
+.volt-auto-list-row.schedule .volt-auto-chip-button.tz {
+	color: var(--volt-auto-soft);
+	background: transparent;
+	padding-left: 7px;
+}
+
+.volt-auto-list-row.schedule .volt-auto-chip-button.tz:hover,
+.volt-auto-list-row.schedule .volt-auto-chip-button.tz.open {
+	background: var(--volt-auto-fill);
+	color: var(--volt-auto-fg);
+}
+
+.volt-auto-list-row.schedule .volt-auto-chip-button.presets {
+	color: var(--volt-auto-soft);
+}
+
+.volt-auto-list-row.schedule .next.preview {
+	flex-basis: 100%;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-auto-once-field {
+	display: inline-flex;
+}
+
+.volt-auto-once-field .volt-dt-field.date {
+	width: 150px;
+}
+
+.volt-auto-once-field .volt-dt-field.time {
+	width: 112px;
+}
+
+.volt-auto-once-field .volt-dt-control {
+	height: 26px;
+	padding: 0 8px;
+	border-color: transparent;
+	border-radius: 6px;
+	background: var(--volt-auto-fill);
+	font-size: 13px;
+}
+
+.volt-auto-once-field .volt-dt-control.text {
+	padding-left: 0;
+}
+
+.volt-auto-cron-menu .volt-menu-row .volt-menu-detail {
+	font-family: var(--monaco-monospace-font, monospace);
+}
+
+@container (max-width: 760px) {
+	.volt-auto-workflow-promo {
+		flex-wrap: wrap;
+	}
+}

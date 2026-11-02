@@ -3,11 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { RunOnceScheduler } from '../../../../../base/common/async.js';
+import { DeferredPromise, raceTimeout, RunOnceScheduler } from '../../../../../base/common/async.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { Disposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
@@ -23,10 +24,11 @@ import {
 	AUTOMATIONS_STATE_VERSION, AutomationRunToolKind, AutomationToolStatus, automationRunPrompt, describeSchedule, dueSchedules, IAutomation, IAutomationCreateInput, IAutomationDeliveryInput,
 	IAutomationDraft, IAutomationRepository, IAutomationRun, IAutomationService, isActiveRun, MAX_REPOSITORIES_PER_RUN, migrateScheduledTasks, nameFromInstructions,
 	IAutomationsState, isTurnOfRun, mergeAutomations, nextDueAt, parseAutomationsFile, parseDeletedAutomations, parseScheduleText, patchRun, planNextRuns, recordRun, SCHEDULE_LATE_NOTE_MS, withRunTool,
+	IAutomationWorkflowResult, IAutomationWorkflowRun, IAutomationWorkflowRunner,
 } from '../../../../services/voltRuntime/common/automations/automations.js';
 import { isRetryableFailure, retryAllowed, retryDelay, RUN_START_RETRY } from '../../../../services/voltRuntime/common/jobs/retryPolicy.js';
 import { DeadlineTimer } from '../../../../services/voltRuntime/browser/jobs/deadlineTimer.js';
-import { DurableClaims } from '../../../../services/voltRuntime/browser/jobs/durableClaims.js';
+import { claimName, DurableClaims } from '../../../../services/voltRuntime/browser/jobs/durableClaims.js';
 import { AutomationProvider } from '../../../../services/voltRuntime/common/automations/automationTriggers.js';
 import { newWebhookTrigger } from '../../../../services/voltRuntime/common/automations/automationWebhooks.js';
 import { IVoltEventEnvelope } from '../../../../services/voltRuntime/common/events.js';
@@ -35,6 +37,8 @@ import { AUTOMATION_TOOL_NAMES, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostT
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { canonicalProjectRoot, IVoltProjectRecord, IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { IAgentCustomizeService } from '../customize/agentCustomizeService.js';
+import { expandSlashPrompt } from '../customize/agentSlashExpansion.js';
 import { AgentScratchFolders } from '../workspace/agentScratchProject.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
@@ -50,6 +54,11 @@ const MEMORY_FILE = 'MEMORIES.md';
 const MEMORY_FILE_NAME = /^[\w][\w.-]{0,79}$/;
 /** What a run reads from Slack or Teams, at most. */
 const READ_LIMIT_CHARS = 8000;
+/** A workflow run waits this long for the workflows bridge to register (both start after the window is restored). */
+const WORKFLOW_RUNNER_WAIT_MS = 60_000;
+/** How often a window running a workflow for an automation says so, and when silence means it died. */
+const WORKFLOW_HEARTBEAT_MS = 20_000;
+const WORKFLOW_HEARTBEAT_STALE_MS = 75_000;
 
 interface IRunOrigin {
 	readonly provider: AutomationProvider | 'manual';
@@ -122,6 +131,14 @@ export class AutomationService extends Disposable implements IAutomationService 
 	private readonly toolCalls = new Map<string, ITracked & { readonly kind: AutomationRunToolKind; readonly detail?: string }>();
 	private readonly scratch: AgentScratchFolders;
 	private login: string | undefined;
+	private workflowRunner: IAutomationWorkflowRunner | undefined;
+	private readonly workflowRunnerReady = new DeferredPromise<void>();
+	/** Automation run id → its workflow run in this window. */
+	private readonly workflowRuns = new Map<string, IAutomationWorkflowRun>();
+	/** Heartbeat files of the workflow runs this window carries out, so other windows leave them alone. */
+	private readonly liveRoot: URI;
+	private readonly heartbeats = new Map<string, number>();
+	private orphanCheck: ReturnType<typeof setTimeout> | undefined;
 	readonly whenReady: Promise<void>;
 
 	private readonly _onDidChange = this._register(new Emitter<void>());
@@ -138,6 +155,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IVoltPullRequestService private readonly pullRequests: IVoltPullRequestService,
 		@IRequestService private readonly requestService: IRequestService,
+		@IAgentCustomizeService private readonly customize: IAgentCustomizeService,
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 		@ILifecycleService lifecycleService: ILifecycleService,
 		@IInstantiationService instantiationService: IInstantiationService,
@@ -148,6 +166,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 		this.memoryRoot = joinPath(root, 'memory');
 		this.legacyFile = joinPath(environmentService.userRoamingDataHome, 'voltSchedules', 'schedules.json');
 		this.claims = new DurableClaims(joinPath(environmentService.userRoamingDataHome, 'voltJobs', 'claims'), fileService, logService);
+		this.liveRoot = joinPath(environmentService.userRoamingDataHome, 'voltJobs', 'workflow-live');
 		this.timer = this._register(new DeadlineTimer(() => void this.tick()));
 		// Another Volt window (each project runs one) changed the automations: take its changes in.
 		this._register(fileService.watch(this.file));
@@ -169,6 +188,12 @@ export class AutomationService extends Disposable implements IAutomationService 
 			}
 			for (const handle of this.retries.values()) {
 				clearTimeout(handle);
+			}
+			for (const handle of this.heartbeats.values()) {
+				mainWindow.clearInterval(handle);
+			}
+			if (this.orphanCheck !== undefined) {
+				clearTimeout(this.orphanCheck);
 			}
 		}));
 		this._register(orchestrator.onDidChange(change => {
@@ -505,7 +530,11 @@ export class AutomationService extends Disposable implements IAutomationService 
 					continue;
 				}
 				count++;
-				if (run.threadId) {
+				// A workflow run stops as a whole (its steps' chats with it); it settles as cancelled.
+				const workflowRun = this.workflowRuns.get(run.id);
+				if (workflowRun) {
+					workflowRun.cancel();
+				} else if (run.threadId) {
 					threads.add(run.threadId);
 				} else {
 					this.mutate(automation.id, current => patchRun(current, run.id, { status: 'cancelled', finishedAt: Date.now(), note: localize('voltAutomations.stopped', "Stopped") }));
@@ -517,6 +546,16 @@ export class AutomationService extends Disposable implements IAutomationService 
 			await this.changed(false);
 		}
 		return count;
+	}
+
+	registerWorkflowRunner(runner: IAutomationWorkflowRunner): IDisposable {
+		this.workflowRunner = runner;
+		void this.workflowRunnerReady.complete();
+		return toDisposable(() => {
+			if (this.workflowRunner === runner) {
+				this.workflowRunner = undefined;
+			}
+		});
 	}
 
 	//#endregion
@@ -696,6 +735,10 @@ export class AutomationService extends Disposable implements IAutomationService 
 		if (!run || run.status !== 'queued') {
 			return;
 		}
+		if (this.get(automationId)?.workflowId) {
+			await this.attemptWorkflow(automationId, run, origin, repository);
+			return;
+		}
 		const attempts = (run.attempts ?? 0) + 1;
 		try {
 			const sent = await this.send(automationId, run, origin, repository, async threadId => {
@@ -760,6 +803,8 @@ export class AutomationService extends Disposable implements IAutomationService 
 			this.history.open(threadId).setMeta({ title: automation.name });
 		}
 		const memory = automation.tools.some(tool => tool.kind === 'memories') ? await this.readMemory(automation.id).catch(() => '') : undefined;
+		// `/skill` tokens from the instructions box carry their skill, as the composer sends them.
+		const instructions = await expandSlashPrompt(this.customize, origin.instructions ?? automation.instructions);
 		const text = automationRunPrompt(automation, {
 			runId: run.id,
 			at: run.at,
@@ -769,7 +814,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 			...(memory !== undefined ? { memory } : {}),
 			...(origin.eventLines?.length ? { eventLines: origin.eventLines, eventProvider: origin.provider } : {}),
 			...(origin.payload ? { payload: origin.payload } : {}),
-			...(origin.instructions ? { instructions: origin.instructions } : {}),
+			instructions,
 			mcpServers: automation.tools.flatMap(tool => tool.kind === 'mcp' && tool.server ? [tool.server] : []),
 			actions: runActions(automation, !!repository || !!automation.threadId),
 		});
@@ -787,6 +832,129 @@ export class AutomationService extends Disposable implements IAutomationService 
 			throw new Error(result.reason ?? localize('voltAutomations.rejected', "The chat refused the prompt."));
 		}
 		return { threadId, outcome: result.outcome };
+	}
+
+	/**
+	 * Runs the automation's workflow instead of sending a prompt: the instructions become its `task`
+	 * input and the run follows the workflow run (its first agent step's chat is the run's chat).
+	 * Not retried like a send: the workflow's own nodes retry what can be retried.
+	 */
+	private async attemptWorkflow(automationId: string, run: IAutomationRun, origin: IRunOrigin, repository: IAutomationRepository | undefined): Promise<void> {
+		const attempts = (run.attempts ?? 0) + 1;
+		const runner = this.workflowRunner ?? await raceTimeout(this.workflowRunnerReady.p.then(() => this.workflowRunner), WORKFLOW_RUNNER_WAIT_MS);
+		const automation = this.get(automationId);
+		if (!automation) {
+			return;
+		}
+		if (!runner) {
+			this.mutate(automationId, current => patchRun(current, run.id, { status: 'failed', attempts, error: localize('voltAutomations.noWorkflows', "Workflows are not available in this window."), finishedAt: Date.now() }));
+			await this.changed(false);
+			return;
+		}
+		const active = () => {
+			const current = this.get(automationId)?.runs.find(entry => entry.id === run.id);
+			return current && isActiveRun(current) ? current : undefined;
+		};
+		const handle = runner.run({
+			automation,
+			run,
+			task: (origin.instructions ?? automation.instructions).trim(),
+			...(origin.eventLines?.length ? { eventLines: origin.eventLines } : {}),
+			...(origin.payload ? { payload: origin.payload } : {}),
+			...(repository ? { repository } : {}),
+			onProgress: progress => {
+				const current = active();
+				if (!current) {
+					return;
+				}
+				const patch: Partial<IAutomationRun> = {
+					...(progress.workflowRunId ? { note: localize('voltAutomations.workflowRun', "Workflow run {0}", progress.workflowRunId) } : {}),
+					...(progress.threadId && !current.threadId ? { threadId: progress.threadId } : {}),
+				};
+				if (Object.keys(patch).length) {
+					this.mutate(automationId, entry => patchRun(entry, run.id, patch));
+					void this.changed(false);
+				}
+			},
+		});
+		this.workflowRuns.set(run.id, handle);
+		this.startHeartbeat(run.id);
+		this.mutate(automationId, current => patchRun(current, run.id, { status: 'running', attempts, error: undefined, startedAt: Date.now() }));
+		await this.changed(true);
+		void handle.result.catch((err): IAutomationWorkflowResult => ({ status: 'failed', error: errorText(err) })).then(result => {
+			this.workflowRuns.delete(run.id);
+			this.stopHeartbeat(run.id);
+			const current = active();
+			if (!current) {
+				return;
+			}
+			const error = result.error ?? (result.status === 'cancelled' ? localize('voltAutomations.stopped', "Stopped") : undefined);
+			this.mutate(automationId, entry => patchRun(entry, run.id, {
+				status: result.status,
+				finishedAt: Date.now(),
+				...(result.threadId && !current.threadId ? { threadId: result.threadId } : {}),
+				...(result.workflowRunId ? { note: localize('voltAutomations.workflowRun', "Workflow run {0}", result.workflowRunId) } : {}),
+				...(error ? (result.status === 'succeeded' ? { note: error } : { error }) : {}),
+			}));
+			void this.changed(true);
+		});
+	}
+
+	/**
+	 * A workflow run lives in the window that runs it (each project runs its own workbench). That
+	 * window touches a file for it every few seconds; another window opening later sees it fresh and
+	 * leaves the run alone instead of calling it interrupted.
+	 */
+	private startHeartbeat(runId: string): void {
+		const file = joinPath(this.liveRoot, claimName(runId));
+		const beat = () => void this.fileService.writeFile(file, VSBuffer.fromString(String(Date.now()))).catch(() => undefined);
+		beat();
+		this.heartbeats.set(runId, mainWindow.setInterval(beat, WORKFLOW_HEARTBEAT_MS));
+	}
+
+	private stopHeartbeat(runId: string): void {
+		const handle = this.heartbeats.get(runId);
+		if (handle !== undefined) {
+			mainWindow.clearInterval(handle);
+			this.heartbeats.delete(runId);
+		}
+		void this.fileService.del(joinPath(this.liveRoot, claimName(runId))).catch(() => undefined);
+	}
+
+	/** Whether some window beat for this workflow run recently. */
+	private async heartbeatFresh(runId: string): Promise<boolean> {
+		try {
+			const at = Number((await this.fileService.readFile(joinPath(this.liveRoot, claimName(runId)))).value.toString());
+			return Number.isFinite(at) && Date.now() - at < WORKFLOW_HEARTBEAT_STALE_MS;
+		} catch {
+			return false;
+		}
+	}
+
+	/** Workflow runs another window was carrying out: fail the ones whose window stopped beating. */
+	private async failOrphanedWorkflowRuns(): Promise<void> {
+		this.orphanCheck = undefined;
+		let touched = false;
+		let alive = false;
+		for (const automation of this.automations) {
+			for (const run of automation.runs) {
+				if (!automation.workflowId || run.status !== 'running' || this.workflowRuns.has(run.id)) {
+					continue;
+				}
+				if (await this.heartbeatFresh(run.id)) {
+					alive = true;
+					continue;
+				}
+				this.mutate(automation.id, current => patchRun(current, run.id, { status: 'failed', error: localize('voltAutomations.workflowInterrupted', "Volt closed before the workflow run finished."), finishedAt: Date.now() }));
+				touched = true;
+			}
+		}
+		if (alive) {
+			this.orphanCheck = setTimeout(() => void this.failOrphanedWorkflowRuns(), WORKFLOW_HEARTBEAT_STALE_MS);
+		}
+		if (touched) {
+			await this.changed(true);
+		}
 	}
 
 	private projectFor(repository: IAutomationRepository): IVoltProjectRecord {
@@ -892,6 +1060,10 @@ export class AutomationService extends Disposable implements IAutomationService 
 		for (const automation of this.automations) {
 			for (const run of automation.runs.filter(isActiveRun)) {
 				touched = true;
+				// A workflow run lives in the window that runs it: decided below by its heartbeat.
+				if (automation.workflowId && run.status === 'running' && !this.workflowRuns.has(run.id)) {
+					continue;
+				}
 				if (run.threadId) {
 					await this.orchestrator.ensureThreadLoaded(run.threadId).catch(() => undefined);
 				}
@@ -923,6 +1095,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 		if (touched) {
 			await this.changed(true);
 		}
+		await this.failOrphanedWorkflowRuns();
 		await this.tick();
 	}
 
