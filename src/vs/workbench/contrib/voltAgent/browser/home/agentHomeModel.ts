@@ -524,9 +524,13 @@ function buildHomeTree(
 	const shelvesAsBuckets = view.grouping === 'status';
 	if (flat) {
 		const buckets = flatBucketNodes(view.grouping, sort(unpinned), now, options);
-		// Status order: Pinned, Draft, Working, Done, then Settled and Snooze.
-		const done = shelvesAsBuckets ? buckets.filter(node => node.element.type === 'bucket' && node.element.id === 'done') : [];
-		body.push(...buckets.filter(node => !done.includes(node)));
+		// Status order: Draft, Pinned, Needs Attention, Working, Done, then Settled and Snooze. Unsent drafts lead,
+		// above Pinned: they are what the user is in the middle of writing.
+		const bucketWithId = (id: string) => shelvesAsBuckets ? buckets.filter(node => node.element.type === 'bucket' && node.element.id === id) : [];
+		const drafts = bucketWithId('draft');
+		const done = bucketWithId('done');
+		body.unshift(...drafts);
+		body.push(...buckets.filter(node => !done.includes(node) && !drafts.includes(node)));
 		if (shelvesAsBuckets) {
 			if (working.length) {
 				// Working keeps the order work was sent in; its rows do not drag into another order.

@@ -298,7 +298,7 @@ suite('Agent home list model', () => {
 			session('draft', { workspaceFolder: '/tmp/a', status: 'idle', turnCount: 0, hasDraft: true }),
 			session('pin', { workspaceFolder: '/tmp/a', pinned: true }),
 		], view({ grouping: 'status' }));
-		assert.deepStrictEqual(headers(tree), ['pinned', 'needsAttention', 'working', 'draft', 'done']);
+		assert.deepStrictEqual(headers(tree), ['draft', 'pinned', 'needsAttention', 'working', 'done'], 'drafts lead, above Pinned');
 		const pinned = tree.find(node => node.element.type === 'bucket' && node.element.id === 'pinned');
 		assert.ok(pinned?.element.type === 'bucket');
 		assert.deepStrictEqual(sessionIds(pinned), ['pin']);
