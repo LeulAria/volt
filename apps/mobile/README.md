@@ -7,9 +7,32 @@ and start new chats in any project, from anywhere on your network or Tailscale.
 ```sh
 npm install                 # also installs ../mobile-widgets' build dependency
 npx expo start              # Expo Go works for everything but Live Activities
-npx expo run:ios            # a dev build: adds the Live Activity / widget extension
+npm run ios                 # a dev build + Metro: adds the Live Activity / widget extension
+npm run android
 npm run typecheck
+npm run build:ios           # standalone simulator .app (JS embedded) in dist/ios
+npm run build:android       # standalone .apk (arm64, debug-signed) in dist/android
 ```
+
+Native code is only compiled once per machine for each native fingerprint, a hash of the native
+modules, config plugins and `app.json` (`.fingerprintignore` skips the generated `ios/` and
+`android/`). Builds are kept in `~/Library/Caches/volt-mobile` (`VOLT_MOBILE_CACHE` moves it) and
+shared by every checkout and worktree:
+
+- `npm run ios|android` installs the cached debug build, starts Metro and launches the app, with
+  no prebuild, CocoaPods or compile. Without one it runs `expo run`, which builds and files it;
+  plain `npx expo run:ios|android` uses the same cache (`buildCacheProvider` in `app.json`).
+  `--rebuild` drops the cached build first; other options (`--device`, …) go to `expo run`.
+- `npm run build:ios|android` repacks the cached release build with the current JS
+  (`@expo/repack-app`). `--native` forces a native build; `--install` puts the result on the
+  booted simulator or the connected device, e.g. `npm run build:ios -- --install`.
+
+A new fingerprint (a native module, a config plugin or `app.json` changed) builds natively. Prebuild
+updates `ios/` and `android/` in place (`--no-clean`), so CocoaPods, DerivedData (`ios/build`) and
+Gradle's outputs survive; `--rebuild` and `--native` regenerate them from scratch. The compiler
+caches are shared too, with the checkout's path mapped out of their keys: Xcode's compilation
+cache on iOS, ccache (`brew install ccache`; the NDK picks it up) and Gradle's build cache on
+Android.
 
 ## Pairing
 
