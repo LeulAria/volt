@@ -101,14 +101,24 @@ export type AgentServerServerFrame = IAgentServerWelcome | IAgentServerCall | IA
 
 /**
  * - `col`: a replicated collection changed ({@link ICollectionDelta}).
- * - `session`: a chat's transcript changed ({@link ISessionPatch}) or one of its lifecycle changes.
+ * - `session`: a chat's transcript changed ({@link ISessionPatch}, changed messages whole) or one of its lifecycle changes.
+ * - `sessionEdits`: the same with changed messages as edits (opt-in). A client that asks for both
+ *   gets only these from a server that has them, and `session` from one that does not.
  * - `runtime.event`: a raw runtime event envelope (opt-in; deltas are many).
  * - `hostTools`: a host tool was invoked (desktop attaches page state to the row).
  * - `server`: server notices (shutting down, version).
  */
-export type AgentServerTopic = 'col' | 'session' | 'runtime.event' | 'hostTools' | 'server';
+export type AgentServerTopic = 'col' | 'session' | 'sessionEdits' | 'runtime.event' | 'hostTools' | 'server';
 
 export const DEFAULT_TOPICS: readonly AgentServerTopic[] = ['col', 'session', 'hostTools', 'server'];
+
+/** What Volt's own windows (desktop and browser workbench) subscribe to. */
+export const WORKBENCH_TOPICS: readonly AgentServerTopic[] = [...DEFAULT_TOPICS, 'sessionEdits', 'runtime.event'];
+
+/** Whether a client subscribed to `topics` gets events of `topic` (`session` gives way to `sessionEdits`). */
+export function hearsTopic(topics: ReadonlySet<AgentServerTopic>, topic: AgentServerTopic): boolean {
+	return topics.has(topic) && !(topic === 'session' && topics.has('sessionEdits'));
+}
 
 /** Put and delete entries of one replicated collection. */
 export interface ICollectionDelta {

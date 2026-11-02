@@ -21,10 +21,12 @@ import { IVoltHostToolService } from '../../../workbench/services/voltRuntime/co
 import { VOLT_MODES, VoltMode } from '../../../workbench/services/voltRuntime/common/modes.js';
 import { IRemoteHostToolCall } from '../../../workbench/services/voltAgentServer/common/remoteVoltHostToolService.js';
 import { IAgentOrchestratorService } from '../../../workbench/services/voltRuntime/common/orchestration/orchestrator.js';
+import { isLiveOnlyEvent } from '../../../workbench/services/voltRuntime/common/events.js';
 import { IAgentRuntimeService } from '../../../workbench/services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../workbench/services/voltRuntime/common/sessionContext.js';
 import { ServerEditsJournal } from './serverEditsJournal.js';
 import { ServerSessionHost } from './serverSessionHost.js';
+import { StreamDeltaCoalescer } from './streamDeltaCoalescer.js';
 import { ServerClientTools } from './serverClientTools.js';
 import { IServerFileRoot, ServerFiles } from './serverFiles.js';
 import { ServerComposer } from './serverComposer.js';
@@ -34,6 +36,11 @@ import { ServerTrajectory } from './serverTrajectory.js';
 import { IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
 import { IVoltPullRequestService } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { basename } from '../../../base/common/path.js';
+
+/** A chat's session summary is republished this long after a change... */
+const SESSION_REFRESH_MS = 30;
+/** ...and this long after streamed text, which changes none of it (a safety net, not a signal). */
+const STREAMING_SESSION_REFRESH_MS = 1000;
 
 /** Replicated collections the server publishes. Clients' mirrors answer synchronous getters from them. */
 export const AGENT_SERVER_COLLECTIONS = [
@@ -96,10 +103,12 @@ const CHECKPOINT_METHODS = ['beginTurn', 'loadCheckpoints', 'previewRestore', 'r
  */
 export class AgentServerApi extends Disposable {
 
-	private readonly sessionRefresh = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly sessionRefresh = new Map<string, { readonly timer: ReturnType<typeof setTimeout>; readonly due: number }>();
 	private readonly runtimeRefresh: RunOnceScheduler;
 	private readonly historyRefresh: RunOnceScheduler;
 	private readonly clientTools: ServerClientTools;
+	/** Runtime events on their way to clients, a chat's streamed deltas joined. */
+	private readonly runtimeEvents = this._register(new StreamDeltaCoalescer(envelope => this.protocol.publish('runtime.event', toWire(envelope))));
 
 	constructor(
 		private readonly protocol: AgentServerProtocol,
@@ -135,7 +144,7 @@ export class AgentServerApi extends Disposable {
 		this.publishProjects();
 		this.publishOrchestrator(undefined);
 		this._register(toDisposable(() => {
-			for (const timer of this.sessionRefresh.values()) {
+			for (const { timer } of this.sessionRefresh.values()) {
 				clearTimeout(timer);
 			}
 		}));
@@ -205,6 +214,7 @@ export class AgentServerApi extends Disposable {
 		this._register(this.protocol.registerMethods('session', {
 			open: (ctx, id) => this.sessions.open(String(id), ctx.client.connectionId),
 			close: (ctx, id) => this.sessions.close(String(id), ctx.client.connectionId),
+			watch: (ctx, ids) => this.sessions.watch(ctx.client.connectionId, Array.isArray(ids) ? ids.map(String) : []),
 			skipCurrentRun: (_ctx, id) => this.sessions.skipCurrentRun(String(id)),
 			truncate: (_ctx, id, messageId) => this.sessions.truncate(String(id), String(messageId)),
 			recordAssistant: (_ctx, id, message, final, status) => this.sessions.recordAssistant(String(id), fromWire(message), !!final, String(status) as AgentSessionStatus),
@@ -288,7 +298,9 @@ export class AgentServerApi extends Disposable {
 			this.col('questions').update({ [sessionId]: pending.length ? toWire(pending) : undefined });
 		}));
 		this._register(this.runtime.onDidEmit(envelope => {
-			this.scheduleSession(envelope.sessionId);
+			// Streamed text changes nothing in the summary (a run's status changes with events of
+			// their own); with a hundred chats streaming it was rebuilt hundreds of times a second.
+			this.scheduleSession(envelope.sessionId, isLiveOnlyEvent(envelope.event) ? STREAMING_SESSION_REFRESH_MS : SESSION_REFRESH_MS);
 			const type = envelope.event.type;
 			if (type === 'access.ask' || type === 'access.resolved' || type === 'access.blocked') {
 				this.publishAccess();
@@ -297,7 +309,7 @@ export class AgentServerApi extends Disposable {
 				// Receipts and run metrics.
 				this.runtimeRefresh.schedule();
 			}
-			this.protocol.publish('runtime.event', toWire(envelope));
+			this.runtimeEvents.push(envelope);
 		}));
 		this._register(this.orchestrator.onDidChange(change => this.publishOrchestrator(change)));
 		this._register(this.history.onDidChange(() => this.historyRefresh.schedule()));
@@ -343,14 +355,23 @@ export class AgentServerApi extends Disposable {
 		this.col('access').replace({ pending: toWire(this.runtime.listPendingAccessRequests()) });
 	}
 
-	private scheduleSession(sessionId: string): void {
-		if (this.sessionRefresh.has(sessionId)) {
-			return;
+	/** Republishes the chat's session summary in `delayMs`, or sooner if one is due already. */
+	private scheduleSession(sessionId: string, delayMs = SESSION_REFRESH_MS): void {
+		const due = Date.now() + delayMs;
+		const pending = this.sessionRefresh.get(sessionId);
+		if (pending) {
+			if (pending.due <= due) {
+				return;
+			}
+			clearTimeout(pending.timer);
 		}
-		this.sessionRefresh.set(sessionId, setTimeout(() => {
-			this.sessionRefresh.delete(sessionId);
-			this.publishSession(sessionId);
-		}, 30));
+		this.sessionRefresh.set(sessionId, {
+			due,
+			timer: setTimeout(() => {
+				this.sessionRefresh.delete(sessionId);
+				this.publishSession(sessionId);
+			}, delayMs),
+		});
 	}
 
 	/** What the UI reads synchronously about a chat's runtime session. */

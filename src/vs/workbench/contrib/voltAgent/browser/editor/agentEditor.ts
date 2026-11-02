@@ -931,6 +931,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private threadBehind = false;
 	/** The chat this pane told the Agents list and the title bar it shows (see agentShownChat.ts). */
 	private shownSessionId: string | undefined;
+	/** Keeps the shown chat's changes coming at full rate from the agent server (see IAgentSessionControl.watch). */
+	private readonly shownWatch = this._register(new MutableDisposable());
 	/** Least recently shown first. */
 	private readonly stashedThreads = new Map<string, IStashedThread>();
 	private renderingTail = false;
@@ -8513,6 +8515,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (token.isCancellationRequested) {
 			return;
 		}
+		// The agent server sends a chat no window shows its changes about once a second: this one
+		// gets them at full rate while it is shown. It is drawn now, from what the window has (a
+		// second old at most); what it missed comes right after as one more streamed change.
+		const watch = input.controller.watch?.();
 		const loaded = performance.now();
 		if (this.input !== input) {
 			this.landingChrome?.resetWorktreeTarget();
@@ -8520,6 +8526,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// The dock beside the chat finds the chat it sits in by this.
 		this.container.dataset.sessionId = input.sessionId;
 		this.surfaceHost.present(input.sessionId);
+		this.shownWatch.value = watch;
 		await super.setInput(input, options, context, token);
 		if (token.isCancellationRequested || this.input !== input) {
 			return;
@@ -8664,7 +8671,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.surfaceHost.present(undefined);
 			this.setComposerZoomed(false);
 			this.publishShownChat(undefined);
+			this.shownWatch.clear();
 		});
+	}
+
+	protected override setEditorVisible(visible: boolean): void {
+		super.setEditorVisible(visible);
+		// A hidden pane shows no chat: the agent server goes back to sending its changes now and then.
+		const input = this.input;
+		this.shownWatch.value = visible && input instanceof AgentEditorInput && input === this.stateInput ? input.controller.watch?.() : undefined;
 	}
 
 	override layout(dimension: Dimension): void {

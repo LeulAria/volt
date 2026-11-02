@@ -27,7 +27,7 @@ import { ISecretStorageService } from '../../../../platform/secrets/common/secre
 import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME, VOLT_ALLOW_NETWORK_COMMAND_ID } from '../../../../platform/voltAgentServer/common/agentServerService.js';
 import { VOLT_USAGE_SHARE_MACHINE_COMMAND_ID } from '../../../../platform/voltUsage/common/voltUsage.js';
 import { IWebSocketLike } from '../../../../platform/voltAgentServer/common/connection.js';
-import { DEFAULT_TOPICS } from '../../../../platform/voltAgentServer/common/protocol.js';
+import { WORKBENCH_TOPICS } from '../../../../platform/voltAgentServer/common/protocol.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
@@ -120,7 +120,7 @@ class DesktopAgentServerClient extends AgentServerClient {
 				}
 			},
 			createSocket: url => new WebSocket(url) as unknown as IWebSocketLike,
-			client: { kind: 'desktop', id: generateUuid(), capabilities: ['browser', 'surface', 'codeIntel'], topics: [...DEFAULT_TOPICS, 'runtime.event'] },
+			client: { kind: 'desktop', id: generateUuid(), capabilities: ['browser', 'surface', 'codeIntel'], topics: WORKBENCH_TOPICS },
 			onError: (method, err) => logService.warn(`[volt agent server] ${method} failed`, err),
 		});
 		this.connect();
