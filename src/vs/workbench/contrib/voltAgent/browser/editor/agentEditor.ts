@@ -157,6 +157,7 @@ import { showHostToolDetail } from '../chrome/agentHostToolDetail.js';
 import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
 import { createHomeAutomationsIcon, createHomeNewChatIcon } from '../home/agentHomeIcons.js';
 import { AgentLandingChrome } from '../home/agentLandingChrome.js';
+import { AgentLandingRecents } from '../home/agentLandingRecents.js';
 import { IAgentThreadLifecycleService } from '../home/agentThreadLifecycle.js';
 import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
 import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitation, revealCitationInChats } from './agentCitationSource.js';
@@ -980,6 +981,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private openedPreviewUrl: string | undefined;
 	private surfaceHost!: AgentSurfaceHost;
 	private landingChrome: AgentLandingChrome | undefined;
+	private landingRecents: AgentLandingRecents | undefined;
 	private restoringChat = false;
 	private chatSaveTimer: number | undefined;
 	private snapshotOverlay: HTMLElement | undefined;
@@ -1555,6 +1557,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}));
 		this.suggestEl = append(this.composerEl, $('.volt-agent-suggest'));
 		this.renderSuggestChips();
+		// Recent projects under the chips while the new chat has no project.
+		this.landingRecents = this._register(this.instantiationService.createInstance(AgentLandingRecents, {
+			hasProject: () => !!this.landingChrome?.projectRoot(),
+			openProject: folder => this.openLandingProject(folder),
+			ownsKey: e => {
+				const target = e.target as HTMLElement | null;
+				return this.isVisible() && (!target || target === this.container.ownerDocument.body || this.container.contains(target));
+			},
+			focusComposer: () => this.inputEditor?.focus(),
+		}));
+		append(this.composerEl, this.landingRecents.element);
 
 		this.bindRuntimeSession();
 		this.renderThread(true);
@@ -8478,6 +8491,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.bindRuntimeSession();
 		this.contextUsageView.refreshBranch();
 		this.renderSuggestChips();
+		this.landingRecents?.refresh();
 		this.updateSendButton();
 		this.layoutInputEditor();
 		if (!options?.preserveFocus) {
