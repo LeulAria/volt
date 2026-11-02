@@ -63,10 +63,12 @@
 				"expo-build-properties",
 				{
 					"android": {
-						"usesCleartextTraffic": true
+						"usesCleartextTraffic": true,
+						"buildArchs": ["arm64-v8a"]
 					}
 				}
 			],
+			"./plugins/withFastBuilds",
 			[
 				"expo-image-picker",
 				{
@@ -89,6 +91,9 @@
 			"expo-document-picker",
 			"./plugins/withSceneLifecycle"
 		],
+		"buildCacheProvider": {
+			"plugin": "./scripts/buildCache.js"
+		},
 		"experiments": {
 			"typedRoutes": true
 		}
