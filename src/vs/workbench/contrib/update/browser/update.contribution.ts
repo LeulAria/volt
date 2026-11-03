@@ -62,7 +62,8 @@ export class ShowCurrentReleaseNotesAction extends Action2 {
 		const openerService = accessor.get(IOpenerService);
 
 		try {
-			await showReleaseNotesInEditor(instantiationService, productService.version, false);
+			// Volt's notes are tagged with Volt's version, not the VS Code version it is built on.
+			await showReleaseNotesInEditor(instantiationService, productService.voltVersion ?? productService.version, false);
 		} catch (err) {
 			if (productService.releaseNotesUrl) {
 				await openerService.open(URI.parse(productService.releaseNotesUrl));

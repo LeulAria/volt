@@ -397,8 +397,11 @@ suite('Agent visuals', () => {
 	test('candlestick readings support keyboard navigation, reuse tooltips and survive resizing', async () => {
 		const handle = render({ type: 'candlestick', x: { timeZone: 'UTC' }, data: [['2026-10-01', 10, 12, 9, 11], ['2026-10-02', 11, 13, 8, 9]] });
 		const plot = host.querySelector<HTMLElement>('.vc-plot')!;
+		// The test window is hidden, so the document never has focus and focus()/blur() move
+		// activeElement without firing events; send them so the chart sees what a reader does.
 		plot.focus();
-		assert.ok(plot.querySelector('.vc-sr')!.textContent?.includes('Oct 2'));
+		plot.dispatchEvent(new FocusEvent('focus'));
+		assert.ok(plot.querySelector('.vc-sr')!.textContent?.includes('Oct 2'), plot.querySelector('.vc-sr')!.textContent ?? '');
 		plot.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
 		assert.ok(plot.querySelector('.vc-sr')!.textContent?.includes('Oct 1'));
 		const hero = plot.querySelector('.vc-tip-hero');
@@ -415,6 +418,7 @@ suite('Agent visuals', () => {
 		assert.strictEqual(pill.textContent, 'Oct2');
 		assert.ok(pill.getBoundingClientRect().right <= plot.getBoundingClientRect().right + 1);
 		plot.blur();
+		plot.dispatchEvent(new FocusEvent('blur'));
 		assert.ok(!plot.querySelector('.vc-pill.vc-shown'));
 		assert.strictEqual(plot.querySelector('.vc-sr')!.textContent, '');
 	});
@@ -493,7 +497,11 @@ suite('Agent visuals', () => {
 		render({ type: 'row', charts: [1, 2, 3].map(index => ({ type: 'bar', title: `Chart ${index}`, categories: ['a', 'b'], series: [{ name: 's', data: [20, 18] }] })) });
 		const tops = [...host.querySelectorAll('.vc-row > .vc-block')].map(block => Math.round(block.getBoundingClientRect().top));
 		assert.strictEqual(new Set(tops).size, 1, `rows at ${tops.join(', ')}`);
-		const label = [...host.querySelectorAll('.vc-tick text')].find(text => text.textContent === '20');
-		assert.strictEqual(label?.getAttribute('text-anchor'), 'end', 'labels sit in a gutter left of the bars');
+		const label = [...host.querySelectorAll('.vc-tick text')].find(text => text.textContent === '20')!;
+		assert.strictEqual(label.getAttribute('text-anchor'), 'start', 'labels sit flush left in their gutter');
+		const bars = label.closest('.vc-block')!.querySelectorAll('.vc-bar');
+		assert.ok(bars.length);
+		const barsLeft = Math.min(...[...bars].map(bar => bar.getBoundingClientRect().left));
+		assert.ok(label.getBoundingClientRect().right <= barsLeft, `labels sit in a gutter left of the bars (${label.getBoundingClientRect().right} > ${barsLeft})`);
 	});
 });

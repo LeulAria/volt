@@ -3,8 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { DeferredPromise, raceTimeout, RunOnceScheduler } from '../../../../../base/common/async.js';
-import { mainWindow } from '../../../../../base/browser/window.js';
+import { DeferredPromise, IntervalTimer, raceTimeout, RunOnceScheduler } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
@@ -137,7 +136,8 @@ export class AutomationService extends Disposable implements IAutomationService 
 	private readonly workflowRuns = new Map<string, IAutomationWorkflowRun>();
 	/** Heartbeat files of the workflow runs this window carries out, so other windows leave them alone. */
 	private readonly liveRoot: URI;
-	private readonly heartbeats = new Map<string, number>();
+	// IntervalTimer, not mainWindow.setInterval: the agent server runs this service in Node, where there is no window.
+	private readonly heartbeats = new Map<string, IntervalTimer>();
 	private orphanCheck: ReturnType<typeof setTimeout> | undefined;
 	readonly whenReady: Promise<void>;
 
@@ -189,8 +189,8 @@ export class AutomationService extends Disposable implements IAutomationService 
 			for (const handle of this.retries.values()) {
 				clearTimeout(handle);
 			}
-			for (const handle of this.heartbeats.values()) {
-				mainWindow.clearInterval(handle);
+			for (const timer of this.heartbeats.values()) {
+				timer.dispose();
 			}
 			if (this.orphanCheck !== undefined) {
 				clearTimeout(this.orphanCheck);
@@ -909,13 +909,15 @@ export class AutomationService extends Disposable implements IAutomationService 
 		const file = joinPath(this.liveRoot, claimName(runId));
 		const beat = () => void this.fileService.writeFile(file, VSBuffer.fromString(String(Date.now()))).catch(() => undefined);
 		beat();
-		this.heartbeats.set(runId, mainWindow.setInterval(beat, WORKFLOW_HEARTBEAT_MS));
+		const timer = this.heartbeats.get(runId) ?? new IntervalTimer();
+		timer.cancelAndSet(beat, WORKFLOW_HEARTBEAT_MS);
+		this.heartbeats.set(runId, timer);
 	}
 
 	private stopHeartbeat(runId: string): void {
-		const handle = this.heartbeats.get(runId);
-		if (handle !== undefined) {
-			mainWindow.clearInterval(handle);
+		const timer = this.heartbeats.get(runId);
+		if (timer) {
+			timer.dispose();
 			this.heartbeats.delete(runId);
 		}
 		void this.fileService.del(joinPath(this.liveRoot, claimName(runId))).catch(() => undefined);

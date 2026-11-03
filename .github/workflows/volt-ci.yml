@@ -176,8 +176,6 @@ jobs:
       - name: Run Node unit tests
         run: npm run test-node
 
-  # Not part of `Check` yet: ten tests that predate CI still fail on main (LeulAria/volt#75). It runs
-  # on every PR and shows its own result; add it back to `check.needs` and the gate map once green.
   test-electron:
     name: Unit Tests (Electron)
     needs: changes
@@ -514,7 +512,7 @@ jobs:
   check:
     name: Check
     if: always()
-    needs: [changes, lint, typecheck, test-volt, test-node, extensions, cli, docs, mobile, relay, govern, workflows, dependencies]
+    needs: [changes, lint, typecheck, test-volt, test-node, test-electron, extensions, cli, docs, mobile, relay, govern, workflows, dependencies]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -525,7 +523,7 @@ jobs:
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           echo "$RESULTS" | jq -e --arg event "$EVENT" '
-            {typecheck: "src", "test-volt": "src", "test-node": "src",
+            {typecheck: "src", "test-volt": "src", "test-node": "src", "test-electron": "src",
              extensions: "extensions", cli: "cli", docs: "docs", mobile: "mobile",
              relay: "relay", govern: "govern", workflows: "workflows"} as $gate
             | .changes.outputs as $areas

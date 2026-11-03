@@ -33,17 +33,28 @@ import { TelemetryLevel } from '../../../../platform/telemetry/common/telemetry.
 import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
 import { SimpleSettingRenderer } from '../../markdown/browser/markdownSettingRenderer.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
-import { Schemas } from '../../../../base/common/network.js';
+import { FileAccess, Schemas } from '../../../../base/common/network.js';
 import { ICodeEditorService } from '../../../../editor/browser/services/codeEditorService.js';
 import { dirname } from '../../../../base/common/resources.js';
 import { asWebviewUri } from '../../webview/common/webview.js';
+import { language } from '../../../../base/common/platform.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
+import { formatVoltReleaseDate, IVoltReleaseInfo, parseVoltReleaseNotes, renderVoltReleaseNotesBody, VOLT_RELEASE_HERO_SCRIPT, VOLT_RELEASE_NOTES_STYLES, voltReleaseNotesFileVersion } from './voltReleaseNotes.js';
+
+interface IVoltRelease {
+	readonly name?: string;
+	readonly body?: string;
+	readonly html_url?: string;
+	readonly published_at?: string;
+}
 
 export class ReleaseNotesManager extends Disposable {
 	private readonly _simpleSettingRenderer: SimpleSettingRenderer;
 	private readonly _releaseNotesCache = new Map<string, Promise<string>>();
 
 	private _currentReleaseNotes: WebviewInput | undefined = undefined;
-	private _lastMeta: { text: string; base: URI } | undefined;
+	private _lastMeta: { text: string; base: URI; volt?: IVoltReleaseInfo } | undefined;
+	private readonly _voltReleases = new Map<string, IVoltReleaseInfo>();
 
 	constructor(
 		@IEnvironmentService private readonly _environmentService: IEnvironmentService,
@@ -59,6 +70,7 @@ export class ReleaseNotesManager extends Disposable {
 		@IExtensionService private readonly _extensionService: IExtensionService,
 		@IProductService private readonly _productService: IProductService,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
+		@IFileService private readonly _fileService: IFileService,
 	) {
 		super();
 
@@ -95,9 +107,14 @@ export class ReleaseNotesManager extends Disposable {
 	}
 
 	public async show(version: string, useCurrentFile: boolean): Promise<boolean> {
+		if (this._productService.voltRelease && useCurrentFile) {
+			// Previewing docs/release-notes/<version>.md: the version is the file's.
+			version = voltReleaseNotesFileVersion(this._codeEditorService.getActiveCodeEditor()?.getModel()?.uri.path) ?? this._productService.voltVersion ?? version;
+		}
 		const releaseNoteText = await this.loadReleaseNotes(version, useCurrentFile);
 		const base = await this.getBase(useCurrentFile);
-		this._lastMeta = { text: releaseNoteText, base };
+		const volt = this._productService.voltRelease ? await this.voltReleaseInfo(version) : undefined;
+		this._lastMeta = { text: releaseNoteText, base, volt };
 		const html = await this.renderBody(this._lastMeta);
 		const title = nls.localize('releaseNotesInputName', "Release Notes: {0}", version);
 
@@ -214,12 +231,21 @@ export class ReleaseNotesManager extends Disposable {
 			try {
 				if (useCurrentFile) {
 					const file = this._codeEditorService.getActiveCodeEditor()?.getModel()?.getValue();
-					text = file ? file.substring(file.indexOf('#')) : undefined;
+					// Volt's notes files start with their summary, before any heading.
+					text = file ? (this._productService.voltRelease ? file : file.substring(file.indexOf('#'))) : undefined;
 				} else if (this._productService.voltRelease) {
-					// Volt's release notes are the GitHub Release body.
-					const releaseUrl = `https://api.github.com/repos/${this._productService.voltRelease.repository}/releases/tags/${voltReleaseTag(version)}`;
-					const release = await asJson<{ name?: string; body?: string; html_url?: string }>(await this._requestService.request({ url: releaseUrl, headers: { Accept: 'application/vnd.github+json' } }, CancellationToken.None));
-					text = release ? `# ${release.name || version}\n\n${release.body ?? ''}\n\n[View on GitHub](${release.html_url})\n` : undefined;
+					// A dev build shows the repo's docs/release-notes/<version>.md, to preview notes before they are published.
+					const file = this._environmentService.isBuilt ? undefined : await this.readVoltReleaseNotesFile(version);
+					if (file) {
+						text = `# Volt ${version}\n\n${file}`;
+					} else {
+						// Volt's release notes are the GitHub Release body.
+						const release = await this.fetchVoltRelease(version);
+						if (release) {
+							this._voltReleases.set(version, { version, publishedAt: release.published_at, url: release.html_url });
+						}
+						text = release ? `# ${release.name || version}\n\n${release.body ?? ''}\n` : undefined;
+					}
 				} else {
 					text = await asTextOrError(await this._requestService.request({ url }, CancellationToken.None));
 				}
@@ -252,6 +278,45 @@ export class ReleaseNotesManager extends Disposable {
 		return this._releaseNotesCache.get(version)!;
 	}
 
+	private async fetchVoltRelease(version: string): Promise<IVoltRelease | undefined> {
+		const releaseUrl = `https://api.github.com/repos/${this._productService.voltRelease!.repository}/releases/tags/${voltReleaseTag(version)}`;
+		return (await asJson<IVoltRelease>(await this._requestService.request({ url: releaseUrl, headers: { Accept: 'application/vnd.github+json' } }, CancellationToken.None))) ?? undefined;
+	}
+
+	private async readVoltReleaseNotesFile(version: string): Promise<string | undefined> {
+		const file = URI.joinPath(FileAccess.asFileUri(''), '..', 'docs', 'release-notes', `${version}.md`);
+		try {
+			return (await this._fileService.readFile(file)).value.toString();
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** The version, date and link above the notes. Notes read from a file take them from the published release, if there is one. */
+	private async voltReleaseInfo(version: string): Promise<IVoltReleaseInfo> {
+		const known = this._voltReleases.get(version);
+		if (known) {
+			return known;
+		}
+		const release = await this.fetchVoltRelease(version).catch(() => undefined);
+		const info = { version, publishedAt: release?.published_at, url: release?.html_url };
+		if (release) {
+			this._voltReleases.set(version, info);
+		}
+		return info;
+	}
+
+	private async renderVoltBody(text: string, info: IVoltReleaseInfo): Promise<string> {
+		const parts = parseVoltReleaseNotes(text);
+		const render = (markdown: string) => renderReleaseNotesMarkdown(markdown, this._extensionService, this._languageService, this._simpleSettingRenderer);
+		const html = async (markdown: string) => markdown ? String(await render(markdown)) : '';
+		return renderVoltReleaseNotesBody(info, parts, { lead: await html(parts.lead), summary: await html(parts.summary), details: await html(parts.details) }, formatVoltReleaseDate(info.publishedAt, language), {
+			draft: nls.localize('voltReleaseDraft', "Draft"),
+			details: nls.localize('voltReleaseDetails', "Details"),
+			viewOnGitHub: nls.localize('voltReleaseViewOnGitHub', "View on GitHub"),
+		});
+	}
+
 	private async onDidClickLink(uri: URI) {
 		if (uri.scheme === Schemas.codeSetting) {
 			// handled in receive message
@@ -271,10 +336,12 @@ export class ReleaseNotesManager extends Disposable {
 		return uri;
 	}
 
-	private async renderBody(fileContent: { text: string; base: URI }) {
+	private async renderBody(fileContent: { text: string; base: URI; volt?: IVoltReleaseInfo }) {
 		const nonce = generateUuid();
 
-		const processedContent = await renderReleaseNotesMarkdown(fileContent.text, this._extensionService, this._languageService, this._simpleSettingRenderer);
+		const processedContent = fileContent.volt
+			? await this.renderVoltBody(fileContent.text, fileContent.volt)
+			: await renderReleaseNotesMarkdown(fileContent.text, this._extensionService, this._languageService, this._simpleSettingRenderer);
 
 		const colorMap = TokenizationRegistry.getColorMap();
 		const css = colorMap ? generateTokensCSSForColorMap(colorMap) : '';
@@ -539,6 +606,7 @@ export class ReleaseNotesManager extends Disposable {
 							margin-left: 0;
 						}
 					}
+					${fileContent.volt ? VOLT_RELEASE_NOTES_STYLES : ''}
 				</style>
 			</head>
 			<body>
@@ -560,8 +628,13 @@ export class ReleaseNotesManager extends Disposable {
 					label.textContent = '${nls.localize('showOnUpdate', "Show release notes after an update")}';
 					container.appendChild(label);
 
+					const voltOptions = document.getElementById('volt-release-options');
 					const beforeElement = document.querySelector("body > h1")?.nextElementSibling;
-					if (beforeElement) {
+					if (voltOptions) {
+						container.style.margin = '0';
+						container.style.gap = '6px';
+						voltOptions.appendChild(container);
+					} else if (beforeElement) {
 						document.body.insertBefore(container, beforeElement);
 					} else {
 						document.body.appendChild(container);
@@ -592,6 +665,7 @@ export class ReleaseNotesManager extends Disposable {
 					input.addEventListener('change', event => {
 						vscode.postMessage({ type: 'showReleaseNotes', value: input.checked }, '*');
 					});
+					${fileContent.volt ? VOLT_RELEASE_HERO_SCRIPT : ''}
 				</script>
 			</body>
 		</html>`;
