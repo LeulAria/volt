@@ -1,0 +1,46 @@
+// Biome settings shared by apps/mobile, apps/mobile-widgets, apps/client-core, apps/relay and
+// apps/volt-govern (each has a biome.json that extends this file; apps/docs has its own config).
+// CI lints the files a pull request changes and fails only on problems it adds
+// (build/volt/ci/biomeDiff.mjs). Run it yourself with:
+//   bunx @biomejs/biome@2.5.14 check apps/<app>
+//
+// The formatter is off: these apps follow the VS Code style (no wrapping, `x => x`), and Biome's
+// formatter, like Prettier's, breaks long chains and objects across lines, so turning it on means
+// reformatting every file once. The options below match the house style as closely as Biome can.
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
+	"files": {
+		"ignoreUnknown": true,
+		"includes": ["**/*.{ts,tsx,js,jsx,mjs,cjs}", "!**/node_modules", "!**/dist", "!**/build", "!**/.expo", "!**/ios", "!**/android"]
+	},
+	"formatter": {
+		"enabled": false,
+		"indentStyle": "tab",
+		"lineWidth": 160
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "single",
+			"jsxQuoteStyle": "double",
+			"semicolons": "always",
+			"arrowParentheses": "asNeeded"
+		}
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": true,
+			"style": {
+				// The house style asserts non-null where the types cannot see an invariant.
+				"noNonNullAssertion": "off"
+			}
+		}
+	},
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "off"
+			}
+		}
+	}
+}

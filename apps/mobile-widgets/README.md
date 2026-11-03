@@ -26,5 +26,5 @@ Run `npx expo prebuild --platform ios` after changing plugins.
 
 ## Tests
 
-`npm test` runs the pure TypeScript tests with `node --test`. `npm run typecheck` checks the same
+`npm test` runs the pure TypeScript tests with `bun test` (needs [Bun](https://bun.sh)). `npm run typecheck` checks the same
 files with `tsc`. The Swift code is checked by building the app for the iOS simulator.

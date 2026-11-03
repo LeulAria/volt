@@ -1,5 +1,5 @@
 // Checks src/lib/releases.ts against a fixture shaped like the GitHub Releases API.
-// Run with `npm run test:releases` (Node 22.18+ strips the TypeScript types itself).
+// Run with `bun run test:releases` (bun test runs these node:test tests and the TypeScript import).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";

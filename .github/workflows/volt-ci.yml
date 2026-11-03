@@ -310,11 +310,15 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: apps/docs/package-lock.json
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      # The docs site installs with Bun (bun.lock). No install cache: it takes seconds, and the
+      # repository's cache space goes to the much larger root node_modules.
       - name: Install
-        run: npm ci --no-audit --no-fund
+        run: bun install --frozen-lockfile
 
       - name: Biome (changed files, new problems only)
         working-directory: .
@@ -324,15 +328,15 @@ jobs:
 
       - name: Type check
         if: ${{ !cancelled() }}
-        run: npm run types:check
+        run: bun run types:check
 
       - name: Release list tests
         if: ${{ !cancelled() }}
-        run: npm run test:releases
+        run: bun run test:releases
 
       - name: Build
         if: ${{ !cancelled() }}
-        run: npm run build
+        run: bun run build
 
   mobile:
     name: Mobile App
@@ -343,7 +347,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 2
           persist-credentials: false
+
+      - name: Fetch the base commit
+        env:
+          BASE: ${{ needs.changes.outputs.base }}
+        run: git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE"
 
       - uses: actions/setup-node@v7
         with:
@@ -351,6 +361,25 @@ jobs:
           cache: npm
           cache-dependency-path: apps/mobile/package-lock.json
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: ./.github/actions/setup-biome
+        id: biome
+
+      - name: Biome (changed files, new problems only)
+        env:
+          BASE: ${{ needs.changes.outputs.base }}
+          BIOME: ${{ steps.biome.outputs.path }}
+        run: |
+          status=0
+          for app in apps/mobile apps/mobile-widgets apps/client-core; do
+            node build/volt/ci/biomeDiff.mjs --app "$app" --base "$BASE" --head HEAD --biome "$BIOME" --diagnostic-level warn || status=1
+          done
+          exit $status
+
+      # The app stays on npm: its release builds (volt-mobile-build.yml) install with npm ci.
       # postinstall also installs apps/mobile-widgets, which the app imports.
       - name: Install
         working-directory: apps/mobile
@@ -369,7 +398,7 @@ jobs:
       - name: Widget tests
         if: ${{ !cancelled() }}
         working-directory: apps/mobile-widgets
-        run: npm test
+        run: bun run test
 
       # client-core has no dependencies of its own; the app's TypeScript checks it.
       - name: Type check client-core
@@ -385,17 +414,34 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 2
           persist-credentials: false
-          sparse-checkout: |
-            apps/relay
-            .nvmrc
-          sparse-checkout-cone-mode: false
+
+      - name: Fetch the base commit
+        env:
+          BASE: ${{ needs.changes.outputs.base }}
+        run: git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE"
 
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: ./.github/actions/setup-biome
+        id: biome
+
+      - name: Biome (changed files, new problems only)
+        env:
+          BASE: ${{ needs.changes.outputs.base }}
+          BIOME: ${{ steps.biome.outputs.path }}
+        run: node build/volt/ci/biomeDiff.mjs --app apps/relay --base "$BASE" --head HEAD --biome "$BIOME" --diagnostic-level warn
+
+      # node --test, not bun test: three of the relay's tests depend on Node's HTTP and timer behavior.
       - name: Test
+        if: ${{ !cancelled() }}
         working-directory: apps/relay
         run: npm test
 
@@ -411,7 +457,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 2
           persist-credentials: false
+
+      - name: Fetch the base commit
+        working-directory: .
+        env:
+          BASE: ${{ needs.changes.outputs.base }}
+        run: git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE"
 
       - uses: actions/setup-node@v7
         with:
@@ -419,7 +472,23 @@ jobs:
           cache: npm
           cache-dependency-path: apps/volt-govern/package-lock.json
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: ./.github/actions/setup-biome
+        id: biome
+
+      - name: Biome (changed files, new problems only)
+        working-directory: .
+        env:
+          BASE: ${{ needs.changes.outputs.base }}
+          BIOME: ${{ steps.biome.outputs.path }}
+        run: node build/volt/ci/biomeDiff.mjs --app apps/volt-govern --base "$BASE" --head HEAD --biome "$BIOME" --diagnostic-level warn
+
+      # Stays on npm: the Dockerfile builds the image with npm ci.
       - name: Install
+        if: ${{ !cancelled() }}
         run: npm ci --no-audit --no-fund
 
       - name: Type check
