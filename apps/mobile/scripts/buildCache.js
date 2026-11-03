@@ -136,6 +136,7 @@ module.exports = {
 	remove,
 	store,
 	nativeBuildEnv,
+	prebuild,
 	buildNative,
 	// The build cache provider interface that `expo run` calls.
 	calculateFingerprintHash: ({ projectRoot, platform }) => fingerprintHash(projectRoot, platform),

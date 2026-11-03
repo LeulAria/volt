@@ -38,6 +38,8 @@ All three call `volt-build.yml`:
      installs) and `.dmg`.
    - Linux x64, arm64 and armhf (cross-built against VS Code's sysroots): `.deb`, `.rpm`, `.tar.gz`.
    - Windows x64 and arm64: user setup, system setup, `.zip`.
+   - The mobile app, from the start and in parallel (`volt-mobile-build.yml`, see [Mobile app](#mobile-app)):
+     Android `.apk` (and `.aab`), iOS simulator `.zip` (and `.ipa`).
 3. **Publish**: uploads the assets to the GitHub Release and writes the update feed. It publishes whatever
    built, then fails the run if any platform failed.
 
@@ -46,13 +48,15 @@ Run one by hand with a subset of targets:
 ```sh
 gh workflow run volt-beta.yml -f version=0.0.3-beta.1 -f platforms=darwin-arm64,linux-x64
 gh workflow run volt-stable.yml -f publish=false   # build everything, publish nothing
+gh workflow run volt-nightly.yml -f platforms=android-arm64,ios-arm64 -f publish=false   # the mobile app only
 ```
 
-Targets: `darwin-x64, darwin-arm64, darwin-universal, linux-x64, linux-arm64, linux-armhf, win32-x64, win32-arm64`.
+Targets: `darwin-x64, darwin-arm64, darwin-universal, linux-x64, linux-arm64, linux-armhf, win32-x64, win32-arm64,
+android-arm64, ios-arm64`.
 
-Asset names are `volt-<channel>-<version>-<os>-<arch>[-user-setup|-system-setup].<ext>`
+Asset names are `volt-<channel>-<version>-<os>-<arch>[-user-setup|-system-setup|-simulator].<ext>`
 (`build/volt/release/releaseNaming.mjs`); the docs download page (`apps/docs/src/lib/releases.ts`) parses
-the same pattern from the GitHub Releases API.
+the same pattern from the GitHub Releases API, for the desktop assets.
 
 ## Update feed
 
@@ -77,6 +81,34 @@ after this build is an update; the same commit or an older build is not, so it n
 a separate app, so it is offered as a download instead of replacing the running one. Release notes come from
 the GitHub Release body and open after the Volt version changes (`update.showReleaseNotes`). While an
 update is available, downloading or ready, the agent sidebar footer shows an update button with the notes.
+
+## Mobile app
+
+`apps/mobile` (Expo) is built by `.github/workflows/volt-mobile-build.yml`, which runs
+`apps/mobile/scripts/releaseBuild.mjs` (`npm run release:android|ios` in `apps/mobile` does the same on a Mac).
+`volt-build.yml` calls it for the `android-arm64` and `ios-arm64` targets, so every release run carries the
+app; it also runs on pull requests that change `apps/mobile`, `apps/mobile-widgets` or `apps/client-core`,
+and by hand (`gh workflow run volt-mobile-build.yml`), where the builds are kept as run artifacts only.
+
+| Target | Runner | Assets |
+| --- | --- | --- |
+| `android-arm64` | ubuntu-latest, JDK 17 | `volt-<channel>-<version>-android-arm64.apk`; with the upload key also `-android-arm64.aab` for Google Play |
+| `ios-arm64` | xcode-27 (Xcode 27.1) | `-ios-arm64-simulator.zip` (Release `.app` for simulators on Apple silicon); with the distribution secrets also `-ios-arm64.ipa` |
+
+Native code is always compiled for a release (no repack from the fingerprint cache). The app keeps its own
+version (`version` in `apps/mobile/app.json`); the build number (`CFBundleVersion`, `versionCode`) is the minutes
+since 1970, so every build is newer than the last on every channel. Every channel ships the same app identity
+(`com.voltadk.volt`), so a nightly build installs over a stable one.
+
+Without the Android secrets the APK is signed with the Expo template's public debug key: it installs, but it can't go
+to Google Play, and a later build signed with the upload key can't update it in place. Without the iOS secrets
+there is no `.ipa`. The `.ipa` is exported for the method its profiles allow: ad hoc (`release-testing`) when they
+list devices, `enterprise` for an in-house profile, otherwise `app-store-connect` (upload it to TestFlight with
+Transporter). The repository variable `IOS_EXPORT_METHOD` overrides it.
+
+The iOS profiles need the App Group `group.com.voltadk.volt` (Live Activities and widgets share it), one for
+`com.voltadk.volt` and one for its widget extension `com.voltadk.volt.widgets`, both for the distribution
+certificate's team.
 
 ## Cutting a release
 
@@ -112,6 +144,17 @@ warning in the run.
 | `APPLE_TEAM_ID` | the team id of the Developer ID certificate |
 | `WINDOWS_CERTIFICATE` | base64 of an Authenticode code-signing `.pfx` |
 | `WINDOWS_CERTIFICATE_PASSWORD` | password of that `.pfx` |
+| `ANDROID_KEYSTORE` | base64 of the Android upload keystore (`.jks`) |
+| `ANDROID_KEYSTORE_PASSWORD` | password of that keystore |
+| `ANDROID_KEY_ALIAS` | alias of the upload key in it |
+| `ANDROID_KEY_PASSWORD` | password of that key (empty = the keystore password) |
+| `IOS_DISTRIBUTION_CERTIFICATE` | base64 of the Apple Distribution `.p12` |
+| `IOS_DISTRIBUTION_CERTIFICATE_PASSWORD` | password of that `.p12` |
+| `IOS_PROVISIONING_PROFILE` | base64 of the `.mobileprovision` for `com.voltadk.volt` |
+| `IOS_WIDGETS_PROVISIONING_PROFILE` | base64 of the `.mobileprovision` for `com.voltadk.volt.widgets` |
+
+A new Android upload key: `keytool -genkeypair -v -keystore upload.jks -alias upload -keyalg RSA -keysize 2048 -validity 10000`
+(keep it safe: Google Play only accepts updates signed with it, unless you ask Google to reset it).
 
 `GITHUB_TOKEN` is provided by Actions (contents: write for releases and the feed branch). Add the rest with
 `gh secret set MACOS_CERTIFICATE < cert.p12.b64` and so on. Unsigned macOS builds need **Open Anyway**

@@ -17,6 +17,14 @@ test('nightly versions are stamped and use the rolling tag', () => {
 	assert.strictEqual(r.tag, 'nightly');
 	assert.strictEqual(r.prerelease, 'true');
 	assert.deepStrictEqual(r.linux, ['x64', 'arm64', 'armhf']);
+	assert.deepStrictEqual([r.android, r.ios], ['true', 'true']);
+});
+
+test('mobile targets can be picked on their own', () => {
+	const r = resolveRelease({ channel: 'nightly', packageVersion: '0.0.1', platforms: 'android-arm64,ios-arm64', now });
+	assert.deepStrictEqual([r.darwin, r.linux, r.win32, r.universal, r.android, r.ios], [[], [], [], 'false', 'true', 'true']);
+	const desktop = resolveRelease({ channel: 'nightly', packageVersion: '0.0.1', platforms: 'darwin-arm64', now });
+	assert.deepStrictEqual([desktop.android, desktop.ios], ['false', 'false']);
 });
 
 test('beta and stable take the version from the tag', () => {
@@ -40,6 +48,10 @@ test('asset names round-trip', () => {
 	assert.deepStrictEqual(parseAssetName(name), { channel: 'nightly', version: '0.0.1-nightly.202610060304', os: 'win32', arch: 'x64', kind: 'user-setup', ext: 'exe' });
 	assert.strictEqual(parseAssetName('volt-stable-0.0.1-linux-armhf.tar.gz')?.ext, 'tar.gz');
 	assert.strictEqual(parseAssetName('Volt-0.1.0-arm64.dmg'), undefined);
+	assert.deepStrictEqual(parseAssetName('volt-beta-0.0.6-beta.1-ios-arm64-simulator.zip'), { channel: 'beta', version: '0.0.6-beta.1', os: 'ios', arch: 'arm64', kind: 'simulator', ext: 'zip' });
+	assert.strictEqual(parseAssetName('volt-stable-0.0.6-android-arm64.aab')?.os, 'android');
+	assert.strictEqual(parseAssetName('volt-stable-0.0.6-ios-arm64.ipa')?.ext, 'ipa');
+	assert.strictEqual(parseAssetName('volt-mobile-c2bdff72-android-arm64.apk'), undefined);
 });
 
 test('feed entries map assets to updater platforms', () => {
@@ -50,6 +62,7 @@ test('feed entries map assets to updater platforms', () => {
 		asset(`volt-stable-${v}-win32-x64-user-setup.exe`), asset(`volt-stable-${v}-win32-x64-system-setup.exe`), asset(`volt-stable-${v}-win32-x64.zip`),
 		asset(`volt-stable-${v}-linux-armhf.tar.gz`), asset(`volt-stable-${v}-linux-armhf.deb`),
 		asset(`volt-beta-${v}-beta.1-linux-x64.tar.gz`),
+		asset(`volt-stable-${v}-android-arm64.apk`), asset(`volt-stable-${v}-ios-arm64-simulator.zip`),
 	], { channel: 'stable', version: v, commit: 'abc', timestamp: 5, releaseUrl: 'https://example.com/r' });
 	assert.deepStrictEqual(Object.keys(feed).sort(), ['darwin-arm64', 'linux-armhf', 'win32-x64', 'win32-x64-archive', 'win32-x64-user']);
 	assert.strictEqual(feed['darwin-arm64'].url, `https://example.com/volt-stable-${v}-darwin-arm64.zip`);
