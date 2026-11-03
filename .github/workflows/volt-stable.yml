@@ -34,6 +34,20 @@ jobs:
       platforms: ${{ inputs.platforms || 'all' }}
       publish: ${{ github.event_name == 'push' || inputs.publish }}
 
+  # `npx volt-run` follows each stable release (needs the NPM_TOKEN secret to publish).
+  npm:
+    name: Publish volt-run
+    needs: build
+    if: github.event_name == 'push' || inputs.publish
+    uses: ./.github/workflows/volt-npm.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      version: ${{ inputs.version || '' }}
+      channel: stable
+
   # Nightly must never trail Stable: rebuild it from the default branch once a Stable release is out.
   # A workflow_dispatch sent with GITHUB_TOKEN is one of the few events that starts another workflow.
   nightly:
