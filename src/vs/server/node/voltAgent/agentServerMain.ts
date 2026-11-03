@@ -125,6 +125,7 @@ import { ServerDocuments } from './serverDocuments.js';
 import { ServerAgentCheckpointService } from './serverCheckpoints.js';
 import { ProjectEnvVoltStdioService } from '../../../workbench/services/voltRuntime/common/projectEnvStdio.js';
 import { AutomationService } from '../../../workbench/contrib/voltAgent/browser/automations/automationService.js';
+import { AgentCustomizeService, IAgentCustomizeService } from '../../../workbench/contrib/voltAgent/browser/customize/agentCustomizeService.js';
 import { IAutomationService } from '../../../workbench/services/voltRuntime/common/automations/automations.js';
 import { ServerAgentRunGroupService } from './serverRunGroups.js';
 import { IPairingHttpContext, isLoopbackAddress, machineLabel, ServerPairing } from './serverPairing.js';
@@ -339,6 +340,8 @@ export async function main(argv: string[]): Promise<void> {
 	services.set(IVoltMemoryService, new SyncDescriptor(VoltMemoryService));
 	// The runtime records each model request's timeline here.
 	services.set(IVoltTrajectoryService, new SyncDescriptor(VoltTrajectoryService));
+	// Automations expand the `/skill` names in their instructions through it.
+	services.set(IAgentCustomizeService, new SyncDescriptor(AgentCustomizeService));
 	// Scheduled automations fire here, so they run with no window open (windows claim the same slots, so each runs once).
 	services.set(IAutomationService, new SyncDescriptor(AutomationService));
 
