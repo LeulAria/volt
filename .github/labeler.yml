@@ -1,0 +1,89 @@
+# Area labels for pull requests, set by actions/labeler in volt-pr.yml from the changed paths.
+# The labels themselves (colors, descriptions) are in labels.json.
+
+area:agent:
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/vs/workbench/contrib/voltAgent/**
+          - src/vs/server/node/voltAgent/**
+          - src/vs/platform/voltAgentServer/**
+          - src/vs/workbench/services/voltAgentServer/**
+
+area:runtime:
+  - changed-files:
+      - any-glob-to-any-file: src/vs/workbench/services/voltRuntime/**
+
+area:platform:
+  - changed-files:
+      - all-globs-to-any-file: ['src/vs/platform/volt*/**', '!src/vs/platform/voltAgentServer/**']
+
+area:settings:
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/vs/workbench/contrib/voltSettings/**
+          - src/vs/workbench/contrib/voltSetup/**
+          - src/vs/workbench/contrib/voltThemes/**
+
+area:mobile:
+  - changed-files:
+      - any-glob-to-any-file:
+          - apps/mobile/**
+          - apps/mobile-widgets/**
+          - apps/client-core/**
+
+area:docs-site:
+  - changed-files:
+      - any-glob-to-any-file: apps/docs/**
+
+area:relay:
+  - changed-files:
+      - any-glob-to-any-file:
+          - apps/relay/**
+          - src/vs/platform/voltRelay/**
+
+area:govern:
+  - changed-files:
+      - any-glob-to-any-file: apps/volt-govern/**
+
+area:extensions:
+  - changed-files:
+      - any-glob-to-any-file: extensions/**
+
+area:cli:
+  - changed-files:
+      - any-glob-to-any-file: cli/**
+
+area:build:
+  - changed-files:
+      - all-globs-to-any-file: ['build/**', '!build/volt/ci/**', '!build/volt/release/**']
+
+area:release:
+  - changed-files:
+      - any-glob-to-any-file:
+          - build/volt/release/**
+          - .github/workflows/volt-build.yml
+          - .github/workflows/volt-beta.yml
+          - .github/workflows/volt-nightly.yml
+          - .github/workflows/volt-stable.yml
+          - .github/workflows/volt-mobile-build.yml
+
+area:ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/workflows/**
+          - .github/actions/**
+          - build/volt/ci/**
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - docs/**
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/package.json'
+          - '**/package-lock.json'
+          - cli/Cargo.toml
+          - cli/Cargo.lock

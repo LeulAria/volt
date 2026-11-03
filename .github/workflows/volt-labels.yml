@@ -1,0 +1,42 @@
+name: Labels
+
+# Creates or updates the labels in .github/labels.json (sizes, areas, triage) when that file changes
+# on main. Labels not in the file are left alone.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/labels.json
+      - .github/workflows/volt-labels.yml
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  sync:
+    name: Sync Labels
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            build/volt/ci
+            .github/labels.json
+            .nvmrc
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Sync
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node build/volt/ci/pr.mjs labels
