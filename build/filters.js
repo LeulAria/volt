@@ -66,6 +66,7 @@ module.exports.unicodeFilter = [
 	'!src/vs/workbench/contrib/voltAgent/browser/blocks/vendor/**',
 	'!src/vs/workbench/contrib/voltAgent/browser/ui/vendor/**',
 	'!src/vs/workbench/contrib/voltAgent/browser/devices/vendor/**',
+	'!src/vs/workbench/contrib/voltSettings/browser/vendor/**',
 	'!src/vs/workbench/services/keybinding/browser/keyboardLayouts/**',
 	'!src/vs/workbench/contrib/terminal/common/scripts/psreadline/**',
 ];
@@ -87,6 +88,7 @@ module.exports.indentationFilter = [
 	'!src/vs/workbench/contrib/voltAgent/browser/blocks/vendor/beautifulMermaid.{js,license.txt}',
 	'!src/vs/workbench/contrib/voltAgent/browser/ui/vendor/dayjs.js',
 	'!src/vs/workbench/contrib/voltAgent/browser/devices/vendor/voltDeviceViewer.{js,license.txt}',
+	'!src/vs/workbench/contrib/voltSettings/browser/vendor/qrcode.js',
 	'!build/volt/deviceViewer/src/**',
 	'!src/vs/base/node/terminateProcess.sh',
 	'!src/vs/base/node/cpuUsage.sh',
@@ -200,7 +202,10 @@ module.exports.copyrightFilter = [
 	'!src/vs/workbench/contrib/voltAgent/browser/blocks/vendor/beautifulMermaid.js',
 	'!src/vs/workbench/contrib/voltAgent/browser/ui/vendor/dayjs.js',
 	'!src/vs/workbench/contrib/voltAgent/browser/devices/vendor/voltDeviceViewer.js',
+	'!src/vs/workbench/contrib/voltSettings/browser/vendor/qrcode.js',
 	'!build/volt/deviceViewer/src/**',
+	// Script helpers: their comment syntax cannot hold the /* */ header (they carry it as # lines).
+	'!src/vs/platform/voltDesktop/node/helper/*.{py,ps1}',
 ];
 
 module.exports.tsFormattingFilter = [

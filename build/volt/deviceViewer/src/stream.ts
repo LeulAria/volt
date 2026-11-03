@@ -481,7 +481,10 @@ export function createDeviceStreamClient(
 
   const connecting = (detail?: string) => {
     firstFrame = false;
-    if (frameTimer === null) {
+    // Volt: a fixed Duo panel feed is silent while its display is still or not drawn (the cover
+    // while the Duo is open), and a reconnect of it shows nothing new. Silence there is not a dead
+    // stream: the parent stream owns liveness, and failing here turned the 3D Duo off for good.
+    if (frameTimer === null && !target.videoOnly) {
       frameTimer = setTimeout(
         () => fail("No video received from the device. Reconnect to try again."),
         FIRST_FRAME_TIMEOUT_MS,

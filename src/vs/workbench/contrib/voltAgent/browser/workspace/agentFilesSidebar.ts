@@ -530,10 +530,6 @@ export class AgentFilesSidebar extends Disposable {
 			case 'worktreePending':
 				message = localize('voltAgent.filesSidebar.worktreePending', "This chat runs in a new worktree, created when you send the first message. Its changes show here then.");
 				break;
-			case 'folderMissing':
-				message = localize('voltAgent.filesSidebar.folderMissing', "This chat's folder no longer exists: {0}", state.folder);
-				action = { label: localize('voltAgent.filesSidebar.retry', "Try Again"), run: async () => this.reopenRepository() };
-				break;
 			case 'notRepository':
 				message = localize('voltAgent.filesSidebar.notRepository', "This folder is not a Git repository.");
 				if (folder?.scheme === Schemas.file) {
@@ -542,6 +538,10 @@ export class AgentFilesSidebar extends Disposable {
 				break;
 			case 'gitFailed':
 				message = localize('voltAgent.filesSidebar.gitFailed', "Git could not run: {0}", firstLine(state.detail));
+				action = { label: localize('voltAgent.filesSidebar.retry', "Try Again"), run: async () => this.reopenRepository() };
+				break;
+			case 'folderMissing':
+				message = localize('voltAgent.filesSidebar.folderMissing', "This chat's folder is not on disk: {0}", state.path);
 				action = { label: localize('voltAgent.filesSidebar.retry', "Try Again"), run: async () => this.reopenRepository() };
 				break;
 			case 'gitDisabled':

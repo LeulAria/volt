@@ -12,16 +12,20 @@ import {
 	authorTier,
 	badgeState,
 	blockedReason,
+	branchNamesFrom,
+	buildBranchNamePrompt,
 	buildFixThreadPrompt,
 	buildPrCommentsPrompt,
 	buildWatchMessage,
 	collectRemarks,
 	commitMessageFrom,
 	currentLink,
+	createdPullRequestUrl,
 	discoveredPrBelongs,
 	evaluateWatch,
 	findPullRequestUrls,
 	groupAndRank,
+	isGitPushOutput,
 	IAgentPrLink,
 	isReadyToMerge,
 	isTrunkBranch,
@@ -36,6 +40,7 @@ import {
 	removeLink,
 	resolveChains,
 	resolveMergeMethod,
+	sanitizeBranchSuggestion,
 	sanitizeCommitSubject,
 	sessionPrFilterTag,
 	shouldSettleForPullRequests,
@@ -348,6 +353,19 @@ suite('Volt agent pull requests', () => {
 		assert.ok(discoveredPrBelongs({ createdAt: 1, state: 'merged' }, { ...chat, ownBranch: true }));
 
 		assert.deepStrictEqual(findPullRequestUrls('Opened https://github.com/a/b/pull/12 and https://github.com/a/b/pull/12, see https://github.com/a/b/issues/3 and https://ghe.io/x/y/pull/4.'), ['https://github.com/a/b/pull/12', 'https://ghe.io/x/y/pull/4']);
+
+		// `gh pr create` ends with the new pull request's URL alone; other output only mentions one.
+		assert.strictEqual(createdPullRequestUrl('\nCreating pull request for feat/donors-page into main in LeulAria/volt\n\nhttps://github.com/LeulAria/volt/pull/45\n'), 'https://github.com/LeulAria/volt/pull/45');
+		assert.strictEqual(createdPullRequestUrl('title:\tFix it\nurl:\thttps://github.com/a/b/pull/3\nstate:\tOPEN'), undefined);
+		assert.strictEqual(createdPullRequestUrl('see https://github.com/a/b/pull/3'), undefined);
+		assert.strictEqual(createdPullRequestUrl(''), undefined);
+
+		// A push that sent commits (new branch or fast-forward) refreshes the chat's pull requests; nothing sent does not.
+		assert.ok(isGitPushOutput('To https://github.com/a/b.git\n * [new branch]      feat/x -> feat/x\nbranch \'feat/x\' set up to track \'origin/feat/x\'.'));
+		assert.ok(isGitPushOutput('To github.com:a/b.git\n   38d1087..dbd750c  feat/x -> feat/x'));
+		assert.ok(isGitPushOutput('To https://github.com/a/b.git\n + 1a2b3c4...5d6e7f8 feat/x -> feat/x (forced update)'));
+		assert.ok(!isGitPushOutput('Everything up-to-date'));
+		assert.ok(!isGitPushOutput('To https://github.com/a/b.git\n ! [rejected]        feat/x -> feat/x (fetch first)'));
 	});
 
 	test('ranking: blocked on me, review requests, readiness and the plain sorts', () => {
@@ -482,6 +500,20 @@ suite('Volt agent pull requests', () => {
 		assert.strictEqual(commitMessageFrom('{"subject":"Add PR view.","body":"- tabs\\n- merge"}'), 'Add PR view\n\n- tabs\n- merge');
 		assert.strictEqual(commitMessageFrom('<think>hmm</think>Refactor parser'), 'Refactor parser');
 		assert.strictEqual(commitMessageFrom(''), undefined);
+	});
+
+	test('reads suggested branch names from a model reply and makes them safe for git', () => {
+		assert.deepStrictEqual(
+			branchNamesFrom('```json\n{"names": ["feat/Cart Discounts", "fix/login_redirect", "feat/cart-discounts", "volt/a2ca757b", "chore/a", "refactor/x"]}\n```', 'volt/a2ca757b'),
+			['feat/cart-discounts', 'fix/login-redirect', 'chore/a', 'refactor/x'],
+			'deduped, without the current name, four at most',
+		);
+		assert.deepStrictEqual(branchNamesFrom('Here are some names:\n1. feat/branch-names\n- `fix/rename-flow`\nHope that helps'), ['feat/branch-names', 'fix/rename-flow']);
+		assert.deepStrictEqual(branchNamesFrom(undefined), []);
+		assert.strictEqual(sanitizeBranchSuggestion(' refs/heads/Feat//-odd..name.lock '), 'feat/odd-name');
+		assert.strictEqual(sanitizeBranchSuggestion('ab'), undefined);
+		const prompt = buildBranchNamePrompt({ current: 'volt/a2ca757b', chatTitle: 'Drag to sort chats', commits: ['feat(home): drag chats'], files: 'M\tsrc/a.ts', patch: '+x', recentSubjects: [] });
+		assert.ok(prompt.includes('Current branch: volt/a2ca757b') && prompt.includes('Chat title: Drag to sort chats') && prompt.includes('- feat(home): drag chats'));
 	});
 
 	test('the fix-this prompt quotes the thread as data with its place in the code', () => {

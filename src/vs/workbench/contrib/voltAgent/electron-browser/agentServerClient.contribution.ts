@@ -24,7 +24,7 @@ import { INativeHostService } from '../../../../platform/native/common/native.js
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
-import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME } from '../../../../platform/voltAgentServer/common/agentServerService.js';
+import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME, VOLT_ALLOW_NETWORK_COMMAND_ID } from '../../../../platform/voltAgentServer/common/agentServerService.js';
 import { VOLT_USAGE_SHARE_MACHINE_COMMAND_ID } from '../../../../platform/voltUsage/common/voltUsage.js';
 import { IWebSocketLike } from '../../../../platform/voltAgentServer/common/connection.js';
 import { DEFAULT_TOPICS } from '../../../../platform/voltAgentServer/common/protocol.js';
@@ -57,7 +57,7 @@ import { IAgentHistoryService } from '../../../services/voltRuntime/common/histo
 import { AGENT_SERVER_WINDOW_COMMANDS, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
 import { IAgentOrchestratorService } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IProviderProfile, secretKeyForProfile } from '../../../services/voltRuntime/common/profiles.js';
-import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
+import { IAgentRuntimeService, OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../services/voltRuntime/common/sessionContext.js';
 import { setAgentSessionControlFactory } from '../browser/editor/agentEditorInput.js';
 import { RemoteAgentSessionControl } from '../browser/editor/remoteAgentSessionControl.js';
@@ -76,7 +76,9 @@ import { IAgentRunGroupService } from '../../../services/voltRuntime/common/runG
 import { IAgentSurfaceDraft, IAgentWorkspaceService } from '../browser/workspace/agentWorkspace.js';
 import { AgentEditsJournalEntry } from '../common/agentEditsJournal.js';
 import { ResourceMap, ResourceSet } from '../../../../base/common/map.js';
-import { IStorageService, StorageScope } from '../../../../platform/storage/common/storage.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
+import { showRemoteControlIntro } from '../browser/remote/voltRemoteIntro.js';
 import { ITextFileService } from '../../../services/textfile/common/textfiles.js';
 import { IWorkingCopyService } from '../../../services/workingCopy/common/workingCopyService.js';
 import { PROJECT_SETTINGS_STORAGE_KEY } from '../../voltSetup/common/projectSettings.js';
@@ -477,10 +479,13 @@ registerAction2(class extends Action2 {
 	}
 });
 
-/** The web app on this machine. It signs itself in over loopback, so no token goes in the URL. */
+/** Volt in the browser on this machine. It signs itself in over loopback, so no token goes in the URL. */
 function localWebUrl(port: number, path = '/'): string {
 	return `http://127.0.0.1:${port}${path}`;
 }
+
+/** The browser workbench opened on Volt Settings > Devices (for when this window is not the agent server's client). */
+const DEVICES_PAGE_PATH = `/?next=${encodeURIComponent('/code/?voltSettings=devices')}`;
 
 /** Turns the agent server on (it needs a restart) when it is off. Resolves whether it is on. */
 async function ensureServerMode(configurationService: IConfigurationService, dialogs: IDialogService, host: IHostService): Promise<boolean> {
@@ -499,6 +504,9 @@ async function ensureServerMode(configurationService: IConfigurationService, dia
 	return false;
 }
 
+/** Set once the user turns Remote Control on from its introduction; until then pairing shows it. */
+const REMOTE_INTRO_SEEN_KEY = 'volt.remoteControl.introSeen';
+
 registerAction2(class extends Action2 {
 	constructor() {
 		super({ id: 'volt.agentServer.pairDevice', title: localize2('voltAgentServer.pairDevice', "Pair a Phone or Browser..."), category: localize2('volt', "Volt"), f1: true });
@@ -507,25 +515,25 @@ registerAction2(class extends Action2 {
 		const mainService = accessor.get(IVoltAgentServerMainService);
 		const configurationService = accessor.get(IConfigurationService);
 		const dialogs = accessor.get(IDialogService);
-		const nativeHost = accessor.get(INativeHostService);
+		const commands = accessor.get(ICommandService);
 		const notifications = accessor.get(INotificationService);
 		const host = accessor.get(IHostService);
+		const storage = accessor.get(IStorageService);
+		const layout = accessor.get(ILayoutService);
+		// The first time, a full introduction instead of going straight to the confirmations.
+		if (!storage.getBoolean(REMOTE_INTRO_SEEN_KEY, StorageScope.APPLICATION, false)) {
+			if (!await showRemoteControlIntro(layout.activeContainer)) {
+				return;
+			}
+			storage.store(REMOTE_INTRO_SEEN_KEY, true, StorageScope.APPLICATION, StorageTarget.USER);
+		}
 		if (!await ensureServerMode(configurationService, dialogs, host)) {
 			return;
 		}
 		try {
-			let endpoint = await mainService.ensureRunning();
-			if (!endpoint.network) {
-				const { confirmed } = await dialogs.confirm({
-					message: localize('voltAgentServer.allowNetwork', "Let your devices on this network connect?"),
-					detail: localize('voltAgentServer.allowNetworkDetail', "Phones and computers on this Wi-Fi or your Tailscale network can reach Volt once you pair them with a one-time code. Each device gets its own key, which you can remove at any time. The agent server restarts; running turns can be resumed."),
-					primaryButton: localize({ key: 'voltAgentServer.allowNetworkButton', comment: ['&& denotes a mnemonic'] }, "&&Allow"),
-				});
-				if (confirmed) {
-					endpoint = await mainService.setNetworkAccess(true);
-				}
-			}
-			await nativeHost.openExternal(localWebUrl(endpoint.port, '/devices'));
+			await mainService.ensureRunning();
+			// Add Device picks the connection (Wi-Fi, Tailscale, Cloudflare, SSH) and asks for network access when one needs it.
+			await commands.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID, 'devices:add');
 		} catch (err) {
 			notifications.error(localize('voltAgentServer.pairFailed', "Could not open pairing: {0}", err instanceof Error ? err.message : String(err)));
 		}
@@ -550,8 +558,23 @@ registerAction2(class extends Action2 {
 			const endpoint = await mainService.ensureRunning();
 			await nativeHost.openExternal(localWebUrl(endpoint.port));
 		} catch (err) {
-			notifications.error(localize('voltAgentServer.openWebFailed', "Could not open the web app: {0}", err instanceof Error ? err.message : String(err)));
+			notifications.error(localize('voltAgentServer.openWebFailed', "Could not open Volt in the browser: {0}", err instanceof Error ? err.message : String(err)));
 		}
+	}
+});
+
+/** Add Device's "Allow Wi-Fi Connections": the user already chose it there, so no second prompt. */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({ id: VOLT_ALLOW_NETWORK_COMMAND_ID, title: localize2('voltAgentServer.allowNetworkCommand', "Let Devices on This Network Connect"), category: localize2('volt', "Volt"), f1: false });
+	}
+	override async run(accessor: ServicesAccessor): Promise<boolean> {
+		const mainService = accessor.get(IVoltAgentServerMainService);
+		const configurationService = accessor.get(IConfigurationService);
+		if (!agentServerEnabled(configurationService)) {
+			return false;
+		}
+		return (await mainService.setNetworkAccess(true)).network;
 	}
 });
 
@@ -603,10 +626,10 @@ registerAction2(class extends Action2 {
 				}
 				endpoint = await mainService.setNetworkAccess(true);
 			}
-			await nativeHost.openExternal(localWebUrl(endpoint.port, '/devices'));
+			await nativeHost.openExternal(localWebUrl(endpoint.port, DEVICES_PAGE_PATH));
 			notifications.notify({
 				severity: Severity.Info,
-				message: localize('voltUsage.shareNext', "Make a pairing code on the Devices page and copy its link. On your other computer, open Settings > Usage, choose Add Machine and paste it."),
+				message: localize('voltUsage.shareNext', "Choose Add Device on the Devices page and copy its link. On your other computer, open Settings > Usage, choose Add Machine and paste it."),
 			});
 		} catch (err) {
 			notifications.error(localize('voltUsage.shareFailed', "Could not share this machine: {0}", err instanceof Error ? err.message : String(err)));

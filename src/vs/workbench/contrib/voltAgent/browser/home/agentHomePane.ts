@@ -10,6 +10,7 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { IDragAndDropData } from '../../../../../base/browser/dnd.js';
 import { IIdentityProvider, IListVirtualDelegate, ListDragOverEffectPosition, ListDragOverEffectType } from '../../../../../base/browser/ui/list/list.js';
 import { IListAccessibilityProvider } from '../../../../../base/browser/ui/list/listWidget.js';
+import { ListViewTargetSector } from '../../../../../base/browser/ui/list/listView.js';
 import { Pane, PaneView } from '../../../../../base/browser/ui/splitview/paneview.js';
 import { RenderIndentGuides } from '../../../../../base/browser/ui/tree/abstractTree.js';
 import { IObjectTreeElement, ITreeDragAndDrop, ITreeDragOverReaction, ITreeNode, ITreeRenderer, ObjectTreeElementCollapseState } from '../../../../../base/browser/ui/tree/tree.js';
@@ -69,7 +70,9 @@ import {
 	anyHomeFilterActive,
 	defaultAgentHomeViewState,
 	IAgentHomeViewState,
+	placeChatInOrder,
 	reviveAgentHomeViewState,
+	reviveManualChatOrder,
 	serializeAgentHomeViewState,
 	sessionFolders,
 	sessionPrimaryStatus,
@@ -134,6 +137,21 @@ const PRESS_OPEN_WINDOW_MS = 1_500;
 const SESSION_HOVER_DELAY_MS = 500;
 /** How long a dragged chat rests on a folded group's header before the group opens (the Explorer's delay). */
 const DROP_EXPAND_DELAY_MS = 500;
+
+/** Chat ids in the order the user dragged them into (Manual chat order). */
+const AGENT_HOME_MANUAL_ORDER_STORAGE_KEY = 'volt.agent.home.manualOrder';
+
+/** A drop between two chats of a group: next to `target`, above it or below. */
+interface IAgentHomeDropPlace {
+	readonly target: IAgentSessionMeta;
+	readonly groupKey: string;
+	readonly after: boolean;
+}
+
+/** Groups whose chats drag into an order of their own; Working keeps the order work was sent in. */
+function isReorderableGroup(groupKey: string): boolean {
+	return groupKey !== 'bucket:working' && groupKey !== 'group:working';
+}
 
 /** What dropping a chat on a group does: back to the inbox (`inbox` keeps a pin), pin, settle, snooze. */
 type AgentHomeDropAction = 'inbox' | 'active' | 'pin' | 'settled' | 'snooze';
@@ -1059,8 +1077,13 @@ export class AgentHomePane extends Disposable {
 	private readonly rowsFrame = this._register(new MutableDisposable());
 	/** A chat opened on the press; the click that completes the press does not open it again. */
 	private pressed: { readonly element: AgentHomeElement; readonly at: number } | undefined;
-	/** The chat dragged from a row, while the drag lasts. */
+	/** The chat dragged from a row, while the drag lasts, and the group (row `folderKey`) it was dragged from. */
 	private dragged: IAgentSessionMeta | undefined;
+	private draggedFrom: string | undefined;
+	/** Chat ids in the order they were dragged into; the list follows it under Manual chat order. */
+	private manualOrder: string[];
+	/** Every chat of each reorderable group as last built, in the order shown (see IAgentHomeTreeOptions.groupMembers). */
+	private groupMembers = new Map<string, readonly string[]>();
 	private readonly dragCleanup = this._register(new MutableDisposable());
 	/** The group under a dragged chat that would take it; highlighted with `drop-target`. */
 	private dropPane: AgentHomeSectionPane | undefined;
@@ -1151,6 +1174,15 @@ export class AgentHomePane extends Disposable {
 		}
 		this.repoResolver = new AgentRepoResolver(fileService);
 		this.viewState = this.readViewState();
+		this.manualOrder = this.readManualOrder();
+		// Another window reordered its chats: this one follows.
+		this._register(this.storageService.onDidChangeValue(StorageScope.PROFILE, AGENT_HOME_MANUAL_ORDER_STORAGE_KEY, this._store)(e => {
+			if (!e.external) {
+				return;
+			}
+			this.manualOrder = this.readManualOrder();
+			this.scheduleRefresh();
+		}));
 		this.element = append(parent, $('.volt-agent-home'));
 		this.keepSingleHome(parent);
 
@@ -1292,38 +1324,81 @@ export class AgentHomePane extends Disposable {
 	}
 
 	/**
-	 * Chat rows drag onto another group: anywhere in its list, or its header. Only chats drag (not
-	 * runs of a run group); the list draws no row feedback, the whole target group lights up instead.
+	 * Chat rows drag onto another group: anywhere in its list, or its header; the whole target group
+	 * lights up. Dropped between two chats of its own group, a chat takes that place (a line marks it)
+	 * and the list switches to Manual chat order. Only chats drag (not runs of a run group).
 	 */
 	private createDragAndDrop(pane: AgentHomeSectionPane): ITreeDragAndDrop<AgentHomeElement> {
-		const dragged = (element: AgentHomeElement | undefined) => element?.type === 'session' && !element.runMember ? element.session : undefined;
+		const dragged = (element: AgentHomeElement | undefined) => element?.type === 'session' && !element.runMember ? element : undefined;
 		return {
 			getDragURI: element => {
-				const session = dragged(element);
-				return session ? `volt-agent-chat:${session.id}` : null;
+				const row = dragged(element);
+				return row ? `volt-agent-chat:${row.session.id}` : null;
 			},
 			getDragLabel: elements => elements[0] ? elementLabel(elements[0]) : undefined,
 			onDragStart: (data: IDragAndDropData) => {
 				const elements = data.getData();
 				this.startDrag(Array.isArray(elements) ? dragged(elements[0]) : undefined);
 			},
-			onDragOver: (): ITreeDragOverReaction | boolean => {
+			onDragOver: (_data, target, _index, sector): ITreeDragOverReaction | boolean => {
+				const place = this.dropPlace(pane, target, sector);
+				const line = place && { type: ListDragOverEffectType.Move, position: place.after ? ListDragOverEffectPosition.After : ListDragOverEffectPosition.Before };
 				if (!this.acceptsDrop(pane)) {
-					this.onDropTargetLeave();
-					return false;
+					// Its own group: no highlight, only the line where it would land.
+					this.setDropPane(undefined);
+					return line ? { accept: true, effect: line } : false;
 				}
 				this.setDropPane(pane);
-				return { accept: true, feedback: [], effect: { type: ListDragOverEffectType.Move, position: ListDragOverEffectPosition.Over } };
+				return line
+					? { accept: true, effect: line }
+					: { accept: true, feedback: [], effect: { type: ListDragOverEffectType.Move, position: ListDragOverEffectPosition.Over } };
 			},
 			onDragLeave: () => this.onDropTargetLeave(),
-			drop: () => this.dropOn(pane),
+			drop: (_data, target, _index, sector) => this.dropOn(pane, this.dropPlace(pane, target, sector)),
 			onDragEnd: () => this.endDrag(),
 			dispose: () => { },
 		};
 	}
 
-	private startDrag(session: IAgentSessionMeta | undefined): void {
+	/**
+	 * Where a drop over `target` puts the dragged chat: next to it, when both are chats of one group that keeps
+	 * an order of its own. A chat from another group takes a place only under Manual order; elsewhere it just
+	 * moves into the group, which sorts it.
+	 */
+	private dropPlace(pane: AgentHomeSectionPane, target: AgentHomeElement | undefined, sector: ListViewTargetSector | undefined): IAgentHomeDropPlace | undefined {
+		const session = this.dragged;
+		if (!session || target?.type !== 'session' || target.runMember || target.session.id === session.id || !isReorderableGroup(target.folderKey) || !this.groupMembers.has(target.folderKey)) {
+			return undefined;
+		}
+		const sameGroup = target.folderKey === this.draggedFrom;
+		if (!sameGroup && (this.viewState.chatOrder !== 'manual' || !this.acceptsDrop(pane))) {
+			return undefined;
+		}
+		const after = sector === ListViewTargetSector.CENTER_BOTTOM || sector === ListViewTargetSector.BOTTOM;
+		return { target: target.session, groupKey: target.folderKey, after };
+	}
+
+	/** Puts `session` at `place` in the Manual order, and lists chats in that order. */
+	private placeChat(session: IAgentSessionMeta, place: IAgentHomeDropPlace): void {
+		const group = this.groupMembers.get(place.groupKey);
+		if (!group) {
+			return;
+		}
+		// Coming from another order, every group is written down as it shows, so only the dragged chat moves.
+		const base = this.viewState.chatOrder === 'manual' ? this.manualOrder : [...this.groupMembers.values()].flat();
+		this.manualOrder = placeChatInOrder(base, group, session.id, place.target.id, place.after);
+		this.storageService.store(AGENT_HOME_MANUAL_ORDER_STORAGE_KEY, JSON.stringify(this.manualOrder), StorageScope.PROFILE, StorageTarget.USER);
+		if (this.viewState.chatOrder !== 'manual') {
+			this.setView({ ...this.viewState, chatOrder: 'manual' });
+		} else {
+			void this.refresh();
+		}
+	}
+
+	private startDrag(row: Extract<AgentHomeElement, { type: 'session' }> | undefined): void {
+		const session = row?.session;
 		this.dragged = session;
+		this.draggedFrom = row?.folderKey;
 		if (!session) {
 			return;
 		}
@@ -1339,6 +1414,7 @@ export class AgentHomePane extends Disposable {
 
 	private endDrag(): void {
 		this.dragged = undefined;
+		this.draggedFrom = undefined;
 		this.dragCleanup.clear();
 		this.setDropPane(undefined);
 	}
@@ -1396,11 +1472,17 @@ export class AgentHomePane extends Disposable {
 		this.dropOn(pane);
 	}
 
-	/** Moves the dragged chat into `pane`'s group with the same lifecycle actions as the row buttons (each one undoable). */
-	private dropOn(pane: AgentHomeSectionPane): void {
+	/**
+	 * Moves the dragged chat into `pane`'s group with the same lifecycle actions as the row buttons (each one
+	 * undoable); `place`, where it was dropped between two chats, sets its place in the group too.
+	 */
+	private dropOn(pane: AgentHomeSectionPane, place?: IAgentHomeDropPlace): void {
 		const session = this.dragged;
 		const action = groupDropAction(pane.group);
 		this.endDrag();
+		if (session && place) {
+			this.placeChat(session, place);
+		}
 		if (!session || !action || !dropChangesSession(session, action)) {
 			return;
 		}
@@ -2311,7 +2393,9 @@ export class AgentHomePane extends Disposable {
 		}
 		const runGroups = this.homeRunGroups(sessions);
 		this.live = agentHomeLiveWork(this.orchestrator.getState());
-		const tree = [...buildCloudHomeNodes(this.cloud.tasks), ...buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, prTags, runGroups, workingShelf: this.workingSection, live: this.live })];
+		const groupMembers = new Map<string, readonly string[]>();
+		const tree = [...buildCloudHomeNodes(this.cloud.tasks), ...buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, prTags, runGroups, workingShelf: this.workingSection, live: this.live, manualOrder: this.manualOrder, groupMembers })];
+		this.groupMembers = groupMembers;
 		const reinsert = this.builtTwoLine !== undefined && this.builtTwoLine !== this.twoLine;
 		this.builtTwoLine = this.twoLine;
 		this.setPanes(tree, reinsert);
@@ -2632,6 +2716,15 @@ export class AgentHomePane extends Disposable {
 
 	private syncFilterButton(): void {
 		this.navFilter?.classList.toggle('active', anyHomeFilterActive(this.viewState));
+	}
+
+	private readManualOrder(): string[] {
+		try {
+			const raw = this.storageService.get(AGENT_HOME_MANUAL_ORDER_STORAGE_KEY, StorageScope.PROFILE);
+			return raw ? reviveManualChatOrder(JSON.parse(raw)) : [];
+		} catch {
+			return [];
+		}
 	}
 
 	private readViewState(): IAgentHomeViewState {

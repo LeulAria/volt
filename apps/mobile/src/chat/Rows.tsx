@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	basename, compactNumber, dirname, duration, formatWorkedTime, type IRowImage, type IStepItem, type ISubagentItem, liveVerb, money, pendingLabel, receiptHeadline,
+	basename, compactNumber, duration, formatWorkedTime, type IRowImage, type IStepItem, type ISubagentItem, liveVerb, money, pendingLabel, receiptHeadline,
 	receiptStatus, relativeTime, shellTokenColor, tokenizeShell, type TranscriptRow, TYPE
 } from '@volt/client-core';
 import { router } from 'expo-router';
@@ -53,9 +53,9 @@ function Stats({ additions, deletions }: { readonly additions?: number; readonly
 		return null;
 	}
 	return (
-		<View style={{ flexDirection: 'row', gap: 4, marginLeft: 4 }}>
-			{additions ? <Text style={[styles.step, { color: p.diffAddedFg }]}>+{additions}</Text> : null}
-			{deletions ? <Text style={[styles.step, { color: p.diffRemovedFg }]}>-{deletions}</Text> : null}
+		<View style={{ flexDirection: 'row', gap: 6, marginLeft: 4 }}>
+			{additions ? <Text style={[styles.step, { color: p.diffAddedFg, fontVariant: ['tabular-nums'] }]}>+{additions}</Text> : null}
+			{deletions ? <Text style={[styles.step, { color: p.diffRemovedFg, fontVariant: ['tabular-nums'] }]}>-{deletions}</Text> : null}
 		</View>
 	);
 }
@@ -102,13 +102,16 @@ function Header({ action, detail, command, live, open, expandable, additions, de
 	);
 }
 
-/** Cursor's command card: `$ cmd args` then the output, 13/18 mono, 200px before it scrolls. */
-export const TerminalCard = memo(function TerminalCard({ command, output }: { readonly command: string; readonly output: string }) {
+/**
+ * Cursor's command card: `$ cmd args` then the output, 13/18 mono, 200px before it scrolls.
+ * `flush` draws it as the body of a step card: no frame of its own, the card's lower corners.
+ */
+export const TerminalCard = memo(function TerminalCard({ command, output, flush }: { readonly command: string; readonly output: string; readonly flush?: boolean }) {
 	const { p } = useTheme();
 	const tokens = useMemo(() => tokenizeShell(command), [command]);
 	const text = output.replace(/[\r\n]+$/, '');
 	return (
-		<View style={[styles.terminal, { backgroundColor: p.card, borderColor: p.strokeFaint }]}>
+		<View style={flush ? { backgroundColor: p.codeBg } : [styles.terminal, { backgroundColor: p.card, borderColor: p.strokeFaint }]}>
 			<ScrollView nestedScrollEnabled style={{ maxHeight: 200 }} showsVerticalScrollIndicator={false}>
 				<Text selectable style={[styles.termText, styles.termCommand, { fontFamily: FONT.mono, color: p.fgQuaternary }]}>
 					{'$ '}
@@ -126,11 +129,11 @@ export const TerminalCard = memo(function TerminalCard({ command, output }: { re
 	);
 });
 
-/** A tool's input or output in the command card's frame. */
-function ToolOutput({ text }: { readonly text: string }) {
+/** A tool's input or output in the command card's frame (`flush`: as a step card's body). */
+function ToolOutput({ text, flush }: { readonly text: string; readonly flush?: boolean }) {
 	const { p } = useTheme();
 	return (
-		<View style={[styles.terminal, { backgroundColor: p.card, borderColor: p.strokeFaint }]}>
+		<View style={flush ? { backgroundColor: p.codeBg } : [styles.terminal, { backgroundColor: p.card, borderColor: p.strokeFaint }]}>
 			<ScrollView nestedScrollEnabled style={{ maxHeight: 200 }} showsVerticalScrollIndicator={false}>
 				<Text selectable style={[styles.termText, { fontFamily: FONT.mono, color: p.fgQuaternary, paddingHorizontal: 10, paddingVertical: 6 }]}>{text.length > 12000 ? `${text.slice(0, 12000)}…` : text.replace(/[\r\n]+$/, '')}</Text>
 			</ScrollView>
@@ -360,17 +363,19 @@ const StepLine = memo(function StepLine({ step, live, card }: { readonly step: I
 		/>
 	);
 	const content = open && body ? (
-		<Animated.View entering={FadeIn.duration(160)} style={card ? { borderTopWidth: 1, borderColor: p.strokeFaint } : { paddingTop: 4 }}>
-			{body.kind === 'command' ? <TerminalCard command={body.command} output={body.output} />
+		<Animated.View entering={FadeIn.duration(160)} style={card ? { borderTopWidth: StyleSheet.hairlineWidth, borderColor: p.stroke } : { paddingTop: 4 }}>
+			{body.kind === 'command' ? <TerminalCard command={body.command} output={body.output} flush={card} />
 				: body.kind === 'diff' ? <TrDiff diff={body.diff} framed={!card} />
-					: body.kind === 'thought' ? <Reasoning text={body.text} />
-						: <ToolOutput text={body.text} />}
+					: body.kind === 'thought' ? <View style={card ? { paddingHorizontal: 12, paddingVertical: 8 } : null}><Reasoning text={body.text} /></View>
+						: <ToolOutput text={body.text} flush={card} />}
 		</Animated.View>
 	) : null;
 	if (card && body) {
+		// One card: the header on the card's surface with the top corners, the body flush under a
+		// hairline on the code background, the bottom corners clipped by the card.
 		return (
-			<View style={[styles.card, { backgroundColor: p.card, borderColor: p.stroke }]}>
-				<View style={{ paddingHorizontal: 10, paddingVertical: 4 }}>{header}</View>
+			<View style={[styles.stepCard, { backgroundColor: p.card, borderColor: p.stroke }]}>
+				<View style={{ paddingHorizontal: 12, paddingVertical: 6 }}>{header}</View>
 				{content}
 			</View>
 		);
@@ -585,10 +590,11 @@ function TurnFilesCard({ row }: { readonly row: RowOf<'turnFiles'> }) {
 	const [all, setAll] = useState(false);
 	const shown = all ? row.files : row.files.slice(0, 6);
 	const review = () => ctx && router.push({ pathname: '/changes/[id]', params: { id: ctx.chatId, ...(row.turnId ? { turn: row.turnId } : {}) } });
+	// The desktop's card: "N Files Changed", then one row per file with its icon and name, the counts at the right edge.
 	return (
 		<View style={{ marginTop: 10, marginBottom: 2, borderRadius: 12, borderWidth: 1, borderColor: dark ? 'rgba(240,240,241,0.12)' : 'rgba(0,0,0,0.10)', backgroundColor: dark ? 'rgba(255,255,255,0.015)' : 'rgba(0,0,0,0.015)' }}>
 			<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 8, paddingHorizontal: 12, minHeight: 28 }}>
-				<Text numberOfLines={1} style={{ flex: 1, fontSize: 13, lineHeight: 20, color: p.fgTertiary }}>{row.files.length === 1 ? '1 file changed' : `${row.files.length} files changed`}</Text>
+				<Text numberOfLines={1} style={{ flex: 1, fontSize: 13, lineHeight: 20, color: p.fgTertiary }}>{row.files.length === 1 ? '1 File Changed' : `${row.files.length} Files Changed`}</Text>
 				{ctx ? (
 					<Tap haptics="selection" onPress={review} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, height: 24, paddingLeft: 10, paddingRight: 7, borderRadius: 999, backgroundColor: dark ? 'rgba(240,240,241,0.05)' : 'rgba(0,0,0,0.04)' }}>
 						<Text style={{ fontSize: 12, lineHeight: 20, color: p.fgTertiary }}>Review</Text>
@@ -597,17 +603,13 @@ function TurnFilesCard({ row }: { readonly row: RowOf<'turnFiles'> }) {
 				) : null}
 			</View>
 			<View style={{ marginHorizontal: 6, marginTop: 4, marginBottom: 6 }}>
-				{shown.map(file => {
-					const dir = dirname(file.path);
-					return (
-						<Tap key={file.path} haptics="selection" onPress={() => file.verb !== 'Deleted' ? openFile(file.path) : review()} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, height: 30, paddingHorizontal: 6, borderRadius: 6 }}>
-							<FileIcon path={file.path} size={16} />
-							<Text numberOfLines={1} style={{ fontSize: 13, color: file.verb === 'Deleted' ? p.fgQuaternary : p.fgSecondary, textDecorationLine: file.verb === 'Deleted' ? 'line-through' : 'none', flexShrink: 0, maxWidth: '60%' }}>{basename(file.path)}</Text>
-							<Text numberOfLines={1} ellipsizeMode="head" style={{ fontSize: 12, color: p.fgQuaternary, flex: 1 }}>{dir}</Text>
-							<Stats additions={file.additions} deletions={file.deletions} />
-						</Tap>
-					);
-				})}
+				{shown.map(file => (
+					<Tap key={file.path} haptics="selection" onPress={() => file.verb !== 'Deleted' ? openFile(file.path) : review()} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, height: 30, paddingHorizontal: 6, borderRadius: 6 }}>
+						<FileIcon path={file.path} size={16} />
+						<Text numberOfLines={1} style={{ flex: 1, fontSize: 13, color: file.verb === 'Deleted' ? p.fgQuaternary : p.fgSecondary, textDecorationLine: file.verb === 'Deleted' ? 'line-through' : 'none' }}>{basename(file.path)}</Text>
+						<Stats additions={file.additions} deletions={file.deletions} />
+					</Tap>
+				))}
 				{row.files.length > shown.length ? (
 					<Tap haptics="selection" onPress={() => setAll(true)} style={{ height: 28, paddingHorizontal: 6, justifyContent: 'center' }}>
 						<Text style={{ fontSize: 12, color: p.fgTertiary }}>{row.files.length - shown.length} more</Text>
@@ -908,6 +910,7 @@ const styles = StyleSheet.create({
 	detail: { flexShrink: 1, minWidth: 0 },
 	exit: { marginLeft: 6, fontSize: 12, opacity: 0.8 },
 	card: { borderWidth: 1, borderRadius: 8, overflow: 'hidden' },
+	stepCard: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 12, overflow: 'hidden' },
 	editHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 30, paddingHorizontal: 10 },
 	terminal: { borderWidth: 1, borderRadius: 8, overflow: 'hidden' },
 	termText: { fontSize: 13, lineHeight: 18 },

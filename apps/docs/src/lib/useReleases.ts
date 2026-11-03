@@ -6,6 +6,7 @@ import {
   detectPlatform,
   type GhRelease,
   pickChannelReleases,
+  totalDownloads,
   trimReleases,
 } from "./releases";
 import { gitConfig } from "./shared";
@@ -18,7 +19,7 @@ const CACHE_KEY = "volt:releases:v1";
 export type ReleasesState =
   | { status: "loading" }
   | { status: "error" }
-  | { status: "ready"; releases: ChannelReleases };
+  | { status: "ready"; releases: ChannelReleases; downloads: number };
 
 let inflight: Promise<GhRelease[]> | null = null;
 
@@ -67,7 +68,11 @@ export function useReleases(): ReleasesState {
     let cancelled = false;
     const show = (data: GhRelease[]) => {
       if (!cancelled)
-        setState({ status: "ready", releases: pickChannelReleases(data) });
+        setState({
+          status: "ready",
+          releases: pickChannelReleases(data),
+          downloads: totalDownloads(data),
+        });
     };
     const cached = readCache();
     if (cached) show(cached);
@@ -90,6 +95,13 @@ export function useReleases(): ReleasesState {
 export function latestVersion(state: ReleasesState): string | undefined {
   if (state.status !== "ready") return undefined;
   return state.releases.stable?.version ?? state.releases.beta?.version;
+}
+
+/** "Downloaded 1,234 times", or undefined until GitHub answers (or before the first download). */
+export function downloadsLabel(state: ReleasesState): string | undefined {
+  if (state.status !== "ready" || state.downloads < 1) return undefined;
+  const n = state.downloads;
+  return `Downloaded ${n.toLocaleString("en-US")} ${n === 1 ? "time" : "times"}`;
 }
 
 interface UaDataLike {

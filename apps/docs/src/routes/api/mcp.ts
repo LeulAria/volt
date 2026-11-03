@@ -74,7 +74,7 @@ const TOOLS = [
     name: "get_page",
     title: "Read a page as Markdown",
     description:
-      "Read a page of getvolt.dev as Markdown: '/', '/download', '/changelog', '/about', '/contact', '/privacy', or any '/docs/...' page.",
+      "Read a page of getvolt.dev as Markdown: '/', '/download', '/changelog', '/about', '/contact', '/privacy', '/donors', or any '/docs/...' page.",
     inputSchema: {
       type: "object",
       properties: {

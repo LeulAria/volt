@@ -5,7 +5,6 @@
 
 import { ChildProcess, spawn } from 'child_process';
 import { createHash } from 'crypto';
-import { existsSync } from 'fs';
 import { appendFile, copyFile, lstat, mkdir, readFile, readlink, readdir, rm, rmdir, stat, writeFile } from 'fs/promises';
 import { homedir, tmpdir } from 'os';
 import { SequencerByKey, timeout } from '../../../base/common/async.js';
@@ -762,9 +761,12 @@ export class VoltGitService extends Disposable implements IVoltGitService {
 			child.stderr.on('data', (chunk: Buffer) => stderr += chunk.toString('utf8'));
 			child.on('error', err => {
 				clearTimeout(timer);
-				// Node reports a missing working folder as `spawn git ENOENT` too, which reads as git missing.
-				const missingFolder = (err as NodeJS.ErrnoException).code === 'ENOENT' && !existsSync(run.cwd);
-				reject(new VoltGitError(run.args, null, missingFolder ? `the folder ${run.cwd} does not exist` : err.message));
+				// Node says "spawn git ENOENT" for a missing working folder too, not only a missing git.
+				if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+					void exists(run.cwd).then(found => reject(new VoltGitError(run.args, null, found ? err.message : `the folder ${run.cwd} does not exist`)));
+					return;
+				}
+				reject(new VoltGitError(run.args, null, err.message));
 			});
 			child.on('close', code => {
 				clearTimeout(timer);

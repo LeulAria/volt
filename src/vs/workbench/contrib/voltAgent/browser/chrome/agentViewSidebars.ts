@@ -27,6 +27,7 @@ import {
 } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { showAgentBranchMenu } from '../picker/agentBranchMenu.js';
+import { createAiSparkleIcon, showBranchNameSuggestions } from '../pullRequests/agentBranchSuggest.js';
 import { OPEN_BROWSER_COMMAND_ID, VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
 import { AgentChangesEditorInput, OPEN_AGENT_CHANGES_COMMAND_ID } from '../review/agentChangesEditor.js';
 import { SHOW_PULL_REQUESTS_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
@@ -231,6 +232,8 @@ class AgentViewSidebarsContribution extends Disposable {
 	private readonly branchLabel: HTMLElement;
 	private readonly branchRow: HTMLElement;
 	private readonly branchWatch = this._register(new DisposableStore());
+	/** The Suggest branch names card, while it is open. */
+	private readonly branchSuggest = this._register(new MutableDisposable());
 	/** The repository the branch row shows: the chat's worktree when Source Control has it open, else the project's. */
 	private branchRepository: ISCMRepository | undefined;
 	/** The checkout the branch row shows and switches: the chat's worktree, else the window's folder. */
@@ -520,6 +523,32 @@ class AgentViewSidebarsContribution extends Disposable {
 			},
 		});
 		this.branchRow = this.branchLabel.parentElement!;
+		// In the chat's own worktree, a sparkle at the row's end (on hover) asks a model for branch names.
+		// A span, not a button: a button cannot sit inside the row's button.
+		const suggest = append(this.branchRow, $('span.volt-agent-dock-branch-suggest'));
+		suggest.setAttribute('role', 'button');
+		const suggestLabel = localize('voltAgent.dock.suggestBranchNames', "Suggest branch names");
+		suggest.setAttribute('aria-label', suggestLabel);
+		suggest.appendChild(createAiSparkleIcon(suggest));
+		setAgentTooltip(suggest, suggestLabel);
+		// Stops the row's own press and click, which open the branch menu.
+		this._register(addDisposableListener(suggest, 'pointerdown', e => EventHelper.stop(e, true)));
+		this._register(addDisposableListener(suggest, 'click', e => {
+			EventHelper.stop(e, true);
+			const folder = this.branchWorktreePath;
+			if (!folder || suggest.classList.contains('open')) {
+				this.branchSuggest.clear();
+				return;
+			}
+			// The hint would sit over the card it opened.
+			setAgentTooltip(suggest, undefined);
+			this.branchSuggest.value = instantiationService.invokeFunction(showBranchNameSuggestions, {
+				anchor: suggest,
+				folder,
+				sessionId: this.branchSessionId,
+				onHide: () => setAgentTooltip(suggest, suggestLabel),
+			});
+		}));
 		// The chat's pull request: its title opens the Pull Requests tab of the right sidebar, its list first.
 		this.pullRequestControl = this._register(instantiationService.createInstance(AgentPullRequestDockControl, this.pullRequestsGroup.body, this.pullRequests, {
 			openCommandId: SHOW_PULL_REQUESTS_COMMAND_ID,
@@ -761,6 +790,8 @@ class AgentViewSidebarsContribution extends Disposable {
 		const name = this.repositoryBranch ?? (meta?.worktreePath ? meta.worktreeBranch : undefined);
 		this.branchLabel.textContent = name ?? '';
 		this.branchRow.style.display = name ? '' : 'none';
+		// Names are suggested only for the chat's own worktree, whose branch it owns.
+		this.branchRow.classList.toggle('can-suggest-branch', !!name && !!meta?.worktreePath && !!this.pullRequests);
 	}
 
 	/**

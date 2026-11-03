@@ -18,7 +18,7 @@ import { IVoltSandboxSettings, withAllowedDomain, withWritableRoot } from '../..
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
-import { disposableTimeout, raceTimeout } from '../../../../../base/common/async.js';
+import { disposableTimeout, raceTimeout, RunOnceScheduler } from '../../../../../base/common/async.js';
 import { DisposableMap, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { basename, dirname, isAbsolute } from '../../../../../base/common/path.js';
 import { joinPath } from '../../../../../base/common/resources.js';
@@ -1547,10 +1547,22 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.forkedTurnIds = undefined;
 			this.syncForkButtons();
 		}));
+		// The agent may switch or rename the project checkout's branch (rename_branch, `git checkout -b`,
+		// `git branch -m`) where no git event reaches the pill: read it again after its tools and runs.
+		const branchRead = this._register(new RunOnceScheduler(() => {
+			if (!this.runtime.getOrCreateSession(this.sessionKey).worktreePath) {
+				void this.landingChrome?.refreshBranch();
+			}
+		}, 400));
 		// The first send in Worktree mode makes the checkout just before the run starts.
 		this._register(this.runtime.onDidEmit(e => {
-			if (e.sessionId === this.sessionKey && (e.event.type === 'run.start' || e.event.type === 'notice')) {
+			if (e.sessionId !== this.sessionKey) {
+				return;
+			}
+			if (e.event.type === 'run.start' || e.event.type === 'notice') {
 				this.contextUsageView.refreshBranch();
+			} else if (e.event.type === 'tool.end' || e.event.type === 'run.end') {
+				branchRead.schedule();
 			}
 		}));
 		this.suggestEl = append(this.composerEl, $('.volt-agent-suggest'));

@@ -105,6 +105,9 @@ export namespace Schemas {
 	/** Scheme used for the agent Automations editor tab. */
 	export const voltAutomations = 'volt-automations';
 
+	/** Scheme used for the full-page Pull Requests dashboard. */
+	export const voltPullRequests = 'volt-pull-requests';
+
 	/** Scheme used for a repository's Git Graph editor tab. */
 	export const voltGitGraph = 'volt-git-graph';
 

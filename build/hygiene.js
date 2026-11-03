@@ -4,6 +4,54 @@
  *--------------------------------------------------------------------------------------------*/
 // @ts-check
 
+/**
+ * A linked worktree (Volt's .volt/worktrees/*) has no node_modules of its own, so the pre-commit hook
+ * could not load its tools and every commit there failed. Link the main checkout's in for the run.
+ * @returns {number | undefined} the exit code of the run with them linked, or undefined to run as is
+ */
+function runWithMainCheckoutModules() {
+	const cp = require('child_process');
+	const fs = require('fs');
+	const path = require('path');
+	const top = path.join(__dirname, '..');
+	const linkable = ['node_modules', path.join('build', 'node_modules')];
+	if (linkable.every(dir => fs.existsSync(path.join(top, dir)))) {
+		return undefined;
+	}
+	let common;
+	try {
+		common = cp.execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: top, encoding: 'utf8' }).trim();
+	} catch {
+		return undefined;
+	}
+	const main = path.dirname(common);
+	if (main === top || !fs.existsSync(path.join(main, 'node_modules'))) {
+		return undefined;
+	}
+	const linked = [];
+	try {
+		for (const dir of linkable) {
+			if (!fs.existsSync(path.join(top, dir)) && fs.existsSync(path.join(main, dir))) {
+				fs.symlinkSync(path.join(main, dir), path.join(top, dir), 'dir');
+				linked.push(path.join(top, dir));
+			}
+		}
+		console.log(`Using the node_modules of ${main}`);
+		return cp.spawnSync(process.execPath, [__filename, ...process.argv.slice(2)], { stdio: 'inherit' }).status ?? 1;
+	} finally {
+		for (const link of linked) {
+			fs.unlinkSync(link);
+		}
+	}
+}
+
+if (require.main === module) {
+	const code = runWithMainCheckoutModules();
+	if (code !== undefined) {
+		process.exit(code);
+	}
+}
+
 const filter = require('gulp-filter');
 const es = require('event-stream');
 const VinylFile = require('vinyl');

@@ -10,7 +10,9 @@ import {
 	defaultAgentHomeViewState,
 	groupingLabel,
 	isStatusFilterActive,
+	placeChatInOrder,
 	reviveAgentHomeViewState,
+	reviveManualChatOrder,
 	serializeAgentHomeViewState,
 	sessionPassesHomeFilters,
 	sessionPrimaryStatus,
@@ -145,5 +147,36 @@ suite('Agent home filter model', () => {
 		const older = session({ id: 'old', updatedAt: 100 });
 		const woken = session({ id: 'woken', updatedAt: 10, wokeAt: 500 });
 		assert.deepStrictEqual(sortSessionsForHome([older, woken], 'updated').map(s => s.id), ['woken', 'old']);
+	});
+
+	test('manual order keeps dragged chats in place; chats it does not list lead, newest first', () => {
+		const sorted = sortSessionsForHome([
+			session({ id: 'a', updatedAt: 1 }),
+			session({ id: 'b', updatedAt: 9 }),
+			session({ id: 'new', updatedAt: 2 }),
+			session({ id: 'newer', updatedAt: 5 }),
+			session({ id: 'c', updatedAt: 5 }),
+		], 'manual', ['c', 'a', 'b']);
+		assert.deepStrictEqual(sorted.map(item => item.id), ['newer', 'new', 'c', 'a', 'b']);
+	});
+
+	test('a dragged chat takes its place before or after the target, and its group holds that order', () => {
+		assert.deepStrictEqual(placeChatInOrder([], ['a', 'b', 'c'], 'c', 'a', false), ['c', 'a', 'b']);
+		assert.deepStrictEqual(placeChatInOrder([], ['a', 'b', 'c'], 'a', 'b', true), ['b', 'a', 'c']);
+		assert.deepStrictEqual(placeChatInOrder([], ['a', 'b', 'c'], 'a', 'c', true), ['b', 'c', 'a']);
+		// Other groups' chats keep their places; the group sits where its first chat was.
+		assert.deepStrictEqual(placeChatInOrder(['x', 'b', 'y', 'a'], ['a', 'b'], 'b', 'a', true), ['x', 'a', 'b', 'y']);
+		// A chat from another group joins this one at the drop.
+		assert.deepStrictEqual(placeChatInOrder(['x', 'a', 'b'], ['a', 'b'], 'x', 'b', false), ['a', 'x', 'b']);
+		// Dropping on itself, or on a chat the group does not list, changes nothing.
+		assert.deepStrictEqual(placeChatInOrder(['a', 'b'], ['a', 'b'], 'a', 'a', true), ['a', 'b']);
+		assert.deepStrictEqual(placeChatInOrder(['a', 'b'], ['a', 'b'], 'a', 'z', true), ['a', 'b']);
+	});
+
+	test('the manual order revives from storage, and Manual is a stored chat order', () => {
+		assert.deepStrictEqual(reviveManualChatOrder(['a', 3, 'b']), ['a', 'b']);
+		assert.deepStrictEqual(reviveManualChatOrder({ a: 1 }), []);
+		const state = reviveAgentHomeViewState(serializeAgentHomeViewState({ ...defaultAgentHomeViewState(), chatOrder: 'manual' }));
+		assert.strictEqual(state.chatOrder, 'manual');
 	});
 });

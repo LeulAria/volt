@@ -7,15 +7,15 @@ import { execFile, spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import { gunzipSync } from 'zlib';
 import { homedir, tmpdir } from 'os';
-import { basename, delimiter, join } from '../../../base/common/path.js';
+import { basename, delimiter, dirname, join } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
 import { DeviceHub } from './deviceHub.js';
-import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidShell, androidTextChunks, avdLabel, fitWithin, gzipFrom, ICommand, IAdbDevice, IRawFrame, iosInputCommand, IosInputTool, isAlreadyBooted, isAlreadyShutdown, isXcodeLicenseError, jpegSize, looksFoldable, parseAdbDevices, parseAndroidFocus, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseNightMode, parseRawFrame, parseSimctlAppearance, parseSimctlDevices, parseSimctlScreen, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, SYSTEM_SIMCTL, sshCommand, stateForPosture } from '../common/deviceCommands.js';
+import { androidKeycode, androidLaunchArgv, emulatorFailure, androidSdkCandidates, androidShell, androidTextChunks, avdLabel, fitWithin, gzipFrom, androidFontScale, ICommand, IAdbDevice, IOS_INPUT_TOOL_FORMULA, IOS_INPUT_TOOL_INSTALL_COMMAND, iosContentSize, IRawFrame, iosInputCommand, IosInputTool, iosInputToolInstallScript, iosInputToolMissingMessage, isAlreadyBooted, isAlreadyShutdown, isXcodeLicenseError, jpegSize, looksFoldable, parseAdbDevices, parseAndroidFocus, parseAvdList, parseCurrentDeviceState, parseDeviceStates, parseEmuAvdName, parseNightMode, parseRawFrame, parseSimctlAppearance, parseSimctlDevices, parseSimctlScreen, pngFrom, pngSize, postureOfState, remoteScript, scpCommand, shellJoin, shellQuote, SYSTEM_SIMCTL, sshCommand, stateForPosture } from '../common/deviceCommands.js';
 import { FileAccess } from '../../../base/common/network.js';
 import { ANDROID_KEY_NUMBERS, ANDROID_UI_SERVER_COMMAND, ANDROID_UI_SERVER_JAR, AndroidUiServer } from './androidUiServer.js';
 import { downscale, encodePng } from './frameEncoding.js';
-import { IVoltDevice, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDeviceRef, IVoltDeviceScreen, IVoltDevicesService, IVoltDeviceUi, VoltDeviceAppearance, VoltDeviceInput, VoltDeviceModelId, VoltDevicePosture, VoltDeviceState } from '../common/voltDevices.js';
+import { isVoltDeviceModelId, IVoltDevice, IVoltDeviceBootOptions, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDeviceRef, IVoltDeviceScreen, IVoltDevicesService, IVoltDeviceStream, IVoltDeviceUi, LOCAL_DEVICE_HOST_ID, VoltDeviceAppearance, VoltDeviceInput, VoltDeviceModelId, VoltDevicePosture, VoltDeviceState, VoltDeviceTextSize } from '../common/voltDevices.js';
 
 interface IRunResult {
 	readonly stdout: Buffer;
@@ -27,16 +27,24 @@ interface IRunOptions {
 	readonly timeout?: number;
 	/** Resolve with the exit code instead of rejecting on a non-zero one. */
 	readonly allowFail?: boolean;
+	/** Added to the user's environment. */
+	readonly env?: NodeJS.ProcessEnv;
 }
 
 const LIST_TIMEOUT = 20_000;
 const ACTION_TIMEOUT = 30_000;
+/** `simctl ui` (dark mode, text size) takes ~4 s idle and went past 10 s on a busy Mac. */
+const SIMCTL_UI_TIMEOUT_MS = 30_000;
 /** A capture that takes this long is stuck; the next one gets a fresh try. */
 const SCREENSHOT_TIMEOUT = 10_000;
 const INSTALL_TIMEOUT = 240_000;
+/** Homebrew may build AXe's dependencies or update itself first. */
+const BREW_INSTALL_TIMEOUT = 600_000;
 const MAX_BUFFER = 96 * 1024 * 1024;
 
-class ToolMissingError extends Error { }
+class ToolMissingError extends Error {
+	readonly code = 'VOLT_TOOL_MISSING';
+}
 
 interface IEmulatorLaunch {
 	readonly logFile: string;
@@ -95,22 +103,42 @@ export class VoltDevicesService implements IVoltDevicesService {
 		/** Where tools Volt installs (Expo's device hub) live; no live streaming without it. */
 		toolsDir?: string,
 	) {
-		this.hub = toolsDir ? new DeviceHub(toolsDir, env, name => this.which(name), logService) : undefined;
+		this.hub = toolsDir ? new DeviceHub(toolsDir, env, name => this.which(name), logService, () => this.androidToolDirs()) : undefined;
 	}
 
 	//#region Live stream
 
-	async attachStream(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<string> {
+	async attachStream(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<IVoltDeviceStream> {
 		if (!this.hub) {
 			throw new Error('Live streaming is not available here.');
 		}
-		if (host.ssh || device.platform !== 'ios' || process.platform !== 'darwin') {
-			throw new Error('Live streaming works for iOS simulators on this Mac.');
+		if (host.ssh || process.platform !== 'darwin') {
+			throw new Error('Live streaming works for iOS simulators and Android emulators on this Mac.');
 		}
-		return this.hub.attach(device.id);
+		if (device.platform === 'android') {
+			return this.withSerial(host, device, async serial => ({ origin: await this.hub!.attachAndroid(serial), streamId: serial }));
+		}
+		return { origin: await this.hub.attach(device.id), streamId: device.id };
+	}
+
+	async prewarmStream(): Promise<void> {
+		if (!this.hub || process.platform !== 'darwin') {
+			return;
+		}
+		await this.hub.prewarm().catch(err => this.logService.warn('[volt-devices] could not start the device hub ahead of time', err instanceof Error ? err.message : String(err)));
+	}
+
+	/** The local SDK's adb and emulator folders, for the hub's PATH. */
+	private async androidToolDirs(): Promise<string[]> {
+		const host: IVoltDeviceHost = { id: LOCAL_DEVICE_HOST_ID, label: LOCAL_DEVICE_HOST_ID };
+		const tools = await Promise.all((['adb', 'emulator'] as const).map(tool => this.androidTool(host, tool).catch(() => undefined)));
+		return [...new Set(tools.filter((tool): tool is string => !!tool).map(tool => dirname(tool)))];
 	}
 
 	async readDeviceModel(id: VoltDeviceModelId): Promise<string | undefined> {
+		if (!isVoltDeviceModelId(id)) {
+			return undefined;
+		}
 		// Apple's models carry no redistribution license, so Volt does not ship them: they are
 		// read from the user's machine (see https://github.com/pingdotgg/t3code for the conversion).
 		const file = join(homedir(), '.volt', 'device-models', `${id}.glb`);
@@ -123,7 +151,7 @@ export class VoltDevicesService implements IVoltDevicesService {
 	//#region Running commands
 
 	private async exec(command: ICommand, options: IRunOptions = {}): Promise<IRunResult> {
-		const env = await this.env();
+		const env = options.env ? { ...await this.env(), ...options.env } : await this.env();
 		return new Promise<IRunResult>((resolve, reject) => {
 			execFile(command.file, command.args as string[], { env, timeout: options.timeout ?? ACTION_TIMEOUT, maxBuffer: MAX_BUFFER, encoding: 'buffer' }, (error, stdout, stderr) => {
 				const result: IRunResult = { stdout, stderr: stderr.toString('utf8'), code: typeof error?.code === 'number' ? error.code : error ? 1 : 0 };
@@ -423,12 +451,17 @@ export class VoltDevicesService implements IVoltDevicesService {
 
 	//#region Boot and shutdown
 
-	async boot(host: IVoltDeviceHost, device: IVoltDeviceRef, timeoutMs = 120_000): Promise<VoltDeviceState> {
+	async boot(host: IVoltDeviceHost, device: IVoltDeviceRef, timeoutMs = 120_000, options?: IVoltDeviceBootOptions): Promise<VoltDeviceState> {
 		const deadline = Date.now() + timeoutMs;
+		const untilReady = options?.waitUntilReady !== false;
 		if (device.platform === 'ios') {
 			const booted = await this.simctlRun(host, ['boot', device.id], { allowFail: true, timeout: ACTION_TIMEOUT });
 			if (booted.code !== 0 && !isAlreadyBooted(booted.stderr)) {
 				throw new Error(firstLine(booted.stderr) || `Could not boot ${device.id}`);
+			}
+			if (!untilReady) {
+				// A live stream shows the rest of the boot.
+				return booted.code === 0 ? 'booting' : 'booted';
 			}
 			// bootstatus returns once SpringBoard is up.
 			const wait = Math.max(1000, deadline - Date.now());
@@ -439,6 +472,10 @@ export class VoltDevicesService implements IVoltDevicesService {
 		const running = await this.adbDevices(host).catch(() => []);
 		let serial = running.find(entry => entry.avd === device.id || entry.device.serial === device.id)?.device.serial;
 		let launch = serial ? undefined : await this.startEmulator(host, device.id, false);
+		if (!untilReady && launch) {
+			// The launch keeps watching for a failed snapshot on its own.
+			return 'booting';
+		}
 		while (Date.now() < deadline) {
 			while (launch?.replacedBy) {
 				launch = launch.replacedBy;
@@ -808,10 +845,47 @@ export class VoltDevicesService implements IVoltDevicesService {
 			tool = await this.which('axe') ? 'axe' : await this.which('idb') ? 'idb' : undefined;
 		}
 		if (!tool) {
-			throw new ToolMissingError(`Touches and typing on iOS simulators need AXe or idb${host.ssh ? ` on ${host.label}` : ''}: \`brew install cameroncooke/axe/axe\` (simctl itself has no touch input). Screenshots, boot, install and launch work without it.`);
+			throw new ToolMissingError(iosInputToolMissingMessage(host.ssh ? host.label : undefined));
 		}
 		this.iosTools.set(host.id, tool);
 		return tool;
+	}
+
+	async installIosInputTool(host: IVoltDeviceHost): Promise<void> {
+		const command = IOS_INPUT_TOOL_INSTALL_COMMAND;
+		let result: IRunResult;
+		if (host.ssh) {
+			result = await this.remote(host, iosInputToolInstallScript(), { allowFail: true, timeout: BREW_INSTALL_TIMEOUT });
+			if (result.code === 127 && /Homebrew is not installed/.test(result.stderr)) {
+				throw new Error(`Homebrew is not installed on ${host.label}. Install it from https://brew.sh, then run \`${command}\` there.`);
+			}
+		} else {
+			if (process.platform !== 'darwin') {
+				throw new Error('AXe drives iOS simulators, which need a Mac.');
+			}
+			const brew = await this.which('brew') ?? await this.firstExisting(['/opt/homebrew/bin/brew', '/usr/local/bin/brew']);
+			if (!brew) {
+				throw new Error(`Homebrew is not installed. Install it from https://brew.sh, then run \`${command}\` in Terminal.`);
+			}
+			this.logService.info(`[volt-devices] ${brew} install ${IOS_INPUT_TOOL_FORMULA}`);
+			// Its folder on PATH too, so the AXe it installs is found next.
+			const env = await this.env();
+			result = await this.exec({ file: brew, args: ['install', IOS_INPUT_TOOL_FORMULA] }, {
+				allowFail: true,
+				timeout: BREW_INSTALL_TIMEOUT,
+				env: { HOMEBREW_NO_AUTO_UPDATE: '1', HOMEBREW_NO_ENV_HINTS: '1', PATH: [env.PATH, dirname(brew)].filter(Boolean).join(delimiter) },
+			}).catch(err => {
+				throw new Error(`\`${command}\` failed: ${err instanceof Error ? err.message : String(err)}`);
+			});
+		}
+		this.iosTools.delete(host.id);
+		if (result.code !== 0) {
+			const lines = result.stderr.split(/\r?\n/).map(line => line.trim()).filter(line => line && !/^Warning:/.test(line));
+			throw new Error(`\`${command}\` failed${host.ssh ? ` on ${host.label}` : ''}: ${lines.slice(-2).join(' ') || `exit code ${result.code}`}`);
+		}
+		await this.iosInputTool(host).catch(() => {
+			throw new Error(`AXe was installed, but its folder is not on ${host.ssh ? `${host.label}'s` : 'your shell\'s'} PATH: add Homebrew's bin folder to PATH and restart Volt.`);
+		});
 	}
 
 	//#endregion
@@ -927,7 +1001,7 @@ export class VoltDevicesService implements IVoltDevicesService {
 
 	async getAppearance(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<VoltDeviceAppearance | undefined> {
 		if (device.platform === 'ios') {
-			const result = await this.simctlRun(host, ['ui', device.id, 'appearance'], { allowFail: true, timeout: 10_000 });
+			const result = await this.simctlRun(host, ['ui', device.id, 'appearance'], { allowFail: true, timeout: SIMCTL_UI_TIMEOUT_MS });
 			return parseSimctlAppearance(text(result));
 		}
 		return this.withSerial(host, device, async serial => parseNightMode(text(await this.run(host, ['adb', '-s', serial, 'shell', 'cmd uimode night'], { allowFail: true, timeout: 8000 }))));
@@ -935,7 +1009,7 @@ export class VoltDevicesService implements IVoltDevicesService {
 
 	async setAppearance(host: IVoltDeviceHost, device: IVoltDeviceRef, appearance: VoltDeviceAppearance): Promise<void> {
 		if (device.platform === 'ios') {
-			const result = await this.simctlRun(host, ['ui', device.id, 'appearance', appearance], { allowFail: true, timeout: 10_000 });
+			const result = await this.simctlRun(host, ['ui', device.id, 'appearance', appearance], { allowFail: true, timeout: SIMCTL_UI_TIMEOUT_MS });
 			if (result.code !== 0) {
 				throw new Error(firstLine(result.stderr) || `Could not switch ${device.id} to ${appearance} mode. Is it booted?`);
 			}
@@ -946,6 +1020,30 @@ export class VoltDevicesService implements IVoltDevicesService {
 			if (/Error|Unknown command/i.test(out)) {
 				throw new Error(`${serial} cannot switch dark mode from adb (${firstLine(out)}); Android 10 or later can.`);
 			}
+		});
+	}
+
+	async setTextSize(host: IVoltDeviceHost, device: IVoltDeviceRef, size: VoltDeviceTextSize): Promise<void> {
+		if (device.platform === 'ios') {
+			// simctl prints "Invalid argument" and still exits 0 for a name it does not know.
+			const result = await this.simctlRun(host, ['ui', device.id, 'content_size', iosContentSize(size)], { allowFail: true, timeout: SIMCTL_UI_TIMEOUT_MS });
+			const out = `${text(result)}\n${result.stderr}`;
+			if (result.code !== 0 || /Invalid argument/i.test(out)) {
+				throw new Error(firstLine(result.stderr) || firstLine(text(result)) || `Could not change the text size of ${device.id}. Is it booted?`);
+			}
+			return;
+		}
+		const scale = androidFontScale(size);
+		await this.withSerial(host, device, async serial => {
+			const shell = (command: string) => this.run(host, ['adb', '-s', serial, 'shell', command], { timeout: 8000 }).then(text);
+			// A write right after another one is sometimes dropped: check and write once more.
+			for (let attempt = 0; attempt < 2; attempt++) {
+				await shell(`settings put system font_scale ${scale}`);
+				if (Number(await shell('settings get system font_scale')) === Number(scale)) {
+					return;
+				}
+			}
+			throw new Error(`${serial} did not take font scale ${scale}.`);
 		});
 	}
 

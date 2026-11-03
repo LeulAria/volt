@@ -54,7 +54,9 @@ import { AGENT_PULL_REQUESTS_CONTAINER_ID, AGENT_PULL_REQUESTS_VIEW_ID, setPullR
 import { composeInChat, openPullRequest, visibleChatSession } from './agentPullRequestUi.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
-import { CREATE_PULL_REQUEST_COMMAND_ID, FIX_PR_SELECTION_COMMAND_ID, GENERATE_COMMIT_MESSAGE_COMMAND_ID, LINK_PULL_REQUEST_COMMAND_ID, OPEN_CHAT_PULL_REQUEST_COMMAND_ID, OPEN_PULL_REQUEST_COMMAND_ID, SHOW_PULL_REQUESTS_COMMAND_ID, SIGN_IN_HOST_COMMAND_ID } from './agentPullRequestCommands.js';
+import { CREATE_PULL_REQUEST_COMMAND_ID, FIX_PR_SELECTION_COMMAND_ID, GENERATE_COMMIT_MESSAGE_COMMAND_ID, LINK_PULL_REQUEST_COMMAND_ID, OPEN_CHAT_PULL_REQUEST_COMMAND_ID, OPEN_PULL_REQUEST_COMMAND_ID, OPEN_PULL_REQUESTS_PAGE_COMMAND_ID, SHOW_PULL_REQUESTS_COMMAND_ID, SIGN_IN_HOST_COMMAND_ID } from './agentPullRequestCommands.js';
+import { AgentPullRequestsPage } from './agentPullRequestsPage.js';
+import { AGENT_PULL_REQUESTS_PAGE_EDITOR_ID, AgentPullRequestsPageInput, AgentPullRequestsPageInputSerializer } from './agentPullRequestsPageInput.js';
 
 /** Volt writes commit messages itself; the core sparkle (Copilot setup) stays hidden. */
 export const VOLT_COMMIT_MESSAGES_CONTEXT = new RawContextKey<boolean>('voltCommitMessages', false);
@@ -121,6 +123,13 @@ Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane
 );
 
 Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEditorSerializer(AgentPullRequestEditorInput.TypeID, AgentPullRequestEditorInputSerializer);
+
+Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
+	EditorPaneDescriptor.create(AgentPullRequestsPage, AGENT_PULL_REQUESTS_PAGE_EDITOR_ID, localize('voltPrPage.editorLabel', "Pull Requests")),
+	[new SyncDescriptor(AgentPullRequestsPageInput)],
+);
+
+Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEditorSerializer(AgentPullRequestsPageInput.TypeID, AgentPullRequestsPageInputSerializer);
 
 const container = Registry.as<IViewContainersRegistry>(ViewExtensions.ViewContainersRegistry).registerViewContainer({
 	id: AGENT_PULL_REQUESTS_CONTAINER_ID,
@@ -273,6 +282,29 @@ registerAction2(class extends Action2 {
 			return;
 		}
 		await accessor.get(IViewsService).openViewContainer(AGENT_PULL_REQUESTS_CONTAINER_ID, true);
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({ id: OPEN_PULL_REQUESTS_PAGE_COMMAND_ID, title: localize2('voltPr.openPage', "Show Pull Requests Dashboard"), category: localize2('volt', "Volt"), f1: true, icon: Codicon.gitPullRequest });
+	}
+	/** A page in the main panel, like Usage; opened from a chat it shows that chat's repository. */
+	override async run(accessor: ServicesAccessor, sessionId?: unknown): Promise<void> {
+		const editorService = accessor.get(IEditorService);
+		const pullRequests = accessor.get(IAgentPullRequestService);
+		const chat = typeof sessionId === 'string' && sessionId ? sessionId : visibleChatSession(accessor);
+		const existing = editorService.editors.find((editor): editor is AgentPullRequestsPageInput => editor instanceof AgentPullRequestsPageInput);
+		const input = existing ?? accessor.get(IInstantiationService).createInstance(AgentPullRequestsPageInput);
+		if (chat && pullRequests.folderFor(chat)) {
+			input.sessionId = chat;
+			input.folder = undefined;
+		}
+		// The page on screen keeps the repository picked on it.
+		if (existing && editorService.activeEditor === existing) {
+			return;
+		}
+		await editorService.openEditor(input, { pinned: true });
 	}
 });
 

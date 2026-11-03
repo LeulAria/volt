@@ -24,6 +24,9 @@ import { ISCMRepository, ISCMService, ISCMViewService } from '../../../scm/commo
 const GIT_EXTENSION_ID = 'vscode.git';
 /** How long a stopped Git extension gets to come back (the extension host restarts when the window moves folders). */
 const GIT_RESTART_WAIT_MS = 15_000;
+/** How long a chat's missing folder gets to appear (a worktree is made after the chat opens). */
+const FOLDER_WAIT_MS = 15_000;
+const FOLDER_POLL_MS = 500;
 
 /**
  * Where a chat's repository stands in Source Control. Anything but `loading` and `ready` says
@@ -35,12 +38,12 @@ export type AgentScmRepositoryState =
 	| { readonly kind: 'ready' }
 	/** The chat has no local folder. */
 	| { readonly kind: 'noFolder' }
-	/** The chat's folder is gone from disk (a removed worktree, a moved project). */
-	| { readonly kind: 'folderMissing'; readonly folder: string }
 	/** Git ran and the folder is in no repository. */
 	| { readonly kind: 'notRepository' }
 	/** Git could not run: not installed, or a broken shim (an unaccepted Xcode license). */
 	| { readonly kind: 'gitFailed'; readonly detail: string }
+	/** The chat's folder is not on disk: its worktree was removed, or never finished. */
+	| { readonly kind: 'folderMissing'; readonly path: string }
 	/** A repository, with `git.enabled` off. */
 	| { readonly kind: 'gitDisabled'; readonly repoRoot: string }
 	/**
@@ -55,17 +58,35 @@ export type AgentScmRepositoryState =
 const openingRepositories = new WeakMap<ICommandService, Map<string, Promise<unknown>>>();
 
 /**
- * The repository at this folder. `getRepository` only matches paths inside a repository, never its root.
- * Compared the way the disk does: a chat's root can differ from git's in case alone on macOS.
+ * The path on the computer: in the browser workbench Git runs on the server and registers its
+ * repositories as `vscode-remote:` URIs, while chats name their folders as `file:` paths.
+ */
+function onDisk(uri: URI): URI {
+	return uri.scheme === Schemas.vscodeRemote ? uri.with({ scheme: Schemas.file, authority: '' }) : uri;
+}
+
+/**
+ * The repository at this folder, or the innermost one it is inside. Compared as paths on the
+ * computer (see {@link onDisk}) and the way the disk does: a chat's root can differ from git's in
+ * case alone on macOS.
  */
 export function findAgentScmRepository(scmService: ISCMService, uriIdentityService: IUriIdentityService, root: URI): ISCMRepository | undefined {
+	const target = onDisk(root);
+	let containing: { readonly repository: ISCMRepository; readonly depth: number } | undefined;
 	for (const repository of scmService.repositories) {
 		const repositoryRoot = repository.provider.rootUri;
-		if (repositoryRoot && uriIdentityService.extUri.isEqual(repositoryRoot, root)) {
+		if (!repositoryRoot) {
+			continue;
+		}
+		const candidate = onDisk(repositoryRoot);
+		if (uriIdentityService.extUri.isEqual(candidate, target)) {
 			return repository;
 		}
+		if (uriIdentityService.extUri.isEqualOrParent(target, candidate) && (!containing || candidate.path.length > containing.depth)) {
+			containing = { repository, depth: candidate.path.length };
+		}
 	}
-	return scmService.getRepository(root);
+	return containing?.repository ?? scmService.getRepository(root);
 }
 
 /**
@@ -157,13 +178,6 @@ export class AgentScmRepositoryFocus extends Disposable {
 				return false;
 			}
 			// Git did not register it. Ask git itself why, so the message says what is really wrong.
-			// A missing folder comes first: git reports it only as `spawn git ENOENT`, which reads as git missing.
-			if (!await this.fileService.exists(root).catch(() => true)) {
-				if (current()) {
-					setState({ kind: 'folderMissing', folder: repoRoot });
-				}
-				return false;
-			}
 			const repo = await this.gitService.resolveRepo(repoRoot).then(found => found ?? null, (error: unknown) => toErrorMessage(error));
 			if (!current()) {
 				return false;
@@ -173,6 +187,16 @@ export class AgentScmRepositoryFocus extends Disposable {
 				return false;
 			}
 			if (typeof repo === 'string') {
+				// Git reports a missing folder as "spawn git ENOENT": a worktree still being made, or removed.
+				if (!await this.folderExists(root)) {
+					if (await this.waitForFolder(root, current)) {
+						return true;
+					}
+					if (current()) {
+						setState({ kind: 'folderMissing', path: repoRoot });
+					}
+					return false;
+				}
 				setState({ kind: 'gitFailed', detail: repo });
 				return false;
 			}
@@ -265,6 +289,28 @@ export class AgentScmRepositoryFocus extends Disposable {
 		} catch {
 			// The Git extension is not running, or failed: the caller asks git why.
 		}
+	}
+
+	private async folderExists(root: URI): Promise<boolean> {
+		try {
+			return await this.fileService.exists(root);
+		} catch {
+			return true;
+		}
+	}
+
+	/** True once the folder shows up within {@link FOLDER_WAIT_MS}; false when it does not or the request moved on. */
+	private async waitForFolder(root: URI, current: () => boolean): Promise<boolean> {
+		for (let waited = 0; waited < FOLDER_WAIT_MS; waited += FOLDER_POLL_MS) {
+			await timeout(FOLDER_POLL_MS);
+			if (!current()) {
+				return false;
+			}
+			if (await this.folderExists(root)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private isGitRunning(): boolean {

@@ -16,7 +16,7 @@ import { Transcript } from '../../src/chat/Transcript';
 import { FileIcon } from '../../src/files/FileIcon';
 import { useClient, useCollections, useOptionalClient } from '../../src/state/client';
 import { useTheme } from '../../src/theme/theme';
-import { Button, EmptyState, haptic, Icon, LiveTimer, Segmented, StatusIcon, T, Tap } from '../../src/ui/core';
+import { Button, EmptyState, haptic, Icon, LiveTimer, Tabs, StatusIcon, T, Tap } from '../../src/ui/core';
 
 export default function SubagentScreen() {
 	const { id } = useLocalSearchParams<{ id: string }>();
@@ -99,7 +99,7 @@ function Subagent({ taskId }: { readonly taskId: string }) {
 						</View>
 					</View>
 				</View>
-				<Segmented<Tab> value={tab} onChange={setTab} options={[
+				<Tabs<Tab> value={tab} onChange={setTab} options={[
 					{ id: 'overview', label: 'Overview' },
 					{ id: 'transcript', label: 'Transcript' },
 					{ id: 'changes', label: changes?.length ? `Changes · ${changes.length}` : 'Changes' },

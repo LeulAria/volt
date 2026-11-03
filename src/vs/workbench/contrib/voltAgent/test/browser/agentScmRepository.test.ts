@@ -33,11 +33,11 @@ suite('Agent repository switching', () => {
 		/** What Volt's own git says about a folder: a repository, none (undefined), or an error when git cannot run. */
 		const git = new Map<string, IVoltGitRepo | Error>();
 		const extension = { gitRunning: true };
+		/** Folders not on disk (a removed worktree). */
+		const missing = new Set<string>();
 		const repositories: ISCMRepository[] = [];
 		const opened: string[] = [];
 		const pending = new Map<string, DeferredPromise<void>>();
-		/** Folders gone from disk. */
-		const missing = new Set<string>();
 		let visible: ISCMRepository[] = [];
 		const view = {
 			get visibleRepositories() { return visible; },
@@ -77,8 +77,8 @@ suite('Agent repository switching', () => {
 			{ exists: async (resource: URI) => !missing.has(resource.fsPath) } as unknown as IFileService,
 			{} as IProductService,
 		));
-		const add = (path: string) => {
-			const repo = { provider: { rootUri: URI.file(path) } } as ISCMRepository;
+		const add = (path: string, rootUri = URI.file(path)) => {
+			const repo = { provider: { rootUri } } as ISCMRepository;
 			repositories.push(repo);
 			added.fire(repo);
 			return repo;
@@ -102,6 +102,17 @@ suite('Agent repository switching', () => {
 			assert.ok(!states.includes('loading'));
 			await result;
 		}
+		assert.deepStrictEqual(opened, []);
+	});
+
+	test('in the browser workbench, finds the repository Git registered as a remote URI by its path', async () => {
+		const { focus, opened, view, add } = setup();
+		// Git runs on the server there and names repositories `vscode-remote://host/path`; chats name `file:` paths.
+		const remote = add('/projects/a', URI.from({ scheme: 'vscode-remote', authority: '127.0.0.1:9931', path: '/projects/a' }));
+		const states: AgentScmRepositoryState['kind'][] = [];
+		await focus.show('a', () => true, undefined, state => states.push(state.kind));
+		assert.deepStrictEqual(view.visibleRepositories, [remote]);
+		assert.deepStrictEqual(states, ['ready']);
 		assert.deepStrictEqual(opened, []);
 	});
 
@@ -166,16 +177,16 @@ suite('Agent repository switching', () => {
 		assert.ok(failed.kind === 'gitFailed' && failed.detail.includes('Xcode license'));
 	});
 
-	test('a folder gone from disk says so instead of blaming git (spawn git ENOENT)', async () => {
+	test('a folder that is not on disk waits for it, then says it is missing instead of blaming git', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
 		const { focus, pending, git, missing } = setup();
-		missing.add('/worktrees/removed');
-		git.set('/worktrees/removed', new Error('git rev-parse could not run: spawn git ENOENT'));
+		git.set('/projects/a', new Error('git rev-parse could not run: spawn git ENOENT'));
+		missing.add('/projects/a');
 		const states: AgentScmRepositoryState[] = [];
-		const result = focus.show('a', () => true, URI.file('/worktrees/removed'), state => states.push(state));
-		await pending.get('/worktrees/removed')!.complete();
+		const result = focus.show('a', () => true, undefined, state => states.push(state));
+		await pending.get('/projects/a')!.complete();
 		await result;
-		assert.deepStrictEqual(states, [{ kind: 'loading' }, { kind: 'folderMissing', folder: '/worktrees/removed' }]);
-	});
+		assert.deepStrictEqual(states, [{ kind: 'loading' }, { kind: 'folderMissing', path: '/projects/a' }]);
+	}));
 
 	test('a repository the running Git extension did not open is reported as not opened', async () => {
 		const { focus, pending, git } = setup();

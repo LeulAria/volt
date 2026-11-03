@@ -6,7 +6,7 @@
 import { IntervalTimer, RunOnceScheduler, SequencerByKey } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { Disposable, DisposableMap } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableMap, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
@@ -52,12 +52,16 @@ import { IVoltSessionContextService } from '../../../../services/voltRuntime/com
 import { AGENT_BRANCH_PREFIX_SETTING, AGENT_PR_ATTRIBUTION_SETTING, readBranchPrefix, withPullRequestAttribution } from '../../common/agentGitSettings.js';
 import {
 	addLink,
+	branchNamesFrom,
+	buildBranchNamePrompt,
 	buildPullRequestTextPrompt,
 	buildCommitMessagePrompt,
 	buildWatchMessage,
 	collectRemarks,
 	commitMessageFrom,
+	createdPullRequestUrl,
 	currentLink,
+	isGitPushOutput,
 	discoveredPrBelongs,
 	evaluateWatch,
 	findPullRequestUrls,
@@ -112,6 +116,8 @@ export interface IAgentPullRequestService {
 	links(sessionId: string): readonly IAgentPrLink[];
 	/** Chats a pull request is linked to. */
 	sessionsFor(key: string): string[];
+	/** Every chat with at least one linked pull request. */
+	linkedChats(): string[];
 	snapshot(key: string): IVoltPullRequest | undefined;
 	link(sessionId: string, target: IAgentPrTarget, source: AgentPrLinkSource): Promise<IAgentPrLink>;
 	unlink(sessionId: string, key: string): void;
@@ -119,6 +125,8 @@ export interface IAgentPullRequestService {
 	unwatch(sessionId: string, key: string): void;
 	/** Syncs these pull requests (or every linked one) now. */
 	refresh(keys?: readonly string[]): Promise<void>;
+	/** The chat's branch was pushed: its pull requests read their new head now, and again a moment later. */
+	didPush(sessionId: string): void;
 	/** The folder a chat's agent works in. */
 	folderFor(sessionId: string): string | undefined;
 	repoFor(sessionId: string): Promise<IVoltPrRepo | undefined>;
@@ -141,6 +149,10 @@ export interface IAgentPullRequestService {
 	restack(folder: string, branch: string | undefined, syncTrunk: boolean): Promise<IVoltPrRestackOutcome>;
 	/** A message for committing everything, or exactly `paths`; with `previous`, a different one than that. */
 	generateCommitMessage(folder: string, sessionId?: string, paths?: readonly string[], previous?: string): Promise<string | undefined>;
+	/** Names for the branch checked out at `folder`, from its chat, commits and changes; none when no model answers. */
+	suggestBranchNames(folder: string, sessionId?: string): Promise<string[]>;
+	/** Renames the branch checked out at `folder`; chats working in that checkout follow the new name. */
+	renameBranch(folder: string, name: string): Promise<{ readonly previous: string; readonly branch: string }>;
 	/** The merge method last picked for a repository. */
 	lastMergeMethod(repo: IVoltPrRepoRef): VoltPrMergeMethod | undefined;
 	rememberMergeMethod(repo: IVoltPrRepoRef, method: VoltPrMergeMethod): void;
@@ -156,6 +168,8 @@ export interface IAgentPullRequestService {
 
 const STORE_VERSION = 1;
 const TICK_MS = 15_000;
+/** How long after a push its pull request is read again: GitHub moves the head a moment later. */
+const PUSH_SETTLE_MS = 4_000;
 const OPEN_SYNC_MS = 60_000;
 const PENDING_SYNC_MS = 40_000;
 const WATCH_SYNC_MS = 45_000;
@@ -219,6 +233,13 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 	private readonly chats = new Map<string, readonly IAgentPrLink[]>();
 	private readonly storeFile: URI;
 	private readonly saveScheduler = this._register(new RunOnceScheduler(() => void this.save(), 400));
+	/** Chats this window changed since its last save: its copy of them wins over the file. */
+	private readonly dirty = new Set<string>();
+	/** Deleted chats this window dropped: another window's copy does not bring them back. */
+	private readonly dropped = new Set<string>();
+	private readonly reloadScheduler = this._register(new RunOnceScheduler(() => void this.reloadFromDisk(), 150));
+	/** Second refreshes after pushes (see didPush). */
+	private readonly pushTimers = new Set<ReturnType<typeof setTimeout>>();
 	private readonly repos = new Map<string, { at: number; repo: Promise<IVoltPrRepo | undefined> }>();
 	private readonly origins = new Map<string, IOriginState>();
 	/** Repository config files watched for remote edits (a linked worktree's is its main repository's). */
@@ -262,6 +283,14 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		super();
 		this.storeFile = joinPath(environmentService.userRoamingDataHome, 'voltPullRequests', 'links.json');
 		this.whenReady = Promise.all([this.load(), this.loadHostTokens()]).then(() => undefined);
+		this._register(toDisposable(() => this.pushTimers.forEach(timer => clearTimeout(timer))));
+		// Other windows link pull requests too: their saves show here (see save()).
+		this._register(this.fileService.watch(this.storeFile));
+		this._register(this.fileService.onDidFilesChange(e => {
+			if (e.contains(this.storeFile)) {
+				this.reloadScheduler.schedule();
+			}
+		}));
 		this._register(hostTools.registerToolProvider({
 			tools: PULL_REQUEST_TOOLS,
 			invoke: (name, args, call) => this.invokeTool(name, args, call),
@@ -278,11 +307,24 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 				}
 			}
 		}));
-		// A finished turn may have pushed a branch or opened a pull request.
+		// A pull request opened from the shell shows as soon as the command prints it (`gh pr create`
+		// ends with the URL alone on its last line), not only once the turn ends.
+		this._register(this.runtime.onDidEmit(({ sessionId, event }) => {
+			if (event.type === 'tool.end' && typeof event.output === 'string' && event.output.length < 20_000) {
+				const url = createdPullRequestUrl(event.output);
+				if (url) {
+					void this.linkCreated(this.runtime.chatFor(sessionId), url);
+				} else if (isGitPushOutput(event.output)) {
+					this.didPush(this.runtime.chatFor(sessionId));
+				}
+			}
+		}));
+		// A finished turn may have pushed a branch or opened a pull request (also one that failed or
+		// was stopped after it did).
 		this._register(this.orchestrator.onDidChange(change => {
 			for (const threadId of change.threads) {
 				const last = this.orchestrator.getThread(threadId)?.last;
-				if (last && last.outcome === 'done' && this.scannedTurns.get(threadId) !== last.turnId) {
+				if (last && this.scannedTurns.get(threadId) !== last.turnId) {
 					this.scannedTurns.set(threadId, last.turnId);
 					void this.afterTurn(threadId);
 				}
@@ -346,10 +388,44 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		}
 	}
 
+	/** The links file as it is on disk; undefined when it cannot be read (then nothing is merged from it). */
+	private async readStore(): Promise<Map<string, IAgentPrLink[]> | undefined> {
+		try {
+			const content = await this.fileService.readFile(this.storeFile);
+			const parsed = JSON.parse(content.value.toString()) as Partial<IStoreFile>;
+			const chats = new Map<string, IAgentPrLink[]>();
+			if (parsed?.version === STORE_VERSION && parsed.chats && typeof parsed.chats === 'object') {
+				for (const [sessionId, links] of Object.entries(parsed.chats)) {
+					const valid = Array.isArray(links) ? links.filter(isStoredLink) : [];
+					if (valid.length) {
+						chats.set(sessionId, valid);
+					}
+				}
+			}
+			return chats;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/**
+	 * Every window keeps its own copy of the links and writes the one file. A save takes what other
+	 * windows wrote for the chats this one did not change, so one window's links never erase another's.
+	 */
 	private async save(): Promise<void> {
 		if (!this.loaded) {
 			this.saveScheduler.schedule();
 			return;
+		}
+		const dirty = new Set(this.dirty);
+		this.dirty.clear();
+		const disk = await this.readStore();
+		const changed: string[] = [];
+		for (const [sessionId, links] of disk ?? []) {
+			if (!dirty.has(sessionId) && !this.dropped.has(sessionId) && JSON.stringify(this.chats.get(sessionId) ?? []) !== JSON.stringify(links)) {
+				this.chats.set(sessionId, links);
+				changed.push(sessionId);
+			}
 		}
 		const chats: Record<string, IAgentPrLink[]> = {};
 		for (const [sessionId, links] of this.chats) {
@@ -363,6 +439,39 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		} catch (err) {
 			this.logService.warn('[volt-pr] could not save linked pull requests', err);
 		}
+		if (changed.length) {
+			this._onDidChange.fire(changed);
+		}
+	}
+
+	/** Another window saved the links: take its changes to the chats this window has not changed since. */
+	private async reloadFromDisk(): Promise<void> {
+		if (!this.loaded) {
+			return;
+		}
+		const disk = await this.readStore();
+		if (!disk) {
+			return;
+		}
+		const changed: string[] = [];
+		for (const sessionId of new Set([...disk.keys(), ...this.chats.keys()])) {
+			if (this.dirty.has(sessionId) || this.dropped.has(sessionId)) {
+				continue;
+			}
+			const links = disk.get(sessionId);
+			if (JSON.stringify(this.chats.get(sessionId) ?? []) === JSON.stringify(links ?? [])) {
+				continue;
+			}
+			if (links) {
+				this.chats.set(sessionId, links);
+			} else {
+				this.chats.delete(sessionId);
+			}
+			changed.push(sessionId);
+		}
+		if (changed.length) {
+			this._onDidChange.fire(changed);
+		}
 	}
 
 	private setLinks(sessionId: string, links: readonly IAgentPrLink[]): void {
@@ -375,6 +484,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		} else {
 			this.chats.delete(sessionId);
 		}
+		this.dirty.add(sessionId);
 		this.saveScheduler.schedule();
 		this._onDidChange.fire([sessionId]);
 	}
@@ -387,6 +497,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		for (const sessionId of [...this.chats.keys()]) {
 			if (!this.history.has(sessionId)) {
 				this.chats.delete(sessionId);
+				this.dropped.add(sessionId);
 				this.saveScheduler.schedule();
 			}
 		}
@@ -408,6 +519,10 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 			}
 		}
 		return out;
+	}
+
+	linkedChats(): string[] {
+		return [...this.chats].filter(([, links]) => visibleLinks(links).length).map(([sessionId]) => sessionId);
 	}
 
 	snapshot(key: string): IVoltPullRequest | undefined {
@@ -861,6 +976,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 			});
 			// syncedAt alone is not worth an event, but it is worth keeping.
 			this.chats.set(sessionId, next);
+			this.dirty.add(sessionId);
 			if (changed) {
 				changedChats.push(sessionId);
 			}
@@ -1083,22 +1199,57 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		try {
 			const transcript = await this.history.open(sessionId).load();
 			const reply = transcript.turns.at(-1)?.assistant?.text ?? '';
-			const urls = findPullRequestUrls(reply);
-			if (urls.length) {
-				const repo = await this.repoFor(sessionId);
-				for (const url of urls.slice(0, 5)) {
-					const parsed = parsePullRequestUrl(url);
-					// Only the chat's own repository: a reply that cites some other project's PR is not this chat's work.
-					if (parsed && repo && sameRepoRef(parsed.repo, repo) && !this.links(sessionId).some(link => link.key === prKey(parsed.repo, parsed.number))) {
-						await this.link(sessionId, { url }, 'agent').catch(err => this.logService.trace('[volt-pr] could not link', url, err));
-					}
-				}
-			}
+			await this.linkOwnUrls(sessionId, findPullRequestUrls(reply).slice(0, 5));
 		} catch (err) {
 			this.logService.trace('[volt-pr] could not read the finished turn', err);
 		}
 		this.repos.delete(this.folderFor(sessionId) ?? '');
 		await this.discoverFor([sessionId], true);
+		// The turn may have pushed in a way no command output showed: its pull requests read their head again.
+		const keys = visibleLinks(this.links(sessionId)).map(link => link.key);
+		if (keys.length) {
+			await this.refresh(keys).catch(err => this.logService.trace('[volt-pr] could not refresh after the turn', err));
+		}
+	}
+
+	didPush(sessionId: string): void {
+		const keys = visibleLinks(this.links(sessionId)).map(link => link.key);
+		if (!keys.length) {
+			return;
+		}
+		const refresh = () => void this.refresh(keys).catch(err => this.logService.trace('[volt-pr] could not refresh after a push', err));
+		refresh();
+		// GitHub moves the pull request's head a moment after the push lands.
+		const timer = setTimeout(() => {
+			this.pushTimers.delete(timer);
+			refresh();
+		}, PUSH_SETTLE_MS);
+		this.pushTimers.add(timer);
+	}
+
+	/** A command in the chat printed the pull request it opened. */
+	private async linkCreated(sessionId: string, url: string): Promise<void> {
+		await this.whenReady;
+		try {
+			await this.linkOwnUrls(sessionId, [url]);
+		} catch (err) {
+			this.logService.trace('[volt-pr] could not link the opened pull request', url, err);
+		}
+	}
+
+	/** Links the URLs that point into the chat's own repository and are not linked yet. */
+	private async linkOwnUrls(sessionId: string, urls: readonly string[]): Promise<void> {
+		if (!urls.length) {
+			return;
+		}
+		const repo = await this.repoFor(sessionId);
+		for (const url of urls) {
+			const parsed = parsePullRequestUrl(url);
+			// Only the chat's own repository: a reply that cites some other project's PR is not this chat's work.
+			if (parsed && repo && sameRepoRef(parsed.repo, repo) && !this.links(sessionId).some(link => link.key === prKey(parsed.repo, parsed.number))) {
+				await this.link(sessionId, { url }, 'agent').catch(err => this.logService.trace('[volt-pr] could not link', url, err));
+			}
+		}
 	}
 
 	private async discover(): Promise<void> {
@@ -1259,6 +1410,42 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		}
 		const raw = await this.runtime.generateText(buildCommitMessagePrompt(summary.branch, summary.files, summary.patch, summary.recentSubjects, previous), { sessionId, slot: 'git' });
 		return commitMessageFrom(raw);
+	}
+
+	async suggestBranchNames(folder: string, sessionId?: string): Promise<string[]> {
+		const status = await this.api.gitStatus(folder);
+		if (!status?.branch) {
+			return [];
+		}
+		// A worktree's own commits (against the trunk it came from) and what is not committed yet.
+		const [changes, branch] = await Promise.all([
+			this.api.describeChanges({ folder }).catch(() => undefined),
+			status.defaultBranch && !status.isDefaultBranch ? this.api.describeBranch({ folder, base: status.defaultBranch }).catch(() => undefined) : undefined,
+		]);
+		const meta = sessionId ? this.history.get(sessionId) : undefined;
+		const prompt = buildBranchNamePrompt({
+			current: status.branch,
+			chatTitle: meta?.title.trim() || undefined,
+			firstPrompt: meta?.preview.trim() || undefined,
+			commits: branch?.commits ?? [],
+			files: changes?.files ?? '',
+			patch: changes?.patch ?? '',
+			recentSubjects: changes?.recentSubjects ?? [],
+		});
+		const raw = await this.runtime.generateText(prompt, { sessionId, slot: 'git' });
+		return branchNamesFrom(raw, status.branch);
+	}
+
+	async renameBranch(folder: string, name: string): Promise<{ readonly previous: string; readonly branch: string }> {
+		const renamed = await this.api.renameBranch({ folder, name });
+		const status = await this.api.gitStatus(folder);
+		// Chats working in this checkout follow the branch (the worktree pill, cleanup, forks). Both paths:
+		// git names the root by its real path (/private/tmp), the chat by the one it was given (/tmp).
+		followWorktreeBranch(this.history, this.runtime, folder, renamed.branch);
+		if (status?.root && status.root !== folder) {
+			followWorktreeBranch(this.history, this.runtime, status.root, renamed.branch);
+		}
+		return renamed;
 	}
 
 	//#endregion

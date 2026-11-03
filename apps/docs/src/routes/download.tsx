@@ -30,6 +30,7 @@ import {
 } from "@/lib/releases";
 import { downloadRouteLinks, downloadRouteMeta } from "@/lib/seo";
 import {
+  downloadsLabel,
   GITHUB_RELEASES_URL,
   useDetectedPlatform,
   useReleases,
@@ -77,6 +78,7 @@ function DownloadPage() {
 
   const unsupported = detected !== null && detected.os === null;
   const platformLabel = platformOf(os).label;
+  const downloads = downloadsLabel(state);
 
   return (
     <div className="home-page relative min-h-dvh overflow-x-clip bg-[#0a0d0c] font-sans text-white antialiased">
@@ -96,6 +98,15 @@ function DownloadPage() {
                 ? "Volt is a desktop app for macOS, Windows, and Linux. Open this page on your computer, or grab a build below."
                 : `Here is the build for ${platformLabel}; every other platform and channel is listed below.`}
             </p>
+            {downloads ? (
+              <p className="mt-3 inline-flex items-center gap-2 text-[13px] text-white/40">
+                <span
+                  className="size-1.5 rounded-full bg-[#3ecf8e]"
+                  aria-hidden
+                />
+                {downloads}
+              </p>
+            ) : null}
             <PrimaryDownload
               state={state}
               channel={channel}
