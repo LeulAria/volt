@@ -198,6 +198,32 @@ export function templateIcon(icon: AutomationTemplateIcon): ThemeIcon {
 		case 'beaker': return Codicon.beaker;
 		case 'rocket': return Codicon.rocket;
 		case 'git': return Codicon.gitPullRequest;
+		case 'calendar': return Codicon.calendar;
+		case 'megaphone': return Codicon.megaphone;
+		case 'heart': return Codicon.heart;
+		case 'chart': return Codicon.graphLine;
+		case 'tag': return Codicon.tag;
+		case 'draft': return Codicon.gitPullRequestDraft;
+		case 'note': return Codicon.note;
+		case 'bell': return Codicon.bell;
+		case 'eye': return Codicon.eye;
+		case 'layers': return Codicon.layers;
+		case 'database': return Codicon.database;
+		case 'merge': return Codicon.gitMerge;
+		case 'law': return Codicon.law;
+		case 'lock': return Codicon.lock;
+		case 'verified': return Codicon.verified;
+		case 'credit': return Codicon.creditCard;
+		case 'dashboard': return Codicon.dashboard;
+		case 'api': return Codicon.json;
+		case 'globe': return Codicon.globe;
+		case 'compass': return Codicon.compass;
+		case 'map': return Codicon.map;
+		case 'clock': return Codicon.clock;
+		case 'milestone': return Codicon.milestone;
+		case 'question': return Codicon.question;
+		case 'tasklist': return Codicon.tasklist;
+		case 'trash': return Codicon.trash;
 	}
 }
 

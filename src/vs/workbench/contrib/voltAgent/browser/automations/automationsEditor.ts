@@ -91,16 +91,24 @@ export class AutomationsEditorInputSerializer implements IEditorSerializer {
 	serialize(input: EditorInput): string {
 		const route = input instanceof AutomationsEditorInput ? input.route : undefined;
 		// A saved automation's page comes back after a reload; a new, unsaved one does not.
-		return route?.page === 'detail' && route.id ? JSON.stringify({ id: route.id, tab: route.tab }) : route?.page === 'runs' ? JSON.stringify({ runs: true }) : '';
+		if (route?.page === 'detail') {
+			return route.id ? JSON.stringify({ id: route.id, tab: route.tab }) : '';
+		}
+		if (route?.page === 'runs') {
+			return JSON.stringify({ runs: true });
+		}
+		return route?.page === 'list' && route.view && route.view !== 'list' ? JSON.stringify({ view: route.view }) : '';
 	}
 	deserialize(instantiationService: IInstantiationService, raw: string): EditorInput {
 		const input = instantiationService.createInstance(AutomationsEditorInput);
 		try {
-			const value = raw ? JSON.parse(raw) as { id?: unknown; tab?: unknown; runs?: unknown } : {};
+			const value = raw ? JSON.parse(raw) as { id?: unknown; tab?: unknown; runs?: unknown; view?: unknown } : {};
 			if (typeof value.id === 'string') {
 				input.route = { page: 'detail', id: value.id, tab: value.tab === 'runs' ? 'runs' : 'settings' };
 			} else if (value.runs === true) {
 				input.route = { page: 'runs' };
+			} else if (value.view === 'day' || value.view === 'week' || value.view === 'month') {
+				input.route = { page: 'list', view: value.view };
 			}
 		} catch {
 			// The list.
@@ -204,7 +212,7 @@ export class AutomationsEditor extends EditorPane {
 		};
 		switch (route.page) {
 			case 'list':
-				this.page.value = this.instantiationService.createInstance(AutomationListView, host);
+				this.page.value = this.instantiationService.createInstance(AutomationListView, host, route);
 				break;
 			case 'runs':
 				this.page.value = this.instantiationService.createInstance(AllRunsView, host);

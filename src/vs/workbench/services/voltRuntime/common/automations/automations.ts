@@ -183,6 +183,7 @@ export function formatTimeOfDay(minutes: number): string {
 
 export function defaultSchedule(kind: string): AutomationSchedule {
 	switch (kind) {
+		case 'minutes': return { type: 'interval', everyMs: 15 * 60_000 };
 		case 'hourly': return { type: 'hourly', minute: 0 };
 		case 'weekly': return { type: 'weekly', weekdays: [1], time: '09:00' };
 		case 'cron': return { type: 'cron', expr: '0 9 * * 1-5' };
@@ -411,9 +412,9 @@ export function parseScheduleText(input: string): { readonly schedule?: Automati
 	return fail;
 }
 
-/** The trigger menu's kind for a schedule (an interval counts as hourly for the picker). */
+/** The trigger menu's kind for a schedule (an interval is "Every few minutes"). */
 export function scheduleKindOf(spec: AutomationSchedule): string {
-	return spec.type === 'interval' ? 'hourly' : spec.type;
+	return spec.type === 'interval' ? 'minutes' : spec.type;
 }
 
 /** "GMT+4", "GMT-5:30", "GMT". */
