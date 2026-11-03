@@ -69,6 +69,7 @@ export class MainThreadWindow implements MainThreadWindowShape {
 			openExternal: true,
 			allowTunneling: options.allowTunneling,
 			allowContributedOpeners: options.allowContributedOpeners,
+			fromExtension: true,
 		});
 	}
 

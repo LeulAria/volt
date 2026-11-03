@@ -86,6 +86,16 @@ export interface IVoltBrowserService {
 	/** Emulates conditions on one page; fields left out keep their current value. `reset` clears all. */
 	emulate(webContentsId: number, emulation: IVoltEmulation, reset?: boolean): Promise<IVoltEmulation | undefined>;
 
+	/**
+	 * Shows the page's DevTools inside another in-app browser webview of the same window (the tab's
+	 * docked DevTools pane, which must not have navigated) instead of a separate window. False when
+	 * either is not an in-app browser page.
+	 */
+	attachDevTools(webContentsId: number, devtoolsWebContentsId: number): Promise<boolean>;
+
+	/** Inspect Element in the page's docked DevTools: selects the node at (x, y) in the page's CSS pixels. */
+	inspectInDevTools(webContentsId: number, x: number, y: number): Promise<boolean>;
+
 	/** A PNG of the whole page, beyond the viewport (data URL), or undefined. */
 	captureFullPage(webContentsId: number, maxHeight?: number): Promise<{ dataUrl: string; width: number; height: number; clipped: boolean } | undefined>;
 

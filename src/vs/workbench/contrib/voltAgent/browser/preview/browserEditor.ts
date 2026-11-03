@@ -517,6 +517,11 @@ const CONNECTION_REFUSED = -102;
 /** About 30 seconds: long enough for a dev server to come up, short enough to give up on a wrong port. */
 const LOCAL_SERVER_RETRIES = 40;
 const LOCAL_SERVER_RETRY_MS = 750;
+/** Docked DevTools: the height the user dragged them to, and the room each side keeps. */
+const DEVTOOLS_HEIGHT_STORAGE_KEY = 'volt.browser.devtools.height';
+const DEVTOOLS_DEFAULT_HEIGHT = 260;
+const DEVTOOLS_MIN_HEIGHT = 120;
+const DEVTOOLS_MIN_PAGE_HEIGHT = 120;
 
 /** `host:port` when the URL points at this machine. */
 export function localServerHost(url: string): string | undefined {
@@ -570,6 +575,9 @@ export class VoltBrowserView extends Disposable {
 	private zoomFactor = 1;
 	private userAgent = BROWSER_USER_AGENT;
 	private devtoolsOpen = false;
+	/** DevTools docked under the page: a pane with its own webview that the page's DevTools draw into. */
+	private devtoolsPane: HTMLElement | undefined;
+	private readonly devtoolsStore = this._register(new DisposableStore());
 	private presentation: BrowserPresentation | undefined;
 	/** The floating preview's scale-down of the desktop-wide page; 1 when the page fills the stage. */
 	private desktopScale = 1;
@@ -1935,22 +1943,147 @@ export class VoltBrowserView extends Disposable {
 	}
 
 	private toggleDevTools(): void {
-		if (this.devtoolsOpen) {
-			this.callGuest(() => this.webview?.closeDevTools?.());
+		if (this.devtoolsOpen || this.devtoolsPane) {
+			this.closeDevTools();
 		} else {
 			this.openDevTools();
 		}
 	}
 
-	private openDevTools(): void {
-		if (!this.webview || !this.guestReady) {
+	/**
+	 * DevTools docked in the tab, under the page (Electron gives a `<webview>`'s DevTools a window of
+	 * their own otherwise). `inspectAt` is a spot in the page to select in Elements once they are up.
+	 */
+	private openDevTools(inspectAt?: { readonly x: number; readonly y: number }): void {
+		const page = this.webview;
+		if (!page || !this.guestReady) {
 			this.showToast(localize('voltBrowser.devtoolsNoPage', "Open a page to inspect it"));
 			return;
 		}
-		this.callGuest(() => this.webview?.openDevTools?.());
+		const service = this.browserService();
+		const pageId = this.pageContentsId();
+		// The page's own inspectElement would open Electron's DevTools window: the docked ones select the node.
+		const inspect = () => {
+			const id = this.pageContentsId();
+			if (inspectAt && service && id !== undefined) {
+				void service.inspectInDevTools(id, inspectAt.x, inspectAt.y);
+			}
+		};
+		// The web build's page is an iframe: there is nothing to dock.
+		if (isWeb || !service || pageId === undefined) {
+			this.callGuest(() => inspectAt ? this.webview?.inspectElement?.(inspectAt.x, inspectAt.y) : this.webview?.openDevTools?.());
+			return;
+		}
+		if (this.devtoolsPane) {
+			inspect();
+			return;
+		}
+		const store = this.devtoolsStore;
+		store.clear();
+		const pane = $('.volt-browser-devtools');
+		pane.style.height = `${this.devtoolsHeight()}px`;
+		const sash = append(pane, $('.volt-browser-devtools-sash'));
+		sash.setAttribute('role', 'separator');
+		sash.setAttribute('aria-orientation', 'horizontal');
+		sash.setAttribute('aria-label', localize('voltBrowser.devtoolsResize', "Resize Developer Tools"));
+		const host = this.container.ownerDocument.createElement('webview') as IVoltWebview;
+		host.className = 'volt-browser-devtools-frame';
+		// The same partition as the page: the main process only docks in-app browser views.
+		host.setAttribute('partition', VOLT_BROWSER_PARTITION);
+		host.setAttribute('src', 'about:blank');
+		pane.appendChild(host);
+		this.stage.insertAdjacentElement('afterend', pane);
+		this.devtoolsPane = pane;
+		store.add(toDisposable(() => {
+			pane.remove();
+			if (this.devtoolsPane === pane) {
+				this.devtoolsPane = undefined;
+			}
+		}));
+		this.registerDevToolsResize(sash, pane, store);
+		let attached = false;
+		store.add(addDisposableListener(host, 'dom-ready', () => {
+			if (attached) {
+				return;
+			}
+			attached = true;
+			let hostId: number | undefined;
+			try {
+				hostId = host.getWebContentsId?.();
+			} catch {
+				hostId = undefined;
+			}
+			const currentPage = this.pageContentsId();
+			if (hostId === undefined || currentPage === undefined) {
+				store.clear();
+				return;
+			}
+			void service.attachDevTools(currentPage, hostId).then(ok => {
+				if (this.devtoolsPane !== pane) {
+					return;
+				}
+				if (!ok) {
+					// An app started before this change has no docking: the separate window it had.
+					store.clear();
+					this.callGuest(() => this.webview?.openDevTools?.());
+					return;
+				}
+				this.syncDevTools(true);
+				inspect();
+			}, () => store.clear());
+		}));
+		this.layout();
+	}
+
+	private closeDevTools(): void {
+		this.callGuest(() => this.webview?.closeDevTools?.());
+		this.devtoolsStore.clear();
+		this.syncDevTools(false);
+		this.layout();
+	}
+
+	/** DevTools' height in the tab, as the user last dragged it, fitted to the tab. */
+	private devtoolsHeight(): number {
+		const room = this.container.clientHeight || 600;
+		// First time: half the tab, as Chrome docks them (the Elements tree and Styles share it).
+		const stored = this.storageService.getNumber(DEVTOOLS_HEIGHT_STORAGE_KEY, StorageScope.PROFILE, Math.max(DEVTOOLS_DEFAULT_HEIGHT, room * 0.5));
+		return Math.round(Math.max(DEVTOOLS_MIN_HEIGHT, Math.min(stored, room - DEVTOOLS_MIN_PAGE_HEIGHT)));
+	}
+
+	/** The pane's top edge drags its height; both webviews ignore the pointer meanwhile so the drag is not lost. */
+	private registerDevToolsResize(sash: HTMLElement, pane: HTMLElement, store: DisposableStore): void {
+		store.add(addDisposableListener(sash, 'pointerdown', (e: PointerEvent) => {
+			if (e.button !== 0) {
+				return;
+			}
+			e.preventDefault();
+			sash.setPointerCapture(e.pointerId);
+			this.container.classList.add('devtools-resizing');
+			const bottom = this.container.getBoundingClientRect().bottom;
+			const max = this.container.clientHeight - DEVTOOLS_MIN_PAGE_HEIGHT;
+			const move = addDisposableListener(sash, 'pointermove', (event: PointerEvent) => {
+				const height = Math.max(DEVTOOLS_MIN_HEIGHT, Math.min(max, bottom - event.clientY));
+				pane.style.height = `${Math.round(height)}px`;
+			});
+			const end = () => {
+				move.dispose();
+				up.dispose();
+				cancel.dispose();
+				this.container.classList.remove('devtools-resizing');
+				this.storageService.store(DEVTOOLS_HEIGHT_STORAGE_KEY, pane.offsetHeight, StorageScope.PROFILE, StorageTarget.USER);
+				this.layout();
+			};
+			const up = addDisposableListener(sash, 'pointerup', end);
+			const cancel = addDisposableListener(sash, 'pointercancel', end);
+		}));
 	}
 
 	private syncDevTools(open: boolean): void {
+		if (!open && this.devtoolsPane) {
+			// Closed from DevTools itself, or the page restarted under it: the pane goes with them.
+			this.devtoolsStore.clear();
+			this.layout();
+		}
 		this.devtoolsOpen = open;
 		this.devtoolsButton.classList.toggle('active', open);
 		setAgentTooltip(this.devtoolsButton, open ? localize('voltBrowser.devtoolsClose', "Close Developer Tools") : localize('voltBrowser.devtools', "Toggle Developer Tools"));
@@ -2026,7 +2159,7 @@ export class VoltBrowserView extends Disposable {
 			]);
 		}
 		group([
-			toAction({ id: 'volt.browser.inspect', label: localize('voltBrowser.ctx.inspect', "Inspect Element"), run: () => this.callGuest(() => this.webview?.inspectElement?.(pageX, pageY)) }),
+			toAction({ id: 'volt.browser.inspect', label: localize('voltBrowser.ctx.inspect', "Inspect Element"), run: () => this.openDevTools({ x: pageX, y: pageY }) }),
 		]);
 		this.contextMenuService.showContextMenu({ getAnchor: () => anchor, getActions: () => actions });
 	}
@@ -3380,7 +3513,7 @@ export class VoltBrowserView extends Disposable {
 		if (!this.webview || !this.guestReady) {
 			return false;
 		}
-		this.callGuest(() => this.webview?.openDevTools?.());
+		this.openDevTools();
 		return true;
 	}
 

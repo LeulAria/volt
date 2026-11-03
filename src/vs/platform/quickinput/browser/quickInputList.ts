@@ -270,13 +270,17 @@ class QuickPickSeparatorElement extends BaseQuickPickItemElement {
 	}
 }
 
+/** One line in a quick pick (Quick Open, the Command Palette, pickers). */
+export const QUICK_INPUT_ROW_HEIGHT = 26;
+
 class QuickInputItemDelegate implements IListVirtualDelegate<IQuickPickElement> {
 	getHeight(element: IQuickPickElement): number {
 
 		if (element instanceof QuickPickSeparatorElement) {
 			return 30;
 		}
-		return element.saneDetail ? 44 : 22;
+		// Volt: 26px rows like its other lists; a detail line adds 22.
+		return element.saneDetail ? QUICK_INPUT_ROW_HEIGHT + 22 : QUICK_INPUT_ROW_HEIGHT;
 	}
 
 	getTemplateId(element: IQuickPickElement): string {
@@ -1377,7 +1381,7 @@ export class QuickInputList extends Disposable {
 	layout(maxHeight?: number): void {
 		this._tree.getHTMLElement().style.maxHeight = maxHeight ? `${
 			// Make sure height aligns with list item heights
-			Math.floor(maxHeight / 44) * 44
+			Math.floor(maxHeight / QUICK_INPUT_ROW_HEIGHT) * QUICK_INPUT_ROW_HEIGHT
 			// Add some extra height so that it's clear there's more to scroll
 			+ 6
 			}px` : '';

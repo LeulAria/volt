@@ -310,7 +310,7 @@ function unsentDraftChat(
 	instantiation: IInstantiationService,
 	project: IVoltProjectRecord,
 ): string | undefined {
-	const enabled = instantiation.invokeFunction(accessor => accessor.get(IConfigurationService).getValue<boolean>(AGENT_NEW_CHAT_DRAFT_SETTING)) !== false;
+	const enabled = instantiation.invokeFunction(accessor => accessor.get(IConfigurationService).getValue<boolean>(AGENT_NEW_CHAT_DRAFT_SETTING)) === true;
 	if (!enabled) {
 		return undefined;
 	}

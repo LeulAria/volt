@@ -54,6 +54,8 @@ export interface IDeviceShot {
 export interface IDeviceActivity {
 	readonly key: string;
 	readonly by: 'agent' | 'user';
+	/** Set when the device was started or an app launched on it: Volt shows it beside the chat. */
+	readonly action?: 'boot' | 'launch';
 }
 
 /**
@@ -535,15 +537,17 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 			case 'device_boot': {
 				const target = await this.resolve(args, call);
 				if (target.device.state === 'booted') {
+					this._onDidAct.fire({ key: this.keyOf(target), by: 'agent', action: 'boot' });
 					return this.withShot(target, [`### ${this.label(target)} is already booted`], args);
 				}
 				const state = await this.devices.boot(target.host, target.device, AGENT_BOOT_MS);
 				this.changed();
 				const booted = { ...target, device: { ...target.device, state } };
+				// Still booting: Volt shows it beside the chat now, its screen comes up there.
+				this._onDidAct.fire({ key: this.keyOf(target), by: 'agent', action: 'boot' });
 				if (state !== 'booted') {
 					return { text: `### Booting ${this.label(target)}\n- Still booting after ${AGENT_BOOT_MS / 1000}s. Call device_screenshot in a few seconds.` };
 				}
-				this._onDidAct.fire({ key: this.keyOf(target), by: 'agent' });
 				return this.withShot(booted, [`### Booted ${this.label(target)}`], args);
 			}
 			case 'device_shutdown': {
@@ -653,7 +657,7 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 					return { error: 'device_launch_app needs `app`.' };
 				}
 				await this.devices.launchApp(target.host, target.device, app);
-				this._onDidAct.fire({ key: this.keyOf(target), by: 'agent' });
+				this._onDidAct.fire({ key: this.keyOf(target), by: 'agent', action: 'launch' });
 				return this.withShot(target, [`### Launched ${app} on ${this.label(target)}`], { ...args, screenshot: args.screenshot ?? true });
 			}
 			case 'device_set_posture': {

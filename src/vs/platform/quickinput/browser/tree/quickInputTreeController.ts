@@ -12,7 +12,7 @@ import { Disposable } from '../../../../base/common/lifecycle.js';
 import { IInstantiationService } from '../../../instantiation/common/instantiation.js';
 import { WorkbenchObjectTree } from '../../../list/browser/listService.js';
 import { IQuickTreeCheckboxEvent, IQuickTreeItem, IQuickTreeItemButtonEvent, QuickPickFocus } from '../../common/quickInput.js';
-import { QuickInputTreeDelegate } from './quickInputDelegate.js';
+import { QUICK_INPUT_TREE_ROW_HEIGHT, QuickInputTreeDelegate } from './quickInputDelegate.js';
 import { getParentNodeState, IQuickTreeFilterData } from './quickInputTree.js';
 import { QuickTreeAccessibilityProvider } from './quickInputTreeAccessibilityProvider.js';
 import { QuickInputTreeFilter } from './quickInputTreeFilter.js';
@@ -162,7 +162,7 @@ export class QuickInputTreeController extends Disposable {
 	layout(maxHeight?: number): void {
 		this._tree.getHTMLElement().style.maxHeight = maxHeight ? `${
 			// Make sure height aligns with list item heights
-			Math.floor(maxHeight / 44) * 44
+			Math.floor(maxHeight / QUICK_INPUT_TREE_ROW_HEIGHT) * QUICK_INPUT_TREE_ROW_HEIGHT
 			// Add some extra height so that it's clear there's more to scroll
 			+ 6
 			}px` : '';

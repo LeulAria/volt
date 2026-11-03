@@ -49,8 +49,9 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 		},
 		[AGENT_NEW_CHAT_DRAFT_SETTING]: {
 			type: 'boolean',
-			default: true,
-			description: localize('voltAgent.restoreUnsentDraft', "When a new chat was left with text that was never sent, New Agent opens that chat again with the text still in the composer."),
+			// Off: every New Agent is a fresh chat, so any number of drafts can stay open side by side.
+			default: false,
+			description: localize('voltAgent.restoreUnsentDraft', "When a new chat was left with text that was never sent, New Agent opens that chat again with the text still in the composer. Off: New Agent always starts a fresh chat, and every draft stays in the sidebar."),
 		},
 		[AGENT_LARGE_PASTE_SETTING]: {
 			type: 'number',

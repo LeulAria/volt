@@ -10,7 +10,7 @@ import { DisposableStore, toDisposable } from '../../../base/common/lifecycle.js
 import { Command } from '../../../editor/common/languages.js';
 import { IAccessibilityInformation } from '../../../platform/accessibility/common/accessibility.js';
 import { IMarkdownString } from '../../../base/common/htmlContent.js';
-import { IExtensionStatusBarItemService, StatusBarUpdateKind } from './statusBarExtensionPoint.js';
+import { IExtensionStatusBarItemService, StatusBarUpdateKind } from '../../services/statusbar/browser/extensionStatusBarItems.js';
 import { IStatusbarEntry, StatusbarAlignment } from '../../services/statusbar/browser/statusbar.js';
 import { IManagedHoverTooltipMarkdownString } from '../../../base/browser/ui/hover/hover.js';
 import { CancellationToken } from '../../../base/common/cancellation.js';
