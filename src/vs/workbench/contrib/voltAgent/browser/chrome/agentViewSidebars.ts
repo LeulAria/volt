@@ -46,6 +46,7 @@ import { ISCMRepository, ISCMService } from '../../../scm/common/scm.js';
 import { isEqual } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { IVoltFeatureService } from '../../../voltCustomize/common/voltFeatures.js';
 import { OPEN_CANVAS_COMMAND_ID } from '../visuals/canvas/canvasCard.js';
 import { IVoltCanvasService } from '../visuals/canvas/canvasService.js';
 import { boardDisplayTitle } from '../../common/scratchBoard/scratchIndex.js';
@@ -208,6 +209,8 @@ class AgentViewSidebarsContribution extends Disposable {
 	private readonly sections = new Map<DockSectionId, HTMLElement>();
 	/** The collapsed rail's buttons for the sections it has one for (Automations, Usage), by id. */
 	private readonly sectionRails = new Map<DockSectionId, HTMLElement>();
+	/** Each quick action's row and rail button, by action id; a disabled feature hides its own. */
+	private readonly actionButtons: [string, HTMLElement][] = [];
 	private readonly automations: AgentDockAutomations;
 	private readonly usage: AgentDockUsage;
 	private readonly tabsSection: HTMLElement;
@@ -304,6 +307,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		@ISCMService private readonly scmService: ISCMService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IAgentResourcesService private readonly agentResources: IAgentResourcesService,
+		@IVoltFeatureService private readonly features: IVoltFeatureService,
 	) {
 		super();
 		const root = layoutService.mainContainer;
@@ -379,7 +383,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.tuneButton.setAttribute('aria-label', tuneLabel);
 		this.tuneButton.setAttribute('aria-haspopup', 'menu');
 		setAgentTooltip(this.tuneButton, tuneLabel);
-		this.sectionPrefs = this._register(new DockSectionPrefs(storageService));
+		this.sectionPrefs = this._register(new DockSectionPrefs(storageService, this.features));
 		const contextViewService = instantiationService.invokeFunction(accessor => accessor.get(IContextViewService));
 		this._register(addDisposableListener(this.tuneButton, 'click', () => {
 			// The menu sits outside the toolbar: both buttons stay while it is open.
@@ -678,6 +682,7 @@ class AgentViewSidebarsContribution extends Disposable {
 	private createActionRow(parent: HTMLElement, action: IDockAction): HTMLElement {
 		const row = append(parent, $('button.volt-agent-dock-row')) as HTMLButtonElement;
 		row.type = 'button';
+		this.actionButtons.push([action.id, row]);
 		this.appendActionIcon(row, action);
 		const label = append(row, $('span.volt-agent-dock-row-label'));
 		label.textContent = action.label;
@@ -771,6 +776,7 @@ class AgentViewSidebarsContribution extends Disposable {
 	private createRailButton(parent: HTMLElement, action: IDockAction): void {
 		const button = append(parent, $('button.volt-agent-rail-btn')) as HTMLButtonElement;
 		button.type = 'button';
+		this.actionButtons.push([action.id, button]);
 		button.setAttribute('aria-label', action.label);
 		const label = append(button, $('span.volt-agent-dock-label'));
 		label.textContent = action.label;
@@ -1272,10 +1278,16 @@ class AgentViewSidebarsContribution extends Disposable {
 		void group?.closeEditor(editor);
 	}
 
-	/** Hides the sections the user unticked in the tune menu; Automations and Usage only read while shown. */
+	/**
+	 * Hides the sections the user unticked in the tune menu, and the sections and quick actions of
+	 * disabled features; Automations and Usage only read while shown.
+	 */
 	private applySectionPrefs(): void {
 		for (const [id, element] of [...this.sections, ...this.sectionRails]) {
 			element.classList.toggle('volt-agent-dock-user-hidden', !this.sectionPrefs.isShown(id));
+		}
+		for (const [id, element] of this.actionButtons) {
+			element.classList.toggle('volt-agent-dock-user-hidden', !this.features.isOn('dock', id));
 		}
 		this.automations.setShown(this.sectionPrefs.isShown('automations'));
 		this.usage.setShown(this.sectionPrefs.isShown('usage'));

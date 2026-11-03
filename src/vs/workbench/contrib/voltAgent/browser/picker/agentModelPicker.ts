@@ -26,6 +26,7 @@ import type { IVoltCatalogItem } from '../../../../services/voltRuntime/common/p
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { createBrandIcon, providerFamily, providerFamilyLabel } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
+import { IVoltFeatureService } from '../../../voltCustomize/common/voltFeatures.js';
 import { createHomeSearchIcon } from '../home/agentHomeIcons.js';
 import { setAgentTooltip, type IAgentTooltipRow } from '../chrome/agentTooltip.js';
 import { createAutoSparkIcon, IModelPickerRow, ModelPickerListDelegate, ModelPickerListRenderer, pickerListHeight } from './agentModelPickerList.js';
@@ -174,6 +175,7 @@ export class AgentModelPicker extends Disposable {
 		@ICommandService private readonly commandService: ICommandService,
 		@IStorageService private readonly storageService: IStorageService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@IVoltFeatureService private readonly features: IVoltFeatureService,
 	) {
 		super();
 		this.favorites = new Set(parseFavoriteRefs(this.storageService.get(MODEL_FAVORITES_STORAGE_KEY, StorageScope.PROFILE)));
@@ -188,6 +190,10 @@ export class AgentModelPicker extends Disposable {
 			this.host.onDidChange?.();
 		}));
 		this._register(this.runtime.onDidChangeActiveCatalog(() => {
+			this.syncCatalog();
+			this.host.onDidChange?.();
+		}));
+		this._register(this.features.onDidChange(() => {
 			this.syncCatalog();
 			this.host.onDidChange?.();
 		}));
@@ -206,8 +212,10 @@ export class AgentModelPicker extends Disposable {
 		}
 		const profiles = enabledProfileIds(this.runtime.listProfiles());
 		const all = this.runtime.listCatalog();
+		// A provider whose extension is disabled is gone from the picker like a hidden model.
+		const visible = (item: IVoltCatalogItem) => isPickerModelVisible(item, profiles) && this.features.isOn('provider', providerFamily(item.providerId));
 		this.catalog = all
-			.filter(item => isPickerModelVisible(item, profiles))
+			.filter(visible)
 			.map(catalogToOption)
 			.filter(option => option.name.trim().toLowerCase() !== 'auto');
 		const binding = this.host.binding;
@@ -218,7 +226,7 @@ export class AgentModelPicker extends Disposable {
 		}
 		const persisted = this.runtime.getActiveCatalogRef();
 		const persistedItem = persisted ? all.find(item => item.ref === persisted) : undefined;
-		const persistedHidden = !!persistedItem && !isPickerModelVisible(persistedItem, profiles);
+		const persistedHidden = !!persistedItem && !visible(persistedItem);
 		if (persisted && this.catalog.some(item => item.ref === persisted)) {
 			this.currentModel = persisted;
 		}
@@ -907,6 +915,11 @@ export class AgentModelPicker extends Disposable {
 				// a catalog change would only rebuild the tab strip under the pointer.
 				if (!this.host.models) {
 					store.add(this.runtime.onDidChangeCatalog(() => {
+						this.syncCatalog();
+						this.host.onDidChange?.();
+						renderAll();
+					}));
+					store.add(this.features.onDidChange(() => {
 						this.syncCatalog();
 						this.host.onDidChange?.();
 						renderAll();

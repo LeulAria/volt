@@ -1,0 +1,25 @@
+{
+	"name": "remote-devices",
+	"displayName": "Volt: Remote Devices",
+	"description": "Pair phones and browsers with this machine's agent server (Settings > Devices). Disable this extension to turn the feature off.",
+	"version": "0.0.1",
+	"publisher": "volt",
+	"license": "MIT",
+	"engines": {
+		"vscode": "*"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"volt",
+		"feature"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {}
+}

@@ -43,7 +43,11 @@ import { encodeVoltContextDrag, IVoltContextDrag, VOLT_CONTEXT_MIME, voltPartCon
 import { allVoltCustomizeParts, IVoltCustomizePart, VOLT_CUSTOMIZE_PARTS } from '../common/voltCustomizeParts.js';
 import { clampVoltLookValue, IVoltLookToken, VOLT_LOOK_TOKENS, voltLookAlias, voltLookToken } from '../common/voltLookTokens.js';
 import { IVoltSlotService, unplacedVoltSlotItems, VOLT_SLOT_ITEMS, VOLT_SLOTS, VoltSlotId } from '../common/voltSlots.js';
+import { isVoltCapabilityId, VoltCapabilitiesView } from './voltCapabilities.js';
+import { IVoltFeatureService } from '../common/voltFeatures.js';
 import { IVoltCustomizeService } from './voltCustomizeService.js';
+
+type DevtoolsTab = 'layers' | 'variables' | 'capabilities';
 
 export const VOLT_DEVTOOLS_EDITOR_ID = 'workbench.editor.voltDevtools';
 const VOLT_DEVTOOLS_INPUT_ID = 'workbench.input.voltDevtools';
@@ -291,7 +295,12 @@ export class VoltDevtoolsEditor extends EditorPane {
 	static pendingReveal: string | undefined;
 	private selected: LayerNode | undefined;
 	private highlighted: Element[] = [];
-	private tab: 'layers' | 'variables' = 'layers';
+	private tab: DevtoolsTab = 'layers';
+	private readonly tabButtons = new Map<DevtoolsTab, HTMLButtonElement>();
+	private indicator!: HTMLElement;
+	private tabsTrailing!: HTMLElement;
+	private readonly indicatorTimer = this._register(new MutableDisposable());
+	private capabilities!: VoltCapabilitiesView;
 	private readonly inspectorStore = this._register(new DisposableStore());
 	private readonly tabsStore = this._register(new DisposableStore());
 	private dimension: Dimension | undefined;
@@ -314,6 +323,7 @@ export class VoltDevtoolsEditor extends EditorPane {
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IVoltFeatureService private readonly features: IVoltFeatureService,
 	) {
 		super(VOLT_DEVTOOLS_EDITOR_ID, group, telemetryService, themeService, storage);
 		this.split = clampSplit(storage.getNumber(SPLIT_STORAGE_KEY, StorageScope.PROFILE, DEFAULT_SPLIT));
@@ -324,6 +334,7 @@ export class VoltDevtoolsEditor extends EditorPane {
 	protected createEditor(parent: HTMLElement): void {
 		this.root = append(parent, $('.volt-devtools'));
 		this.tabs = append(this.root, $('.volt-devtools-tabs'));
+		this.createTabs();
 		this.renderTabs();
 
 		this.layersView = append(this.root, $('.volt-devtools-layers'));
@@ -359,8 +370,11 @@ export class VoltDevtoolsEditor extends EditorPane {
 				openOnSingleClick: false,
 			}));
 
+		this.capabilities = this._register(this.instantiationService.createInstance(VoltCapabilitiesView, this.root, (label: string, value: string) => this.addContextToChat(label, value)));
+
 		this._register(this.customize.onDidChange(() => this.refresh()));
 		this._register(this.slotService.onDidChange(() => this.refresh()));
+		this._register(this.features.onDidChange(() => this.refresh()));
 		this.refresh();
 	}
 
@@ -369,46 +383,80 @@ export class VoltDevtoolsEditor extends EditorPane {
 		this.refresh();
 	}
 
-	private renderTabs(): void {
-		this.tabsStore.clear();
-		clearNode(this.tabs);
+	/** The bar, built once: the buttons and the indicator stay put, so the indicator can slide. */
+	private createTabs(): void {
 		// Inspect element: point at something in the window to select its layer.
-		const pick = this.pickButton = append(this.tabs, $('button.volt-devtools-tab.icon')) as HTMLButtonElement;
+		const pick = this.pickButton = append(this.tabs, $('button.volt-devtools-pick')) as HTMLButtonElement;
 		pick.type = 'button';
 		pick.appendChild(renderIcon(Codicon.inspect));
 		const pickLabel = localize('voltDevtools.inspect', "Inspect an element in the window (Esc to stop)");
 		pick.setAttribute('aria-label', pickLabel);
 		pick.title = pickLabel;
-		pick.classList.toggle('active', this.picking);
-		pick.setAttribute('aria-pressed', String(this.picking));
-		this.tabsStore.add(addDisposableListener(pick, 'click', () => this.togglePicking()));
-		const tab = (id: 'layers' | 'variables', label: string) => {
-			const button = append(this.tabs, $('button.volt-devtools-tab')) as HTMLButtonElement;
+		this._register(addDisposableListener(pick, 'click', () => this.togglePicking()));
+		const list = append(this.tabs, $('.volt-devtools-tablist'));
+		list.setAttribute('role', 'tablist');
+		const tab = (id: DevtoolsTab, label: string) => {
+			const button = append(list, $('button.volt-devtools-tab')) as HTMLButtonElement;
 			button.type = 'button';
 			button.textContent = label;
-			button.classList.toggle('active', this.tab === id);
-			button.setAttribute('aria-pressed', String(this.tab === id));
-			this.tabsStore.add(addDisposableListener(button, 'click', () => {
-				this.tab = id;
-				this.renderTabs();
-				this.syncTab();
-			}));
+			button.setAttribute('role', 'tab');
+			this.tabButtons.set(id, button);
+			this._register(addDisposableListener(button, 'click', () => this.showTab(id)));
 		};
 		tab('layers', localize('voltDevtools.layersTab', "Layers"));
 		tab('variables', localize('voltDevtools.variablesTab', "Variables"));
+		tab('capabilities', localize('voltDevtools.capabilitiesTab', "Capabilities"));
+		this.indicator = append(list, $('.volt-devtools-tab-indicator.instant'));
+		this.tabsTrailing = append(this.tabs, $('.volt-devtools-tabs-trailing'));
+	}
+
+	private showTab(id: DevtoolsTab): void {
+		if (this.tab !== id) {
+			this.tab = id;
+			this.renderTabs();
+			this.syncTab();
+		}
+	}
+
+	private renderTabs(): void {
+		this.pickButton?.classList.toggle('active', this.picking);
+		this.pickButton?.setAttribute('aria-pressed', String(this.picking));
+		for (const [id, button] of this.tabButtons) {
+			button.classList.toggle('active', this.tab === id);
+			button.setAttribute('aria-selected', String(this.tab === id));
+		}
+		this.placeIndicator();
+		this.tabsStore.clear();
+		clearNode(this.tabsTrailing);
 		const playground = this.customize.playground;
 		if (playground?.role === 'develop' && !this.customize.previewElsewhere) {
-			const spacer = append(this.tabs, $('span.spacer'));
-			spacer.setAttribute('aria-hidden', 'true');
-			const popOut = this.tabsStore.add(createVoltButton(this.tabs, 'ghost'));
+			const popOut = this.tabsStore.add(createVoltButton(this.tabsTrailing, 'ghost'));
 			popOut.label = localize('voltDevtools.popOut', "Pop Out Preview");
 			this.tabsStore.add(popOut.onDidClick(() => void this.customize.openPreviewWindow()));
+		}
+	}
+
+	/** Moves the indicator under the active tab; the first time (nothing measured yet) without sliding. */
+	private placeIndicator(): void {
+		const active = this.tabButtons.get(this.tab);
+		if (!active?.offsetWidth) {
+			return;
+		}
+		this.indicator.style.width = `${active.offsetWidth}px`;
+		this.indicator.style.transform = `translateX(${active.offsetLeft}px)`;
+		if (this.indicator.classList.contains('instant')) {
+			// Drop `instant` after this position is drawn, so only later moves slide.
+			this.indicatorTimer.value = disposableTimeout(() => this.indicator.classList.remove('instant'), 50);
 		}
 	}
 
 	private syncTab(): void {
 		this.layersView.classList.toggle('hidden', this.tab !== 'layers');
 		this.variablesView.classList.toggle('hidden', this.tab !== 'variables');
+		this.capabilities.element.classList.toggle('hidden', this.tab !== 'capabilities');
+		if (this.tab === 'capabilities') {
+			this.capabilities.show();
+		}
 		if (this.dimension) {
 			this.layout(this.dimension);
 		}
@@ -447,6 +495,7 @@ export class VoltDevtoolsEditor extends EditorPane {
 
 	private layerElements(): ITreeElement<LayerNode>[] {
 		const placement = this.slotService.placement;
+		const turnedOff = VOLT_SLOT_ITEMS.filter(entry => !this.features.isOn('item', entry.id)).map(entry => entry.id);
 		const item = (itemId: string, slot: VoltSlotId): ITreeElement<LayerNode> => ({ element: { kind: 'item', id: `item:${itemId}`, itemId, slot } });
 		const part = (entry: IVoltCustomizePart): ITreeElement<LayerNode> => ({
 			element: { kind: 'part', id: `part:${entry.id}`, part: entry },
@@ -467,7 +516,9 @@ export class VoltDevtoolsEditor extends EditorPane {
 			{ element: { kind: 'group', id: 'group:window', label: localize('voltDevtools.window', "Agent window"), icon: Codicon.window }, collapsed: false, children: VOLT_CUSTOMIZE_PARTS.map(part) },
 			{ element: { kind: 'group', id: 'group:hidden', label: localize('voltDevtools.hidden', "Hidden buttons"), icon: Codicon.eyeClosed }, collapsed: false, children: placement.hidden.map(itemId => item(itemId, 'hidden')) },
 			// Buttons with no slot of their own (the activity bar's views): pick a slot for one to show it.
-			{ element: { kind: 'group', id: 'group:more', label: localize('voltDevtools.more', "More buttons (not shown)"), icon: Codicon.add }, collapsed: false, children: unplacedVoltSlotItems(placement).map(itemId => item(itemId, 'hidden')) },
+			{ element: { kind: 'group', id: 'group:more', label: localize('voltDevtools.more', "More buttons (not shown)"), icon: Codicon.add }, collapsed: false, children: unplacedVoltSlotItems(placement, itemId => this.features.isOn('item', itemId)).map(itemId => item(itemId, 'hidden')) },
+			// Buttons of features turned off in Capabilities or Extensions: no layout can show them.
+			...(turnedOff.length ? [{ element: { kind: 'group' as const, id: 'group:off', label: localize('voltDevtools.off', "Turned off (their feature is off)"), icon: Codicon.circleSlash }, collapsed: false, children: turnedOff.map(itemId => item(itemId, 'hidden')) }] : []),
 			{
 				element: { kind: 'group', id: 'group:plugins', label: localize('voltDevtools.plugins', "Plugins"), icon: Codicon.extensions }, collapsed: false, children: [
 					{ element: { kind: 'group', id: 'group:volt', label: localize('voltDevtools.core', "Volt"), icon: Codicon.zap }, collapsed: true, children: bySource('volt') },
@@ -485,13 +536,15 @@ export class VoltDevtoolsEditor extends EditorPane {
 	reveal(id: string): boolean {
 		const node = this.nodesById.get(`part:${id}`) ?? this.nodesById.get(`item:${id}`) ?? this.nodesById.get(id);
 		if (!node) {
+			if (isVoltCapabilityId(id)) {
+				this.showTab('capabilities');
+				// Selected once the tree has it (it builds when the tab first shows).
+				this.capabilities.reveal(id);
+				return true;
+			}
 			return false;
 		}
-		if (this.tab !== 'layers') {
-			this.tab = 'layers';
-			this.renderTabs();
-			this.syncTab();
-		}
+		this.showTab('layers');
 		this.selectNode(node);
 		this.highlight(node);
 		this.flash.value = disposableTimeout(() => this.highlight(undefined), 1200);
@@ -549,11 +602,7 @@ export class VoltDevtoolsEditor extends EditorPane {
 				const node = this.nodeAt(e.target) ?? hovered;
 				this.stopPicking();
 				if (node) {
-					if (this.tab !== 'layers') {
-						this.tab = 'layers';
-						this.renderTabs();
-						this.syncTab();
-					}
+					this.showTab('layers');
 					this.selectNode(node);
 				}
 			}, true));
@@ -664,12 +713,15 @@ export class VoltDevtoolsEditor extends EditorPane {
 	/** Adds the layer to the chat on screen as a chip. */
 	private addToChat(node: LayerNode): void {
 		const drag = this.contextFor(node);
-		if (!drag) {
-			return;
+		if (drag) {
+			this.addContextToChat(drag.label, drag.value);
 		}
+	}
+
+	private addContextToChat(label: string, value: string): void {
 		for (const pane of this.editorService.visibleEditorPanes) {
 			const chat = pane as unknown as { addContextMention?(label: string, value: string): boolean };
-			if (typeof chat.addContextMention === 'function' && chat.addContextMention(drag.label, drag.value)) {
+			if (typeof chat.addContextMention === 'function' && chat.addContextMention(label, value)) {
 				return;
 			}
 		}
@@ -797,10 +849,13 @@ export class VoltDevtoolsEditor extends EditorPane {
 				this.tree?.layout(first, dimension.width);
 			}
 			this.sash?.layout();
-		} else {
+		} else if (this.tab === 'variables') {
 			this.variablesView.style.height = `${height}px`;
 			this.variables?.layout(height, dimension.width);
+		} else {
+			this.capabilities?.layout(height, dimension.width);
 		}
+		this.placeIndicator();
 	}
 
 	/** The tree's size along the split, leaving both sides at least MIN_PANE_SIZE. */

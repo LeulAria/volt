@@ -26,6 +26,7 @@ import { CLAUDE_ACCOUNT_SWITCHING_SETTING, CLAUDE_AUTO_SWITCH_THRESHOLD_SETTING,
 import { IVoltUsageLimitWindow } from '../../../../platform/voltUsage/common/voltUsage.js';
 import { CLI_AGENT_DEFINITIONS } from '../../../services/voltRuntime/browser/agents/cliAgents.js';
 import { createBrandIcon } from '../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { providerFamily } from '../../../services/voltRuntime/browser/providers/providerFamily.js';
 import { IModelOptionDescriptor, IModelParamSpec, isSelectableDescriptor, MODEL_GENERATION_PARAMS, MODEL_OPTION_CONTEXT, MODEL_OPTION_FAST, MODEL_OPTION_REASONING, MODEL_OPTION_SERVICE_TIER, MODEL_OPTION_THINKING, MODEL_PARAM_MAX_OUTPUT, MODEL_PARAM_TEMPERATURE, MODEL_PARAM_TOP_P, optionValue, parseModelParam, traitDescriptors } from '../../../services/voltRuntime/common/models/modelOptions.js';
 import { IProviderProfile, IProviderProfileDraft, VoltApiStyle, VoltAuthKind } from '../../../services/voltRuntime/common/profiles.js';
 import { IVoltCatalogItem, IVoltProviderStatus } from '../../../services/voltRuntime/common/providers.js';
@@ -39,6 +40,7 @@ import { IVoltQuery, IVoltQueryCache, IVoltQueryHandle } from '../../../services
 import { createVoltButton, VoltButtonKind } from '../../voltAgent/browser/chrome/voltButton.js';
 import { createVoltDropdown, IVoltDropdownOption } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
 import { createMessageCopyIcon } from '../../voltAgent/browser/blocks/agentCodeBlock.js';
+import { IVoltFeatureService } from '../../voltCustomize/common/voltFeatures.js';
 import './media/providersPage.css';
 
 /** How long a background install may run before it is called failed. */
@@ -276,6 +278,8 @@ export interface IProvidersPageHost {
 	readonly store: DisposableStore;
 	search(): string;
 	rerender(): void;
+	/** Whether this page is the one on screen. */
+	isCurrent(): boolean;
 	/** The next render starts the page at the top (a new provider or model was picked). */
 	scrollToTop(): void;
 	/** Shows the window under the settings overlay, so a terminal the page opened can be used. */
@@ -321,6 +325,8 @@ export class ProvidersPage {
 	private readonly contextViewService: IContextViewService;
 	private readonly configurationService: IConfigurationService;
 	private readonly clipboard: IClipboardService;
+	/** Which provider families and Claude accounts are on (their built-in extensions). */
+	private readonly features: IVoltFeatureService;
 	private readonly setup: AgentSetupService;
 	/** Saved Claude accounts (desktop only). */
 	private readonly accounts: IVoltAccountsService | undefined;
@@ -372,6 +378,7 @@ export class ProvidersPage {
 			configurationService: this.configurationService,
 			clipboard: this.clipboard,
 			cache: this.cache,
+			features: this.features,
 		} = instantiationService.invokeFunction(accessor => ({
 			runtime: accessor.get(IAgentRuntimeService),
 			stdio: accessor.get(IVoltStdioService),
@@ -380,7 +387,14 @@ export class ProvidersPage {
 			configurationService: accessor.get(IConfigurationService),
 			clipboard: accessor.get(IClipboardService),
 			cache: accessor.get(IVoltQueryCache),
+			features: accessor.get(IVoltFeatureService),
 		})));
+		// A provider family or Claude accounts turned on or off adds or takes away their rows.
+		this.setupStore.add(this.features.onDidChange(() => {
+			if (!this.disposed && this.host.isCurrent()) {
+				this.host.rerender();
+			}
+		}));
 		this.setup = instantiationService.createInstance(AgentSetupService);
 		this.accounts = instantiationService.invokeFunction(accessor => {
 			try {
@@ -510,7 +524,7 @@ export class ProvidersPage {
 		const head = append(listPane, $('.volt-settings-side-head'));
 		append(head, $('span.volt-settings-side-title')).textContent = localize('voltSettings.providers', "Providers & Models");
 		this.renderHeadActions(head);
-		const all = this.runtime.listProviderStatuses();
+		const all = this.statuses();
 		this.validateSelection(all);
 		const needle = this.host.search().trim().toLowerCase();
 		const statuses = all.filter(status => !needle
@@ -526,6 +540,11 @@ export class ProvidersPage {
 		this.renderDetail(append(detailPane, $('.volt-pm-detail')), all);
 		this.restoreFocus(listPane);
 		this.restoreFocus(detailPane);
+	}
+
+	/** The providers, without those whose family's feature is off. */
+	private statuses(): IVoltProviderStatus[] {
+		return this.runtime.listProviderStatuses().filter(status => this.features.isOn('provider', providerFamily(status.providerId)));
 	}
 
 	private select(selection: Selection): void {
@@ -586,7 +605,7 @@ export class ProvidersPage {
 		this.trackFocus(filter.inputElement, 'list-filter');
 
 		const scroller = append(pane, $('.volt-pm-scroll'));
-		const attention = this.runtime.listProviderStatuses().filter(status => this.needsAction(status)).length;
+		const attention = this.statuses().filter(status => this.needsAction(status)).length;
 		const agents = this.sorted(statuses.filter(status => status.kind === 'agent'));
 		const apis = this.sorted(statuses.filter(status => status.kind === 'model'));
 		const rowsFor = (value: string): ListRow[] => {
@@ -1149,7 +1168,7 @@ export class ProvidersPage {
 
 		if (status.kind === 'agent') {
 			this.renderAgentConnection(parent, status, setup, profile);
-			if (status.providerId === 'claude-code' && this.accounts && installed) {
+			if (status.providerId === 'claude-code' && this.accounts && installed && this.features.isEnabled('claudeAccounts')) {
 				this.renderClaudeAccounts(parent);
 			}
 		} else if (profile) {
@@ -2160,10 +2179,13 @@ export class ProvidersPage {
 			label: localize('voltSettings.addApiLead', "A model API Volt calls directly. The key stays in the OS keychain."),
 		});
 		const form = append(parent, $('.volt-settings-form'));
-		let provider = API_PROVIDERS[0];
+		// Providers whose family's feature is off are not offered.
+		const on = API_PROVIDERS.filter(item => this.features.isOn('provider', providerFamily(item.id)));
+		const choices = on.length ? on : API_PROVIDERS;
+		let provider = choices[0];
 		const grid = append(form, $('.volt-settings-form-grid'));
 		let onProvider = (_id: string) => { };
-		this.field(grid, localize('voltSettings.provider', "Provider"), host => this.dropdown(host, localize('voltSettings.provider', "Provider"), provider.id, API_PROVIDERS.map(item => ({
+		this.field(grid, localize('voltSettings.provider', "Provider"), host => this.dropdown(host, localize('voltSettings.provider', "Provider"), provider.id, choices.map(item => ({
 			id: item.id,
 			label: item.label,
 			icon: () => createBrandIcon(item.id, 14),
@@ -2173,7 +2195,7 @@ export class ProvidersPage {
 		const baseUrl = this.input(grid, localize('voltSettings.baseUrl', "Base URL"), provider.baseUrl ?? localize('voltSettings.baseUrl.placeholder', "Optional"));
 		const model = this.input(grid, localize('voltSettings.modelIdField', "Model id"), localize('voltSettings.modelId.placeholder', "Optional, e.g. gpt-4.1"));
 		onProvider = id => {
-			provider = API_PROVIDERS.find(item => item.id === id) ?? API_PROVIDERS[0];
+			provider = choices.find(item => item.id === id) ?? choices[0];
 			key.setPlaceHolder(authKind(provider.id) === 'none' ? localize('voltSettings.noKeyNeeded', "Not needed") : provider.keyHint ?? '');
 			baseUrl.setPlaceHolder(provider.baseUrl ?? localize('voltSettings.baseUrl.placeholder', "Optional"));
 		};

@@ -6,6 +6,7 @@
 import { VOLT_BUILTIN_LAYOUTS, VOLT_BUILTIN_LOOKS, VOLT_BUILTIN_SOURCE, VOLT_CUSTOMIZE_LAYOUT_SETTING, VOLT_CUSTOMIZE_LOOK_SETTING, voltCustomizeId, voltCustomizeSlug } from './voltCustomizeModel.js';
 import { VOLT_LOOK_ALIASES, VOLT_LOOK_TOKENS, voltLookCssVariable, voltLookSettingId } from './voltLookTokens.js';
 import { VOLT_SLOT_ITEMS, VOLT_SLOTS, VOLT_VSCODE_ACTIVITY_BAR } from './voltSlots.js';
+import { IVoltFeature, VOLT_FEATURES } from './voltFeatures.js';
 
 /**
  * The customize folder (`~/.volt/customize` on the machine the agent server runs on) and the files
@@ -251,11 +252,39 @@ Package with \`npx @vscode/vsce package\`, publish with \`npx ovsx publish\` (Op
 
 Prefer files over code: a look or layout before an extension, an extension before anything else.
 
+## Features: built-in extensions
+
+Volt's optional features come with it as built-in extensions (publisher \`volt\`). Disabling one in
+Extensions, or **Turn Off** in the Playground devtools' Capabilities tab, takes away everything it
+brings: its buttons, Volt Settings pages, side toolbar sections, "+" menu entries, model providers
+and agent tools. When someone asks to drop a whole feature ("I never use Automations", "no Grok in
+the picker"), tell them which extension to disable; don't hide its pieces one by one with layout
+\`slots\`. Features with no extension are Volt's core and always on.
+
+${featureTable()}
+
+The Capabilities tab lists all of this live, plus everything VS Code registers (views, editors,
+commands, settings, shortcuts, languages, themes) and every extension's contributions. A row
+dragged into the chat arrives as a \`<volt_capability>\` block.
+
 ## Escape hatch
 
 **Volt: Reset Customizations** (Command Palette, or ⌘⌥⇧Escape / Ctrl+Alt+Shift+Escape) switches back to
 \`volt/default\` with no look. Your files stay where they are.
 `;
+}
+
+/** Every optional feature, its extension and what turning it off takes away. */
+function featureTable(): string {
+	const owned = (feature: IVoltFeature) => [
+		feature.items?.length ? `buttons ${feature.items.map(id => `\`${id}\``).join(', ')}` : '',
+		feature.sections?.length ? `Settings ${feature.sections.map(id => `\`${id}\``).join(', ')}` : '',
+		feature.surfaces?.length ? `"+" menu ${feature.surfaces.map(id => `\`${id}\``).join(', ')}` : '',
+		feature.dock?.length ? `side toolbar ${feature.dock.map(id => `\`${id}\``).join(', ')}` : '',
+		feature.providers?.length ? `providers ${feature.providers.map(id => `\`${id}\``).join(', ')}` : '',
+		feature.tools?.length ? `${feature.tools.length} agent tools` : '',
+	].filter(Boolean).join('; ');
+	return table(['Feature', 'Extension', 'Turning it off removes'], VOLT_FEATURES.filter(feature => feature.extensionId).map(feature => [feature.label, `\`${feature.extensionId}\``, owned(feature) || feature.description]));
 }
 
 /** CLAUDE.md beside it: Claude Code reads AGENTS.md through this import. */

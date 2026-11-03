@@ -1015,6 +1015,11 @@ export interface IVoltHostToolService {
 	readonly onDidChangeTools: Event<void>;
 	listTools(): readonly IVoltHostToolInfo[];
 	registerToolProvider(provider: IVoltHostToolProvider): IDisposable;
+	/**
+	 * Tools of the Volt features the user turned off (their built-in extensions are disabled): left
+	 * out of the list agents get and refused if called anyway.
+	 */
+	setDisabledTools(names: Iterable<string>): void;
 	/** The browser half of an ACP agent's turn primer (the app serving and open in the chat's browser, audits). */
 	preflightBrowser(sessionId: string, request: IVoltBrowserPreflightRequest, token: CancellationToken): Promise<IVoltBrowserPreflightResult>;
 	invokeTool(name: string, input?: unknown, call?: IVoltHostToolCall): Promise<IVoltHostToolResult>;

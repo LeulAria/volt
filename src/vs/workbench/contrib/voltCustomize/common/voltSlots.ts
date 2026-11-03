@@ -90,31 +90,37 @@ export function defaultVoltSlotPlacement(): VoltSlotPlacement {
 
 /**
  * Where each item goes: the layout's lists first (unknown ids dropped, each item once, the first
- * mention wins), then every item it doesn't name in its own slot, in Volt's order.
+ * mention wins), then every item it doesn't name in its own slot, in Volt's order. An item whose
+ * feature is turned off (`isOn` says no) goes nowhere, whatever the layout says.
  */
-export function resolveVoltSlotPlacement(slots: Readonly<Record<string, readonly string[]>> | undefined): VoltSlotPlacement {
+export function resolveVoltSlotPlacement(slots: Readonly<Record<string, readonly string[]>> | undefined, isOn: (itemId: string) => boolean = () => true): VoltSlotPlacement {
 	const placement: Record<VoltSlotId, string[]> = { 'sidebar.header': [], 'sidebar.footer': [], 'activityBar.top': [], 'activityBar.bottom': [], hidden: [] };
 	const placed = new Set<string>();
 	for (const slot of VOLT_SLOTS) {
 		for (const id of slots?.[slot.id] ?? []) {
 			if (ITEM_IDS.has(id) && !placed.has(id)) {
-				placement[slot.id].push(id);
 				placed.add(id);
+				if (isOn(id)) {
+					placement[slot.id].push(id);
+				}
 			}
 		}
 	}
 	for (const item of VOLT_SLOT_ITEMS) {
-		if (!placed.has(item.id) && item.defaultSlot) {
+		if (!placed.has(item.id) && item.defaultSlot && isOn(item.id)) {
 			placement[item.defaultSlot].push(item.id);
 		}
 	}
 	return placement;
 }
 
-/** Items in no slot at all: not shown, ready to be placed (the devtools list them as more buttons). */
-export function unplacedVoltSlotItems(placement: VoltSlotPlacement): string[] {
+/**
+ * Items in no slot at all and still on: not shown, ready to be placed (the devtools list them as
+ * more buttons).
+ */
+export function unplacedVoltSlotItems(placement: VoltSlotPlacement, isOn: (itemId: string) => boolean = () => true): string[] {
 	const placed = new Set(VOLT_SLOTS.flatMap(slot => placement[slot.id]));
-	return VOLT_SLOT_ITEMS.filter(item => !placed.has(item.id)).map(item => item.id);
+	return VOLT_SLOT_ITEMS.filter(item => !placed.has(item.id) && isOn(item.id)).map(item => item.id);
 }
 
 export function sameVoltSlotPlacement(a: VoltSlotPlacement, b: VoltSlotPlacement): boolean {

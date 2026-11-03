@@ -21,9 +21,12 @@ export interface IVoltContextDrag {
 /** Opens the devtools on a part: the command a part chip runs when clicked (`id` from its block). */
 export const REVEAL_VOLT_PART_COMMAND_ID = 'volt.devtools.reveal';
 
-/** The part id a chip's block names (`<volt_part id="composer" …>`), if it is one. */
+/**
+ * The part id a chip's block names (`<volt_part id="composer" ...>`, or a capability's
+ * `<volt_capability id="volt/usage" ...>`), if it is one.
+ */
 export function voltPartIdFromContext(value: string | undefined): string | undefined {
-	return value ? /^<volt_part id="([^"]+)"/.exec(value)?.[1] : undefined;
+	return value ? /^<volt_(?:part|capability) id="([^"]+)"/.exec(value)?.[1] : undefined;
 }
 
 export function encodeVoltContextDrag(drag: IVoltContextDrag): string {

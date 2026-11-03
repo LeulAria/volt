@@ -16,6 +16,7 @@ import { createUsageIcon } from '../usage/agentUsageIcons.js';
 import { AgentUsageHoverCard } from '../usage/agentUsageHoverCard.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { OPEN_PULL_REQUESTS_PAGE_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
+import { IVoltFeatureService } from '../../../voltCustomize/common/voltFeatures.js';
 import { createHomeAutomationsIcon, createHomeCustomizeIcon, createHomePullRequestsIcon, createHomeSettingsIcon } from './agentHomeIcons.js';
 
 export type AgentFooterAction = 'settings' | 'usage' | 'pullRequests' | 'automations' | 'customize';
@@ -68,5 +69,27 @@ export function appendAgentFooterActions(footer: HTMLElement, commandService: IC
 		wireAgentFooterAction(button, id, commandService, store, instantiationService);
 		return button;
 	};
-	return { settings: action('settings'), usage: action('usage'), pullRequests: action('pullRequests'), automations: action('automations'), customize: action('customize') };
+	const buttons = { settings: action('settings'), usage: action('usage'), pullRequests: action('pullRequests'), automations: action('automations'), customize: action('customize') };
+	// A button whose feature is turned off (its extension is disabled) stays out of sight.
+	const features = instantiationService?.invokeFunction(accessor => accessor.get(IVoltFeatureService));
+	if (features) {
+		const sync = () => {
+			for (const [id, button] of Object.entries(buttons) as [AgentFooterAction, HTMLButtonElement][]) {
+				// Not `hidden`: the footer's button rule sets display and would win over it.
+				button.style.display = features.isOn('item', AGENT_FOOTER_SLOT_ITEMS[id]) ? '' : 'none';
+			}
+		};
+		sync();
+		store.add(features.onDidChange(sync));
+	}
+	return buttons;
 }
+
+/** The slot item each footer action is (voltSlots.ts). */
+const AGENT_FOOTER_SLOT_ITEMS: Readonly<Record<AgentFooterAction, string>> = {
+	settings: 'volt.settings',
+	usage: 'volt.usage',
+	pullRequests: 'volt.pullRequestsPage',
+	automations: 'volt.automations',
+	customize: 'volt.customize',
+};

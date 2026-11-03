@@ -1,0 +1,25 @@
+{
+	"name": "agent-resources",
+	"displayName": "Volt: Agent Resources",
+	"description": "What each harness loads (instructions, skills, agents, MCP) and in what order, in the files sidebar and its own page. Disable this extension to turn the feature off.",
+	"version": "0.0.1",
+	"publisher": "volt",
+	"license": "MIT",
+	"engines": {
+		"vscode": "*"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"volt",
+		"feature"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {}
+}

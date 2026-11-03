@@ -1,0 +1,26 @@
+{
+	"name": "provider-antigravity",
+	"displayName": "Volt: Antigravity Provider",
+	"description": "Antigravity and Gemini models in the model picker and Providers & Models. Disable this extension to turn the feature off.",
+	"version": "0.0.1",
+	"publisher": "volt",
+	"license": "MIT",
+	"engines": {
+		"vscode": "*"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"volt",
+		"provider",
+		"model"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {}
+}

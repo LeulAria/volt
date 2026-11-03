@@ -1,0 +1,25 @@
+{
+	"name": "customize",
+	"displayName": "Volt: Customize Volt",
+	"description": "Looks, layouts and slots, the Customize Volt page, and the Playground where agents change Volt. Disable this extension to turn the feature off.",
+	"version": "0.0.1",
+	"publisher": "volt",
+	"license": "MIT",
+	"engines": {
+		"vscode": "*"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"volt",
+		"feature"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {}
+}

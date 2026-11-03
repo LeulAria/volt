@@ -45,6 +45,7 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
+import { IVoltFeatureService } from '../../../voltCustomize/common/voltFeatures.js';
 import { AGENT_RESOURCE_FILTER_ICON, AGENT_RESOURCE_GROUPS, agentResourceGroup } from '../../common/agentResources.js';
 import { AgentResourceTree, openAgentResource } from '../resources/agentResourceTree.js';
 import { AgentResourceFilter, IAgentResourcesService } from '../resources/agentResourcesService.js';
@@ -235,6 +236,7 @@ export class AgentFilesSidebar extends Disposable {
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IKeybindingService private readonly keybindingService: IKeybindingService,
+		@IVoltFeatureService private readonly features: IVoltFeatureService,
 	) {
 		super();
 		this.scmRepository = this._register(instantiationService.createInstance(AgentScmRepositoryFocus));
@@ -316,6 +318,8 @@ export class AgentFilesSidebar extends Disposable {
 		this.filterTree = this._register(instantiationService.createInstance(AgentResourceTree, this.filterTreeHost, 'VoltAgentFilesSidebarResources'));
 		this._register(this.filterTree.onDidOpen(({ item, preserveFocus }) => openAgentResource(this.editorService, item, preserveFocus)));
 		this._register(this.resources.onDidChangeFilter(() => this.sync()));
+		// Disabling Agent Resources takes away the filter and lifts one in use.
+		this._register(this.features.onDidChange(() => this.sync()));
 		this._register(this.resources.onDidChange(folder => {
 			if (this.uriIdentityService.extUri.isEqual(folder, this.filterFolder)) {
 				this.renderFilter();
@@ -494,7 +498,7 @@ export class AgentFilesSidebar extends Disposable {
 			this.searchScope.value = searchFolder ? this.searchViewModel.scopeToFolder(searchFolder) : undefined;
 		}
 		// A filter narrows the Explorer to the chat folder's agent resources.
-		const filterFolder = want === 'explorer' && agentLayout && this.resources.filter ? this.resources.folderForSession(this.sessionId!) : undefined;
+		const filterFolder = want === 'explorer' && agentLayout && this.resources.filter && this.features.isEnabled('agentResources') ? this.resources.folderForSession(this.sessionId!) : undefined;
 		if (!this.uriIdentityService.extUri.isEqual(filterFolder, this.filterFolder)) {
 			this.filterFolder = filterFolder;
 			if (filterFolder) {
@@ -730,7 +734,8 @@ export class AgentFilesSidebar extends Disposable {
 					id: 'files',
 					items: [{ id: 'files', label: localize('voltAgent.filesSidebar.allFiles', "All Files"), icon: () => createTabIcon(this.filterButton.ownerDocument, EXPLORER_ICON_SHAPES), checked: !current, data: undefined }],
 				},
-				{
+				// Agent Resources is a feature the user can disable: its groups go with it.
+				...(this.features.isEnabled('agentResources') ? [{
 					id: 'resources',
 					title: localize('voltAgent.filesSidebar.agentResources', "Agent Resources"),
 					items: [
@@ -744,7 +749,7 @@ export class AgentFilesSidebar extends Disposable {
 							data: group.id as AgentResourceFilter,
 						})),
 					],
-				},
+				}] : []),
 			];
 		};
 		const handle = showVoltMenu<AgentResourceFilter | undefined | 'manage'>(this.contextViewService, {
@@ -774,9 +779,10 @@ export class AgentFilesSidebar extends Disposable {
 			button.classList.toggle('active', active);
 			button.setAttribute('aria-pressed', String(active));
 		}
-		// The filter narrows the Explorer only.
-		const filter = this.resources.filter;
-		this.filterButton.style.display = shown === 'explorer' ? '' : 'none';
+		// The filter narrows the Explorer only. With Agent Resources disabled it would hold All Files alone.
+		const resourcesOn = this.features.isEnabled('agentResources');
+		const filter = resourcesOn ? this.resources.filter : undefined;
+		this.filterButton.style.display = shown === 'explorer' && resourcesOn ? '' : 'none';
 		this.filterButton.classList.toggle('filtered', !!filter);
 		const filterLabel = filter
 			? localize('voltAgent.filesSidebar.filterOn', "Filter Files: {0}", filter === 'all' ? localize('voltAgent.filesSidebar.agentResources', "Agent Resources") : agentResourceGroup(filter).label)

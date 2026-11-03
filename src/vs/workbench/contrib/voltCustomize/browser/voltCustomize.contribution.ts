@@ -45,8 +45,12 @@ import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/edit
 import { EditorExtensions, EditorsOrder } from '../../../common/editor.js';
 import { closeAgentToolEditor, openInAgentTools, revealAgentToolEditor, shownAgentToolEditors } from '../../voltAgent/browser/workspace/agentSurfaceHost.js';
 import { REVEAL_VOLT_PART_COMMAND_ID } from '../common/voltCustomizeContext.js';
+import { IVoltFeatureService } from '../common/voltFeatures.js';
+import { VoltFeatureService } from './voltFeatureService.js';
 
 registerSingleton(IVoltSlotService, VoltSlotService, InstantiationType.Delayed);
+// Eager: it sets the `voltFeature.*` context keys and takes turned-off features' tools away at startup.
+registerSingleton(IVoltFeatureService, VoltFeatureService, InstantiationType.Eager);
 registerSingleton(IVoltCustomizeService, VoltCustomizeService, InstantiationType.Eager);
 
 export const CUSTOMIZE_VOLT_SECTION = 'customizeVolt';

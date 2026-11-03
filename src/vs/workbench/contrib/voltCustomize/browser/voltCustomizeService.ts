@@ -40,6 +40,7 @@ import {
 	voltLayoutWindowState, voltLookSchema, VoltSettingScopeLookup, voltTokensReference,
 } from '../common/voltCustomizeModel.js';
 import { IVoltSlotService, resolveVoltSlotPlacement, VoltSlotId } from '../common/voltSlots.js';
+import { IVoltFeatureService } from '../common/voltFeatures.js';
 import { voltLookTargetSetting } from '../common/voltLookTokens.js';
 import { applyEdits, setProperty } from '../../../../base/common/jsonEdit.js';
 import { IHostService } from '../../../services/host/browser/host.js';
@@ -182,6 +183,8 @@ export class VoltCustomizeService extends Disposable implements IVoltCustomizeSe
 	private readonly lastGood = new Map<string, IVoltLook>();
 	private _problems: IVoltCustomizeProblem[] = [];
 	private _playground: IVoltPlaygroundInfo | undefined;
+	/** The `slots` of the layout on screen (the draft's in a Playground). */
+	private shownSlots: Readonly<Record<string, readonly string[]>> | undefined;
 	/** Settings the playground holds at memory level in this window. */
 	private playgroundKeys = new Set<string>();
 	private playgroundPreview: { layout?: IVoltLayout; look?: IVoltLook } = {};
@@ -200,12 +203,14 @@ export class VoltCustomizeService extends Disposable implements IVoltCustomizeSe
 		@ICommandService private readonly commandService: ICommandService,
 		@ILogService private readonly logService: ILogService,
 		@IVoltSlotService private readonly slotService: IVoltSlotService,
+		@IVoltFeatureService private readonly features: IVoltFeatureService,
 		@IHostService private readonly hostService: IHostService,
 		@ILifecycleService private readonly lifecycleService: ILifecycleService,
 	) {
 		super();
 		// What the last window applied, at once: a look from a file must not flash the default first.
 		this.registerDefaults(this.readStoredOverrides());
+		this._register(this.features.onDidChange(() => this.applySlots()));
 
 		looksExtensionPoint.setHandler(extensions => {
 			this.lookContributions = extensions;
@@ -648,13 +653,19 @@ export class VoltCustomizeService extends Disposable implements IVoltCustomizeSe
 		// With the preview in its own window, this one is the devtools platform: plain Volt, no draft.
 		const showsDraft = !!this._playground && !this._previewElsewhere;
 		const shown = showsDraft ? this.playgroundLayout(layout) : layout;
-		this.slotService.setPlacement(resolveVoltSlotPlacement(shown?.slots));
+		this.shownSlots = shown?.slots;
+		this.applySlots();
 		// The devtools window leaves its panels alone while the preview is elsewhere, so the draft's
 		// commands (a terminal tab) don't run again when it switches between plain Volt and the draft.
 		if (!(this._playground && this._previewElsewhere)) {
 			this.applyWindowState(layoutId, shown, selectionChanged);
 		}
 		this._onDidChange.fire();
+	}
+
+	/** The shown layout's slots, less the buttons of features that are turned off. */
+	private applySlots(): void {
+		this.slotService.setPlacement(resolveVoltSlotPlacement(this.shownSlots, itemId => this.features.isOn('item', itemId)));
 	}
 
 	private readStoredOverrides(): Record<string, unknown> {

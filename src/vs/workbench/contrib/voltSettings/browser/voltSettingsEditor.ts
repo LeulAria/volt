@@ -77,6 +77,7 @@ import { AgentFooterAction, appendAgentFooterActions } from '../../voltAgent/bro
 import { AgentCustomizeEditor, AgentCustomizeEditorInput } from '../../voltAgent/browser/customize/agentCustomizeEditor.js';
 import { AutomationsEditor, AutomationsEditorInput } from '../../voltAgent/browser/automations/automationsEditor.js';
 import { createHomeAutomationsIcon } from '../../voltAgent/browser/home/agentHomeIcons.js';
+import { IVoltFeatureService } from '../../voltCustomize/common/voltFeatures.js';
 import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IPreferencesService } from '../../../services/preferences/common/preferences.js';
@@ -235,12 +236,11 @@ export class VoltSettingsEditor extends EditorPane {
 	private inspector: SettingsInspectorPage | undefined;
 	/** A subsection to pick on the next render (an extension, from an `ext:` link). */
 	private pendingGroup: string | undefined;
-	/** Volt's pages as links at the top of Volt's list; one array, so the list can tell nothing changed. */
-	private readonly voltPages: readonly IInspectorPageLink[] = SECTIONS.filter(section => section.group > 0).map(section => ({
-		id: section.id,
-		label: section.label,
-		icon: () => createSettingsIcon(section.id) ?? renderIcon(section.icon),
-	}));
+	/**
+	 * Volt's pages that are on, as links at the top of Volt's list; one array until a feature turns
+	 * on or off, so the list can tell nothing changed.
+	 */
+	private voltPages: readonly IInspectorPageLink[];
 	/** Appearance's color themes; kept across renders so arrowing through them keeps focus. */
 	private themeList: SettingsThemeList | undefined;
 	private body!: HTMLElement;
@@ -270,8 +270,25 @@ export class VoltSettingsEditor extends EditorPane {
 		@IWorkbenchThemeService private readonly workbenchThemeService: IWorkbenchThemeService,
 		@IPreferencesService private readonly preferencesService: IPreferencesService,
 		@ILogService private readonly logService: ILogService,
+		@IVoltFeatureService private readonly features: IVoltFeatureService,
 	) {
 		super(VoltSettingsEditor.ID, group, telemetryService, themeService, storageService);
+		this.voltPages = this.voltPageLinks();
+		// A feature turned on or off adds or takes away its pages; a page on screen that went away
+		// gives way to General.
+		this._register(this.features.onDidChange(() => {
+			this.voltPages = this.voltPageLinks();
+			if (!this.container) {
+				return;
+			}
+			this.renderNav();
+			if (!this.features.isOn('section', this.section)) {
+				this.setSection('general');
+			} else if (isVoltPage(this.section)) {
+				// Volt's list beside the page links the pages that are on.
+				this.renderContent();
+			}
+		}));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (this.section === 'composer' && COMPOSER_PAGE_SETTINGS.some(key => e.affectsConfiguration(key))) {
 				this.renderContent();
@@ -405,6 +422,7 @@ export class VoltSettingsEditor extends EditorPane {
 			store: this.renderStore,
 			search: () => this.search,
 			rerender: () => this.renderContent(),
+			isCurrent: () => this.section === 'providers',
 			scrollToTop: () => { this.renderedSection = undefined; },
 			revealWorkbench: () => this.close(),
 			switch: (parent, on, label, onClick) => this.switch(parent, on, label, onClick),
@@ -439,6 +457,14 @@ export class VoltSettingsEditor extends EditorPane {
 		}));
 		this.syncCrumb();
 		this.renderContent();
+	}
+
+	private voltPageLinks(): readonly IInspectorPageLink[] {
+		return SECTIONS.filter(section => section.group > 0 && this.features.isOn('section', section.id)).map(section => ({
+			id: section.id,
+			label: section.label,
+			icon: () => createSettingsIcon(section.id) ?? renderIcon(section.icon),
+		}));
 	}
 
 	private close(): void {
@@ -522,7 +548,8 @@ export class VoltSettingsEditor extends EditorPane {
 		const needle = this.search.trim().toLowerCase();
 		const words = searchWords(this.search);
 		const page = (section: typeof SECTIONS[number]): ISettingsNavNode => ({ id: section.id, label: section.label, icon: () => createSettingsIcon(section.id) ?? renderIcon(section.icon) });
-		const pageShown = (node: ISettingsNavNode) => !needle || node.label.toLowerCase().includes(needle);
+		// A page whose feature is off is left out.
+		const pageShown = (node: ISettingsNavNode) => this.features.isOn('section', node.id) && (!needle || node.label.toLowerCase().includes(needle));
 		const categoryNode = (category: ISettingsCatalogCategory, pageMatch = false): ISettingsNavNode | undefined => {
 			const matches = needle ? category.settings.filter(entry => settingMatches(entry, words)).length : 0;
 			const shown = !needle || matches > 0 || category.label.toLowerCase().includes(needle) || pageMatch;
@@ -587,11 +614,14 @@ export class VoltSettingsEditor extends EditorPane {
 		// `devices:add` (or `devices:add:cloudflare`) opens Devices with Add Device on top.
 		const add = /^devices:add(?::(lan|tailscale|cloudflare|ssh))?$/.exec(section);
 		if (add) {
-			this.devices.requestAddDevice(add[1] as VoltConnectionKind | undefined);
 			section = 'devices';
-			if (this.section === 'devices') {
-				this.renderContent();
-				return;
+			// With Devices off, setSection opens General instead.
+			if (this.features.isOn('section', 'devices')) {
+				this.devices.requestAddDevice(add[1] as VoltConnectionKind | undefined);
+				if (this.section === 'devices') {
+					this.renderContent();
+					return;
+				}
 			}
 		}
 		const id = SECTION_ALIASES[section] ?? section;
@@ -631,6 +661,10 @@ export class VoltSettingsEditor extends EditorPane {
 	}
 
 	private setSection(section: SettingsSection): void {
+		// A page whose feature is off (a link, a footer button, a command) opens General instead.
+		if (!this.features.isOn('section', section)) {
+			section = 'general';
+		}
 		// Volt's list holds only its pages, so Volt opens on the first of them.
 		if (section === 'cat:volt') {
 			section = SECTIONS.find(entry => entry.group > 0)?.id ?? section;

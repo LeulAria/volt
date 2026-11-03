@@ -25,8 +25,8 @@
 .volt-devtools-tabs {
 	display: flex;
 	align-items: center;
-	gap: 2px;
-	height: 32px;
+	gap: 4px;
+	height: 34px;
 	padding: 0 8px;
 	border-bottom: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.2));
 	flex-shrink: 0;
@@ -41,15 +41,23 @@
 	flex-shrink: 0;
 }
 
+/* Tabs like Material's: plain text, the active one underlined by an indicator that slides between them. */
+.volt-devtools-tablist {
+	position: relative;
+	display: flex;
+	align-self: stretch;
+}
+
 .volt-devtools-tab {
-	height: 24px;
+	height: 100%;
 	padding: 0 10px;
 	border: 0;
-	border-radius: 6px;
+	border-radius: 0;
 	background: transparent;
 	color: var(--vscode-descriptionForeground);
 	font: inherit;
 	cursor: pointer;
+	transition: color 150ms ease;
 }
 
 .volt-devtools-tab:hover {
@@ -57,8 +65,39 @@
 }
 
 .volt-devtools-tab.active {
-	background: var(--vscode-toolbar-activeBackground, rgba(127, 127, 127, 0.18));
-	color: var(--vscode-foreground);
+	color: var(--vscode-panelTitle-activeForeground, var(--vscode-foreground));
+}
+
+.volt-devtools-tab:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+/* Sits on the bar's bottom line. Foreground, not an accent: gray in Volt's themes. */
+.volt-devtools-tab-indicator {
+	position: absolute;
+	left: 0;
+	bottom: -1px;
+	width: 0;
+	height: 2px;
+	background: var(--vscode-foreground);
+	pointer-events: none;
+	transition: transform 250ms cubic-bezier(0.4, 0, 0.2, 1), width 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.volt-devtools-tab-indicator.instant {
+	transition: none;
+}
+
+.volt-devtools-tabs-trailing {
+	display: flex;
+	align-items: center;
+	margin-left: auto;
+	padding-left: 8px;
+}
+
+.volt-devtools-tabs-trailing:empty {
+	display: none;
 }
 
 /* Relative: the sash between the layers and the inspector is placed inside it. */
@@ -342,15 +381,84 @@
 }
 
 /* Inspect element: the icon button left of the tabs, and a crosshair over the window while picking. */
-.volt-devtools-tab.icon {
+.volt-devtools-pick {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 26px;
+	width: 24px;
+	height: 24px;
 	padding: 0;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+}
+
+.volt-devtools-pick:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-foreground);
+}
+
+.volt-devtools-pick.active {
+	background: var(--vscode-toolbar-activeBackground, rgba(127, 127, 127, 0.18));
+	color: var(--vscode-foreground);
 }
 
 .monaco-workbench.volt-devtools-picking,
 .monaco-workbench.volt-devtools-picking * {
 	cursor: crosshair !important;
+}
+
+/* Capabilities: a filter over a tree and its inspector, split like Layers. */
+.volt-capabilities {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.volt-capabilities-filter {
+	flex: none;
+	height: 36px;
+	box-sizing: border-box;
+	padding: 5px 8px;
+	border-bottom: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.2));
+}
+
+.volt-capabilities-body {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.volt-capabilities-body.side {
+	flex-direction: row;
+}
+
+.volt-capabilities-body.side .volt-devtools-tree {
+	flex: none;
+	border-right: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.2));
+}
+
+.volt-capabilities-body:not(.side) .volt-devtools-tree {
+	border-bottom: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.2));
+}
+
+.volt-capability .badge {
+	flex: none;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-capability.off .label,
+.volt-capability.off .icon {
+	opacity: 0.5;
+}
+
+.volt-capabilities-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin: 2px 0 10px;
 }
