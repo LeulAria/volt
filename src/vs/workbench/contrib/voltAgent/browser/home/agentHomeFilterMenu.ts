@@ -299,6 +299,14 @@ function renderFlyout(
 				onClick: () => setView({ ...view, chatOrder: 'status' }),
 				store,
 			});
+			// Dragging a chat to another place in its group switches to this.
+			appendCheckRow(flyout, {
+				label: localize('voltAgent.home.filter.manual', "Manual"),
+				icon: Codicon.arrowBoth,
+				checked: view.chatOrder === 'manual',
+				onClick: () => setView({ ...view, chatOrder: 'manual' }),
+				store,
+			});
 			// Updated, Status and Environment have fixed headers; only project rows can be reordered.
 			if (isFlatGrouping(view.grouping)) {
 				return;

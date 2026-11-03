@@ -52,6 +52,8 @@ import { IVoltSessionContextService } from '../../../../services/voltRuntime/com
 import { AGENT_BRANCH_PREFIX_SETTING, AGENT_PR_ATTRIBUTION_SETTING, readBranchPrefix, withPullRequestAttribution } from '../../common/agentGitSettings.js';
 import {
 	addLink,
+	branchNamesFrom,
+	buildBranchNamePrompt,
 	buildPullRequestTextPrompt,
 	buildCommitMessagePrompt,
 	buildWatchMessage,
@@ -147,6 +149,10 @@ export interface IAgentPullRequestService {
 	restack(folder: string, branch: string | undefined, syncTrunk: boolean): Promise<IVoltPrRestackOutcome>;
 	/** A message for committing everything, or exactly `paths`; with `previous`, a different one than that. */
 	generateCommitMessage(folder: string, sessionId?: string, paths?: readonly string[], previous?: string): Promise<string | undefined>;
+	/** Names for the branch checked out at `folder`, from its chat, commits and changes; none when no model answers. */
+	suggestBranchNames(folder: string, sessionId?: string): Promise<string[]>;
+	/** Renames the branch checked out at `folder`; chats working in that checkout follow the new name. */
+	renameBranch(folder: string, name: string): Promise<{ readonly previous: string; readonly branch: string }>;
 	/** The merge method last picked for a repository. */
 	lastMergeMethod(repo: IVoltPrRepoRef): VoltPrMergeMethod | undefined;
 	rememberMergeMethod(repo: IVoltPrRepoRef, method: VoltPrMergeMethod): void;
@@ -1404,6 +1410,42 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		}
 		const raw = await this.runtime.generateText(buildCommitMessagePrompt(summary.branch, summary.files, summary.patch, summary.recentSubjects, previous), { sessionId, slot: 'git' });
 		return commitMessageFrom(raw);
+	}
+
+	async suggestBranchNames(folder: string, sessionId?: string): Promise<string[]> {
+		const status = await this.api.gitStatus(folder);
+		if (!status?.branch) {
+			return [];
+		}
+		// A worktree's own commits (against the trunk it came from) and what is not committed yet.
+		const [changes, branch] = await Promise.all([
+			this.api.describeChanges({ folder }).catch(() => undefined),
+			status.defaultBranch && !status.isDefaultBranch ? this.api.describeBranch({ folder, base: status.defaultBranch }).catch(() => undefined) : undefined,
+		]);
+		const meta = sessionId ? this.history.get(sessionId) : undefined;
+		const prompt = buildBranchNamePrompt({
+			current: status.branch,
+			chatTitle: meta?.title.trim() || undefined,
+			firstPrompt: meta?.preview.trim() || undefined,
+			commits: branch?.commits ?? [],
+			files: changes?.files ?? '',
+			patch: changes?.patch ?? '',
+			recentSubjects: changes?.recentSubjects ?? [],
+		});
+		const raw = await this.runtime.generateText(prompt, { sessionId, slot: 'git' });
+		return branchNamesFrom(raw, status.branch);
+	}
+
+	async renameBranch(folder: string, name: string): Promise<{ readonly previous: string; readonly branch: string }> {
+		const renamed = await this.api.renameBranch({ folder, name });
+		const status = await this.api.gitStatus(folder);
+		// Chats working in this checkout follow the branch (the worktree pill, cleanup, forks). Both paths:
+		// git names the root by its real path (/private/tmp), the chat by the one it was given (/tmp).
+		followWorktreeBranch(this.history, this.runtime, folder, renamed.branch);
+		if (status?.root && status.root !== folder) {
+			followWorktreeBranch(this.history, this.runtime, status.root, renamed.branch);
+		}
+		return renamed;
 	}
 
 	//#endregion
