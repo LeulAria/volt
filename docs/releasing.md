@@ -110,6 +110,32 @@ The iOS profiles need the App Group `group.com.voltadk.volt` (Live Activities an
 `com.voltadk.volt` and one for its widget extension `com.voltadk.volt.widgets`, both for the distribution
 certificate's team.
 
+## npm package (`npx volt-run`)
+
+`apps/volt-run` is the npm package that runs Volt in a browser: it opens the profile's agent server, or
+starts it from the installed Volt or a downloaded release archive, and opens the browser workbench (see its
+[README](../apps/volt-run/README.md)). Each package version is a Volt version and carries that release's
+manifest: one runnable archive per platform (dmg on macOS, tar.gz on Linux, zip on Windows) with its SHA-256
+from the GitHub release, so `npx volt-run` starts without reading the feed and only runs a checked download.
+
+After a stable release is published, `volt-stable.yml` calls `volt-npm.yml`, which runs
+`apps/volt-run/scripts/release.mjs`: it reads the release's assets, runs the package's tests, builds the one-file
+bundle with the manifest in it, checks that it runs, packs it and publishes it as `latest` (with provenance).
+A version already on npm is skipped, so the job can run again. Betas and nightlies publish by hand under the
+`beta` and `nightly` tags: `gh workflow run volt-npm.yml -f version=0.0.7-beta.1 -f channel=beta`.
+
+From the repo root:
+
+```sh
+npm --prefix apps/volt-run ci                          # esbuild, once
+npm run volt-run:test
+npm run volt-run:release -- --version 0.0.6            # dry run: build, test, pack, print the staged folder
+npm run volt-run:release -- --version 0.0.6 --publish  # publish (npm login first, or NODE_AUTH_TOKEN)
+```
+
+Publishing needs the `NPM_TOKEN` secret, an npm automation token allowed to publish `volt-run`. Without it the
+job builds and tests the package and warns instead of publishing.
+
 ## Cutting a release
 
 1. Bump `version` in `package.json` and `package-lock.json` (both places at the top of the lock file).
@@ -152,6 +178,7 @@ warning in the run.
 | `IOS_DISTRIBUTION_CERTIFICATE_PASSWORD` | password of that `.p12` |
 | `IOS_PROVISIONING_PROFILE` | base64 of the `.mobileprovision` for `com.voltadk.volt` |
 | `IOS_WIDGETS_PROVISIONING_PROFILE` | base64 of the `.mobileprovision` for `com.voltadk.volt.widgets` |
+| `NPM_TOKEN` | npm automation token that may publish `volt-run` (`volt-npm.yml`) |
 
 A new Android upload key: `keytool -genkeypair -v -keystore upload.jks -alias upload -keyalg RSA -keysize 2048 -validity 10000`
 (keep it safe: Google Play only accepts updates signed with it, unless you ask Google to reset it).

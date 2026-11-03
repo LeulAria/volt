@@ -89,7 +89,7 @@ export function machineLabel(): string {
 	return name.replace(/-/g, ' ').trim() || 'Volt';
 }
 
-function isLoopbackAddress(address: string | undefined): boolean {
+export function isLoopbackAddress(address: string | undefined): boolean {
 	return !!address && (address === '::1' || address.startsWith('127.') || address === '::ffff:127.0.0.1');
 }
 

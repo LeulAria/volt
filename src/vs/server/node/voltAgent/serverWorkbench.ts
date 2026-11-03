@@ -142,7 +142,12 @@ export class ServerWorkbench extends Disposable {
 			return true;
 		}
 		try {
-			await (await this.ensureServer()).handleRequest(req, res);
+			const server = await this.ensureServer();
+			// The device's session cookie let it in. VS Code's own check reads the first `vscode-tkn`
+			// cookie, and cookies ignore the port, so another Volt server on this host (whose page set
+			// one under /code) would lock this one out: it gets this server's token instead.
+			req.headers.cookie = withCookie(req.headers.cookie, CONNECTION_TOKEN_COOKIE, await this.ensureConnectionToken());
+			await server.handleRequest(req, res);
 		} catch (err) {
 			this.logService.error('[volt agent server] the workbench server failed to start', err);
 			if (!res.headersSent) {
@@ -183,7 +188,9 @@ export class ServerWorkbench extends Disposable {
 	private async handleSession(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
 		const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
 		if (req.method === 'DELETE') {
-			res.writeHead(204, { 'Set-Cookie': [`${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`, `${CONNECTION_TOKEN_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0${secure}`] }).end();
+			// The connection token cookies older builds set (the page gets its token from its configuration).
+			const tokenCookies = ['/', WORKBENCH_BASE_PATH].map(path => `${CONNECTION_TOKEN_COOKIE}=; Path=${path}; SameSite=Lax; Max-Age=0${secure}`);
+			res.writeHead(204, { 'Set-Cookie': [`${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`, ...tokenCookies] }).end();
 			return;
 		}
 		if (req.method !== 'POST' || !sameOrigin(req)) {
@@ -200,15 +207,10 @@ export class ServerWorkbench extends Disposable {
 			res.writeHead(404, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'unavailable', message: 'This Volt build does not include the browser workbench.' }));
 			return;
 		}
-		const connectionToken = await this.ensureConnectionToken();
 		res.writeHead(200, {
 			'Content-Type': 'application/json',
 			'Cache-Control': 'no-store',
-			'Set-Cookie': [
-				`${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}${secure}`,
-				// The workbench reads this one itself (it is VS Code's connection token, not the device's).
-				`${CONNECTION_TOKEN_COOKIE}=${connectionToken}; Path=/; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}${secure}`,
-			],
+			'Set-Cookie': `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}${secure}`,
 		}).end(JSON.stringify({ path: `${WORKBENCH_BASE_PATH}/` }));
 		// Warm the server while the browser follows the link.
 		void this.ensureServer().catch(() => undefined);
@@ -365,6 +367,8 @@ export class ServerWorkbench extends Disposable {
 		// The desktop's title (a browser's adds the server's address).
 		defaults['window.title'] ??= '${dirty}${activeEditorShort}${separator}${rootName}${separator}${profileName}${separator}${appName}';
 		return {
+			// VS Code's connection token, given to signed-in pages only (a cookie would clash with other servers on this host).
+			connectionToken: await this.ensureConnectionToken(),
 			configurationDefaults: defaults,
 			// The first frame in the desktop's colors, before the theme loads (no white flash).
 			initialColorTheme: initialColorTheme(settings['workbench.colorTheme']),
@@ -469,6 +473,12 @@ function readCookie(req: http.IncomingMessage, name: string): string | undefined
 		}
 	}
 	return undefined;
+}
+
+/** The cookie header with exactly one `name` cookie, set to `value`. */
+function withCookie(header: string | undefined, name: string, value: string): string {
+	const others = (header ?? '').split(';').map(part => part.trim()).filter(part => part && !part.startsWith(`${name}=`));
+	return [...others, `${name}=${value}`].join('; ');
 }
 
 /** Requests from another site's page (which would carry the cookies) are refused. */
