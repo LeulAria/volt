@@ -97,8 +97,47 @@
 	cursor: pointer;
 }
 
+.volt-auto-save {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	transition: background-color 160ms ease, color 160ms ease;
+}
+
 .volt-auto-save:disabled {
 	cursor: default;
+}
+
+/* Saved: everything is on disk. A check and the word, quieter than Save. */
+.volt-auto-save .codicon {
+	display: none;
+	font-size: 13px;
+}
+
+.volt-auto-save.saved {
+	padding: 0 10px 0 8px;
+	background: color-mix(in srgb, var(--volt-auto-green) 14%, transparent);
+	color: var(--volt-auto-green);
+}
+
+.volt-auto-save.saved .codicon {
+	display: inline-block;
+}
+
+.volt-auto-save.just-saved {
+	animation: volt-auto-saved 600ms ease;
+}
+
+@keyframes volt-auto-saved {
+	0% {
+		transform: scale(0.92);
+	}
+	45% {
+		transform: scale(1.06);
+	}
+	100% {
+		transform: scale(1);
+	}
 }
 
 .volt-auto-save.dirty,
@@ -261,6 +300,11 @@
 	padding-top: 76px;
 }
 
+/* A calendar needs the room: the page widens while one is on. */
+.volt-auto-page.list.wide {
+	max-width: 1180px;
+}
+
 .volt-auto-list-head {
 	display: flex;
 	align-items: flex-start;
@@ -333,6 +377,11 @@
 
 .volt-auto-builtin .state.on {
 	color: var(--volt-auto-green);
+}
+
+/* From Volt sits under the table or calendar. */
+.volt-auto-table + .volt-auto-calendar-slot + .volt-auto-group-label {
+	margin-top: 40px;
 }
 
 /* Tabs. */
@@ -434,7 +483,7 @@
 
 .volt-auto-row {
 	display: grid;
-	grid-template-columns: 30% 30% 16% minmax(0, 1fr) 28px;
+	grid-template-columns: 27% 19% 22% 13% minmax(0, 1fr) 28px;
 	align-items: center;
 	min-height: 42px;
 	border-top: 1px solid var(--volt-auto-hair);
@@ -477,6 +526,10 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.volt-auto-row .cell.next {
+	font-variant-numeric: tabular-nums;
 }
 
 .volt-auto-row .cell.by span.muted {
@@ -567,7 +620,11 @@
 
 /* Templates. */
 .volt-auto-templates {
-	margin-top: 56px;
+	margin-top: 44px;
+}
+
+.volt-auto-group-label.templates {
+	margin: 0 0 10px;
 }
 
 .volt-auto-tabs.categories {
@@ -676,22 +733,24 @@
 	margin-bottom: 4px;
 }
 
-.volt-auto-detail-title {
+/* Scoped twice: `.monaco-workbench input { font-size: 100% }` outranks one class. */
+.volt-automations .volt-auto-detail-title {
 	display: block;
 	width: 100%;
-	margin: 0 0 14px;
+	margin: 0 0 16px;
 	padding: 0;
 	border: none;
 	outline: none !important;
 	background: transparent;
 	color: var(--volt-auto-fg);
 	font: inherit;
-	font-size: 22px;
-	line-height: 30px;
-	font-weight: 500;
+	font-size: 2rem;
+	line-height: 1.25;
+	font-weight: 600;
+	letter-spacing: -0.015em;
 }
 
-.volt-auto-detail-title::placeholder {
+.volt-automations .volt-auto-detail-title::placeholder {
 	color: var(--volt-auto-muted);
 }
 
@@ -973,6 +1032,17 @@ button.volt-auto-list-row.add:hover {
 	color: var(--volt-auto-soft);
 }
 
+.volt-auto-chip-button.subtle {
+	background: transparent;
+	color: var(--volt-auto-soft);
+}
+
+.volt-auto-chip-button.subtle:hover,
+.volt-auto-chip-button.subtle.open {
+	background: var(--volt-auto-fill);
+	color: var(--volt-auto-fg);
+}
+
 .volt-auto-cron {
 	width: 150px;
 	height: 26px;
@@ -1125,12 +1195,37 @@ textarea.volt-auto-input.filters {
 	white-space: nowrap;
 }
 
-/* Agent Instructions. */
-.volt-auto-instructions {
+/* Agent Instructions: the chat composer's box (agentEditor.css .volt-agent-input-box) with a taller text area. */
+.volt-auto-instructions-box.volt-agent-input-box {
 	position: relative;
+	max-width: none;
+	margin: 0;
+	border-color: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	transition: border-color 160ms ease;
+}
+
+.monaco-workbench.vs .volt-auto-instructions-box.volt-agent-input-box,
+.monaco-workbench.hc-light .volt-auto-instructions-box.volt-agent-input-box {
+	--volt-composer-bg: rgba(255, 255, 255, 0.94);
+}
+
+.volt-auto-instructions-box.volt-agent-input-box.focused {
+	border-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+}
+
+.volt-auto-slash-anchor {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: min(600px, 62%);
+	visibility: hidden;
+	pointer-events: none;
 }
 
 .volt-auto-instructions-input {
+	position: relative;
+	z-index: 1;
 	display: block;
 	width: 100%;
 	min-height: 150px;
@@ -1144,46 +1239,22 @@ textarea.volt-auto-input.filters {
 	font: inherit;
 	font-size: 13.5px;
 	line-height: 20px;
-	border-radius: 12px 12px 0 0;
 }
 
 .volt-auto-instructions-input::placeholder {
 	color: color-mix(in srgb, var(--vscode-foreground) 42%, transparent);
 }
 
-.volt-auto-instructions.overflowing .volt-auto-instructions-input {
-	-webkit-mask-image: linear-gradient(to bottom, #000 82%, transparent);
-	mask-image: linear-gradient(to bottom, #000 82%, transparent);
+.volt-auto-instructions-box .volt-agent-toolbar {
+	padding: 4px 12px 12px;
 }
 
-.volt-auto-instructions:focus-within {
-	border-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+.volt-auto-instructions-box .volt-agent-icon-btn {
+	color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
 }
 
-.volt-auto-instructions-footer {
-	display: flex;
-	align-items: center;
-	padding: 6px 12px 12px;
-}
-
-.volt-auto-model-button {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	height: 24px;
-	padding: 0 6px;
-	border: none;
-	border-radius: 6px;
-	background: transparent;
-	color: var(--volt-auto-soft);
-	font-size: 12.5px;
-	cursor: pointer;
-}
-
-.volt-auto-model-button:hover,
-.volt-auto-model-button.open {
-	background: var(--volt-auto-fill);
-	color: var(--volt-auto-fg);
+.volt-auto-instructions-box .volt-agent-icon-btn:hover {
+	color: var(--vscode-foreground);
 }
 
 .volt-auto-model-button .codicon {

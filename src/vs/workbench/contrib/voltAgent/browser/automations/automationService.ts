@@ -22,7 +22,7 @@ import { ILifecycleService } from '../../../../services/lifecycle/common/lifecyc
 import {
 	AUTOMATIONS_STATE_VERSION, AutomationRunToolKind, AutomationToolStatus, automationRunPrompt, describeSchedule, dueSchedules, IAutomation, IAutomationCreateInput, IAutomationDeliveryInput,
 	IAutomationDraft, IAutomationRepository, IAutomationRun, IAutomationService, isActiveRun, MAX_REPOSITORIES_PER_RUN, migrateScheduledTasks, nameFromInstructions,
-	IAutomationsState, isTurnOfRun, mergeAutomations, nextDueAt, parseAutomationsFile, parseDeletedAutomations, parseScheduleText, patchRun, planNextRuns, recordRun, SCHEDULE_LATE_NOTE_MS, withRunTool,
+	IAutomationsState, isTurnOfRun, mergeAutomations, nextDueAt, parseAutomationsFile, parseDeletedAutomations, parseScheduleText, patchRun, planNextRuns, recordRun, scheduleKindOf, SCHEDULE_LATE_NOTE_MS, withRunTool,
 } from '../../../../services/voltRuntime/common/automations/automations.js';
 import { isRetryableFailure, retryAllowed, retryDelay, RUN_START_RETRY } from '../../../../services/voltRuntime/common/jobs/retryPolicy.js';
 import { DeadlineTimer } from '../../../../services/voltRuntime/browser/jobs/deadlineTimer.js';
@@ -35,6 +35,7 @@ import { AUTOMATION_TOOL_NAMES, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostT
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { canonicalProjectRoot, IVoltProjectRecord, IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { IAgentCustomizeService } from '../customize/agentCustomizeService.js';
 import { AgentScratchFolders } from '../workspace/agentScratchProject.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
@@ -140,7 +141,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 		@IRequestService private readonly requestService: IRequestService,
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 		@ILifecycleService lifecycleService: ILifecycleService,
-		@IInstantiationService instantiationService: IInstantiationService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
 	) {
 		super();
 		const root = joinPath(environmentService.userRoamingDataHome, 'voltAutomations');
@@ -773,11 +774,12 @@ export class AutomationService extends Disposable implements IAutomationService 
 			mcpServers: automation.tools.flatMap(tool => tool.kind === 'mcp' && tool.server ? [tool.server] : []),
 			actions: runActions(automation, !!repository || !!automation.threadId),
 		});
+		const skills = await this.slashBlocks(origin.instructions ?? automation.instructions);
 		const modelRef = automation.modelRef ?? (automation.sourceThreadId ? this.orchestrator.getThread(automation.sourceThreadId)?.modelRef : undefined);
 		const host: IAutomationRunHost = { scheduled: { id: automation.id, title: automation.name, runId: run.id, ...(origin.provider !== 'schedule' && origin.provider !== 'manual' ? { webhook: true } : {}) } };
 		await onThread(threadId);
 		const result = await this.orchestrator.submit(threadId, {
-			text,
+			text: skills.length ? [text, ...skills].join('\n\n') : text,
 			display: { text: (origin.instructions ?? automation.instructions).trim() || automation.name },
 			mode: automation.mode ?? 'Agent',
 			...(modelRef ? { modelRef } : {}),
@@ -787,6 +789,33 @@ export class AutomationService extends Disposable implements IAutomationService 
 			throw new Error(result.reason ?? localize('voltAutomations.rejected', "The chat refused the prompt."));
 		}
 		return { threadId, outcome: result.outcome };
+	}
+
+	/**
+	 * Skills and commands named in the instructions (`/code-review`), as the composer sends them: the
+	 * text keeps the name, and each one's instructions follow the prompt. Paths and unknown names stay text.
+	 */
+	private async slashBlocks(instructions: string): Promise<string[]> {
+		const names = [...new Set([...instructions.matchAll(/(?:^|\s)\/([A-Za-z][\w.-]*)/g)].map(match => match[1].toLowerCase()))].slice(0, 8);
+		if (!names.length) {
+			return [];
+		}
+		let customize: IAgentCustomizeService;
+		try {
+			customize = this.instantiationService.invokeFunction(accessor => accessor.get(IAgentCustomizeService));
+		} catch {
+			// No skills service in this window: the names stay plain text.
+			return [];
+		}
+		const blocks: string[] = [];
+		for (const name of names) {
+			const item = await customize.findSlashItem(name).catch(() => undefined);
+			const block = item && item.type !== 'builtin-command' ? await customize.resolveSlashPrompt(item).catch(() => undefined) : undefined;
+			if (block) {
+				blocks.push(block);
+			}
+		}
+		return blocks;
 	}
 
 	private projectFor(repository: IAutomationRepository): IVoltProjectRecord {
@@ -998,7 +1027,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 					return { error: parsed.error ?? 'Bad schedule.' };
 				}
 				const others = (target?.triggers ?? []).filter(trigger => trigger.provider !== 'schedule');
-				patch.triggers = [...others, { id: shortId('tr'), provider: 'schedule', event: parsed.schedule.type === 'interval' ? 'hourly' : parsed.schedule.type, schedule: parsed.schedule }];
+				patch.triggers = [...others, { id: shortId('tr'), provider: 'schedule', event: scheduleKindOf(parsed.schedule), schedule: parsed.schedule }];
 			}
 			if (args.repository === 'none') {
 				patch.repositories = [];
@@ -1266,7 +1295,7 @@ export const AUTOMATION_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: MANAGE_TOOL,
 		title: 'Automations',
 		group: 'tasks',
-		description: 'Volt automations: an agent with instructions that runs on a schedule or on events (GitHub, Slack, Teams, Sentry, Linear, PagerDuty, webhooks), each run in a new chat. action: create | list | update | delete | run_now. create/update take name, instructions, schedule ("daily at 09:00", "weekdays at 18:30", "hourly at :15", "every 2 hours", or cron "0 9 * * 1-5"), repository ("this" for this chat\'s project, or "none"), enabled. Event triggers need a URL set up in the sender: point the user to the Automations page for those.',
+		description: 'Volt automations: an agent with instructions that runs on a schedule or on events (GitHub, Slack, Teams, Sentry, Linear, PagerDuty, webhooks), each run in a new chat. action: create | list | update | delete | run_now. create/update take name, instructions, schedule ("daily at 09:00", "weekdays at 18:30", "hourly at :15", "every 15 minutes", "every 2 hours", or cron "0 9 * * 1-5"), repository ("this" for this chat\'s project, or "none"), enabled. Event triggers need a URL set up in the sender: point the user to the Automations page for those.',
 		inputSchema: {
 			type: 'object',
 			properties: {
