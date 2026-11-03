@@ -282,7 +282,7 @@ Every pull request and every push to `main` runs these on GitHub Actions, with n
 | --- | --- | --- |
 | **CI** | Lint | Hygiene on the changed files, failing only on problems the change adds |
 | | Typecheck | `src/` type check, layer rules, class field order |
-| | Unit Tests (Volt, Node, Electron) | Volt's Bun suites, the Node mocha suites, the Electron suites under a virtual display |
+| | Unit Tests (Volt, Node, Electron) | Volt's Bun suites, the Node mocha suites, the Electron suites under a virtual display. Electron is not part of Check until [the tests that predate CI](https://github.com/LeulAria/volt/issues/75) pass |
 | | Extensions | Built-in extensions compile |
 | | Rust CLI | Clippy and tests for `cli/` |
 | | Docs Site, Mobile App, Relay, Volt Govern | Each app's own type check, tests, build, and Biome for the docs site |
