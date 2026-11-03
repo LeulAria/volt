@@ -18,6 +18,11 @@
 	z-index: 1;
 }
 
+/* Out of sight while a dialog it opened is up (the folder picker); it comes back as it was. */
+.volt-menu-host.set-aside {
+	visibility: hidden;
+}
+
 .volt-menu {
 	display: flex;
 	flex-direction: column;
@@ -396,6 +401,29 @@
 
 .volt-menu-message.error {
 	color: var(--vscode-errorForeground);
+	opacity: 1;
+}
+
+/* A prompt's destination (where a new project goes): the path, then "Change". The pointer
+ * only highlights it; ↓ makes it the row Enter acts on. */
+.volt-menu-list .monaco-list-row:hover .volt-menu-destination {
+	background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)));
+	color: var(--vscode-menu-selectionForeground, var(--vscode-foreground));
+}
+
+.volt-menu-destination .volt-menu-label {
+	direction: rtl;
+	text-align: left;
+}
+
+.volt-menu-destination .volt-menu-keybinding {
+	color: var(--vscode-textLink-foreground);
+	opacity: 0.9;
+}
+
+.volt-menu-list .monaco-list-row:hover .volt-menu-destination .volt-menu-keybinding,
+.volt-menu-list .monaco-list-row.focused .volt-menu-destination .volt-menu-keybinding {
+	color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
 	opacity: 1;
 }
 

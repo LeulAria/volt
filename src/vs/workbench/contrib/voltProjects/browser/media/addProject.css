@@ -251,9 +251,9 @@
 	flex: 1;
 }
 
-/* Lined up with the top rows' folder icons, past the row padding, indent and twistie. */
+/* Lined up with the top rows' icons, past the row padding, indent and twistie. */
 .volt-folder-section {
-	padding: 6px 24px 4px 34px;
+	padding: 6px 24px 4px 40px;
 	color: var(--vscode-descriptionForeground);
 	font-size: 12px;
 	flex-shrink: 0;
@@ -317,10 +317,22 @@
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	height: 32px;
+	height: 28px;
 	padding: 0 20px 0 2px;
 	box-sizing: border-box;
 	cursor: default;
+}
+
+/* The file icon theme's icon (its ::before) and the name, as in the Explorer. */
+.volt-folder-row .monaco-icon-label {
+	flex: 0 1 auto;
+	min-width: 0;
+	line-height: 22px;
+}
+
+/* Files only help recognise a folder; they cannot be picked. */
+.volt-folder-row.file .monaco-icon-label {
+	opacity: 0.5;
 }
 
 .volt-github-list .monaco-list-row.focused .volt-github-row {
@@ -361,23 +373,7 @@
 	background: transparent !important;
 }
 
-.volt-folder-icon {
-	display: inline-flex;
-	width: 16px;
-	justify-content: center;
-	flex-shrink: 0;
-	color: var(--vscode-symbolIcon-folderForeground, var(--vscode-icon-foreground));
-}
-
-.volt-folder-name {
-	flex: 0 1 auto;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.volt-folder-name .highlight,
+.volt-folder-row .monaco-highlighted-label .highlight,
 .volt-github-name .highlight {
 	color: var(--vscode-list-highlightForeground);
 	font-weight: 600;
@@ -415,6 +411,10 @@
 	color: var(--vscode-badge-foreground);
 	background: var(--vscode-badge-background);
 	border-color: transparent;
+}
+
+.volt-folder-badge.hidden {
+	display: none;
 }
 
 .volt-folder-row.message {
