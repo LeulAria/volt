@@ -121,7 +121,8 @@ suite('Volt browser agent: mocks, emulation, playgrounds', () => {
 
 	test('a dev server Volt starts is found by its port, reused, and stopped', async function () {
 		this.timeout(20000);
-		const servers = new DevServers(async () => process.env, () => { });
+		// process.execPath is Electron's binary under the Electron test runner; this makes it run as Node.
+		const servers = new DevServers(async () => ({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }), () => { });
 		try {
 			const script = 'require("http").createServer((q, s) => s.end("ok")).listen(0, function () { console.log("listening on http://localhost:" + this.address().port); })';
 			const started = await servers.start(process.cwd(), `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`, 10000);
