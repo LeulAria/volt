@@ -6,8 +6,8 @@
 // Lint for pull requests: runs the repository's own hygiene (build/hygiene.js: eslint, the CSS
 // variable check, TypeScript formatting, copyright headers, tab indentation, stray unicode) on every
 // changed file, at the base commit and at the head, and fails only on problems the change adds.
-// See ratchet.mjs for why. The same check the pre-commit hook runs, so a green local commit is a
-// green CI lint.
+// See ratchet.mjs for why. The same check, on the same files, as the pre-commit hook, so a green
+// local commit is a green CI lint.
 // Usage: node build/volt/ci/lintDiff.mjs --base <sha> [--head <sha>]
 //        node build/volt/ci/lintDiff.mjs --base origin/main   (your working tree against main)
 // The head files are read from disk, so check out the head commit first when you pass --head.
@@ -71,7 +71,9 @@ function toPosix(p) {
 async function runHygiene(files) {
 	const require = createRequire(path.join(root, 'build', 'hygiene.js'));
 	const { hygiene } = require('./hygiene.js');
+	const { all } = require('./filters.js');
 	const es = require('event-stream');
+	const filter = require('gulp-filter');
 	const VinylFile = require('vinyl');
 	const vinyls = files.map(file => new VinylFile({
 		path: path.join(root, file.path),
@@ -92,7 +94,9 @@ async function runHygiene(files) {
 	process.stderr.write = capture;
 	try {
 		await new Promise((resolve) => {
-			hygiene(es.readArray(vinyls), true)
+			// filter(all) first, exactly as the pre-commit hook does: it leaves out apps with their own
+			// formatter (apps/docs) and other files hygiene does not own.
+			hygiene(es.readArray(vinyls).pipe(filter(all)), true)
 				.on('data', () => { /* drain */ })
 				.on('end', resolve)
 				// hygiene emits a summary error when it found problems; the problems themselves were printed.

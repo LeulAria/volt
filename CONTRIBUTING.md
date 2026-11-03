@@ -197,7 +197,7 @@ npm run valid-layers-check        # layering rules
 npm run test-volt-bun             # Volt's unit tests straight from src/ (needs Bun)
 ```
 
-`lintDiff.mjs` runs the repository's hygiene (eslint, the CSS variable check, formatting, license headers, tab indentation, stray unicode) on the files you changed, at `origin/main` and in your working tree, and reports only the problems your change adds. The full-repo `npm run eslint` and `npm run hygiene` still report problems that predate CI, mostly unexternalized strings in `apps/`; fixing those is welcome, in their own PR.
+`lintDiff.mjs` runs the same hygiene as the pre-commit hook (eslint, the CSS variable check, formatting, license headers, tab indentation, stray unicode) on the files you changed, at `origin/main` and in your working tree, and reports only the problems your change adds. Like the hook, it covers `src/`, `build/`, `extensions/`, `scripts/`, `test/` and top-level files; `apps/docs` has its own Biome check in CI. `npm run eslint` also lints `apps/` with the VS Code rules and reports about 1,700 warnings there that no check enforces.
 
 > The type check is clean as of November 2026, and CI fails on any error. For local packaging only, `VOLT_BUILD_IGNORE_TYPE_ERRORS=1` reports type errors and still builds. Never use it to hide an error you introduced.
 

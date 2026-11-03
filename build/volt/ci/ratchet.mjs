@@ -3,11 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-// A lint ratchet: main has problems that predate CI (eslint reports 35 errors and 1706 warnings,
-// mostly unexternalized strings), so a check that fails on any problem would fail every PR.
-// Instead each changed file is checked twice, at the base commit and at the head, and only
-// problems the change adds fail. A problem is identified by file, message and the trimmed text of
-// its line, not the line number, so code that moves keeps its old problems without failing.
+// A lint ratchet: main has problems that predate CI (a binary file hygiene reads as text, an eslint
+// warning in build/lib, and in apps/docs the Biome findings), so a check that fails on any problem
+// in a touched file would fail PRs for code they did not write. Instead each changed file is
+// checked twice, at the base commit and at the head, and only problems the change adds fail. A
+// problem is identified by file, message and the trimmed text of its line, not the line number, so
+// code that moves keeps its old problems without failing.
 
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
