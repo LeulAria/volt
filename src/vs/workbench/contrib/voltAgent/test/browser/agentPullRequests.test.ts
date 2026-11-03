@@ -12,6 +12,8 @@ import {
 	authorTier,
 	badgeState,
 	blockedReason,
+	branchNamesFrom,
+	buildBranchNamePrompt,
 	buildFixThreadPrompt,
 	buildPrCommentsPrompt,
 	buildWatchMessage,
@@ -38,6 +40,7 @@ import {
 	removeLink,
 	resolveChains,
 	resolveMergeMethod,
+	sanitizeBranchSuggestion,
 	sanitizeCommitSubject,
 	sessionPrFilterTag,
 	shouldSettleForPullRequests,
@@ -497,6 +500,20 @@ suite('Volt agent pull requests', () => {
 		assert.strictEqual(commitMessageFrom('{"subject":"Add PR view.","body":"- tabs\\n- merge"}'), 'Add PR view\n\n- tabs\n- merge');
 		assert.strictEqual(commitMessageFrom('<think>hmm</think>Refactor parser'), 'Refactor parser');
 		assert.strictEqual(commitMessageFrom(''), undefined);
+	});
+
+	test('reads suggested branch names from a model reply and makes them safe for git', () => {
+		assert.deepStrictEqual(
+			branchNamesFrom('```json\n{"names": ["feat/Cart Discounts", "fix/login_redirect", "feat/cart-discounts", "volt/a2ca757b", "chore/a", "refactor/x"]}\n```', 'volt/a2ca757b'),
+			['feat/cart-discounts', 'fix/login-redirect', 'chore/a', 'refactor/x'],
+			'deduped, without the current name, four at most',
+		);
+		assert.deepStrictEqual(branchNamesFrom('Here are some names:\n1. feat/branch-names\n- `fix/rename-flow`\nHope that helps'), ['feat/branch-names', 'fix/rename-flow']);
+		assert.deepStrictEqual(branchNamesFrom(undefined), []);
+		assert.strictEqual(sanitizeBranchSuggestion(' refs/heads/Feat//-odd..name.lock '), 'feat/odd-name');
+		assert.strictEqual(sanitizeBranchSuggestion('ab'), undefined);
+		const prompt = buildBranchNamePrompt({ current: 'volt/a2ca757b', chatTitle: 'Drag to sort chats', commits: ['feat(home): drag chats'], files: 'M\tsrc/a.ts', patch: '+x', recentSubjects: [] });
+		assert.ok(prompt.includes('Current branch: volt/a2ca757b') && prompt.includes('Chat title: Drag to sort chats') && prompt.includes('- feat(home): drag chats'));
 	});
 
 	test('the fix-this prompt quotes the thread as data with its place in the code', () => {
