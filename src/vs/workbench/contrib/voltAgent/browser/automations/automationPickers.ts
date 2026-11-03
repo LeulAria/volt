@@ -8,7 +8,9 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { localize } from '../../../../../nls.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IVoltPullRequestService } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
-import { AutomationToolKind, formatTimeOfDay, IAutomationRepository, weekdayName } from '../../../../services/voltRuntime/common/automations/automations.js';
+import { AutomationToolKind, formatTimeOfDay, gmtOffsetLabel, IAutomationRepository, weekdayName } from '../../../../services/voltRuntime/common/automations/automations.js';
+import { describeCron } from '../../../../services/voltRuntime/common/automations/automationCron.js';
+import { COMMON_TIME_ZONES, isLocalTimeZone, localTimeZone, timeZoneCity, timeZoneList } from '../../../../services/voltRuntime/common/automations/automationTime.js';
 import { AUTOMATION_EVENTS, AUTOMATION_PROVIDERS, AutomationProvider, IAutomationEventNode, providerLabel } from '../../../../services/voltRuntime/common/automations/automationTriggers.js';
 import { IVoltMcpServerStatus } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltMenuHandle, IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
@@ -102,58 +104,92 @@ export function showMinuteMenu(contextView: IContextViewService, anchor: HTMLEle
 	});
 }
 
-/** "Every N minutes" (and a few hours) for an interval trigger, in ms. */
-export const INTERVAL_CHOICES: readonly number[] = [1, 2, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 360, 480, 720].map(minutes => minutes * 60_000);
+const INTERVAL_MINUTES = [1, 2, 3, 5, 10, 15, 20, 30, 45];
+const INTERVAL_HOURS = [1, 2, 3, 6, 12];
 
-export function intervalLabel(everyMs: number): string {
-	const minutes = Math.round(everyMs / 60_000);
-	if (minutes % 60 === 0) {
-		return minutes === 60 ? localize('voltAutomations.oneHour', "hour") : localize('voltAutomations.nHours', "{0} hours", minutes / 60);
+/** "7", "7m", "90 min", "2h", "1.5 hours" → ms; undefined when it is not a whole number of minutes from 1 minute to 7 days. */
+export function parseIntervalInput(text: string): number | undefined {
+	const match = /^(\d+(?:\.\d+)?)\s*(m|mins?|minutes?|h|hrs?|hours?)?$/i.exec(text.trim());
+	if (!match) {
+		return undefined;
 	}
-	return minutes === 1 ? localize('voltAutomations.oneMinute', "minute") : localize('voltAutomations.nMinutes', "{0} minutes", minutes);
+	const minutes = Number(match[1]) * (match[2] && /^h/i.test(match[2]) ? 60 : 1);
+	return Number.isInteger(minutes) && minutes >= 1 && minutes <= 7 * 1440 ? minutes * 60_000 : undefined;
 }
 
+/** Every 1-45 minutes or 1-12 hours, and Custom for any whole number of minutes. */
 export function showIntervalMenu(contextView: IContextViewService, anchor: HTMLElement, current: number, onPick: (everyMs: number) => void): IVoltMenuHandle {
-	const values = new Set<number>(INTERVAL_CHOICES);
-	values.add(current);
-	const item = (everyMs: number): IVoltMenuItem<number> => ({ id: String(everyMs), label: intervalLabel(everyMs), checked: everyMs === current, data: everyMs });
-	const sorted = [...values].sort((a, b) => a - b);
+	const item = (minutes: number, label: string): IVoltMenuItem<number> => ({ id: String(minutes), label, checked: minutes * 60_000 === current, keywords: `${minutes}`, data: minutes * 60_000 });
+	const listed = [...INTERVAL_MINUTES, ...INTERVAL_HOURS.map(hours => hours * 60)].includes(current / 60_000);
 	return showVoltMenu<number>(contextView, {
 		anchor,
 		gap: 4,
-		width: 140,
+		width: 200,
 		className: 'volt-auto-menu volt-auto-time-menu',
-		ariaLabel: localize('voltAutomations.interval', "Interval"),
+		ariaLabel: localize('voltAutomations.interval', "Repeat every"),
+		search: { placeholder: localize('voltAutomations.intervalSearch', "Minutes or hours...") },
 		sections: [
-			{ id: 'minutes', title: localize('voltAutomations.minutes', "Minutes"), items: sorted.filter(value => value < 3_600_000 || value % 3_600_000 !== 0).map(item) },
-			{ id: 'hours', title: localize('voltAutomations.hours', "Hours"), items: sorted.filter(value => value >= 3_600_000 && value % 3_600_000 === 0).map(item) },
+			{ id: 'minutes', title: localize('voltAutomations.minutesTitle', "Minutes"), items: INTERVAL_MINUTES.map(minutes => item(minutes, minutes === 1 ? localize('voltAutomations.oneMinute', "1 minute") : localize('voltAutomations.nMinutes', "{0} minutes", minutes))) },
+			{ id: 'hours', title: localize('voltAutomations.hoursTitle', "Hours"), items: INTERVAL_HOURS.map(hours => item(hours * 60, hours === 1 ? localize('voltAutomations.oneHour', "1 hour") : localize('voltAutomations.nHours', "{0} hours", hours))) },
+			{
+				id: 'custom', items: [{
+					id: 'custom', label: listed ? localize('voltAutomations.customInterval', "Custom") : localize('voltAutomations.customIntervalNow', "Custom ({0} minutes)", Math.round(current / 60_000)),
+					checked: !listed, alwaysShow: true, icon: Codicon.edit, data: current,
+					prompt: {
+						placeholder: localize('voltAutomations.customPlaceholder', "Every how long? 7, 90 min, 2h"),
+						hint: localize('voltAutomations.customHint', "Minutes by default. From 1 minute to 7 days. Enter to set."),
+						validate: value => parseIntervalInput(value) === undefined ? localize('voltAutomations.customInvalid', "A whole number of minutes (1 to 10080), or hours like 2h.") : undefined,
+						onSubmit: async value => onPick(parseIntervalInput(value)!),
+					},
+				}],
+			},
 		],
 		onPick: picked => onPick(picked.data),
 	});
 }
 
-/** Common cron expressions, for the Custom (cron) row. */
-const CRON_PRESETS: readonly { readonly expr: string; readonly label: string }[] = [
-	{ expr: '*/5 * * * *', label: localize('voltAutomations.cronEvery5', "Every 5 minutes") },
-	{ expr: '*/15 * * * *', label: localize('voltAutomations.cronEvery15', "Every 15 minutes") },
-	{ expr: '*/30 9-18 * * 1-5', label: localize('voltAutomations.cronWorkHours', "Every 30 minutes, 9:00 to 18:59 on weekdays") },
-	{ expr: '0 */2 * * *', label: localize('voltAutomations.cronEvery2h', "Every 2 hours") },
-	{ expr: '0 9 * * 1-5', label: localize('voltAutomations.cronWeekdays9', "Weekdays at 09:00") },
-	{ expr: '0 9,17 * * 1-5', label: localize('voltAutomations.cronTwiceDaily', "Weekdays at 09:00 and 17:00") },
-	{ expr: '0 18 * * 5', label: localize('voltAutomations.cronFriday', "Fridays at 18:00") },
-	{ expr: '0 9 1 * *', label: localize('voltAutomations.cronMonthly', "First of the month at 09:00") },
-	{ expr: '0 9 1 */3 *', label: localize('voltAutomations.cronQuarterly', "Every quarter, on the 1st at 09:00") },
-];
+/** Local first, then the zones most teams use, then every zone (folded until searched). */
+export function showTimeZoneMenu(contextView: IContextViewService, anchor: HTMLElement, current: string | undefined, now: number, onPick: (zone: string | undefined) => void): IVoltMenuHandle {
+	const local = localTimeZone();
+	const isCurrent = (zone: string) => !isLocalTimeZone(current) && current === zone;
+	const zoneItem = (zone: string, withOffset: boolean): IVoltMenuItem<string | undefined> => ({
+		id: zone,
+		label: timeZoneCity(zone),
+		description: zone,
+		...(withOffset ? { detail: gmtOffsetLabel(now, zone) } : {}),
+		keywords: zone.replace(/[/_]/g, ' '),
+		checked: isCurrent(zone),
+		data: zone,
+	});
+	const common = COMMON_TIME_ZONES.filter(zone => zone !== local);
+	return showVoltMenu<string | undefined>(contextView, {
+		anchor,
+		gap: 4,
+		width: 320,
+		className: 'volt-auto-menu',
+		ariaLabel: localize('voltAutomations.timeZone', "Time zone"),
+		search: { placeholder: localize('voltAutomations.searchZones', "Search time zones..."), icon: true },
+		sections: [
+			{ id: 'local', items: [{ id: 'local', label: localize('voltAutomations.localZone', "Local ({0})", gmtOffsetLabel(now)), description: timeZoneCity(local), keywords: `local ${local.replace(/[/_]/g, ' ')}`, checked: isLocalTimeZone(current), data: undefined }] },
+			{ id: 'common', title: localize('voltAutomations.commonZones', "Common"), items: common.map(zone => zoneItem(zone, true)) },
+			{ id: 'all', title: localize('voltAutomations.allZones', "All Time Zones"), collapsed: true, items: timeZoneList().filter(zone => zone !== local && !common.includes(zone)).map(zone => zoneItem(zone, false)) },
+		],
+		onPick: picked => onPick(picked.data),
+	});
+}
 
-export function showCronPresetMenu(contextView: IContextViewService, anchor: HTMLElement, current: string, onPick: (expr: string) => void): IVoltMenuHandle {
+const CRON_PRESETS: readonly string[] = ['* * * * *', '*/5 * * * *', '*/15 * * * *', '*/30 * * * *', '0 * * * *', '0 */2 * * *', '0 9 * * *', '0 9 * * 1-5', '*/15 9-17 * * 1-5', '0 9 * * 1', '0 18 * * 5', '0 9 1 * *'];
+
+/** Common cron expressions, each with its plain description. */
+export function showCronPresetMenu(contextView: IContextViewService, anchor: HTMLElement, current: string, onPick: (expression: string) => void): IVoltMenuHandle {
 	return showVoltMenu<string>(contextView, {
 		anchor,
 		gap: 4,
-		width: 330,
-		className: 'volt-auto-menu',
+		width: 320,
+		className: 'volt-auto-menu volt-auto-cron-menu',
 		ariaLabel: localize('voltAutomations.cronPresets', "Cron presets"),
-		sections: [{ id: 'presets', items: CRON_PRESETS.map(preset => ({ id: preset.expr, label: preset.label, detail: preset.expr, checked: preset.expr === current.trim(), data: preset.expr })) }],
-		onPick: item => onPick(item.data),
+		sections: [{ id: 'presets', items: CRON_PRESETS.map(expression => ({ id: expression, label: describeCron(expression), detail: expression, checked: expression === current.trim(), data: expression })) }],
+		onPick: picked => onPick(picked.data),
 	});
 }
 

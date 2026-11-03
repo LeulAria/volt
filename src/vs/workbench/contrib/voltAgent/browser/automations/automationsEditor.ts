@@ -8,6 +8,7 @@ import { $, append, clearNode, Dimension } from '../../../../../base/browser/dom
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { Emitter } from '../../../../../base/common/event.js';
 import { MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../../base/common/network.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
@@ -29,6 +30,8 @@ import { AutomationListView } from './automationListView.js';
 import { AllRunsView } from './automationRunsView.js';
 import { IAgentPageCrumb } from '../customize/agentMarketplaceView.js';
 import { AutomationsRoute, IAutomationsHost, IAutomationsPage } from './automationRoutes.js';
+import { WorkflowBuilderPage } from '../workflows/workflowBuilderPage.js';
+import { WorkflowLibraryPage } from '../workflows/workflowLibraryPage.js';
 
 export const AUTOMATIONS_EDITOR_ID = 'workbench.editor.voltAutomations';
 const AUTOMATIONS_INPUT_ID = 'workbench.input.voltAutomations';
@@ -91,22 +94,28 @@ export class AutomationsEditorInputSerializer implements IEditorSerializer {
 	serialize(input: EditorInput): string {
 		const route = input instanceof AutomationsEditorInput ? input.route : undefined;
 		// A saved automation's page comes back after a reload; a new, unsaved one does not.
-		if (route?.page === 'detail') {
-			return route.id ? JSON.stringify({ id: route.id, tab: route.tab }) : '';
+		switch (route?.page) {
+			case 'detail': return route.id ? JSON.stringify({ id: route.id, tab: route.tab }) : '';
+			case 'runs': return JSON.stringify({ runs: true });
+			case 'list': return route.view && route.view !== 'list' ? JSON.stringify({ view: route.view }) : '';
+			case 'workflows': return JSON.stringify({ workflows: route.tab ?? 'mine' });
+			// A saved workflow comes back after a reload; a new, unsaved one opens the library.
+			case 'workflow': return route.id ? JSON.stringify({ workflow: route.id }) : JSON.stringify({ workflows: 'mine' });
+			default: return '';
 		}
-		if (route?.page === 'runs') {
-			return JSON.stringify({ runs: true });
-		}
-		return route?.page === 'list' && route.view && route.view !== 'list' ? JSON.stringify({ view: route.view }) : '';
 	}
 	deserialize(instantiationService: IInstantiationService, raw: string): EditorInput {
 		const input = instantiationService.createInstance(AutomationsEditorInput);
 		try {
-			const value = raw ? JSON.parse(raw) as { id?: unknown; tab?: unknown; runs?: unknown; view?: unknown } : {};
+			const value = raw ? JSON.parse(raw) as { id?: unknown; tab?: unknown; runs?: unknown; view?: unknown; workflows?: unknown; workflow?: unknown } : {};
 			if (typeof value.id === 'string') {
 				input.route = { page: 'detail', id: value.id, tab: value.tab === 'runs' ? 'runs' : 'settings' };
 			} else if (value.runs === true) {
 				input.route = { page: 'runs' };
+			} else if (typeof value.workflow === 'string') {
+				input.route = { page: 'workflow', id: value.workflow };
+			} else if (value.workflows === 'mine' || value.workflows === 'templates') {
+				input.route = { page: 'workflows', tab: value.workflows };
 			} else if (value.view === 'day' || value.view === 'week' || value.view === 'month') {
 				input.route = { page: 'list', view: value.view };
 			}
@@ -129,7 +138,11 @@ export class AutomationsEditor extends EditorPane {
 	private container!: HTMLElement;
 	private bar!: HTMLElement;
 	private content!: HTMLElement;
+	private stage!: HTMLElement;
 	private scroll!: DomScrollableElement;
+	private stageWidth = 0;
+	private stageHeight = 0;
+	private readonly onDidLayoutStage = this._register(new Emitter<{ readonly width: number; readonly height: number }>());
 	private readonly page = this._register(new MutableDisposable<IAutomationsPage>());
 	private navigating = false;
 
@@ -152,6 +165,7 @@ export class AutomationsEditor extends EditorPane {
 		this.content = append(body, $('.volt-automations-content'));
 		this.scroll = this._register(createAgentScrollable(body));
 		append(this.container, this.scroll.getDomNode());
+		this.stage = append(this.container, $('.volt-automations-stage'));
 	}
 
 	override async setInput(input: AutomationsEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
@@ -191,11 +205,15 @@ export class AutomationsEditor extends EditorPane {
 		this.page.clear();
 		clearNode(this.bar);
 		clearNode(this.content);
+		clearNode(this.stage);
 		input?.setCrumbs([], undefined);
 		this.container.dataset.page = route.page;
 		const host: IAutomationsHost = {
 			bar: this.bar,
 			content: this.content,
+			stage: this.stage,
+			onDidLayout: this.onDidLayoutStage.event,
+			stageSize: () => ({ width: this.stageWidth, height: this.stageHeight }),
 			navigate: next => void this.navigate(next),
 			setRoute: next => {
 				if (this.input instanceof AutomationsEditorInput) {
@@ -220,7 +238,14 @@ export class AutomationsEditor extends EditorPane {
 			case 'detail':
 				this.page.value = this.instantiationService.createInstance(AutomationDetailView, host, route);
 				break;
+			case 'workflows':
+				this.page.value = this.instantiationService.createInstance(WorkflowLibraryPage, host, route);
+				break;
+			case 'workflow':
+				this.page.value = this.instantiationService.createInstance(WorkflowBuilderPage, host, route);
+				break;
 		}
+		this.container.classList.toggle('uses-stage', !!this.page.value?.usesStage);
 		host.scrollToTop();
 		this.scroll.scanDomNode();
 	}
@@ -229,6 +254,13 @@ export class AutomationsEditor extends EditorPane {
 		this.container.style.height = `${dimension.height}px`;
 		this.container.style.width = `${dimension.width}px`;
 		this.scroll.scanDomNode();
+		const width = this.stage.clientWidth || dimension.width;
+		const height = this.stage.clientHeight || Math.max(0, dimension.height - this.bar.offsetHeight);
+		if (width !== this.stageWidth || height !== this.stageHeight) {
+			this.stageWidth = width;
+			this.stageHeight = height;
+			this.onDidLayoutStage.fire({ width, height });
+		}
 	}
 
 	override focus(): void {

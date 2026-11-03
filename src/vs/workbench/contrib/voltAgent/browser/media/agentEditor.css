@@ -6531,15 +6531,50 @@ pre.volt-agent-searchable {
 	color: var(--vscode-descriptionForeground);
 }
 
+/* Loading rows look like the rows they stand for: an icon, then a label bar where the label sits */
+/* (the row's own empty slots would push the bar to the right). */
+.volt-agent-picker-list .monaco-list-row.skeleton {
+	justify-content: flex-start;
+	gap: 8px;
+	pointer-events: none;
+}
+
+.volt-agent-picker-list .monaco-list-row.skeleton.focused {
+	background: transparent !important;
+}
+
+.volt-agent-picker-list .monaco-list-row.skeleton > * {
+	display: none;
+}
+
+.volt-agent-picker-list .monaco-list-row.skeleton::before,
 .volt-agent-picker-list .monaco-list-row.skeleton::after {
 	content: '';
 	display: block;
-	height: 8px;
-	width: 58%;
-	border-radius: 999px;
+	flex-shrink: 0;
 	background: linear-gradient(90deg, color-mix(in srgb, var(--vscode-foreground) 6%, transparent) 0%, color-mix(in srgb, var(--vscode-foreground) 14%, transparent) 50%, color-mix(in srgb, var(--vscode-foreground) 6%, transparent) 100%);
 	background-size: 200% 100%;
 	animation: volt-agent-skeleton 1.1s ease-in-out infinite;
+}
+
+.volt-agent-picker-list .monaco-list-row.skeleton::before {
+	width: 16px;
+	height: 16px;
+	border-radius: 4px;
+}
+
+.volt-agent-picker-list .monaco-list-row.skeleton::after {
+	width: 44%;
+	height: 8px;
+	border-radius: 999px;
+}
+
+.volt-agent-picker-list .monaco-list-row.skeleton:nth-child(3n + 2)::after {
+	width: 58%;
+}
+
+.volt-agent-picker-list .monaco-list-row.skeleton:nth-child(3n)::after {
+	width: 34%;
 }
 
 .volt-agent-picker-list .check {
@@ -6840,7 +6875,7 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-skeleton-bar,
-.volt-agent-provider-tab.skeleton {
+.volt-agent-provider-tab.skeleton::after {
 	background: linear-gradient(90deg, color-mix(in srgb, var(--vscode-foreground) 6%, transparent) 0%, color-mix(in srgb, var(--vscode-foreground) 14%, transparent) 50%, color-mix(in srgb, var(--vscode-foreground) 6%, transparent) 100%);
 	background-size: 200% 100%;
 	animation: volt-agent-skeleton 1.1s ease-in-out infinite;
@@ -6861,9 +6896,17 @@ pre.volt-agent-searchable {
 	width: 66%;
 }
 
+/* A loading provider tab: a rounded icon in the tab's slot, so the strip reads as separate tabs. */
 .volt-agent-provider-tab.skeleton {
 	pointer-events: none;
 	opacity: 1;
+}
+
+.volt-agent-provider-tab.skeleton::after {
+	content: '';
+	width: 18px;
+	height: 18px;
+	border-radius: 5px;
 }
 
 @keyframes volt-agent-skeleton {

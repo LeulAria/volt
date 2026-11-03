@@ -62,7 +62,7 @@ import { AgentChangesEditorInput, isAgentChangesDiffFor, openAgentChangesDiff } 
 import { AgentChangesScope } from '../review/agentSessionChanges.js';
 import { AgentFilesSidebar, AgentFilesSidebarView, filesSidebarTabs, filesSidebarViewCommandId } from './agentFilesSidebar.js';
 import { AgentSurfaceAddMenu, IAgentSurfaceAddMenuHost, renderSurfaceOpenList, visibleSurfaceMenuItems } from './agentSurfaceAddMenu.js';
-import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
+import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
 import { AgentToolsEditorPart, AgentToolsPartContext, hasSavedAgentTools } from './agentToolsEditorPart.js';
 import { attachSessionToProject } from './agentShell.js';
 import { registerAgentFileEditorRouting } from './agentFileEditorRouting.js';
@@ -2447,6 +2447,9 @@ export class AgentSurfaceHost extends Disposable {
 				return;
 			case 'automations':
 				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, this.sessionId));
+				return;
+			case 'workflows':
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, this.sessionId));
 				return;
 			case 'sideChat':
 				void this.openSideChat();

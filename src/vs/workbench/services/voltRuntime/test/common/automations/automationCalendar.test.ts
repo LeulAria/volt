@@ -5,41 +5,20 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { CALENDAR_FREQUENT_PER_DAY, daySlots, packColumns, pullRequestNumber, runPullRequest, runsBetween, scheduleSlotsOnDay } from '../../../common/automations/automationCalendar.js';
-import { defaultSchedule, describeSchedule, IAutomation, IAutomationRun, parseScheduleText, scheduleKindOf } from '../../../common/automations/automations.js';
-import { eventLabel } from '../../../common/automations/automationTriggers.js';
+import { expandCalendar, layoutLanes, localDays, moveBlocker, movedSchedule } from '../../../common/automations/automationCalendar.js';
+import { AutomationSchedule, IAutomation, IAutomationRun } from '../../../common/automations/automations.js';
 
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
+/** Local time, so the suite reads the same in every zone (mid-November: no daylight saving change nearby). */
+const local = (day: number, hour = 0, minute = 0) => new Date(2026, 10, day, hour, minute).getTime();
+const MIN = 60_000;
 
-/** Local midnight of 2026-11-02 (a Monday). */
-const MONDAY = new Date(2026, 10, 2).getTime();
-
-function at(day: number, hour: number, minute = 0): number {
-	return new Date(new Date(day).getFullYear(), new Date(day).getMonth(), new Date(day).getDate(), hour, minute).getTime();
-}
-
-function clock(value: number): string {
-	const date = new Date(value);
-	return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
-
-function automation(id: string, patch: Partial<IAutomation>): IAutomation {
+function automation(id: string, schedule: AutomationSchedule | undefined, options: { enabled?: boolean; next?: number; runs?: IAutomationRun[] } = {}): IAutomation {
 	return {
-		id,
-		name: id,
-		instructions: '',
-		enabled: true,
-		triggers: [],
-		repositories: [],
-		tools: [],
-		createdAt: 0,
-		updatedAt: 0,
-		createdBy: 'You',
-		nextRuns: {},
-		runs: [],
-		runCount: 0,
-		...patch,
+		id, name: id, instructions: '', enabled: options.enabled ?? true, repositories: [], tools: [],
+		triggers: schedule ? [{ id: `${id}-t`, provider: 'schedule', event: schedule.type, schedule }] : [],
+		createdAt: 0, updatedAt: 0, createdBy: 'You',
+		nextRuns: options.next !== undefined ? { [`${id}-t`]: options.next } : {},
+		runs: options.runs ?? [], runCount: options.runs?.length ?? 0,
 	};
 }
 
@@ -47,91 +26,97 @@ suite('Volt automation calendar', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	test('slots of each schedule kind on one day', () => {
-		assert.deepStrictEqual(scheduleSlotsOnDay({ type: 'daily', time: '09:30' }, MONDAY, 50).map(clock), ['09:30']);
-		assert.deepStrictEqual(scheduleSlotsOnDay({ type: 'weekly', weekdays: [1, 3], time: '18:00' }, MONDAY, 50).map(clock), ['18:00']);
-		assert.deepStrictEqual(scheduleSlotsOnDay({ type: 'weekly', weekdays: [2], time: '18:00' }, MONDAY, 50), []);
-		const hourly = scheduleSlotsOnDay({ type: 'hourly', minute: 15 }, MONDAY, 50);
-		assert.strictEqual(hourly.length, 24);
-		assert.strictEqual(clock(hourly[0]), '00:15');
-		assert.deepStrictEqual(scheduleSlotsOnDay({ type: 'cron', expr: '0 9,17 * * 1-5' }, MONDAY, 50).map(clock), ['09:00', '17:00']);
-		assert.deepStrictEqual(scheduleSlotsOnDay({ type: 'cron', expr: '0 9 * * 0' }, MONDAY, 50), []);
-		// A cap stops an every-minute cron early instead of listing 1440 slots.
-		assert.strictEqual(scheduleSlotsOnDay({ type: 'cron', expr: '* * * * *' }, MONDAY, 13).length, 13);
-	});
-
-	test('an interval counts whole steps from its anchor, either side of it', () => {
-		const anchor = at(MONDAY, 10, 5);
-		const slots = scheduleSlotsOnDay({ type: 'interval', everyMs: 4 * HOUR }, MONDAY, 50, anchor).map(clock);
-		assert.deepStrictEqual(slots, ['02:05', '06:05', '10:05', '14:05', '18:05', '22:05']);
-		assert.strictEqual(scheduleSlotsOnDay({ type: 'interval', everyMs: 15 * MINUTE }, MONDAY, 1440, MONDAY).length, 96);
-	});
-
-	test('a day keeps rare slots as slots and folds frequent ones into a repeat with a count', () => {
-		const now = at(MONDAY, 12, 0);
-		const daily = automation('daily', { triggers: [{ id: 'a', provider: 'schedule', event: 'daily', schedule: { type: 'daily', time: '15:00' } }] });
-		const morning = automation('morning', { triggers: [{ id: 'b', provider: 'schedule', event: 'daily', schedule: { type: 'daily', time: '08:00' } }] });
-		const busy = automation('busy', { triggers: [{ id: 'c', provider: 'schedule', event: 'minutes', schedule: { type: 'interval', everyMs: 15 * MINUTE } }], nextRuns: { c: at(MONDAY, 12, 10) } });
-		const result = daySlots([daily, morning, busy], MONDAY, now);
-		assert.deepStrictEqual(result.slots.map(slot => `${slot.automationId} ${clock(slot.at)}`), ['daily 15:00'], 'past slots (08:00) are left to the runs');
-		assert.strictEqual(result.repeats.length, 1);
-		assert.strictEqual(result.repeats[0].automationId, 'busy');
-		assert.strictEqual(clock(result.repeats[0].first), '12:10');
-		assert.strictEqual(result.repeats[0].count, 48, '12:10 to 23:55 every 15 minutes');
-		assert.ok(result.repeats[0].count > CALENDAR_FREQUENT_PER_DAY);
-		// Tomorrow: everything ahead, and the interval keeps its rhythm from the anchor.
-		const tomorrow = daySlots([busy], MONDAY + 24 * HOUR, now);
-		assert.strictEqual(clock(tomorrow.repeats[0].first), '00:10');
-		assert.strictEqual(tomorrow.repeats[0].count, 96);
-		// A day already over has nothing ahead.
-		assert.deepStrictEqual(daySlots([daily], MONDAY - 24 * HOUR, now), { slots: [], repeats: [] });
-	});
-
-	test('runs in a range, oldest first, a running one ends now', () => {
-		const now = at(MONDAY, 12, 0);
-		const runs: IAutomationRun[] = [
-			{ id: 'r2', at: at(MONDAY, 11, 0), status: 'running', provider: 'schedule', label: 'Every hour', startedAt: at(MONDAY, 11, 1) },
-			{ id: 'r1', at: at(MONDAY, 9, 0), status: 'succeeded', provider: 'github', label: 'Pull request opened', startedAt: at(MONDAY, 9, 3), finishedAt: at(MONDAY, 9, 20), tools: [{ kind: 'pull_request', status: 'success', detail: 'https://github.com/acme/app/pull/132', at: 0 }] },
-			{ id: 'r0', at: at(MONDAY, -2, 0), status: 'failed', provider: 'manual', label: 'Run now' },
-		];
-		const list = runsBetween([automation('a', { runs })], MONDAY, MONDAY + 24 * HOUR, now);
-		assert.deepStrictEqual(list.map(entry => entry.run.id), ['r1', 'r2']);
-		assert.strictEqual(list[1].endedAt, now);
-		assert.strictEqual(list[0].endedAt, at(MONDAY, 9, 20));
-		assert.deepStrictEqual(runPullRequest(list[0].run), { label: '#132', url: 'https://github.com/acme/app/pull/132' });
-		assert.strictEqual(runPullRequest(list[1].run), undefined);
-	});
-
-	test('pull request numbers from GitHub, GitLab and Bitbucket links', () => {
-		assert.strictEqual(pullRequestNumber('https://github.com/a/b/pull/7'), '#7');
-		assert.strictEqual(pullRequestNumber('https://gitlab.com/a/b/-/merge_requests/12'), '#12');
-		assert.strictEqual(pullRequestNumber('https://bitbucket.org/a/b/pull-requests/3'), '#3');
-		assert.strictEqual(pullRequestNumber('opened #45 for review'), '#45');
-		assert.strictEqual(pullRequestNumber('no link'), undefined);
-	});
-
-	test('overlapping blocks share the column width, widen into free columns, separate groups keep it', () => {
-		const columns = packColumns([
-			{ start: 0, end: 60 },
-			{ start: 0, end: 20 },
-			{ start: 10, end: 30 },
-			{ start: 40, end: 60 },
-			{ start: 200, end: 230 },
+	test('a dense interval is one band per day, counted, not listed', () => {
+		const every5 = automation('a', { type: 'interval', everyMs: 5 * MIN }, { next: local(10, 0, 5) });
+		const entries = expandCalendar([every5], { from: local(10), to: local(12), now: local(10) });
+		assert.deepStrictEqual(entries.map(entry => [entry.kind, entry.day, entry.count, entry.label]), [
+			['band', local(10), 287, 'Every 5 minutes'],
+			['band', local(11), 288, 'Every 5 minutes'],
 		]);
-		assert.deepStrictEqual(columns, [
-			{ column: 0, columns: 3, span: 1 },
-			{ column: 1, columns: 3, span: 1 },
-			{ column: 2, columns: 3, span: 1 },
-			{ column: 1, columns: 3, span: 2 },
-			{ column: 0, columns: 1, span: 1 },
-		]);
+		// Bands keep their ids from one redraw to the next.
+		assert.deepStrictEqual(expandCalendar([every5], { from: local(10), to: local(12), now: local(10) }).map(entry => entry.id), entries.map(entry => entry.id));
+		// A sparse interval is listed.
+		const every4h = automation('b', { type: 'interval', everyMs: 4 * 60 * MIN }, { next: local(10, 2) });
+		assert.deepStrictEqual(expandCalendar([every4h], { from: local(10), to: local(11), now: local(10) }).map(entry => entry.start), [2, 6, 10, 14, 18, 22].map(hour => local(10, hour)));
 	});
 
-	test('every few minutes: an interval schedule with its own trigger kind', () => {
-		assert.deepStrictEqual(defaultSchedule('minutes'), { type: 'interval', everyMs: 15 * MINUTE });
-		assert.strictEqual(scheduleKindOf({ type: 'interval', everyMs: 5 * MINUTE }), 'minutes');
-		assert.strictEqual(eventLabel('schedule', 'minutes'), 'Every few minutes');
-		assert.strictEqual(describeSchedule({ type: 'interval', everyMs: 5 * MINUTE }), 'Every 5 minutes');
-		assert.deepStrictEqual(parseScheduleText('every 10 minutes').schedule, { type: 'interval', everyMs: 10 * MINUTE });
+	test('one-time runs: shown until they run, then only the run', () => {
+		const at = local(12, 9);
+		const pending = automation('a', { type: 'once', at }, { next: at });
+		assert.deepStrictEqual(expandCalendar([pending], { from: local(9), to: local(16), now: local(10) }).map(entry => [entry.kind, entry.start, entry.status]), [['occurrence', at, 'upcoming']]);
+		const ran = automation('a', { type: 'once', at }, { runs: [{ id: 'r1', at: at + 2000, slotAt: at, triggerId: 'a-t', status: 'succeeded', provider: 'schedule', label: 'Once', threadId: 'th' }] });
+		const after = expandCalendar([ran], { from: local(9), to: local(16), now: local(13) });
+		assert.deepStrictEqual(after.map(entry => [entry.kind, entry.status, entry.threadId]), [['run', 'succeeded', 'th']]);
+		// Off: where it would run, flagged.
+		const off = automation('a', { type: 'once', at }, { enabled: false });
+		assert.deepStrictEqual(expandCalendar([off], { from: local(9), to: local(16), now: local(10) }).map(entry => [entry.start, entry.disabled]), [[at, true]]);
+	});
+
+	test('weekly and cron occurrences in the range', () => {
+		// 2026-11-09 is a Monday.
+		const weekly = automation('w', { type: 'weekly', weekdays: [1, 3], time: '09:00' }, { enabled: false });
+		assert.deepStrictEqual(expandCalendar([weekly], { from: local(9), to: local(16), now: local(8) }).map(entry => [entry.start, entry.disabled]), [[local(9, 9), true], [local(11, 9), true]]);
+		const cron = automation('c', { type: 'cron', expr: '30 8 * * 1-5' }, { next: local(9, 8, 30) });
+		assert.deepStrictEqual(expandCalendar([cron], { from: local(9), to: local(16), now: local(8) }).map(entry => entry.start), [9, 10, 11, 12, 13].map(day => local(day, 8, 30)));
+		// Every 15 minutes in work hours: one band per weekday with 9 hours × 4 runs.
+		const busy = automation('d', { type: 'cron', expr: '*/15 9-17 * * 1-5' }, { next: local(9, 9) });
+		const bands = expandCalendar([busy], { from: local(9), to: local(16), now: local(8) });
+		assert.deepStrictEqual(bands.map(entry => [entry.kind, entry.day, entry.count]), [9, 10, 11, 12, 13].map(day => ['band', local(day), 36]));
+		// Counted from the next run on the first day: 17:00, 17:15, 17:30, 17:45.
+		const late = automation('d', { type: 'cron', expr: '*/15 9-17 * * 1-5' }, { next: local(9, 17) });
+		const today = expandCalendar([late], { from: local(9), to: local(10), now: local(9, 16, 50) });
+		assert.deepStrictEqual(today.map(entry => entry.count), [4]);
+	});
+
+	test('a run takes its slot; earlier runs show with their status', () => {
+		const daily = automation('a', { type: 'daily', time: '09:00' }, {
+			next: local(10, 9),
+			runs: [
+				{ id: 'r0', at: local(9, 9), slotAt: local(9, 9), triggerId: 'a-t', status: 'failed', provider: 'schedule', label: 'Every day at 09:00', error: 'boom' },
+				{ id: 'r1', at: local(10, 9) + 3000, slotAt: local(10, 9), triggerId: 'a-t', status: 'running', provider: 'schedule', label: 'Every day at 09:00' },
+				{ id: 'r2', at: local(10, 13), status: 'succeeded', provider: 'manual', label: 'Run now' },
+			],
+		});
+		const entries = expandCalendar([daily], { from: local(9), to: local(12), now: local(10, 9, 1) });
+		assert.deepStrictEqual(entries.map(entry => [entry.kind, entry.start, entry.status]), [
+			['run', local(9, 9), 'failed'],
+			['run', local(10, 9) + 3000, 'running'],
+			['run', local(10, 13), 'succeeded'],
+			['occurrence', local(11, 9), 'upcoming'],
+		]);
+		assert.strictEqual(entries[0].error, 'boom');
+	});
+
+	test('a storm of event runs in one day collapses into a band', () => {
+		const runs: IAutomationRun[] = Array.from({ length: 30 }, (_, index) => ({ id: `r${index}`, at: local(10, 8) + index * MIN, status: index === 3 ? 'failed' : 'succeeded', provider: 'github', label: 'Pull request opened' }));
+		const entries = expandCalendar([automation('a', undefined, { runs })], { from: local(9), to: local(12), now: local(11) });
+		assert.deepStrictEqual(entries.map(entry => [entry.kind, entry.count, entry.failed, entry.status]), [['band', 30, 1, 'failed']]);
+	});
+
+	test('dragging: what moves, and the schedule it becomes', () => {
+		// 2026-11-10 is a Tuesday, the 12th a Thursday.
+		const from = local(10, 9);
+		const to = local(12, 10, 30);
+		assert.deepStrictEqual(movedSchedule({ type: 'once', at: from }, undefined, from, to), { type: 'once', at: to });
+		assert.deepStrictEqual(movedSchedule({ type: 'daily', time: '09:00' }, undefined, from, to), { type: 'daily', time: '10:30' });
+		assert.deepStrictEqual(movedSchedule({ type: 'hourly', minute: 0 }, undefined, from, to), { type: 'hourly', minute: 30 });
+		assert.deepStrictEqual(movedSchedule({ type: 'weekly', weekdays: [1, 2], time: '09:00' }, undefined, from, to), { type: 'weekly', weekdays: [1, 4], time: '10:30' });
+		assert.deepStrictEqual(movedSchedule({ type: 'cron', expr: '0 9 * * 1-5' }, undefined, from, local(10, 11)), { type: 'cron', expr: '0 11 * * 1-5' });
+		assert.deepStrictEqual(movedSchedule({ type: 'cron', expr: '0 9 * * 2' }, undefined, from, to), { type: 'cron', expr: '30 10 * * 4' });
+		assert.strictEqual(movedSchedule({ type: 'cron', expr: '*/5 * * * *' }, undefined, from, to), undefined);
+		assert.strictEqual(movedSchedule({ type: 'daily', time: '09:00' }, undefined, from, local(12, 9)), undefined);
+		assert.strictEqual(moveBlocker({ kind: 'occurrence', schedule: { type: 'interval', everyMs: MIN } }, false), 'interval');
+		assert.strictEqual(moveBlocker({ kind: 'occurrence', schedule: { type: 'daily', time: '09:00' } }, true), 'everyDay');
+		assert.strictEqual(moveBlocker({ kind: 'occurrence', schedule: { type: 'daily', time: '09:00' } }, false), undefined);
+		assert.strictEqual(moveBlocker({ kind: 'occurrence', schedule: { type: 'cron', expr: '0 9 1 * *' } }, false), 'cron');
+		assert.strictEqual(moveBlocker({ kind: 'occurrence', schedule: { type: 'cron', expr: '0 9 * * 1,3' } }, true), undefined);
+		assert.strictEqual(moveBlocker({ kind: 'run', schedule: { type: 'once', at: from } }, false), 'run');
+	});
+
+	test('lanes: overlapping entries side by side, others full width', () => {
+		const entries = [{ start: 0, end: 60, id: 'a' }, { start: 30, end: 90, id: 'b' }, { start: 60, end: 120, id: 'c' }, { start: 200, end: 260, id: 'd' }];
+		const laid = layoutLanes(entries, entry => entry.end);
+		assert.deepStrictEqual(laid.map(item => [item.entry.id, item.lane, item.lanes]), [['a', 0, 2], ['b', 1, 2], ['c', 0, 2], ['d', 0, 1]]);
+		assert.deepStrictEqual(localDays(local(9), local(12)), [local(9), local(10), local(11)]);
 	});
 });

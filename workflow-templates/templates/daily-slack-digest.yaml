@@ -1,0 +1,72 @@
+# Every weekday morning: summarize the last day's commits and post the digest to Slack.
+version: 1
+id: daily-slack-digest
+name: Daily Slack digest
+description: >-
+  Runs at 09:00 on weekdays. Collects the last day's commits on every branch and, when
+  there are any, a model writes a short digest (highlights first) that goes to Slack.
+  Set the slackWebhook variable to your Slack incoming webhook URL.
+tags: [slack, digest, schedule, team]
+trigger:
+  type: schedule
+  cron: '0 9 * * 1-5'
+variables:
+  slackWebhook: https://hooks.slack.com/services/T000/B000/XXXX
+nodes:
+  - id: start
+    type: start
+    position: [0, 0]
+  - id: activity
+    type: shell
+    name: The last day's commits
+    position: [352, 0]
+    config:
+      command: |
+        git fetch --all --quiet
+        git log --all --no-merges --since='1 day ago' --pretty=format:'- %s (%an, %h)'
+  - id: any
+    type: if
+    name: Anything new?
+    position: [688, 0]
+    config:
+      condition: len(trim(nodes.activity.stdout)) > 0
+  - id: digest
+    type: summarize
+    name: Write the digest
+    position: [1024, -44]
+    config:
+      text: '{{ nodes.activity.stdout }}'
+      instructions: |
+        Write a Slack digest of these commits for the team: two or three highlights
+        first, then short bullets grouped by area. At most 15 lines, plain words, no
+        commit hashes.
+  - id: post
+    type: slack_message
+    name: Post to Slack
+    position: [1360, -44]
+    config:
+      webhookUrl: '{{ vars.slackWebhook }}'
+      text: |
+        *The last day in the repository*
+
+        {{ nodes.digest.summary }}
+  - id: done
+    type: end
+    position: [1696, -4]
+    config:
+      status: success
+      output: '{{ nodes.digest.summary }}'
+  - id: quiet
+    type: end
+    name: Quiet day
+    position: [1024, 108]
+    config:
+      status: success
+      output: No commits in the last day
+edges:
+  - { from: start.next, to: activity }
+  - { from: activity.passed, to: any }
+  - { from: any.true, to: digest }
+  - { from: any.false, to: quiet }
+  - { from: digest.done, to: post }
+  - { from: post.sent, to: done }

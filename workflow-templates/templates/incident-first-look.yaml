@@ -1,0 +1,81 @@
+# When PagerDuty pages: an agent takes a first look at recent changes, you approve the summary for Slack.
+version: 1
+id: incident-first-look
+name: Incident first look
+description: |
+  Starts when PagerDuty triggers an incident. A read-only agent looks at what changed in
+  the repository in the last hours and at the code the incident points to, and writes a
+  short first-look summary. You approve it before it is posted to the incident channel,
+  so nothing half-checked reaches people in the middle of an incident.
+  Set the slackWebhook variable to the incident channel's incoming webhook URL.
+tags: [incidents, pagerduty, slack, approval]
+trigger:
+  type: event
+  provider: pagerduty
+  event: incident.triggered
+  samplePayload:
+    event:
+      data:
+        title: 'Checkout API: error rate above 5%'
+        html_url: https://acme.pagerduty.com/incidents/Q1W2E3
+        service:
+          summary: checkout-api
+variables:
+  slackWebhook: https://hooks.slack.com/services/T000/B000/XXXX
+nodes:
+  - id: start
+    type: start
+    position: [0, 0]
+  - id: look
+    type: agent
+    name: First look
+    position: [280, 0]
+    config:
+      prompt: |
+        PagerDuty incident: {{ trigger.payload.event.data.title }}
+        Service: {{ trigger.payload.event.data.service.summary }}
+        {{ trigger.payload.event.data.html_url }}
+
+        Without changing anything, look at the commits of the last 12 hours
+        (git log --since='12 hours ago' --stat) and the code of this service. Name the
+        changes most likely related to the incident, what to check first, and whether a
+        revert looks safe. At most ten lines.
+      mode: Ask
+  - id: review
+    type: approval
+    name: Post it?
+    position: [560, 0]
+    config:
+      title: Post the first look to the incident channel?
+      detail: '{{ nodes.look.summary }}'
+      timeout: 30m
+  - id: post
+    type: slack_message
+    name: Post to Slack
+    position: [840, 0]
+    config:
+      webhookUrl: '{{ vars.slackWebhook }}'
+      text: |
+        *First look: {{ trigger.payload.event.data.title }}*
+        {{ trigger.payload.event.data.html_url }}
+
+        {{ nodes.look.summary }}
+  - id: done
+    type: end
+    position: [1120, 0]
+    config:
+      status: success
+      output: '{{ nodes.look.summary }}'
+  - id: kept
+    type: end
+    name: Not posted
+    position: [840, 140]
+    config:
+      status: success
+      output: The first look was not posted
+edges:
+  - { from: start.next, to: look }
+  - { from: look.done, to: review }
+  - { from: review.approved, to: post }
+  - { from: review.rejected, to: kept }
+  - { from: post.sent, to: done }

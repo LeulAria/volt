@@ -67,6 +67,28 @@
 	container-type: inline-size;
 }
 
+/* The full-size stage (workflow builder): replaces the scroller while a page uses it. */
+.volt-automations-stage {
+	display: none;
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.volt-automations.uses-stage > .volt-agent-scrollable {
+	display: none;
+}
+
+.volt-automations.uses-stage > .volt-automations-stage {
+	display: flex;
+	flex-direction: column;
+}
+
+.volt-automations.uses-stage > .volt-automations-bar:empty {
+	display: none;
+}
+
 /* The detail page's back arrow: the one thing on the bar's left. */
 .volt-automations-bar > .volt-auto-back {
 	margin-right: auto;
@@ -100,7 +122,9 @@
 .volt-auto-save {
 	display: inline-flex;
 	align-items: center;
+	justify-content: center;
 	gap: 5px;
+	min-width: 64px;
 	transition: background-color 160ms ease, color 160ms ease;
 }
 
@@ -148,6 +172,12 @@
 .volt-auto-save.dirty:hover,
 .volt-auto-primary:hover {
 	background: var(--vscode-foreground);
+}
+
+/* `.monaco-workbench .codicon[class*=codicon-]` outranks one class on the check's size. */
+.volt-automations .volt-auto-save .codicon[class*='codicon-'] {
+	font-size: 13px;
+	color: inherit;
 }
 
 .volt-auto-primary {
@@ -380,7 +410,7 @@
 }
 
 /* From Volt sits under the table or calendar. */
-.volt-auto-table + .volt-auto-calendar-slot + .volt-auto-group-label {
+.volt-auto-table + .volt-auto-calendar-host + .volt-auto-group-label {
 	margin-top: 40px;
 }
 
@@ -733,11 +763,11 @@
 	margin-bottom: 4px;
 }
 
-/* Scoped twice: `.monaco-workbench input { font-size: 100% }` outranks one class. */
-.volt-automations .volt-auto-detail-title {
+/* `input.` and the page class: `.monaco-workbench input { font-size: 100% }` beats a lone class. */
+.volt-automations input.volt-auto-detail-title {
 	display: block;
 	width: 100%;
-	margin: 0 0 16px;
+	margin: 0 0 12px;
 	padding: 0;
 	border: none;
 	outline: none !important;
@@ -748,6 +778,7 @@
 	line-height: 1.25;
 	font-weight: 600;
 	letter-spacing: -0.015em;
+	text-overflow: ellipsis;
 }
 
 .volt-automations .volt-auto-detail-title::placeholder {
@@ -862,6 +893,34 @@
 
 .volt-auto-section-label.spaced {
 	margin-top: 46px;
+}
+
+/* Settings' parts (Triggers, Agent Instructions, Tools): a title, a muted line saying what it is for, the card. */
+.volt-auto-section {
+	margin-top: 40px;
+}
+
+.volt-auto-section:first-child {
+	margin-top: 26px;
+}
+
+.volt-auto-section-head {
+	margin: 0 16px 12px;
+}
+
+.volt-auto-section-title {
+	margin: 0;
+	color: var(--volt-auto-fg);
+	font-size: 13.5px;
+	line-height: 20px;
+	font-weight: 600;
+}
+
+.volt-auto-section-desc {
+	margin: 1px 0 0;
+	color: var(--volt-auto-muted);
+	font-size: 12.5px;
+	line-height: 18px;
 }
 
 /* Trigger and tool rows. */
@@ -1195,71 +1254,7 @@ textarea.volt-auto-input.filters {
 	white-space: nowrap;
 }
 
-/* Agent Instructions: the chat composer's box (agentEditor.css .volt-agent-input-box) with a taller text area. */
-.volt-auto-instructions-box.volt-agent-input-box {
-	position: relative;
-	max-width: none;
-	margin: 0;
-	border-color: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
-	transition: border-color 160ms ease;
-}
-
-.monaco-workbench.vs .volt-auto-instructions-box.volt-agent-input-box,
-.monaco-workbench.hc-light .volt-auto-instructions-box.volt-agent-input-box {
-	--volt-composer-bg: rgba(255, 255, 255, 0.94);
-}
-
-.volt-auto-instructions-box.volt-agent-input-box.focused {
-	border-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
-}
-
-.volt-auto-slash-anchor {
-	position: absolute;
-	top: 0;
-	bottom: 0;
-	left: 0;
-	width: min(600px, 62%);
-	visibility: hidden;
-	pointer-events: none;
-}
-
-.volt-auto-instructions-input {
-	position: relative;
-	z-index: 1;
-	display: block;
-	width: 100%;
-	min-height: 150px;
-	padding: 16px 18px 8px;
-	box-sizing: border-box;
-	border: none;
-	outline: none !important;
-	resize: none;
-	background: transparent;
-	color: var(--volt-auto-fg);
-	font: inherit;
-	font-size: 13.5px;
-	line-height: 20px;
-}
-
-.volt-auto-instructions-input::placeholder {
-	color: color-mix(in srgb, var(--vscode-foreground) 42%, transparent);
-}
-
-.volt-auto-instructions-box .volt-agent-toolbar {
-	padding: 4px 12px 12px;
-}
-
-.volt-auto-instructions-box .volt-agent-icon-btn {
-	color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
-}
-
-.volt-auto-instructions-box .volt-agent-icon-btn:hover {
-	color: var(--vscode-foreground);
-}
-
-.volt-auto-model-button .codicon {
-	font-size: 11px;
-}
+/* Agent Instructions: the composer-like box, in agentAutomationComposer.css. */
 
 /* Run History. */
 .volt-auto-stats {
@@ -1482,8 +1477,9 @@ textarea.volt-auto-input.filters {
 }
 
 .volt-auto-dialog-head {
-	padding: 0 0 18px;
-	margin-bottom: 18px;
+	/* The rule under the title runs the card's full width, through its side padding. */
+	margin: 0 -18px 18px;
+	padding: 0 18px 18px;
 	border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
@@ -1526,27 +1522,10 @@ textarea.volt-auto-input.filters {
 	resize: vertical;
 }
 
-.volt-auto-select select {
-	width: 100%;
-	height: 34px;
-	padding: 0 10px;
-	box-sizing: border-box;
-	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
-	border-radius: 8px;
-	background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
-	color: var(--vscode-foreground);
-	font: inherit;
-	font-size: 13.5px;
-	outline: none;
-}
-
-.volt-auto-select select:focus {
-	border-color: var(--vscode-focusBorder);
-}
-
-.volt-auto-select option {
-	background: var(--vscode-editor-background, #1c1c1c);
-	color: var(--vscode-foreground);
+/* Memory Notes' file: the Volt dropdown, left-aligned under its label. */
+.volt-auto-memory-file {
+	display: flex;
+	min-width: 0;
 }
 
 .volt-auto-dialog-footer {

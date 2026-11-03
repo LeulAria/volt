@@ -163,7 +163,8 @@ export function showAutomationDialog(host: HTMLElement, title: string, subtitle:
 		}
 	}));
 	openDialog = dialog;
-	window.requestAnimationFrame(() => (card.querySelector<HTMLElement>('input, textarea, select') ?? card).focus());
+	// Not an editor's hidden IME textarea: a code editor in the dialog takes focus itself.
+	window.requestAnimationFrame(() => (card.querySelector<HTMLElement>('input:not(.monaco-editor *), textarea:not(.monaco-editor *), select') ?? card).focus());
 	return dialog;
 }
 

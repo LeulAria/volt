@@ -987,6 +987,72 @@ ${MEMORY_RULES}
 
 ${MEMORY_CLOSE}`,
 	},
+	{
+		id: 'main-ci-watch',
+		categories: ['monitoring', 'environment'],
+		title: 'Watch CI on main during work hours',
+		description: 'Every 15 minutes on weekdays, check the default branch and flag a red build at once',
+		icon: 'rocket',
+		triggers: [{ provider: 'schedule', event: 'cron', schedule: { type: 'cron', expr: '*/15 9-17 * * 1-5' } }],
+		tools: ['slack_send'],
+		instructions: `Check the latest CI runs on the default branch (gh run list --branch <default> --limit 5).
+
+- If the newest finished run failed and MEMORIES.md does not already record that run id, find the failing job and the commit that broke it (gh run view --log-failed), and send a Slack message: the workflow, the commit and its author, the first error line, and the run URL.
+- Record the run id in MEMORIES.md so the same failure is reported once.
+- When main turns green again after a failure, send a one-line "main is green again".
+
+Stay silent otherwise. Do not push fixes from this automation.`,
+	},
+	{
+		id: 'nightly-build-health',
+		categories: ['monitoring'],
+		title: 'Nightly build health',
+		description: 'Build and test the whole project every night and report what broke since yesterday',
+		icon: 'check',
+		triggers: [{ provider: 'schedule', event: 'cron', schedule: { type: 'cron', expr: '0 2 * * *' } }],
+		tools: ['slack_send'],
+		instructions: `Run the project's full build and test suite from a clean checkout of the default branch.
+
+${MEMORY_RULES}
+
+- Compare with last night's result in MEMORIES.md: list new failures, fixed tests, and a build time change beyond 20%.
+- For each new failure, name the most likely commit since yesterday (git log, blame on the failing code).
+- Record tonight's result (passed/failed counts, build time, failing test names) in MEMORIES.md, keeping 14 nights.
+
+Send a Slack summary only when something changed; otherwise finish with "Nightly build unchanged."`,
+	},
+	{
+		id: 'changelog-on-merge',
+		categories: ['docs'],
+		title: 'Keep the changelog current',
+		description: 'Add an entry to CHANGELOG.md for each merged pull request that users would notice',
+		icon: 'book',
+		triggers: [{ provider: 'github', event: 'pr.merged' }],
+		tools: [],
+		instructions: `A pull request was merged (see the event above).
+
+- If it changes nothing users would notice (tests, refactors, CI, docs typos), finish with "No changelog entry needed."
+- Otherwise add one line under "Unreleased" in CHANGELOG.md, in the section that fits (Added, Changed, Fixed, Removed), in the file's existing style, with the PR number.
+- Open a small pull request titled "changelog: #<number>" (or push to an open changelog PR if there is one).`,
+	},
+	{
+		id: 'docs-drift',
+		categories: ['docs', 'research'],
+		title: 'Catch docs that drifted from the code',
+		description: 'Find commands, options and APIs in the docs that no longer match the code',
+		icon: 'book',
+		triggers: [{ provider: 'schedule', event: 'weekly', schedule: { type: 'weekly', weekdays: [3], time: '11:00' } }],
+		tools: [],
+		instructions: `Find documentation that no longer matches the code.
+
+${MEMORY_RULES}
+
+- Collect what the docs promise: CLI commands and flags, config keys, environment variables, API routes and function signatures in README files, docs/ and code comments on public APIs.
+- Check each one against the code. A renamed flag, a removed option, a changed default or a wrong example is drift.
+- Fix the docs (never the code) in one PR titled "docs: fix drift", listing each mismatch and where the truth lives in the code.
+
+If everything matches, finish with "Docs match the code." ${MEMORY_CLOSE}`,
+	},
 ];
 
 export function templatesIn(category: AutomationTemplateCategory): readonly IAutomationTemplate[] {

@@ -1,0 +1,17 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": { "noEmit": true, "plugins": [], "skipLibCheck": true },
+	"include": [
+		"./typings",
+		"./vs/**/*.d.ts",
+		"./vs/workbench/services/voltRuntime/common/automations/**/*.ts",
+		"./vs/workbench/services/voltRuntime/common/workflows/**/*.ts",
+		"./vs/workbench/services/voltRuntime/test/common/automations/**/*.ts",
+		"./vs/workbench/services/voltRuntime/test/common/workflows/**/*.ts",
+		"./vs/workbench/contrib/voltAgent/common/workflows/**/*.ts",
+		"./vs/workbench/contrib/voltAgent/test/*/workflow*.test.ts",
+		"./vs/workbench/contrib/voltAgent/browser/automations/**/*.ts",
+		"./vs/workbench/contrib/voltAgent/browser/workflows/**/*.ts"
+	],
+	"exclude": []
+}

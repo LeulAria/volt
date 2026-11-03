@@ -1,0 +1,587 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://raw.githubusercontent.com/LeulAria/volt/main/workflow-templates/schema/workflow.schema.json",
+	"title": "Volt workflow",
+	"description": "A Volt workflow: a trigger, nodes (agents, checks, git steps, branches, loops) and the edges between their ports. Format: https://github.com/LeulAria/volt/tree/main/workflow-templates",
+	"type": "object",
+	"required": [
+		"name",
+		"nodes"
+	],
+	"additionalProperties": false,
+	"properties": {
+		"version": {
+			"description": "File format version. Volt reads older versions by migrating them; missing means 1.",
+			"type": "integer",
+			"minimum": 1,
+			"default": 1
+		},
+		"id": {
+			"description": "Slug, unique among your workflows (the file name). Derived from the name when absent.",
+			"$ref": "#/$defs/id"
+		},
+		"name": {
+			"description": "Display name.",
+			"type": "string",
+			"minLength": 1
+		},
+		"description": {
+			"type": "string"
+		},
+		"revision": {
+			"description": "Bumped on every save; history keeps earlier revisions.",
+			"type": "integer",
+			"minimum": 0
+		},
+		"tags": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"trigger": {
+			"$ref": "#/$defs/trigger"
+		},
+		"inputs": {
+			"description": "Values a run starts with, read as {{ inputs.<name> }}.",
+			"anyOf": [
+				{
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/input"
+					}
+				},
+				{
+					"type": "object",
+					"propertyNames": {
+						"pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+					},
+					"additionalProperties": {
+						"anyOf": [
+							{
+								"enum": [
+									"string",
+									"number",
+									"boolean",
+									"json"
+								]
+							},
+							{
+								"type": "null"
+							},
+							{
+								"$ref": "#/$defs/inputFields"
+							}
+						]
+					}
+				}
+			]
+		},
+		"variables": {
+			"description": "Starting run variables, read as {{ vars.<name> }}; Set Variables nodes change them.",
+			"type": "object"
+		},
+		"settings": {
+			"$ref": "#/$defs/settings"
+		},
+		"nodes": {
+			"type": "array",
+			"items": {
+				"$ref": "#/$defs/node"
+			}
+		},
+		"edges": {
+			"type": "array",
+			"items": {
+				"$ref": "#/$defs/edge"
+			}
+		},
+		"groups": {
+			"type": "array",
+			"items": {
+				"$ref": "#/$defs/group"
+			}
+		},
+		"source": {
+			"$ref": "#/$defs/source"
+		}
+	},
+	"$defs": {
+		"id": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9_-]{0,63}$"
+		},
+		"color": {
+			"enum": [
+				"default",
+				"blue",
+				"green",
+				"yellow",
+				"orange",
+				"red",
+				"pink",
+				"purple",
+				"teal"
+			]
+		},
+		"trigger": {
+			"description": "What starts the workflow. Schedules and events run through a linked automation.",
+			"anyOf": [
+				{
+					"const": "manual"
+				},
+				{
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"type": {
+							"enum": [
+								"manual",
+								"schedule",
+								"event"
+							],
+							"default": "manual"
+						},
+						"cron": {
+							"description": "schedule: a five-field cron expression or macro (quote it: '*/5 * * * *', '@daily').",
+							"type": "string"
+						},
+						"everyMinutes": {
+							"description": "schedule: every N minutes (instead of cron).",
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 44640
+						},
+						"timezone": {
+							"description": "schedule: an IANA time zone (Europe/Berlin); local time when absent.",
+							"type": "string"
+						},
+						"provider": {
+							"description": "event: where the event comes from.",
+							"enum": [
+								"github",
+								"gitlab",
+								"slack",
+								"teams",
+								"sentry",
+								"linear",
+								"jira",
+								"atlassian",
+								"webhook",
+								"pagerduty"
+							]
+						},
+						"event": {
+							"description": "event: the provider's event (pr.opened, push, issue.created).",
+							"type": "string"
+						},
+						"option": {
+							"description": "event: narrows the event (a branch, a channel, a label).",
+							"type": "string"
+						},
+						"filters": {
+							"description": "event: payload filters, one \"path op value\" each (payload.ref matches ^refs/tags/).",
+							"type": "array",
+							"items": {
+								"type": "string"
+							}
+						},
+						"samplePayload": {
+							"description": "A payload for simulations and the start node's Input tab."
+						}
+					},
+					"allOf": [
+						{
+							"if": {
+								"properties": {
+									"type": {
+										"const": "schedule"
+									}
+								},
+								"required": [
+									"type"
+								]
+							},
+							"then": {
+								"anyOf": [
+									{
+										"required": [
+											"cron"
+										]
+									},
+									{
+										"required": [
+											"everyMinutes"
+										]
+									}
+								]
+							}
+						},
+						{
+							"if": {
+								"properties": {
+									"type": {
+										"const": "event"
+									}
+								},
+								"required": [
+									"type"
+								]
+							},
+							"then": {
+								"required": [
+									"provider"
+								]
+							}
+						}
+					]
+				}
+			]
+		},
+		"inputFields": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"type": {
+					"enum": [
+						"string",
+						"number",
+						"boolean",
+						"json"
+					],
+					"default": "string"
+				},
+				"description": {
+					"type": "string"
+				},
+				"default": {
+					"description": "The value when the run gives none."
+				},
+				"required": {
+					"type": "boolean"
+				}
+			}
+		},
+		"input": {
+			"type": "object",
+			"required": [
+				"name"
+			],
+			"additionalProperties": false,
+			"properties": {
+				"name": {
+					"type": "string",
+					"pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+				},
+				"type": {
+					"enum": [
+						"string",
+						"number",
+						"boolean",
+						"json"
+					],
+					"default": "string"
+				},
+				"description": {
+					"type": "string"
+				},
+				"default": {
+					"description": "The value when the run gives none."
+				},
+				"required": {
+					"type": "boolean"
+				}
+			}
+		},
+		"settings": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"concurrency": {
+					"description": "Nodes that run at the same time (fork branches, independent paths).",
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 32
+				},
+				"maxSteps": {
+					"description": "Node executions per run; loops count every pass.",
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 2000
+				},
+				"timeoutMs": {
+					"description": "Whole-run timeout.",
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 604800000
+				},
+				"repository": {
+					"description": "The folder agent, shell and git nodes work in (a stored URI).",
+					"type": "string"
+				},
+				"modelRef": {
+					"description": "Default model of agent nodes that set none.",
+					"type": "string"
+				}
+			}
+		},
+		"position": {
+			"description": "Canvas position in pixels: [x, y] or { x, y }. Laid out automatically when absent.",
+			"anyOf": [
+				{
+					"type": "array",
+					"prefixItems": [
+						{
+							"type": "number"
+						},
+						{
+							"type": "number"
+						}
+					],
+					"minItems": 2,
+					"maxItems": 2
+				},
+				{
+					"type": "object",
+					"required": [
+						"x",
+						"y"
+					],
+					"additionalProperties": false,
+					"properties": {
+						"x": {
+							"type": "number"
+						},
+						"y": {
+							"type": "number"
+						}
+					}
+				}
+			]
+		},
+		"node": {
+			"type": "object",
+			"required": [
+				"id",
+				"type"
+			],
+			"additionalProperties": false,
+			"properties": {
+				"id": {
+					"$ref": "#/$defs/id"
+				},
+				"type": {
+					"description": "The node type (agent, shell, if, loop, github_pr, …).",
+					"anyOf": [
+						{
+							"enum": [
+								"start",
+								"agent",
+								"ask_user",
+								"subtask",
+								"classify",
+								"summarize",
+								"end",
+								"if",
+								"switch",
+								"loop",
+								"for_each",
+								"fork",
+								"join",
+								"wait",
+								"approval",
+								"subworkflow",
+								"set_variables",
+								"shell",
+								"http",
+								"webhook",
+								"package_script",
+								"git_commit",
+								"git_push",
+								"git_sync",
+								"git_branch",
+								"github_pr",
+								"github_wait_ci",
+								"github_pr_comment",
+								"github_update_pr",
+								"github_issue_comment",
+								"mcp_tool",
+								"skill",
+								"slack_message",
+								"teams_message",
+								"transform",
+								"filter",
+								"parse_json",
+								"template",
+								"notify",
+								"log",
+								"write_file"
+							]
+						},
+						{
+							"type": "string",
+							"pattern": "^[a-z][a-z0-9_.-]{0,63}$"
+						}
+					]
+				},
+				"name": {
+					"type": "string"
+				},
+				"position": {
+					"$ref": "#/$defs/position"
+				},
+				"color": {
+					"$ref": "#/$defs/color"
+				},
+				"disabled": {
+					"description": "Skipped in runs; passes its input through its first port.",
+					"type": "boolean"
+				},
+				"notes": {
+					"type": "string"
+				},
+				"config": {
+					"description": "The node type's settings; text values may hold {{ … }} templates.",
+					"type": "object"
+				},
+				"retry": {
+					"anyOf": [
+						{
+							"type": "integer",
+							"minimum": 0,
+							"maximum": 10
+						},
+						{
+							"type": "object",
+							"required": [
+								"attempts"
+							],
+							"additionalProperties": false,
+							"properties": {
+								"attempts": {
+									"description": "Extra attempts after the first.",
+									"type": "integer",
+									"minimum": 0,
+									"maximum": 10
+								},
+								"delayMs": {
+									"type": "integer",
+									"minimum": 0,
+									"maximum": 3600000
+								},
+								"maxDelayMs": {
+									"type": "integer",
+									"minimum": 0,
+									"maximum": 3600000
+								}
+							}
+						}
+					]
+				},
+				"timeoutMs": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 604800000
+				},
+				"onError": {
+					"description": "fail: the run fails; continue: go on down the first port; route: go on down the failed port.",
+					"enum": [
+						"fail",
+						"continue",
+						"route"
+					]
+				},
+				"pinnedOutput": {
+					"description": "Output used instead of running the node in simulations."
+				}
+			}
+		},
+		"edge": {
+			"type": "object",
+			"required": [
+				"from",
+				"to"
+			],
+			"additionalProperties": false,
+			"properties": {
+				"from": {
+					"description": "node.port it leaves (start.next, review.approve); the node's first port when only the node is given.",
+					"type": "string",
+					"pattern": "^[a-z][a-z0-9_-]{0,63}(\\.\\S+)?$"
+				},
+				"port": {
+					"description": "The port, when \"from\" names only the node.",
+					"type": "string"
+				},
+				"to": {
+					"description": "The node it goes to (node.port for a port other than in).",
+					"type": "string",
+					"pattern": "^[a-z][a-z0-9_-]{0,63}(\\.\\S+)?$"
+				},
+				"toPort": {
+					"type": "string"
+				},
+				"label": {
+					"type": "string"
+				},
+				"id": {
+					"description": "Stable id; from.port->to when absent.",
+					"type": "string"
+				}
+			}
+		},
+		"group": {
+			"type": "object",
+			"required": [
+				"id",
+				"nodes"
+			],
+			"additionalProperties": false,
+			"properties": {
+				"id": {
+					"$ref": "#/$defs/id"
+				},
+				"title": {
+					"type": "string"
+				},
+				"color": {
+					"$ref": "#/$defs/color"
+				},
+				"nodes": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"source": {
+			"description": "Where the workflow came from. Community and imported workflows stay untrusted until reviewed.",
+			"type": "object",
+			"required": [
+				"kind"
+			],
+			"additionalProperties": false,
+			"properties": {
+				"kind": {
+					"enum": [
+						"blank",
+						"template",
+						"community",
+						"import",
+						"describe"
+					]
+				},
+				"url": {
+					"type": "string"
+				},
+				"sha": {
+					"type": "string"
+				},
+				"templateId": {
+					"type": "string"
+				}
+			}
+		}
+	}
+}

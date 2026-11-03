@@ -1,0 +1,133 @@
+# Implement a task, test it, fix failures (up to 3 passes), review it, then open a pull request.
+version: 1
+id: implement-test-review
+name: Implement, test and review loop
+description: >-
+  An agent implements the task on a new branch and the tests run. Failures go back to a
+  fixing agent with the test output, at most three times. A reviewer agent then approves
+  the change or asks for changes (which go round the loop again). Approved work is
+  committed, pushed and opened as a pull request.
+tags: [coding, tests, review, pull-request]
+trigger:
+  type: manual
+inputs:
+  - name: task
+    type: string
+    description: What to build or fix
+    required: true
+  - name: testCommand
+    type: string
+    description: The command that runs the tests
+    default: npm test
+nodes:
+  - id: start
+    type: start
+    position: [0, 0]
+  - id: branch
+    type: git_branch
+    name: New branch
+    position: [352, 0]
+    config:
+      name: 'volt/{{ run.id }}'
+  - id: implement
+    type: agent
+    name: Implement
+    position: [688, 0]
+    config:
+      prompt: |
+        {{ inputs.task }}
+
+        Make the change in this repository. Keep it focused, follow the existing
+        style, and add or update tests that cover it.
+      mode: Agent
+  - id: test
+    type: shell
+    name: Run tests
+    position: [1024, 0]
+    config:
+      command: '{{ inputs.testCommand }}'
+      timeout: 15m
+  - id: review
+    type: agent
+    name: Review
+    position: [1360, -65]
+    config:
+      prompt: |
+        Review the uncommitted changes in this repository. They are meant to do this:
+        {{ inputs.task }}
+
+        Look for bugs, missing tests and risky changes. Do not edit files. End with one
+        verdict: approve when it is ready to merge, or changes when something must be
+        fixed first (say exactly what).
+      mode: Ask
+      verdicts: [approve, changes]
+  - id: commit
+    type: git_commit
+    name: Commit
+    position: [1696, -107]
+    config:
+      message: '{{ inputs.task }}'
+  - id: push
+    type: git_push
+    name: Push
+    position: [2032, -107]
+  - id: pr
+    type: github_pr
+    name: Open pull request
+    position: [2368, -107]
+    config:
+      title: '{{ inputs.task }}'
+      body: |
+        {{ nodes.implement.summary }}
+
+        Review: {{ nodes.review.summary }}
+  - id: done
+    type: end
+    position: [2704, -67]
+    config:
+      status: success
+      output: '{{ nodes.pr.url }}'
+  - id: retry
+    type: loop
+    name: Up to 3 fixes
+    position: [1696, 89]
+    config:
+      max: 3
+  - id: fix
+    type: agent
+    name: Fix
+    position: [2032, 45]
+    config:
+      prompt: |
+        The change for "{{ inputs.task }}" is not finished.
+
+        Test output (exit code {{ nodes.test.exitCode }}):
+        {{ nodes.test.stdout }}
+        {{ nodes.test.stderr }}
+
+        Review notes, if any: {{ nodes.review.summary }}
+
+        Fix what failed. Do not disable or skip tests.
+      mode: Agent
+  - id: gave_up
+    type: end
+    name: Gave up
+    position: [2032, 197]
+    config:
+      status: failure
+      output: 'Still failing after {{ nodes.retry.iteration }} fixes: {{ nodes.test.stderr }}'
+edges:
+  - { from: start.next, to: branch }
+  - { from: branch.created, to: implement }
+  - { from: implement.done, to: test }
+  - { from: test.passed, to: review }
+  - { from: test.failed, to: retry, label: tests failed }
+  - { from: review.approve, to: commit }
+  - { from: review.done, to: commit }
+  - { from: review.changes, to: retry, label: changes requested }
+  - { from: retry.repeat, to: fix }
+  - { from: retry.exhausted, to: gave_up }
+  - { from: fix.done, to: test }
+  - { from: commit.committed, to: push }
+  - { from: push.pushed, to: pr }
+  - { from: pr.opened, to: done }

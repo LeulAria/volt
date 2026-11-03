@@ -1,0 +1,72 @@
+# Every 5 minutes: request a URL, and tell Slack when it is down or slow.
+version: 1
+id: uptime-check
+name: Uptime check every 5 minutes
+description: >-
+  Requests the url variable every five minutes. When the request fails or answers with an
+  error status, Slack hears that the site is down; when the answer takes longer than
+  slowMs, Slack hears that it is slow. Set url, slowMs and slackWebhook in the variables.
+tags: [monitoring, uptime, slack, schedule]
+trigger:
+  type: schedule
+  everyMinutes: 5
+variables:
+  url: https://example.com/health
+  slowMs: 2000
+  slackWebhook: https://hooks.slack.com/services/T000/B000/XXXX
+nodes:
+  - id: start
+    type: start
+    position: [0, 0]
+  - id: ping
+    type: http
+    name: Request the URL
+    position: [352, 0]
+    config:
+      method: GET
+      url: '{{ vars.url }}'
+      timeout: 10s
+  - id: slow
+    type: if
+    name: Too slow?
+    position: [688, -71]
+    config:
+      condition: nodes.ping.durationMs > vars.slowMs
+  - id: slow_alert
+    type: slack_message
+    name: Slow alert
+    position: [1024, -107]
+    config:
+      webhookUrl: '{{ vars.slackWebhook }}'
+      text: ':warning: {{ vars.url }} answered in {{ nodes.ping.durationMs }} ms (limit {{ vars.slowMs }} ms)'
+  - id: up
+    type: end
+    name: Up
+    position: [1360, -13]
+    config:
+      status: success
+      output: '{{ nodes.ping.status }} in {{ nodes.ping.durationMs }} ms'
+  - id: down_alert
+    type: slack_message
+    name: Down alert
+    position: [688, 95]
+    config:
+      webhookUrl: '{{ vars.slackWebhook }}'
+      text: ':red_circle: {{ vars.url }} is down (status {{ nodes.ping.status }})'
+  - id: down
+    type: end
+    name: Down
+    position: [1024, 147]
+    config:
+      status: failure
+      output: '{{ vars.url }} is down'
+edges:
+  - { from: start.next, to: ping }
+  - { from: ping.success, to: slow }
+  - { from: ping.fail, to: down_alert }
+  - { from: slow.true, to: slow_alert }
+  - { from: slow.false, to: up }
+  - { from: slow_alert.sent, to: up }
+  - { from: slow_alert.failed, to: up }
+  - { from: down_alert.sent, to: down }
+  - { from: down_alert.failed, to: down }

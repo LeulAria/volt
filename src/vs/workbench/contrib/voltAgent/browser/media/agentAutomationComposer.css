@@ -1,0 +1,310 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * An automation's Agent Instructions (automationComposer.ts), drawn like the chat composer: a
+ * raised 20px-radius box, the text on top, a toolbar under it (+, mode, model and workflow on the
+ * left, dictation on the right). Dictation's glow and waveform come from agentComposerInput.css,
+ * whose state rules are written for the chat's box; they are repeated here for this one.
+ */
+
+.volt-auto-composer {
+	position: relative;
+	isolation: isolate;
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	overflow: hidden;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	border-radius: 20px;
+	background: var(--volt-surface-raised, color-mix(in srgb, var(--vscode-foreground) 5%, transparent));
+	cursor: text;
+	transition: border-color 180ms ease;
+}
+
+.volt-auto-composer:focus-within {
+	border-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+}
+
+.monaco-workbench.vs .volt-auto-composer,
+.monaco-workbench.hc-light .volt-auto-composer {
+	border-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	background: var(--vscode-input-background);
+}
+
+.monaco-workbench.vs .volt-auto-composer:focus-within,
+.monaco-workbench.hc-light .volt-auto-composer:focus-within {
+	border-color: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+}
+
+.monaco-workbench.hc-black .volt-auto-composer,
+.monaco-workbench.hc-light .volt-auto-composer {
+	border-color: var(--vscode-contrastBorder);
+}
+
+.monaco-workbench.hc-black .volt-auto-composer:focus-within,
+.monaco-workbench.hc-light .volt-auto-composer:focus-within {
+	border-color: var(--vscode-focusBorder);
+}
+
+.volt-auto-composer-input {
+	display: block;
+	width: 100%;
+	margin: 0;
+	padding: 14px 16px 4px;
+	box-sizing: border-box;
+	border: none;
+	border-radius: 0;
+	outline: none !important;
+	resize: none;
+	background: transparent;
+	color: var(--volt-auto-fg);
+	font: inherit;
+	font-size: 14px;
+	line-height: 22px;
+	cursor: text;
+}
+
+.volt-auto-composer-input::placeholder {
+	color: var(--vscode-input-placeholderForeground, var(--volt-auto-muted));
+}
+
+/* Taller than the box can grow: the last lines fade under the toolbar while there is more below. */
+.volt-auto-composer.overflowing .volt-auto-composer-input {
+	-webkit-mask-image: linear-gradient(to bottom, #000 84%, transparent);
+	mask-image: linear-gradient(to bottom, #000 84%, transparent);
+}
+
+/* Toolbar. */
+.volt-auto-composer-toolbar {
+	display: flex;
+	align-items: flex-end;
+	gap: 6px;
+	padding: 4px 10px 10px;
+	cursor: default;
+}
+
+.volt-auto-composer-start {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 4px 2px;
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.volt-auto-composer-end {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex: 0 0 auto;
+	height: 26px;
+	margin-left: auto;
+}
+
+.volt-auto-composer-plus {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	margin: 0 4px 0 0;
+	padding: 0;
+	border: none;
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+	cursor: pointer;
+	flex-shrink: 0;
+	transition: background-color 120ms ease, color 120ms ease;
+}
+
+.volt-auto-composer-plus:hover,
+.volt-auto-composer-plus.open {
+	background: color-mix(in srgb, var(--vscode-foreground) 15%, transparent);
+	color: var(--volt-auto-fg);
+}
+
+.volt-auto-composer-plus .volt-agent-svg-icon,
+.volt-auto-composer-plus .volt-agent-svg-icon svg {
+	display: block;
+	width: 15px;
+	height: 15px;
+}
+
+/* Mode, model and workflow: ghost buttons, no fill until hovered (Cursor's "Opus 5.5 High" with its chevron). */
+.volt-automations .volt-auto-composer .volt-auto-composer-ghost {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 26px;
+	min-width: 0;
+	max-width: 100%;
+	margin: 0;
+	padding: 0 7px 0 8px;
+	box-sizing: border-box;
+	overflow: hidden;
+	border: none;
+	border-radius: 999px;
+	background: transparent;
+	color: color-mix(in srgb, var(--vscode-foreground) 66%, transparent);
+	font-family: inherit;
+	font-size: 13px;
+	font-weight: 300;
+	line-height: 18px;
+	white-space: nowrap;
+	cursor: pointer;
+	transition: background-color 120ms ease, color 120ms ease;
+}
+
+.volt-automations .volt-auto-composer .volt-auto-composer-ghost:hover,
+.volt-automations .volt-auto-composer .volt-auto-composer-ghost.open {
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+	color: var(--volt-auto-fg);
+}
+
+.volt-auto-composer-ghost .label,
+.volt-auto-composer-ghost .volt-agent-model-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: inherit;
+	font-weight: inherit;
+}
+
+.volt-auto-composer-ghost .volt-agent-model-effort {
+	flex-shrink: 0;
+	font-size: inherit;
+	font-weight: inherit;
+	opacity: 0.72;
+}
+
+.volt-automations .volt-auto-composer .volt-auto-composer-ghost .codicon[class*='codicon-'] {
+	flex-shrink: 0;
+	font-size: 14px;
+	color: inherit;
+}
+
+.volt-automations .volt-auto-composer .volt-auto-composer-ghost .codicon[class*='codicon-'].codicon-chevron-down {
+	font-size: 11px;
+	opacity: 0.8;
+}
+
+.volt-auto-composer-ghost .volt-agent-svg-icon,
+.volt-auto-composer-ghost .volt-agent-svg-icon svg {
+	display: block;
+	flex-shrink: 0;
+	width: 14px;
+	height: 14px;
+}
+
+.volt-auto-composer-ghost.workflow {
+	max-width: 280px;
+}
+
+.volt-auto-composer-ghost.workflow .prefix {
+	flex-shrink: 0;
+	opacity: 0.72;
+}
+
+.volt-automations .volt-auto-composer .volt-auto-composer-ghost.workflow.picked {
+	color: var(--volt-auto-fg);
+}
+
+.volt-automations .volt-auto-composer .volt-auto-composer-ghost.workflow.missing .label {
+	color: var(--vscode-editorWarning-foreground, var(--volt-auto-amber));
+}
+
+/* Dictation: a round mic, and the composer's waveform pill while recording. */
+.volt-auto-composer-mic {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: none;
+	background: transparent;
+	cursor: pointer;
+	transition: background-color 120ms ease, color 120ms ease;
+}
+
+.volt-auto-composer-mic[hidden] {
+	display: none;
+}
+
+.volt-automations .volt-auto-composer .volt-auto-composer-mic:not(.recording) {
+	width: 28px;
+	height: 28px;
+	border-radius: 50%;
+	color: color-mix(in srgb, var(--vscode-foreground) 52%, transparent);
+}
+
+.volt-automations .volt-auto-composer .volt-auto-composer-mic:not(.recording):hover {
+	background: var(--volt-auto-fill);
+	color: var(--volt-auto-fg);
+}
+
+.volt-automations .volt-auto-composer .volt-auto-composer-mic.recording {
+	height: 26px;
+}
+
+.volt-auto-composer-mic .volt-agent-svg-icon.mic,
+.volt-auto-composer-mic .volt-agent-svg-icon.mic svg {
+	display: block;
+	width: 17px;
+	height: 17px;
+}
+
+.volt-auto-composer.voice-active .volt-agent-voice-glow {
+	opacity: calc(0.6 + var(--volt-voice-level, 0) * 0.4);
+}
+
+.volt-auto-composer.voice-transcribing .volt-agent-voice-glow {
+	opacity: 0.5;
+}
+
+.monaco-workbench.vs .volt-auto-composer.voice-active .volt-agent-voice-glow,
+.monaco-workbench.hc-light .volt-auto-composer.voice-active .volt-agent-voice-glow {
+	opacity: calc(0.4 + var(--volt-voice-level, 0) * 0.3);
+}
+
+.volt-auto-composer.voice-active .volt-agent-voice-aurora {
+	will-change: transform;
+	animation-play-state: running;
+}
+
+.volt-auto-composer.voice-transcribing .volt-agent-voice-wave-bar {
+	animation: volt-agent-voice-pulse 1.2s ease-in-out infinite;
+}
+
+.volt-auto-composer.voice-transcribing .volt-agent-voice-wave-bar:nth-child(even) {
+	animation-delay: 0.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-auto-composer.voice-transcribing .volt-agent-voice-wave-bar {
+		animation: none;
+	}
+}
+
+/* "Runs Review & fix; these instructions become its task input." */
+.volt-auto-composer-note {
+	margin: 8px 16px 0;
+	color: var(--volt-auto-muted);
+	font-size: 12px;
+	line-height: 17px;
+}
+
+.volt-auto-composer-note[hidden] {
+	display: none;
+}
+
+/* The composer's menus (+, mode, workflow, @): line icons at the menu's icon size. */
+.volt-auto-composer-menu .volt-menu-icon .volt-agent-svg-icon,
+.volt-auto-composer-menu .volt-menu-icon .volt-agent-svg-icon svg {
+	display: block;
+	width: 15px;
+	height: 15px;
+	color: currentColor;
+}

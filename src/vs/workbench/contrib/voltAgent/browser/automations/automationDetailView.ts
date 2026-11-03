@@ -25,8 +25,8 @@ import { IVoltPullRequestService } from '../../../../../platform/voltPullRequest
 import { IVoltRelayService, IVoltRelayState } from '../../../../../platform/voltRelay/common/voltRelay.js';
 import { IWorkspacesService, isRecentFolder } from '../../../../../platform/workspaces/common/workspaces.js';
 import {
-	AutomationSchedule, defaultSchedule, describeSchedule, formatTimeOfDay, gmtOffsetLabel, IAutomation, IAutomationDraft, IAutomationRepository, IAutomationService,
-	IAutomationTool, IAutomationTrigger, isActiveRun, nextScheduleAt, parseTimeOfDay, scheduleKindOf, validateSchedule, weekdayName,
+	AutomationToolKind, defaultSchedule, describeSchedule, IAutomation, IAutomationDraft, IAutomationRepository, IAutomationService,
+	IAutomationTool, IAutomationTrigger, isActiveRun, scheduleKindOf, scheduleSaveError,
 } from '../../../../services/voltRuntime/common/automations/automations.js';
 import { automationTemplate } from '../../../../services/voltRuntime/common/automations/automationTemplates.js';
 import { AutomationProvider, eventLabel, eventOption, providerLabel, providerSignature } from '../../../../services/voltRuntime/common/automations/automationTriggers.js';
@@ -36,15 +36,17 @@ import { IVoltQueryCache } from '../../../../services/voltRuntime/browser/queryC
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID } from '../editor/agentEditorInput.js';
+import { createVoltDropdown } from '../ui/dropdown/voltDropdown.js';
 import { showVoltMenu } from '../ui/menu/voltMenu.js';
-import { formatNextRun, formatScheduleWhen } from './automationFormat.js';
+import { AutomationComposer } from './automationComposer.js';
+import { formatScheduleWhen } from './automationFormat.js';
 import { connectVoltRelay, hookUrl } from './automationHooks.js';
-import { clockIcon, memoriesIcon, providerIcon, toolKindIcon } from './automationIcons.js';
-import { AutomationInstructionsBox } from './automationInstructionsBox.js';
-import { forgetRemoteNames, intervalLabel, IRepositoryCandidate, showCronPresetMenu, showIntervalMenu, showMinuteMenu, showRepositoryMenu, showTimeMenu, showToolMenu, showTriggerMenu, showWeekdayMenu, ToolPick } from './automationPickers.js';
+import { memoriesIcon, providerIcon, toolKindIcon } from './automationIcons.js';
+import { forgetRemoteNames, IRepositoryCandidate, showRepositoryMenu, showToolMenu, showTriggerMenu, ToolPick } from './automationPickers.js';
+import { renderScheduleRow } from './automationScheduleRow.js';
 import { AutomationsRoute, IAutomationSeed, IAutomationsHost, IAutomationsPage } from './automationRoutes.js';
 import { RunHistoryPanel } from './automationRunsView.js';
-import { button, field, flashLabel, iconButton, pillTabs, sectionLabel, showAutomationDialog, toggleSwitch } from './automationUi.js';
+import { button, field, flashLabel, iconButton, pillTabs, showAutomationDialog, toggleSwitch } from './automationUi.js';
 
 type Tab = 'settings' | 'runs';
 
@@ -71,6 +73,7 @@ function configOf(automation: IAutomationDraft): IAutomationDraft {
 		...(automation.shared ? { shared: true } : {}),
 		...(automation.templateId ? { templateId: automation.templateId } : {}),
 		...(automation.threadId ? { threadId: automation.threadId } : {}),
+		...(automation.workflowId ? { workflowId: automation.workflowId } : {}),
 	};
 }
 
@@ -93,18 +96,18 @@ export function automationJson(automation: IAutomationDraft): string {
 
 function seededDraft(seed: IAutomationSeed | undefined, defaults: { readonly modelRef?: string; readonly repository?: IAutomationRepository }): MutableDraft {
 	const template = automationTemplate(seed?.templateId);
-	let triggers: IAutomationTrigger[] = (template?.triggers ?? []).map(trigger => ({
+	const triggers: IAutomationTrigger[] = (template?.triggers ?? []).map(trigger => ({
 		id: newId('tr'),
 		provider: trigger.provider,
 		event: trigger.event,
 		...(trigger.schedule ? { schedule: trigger.schedule } : {}),
 		...(trigger.provider !== 'schedule' ? { hook: newHook() } : {}),
 	}));
-	// A time picked on the calendar replaces the template's schedule, or is the first trigger.
+	// A time picked on the calendar: it replaces a template's schedule, or is the first trigger.
 	if (seed?.schedule) {
-		const picked: IAutomationTrigger = { id: newId('tr'), provider: 'schedule', event: scheduleKindOf(seed.schedule), schedule: seed.schedule };
-		const index = triggers.findIndex(trigger => trigger.provider === 'schedule');
-		triggers = index >= 0 ? triggers.map((trigger, i) => i === index ? { ...picked, id: trigger.id } : trigger) : [picked, ...triggers];
+		const scheduled = triggers.findIndex(trigger => trigger.provider === 'schedule');
+		const trigger: IAutomationTrigger = { id: newId('tr'), provider: 'schedule', event: scheduleKindOf(seed.schedule), schedule: seed.schedule };
+		triggers.splice(scheduled >= 0 ? scheduled : 0, scheduled >= 0 ? 1 : 0, trigger);
 	}
 	const tools: IAutomationTool[] = [{ id: newId('t'), kind: 'memories' }, ...(template?.tools ?? []).map(kind => ({ id: newId('t'), kind }))];
 	const modelRef = seed?.modelRef ?? defaults.modelRef;
@@ -183,7 +186,6 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 	private readonly triggerStore = this._register(new DisposableStore());
 	private readonly toolStore = this._register(new DisposableStore());
 	private readonly panel = this._register(new MutableDisposable<RunHistoryPanel>());
-	private readonly instructionsBox = this._register(new MutableDisposable<AutomationInstructionsBox>());
 	private readonly refresh = this._register(new RunOnceScheduler(() => this.onServiceChange(), 40));
 
 	private readonly page: HTMLElement;
@@ -197,6 +199,7 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 	private body!: HTMLElement;
 	private triggersCard: HTMLElement | undefined;
 	private toolsCard: HTMLElement | undefined;
+	private composer: AutomationComposer | undefined;
 
 	constructor(
 		private readonly host: IAutomationsHost,
@@ -241,6 +244,16 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 			return;
 		}
 		this.render();
+		// Cmd/Ctrl+S saves from anywhere on the page (the bar, the fields, Run History).
+		this._register(addDisposableListener(host.bar.parentElement ?? this.page, 'keydown', e => {
+			if (e.key.toLowerCase() === 's' && (isMacintosh ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey && !e.shiftKey) {
+				e.preventDefault();
+				e.stopPropagation();
+				if (this.canSave()) {
+					void this.save();
+				}
+			}
+		}));
 		this._register(automations.onDidChange(() => this.refresh.schedule()));
 		this._register(relay.onDidChangeState(state => {
 			this.relayState = state;
@@ -273,7 +286,8 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 	/** Save while there is something to save; Saved, with a check, once everything is. */
 	private changed(): void {
 		const button = this.saveButton;
-		if (!button) {
+		// A save can finish after the page closed.
+		if (!button || this._store.isDisposed) {
 			return;
 		}
 		const dirty = this.canSave();
@@ -313,7 +327,7 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 
 	private validate(): string | undefined {
 		for (const trigger of this.draft.triggers) {
-			const error = trigger.schedule ? validateSchedule(trigger.schedule) : undefined;
+			const error = scheduleSaveError(trigger, this.saved?.triggers, Date.now());
 			if (error) {
 				return localize('voltAutomations.badTrigger', "{0}: {1}", describeSchedule(trigger.schedule!), error);
 			}
@@ -331,7 +345,7 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 		let result: IAutomation | undefined;
 		if (this.id) {
 			// Optional fields left out of the draft (Auto model, not shared) must clear the stored ones.
-			result = await this.automations.update(this.id, { ...draft, modelRef: draft.modelRef, mode: draft.mode, shared: draft.shared, templateId: draft.templateId, threadId: draft.threadId });
+			result = await this.automations.update(this.id, { ...draft, modelRef: draft.modelRef, mode: draft.mode, shared: draft.shared, templateId: draft.templateId, threadId: draft.threadId, workflowId: draft.workflowId });
 		} else {
 			result = await this.automations.create(draft);
 			this.id = result.id;
@@ -422,18 +436,9 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 			this.syncCrumbs();
 		}));
 		this._register(addDisposableListener(this.titleInput, 'keydown', e => {
-			if (e.key === 'Enter') {
-				this.instructionsBox.value?.focus();
-			}
-		}));
-
-		this._register(addDisposableListener(this.page, 'keydown', e => {
-			if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's' && this.tab === 'settings') {
+			if (e.key === 'Enter' && !e.isComposing) {
 				e.preventDefault();
-				e.stopPropagation();
-				if (this.canSave()) {
-					void this.save();
-				}
+				this.composer?.focus();
 			}
 		}));
 
@@ -525,26 +530,37 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 	private renderBody(): void {
 		this.bodyStore.clear();
 		this.panel.clear();
-		this.instructionsBox.clear();
 		clearNode(this.body);
 		clearNode(this.toolbar);
-		this.triggersCard = this.toolsCard = undefined;
+		this.triggersCard = this.toolsCard = this.composer = undefined;
 		if (this.tab === 'runs') {
 			this.panel.value = this.instantiationService.createInstance(RunHistoryPanel, this.toolbar, this.body, this.id ?? 'unsaved', () => this.host.relayout());
 			this.host.relayout();
 			return;
 		}
-		sectionLabel(this.body, localize('voltAutomations.triggers', "Triggers"));
-		this.triggersCard = append(this.body, $('.volt-auto-card.volt-auto-list-card.triggers'));
+		const triggers = this.section('triggers', localize('voltAutomations.triggers', "Triggers"), localize('voltAutomations.triggersDesc', "When it runs"));
+		this.triggersCard = append(triggers, $('.volt-auto-card.volt-auto-list-card.triggers'));
 		this.renderTriggers();
 
-		sectionLabel(this.body, localize('voltAutomations.instructions', "Agent Instructions")).classList.add('spaced');
-		this.renderInstructions();
+		const instructions = this.section('instructions', localize('voltAutomations.instructions', "Agent Instructions"), localize('voltAutomations.instructionsDesc', "What the agent does"));
+		this.renderInstructions(instructions);
 
-		sectionLabel(this.body, localize('voltAutomations.tools', "Tools")).classList.add('spaced');
-		this.toolsCard = append(this.body, $('.volt-auto-card.volt-auto-list-card.tools'));
+		const tools = this.section('tools', localize('voltAutomations.tools', "Tools"), localize('voltAutomations.toolsDesc', "What it can use"));
+		this.toolsCard = append(tools, $('.volt-auto-card.volt-auto-list-card.tools'));
 		this.renderTools();
 		this.host.relayout();
+	}
+
+	/** A titled part of Settings with a one-line description; its content goes in the returned element. */
+	private section(id: string, title: string, description: string): HTMLElement {
+		const section = append(this.body, $(`section.volt-auto-section.${id}`));
+		const head = append(section, $('.volt-auto-section-head'));
+		const heading = append(head, $('h3.volt-auto-section-title'));
+		heading.textContent = title;
+		heading.id = `volt-auto-section-${id}-${generateUuid().slice(0, 8)}`;
+		append(head, $('p.volt-auto-section-desc')).textContent = description;
+		section.setAttribute('aria-labelledby', heading.id);
+		return section;
 	}
 
 	//#endregion
@@ -768,87 +784,17 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 		remove.classList.add('row-hover');
 	}
 
-	private chip(parent: HTMLElement, label: string, onClick: (anchor: HTMLElement) => void): HTMLButtonElement {
-		const chip = button(parent, 'volt-auto-chip-button', label, this.triggerStore, () => onClick(chip));
-		chip.appendChild(renderIcon(Codicon.chevronDown));
-		return chip;
-	}
-
+	/** The schedule row lives in automationScheduleRow.ts; the remove button is the editor's. */
 	private renderScheduleRow(card: HTMLElement, trigger: IAutomationTrigger, now: number): void {
-		const row = append(card, $('.volt-auto-list-row.schedule'));
-		append(row, $('span.icon')).appendChild(clockIcon());
-		const line = append(row, $('span.schedule-line'));
-		const spec = trigger.schedule!;
-		const set = (schedule: AutomationSchedule) => this.updateTrigger(trigger.id, { schedule, event: scheduleKindOf(schedule) });
-		const word = (text: string, muted = false) => append(line, $(muted ? 'span.word.muted' : 'span.word')).textContent = text;
-		switch (spec.type) {
-			case 'hourly':
-				word(localize('voltAutomations.everyHour', "Every hour"));
-				word(localize('voltAutomations.at', "at"), true);
-				this.chip(line, `:${String(spec.minute).padStart(2, '0')}`, anchor => showMinuteMenu(this.contextView, anchor, spec.minute, minute => set({ type: 'hourly', minute })));
-				break;
-			case 'daily':
-				word(localize('voltAutomations.everyDay', "Every day"));
-				word(localize('voltAutomations.at', "at"), true);
-				this.chip(line, spec.time, anchor => showTimeMenu(this.contextView, anchor, parseTimeOfDay(spec.time) ?? 540, minutes => set({ type: 'daily', time: formatTimeOfDay(minutes) })));
-				break;
-			case 'weekly': {
-				word(localize('voltAutomations.every', "Every"));
-				const days = [...spec.weekdays].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
-				const dayLabel = days.length === 1 ? weekdayName(days[0]) : days.map(day => weekdayName(day, true)).join(', ');
-				let picked = [...spec.weekdays];
-				this.chip(line, dayLabel, anchor => showWeekdayMenu(this.contextView, anchor, () => picked, day => {
-					picked = picked.includes(day) ? (picked.length > 1 ? picked.filter(entry => entry !== day) : picked) : [...picked, day].sort((a, b) => a - b);
-					this.updateTrigger(trigger.id, { schedule: { type: 'weekly', weekdays: picked, time: spec.time } }, false);
-				}, () => this.renderTriggers()));
-				word(localize('voltAutomations.at', "at"), true);
-				this.chip(line, spec.time, anchor => showTimeMenu(this.contextView, anchor, parseTimeOfDay(spec.time) ?? 540, minutes => set({ type: 'weekly', weekdays: spec.weekdays, time: formatTimeOfDay(minutes) })));
-				break;
-			}
-			case 'cron': {
-				word(localize('voltAutomations.cron', "Cron"));
-				const input = append(line, $('input.volt-auto-cron')) as HTMLInputElement;
-				input.value = spec.expr;
-				input.spellcheck = false;
-				input.placeholder = '0 9 * * 1-5';
-				setAgentTooltip(input, localize('voltAutomations.cronHelp', "minute hour day-of-month month day-of-week, in your local time. Examples: */15 * * * *, 0 9 * * 1-5, @daily"));
-				const update = new RunOnceScheduler(() => {
-					this.updateTrigger(trigger.id, { schedule: { type: 'cron', expr: input.value.trim() } }, false);
-					this.syncNext(row, { type: 'cron', expr: input.value.trim() }, Date.now());
-				}, 150);
-				this.triggerStore.add(update);
-				this.triggerStore.add(addDisposableListener(input, 'input', () => update.schedule()));
-				const presets = this.chip(line, localize('voltAutomations.cronPresetsChip', "Presets"), anchor => showCronPresetMenu(this.contextView, anchor, input.value, expr => set({ type: 'cron', expr })));
-				presets.classList.add('subtle');
-				break;
-			}
-			case 'interval':
-				word(localize('voltAutomations.every', "Every"));
-				this.chip(line, intervalLabel(spec.everyMs), anchor => showIntervalMenu(this.contextView, anchor, spec.everyMs, everyMs => set({ type: 'interval', everyMs })));
-				break;
-		}
-		append(line, $('span.word.tz')).textContent = gmtOffsetLabel(now);
-		append(line, $('span.next'));
-		this.syncNext(row, spec, now, trigger.id);
+		const row = renderScheduleRow(card, trigger, now, {
+			contextView: this.contextView,
+			store: this.triggerStore,
+			update: (patch, redraw) => this.updateTrigger(trigger.id, patch, redraw),
+			rerender: () => this.renderTriggers(),
+			saved: () => this.saved,
+			enabled: () => this.draft.enabled,
+		});
 		this.removeButton(row, trigger);
-	}
-
-	private syncNext(row: HTMLElement, spec: AutomationSchedule, now: number, triggerId?: string): void {
-		const next = row.querySelector<HTMLElement>('.next');
-		const error = validateSchedule(spec);
-		row.classList.toggle('invalid', !!error);
-		if (!next) {
-			return;
-		}
-		if (error) {
-			next.textContent = error;
-			return;
-		}
-		const saved = triggerId ? this.saved?.nextRuns[triggerId] : undefined;
-		const unchanged = triggerId && this.saved?.triggers.find(entry => entry.id === triggerId && JSON.stringify(entry.schedule) === JSON.stringify(spec));
-		const at = saved !== undefined && unchanged && this.draft.enabled ? saved : nextScheduleAt(spec, now);
-		next.textContent = at !== undefined ? localize('voltAutomations.nextRun', "Next run {0} {1}", formatNextRun(at), gmtOffsetLabel(at)) : '';
-		setAgentTooltip(next, at !== undefined ? formatScheduleWhen(at, now) : '');
 	}
 
 	private renderEventRow(card: HTMLElement, trigger: IAutomationTrigger): void {
@@ -1025,26 +971,47 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 
 	//#region Instructions
 
-	private renderInstructions(): void {
-		this.instructionsBox.value = this.instantiationService.createInstance(AutomationInstructionsBox, this.body, {
-			value: this.draft.instructions,
-			onDidChange: instructions => this.setDraft({ instructions }),
-			model: {
-				get: () => this.draft.modelRef,
-				set: ref => this.setDraft({ modelRef: ref }),
-			},
-			tools: () => ({
-				hasMemories: this.draft.tools.some(tool => tool.kind === 'memories'),
-				added: this.draft.tools.map(tool => tool.kind === 'mcp' ? `mcp:${tool.server}` : tool.kind),
-				servers: () => this.runtime.listMcpServers(this.draft.repositories[0] ? uriFromStoredRoot(this.draft.repositories[0].root) : this.sessionContext.activeProject?.root),
-				mcp: this.draft.tools.flatMap(tool => tool.kind === 'mcp' && tool.server ? [tool.server] : []),
-			}),
-			onAddTool: pick => {
-				if (pick.kind === 'new-mcp' || !this.draft.tools.some(tool => tool.kind === pick.kind && (pick.kind !== 'mcp' || ('server' in pick && tool.server === pick.server)))) {
-					this.addTool(pick);
-				}
-			},
-		});
+	/** The composer-like box: text, + menu, mode, model, workflow and dictation; it edits the draft. */
+	private renderInstructions(parent: HTMLElement): void {
+		this.composer = this.bodyStore.add(this.instantiationService.createInstance(AutomationComposer, parent, {
+			draft: () => this.draft,
+			update: patch => this.setDraft(patch),
+			addTool: tool => this.addComposerTool(tool),
+			mcpRoot: () => this.draft.repositories[0] ? uriFromStoredRoot(this.draft.repositories[0].root) : this.sessionContext.activeProject?.root,
+			newMcpServer: () => void this.commandService.executeCommand(OPEN_AGENT_CUSTOMIZE_COMMAND_ID),
+			newWorkflow: () => void this.newWorkflow(),
+			openWorkflow: id => void this.openWorkflow(id),
+			relayout: () => this.host.relayout(),
+		}));
+	}
+
+	/** A tool named in the instructions joins Tools once (an MCP server once per name). */
+	private addComposerTool(tool: { readonly kind: AutomationToolKind; readonly server?: string }): void {
+		const present = this.draft.tools.some(entry => entry.kind === tool.kind && (tool.kind !== 'mcp' || entry.server === tool.server));
+		if (!present) {
+			this.setDraft({ tools: [...this.draft.tools, { id: newId('t'), kind: tool.kind, ...(tool.server ? { server: tool.server } : {}) }] }, 'tools');
+		}
+	}
+
+	/**
+	 * New workflow from the Workflow menu: the automation is saved first (the builder links the
+	 * workflow to it on save), then the builder opens.
+	 */
+	private async newWorkflow(): Promise<void> {
+		if (!this.id || this.isDirty()) {
+			if (!await this.save()) {
+				return;
+			}
+		}
+		this.host.navigate({ page: 'workflow', seed: { automationId: this.id! } });
+	}
+
+	/** Open in Builder: the pick is saved first, so leaving does not ask to discard it. */
+	private async openWorkflow(id: string): Promise<void> {
+		if (this.isDirty() && !await this.save()) {
+			return;
+		}
+		this.host.navigate({ page: 'workflow', id });
 	}
 
 	//#endregion
@@ -1145,7 +1112,10 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 		}
 		const id = this.id!;
 		const dialog = showAutomationDialog(this.layoutService.activeContainer, localize('voltAutomations.memoryNotes', "Memory Notes"), localize('voltAutomations.memoryHelp', "View and edit files the agent keeps in memories/"), 'memory');
-		const select = append(append(field(dialog.body, localize('voltAutomations.file', "File")), $('.volt-auto-select')), $('select')) as HTMLSelectElement;
+		// The file: a Volt dropdown, drawn again when the list of files changes (a delete).
+		const fileHost = append(field(dialog.body, localize('voltAutomations.file', "File")), $('.volt-auto-memory-file'));
+		const fileStore = dialog.store.add(new DisposableStore());
+		let file = 'MEMORIES.md';
 		const content = append(field(dialog.body, localize('voltAutomations.content', "Content")), $('textarea.volt-auto-input.memory')) as HTMLTextAreaElement;
 		content.placeholder = localize('voltAutomations.memoryPlaceholder', "Add memory notes...");
 		content.spellcheck = false;
@@ -1155,11 +1125,11 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 			sync();
 		});
 		const remove = button(dialog.footer, 'volt-auto-outline-button.small', localize('voltAutomations.deleteFile', "Delete"), dialog.store, async () => {
-			await this.automations.deleteMemory(id, select.value);
-			await load(select.value);
+			await this.automations.deleteMemory(id, file);
+			await load(file);
 		});
 		const save = button(dialog.footer, 'volt-auto-outline-button.small.primary', localize('voltAutomations.save', "Save"), dialog.store, async () => {
-			await this.automations.writeMemory(id, select.value, content.value);
+			await this.automations.writeMemory(id, file, content.value);
 			original = content.value;
 			sync();
 			flashLabel(save, localize('voltAutomations.saved', "Saved"));
@@ -1170,20 +1140,22 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 			reset.disabled = !changed;
 			remove.disabled = !original && !content.value;
 		};
-		const load = async (file: string) => {
+		const load = async (wanted: string) => {
 			const files = await this.automations.listMemoryFiles(id);
-			clearNode(select);
-			for (const name of files) {
-				const option = append(select, $('option')) as HTMLOptionElement;
-				option.value = name;
-				option.textContent = name;
-			}
-			select.value = files.includes(file) ? file : files[0];
-			original = await this.automations.readMemory(id, select.value).catch(() => '');
+			file = files.includes(wanted) ? wanted : files[0] ?? wanted;
+			fileStore.clear();
+			clearNode(fileHost);
+			createVoltDropdown(fileHost, this.contextView, {
+				options: (files.length ? files : [file]).map(name => ({ id: name, label: name, icon: Codicon.file })),
+				value: file,
+				ariaLabel: localize('voltAutomations.file', "File"),
+				align: 'left',
+				onChange: name => void load(name),
+			}, fileStore);
+			original = await this.automations.readMemory(id, file).catch(() => '');
 			content.value = original;
 			sync();
 		};
-		dialog.store.add(addDisposableListener(select, 'change', () => void load(select.value)));
 		dialog.store.add(addDisposableListener(content, 'input', sync));
 		await load('MEMORIES.md');
 	}
