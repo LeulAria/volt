@@ -17,6 +17,7 @@ import {
 	buildFixThreadPrompt,
 	buildPrCommentsPrompt,
 	buildWatchMessage,
+	changedPullRequestsInOutput,
 	collectRemarks,
 	commitMessageFrom,
 	currentLink,
@@ -359,6 +360,14 @@ suite('Volt agent pull requests', () => {
 		assert.strictEqual(createdPullRequestUrl('title:\tFix it\nurl:\thttps://github.com/a/b/pull/3\nstate:\tOPEN'), undefined);
 		assert.strictEqual(createdPullRequestUrl('see https://github.com/a/b/pull/3'), undefined);
 		assert.strictEqual(createdPullRequestUrl(''), undefined);
+
+		// `gh pr merge`, `close` and `reopen` name the pull request they changed, so its chats read it again at once.
+		assert.deepStrictEqual(changedPullRequestsInOutput('✓ Squashed and merged pull request LeulAria/volt#60 (feat(release): build apps)\n✓ Deleted local branch feat/x'), [{ repo: 'LeulAria/volt', number: 60 }]);
+		assert.deepStrictEqual(changedPullRequestsInOutput('✓ Merged pull request #7 (Fix it)'), [{ number: 7 }]);
+		assert.deepStrictEqual(changedPullRequestsInOutput('✓ Closed pull request a/b#3 (x)\n✓ Reopened pull request a/b#4 (y)'), [{ repo: 'a/b', number: 3 }, { repo: 'a/b', number: 4 }]);
+		assert.deepStrictEqual(changedPullRequestsInOutput('! Pull request a/b#9 (Fix it) was already merged'), [{ repo: 'a/b', number: 9 }]);
+		assert.deepStrictEqual(changedPullRequestsInOutput('✓ Pull request a/b#9 will be automatically merged via squash when all requirements are met'), []);
+		assert.deepStrictEqual(changedPullRequestsInOutput('Opened pull request a/b#9\nsee https://github.com/a/b/pull/9'), []);
 
 		// A push that sent commits (new branch or fast-forward) refreshes the chat's pull requests; nothing sent does not.
 		assert.ok(isGitPushOutput('To https://github.com/a/b.git\n * [new branch]      feat/x -> feat/x\nbranch \'feat/x\' set up to track \'origin/feat/x\'.'));
