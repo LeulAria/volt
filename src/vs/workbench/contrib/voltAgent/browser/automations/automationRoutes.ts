@@ -8,7 +8,7 @@ import { IDisposable } from '../../../../../base/common/lifecycle.js';
 import type { AutomationSchedule } from '../../../../services/voltRuntime/common/automations/automations.js';
 import type { IAgentPageCrumb } from '../customize/agentMarketplaceView.js';
 
-/** A new automation's starting point: a template, a prompt from a chat's composer, or a calendar slot. */
+/** A new automation's starting point: a template, a prompt from a chat's composer, or a time picked on the calendar. */
 export interface IAutomationSeed {
 	readonly templateId?: string;
 	readonly threadId?: string;
@@ -34,8 +34,8 @@ export interface IWorkflowSeed {
 	readonly automationId?: string;
 }
 
-/** How the automations list shows: the table, or the calendar at a scale. */
-export type AutomationsView = 'list' | 'month' | 'week' | 'day' | 'agenda';
+/** How the list page shows automations: the table, or a calendar of their runs. */
+export type AutomationsView = 'list' | 'day' | 'week' | 'month';
 
 export type AutomationsRoute =
 	/** `date`: the day the calendar shows (start of day, local), today when absent. */

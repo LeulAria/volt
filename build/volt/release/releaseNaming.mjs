@@ -4,10 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 
 // Shared release conventions: versions, tags, asset names and update feed entries.
-// The docs download page (apps/docs/src/lib/releases.ts) parses the same asset names.
+// The docs download page (apps/docs/src/lib/releases.ts) parses the same names for the desktop assets.
 
 export const CHANNELS = ['stable', 'beta', 'nightly'];
-export const TARGETS = ['darwin-x64', 'darwin-arm64', 'darwin-universal', 'linux-x64', 'linux-arm64', 'linux-armhf', 'win32-x64', 'win32-arm64'];
+// android-arm64 and ios-arm64 are the mobile app (apps/mobile, .github/workflows/volt-mobile-build.yml).
+export const TARGETS = ['darwin-x64', 'darwin-arm64', 'darwin-universal', 'linux-x64', 'linux-arm64', 'linux-armhf', 'win32-x64', 'win32-arm64', 'android-arm64', 'ios-arm64'];
 
 /**
  * @param {{ channel: string, version?: string, packageVersion: string, refType?: string, refName?: string, runNumber?: string, platforms?: string, now: Date }} o
@@ -64,18 +65,20 @@ export function resolveRelease(o) {
 		linux: archesFor('linux'),
 		win32: archesFor('win32'),
 		universal: wanted.has('darwin-universal') ? 'true' : 'false',
+		android: wanted.has('android-arm64') ? 'true' : 'false',
+		ios: wanted.has('ios-arm64') ? 'true' : 'false',
 	};
 }
 
 /**
- * volt-<channel>-<version>-<os>-<arch>[-user-setup|-system-setup].<ext>
+ * volt-<channel>-<version>-<os>-<arch>[-user-setup|-system-setup|-simulator].<ext>
  * @param {{ channel: string, version: string, os: string, arch: string, kind?: string, ext: string }} a
  */
 export function assetName(a) {
 	return `volt-${a.channel}-${a.version}-${a.os}-${a.arch}${a.kind ? `-${a.kind}` : ''}.${a.ext}`;
 }
 
-export const ASSET_PATTERN = /^volt-(stable|beta|nightly)-(.+)-(darwin|win32|linux)-(x64|arm64|armhf|universal)(?:-(user-setup|system-setup))?\.(dmg|zip|exe|deb|rpm|tar\.gz)$/;
+export const ASSET_PATTERN = /^volt-(stable|beta|nightly)-(.+)-(darwin|win32|linux|android|ios)-(x64|arm64|armhf|universal)(?:-(user-setup|system-setup|simulator))?\.(dmg|zip|exe|deb|rpm|tar\.gz|apk|aab|ipa)$/;
 
 /** @param {string} name */
 export function parseAssetName(name) {

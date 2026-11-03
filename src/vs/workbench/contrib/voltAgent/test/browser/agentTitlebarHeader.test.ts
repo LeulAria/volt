@@ -28,9 +28,10 @@ suite('Agent primary header', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	test('keeps a tab title to three words', () => {
+	test('keeps a tab title to six words', () => {
 		assert.strictEqual(shortTabTitle('Header drag issue'), 'Header drag issue');
-		assert.strictEqual(shortTabTitle('Fix the header drag issue'), 'Fix the header');
+		assert.strictEqual(shortTabTitle('Fix doubled run command card borders'), 'Fix doubled run command card borders');
+		assert.strictEqual(shortTabTitle('Fix the header drag issue on the agent window'), 'Fix the header drag issue on');
 		assert.strictEqual(shortTabTitle('  one   two  '), 'one two');
 		assert.strictEqual(shortTabTitle(''), '');
 	});

@@ -37,6 +37,58 @@ export function agentHomeWorkspaceEntries(
 	return [...entries.values()];
 }
 
+/** Claude Code history folders the menu takes at most, as Cezar does. */
+export const CLAUDE_HISTORY_LIMIT = 30;
+
+/** Home folders macOS guards: reading inside one is what makes it ask for permission. */
+const PRIVACY_PROTECTED_HOME_DIRS = new Set(['Desktop', 'Documents', 'Downloads', 'Movies', 'Music', 'Pictures']);
+
+/**
+ * The folders Claude Code has worked in, newest first: the keys of `projects` in its
+ * `~/.claude.json`, kept in the order each was first opened. Anything unreadable is no history.
+ */
+export function claudeHistoryFolders(content: string): string[] {
+	try {
+		const projects = (JSON.parse(content) as { projects?: unknown } | null)?.projects;
+		return projects && typeof projects === 'object' && !Array.isArray(projects) ? Object.keys(projects).reverse() : [];
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * How a Claude Code history folder is offered. `skip`: noise (the home folder, anything under a
+ * hidden folder such as ~/.volt or ~/.claude worktrees, ~/Library, temp folders). `listed`: under a
+ * folder macOS guards (or an external volume), listed without a look, as looking would ask for
+ * permission. `check`: listed if it is still there.
+ */
+export function claudeHistoryFolderKind(path: string, home: string): 'skip' | 'listed' | 'check' {
+	const normalize = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '');
+	const folder = normalize(path);
+	const homeFolder = normalize(home);
+	if (!/^(\/|[a-zA-Z]:\/)/.test(folder) || folder === homeFolder) {
+		return 'skip';
+	}
+	const segments = folder.split('/').filter(Boolean);
+	if (segments.some(segment => segment.startsWith('.') || segment === 'node_modules' || segment === 'AppData')
+		|| /^\/(private\/)?(tmp|var\/folders)(\/|$)/.test(folder)) {
+		return 'skip';
+	}
+	if (folder.startsWith('/Volumes/')) {
+		return 'listed';
+	}
+	if (folder.startsWith(`${homeFolder}/`)) {
+		const first = folder.slice(homeFolder.length + 1).split('/')[0];
+		if (first === 'Library') {
+			return 'skip';
+		}
+		if (PRIVACY_PROTECTED_HOME_DIRS.has(first)) {
+			return 'listed';
+		}
+	}
+	return 'check';
+}
+
 /**
  * Folders whose path holds every word of the query, ignoring case. Folders
  * whose own name matches come first; the order inside each group is kept.

@@ -9,36 +9,59 @@ import { isMarkupOnlyTitle, truncateAtWord } from './agentHistoryLog.js';
  * Chat titles written by a model from the first message, the way T3 Code and OpenCode do it:
  * one small, tool-less call that runs beside the agent's first turn. A CLI agent's title call
  * (a process start) waits for the turn's first reply text, so it never slows the turn's startup.
- * The sidebar shows the first-line title until it lands.
+ * The sidebar shows the first-line title until it lands. A first message that names little
+ * ("hi", "fix this") is titled again, once, from the first two messages.
  */
 
-const MAX_TITLE_LENGTH = 48;
+const MAX_TITLE_LENGTH = 56;
 /** Head and tail of a long first message; the middle is usually pasted logs or code. */
 const MAX_INPUT_CHARS = 3000;
+/** A first message with fewer words names too little to title the chat by. */
+const VAGUE_MESSAGE_WORDS = 4;
+/** What the model answers for a message with no subject (see the prompt), lowercased. */
+const NEUTRAL_TITLES = new Set(['quick question', 'general question', 'quick chat', 'greeting', 'small talk', 'new task', 'help request']);
 
 const TITLE_INSTRUCTIONS = [
 	'You name coding chats so the user can find this one again weeks later in a sidebar list.',
 	'Reply with the title only: one line, no quotes, no trailing period, no preamble.',
 	'',
 	'Rules:',
-	'- 2 to 6 words, under 40 characters, sentence case.',
-	'- Name the subject and the goal (what is being built, fixed or asked), not the user\'s wording.',
+	'- Say what the task is. For a work request, start with a verb (Fix, Add, Speed up, Refactor, Debug, Explain, Compare, Write) and name the specific thing (component, file, command, error, feature) and the goal.',
+	'- For a question, name what is asked, such as "How the stash restores chats" or "Why npm test hangs on CI".',
+	'- 3 to 7 words, under 50 characters, sentence case.',
+	'- When the message asks for several things, title the main task (the first or the largest), not a list.',
 	'- Do not copy and truncate the message. Drop filler such as "please", "can you", "I want".',
 	'- Keep exact names that identify the work: files, components, commands, error names.',
 	'- Use the language the user wrote in.',
 	'- Attached images usually show the UI being discussed; name that UI.',
+	'- Given a first and a latest message, title the task they set together; a short first message often makes sense only with the latest.',
 	'- If the message is only a greeting or has no clear subject, reply with a short neutral title such as "Quick question".',
 	'',
 	'Examples:',
-	'"the borders on the run command card look doubled, polish it" -> Run command card border fix',
-	'"why does npm test hang on CI but not locally" -> CI test hang investigation',
-	'"add oauth login with github to the settings page" -> GitHub OAuth login in settings',
+	'"the borders on the run command card look doubled, polish it" -> Fix doubled run command card borders',
+	'"npm test hangs on CI but not locally, find out why" -> Debug npm test hang on CI',
+	'"add oauth login with github to the settings page" -> Add GitHub OAuth login to settings',
+	'"how does the stash restore chats after a reload?" -> How the stash restores chats',
+	'"rename getUser to fetchUser everywhere, then update the README and bump the version" -> Rename getUser to fetchUser',
+	'"ok so whenever a chat finishes the sidebar list jumps back to the top, really annoying when I am scrolled down reading older chats, maybe the title update does it, not sure, can you look" -> Fix sidebar list jumping to top',
+	'"hey" -> Quick question',
 ].join('\n');
 
-/** The whole prompt for one title. `attachments` are file or image names the user attached. */
-export function buildTitlePrompt(message: string, attachments: readonly string[] = []): string {
-	const text = clipMiddle(stripAttachmentLines(message), MAX_INPUT_CHARS);
-	const parts = [TITLE_INSTRUCTIONS, '', 'User message:', text || '(no text)'];
+/**
+ * The whole prompt for one title. `messages` is the first message, or the first and the latest
+ * when the first named little. `attachments` are file or image names the user attached.
+ */
+export function buildTitlePrompt(messages: string | readonly string[], attachments: readonly string[] = []): string {
+	const [first = '', ...rest] = typeof messages === 'string' ? [messages] : messages;
+	const parts = [TITLE_INSTRUCTIONS, ''];
+	if (rest.length) {
+		// The first message is short when it named little; the latest gets the room it leaves.
+		const head = clipMiddle(stripAttachmentLines(first), MAX_INPUT_CHARS / 2);
+		const latest = clipMiddle(stripAttachmentLines(rest[rest.length - 1]), MAX_INPUT_CHARS - head.length);
+		parts.push('First message:', head || '(no text)', '', 'Latest message:', latest || '(no text)');
+	} else {
+		parts.push('User message:', clipMiddle(stripAttachmentLines(first), MAX_INPUT_CHARS) || '(no text)');
+	}
 	if (attachments.length) {
 		parts.push('', `Attached: ${attachments.slice(0, 6).join(', ')}`);
 	}
@@ -68,6 +91,21 @@ export function sanitizeTitle(raw: string | undefined): string | undefined {
 		return undefined;
 	}
 	return truncateAtWord(line.charAt(0).toUpperCase() + line.slice(1), MAX_TITLE_LENGTH);
+}
+
+/** A message too short to say what the chat is about ("hi", "continue", "fix this" under an image). */
+export function isVagueMessage(message: string): boolean {
+	const words = message
+		// Attachment chips: `[Image #1: a.png]`, `[Image #1 "a.png" is saved at: /path]`.
+		.replace(/\[(?:Image|Video|File)\b[^\]\n]*\]/g, ' ')
+		.split(/\s+/)
+		.filter(word => /[\p{L}\p{N}]/u.test(word));
+	return words.length < VAGUE_MESSAGE_WORDS;
+}
+
+/** A title the prompt gives a message with no subject, such as "Quick question". */
+export function isNeutralTitle(title: string): boolean {
+	return NEUTRAL_TITLES.has(title.trim().toLowerCase());
 }
 
 /**

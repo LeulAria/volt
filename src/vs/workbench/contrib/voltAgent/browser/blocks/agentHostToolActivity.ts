@@ -6,7 +6,11 @@
 import { isMemoryToolName } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
 import { AGENT_TASK_TOOLS, bareTaskToolName } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import { describeLocator, parseLocator } from '../../../../services/voltRuntime/common/tools/browserRun.js';
-import { TERMINAL_START_TOOL_NAME, TERMINAL_TOOLS, TERMINAL_SEND_TOOL_NAME, APP_OPEN_TOOL_NAME } from '../../../../services/voltRuntime/common/terminalTools.js';
+import { TERMINAL_START_TOOL_NAME, TERMINAL_TOOLS as MANAGED_TERMINAL_TOOLS, TERMINAL_SEND_TOOL_NAME, APP_OPEN_TOOL_NAME } from '../../../../services/voltRuntime/common/terminalTools.js';
+import { TASK_WATCH_TOOL_NAME, WATCHED_TASK_TOOLS } from '../../../../services/voltRuntime/common/terminals/watchedTasks.js';
+
+/** The terminal tools and the watched task tools: rows named by their title. */
+const TERMINAL_TOOLS = [...MANAGED_TERMINAL_TOOLS, ...WATCHED_TASK_TOOLS];
 import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, COMMIT_PLAN_TOOL_NAMES, BROWSER_DEVTOOLS_TOOL_NAME, CANVAS_READ_TOOL_NAME, CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, humanizeToolName, IMAGE_INSPECT_TOOL_NAME, isBrowserToolName, isRawToolName, MOCKUPS_TOOL_NAME, PREVIEW_HTML_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME, splitMcpToolName, THREAD_TOOL_NAMES, VOLT_HOST_TOOLS, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 
 /** How one of Volt's own MCP tools reads in the activity trail, the way Cursor words its browser actions. */
@@ -107,7 +111,8 @@ export function describeTerminalToolActivity(name: string | undefined, title: st
 	}
 	const args = parseRecord(input) ?? {};
 	switch (tool) {
-		case TERMINAL_START_TOOL_NAME: return { label, detail: text(args.command, 80) };
+		case TERMINAL_START_TOOL_NAME:
+		case TASK_WATCH_TOOL_NAME: return { label, detail: text(args.command, 80) };
 		case TERMINAL_SEND_TOOL_NAME: return { label, detail: text(args.text, 60) };
 		case APP_OPEN_TOOL_NAME: return { label, detail: text(args.target, 80) };
 		default: return { label };

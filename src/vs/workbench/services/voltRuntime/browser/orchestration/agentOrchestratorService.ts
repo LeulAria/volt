@@ -296,7 +296,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return threadId === undefined ? this.whenReady : this.ensureThreadLoaded(threadId);
 	}
 
-	async submit(threadId: string, prompt: IOrchPrompt, delivery: OrchDelivery, turnId = generateUuid()): Promise<IOrchSubmitResult> {
+	async submit(threadId: string, prompt: IOrchPrompt, delivery: OrchDelivery, requestedTurnId?: string): Promise<IOrchSubmitResult> {
+		// Not a default parameter: from a window, an id left out arrives as null (JSON has no
+		// undefined). A turn with no id was never written to the chat's history, and its reply was
+		// lost the next time the agent server restarted.
+		const turnId = requestedTurnId || generateUuid();
 		await this.ensureThreadLoaded(threadId);
 		this.describeThread(threadId, prompt.modelRef);
 		const thread = this.state.threads[threadId];

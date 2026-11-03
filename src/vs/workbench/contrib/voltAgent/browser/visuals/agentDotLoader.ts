@@ -44,7 +44,7 @@ const FALLBACK_HIGHLIGHT = new Color(new RGBA(170, 192, 255));
  * The phase comes from the page clock, not the element's age: a transcript that redraws a streaming
  * block every frame makes a new loader each time, and it carries on exactly where the last one
  * was. The first frame is drawn from a ResizeObserver (after layout, before paint), so a new loader
- * never flashes empty. It stops itself once it leaves the document.
+ * never flashes empty. It stops itself once it leaves the document, and pauses out of view.
  */
 export function renderDotLoader(parent: HTMLElement, options: IDotLoaderOptions = {}): HTMLElement {
 	const shape = options.shape ?? 'wide';
@@ -284,31 +284,30 @@ function animateDots(field: HTMLElement, canvas: HTMLCanvasElement, round: boole
 			styles = levelStyles(base, highlight);
 		}
 	};
-	const onScreen = () => {
-		const box = canvas.getBoundingClientRect();
-		const view = getWindow(canvas);
-		return box.bottom > 0 && box.right > 0 && box.top < view.innerHeight && box.left < view.innerWidth;
-	};
 	const tick = () => {
 		frame = 0;
-		if (!canvas.isConnected || !grid) {
-			// Gone: stop. The ResizeObserver starts it again if the loader comes back.
+		if (!canvas.isConnected || !grid || !visible) {
+			// Gone or scrolled away: stop. The observers start it again when it is back in view.
 			return;
 		}
 		frames++;
-		if (frames % 12 === 0) {
-			visible = onScreen();
-		}
 		if (frames % 90 === 0) {
 			readColors();
 		}
-		if (visible) {
-			paint(context, grid, styles, now());
-		}
+		paint(context, grid, styles, now());
 		frame = getWindow(canvas).requestAnimationFrame(tick);
 	};
 
 	const win = getWindow(field);
+	// Told when it scrolls in and out of view, instead of measuring itself (a forced layout) every few
+	// frames; out of view it asks for no frames at all.
+	const intersection = new win.IntersectionObserver(entries => {
+		visible = entries[entries.length - 1].isIntersecting;
+		if (visible && grid && !still && !frame && canvas.isConnected) {
+			frame = getWindow(canvas).requestAnimationFrame(tick);
+		}
+	});
+	intersection.observe(canvas);
 	const observer = new win.ResizeObserver(entries => {
 		const box = entries[entries.length - 1].contentRect;
 		const width = Math.round(box.width);
@@ -324,10 +323,10 @@ function animateDots(field: HTMLElement, canvas: HTMLCanvasElement, round: boole
 		grid = layoutGrid(width, height, round);
 		still = view.matchMedia('(prefers-reduced-motion: reduce)').matches || !!field.closest('.monaco-workbench.reduce-motion');
 		readColors();
-		visible = true;
-		// Reduced motion: one still frame of the same field.
+		// Reduced motion: one still frame of the same field. The frame is drawn in view or not, so
+		// scrolling to it never shows it empty; only the motion waits for it to be in view.
 		paint(context, grid, styles, still ? 2.2 : now());
-		if (!still && !frame) {
+		if (!still && !frame && visible) {
 			frame = view.requestAnimationFrame(tick);
 		}
 	});

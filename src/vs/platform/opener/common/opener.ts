@@ -44,6 +44,8 @@ export type OpenExternalOptions = {
 	readonly allowContributedOpeners?: boolean | string;
 	readonly fromWorkspace?: boolean;
 	readonly skipValidation?: boolean;
+	/** An extension asked for it (`vscode.env.openExternal`), not the user: Volt opens local pages in its own browser. */
+	readonly fromExtension?: boolean;
 };
 
 export type OpenOptions = OpenInternalOptions & OpenExternalOptions;

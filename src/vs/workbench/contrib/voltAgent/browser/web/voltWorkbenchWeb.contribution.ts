@@ -30,7 +30,7 @@ import { isDark } from '../../../../../platform/theme/common/theme.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IVoltAccountsService } from '../../../../../platform/voltAccounts/common/voltAccounts.js';
 import { IWebSocketLike } from '../../../../../platform/voltAgentServer/common/connection.js';
-import { DEFAULT_TOPICS } from '../../../../../platform/voltAgentServer/common/protocol.js';
+import { WORKBENCH_TOPICS } from '../../../../../platform/voltAgentServer/common/protocol.js';
 import { IVoltAwakeService } from '../../../../../platform/voltAwake/common/voltAwake.js';
 import { IVoltBrowserService } from '../../../../../platform/voltBrowser/common/voltBrowser.js';
 import { IVoltExternalMcpService } from '../../../../../platform/voltExternalMcp/common/voltExternalMcp.js';
@@ -120,7 +120,7 @@ class WebAgentServerClient extends AgentServerClient {
 				return { url: `${scheme}://${mainWindow.location.host}${config.wsPath ?? '/ws'}`, token };
 			},
 			createSocket: url => new WebSocket(url) as unknown as IWebSocketLike,
-			client: { kind: 'web', id: `workbench-${generateUuid()}`, capabilities: ['surface'], topics: [...DEFAULT_TOPICS, 'runtime.event'] },
+			client: { kind: 'web', id: `workbench-${generateUuid()}`, capabilities: ['surface'], topics: WORKBENCH_TOPICS },
 			onError: (method, err) => logService.warn(`[volt agent server] ${method} failed`, err),
 		});
 		this.connect();

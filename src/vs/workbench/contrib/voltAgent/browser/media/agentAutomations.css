@@ -119,8 +119,49 @@
 	cursor: pointer;
 }
 
+.volt-auto-save {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 5px;
+	min-width: 64px;
+	transition: background-color 160ms ease, color 160ms ease;
+}
+
 .volt-auto-save:disabled {
 	cursor: default;
+}
+
+/* Saved: everything is on disk. A check and the word, quieter than Save. */
+.volt-auto-save .codicon {
+	display: none;
+	font-size: 13px;
+}
+
+.volt-auto-save.saved {
+	padding: 0 10px 0 8px;
+	background: color-mix(in srgb, var(--volt-auto-green) 14%, transparent);
+	color: var(--volt-auto-green);
+}
+
+.volt-auto-save.saved .codicon {
+	display: inline-block;
+}
+
+.volt-auto-save.just-saved {
+	animation: volt-auto-saved 600ms ease;
+}
+
+@keyframes volt-auto-saved {
+	0% {
+		transform: scale(0.92);
+	}
+	45% {
+		transform: scale(1.06);
+	}
+	100% {
+		transform: scale(1);
+	}
 }
 
 .volt-auto-save.dirty,
@@ -133,49 +174,10 @@
 	background: var(--vscode-foreground);
 }
 
-/* After a save: a check and "Saved" for a moment, at Save's width, then Save again. */
-.volt-auto-save {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	gap: 5px;
-	min-width: 64px;
-	transition: background-color 240ms ease;
-}
-
-.volt-auto-save.saved {
-	background: color-mix(in srgb, var(--vscode-foreground) 92%, transparent);
-}
-
+/* `.monaco-workbench .codicon[class*=codicon-]` outranks one class on the check's size. */
 .volt-automations .volt-auto-save .codicon[class*='codicon-'] {
 	font-size: 13px;
 	color: inherit;
-}
-
-/* "Saved 2 min ago", or "Unsaved changes" after a dot, before the bar's buttons. */
-.volt-auto-save-status {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	margin-right: 4px;
-	color: var(--volt-auto-muted);
-	font-size: 12px;
-	line-height: 16px;
-	white-space: nowrap;
-	font-variant-numeric: tabular-nums;
-}
-
-.volt-auto-save-status:empty {
-	display: none;
-}
-
-.volt-auto-save-status.dirty::before {
-	content: '';
-	flex-shrink: 0;
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	background: var(--vscode-gitDecoration-modifiedResourceForeground, var(--volt-auto-amber));
 }
 
 .volt-auto-primary {
@@ -328,6 +330,11 @@
 	padding-top: 76px;
 }
 
+/* A calendar needs the room: the page widens while one is on. */
+.volt-auto-page.list.wide {
+	max-width: 1180px;
+}
+
 .volt-auto-list-head {
 	display: flex;
 	align-items: flex-start;
@@ -400,6 +407,11 @@
 
 .volt-auto-builtin .state.on {
 	color: var(--volt-auto-green);
+}
+
+/* From Volt sits under the table or calendar. */
+.volt-auto-table + .volt-auto-calendar-host + .volt-auto-group-label {
+	margin-top: 40px;
 }
 
 /* Tabs. */
@@ -501,7 +513,7 @@
 
 .volt-auto-row {
 	display: grid;
-	grid-template-columns: 30% 30% 16% minmax(0, 1fr) 28px;
+	grid-template-columns: 27% 19% 22% 13% minmax(0, 1fr) 28px;
 	align-items: center;
 	min-height: 42px;
 	border-top: 1px solid var(--volt-auto-hair);
@@ -544,6 +556,10 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.volt-auto-row .cell.next {
+	font-variant-numeric: tabular-nums;
 }
 
 .volt-auto-row .cell.by span.muted {
@@ -634,7 +650,11 @@
 
 /* Templates. */
 .volt-auto-templates {
-	margin-top: 56px;
+	margin-top: 44px;
+}
+
+.volt-auto-group-label.templates {
+	margin: 0 0 10px;
 }
 
 .volt-auto-tabs.categories {
@@ -761,7 +781,7 @@
 	text-overflow: ellipsis;
 }
 
-.volt-auto-detail-title::placeholder {
+.volt-automations .volt-auto-detail-title::placeholder {
 	color: var(--volt-auto-muted);
 }
 
@@ -1069,6 +1089,17 @@ button.volt-auto-list-row.add:hover {
 .volt-auto-chip-button .codicon {
 	font-size: 12px;
 	color: var(--volt-auto-soft);
+}
+
+.volt-auto-chip-button.subtle {
+	background: transparent;
+	color: var(--volt-auto-soft);
+}
+
+.volt-auto-chip-button.subtle:hover,
+.volt-auto-chip-button.subtle.open {
+	background: var(--volt-auto-fill);
+	color: var(--volt-auto-fg);
 }
 
 .volt-auto-cron {

@@ -8,6 +8,8 @@ import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import {
 	agentHomeWorkspaceEntries,
+	claudeHistoryFolderKind,
+	claudeHistoryFolders,
 	cloneFolderName,
 	commitFailureSummary,
 	filterAgentHomeWorkspaceEntries,
@@ -36,6 +38,34 @@ suite('Agent home workspace menu', () => {
 		);
 		assert.deepStrictEqual(entries.map(entry => entry.path), ['~/Desktop/VOLT/volt', '~/Desktop/hotel', '~/Documents/ecomm']);
 		assert.deepStrictEqual(entries.map(entry => entry.name), ['volt', 'hotel', 'ecomm']);
+	});
+
+	test('reads Claude Code history newest first, and nothing from a bad file', () => {
+		const content = JSON.stringify({ numStartups: 4, projects: { '/Users/me/Desktop/hotel': {}, '/Users/me/code/api': {}, '/Users/me/Desktop/VOLT/volt': {} } });
+		assert.deepStrictEqual(claudeHistoryFolders(content), ['/Users/me/Desktop/VOLT/volt', '/Users/me/code/api', '/Users/me/Desktop/hotel']);
+		assert.deepStrictEqual(claudeHistoryFolders('{"projects": ['), []);
+		assert.deepStrictEqual(claudeHistoryFolders('null'), []);
+		assert.deepStrictEqual(claudeHistoryFolders('{"projects": ["/Users/me/a"]}'), []);
+		assert.deepStrictEqual(claudeHistoryFolders('{}'), []);
+	});
+
+	test('sorts Claude Code history into noise, unchecked and checked folders', () => {
+		const kind = (path: string) => claudeHistoryFolderKind(path, '/Users/me');
+		assert.strictEqual(kind('/Users/me'), 'skip');
+		assert.strictEqual(kind('/Users/me/'), 'skip');
+		assert.strictEqual(kind('relative/path'), 'skip');
+		assert.strictEqual(kind('/Users/me/.volt/worktrees/-ab12/volt-1e41210f'), 'skip');
+		assert.strictEqual(kind('/Users/me/Desktop/app/.claude/worktrees/feature'), 'skip');
+		assert.strictEqual(kind('/Users/me/Library/Application Support/Volt'), 'skip');
+		assert.strictEqual(kind('/tmp/voltperf'), 'skip');
+		assert.strictEqual(kind('/private/var/folders/xy/T/run'), 'skip');
+		assert.strictEqual(kind('/Users/me/Desktop/VOLT/volt'), 'listed');
+		assert.strictEqual(kind('/Users/me/Documents/Project/Keleme'), 'listed');
+		assert.strictEqual(kind('/Volumes/External/site'), 'listed');
+		assert.strictEqual(kind('/Users/me/code/api'), 'check');
+		assert.strictEqual(kind('/opt/work/api'), 'check');
+		assert.strictEqual(claudeHistoryFolderKind('C:\\Users\\me\\Desktop\\app', 'C:\\Users\\me'), 'listed');
+		assert.strictEqual(claudeHistoryFolderKind('C:\\Users\\me\\AppData\\Local\\Temp\\x', 'C:\\Users\\me'), 'skip');
 	});
 
 	test('search matches every word in the path and puts name matches first', () => {

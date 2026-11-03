@@ -116,7 +116,7 @@ export class AutomationsEditorInputSerializer implements IEditorSerializer {
 				input.route = { page: 'workflow', id: value.workflow };
 			} else if (value.workflows === 'mine' || value.workflows === 'templates') {
 				input.route = { page: 'workflows', tab: value.workflows };
-			} else if (value.view === 'month' || value.view === 'week' || value.view === 'day' || value.view === 'agenda') {
+			} else if (value.view === 'day' || value.view === 'week' || value.view === 'month') {
 				input.route = { page: 'list', view: value.view };
 			}
 		} catch {

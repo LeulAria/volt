@@ -22,7 +22,7 @@ import { startOfDay } from '../ui/dateTime/voltDateTime.js';
 import { showVoltMenu } from '../ui/menu/voltMenu.js';
 import { AutomationCalendarView, CalendarView } from './automationCalendarView.js';
 import { automationJson } from './automationDetailView.js';
-import { formatAge, formatScheduleWhen } from './automationFormat.js';
+import { formatAge, formatNextShort, formatScheduleWhen } from './automationFormat.js';
 import { arrowUpRightIcon, clockIcon, providerIcon, templateIcon, toolKindIcon } from './automationIcons.js';
 import { AutomationsRoute, AutomationsView, IAutomationsHost, IAutomationsPage } from './automationRoutes.js';
 import { button, iconButton, pillTabs } from './automationUi.js';
@@ -80,8 +80,7 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 	) {
 		super();
 		// Back from an automation is a plain list route: the page comes back as it was left.
-		// The calendar is List · Day · Week · Month; an Agenda route from an earlier build opens the list.
-		this.view = route?.view === 'agenda' ? 'list' : route?.view ?? lastView;
+		this.view = route?.view ?? lastView;
 		this.date = route?.date ?? lastDate;
 		this.page = append(host.content, $('.volt-auto-page.list'));
 
@@ -122,6 +121,7 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 		this.builtIns = append(this.page, $('.volt-auto-builtins'));
 
 		const templates = append(this.page, $('.volt-auto-templates'));
+		append(templates, $('.volt-auto-group-label.templates')).textContent = localize('voltAutomations.templates', "Start from a template");
 		const grid = $('.volt-auto-template-grid');
 		pillTabs<AutomationTemplateCategory>(templates, AUTOMATION_TEMPLATE_CATEGORIES, lastCategory, this.store, category => {
 			lastCategory = category;
@@ -161,7 +161,7 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 		this.page.classList.toggle('calendar-view', view !== 'list');
 		this.table.classList.toggle('hidden', view !== 'list');
 		this.calendarHost.classList.toggle('hidden', view === 'list');
-		if (view === 'list' || view === 'agenda') {
+		if (view === 'list') {
 			this.calendar.clear();
 			clearNode(this.calendarHost);
 			this.renderTable();
@@ -320,7 +320,10 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 				? { page: 'detail', id: existing.id, tab: 'settings' }
 				: { page: 'detail', tab: 'settings', seed: { templateId: id } })));
 		}
+		this.host.relayout();
 	}
+
+	//#region Table
 
 	private visible(): IAutomation[] {
 		const query = this.searchInput.value.trim().toLowerCase();
@@ -332,8 +335,11 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 	private renderTable(): void {
 		this.tableStore.clear();
 		clearNode(this.table);
+		if (this.view !== 'list') {
+			return;
+		}
 		const head = append(this.table, $('.volt-auto-row.head'));
-		for (const column of [localize('voltAutomations.colName', "Name"), localize('voltAutomations.colCreatedBy', "Created By"), localize('voltAutomations.colStatus', "Status"), localize('voltAutomations.colTools', "Tools"), '']) {
+		for (const column of [localize('voltAutomations.colName', "Name"), localize('voltAutomations.colNextRun', "Next Run"), localize('voltAutomations.colCreatedBy', "Created By"), localize('voltAutomations.colStatus', "Status"), localize('voltAutomations.colTools', "Tools"), '']) {
 			append(head, $('span.cell')).textContent = column;
 		}
 		const rows = this.visible();
@@ -360,6 +366,17 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 			name.textContent = automation.name;
 			if (automation.runs.some(isActiveRun)) {
 				append(name, $('span.volt-auto-live')).title = localize('voltAutomations.runningNow', "Running now");
+			}
+			const next = append(row, $('span.cell.next'));
+			const nextAt = nextRunOf(automation);
+			if (nextAt !== undefined) {
+				next.textContent = formatNextShort(nextAt, now);
+				setAgentTooltip(next, formatScheduleWhen(nextAt, now));
+			} else {
+				next.classList.add('muted');
+				next.textContent = !automation.enabled
+					? '-'
+					: automation.triggers.length ? localize('voltAutomations.onEvent', "On event") : localize('voltAutomations.manualOnly', "Manual");
 			}
 			const by = append(row, $('span.cell.by'));
 			append(by, $('span')).textContent = automation.createdBy;
@@ -440,6 +457,10 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 		});
 	}
 
+	//#endregion
+
+	//#region Templates
+
 	private renderTemplates(grid: HTMLElement, category: AutomationTemplateCategory): void {
 		this.templateStore.clear();
 		clearNode(grid);
@@ -491,4 +512,6 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 		button(actions, 'volt-auto-outline-button.small', localize('voltAutomations.promoTemplates', "Browse Templates"), this.store, () => this.host.navigate({ page: 'workflows', tab: 'templates' }));
 		button(actions, 'volt-auto-outline-button.small.primary', localize('voltAutomations.promoOpen', "Open Workflows"), this.store, () => this.host.navigate({ page: 'workflows' }));
 	}
+
+	//#endregion
 }

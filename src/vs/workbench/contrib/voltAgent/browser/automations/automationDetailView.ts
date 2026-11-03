@@ -5,7 +5,7 @@
 
 import { $, addDisposableListener, append, clearNode, getWindow } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { IntervalTimer, RunOnceScheduler } from '../../../../../base/common/async.js';
+import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { isMacintosh } from '../../../../../base/common/platform.js';
@@ -161,26 +161,6 @@ function toolNeedsSetup(tool: IAutomationTool): boolean {
 	}
 }
 
-/** "Saved just now", "Saved 5 min ago", "Saved 3 h ago", "Saved Oct 12". */
-function savedLabel(at: number, now: number): string {
-	const minutes = Math.floor(Math.max(0, now - at) / 60_000);
-	if (minutes < 1) {
-		return localize('voltAutomations.savedJustNow', "Saved just now");
-	}
-	if (minutes < 60) {
-		return localize('voltAutomations.savedMinutes', "Saved {0} min ago", minutes);
-	}
-	const hours = Math.floor(minutes / 60);
-	if (hours < 24) {
-		return localize('voltAutomations.savedHours', "Saved {0} h ago", hours);
-	}
-	const sameYear = new Date(at).getFullYear() === new Date(now).getFullYear();
-	return localize('voltAutomations.savedOn', "Saved {0}", new Date(at).toLocaleDateString(undefined, sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' }));
-}
-
-/** How long Save shows "Saved" after a save. */
-const SAVED_FLASH_MS = 1500;
-
 /**
  * One automation: its name, Active switch, repository and author; Settings (triggers, agent
  * instructions with the model, tools) and Run History. Edits stay a draft until Save; the switch
@@ -207,16 +187,9 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 	private readonly toolStore = this._register(new DisposableStore());
 	private readonly panel = this._register(new MutableDisposable<RunHistoryPanel>());
 	private readonly refresh = this._register(new RunOnceScheduler(() => this.onServiceChange(), 40));
-	/** Save reads "Saved" for a moment after a save, then goes back. */
-	private readonly savedFlash = this._register(new RunOnceScheduler(() => this.endSavedFlash(), SAVED_FLASH_MS));
-	/** Keeps "Saved 2 min ago" current: one timer while the label shows a time. */
-	private readonly savedClock = this._register(new IntervalTimer());
-	/** When this page last saved; the stored automation's time before that. */
-	private savedAt: number | undefined;
 
 	private readonly page: HTMLElement;
 	private saveButton: HTMLButtonElement | undefined;
-	private saveStatus: HTMLElement | undefined;
 	private titleInput!: HTMLInputElement;
 	private switchEl!: HTMLButtonElement;
 	private statusLabel!: HTMLElement;
@@ -310,80 +283,23 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 		return this.isDirty() || (!this.saved && this.seeded);
 	}
 
+	/** Save while there is something to save; Saved, with a check, once everything is. */
 	private changed(): void {
-		if (this.canSave() && this.savedFlash.isScheduled()) {
-			this.savedFlash.cancel();
-			this.endSavedFlash();
-		}
-		this.saveButton?.classList.toggle('dirty', this.canSave());
-		if (this.saveButton) {
-			this.saveButton.disabled = !this.canSave();
-		}
-		this.syncSaveStatus();
-	}
-
-	/** Next to Save: "Unsaved changes" while there are any, else when it was saved. */
-	private syncSaveStatus(): void {
-		const status = this.saveStatus;
-		// A save can finish after the page closed.
-		if (this._store.isDisposed) {
-			return;
-		}
-		if (!status) {
-			this.savedClock.cancel();
-			return;
-		}
-		const pending = this.canSave();
-		const at = this.saved ? Math.max(this.savedAt ?? 0, this.saved.updatedAt) : undefined;
-		const now = Date.now();
-		// A new automation with nothing in it yet has no status.
-		const text = pending
-			? (this.saved ? localize('voltAutomations.unsavedChanges', "Unsaved changes") : localize('voltAutomations.notSaved', "Not saved yet"))
-			: at !== undefined ? savedLabel(at, now) : '';
-		// Runs on every keystroke: touch the DOM only when the words change.
-		if (status.textContent !== text) {
-			status.textContent = text;
-			status.classList.toggle('dirty', pending);
-			setAgentTooltip(status, pending
-				? (isMacintosh ? localize('voltAutomations.saveHintMac', "Save with Cmd+S") : localize('voltAutomations.saveHint', "Save with Ctrl+S"))
-				: at !== undefined ? formatScheduleWhen(at, now) : '');
-		}
-		// Only a time ages: one tick each half minute while it shows.
-		if (!pending && at !== undefined) {
-			this.savedClock.cancelAndSet(() => this.syncSaveStatus(), 30_000, getWindow(this.page));
-		} else {
-			this.savedClock.cancel();
-		}
-	}
-
-	/** Save shows a check and "Saved" for a moment. */
-	private flashSaved(): void {
 		const button = this.saveButton;
+		// A save can finish after the page closed.
 		if (!button || this._store.isDisposed) {
 			return;
 		}
-		this.savedFlash.cancel();
-		button.querySelector('.codicon')?.remove();
-		button.prepend(renderIcon(Codicon.check));
+		const dirty = this.canSave();
+		const saved = !dirty && !!this.saved;
+		button.classList.toggle('dirty', dirty);
+		button.classList.toggle('saved', saved);
+		button.disabled = !dirty;
 		const label = button.querySelector('.label');
 		if (label) {
-			label.textContent = localize('voltAutomations.saved', "Saved");
+			label.textContent = saved ? localize('voltAutomations.savedState', "Saved") : localize('voltAutomations.save', "Save");
 		}
-		button.classList.add('saved');
-		this.savedFlash.schedule();
-	}
-
-	private endSavedFlash(): void {
-		const button = this.saveButton;
-		if (!button) {
-			return;
-		}
-		button.classList.remove('saved');
-		button.querySelector('.codicon')?.remove();
-		const label = button.querySelector('.label');
-		if (label) {
-			label.textContent = localize('voltAutomations.save', "Save");
-		}
+		setAgentTooltip(button, saved ? localize('voltAutomations.allSaved', "All changes saved") : localize('voltAutomations.save', "Save"), saved ? undefined : isMacintosh ? '⌘S' : 'Ctrl+S');
 	}
 
 	private setDraft(patch: Partial<MutableDraft>, redraw?: 'triggers' | 'tools' | 'meta'): void {
@@ -437,7 +353,6 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 		}
 		if (result) {
 			this.saved = result;
-			this.savedAt = Date.now();
 			this.draft = { ...configOf(result) };
 			this.baseline = JSON.stringify(configOf(this.draft));
 			this.changed();
@@ -448,6 +363,18 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 			}
 		}
 		return result;
+	}
+
+	/** A short pop on the button as it turns to Saved. */
+	private flashSaved(): void {
+		const button = this.saveButton;
+		if (!button) {
+			return;
+		}
+		button.classList.remove('just-saved');
+		void button.offsetWidth;
+		button.classList.add('just-saved');
+		getWindow(button).setTimeout(() => button.classList.remove('just-saved'), 900);
 	}
 
 	//#endregion
@@ -471,6 +398,7 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 			if (this.tab === 'settings' && !this.page.contains(getWindow(this.page).document.activeElement)) {
 				this.renderBody();
 			}
+			this.changed();
 		} else if (this.draft.enabled !== latest.enabled && !this.isDirty()) {
 			this.draft = { ...this.draft, enabled: latest.enabled };
 			this.baseline = JSON.stringify(configOf(this.draft));
@@ -561,18 +489,14 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 		const backLabel = this.tab === 'runs' ? localize('voltAutomations.backToSettings', "Back to Settings") : localize('voltAutomations.back', "Back to Automations");
 		iconButton(this.host.bar, Codicon.arrowLeft, backLabel, this.barStore, () => this.tab === 'runs' ? this.switchTab('settings') : this.host.navigate({ page: 'list' }), 'volt-auto-icon-button.volt-auto-back');
 		const actions = append(this.host.bar, $('.volt-auto-bar-actions'));
-		this.saveStatus = append(actions, $('span.volt-auto-save-status'));
-		this.saveStatus.setAttribute('role', 'status');
-		this.saveStatus.setAttribute('aria-live', 'polite');
 		if (this.tab === 'runs') {
 			this.saveButton = undefined;
-			this.syncSaveStatus();
 			const stop = button(actions, 'volt-auto-outline-button.stop-all', localize('voltAutomations.stopAll', "Stop All Runs"), this.barStore, () => void this.stopAll(), () => renderIcon(Codicon.debugStop));
 			stop.dataset.role = 'stop-all';
 			this.syncBar();
 			return;
 		}
-		this.saveButton = button(actions, 'volt-auto-save', localize('voltAutomations.save', "Save"), this.barStore, () => void this.save());
+		this.saveButton = button(actions, 'volt-auto-save', localize('voltAutomations.save', "Save"), this.barStore, () => void this.save(), Codicon.check);
 		this.changed();
 		iconButton(actions, Codicon.play, localize('voltAutomations.runNow', "Run Now"), this.barStore, () => void this.runNow());
 		const more = iconButton(actions, Codicon.ellipsis, localize('voltAutomations.more', "More actions"), this.barStore, () => this.showMore(more));

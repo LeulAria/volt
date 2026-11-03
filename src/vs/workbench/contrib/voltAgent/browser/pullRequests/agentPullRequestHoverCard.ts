@@ -24,6 +24,8 @@ import { checkIcon, checksLabel, iconSpan, mergePullRequest, prStateIcon, prStat
 const SHOW_DELAY_MS = 250;
 /** Time to cross the gap from the chip to the card (and back) before it closes. */
 const HIDE_DELAY_MS = 160;
+/** Opening the card reads the pull request again when the last read is older than this. */
+const HOVER_SYNC_MS = 5_000;
 
 /**
  * A pull request at a glance over the chip that stands for it: state, checks, size, and a Merge
@@ -145,6 +147,10 @@ export class AgentPullRequestHoverCard extends Disposable {
 		store.add(this.pullRequests.onDidChange(() => this.update()));
 		store.add(addDisposableListener(getWindow(this.anchor), 'blur', () => this.hide()));
 		this.render(pr);
+		// The card is a look at it now: a merge made elsewhere since the last read shows while it is open.
+		if (Date.now() - (link.syncedAt ?? 0) > HOVER_SYNC_MS) {
+			void this.pullRequests.refresh([link.key]).catch(() => undefined);
+		}
 	}
 
 	private render(pr: IVoltPullRequest): void {

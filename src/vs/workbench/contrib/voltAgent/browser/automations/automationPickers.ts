@@ -384,59 +384,70 @@ export function showRepositoryMenu(contextView: IContextViewService, pullRequest
 
 export type ToolPick = { readonly kind: AutomationToolKind; readonly server?: string } | { readonly kind: 'new-mcp' };
 
+export interface IToolMenuOptions {
+	readonly hasMemories: boolean;
+	readonly added: readonly string[];
+	readonly servers: () => Promise<readonly IVoltMcpServerStatus[]>;
+}
+
 /** Add Tool or MCP: Built-in, MCP (servers in a flyout), Slack, Microsoft Teams. */
-export function showToolMenu(contextView: IContextViewService, anchor: HTMLElement, options: { readonly hasMemories: boolean; readonly added: readonly string[]; readonly servers: () => Promise<readonly IVoltMcpServerStatus[]>; readonly onPick: (pick: ToolPick) => void }): IVoltMenuHandle {
-	const added = (kind: string) => options.added.includes(kind);
-	const addedLabel = localize('voltAutomations.added', "Added");
+export function showToolMenu(contextView: IContextViewService, anchor: HTMLElement, options: IToolMenuOptions & { readonly onPick: (pick: ToolPick) => void }): IVoltMenuHandle {
 	return showVoltMenu<ToolPick>(contextView, {
 		anchor,
 		gap: 6,
 		width: 316,
 		className: 'volt-auto-menu',
 		ariaLabel: localize('voltAutomations.addTool', "Add Tool or MCP"),
-		sections: [
-			{
-				id: 'builtin', title: localize('voltAutomations.builtin', "Built-in"),
-				items: [{ id: 'memories', label: localize('voltAutomations.memories', "Memories"), icon: () => memoriesIcon(), disabled: options.hasMemories, ...(options.hasMemories ? { detail: addedLabel } : {}), data: { kind: 'memories' } }],
-			},
-			{
-				id: 'mcp', title: localize('voltAutomations.mcp', "MCP"),
-				items: [{
-					id: 'mcp-server', label: localize('voltAutomations.mcpServer', "MCP Server"), icon: () => mcpIcon(), data: { kind: 'new-mcp' },
-					submenu: {
-						width: 220,
-						emptyMessage: localize('voltAutomations.noMcp', "No MCP servers configured."),
-						sections: async () => {
-							const servers = await options.servers().catch(() => []);
-							const item = (server: IVoltMcpServerStatus): IVoltMenuItem<ToolPick> => ({
-								id: `mcp:${server.name}`, label: server.name, disabled: added(`mcp:${server.name}`), ...(added(`mcp:${server.name}`) ? { detail: addedLabel } : {}), data: { kind: 'mcp', server: server.name },
-							});
-							return [
-								{ id: 'new', items: [{ id: 'new', label: localize('voltAutomations.newConnection', "New Connection"), icon: Codicon.add, data: { kind: 'new-mcp' } }] },
-								{ id: 'user', title: localize('voltAutomations.mcpUser', "User"), items: servers.filter(server => server.scope === 'user').map(item) },
-								{ id: 'project', title: localize('voltAutomations.mcpProject', "Project"), items: servers.filter(server => server.scope === 'project').map(item) },
-							];
-						},
-					},
-				}],
-			},
-			{
-				id: 'slack', title: localize('voltAutomations.slack', "Slack"),
-				items: [
-					{ id: 'slack_send', label: localize('voltAutomations.sendSlack', "Send to Slack"), icon: () => providerIcon('slack'), disabled: added('slack_send'), ...(added('slack_send') ? { detail: addedLabel } : {}), data: { kind: 'slack_send' } },
-					{ id: 'slack_read', label: localize('voltAutomations.readSlack', "Read Public Slack Channels"), icon: () => providerIcon('slack'), disabled: added('slack_read'), ...(added('slack_read') ? { detail: addedLabel } : {}), data: { kind: 'slack_read' } },
-				],
-			},
-			{
-				id: 'teams', title: localize('voltAutomations.teams', "Microsoft Teams"),
-				items: [
-					{ id: 'teams_send', label: localize('voltAutomations.sendTeams', "Send to Microsoft Teams"), icon: () => providerIcon('teams'), disabled: added('teams_send'), ...(added('teams_send') ? { detail: addedLabel } : {}), data: { kind: 'teams_send' } },
-					{ id: 'teams_read', label: localize('voltAutomations.readTeams', "Read Microsoft Teams Channels"), icon: () => providerIcon('teams'), disabled: added('teams_read'), ...(added('teams_read') ? { detail: addedLabel } : {}), data: { kind: 'teams_read' } },
-				],
-			},
-		],
+		sections: toolMenuSections(options, pick => pick),
 		onPick: item => options.onPick(item.data),
 	});
+}
+
+/** The tool menu's sections, its picks wrapped for a menu of another kind (the instructions' + menu). */
+export function toolMenuSections<T>(options: IToolMenuOptions, wrap: (pick: ToolPick) => T): IVoltMenuSection<T>[] {
+	const added = (kind: string) => options.added.includes(kind);
+	const addedLabel = localize('voltAutomations.added', "Added");
+	return [
+		{
+			id: 'builtin', title: localize('voltAutomations.builtin', "Built-in"),
+			items: [{ id: 'memories', label: localize('voltAutomations.memories', "Memories"), icon: () => memoriesIcon(), disabled: options.hasMemories, ...(options.hasMemories ? { detail: addedLabel } : {}), data: wrap({ kind: 'memories' }) }],
+		},
+		{
+			id: 'mcp', title: localize('voltAutomations.mcp', "MCP"),
+			items: [{
+				id: 'mcp-server', label: localize('voltAutomations.mcpServer', "MCP Server"), icon: () => mcpIcon(), data: wrap({ kind: 'new-mcp' }),
+				submenu: {
+					width: 220,
+					emptyMessage: localize('voltAutomations.noMcp', "No MCP servers configured."),
+					sections: async () => {
+						const servers = await options.servers().catch(() => []);
+						const item = (server: IVoltMcpServerStatus): IVoltMenuItem<T> => ({
+							id: `mcp:${server.name}`, label: server.name, disabled: added(`mcp:${server.name}`), ...(added(`mcp:${server.name}`) ? { detail: addedLabel } : {}), data: wrap({ kind: 'mcp', server: server.name }),
+						});
+						return [
+							{ id: 'new', items: [{ id: 'new', label: localize('voltAutomations.newConnection', "New Connection"), icon: Codicon.add, data: wrap({ kind: 'new-mcp' }) }] },
+							{ id: 'user', title: localize('voltAutomations.mcpUser', "User"), items: servers.filter(server => server.scope === 'user').map(item) },
+							{ id: 'project', title: localize('voltAutomations.mcpProject', "Project"), items: servers.filter(server => server.scope === 'project').map(item) },
+						];
+					},
+				},
+			}],
+		},
+		{
+			id: 'slack', title: localize('voltAutomations.slack', "Slack"),
+			items: [
+				{ id: 'slack_send', label: localize('voltAutomations.sendSlack', "Send to Slack"), icon: () => providerIcon('slack'), disabled: added('slack_send'), ...(added('slack_send') ? { detail: addedLabel } : {}), data: wrap({ kind: 'slack_send' }) },
+				{ id: 'slack_read', label: localize('voltAutomations.readSlack', "Read Public Slack Channels"), icon: () => providerIcon('slack'), disabled: added('slack_read'), ...(added('slack_read') ? { detail: addedLabel } : {}), data: wrap({ kind: 'slack_read' }) },
+			],
+		},
+		{
+			id: 'teams', title: localize('voltAutomations.teams', "Microsoft Teams"),
+			items: [
+				{ id: 'teams_send', label: localize('voltAutomations.sendTeams', "Send to Microsoft Teams"), icon: () => providerIcon('teams'), disabled: added('teams_send'), ...(added('teams_send') ? { detail: addedLabel } : {}), data: wrap({ kind: 'teams_send' }) },
+				{ id: 'teams_read', label: localize('voltAutomations.readTeams', "Read Microsoft Teams Channels"), icon: () => providerIcon('teams'), disabled: added('teams_read'), ...(added('teams_read') ? { detail: addedLabel } : {}), data: wrap({ kind: 'teams_read' }) },
+			],
+		},
+	];
 }
 
 //#endregion

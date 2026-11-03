@@ -12,9 +12,12 @@ import {
 	authorTier,
 	badgeState,
 	blockedReason,
+	branchNamesFrom,
+	buildBranchNamePrompt,
 	buildFixThreadPrompt,
 	buildPrCommentsPrompt,
 	buildWatchMessage,
+	changedPullRequestsInOutput,
 	collectRemarks,
 	commitMessageFrom,
 	currentLink,
@@ -38,6 +41,7 @@ import {
 	removeLink,
 	resolveChains,
 	resolveMergeMethod,
+	sanitizeBranchSuggestion,
 	sanitizeCommitSubject,
 	sessionPrFilterTag,
 	shouldSettleForPullRequests,
@@ -357,6 +361,14 @@ suite('Volt agent pull requests', () => {
 		assert.strictEqual(createdPullRequestUrl('see https://github.com/a/b/pull/3'), undefined);
 		assert.strictEqual(createdPullRequestUrl(''), undefined);
 
+		// `gh pr merge`, `close` and `reopen` name the pull request they changed, so its chats read it again at once.
+		assert.deepStrictEqual(changedPullRequestsInOutput('✓ Squashed and merged pull request LeulAria/volt#60 (feat(release): build apps)\n✓ Deleted local branch feat/x'), [{ repo: 'LeulAria/volt', number: 60 }]);
+		assert.deepStrictEqual(changedPullRequestsInOutput('✓ Merged pull request #7 (Fix it)'), [{ number: 7 }]);
+		assert.deepStrictEqual(changedPullRequestsInOutput('✓ Closed pull request a/b#3 (x)\n✓ Reopened pull request a/b#4 (y)'), [{ repo: 'a/b', number: 3 }, { repo: 'a/b', number: 4 }]);
+		assert.deepStrictEqual(changedPullRequestsInOutput('! Pull request a/b#9 (Fix it) was already merged'), [{ repo: 'a/b', number: 9 }]);
+		assert.deepStrictEqual(changedPullRequestsInOutput('✓ Pull request a/b#9 will be automatically merged via squash when all requirements are met'), []);
+		assert.deepStrictEqual(changedPullRequestsInOutput('Opened pull request a/b#9\nsee https://github.com/a/b/pull/9'), []);
+
 		// A push that sent commits (new branch or fast-forward) refreshes the chat's pull requests; nothing sent does not.
 		assert.ok(isGitPushOutput('To https://github.com/a/b.git\n * [new branch]      feat/x -> feat/x\nbranch \'feat/x\' set up to track \'origin/feat/x\'.'));
 		assert.ok(isGitPushOutput('To github.com:a/b.git\n   38d1087..dbd750c  feat/x -> feat/x'));
@@ -497,6 +509,20 @@ suite('Volt agent pull requests', () => {
 		assert.strictEqual(commitMessageFrom('{"subject":"Add PR view.","body":"- tabs\\n- merge"}'), 'Add PR view\n\n- tabs\n- merge');
 		assert.strictEqual(commitMessageFrom('<think>hmm</think>Refactor parser'), 'Refactor parser');
 		assert.strictEqual(commitMessageFrom(''), undefined);
+	});
+
+	test('reads suggested branch names from a model reply and makes them safe for git', () => {
+		assert.deepStrictEqual(
+			branchNamesFrom('```json\n{"names": ["feat/Cart Discounts", "fix/login_redirect", "feat/cart-discounts", "volt/a2ca757b", "chore/a", "refactor/x"]}\n```', 'volt/a2ca757b'),
+			['feat/cart-discounts', 'fix/login-redirect', 'chore/a', 'refactor/x'],
+			'deduped, without the current name, four at most',
+		);
+		assert.deepStrictEqual(branchNamesFrom('Here are some names:\n1. feat/branch-names\n- `fix/rename-flow`\nHope that helps'), ['feat/branch-names', 'fix/rename-flow']);
+		assert.deepStrictEqual(branchNamesFrom(undefined), []);
+		assert.strictEqual(sanitizeBranchSuggestion(' refs/heads/Feat//-odd..name.lock '), 'feat/odd-name');
+		assert.strictEqual(sanitizeBranchSuggestion('ab'), undefined);
+		const prompt = buildBranchNamePrompt({ current: 'volt/a2ca757b', chatTitle: 'Drag to sort chats', commits: ['feat(home): drag chats'], files: 'M\tsrc/a.ts', patch: '+x', recentSubjects: [] });
+		assert.ok(prompt.includes('Current branch: volt/a2ca757b') && prompt.includes('Chat title: Drag to sort chats') && prompt.includes('- feat(home): drag chats'));
 	});
 
 	test('the fix-this prompt quotes the thread as data with its place in the code', () => {

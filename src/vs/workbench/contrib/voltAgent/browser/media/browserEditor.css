@@ -2039,6 +2039,51 @@ the background paints a solid square) and keep the glyph in the accent. */
 	pointer-events: none !important;
 }
 
+/* DevTools docked under the page, in the tab: a solid pane of its own (the window is see-through). */
+.volt-browser-devtools {
+	position: relative;
+	flex: none;
+	min-height: 120px;
+	border-top: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)));
+	background: var(--vscode-editor-background);
+	isolation: isolate;
+	contain: paint;
+}
+
+webview.volt-browser-devtools-frame {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	border: 0;
+	display: flex;
+}
+
+/* The top edge drags the height; it reaches over the border so it is easy to catch. */
+.volt-browser-devtools-sash {
+	position: absolute;
+	top: -3px;
+	left: 0;
+	right: 0;
+	height: 6px;
+	z-index: 2;
+	cursor: ns-resize;
+}
+
+.volt-browser-devtools-sash:hover,
+.volt-browser-editor.devtools-resizing .volt-browser-devtools-sash {
+	background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder));
+}
+
+/* While dragging, neither webview takes the pointer, or the drag stops at the first one it crosses. */
+.volt-browser-editor.devtools-resizing webview {
+	pointer-events: none !important;
+}
+
+.volt-browser-editor.devtools-resizing {
+	cursor: ns-resize;
+}
+
 /*
  * The agent drives the page: a clear layer takes the pointer (inside the opaque stage, so the
  * see-through window is safe) and Cursor's white "Take control" pill sits in the middle of it.

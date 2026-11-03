@@ -16,8 +16,19 @@ import { IAgentSessionChange } from '../../../workbench/contrib/voltAgent/browse
 
 const NO_HOLDERS: ReadonlySet<number> = new Set();
 
-/** Streaming changes are sent at most this often per chat. */
+/** Streaming changes are sent at most this often per chat a client shows. */
 const PATCH_INTERVAL_MS = 50;
+/**
+ * And this often for a chat no client shows: with a hundred chats at work, every one of them at
+ * 50 ms kept the server and the windows busy with chats nobody was looking at. Turn starts and ends
+ * still go out at once, and a chat is brought up to date the moment a client shows it.
+ */
+const BACKGROUND_PATCH_INTERVAL_MS = 1000;
+/**
+ * A streaming patch compares only the current turn (from the last prompt on); the whole transcript
+ * is compared at a turn's start and end, on a client's request, and at least this often.
+ */
+const WHOLE_DIFF_INTERVAL_MS = 5000;
 /** Chats a client opened stay loaded on the server; idle ones beyond this are let go. */
 const MAX_HELD = 48;
 
@@ -46,9 +57,20 @@ export class ServerSessionHost extends Disposable {
 	private readonly tracked = new Map<string, ITracked>();
 	private readonly held = new Map<string, IHeld>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+	/** When each chat's whole transcript was last compared (see WHOLE_DIFF_INTERVAL_MS). */
+	private readonly wholeDiffAt = new Map<string, number>();
+	/** Per connection that said so (`session.watch`): the chats it shows. */
+	private readonly watching = new Map<number, ReadonlySet<string>>();
+	/** Per connection: the chats it has open (`session.open` without a `session.close` yet). */
+	private readonly opened = new Map<number, Set<string>>();
+	private connections: ReadonlySet<number> = new Set();
 
+	/**
+	 * `publish` sends session events: patches in their compact form, with `full` building the
+	 * whole-message form for clients that take only that (see ISessionPatch).
+	 */
 	constructor(
-		private readonly publish: (data: SessionTopicData) => void,
+		private readonly publish: (data: SessionTopicData, full?: () => SessionTopicData) => void,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@ILogService private readonly logService: ILogService,
 	) {
@@ -125,12 +147,43 @@ export class ServerSessionHost extends Disposable {
 		}
 		this.timers.set(sessionId, setTimeout(() => {
 			this.timers.delete(sessionId);
-			this.flush(sessionId);
-		}, PATCH_INTERVAL_MS));
+			this.flush(sessionId, true);
+		}, this.shown(sessionId) ? PATCH_INTERVAL_MS : BACKGROUND_PATCH_INTERVAL_MS));
 	}
 
-	/** Sends what changed in the chat's transcript since the last patch. */
-	private flush(sessionId: string): void {
+	/**
+	 * A client shows the chat. One that never said what it shows (the phone app) shows the chats it
+	 * has open: it opens a chat while it is on screen and closes it soon after.
+	 */
+	private shown(sessionId: string): boolean {
+		for (const connectionId of this.connections) {
+			if ((this.watching.get(connectionId) ?? this.opened.get(connectionId))?.has(sessionId)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * The chats `connectionId` shows now (it replaces what it said before). A chat it starts showing
+	 * is sent its changes at once, before this returns, so the client draws it up to date.
+	 */
+	watch(connectionId: number, sessionIds: readonly string[]): void {
+		const before = this.watching.get(connectionId);
+		const next = new Set(sessionIds);
+		this.watching.set(connectionId, next);
+		for (const sessionId of next) {
+			if (!before?.has(sessionId)) {
+				this.flush(sessionId);
+			}
+		}
+	}
+
+	/**
+	 * Sends what changed in the chat's transcript since the last patch. A `streaming` flush compares
+	 * only the current turn, unless the whole transcript was last compared a while ago.
+	 */
+	private flush(sessionId: string, streaming = false): void {
 		const timer = this.timers.get(sessionId);
 		if (timer !== undefined) {
 			clearTimeout(timer);
@@ -144,17 +197,22 @@ export class ServerSessionHost extends Disposable {
 		// Tool arguments streamed since the last patch are parsed once, here (the window does it per frame).
 		input.controller.flushStreamedInput?.();
 		const patcher = this.patcherFor(sessionId, input.messages);
-		const patch = patcher.diff(this.wireMessages(input.messages), { contextUsed: input.contextUsed, contextWindow: input.contextWindow });
-		if (patch) {
-			this.publish({ type: 'patch', ...patch });
+		const now = Date.now();
+		const whole = !streaming || now - (this.wholeDiffAt.get(sessionId) ?? 0) >= WHOLE_DIFF_INTERVAL_MS;
+		if (whole) {
+			this.wholeDiffAt.set(sessionId, now);
+		}
+		const patches = patcher.diffPatches(input.messages, { contextUsed: input.contextUsed, contextWindow: input.contextWindow }, whole ? 0 : currentTurnStart(input.messages));
+		if (patches) {
+			this.publish({ type: 'patch', ...patches.compact }, () => ({ type: 'patch', ...patches.full }));
 		}
 	}
 
 	private patcherFor(sessionId: string, messages: readonly IAgentMessage[]): SessionPatcher {
 		let patcher = this.patchers.get(sessionId);
 		if (!patcher) {
-			patcher = new SessionPatcher(sessionId);
-			patcher.reset(this.wireMessages(messages));
+			patcher = new SessionPatcher(sessionId, toWire);
+			patcher.reset(messages);
 			this.patchers.set(sessionId, patcher);
 		}
 		return patcher;
@@ -181,6 +239,7 @@ export class ServerSessionHost extends Disposable {
 
 	/** Loads the chat (keeping it loaded while `connectionId` holds it) and returns its transcript. */
 	async open(sessionId: string, connectionId: number): Promise<ISessionState> {
+		this.markOpened(connectionId, sessionId, true);
 		const input = await this.inputFor(sessionId);
 		const held = this.held.get(sessionId);
 		if (held) {
@@ -208,6 +267,7 @@ export class ServerSessionHost extends Disposable {
 	}
 
 	close(sessionId: string, connectionId: number): void {
+		this.markOpened(connectionId, sessionId, false);
 		const held = this.held.get(sessionId);
 		if (held) {
 			held.holders.delete(connectionId);
@@ -216,8 +276,29 @@ export class ServerSessionHost extends Disposable {
 		}
 	}
 
-	/** Only these connections are still there: the others no longer hold any chat. */
+	private markOpened(connectionId: number, sessionId: string, open: boolean): void {
+		let chats = this.opened.get(connectionId);
+		if (open) {
+			if (!chats) {
+				chats = new Set();
+				this.opened.set(connectionId, chats);
+			}
+			chats.add(sessionId);
+		} else if (chats?.delete(sessionId) && !chats.size) {
+			this.opened.delete(connectionId);
+		}
+	}
+
+	/** Only these connections are still there: the others no longer hold or show any chat. */
 	releaseExcept(live: ReadonlySet<number>): void {
+		this.connections = new Set(live);
+		for (const shows of [this.watching, this.opened]) {
+			for (const connectionId of [...shows.keys()]) {
+				if (!live.has(connectionId)) {
+					shows.delete(connectionId);
+				}
+			}
+		}
 		for (const held of this.held.values()) {
 			for (const holder of [...held.holders]) {
 				if (!live.has(holder)) {
@@ -279,4 +360,14 @@ export class ServerSessionHost extends Disposable {
 	}
 
 	//#endregion
+}
+
+/** Where the current turn starts: its prompt. A streaming reply (steers included) comes after it. */
+function currentTurnStart(messages: readonly IAgentMessage[]): number {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (messages[i].kind === 'user') {
+			return i;
+		}
+	}
+	return 0;
 }

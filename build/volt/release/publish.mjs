@@ -84,6 +84,9 @@ function releaseNotesHeader() {
 	} else if (channel !== 'nightly') {
 		lines.push(channel === 'beta' ? 'Beta builds install next to Volt.' : 'Download for your platform at https://volt.leularia.com/download.');
 	}
+	if (files.some(name => ['android', 'ios'].includes(parseAssetName(name).os))) {
+		lines.push('', '**Mobile app:** the `.apk` installs on Android (arm64), `ios-arm64-simulator.zip` runs in the iOS Simulator on Apple silicon, and the `.ipa`, when there is one, is signed for iPhone and iPad.');
+	}
 	lines.push('', '**Downloads:** https://volt.leularia.com/download');
 	if (!hasNotes) {
 		lines.push('', 'Mac builds are signed with an Apple Developer ID and notarized. Volt 0.0.3 and older cannot update themselves: download this build once and replace the app.');

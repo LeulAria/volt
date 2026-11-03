@@ -30,7 +30,7 @@ import { IVoltMenuHandle, IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '
 import { AutomationsView, IAutomationsHost } from './automationRoutes.js';
 import { button, iconButton } from './automationUi.js';
 
-export type CalendarView = Exclude<AutomationsView, 'list' | 'agenda'>;
+export type CalendarView = Exclude<AutomationsView, 'list'>;
 
 export interface IAutomationCalendarOptions {
 	readonly view: CalendarView;

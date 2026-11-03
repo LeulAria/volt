@@ -123,6 +123,8 @@ export interface IAgentHomeTreeOptions {
 	readonly repos?: ReadonlyMap<string, IAgentRepoInfo>;
 	/** Rows shown per group, by group key; groups start at {@link AGENT_HOME_GROUP_LIMIT}. */
 	readonly limits?: ReadonlyMap<string, number>;
+	/** The chat on screen: its row shows even past its group's Show more, so its highlight is always there. */
+	readonly keep?: string;
 	/** What each session's linked pull requests add up to, for the PR filter. Absent: "No PR". */
 	readonly prTags?: ReadonlyMap<string, AgentHomePrFilter>;
 	/** Run groups: each replaces its runs' rows with one row that folds out into them. */
@@ -131,6 +133,13 @@ export interface IAgentHomeTreeOptions {
 	readonly workingShelf?: boolean;
 	/** What the orchestrator knows that history does not: a turn starting, or subagents still running. See {@link agentHomeLiveWork}. */
 	readonly live?: ReadonlyMap<string, AgentHomeWorkState>;
+	/** Chat ids in the order they were dragged into, for Manual chat order. */
+	readonly manualOrder?: readonly string[];
+	/**
+	 * Filled while building: every chat id of each group whose rows can be dragged into order, by group key (a
+	 * session row's `folderKey`), in the order shown, rows behind "More" included.
+	 */
+	readonly groupMembers?: Map<string, readonly string[]>;
 }
 
 /** Agent tabs shown in a group before a "Show more" row. */
@@ -497,7 +506,8 @@ function buildHomeTree(
 	const workspaceFileIds = new Set(unique.flatMap(folder => folder.workspace && folder.workspaceId ? [folder.workspaceId] : []));
 	const visible = sessions.filter(session => sessionPassesHomeFilters(session, view, workspaceFileIds, options.prTags));
 	const active = visible.filter(session => sessionHomeShelf(session) === 'active');
-	const pinned = sortSessionsForHome(active.filter(session => session.pinned), view.chatOrder);
+	const sort = (list: readonly IAgentSessionMeta[]) => sortSessionsForHome(list, view.chatOrder, options.manualOrder);
+	const pinned = sort(active.filter(session => session.pinned));
 	// Busy chats fold into Working and come back to the inbox when they finish, fail or need the user.
 	const working = options.workingShelf
 		? sortWorkingSessions(active.filter(session => sessionInWorkingShelf(session, options.live?.get(session.id))))
@@ -509,25 +519,30 @@ function buildHomeTree(
 	const body: IAgentHomeNode[] = [];
 	const flat = isFlatGrouping(view.grouping);
 	if (pinned.length) {
-		body.push(bucketNode('pinned', localize('voltAgent.home.pinned', "Pinned"), pinned, options.limits, { add: flat }));
+		body.push(bucketNode('pinned', localize('voltAgent.home.pinned', "Pinned"), pinned, options, { add: flat }));
 	}
-	const shelved = (shelf: Exclude<AgentHomeSessionShelf, 'active'>) => sortSessionsForHome(visible.filter(session => sessionHomeShelf(session) === shelf), view.chatOrder);
+	const shelved = (shelf: Exclude<AgentHomeSessionShelf, 'active'>) => sort(visible.filter(session => sessionHomeShelf(session) === shelf));
 	// Status grouping lists Settled and Snooze as status headers after Done; elsewhere they fold at the bottom.
 	const shelvesAsBuckets = view.grouping === 'status';
 	if (flat) {
-		const buckets = flatBucketNodes(view.grouping, sortSessionsForHome(unpinned, view.chatOrder), now, options.limits);
-		// Status order: Pinned, Draft, Working, Done, then Settled and Snooze.
-		const done = shelvesAsBuckets ? buckets.filter(node => node.element.type === 'bucket' && node.element.id === 'done') : [];
-		body.push(...buckets.filter(node => !done.includes(node)));
+		const buckets = flatBucketNodes(view.grouping, sort(unpinned), now, options);
+		// Status order: Draft, Pinned, Needs Attention, Working, Done, then Settled and Snooze. Unsent drafts lead,
+		// above Pinned: they are what the user is in the middle of writing.
+		const bucketWithId = (id: string) => shelvesAsBuckets ? buckets.filter(node => node.element.type === 'bucket' && node.element.id === id) : [];
+		const drafts = bucketWithId('draft');
+		const done = bucketWithId('done');
+		body.unshift(...drafts);
+		body.push(...buckets.filter(node => !done.includes(node) && !drafts.includes(node)));
 		if (shelvesAsBuckets) {
 			if (working.length) {
-				body.push(bucketNode('working', statusBucketLabel('working'), working, options.limits, { add: true, collapsed: true, count: working.length }));
+				// Working keeps the order work was sent in; its rows do not drag into another order.
+				body.push(bucketNode('working', statusBucketLabel('working'), working, { limits: options.limits, keep: options.keep }, { add: true, collapsed: true, count: working.length }));
 			}
 			body.push(...done);
 			for (const shelf of AGENT_HOME_SHELVES) {
 				const members = shelved(shelf);
 				if (members.length) {
-					body.push(bucketNode(shelf, agentHomeGroupLabel(shelf), members, options.limits, { add: true }));
+					body.push(bucketNode(shelf, agentHomeGroupLabel(shelf), members, options, { add: true }));
 				}
 			}
 		}
@@ -563,6 +578,7 @@ function buildHomeTree(
 		for (const shelf of AGENT_HOME_SHELVES) {
 			const members = shelved(shelf);
 			if (members.length) {
+				options.groupMembers?.set(`group:${shelf}`, members.map(session => session.id));
 				tree.push({
 					element: { type: 'group', id: shelf },
 					// Snoozed tabs come back on their own, so the countdown stays in view.
@@ -583,18 +599,21 @@ interface IBucketNodeOptions {
 	readonly count?: number;
 }
 
+/** How a group pages its rows, the row that shows regardless, and where it notes its whole list for dragging (see {@link IAgentHomeTreeOptions}). */
+type AgentHomePaging = Pick<IAgentHomeTreeOptions, 'limits' | 'keep' | 'groupMembers'>;
+
 function bucketNode(
 	id: string,
 	label: string,
 	sessions: readonly IAgentSessionMeta[],
-	limits: ReadonlyMap<string, number> | undefined,
+	paging: AgentHomePaging,
 	options: IBucketNodeOptions = {},
 ): IAgentHomeNode {
 	const groupKey = `bucket:${id}`;
 	return {
 		element: { type: 'bucket', id, label, add: options.add, ...(options.count !== undefined ? { count: options.count } : {}) },
 		collapsed: options.collapsed ?? false,
-		children: pagedSessionNodes(groupKey, sessions, false, limits, options.defaultLimit),
+		children: pagedSessionNodes(groupKey, sessions, false, paging, options.defaultLimit),
 	};
 }
 
@@ -619,22 +638,22 @@ function flatBucketNodes(
 	grouping: AgentHomeGrouping,
 	sessions: readonly IAgentSessionMeta[],
 	now: number,
-	limits: ReadonlyMap<string, number> | undefined,
+	paging: AgentHomePaging,
 ): IAgentHomeNode[] {
 	switch (grouping) {
 		case 'updated':
 			return orderedBuckets<AgentHomeUpdatedBucket>(UPDATED_BUCKET_ORDER, sessions, session => updatedBucketId(sessionStamp(session), now))
-				.map(([id, members]) => bucketNode(id, updatedBucketLabel(id), members, limits, {
+				.map(([id, members]) => bucketNode(id, updatedBucketLabel(id), members, paging, {
 					collapsed: updatedBucketCollapsed(id),
 					add: true,
 					defaultLimit: id === 'week' ? AGENT_HOME_WEEK_LIMIT : undefined,
 				}));
 		case 'status':
 			return orderedBuckets<AgentHomeSessionStatus>(STATUS_BUCKET_ORDER, sessions, sessionPrimaryStatus)
-				.map(([id, members]) => bucketNode(id, statusBucketLabel(id), members, limits, { add: true }));
+				.map(([id, members]) => bucketNode(id, statusBucketLabel(id), members, paging, { add: true }));
 		case 'environment':
 			return orderedBuckets<AgentHomeEnvironmentFilter>(['cloud', 'local'], sessions, sessionEnvironmentTag)
-				.map(([id, members]) => bucketNode(id, environmentLabel(id), members, limits, { add: true }));
+				.map(([id, members]) => bucketNode(id, environmentLabel(id), members, paging, { add: true }));
 		case 'repository':
 		case 'workspace':
 			return [];
@@ -661,11 +680,17 @@ function pagedSessionNodes(
 	groupKey: string,
 	sessions: readonly IAgentSessionMeta[],
 	nested: boolean,
-	limits: ReadonlyMap<string, number> | undefined,
+	paging: AgentHomePaging,
 	defaultLimit: number = AGENT_HOME_GROUP_LIMIT,
 ): IAgentHomeNode[] {
-	const max = limits?.get(groupKey) ?? defaultLimit;
+	paging.groupMembers?.set(groupKey, sessions.map(session => session.id));
+	const max = paging.limits?.get(groupKey) ?? defaultLimit;
 	const shown = sessions.slice(0, max);
+	// The chat on screen keeps its row past Show more: it goes last, above the Show more row.
+	const kept = paging.keep !== undefined && sessions.length > max ? sessions.slice(max).find(session => session.id === paging.keep) : undefined;
+	if (kept) {
+		shown.push(kept);
+	}
 	const nodes: IAgentHomeNode[] = shown.map(session => ({ element: { type: 'session' as const, session, folderKey: groupKey, nested } }));
 	if (sessions.length > shown.length) {
 		nodes.push({ element: { type: 'more', groupKey, hidden: sessions.length - shown.length, nested } });
@@ -806,7 +831,7 @@ function projectNodes(
 			folder: draft.folder,
 			current: draft.current,
 		};
-		const children = pagedSessionNodes(`folder:${draft.key}`, sortSessionsForHome(draft.sessions, view.chatOrder), true, options.limits);
+		const children = pagedSessionNodes(`folder:${draft.key}`, sortSessionsForHome(draft.sessions, view.chatOrder, options.manualOrder), true, options);
 		return {
 			element: { type: 'folder' as const, project },
 			collapsed: !project.current,

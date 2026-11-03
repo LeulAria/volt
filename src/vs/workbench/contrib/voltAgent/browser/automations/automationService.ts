@@ -23,7 +23,7 @@ import { ILifecycleService } from '../../../../services/lifecycle/common/lifecyc
 import {
 	AUTOMATIONS_STATE_VERSION, AutomationRunToolKind, AutomationToolStatus, automationRunPrompt, describeSchedule, dueSchedules, IAutomation, IAutomationCreateInput, IAutomationDeliveryInput,
 	IAutomationDraft, IAutomationRepository, IAutomationRun, IAutomationService, isActiveRun, MAX_REPOSITORIES_PER_RUN, migrateScheduledTasks, nameFromInstructions,
-	IAutomationsState, isTurnOfRun, mergeAutomations, nextDueAt, parseAutomationsFile, parseDeletedAutomations, parseScheduleText, patchRun, planNextRuns, recordRun, SCHEDULE_LATE_NOTE_MS, withRunTool,
+	IAutomationsState, isTurnOfRun, mergeAutomations, nextDueAt, parseAutomationsFile, parseDeletedAutomations, parseScheduleText, patchRun, planNextRuns, recordRun, scheduleKindOf, SCHEDULE_LATE_NOTE_MS, withRunTool,
 	IAutomationWorkflowResult, IAutomationWorkflowRun, IAutomationWorkflowRunner,
 } from '../../../../services/voltRuntime/common/automations/automations.js';
 import { isRetryableFailure, retryAllowed, retryDelay, RUN_START_RETRY } from '../../../../services/voltRuntime/common/jobs/retryPolicy.js';
@@ -1171,7 +1171,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 					return { error: parsed.error ?? 'Bad schedule.' };
 				}
 				const others = (target?.triggers ?? []).filter(trigger => trigger.provider !== 'schedule');
-				patch.triggers = [...others, { id: shortId('tr'), provider: 'schedule', event: parsed.schedule.type === 'interval' ? 'hourly' : parsed.schedule.type, schedule: parsed.schedule }];
+				patch.triggers = [...others, { id: shortId('tr'), provider: 'schedule', event: scheduleKindOf(parsed.schedule), schedule: parsed.schedule }];
 			}
 			if (args.repository === 'none') {
 				patch.repositories = [];
@@ -1439,7 +1439,7 @@ export const AUTOMATION_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: MANAGE_TOOL,
 		title: 'Automations',
 		group: 'tasks',
-		description: 'Volt automations: an agent with instructions that runs on a schedule or on events (GitHub, Slack, Teams, Sentry, Linear, PagerDuty, webhooks), each run in a new chat. action: create | list | update | delete | run_now. create/update take name, instructions, schedule ("daily at 09:00", "weekdays at 18:30", "hourly at :15", "every 2 hours", or cron "0 9 * * 1-5"), repository ("this" for this chat\'s project, or "none"), enabled. Event triggers need a URL set up in the sender: point the user to the Automations page for those.',
+		description: 'Volt automations: an agent with instructions that runs on a schedule or on events (GitHub, Slack, Teams, Sentry, Linear, PagerDuty, webhooks), each run in a new chat. action: create | list | update | delete | run_now. create/update take name, instructions, schedule ("daily at 09:00", "weekdays at 18:30", "hourly at :15", "every 15 minutes", "every 2 hours", or cron "0 9 * * 1-5"), repository ("this" for this chat\'s project, or "none"), enabled. Event triggers need a URL set up in the sender: point the user to the Automations page for those.',
 		inputSchema: {
 			type: 'object',
 			properties: {

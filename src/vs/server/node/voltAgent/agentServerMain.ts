@@ -51,6 +51,7 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../platform/
 import { IWorkspaceContextService } from '../../../platform/workspace/common/workspace.js';
 import { AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo, IVoltSshTunnelOptions } from '../../../platform/voltAgentServer/common/protocol.js';
 import { AgentServerProtocol, IClientCallOptions, tokensEqual } from '../../../platform/voltAgentServer/common/protocolServer.js';
+import { SessionTopicData } from '../../../platform/voltAgentServer/common/sessionPatch.js';
 import { agentServerPaths, clearAgentServerRuntime, ensureAgentServerToken, isProcessAlive, preferredAgentServerPort, writeAgentServerRuntime } from '../../../platform/voltAgentServer/node/agentServerFiles.js';
 import { acceptWebSocket } from '../../../platform/voltAgentServer/node/webSocket.js';
 import { IVoltGitService } from '../../../platform/voltGit/common/voltGit.js';
@@ -355,7 +356,11 @@ export async function main(argv: string[]): Promise<void> {
 		}
 	}));
 
-	const sessionHost = disposables.add(instantiationService.createInstance(ServerSessionHost, data => protocol.publish('session', data)));
+	// Volt's windows take patches as edits; the phone app and older clients take changed messages whole.
+	const sessionHost = disposables.add(instantiationService.createInstance(ServerSessionHost, (data: SessionTopicData, full?: () => SessionTopicData) => {
+		protocol.publish('sessionEdits', data);
+		protocol.publishIfHeard('session', full ?? (() => data));
+	}));
 	holdersOf = sessionId => sessionHost.holders(sessionId);
 	const [history, orchestrator] = instantiationService.invokeFunction(accessor => [accessor.get(IAgentHistoryService), accessor.get(IAgentOrchestratorService)] as const);
 	await history.whenReady;

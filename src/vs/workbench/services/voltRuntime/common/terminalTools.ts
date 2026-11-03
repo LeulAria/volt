@@ -73,7 +73,7 @@ export const TERMINAL_TOOLS: readonly IVoltHostToolInfo[] = [
 			'Start a long-running process in a terminal the user can watch: dev servers, watchers, `docker compose up`, `tail -f`, anything that does not exit by itself.',
 			'Returns as soon as the process is ready (printed a local URL or matched ready_pattern), exits, or wait_ms passes, with its id, status and first output. It keeps running while you keep working.',
 			'Check on it with terminal_output or terminal_wait, answer prompts with terminal_send, stop it with terminal_stop.',
-			'Do not use it for commands that finish on their own (builds, tests, installs, git): run those as normal commands.',
+			'Do not use it for commands that finish on their own (builds, tests, installs, git): run those as normal commands, or, for long ones you should not sit and wait on (iOS/Android builds, release bundles, docker build), with task_watch, which checks, verifies and re-runs them for you.',
 		].join(' '),
 		inputSchema: {
 			type: 'object',

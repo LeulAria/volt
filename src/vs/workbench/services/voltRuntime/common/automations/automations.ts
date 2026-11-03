@@ -192,7 +192,7 @@ export function formatTimeOfDay(minutes: number): string {
 export function defaultSchedule(kind: string, now = Date.now()): AutomationSchedule {
 	switch (kind) {
 		case 'minutes':
-		case 'interval': return { type: 'interval', everyMs: 5 * 60_000 };
+		case 'interval': return { type: 'interval', everyMs: 15 * 60_000 };
 		case 'hourly': return { type: 'hourly', minute: 0 };
 		case 'weekly': return { type: 'weekly', weekdays: [1], time: '09:00' };
 		case 'cron': return { type: 'cron', expr: '0 9 * * 1-5' };
@@ -529,7 +529,7 @@ export function parseScheduleText(input: string, now = Date.now()): { readonly s
 	return fail;
 }
 
-/** The trigger's event for a schedule: its kind in the Scheduled menu (an interval is "Every few minutes"). */
+/** The trigger menu's kind for a schedule (an interval is "Every few minutes"). */
 export function scheduleKindOf(spec: AutomationSchedule): string {
 	return spec.type === 'interval' ? 'minutes' : spec.type;
 }

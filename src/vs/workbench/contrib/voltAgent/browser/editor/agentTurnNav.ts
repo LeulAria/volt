@@ -114,8 +114,10 @@ export class AgentTurnNav extends Disposable {
 	layout(): void {
 		const threadRect = this.thread.element.getBoundingClientRect();
 		// The rail lives in the room left of the transcript column: the sent card's edge, as the
-		// turn itself can bleed to the thread's edge while pinned.
-		const column = (this.thread.inner.querySelector('.volt-agent-turn.user .volt-agent-bubble') ?? this.thread.inner.querySelector('.volt-agent-turn'))?.getBoundingClientRect();
+		// turn itself can bleed to the thread's edge while pinned. Read from the last exchange, which
+		// is always laid out: an older one off screen would be laid out just to answer this.
+		const inner = this.thread.inner;
+		const column = (inner.lastElementChild?.querySelector('.volt-agent-turn.user .volt-agent-bubble') ?? inner.querySelector('.volt-agent-turn.user .volt-agent-bubble') ?? inner.querySelector('.volt-agent-turn'))?.getBoundingClientRect();
 		const gutter = column ? column.left - threadRect.left : 0;
 		const show = this.turns.length > 1 && gutter >= RAIL_WIDTH + 2 && threadRect.height > 0;
 		this.element.classList.toggle('hidden', !show);

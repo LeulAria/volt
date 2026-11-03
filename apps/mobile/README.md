@@ -12,7 +12,12 @@ npm run android
 npm run typecheck
 npm run build:ios           # standalone simulator .app (JS embedded) in dist/ios
 npm run build:android       # standalone .apk (arm64, debug-signed) in dist/android
+npm run release:ios         # what CI ships: native build from scratch, in dist/release
+npm run release:android
 ```
+
+Releases build the app in GitHub Actions (`.github/workflows/volt-mobile-build.yml`, signing secrets and
+assets in [docs/releasing.md](../../docs/releasing.md#mobile-app)).
 
 Native code is only compiled once per machine for each native fingerprint, a hash of the native
 modules, config plugins and `app.json` (`.fingerprintignore` skips the generated `ios/` and

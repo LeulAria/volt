@@ -68,6 +68,7 @@ import { attachSessionToProject } from './agentShell.js';
 import { registerAgentFileEditorRouting } from './agentFileEditorRouting.js';
 import { IAgentChatView, IAgentSurface, IAgentWorkspaceService } from './agentWorkspace.js';
 import { SHOW_AGENT_SCM_COMMAND_ID } from '../../common/agentGitActions.js';
+import { AGENT_RUN_SHOW_IN_VOLT_SETTING, isLocalPageUrl } from '../../common/agentRunSettings.js';
 
 export { chooseAgentBrowserSurfaceMount, type AgentBrowserSurfaceMount } from './agentBrowserMount.js';
 export { shouldHideAgentQuickOpenRail, surfaceKindForMenuAction, agentSurfaceMenuItems } from './agentSurfaceMenu.js';
@@ -2706,7 +2707,8 @@ registerAction2(class ToggleAgentToolsPanelAction extends Action2 {
  * In the agent layout a web link opens as a browser tab in the tools of the chat on screen, wherever
  * it is clicked: code, terminals, hovers, Source Control, any view. (Links in the chat itself already
  * do, through their own handler.) "Open in System Browser" and extensions' openExternal ask for the
- * system browser explicitly and still get it.
+ * system browser explicitly and still get it, except a local page an extension or debug session opens
+ * (a dev server on localhost): with `volt.agent.run.showInVolt` that shows in Volt's browser too.
  */
 class AgentBrowserLinkOpener extends Disposable {
 
@@ -2716,12 +2718,22 @@ class AgentBrowserLinkOpener extends Disposable {
 		@IOpenerService openerService: IOpenerService,
 		@IWorkbenchLayoutService layoutService: IWorkbenchLayoutService,
 		@IAgentWorkspaceService workspace: IAgentWorkspaceService,
+		@IConfigurationService configurationService: IConfigurationService,
 	) {
 		super();
 		this._register(openerService.registerOpener({
 			open: async (resource: URI | string, options?: OpenInternalOptions | OpenExternalOptions) => {
-				if ((options as OpenExternalOptions | undefined)?.openExternal || getLayoutMode(layoutService) !== 'agent') {
+				if (getLayoutMode(layoutService) !== 'agent') {
 					return false;
+				}
+				const external = options as OpenExternalOptions | undefined;
+				if (external?.openExternal) {
+					const local = external.fromExtension
+						&& configurationService.getValue<boolean>(AGENT_RUN_SHOW_IN_VOLT_SETTING) !== false
+						&& isLocalPageUrl(typeof resource === 'string' ? resource : resource.toString(true));
+					if (!local) {
+						return false;
+					}
 				}
 				let target: URI;
 				try {

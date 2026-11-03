@@ -121,6 +121,11 @@ export interface IAgentSessionControl extends IDisposable {
 	 */
 	loadTranscript?(): Promise<{ readonly messages: IAgentMessage[]; readonly contextUsed?: number; readonly contextWindow?: number }>;
 	/**
+	 * Set when another process owns the transcript: a view shows the chat until the handle is
+	 * disposed, so its changes come at full rate (others come about once a second).
+	 */
+	watch?(): IDisposable;
+	/**
 	 * Set when another process owns the transcript: a view's own change to the transcript (a stopped
 	 * reply, an edited plan, a cut before an edited prompt) goes to that owner, which records it.
 	 */

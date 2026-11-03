@@ -8,6 +8,8 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../platfo
 export const LAYOUT_MODE_STORAGE_KEY = 'volt.layoutMode';
 export const AGENT_LEFT_SIDEBAR_HIDDEN_KEY = 'volt.agent.leftSidebar.hidden';
 export const SIDEBAR_LOCATION_KEY = 'workbench.sideBar.location';
+/** The agent layout hides the status bar unless this is on (`workbench.statusBar.visible` still wins when off). */
+export const AGENT_STATUS_BAR_VISIBLE_KEY = 'volt.agent.statusBar.visible';
 export const AGENT_LIST_WIDTH = 230;
 export const AGENT_SIDEBAR_MIN_WIDTH = 180;
 

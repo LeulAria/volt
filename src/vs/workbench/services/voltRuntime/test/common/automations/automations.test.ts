@@ -72,7 +72,8 @@ suite('Volt automation schedules', () => {
 		assert.deepStrictEqual(dueSchedules(withTrigger(trigger, { t: now - 48 * HOUR }), now), [{ triggerId: 't', kind: 'run', next: now + 5 * 60_000, due: now - 48 * HOUR }]);
 		assert.strictEqual(validateSchedule({ type: 'interval', everyMs: 30_000 }), 'Runs at most once a minute.');
 		assert.strictEqual(scheduleKindOf({ type: 'interval', everyMs: 60_000 }), 'minutes');
-		assert.deepStrictEqual(defaultSchedule('minutes'), { type: 'interval', everyMs: 5 * 60_000 });
+		// "Every few minutes" starts at 15 minutes (as #64 chose); 1-minute steps stay a pick away.
+		assert.deepStrictEqual(defaultSchedule('minutes'), { type: 'interval', everyMs: 15 * 60_000 });
 		assert.strictEqual(describeSchedule({ type: 'interval', everyMs: 15 * 60_000 }), 'Every 15 minutes');
 	});
 
