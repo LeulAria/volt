@@ -15,6 +15,8 @@ import * as fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const releaseAndCiScripts = /^build\/volt\/(ci|release)\//;
+/** The Biome settings the mobile, relay and Volt Govern jobs lint with. */
+const appsBiome = /^apps\/biome-shared\.jsonc$/;
 
 /**
  * Each job's trigger paths (repository-relative, `/` separators). A file can wake several jobs.
@@ -34,9 +36,9 @@ export const areas = {
 	cli: { include: [/^cli\//] },
 	docs: { include: [/^apps\/docs\//] },
 	// The app, the widgets it bundles and the client-core it imports, checked together.
-	mobile: { include: [/^apps\/mobile\//, /^apps\/mobile-widgets\//, /^apps\/client-core\//] },
-	relay: { include: [/^apps\/relay\//] },
-	govern: { include: [/^apps\/volt-govern\//] },
+	mobile: { include: [/^apps\/mobile\//, /^apps\/mobile-widgets\//, /^apps\/client-core\//, appsBiome] },
+	relay: { include: [/^apps\/relay\//, appsBiome] },
+	govern: { include: [/^apps\/volt-govern\//, appsBiome] },
 	// Workflows, actions and the scripts they run.
 	workflows: { include: [/^\.github\//, releaseAndCiScripts] },
 };

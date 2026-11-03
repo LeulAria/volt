@@ -37,6 +37,10 @@ test('apps run only their own jobs', () => {
 	assert.deepEqual(on(detect(['apps/mobile/app/index.tsx'])), ['mobile']);
 });
 
+test('the shared Biome settings wake every app job that lints with them', () => {
+	assert.deepEqual(on(detect(['apps/biome-shared.jsonc'])), ['govern', 'mobile', 'relay']);
+});
+
 test('client-core and the widgets are checked with the mobile app', () => {
 	assert.deepEqual(on(detect(['apps/client-core/src/terminals.ts'])), ['mobile']);
 	assert.deepEqual(on(detect(['apps/mobile-widgets/src/model.ts'])), ['mobile']);

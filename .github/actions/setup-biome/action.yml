@@ -1,0 +1,31 @@
+name: Set up Biome
+description: >-
+  A pinned Biome for the apps that lint with apps/biome-shared.jsonc and do not install it
+  themselves. Bump the version here and in that file's $schema together.
+
+inputs:
+  version:
+    description: Biome version
+    default: 2.5.14
+
+outputs:
+  path:
+    description: The biome executable
+    value: ${{ steps.install.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Biome
+      id: install
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -e
+        dir="$RUNNER_TEMP/biome"
+        mkdir -p "$dir"
+        echo '{"private":true}' > "$dir/package.json"
+        (cd "$dir" && bun add --exact "@biomejs/biome@$VERSION" > /dev/null)
+        "$dir/node_modules/.bin/biome" --version
+        echo "path=$dir/node_modules/.bin/biome" >> "$GITHUB_OUTPUT"

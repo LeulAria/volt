@@ -64,13 +64,15 @@ export function parseGithubReporter(output, cwd, prefix) {
  * @param {string} biome
  * @param {string} cwd
  * @param {string[]} files relative to cwd
+ * @param {string | undefined} level the lowest severity reported (info, warn, error)
  */
-function runBiome(biome, cwd, files) {
+function runBiome(biome, cwd, files, level) {
 	if (!files.length) {
 		return '';
 	}
+	const args = ['check', '--reporter=github', '--vcs-enabled=false', '--no-errors-on-unmatched', '--files-ignore-unknown=true', '--max-diagnostics=none', ...(level ? [`--diagnostic-level=${level}`] : []), ...files];
 	try {
-		return execFileSync(biome, ['check', '--reporter=github', '--vcs-enabled=false', '--no-errors-on-unmatched', '--files-ignore-unknown=true', '--max-diagnostics=none', ...files], { cwd, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+		return execFileSync(biome, args, { cwd, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
 	} catch (error) {
 		// Biome exits 1 when it reports problems; its report is still on stdout.
 		const failure = /** @type {{ stdout?: string, status?: number }} */ (error);
@@ -81,9 +83,49 @@ function runBiome(biome, cwd, files) {
 	}
 }
 
+/**
+ * Writes the app's Biome configuration at a commit into `dir` (a copy of the repository layout),
+ * with the files it extends, so `extends: ["../biome-shared.jsonc"]` resolves there too.
+ * @param {string} commit
+ * @param {string} app
+ * @param {string} dir
+ * @returns {boolean} whether the app had a configuration at that commit
+ */
+export function writeConfigAt(commit, app, dir) {
+	for (const name of ['biome.json', 'biome.jsonc']) {
+		const config = showFile(commit, `${app}/${name}`, root);
+		if (!config) {
+			continue;
+		}
+		fs.mkdirSync(path.join(dir, app), { recursive: true });
+		fs.writeFileSync(path.join(dir, app, name), config);
+		/** @type {unknown} */
+		let parsed;
+		try {
+			parsed = JSON.parse(config.toString('utf8').replace(/^\s*\/\/.*$/gm, ''));
+		} catch {
+			return true;
+		}
+		const extendsList = /** @type {{ extends?: unknown }} */ (parsed).extends;
+		for (const target of Array.isArray(extendsList) ? extendsList : []) {
+			if (typeof target !== 'string' || !target.startsWith('.')) {
+				continue;
+			}
+			const relative = path.posix.normalize(path.posix.join(app, target));
+			const contents = showFile(commit, relative, root);
+			if (contents && !relative.startsWith('..')) {
+				fs.mkdirSync(path.dirname(path.join(dir, relative)), { recursive: true });
+				fs.writeFileSync(path.join(dir, relative), contents);
+			}
+		}
+		return true;
+	}
+	return false;
+}
+
 /** @param {string[]} argv */
 function parseArgs(argv) {
-	/** @type {{ base?: string, head?: string, app?: string }} */
+	/** @type {{ base?: string, head?: string, app?: string, biome?: string, level?: string }} */
 	const args = {};
 	for (let i = 0; i < argv.length; i++) {
 		if (argv[i] === '--base') {
@@ -92,6 +134,10 @@ function parseArgs(argv) {
 			args.head = argv[++i];
 		} else if (argv[i] === '--app') {
 			args.app = argv[++i]?.replace(/\/$/, '');
+		} else if (argv[i] === '--biome') {
+			args.biome = argv[++i];
+		} else if (argv[i] === '--diagnostic-level') {
+			args.level = argv[++i];
 		}
 	}
 	return args;
@@ -100,12 +146,13 @@ function parseArgs(argv) {
 function main() {
 	const args = parseArgs(process.argv.slice(2));
 	if (!args.base || !args.app) {
-		console.error('Usage: node build/volt/ci/biomeDiff.mjs --app apps/docs --base <sha> [--head <sha>]');
+		console.error('Usage: node build/volt/ci/biomeDiff.mjs --app apps/docs --base <sha> [--head <sha>] [--biome <path>] [--diagnostic-level warn]');
 		process.exit(2);
 	}
 	const app = args.app;
 	const appDir = path.join(root, app);
-	const biome = path.join(appDir, 'node_modules', '.bin', process.platform === 'win32' ? 'biome.cmd' : 'biome');
+	// The app's own Biome, or one passed in for apps that do not install it (see apps/biome-shared.jsonc).
+	const biome = args.biome ?? path.join(appDir, 'node_modules', '.bin', process.platform === 'win32' ? 'biome.cmd' : 'biome');
 	const tool = `Biome (${app})`;
 	const changes = listChanges(args.base, args.head, root)
 		.filter(change => change.status !== 'D' && change.path.startsWith(`${app}/`) && fs.existsSync(path.join(root, change.path)));
@@ -114,37 +161,36 @@ function main() {
 		return;
 	}
 
+	// The base versions go into a copy of the repository layout, so relative `extends` still resolve.
 	const tmp = fs.realpathSync(fs.mkdtempSync(path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'volt-biome-base-')));
 	try {
-		const baseConfig = showFile(args.base, `${app}/biome.json`, root);
-		if (baseConfig) {
-			fs.writeFileSync(path.join(tmp, 'biome.json'), baseConfig);
-		}
+		const baseAppDir = path.join(tmp, app);
+		const baseConfig = writeConfigAt(args.base, app, tmp);
 		/** @type {string[]} */
 		const baseFiles = [];
 		for (const change of changes) {
 			const contents = change.status === 'A' ? undefined : showFile(args.base, change.oldPath, root);
 			if (contents) {
 				const relative = change.path.slice(app.length + 1);
-				fs.mkdirSync(path.dirname(path.join(tmp, relative)), { recursive: true });
-				fs.writeFileSync(path.join(tmp, relative), contents);
+				fs.mkdirSync(path.dirname(path.join(baseAppDir, relative)), { recursive: true });
+				fs.writeFileSync(path.join(baseAppDir, relative), contents);
 				baseFiles.push(relative);
 			}
 		}
 		const headFiles = changes.map(change => change.path.slice(app.length + 1));
-		const baseProblems = baseConfig ? parseGithubReporter(runBiome(biome, tmp, baseFiles), tmp, app) : [];
-		const headProblems = parseGithubReporter(runBiome(biome, fs.realpathSync(appDir), headFiles), fs.realpathSync(appDir), app);
+		const baseProblems = baseConfig ? parseGithubReporter(runBiome(biome, baseAppDir, baseFiles, args.level), baseAppDir, app) : [];
+		const headProblems = parseGithubReporter(runBiome(biome, fs.realpathSync(appDir), headFiles, args.level), fs.realpathSync(appDir), app);
 
 		const read = (/** @type {string} */ dir, /** @type {string[]} */ files) => new Map(files.map(f => [`${app}/${f}`, fs.readFileSync(path.join(dir, f), 'utf8').split(/\r\n|\r|\n/)]));
 		const added = addedLinesByFile(args.base, args.head, root);
 		const result = compareProblems(baseProblems, headProblems, {
-			baseLine: lineLookup(read(tmp, baseFiles)),
+			baseLine: lineLookup(read(baseAppDir, baseFiles)),
 			headLine: lineLookup(read(appDir, headFiles)),
 			added: file => added.get(file) ?? new Set(),
 		});
 		report(tool, result.added, { fixed: result.fixed, files: headFiles.length });
 		if (result.added.length) {
-			console.log(`\nFix these before merging: \`cd ${app} && npx biome check --write <file>\` fixes formatting and import order.`);
+			console.log(`\nFix these before merging. In ${app}, \`bunx @biomejs/biome check --write <file>\` fixes what Biome can.`);
 			process.exitCode = 1;
 		}
 	} finally {

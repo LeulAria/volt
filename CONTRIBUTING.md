@@ -285,7 +285,7 @@ Every pull request and every push to `main` runs these on GitHub Actions, with n
 | | Unit Tests (Volt, Node, Electron) | Volt's Bun suites, the Node mocha suites, the Electron suites under a virtual display. Electron is not part of Check until [the tests that predate CI](https://github.com/LeulAria/volt/issues/75) pass |
 | | Extensions | Built-in extensions compile |
 | | Rust CLI | Clippy and tests for `cli/` |
-| | Docs Site, Mobile App, Relay, Volt Govern | Each app's own type check, tests, build, and Biome for the docs site |
+| | Docs Site, Mobile App, Relay, Volt Govern | Each app's own type check, tests and build, and Biome lint on the changed files (new problems only) |
 | | Workflows | The CI scripts' tests, actionlint and zizmor (workflow security) |
 | | Dependency Review | New dependencies with a known high or critical vulnerability |
 | | **Check** | Passes when every job passed or was skipped because the change can't affect it |
@@ -328,20 +328,23 @@ Open an issue that starts from the problem rather than the solution: what are yo
 
 ## Working on the docs site
 
-The documentation site lives in [`apps/docs`](apps/docs). It's a separate project with its own dependencies (TanStack Start, Fumadocs, and Tailwind), and it doesn't affect the desktop build.
+The documentation site lives in [`apps/docs`](apps/docs). It's a separate project with its own dependencies (TanStack Start, Fumadocs, and Tailwind), installed with [Bun](https://bun.sh), and it doesn't affect the desktop build.
 
 ```bash
 cd apps/docs
-npm install
-npm run dev          # http://localhost:3000
+bun install
+bun run dev          # http://localhost:3000
 ```
 
 Page content is MDX under `apps/docs/content/docs`. Before you open a PR, run:
 
 ```bash
-npm run types:check
-npm run lint         # Biome
+bun run types:check
+bun run lint         # Biome
+bun run test:releases
 ```
+
+The other apps (`mobile`, `mobile-widgets`, `client-core`, `relay`, `volt-govern`) lint with the Biome settings in [`apps/biome-shared.jsonc`](apps/biome-shared.jsonc): `bunx @biomejs/biome@2.5.14 check apps/<app>`. They still install with npm, which their release builds and Docker images use.
 
 If you change how Volt behaves, update the docs in the same pull request.
 
