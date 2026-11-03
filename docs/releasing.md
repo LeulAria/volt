@@ -140,8 +140,12 @@ job builds and tests the package and warns instead of publishing.
 
 1. Bump `version` in `package.json` and `package-lock.json` (both places at the top of the lock file).
 2. Add the version to [`CHANGELOG.md`](../CHANGELOG.md): what was added, changed and fixed, and any known limitation.
-3. Write `docs/release-notes/<version>.md`. `build/volt/release/publish.mjs` puts it at the top of the GitHub Release (a shorter
-   version of the changelog, with the install steps). Image links in it must be absolute, pinned to the tag, for example
+3. Write `docs/release-notes/<version>.md`. `build/volt/release/publish.mjs` puts it at the top of the GitHub Release, and Volt
+   shows it on its release notes page after the update. It starts with a summary (a one-sentence headline, a
+   `✦ https://github.com/LeulAria/volt` line and short `+ ` lines), then a `---` line, then every detail from the changelog and
+   the install steps; [`docs/release-notes/0.0.5.md`](release-notes/0.0.5.md) is an example and the `volt-release` skill
+   (`.claude/skills/volt-release/SKILL.md`) has the rules. In a dev build, Help > Show Release Notes previews the file. Image
+   links in it must be absolute, pinned to the tag, for example
    `https://raw.githubusercontent.com/LeulAria/volt/v<version>/docs/<folder>/<image>.png`.
 4. Merge to `main`, then tag the commit and push the tag. A `v*` tag without a suffix starts `volt-stable.yml`; `v*-beta*` starts the beta:
 
