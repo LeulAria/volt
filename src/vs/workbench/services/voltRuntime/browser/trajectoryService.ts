@@ -28,7 +28,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 		[VOLT_TRAJECTORY_ENABLED_SETTING]: {
 			type: 'boolean',
 			default: true,
-			description: localize('voltTrajectory.enabled', "Records every model request of the agents Volt runs itself (prompt, tools, response, usage, timings) in memory, for the Trajectory panel. Nothing is saved to disk or sent anywhere."),
+			description: localize('voltTrajectory.enabled', "Records every model request of the agents Volt runs itself (prompt, tools, response, usage, timings), and each answer of Claude Code, Codex and other agents as Volt sees it, in memory, for the Trajectory panel. Nothing is saved to disk or sent anywhere."),
 		},
 	},
 });
@@ -71,7 +71,8 @@ export class VoltTrajectoryService extends Disposable implements IVoltTrajectory
 		}
 		const chat = this.chat(input.sessionId);
 		const previous = chat.requests.filter(candidate => candidate.agent === input.agent).at(-1);
-		if (previous) {
+		// An agent's own calls may still report after its model speaks again (background commands).
+		if (previous && !input.harness) {
 			closeOpenToolRuns(previous);
 		}
 		const request = newTrajectoryRequest({ ...input, id: generateUuid(), index: ++chat.next });
