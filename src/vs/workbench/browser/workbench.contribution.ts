@@ -614,7 +614,8 @@ const registry = Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Con
 			'workbench.fontAliasing': {
 				'type': 'string',
 				'enum': ['default', 'antialiased', 'none', 'auto'],
-				'default': 'default',
+				// Volt: smooth text out of the box (Settings > Appearance > Font Smoothing).
+				'default': 'antialiased',
 				'description':
 					localize('fontAliasing', "Controls font aliasing method in the workbench."),
 				'enumDescriptions': [

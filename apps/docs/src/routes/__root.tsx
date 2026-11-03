@@ -15,6 +15,12 @@ export const Route = createRootRoute({
     meta: [...rootHeadMeta()],
     links: [
       ...rootHeadLinks(),
+      // The site's public API for agents (MCP, Markdown pages, llms.txt).
+      {
+        rel: "service-desc",
+        type: "application/openapi+json",
+        href: "/openapi.json",
+      },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       {
         rel: "preconnect",

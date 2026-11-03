@@ -717,6 +717,7 @@ export class AgentHistoryList extends Disposable implements IHistoryRendererHost
 			matchCase: this.findInput?.getCaseSensitive(),
 			wholeWord: this.findInput?.getWholeWords(),
 			isRegex: this.findInput?.getRegex(),
+			inWindow: true,
 		};
 		if (!this.query) {
 			return this.history.list(options);

@@ -15,7 +15,7 @@ import { IConfigurationService } from '../../../../../platform/configuration/com
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { imagePointToInput } from '../../../../../platform/voltDevices/common/deviceCommands.js';
-import { IVoltDevice, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDevicesService, VoltDeviceAppearance, VoltDeviceButton, VoltDeviceInput, VoltDeviceModelId, VoltDevicePosture, VoltDeviceState } from '../../../../../platform/voltDevices/common/voltDevices.js';
+import { IVoltDevice, IVoltDeviceBootOptions, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDevicesService, IVoltDeviceStream, VoltDeviceAppearance, VoltDeviceButton, VoltDeviceInput, VoltDeviceModelId, VoltDevicePosture, VoltDeviceState, VoltDeviceTextSize } from '../../../../../platform/voltDevices/common/voltDevices.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { scaleScreenshot } from '../../../../services/voltRuntime/browser/host/imageCodec.js';
 import { DEVICE_TOOLS, VoltDeviceToolName } from '../../../../services/voltRuntime/common/deviceTools.js';
@@ -70,7 +70,8 @@ export interface IAgentDevicesService {
 	cached(): readonly IHostDevices[];
 	keyOf(target: IDeviceTarget): string;
 	find(key: string): IDeviceTarget | undefined;
-	boot(target: IDeviceTarget, timeoutMs?: number): Promise<VoltDeviceState>;
+	/** `waitUntilReady: false` resolves 'booting' once the boot started, so a live stream can show it. */
+	boot(target: IDeviceTarget, timeoutMs?: number, options?: IVoltDeviceBootOptions): Promise<VoltDeviceState>;
 	shutdown(target: IDeviceTarget): Promise<void>;
 	/**
 	 * `maxSide` 0 keeps the full size (as PNG). `by` keeps the agent's and the preview's
@@ -88,6 +89,8 @@ export interface IAgentDevicesService {
 	resolveTarget(device: string | undefined, host: string | undefined, call: IVoltHostToolCall | undefined): Promise<IDeviceTarget>;
 	appearance(target: IDeviceTarget): Promise<VoltDeviceAppearance | undefined>;
 	setAppearance(target: IDeviceTarget, appearance: VoltDeviceAppearance): Promise<void>;
+	/** Sets the system text size (the user's choice in the preview). */
+	setTextSize(target: IDeviceTarget, size: VoltDeviceTextSize): Promise<void>;
 	/** Runs device_act steps (a script, `${name}` vars, saved flows) and reports the run. */
 	act(target: IDeviceTarget, script: string, options: { readonly vars?: Record<string, unknown>; readonly cwd?: string; readonly token: CancellationToken }): Promise<{ readonly ok: boolean; readonly lines: readonly string[] }>;
 	/**
@@ -95,12 +98,16 @@ export interface IAgentDevicesService {
 	 * preview's screenshots, whose coordinates their taps refer to.
 	 */
 	capture(target: IDeviceTarget, maxSide: number): Promise<IDeviceShot>;
-	/** Whether `target` can stream live (a booted iOS simulator on this Mac). */
+	/** Whether `target` can stream live: an iOS simulator on this Mac that is booted or booting, or a booted Android emulator on it. */
 	canStream(target: IDeviceTarget): boolean;
-	/** Starts the device hub and attaches it to `target`; resolves with the hub's origin. */
-	attachStream(target: IDeviceTarget): Promise<string>;
-	/** A blob: URL of a 3D model on this machine, or undefined when it is missing. */
-	deviceModelUrl(id: VoltDeviceModelId): Promise<string | undefined>;
+	/** Starts the device hub and attaches it to `target`; resolves with the hub's base URL and the id its stream client takes. */
+	attachStream(target: IDeviceTarget): Promise<IVoltDeviceStream>;
+	/** Starts the device hub ahead of the first `attachStream` (on a Mac; never rejects). */
+	prewarmStream(): Promise<void>;
+	/** Installs AXe with Homebrew on `target`'s machine; see `isIosInputToolMissing`. */
+	installIosInputTool(target: IDeviceTarget): Promise<void>;
+	/** A 3D model's bytes on this machine, or undefined when it is missing. */
+	deviceModel(id: VoltDeviceModelId): Promise<ArrayBuffer | undefined>;
 	/** The bundle id or package in front, when it can be told cheaply. */
 	foregroundApp(target: IDeviceTarget): Promise<string | undefined>;
 }
@@ -142,7 +149,7 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 	private readonly refs = new Map<string, DeviceRefs>();
 	/** The screen as the agent last read it per device, so the next result reports only what changed. */
 	private readonly seen = new Map<string, IPageView>();
-	private readonly modelUrls = new Map<VoltDeviceModelId, Promise<string | undefined>>();
+	private readonly models = new Map<VoltDeviceModelId, Promise<ArrayBuffer | undefined>>();
 
 	constructor(
 		@IVoltDevicesService private readonly devices: IVoltDevicesService,
@@ -216,11 +223,23 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 	}
 
 	canStream(target: IDeviceTarget): boolean {
-		return isMacintosh && !target.host.ssh && target.device.platform === 'ios' && target.device.state === 'booted';
+		if (!isMacintosh || target.host.ssh) {
+			return false;
+		}
+		const { platform, kind, state } = target.device;
+		return platform === 'ios' ? state === 'booted' || state === 'booting' : kind === 'emulator' && state === 'booted';
 	}
 
-	attachStream(target: IDeviceTarget): Promise<string> {
+	attachStream(target: IDeviceTarget): Promise<IVoltDeviceStream> {
 		return this.devices.attachStream(target.host, target.device);
+	}
+
+	prewarmStream(): Promise<void> {
+		return isMacintosh ? this.devices.prewarmStream().catch(() => undefined) : Promise.resolve();
+	}
+
+	installIosInputTool(target: IDeviceTarget): Promise<void> {
+		return this.devices.installIosInputTool(target.host);
 	}
 
 	foregroundApp(target: IDeviceTarget): Promise<string | undefined> {
@@ -230,27 +249,27 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 		return this.devices.foregroundApp(target.host, target.device).catch(() => undefined);
 	}
 
-	deviceModelUrl(id: VoltDeviceModelId): Promise<string | undefined> {
-		let url = this.modelUrls.get(id);
-		if (!url) {
-			url = this.devices.readDeviceModel(id).then(base64 => {
+	deviceModel(id: VoltDeviceModelId): Promise<ArrayBuffer | undefined> {
+		let model = this.models.get(id);
+		if (!model) {
+			model = this.devices.readDeviceModel(id).then(base64 => {
 				if (!base64) {
-					this.modelUrls.delete(id);
+					this.models.delete(id);
 					return undefined;
 				}
 				const bytes = decodeBase64(base64).buffer;
-				return URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'model/gltf-binary' }));
+				return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 			}, () => {
-				this.modelUrls.delete(id);
+				this.models.delete(id);
 				return undefined;
 			});
-			this.modelUrls.set(id, url);
+			this.models.set(id, model);
 		}
-		return url;
+		return model;
 	}
 
-	async boot(target: IDeviceTarget, timeoutMs?: number): Promise<VoltDeviceState> {
-		const state = await this.devices.boot(target.host, target.device, timeoutMs);
+	async boot(target: IDeviceTarget, timeoutMs?: number, options?: IVoltDeviceBootOptions): Promise<VoltDeviceState> {
+		const state = await this.devices.boot(target.host, target.device, timeoutMs, options);
 		this.changed();
 		this._onDidAct.fire({ key: this.keyOf(target), by: 'user' });
 		return state;
@@ -375,6 +394,11 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 	async setAppearance(target: IDeviceTarget, appearance: VoltDeviceAppearance): Promise<void> {
 		await this.devices.setAppearance(target.host, target.device, appearance);
 		this._onDidAct.fire({ key: this.keyOf(target), by: 'agent' });
+	}
+
+	async setTextSize(target: IDeviceTarget, size: VoltDeviceTextSize): Promise<void> {
+		await this.devices.setTextSize(target.host, target.device, size);
+		this._onDidAct.fire({ key: this.keyOf(target), by: 'user' });
 	}
 
 	async act(target: IDeviceTarget, script: string, options: { readonly vars?: Record<string, unknown>; readonly cwd?: string; readonly token: CancellationToken }): Promise<{ readonly ok: boolean; readonly lines: readonly string[] }> {

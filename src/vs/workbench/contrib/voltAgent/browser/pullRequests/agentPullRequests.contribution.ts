@@ -30,7 +30,7 @@ import { IViewContainersRegistry, IViewsRegistry, ViewContainerLocation, Extensi
 import { IEditorResolverService, RegisteredEditorPriority } from '../../../../services/editor/common/editorResolverService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IMultiDiffSourceResolverService } from '../../../multiDiffEditor/browser/multiDiffSourceResolverService.js';
-import { ISCMService } from '../../../scm/common/scm.js';
+import { ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
 import { buildReviewLinePrompt, currentLink } from '../../common/agentPullRequests.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { AgentFilesSidebar } from '../workspace/agentFilesSidebar.js';
@@ -38,6 +38,8 @@ import { agentToolsSessionOnScreen, showAgentFilesSidebar } from '../workspace/a
 import { LayoutModeContext } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import { AgentGitActionsService, IAgentGitActionsService } from './agentGitActionsService.js';
+import { AgentCommitPlanService, IAgentCommitPlanService } from './agentCommitPlanService.js';
+import { COMMIT_PLAN_CONTENT_SCHEME, COMMIT_PLAN_HEAD_SCHEME, CommitPlanContentProvider, CommitPlanDiffSourceResolver, CommitPlanHeadContentProvider } from './agentCommitPlanTray.js';
 import { parseBlobUri, PR_BLOB_SCHEME, PrBlobContentProvider, PrDiffSourceResolver } from './agentPullRequestDiff.js';
 import { AgentPullRequestEditor } from './agentPullRequestEditor.js';
 import { AGENT_PULL_REQUEST_EDITOR_ID, AGENT_PULL_REQUEST_SCHEME, AgentPullRequestEditorInput, AgentPullRequestEditorInputSerializer, parsePullRequestUri } from './agentPullRequestEditorInput.js';
@@ -52,7 +54,9 @@ import { AGENT_PULL_REQUESTS_CONTAINER_ID, AGENT_PULL_REQUESTS_VIEW_ID, setPullR
 import { composeInChat, openPullRequest, visibleChatSession } from './agentPullRequestUi.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
-import { CREATE_PULL_REQUEST_COMMAND_ID, FIX_PR_SELECTION_COMMAND_ID, GENERATE_COMMIT_MESSAGE_COMMAND_ID, LINK_PULL_REQUEST_COMMAND_ID, OPEN_CHAT_PULL_REQUEST_COMMAND_ID, OPEN_PULL_REQUEST_COMMAND_ID, SHOW_PULL_REQUESTS_COMMAND_ID, SIGN_IN_HOST_COMMAND_ID } from './agentPullRequestCommands.js';
+import { CREATE_PULL_REQUEST_COMMAND_ID, FIX_PR_SELECTION_COMMAND_ID, GENERATE_COMMIT_MESSAGE_COMMAND_ID, LINK_PULL_REQUEST_COMMAND_ID, OPEN_CHAT_PULL_REQUEST_COMMAND_ID, OPEN_PULL_REQUEST_COMMAND_ID, OPEN_PULL_REQUESTS_PAGE_COMMAND_ID, SHOW_PULL_REQUESTS_COMMAND_ID, SIGN_IN_HOST_COMMAND_ID } from './agentPullRequestCommands.js';
+import { AgentPullRequestsPage } from './agentPullRequestsPage.js';
+import { AGENT_PULL_REQUESTS_PAGE_EDITOR_ID, AgentPullRequestsPageInput, AgentPullRequestsPageInputSerializer } from './agentPullRequestsPageInput.js';
 
 /** Volt writes commit messages itself; the core sparkle (Copilot setup) stays hidden. */
 export const VOLT_COMMIT_MESSAGES_CONTEXT = new RawContextKey<boolean>('voltCommitMessages', false);
@@ -60,6 +64,16 @@ export const VOLT_COMMIT_MESSAGES_CONTEXT = new RawContextKey<boolean>('voltComm
 registerSingleton(IAgentPullRequestService, AgentPullRequestService, InstantiationType.Delayed);
 registerSingleton(IAgentGitActionsService, AgentGitActionsService, InstantiationType.Delayed);
 registerSingleton(IAgentPrReviewService, AgentPullRequestReviewService, InstantiationType.Delayed);
+registerSingleton(IAgentCommitPlanService, AgentCommitPlanService, InstantiationType.Delayed);
+
+/** Starts the commit review with the workbench, so agents have propose_commits and rename_branch from the first turn. */
+class AgentCommitPlanContribution {
+
+	static readonly ID = 'workbench.contrib.voltAgentCommitPlan';
+
+	constructor(@IAgentCommitPlanService _plans: IAgentCommitPlanService) { }
+}
+registerWorkbenchContribution2(AgentCommitPlanContribution.ID, AgentCommitPlanContribution, WorkbenchPhase.AfterRestored);
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 	id: 'volt.pullRequests',
@@ -110,6 +124,13 @@ Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane
 
 Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEditorSerializer(AgentPullRequestEditorInput.TypeID, AgentPullRequestEditorInputSerializer);
 
+Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
+	EditorPaneDescriptor.create(AgentPullRequestsPage, AGENT_PULL_REQUESTS_PAGE_EDITOR_ID, localize('voltPrPage.editorLabel', "Pull Requests")),
+	[new SyncDescriptor(AgentPullRequestsPageInput)],
+);
+
+Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEditorSerializer(AgentPullRequestsPageInput.TypeID, AgentPullRequestsPageInputSerializer);
+
 const container = Registry.as<IViewContainersRegistry>(ViewExtensions.ViewContainersRegistry).registerViewContainer({
 	id: AGENT_PULL_REQUESTS_CONTAINER_ID,
 	title: localize2('voltPr.containerTitle', "Pull Requests"),
@@ -147,7 +168,10 @@ class AgentPullRequestResolversContribution extends Disposable {
 		super();
 		VOLT_COMMIT_MESSAGES_CONTEXT.bindTo(contextKeyService).set(true);
 		this._register(multiDiffSourceResolverService.registerResolver(instantiationService.createInstance(PrDiffSourceResolver)));
+		this._register(multiDiffSourceResolverService.registerResolver(instantiationService.createInstance(CommitPlanDiffSourceResolver)));
 		this._register(textModelService.registerTextModelContentProvider(PR_BLOB_SCHEME, instantiationService.createInstance(PrBlobContentProvider)));
+		this._register(textModelService.registerTextModelContentProvider(COMMIT_PLAN_HEAD_SCHEME, instantiationService.createInstance(CommitPlanHeadContentProvider)));
+		this._register(textModelService.registerTextModelContentProvider(COMMIT_PLAN_CONTENT_SCHEME, this._register(instantiationService.createInstance(CommitPlanContentProvider))));
 		this._register(editorResolverService.registerEditor(
 			`${AGENT_PULL_REQUEST_SCHEME}:**/**`,
 			{ id: AGENT_PULL_REQUEST_EDITOR_ID, label: localize('voltPr.editorLabel', "Pull Request"), priority: RegisteredEditorPriority.builtin },
@@ -263,6 +287,29 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
+		super({ id: OPEN_PULL_REQUESTS_PAGE_COMMAND_ID, title: localize2('voltPr.openPage', "Show Pull Requests Dashboard"), category: localize2('volt', "Volt"), f1: true, icon: Codicon.gitPullRequest });
+	}
+	/** A page in the main panel, like Usage; opened from a chat it shows that chat's repository. */
+	override async run(accessor: ServicesAccessor, sessionId?: unknown): Promise<void> {
+		const editorService = accessor.get(IEditorService);
+		const pullRequests = accessor.get(IAgentPullRequestService);
+		const chat = typeof sessionId === 'string' && sessionId ? sessionId : visibleChatSession(accessor);
+		const existing = editorService.editors.find((editor): editor is AgentPullRequestsPageInput => editor instanceof AgentPullRequestsPageInput);
+		const input = existing ?? accessor.get(IInstantiationService).createInstance(AgentPullRequestsPageInput);
+		if (chat && pullRequests.folderFor(chat)) {
+			input.sessionId = chat;
+			input.folder = undefined;
+		}
+		// The page on screen keeps the repository picked on it.
+		if (existing && editorService.activeEditor === existing) {
+			return;
+		}
+		await editorService.openEditor(input, { pinned: true });
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
 		super({ id: LINK_PULL_REQUEST_COMMAND_ID, title: localize2('voltPr.linkCommand', "Link Pull Request to Chat"), category: localize2('volt', "Volt"), f1: true, icon: Codicon.link });
 	}
 	override async run(accessor: ServicesAccessor, sessionId?: string, target?: string): Promise<void> {
@@ -354,7 +401,7 @@ registerAction2(class extends Action2 {
 		const progressService = accessor.get(IProgressService);
 		const notificationService = accessor.get(INotificationService);
 		const repository = [...scmService.repositories].find(candidate => URI.isUri(rootUri) && candidate.provider.rootUri?.toString() === rootUri.toString())
-			?? [...scmService.repositories][0];
+			?? accessor.get(ISCMViewService).activeRepository.get();
 		const root = repository?.provider.rootUri;
 		if (!repository || !root || root.scheme !== 'file') {
 			return;

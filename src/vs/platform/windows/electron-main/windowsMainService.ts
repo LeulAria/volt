@@ -8,7 +8,7 @@ import { app, BrowserWindow, WebContents, shell } from 'electron';
 import { addUNCHostToAllowlist } from '../../../base/node/unc.js';
 import { hostname, release, arch } from 'os';
 import { coalesce, distinct } from '../../../base/common/arrays.js';
-import { raceTimeout, timeout } from '../../../base/common/async.js';
+import { raceTimeout, RunOnceScheduler, timeout } from '../../../base/common/async.js';
 import { CancellationToken } from '../../../base/common/cancellation.js';
 import { CharCode } from '../../../base/common/charCode.js';
 import { Emitter, Event } from '../../../base/common/event.js';
@@ -58,6 +58,8 @@ import { IAuxiliaryWindowsMainService } from '../../auxiliaryWindow/electron-mai
 import { IAuxiliaryWindow } from '../../auxiliaryWindow/electron-main/auxiliaryWindow.js';
 import { ICSSDevelopmentService } from '../../cssDev/node/cssDevService.js';
 import { ResourceSet } from '../../../base/common/map.js';
+import { KEEP_NEXT_WINDOW_READY_SETTING } from '../../voltWindowScope/common/voltWindowScope.js';
+import { IVoltWindowScopesMainService } from '../../voltWindowScope/electron-main/voltWindowScopesMainService.js';
 
 //#region Helper Interfaces
 
@@ -114,7 +116,21 @@ interface IOpenBrowserWindowOptions {
 	 * never loses the session it switches away from.
 	 */
 	readonly switchFrom?: ICodeWindow;
+
+	/** Volt: a New Window, which gets a scope of its own when a main window is open. */
+	readonly ownScope?: boolean;
+
+	/** Volt: boot an empty window out of sight for the next New Window (see `takeSpareWindow`). */
+	readonly spare?: boolean;
 }
+
+/** How long after a window finished restoring the next New Window starts loading, so it does not slow that window. */
+const SPARE_WINDOW_DELAY = 3000;
+/** Set once the user opened a New Window; from then on one is kept ready (see keepsSpareWindow). */
+const USED_NEW_WINDOW_STATE_KEY = 'volt.window.usedNewWindow';
+
+/** How long the next New Window may take to show its chat before it comes to the front anyway. */
+const SPARE_WINDOW_SHOW_TIMEOUT = 500;
 
 interface IPathResolveOptions {
 
@@ -242,6 +258,15 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 
 	private readonly windows = new Map<number, ICodeWindow>();
 	private readonly pendingWorkspaceSwitch = new Map<number /* window switched away from */, number /* window switched to */>();
+	private readonly voltScopes = new Map<number /* window */, string /* its scope */>();
+
+	/**
+	 * Volt: an empty window loaded out of sight, so New Window and Open in New Window show at once
+	 * instead of booting a workbench. It is not one of `windows` until it is shown.
+	 */
+	private spareWindow: ICodeWindow | undefined;
+	private spareRestored = false;
+	private readonly spareScheduler = this._register(new RunOnceScheduler(() => this.prepareSpareWindow(), SPARE_WINDOW_DELAY));
 
 	private readonly windowsStateHandler: WindowsStateHandler;
 
@@ -252,7 +277,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		private readonly initialUserEnv: IProcessEnvironment,
 		@ILogService private readonly logService: ILogService,
 		@ILoggerMainService private readonly loggerService: ILoggerMainService,
-		@IStateService stateService: IStateService,
+		@IStateService private readonly stateService: IStateService,
 		@IPolicyService private readonly policyService: IPolicyService,
 		@IEnvironmentMainService private readonly environmentMainService: IEnvironmentMainService,
 		@IUserDataProfilesMainService private readonly userDataProfilesMainService: IUserDataProfilesMainService,
@@ -267,7 +292,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		@IProtocolMainService private readonly protocolMainService: IProtocolMainService,
 		@IThemeMainService private readonly themeMainService: IThemeMainService,
 		@IAuxiliaryWindowsMainService private readonly auxiliaryWindowsMainService: IAuxiliaryWindowsMainService,
-		@ICSSDevelopmentService private readonly cssDevelopmentService: ICSSDevelopmentService
+		@ICSSDevelopmentService private readonly cssDevelopmentService: ICSSDevelopmentService,
+		@IVoltWindowScopesMainService private readonly voltWindowScopes: IVoltWindowScopesMainService
 	) {
 		super();
 
@@ -277,6 +303,16 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 	}
 
 	private registerListeners(): void {
+
+		this._register(this.configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(KEEP_NEXT_WINDOW_READY_SETTING)) {
+				if (this.keepsSpareWindow()) {
+					this.scheduleSpareWindow();
+				} else {
+					this.discardSpareWindow();
+				}
+			}
+		}));
 
 		// Signal a window is ready after having entered a workspace
 		this._register(this.workspacesManagementMainService.onDidEnterWorkspace(event => this._onDidSignalReadyWindow.fire(event.window)));
@@ -786,7 +822,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 			windowToUse,
 			emptyWindowBackupInfo,
 			forceProfile: openConfig.forceProfile,
-			forceTempProfile: openConfig.forceTempProfile
+			forceTempProfile: openConfig.forceTempProfile,
+			ownScope: !!openConfig.forceEmpty && !emptyWindowBackupInfo && !openConfig.initialStartup
 		});
 	}
 
@@ -1513,6 +1550,11 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 			? this.userDataProfilesMainService.profiles.find(profile => profile.name === windowConfig.newWindowProfile) : undefined;
 		const defaultProfile = newWindowProfile ?? lastActiveWindow?.profile ?? this.userDataProfilesMainService.defaultProfile;
 
+		const spare = this.takeSpareWindow(options, defaultProfile);
+		if (spare) {
+			return spare;
+		}
+
 		let window: ICodeWindow | undefined;
 		if (!options.forceNewWindow && !options.forceNewTabbedWindow) {
 			window = options.windowToUse || lastActiveWindow;
@@ -1592,6 +1634,19 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 			cssModules: this.cssDevelopmentService.isEnabled ? await this.cssDevelopmentService.getCssModules() : undefined
 		};
 
+		// Volt: a New Window opened beside a main window keeps its chats, projects and layout to
+		// itself until it closes. A window keeps its scope through reloads, workspace changes and
+		// the project sessions that share its browser window.
+		const scope = window
+			? this.voltScopes.get(window.id)
+			: options.switchFrom
+				? this.voltScopes.get(options.switchFrom.id)
+				: options.spare
+					? this.voltWindowScopes.createScope(true)
+					: options.ownScope && !configuration.extensionDevelopmentPath && (this.voltWindowScopes.hasPreparedStart || this.getWindows().some(other => !this.voltScopes.has(other.id)))
+						? this.voltWindowScopes.createScope()
+						: undefined;
+
 		// New window
 		if (!window) {
 			const state = this.windowsStateHandler.getNewWindowState(configuration);
@@ -1603,7 +1658,8 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 				state,
 				extensionDevelopmentPath: configuration.extensionDevelopmentPath,
 				isExtensionTestHost: !!configuration.extensionTestsPath,
-				hostWindow: options.switchFrom
+				hostWindow: options.switchFrom,
+				hidden: options.spare
 			});
 			mark('code/didCreateCodeWindow');
 
@@ -1613,22 +1669,41 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 				activeWindow?.addTabbedWindow(createdWindow);
 			}
 
-			// Add to our list of windows
-			this.windows.set(createdWindow.id, createdWindow);
+			// Add to our list of windows (the next New Window joins it once it shows)
+			if (options.spare) {
+				this.spareWindow = createdWindow;
+				this.spareRestored = false;
+			} else {
+				this.windows.set(createdWindow.id, createdWindow);
+			}
 
 			if (options.switchFrom) {
 				this.beginWorkspaceSwitch(options.switchFrom, createdWindow);
 			}
 
-			// Indicate new window via event
-			this._onDidOpenWindow.fire(createdWindow);
+			if (!options.spare) {
 
-			// Indicate number change via event
-			this._onDidChangeWindowsCount.fire({ oldCount: this.getWindowCount() - 1, newCount: this.getWindowCount() });
+				// Indicate new window via event
+				this._onDidOpenWindow.fire(createdWindow);
+
+				// Indicate number change via event
+				this._onDidChangeWindowsCount.fire({ oldCount: this.getWindowCount() - 1, newCount: this.getWindowCount() });
+			}
 
 			// Window Events
 			const disposables = new DisposableStore();
-			disposables.add(createdWindow.onDidSignalReady(() => this._onDidSignalReadyWindow.fire(createdWindow)));
+			disposables.add(createdWindow.onDidSignalReady(() => {
+				if (createdWindow !== this.spareWindow) {
+					this._onDidSignalReadyWindow.fire(createdWindow);
+				}
+			}));
+			disposables.add(createdWindow.onDidSignalRestored(() => {
+				if (createdWindow === this.spareWindow) {
+					this.spareRestored = true;
+				} else {
+					this.scheduleSpareWindow();
+				}
+			}));
 			disposables.add(Event.once(createdWindow.onDidClose)(() => this.onWindowClosed(createdWindow, disposables)));
 			disposables.add(Event.once(createdWindow.onDidDestroy)(() => this.onWindowDestroyed(createdWindow)));
 			disposables.add(createdWindow.onDidMaximize(() => this._onDidMaximizeWindow.fire(createdWindow)));
@@ -1670,6 +1745,10 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		// Update window identifier and session now
 		// that we have the window object in hand.
 		configuration.windowId = window.id;
+		if (scope) {
+			this.voltScopes.set(window.id, scope);
+			configuration.voltWindowScope = scope;
+		}
 
 		// If the window was already loaded, make sure to unload it
 		// first and only load the new configuration if that was
@@ -1806,10 +1885,17 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 	}
 
 	private onWindowClosed(window: ICodeWindow, disposables: IDisposable): void {
+		if (window === this.spareWindow) {
+			this.spareWindow = undefined;
+			this.releaseVoltScope(window);
+			disposables.dispose();
+			return;
+		}
 
 		// Remove from our list so that Electron can clean it up
 		this.windows.delete(window.id);
 		this.pendingWorkspaceSwitch.delete(window.id);
+		this.releaseVoltScope(window);
 
 		// A session that went away while on screen hands the window to the
 		// most recently used session that shares it
@@ -1826,16 +1912,103 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 
 		// Clean up
 		disposables.dispose();
+
+		// The window kept for the next New Window must not keep Volt running with no window open
+		if (this.getWindowCount() === 0) {
+			this.discardSpareWindow();
+		}
 	}
 
 	private onWindowDestroyed(window: ICodeWindow): void {
+		if (window === this.spareWindow) {
+			this.spareWindow = undefined;
+		}
 
 		// Remove from our list so that Electron can clean it up
 		this.windows.delete(window.id);
 		this.pendingWorkspaceSwitch.delete(window.id);
+		this.releaseVoltScope(window);
 
 		// Emit
 		this._onDidDestroyWindow.fire(window);
+	}
+
+	/**
+	 * A spare is a whole hidden workbench (renderer, extension host, file watcher), so it is kept
+	 * only for people who open New Windows: from the first one on, and after restarts.
+	 */
+	private keepsSpareWindow(): boolean {
+		return this.configurationService.getValue<boolean>(KEEP_NEXT_WINDOW_READY_SETTING) !== false
+			&& this.stateService.getItem<boolean>(USED_NEW_WINDOW_STATE_KEY, false)
+			&& !this.environmentMainService.args.extensionDevelopmentPath
+			&& !this.environmentMainService.extensionTestsLocationURI;
+	}
+
+	/** Loads the next New Window shortly after a window finished restoring. */
+	private scheduleSpareWindow(): void {
+		if (!this.spareWindow && this.keepsSpareWindow()) {
+			this.spareScheduler.schedule();
+		}
+	}
+
+	private prepareSpareWindow(): void {
+		if (this.spareWindow || !this.keepsSpareWindow() || this.getWindowCount() === 0 || this.lifecycleMainService.quitRequested) {
+			return;
+		}
+		this.logService.trace('windowsManager#prepareSpareWindow');
+		void this.openInBrowserWindow({ cli: this.environmentMainService.args, forceNewWindow: true, spare: true });
+	}
+
+	/** Closes the window kept for the next New Window; it is let go once it has closed. */
+	private discardSpareWindow(): void {
+		this.spareScheduler.cancel();
+		this.spareRestored = false;
+		this.spareWindow?.close();
+	}
+
+	/**
+	 * A plain New Window shows the window kept ready instead of booting one: it takes the chat
+	 * Open in New Window asked for (if any), moves where a new window opens and comes to the front,
+	 * see-through until it shows that chat so the empty composer never flashes first.
+	 * Anything a loaded empty window cannot become (files, a remote, another profile) boots as before.
+	 */
+	private takeSpareWindow(options: IOpenBrowserWindowOptions, profile: IUserDataProfile): ICodeWindow | undefined {
+		const plainNewWindow = options.ownScope && !options.spare && !options.windowToUse && !options.userEnv && !options.remoteAuthority && !options.filesToOpen
+			&& !options.emptyWindowBackupInfo && !options.forceNewTabbedWindow && !options.forceProfile && !options.forceTempProfile;
+		if (plainNewWindow && !this.stateService.getItem<boolean>(USED_NEW_WINDOW_STATE_KEY, false)) {
+			// The first New Window boots as usual; once it has restored, the next one is kept ready.
+			this.stateService.setItem(USED_NEW_WINDOW_STATE_KEY, true);
+		}
+		const spare = this.spareWindow;
+		if (!plainNewWindow || !spare || !this.spareRestored || !spare.config || spare.profile?.id !== profile.id) {
+			return undefined;
+		}
+
+		// With no main window open the new window is the main window, which has no scope
+		const scope = this.voltScopes.get(spare.id);
+		if (!scope || (!this.voltWindowScopes.hasPreparedStart && !this.getWindows().some(other => !this.voltScopes.has(other.id)))) {
+			return undefined;
+		}
+
+		this.spareWindow = undefined;
+		this.spareRestored = false;
+		this.windows.set(spare.id, spare);
+		const shown = this.voltWindowScopes.startScope(scope);
+		spare.reveal(this.windowsStateHandler.getNewWindowState(spare.config), shown && raceTimeout(shown, SPARE_WINDOW_SHOW_TIMEOUT));
+
+		this._onDidOpenWindow.fire(spare);
+		this._onDidChangeWindowsCount.fire({ oldCount: this.getWindowCount() - 1, newCount: this.getWindowCount() });
+
+		this.scheduleSpareWindow();
+
+		return spare;
+	}
+
+	/** A scope ends with the last window in it; its chats and projects then show in the main window. */
+	private releaseVoltScope(window: ICodeWindow): void {
+		if (this.voltScopes.delete(window.id)) {
+			this.voltWindowScopes.retainScopes(new Set(this.voltScopes.values()));
+		}
 	}
 
 	getFocusedWindow(): ICodeWindow | undefined {
@@ -1880,7 +2053,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 	}
 
 	sendToAll(channel: string, payload?: any, windowIdsToIgnore?: number[]): void {
-		for (const window of this.getWindows()) {
+		for (const window of this.spareWindow ? [...this.getWindows(), this.spareWindow] : this.getWindows()) {
 			if (windowIdsToIgnore && windowIdsToIgnore.indexOf(window.id) >= 0) {
 				continue; // do not send if we are instructed to ignore it
 			}
@@ -1897,11 +2070,15 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		return this.windows.size;
 	}
 
+	getSpareWindow(): ICodeWindow | undefined {
+		return this.spareWindow;
+	}
+
 	getWindowById(windowId: number): ICodeWindow | undefined {
-		return this.windows.get(windowId);
+		return this.windows.get(windowId) ?? (this.spareWindow?.id === windowId ? this.spareWindow : undefined);
 	}
 
 	getWindowByWebContents(webContents: WebContents): ICodeWindow | undefined {
-		return this.getWindows().find(window => window.matches(webContents));
+		return this.getWindows().find(window => window.matches(webContents)) ?? (this.spareWindow?.matches(webContents) ? this.spareWindow : undefined);
 	}
 }

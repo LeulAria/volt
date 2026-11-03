@@ -4,10 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
-import { getDelayedChannel, ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
+import { ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import { IFileChange } from '../../../../platform/files/common/files.js';
 import { AbstractUniversalWatcherClient, ILogMessage, IRecursiveWatcher } from '../../../../platform/files/common/watcher.js';
-import { IUtilityProcessWorkerWorkbenchService } from '../../utilityProcess/electron-browser/utilityProcessWorkerWorkbenchService.js';
+import { ISharedProcessService } from '../../../../platform/ipc/electron-browser/services.js';
 
 export class UniversalWatcherClient extends AbstractUniversalWatcherClient {
 
@@ -15,7 +15,7 @@ export class UniversalWatcherClient extends AbstractUniversalWatcherClient {
 		onFileChanges: (changes: IFileChange[]) => void,
 		onLogMessage: (msg: ILogMessage) => void,
 		verboseLogging: boolean,
-		private readonly utilityProcessWorkerWorkbenchService: IUtilityProcessWorkerWorkbenchService
+		private readonly sharedProcessService: ISharedProcessService
 	) {
 		super(onFileChanges, onLogMessage, verboseLogging);
 
@@ -23,37 +23,11 @@ export class UniversalWatcherClient extends AbstractUniversalWatcherClient {
 	}
 
 	protected override createWatcher(disposables: DisposableStore): IRecursiveWatcher {
-		const watcher = ProxyChannel.toService<IRecursiveWatcher>(getDelayedChannel((async () => {
 
-			// Acquire universal watcher via utility process worker
-			//
-			// We explicitly do not add the worker as a disposable
-			// because we need to call `stop` on disposal to prevent
-			// a crash on shutdown (see below).
-			//
-			// The utility process worker services ensures to terminate
-			// the process automatically when the window closes or reloads.
-			const { client, onDidTerminate } = disposables.add(await this.utilityProcessWorkerWorkbenchService.createWorker({
-				moduleId: 'vs/platform/files/node/watcher/watcherMain',
-				type: 'fileWatcher',
-				name: 'file-watcher'
-			}));
-
-			// React on unexpected termination of the watcher process
-			// by listening to the `onDidTerminate` event. We do not
-			// consider an exit code of `0` as abnormal termination.
-
-			onDidTerminate.then(({ reason }) => {
-				if (reason?.code === 0) {
-					this.trace(`terminated by itself with code ${reason.code}, signal: ${reason.signal}`);
-				} else {
-					this.onError(`terminated by itself unexpectedly with code ${reason?.code}, signal: ${reason?.signal} (ETERM)`);
-				}
-			});
-
-			return client.getChannel('watcher');
-		})()));
-
-		return watcher;
+		// The universal watcher lives in the shared process (one watcher per
+		// window, see `PerWindowWatcherChannel`) rather than in a utility
+		// process of its own, which saved a whole Node process per window.
+		// The shared process stops this window's watcher when it disconnects.
+		return ProxyChannel.toService<IRecursiveWatcher>(this.sharedProcessService.getChannel('watcher'));
 	}
 }

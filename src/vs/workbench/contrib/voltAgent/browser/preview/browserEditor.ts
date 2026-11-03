@@ -9,19 +9,19 @@ import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent
 import { isWeb } from '../../../../../base/common/platform.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IAction, Separator, toAction } from '../../../../../base/common/actions.js';
-import { disposableTimeout, timeout } from '../../../../../base/common/async.js';
+import { disposableTimeout, raceTimeout, timeout } from '../../../../../base/common/async.js';
 import { encodeBase64, VSBuffer } from '../../../../../base/common/buffer.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { Emitter, Event as BaseEvent } from '../../../../../base/common/event.js';
-import { Disposable, DisposableMap, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableMap, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextMenuService, IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
@@ -37,13 +37,14 @@ import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/
 import { IHostService } from '../../../../services/host/browser/host.js';
 import { IAgentDisplayMention, IAgentMention, browserMentionColor, cloneDisplayMentions } from '../composer/agentMentions.js';
 import { BrowserCommentCard } from './browserCommentCard.js';
-import { IBrowserComment, IBrowserCommentInit, IBrowserCommentMessage, IBrowserCommentRef, IVoltBrowserComments } from './browserCommentStore.js';
+import { IBrowserComment, IBrowserCommentInit, IBrowserCommentMessage, IBrowserCommentRef, IVoltBrowserComments, REVEAL_BROWSER_ELEMENT_COMMAND_ID } from './browserCommentStore.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { buildTaskPrompt, newTaskId, titleFromBrief } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import { BATCH_EDITS_STORAGE_KEY, IVoltAnnotationItem, VoltAnnotationsSendButton } from '../chrome/voltAnnotations.js';
 import { BrowserAgentComposer } from './browserComposer.js';
 import { OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
+import { createVoltButton } from '../chrome/voltButton.js';
 import { BrowserDeviceMode } from './browserDevices.js';
 import { BrowserAgentDock } from './browserDock.js';
 import { BROWSER_PRESENT_EVENT, BROWSER_PRESENTATION_EVENT, BrowserPresentation, DEFAULT_BROWSER_URL, VoltBrowserEditorInput } from './browserEditorInput.js';
@@ -63,6 +64,8 @@ interface IPinnedBrowserComment {
 	readonly refs: Map<string, IBrowserCommentRef>;
 	markIds: string[];
 	bounds: { x: number; y: number; w: number; h: number };
+	/** Its first element's key in the page's tracked elements: the pin follows it. */
+	track?: string;
 }
 const PROBE_SCRIPT = `(() => {
 	const x = __X__;
@@ -129,7 +132,15 @@ const PROBE_SCRIPT = `(() => {
 	for (const attr of Array.from(el.attributes || [])) {
 		attributes[attr.name] = attr.value;
 	}
+	// Kept a moment by number, so picking this answer can track the element itself (TRACK_SCRIPT).
+	const probes = window.__voltProbes || (window.__voltProbes = new Map());
+	const probe = window.__voltProbeCount = (window.__voltProbeCount || 0) + 1;
+	probes.set(probe, el);
+	if (probes.size > 20) {
+		probes.delete(probes.keys().next().value);
+	}
 	return {
+		probe,
 		tag: el.tagName.toLowerCase(),
 		selector: token(el),
 		domPath: parts.join(' > '),
@@ -145,6 +156,100 @@ const PROBE_SCRIPT = `(() => {
 		h: r.height
 	};
 })()`;
+
+/**
+ * Keeps a picked element (a probe's answer) or a drawn region (pinned to the element at its middle)
+ * in the page under `key`, so its marks and pin follow it when the page scrolls or reflows.
+ */
+function trackScript(key: string, probe: number | undefined, region: { x: number; y: number; w: number; h: number } | undefined): string {
+	return `(() => {
+		const region = ${JSON.stringify(region ?? null)};
+		const el = region ? document.elementFromPoint(region.x + region.w / 2, region.y + region.h / 2) : window.__voltProbes && window.__voltProbes.get(${JSON.stringify(probe ?? -1)});
+		if (!el) return false;
+		const r = el.getBoundingClientRect();
+		const tracked = window.__voltTracked || (window.__voltTracked = new Map());
+		tracked.set(${JSON.stringify(key)}, { el: new WeakRef(el), dx: region ? region.x - r.x : 0, dy: region ? region.y - r.y : 0, w: region ? region.w : -1, h: region ? region.h : -1 });
+		return true;
+	})()`;
+}
+
+/** Where every tracked element is now, in page CSS pixels; null once it has left the document. */
+const READ_TRACKED_SCRIPT = `(() => {
+	const tracked = window.__voltTracked;
+	const out = {};
+	if (!tracked) return out;
+	for (const [key, t] of tracked) {
+		const el = t.el.deref();
+		if (!el || !el.isConnected) {
+			tracked.delete(key);
+			out[key] = null;
+			continue;
+		}
+		const r = el.getBoundingClientRect();
+		out[key] = [r.x + t.dx, r.y + t.dy, t.w < 0 ? r.width : t.w, t.h < 0 ? r.height : t.h];
+	}
+	return out;
+})()`;
+
+/** How often tracked marks re-read their elements while nothing moves; each move reads again the next frame. */
+const TRACK_IDLE_MS = 120;
+
+/**
+ * Scrolls the element a chip points at into the middle of the view: the tracked one (`track`, see
+ * {@link trackScript}) when the page still has it, else the one with `id`, else the one at `domPath`
+ * (the probe's `tag#id`, `tag.class`, `tag[n]` steps). Answers its box (a drawn area's own box) once
+ * the scroll settles, or null.
+ */
+function revealElementScript(track: string | undefined, domPath: string | undefined, id: string | undefined): string {
+	return `(async () => {
+		const t = window.__voltTracked && window.__voltTracked.get(${JSON.stringify(track ?? '')});
+		let el = t ? t.el.deref() : undefined;
+		const tracked = !!el && el.isConnected;
+		if (!tracked) {
+			el = ${JSON.stringify(id ?? '')} ? document.getElementById(${JSON.stringify(id ?? '')}) : null;
+		}
+		const path = ${JSON.stringify(domPath ?? '')};
+		if (!el && path && document.body) {
+			el = document.body;
+			for (const step of path.split(' > ')) {
+				const m = /^([a-z0-9-]+)(?:#(.+)|\\.(.+)|\\[(\\d+)\\])?$/i.exec(step);
+				const kids = m ? Array.from(el.children).filter(kid => kid.tagName.toLowerCase() === m[1].toLowerCase()) : [];
+				el = !m ? null
+					: m[2] ? kids.find(kid => kid.id === m[2])
+					: m[3] ? kids.find(kid => m[3].split('.').every(name => kid.classList.contains(name)))
+					: m[4] ? kids[Number(m[4])]
+					: kids[0];
+				if (!el) {
+					break;
+				}
+			}
+		}
+		if (!el || !el.isConnected) {
+			return null;
+		}
+		await new Promise(resolve => {
+			let quiet;
+			const done = () => {
+				clearTimeout(quiet);
+				removeEventListener('scroll', moved, true);
+				resolve();
+			};
+			const moved = () => {
+				clearTimeout(quiet);
+				quiet = setTimeout(done, 150);
+			};
+			addEventListener('scroll', moved, { capture: true, passive: true });
+			addEventListener('scrollend', done, { capture: true, once: true });
+			quiet = setTimeout(done, 150);
+			setTimeout(done, 1500);
+			el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+		});
+		const r = el.getBoundingClientRect();
+		return tracked
+			? { x: r.x + t.dx, y: r.y + t.dy, w: t.w < 0 ? r.width : t.w, h: t.h < 0 ? r.height : t.h }
+			: { x: r.x, y: r.y, w: r.width, h: r.height };
+	})()`;
+}
 
 interface IVoltNativeImage {
 	isEmpty?(): boolean;
@@ -195,6 +300,42 @@ interface IPageContextParams {
 }
 
 const ZOOM_LEVELS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+/** How long after the user last pressed, typed or scrolled in a page (or took control of it) an agent leaves the tab to them. */
+const USER_ACTIVE_MS = 2 * 60 * 1000;
+
+/**
+ * Notes the user's own input in the page: when, and which fields they typed into, so an agent can
+ * tell the tab is in use before it takes it. Installed on every document the tab loads.
+ */
+const USER_ACTIVITY_TRACKER = `(() => {
+	if (window.__voltUserActivity) return;
+	const activity = window.__voltUserActivity = { at: 0, fields: [] };
+	const mark = event => { if (event.isTrusted) activity.at = Date.now(); };
+	for (const type of ['pointerdown', 'keydown', 'wheel']) addEventListener(type, mark, { capture: true, passive: true });
+	addEventListener('input', event => {
+		if (!event.isTrusted || !(event.target instanceof Element)) return;
+		activity.at = Date.now();
+		activity.fields = activity.fields.filter(field => field.element.deref() && field.element.deref() !== event.target).slice(-30);
+		activity.fields.push({ element: new WeakRef(event.target), at: activity.at });
+	}, true);
+})()`;
+
+/** The user's last input after `since` (0 when none), and how many fields they typed into still hold text. */
+function userActivityScript(since: number): string {
+	return `(() => {
+		const activity = window.__voltUserActivity;
+		if (!activity) return { at: 0, drafts: 0 };
+		const text = element => 'value' in element ? String(element.value ?? '') : element.isContentEditable ? element.textContent ?? '' : '';
+		const drafts = activity.fields.filter(field => {
+			const element = field.element.deref();
+			return field.at > ${since} && element && element.isConnected && element.type !== 'password' && text(element).trim();
+		}).length;
+		return { at: activity.at > ${since} ? activity.at : 0, drafts };
+	})()`;
+}
+
+/** A floating preview lays the page out this wide and scales it down, so sites show their desktop layout. */
+const FLOAT_DESKTOP_WIDTH = 1280;
 
 /** The page's colors at its top (`theme-color`, else its background) and at its bottom (its background). */
 const SCREEN_COLOR_SCRIPT = `(() => {
@@ -266,6 +407,8 @@ export interface IVoltConsoleMessage {
 }
 
 interface IBrowserHit {
+	/** The probe that found it, for {@link trackScript}. */
+	probe?: number;
 	tag: string;
 	selector: string;
 	domPath: string;
@@ -300,6 +443,8 @@ interface IBrowserSelection {
 	bounds: { x: number; y: number; w: number; h: number };
 	/** `bounds` in the page's CSS pixels (device scale and zoom taken out). */
 	pageBounds?: { x: number; y: number; w: number; h: number };
+	/** Its key in the page's tracked elements: `bounds` follows it as the page moves. */
+	track?: string;
 	tag?: string;
 	domPath?: string;
 	className?: string;
@@ -426,6 +571,8 @@ export class VoltBrowserView extends Disposable {
 	private userAgent = BROWSER_USER_AGENT;
 	private devtoolsOpen = false;
 	private presentation: BrowserPresentation | undefined;
+	/** The floating preview's scale-down of the desktop-wide page; 1 when the page fills the stage. */
+	private desktopScale = 1;
 	private stage!: HTMLElement;
 	private overlay!: HTMLElement;
 	private hoverBox!: HTMLElement;
@@ -459,6 +606,8 @@ export class VoltBrowserView extends Disposable {
 	private readonly loadRetry = this._register(new MutableDisposable());
 	private loadRetries = 0;
 	private designMode = false;
+	/** The page whose focus design mode is holding (DevTools focus emulation), so an open dropdown stays open. */
+	private pageFocusHeld: number | undefined;
 	/** Fn held in design mode: the pointer is the page's again (clicks and hovers go to it), not a picker. */
 	private pagePointer = false;
 	private fnHeld = false;
@@ -474,11 +623,28 @@ export class VoltBrowserView extends Disposable {
 	private selection: IBrowserSelection | undefined;
 	/** The first element of the open draft: the draft box stays beside it while more are added. */
 	private draftAnchor: IBrowserSelection | undefined;
-	private readonly marks = new Map<string, { box: HTMLElement; accent: number; bounds: { x: number; y: number; w: number; h: number } }>();
+	private readonly marks = new Map<string, { box: HTMLElement; accent: number; bounds: { x: number; y: number; w: number; h: number }; track?: string }>();
+	/** Where each tracked element was last read, in page CSS pixels (see {@link followTracked}). */
+	private readonly trackedBounds = new Map<string, { x: number; y: number; w: number; h: number }>();
+	private following = false;
+	/** Cuts the idle wait short: the user is scrolling the page. */
+	private followWake: (() => void) | undefined;
+	private disposed = false;
+	/** Each picked element's tracking key by its chip's block, so a chip clicked in the chat finds it again. */
+	private readonly payloadTracks = new Map<string, string>();
+	private readonly revealFlash = this._register(new MutableDisposable());
 	private drawing: { startX: number; startY: number; currentX: number; currentY: number } | undefined;
 	private probeHandle: number | undefined;
 	private lastProbe = '';
 	private agentLock: HTMLElement | undefined;
+	/** When an agent last handed the page back; the page's input before then was the agent's, not the user's. */
+	private agentReleasedAt = 0;
+	private userTookControlAt = 0;
+	/** The tab this one runs under while an agent drives it out of sight, and the tabs running under this one. */
+	private runningUnder: VoltBrowserView | undefined;
+	private readonly underneath = new Set<VoltBrowserView>();
+	private readonly agentNotice = this._register(new DisposableStore());
+	private agentNoticeEl: HTMLElement | undefined;
 	private readonly consoleMessages: IVoltConsoleMessage[] = [];
 	private consoleSeen = 0;
 	private readonly _onDidTakeControl = this._register(new Emitter<void>());
@@ -548,11 +714,44 @@ export class VoltBrowserView extends Disposable {
 		}
 		this.layer = layer;
 		this.owner = slot;
+		this.stopRunningUnder(false);
 		this.element.classList.remove('parked');
 		// A tab opened while its tools area floats or spans the window takes that presentation at once.
 		const area = slot.closest('.volt-agent-tools-area');
 		this.setPresentation(area?.classList.contains('fullscreen') ? 'fullscreen' : area?.classList.contains('floating') ? 'floating' : area ? 'split' : undefined);
 		this.layoutOver(slot);
+	}
+
+	/** Whether a pane shows this tab now. */
+	get shown(): boolean {
+		return !!this.owner;
+	}
+
+	/** Whether an annotation chip with `payload` was picked in this tab. */
+	pickedHere(payload: string): boolean {
+		return this.payloadTracks.has(payload);
+	}
+
+	/**
+	 * Scrolls the page to the element a chip points at (`payload`, its browser_element block) and
+	 * flashes its outline. False when the page has no such element.
+	 */
+	async revealElement(payload: string): Promise<boolean> {
+		const field = (name: string) => payload.match(new RegExp(`^${name}: (.+)$`, 'm'))?.[1].trim();
+		const rect = await this.runGuest<{ x: number; y: number; w: number; h: number } | null>(revealElementScript(this.payloadTracks.get(payload), field('dom_path'), field('id')));
+		if (!rect) {
+			return false;
+		}
+		// Marks and pins catch up now rather than at the next idle read.
+		this.followWake?.();
+		const box = append(this.overlay, $('div.volt-browser-box.mark.glow'));
+		this.placeBox(box, this.pageRectToStage(rect));
+		const timer = disposableTimeout(() => box.remove(), 1200);
+		this.revealFlash.value = toDisposable(() => {
+			timer.dispose();
+			box.remove();
+		});
+		return true;
 	}
 
 	/** Hide the view if `slot` still shows it. A pane that lost the tab to another group leaves it alone. */
@@ -562,6 +761,54 @@ export class VoltBrowserView extends Disposable {
 		}
 		this.owner = undefined;
 		this.element.classList.add('parked');
+		// Nothing covers the tabs under this one now: they would show through, so they park too.
+		for (const under of [...this.underneath]) {
+			under.stopRunningUnder(true);
+		}
+	}
+
+	/**
+	 * Keeps this tab's page live while `front` covers it: laid under it at the same size, so the page
+	 * loads, paints and takes an agent's input, but the user never sees or clicks it. A parked page
+	 * stops painting, which would stall the agent's screenshots and waits. False when it can't.
+	 */
+	runUnder(front: VoltBrowserView): boolean {
+		if (this.owner) {
+			return true;
+		}
+		const layer = front.layer;
+		if (front === this || !front.owner || !layer) {
+			return false;
+		}
+		if (this.element.parentElement !== layer) {
+			// In another part's layer, moving the webview would restart its page.
+			if (this.element.parentElement) {
+				return false;
+			}
+			layer.insertBefore(this.element, front.element);
+			this.dragListeners.clear();
+			this.passDragsThroughPage(layer.ownerDocument);
+		}
+		this.runningUnder?.underneath.delete(this);
+		this.runningUnder = front;
+		front.underneath.add(this);
+		this.layer = layer;
+		this.element.classList.remove('parked');
+		this.element.classList.add('underneath');
+		this.place(front.owner);
+		return true;
+	}
+
+	private stopRunningUnder(park: boolean): void {
+		if (!this.runningUnder) {
+			return;
+		}
+		this.runningUnder.underneath.delete(this);
+		this.runningUnder = undefined;
+		this.element.classList.remove('underneath');
+		if (park) {
+			this.element.classList.add('parked');
+		}
 	}
 
 	layoutOver(slot: HTMLElement): void {
@@ -583,6 +830,9 @@ export class VoltBrowserView extends Disposable {
 	private place(slot: HTMLElement): void {
 		if (!this.layer) {
 			return;
+		}
+		for (const under of this.underneath) {
+			under.place(slot);
 		}
 		const box = slot.getBoundingClientRect();
 		const origin = this.layer.getBoundingClientRect();
@@ -654,6 +904,7 @@ export class VoltBrowserView extends Disposable {
 		exitDesign.type = 'button';
 		exitDesign.appendChild(renderIcon(Codicon.close));
 		setAgentTooltip(exitDesign, localize('voltBrowser.exitDesign', "Exit Design Mode"), formatAgentTooltipShortcut({ key: 'Escape' }));
+		this._register(addDisposableListener(exitDesign, 'mousedown', e => e.preventDefault()));
 		this._register(addDisposableListener(exitDesign, 'click', e => {
 			e.preventDefault();
 			this.setDesignMode(false);
@@ -681,6 +932,8 @@ export class VoltBrowserView extends Disposable {
 		}));
 		this.designButton = this.actionButton(actions, 'design', localize('voltBrowser.design', "Design"), () => this.setDesignMode(!this.designMode));
 		setAgentTooltip(this.designButton, localize('voltBrowser.designMode', "Design Mode"), formatAgentTooltipShortcut({ meta: true, shift: true, key: 'D' }));
+		// Pressing the button must not take focus from the page: its open dropdown or menu would close.
+		this._register(addDisposableListener(this.designButton, 'mousedown', e => e.preventDefault()));
 		this.responsiveButton = this.actionButton(actions, 'responsive', localize('voltBrowser.responsive', "Responsive Design Mode"), () => this.toggleResponsive());
 		this.responsiveButton.appendChild(createAriaIcon(ARIA_ICONS.smartphone));
 		this.devtoolsButton = this.actionButton(actions, 'devtools', localize('voltBrowser.devtools', "Toggle Developer Tools"), () => this.toggleDevTools());
@@ -1150,6 +1403,7 @@ export class VoltBrowserView extends Disposable {
 		on('dom-ready', () => {
 			const firstReady = !this.guestReady;
 			this.guestReady = true;
+			this.runScript(USER_ACTIVITY_TRACKER).catch(() => undefined);
 			this.syncNavButtons();
 			this.applyPageSettings();
 			if (!firstReady) {
@@ -1282,6 +1536,7 @@ export class VoltBrowserView extends Disposable {
 		});
 		this.stage.insertBefore(webview, this.overlay);
 		this.webview = webview;
+		this.layoutDesktopPreview();
 		return webview;
 	}
 
@@ -1514,10 +1769,51 @@ export class VoltBrowserView extends Disposable {
 			this.clearSelection(true);
 			this.clearHover();
 			this.drawing = undefined;
+			void this.releasePageFocus();
 		} else {
-			this.container.focus();
+			void this.holdPageFocus();
 		}
 		this.syncDesignChrome();
+	}
+
+	/**
+	 * Design mode needs the keys (Escape, the arrows), but taking focus from the page blurs it and closes
+	 * whatever it had open. Focus emulation keeps the page focused while this editor has the keyboard.
+	 */
+	private async holdPageFocus(): Promise<void> {
+		const id = this.pageContentsId();
+		const service = this.browserService();
+		if (id !== undefined && service && this.pageFocusHeld !== id) {
+			try {
+				if (await service.setFocusEmulation(id, true)) {
+					this.pageFocusHeld = id;
+				}
+			} catch {
+				// An app started before this feature has no handler; design mode works, the page just blurs.
+			}
+		}
+		if (!this.designMode) {
+			void this.releasePageFocus();
+			return;
+		}
+		this.container.focus();
+	}
+
+	private async releasePageFocus(): Promise<void> {
+		const id = this.pageFocusHeld;
+		if (id === undefined) {
+			return;
+		}
+		this.pageFocusHeld = undefined;
+		// The keyboard goes back to the page before it stops pretending, so it never sees a blur.
+		if (getWindow(this.container).document.activeElement === this.container && this.pageContentsId() === id) {
+			this.focusPage();
+		}
+		try {
+			await this.browserService()?.setFocusEmulation(id, false);
+		} catch {
+			// The page is gone.
+		}
 	}
 
 	private syncDesignChrome(): void {
@@ -1603,6 +1899,8 @@ export class VoltBrowserView extends Disposable {
 	}
 
 	private onViewportLayout(): void {
+		// Responsive mode just ended while floating: the page goes back to the desktop scale.
+		this.layoutDesktopPreview();
 		this.syncResponsiveButton();
 		this.clearHover();
 		if (this.selection) {
@@ -1666,7 +1964,7 @@ export class VoltBrowserView extends Disposable {
 		}
 		// Electron reports the spot in the window's coordinates; Inspect Element wants the page's.
 		const frame = webview.getBoundingClientRect();
-		const scale = this.deviceMode.scale || 1;
+		const scale = this.pageScale() || 1;
 		const anchor = { x: params.x, y: params.y };
 		const pageX = Math.round((params.x - frame.left) / scale);
 		const pageY = Math.round((params.y - frame.top) / scale);
@@ -2032,6 +2330,7 @@ export class VoltBrowserView extends Disposable {
 		const x = view ? (point.x - view.left) / view.deviceScale : point.x;
 		const y = view ? (point.y - view.top) / view.deviceScale : point.y;
 		this.sendInput({ type: 'mouseWheel', x: Math.round(x), y: Math.round(y), deltaX: -e.deltaX * unit, deltaY: -e.deltaY * unit, canScroll: true });
+		this.followWake?.();
 		this.clearHover();
 		this.scheduleProbe(point.x, point.y);
 	}
@@ -2128,13 +2427,104 @@ export class VoltBrowserView extends Disposable {
 			html: hit.html,
 			text: hit.text,
 			component: hit.component,
+			track: await this.track(hit.probe, undefined),
 		};
 		this.finishSelection();
 	}
 
 	private async selectRegion(bounds: { x: number; y: number; w: number; h: number }): Promise<void> {
-		this.selection = { kind: 'region', tag: 'region', bounds, pageBounds: this.stageRectToPage(bounds) };
+		const pageBounds = this.stageRectToPage(bounds);
+		this.selection = { kind: 'region', tag: 'region', bounds, pageBounds, track: await this.track(undefined, pageBounds) };
 		this.finishSelection();
+	}
+
+	/** Tracks a probed element or a region in the page; its key, or undefined when the page could not. */
+	private async track(probe: number | undefined, region: { x: number; y: number; w: number; h: number } | undefined): Promise<string | undefined> {
+		if (probe === undefined && !region) {
+			return undefined;
+		}
+		const key = generateUuid();
+		return await this.runGuest<boolean>(trackScript(key, probe, region)) ? key : undefined;
+	}
+
+	/** Where a tracked element is now on the design layer; `fallback` until (or unless) the page has said. */
+	private liveBounds(track: string | undefined, fallback: { x: number; y: number; w: number; h: number }): { x: number; y: number; w: number; h: number } {
+		const page = track ? this.trackedBounds.get(track) : undefined;
+		return page ? this.pageRectToStage(page) : { ...fallback };
+	}
+
+	/** Whether `rect` (stage pixels) shows any of itself in the page's view. */
+	private inPageView(rect: { x: number; y: number; w: number; h: number }): boolean {
+		const view = this.pageView();
+		return !view || (rect.x + rect.w > view.left && rect.x < view.left + view.width && rect.y + rect.h > view.top && rect.y < view.top + view.height);
+	}
+
+	private hasTracked(): boolean {
+		return [...this.marks.values()].some(mark => mark.track) || [...this.pins.values()].some(pin => pin.track) || !!this.draftAnchor?.track;
+	}
+
+	/**
+	 * Keeps marks, pins and the draft on their elements: reads where the tracked ones are every
+	 * frame while they move (scrolling, reflow), and a few times a second while they don't.
+	 */
+	private followTracked(): void {
+		if (this.following || this.disposed) {
+			return;
+		}
+		this.following = true;
+		const win = getWindow(this.stage);
+		const step = async () => {
+			if (this.disposed || !this.hasTracked()) {
+				this.following = false;
+				return;
+			}
+			let moved = false;
+			const rects = win.document.visibilityState === 'hidden' ? undefined : await this.runGuest<Record<string, [number, number, number, number] | null>>(READ_TRACKED_SCRIPT);
+			for (const [key, rect] of Object.entries(rects ?? {})) {
+				const last = this.trackedBounds.get(key);
+				// An element gone from the page leaves its marks where it last was.
+				if (rect && (!last || last.x !== rect[0] || last.y !== rect[1] || last.w !== rect[2] || last.h !== rect[3])) {
+					this.trackedBounds.set(key, { x: rect[0], y: rect[1], w: rect[2], h: rect[3] });
+					moved = true;
+				}
+			}
+			if (moved) {
+				this.layoutTracked();
+				win.requestAnimationFrame(() => void step());
+				return;
+			}
+			const timer = setTimeout(() => {
+				this.followWake = undefined;
+				void step();
+			}, TRACK_IDLE_MS);
+			this.followWake = () => {
+				clearTimeout(timer);
+				this.followWake = undefined;
+				void step();
+			};
+		};
+		void step();
+	}
+
+	private layoutTracked(): void {
+		for (const mark of this.marks.values()) {
+			if (mark.track) {
+				mark.bounds = this.liveBounds(mark.track, mark.bounds);
+				this.placeBox(mark.box, mark.bounds);
+				mark.box.style.visibility = this.inPageView(mark.bounds) ? '' : 'hidden';
+			}
+		}
+		for (const pin of this.pins.values()) {
+			if (pin.track) {
+				pin.bounds = this.liveBounds(pin.track, pin.bounds);
+				this.placeComment(pin);
+			}
+		}
+		const anchor = this.draftAnchor;
+		if (anchor?.track) {
+			anchor.bounds = this.liveBounds(anchor.track, anchor.bounds);
+			this.positionPrompt();
+		}
 	}
 
 	private finishSelection(): void {
@@ -2145,6 +2535,9 @@ export class VoltBrowserView extends Disposable {
 		this.hoverBox.classList.add('hidden');
 		this.hintEl.classList.add('hidden');
 		const ref = this.selectionRef(selection);
+		if (ref.track) {
+			this.payloadTracks.set(ref.payload, ref.track);
+		}
 		// A comment open on the page takes the element as one more chip: one comment can point at several.
 		const openPin = this.openPin();
 		const pinComposer = openPin?.card.input;
@@ -2177,7 +2570,7 @@ export class VoltBrowserView extends Disposable {
 		const mention = this.composer?.setSelectionChip(ref.label, ref.payload);
 		if (mention) {
 			this.draftRefs.set(mention.id, ref);
-			this.addMark(mention, ref.bounds);
+			this.addMark(mention, ref.bounds, ref.track);
 			// A drawn area is only its picture: it lands in the prompt as an image, as a pasted one would.
 			const composer = this.composer;
 			this.captureRef(ref, selection.kind === 'region' && composer ? () => {
@@ -2206,7 +2599,7 @@ export class VoltBrowserView extends Disposable {
 	private selectionRef(selection: IBrowserSelection): IBrowserCommentRef {
 		const text = selection.kind === 'element' ? (selection.text ?? '').trim() : '';
 		const snippet = text.length > 64 ? `${text.slice(0, 63).trimEnd()}\u2026` : text;
-		return { label: this.selectionChipLabel(selection), payload: this.formatBrowserElement(selection), bounds: { ...selection.bounds }, ...(snippet ? { snippet } : {}) };
+		return { label: this.selectionChipLabel(selection), payload: this.formatBrowserElement(selection), bounds: { ...selection.bounds }, ...(selection.track ? { track: selection.track } : {}), ...(snippet ? { snippet } : {}) };
 	}
 
 	/**
@@ -2300,18 +2693,23 @@ export class VoltBrowserView extends Disposable {
 		this.dock?.setBlocked(draftOpen || commentOpen);
 	}
 
-	private addMark(mention: IAgentMention, bounds: { x: number; y: number; w: number; h: number }): void {
-		this.addBoundsMark(mention.id, bounds, mention.accent ?? 0);
+	private addMark(mention: IAgentMention, bounds: { x: number; y: number; w: number; h: number }, track?: string): void {
+		this.addBoundsMark(mention.id, bounds, mention.accent ?? 0, track);
 	}
 
-	private addBoundsMark(id: string, bounds: { x: number; y: number; w: number; h: number }, accent: number): void {
+	private addBoundsMark(id: string, bounds: { x: number; y: number; w: number; h: number }, accent: number, track?: string): void {
 		if (this.marks.has(id)) {
 			return;
 		}
 		const box = append(this.overlay, $('div.volt-browser-box.mark'));
 		box.style.setProperty('--volt-mark-color', browserMentionColor(accent));
-		this.placeBox(box, bounds);
-		this.marks.set(id, { box, accent, bounds });
+		const live = this.liveBounds(track, bounds);
+		this.placeBox(box, live);
+		box.style.visibility = this.inPageView(live) ? '' : 'hidden';
+		this.marks.set(id, { box, accent, bounds: live, track });
+		if (track) {
+			this.followTracked();
+		}
 	}
 
 	private removeMark(id: string): void {
@@ -2550,12 +2948,13 @@ export class VoltBrowserView extends Disposable {
 		for (const id of pin.markIds) {
 			this.removeMark(id);
 		}
-		comment.refs.forEach((ref, index) => this.addBoundsMark(ids[index], ref.bounds, comment.number - 1));
+		comment.refs.forEach((ref, index) => this.addBoundsMark(ids[index], ref.bounds, comment.number - 1, ref.track));
 		for (const id of ids) {
 			this.marks.get(id)?.box.classList.toggle('settled', comment.status !== 'open');
 		}
 		pin.markIds = ids;
-		pin.bounds = { ...comment.refs[0]?.bounds ?? pin.bounds };
+		pin.track = comment.refs[0]?.track;
+		pin.bounds = this.liveBounds(pin.track, comment.refs[0]?.bounds ?? pin.bounds);
 	}
 
 	private disposePin(pin: IPinnedBrowserComment): void {
@@ -2696,6 +3095,7 @@ export class VoltBrowserView extends Disposable {
 			el.style.left = `${placed.left}px`;
 			el.style.top = `${placed.top}px`;
 			el.style.height = 'auto';
+			el.style.visibility = '';
 			return;
 		}
 		const width = 30;
@@ -2706,6 +3106,8 @@ export class VoltBrowserView extends Disposable {
 		const top = Math.min(Math.max(pad, sel.y - 10), Math.max(pad, stage.height - height - pad));
 		el.style.left = `${left}px`;
 		el.style.top = `${top}px`;
+		// A closed pin scrolls away with its element; an open one stays to be typed in.
+		el.style.visibility = this.inPageView(sel) ? '' : 'hidden';
 	}
 
 	private placeAroundSelection(width: number, height: number, bounds?: { x: number; y: number; w: number; h: number }): { left: number; top: number } {
@@ -3061,7 +3463,7 @@ export class VoltBrowserView extends Disposable {
 	private pagePointInStage(x: number, y: number): { x: number; y: number } {
 		const frame = this.webview?.getBoundingClientRect();
 		const stage = this.stage.getBoundingClientRect();
-		const scale = this.deviceMode.scale;
+		const scale = this.pageScale();
 		return { x: (frame ? frame.left - stage.left : 0) + x * scale, y: (frame ? frame.top - stage.top : 0) + y * scale };
 	}
 
@@ -3092,6 +3494,7 @@ export class VoltBrowserView extends Disposable {
 		}
 		this.container.classList.toggle('agent-locked', locked);
 		if (!locked) {
+			this.agentReleasedAt = Date.now();
 			this.agentLock?.remove();
 			this.agentLock = undefined;
 			return;
@@ -3110,6 +3513,7 @@ export class VoltBrowserView extends Disposable {
 		store.add(addDisposableListener(pill, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
+			this.userTookControlAt = Date.now();
 			this.setAgentLock(false);
 			this._onDidTakeControl.fire();
 		}));
@@ -3121,10 +3525,83 @@ export class VoltBrowserView extends Disposable {
 		this.agentLock = lock;
 	}
 
+	/**
+	 * Why the user is using this tab, or undefined when an agent can take it. In use: a comment or
+	 * prompt being written, open comments, design mode, the address bar, text the user typed into
+	 * the page, or any input (or Take control) in the last two minutes.
+	 */
+	async userBusyReason(): Promise<string | undefined> {
+		if (!this.container) {
+			return undefined;
+		}
+		if ((!this.promptEl.classList.contains('hidden') && this.composer?.hasDraft()) || this.openPin() || this.dock?.hasDraft()) {
+			return 'they are writing a comment on the page';
+		}
+		if (this.commentStore.list({ viewId: this.viewId }).some(comment => comment.status === 'open')) {
+			return 'it has their open comments';
+		}
+		if (this.designMode) {
+			return 'they are in design mode';
+		}
+		if (getWindow(this.container).document.activeElement === this.urlInput) {
+			return 'they are typing in the address bar';
+		}
+		if (Date.now() - this.userTookControlAt < USER_ACTIVE_MS) {
+			return 'they took control of it';
+		}
+		const activity = await raceTimeout(this.runScript<{ at: number; drafts: number }>(userActivityScript(this.agentReleasedAt)).catch(() => undefined), 1000);
+		if (activity?.drafts) {
+			return 'they typed into the page';
+		}
+		if (activity?.at && Date.now() - activity.at < USER_ACTIVE_MS) {
+			return 'they used it in the last two minutes';
+		}
+		return undefined;
+	}
+
+	/**
+	 * A note at the top of the page about an agent working in a tab of its own. `refresh` offers a
+	 * reload to pick up what the agent changed; `onView` opens the agent's tab. Never takes focus,
+	 * so the user's typing in the page carries on.
+	 */
+	setAgentNotice(notice: { readonly text: string; readonly refresh?: boolean; readonly onView?: () => void } | undefined): void {
+		this.agentNotice.clear();
+		this.agentNoticeEl?.remove();
+		this.agentNoticeEl = undefined;
+		if (!notice || !this.stage) {
+			return;
+		}
+		const el = append(this.stage, $('.volt-browser-agent-notice'));
+		el.setAttribute('role', 'status');
+		this.agentNoticeEl = el;
+		this.agentNotice.add(addDisposableListener(el, 'mousedown', e => e.preventDefault()));
+		append(el, $('span.volt-browser-agent-notice-text')).textContent = notice.text;
+		if (notice.refresh) {
+			const refresh = this.agentNotice.add(createVoltButton(el, 'primary'));
+			refresh.label = localize('voltBrowser.agentNoticeRefresh', "Refresh");
+			this.agentNotice.add(refresh.onDidClick(() => {
+				this.setAgentNotice(undefined);
+				this.callGuest(() => this.webview?.reload());
+			}));
+		}
+		const onView = notice.onView;
+		if (onView) {
+			const view = this.agentNotice.add(createVoltButton(el, 'secondary'));
+			view.label = localize('voltBrowser.agentNoticeView', "View Agent Tab");
+			this.agentNotice.add(view.onDidClick(() => onView()));
+		}
+		const close = append(el, $('button.volt-browser-agent-notice-close')) as HTMLButtonElement;
+		close.type = 'button';
+		close.setAttribute('aria-label', localize('voltBrowser.agentNoticeDismiss', "Dismiss"));
+		close.appendChild(renderIcon(Codicon.close));
+		this.agentNotice.add(addDisposableListener(close, 'click', () => this.setAgentNotice(undefined)));
+	}
+
 	//#endregion
 
 	private layout(): void {
 		this.deviceMode?.layout();
+		this.layoutDesktopPreview();
 		if (this.selection) {
 			this.positionPrompt();
 		}
@@ -3132,6 +3609,33 @@ export class VoltBrowserView extends Disposable {
 			this.placeComment(pin);
 		}
 		this.dock?.layout();
+	}
+
+	/** Floating over the chat the page keeps a desktop width, scaled down to the preview. Responsive mode lays the page out itself. */
+	private layoutDesktopPreview(): void {
+		const width = this.stage?.clientWidth ?? 0;
+		const scale = this.presentation === 'floating' && !this.deviceMode?.active && width > 0 ? Math.min(1, width / FLOAT_DESKTOP_WIDTH) : 1;
+		const wasScaled = this.desktopScale < 1;
+		this.desktopScale = scale;
+		this.stage?.classList.toggle('desktop-preview', scale < 1);
+		const page = this.webview;
+		if (!page || this.deviceMode?.active) {
+			return;
+		}
+		if (scale < 1) {
+			page.style.width = `${FLOAT_DESKTOP_WIDTH}px`;
+			page.style.height = `${Math.ceil(this.stage.clientHeight / scale)}px`;
+			page.style.transform = `scale(${scale})`;
+		} else if (wasScaled) {
+			for (const property of ['width', 'height', 'transform']) {
+				page.style.removeProperty(property);
+			}
+		}
+	}
+
+	/** CSS px on screen per page px: responsive mode's fit, or the floating preview's desktop scale. */
+	private pageScale(): number {
+		return this.deviceMode.active ? this.deviceMode.scale : this.desktopScale;
 	}
 
 	async revealAgentInSidebar(): Promise<void> {
@@ -3161,6 +3665,12 @@ export class VoltBrowserView extends Disposable {
 	}
 
 	override dispose(): void {
+		this.disposed = true;
+		this.followWake?.();
+		this.stopRunningUnder(false);
+		for (const under of [...this.underneath]) {
+			under.stopRunningUnder(true);
+		}
 		for (const pin of [...this.pins.values()]) {
 			this.disposePin(pin);
 		}
@@ -3174,6 +3684,7 @@ export class VoltBrowserView extends Disposable {
 		this.webview?.remove();
 		this.webview = undefined;
 		this.guestReady = false;
+		this.pageFocusHeld = undefined;
 		this.pendingUrl = undefined;
 		this.element.remove();
 		super.dispose();
@@ -3197,6 +3708,8 @@ export const IVoltBrowserViews = createDecorator<IVoltBrowserViews>('voltBrowser
 export interface IVoltBrowserViews {
 	readonly _serviceBrand: undefined;
 	viewFor(input: VoltBrowserEditorInput): VoltBrowserView;
+	/** Scrolls a shown tab to the element a chip points at, the tab it was picked in first. False when none has it. */
+	revealElement(payload: string): Promise<boolean>;
 }
 
 class VoltBrowserViews extends Disposable implements IVoltBrowserViews {
@@ -3219,9 +3732,22 @@ class VoltBrowserViews extends Disposable implements IVoltBrowserViews {
 		}
 		return view;
 	}
+
+	async revealElement(payload: string): Promise<boolean> {
+		const shown = [...this.views.values()].filter(view => view.shown);
+		shown.sort((a, b) => Number(b.pickedHere(payload)) - Number(a.pickedHere(payload)));
+		for (const view of shown) {
+			if (await view.revealElement(payload)) {
+				return true;
+			}
+		}
+		return false;
+	}
 }
 
 registerSingleton(IVoltBrowserViews, VoltBrowserViews, InstantiationType.Delayed);
+
+CommandsRegistry.registerCommand(REVEAL_BROWSER_ELEMENT_COMMAND_ID, (accessor, payload: string) => accessor.get(IVoltBrowserViews).revealElement(payload));
 
 /** The editor pane for a browser tab: a slot the tab's `VoltBrowserView` is laid over. */
 export class VoltBrowserEditor extends EditorPane {

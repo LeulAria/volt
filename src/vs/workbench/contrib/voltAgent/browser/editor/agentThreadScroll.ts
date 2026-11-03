@@ -5,6 +5,7 @@
 
 import { getWindow, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
+import { findLastIdx } from '../../../../../base/common/arraysFind.js';
 import { IDisposable } from '../../../../../base/common/lifecycle.js';
 
 /** How long a glide to a message or a page takes; reduced motion jumps instead. */
@@ -28,7 +29,7 @@ export function pageScrollTarget(scrollTop: number, viewportHeight: number, scro
  */
 export function stepTurnIndex(tops: readonly number[], landing: number, direction: -1 | 1, slack = 2): number {
 	return direction < 0
-		? tops.findLastIndex(top => top < landing - slack)
+		? findLastIdx(tops, top => top < landing - slack)
 		: tops.findIndex(top => top > landing + slack);
 }
 

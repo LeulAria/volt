@@ -379,7 +379,8 @@ function evidenceFor(text: string): EvidenceKind {
 	return 'manual';
 }
 
-function defaultCriterionText(evidence: EvidenceKind): string {
+/** The criterion text Volt writes when the request only mentions a check by name. */
+export function defaultCriterionText(evidence: EvidenceKind): string {
 	switch (evidence) {
 		case 'test': return 'The project\'s tests pass.';
 		case 'typecheck': return 'The project type-checks.';

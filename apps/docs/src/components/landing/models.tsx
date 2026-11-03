@@ -1,6 +1,7 @@
 import { type ReactNode, useRef } from "react";
 import { cn } from "@/lib/cn";
 import { gsap, REDUCED, ScrollTrigger, useGSAP } from "@/lib/gsap";
+import { useHydrated } from "@/lib/useHydrated";
 import { COLUMN } from "./geometry";
 import { SectionHeading } from "./primitives";
 import { PROVIDER_ICONS, type ProviderIconId } from "./providerIcons";
@@ -38,11 +39,13 @@ const SELF_HOSTED: Provider[] = [
 
 export function Models() {
   const ref = useRef<HTMLElement>(null);
+  const hydrated = useHydrated();
 
   useGSAP(
     () => {
       const root = ref.current;
-      if (!root) return;
+      // The rows get their loop copy and logos once hydrated (see Ticker); measure them after that.
+      if (!root || !hydrated) return;
       gsap.matchMedia().add(`not ${REDUCED}`, () => {
         // Each row loops by sliding half its width (the list renders twice). Scrolling kicks
         // the rows forward in proportion to scroll speed, then they ease back to cruising.
@@ -96,7 +99,7 @@ export function Models() {
         });
       });
     },
-    { scope: ref },
+    { scope: ref, dependencies: [hydrated] },
   );
 
   return (
@@ -133,7 +136,10 @@ function Ticker({
   speed: number;
   reverse?: boolean;
 }) {
-  const loop = [...items, ...items];
+  // The server's HTML lists each name once, without logos (40 KB of SVG and repeats, far below the
+  // fold). Once hydrated the row gets its logos and the repeat that makes the loop seamless.
+  const hydrated = useHydrated();
+  const loop = hydrated ? [...items, ...items] : items;
   return (
     <div className="ticker-row relative z-10 -mt-px overflow-hidden border-y border-white/[0.07] bg-[#0a0d0c]">
       <div className="[mask-image:linear-gradient(90deg,transparent,#000_10%,#000_90%,transparent)]">
@@ -149,7 +155,11 @@ function Ticker({
               key={`${p.id}-${i}`}
               hidden={i >= items.length}
             >
-              <ProviderIcon id={p.id} className="size-[22px]" />
+              {hydrated ? (
+                <ProviderIcon id={p.id} className="size-[22px]" />
+              ) : (
+                <span aria-hidden className="block size-[22px] shrink-0" />
+              )}
               {p.name}
             </Item>
           ))}
@@ -161,10 +171,7 @@ function Ticker({
 
 function Item({ hidden, children }: { hidden: boolean; children: ReactNode }) {
   return (
-    <li
-      aria-hidden={hidden || undefined}
-      className="flex h-[88px] shrink-0 items-center gap-3 border-r border-white/[0.07] px-10 text-[15px] font-medium whitespace-nowrap text-white/55 transition-colors duration-300 hover:text-white"
-    >
+    <li aria-hidden={hidden || undefined} className="ticker-item">
       {children}
     </li>
   );

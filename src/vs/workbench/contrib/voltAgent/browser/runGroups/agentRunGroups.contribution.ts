@@ -21,9 +21,11 @@ import { IMultiDiffSourceResolverService } from '../../../multiDiffEditor/browse
 import { ARCHIVE_RUN_GROUP_COMMAND_ID, OPEN_RUN_GROUP_COMMAND_ID, STOP_RUN_GROUP_COMMAND_ID } from './agentRunGroupCommands.js';
 import { RUN_BLOB_SCHEME, RunBlobContentProvider, RunDiffSourceResolver } from './agentRunGroupDiff.js';
 import { AGENT_RUN_GROUP_EDITOR_ID, AgentRunGroupEditor, AgentRunGroupEditorInput, AgentRunGroupEditorInputSerializer } from './agentRunGroupEditor.js';
-import { AgentRunGroupService } from './agentRunGroupService.js';
+import { WindowAgentRunGroupService } from './agentRunGroupWindowService.js';
 
-registerSingleton(IAgentRunGroupService, AgentRunGroupService, InstantiationType.Delayed);
+// A window on the agent server (the browser workbench, the desktop with the server on) replaces this
+// with RemoteAgentRunGroupService: the server owns the groups then.
+registerSingleton(IAgentRunGroupService, WindowAgentRunGroupService, InstantiationType.Delayed);
 
 Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
 	EditorPaneDescriptor.create(AgentRunGroupEditor, AGENT_RUN_GROUP_EDITOR_ID, localize('voltRun.editorLabel', "Compare Models")),

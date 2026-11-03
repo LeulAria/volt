@@ -43,6 +43,23 @@ export class VoltBrowserAccessService extends Disposable implements IVoltBrowser
 		@IStorageService private readonly storageService: IStorageService,
 	) {
 		super();
+		this.load();
+		// Another window changed a chat's choice: this one (and the agent server it updates) follows.
+		this._register(this.storageService.onDidChangeValue(StorageScope.APPLICATION, STORAGE_KEY, this._store)(e => {
+			if (e.external) {
+				this.load();
+				this._onDidChange.fire();
+			}
+		}));
+		this._register(this.configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(AGENT_BROWSER_ACCESS_SETTING)) {
+				this._onDidChange.fire();
+			}
+		}));
+	}
+
+	private load(): void {
+		this.choices.clear();
 		try {
 			const stored = JSON.parse(this.storageService.get(STORAGE_KEY, StorageScope.APPLICATION, '{}')) as Record<string, unknown>;
 			for (const [sessionId, allowed] of Object.entries(stored)) {
@@ -53,11 +70,6 @@ export class VoltBrowserAccessService extends Disposable implements IVoltBrowser
 		} catch {
 			// a damaged value: start over
 		}
-		this._register(this.configurationService.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration(AGENT_BROWSER_ACCESS_SETTING)) {
-				this._onDidChange.fire();
-			}
-		}));
 	}
 
 	blockReason(sessionId: string | undefined): BrowserBlockReason | undefined {
@@ -67,6 +79,10 @@ export class VoltBrowserAccessService extends Disposable implements IVoltBrowser
 
 	chatChoice(sessionId: string): boolean | undefined {
 		return this.choices.get(sessionId);
+	}
+
+	chatChoices(): Record<string, boolean> {
+		return Object.fromEntries(this.choices);
 	}
 
 	setChatChoice(sessionId: string, allowed: boolean | undefined): void {
@@ -80,6 +96,22 @@ export class VoltBrowserAccessService extends Disposable implements IVoltBrowser
 				this.choices.delete(this.choices.keys().next().value!);
 			}
 		}
+		this.save();
+	}
+
+	setChatChoices(choices: Readonly<Record<string, boolean>>): void {
+		const entries = Object.entries(choices).filter(([, allowed]) => typeof allowed === 'boolean').slice(-MAX_CHOICES);
+		if (entries.length === this.choices.size && entries.every(([sessionId, allowed]) => this.choices.get(sessionId) === allowed)) {
+			return;
+		}
+		this.choices.clear();
+		for (const [sessionId, allowed] of entries) {
+			this.choices.set(sessionId, allowed);
+		}
+		this.save();
+	}
+
+	private save(): void {
 		this.storageService.store(STORAGE_KEY, JSON.stringify(Object.fromEntries(this.choices)), StorageScope.APPLICATION, StorageTarget.USER);
 		this._onDidChange.fire();
 	}

@@ -9,6 +9,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService, WorkbenchState } from '../../../../platform/workspace/common/workspace.js';
 import { canonicalProjectRoot, IVoltProjectRecord, IVoltSessionBinding, IVoltSessionContextService, projectAuthority, projectDisplayName, projectIdForRoot } from '../../voltRuntime/common/sessionContext.js';
+import { IVoltWindowScopeService } from '../../voltWindowScope/common/voltWindowScope.js';
 import { IAgentServerClientService } from './agentServerClient.js';
 
 const ACTIVE_KEY = 'volt.agent.activeProject';
@@ -36,6 +37,7 @@ export class RemoteVoltSessionContextService extends Disposable implements IVolt
 		@IAgentServerClientService private readonly client: IAgentServerClientService,
 		@IStorageService private readonly storageService: IStorageService,
 		@IWorkspaceContextService workspaceContextService: IWorkspaceContextService,
+		@IVoltWindowScopeService private readonly windowScope: IVoltWindowScopeService,
 	) {
 		super();
 		this.activeId = storageService.get(ACTIVE_KEY, StorageScope.WORKSPACE, '') || undefined;
@@ -45,7 +47,11 @@ export class RemoteVoltSessionContextService extends Disposable implements IVolt
 			this.activeId = this.registerProject(folders[0].uri, folders[0].name).id;
 			storageService.store(ACTIVE_KEY, this.activeId, StorageScope.WORKSPACE, StorageTarget.MACHINE);
 		}
-		this.activeId ??= storageService.get(ACTIVE_KEY, StorageScope.APPLICATION, '') || undefined;
+		// A New Window with a scope of its own starts on no project.
+		if (!windowScope.scope) {
+			this.activeId ??= storageService.get(ACTIVE_KEY, StorageScope.APPLICATION, '') || undefined;
+		}
+		this._register(windowScope.onDidChange(() => this._onDidChangeProjects.fire()));
 		this._register(client.onDidChangeCollection(e => {
 			if (e.col !== 'projects') {
 				return;
@@ -77,7 +83,7 @@ export class RemoteVoltSessionContextService extends Disposable implements IVolt
 	}
 
 	get projects(): readonly IVoltProjectRecord[] {
-		return this.allProjects().filter(project => !project.scratch);
+		return this.allProjects().filter(project => !project.scratch && this.windowScope.showsProject(project.id));
 	}
 
 	get activeProject(): IVoltProjectRecord | undefined {
@@ -102,6 +108,9 @@ export class RemoteVoltSessionContextService extends Disposable implements IVolt
 		const canonical = canonicalProjectRoot(root);
 		const id = projectIdForRoot(canonical);
 		const existing = this.getProject(id);
+		if (!scratch && !existing?.scratch) {
+			this.windowScope.claimProject(id, !existing);
+		}
 		if (existing) {
 			return existing;
 		}
@@ -128,15 +137,23 @@ export class RemoteVoltSessionContextService extends Disposable implements IVolt
 
 	selectProject(id: string | undefined): void {
 		const next = id && this.getProject(id) && !this.getProject(id)?.scratch ? id : undefined;
+		if (next) {
+			this.windowScope.claimProject(next, false);
+		}
 		if (this.activeId === next) {
 			return;
 		}
 		this.activeId = next;
+		const shared = !this.windowScope.scope;
 		if (next) {
-			this.storageService.store(ACTIVE_KEY, next, StorageScope.APPLICATION, StorageTarget.USER);
+			if (shared) {
+				this.storageService.store(ACTIVE_KEY, next, StorageScope.APPLICATION, StorageTarget.USER);
+			}
 			this.storageService.store(ACTIVE_KEY, next, StorageScope.WORKSPACE, StorageTarget.MACHINE);
 		} else {
-			this.storageService.remove(ACTIVE_KEY, StorageScope.APPLICATION);
+			if (shared) {
+				this.storageService.remove(ACTIVE_KEY, StorageScope.APPLICATION);
+			}
 			this.storageService.remove(ACTIVE_KEY, StorageScope.WORKSPACE);
 		}
 		this._onDidChangeActiveProject.fire(next);
@@ -155,6 +172,9 @@ export class RemoteVoltSessionContextService extends Disposable implements IVolt
 		const current = this.bindingFor(sessionId);
 		if (current) {
 			return current;
+		}
+		if (!this.getProject(projectId)?.scratch) {
+			this.windowScope.claimProject(projectId, false);
 		}
 		this.pendingBindings.set(sessionId, projectId);
 		this.client.send('projects.bindSession', sessionId, projectId);

@@ -49,6 +49,9 @@ export interface IWindowsMainService {
 	getWindows(): ICodeWindow[];
 	getWindowCount(): number;
 
+	/** Volt: the window loaded out of sight for the next New Window. It is not one of `getWindows()`. */
+	getSpareWindow(): ICodeWindow | undefined;
+
 	getFocusedWindow(): ICodeWindow | undefined;
 	getLastActiveWindow(): ICodeWindow | undefined;
 

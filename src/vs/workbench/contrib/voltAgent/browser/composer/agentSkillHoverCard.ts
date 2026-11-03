@@ -13,7 +13,6 @@ import { createModeIcon } from '../chrome/agentModeIcons.js';
 import { IAgentCustomizeService, IAgentSlashItem } from '../customize/agentCustomizeService.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-let maskCounter = 0;
 
 function svgElement(document: Document, viewBox = '0 0 16 16'): SVGSVGElement {
 	const svg = document.createElementNS(SVG_NS, 'svg');
@@ -38,34 +37,21 @@ function strokePaths(document: Document, svg: SVGSVGElement, paths: readonly str
 }
 
 const HEXAGON = 'M8 1.6 13.6 4.8v6.4L8 14.4 2.4 11.2V4.8Z';
+/** The app icon's bolt (brand/volt-icon.svg), centred in 16px. */
+const VOLT_BOLT = 'M9.5 1.6 3.8 8.6l3.3.6-.6 5.2 5.7-7-3.3-.6Z';
 
-/** Volt's mark for built-in entries: a solid cube with a bolt cut out of it. */
+/** Volt's mark for built-in entries: the solid bolt of the app icon. */
 export function createVoltGlyph(document: Document): HTMLElement {
 	const el = document.createElement('span');
 	el.className = 'volt-slash-glyph volt';
 	const svg = svgElement(document);
-	const id = `volt-slash-bolt-${++maskCounter}`;
-	const defs = document.createElementNS(SVG_NS, 'defs');
-	const mask = document.createElementNS(SVG_NS, 'mask');
-	mask.setAttribute('id', id);
-	const all = document.createElementNS(SVG_NS, 'rect');
-	all.setAttribute('width', '16');
-	all.setAttribute('height', '16');
-	all.setAttribute('fill', 'white');
 	const bolt = document.createElementNS(SVG_NS, 'path');
-	bolt.setAttribute('d', 'M8.95 3.7 5.55 8.65h2.3l-.75 3.65 3.4-4.95h-2.3Z');
-	bolt.setAttribute('fill', 'black');
-	mask.append(all, bolt);
-	defs.appendChild(mask);
-	svg.appendChild(defs);
-	const body = document.createElementNS(SVG_NS, 'path');
-	body.setAttribute('d', HEXAGON);
-	body.setAttribute('fill', 'currentColor');
-	body.setAttribute('stroke', 'currentColor');
-	body.setAttribute('stroke-width', '1.4');
-	body.setAttribute('stroke-linejoin', 'round');
-	body.setAttribute('mask', `url(#${id})`);
-	svg.appendChild(body);
+	bolt.setAttribute('d', VOLT_BOLT);
+	bolt.setAttribute('fill', 'currentColor');
+	bolt.setAttribute('stroke', 'currentColor');
+	bolt.setAttribute('stroke-width', '1');
+	bolt.setAttribute('stroke-linejoin', 'round');
+	svg.appendChild(bolt);
 	el.appendChild(svg);
 	return el;
 }

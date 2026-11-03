@@ -12,6 +12,8 @@ import { CommandsRegistry } from '../../../../../platform/commands/common/comman
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
+import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
+import { localize } from '../../../../../nls.js';
 import { IVoltBrowserService } from '../../../../../platform/voltBrowser/common/voltBrowser.js';
 import { describeMockRoute, IVoltEmulation, IVoltMockRoute, parseEmulation, parseMockRoutes } from '../../../../../platform/voltBrowser/common/browserAgent.js';
 import { decodeDataUrl, encodeImage, IImageLabel, ImageFormat, scaleScreenshot } from '../../../../services/voltRuntime/browser/host/imageCodec.js';
@@ -28,6 +30,7 @@ import { formatActRun, formatFlowRuns, IActDriver, IFlowRun, IPageSnapshotBase, 
 import { fileFlowStore, resolveActInput } from '../actFlows.js';
 import { runDevtools } from './browserDevtools.js';
 import { IVoltBrowserViews, IVoltConsoleMessage, normalizeBrowserUrl, VoltBrowserView } from './browserEditor.js';
+import { VoltBrowserEditorInput } from './browserEditorInput.js';
 import { assertScript, auditScript, IAuditFinding, IAuditPage, IPageStatus, locateScript as agentLocateScript, NET_MARK_SCRIPT, netSinceScript, STATUS_SCRIPT } from './browserAgentScripts.js';
 import { clickFallbackScript, evaluateScript, focusScript, INetworkEntry, NETWORK_SCRIPT, readStateScript, rectScript, scrollScript, selectOptionScript, setValueScript, SNAPSHOT_SCRIPT, snapshotScript, targetScript, textPresentScript } from './browserAutomationScripts.js';
 import { RunModeTracker } from '../../../../services/voltRuntime/common/hostSessionResolver.js';
@@ -48,6 +51,7 @@ interface IAutomationServices {
 	readonly workspace: IAgentWorkspaceService;
 	readonly views: IVoltBrowserViews;
 	readonly files: IFileService;
+	readonly groups: IEditorGroupsService;
 	/** Main-process side of the browser (desktop only). */
 	readonly browser?: IVoltBrowserService;
 }
@@ -292,9 +296,128 @@ function action(name: string, details: Record<string, string | undefined>): stri
 	return lines;
 }
 
-/** Finds the chat's browser tab, opening one for `browser_navigate`, and brings it to the front. */
+interface IOwnTab {
+	readonly input: VoltBrowserEditorInput;
+	group: IEditorGroup;
+	/** The user's tab it was opened beside. */
+	readonly beside: VoltBrowserEditorInput;
+}
+
+/** A tab an agent opened for itself because the user was using theirs, per chat; it keeps using it. */
+const ownTabs = new Map<string, IOwnTab>();
+/** The user's tab each chat's agent stepped around: it gets the notice, and the refresh offer at the end. */
+const steppedAround = new Map<string, VoltBrowserView>();
+/** Why a chat's agent moved to its own tab, told with its next result. */
+const ownTabNotes = new Map<string, string>();
+/** Chats whose current run changed files, so a user's tab it stepped around may show old code. */
+const changedFiles = new Set<string>();
+
+/** The chat's browser tab: the agent's own tab while it has one, else the one beside the chat. */
+function sessionBrowser(sessionId: string): { input: VoltBrowserEditorInput; group: IEditorGroup } | undefined {
+	const own = ownTabs.get(sessionId);
+	if (own && !own.input.isDisposed()) {
+		return own;
+	}
+	ownTabs.delete(sessionId);
+	return agentSessionBrowser(sessionId);
+}
+
+/** Another chat's agent holds `view`. */
+function heldByOther(view: VoltBrowserView, sessionId: string): boolean {
+	for (const [holder, held] of locked) {
+		if (holder !== sessionId && held === view) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/** Why the agent must leave `view` alone: the user is using it, or another agent is driving it. */
+async function busyReason(view: VoltBrowserView, sessionId: string): Promise<string | undefined> {
+	if (locked.get(sessionId) === view) {
+		return undefined;
+	}
+	return heldByOther(view, sessionId) ? 'another agent is driving it' : view.userBusyReason();
+}
+
+/**
+ * Keeps the agent's own tab live without bringing it forward: shown if the user is looking at it,
+ * else laid under the browser tab in front. With no page in front to hide under, it comes forward.
+ */
+async function keepOwnTabLive(services: IAutomationServices, own: IOwnTab): Promise<VoltBrowserView> {
+	if (!own.group.contains(own.input)) {
+		own.group = services.groups.groups.find(group => group.contains(own.input)) ?? own.group;
+	}
+	const view = services.views.viewFor(own.input);
+	const front = own.group.activeEditor;
+	if (front !== own.input && front instanceof VoltBrowserEditorInput && view.runUnder(services.views.viewFor(front))) {
+		return view;
+	}
+	await own.group.openEditor(own.input, { preserveFocus: true });
+	return view;
+}
+
+/**
+ * A tab of the agent's own beside the user's, on the same page, so the agent never types over what
+ * the user is doing. It runs under the user's tab; a notice on their page says so.
+ */
+async function openOwnTab(services: IAutomationServices, sessionId: string, user: { input: VoltBrowserEditorInput; group: IEditorGroup }, url: string, reason: string): Promise<VoltBrowserView> {
+	const input = new VoltBrowserEditorInput(VoltBrowserEditorInput.getNewEditorUri());
+	input.url = url;
+	input.agentOwner = sessionId;
+	try {
+		input.setTitle(new URL(url).host || 'Browser');
+	} catch {
+		// keeps "Browser"
+	}
+	await user.group.openEditor(input, { pinned: true, inactive: true, preserveFocus: true });
+	const own: IOwnTab = { input, group: user.group, beside: user.input };
+	ownTabs.set(sessionId, own);
+	ownTabNotes.set(sessionId, reason);
+	stepAround(services, sessionId, own);
+	return keepOwnTabLive(services, own);
+}
+
+/** Tells the user, on their own tab, that the agent is working in its tab this run. */
+function stepAround(services: IAutomationServices, sessionId: string, own: IOwnTab): void {
+	if (own.beside.isDisposed() || steppedAround.has(sessionId)) {
+		return;
+	}
+	const userView = services.views.viewFor(own.beside);
+	steppedAround.set(sessionId, userView);
+	userView.setAgentNotice({
+		text: localize('voltBrowser.agentOwnTab', "The agent is working in its own tab, so it won't interrupt you"),
+		onView: () => void own.group.openEditor(own.input),
+	});
+}
+
+/**
+ * Finds the chat's browser tab, opening one for `browser_navigate`. A tab the user is using (or
+ * another agent holds) is left alone: the agent gets a tab of its own on the same page instead.
+ */
 async function browserFor(services: IAutomationServices, sessionId: string, openUrl: string | undefined, token: CancellationToken): Promise<{ view: VoltBrowserView; opened: boolean }> {
+	const own = ownTabs.get(sessionId);
+	let ownBusy: string | undefined;
+	if (own && !own.input.isDisposed()) {
+		const view = await keepOwnTabLive(services, own);
+		cancelled(token);
+		ownBusy = await busyReason(view, sessionId);
+		if (!ownBusy) {
+			stepAround(services, sessionId, own);
+			return { view, opened: false };
+		}
+		// The user took the agent's tab over too: it gets another.
+		ownTabs.delete(sessionId);
+	}
 	let found = agentSessionBrowser(sessionId);
+	if (found) {
+		const view = services.views.viewFor(found.input);
+		const reason = found.input === own?.input ? ownBusy : await busyReason(view, sessionId);
+		cancelled(token);
+		if (reason) {
+			return { view: await openOwnTab(services, sessionId, found, openUrl ?? view.pageUrl, reason), opened: true };
+		}
+	}
 	let opened = false;
 	if (!found) {
 		if (!openUrl) {
@@ -1023,7 +1146,7 @@ async function fullPage(view: VoltBrowserView, args: Record<string, unknown>, ct
 
 async function status(ctx: ICallContext): Promise<IVoltHostToolResult> {
 	const lines = ['### Browser status'];
-	const found = agentSessionBrowser(ctx.sessionId);
+	const found = sessionBrowser(ctx.sessionId);
 	const view = found ? ctx.services.views.viewFor(found.input) : undefined;
 	if (!view) {
 		lines.push('- No browser tab is open for this chat yet: browser_navigate, browser_run with url, or playground_create opens one.');
@@ -1156,6 +1279,8 @@ async function automate(services: IAutomationServices, sessionId: string, tool: 
 		cancelled(ctx.token);
 		const { view, opened } = await browserFor(services, sessionId, normalized, ctx.token);
 		lock(sessionId, view);
+		const ownTabNote = ownTabNotes.get(sessionId);
+		ownTabNotes.delete(sessionId);
 		if (!opened || tool !== 'browser_navigate') {
 			if (!await view.automationReady(tool === 'browser_navigate' ? 2000 : 15000, ctx.token) && tool !== 'browser_navigate') {
 				cancelled(ctx.token);
@@ -1163,7 +1288,11 @@ async function automate(services: IAutomationServices, sessionId: string, tool: 
 			}
 		}
 		// The user keeps typing in the composer while the agent clicks and types in the page.
-		const result = await keepUserFocus(getActiveDocument(), () => act(view, tool, args, normalized, opened, ctx));
+		let result = await keepUserFocus(getActiveDocument(), () => act(view, tool, args, normalized, opened, ctx));
+		if (ownTabNote) {
+			const note = `[Volt] The user is using their browser tab (${ownTabNote}), so this ran in a separate tab of yours on the same page ("Agent · …"). Their tab stays as it is; keep working here, and don't ask them to stop.`;
+			result = { ...result, text: result.text ? `${note}\n${result.text}` : note };
+		}
 		if (args.screenshot === true && !result.error && !result.image && tool !== 'browser_screenshot') {
 			const shot = await screenshot(view, {}, ctx.token);
 			if (shot) {
@@ -1495,7 +1624,7 @@ function mainBrowserService(accessor: ServicesAccessor): IVoltBrowserService | u
 
 CommandsRegistry.registerCommand(AUTOMATE_BROWSER_COMMAND_ID, (accessor: ServicesAccessor, callerId: string, tool: VoltBrowserAutomationToolName, args?: Record<string, unknown>, options?: IVoltBrowserAutomationOptions) => {
 	// The accessor is only valid now, not once the call's turn in the queue comes.
-	const services: IAutomationServices = { workspace: accessor.get(IAgentWorkspaceService), views: accessor.get(IVoltBrowserViews), files: accessor.get(IFileService), browser: mainBrowserService(accessor) };
+	const services: IAutomationServices = { workspace: accessor.get(IAgentWorkspaceService), views: accessor.get(IVoltBrowserViews), files: accessor.get(IFileService), groups: accessor.get(IEditorGroupsService), browser: mainBrowserService(accessor) };
 	// A warm-pool agent calls with its pool id; its browser tab lives under the chat it was given.
 	const sessionId = accessor.get(IAgentRuntimeService).chatFor(callerId);
 	const source = new CancellationTokenSource(options?.token);
@@ -1519,7 +1648,7 @@ CommandsRegistry.registerCommand(AUTOMATE_BROWSER_COMMAND_ID, (accessor: Service
 });
 
 CommandsRegistry.registerCommand(BROWSER_PAGE_URL_COMMAND_ID, (accessor: ServicesAccessor, sessionId: string): string | undefined => {
-	return agentSessionBrowser(accessor.get(IAgentRuntimeService).chatFor(sessionId))?.input.url;
+	return sessionBrowser(accessor.get(IAgentRuntimeService).chatFor(sessionId))?.input.url;
 });
 
 CommandsRegistry.registerCommand(PREFLIGHT_BROWSER_COMMAND_ID, (accessor: ServicesAccessor, callerId: string, request: IVoltBrowserPreflightRequest, token?: CancellationToken): Promise<IVoltBrowserPreflightResult> => {
@@ -1529,7 +1658,7 @@ CommandsRegistry.registerCommand(PREFLIGHT_BROWSER_COMMAND_ID, (accessor: Servic
 	if (!browser) {
 		return Promise.resolve({ lines: [] }); // web: no main process, no dev servers to find
 	}
-	const services: IAutomationServices = { workspace: accessor.get(IAgentWorkspaceService), views: accessor.get(IVoltBrowserViews), files: accessor.get(IFileService), browser };
+	const services: IAutomationServices = { workspace: accessor.get(IAgentWorkspaceService), views: accessor.get(IVoltBrowserViews), files: accessor.get(IFileService), groups: accessor.get(IEditorGroupsService), browser };
 	// A primer that failed says nothing rather than something the agent would have to work around.
 	return queue.queue(sessionId, () => preflight(services, browser, sessionId, request, token ?? CancellationToken.None).catch((): IVoltBrowserPreflightResult => ({ lines: [] })));
 });
@@ -1637,7 +1766,23 @@ class AgentBrowserLockContribution extends Disposable implements IWorkbenchContr
 					}
 				}));
 			}
+			if (event.type === 'file.change') {
+				changedFiles.add(sessionId);
+			}
 			if (event.type === 'run.end') {
+				const userView = steppedAround.get(sessionId);
+				steppedAround.delete(sessionId);
+				const own = ownTabs.get(sessionId);
+				if (userView && changedFiles.has(sessionId) && own && !own.input.isDisposed()) {
+					userView.setAgentNotice({
+						text: localize('voltBrowser.agentChanged', "The agent changed the app. Refresh to see it"),
+						refresh: true,
+						onView: () => void own.group.openEditor(own.input),
+					});
+				} else {
+					userView?.setAgentNotice(undefined);
+				}
+				changedFiles.delete(sessionId);
 				cancelAgentBrowserCalls(sessionId);
 				// Mocks and emulation were for the agent's test, not for the user's browsing afterwards.
 				void clearAgentOverrides(sessionId, undefined);

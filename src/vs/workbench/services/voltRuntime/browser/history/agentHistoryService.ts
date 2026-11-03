@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { findLast } from '../../../../../base/common/arraysFind.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { hashAsync } from '../../../../../base/common/hash.js';
@@ -18,11 +19,13 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILifecycleService } from '../../../lifecycle/common/lifecycle.js';
 import { IAgentWorktreeService } from '../../common/git/agentWorktree.js';
+import { IVoltWindowScopeService } from '../../../voltWindowScope/common/voltWindowScope.js';
 import {
 	AGENT_HISTORY_FORMAT_VERSION,
 	AgentHistoryEntry,
 	AgentHistoryRecord,
 	AgentSessionAttention,
+	AgentSessionStatus,
 	IAgentAssistantEntry,
 	IAgentForkOrigin,
 	IAgentHistoryIndex,
@@ -52,6 +55,7 @@ import {
 	deriveTitle,
 	encodeRecord,
 	foldTranscript,
+	isMarkupOnlyTitle,
 	metaAfterEntry,
 	normalizeIndex,
 	parseAttachmentRef,
@@ -84,6 +88,20 @@ const INDEX_WINDOW_MS = 400;
 const DRAFT_WINDOW_MS = 600;
 /** Longest single wait for a snooze to end; setTimeout cannot count past ~24.8 days. */
 const SNOOZE_TIMER_MAX_MS = 86_400_000;
+
+/** Appends `text` to `file` and makes it durable before resolving (the agent server's `fs`). */
+export type AgentHistoryAppender = (file: URI, text: string) => Promise<void>;
+
+let historyAppender: AgentHistoryAppender | undefined;
+
+/**
+ * The agent server writes chat logs on a real disk, where an append is reliable: it sets this so a
+ * turn appends its records instead of rewriting the whole log. Unset (a window's vscode-userdata
+ * provider, whose offset appends were unreliable), every write is an atomic rewrite.
+ */
+export function setAgentHistoryAppender(appender: AgentHistoryAppender | undefined): void {
+	historyAppender = appender;
+}
 
 function isNotFound(err: unknown): boolean {
 	return err instanceof FileOperationError && err.fileOperationResult === FileOperationResult.FILE_NOT_FOUND;
@@ -214,7 +232,7 @@ class SessionHandle implements IAgentSessionHandle {
 				// A reply that was streaming when the window went away: its last snapshot, unless the
 				// log already has that reply as recent (or final).
 				const partial = await this.readPartial();
-				const logged = partial && decoded.entries.findLast((entry): entry is IAgentAssistantEntry => entry.type === 'agent' && entry.turn === partial.turn);
+				const logged = partial && findLast(decoded.entries, (entry): entry is IAgentAssistantEntry => entry.type === 'agent' && entry.turn === partial.turn);
 				const restored = partial && (!logged || (!logged.final && logged.at < partial.at)) ? [partial] : [];
 				// Appends that raced the load stay after the stored entries.
 				this.entries = [...decoded.entries, ...restored, ...this.entries];
@@ -357,6 +375,12 @@ class SessionHandle implements IAgentSessionHandle {
 	}
 
 	setMeta(meta: { title?: string; agentTitle?: string; mode?: string; model?: string; worktreePath?: string; worktreeBranch?: string; forkOf?: IAgentForkOrigin }): void {
+		// A stored chat nobody has opened yet (a branch rename reaching every chat in the worktree):
+		// read its log first, or its record is worked out from no turns and reads as a draft.
+		if (this.materialized && !this.loaded) {
+			void this.load().then(() => this.append({ type: 'meta', at: Date.now(), ...meta }), () => undefined);
+			return;
+		}
 		this.append({ type: 'meta', at: Date.now(), ...meta });
 	}
 
@@ -487,10 +511,36 @@ class SessionHandle implements IAgentSessionHandle {
 		});
 	}
 
-	private async writeBatch(_batch: readonly string[]): Promise<void> {
+	private async writeBatch(batch: readonly string[]): Promise<void> {
+		// Append where it is reliable (the agent server's disk) to a log that is on disk and sound,
+		// unless enough of it is stale that a rewrite should compact it anyway.
+		const append = historyAppender;
+		if (append && batch.length && this.logFile.scheme === 'file' && this.materialized && !this.damaged) {
+			const effective = compactRecords(this.transcript ?? foldTranscript(this.header, this.entries)).length;
+			if (!shouldCompact(this.recordCount + batch.length, effective, false)) {
+				await append(this.logFile, batch.join(''));
+				this.recordCount += batch.length;
+				await this.dropPartialFile();
+				this.service.rememberOnDisk(this.id);
+				return;
+			}
+		}
 		// Atomic rewrite on vscode-userdata: offset appends on that provider can
 		// succeed without the new bytes being readable after a reload.
 		await this.rewrite();
+	}
+
+	/** The log holds the reply the partial file kept (or that reply was dropped): the file goes. */
+	private async dropPartialFile(): Promise<void> {
+		if (!this.partialOnDisk || this.partial) {
+			return;
+		}
+		this.partialOnDisk = false;
+		await this.service.fileService.del(this.partialFile).catch(err => {
+			if (!isNotFound(err)) {
+				this.service.logService.warn(`[agent history] failed to delete ${this.partialFile.toString()}`, err);
+			}
+		});
 	}
 
 	/** Atomically rewrite the log with only the effective records. */
@@ -507,15 +557,7 @@ class SessionHandle implements IAgentSessionHandle {
 		}
 		await this.service.ensureDirectories();
 		await this.service.fileService.writeFile(this.logFile, VSBuffer.fromString(text), ATOMIC);
-		if (this.partialOnDisk && !this.partial) {
-			// The log now holds the reply the partial file kept (or that reply was dropped).
-			this.partialOnDisk = false;
-			await this.service.fileService.del(this.partialFile).catch(err => {
-				if (!isNotFound(err)) {
-					this.service.logService.warn(`[agent history] failed to delete ${this.partialFile.toString()}`, err);
-				}
-			});
-		}
+		await this.dropPartialFile();
 		const arrived = this.entries.slice(entriesAtStart);
 		this.entries = [...records.filter((record): record is AgentHistoryEntry => record.type !== 'header'), ...arrived];
 		this.pending = this.pending.slice(pendingAtStart);
@@ -583,6 +625,13 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 	private readonly indexQueue = new WriteQueue();
 	private indexTimer: ReturnType<typeof setTimeout> | undefined;
 	private indexDirty = false;
+	/**
+	 * Entries set or removed here since the last index write. Every window writes the one index,
+	 * so a write keeps what other windows wrote and replaces only these.
+	 */
+	private readonly changedHere = new Set<string>();
+	/** Chats deleted in this window; picking up other windows' chats must not bring them back. */
+	private readonly deletedHere = new Set<string>();
 	private snoozeTimer: ReturnType<typeof setTimeout> | undefined;
 	private directoriesReady: Promise<void> | undefined;
 
@@ -600,6 +649,7 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		@ILifecycleService lifecycleService: ILifecycleService,
 		@ILogService public readonly logService: ILogService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@IVoltWindowScopeService private readonly windowScope: IVoltWindowScopeService,
 	) {
 		super();
 		this.root = joinPath(environmentService.userRoamingDataHome, ROOT_DIR);
@@ -608,6 +658,10 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		this.indexFile = joinPath(this.root, INDEX_FILE);
 		this.currentWorkspace = describeWorkspace(workspaceContextService);
 		this.whenReady = this.loadIndex();
+		// Lists asked for `inWindow` change with the scopes.
+		this._register(windowScope.onDidChange(() => this._onDidChange.fire()));
+		// A New Window closed: the chats it started are this window's now.
+		this._register(windowScope.onDidEndScopes(() => void this.adoptFromDisk()));
 		this._register(lifecycleService.onWillShutdown(e => e.join(this.flushAll(), { id: 'volt.agentHistory', label: 'Saving agent history' })));
 		this._register(toDisposable(() => {
 			for (const timer of this.prefetched.values()) {
@@ -649,6 +703,7 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 			index = createEmptyIndex();
 			rebuilt = true;
 		}
+		const indexed = index.sessions.map(meta => meta.id);
 		// The index is written on a short debounce; a log is flushed as soon as a reply is final. A
 		// window that closed in between left the index saying "running" for a turn that finished.
 		const indexedRunning = index.sessions.filter(meta => meta.status === 'running').map(meta => meta.id);
@@ -670,10 +725,60 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 			rebuilt = true;
 		}
 		if (rebuilt) {
+			// The whole index as read here, rebuilt entries added and vanished ones dropped.
+			for (const id of [...indexed, ...this.sessions.keys()]) {
+				this.changedHere.add(id);
+			}
 			this.scheduleIndexWrite();
 		}
 		this.scheduleSnoozeWake();
 		this._onDidChange.fire();
+	}
+
+	/**
+	 * Takes in chats other windows wrote since this one loaded: after a New Window closes, the
+	 * chats it started show here. Chats still owned by an open scoped window stay out of `inWindow`
+	 * lists all the same.
+	 */
+	private async adoptFromDisk(): Promise<void> {
+		await this.whenReady;
+		const files = new Set(await this.listLogFiles());
+		const indexed = new Map<string, IAgentSessionMeta>((await this.readIndexFile())?.sessions.map(meta => [meta.id, meta] as const) ?? []);
+		// As on load: a chat with a log, or one with only unsent text (no log yet).
+		const unknown = [...new Set([...files, ...[...indexed.values()].filter(meta => meta.turnCount === 0).map(meta => meta.id)])]
+			.filter(id => !this.sessions.has(id) && !this.deletedHere.has(id) && !this.handles.has(id));
+		if (!unknown.length || this._store.isDisposed) {
+			return;
+		}
+		for (const id of unknown) {
+			if (this.sessions.has(id) || this.deletedHere.has(id)) {
+				continue;
+			}
+			if (files.has(id)) {
+				this.onDisk.add(id);
+			}
+			const meta = indexed.get(id);
+			if (meta) {
+				// Its window is gone, and a run in it went with it.
+				this.sessions.set(id, meta.status === 'running' ? { ...meta, status: 'interrupted' } : meta);
+			} else {
+				await this.rebuildMeta(id);
+			}
+			if (this.sessions.has(id)) {
+				this.changedHere.add(id);
+			}
+		}
+		this.scheduleIndexWrite();
+		this._onDidChange.fire();
+	}
+
+	private async readIndexFile(): Promise<IAgentHistoryIndex | undefined> {
+		try {
+			const content = await this.fileService.readFile(this.indexFile);
+			return normalizeIndex(JSON.parse(content.value.toString()));
+		} catch {
+			return undefined;
+		}
 	}
 
 	private async listLogFiles(): Promise<string[]> {
@@ -711,6 +816,7 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 				return false;
 			}
 			this.sessions.set(id, { ...meta, status });
+			this.changedHere.add(id);
 			return true;
 		} catch {
 			return false;
@@ -750,12 +856,28 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 				return;
 			}
 			this.indexDirty = false;
-			const index: IAgentHistoryIndex = { version: AGENT_HISTORY_FORMAT_VERSION, sessions: sortSessions([...this.sessions.values()]) };
+			const changed = [...this.changedHere];
+			this.changedHere.clear();
+			// Other windows write this file too: keep their entries, replace only the ones changed here.
+			const onDisk = await this.readIndexFile();
+			const merged = new Map<string, IAgentSessionMeta>(onDisk ? onDisk.sessions.map(meta => [meta.id, meta] as const) : this.sessions);
+			for (const id of onDisk ? changed : []) {
+				const meta = this.sessions.get(id);
+				if (meta) {
+					merged.set(id, meta);
+				} else {
+					merged.delete(id);
+				}
+			}
+			const index: IAgentHistoryIndex = { version: AGENT_HISTORY_FORMAT_VERSION, sessions: sortSessions([...merged.values()]) };
 			try {
 				await this.ensureDirectories();
 				await this.fileService.writeFile(this.indexFile, VSBuffer.fromString(JSON.stringify(index)), ATOMIC);
 			} catch (err) {
 				this.indexDirty = true;
+				for (const id of changed) {
+					this.changedHere.add(id);
+				}
 				this.logService.error('[agent history] failed to write index', err);
 			}
 		});
@@ -772,7 +894,12 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		if (previous && shallowEqualMeta(previous, meta)) {
 			return;
 		}
+		if (!previous) {
+			// A chat this window writes first was started here.
+			this.windowScope.claimSession(meta.id);
+		}
 		this.sessions.set(meta.id, meta);
+		this.changedHere.add(meta.id);
 		this.scheduleIndexWrite();
 		this._onDidChange.fire();
 	}
@@ -800,7 +927,7 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 	}
 
 	private matches(meta: IAgentSessionMeta, options?: IAgentHistoryListOptions): boolean {
-		return matchesHistoryListOptions(meta, options);
+		return matchesHistoryListOptions(meta, options) && (!options?.inWindow || this.windowScope.showsSession(meta.id));
 	}
 
 	get(id: string): IAgentSessionMeta | undefined {
@@ -1087,6 +1214,7 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		for (const meta of this.sessions.values()) {
 			if (meta.unread) {
 				this.sessions.set(meta.id, { ...meta, unread: undefined });
+				this.changedHere.add(meta.id);
 				changed = true;
 			}
 		}
@@ -1100,6 +1228,14 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		const meta = this.sessions.get(id);
 		if (meta && meta.attention !== attention) {
 			this.updateMeta({ ...meta, attention });
+		}
+	}
+
+	async settleRunning(id: string, status: Exclude<AgentSessionStatus, 'running' | 'idle'>): Promise<void> {
+		const meta = this.sessions.get(id);
+		if (meta?.status === 'running') {
+			this.logService.warn(`[agent history] ${id} still read running after its run ended; recording it as ${status}`);
+			this.updateMeta({ ...meta, status });
 		}
 	}
 
@@ -1117,7 +1253,7 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 	async setAgentTitle(id: string, title: string): Promise<void> {
 		const text = title.trim();
 		const meta = this.sessions.get(id);
-		if (!meta || !text || meta.customTitle) {
+		if (!meta || !text || meta.customTitle || isMarkupOnlyTitle(text)) {
 			return;
 		}
 		const handle = this.open(id);
@@ -1139,6 +1275,8 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		await this.closing.get(id);
 		this.sessions.delete(id);
 		this.onDisk.delete(id);
+		this.changedHere.add(id);
+		this.deletedHere.add(id);
 		await Promise.all([
 			this.fileService.del(this.logFileFor(id)).catch(err => { if (!isNotFound(err)) { this.logService.warn(`[agent history] failed to delete ${id}`, err); } }),
 			this.fileService.del(this.draftFileFor(id)).catch(() => undefined),

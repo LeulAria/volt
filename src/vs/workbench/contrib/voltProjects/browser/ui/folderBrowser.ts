@@ -26,6 +26,7 @@ import { IConfigurationService } from '../../../../../platform/configuration/com
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { WorkbenchAsyncDataTree } from '../../../../../platform/list/browser/listService.js';
 import { defaultInputBoxStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
+import { activeContrastBorder, listActiveSelectionBackground, listActiveSelectionForeground, listActiveSelectionIconForeground } from '../../../../../platform/theme/common/colorRegistry.js';
 import { IVoltFsBrowseService, IVoltFsEntry, IVoltFsListing, IVoltQuickAccessRoot } from '../../../../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { browseDirectory, browseLeaf, BrowseGeneration, ensureTrailingSeparator, hasTrailingSeparator, parentDirectory, tildify, untildify } from '../../common/browsePath.js';
 import { rankFolders } from '../../common/folderSearch.js';
@@ -169,7 +170,18 @@ export class FolderBrowser extends Disposable {
 				getRole: row => row.kind === 'message' ? 'presentation' : 'treeitem',
 				getAriaLabel: row => row.kind === 'folder' ? `${row.entry.name}${row.entry.gitRepo ? ', git' : ''}${row.added ? ', added' : ''}` : row.text,
 			},
-			overrideStyles: { listBackground: 'transparent', listFocusOutline: 'transparent', listInactiveFocusOutline: 'transparent' },
+			// Keys stay in the path field, so the list never holds DOM focus: its focused row takes the
+			// list's active selection colors, like a quick pick. Outlines only in high contrast.
+			overrideStyles: {
+				listBackground: 'transparent',
+				listFocusBackground: listActiveSelectionBackground,
+				listFocusForeground: listActiveSelectionForeground,
+				listInactiveFocusBackground: listActiveSelectionBackground,
+				listInactiveFocusForeground: listActiveSelectionForeground,
+				listInactiveSelectionIconForeground: listActiveSelectionIconForeground,
+				listFocusOutline: activeContrastBorder,
+				listInactiveFocusOutline: activeContrastBorder,
+			},
 		}));
 		// Sticky parent rows are not worth their backdrop layer in a picker over the agent window.
 		this.tree.updateOptions({ enableStickyScroll: false });
@@ -190,6 +202,12 @@ export class FolderBrowser extends Disposable {
 				return;
 			}
 			this.fireTarget();
+		}));
+		// The focus is the pick; a click's selection would leave a second highlight behind.
+		this._register(this.tree.onDidChangeSelection(e => {
+			if (e.elements.length) {
+				this.tree.setSelection([]);
+			}
 		}));
 		this._register(this.tree.onMouseDblClick(e => {
 			if (e.element?.kind === 'folder' && e.target !== TreeMouseEventTarget.Twistie) {

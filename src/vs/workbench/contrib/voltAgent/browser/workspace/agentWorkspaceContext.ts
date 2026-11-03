@@ -23,14 +23,25 @@ import { ITerminalInstance } from '../../../terminal/browser/terminal.js';
 import { TerminalEditorInput } from '../../../terminal/browser/terminalEditorInput.js';
 import { IAgentDevicesService } from '../devices/agentDevicesService.js';
 import { DevicePreviewEditorInput } from '../devices/deviceEditor.js';
+import { devicePreviews } from '../devices/devicePreview.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
 import { AgentChangesEditorInput } from '../review/agentChangesEditor.js';
+import { ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
+import { IScratchBoardService } from '../scratchBoard/scratchBoardService.js';
+import { boardDisplayTitle } from '../../common/scratchBoard/scratchIndex.js';
 import { agentSessionToolTabs } from './agentSurfaceHost.js';
 
 /** The turn waits at most this long for the snapshot (git, the device's app); then it goes without. */
 const SNAPSHOT_BUDGET_MS = 1200;
+/** A turn's summary reuses a git result this fresh as it is; an older one is refreshed behind the turn. */
+const GIT_FRESH_MS = 2_000;
+/** Past this a git result is too old to show: the turn waits for a new one. */
+const GIT_STALE_MS = 60_000;
 const OUTPUT_LINES = 30;
+/** CanvasEditorInput.TypeID and CANVAS_SCHEME (visuals/canvas/canvasEditor.ts), not imported for its weight. */
+const CANVAS_INPUT_TYPE_ID = 'workbench.input.voltCanvas';
+const CANVAS_SCHEME = 'volt-canvas';
 
 /**
  * What the user has open beside each chat, for its agent: a compact snapshot the runtime puts in
@@ -40,12 +51,16 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 
 	static readonly ID = 'workbench.contrib.voltAgentWorkspaceContext';
 
+	/** The last `git status` summary per folder (see git). */
+	private readonly gitByFolder = new Map<string, { at: number; settled?: { value: IWorkspaceGit | undefined }; refreshing: boolean }>();
+
 	constructor(
 		@IAgentDevicesService private readonly devices: IAgentDevicesService,
 		@IAgentWorktreeService private readonly worktrees: IAgentWorktreeService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+		@IScratchBoardService private readonly scratchBoards: IScratchBoardService,
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 	) {
 		super();
@@ -56,7 +71,7 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 				name: WORKSPACE_STATUS_TOOL_NAME,
 				title: 'Checked the workspace',
 				group: 'core',
-				description: 'What the user has open beside this chat in Volt, in detail: every right-panel tab (which one is in front), the simulator or emulator shown and the app in front on it, browser tabs and their URLs, terminals with their running or last command, exit code and last output lines, and git branch with the changed files. Call it when the request refers to something on screen ("this", "the app", "the error in the terminal") and the turn\'s workspace summary does not say enough.',
+				description: 'What the user has open beside this chat in Volt, in detail: every right-panel tab (which one is in front), the simulator or emulator shown and the app in front on it, browser tabs and their URLs, scratch boards and design canvases with their ids, terminals with their running or last command, exit code and last output lines, and git branch with the changed files. Call it when the request refers to something on screen ("this", "the app", "the error in the terminal") and the turn\'s workspace summary does not say enough.',
 				inputSchema: { type: 'object', properties: {} },
 			}],
 			invoke: (_name, _args, call) => this.status(call),
@@ -113,6 +128,8 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 				...(device.runtime ? { runtime: device.runtime } : {}),
 				...(foreground ? { foreground } : {}),
 				...(target.host.ssh ? { host: target.host.label } : {}),
+				id: device.id,
+				...(devicePreviews.get(input)?.floating ? { floating: true } : {}),
 			};
 			return { kind: 'device', title, focused, device: info };
 		}
@@ -125,6 +142,16 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 		}
 		if (input instanceof AgentEditorInput) {
 			return { kind: 'chat', title, focused };
+		}
+		if (input instanceof ScratchBoardEditorInput) {
+			const boardId = input.boardId;
+			const board = boardId ? this.scratchBoards.getBoard(boardId) : undefined;
+			return { kind: 'scratch', title: board ? boardDisplayTitle(board) : title, focused, ...(boardId ? { surfaceId: boardId } : {}) };
+		}
+		if (input.typeId === CANVAS_INPUT_TYPE_ID || input.resource?.scheme === CANVAS_SCHEME) {
+			// CanvasEditorInput is read structurally: its module pulls in webviews and the editor.
+			const canvasId = (input as { readonly canvasId?: unknown }).canvasId;
+			return { kind: 'canvas', title, focused, ...(typeof canvasId === 'string' && canvasId ? { surfaceId: canvasId } : {}) };
 		}
 		const resource = input.resource;
 		if (resource?.scheme === Schemas.file || resource?.scheme === Schemas.vscodeUserData) {
@@ -149,7 +176,37 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 		};
 	}
 
-	private async git(folder: string, detail: boolean): Promise<IWorkspaceGit | undefined> {
+	/**
+	 * A turn's summary takes the folder's last git result at once and refreshes it behind the turn:
+	 * `git status` in a big repository takes a few hundred ms, and every prompt would wait for it.
+	 * workspace_status (`detail`) always runs it.
+	 */
+	private git(folder: string, detail: boolean): Promise<IWorkspaceGit | undefined> {
+		const cached = this.gitByFolder.get(folder);
+		const age = cached ? Date.now() - cached.at : Infinity;
+		if (!detail && cached?.settled && age < GIT_STALE_MS) {
+			if (age >= GIT_FRESH_MS && !cached.refreshing) {
+				cached.refreshing = true;
+				void this.readGit(folder, false);
+			}
+			return Promise.resolve(cached.settled.value);
+		}
+		return this.readGit(folder, detail);
+	}
+
+	private async readGit(folder: string, detail: boolean): Promise<IWorkspaceGit | undefined> {
+		const at = Date.now();
+		const value = await this.gitStatus(folder, detail);
+		const current = this.gitByFolder.get(folder);
+		if (!current || current.at <= at) {
+			// Kept as a turn's summary has it: the counts, not workspace_status's file list.
+			const summary = value && detail ? (({ files: _files, ...rest }) => rest)(value) : value;
+			this.gitByFolder.set(folder, { at, settled: { value: summary }, refreshing: false });
+		}
+		return value;
+	}
+
+	private async gitStatus(folder: string, detail: boolean): Promise<IWorkspaceGit | undefined> {
 		const status = await this.worktrees.git(folder, ['status', '--porcelain=v1', '-b']).catch(() => undefined);
 		if (!status || status.exitCode !== 0) {
 			return undefined;

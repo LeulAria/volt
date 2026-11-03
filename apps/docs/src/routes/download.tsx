@@ -30,6 +30,7 @@ import {
 } from "@/lib/releases";
 import { downloadRouteLinks, downloadRouteMeta } from "@/lib/seo";
 import {
+  downloadsLabel,
   GITHUB_RELEASES_URL,
   useDetectedPlatform,
   useReleases,
@@ -40,8 +41,6 @@ const OSES: readonly Os[] = ["darwin", "win32", "linux"];
 interface DownloadSearch {
   os?: Os;
   channel?: Channel;
-  /** `mac`: the Mac install guide drawer is open (a shareable link). */
-  install?: "mac";
 }
 
 export const Route = createFileRoute("/download")({
@@ -49,7 +48,6 @@ export const Route = createFileRoute("/download")({
   validateSearch: (search: Record<string, unknown>): DownloadSearch => ({
     os: OSES.find((o) => o === search.os),
     channel: CHANNELS.find((c) => c === search.channel),
-    install: search.install === "mac" ? "mac" : undefined,
   }),
   head: () => ({
     meta: downloadRouteMeta(),
@@ -80,6 +78,7 @@ function DownloadPage() {
 
   const unsupported = detected !== null && detected.os === null;
   const platformLabel = platformOf(os).label;
+  const downloads = downloadsLabel(state);
 
   return (
     <div className="home-page relative min-h-dvh overflow-x-clip bg-[#0a0d0c] font-sans text-white antialiased">
@@ -97,15 +96,23 @@ function DownloadPage() {
             <p className="mt-5 max-w-xl text-pretty text-[15px] leading-[1.65] text-white/50 md:text-[17px]">
               {unsupported
                 ? "Volt is a desktop app for macOS, Windows, and Linux. Open this page on your computer, or grab a build below."
-                : `Free while in public beta. Here is the build for ${platformLabel}; every other platform and channel is listed below.`}
+                : `Here is the build for ${platformLabel}; every other platform and channel is listed below.`}
             </p>
+            {downloads ? (
+              <p className="mt-3 inline-flex items-center gap-2 text-[13px] text-white/40">
+                <span
+                  className="size-1.5 rounded-full bg-[#3ecf8e]"
+                  aria-hidden
+                />
+                {downloads}
+              </p>
+            ) : null}
             <PrimaryDownload
               state={state}
               channel={channel}
               os={os}
               arch={arch}
               onArch={setArchChoice}
-              installGuide
               className="mt-10"
             />
           </div>
@@ -214,7 +221,7 @@ function DownloadPage() {
             )}
           >
             <div className="w-full max-w-[460px]">
-              <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-white/35">
+              <div className="mb-2 text-[12.5px] font-medium text-white/45">
                 Or install from a terminal
               </div>
               <InstallCommand />

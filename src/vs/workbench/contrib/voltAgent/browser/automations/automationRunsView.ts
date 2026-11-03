@@ -14,7 +14,7 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { activeFilterCount, AutomationRunStatus, filterRuns, formatDuration, IAutomationRun, IAutomationService, isActiveRun, runDuration, runStats } from '../../../../services/voltRuntime/common/automations/automations.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
-import { createHomeFilterIcon } from '../home/agentHomeIcons.js';
+import { createHomeFilterIcon, createHomeSearchIcon } from '../home/agentHomeIcons.js';
 import { IMutableRunFilter, newRunFilter, runToolLabel, showRunFilterMenu, statusLabel } from './automationFilterMenu.js';
 import { formatScheduleWhen } from './automationFormat.js';
 import { providerIcon, statusIcon, toolKindIcon } from './automationIcons.js';
@@ -79,7 +79,8 @@ export class RunHistoryPanel extends Disposable {
 				this.render();
 			}
 		}));
-		iconButton(tools, Codicon.search, localize('voltAutomations.search', "Search"), store, () => {
+		// The sidebar's own search and filter marks, so the pair matches the rest of Volt.
+		iconButton(tools, () => createHomeSearchIcon(), localize('voltAutomations.search', "Search"), store, () => {
 			this.searchBox.classList.toggle('hidden');
 			if (!this.searchBox.classList.contains('hidden')) {
 				this.searchBox.focus();

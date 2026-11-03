@@ -9,6 +9,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService, WorkbenchState } from '../../../../platform/workspace/common/workspace.js';
+import { IVoltWindowScopeService } from '../../voltWindowScope/common/voltWindowScope.js';
 import { IAgentSessionWorkspace } from '../common/history/agentHistory.js';
 import {
 	canonicalProjectRoot,
@@ -114,11 +115,14 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 	constructor(
 		@IStorageService private readonly storageService: IStorageService,
 		@IWorkspaceContextService workspaceContextService: IWorkspaceContextService,
+		@IVoltWindowScopeService private readonly windowScope: IVoltWindowScopeService,
 	) {
 		super();
 		this.projectMap = reviveProjects(this.readJson(PROJECTS_KEY));
 		this.bindings = reviveBindings(this.readJson(BINDINGS_KEY), this.projectMap);
 		this.activeId = this.initialActiveProject(workspaceContextService);
+		// A New Window lists only its own projects; the main window gets them back when it closes.
+		this._register(windowScope.onDidChange(() => this._onDidChangeProjects.fire()));
 		// Every window keeps its own copy. Another window's additions are merged in, never dropped.
 		const listeners = this._register(new DisposableStore());
 		this._register(this.storageService.onDidChangeValue(StorageScope.APPLICATION, PROJECTS_KEY, listeners)(e => {
@@ -136,11 +140,12 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 	/**
 	 * Each window remembers its own project. A window opened on a folder starts on that
 	 * folder, so a new chat never runs in a project the window was not opened for.
-	 * Empty windows start on the project used last anywhere.
+	 * Empty windows start on the project used last anywhere, except a New Window with a scope
+	 * of its own, which starts on none.
 	 */
 	private initialActiveProject(workspaceContextService: IWorkspaceContextService): string | undefined {
 		const own = this.storageService.get(ACTIVE_KEY, StorageScope.WORKSPACE, '');
-		if (own && this.isListed(own)) {
+		if (own && this.isListed(own) && this.windowScope.showsProject(own)) {
 			return own;
 		}
 		const folders = workspaceContextService.getWorkbenchState() === WorkbenchState.FOLDER ? workspaceContextService.getWorkspace().folders : [];
@@ -149,8 +154,11 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 			this.storageService.store(ACTIVE_KEY, project.id, StorageScope.WORKSPACE, StorageTarget.MACHINE);
 			return project.id;
 		}
+		if (this.windowScope.scope) {
+			return undefined;
+		}
 		const last = this.storageService.get(ACTIVE_KEY, StorageScope.APPLICATION, '');
-		return last && this.isListed(last) ? last : undefined;
+		return last && this.isListed(last) && this.windowScope.showsProject(last) ? last : undefined;
 	}
 
 	/** Adds projects another window registered. Returns whether anything was new. */
@@ -179,7 +187,7 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 	}
 
 	get projects(): readonly IVoltProjectRecord[] {
-		return [...this.projectMap.values()].filter(project => !project.scratch);
+		return [...this.projectMap.values()].filter(project => !project.scratch && this.windowScope.showsProject(project.id));
 	}
 
 	get activeProject(): IVoltProjectRecord | undefined {
@@ -213,7 +221,13 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 	private addProject(root: URI, displayName: string | undefined, scratch: boolean): IVoltProjectRecord {
 		const canonical = canonicalProjectRoot(root);
 		const id = projectIdForRoot(canonical);
+		// Another window may have added it a moment ago; then it is not new here either.
+		this.absorbProjects();
 		const existing = this.projectMap.get(id);
+		if (!scratch && !existing?.scratch) {
+			// Claimed before it is stored, so the main window never lists a New Window's project.
+			this.windowScope.claimProject(id, !existing);
+		}
 		if (existing) {
 			return existing;
 		}
@@ -250,15 +264,24 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 	selectProject(id: string | undefined): void {
 		// A scratch chat on screen shows no project; selecting its folder would list it.
 		const next = id && this.isListed(id) ? id : undefined;
+		if (next) {
+			this.windowScope.claimProject(next, false);
+		}
 		if (this.activeId === next) {
 			return;
 		}
 		this.activeId = next;
+		// A New Window's choice is its own: the project other empty windows start on stays as it was.
+		const shared = !this.windowScope.scope;
 		if (next) {
-			this.storageService.store(ACTIVE_KEY, next, StorageScope.APPLICATION, StorageTarget.USER);
+			if (shared) {
+				this.storageService.store(ACTIVE_KEY, next, StorageScope.APPLICATION, StorageTarget.USER);
+			}
 			this.storageService.store(ACTIVE_KEY, next, StorageScope.WORKSPACE, StorageTarget.MACHINE);
 		} else {
-			this.storageService.remove(ACTIVE_KEY, StorageScope.APPLICATION);
+			if (shared) {
+				this.storageService.remove(ACTIVE_KEY, StorageScope.APPLICATION);
+			}
 			this.storageService.remove(ACTIVE_KEY, StorageScope.WORKSPACE);
 		}
 		this._onDidChangeActiveProject.fire(next);
@@ -284,6 +307,10 @@ export class VoltSessionContextService extends Disposable implements IVoltSessio
 		}
 		if (current) {
 			return this.bindingFor(sessionId);
+		}
+		if (!project.scratch) {
+			// A chat started here runs in this window's project.
+			this.windowScope.claimProject(projectId, false);
 		}
 		this.bindings.set(sessionId, projectId);
 		this.persistBindings();

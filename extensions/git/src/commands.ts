@@ -11,12 +11,14 @@ import TelemetryReporter from '@vscode/extension-telemetry';
 import { uniqueNamesGenerator, adjectives, animals, colors, NumberDictionary } from '@joaomoreno/unique-names-generator';
 import { ForcePushMode, GitErrorCodes, RefType, Status, CommitOptions, RemoteSourcePublisher, Remote, Branch, Ref } from './api/git';
 import { getLockFilePath, Git, Stash, Worktree } from './git';
+import type { CommitActivityDay } from './commitActivity';
 import { Model } from './model';
 import { GitResourceGroup, Repository, Resource, ResourceGroupType } from './repository';
 import { DiffEditorSelectionHunkToolbarContext, LineChange, applyLineChanges, getIndexDiffInformation, getModifiedRange, getWorkingTreeDiffInformation, intersectDiffWithRange, invertLineChange, toLineChanges, toLineRanges, compareLineChanges } from './staging';
 import { fromGitUri, toGitUri, isGitUri, toMergeUris, toMultiFileDiffEditorUris } from './uri';
 import { DiagnosticSeverityConfig, dispose, fromNow, grep, isDefined, isDescendant, isLinuxSnap, isRemote, isWindows, pathEquals, relativePath, subject, toDiagnosticSeverity, truncate } from './util';
 import { GitTimelineItem } from './timelineProvider';
+import type { BlameFileChangesDetails } from './blame';
 import { ApiRepository } from './api/api1';
 import { getRemoteSourceActions, pickRemoteSource } from './remoteSource';
 import { RemoteSourceAction } from './typings/git-base';
@@ -4252,6 +4254,27 @@ export class CommandCenter {
 		await repository.cherryPick(historyItem.id);
 	}
 
+	@command('git.graph.revert', { repository: true })
+	async revertCommit(repository: Repository, historyItem?: SourceControlHistoryItem): Promise<void> {
+		if (!historyItem) {
+			return;
+		}
+
+		// A merge commit is reverted against its first parent
+		await repository.revertCommit(historyItem.id, historyItem.parentIds.length > 1 ? 1 : undefined);
+	}
+
+	/** The Git Graph's activity strip: commits per day for `rootPath` (fsPath), walking `refNames` or every branch. */
+	@command('_volt.git.commitActivity')
+	async commitActivity(rootPath?: unknown, refNames?: unknown): Promise<CommitActivityDay[] | undefined> {
+		if (typeof rootPath !== 'string') {
+			return undefined;
+		}
+		const repository = this.model.getRepository(Uri.file(rootPath));
+		const revs = Array.isArray(refNames) ? refNames.filter((ref): ref is string => typeof ref === 'string' && /^[^\s-][^\s]*$/.test(ref)) : undefined;
+		return repository?.getCommitActivity(revs);
+	}
+
 	@command('git.cherryPickAbort', { repository: true })
 	async cherryPickAbort(repository: Repository): Promise<void> {
 		await repository.cherryPickAbort();
@@ -5207,6 +5230,50 @@ export class CommandCenter {
 	@command('git.blame.toggleStatusBarItem')
 	toggleBlameStatusBarItem(): void {
 		this._toggleBlameSetting('blame.statusBarItem.enabled');
+	}
+
+	/**
+	 * Opens the changes of one file in a commit, against the commit's first parent.
+	 * @param uri The file (on disk or a git uri); used when `details` is missing.
+	 * @param details The path of the file in the commit and in its parent, from `git blame`.
+	 */
+	@command('git.blame.openFileChanges', { repository: true })
+	async blameOpenFileChanges(repository: Repository, hash: string, uri?: Uri, details?: BlameFileChangesDetails): Promise<void> {
+		if (typeof hash !== 'string' || !hash) {
+			return;
+		}
+
+		const fsPath = details?.path
+			? path.join(repository.root, details.path)
+			: uri ? (isGitUri(uri) ? fromGitUri(uri).path : uri.fsPath) : undefined;
+		if (!fsPath) {
+			return;
+		}
+
+		let parentHash: string | undefined;
+		let parentFsPath: string | undefined;
+		if (details?.path) {
+			// `git blame` names the parent only when the file existed in it
+			parentHash = details.previousHash;
+			parentFsPath = details.previousPath ? path.join(repository.root, details.previousPath) : undefined;
+		} else {
+			const commit = await repository.getCommit(hash);
+			parentHash = commit.parents[0];
+			parentFsPath = fsPath;
+		}
+
+		const fileUri = Uri.file(fsPath);
+		const shortHash = truncate(hash, workspace.getConfiguration('git', Uri.file(repository.root)).get<number>('commitShortHashLength', 7), false);
+		const basename = path.basename(fsPath);
+
+		if (parentHash && parentFsPath) {
+			const title = `${basename} (${shortHash}^ ↔ ${shortHash})`;
+			await commands.executeCommand('vscode.diff', toGitUri(Uri.file(parentFsPath), parentHash), toGitUri(fileUri, hash), title);
+		} else {
+			// Added in the commit (or the root commit)
+			const title = l10n.t('{0} (added in {1})', basename, shortHash);
+			await commands.executeCommand('vscode.diff', toGitUri(fileUri, await repository.getEmptyTree()), toGitUri(fileUri, hash), title);
+		}
 	}
 
 	private _toggleBlameSetting(setting: string): void {

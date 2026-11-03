@@ -194,3 +194,20 @@ https://wrkr.dev/
 * Interactive progress UI
 * Live execution timeline
 * Human-readable agent traces
+
+---
+
+## Test real agent runs from start to finish
+
+Nearly every feature from the last two weeks is untested at runtime: durable resume, the self-healing orchestrator,
+keep-working, harness hardening, channel switching, the Terminals tab, the design canvas, and the agent server. The
+repo has no benchmark or replay suite, only unit tests, and some of those already fail at HEAD. So we can't tell
+whether a change helps long runs or quietly breaks them.
+
+Build a small headless set of real tasks (10–20 repo tasks across short, multi-hour, crash-in-the-middle and approval
+cases). It runs against the agent server and scores pass/fail, steps, tokens and recoveries. Durability features
+can't be built on without being measured, and "agents lose hope after 2 hours" is exactly the kind of bug only this
+would catch.
+
+Start from the proof cases: every gated run is saved to `<user data>/voltProofs/cases.jsonl` with its request, project,
+contract and receipt (`ProofCaseJournal`). A replay sends the same request and scores it against the same contract.

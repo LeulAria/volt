@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { VoltMode } from '../modes.js';
+import { modePolicy, VoltMode } from '../modes.js';
 import { IRoutableModel, IRoleAssignments, IRoutingDecision, IRoutingRequest, roleFor, route } from './modelRouter.js';
 import { IExecutionRoute, IExecutionTarget, routeExecution } from './execRouter.js';
 import { IClarification, decideClarification } from './clarification.js';
@@ -185,7 +185,7 @@ export function prepareRun(input: IPrepareInput): IPreparedRun {
 }
 
 export function preparedLaneFraming(prepared: IPreparedRun): string {
-	const allowWrites = prepared.intent.lane !== 'chat';
+	const allowWrites = modePolicy(prepared.envelope.mode).allowWrites;
 	const shaped = framingForShape(prepared.intel.shape, prepared.intent.wantsWeb, { allowWrites });
 	const parts = allowWrites
 		? [laneDefinition(prepared.intent.lane).framing, ...(shaped ? [shaped] : [])]

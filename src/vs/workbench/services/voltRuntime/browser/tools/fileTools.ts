@@ -23,6 +23,21 @@ export interface IToolDocuments {
 	writeOpen(uri: URI, text: string): Promise<boolean>;
 }
 
+let hostDocuments: IToolDocuments | undefined;
+
+/**
+ * The agent server has no editors: it sets the documents the windows hold (their unsaved changes,
+ * sent as they happen), so an agent reads what the user sees and its edits land in that buffer.
+ * Unset, the runtime uses this window's editors.
+ */
+export function setRuntimeToolDocuments(documents: IToolDocuments | undefined): void {
+	hostDocuments = documents;
+}
+
+export function runtimeToolDocuments(): IToolDocuments | undefined {
+	return hostDocuments;
+}
+
 export interface IFileToolHost {
 	readonly fileService: IFileService;
 	readonly root: () => URI | undefined;

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-/* A sent prompt's images on one row (agentMessageImageRow.ts): tiles past the width hide, the last shows "+N". */
+/* A sent prompt's or the composer's images on one row (agentMessageImageRow.ts): tiles past the width hide, the last shows "+N". */
 .volt-agent-image-strip.one-row {
 	flex-wrap: nowrap;
 	overflow: hidden;
@@ -21,7 +21,8 @@
 	opacity: 0.35;
 }
 
-.volt-agent-image-tile.more > .volt-agent-image-tile-badge {
+.volt-agent-image-tile.more > .volt-agent-image-tile-badge,
+.volt-agent-image-tile.more > .volt-agent-image-tile-remove {
 	display: none;
 }
 

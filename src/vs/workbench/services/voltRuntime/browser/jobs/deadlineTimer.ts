@@ -27,10 +27,10 @@ export class DeadlineTimer extends Disposable {
 		private readonly heartbeatMs = HEARTBEAT_MS,
 	) {
 		super();
-		const wake = () => this.check();
-		// Not base/browser/window: importing it throws where there is no `window` (the agent server).
+		// The agent server runs this too, where there is no window: the heartbeat alone wakes it.
 		const win = (globalThis as { window?: Window }).window;
 		if (win) {
+			const wake = () => this.check();
 			win.addEventListener('online', wake);
 			win.addEventListener('focus', wake);
 			win.document.addEventListener('visibilitychange', wake);

@@ -600,6 +600,20 @@ export function findPullRequestUrls(text: string): string[] {
 	return [...found];
 }
 
+/**
+ * The pull request a command opened: `gh pr create` ends by printing its URL alone on the last
+ * line. Output that only mentions a pull request (a log, `gh pr view`, a list) is not one.
+ */
+export function createdPullRequestUrl(output: string): string | undefined {
+	const last = output.trimEnd().split(/\r?\n/).pop()?.trim() ?? '';
+	return /^https?:\/\/[a-z0-9.-]+\/[\w.-]+\/[\w.-]+\/pull\/\d+$/i.test(last) ? last : undefined;
+}
+
+/** A command's output is a `git push` that sent commits: "To <remote>" and then a ref line ("a..b  x -> x"). */
+export function isGitPushOutput(output: string): boolean {
+	return /^To \S+$/m.test(output) && /^\s*(?:[+*-]\s+)?(?:[0-9a-f]{7,}\.\.\.?[0-9a-f]{7,}|\[new branch\])\s+\S+\s+->\s+\S+/m.test(output);
+}
+
 //#endregion
 
 //#region Ranking
@@ -853,6 +867,83 @@ export function buildReviewLinePrompt(pr: Pick<IVoltPullRequest, 'number' | 'tit
 	].join('\n');
 }
 
+/** A comment for the chat's agent from the pull request view: on the pull request, or on lines of a file. */
+export interface IAgentPrComment {
+	readonly text: string;
+	readonly path?: string;
+	readonly startLine?: number;
+	readonly endLine?: number;
+	/** The lines it is on (or the file's patch), quoted for the agent. */
+	readonly code?: string;
+}
+
+/** Commits listed in the comments prompt, newest kept; a longer branch says how many were left out. */
+const MAX_PROMPT_COMMITS = 30;
+/** Code quoted per comment; a whole file's patch is cut here. */
+const MAX_COMMENT_CODE_CHARS = 6_000;
+
+/** "src/a.ts, lines 3-5", "src/a.ts", or undefined for a comment on the whole pull request. */
+export function prCommentPlace(comment: Pick<IAgentPrComment, 'path' | 'startLine' | 'endLine'>): string | undefined {
+	if (!comment.path) {
+		return undefined;
+	}
+	const { startLine: start, endLine: end } = comment;
+	if (!start) {
+		return comment.path;
+	}
+	return !end || end === start ? `${comment.path}, line ${start}` : `${comment.path}, lines ${start}-${end}`;
+}
+
+/**
+ * The batch of comments the pull request view sends to the chat: the pull request (title, URL,
+ * branch, head and its commits) once, then each comment numbered with the code it is on.
+ */
+export function buildPrCommentsPrompt(pr: Pick<IVoltPullRequestDetail, 'number' | 'title' | 'url' | 'headRefName' | 'baseRefName' | 'headRefOid' | 'commits'>, comments: readonly IAgentPrComment[]): string {
+	const commits = pr.commits.slice(-MAX_PROMPT_COMMITS);
+	const skipped = pr.commits.length - commits.length;
+	const lines = [
+		comments.length === 1 ? `Address my comment on pull request #${pr.number}.` : `Address my ${comments.length} comments on pull request #${pr.number}.`,
+		'',
+		prContext(pr),
+		`Head commit: ${pr.headRefOid.slice(0, 12)}`,
+	];
+	if (pr.commits.length) {
+		lines.push('', `Commits (${pr.commits.length}, oldest first):`);
+		if (skipped) {
+			lines.push(`- (${skipped} earlier commits not listed)`);
+		}
+		lines.push(...commits.map(commit => `- ${commit.oid.slice(0, 7)} ${commit.headline}${commit.author ? ` (${commit.author})` : ''}`));
+	}
+	lines.push('', comments.length === 1 ? 'Comment:' : 'Comments:');
+	comments.forEach((comment, i) => {
+		const place = prCommentPlace(comment);
+		lines.push('', `${i + 1}. ${place ? `On ${place}` : 'On the pull request'}:`);
+		const code = comment.code?.replace(/\s+$/, '');
+		if (code) {
+			const quoted = code.length > MAX_COMMENT_CODE_CHARS ? `${code.slice(0, MAX_COMMENT_CODE_CHARS)}\n... (cut)` : code;
+			// A fence longer than any run of backticks in the code, so the quote cannot end early.
+			const fence = '`'.repeat(Math.max(3, ...(quoted.match(/`+/g) ?? []).map(run => run.length + 1)));
+			lines.push(fence, quoted, fence);
+		}
+		lines.push(comment.text.trim());
+	});
+	lines.push('', `Work on ${pr.headRefName} (check it out first if this chat is on another branch), make the changes, and tell me what you did for each comment.`);
+	return lines.join('\n');
+}
+
+/** What the chat's transcript shows for that batch: the comments, not the whole prompt. */
+export function prCommentsDisplay(pr: Pick<IVoltPullRequest, 'number' | 'headRefName' | 'baseRefName'>, comments: readonly IAgentPrComment[]): string {
+	const head = `#${pr.number} \u00b7 ${pr.headRefName} \u2192 ${pr.baseRefName}`;
+	if (comments.length === 1) {
+		const place = prCommentPlace(comments[0]);
+		return `${head}\n${place ? `${place}: ` : ''}${comments[0].text.trim()}`;
+	}
+	return [head, ...comments.map((comment, i) => {
+		const place = prCommentPlace(comment);
+		return `${i + 1}. ${place ? `${place}: ` : ''}${comment.text.trim()}`;
+	})].join('\n');
+}
+
 export function buildExplainPrompt(pr: Pick<IVoltPullRequest, 'number' | 'title' | 'url' | 'headRefName' | 'baseRefName'>): string {
 	return [
 		`Explain pull request #${pr.number}: what it changes, why, and anything risky a reviewer should look at.`,
@@ -874,15 +965,18 @@ function clip(text: string, max: number): string {
 	return text.length > max ? `${text.slice(0, max)}\n… (${text.length - max} more characters left out)` : text;
 }
 
-export function buildCommitMessagePrompt(branch: string | undefined, files: string, patch: string, recentSubjects: readonly string[] = []): string {
+export function buildCommitMessagePrompt(branch: string | undefined, files: string, patch: string, recentSubjects: readonly string[] = [], previous?: string): string {
 	return [
 		'You write concise git commit messages.',
 		'Return a JSON object with keys: subject, body.',
 		'Rules:',
-		'- subject must be imperative, at most 72 characters, no trailing period',
+		'- subject follows Conventional Commits: type(scope): summary, with type one of feat, fix, refactor, perf, docs, test, style, build, ci, chore and a short scope for the area changed (e.g. feat(cart): apply discount at checkout)',
+		'- the summary is imperative, lower case, at most 72 characters in all, no trailing period',
 		'- body can be an empty string or short bullet points',
 		'- capture the primary user-visible or developer-visible change',
-		...(recentSubjects.length ? ['- match the style of these recent commits:', ...recentSubjects.slice(0, 8).map(subject => `  ${subject}`)] : []),
+		...(recentSubjects.length ? ['- recent commits, for the scopes and wording this repository uses:', ...recentSubjects.slice(0, 8).map(subject => `  ${subject}`)] : []),
+		// Regenerate: the user saw this one and asked for another.
+		...(previous?.trim() ? ['- the user asked for a new message instead of this one, so write a different subject (other wording, the most important change first), not a copy:', ...previous.trim().split('\n').slice(0, 6).map(line => `  ${line}`)] : []),
 		'',
 		`Branch: ${branch ?? '(detached)'}`,
 		'Changed files:',
@@ -915,6 +1009,89 @@ export function buildPullRequestTextPrompt(head: string, base: string, commits: 
 		clip(patch, MAX_DIFF_CHARS),
 		...(template ? ['', 'Template:', clip(template, 4000)] : []),
 	].join('\n');
+}
+
+/** Branch names the suggestion card offers. */
+export const BRANCH_NAME_SUGGESTIONS = 4;
+
+/** What a branch is about, for naming it: the chat that works on it and what it holds so far. */
+export interface IBranchNameContext {
+	readonly current: string;
+	readonly chatTitle?: string;
+	readonly firstPrompt?: string;
+	/** Subjects of the commits on the branch, oldest first. */
+	readonly commits: readonly string[];
+	/** Uncommitted files as `M\tpath` lines, and their patch. */
+	readonly files: string;
+	readonly patch: string;
+	readonly recentSubjects: readonly string[];
+}
+
+export function buildBranchNamePrompt(context: IBranchNameContext): string {
+	return [
+		'You name git branches.',
+		`Return a JSON object with one key, names: an array of ${BRANCH_NAME_SUGGESTIONS} different branch names for the work below, best first.`,
+		'Rules:',
+		'- each name is type/short-kebab-summary, type one of feat, fix, refactor, perf, docs, test, chore (e.g. feat/cart-discounts, fix/login-redirect)',
+		'- the summary is 2 to 4 lower case words joined by dashes, at most 40 characters in all',
+		'- name the branch\'s whole work (the request, its commits and the uncommitted changes together), not only the latest edit',
+		'- vary the wording or the angle between names, not just the type',
+		...(context.recentSubjects.length ? ['- recent commits, for the words this repository uses:', ...context.recentSubjects.slice(0, 8).map(subject => `  ${subject}`)] : []),
+		'',
+		`Current branch: ${context.current}`,
+		...(context.chatTitle ? [`Chat title: ${context.chatTitle}`] : []),
+		...(context.firstPrompt ? ['Request:', clip(context.firstPrompt, 2000)] : []),
+		...(context.commits.length ? ['Commits on the branch:', ...context.commits.slice(0, 30).map(commit => `- ${commit}`)] : []),
+		...(context.files.trim() ? ['Uncommitted files:', clip(context.files, MAX_FILES_CHARS), '', 'Patch:', clip(context.patch, MAX_DIFF_CHARS / 2)] : []),
+	].join('\n');
+}
+
+/** A suggested name made safe for git: lower case, dashes for spaces, no quotes, list markers or `refs/heads/`. */
+export function sanitizeBranchSuggestion(raw: string): string | undefined {
+	const name = raw.trim()
+		.replace(/^(?:[-*•]|\d+[.)])\s+/, '')
+		.replace(/^["'`]+|["'`,]+$/g, '')
+		.replace(/^refs\/heads\//, '')
+		.toLowerCase()
+		.replace(/[\s_]+/g, '-')
+		.replace(/[^a-z0-9/.-]/g, '')
+		.replace(/\.{2,}/g, '-')
+		.replace(/\.lock(?=\/|$)/g, '')
+		.replace(/-{2,}/g, '-')
+		.replace(/\/{2,}/g, '/')
+		.replace(/(^|\/)[-.]+|[-.]+(?=\/|$)/g, '$1')
+		.replace(/^\/+|\/+$/g, '');
+	return name.length >= 3 && name.length <= 60 ? name : undefined;
+}
+
+/** Up to {@link BRANCH_NAME_SUGGESTIONS} distinct names from a model reply (`{ names: [...] }`, or one name per line), never `current`. */
+export function branchNamesFrom(raw: string | undefined, current?: string): string[] {
+	if (!raw) {
+		return [];
+	}
+	const text = raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '');
+	let candidates: unknown[] | undefined;
+	const start = text.indexOf('{');
+	const end = text.lastIndexOf('}');
+	if (start >= 0 && end > start) {
+		try {
+			const parsed = JSON.parse(text.slice(start, end + 1)) as { names?: unknown };
+			candidates = Array.isArray(parsed.names) ? parsed.names : undefined;
+		} catch {
+			// Read it line by line instead.
+		}
+	}
+	// Without JSON, only lines shaped like type/name count: prose around them ("Here are some names:") does not.
+	const lines = !candidates;
+	candidates ??= text.split('\n').filter(line => /^\s*(?:[-*•]|\d+[.)])?\s*[`"']?[A-Za-z]+\/\S+\s*$/.test(line));
+	const names: string[] = [];
+	for (const candidate of candidates) {
+		const name = typeof candidate === 'string' ? sanitizeBranchSuggestion(candidate) : undefined;
+		if (name && (!lines || name.includes('/')) && name !== current && !names.includes(name)) {
+			names.push(name);
+		}
+	}
+	return names.slice(0, BRANCH_NAME_SUGGESTIONS);
 }
 
 /** Reads `{ subject, body }` / `{ title, body }` from a model reply, tolerating code fences and prose around it. */

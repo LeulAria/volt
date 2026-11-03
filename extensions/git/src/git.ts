@@ -69,6 +69,32 @@ export interface LogFileOptions {
 	readonly shortStats?: boolean;
 }
 
+/**
+ * Log options used internally, on top of the public API's log options.
+ */
+export interface GitLogOptions extends LogOptions {
+	/** Optional. Only commits newer than the date (`--since`). */
+	readonly since?: string;
+	/** Optional. Only commits older than the date (`--until`). */
+	readonly until?: string;
+	/** Optional. Follow `path` across renames (`--follow`); `path` must be a single file. */
+	readonly follow?: boolean;
+	/** Optional. Only commits that touched the line range of a file (`-L`). Statistics are not available. */
+	readonly lineRange?: { readonly startLine: number; readonly endLine: number; readonly path: string };
+	/** Optional. Only merge commits, or no merge commits. */
+	readonly merges?: 'only' | 'none';
+	/** Optional. Only the commits given in `refNames`, without their ancestors. `maxEntries` is ignored. */
+	readonly noWalk?: boolean;
+	/** Optional. Include the full reference names of the commits even without `refNames`. */
+	readonly decorate?: boolean;
+	/**
+	 * Optional. How a walk from `refNames` is ordered: `topo` (the default, what a graph needs) or
+	 * `date`, git's own commit-date order, which streams matches instead of walking the whole graph
+	 * first (searches).
+	 */
+	readonly walkOrder?: 'topo' | 'date';
+}
+
 function parseVersion(raw: string): string {
 	return raw.replace(/^git version /, '');
 }
@@ -1124,6 +1150,13 @@ export interface BlameInformation {
 	readonly authorName?: string;
 	readonly authorEmail?: string;
 	readonly authorDate?: number;
+	/** The repository-relative path of the file in the commit. */
+	readonly filename?: string;
+	/** The parent commit and the path of the file in it; missing when the commit added the file. */
+	readonly previous?: {
+		readonly hash: string;
+		readonly filename: string;
+	};
 	readonly ranges: {
 		readonly startLineNumber: number;
 		readonly endLineNumber: number;
@@ -1141,6 +1174,7 @@ function parseGitBlame(data: string): BlameInformation[] {
 	let authorEmail: string | undefined = undefined;
 	let authorTime: number | undefined = undefined;
 	let message: string | undefined = undefined;
+	let previous: { hash: string; filename: string } | undefined = undefined;
 	let startLineNumber: number | undefined = undefined;
 	let endLineNumber: number | undefined = undefined;
 
@@ -1168,6 +1202,13 @@ function parseGitBlame(data: string): BlameInformation[] {
 		if (commitHash && line.startsWith('summary ')) {
 			message = line.substring('summary '.length);
 		}
+		if (commitHash && line.startsWith('previous ')) {
+			// previous <hash> <filename>
+			const separator = line.indexOf(' ', 'previous '.length);
+			if (separator !== -1) {
+				previous = { hash: line.substring('previous '.length, separator), filename: line.substring(separator + 1) };
+			}
+		}
 
 		// Commit end
 		if (commitHash && startLineNumber && endLineNumber && line.startsWith('filename ')) {
@@ -1176,12 +1217,13 @@ function parseGitBlame(data: string): BlameInformation[] {
 				existingCommit.ranges.push({ startLineNumber, endLineNumber });
 				blameInformation.set(commitHash, existingCommit);
 			} else {
+				const filename = line.substring('filename '.length);
 				blameInformation.set(commitHash, {
-					hash: commitHash, authorName, authorEmail, authorDate: authorTime, subject: message, ranges: [{ startLineNumber, endLineNumber }]
+					hash: commitHash, authorName, authorEmail, authorDate: authorTime, subject: message, filename, previous, ranges: [{ startLineNumber, endLineNumber }]
 				});
 			}
 
-			commitHash = authorName = authorEmail = authorTime = message = startLineNumber = endLineNumber = undefined;
+			commitHash = authorName = authorEmail = authorTime = message = previous = startLineNumber = endLineNumber = undefined;
 		}
 	}
 
@@ -1351,16 +1393,46 @@ export class Repository {
 		});
 	}
 
-	async log(options?: LogOptions, cancellationToken?: CancellationToken): Promise<Commit[]> {
+	async log(options?: GitLogOptions, cancellationToken?: CancellationToken): Promise<Commit[]> {
 		const spawnOptions: SpawnOptions = { cancellationToken };
 		const args = ['log', `--format=${COMMIT_FORMAT}`, '-z'];
 
-		if (options?.shortStats) {
+		if (options?.lineRange) {
+			// `-L` only supports the patch (`-p`) and no-patch (`-s`) diff formats
+			args.push('-L', `${options.lineRange.startLine},${options.lineRange.endLine}:${options.lineRange.path}`, '-s');
+		} else if (options?.shortStats) {
 			args.push('--shortstat');
 
 			if (this._git.compareGitVersionTo('2.31') !== -1) {
 				args.push('--diff-merges=first-parent');
 			}
+		}
+
+		if (options?.noWalk) {
+			// Only the given commits, in the given order
+			args.push('--no-walk=unsorted');
+		}
+
+		if (options?.since) {
+			args.push(`--since=${options.since}`);
+		}
+
+		if (options?.until) {
+			args.push(`--until=${options.until}`);
+		}
+
+		if (options?.merges === 'only') {
+			args.push('--merges');
+		} else if (options?.merges === 'none') {
+			args.push('--no-merges');
+		}
+
+		if (options?.follow && options.path && !options.lineRange) {
+			args.push('--follow');
+		}
+
+		if (options?.decorate && !options.refNames) {
+			args.push('--decorate=full');
 		}
 
 		if (options?.reverse) {
@@ -1373,7 +1445,8 @@ export class Repository {
 
 		if (options?.range) {
 			args.push(options.range);
-		} else {
+		} else if (!options?.noWalk) {
+			// `--no-walk` walks again when combined with `-n`
 			args.push(`-n${options?.maxEntries ?? 32}`);
 		}
 
@@ -1396,7 +1469,10 @@ export class Repository {
 		}
 
 		if (options?.refNames) {
-			args.push('--topo-order');
+			if (!options.noWalk && options.walkOrder !== 'date') {
+				// `--topo-order` walks the ancestors of the given commits
+				args.push('--topo-order');
+			}
 			args.push('--decorate=full');
 
 			// In order to avoid hitting the command line limit due to large number of reference
@@ -1406,7 +1482,7 @@ export class Repository {
 			args.push('--stdin');
 		}
 
-		if (options?.path) {
+		if (options?.path && !options.lineRange) {
 			args.push('--', options.path);
 		}
 
@@ -1417,6 +1493,16 @@ export class Repository {
 		}
 
 		return parseGitCommits(result.stdout);
+	}
+
+	/**
+	 * The local branch a commit is on (`git name-rev`), without the `~N`/`^N` suffix,
+	 * or `undefined` when no local branch contains the commit.
+	 */
+	async getBranchNameOfCommit(hash: string, cancellationToken?: CancellationToken): Promise<string | undefined> {
+		const result = await this.exec(['name-rev', '--name-only', '--no-undefined', '--refs=refs/heads/*', hash], { cancellationToken });
+		const name = result.stdout.trim().replace(/[~^].*$/, '');
+		return name !== '' ? name : undefined;
 	}
 
 	async logFile(uri: Uri, options?: LogFileOptions, cancellationToken?: CancellationToken): Promise<Commit[]> {
@@ -2404,6 +2490,18 @@ export class Repository {
 
 	async cherryPickAbort(): Promise<void> {
 		await this.exec(['cherry-pick', '--abort']);
+	}
+
+	/** Reverts a commit; `mainline` is the parent number to revert a merge commit against (`-m`). */
+	async revertCommit(commitHash: string, mainline?: number): Promise<void> {
+		const args = ['revert', '--no-edit'];
+
+		if (typeof mainline === 'number') {
+			args.push('-m', String(mainline));
+		}
+
+		args.push(commitHash);
+		await this.exec(args);
 	}
 
 	async blame(path: string): Promise<string> {

@@ -39,10 +39,16 @@ export interface IIntent {
 	readonly wantsScreens?: boolean;
 	/** Screens, flows or a design board to work on ("design the onboarding flow", "mobile screens", "figma"): canvas_render. */
 	readonly wantsCanvas?: boolean;
+	/** A sketch, diagram, brainstorm or notes on the whiteboard ("sketch out the architecture", "mind map"): scratch_draw. */
+	readonly wantsScratch?: boolean;
+	/** A native mobile app on the iOS Simulator or Android Emulator ("run the ios app", "on the simulator"): device_* tools. */
+	readonly wantsDevice?: boolean;
 	/** How they asked to be answered - form, completeness, lookup. Every lane reads this. */
 	readonly shape: IRequestShape;
 	/** Something long-running is involved: a server, a watcher, Docker. Managed terminals fit. */
 	readonly wantsServices?: boolean;
+	/** Committing, pushing, naming the branch or opening a pull request: Volt's commit review and branch naming. */
+	readonly wantsGit?: boolean;
 }
 
 export interface IIntentContext {
@@ -94,6 +100,8 @@ const WORKSPACE_REF = /\b(this|the|our|my) (repo|repository|code ?base|project|a
  * verb ("show me it", "open this"): "check it with a simulation" or "run this repo's tests" is not a preview.
  */
 /** Long-running things: containers, servers, watchers, daemons. */
+/** "commit this", "push it", "raise a PR", "rename the branch": the commit review and branch naming apply. */
+const GIT_INTENT = /\b(?:commit(?:s|ting)?|push(?:ed|ing)?|pull request|(?:raise|open|create|make|send) (?:a |the )?pr|pr to|(?:re)?name (?:the |this |my )?branch|branch name)\b/i;
 const SERVICE_INTENT = /\b(?:docker|compose|container|kubernetes|k8s|dev ?server|web ?server|(?:start|run|launch|boot|restart|spin up)\b[^.?!]{0,30}\b(?:server|service|api|backend|database|db|redis|postgres|mongo|stack|worker|queue|app)|watch mode|watcher|hot reload|localhost:\d+)\b/i;
 const PREVIEW_INTENT = /\b(?:preview|open|show|see|view|look at)\b[^.?!]{0,40}\b(?:app|site|website|page|server|project|frontend|front-end|ui|it|this|the (?:thing|result|game|demo)|in (?:the |a )?browser|locally|on localhost)\b|\b(?:run|start|launch|serve|spin up|boot)\b[^.?!]{0,30}\b(?:app|site|website|page|(?:dev |web |http )?server|frontend|front-end|ui|game|demo|locally|on localhost|in (?:the |a )?browser)\b|\b(?:check|test)\b[^.?!]{0,30}\b(?:in (?:the |a )?browser|on localhost|the (?:ui|page|site|website|frontend))\b|\b(?:dev server|localhost|live preview|hot reload|in the browser|show me (?:the|what|how it looks))\b|\bmake it (?:run|work)\b|\bcan i see\b|\blet'?s see it\b/i;
 
@@ -104,8 +112,23 @@ const UI_NOUN = '(?:side ?bar|nav ?bar|nav(?:igation)?|header|footer|page|screen
 const MOCKUP_INTENT = new RegExp(`\\bmock[- ]?ups?\\b|\\bwire ?frames?\\b|\\b${UI_NOUN}s? (?:alternatives?|variations?|variants?|options|ideas|concepts|directions|versions|designs|explorations)\\b|\\b(?:alternatives?|variations?|variants?|options|ideas|concepts|directions|versions|designs|explorations) (?:for|of) (?:the |our |my |a |an |this )?[\\w -]{0,30}?${UI_NOUN}\\b|\\bdesign (?:alternatives?|options|ideas|directions|concepts)\\b`, 'i');
 /** Designing several screens, a flow or a board: the design canvas. */
 const CANVAS_INTENT = /\b(?:design canvas|figma|(?:user|screen|ux) flows?|(?:design|mock ?up|prototype|sketch|wireframe)\b[^.?!]{0,40}\b(?:screens|flows?|(?:mobile|ios|android|iphone) app|website|landing page|prototype)|(?:mobile|ios|android|iphone|ipad|tablet|app) (?:screens|ui|design|mockups?|prototype)|clickable prototype|screen designs?|responsive (?:design|layouts?|previews?)|(?:phone|tablet|desktop) (?:and|&|\/) (?:phone|tablet|desktop))\b/i;
+/**
+ * A sketch, a diagram, a brainstorm or notes on Volt's whiteboard: the Scratch board. "On the
+ * board" alone is game code (chess pieces) or a Trello board, so only "my/our board" counts.
+ */
+const SCRATCH_INTENT = /\b(?:white ?boards?|scratch ?boards?|on(?:to)? (?:my|our) board|sketch (?:out|up)\b|sketch(?: (?:me|us))?(?: (?:a|an|the|our|my))?(?: quick| rough| simple)? (?:diagram|flow ?chart|flow|architecture|plan|system design|map|overview)s?|mind ?maps?|sticky notes?|post-?it notes?|brainstorm(?:ing)?\b[^.?!]{0,40}\b(?:board|visually|sticky|notes|map|diagram))\b/i;
+/**
+ * A native mobile app on a simulator or emulator. Bare "simulator", "emulator" and "device" are
+ * ordinary code words (a physics simulator, a terminal emulator, a device driver), so each needs
+ * mobile or app context.
+ */
+const DEVICE_INTENT = /\b(?:(?:ios|iphone|ipad|xcode|android|apple) (?:simulators?|emulators?)|(?:on|in|into|to|with|using) (?:the|a|an|my) (?:simulator|emulator)|(?:boot|open|launch|start|run)(?: up)? (?:the|a|an) (?:simulator|emulator)|(?:ios|android|iphone|ipad|react native|expo|flutter|swiftui) app\b[^.?!]{0,40}\b(?:run|runs|running|test|open|launch|start|install|try|check)|(?:run|test|open|launch|start|install|try|check|debug)\b[^.?!]{0,40}\b(?:ios|android|iphone|ipad|react native|expo|flutter|swiftui) app|(?:run|test|try|open|launch|install|check|see|show)\b[^.?!]{0,40}\bon (?:my|the|a|an) (?:phone|iphone|ipad|android(?: phone| device)?|pixel|(?:test|physical|real) device))\b/i;
+/** How the composer writes a picked `/name` skill into the prompt: `[/scratch skill]`. */
+const SURFACE_SKILL_TAG = /\[\/(scratch|canvas|browser|device) skill\]/gi;
 const SCREENS_INTENT = /\b(?:(?:all|every|each) (?:of )?(?:the |our |my )?(?:app'?s? |current |existing |mobile |web )?(?:screens|pages|views)|(?:current|existing|app'?s?|mobile) screens|screen ?shots? of (?:all|every|each|the)|inspect (?:the |our |my )?(?:app|ui|screens|pages|mobile)|(?:light|dark) (?:and|&|\/) (?:light|dark)(?: (?:mode|theme)s?)?)\b/i;
 /** Web UI work: something rendered in a browser that an agent should check there, not only in code. */
+/** Asking for an explanation as a picture ("explain visually", "show me visually", "visually compare"). */
+const VISUAL_EXPLANATION = /\b(?:explain|show|teach|illustrate|walk (?:me|us) through|help (?:me|us) understand|break down)\b[^.?!]{0,80}?\bvisual(?:ly)?\b|\bvisual(?:ly)?\s+(?:explain|show|illustrate|compare|break down)\b/gi;
 const UI_WORK = /\b(?:buttons?|click(?:ing|s)?|pages?|layout|ui|ux|css|styles?|styling|responsive|mobile|phones?|tablet|viewport|overflow|scroll(?:s|ing)? sideways|horizontal scroll|forms?|modal|dialog|dropdown|navbar|nav ?bar|header|footer|widget|component|frontend|front-end|accessib\w*|a11y|contrast|screen ?reader|dark mode|prototype|mock ?ups?|draft|landing page|html|in the browser|e2e|end[- ]to[- ]end|user flow|sign ?up|log ?in|checkout|loading state|empty state|error state|renders?|visual(?:ly)?)\b/i;
 
 export function classifyIntent(text: string, mode: VoltMode, context: IIntentContext = {}): IIntent {
@@ -149,12 +172,20 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	if (wantsPreview) { signals.push('preview'); }
 	const wantsServices = wantsPreview || SERVICE_INTENT.test(raw);
 	if (wantsServices) { signals.push('services'); }
+	const wantsGit = hasWorkspace && GIT_INTENT.test(raw);
+	if (wantsGit) { signals.push('git'); }
 
 	const matchesDesign = hasWorkspace && mode !== 'ask' && DESIGN_VERB.test(raw)
 		&& (IMAGE_FILE.test(raw) || (context.attachments ?? []).some(name => IMAGE_FILE.test(name)));
 	if (matchesDesign) { signals.push('design-reference'); }
 
-	const uiWork = hasWorkspace && (wantsPreview || matchesDesign || UI_WORK.test(raw));
+	// A picked surface skill forces that surface, whatever the words say.
+	const surfaceSkills = new Set([...raw.matchAll(SURFACE_SKILL_TAG)].map(match => match[1].toLowerCase()));
+	const browserSkill = surfaceSkills.has('browser');
+	if (browserSkill) { signals.push('skill-browser'); }
+
+	// "Explain visually how rebase works" asks for a picture, not for UI work: only the rest of the message counts.
+	const uiWork = hasWorkspace && (wantsPreview || matchesDesign || browserSkill || UI_WORK.test(raw.replace(VISUAL_EXPLANATION, ' ')));
 	if (uiWork) { signals.push('ui'); }
 
 	const broadChange = hasWorkspace && mode !== 'ask' && mode !== 'plan' && BROAD_CHANGE.test(raw);
@@ -167,8 +198,12 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	if (wantsMockups) { signals.push('mockups'); }
 	const wantsScreens = SCREENS_INTENT.test(raw);
 	if (wantsScreens) { signals.push('screens'); }
-	const wantsCanvas = CANVAS_INTENT.test(raw);
+	const wantsCanvas = surfaceSkills.has('canvas') || CANVAS_INTENT.test(raw);
 	if (wantsCanvas) { signals.push('canvas'); }
+	const wantsScratch = surfaceSkills.has('scratch') || SCRATCH_INTENT.test(raw);
+	if (wantsScratch) { signals.push('scratch'); }
+	const wantsDevice = surfaceSkills.has('device') || DEVICE_INTENT.test(raw);
+	if (wantsDevice) { signals.push('device'); }
 
 	let lane: VoltLane;
 
@@ -207,8 +242,8 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	}
 
 	// "5 sidebar alternatives" has no coding verb, but it is work on the project shown as a gallery,
-	// not a question to answer in prose.
-	if (lane === 'chat' && (wantsMockups || wantsScreens || wantsCanvas) && hasWorkspace && mode !== 'ask' && !slashChat) {
+	// not a question to answer in prose. The same holds for a board, a device or a picked /browser.
+	if (lane === 'chat' && (wantsMockups || wantsScreens || wantsCanvas || wantsScratch || wantsDevice || browserSkill) && hasWorkspace && mode !== 'ask' && !slashChat) {
 		lane = 'agent';
 		signals.push('gallery');
 	}
@@ -247,7 +282,10 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 		...(wantsMockups ? { wantsMockups } : {}),
 		...(wantsScreens ? { wantsScreens } : {}),
 		...(wantsCanvas ? { wantsCanvas } : {}),
+		...(wantsScratch ? { wantsScratch } : {}),
+		...(wantsDevice ? { wantsDevice } : {}),
 		...(wantsServices ? { wantsServices } : {}),
+		...(wantsGit ? { wantsGit } : {}),
 		shape,
 	};
 }

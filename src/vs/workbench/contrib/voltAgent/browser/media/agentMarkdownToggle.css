@@ -52,7 +52,7 @@
 	contain: strict;
 	--volt-skill-fg: var(--vscode-editor-foreground, #e6e6e6);
 	--volt-skill-muted: var(--vscode-descriptionForeground, #9a9a9a);
-	--volt-skill-line: var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	--volt-skill-line: var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 }
 
 .monaco-workbench.vs .volt-md-preview,

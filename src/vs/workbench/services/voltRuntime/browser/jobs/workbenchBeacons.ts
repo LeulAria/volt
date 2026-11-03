@@ -16,6 +16,22 @@ export const BEACON_TTL_MS = 60_000;
 const BEACON_SWEEP_MS = 86_400_000;
 const ATOMIC = { atomic: { postfix: '.tmp' } } as const;
 
+/** Where a workbench can see processes (the agent server, in Node): its own pid, and whether another is alive. */
+export interface IBeaconProcessProbe {
+	readonly pid: number;
+	alive(pid: number): boolean;
+}
+
+let processProbe: IBeaconProcessProbe | undefined;
+
+/**
+ * Set by the agent server. Its beacons then carry its pid, and a beacon whose process is gone
+ * (the server was killed and started again) stops counting at once instead of after {@link BEACON_TTL_MS}.
+ */
+export function setBeaconProcessProbe(probe: IBeaconProcessProbe | undefined): void {
+	processProbe = probe;
+}
+
 /**
  * Which chats another Volt workbench is responsible for right now. Each project runs its own
  * workbench and all of them load the same orchestration, so one that starts (or loads a chat tree
@@ -53,7 +69,7 @@ export class WorkbenchBeacons {
 			}
 			const file = this.file;
 			const atomic = this.fileService.hasCapability(file, FileSystemProviderCapabilities.FileAtomicWrite);
-			await this.fileService.writeFile(file, VSBuffer.fromString(JSON.stringify({ at: now, threads: [...threadIds].sort() })), atomic ? ATOMIC : undefined);
+			await this.fileService.writeFile(file, VSBuffer.fromString(JSON.stringify({ at: now, threads: [...threadIds].sort(), ...(processProbe ? { pid: processProbe.pid } : {}) })), atomic ? ATOMIC : undefined);
 			this.written = true;
 		} catch (err) {
 			this.logService.trace('[volt orchestrator] could not write the workbench beacon', err);
@@ -75,9 +91,12 @@ export class WorkbenchBeacons {
 				return;
 			}
 			try {
-				const beacon = JSON.parse((await this.fileService.readFile(child.resource)).value.toString()) as { at?: unknown; threads?: unknown };
+				const beacon = JSON.parse((await this.fileService.readFile(child.resource)).value.toString()) as { at?: unknown; threads?: unknown; pid?: unknown };
 				const at = typeof beacon.at === 'number' ? beacon.at : 0;
-				if (now - at < BEACON_TTL_MS && Array.isArray(beacon.threads)) {
+				const dead = !!processProbe && typeof beacon.pid === 'number' && beacon.pid !== processProbe.pid && !processProbe.alive(beacon.pid);
+				if (dead) {
+					await this.fileService.del(child.resource).catch(() => undefined);
+				} else if (now - at < BEACON_TTL_MS && Array.isArray(beacon.threads)) {
 					for (const id of beacon.threads) {
 						if (typeof id === 'string') {
 							live.add(id);

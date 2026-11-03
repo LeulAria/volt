@@ -58,10 +58,15 @@ export class AgentHistoryCodec {
 		const segments = await Promise.all(message.segments.map(async segment => segment.kind === 'activity'
 			? { kind: 'activity', item: await this.freezeActivityItem(segment.item) }
 			: segment));
+		// A steer's pasted image is stored by reference, like a prompt's (its bytes are not JSON).
+		const steers = message.steers?.some(steer => steer.mentions?.length)
+			? await Promise.all(message.steers.map(async steer => steer.mentions?.length ? { ...steer, mentions: await this.freezeMentions(steer.mentions) } : steer))
+			: message.steers;
 		return {
 			...message,
 			segments,
 			activity: message.activity ? { ...message.activity, items: frozenItems } : undefined,
+			...(steers ? { steers } : {}),
 		};
 	}
 
@@ -187,6 +192,12 @@ export class AgentHistoryCodec {
 			blockState: raw.blockState && typeof raw.blockState === 'object' ? raw.blockState : {},
 			activity: raw.activity ? { ...raw.activity, items } : undefined,
 		};
+		if (Array.isArray(raw.steers)) {
+			message.steers = await Promise.all(raw.steers.map(async steer => {
+				const mentions = steer.mentions?.length ? await this.thawMentions(steer.mentions).catch(() => undefined) : undefined;
+				return { text: typeof steer.text === 'string' ? steer.text : '', at: steer.at, ...(mentions?.length ? { mentions } : {}) };
+			}));
+		}
 		if (settled) {
 			settleAssistant(message, at);
 		}

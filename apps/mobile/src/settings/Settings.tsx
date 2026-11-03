@@ -14,7 +14,7 @@ import { useClient, useOptionalClient, useRuntime, useStatus } from '../state/cl
 import { activate, forget, useEnvironments } from '../state/environments';
 import { conversationPrefs, useConversationPrefs } from '../state/prefs';
 import { type ThemePreference, useTheme } from '../theme/theme';
-import { haptic, Icon, Segmented, T, Tap } from '../ui/core';
+import { haptic, Icon, Tabs, T, Tap } from '../ui/core';
 import { Group, ListRow } from '../ui/list';
 import { ActionSheet, ConfirmSheet, type ISheetAction } from '../ui/sheets';
 
@@ -175,7 +175,7 @@ function AgentConversations() {
 					<T variant="body">Tool call density</T>
 					<T variant="footnote" color={p.fgTertiary}>Adjust how much detail is shown for tool calls</T>
 				</View>
-				<Segmented value={prefs.toolDensity} onChange={toolDensity => conversationPrefs.set({ toolDensity })} options={TOOL_DENSITIES.map(id => ({ id, label: TOOL_DENSITY_LABELS[id] }))} />
+				<Tabs value={prefs.toolDensity} onChange={toolDensity => conversationPrefs.set({ toolDensity })} options={TOOL_DENSITIES.map(id => ({ id, label: TOOL_DENSITY_LABELS[id] }))} />
 				<DensityPreview density={prefs.toolDensity} />
 			</View>
 			<ListRow label="Code block word wrap" detail="Wrap long lines in code blocks" right={toggle(prefs.codeWrap, codeWrap => conversationPrefs.set({ codeWrap }))} />

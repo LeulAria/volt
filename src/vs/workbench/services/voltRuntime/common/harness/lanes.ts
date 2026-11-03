@@ -65,7 +65,9 @@ const LANES: Record<VoltLane, ILaneDefinition> = {
 		checkpoints: false,
 		verify: false,
 		synthesize: false,
-		framing: 'This is a question. Answer it. Look things up when the answer depends on current or external facts. Match the form they asked for. Do not modify the workspace and do not run commands.',
+		// No read-only rule here: a question typed in Agent mode is still an Agent turn. Ask and Plan
+		// keep the agent read-only through their mode (modePolicy, the agent's own read-only mode).
+		framing: 'This looks like a question. Answer it directly. Look things up when the answer depends on current or external facts. Match the form they asked for. Change files or run commands only when the user asks for a change.',
 	},
 	fast: {
 		lane: 'fast',

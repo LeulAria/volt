@@ -140,6 +140,50 @@ suite('Device UI', () => {
 		assert.ok(!('error' in password) && password.element.secret);
 	});
 
+	test('desktop rows are one line named by what they show, in reading order; noise goes', () => {
+		let n = 0;
+		const node = (role: string, extra: Partial<IDesktopNode> = {}, f: [number, number, number, number] = [100, 100, 200, 24]): IDesktopNode => ({ h: `h${n++}`, role, f, ...extra });
+		const root = node('AXWindow', {
+			title: 'Notes', c: [
+				node('AXOutline', {
+					desc: 'Folders', c: [
+						// A folder row: cell named "Ideation, 20 notes" holding its own (idle) rename field.
+						node('AXRow', { sub: 'AXOutlineRow', c: [node('AXCell', { desc: 'Ideation, 20 notes', c: [node('AXTextField', { value: 'Ideation' }), node('AXStaticText', { value: '20' })] })] }),
+						node('AXRow', { sub: 'AXOutlineRow', selected: true, c: [node('AXCell', { selected: true, c: [node('AXStaticText', { value: 'All iCloud' })] })] }),
+					],
+				}),
+				node('AXTable', {
+					desc: 'Notes', c: [
+						// A note row: texts built out of reading order, an unlabeled thumbnail.
+						node('AXRow', {
+							c: [node('AXCell', {
+								c: [
+									node('AXImage', {}, [300, 290, 13, 13]),
+									node('AXStaticText', { value: '12:44 PM' }, [317, 307, 54, 17]),
+									node('AXStaticText', { value: 'VOLT REQUIREMENTS' }, [317, 288, 79, 18]),
+								]
+							})]
+						}),
+					],
+				}),
+				node('AXGroup', { c: [node('AXStaticText', { value: 'Monday' }), node('AXStaticText', { value: 'Tuesday' }), node('AXStaticText', { value: 'Monday' })] }),
+				node('AXButton', { sub: 'AXCloseButton' }),
+			],
+		}, [0, 0, 800, 600]);
+		const screen = readDesktopScreen({ app: 'Notes', root }, new DeviceRefs())!;
+		assert.deepStrictEqual(renderPage({ ...deviceView(screen), compact: true }), [
+			'- d0 list "Folders":',
+			'  - d1 treeitem "Ideation, 20 notes"',
+			'  - d2 treeitem "All iCloud" selected',
+			'- d3 table "Notes":',
+			'  - d4 row "VOLT REQUIREMENTS, 12:44 PM"',
+			'- text: Monday',
+			'- text: Tuesday',
+			'- d5 button "Close window"',
+		]);
+		assert.deepStrictEqual(screen.frame, [0, 0, 800, 600], 'the window frame is kept for drawing over the window');
+	});
+
 	test('reads an iOS AXe tree', () => {
 		const screen = parseDeviceUi('axe', IOS, new DeviceRefs())!;
 		assert.strictEqual(screen.app, 'Settings');

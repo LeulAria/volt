@@ -7,9 +7,32 @@ and start new chats in any project, from anywhere on your network or Tailscale.
 ```sh
 npm install                 # also installs ../mobile-widgets' build dependency
 npx expo start              # Expo Go works for everything but Live Activities
-npx expo run:ios            # a dev build: adds the Live Activity / widget extension
+npm run ios                 # a dev build + Metro: adds the Live Activity / widget extension
+npm run android
 npm run typecheck
+npm run build:ios           # standalone simulator .app (JS embedded) in dist/ios
+npm run build:android       # standalone .apk (arm64, debug-signed) in dist/android
 ```
+
+Native code is only compiled once per machine for each native fingerprint, a hash of the native
+modules, config plugins and `app.json` (`.fingerprintignore` skips the generated `ios/` and
+`android/`). Builds are kept in `~/Library/Caches/volt-mobile` (`VOLT_MOBILE_CACHE` moves it) and
+shared by every checkout and worktree:
+
+- `npm run ios|android` installs the cached debug build, starts Metro and launches the app, with
+  no prebuild, CocoaPods or compile. Without one it runs `expo run`, which builds and files it;
+  plain `npx expo run:ios|android` uses the same cache (`buildCacheProvider` in `app.json`).
+  `--rebuild` drops the cached build first; other options (`--device`, …) go to `expo run`.
+- `npm run build:ios|android` repacks the cached release build with the current JS
+  (`@expo/repack-app`). `--native` forces a native build; `--install` puts the result on the
+  booted simulator or the connected device, e.g. `npm run build:ios -- --install`.
+
+A new fingerprint (a native module, a config plugin or `app.json` changed) builds natively. Prebuild
+updates `ios/` and `android/` in place (`--no-clean`), so CocoaPods, DerivedData (`ios/build`) and
+Gradle's outputs survive; `--rebuild` and `--native` regenerate them from scratch. The compiler
+caches are shared too, with the checkout's path mapped out of their keys: Xcode's compilation
+cache on iOS, ccache (`brew install ccache`; the NDK picks it up) and Gradle's build cache on
+Android.
 
 ## Pairing
 
@@ -41,6 +64,18 @@ Laid out like the GitHub app, in Volt's themes: four tabs.
 - **Theme**: System, or any of the desktop's Volt themes (Dark, Dark Midnight, Dark High
   Contrast, Light, Light Colorblind). **MCP servers**: yours and a project's, with their state.
 - Every chat live, with approvals, questions, the queue, usage-limit pauses and subagents.
+- **The transcript is the desktop's** (client-core `rows.ts`, `src/chat/Rows.tsx`): work folds into
+  22px group lines ("Explored 3 files, 2 searches") whose live verbs shimmer, each edit is a card
+  over a fading peek of its diff, commands are `$` cards in the shell colours, subagents and
+  compaction get rows, a finished turn folds its work behind "Worked for 3m 3s" (open for turns
+  you watched run), and a card lists the files the turn changed. Replies are 14/22 in the light
+  face, code is Geist Mono, a long prompt shows two lines and Read more, the running prompt holds
+  Stop. While a reply streams, only the row that grew re-renders.
+- **Plans**: a plan waiting for approval reads as the plan, with **Build** (back to Agent mode)
+  and **Keep planning**.
+- **Terminals**: the chat's dev servers, tests and background commands (header button while it has
+  any), with live output, Stop, Restart, Copy and their URLs. Typing into one stays with Volt on
+  the computer.
 - New chats in any project (the **New chat** button), with mode, model and access.
 - Images: **+** in the composer picks photos or takes one; they are downscaled to 2048 px JPEG,
   uploaded to Volt's attachment store and sent to the model like images pasted on the desktop.

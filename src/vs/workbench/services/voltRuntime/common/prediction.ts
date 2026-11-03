@@ -215,8 +215,10 @@ export interface IVoltPredictionService {
 	polishDictation(input: IDictationInput, token: CancellationToken): Promise<string | undefined>;
 
 	/**
-	 * Gets the model behind predictions ready before the first keystroke: for an agent, starts its
-	 * predictor session. Called when Volt starts; the service repeats it when the Tab model changes.
+	 * Gets the model behind predictions ready: for an agent, starts its predictor session. Called on
+	 * the first keystroke in an editor or composer and when a dictation starts, not at launch (the
+	 * session is an agent process tree of a few hundred MB); after that the service repeats it
+	 * when the Tab model changes.
 	 */
 	warmUp(): void;
 }

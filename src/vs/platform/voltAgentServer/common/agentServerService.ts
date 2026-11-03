@@ -8,6 +8,15 @@ import { createDecorator } from '../../instantiation/common/instantiation.js';
 export const IVoltAgentServerMainService = createDecorator<IVoltAgentServerMainService>('voltAgentServerMainService');
 export const VOLT_AGENT_SERVER_CHANNEL_NAME = 'voltAgentServer';
 
+/**
+ * Windows run their agents in the agent server when this is on (the default). The main process
+ * reads it too: the server then holds the relay connection instead of the main process.
+ */
+export const VOLT_AGENT_SERVER_ENABLED_SETTING = 'volt.agentServer.enabled';
+
+/** Desktop only: lets the agent server listen on the network (it restarts). Add Device runs it. */
+export const VOLT_ALLOW_NETWORK_COMMAND_ID = 'volt.agentServer.allowNetwork';
+
 /** Where a window finds this profile's agent server. */
 export interface IVoltAgentServerEndpoint {
 	/** `ws://127.0.0.1:<port>/ws` */
@@ -15,11 +24,11 @@ export interface IVoltAgentServerEndpoint {
 	readonly token: string;
 	readonly port: number;
 	readonly pid: number;
-	/** The web app, with the token in the hash. */
+	/** Volt in the browser (the sign-in page, then the workbench), with the token in the hash. */
 	readonly webUrl: string;
 	/** Whether the server also listens on the local network (phones pair over it). */
 	readonly network: boolean;
-	/** The web app at this Mac's network address, with the token: what a phone pairs with. Set while `network` is on. */
+	/** Volt in the browser at this Mac's network address, with the token: what a phone pairs with. Set while `network` is on. */
 	readonly pairingUrl?: string;
 }
 

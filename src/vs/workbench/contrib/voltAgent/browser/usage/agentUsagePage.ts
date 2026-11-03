@@ -7,6 +7,7 @@ import '../media/agentUsage.css';
 import { $, addDisposableListener, append, clearNode, EventType, getWindow } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { fromNow } from '../../../../../base/common/date.js';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
@@ -16,6 +17,8 @@ import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.j
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
+import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { IVoltAccountsService, IVoltClaudeAccount, IVoltClaudeAccountsState } from '../../../../../platform/voltAccounts/common/voltAccounts.js';
 import {
 	IVoltUsageLimitGroup, IVoltUsageMachineStatus, IVoltUsageModelPrice, IVoltUsageService, IVoltUsageSnapshot, VOLT_USAGE_PROVIDERS, VOLT_USAGE_SHARE_MACHINE_COMMAND_ID,
 	VoltResetCreditOutcome, VoltUsageProvider
@@ -118,6 +121,12 @@ export class AgentUsagePage extends Disposable {
 	/** Other computers whose usage counts here, and the prices the user set. */
 	private machines: readonly IVoltUsageMachineStatus[] = [];
 	private prices: Record<string, IVoltUsageModelPrice> = {};
+	/** The saved Claude accounts (absent where the service isn't, e.g. another machine's browser). */
+	private readonly accounts: IVoltAccountsService | undefined;
+	private accountsState: IVoltClaudeAccountsState | undefined;
+	private accountsLoading = false;
+	/** The account being switched to. */
+	private switchingAccount: string | undefined;
 	/** Accounts with a reset being redeemed, by `provider|account`. */
 	private readonly redeeming = new Set<string>();
 	private usageError = false;
@@ -153,8 +162,16 @@ export class AgentUsagePage extends Disposable {
 		@INotificationService private readonly notificationService: INotificationService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IInstantiationService instantiationService: IInstantiationService,
 	) {
 		super();
+		this.accounts = instantiationService.invokeFunction(accessor => {
+			try {
+				return accessor.get(IVoltAccountsService);
+			} catch {
+				return undefined;
+			}
+		});
 		this.range = this.readStored(STORAGE_RANGE, RANGES.map(range => range.id), '30d');
 		this.breakdown = this.readStored(STORAGE_BREAKDOWN, ['model', 'day'], 'model');
 		const pageSize = Number(this.storage.get(STORAGE_PAGE_SIZE, StorageScope.PROFILE));
@@ -210,6 +227,31 @@ export class AgentUsagePage extends Disposable {
 		}));
 		sync();
 		void this.loadExtras();
+		if (this.accounts) {
+			this.visibleStore.add(this.accounts.onDidChangeClaudeAccounts(() => void this.loadAccounts(false)));
+			void this.loadAccounts(true);
+		}
+	}
+
+	/** Reads the saved Claude accounts; `refreshLimits` also reads limits gone stale. Redraws when they changed. */
+	private async loadAccounts(refreshLimits: boolean): Promise<void> {
+		if (!this.accounts || this.accountsLoading) {
+			return;
+		}
+		this.accountsLoading = true;
+		try {
+			const state = await this.accounts.getClaudeAccounts(refreshLimits);
+			if (JSON.stringify(state) !== JSON.stringify(this.accountsState)) {
+				this.accountsState = state;
+				if (this.visible) {
+					this.render();
+				}
+			}
+		} catch {
+			// A locked keychain: the section stays as it was.
+		} finally {
+			this.accountsLoading = false;
+		}
 	}
 
 	focus(): void {
@@ -261,7 +303,7 @@ export class AgentUsagePage extends Disposable {
 		if (!this.handles) {
 			return;
 		}
-		await Promise.all([this.handles.usage.refetch(force), this.handles.limits.refetch(force), this.loadExtras()]);
+		await Promise.all([this.handles.usage.refetch(force), this.handles.limits.refetch(force), this.loadExtras(), this.loadAccounts(force)]);
 	}
 
 	/** The machines list and the user's prices; redraws when either changed. */
@@ -388,6 +430,9 @@ export class AgentUsagePage extends Disposable {
 				this.renderBreakdown(summary, METRIC);
 				if (!usagePending) {
 					this.renderInsights(snapshot, summary, METRIC, animate);
+				}
+				if (!limitsPending) {
+					this.renderAccounts(groups, now);
 				}
 				this.renderFootnote();
 				for (const section of this.content.querySelectorAll<HTMLElement>(':scope > .volt-usage-section')) {
@@ -740,6 +785,124 @@ export class AgentUsagePage extends Disposable {
 			const share = this.renderStore.add(createVoltButton(actions, 'ghost'));
 			share.label = localize('voltUsage.shareMachine', "Share This Machine");
 			this.renderStore.add(share.onDidClick(() => void this.commandService.executeCommand(VOLT_USAGE_SHARE_MACHINE_COMMAND_ID)));
+		}
+	}
+
+	/**
+	 * Every saved Claude account, then each other account a limit was read for (Codex, Cursor...),
+	 * with every limit window, how much of it is used and when it resets.
+	 */
+	private renderAccounts(groups: readonly IVoltUsageLimitGroup[], now: number): void {
+		const claude = this.accountsState?.accounts.filter(account => !account.needsSignIn || account.limits) ?? [];
+		const expired = this.accountsState?.accounts.filter(account => account.needsSignIn && !account.limits) ?? [];
+		const others = groups.filter(group => !(group.provider === 'claude' && claude.length));
+		if (!claude.length && !expired.length && !others.length) {
+			return;
+		}
+		const section = append(this.content, $('.volt-usage-section.volt-usage-accounts'));
+		const head = sectionHead(section, localize('voltUsage.accounts', "Accounts"));
+		if (this.accountsState && this.accountsState.accounts.length > 1) {
+			append(head, $('span.volt-usage-accounts-mode')).textContent = this.accountsState.switching === 'auto'
+				? localize('voltUsage.accountsAuto', "Switches automatically at {0}%", this.accountsState.threshold)
+				: localize('voltUsage.accountsManual', "Switched by hand");
+		}
+		const list = append(section, $('.volt-usage-card.volt-usage-list'));
+		const sorted = [...claude, ...expired].sort((a, b) => Number(b.active) - Number(a.active));
+		for (const account of sorted) {
+			// The account in use reads its limits from the same source as the lanes above.
+			const live = account.active ? groups.find(group => group.provider === 'claude' && (group.account?.id === account.id || group.account?.label === account.email)) : undefined;
+			this.renderAccountRow(list, {
+				provider: 'claude',
+				name: account.email,
+				detail: [account.plan ? `Claude ${account.plan}` : PROVIDER_LABELS.claude.account, account.organizationName].filter(Boolean).join(' \u00b7 '),
+				active: account.active,
+				limits: live ?? account.limits,
+				warning: account.needsSignIn ? localize('voltUsage.accountExpired', "The saved sign-in expired. Sign in again in Settings > Providers & Models.") : undefined,
+			}, now, account);
+		}
+		for (const group of others) {
+			this.renderAccountRow(list, {
+				provider: group.provider,
+				name: group.account?.label ?? PROVIDER_LABELS[group.provider].account,
+				detail: [PROVIDER_LABELS[group.provider].account, group.plan, group.machines?.join(', ')].filter(Boolean).join(' \u00b7 '),
+				active: false,
+				limits: group,
+			}, now);
+		}
+	}
+
+	private renderAccountRow(list: HTMLElement, row: { provider: VoltUsageProvider; name: string; detail: string; active: boolean; limits?: IVoltUsageLimitGroup; warning?: string }, now: number, claude?: IVoltClaudeAccount): void {
+		const item = append(list, $('.volt-usage-list-row.volt-usage-account'));
+		item.classList.toggle('active', row.active);
+		const top = append(item, $('.volt-usage-account-top'));
+		top.appendChild(createBrandIcon(row.provider, 16));
+		const who = append(top, $('.who'));
+		const name = append(who, $('span.label'));
+		append(name, $('span')).textContent = row.name;
+		if (row.active) {
+			append(name, $('span.volt-usage-account-badge')).textContent = localize('voltUsage.accountInUse', "In use");
+		}
+		const detail = append(who, $('span.detail'));
+		detail.textContent = row.warning ?? row.detail;
+		detail.classList.toggle('warn', !!row.warning);
+		const credits = row.limits?.resetCredits;
+		if (credits) {
+			append(top, $('span.volt-usage-account-credits')).textContent = credits === 1 ? localize('voltUsage.oneReset', "1 reset available") : localize('voltUsage.resets', "{0} resets available", credits);
+		}
+		if (claude && !claude.active && !claude.needsSignIn) {
+			if (this.switchingAccount === claude.id) {
+				append(top, $('span.volt-usage-account-busy')).appendChild(renderIcon(ThemeIcon.modify(Codicon.loading, 'spin')));
+			} else {
+				const button = this.renderStore.add(createVoltButton(top, 'ghost', { ariaLabel: localize('voltUsage.switchAccount', "Make {0} Claude Code's account", claude.email) }));
+				button.label = localize('voltUsage.switch', "Switch");
+				this.renderStore.add(button.onDidClick(() => void this.switchAccount(claude)));
+			}
+		}
+
+		const limits = row.limits;
+		if (!limits || !limits.windows.length) {
+			if (!row.warning) {
+				append(item, $('.volt-usage-account-empty')).textContent = limits?.error ?? localize('voltUsage.accountLimitsUnknown', "Limits not read yet");
+			}
+			return;
+		}
+		const grid = append(item, $('.volt-usage-account-windows'));
+		for (const window of limits.windows) {
+			const passed = window.resetsAt !== undefined && window.resetsAt <= now;
+			const used = passed ? 0 : Math.round(window.usedPercent);
+			const meter = append(grid, $('.volt-usage-account-window'));
+			meter.classList.toggle('high', used >= 80);
+			meter.classList.toggle('full', used >= 100);
+			const line = append(meter, $('.line'));
+			append(line, $('span.name')).textContent = window.scope && window.scope !== window.label ? `${window.label} \u00b7 ${window.scope}` : window.label;
+			append(line, $('span.value')).textContent = `${used}%`;
+			const bar = append(meter, $('span.bar'));
+			append(bar, $('span.fill')).style.width = `${Math.min(100, used)}%`;
+			append(meter, $('span.reset')).textContent = window.resetsAt && !passed
+				? localize('voltUsage.accountResets', "Resets {0} \u00b7 {1}", fromNow(window.resetsAt, true, true), formatResetTime(window.resetsAt))
+				: passed ? localize('voltUsage.accountReset', "Reset") : localize('voltUsage.accountNotStarted', "Starts with your next message");
+			if (window.note) {
+				setAgentTooltip(meter, window.note);
+			}
+		}
+		append(item, $('.volt-usage-account-checked')).textContent = localize('voltUsage.accountChecked', "Checked {0}", now - limits.checkedAt < 60_000 ? localize('voltUsage.justNow', "just now") : fromNow(limits.checkedAt, true));
+	}
+
+	private async switchAccount(account: IVoltClaudeAccount): Promise<void> {
+		if (!this.accounts) {
+			return;
+		}
+		this.switchingAccount = account.id;
+		this.render();
+		try {
+			this.accountsState = await this.accounts.switchClaudeAccount(account.id);
+			this.notificationService.info(localize('voltUsage.switched', "Claude Code now uses {0}. Running chats pick it up within about 30 seconds.", account.email));
+		} catch (error) {
+			this.notificationService.error(error instanceof Error ? error.message : String(error));
+		} finally {
+			this.switchingAccount = undefined;
+			this.render();
+			await this.load(true);
 		}
 	}
 

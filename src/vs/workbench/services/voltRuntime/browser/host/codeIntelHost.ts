@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
-import { Disposable, IReference } from '../../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable, IReference } from '../../../../../base/common/lifecycle.js';
 import { ResourceMap } from '../../../../../base/common/map.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { Position } from '../../../../../editor/common/core/position.js';
@@ -26,7 +26,39 @@ const MARKER_SETTLE_MS = 400;
 const KEEP_OPEN_MS = 90_000;
 const MAX_OPEN = 24;
 
-export class CodeIntelHost extends Disposable implements ICodeIntelHost {
+/** What the runtime needs from code intelligence: the agent tools, plus checks after its own edits. */
+export interface IRuntimeCodeIntel extends ICodeIntelHost, IDisposable {
+	setLspPolicy(policy: (uri: URI) => boolean): void;
+	/** Called for every agent write, so the next diagnostics call waits for fresh results. */
+	noteWrite(uri: URI): void;
+	/** Error markers on a file right now, counted by message. May fill in shortly after it returns (agent server). */
+	errorCounts(uri: URI): Map<string, number>;
+	/** Errors on `uri` beyond those in `baseline`. */
+	newErrors(uri: URI, baseline: ReadonlyMap<string, number>): Promise<IDiagnostic[]>;
+}
+
+let runtimeCodeIntelFactory: (() => IRuntimeCodeIntel) | undefined;
+
+/**
+ * The agent server has no editor models or language servers: it sets a factory whose code
+ * intelligence asks an open Volt window. Unset, the runtime uses this window's {@link CodeIntelHost}.
+ */
+export function setRuntimeCodeIntelFactory(factory: (() => IRuntimeCodeIntel) | undefined): void {
+	runtimeCodeIntelFactory = factory;
+}
+
+export function createRuntimeCodeIntel(markerService: IMarkerService, textModelService: ITextModelService, languageFeatures: ILanguageFeaturesService, fileService: IFileService): IRuntimeCodeIntel {
+	return runtimeCodeIntelFactory?.() ?? new CodeIntelHost(markerService, textModelService, languageFeatures, fileService);
+}
+
+/** The column of `symbol` on a line of text (1-based), matching a whole word first. */
+export function columnOfSymbol(text: string, symbol: string): number | undefined {
+	const exact = new RegExp(`\\b${symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).exec(text);
+	const index = exact ? exact.index : text.indexOf(symbol);
+	return index >= 0 ? index + 1 : undefined;
+}
+
+export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 
 	private readonly writes = new ResourceMap<number>();
 	private readonly open = new ResourceMap<{ ref: IReference<IResolvedTextEditorModel>; timer: ReturnType<typeof setTimeout> }>();
@@ -172,10 +204,7 @@ export class CodeIntelHost extends Disposable implements ICodeIntelHost {
 		if (line < 1 || line > model.getLineCount()) {
 			return undefined;
 		}
-		const text = model.getLineContent(line);
-		const exact = new RegExp(`\\b${symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).exec(text);
-		const index = exact ? exact.index : text.indexOf(symbol);
-		return index >= 0 ? index + 1 : undefined;
+		return columnOfSymbol(model.getLineContent(line), symbol);
 	}
 
 	/** Opens the document for its language service and waits for markers when it was just written. */

@@ -16,7 +16,7 @@ import { VoltMode } from './modes.js';
 import { IVoltModelOptions } from './models/modelOptions.js';
 import { IAgentDetectResult, IVoltCatalogItem, IVoltProviderStatus } from './providers.js';
 import { IProviderProfile, IProviderProfileDraft } from './profiles.js';
-import { IVoltSendRequest, IVoltSession } from './session.js';
+import { IVoltImageAttachment, IVoltSendRequest, IVoltSession } from './session.js';
 import { IVoltModelAccess } from './models/modelAccess.js';
 import type { IHumanAction } from './harness/humanLoop.js';
 import type { IAgentQuestionRequest, IAgentQuestionResponse } from './questions.js';
@@ -59,6 +59,16 @@ export interface IVoltSeedMessage {
 	readonly compacted?: boolean;
 }
 
+export interface IVoltSeedOptions {
+	readonly forkedFrom?: string;
+	readonly continuedFrom?: {
+		readonly id: string;
+		readonly title: string;
+		/** That chat was still running its last turn. */
+		readonly live?: boolean;
+	};
+}
+
 export interface IVoltCompactionPlan {
 	readonly kind: 'native' | 'handoff';
 	/** `handoff`: estimated tokens the conversation compacts to. */
@@ -94,9 +104,11 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	getOrCreateSession(key: string): IVoltSession;
 	/**
 	 * Restore a session's model transcript from durable history when it has none yet. `forkedFrom`
-	 * marks a fork, so its first agent is briefed as one.
+	 * marks a fork, so its first agent is briefed as one. `continuedFrom` marks a new chat started
+	 * from another chat's queued message: `messages` are that chat's, and its first agent gets them
+	 * as a condensed handoff (also on a model Volt runs itself, which would otherwise read them whole).
 	 */
-	seedSession(key: string, messages: readonly IVoltSeedMessage[], options?: { readonly forkedFrom?: string }): void;
+	seedSession(key: string, messages: readonly IVoltSeedMessage[], options?: IVoltSeedOptions): void;
 	/**
 	 * Lets go of an idle chat's heavy state (its model transcript, file ledger, agent processes),
 	 * for a chat the orchestrator forgot. Its text history stays; if it runs again, the transcript
@@ -149,9 +161,10 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	steer(sessionId: string, text: string): boolean;
 	/**
 	 * Like `steer`, for any agent that takes messages mid-turn: the native loop's inbox, or an ACP
-	 * agent's `_session/steering` (Claude, Codex). Resolves false when nothing took it.
+	 * agent's `_session/steering` (Claude, Codex). Resolves false when nothing took it. The native
+	 * loop's inbox takes text only, so a steer with images is refused there.
 	 */
-	steerAsync(sessionId: string, text: string): Promise<boolean>;
+	steerAsync(sessionId: string, text: string, images?: readonly IVoltImageAttachment[]): Promise<boolean>;
 	cancel(sessionId: string): Promise<void>;
 	pause(sessionId: string): Promise<void>;
 	resume(sessionId: string): Promise<void>;

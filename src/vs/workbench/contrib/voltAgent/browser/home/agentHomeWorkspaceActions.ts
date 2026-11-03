@@ -4,14 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { VSBuffer } from '../../../../../base/common/buffer.js';
+import { IGitRun, runGit } from './agentGitRun.js';
 import { toErrorMessage } from '../../../../../base/common/errorMessage.js';
 import { hash } from '../../../../../base/common/hash.js';
 import { untildify } from '../../../../../base/common/labels.js';
 import { isAbsolute } from '../../../../../base/common/path.js';
-import { isWindows } from '../../../../../base/common/platform.js';
 import { isEqual, joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
-import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -35,11 +34,12 @@ import { AddProjectDialog } from '../../../voltProjects/browser/ui/addProjectVie
 import { agentHomeWorkspaceEntries, cloneFolderName, commitFailureSummary, freeFolderName, gitErrorSummary, IAgentHomeWorkspaceEntry, namedProjectReadme, projectFolderSlug } from './agentHomeWorkspace.js';
 import { IAgentHomeWorkspaceMenuHost, showAgentHomeWorkspaceMenu } from './agentHomeWorkspaceMenu.js';
 
-/** Parent folder for clones and Start from scratch, once the user picks one. */
+/** Parent folder for clones and new projects, once the user picks one. */
 const LOCATION_STORAGE_KEY = 'volt.agent.home.projectsLocation';
 export const INIT_TIMEOUT_MS = 30_000;
-/** Folder name for Start from scratch; a number follows when it is taken. */
-const SCRATCH_FOLDER_NAME = 'new-project';
+
+export { runGit } from './agentGitRun.js';
+export type { IGitRun } from './agentGitRun.js';
 
 /** What the Open Workspace menu does: open and clone local folders, then show them as projects. */
 export class AgentHomeWorkspaceActions {
@@ -68,7 +68,7 @@ export class AgentHomeWorkspaceActions {
 
 	/**
 	 * The menu's host, with the folder list read now. `current` is the project the caller shows,
-	 * checked in the menu. `openOne` takes a single picked, created or scratch folder.
+	 * checked in the menu. `openOne` takes a single picked or created folder.
 	 */
 	async menuHost(current?: URI, openOne?: (folder: URI) => Promise<void>): Promise<IAgentHomeWorkspaceMenuHost> {
 		this.openOne = openOne;
@@ -81,7 +81,6 @@ export class AgentHomeWorkspaceActions {
 			openFolders: folders => this.openFolders(folders),
 			browse: () => this.browse(),
 			browseGitHub: () => this.instantiationService.createInstance(AddProjectDialog).show('github'),
-			startFromScratch: () => this.startFromScratch(),
 			createProject: name => this.createProject(name),
 			clone: url => this.clone(url),
 			reportError: message => this.notificationService.error(message),
@@ -124,7 +123,7 @@ export class AgentHomeWorkspaceActions {
 	private async changeLocation(): Promise<void> {
 		const picked = await this.folderPicker.pickFolder({
 			title: localize('voltAgent.workspace.chooseLocation', "Choose where new projects go"),
-			subtitle: localize('voltAgent.workspace.chooseLocationSubtitle', "Clones, new folders and scratch projects are created here"),
+			subtitle: localize('voltAgent.workspace.chooseLocationSubtitle', "Clones and new projects are created here"),
 			acceptLabel: localize('voltAgent.workspace.choose', "Choose"),
 			initialPath: this.locationUri().fsPath,
 		});
@@ -180,21 +179,6 @@ export class AgentHomeWorkspaceActions {
 	/** Volt's in-app folder picker (This PC); it adds the folder and opens a chat in it. */
 	private async browse(): Promise<void> {
 		await this.instantiationService.createInstance(AddProjectDialog).show('thisPC');
-	}
-
-	/** An empty git repository in the projects location, open in a new chat. */
-	private async startFromScratch(): Promise<void> {
-		const parent = this.locationUri();
-		try {
-			const name = await freeFolderName(SCRATCH_FOLDER_NAME, candidate => this.fileService.exists(joinPath(parent, candidate)));
-			const target = joinPath(parent, name);
-			await this.fileService.createFolder(target);
-			// Git lets the chat show its changes and use worktrees; a folder without it still works.
-			await this.git(target.fsPath, ['init'], INIT_TIMEOUT_MS);
-			await this.openFolders([target]);
-		} catch (err) {
-			this.notificationService.error(localize('voltAgent.workspace.scratchFailed', "Could not create a project: {0}", toErrorMessage(err)));
-		}
 	}
 
 	/**
@@ -272,39 +256,8 @@ export class AgentHomeWorkspaceActions {
 	}
 }
 
-export interface IGitRun {
-	readonly exitCode: number | null;
-	readonly stderr: string;
-	readonly timedOut: boolean;
-}
-
-/** Runs git in the user's shell, with their environment, so it is the git they use in a terminal. */
-export async function runGit(stdio: IVoltStdioService, cwd: string, args: readonly string[], timeoutMs: number): Promise<IGitRun> {
-	try {
-		const result = await stdio.exec({
-			id: `git-${generateUuid().slice(0, 8)}`,
-			command: ['git', ...args].map(shellQuote).join(' '),
-			cwd,
-			// No terminal to answer a credential prompt; fail instead of waiting for the timeout.
-			env: { GIT_TERMINAL_PROMPT: '0' },
-			timeoutMs,
-			inlineChars: 20_000,
-		});
-		return { exitCode: result.exitCode, stderr: result.stderr, timedOut: result.timedOut };
-	} catch (err) {
-		return { exitCode: 1, stderr: toErrorMessage(err), timedOut: false };
-	}
-}
-
-function shellQuote(arg: string): string {
-	if (/^[\w@%+=:,./~^-]+$/.test(arg)) {
-		return arg;
-	}
-	return isWindows ? `"${arg.replace(/"/g, '""')}"` : `'${arg.replace(/'/g, `'\\''`)}'`;
-}
-
 /**
- * The project menu (Recents, Start from scratch, Local folder, On This Mac, clone hosts) under
+ * The project menu (Recents, Local folders, New project, On This Mac, Git Repo) under
  * `anchor`, shared by the sidebar header, the new agent's project picker and Add Project.
  * Without `openOne`, a folder shows its latest chat (or a new one). A second click on the
  * same anchor closes it.

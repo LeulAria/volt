@@ -251,7 +251,7 @@
 	flex: 1;
 }
 
-/* Lined up with the top rows' folder icons, past the list's margin, indent and twistie. */
+/* Lined up with the top rows' folder icons, past the row padding, indent and twistie. */
 .volt-folder-section {
 	padding: 6px 24px 4px 34px;
 	color: var(--vscode-descriptionForeground);
@@ -259,10 +259,11 @@
 	flex-shrink: 0;
 }
 
+/* Edge to edge: the rows' highlight spans the dialog's full width. */
 .volt-folder-list {
 	flex: 1;
 	min-height: 0;
-	margin: 0 8px 8px;
+	margin: 0 0 8px;
 }
 
 .volt-folder-foot {
@@ -317,7 +318,7 @@
 	align-items: center;
 	gap: 10px;
 	height: 32px;
-	padding: 0 12px 0 2px;
+	padding: 0 20px 0 2px;
 	box-sizing: border-box;
 	cursor: default;
 }
@@ -327,20 +328,24 @@
 	color: var(--vscode-list-activeSelectionForeground);
 }
 
-/* The whole tree row, twistie included, takes the highlight. A click's selection does not show: the focus is the pick. */
+/* Rows keep the list's own square, full-width highlight (themed in folderBrowser.ts); the content sits in from the edge. */
 .volt-folder-list .monaco-list-row {
-	border-radius: 7px;
-	background: transparent !important;
-	color: var(--vscode-foreground) !important;
+	border-radius: 0;
 }
 
-/* A quiet highlight, like a command palette row. */
-.volt-folder-list .monaco-list-row.focused {
-	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent) !important;
+.volt-folder-list .monaco-tl-row {
+	padding-left: 8px;
 }
 
-.volt-folder-list .monaco-list-row:hover:not(.focused):not(:has(.volt-folder-row.message)) {
-	background: var(--vscode-list-hoverBackground) !important;
+/* Indent guides are absolutely placed, so they move with the padding by hand. */
+.volt-folder-list .monaco-tl-indent {
+	margin-left: 8px;
+}
+
+/* Messages ("Loading...", "No folders here") are not rows you can pick. */
+.volt-folder-list .monaco-list-row:has(.volt-folder-row.message) {
+	background-color: transparent !important;
+	outline: none !important;
 }
 
 .volt-folder-list .monaco-tl-twistie {

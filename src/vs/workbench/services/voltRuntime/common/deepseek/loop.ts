@@ -7,6 +7,7 @@ import { CancellationToken, CancellationTokenSource } from '../../../../../base/
 import { localize } from '../../../../../nls.js';
 import { IVoltEvent } from '../events.js';
 import { ILoopDetectorOptions, LoopDetector, LoopSignal, LoopVerdict } from '../harness/doomLoop.js';
+import { ILesson, LessonBook } from '../harness/lessons.js';
 import { dropBoundReasoning, latestUserRequest } from '../harness/nativeCompaction.js';
 import { INativeLoopMessage } from '../harness/nativeLoop.js';
 import { toLoopStep } from '../harness/progress.js';
@@ -43,6 +44,9 @@ export interface IDeepseekStreamTimeouts {
 
 export const DEEPSEEK_STREAM_TIMEOUTS = { firstChunkMs: 600_000, idleMs: 120_000 } as const;
 
+/** `volt.agent.promptCacheKeepAlive`: keep a Claude chat's prompt cache warm while its run waits (see `keepAlive`). */
+export const PROMPT_CACHE_KEEPALIVE_SETTING = 'volt.agent.promptCacheKeepAlive';
+
 export interface IDeepseekHost {
 	stream(messages: readonly INativeLoopMessage[], token: { isCancellationRequested: boolean }, options?: IDeepseekStreamOptions): AsyncIterable<StreamChunk>;
 	/** Runs a batch; `onResult` fires as each call finishes so its card completes immediately. */
@@ -71,6 +75,12 @@ export interface IDeepseekHost {
 	onResponse?(messages: readonly INativeLoopMessage[]): void;
 	/** The provider said the prompt no longer fits. Returns true when the transcript shrank. */
 	recoverOverflow?(messages: INativeLoopMessage[]): Promise<boolean>;
+	/**
+	 * Sends `messages` again exactly as the last model request had them and stops at the first
+	 * chunk: the provider's prompt cache reads (and so keeps) the prefix while a long tool call or an
+	 * approval holds the run. Set only for providers whose cache expires within minutes (Claude).
+	 */
+	keepAlive?(messages: readonly INativeLoopMessage[], options: IDeepseekStreamOptions): Promise<void>;
 	/**
 	 * The model wants to stop. Returns a message that sends it back to work (new errors in files
 	 * it changed, an unverified change), or `undefined` to accept the answer.
@@ -132,6 +142,8 @@ export interface IDeepseekLoopResult {
 	readonly assistant: string;
 	readonly messages: INativeLoopMessage[];
 	readonly stopped?: IDeepseekStop;
+	/** The recoveries this run tried and whether each worked (see LessonBook), one line each. */
+	readonly lessons?: readonly string[];
 }
 
 interface IOpenBlock {
@@ -153,12 +165,22 @@ const MAX_COMPLETION_REVIEWS = 2;
  * "I'm done" went through unchecked.
  */
 const REVIEW_RESET_STEPS = 3;
+/** A prompt cache entry lives five minutes from its last read: it is read again a little before. */
+const KEEPALIVE_AFTER_MS = 270_000;
+const KEEPALIVE_CHECK_MS = 15_000;
+/**
+ * Reads per wait at most (about half an hour). A wait that long is likely a person away; past it the
+ * next request writes the cache once, which costs about what a dozen reads would.
+ */
+const MAX_KEEPALIVE_PINGS = 6;
 const FALLBACK_MAX_OUTPUT = 128_000;
 /** Streamed text is checked for runaway repetition each time it grows by this much. */
 const TEXT_CHECK_CHARS = 1_024;
 const TRUNCATED_TOOL = 'Tool call was truncated at the output limit before its arguments were complete. It was not executed.';
 const INTERRUPTED_TOOL = 'Tool call was interrupted before it was dispatched.';
 const STALL_HINT = 'Your last response was cut off because the model stream stalled. Continue exactly where you left off, without repeating what you already wrote. Tool calls in that response did not run; make them again if you still need them.';
+/** Added to a loop nudge when an earlier one in this run did not stop the repetition. */
+const REPEAT_NUDGE_HINT = 'You were already asked once in this run to change approach and the repetition came back. Do something different now: a different tool, a smaller step, re-read the current file, or ask the user. Do not retry the same call.';
 const NO_LOOP: LoopVerdict = { kind: 'ok' };
 const CONTINUE: DeepseekDirective = { kind: 'continue' };
 
@@ -174,6 +196,12 @@ const CONTINUE: DeepseekDirective = { kind: 'continue' };
  * step. The model decides when the turn is over; the host may send it back once or twice.
  */
 export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopInput): Promise<IDeepseekLoopResult> {
+	const lessons = new LessonBook();
+	const result = await runLoop(host, input, lessons);
+	return lessons.all().length ? { ...result, lessons: lessons.describe() } : result;
+}
+
+async function runLoop(host: IDeepseekHost, input: IDeepseekLoopInput, lessons: LessonBook): Promise<IDeepseekLoopResult> {
 	const messages = input.messages;
 	const budget = input.budget ?? DEEPSEEK_BUDGET;
 	const detector = input.loopDetection === false ? undefined : createLoopDetector({ request: latestRequest(messages), ...input.loopDetection });
@@ -189,6 +217,27 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 	let gateInjections = 0;
 	/** Tool steps since the model was last sent back to work. */
 	let workSinceSendBack = 0;
+	/** Stream recoveries (stall, retry, overflow, output limit) waiting for the next good stream. */
+	let streamLessons: ILesson[] = [];
+	/** The last model request (for the prompt cache keep-alive) and when it was sent. */
+	let lastRequest: { readonly messages: readonly INativeLoopMessage[]; readonly options: IDeepseekStreamOptions; at: number } | undefined;
+	/** The last loop nudge, until a step shows whether it worked. */
+	let nudgeLesson: ILesson | undefined;
+	/** A loop nudge: an earlier one in this run that did not work makes this one firmer. */
+	const nudge = (text: string, subject: string): string => {
+		if (nudgeLesson) {
+			lessons.settle(nudgeLesson, false);
+		}
+		const repeated = lessons.failedFor('doom').includes('nudge');
+		nudgeLesson = lessons.record('doom', 'nudge', false, subject);
+		return repeated ? `${text}\n\n${REPEAT_NUDGE_HINT}` : text;
+	};
+	const settleNudge = (worked: boolean) => {
+		if (nudgeLesson) {
+			lessons.settle(nudgeLesson, worked);
+			nudgeLesson = undefined;
+		}
+	};
 
 	const stopped = (stop: IDeepseekStop, outcome: 'done' | 'fail'): IDeepseekLoopResult => ({ outcome, assistant: lastAssistant, messages, stopped: stop });
 
@@ -216,9 +265,11 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 	};
 
 	while (!input.token.isCancellationRequested) {
+		const pausedWarm = input.isPaused?.() && lastRequest ? keepCacheWarm(host, lastRequest, input.token) : undefined;
 		while (input.isPaused?.() && !input.token.isCancellationRequested) {
 			await sleep(50);
 		}
+		pausedWarm?.stop();
 		if (input.token.isCancellationRequested) {
 			return { outcome: 'abort', assistant: lastAssistant, messages };
 		}
@@ -236,6 +287,9 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 
 		modelCalls++;
 		host.emit({ type: 'step.start', step: modelCalls });
+		if (host.keepAlive) {
+			lastRequest = { messages: messages.slice(), options: maxOutputTokens ? { maxOutputTokens } : {}, at: Date.now() };
+		}
 		const eager = new EagerDispatch(host, input.token);
 		const streamed = await readChunks(host, messages, input.token, { maxOutputTokens }, call => eager.offer(call), eager, detector);
 		host.emit({ type: 'step.end', step: modelCalls });
@@ -256,11 +310,12 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 				messages.push({ role: 'assistant', content: kept });
 			}
 			if (verdict.kind === 'stop') {
+				settleNudge(false);
 				host.emit({ type: 'error', message: loopStopMessage(verdict), retryable: false });
 				return stopped({ by: 'loop', reason: verdict.reason, signal: verdict.signal, evidence: [modelCalls] }, 'fail');
 			}
 			host.emit(loopNotice(verdict));
-			messages.push({ role: 'user', content: verdict.nudge });
+			messages.push({ role: 'user', content: nudge(verdict.nudge, verdict.subject) });
 			continue;
 		}
 		if (streamed.kind === 'stalled') {
@@ -270,6 +325,7 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 				return { outcome: 'fail', assistant: lastAssistant, messages };
 			}
 			stallRecoveries++;
+			streamLessons.push(lessons.record('transient', 'retry', false, `stream stalled for ${streamed.seconds}s; continued`));
 			lastAssistant = streamed.assistant || lastAssistant;
 			const parts = streamed.parts.filter(part => part.type === 'text');
 			if (streamed.assistant || parts.length) {
@@ -285,18 +341,21 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 			// Rejected before any output, so nothing ran; without Claude's earlier thinking the same
 			// step goes through. Once that thinking is gone, the same refusal is a real failure.
 			if (error instanceof ProviderError && error.thinkingRejected && !streamed.visible && dropBoundReasoning(messages) > 0) {
+				streamLessons.push(lessons.record('invalid-args', 'switch', false, 'provider refused earlier reasoning; dropped it'));
 				host.emit({ type: 'retry', attempt: streamRetries + 1, delayMs: 0, message: localize('volt.loop.thinkingRejected', "The provider would not take the model's earlier reasoning back. Retrying without it.") });
 				modelCalls--;
 				continue;
 			}
 			if (error instanceof ProviderError && error.overflow && !overflowRecovered && host.recoverOverflow && await host.recoverOverflow(messages)) {
 				overflowRecovered = true;
+				streamLessons.push(lessons.record('environment', 'reset', false, 'prompt no longer fit; compacted'));
 				modelCalls--;
 				continue;
 			}
 			const retryable = error instanceof ProviderError ? error.retryable : true;
 			if (retryable && !streamed.visible && streamRetries < MAX_STREAM_RETRIES && !input.token.isCancellationRequested) {
 				streamRetries++;
+				streamLessons.push(lessons.record('transient', 'retry', false, errorText(error).split('\n')[0]));
 				const delayMs = providerRetryDelay(streamRetries, error instanceof ProviderError ? error.retryAfterMs : undefined);
 				host.emit({ type: 'retry', attempt: streamRetries + 1, delayMs, message: `${errorText(error)} Retrying.` });
 				await sleep(delayMs);
@@ -304,6 +363,7 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 				continue;
 			}
 			host.emit({ type: 'error', message: errorText(error), retryable });
+			streamLessons = [];
 			return { outcome: 'fail', assistant: lastAssistant, messages };
 		}
 		// Recovery budgets are per streak: a long run meets a stall or an overflow every so often, and
@@ -311,6 +371,11 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 		streamRetries = 0;
 		stallRecoveries = 0;
 		overflowRecovered = false;
+		// This stream went through: the recoveries before it worked.
+		for (const lesson of streamLessons) {
+			lessons.settle(lesson, true);
+		}
+		streamLessons = [];
 		lastAssistant = streamed.assistant || lastAssistant;
 		if (streamed.finish === 'error') {
 			await eager.settle();
@@ -324,6 +389,7 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 				return { outcome: 'fail', assistant: lastAssistant, messages };
 			}
 			maxOutputTokens = host.maxOutputTokens ?? FALLBACK_MAX_OUTPUT;
+			streamLessons.push(lessons.record('unknown', 'retry', false, 'hit the output limit; raised it'));
 			const parts = streamed.parts.filter(part => part.type !== 'tool_call');
 			if (streamed.assistant || parts.length) {
 				messages.push({ role: 'assistant', content: streamed.assistant, ...(parts.length ? { parts } : {}) });
@@ -346,7 +412,8 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 
 		messages.push({ role: 'assistant', content: streamed.assistant, toolCalls: calls, ...(streamed.parts.length ? { parts: streamed.parts } : {}) });
 		host.onResponse?.(messages);
-		const outcome = await runCalls(host, calls, eager);
+		const warm = lastRequest ? keepCacheWarm(host, lastRequest, input.token) : undefined;
+		const outcome = await runCalls(host, calls, eager).finally(() => warm?.stop());
 		toolCalls += outcome.executed;
 		if (outcome.executed && ++workSinceSendBack >= REVIEW_RESET_STEPS) {
 			reviews = 0;
@@ -386,7 +453,11 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 		}
 
 		const verdict = detector?.observe(toLoopStep(modelCalls, calls, outcome.results, streamed.assistant)) ?? NO_LOOP;
+		if (verdict.kind === 'ok') {
+			settleNudge(true);
+		}
 		if (verdict.kind === 'stop') {
+			settleNudge(false);
 			host.emit({ type: 'error', message: loopStopMessage(verdict), retryable: false });
 			return stopped({ by: 'loop', reason: verdict.reason, signal: verdict.signal, evidence: verdict.evidence }, 'fail');
 		}
@@ -397,7 +468,7 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 		const notes: string[] = [];
 		if (verdict.kind === 'warn') {
 			host.emit(loopNotice(verdict));
-			notes.push(verdict.nudge);
+			notes.push(nudge(verdict.nudge, verdict.subject));
 		}
 		if (directive.kind === 'inject' && directive.message.trim()) {
 			notes.push(directive.message);
@@ -407,6 +478,25 @@ export async function runDeepseekLoop(host: IDeepseekHost, input: IDeepseekLoopI
 		}
 	}
 	return { outcome: 'abort', assistant: lastAssistant, messages };
+}
+
+/**
+ * While the run waits (tools, an approval, a pause), reads the last request's prompt again before
+ * the provider's cache drops it, so the next step reads the prefix instead of writing it anew.
+ */
+function keepCacheWarm(host: IDeepseekHost, request: { readonly messages: readonly INativeLoopMessage[]; readonly options: IDeepseekStreamOptions; at: number }, token: { isCancellationRequested: boolean }): { stop(): void } {
+	let pings = 0;
+	let busy = false;
+	const timer = setInterval(() => {
+		if (busy || token.isCancellationRequested || pings >= MAX_KEEPALIVE_PINGS || Date.now() - request.at < KEEPALIVE_AFTER_MS || !host.keepAlive) {
+			return;
+		}
+		busy = true;
+		pings++;
+		request.at = Date.now();
+		host.keepAlive(request.messages, request.options).catch(() => undefined).finally(() => busy = false);
+	}, KEEPALIVE_CHECK_MS);
+	return { stop: () => clearInterval(timer) };
 }
 
 /** The user's latest typed turn, past Volt's continuations: the loop detector lets repetition it asks for through. */

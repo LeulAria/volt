@@ -16,6 +16,8 @@ import { replaceEmojiWithIcons } from './agentEmojiIcons.js';
 import { IMermaidOptions, isMermaidXyChart, preloadMermaid, renderMermaidDiagram, xychartToChartSpec } from './agentMermaid.js';
 import { IVisualHostContext, mountChart, renderVisualSkeleton } from '../visuals/agentVisuals.js';
 import { chartLoaderShape } from '../visuals/agentDotLoader.js';
+import { createLinkBrandIcon, fillBrandLink, linkBrandForHref } from './agentLinkLogos.js';
+import { extractHttpUrl } from '../preview/localPreview.js';
 
 /**
  * Markdown the way Cursor's transcript draws it: KaTeX math, highlighted code cards,
@@ -219,13 +221,33 @@ function decorateTaskLists(root: HTMLElement): void {
 /** Hosts whose /favicon.ico failed: streaming re-renders every frame, so never ask them again. */
 const failedFavicons = new Set<string>();
 
-/** External links lead with the site's favicon (15px, 3px radius), dropped silently when the site has none. */
+/**
+ * External links lead with the site's favicon (15px, 3px radius), dropped silently when the site has
+ * none. A known site (YouTube, GitHub, X...) shows its logo instead, and a bare link to one reads as
+ * its URL in link colour rather than code.
+ */
 function decorateLinkFavicons(root: HTMLElement, store: DisposableStore): void {
 	for (const link of root.querySelectorAll('a')) {
-		if (link.querySelector('img, code') || link.classList.contains('volt-agent-path-pill')) {
+		if (link.classList.contains('volt-agent-path-pill') || link.classList.contains('volt-brand-link')) {
 			continue;
 		}
 		const href = link.getAttribute('data-href') || link.getAttribute('href') || '';
+		const brand = linkBrandForHref(href);
+		if (brand) {
+			const code = link.querySelector('code');
+			const text = code?.textContent?.trim() ?? '';
+			if (code && link.childElementCount === 1 && text === link.textContent?.trim() && extractHttpUrl(text)) {
+				link.replaceChildren();
+				fillBrandLink(link, text);
+			} else if (!link.querySelector('img, code')) {
+				link.classList.add('volt-md-link');
+				link.insertBefore(createLinkBrandIcon(brand, 15), link.firstChild);
+			}
+			continue;
+		}
+		if (link.querySelector('img, code')) {
+			continue;
+		}
 		let url: URL;
 		try {
 			url = new URL(href);

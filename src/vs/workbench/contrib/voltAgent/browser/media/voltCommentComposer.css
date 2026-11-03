@@ -1,0 +1,97 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * The comment composer (voltCommentComposer.ts): the browser's inspect prompt outside the browser.
+ * Its frame, fill and pill come from `.volt-browser-prompt` in browserEditor.css; this adds what the
+ * browser tab gives it through `.volt-browser-editor` (hidden), the X / bin and the fade in.
+ */
+
+.volt-comment-composer.hidden,
+.volt-comment-composer .hidden {
+	display: none !important;
+}
+
+/* Placed with left/top (never a transform), so it fades in where it lands instead of sliding in. */
+.volt-comment-composer {
+	top: 0;
+	left: 0;
+	color: var(--vscode-foreground);
+}
+
+.volt-comment-composer.volt-comment-composer-in {
+	animation: volt-comment-composer-in 120ms ease-out;
+}
+
+@keyframes volt-comment-composer-in {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+/* The X and the bin sit in the input row's top right corner, over the composer. */
+.volt-comment-composer > .volt-comment-composer-tools {
+	position: absolute;
+	top: 9px;
+	right: 8px;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	gap: 0;
+}
+
+.volt-comment-composer-tool {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: transparent;
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+	cursor: pointer;
+	flex-shrink: 0;
+}
+
+.volt-comment-composer-tool:hover {
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.volt-comment-composer-tool .codicon {
+	font-size: 14px;
+}
+
+/* The text keeps clear of them. */
+.volt-comment-composer.volt-browser-prompt > .volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-monaco,
+.volt-comment-composer.volt-browser-prompt > .volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).has-content .volt-agent-monaco {
+	padding-right: 28px !important;
+}
+
+.volt-comment-composer.volt-browser-prompt.deletable > .volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock):not(.empty) .volt-agent-monaco,
+.volt-comment-composer.volt-browser-prompt.deletable > .volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).has-content .volt-agent-monaco {
+	padding-right: 50px !important;
+}
+
+/* An emptied box is the one-line pill: its mic moves left of them. */
+.volt-comment-composer.volt-browser-prompt.composer-empty > .volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).empty {
+	padding-right: 34px;
+}
+
+.volt-comment-composer.volt-browser-prompt.composer-empty.deletable > .volt-agent-input-box.follow-up.volt-browser-agent-composer:not(.dock).empty {
+	padding-right: 56px;
+}
+
+.volt-comment-composer.composer-empty > .volt-comment-composer-tools {
+	top: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-comment-composer.volt-comment-composer-in {
+		animation: none;
+	}
+}

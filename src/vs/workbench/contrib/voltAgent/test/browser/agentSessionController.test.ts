@@ -32,7 +32,7 @@ class FakeRuntime {
 	}
 
 	listCatalog() {
-		return [{ kind: 'model', providerId: 'cursor-acp', id: 'composer-2.5', label: 'Composer 2.5' }, { ref: 'claude:opus', id: 'claude-opus-5', label: 'Opus 5' }];
+		return [{ kind: 'model', providerId: 'cursor-acp', id: 'composer-2.5', label: 'Composer 2.5' }, { ref: 'claude:opus', id: 'claude-opus-5', label: 'Opus 5' }, { kind: 'agent', ref: 'claude:sonnet', id: 'claude-sonnet-5', label: 'Sonnet 5' }];
 	}
 
 	emit(event: IVoltEvent, runId = 'run-1'): void {
@@ -231,6 +231,20 @@ suite('Agent session controller', () => {
 		assert.strictEqual(reply.activity!.status, running, 'the command is still running');
 		runtime.emit({ type: 'tool.end', callId: 'b', result: 'ok', exitCode: 0 });
 		assert.strictEqual(reply.activity!.status, 'Thinking', 'a quiet model after tools can read "Taking longer than expected"');
+	});
+
+	test('"Starting" lasts only until the agent has the prompt; a slow model reads "Thinking"', () => {
+		const { runtime, host } = setup();
+		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'agent', providerRef: 'claude:sonnet' });
+		runtime.emit({ type: 'lifecycle', phase: 'planning' });
+		const reply = host.messages.at(-1) as IAgentAssistantMessage;
+		assert.strictEqual(reply.activity!.status, 'Starting Sonnet 5');
+		runtime.emit({ type: 'lifecycle', phase: 'running' });
+		assert.strictEqual(reply.activity!.status, 'Thinking');
+		// A status the run set since then is not taken back by a later 'running'.
+		runtime.emit({ type: 'tool.progress', callId: 'a', status: 'Indexing' });
+		runtime.emit({ type: 'lifecycle', phase: 'running' });
+		assert.strictEqual(reply.activity!.status, 'Indexing');
 	});
 
 	test('a failed run keeps the error and run id, and leaves the queue waiting', () => {

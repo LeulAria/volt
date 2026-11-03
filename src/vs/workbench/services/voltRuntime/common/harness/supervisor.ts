@@ -39,6 +39,14 @@ export const TEST_GAMING_NOTICE_TITLE = 'Possible test special-casing';
 
 // --- Loop detection ------------------------------------------------------------------------
 
+/** Tools made to be called again with the same answer until something happens (await_commits says STILL WAITING). */
+const WAIT_TOOLS = new Set(['await_commits', 'await_answers', 'wait_tasks', 'thread_wait', 'terminal_wait', 'task_status', 'browser_wait_for']);
+
+/** `mcp__volt__await_commits`, `volt: await_commits` and `await_commits` alike. */
+export function isWaitTool(name: string): boolean {
+	return WAIT_TOOLS.has(name.trim().split(/__|[\s:./]+/).filter(Boolean).pop()?.toLowerCase() ?? '');
+}
+
 /** One finished tool call, reduced to what loop detection compares. */
 export interface ISupervisedCall {
 	/** Tool identity without arguments (`execute`, `edit`, `read_file`). */
@@ -458,7 +466,7 @@ export class RunSupervisor {
 				this.checkDiffs(event.diffs, out);
 				const call = this.calls.get(event.callId);
 				this.calls.delete(event.callId);
-				if (call) {
+				if (call && !isWaitTool(call.name)) {
 					const signal = this.detector.record(this.summarise(call, event));
 					const directive = signal && this.onLoop(signal);
 					if (directive) {

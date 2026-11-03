@@ -11,6 +11,7 @@ import { Workspace } from '../../../../../platform/workspace/common/workspace.js
 import { TestContextService } from '../../../../test/common/workbenchTestServices.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { VoltSessionContextService } from '../../../../services/voltRuntime/browser/sessionContextService.js';
+import { VoltWindowScopeService } from '../../../../services/voltWindowScope/common/voltWindowScopeService.js';
 import {
 	adoptProjectForUnstartedSession,
 	agentSessionNeedsScratch,
@@ -38,8 +39,8 @@ suite('Agent shell project matching', () => {
 	});
 
 	test('binding a chat to another project does not move it', () => {
-		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService()), emptyWindow()));
-		const workspace = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService())));
+		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService()), emptyWindow(), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
+		const workspace = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService()), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		const pinned: string[] = [];
 		const history = { pinSessionWorkspace: (id: string) => { pinned.push(id); } } as unknown as IAgentHistoryService;
 		const repo = context.registerProject(URI.file('/repo'), 'Repo');
@@ -54,8 +55,8 @@ suite('Agent shell project matching', () => {
 	});
 
 	test('an unstarted chat moves to the project its composer shows', () => {
-		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService()), emptyWindow()));
-		const workspace = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService())));
+		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService()), emptyWindow(), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
+		const workspace = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService()), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		const pinned: string[] = [];
 		const history = { pinSessionWorkspace: (id: string, ws: { folders: string[] }) => { pinned.push(`${id}:${ws.folders[0]}`); } } as unknown as IAgentHistoryService;
 		const stale = context.registerProject(URI.file('/stale'), 'Stale');
@@ -70,7 +71,7 @@ suite('Agent shell project matching', () => {
 	});
 
 	test('a foreground chat with no history uses the selected project', () => {
-		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService()), emptyWindow()));
+		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService()), emptyWindow(), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		const selected = context.registerProject(URI.file('/repo'), 'Repo');
 		context.selectProject(selected.id);
 		assert.strictEqual(resolveSessionProject(context, undefined, true)?.id, selected.id);
@@ -78,7 +79,7 @@ suite('Agent shell project matching', () => {
 	});
 
 	test('a chat with no project gets a scratch folder on its first send, unless a project is selected', () => {
-		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService()), emptyWindow()));
+		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService()), emptyWindow(), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		assert.strictEqual(agentSessionNeedsScratch(context, 'new', undefined, false), true);
 		const project = context.registerProject(URI.file('/repo'), 'Repo');
 		context.bindSession('bound', project.id);
@@ -91,7 +92,7 @@ suite('Agent shell project matching', () => {
 
 	test('scratch folders bind like projects but are never listed or selected', () => {
 		const storage = store.add(new InMemoryStorageService());
-		const context = store.add(new VoltSessionContextService(storage, emptyWindow()));
+		const context = store.add(new VoltSessionContextService(storage, emptyWindow(), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		const repo = context.registerProject(URI.file('/repo'), 'Repo');
 		context.selectProject(repo.id);
 		const scratch = context.registerScratchProject(URI.file('/home/.volt/scratch/2026-10-06-hi-abcd1234'), 'No Project');
@@ -106,14 +107,14 @@ suite('Agent shell project matching', () => {
 		assert.strictEqual(resolveSessionProject(context, { workspaceFolder: scratch.root.fsPath, workspaceLabel: 'No Project' }, true)?.id, scratch.id);
 		assert.strictEqual(context.projects.length, 1);
 
-		const reloaded = store.add(new VoltSessionContextService(storage, emptyWindow()));
+		const reloaded = store.add(new VoltSessionContextService(storage, emptyWindow(), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		assert.strictEqual(reloaded.getProject(scratch.id)?.scratch, true);
 		assert.strictEqual(reloaded.rootFor('chat')?.fsPath, scratch.root.fsPath, 'the binding survives a reload');
 		assert.deepStrictEqual(reloaded.projects.map(project => project.id), [repo.id]);
 	});
 
 	test('New Chat uses the last project when one is selected, otherwise none', () => {
-		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService()), emptyWindow()));
+		const context = store.add(new VoltSessionContextService(store.add(new InMemoryStorageService()), emptyWindow(), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		assert.strictEqual(context.activeProject?.id, undefined, 'no last project');
 		const project = context.registerProject(URI.file('/repo'), 'Repo');
 		context.selectProject(project.id);

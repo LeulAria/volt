@@ -4,8 +4,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { $, addDisposableListener, append } from '../../../../../base/browser/dom.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -15,22 +13,30 @@ import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { OPEN_AGENT_CUSTOMIZE_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { OPEN_AGENT_USAGE_COMMAND_ID } from '../usage/agentUsageEditor.js';
 import { createUsageIcon } from '../usage/agentUsageIcons.js';
-import { createHomeAutomationsIcon, createHomeSettingsIcon } from './agentHomeIcons.js';
+import { AgentUsageHoverCard } from '../usage/agentUsageHoverCard.js';
+import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { OPEN_PULL_REQUESTS_PAGE_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
+import { createHomeAutomationsIcon, createHomeCustomizeIcon, createHomePullRequestsIcon, createHomeSettingsIcon } from './agentHomeIcons.js';
 
-export type AgentFooterAction = 'settings' | 'usage' | 'automations' | 'customize';
+export type AgentFooterAction = 'settings' | 'usage' | 'pullRequests' | 'automations' | 'customize';
 
 /**
- * Settings, Usage, Automations and Customize: the icon row at the foot of the agent list, also
+ * Settings, Usage, Pull Requests, Automations and Customize: the icon row at the foot of the agent list, also
  * at the foot of the Settings nav. Each runs its command; the buttons come back by id.
  */
-export function appendAgentFooterActions(footer: HTMLElement, commandService: ICommandService, store: DisposableStore): Record<AgentFooterAction, HTMLButtonElement> {
+export function appendAgentFooterActions(footer: HTMLElement, commandService: ICommandService, store: DisposableStore, instantiationService?: IInstantiationService): Record<AgentFooterAction, HTMLButtonElement> {
 	const action = (id: AgentFooterAction, label: string, icon: () => Element, command: string, className = '') => {
 		const button = append(footer, $(`button.volt-agent-home-settings${className}`)) as HTMLButtonElement;
 		button.type = 'button';
 		button.dataset.action = id;
 		button.appendChild(icon());
 		button.setAttribute('aria-label', label);
-		setAgentTooltip(button, label);
+		if (id === 'usage' && instantiationService) {
+			// Every account's limits on hover, instead of a plain "Usage" tooltip.
+			store.add(instantiationService.createInstance(AgentUsageHoverCard, button, 'above'));
+		} else {
+			setAgentTooltip(button, label);
+		}
 		store.add(addDisposableListener(button, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
@@ -42,7 +48,8 @@ export function appendAgentFooterActions(footer: HTMLElement, commandService: IC
 	return {
 		settings: action('settings', localize('voltAgent.home.settings', "Settings"), () => createHomeSettingsIcon(), OPEN_VOLT_SETTINGS_COMMAND_ID),
 		usage: action('usage', localize('voltAgent.home.usage', "Usage"), () => createUsageIcon(14), OPEN_AGENT_USAGE_COMMAND_ID, '.volt-agent-home-usage'),
+		pullRequests: action('pullRequests', localize('voltAgent.home.pullRequests', "Pull Requests"), () => createHomePullRequestsIcon(), OPEN_PULL_REQUESTS_PAGE_COMMAND_ID),
 		automations: action('automations', localize('voltAgent.home.automations', "Automations"), () => createHomeAutomationsIcon(), OPEN_AUTOMATIONS_COMMAND_ID),
-		customize: action('customize', localize('voltAgent.home.customize', "Customize"), () => renderIcon(Codicon.extensions), OPEN_AGENT_CUSTOMIZE_COMMAND_ID),
+		customize: action('customize', localize('voltAgent.home.customize', "Customize"), () => createHomeCustomizeIcon(), OPEN_AGENT_CUSTOMIZE_COMMAND_ID),
 	};
 }

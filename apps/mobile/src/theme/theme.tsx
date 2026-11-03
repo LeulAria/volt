@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Font from 'expo-font';
 import { darkPalette, type IVoltPalette, lightPalette, MODE_COLORS, type ComposerMode, voltTheme, type VoltThemeId } from '@volt/client-core';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Platform, useColorScheme } from 'react-native';
@@ -13,9 +14,20 @@ export type ThemePreference = 'system' | VoltThemeId;
 
 const KEY = 'volt.theme';
 
-export const FONT = {
-	mono: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
-} as const;
+const SYSTEM_MONO = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
+
+/** Code is set in Geist Mono, the desktop's monospace font, once {@link loadFonts} has it. */
+export const FONT: { mono: string } = { mono: SYSTEM_MONO };
+
+/** Loads the bundled fonts; the system's monospace stays if they don't load. Call before the first screen draws. */
+export async function loadFonts(): Promise<void> {
+	try {
+		await Font.loadAsync({ GeistMono: require('../../assets/fonts/GeistMono-Variable.ttf') as number });
+		FONT.mono = 'GeistMono';
+	} catch {
+		FONT.mono = SYSTEM_MONO;
+	}
+}
 
 export interface ITheme {
 	readonly p: IVoltPalette;

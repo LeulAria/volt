@@ -31,8 +31,8 @@ const ActiveRepositoryContextKeys = {
 };
 
 export class SCMActiveRepositoryController extends Disposable implements IWorkbenchContribution {
-	private readonly _repositories: IObservable<Iterable<ISCMRepository>>;
 	private readonly _activeRepositoryHistoryItemRefName: IObservable<string | undefined>;
+	private readonly _visibleRepositories: IObservable<readonly ISCMRepository[]>;
 	private readonly _countBadgeConfig: IObservable<'all' | 'focused' | 'off'>;
 	private readonly _countBadgeRepositories: IObservable<readonly { provider: ISCMProvider; resourceCount: IObservable<number> }[]>;
 	private readonly _countBadge: IObservable<number>;
@@ -61,9 +61,9 @@ export class SCMActiveRepositoryController extends Disposable implements IWorkbe
 
 		this._countBadgeConfig = observableConfigValue<'all' | 'focused' | 'off'>('scm.countBadge', 'all', this.configurationService);
 
-		this._repositories = observableFromEvent(this,
-			Event.any(this.scmService.onDidAddRepository, this.scmService.onDidRemoveRepository),
-			() => this.scmService.repositories);
+		this._visibleRepositories = observableFromEvent(this,
+			this.scmViewService.onDidChangeVisibleRepositories,
+			() => this.scmViewService.visibleRepositories);
 
 		this._activeRepositoryHistoryItemRefName = derived(reader => {
 			const repository = this.scmViewService.activeRepository.read(reader);
@@ -76,7 +76,9 @@ export class SCMActiveRepositoryController extends Disposable implements IWorkbe
 		this._countBadgeRepositories = derived(this, reader => {
 			switch (this._countBadgeConfig.read(reader)) {
 				case 'all': {
-					const repositories = this._repositories.read(reader);
+					// Volt: the repositories the view shows, not every one Git opened. A chat shows its
+					// own repository alone (AgentScmRepositoryFocus), and the badge counts what it lists.
+					const repositories = this._visibleRepositories.read(reader);
 					return [...Iterable.map(repositories, r => ({ provider: r.provider, resourceCount: this._getRepositoryResourceCount(r) }))];
 				}
 				case 'focused': {

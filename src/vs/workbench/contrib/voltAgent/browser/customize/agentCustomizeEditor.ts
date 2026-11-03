@@ -40,16 +40,23 @@ import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService, SIDE_GROUP } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
+import { ITextEditorService } from '../../../../services/textfile/common/textEditorService.js';
 import { IAgentRuntimeService, IVoltMcpServerStatus } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltMemoryService, VoltMemoryScope } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
 import { IVoltHookExecution, IVoltHooksService } from '../../../../services/voltRuntime/common/hooks/voltHooks.js';
 import '../../../../services/voltRuntime/browser/hooks/voltHooksService.js';
-import { createModeIcon } from '../chrome/agentModeIcons.js';
+import { createCustomizationKindIcon } from '../chrome/agentModeIcons.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createAgentScrollable } from '../editor/agentScrollable.js';
 import { createAgentTitleActionViewItem } from '../editor/agentTitleActions.js';
+import { AGENT_RESOURCE_FILTER_ICON, AgentResourceScopeKind } from '../../common/agentResources.js';
+import { AgentResourcesEmbed } from '../resources/agentResourcesEmbed.js';
+import { AgentResourcesSectionId } from '../resources/agentResourcesPage.js';
+import { agentResourceScopeFilterOptions } from '../resources/agentResourcesSections.js';
+import { createVoltDropdown } from '../ui/dropdown/voltDropdown.js';
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { AgentSurfaceHost } from '../workspace/agentSurfaceHost.js';
+import { createSurfaceStrokeIcon } from '../workspace/agentSurfaceMenu.js';
 import { hasSavedAgentTools } from '../workspace/agentToolsEditorPart.js';
 import { AgentCustomizationKind, customizationGroupKey, IAgentCustomization, IAgentPluginInfo, kindInfo, ORIGIN_LABELS, safeItemName } from './agentCustomize.js';
 import { IAgentCustomizeService } from './agentCustomizeService.js';
@@ -117,9 +124,29 @@ export class AgentCustomizeEditorInputSerializer implements IEditorSerializer {
 	}
 }
 
-/** The tabs of the page, in Cursor's order; Memories is Volt's own. */
+/** The kinds of customization, as tabs in Cursor's order; Memories is Volt's own. */
 type KindTab = 'plugin' | 'mcp' | 'skill' | 'subagent' | 'rule' | 'command' | 'hook' | 'memory';
-const TABS: readonly KindTab[] = ['plugin', 'mcp', 'skill', 'subagent', 'rule', 'command', 'hook', 'memory'];
+/** Tabs that are Agent Resources sections only. */
+type ResourceTab = 'overview' | 'instructions' | 'harness';
+type Tab = KindTab | ResourceTab;
+/**
+ * Rules live in Instructions & Rules, with AGENTS.md, CLAUDE.md and the other instruction files,
+ * so they have no tab of their own.
+ */
+const TABS: readonly Tab[] = ['overview', 'plugin', 'mcp', 'skill', 'subagent', 'instructions', 'command', 'hook', 'memory', 'harness'];
+/**
+ * Tabs drawn by Agent Resources (agentResourcesEmbed.ts): every agent's files, not only Volt's,
+ * by scope (Workspace, Global, External, Managed), with the load order, status and the harness.
+ * Plugins, MCPs, Commands, Hooks and Memories keep Customize's own lists: installs, connections,
+ * hook runs and saved notes live there.
+ */
+const RESOURCE_SECTIONS: Partial<Record<Tab, Exclude<AgentResourcesSectionId, 'marketplace'>>> = {
+	overview: 'overview',
+	skill: 'skills',
+	subagent: 'agents',
+	instructions: 'instructions',
+	harness: 'harness',
+};
 /** Kinds a section's + New creates from a template and a name. */
 const NAMED_KINDS: ReadonlySet<AgentCustomizationKind> = new Set(['skill', 'subagent', 'rule', 'command']);
 
@@ -127,7 +154,9 @@ type SortOrder = 'name' | 'source';
 type View = 'manage' | 'marketplace';
 
 interface IPageState {
-	readonly kind?: KindTab;
+	readonly kind?: Tab;
+	/** The Agent Resources tabs' scope filter. */
+	readonly resourceScope?: 'all' | AgentResourceScopeKind;
 	readonly sort?: SortOrder;
 	readonly descriptions?: boolean;
 	/** Scopes the user unchecked: `user`, or a folder URI. New folders start checked. */
@@ -173,7 +202,10 @@ function formatDuration(ms: number): string {
 	return ms < 1000 ? `${Math.max(0, Math.round(ms))}ms` : `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
 }
 
-const KIND_TITLES: Record<KindTab, string> = {
+const KIND_TITLES: Record<Tab, string> = {
+	overview: localize('voltCustomize.tabOverview', "Overview"),
+	instructions: localize('voltCustomize.tabInstructions', "Instructions & Rules"),
+	harness: localize('voltCustomize.tabHarness', "Harness"),
 	plugin: localize('voltCustomize.tabPlugins', "Plugins"),
 	mcp: localize('voltCustomize.tabMcps', "MCPs"),
 	skill: localize('voltCustomize.tabSkills', "Skills"),
@@ -222,7 +254,9 @@ export class AgentCustomizeEditor extends EditorPane {
 	private items: readonly IAgentCustomization[] = [];
 	private loaded = false;
 	private query = '';
-	private kind: KindTab = 'skill';
+	private kind: Tab = 'skill';
+	private resourceScope: 'all' | AgentResourceScopeKind = 'all';
+	private resourcesEmbed!: AgentResourcesEmbed;
 	private sort: SortOrder = 'name';
 	private showDescriptions = true;
 	private excluded = new Set<string>();
@@ -267,6 +301,7 @@ export class AgentCustomizeEditor extends EditorPane {
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IVoltHooksService private readonly hooks: IVoltHooksService,
 		@IOpenerService private readonly openerService: IOpenerService,
+		@ITextEditorService private readonly textEditorService: ITextEditorService,
 	) {
 		super(AgentCustomizeEditor.ID, group, telemetryService, themeService, storage);
 		this.restoreState();
@@ -327,6 +362,17 @@ export class AgentCustomizeEditor extends EditorPane {
 
 		this.surfaceHost = this._register(this.instantiationService.createInstance(AgentSurfaceHost, this.rootEl, this.mainEl));
 
+		this.resourcesEmbed = this._register(this.instantiationService.createInstance(AgentResourcesEmbed, {
+			openResource: resource => void this.openResource(resource),
+			openDiff: (original, modified, label) => void this.openDiff(original, modified, label),
+			navigate: section => this.navigateTo(section),
+			changed: () => {
+				if (this.view === 'manage' && (this.query || RESOURCE_SECTIONS[this.kind])) {
+					this.render();
+				}
+			},
+		}));
+
 		this._register(this.customize.onDidChange(() => {
 			this.items = this.customize.items;
 			this.loaded = true;
@@ -386,6 +432,11 @@ export class AgentCustomizeEditor extends EditorPane {
 			const state = JSON.parse(this.storage.get(STATE_KEY, StorageScope.PROFILE, '{}')) as IPageState;
 			if (state.kind && TABS.includes(state.kind)) {
 				this.kind = state.kind;
+			} else if (state.kind === 'rule') {
+				this.kind = 'instructions';
+			}
+			if (state.resourceScope && agentResourceScopeFilterOptions().some(option => option.id === state.resourceScope)) {
+				this.resourceScope = state.resourceScope;
 			}
 			if (state.sort === 'name' || state.sort === 'source') {
 				this.sort = state.sort;
@@ -402,7 +453,7 @@ export class AgentCustomizeEditor extends EditorPane {
 	}
 
 	private storePageState(): void {
-		const state: IPageState = { kind: this.kind, sort: this.sort, descriptions: this.showDescriptions, excluded: [...this.excluded] };
+		const state: IPageState = { kind: this.kind, resourceScope: this.resourceScope, sort: this.sort, descriptions: this.showDescriptions, excluded: [...this.excluded] };
 		this.storage.store(STATE_KEY, JSON.stringify(state), StorageScope.PROFILE, StorageTarget.USER);
 	}
 
@@ -432,6 +483,20 @@ export class AgentCustomizeEditor extends EditorPane {
 		}
 		const inMainPart = this.editorGroupsService.mainPart.groups.includes(this.group);
 		await this.editorService.openEditor({ resource, options: { pinned: true } }, inMainPart ? SIDE_GROUP : this.editorGroupsService.mainPart.activeGroup);
+	}
+
+	/** Opens two files side by side in the right panel (Agent Resources' Compare With). */
+	private async openDiff(original: URI, modified: URI, label: string): Promise<void> {
+		const input = this.textEditorService.createTextEditor({ original: { resource: original }, modified: { resource: modified }, label });
+		const host = this.surfaceHost;
+		if (host && getLayoutMode(this.layoutService) === 'agent' && this.editorGroupsService.mainPart.groups.includes(this.group)) {
+			this.presentTools();
+			if (host.canOpenTools()) {
+				await host.openEditorInTools(input, { pinned: true });
+				return;
+			}
+		}
+		await this.editorService.openEditor(input, { pinned: true }, SIDE_GROUP);
 	}
 
 	/** Opens a web page in the right panel's browser, reusing a tab already on it. Without the panel it goes to the opener. */
@@ -475,11 +540,26 @@ export class AgentCustomizeEditor extends EditorPane {
 		this.scroll.setScrollPosition({ scrollTop: 0 });
 	}
 
-	private setKind(kind: KindTab): void {
+	private setKind(kind: Tab): void {
 		this.kind = kind;
 		this.editingPlugins = false;
 		this.storePageState();
 		this.render();
+		this.scroll.setScrollPosition({ scrollTop: 0 });
+	}
+
+	/** An Agent Resources section's link to another (an Overview card, Skills' Discover): the tab that shows it. */
+	private navigateTo(section: AgentResourcesSectionId): void {
+		switch (section) {
+			case 'marketplace': this.setView('marketplace'); return;
+			case 'overview': this.setKind('overview'); return;
+			case 'instructions': this.setKind('instructions'); return;
+			case 'skills': this.setKind('skill'); return;
+			case 'agents': this.setKind('subagent'); return;
+			case 'integrations': this.setKind('mcp'); return;
+			case 'workflows': this.setKind('hook'); return;
+			case 'harness': this.setKind('harness'); return;
+		}
 	}
 
 	private cancelRemote(): void {
@@ -542,14 +622,17 @@ export class AgentCustomizeEditor extends EditorPane {
 		this.renderFilters();
 		this.renderStore.clear();
 		clearNode(this.listEl);
+		const resourceSection = RESOURCE_SECTIONS[this.kind];
 		if (this.query) {
 			this.renderSearch();
+		} else if (resourceSection) {
+			this.resourcesEmbed.render(this.listEl, resourceSection, this.resourceScope, '');
 		} else {
 			switch (this.kind) {
 				case 'plugin': this.renderPlugins(); break;
 				case 'mcp': this.renderMcps(); break;
 				case 'hook': this.renderHooks(); break;
-				default: this.renderKind(this.kind); break;
+				case 'rule': case 'command': case 'memory': this.renderKind(this.kind); break;
 			}
 		}
 		this.scroll.scanDomNode();
@@ -560,17 +643,41 @@ export class AgentCustomizeEditor extends EditorPane {
 		const chipsScroll = this.filtersEl.querySelector('.volt-customize-chips')?.scrollLeft ?? 0;
 		this.filterStore.clear();
 		clearNode(this.filtersEl);
-		const scope = append(this.filtersEl, $('button.volt-customize-chip.scope')) as HTMLButtonElement;
-		scope.type = 'button';
-		scope.appendChild(renderIcon(Codicon.globe));
-		append(scope, $('span')).textContent = this.scopeLabel();
-		scope.appendChild(renderIcon(Codicon.chevronDown));
-		scope.setAttribute('aria-haspopup', 'true');
-		this.filterStore.add(addDisposableListener(scope, EventType.CLICK, () => this.showScopeMenu(scope)));
+		const resources = !this.query && !!RESOURCE_SECTIONS[this.kind];
+		if (resources && this.kind === 'harness') {
+			// Nothing to filter: the chips start the row.
+		} else if (resources) {
+			// Agent Resources tabs list every scope, not only the folders Customize reads: filter by scope instead.
+			// The harness lists settings, not files, so it has no filter.
+			const host = append(this.filtersEl, $('.volt-customize-resource-scope'));
+			createVoltDropdown(host, this.contextViewService, {
+				options: agentResourceScopeFilterOptions(),
+				value: this.resourceScope,
+				ariaLabel: localize('voltCustomize.resourceScope', "Scope"),
+				align: 'left',
+				width: 280,
+				leadingIcon: () => createSurfaceStrokeIcon(host.ownerDocument, AGENT_RESOURCE_FILTER_ICON),
+				onChange: value => {
+					this.resourceScope = value;
+					this.storePageState();
+					this.render();
+				},
+			}, this.filterStore);
+		} else {
+			const scope = append(this.filtersEl, $('button.volt-customize-chip.scope')) as HTMLButtonElement;
+			scope.type = 'button';
+			scope.appendChild(renderIcon(Codicon.globe));
+			append(scope, $('span')).textContent = this.scopeLabel();
+			scope.appendChild(renderIcon(Codicon.chevronDown));
+			scope.setAttribute('aria-haspopup', 'true');
+			this.filterStore.add(addDisposableListener(scope, EventType.CLICK, () => this.showScopeMenu(scope)));
+		}
 		if (this.query) {
 			return;
 		}
-		append(this.filtersEl, $('span.volt-customize-divider'));
+		if (this.kind !== 'harness' || !resources) {
+			append(this.filtersEl, $('span.volt-customize-divider'));
+		}
 		const chips = append(this.filtersEl, $('.volt-customize-chips'));
 		for (const kind of TABS) {
 			const chip = append(chips, $('button.volt-customize-chip')) as HTMLButtonElement;
@@ -584,6 +691,9 @@ export class AgentCustomizeEditor extends EditorPane {
 		const active = chips.querySelector<HTMLElement>('.volt-customize-chip.active');
 		if (active && (active.offsetLeft < chips.scrollLeft || active.offsetLeft + active.offsetWidth > chips.scrollLeft + chips.clientWidth)) {
 			chips.scrollLeft = Math.max(0, active.offsetLeft - 24);
+		}
+		if (resources) {
+			return;
 		}
 		const sort = append(this.filtersEl, $('button.volt-customize-icon-button.filter')) as HTMLButtonElement;
 		sort.type = 'button';
@@ -773,7 +883,8 @@ export class AgentCustomizeEditor extends EditorPane {
 
 	private iconTile(item: IAgentCustomization | undefined, kind: AgentCustomizationKind, status?: 'ready' | 'connecting' | 'idle' | 'error'): HTMLElement {
 		const tile = $('.volt-customize-tile');
-		const plugin = item?.plugin;
+		// The plugin's logo marks only its own row; its skills, rules and commands keep the kind's line icon.
+		const plugin = kind === 'plugin' ? item?.plugin : undefined;
 		if (plugin?.logo) {
 			const cached = this.logos.get(plugin.id);
 			if (cached) {
@@ -807,18 +918,7 @@ export class AgentCustomizeEditor extends EditorPane {
 	}
 
 	private kindIcon(tile: HTMLElement, kind: AgentCustomizationKind): void {
-		switch (kind) {
-			case 'subagent':
-				tile.appendChild(createModeIcon('agent'));
-				break;
-			case 'skill': tile.appendChild(renderIcon(Codicon.zap)); break;
-			case 'rule': tile.appendChild(renderIcon(Codicon.listUnordered)); break;
-			case 'command': tile.appendChild(renderIcon(Codicon.terminal)); break;
-			case 'hook': tile.appendChild(renderIcon(Codicon.file)); break;
-			case 'mcp': tile.appendChild(renderIcon(Codicon.mcp)); break;
-			case 'plugin': tile.appendChild(renderIcon(Codicon.package)); break;
-			case 'memory': tile.appendChild(renderIcon(Codicon.bookmark)); break;
-		}
+		tile.appendChild(createCustomizationKindIcon(kind));
 	}
 
 	private itemRow(item: IAgentCustomization, options?: { badge?: string; descriptionFallback?: string }): IRowSpec {
@@ -1162,7 +1262,7 @@ export class AgentCustomizeEditor extends EditorPane {
 			}
 			const id = `plugin:${plugin.marketplace}/${plugin.name}`;
 			rows.push({
-				icon: (() => { const tile = $('.volt-customize-tile.box'); tile.appendChild(renderIcon(Codicon.package)); return tile; })(),
+				icon: (() => { const tile = $('.volt-customize-tile.box'); this.kindIcon(tile, 'plugin'); return tile; })(),
 				name: plugin.name,
 				description: plugin.description || plugin.author,
 				tooltip: plugin.description,
@@ -1204,10 +1304,10 @@ export class AgentCustomizeEditor extends EditorPane {
 			this.renderStore.add(addDisposableListener(image, 'error', () => {
 				image.remove();
 				tile.classList.remove('logo');
-				tile.appendChild(renderIcon(Codicon.zap));
+				this.kindIcon(tile, 'skill');
 			}));
 		} else {
-			tile.appendChild(renderIcon(Codicon.zap));
+			this.kindIcon(tile, 'skill');
 		}
 		return tile;
 	}

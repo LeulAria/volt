@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { raceCancellation } from '../../../../../base/common/async.js';
+import { raceCancellation, RunOnceScheduler } from '../../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { CancellationError } from '../../../../../base/common/errors.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
@@ -24,6 +24,8 @@ const STANDBY_LEAD_PROMPTS = 3;
 const RETRY_BOOT_MS = 15_000;
 /** Teaching a session its skill is one short turn. */
 const PRIME_TIMEOUT_MS = 60_000;
+/** A predictor nobody asked for this long stops; the next request or keystroke starts it again. */
+const IDLE_STOP_MS = 10 * 60_000;
 
 /** Two requests that want the session at once: the higher rank goes first; on a tie the newer one wins. */
 const TASK_PRIORITY: Readonly<Record<PredictorTask, number>> = {
@@ -70,8 +72,9 @@ interface ITurn {
 
 /**
  * The predictor: one agent session over ACP that answers every prediction (Tab, the composer's
- * ghost text, next edits, dictation cleanup) for the agent that serves Tab. It starts with Volt,
- * so no keystroke waits for an agent to boot, and it learns its skill once, so a request is only
+ * ghost text, next edits, dictation cleanup) for the agent that serves Tab. It starts on the first
+ * keystroke or dictation (not with Volt) and stops after {@link IDLE_STOP_MS} without a request,
+ * and it learns its skill once, so a request is only
  * the task and its context. One request runs at a time: a newer one of the same or a higher rank
  * replaces the running one, a lower one waits for it.
  */
@@ -86,6 +89,7 @@ export class PredictorAgent extends Disposable {
 	/** The newest request: a waiting older one of no higher rank gives way to it. */
 	private newest: { readonly ticket: number; readonly priority: number } | undefined;
 	private disposed = false;
+	private readonly idleStop = this._register(new RunOnceScheduler(() => this.stopIfIdle(), IDLE_STOP_MS));
 
 	constructor(
 		private readonly launcher: PredictorLauncher,
@@ -106,6 +110,22 @@ export class PredictorAgent extends Disposable {
 		}
 		if (ref && !this.active && Date.now() - this.failedAt >= RETRY_BOOT_MS) {
 			this.active = this.boot(ref);
+		}
+		if (ref) {
+			this.idleStop.schedule();
+		} else {
+			this.idleStop.cancel();
+		}
+	}
+
+	private stopIfIdle(): void {
+		if (this.turn) {
+			this.idleStop.schedule();
+			return;
+		}
+		if (this.active || this.standby) {
+			this.logService.info(`[volt predictor] ${this.ref} stopped after ${IDLE_STOP_MS / 60_000} idle minutes`);
+			this.stop();
 		}
 	}
 

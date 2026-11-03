@@ -11,6 +11,8 @@ export type DeviceScreenSize = Viewer.DeviceScreenSize;
 export type DuoCommand = Viewer.DuoCommand;
 export type DuoControlState = Viewer.DuoControlState;
 export type DeviceHardwareButton = Viewer.DeviceHardwareButton;
+export type DeviceOrientation = Viewer.DeviceOrientation;
+export type PhoneViewport = Viewer.PhoneViewport;
 
 let viewerLoad: Promise<typeof Viewer> | undefined;
 const MAX_RETRIES = 3;
@@ -35,9 +37,9 @@ export function iosPointScale(name: string): number {
 }
 
 /**
- * One iOS simulator streaming from Expo's device hub: H.264 decoded into `canvas`, touches, keys
- * and buttons over the hub's socket, and the iPhone Duo's hinge. `mountDuo` puts the 3D Duo over a
- * host element, fed by the same stream.
+ * One simulator or emulator streaming from Expo's device hub (serve-sim for iOS, serve-emu for
+ * Android): H.264 decoded into `canvas`, touches, keys and buttons over the hub's socket, and the
+ * iPhone Duo's hinge. `mountDuo` puts the 3D Duo over a host element, fed by the same stream.
  */
 export class DeviceLiveStream extends Disposable {
 
@@ -46,6 +48,7 @@ export class DeviceLiveStream extends Disposable {
 	private duo: Viewer.DuoViewport | undefined;
 	private retries = 0;
 	private disposed = false;
+	private readonly frameListeners = new Set<() => void>();
 
 	status: Viewer.DeviceStreamStatus = 'connecting';
 	detail: string | undefined;
@@ -67,6 +70,8 @@ export class DeviceLiveStream extends Disposable {
 		private readonly lib: typeof Viewer,
 		doc: Document,
 		origin: string,
+		readonly platform: 'ios' | 'android',
+		/** iOS: the UDID. Android: the emulator's adb serial. */
 		readonly udid: string,
 		/** Attaches the hub to the simulator again (after a hub restart or a reboot). */
 		private readonly reattach: () => Promise<unknown>,
@@ -76,13 +81,16 @@ export class DeviceLiveStream extends Disposable {
 		this.canvas.className = 'volt-device-screen volt-device-live-canvas';
 		const ws = origin.replace(/^http/, 'ws');
 		this.client = lib.createDeviceStreamClient(
-			{ platform: 'ios', deviceId: udid, access: { httpBase: origin, wsBase: ws, query: {}, credentials: false } },
+			{ platform, deviceId: udid, access: { httpBase: origin, wsBase: ws, query: {}, credentials: false } },
 			lib.createCanvasFrameSink(this.canvas, () => {
 				if (!this.streaming) {
 					this.streaming = true;
 					this._onDidChange.fire();
 				}
 				this.duo?.frame();
+				for (const listener of this.frameListeners) {
+					listener();
+				}
 			}),
 			{
 				onStatus: (status, detail) => {
@@ -132,6 +140,11 @@ export class DeviceLiveStream extends Disposable {
 		return this.screen ? this.lib.duoFoldState(this.screen) : undefined;
 	}
 
+	/** The orientation that keeps the phone held as it stands, sent before folding out of a stand. */
+	holdOrientation(vertical: boolean): Viewer.DeviceOrientation | undefined {
+		return this.screen ? this.lib.duoHoldOrientation(vertical, this.screen.screenId) : undefined;
+	}
+
 	/** A dropped stream starts again a few times (the hub restarting, a simulator reboot) before giving up. */
 	private retry(reason: string): void {
 		if (this.retries >= MAX_RETRIES || this.disposed) {
@@ -154,7 +167,26 @@ export class DeviceLiveStream extends Disposable {
 
 	/** Normalized 0..1 point on the raw framebuffer, which is what `canvas` shows. */
 	touch(phase: 'begin' | 'move' | 'end', x: number, y: number): void {
-		this.client.sendRawTouch(phase, x, y);
+		if (this.platform === 'android') {
+			this.client.sendTouch(phase, x, y);
+		} else {
+			this.client.sendRawTouch(phase, x, y);
+		}
+	}
+
+	/** Normalized 0..1 point on the frame as it is displayed (turned with the device), what the 3D phone reports. */
+	touchDisplayed(phase: 'begin' | 'move' | 'end', x: number, y: number): void {
+		this.client.sendTouch(phase, x, y);
+	}
+
+	/** Called after every decoded frame (the 3D phone redraws from `canvas`). */
+	onFrame(listener: () => void): { dispose(): void } {
+		this.frameListeners.add(listener);
+		return { dispose: () => this.frameListeners.delete(listener) };
+	}
+
+	setOrientation(orientation: DeviceOrientation): void {
+		this.client.setOrientation(orientation);
 	}
 
 	key(event: KeyboardEvent, phase: 'down' | 'up'): void {
@@ -174,7 +206,7 @@ export class DeviceLiveStream extends Disposable {
 		this.client.controlDuo(command);
 	}
 
-	mountDuo(host: HTMLElement, modelUrl: string, label: string, onUnavailable: (cause?: unknown) => void): void {
+	mountDuo(host: HTMLElement, modelData: ArrayBuffer, label: string, onUnavailable: (cause?: unknown) => void): void {
 		if (this.duo) {
 			return;
 		}
@@ -182,7 +214,7 @@ export class DeviceLiveStream extends Disposable {
 			host,
 			decoded: this.canvas,
 			client: this.client,
-			modelUrl,
+			modelData,
 			screen: this.screen ?? null,
 			label,
 			onUnavailable,
@@ -193,6 +225,14 @@ export class DeviceLiveStream extends Disposable {
 		this.unmountDuo();
 		this.duoUnavailable = reason;
 		this._onDidChange.fire();
+	}
+
+	/** The 3D Duo may mount again (the user asked to retry it). */
+	clearDuoUnavailable(): void {
+		if (this.duoUnavailable !== undefined) {
+			this.duoUnavailable = undefined;
+			this._onDidChange.fire();
+		}
 	}
 
 	unmountDuo(): void {

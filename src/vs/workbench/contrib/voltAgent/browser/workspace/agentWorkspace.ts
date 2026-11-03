@@ -9,6 +9,7 @@ import { generateUuid } from '../../../../../base/common/uuid.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { IStorageService, StorageScope, StorageTarget, WillSaveStateReason } from '../../../../../platform/storage/common/storage.js';
+import { IVoltWindowScopeService } from '../../../../services/voltWindowScope/common/voltWindowScope.js';
 
 /**
  * One session workspace: the chat's files, terminals, browsers, and split.
@@ -461,12 +462,17 @@ export class AgentWorkspaceService extends Disposable implements IAgentWorkspace
 	private readonly deletedHere = new Set<string>();
 	private saving = false;
 
+	/** A New Window with a scope of its own keeps its active chat to itself. */
+	private readonly activeScope: StorageScope;
+
 	constructor(
 		@IStorageService private readonly storageService: IStorageService,
+		@IVoltWindowScopeService windowScope: IVoltWindowScopeService,
 	) {
 		super();
+		this.activeScope = windowScope.scope ? StorageScope.WORKSPACE : StorageScope.APPLICATION;
 		this.workspaces = reviveAgentWorkspaces(this.readStored(), Date.now());
-		const active = this.storageService.get(ACTIVE_KEY, StorageScope.APPLICATION, '')
+		const active = this.storageService.get(ACTIVE_KEY, this.activeScope, '')
 			|| this.storageService.get(ACTIVE_KEY, StorageScope.WORKSPACE, '');
 		this.activeId = active && this.workspaces.has(active) ? active : undefined;
 		this._register(storageService.onWillSaveState(e => {
@@ -706,9 +712,9 @@ export class AgentWorkspaceService extends Disposable implements IAgentWorkspace
 			this.saving = false;
 		}
 		if (this.activeId) {
-			this.storageService.store(ACTIVE_KEY, this.activeId, StorageScope.APPLICATION, StorageTarget.MACHINE);
+			this.storageService.store(ACTIVE_KEY, this.activeId, this.activeScope, StorageTarget.MACHINE);
 		} else {
-			this.storageService.remove(ACTIVE_KEY, StorageScope.APPLICATION);
+			this.storageService.remove(ACTIVE_KEY, this.activeScope);
 		}
 	}
 }

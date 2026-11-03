@@ -91,7 +91,10 @@ export class ThemeMainService extends Disposable implements IThemeMainService {
 		if (isLinux || this.configurationService.getValue(ThemeSettings.DETECT_COLOR_SCHEME)) {
 			electron.nativeTheme.themeSource = 'system'; // only with `system` we can detect the system color scheme
 		} else {
-			switch (this.configurationService.getValue<'default' | 'auto' | 'light' | 'dark'>(ThemeSettings.SYSTEM_COLOR_THEME)) {
+			// Unset means `auto`: the agent window's see-through material follows the color theme, so a
+			// light theme on a dark-mode Mac does not paint over dark glass. Main does not know the
+			// renderer-registered default, so the fallback lives here.
+			switch (this.configurationService.getValue<'default' | 'auto' | 'light' | 'dark' | undefined>(ThemeSettings.SYSTEM_COLOR_THEME) ?? 'auto') {
 				case 'dark':
 					electron.nativeTheme.themeSource = 'dark';
 					break;
@@ -100,8 +103,10 @@ export class ThemeMainService extends Disposable implements IThemeMainService {
 					break;
 				case 'auto':
 					switch (this.getPreferredBaseTheme() ?? this.getStoredBaseTheme()) {
-						case ThemeTypeSelector.VS: electron.nativeTheme.themeSource = 'light'; break;
-						case ThemeTypeSelector.VS_DARK: electron.nativeTheme.themeSource = 'dark'; break;
+						case ThemeTypeSelector.VS:
+						case ThemeTypeSelector.HC_LIGHT: electron.nativeTheme.themeSource = 'light'; break;
+						case ThemeTypeSelector.VS_DARK:
+						case ThemeTypeSelector.HC_BLACK: electron.nativeTheme.themeSource = 'dark'; break;
 						default: electron.nativeTheme.themeSource = 'system';
 					}
 					break;

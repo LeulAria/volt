@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { truncateAtWord } from './agentHistoryLog.js';
+import { isMarkupOnlyTitle, truncateAtWord } from './agentHistoryLog.js';
 
 /**
  * Chat titles written by a model from the first message, the way T3 Code and OpenCode do it:
@@ -64,7 +64,7 @@ export function sanitizeTitle(raw: string | undefined): string | undefined {
 		.replace(/\s+/g, ' ')
 		.replace(/[.!\s]+$/, '')
 		.trim();
-	if (!line || /^(new (chat|thread)|untitled)$/i.test(line)) {
+	if (!line || /^(new (chat|thread)|untitled)$/i.test(line) || isMarkupOnlyTitle(line)) {
 		return undefined;
 	}
 	return truncateAtWord(line.charAt(0).toUpperCase() + line.slice(1), MAX_TITLE_LENGTH);

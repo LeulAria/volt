@@ -163,7 +163,7 @@
 .monaco-workbench.vs .volt-agent-pending-card,
 .monaco-workbench.hc-light .volt-agent-pending-card {
 	background: rgba(236, 236, 236, 0.8);
-	border-color: rgba(0, 0, 0, 0.1);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
 }
 
 .volt-agent-pending-card.hidden {
@@ -259,17 +259,12 @@
 }
 
 .volt-agent-pending-action.review {
-	background-color: rgba(255, 255, 255, 0.12);
+	background-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
 	color: var(--vscode-foreground);
 }
 
-.monaco-workbench.vs .volt-agent-pending-action.review,
-.monaco-workbench.hc-light .volt-agent-pending-action.review {
-	background-color: rgba(0, 0, 0, 0.08);
-}
-
 .volt-agent-pending-action.review:hover:not(:disabled) {
-	background-color: rgba(255, 255, 255, 0.18);
+	background-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
 }
 
 .volt-agent-pending-action:disabled {
@@ -378,7 +373,7 @@
 }
 
 .volt-agent-block.approval.question.deny {
-	box-shadow: inset 0 0 0 1px var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+	box-shadow: inset 0 0 0 1px var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
 }
 
 /* Title, then Open at the right: the whole plan in the preview dialog. */
@@ -436,7 +431,7 @@
 .volt-agent-plan-expanded .volt-agent-plan-questions {
 	margin-top: 16px;
 	padding-top: 10px;
-	border-top: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+	border-top: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
 	color: var(--vscode-descriptionForeground);
 }
 
@@ -458,7 +453,7 @@
 .volt-agent-approval-plan .volt-agent-plan-questions {
 	margin-top: 12px;
 	padding-top: 8px;
-	border-top: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+	border-top: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
 	color: var(--vscode-descriptionForeground);
 	font-size: 12px;
 }
@@ -518,5 +513,5 @@
 }
 
 .volt-agent-block.approval.question .volt-agent-approval-btn.deny {
-	background: rgba(255, 255, 255, 0.08);
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 }

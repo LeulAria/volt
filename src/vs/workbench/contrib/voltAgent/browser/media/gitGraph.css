@@ -1,0 +1,1489 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * The Git Graph tab: GitLens' Commit Graph layout in Cursor's proportions. 12px controls on a 24px
+ * grid, hairline borders, tinted (not solid) chips, and every colour from the theme. Every surface
+ * is opaque (the editor background) so nothing scrolls over the see-through window
+ * (volt-transparent-window skill). Rows are 28px; the graph lanes come from scmHistory.ts.
+ */
+
+.volt-git-graph {
+	--vgg-fg: var(--vscode-foreground);
+	--vgg-muted: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+	--vgg-soft: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
+	--vgg-line: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	--vgg-hair: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+	--vgg-fill: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	--vgg-fill-strong: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+	--vgg-hover: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	--vgg-bg: var(--vscode-editor-background);
+	--vgg-added: var(--vscode-scmGraph-historyItemHoverAdditionsForeground, #81b88b);
+	--vgg-removed: var(--vscode-scmGraph-historyItemHoverDeletionsForeground, #c74e39);
+	--vgg-control: 24px;
+	--vgg-radius: 6px;
+	display: flex;
+	flex-direction: column;
+	position: relative;
+	background: var(--vgg-bg);
+	color: var(--vgg-fg);
+	font-size: 13px;
+	outline: none;
+	overflow: hidden;
+}
+
+/* The tab: the graph, and its own right panel (side chats from Explain / Review) when it has one. */
+.vgg-frame {
+	position: relative;
+	display: flex;
+	flex-direction: row;
+	align-items: stretch;
+	overflow: hidden;
+	background: var(--vscode-editor-background);
+}
+
+.vgg-frame > .volt-git-graph {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.volt-git-graph button {
+	font: inherit;
+	color: inherit;
+}
+
+.volt-git-graph *:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+/* Compact Volt buttons: 24px, 12px text, 14px icons, tight padding (Cursor's toolbar buttons). */
+.monaco-workbench .volt-git-graph .volt-button.vgg-btn {
+	height: var(--vgg-control);
+	padding: 0 8px;
+	gap: 5px;
+	border-radius: var(--vgg-radius);
+	font-size: 12px;
+	font-weight: 500;
+	flex-shrink: 0;
+}
+
+.monaco-workbench .volt-git-graph .volt-button.vgg-btn.icon-only {
+	width: var(--vgg-control);
+	padding: 0;
+}
+
+.monaco-workbench .volt-git-graph .volt-button.vgg-btn .codicon {
+	font-size: 14px;
+	color: inherit;
+}
+
+.monaco-workbench .volt-git-graph .volt-button.vgg-btn.volt-button-secondary {
+	background: var(--vgg-fill-strong);
+	border-color: transparent;
+	color: var(--vgg-fg);
+}
+
+.monaco-workbench .volt-git-graph .volt-button.vgg-btn.volt-button-secondary:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 13%, transparent);
+}
+
+.monaco-workbench .volt-git-graph .volt-button.vgg-btn.volt-button-ghost {
+	color: var(--vgg-soft);
+}
+
+.monaco-workbench .volt-git-graph .volt-button.vgg-btn.volt-button-ghost:hover {
+	color: var(--vgg-fg);
+	background: var(--vgg-hover);
+}
+
+/* Toolbar: repository > git's branch and sync commands, working-tree chip, then git actions. */
+.volt-git-graph .vgg-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: 36px;
+	padding: 0 8px 0 10px;
+	flex-shrink: 0;
+	border-bottom: 1px solid var(--vgg-hair);
+	min-width: 0;
+}
+
+.volt-git-graph .vgg-title {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	flex-shrink: 1;
+	font-weight: 600;
+	font-size: 12.5px;
+	margin-right: 2px;
+}
+
+.volt-git-graph .vgg-title-mark {
+	display: inline-grid;
+	place-items: center;
+	width: 20px;
+	height: 20px;
+	border-radius: 5px;
+	background: var(--vgg-fill);
+	color: var(--vgg-soft);
+	flex-shrink: 0;
+}
+
+.volt-git-graph .vgg-title-mark .codicon {
+	font-size: 13px;
+}
+
+.volt-git-graph .vgg-title-name {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-git-graph .vgg-title .volt-dropdown {
+	min-width: 0;
+	max-width: 200px;
+}
+
+.volt-git-graph .vgg-sep {
+	color: var(--vgg-muted);
+	display: inline-flex;
+	opacity: 0.6;
+	flex-shrink: 0;
+}
+
+.volt-git-graph .vgg-sep .codicon {
+	font-size: 12px;
+}
+
+.volt-git-graph .vgg-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: var(--vgg-control);
+	padding: 0 7px;
+	border: none;
+	border-radius: var(--vgg-radius);
+	background: transparent;
+	color: var(--vgg-soft);
+	font-size: 12px;
+	cursor: pointer;
+	white-space: nowrap;
+	max-width: 260px;
+	min-width: 0;
+	flex-shrink: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-git-graph .vgg-chip .codicon {
+	font-size: 14px;
+}
+
+.volt-git-graph .vgg-chip:hover {
+	background: var(--vgg-hover);
+	color: var(--vgg-fg);
+}
+
+.volt-git-graph .vgg-chip.wip {
+	color: var(--vscode-gitDecoration-modifiedResourceForeground, var(--vgg-soft));
+}
+
+.volt-git-graph .vgg-spacer {
+	flex: 1;
+	min-width: 8px;
+}
+
+/* Filters: branches, date, search, count. */
+.volt-git-graph .vgg-filters {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 40px;
+	padding: 0 10px;
+	flex-shrink: 0;
+	min-width: 0;
+}
+
+.volt-git-graph .vgg-filter-slot {
+	display: flex;
+	flex-shrink: 0;
+}
+
+.volt-git-graph .vgg-filters .volt-dropdown,
+.volt-git-graph .vgg-title .volt-dropdown {
+	height: var(--vgg-control);
+	padding: 0 4px 0 8px;
+	gap: 5px;
+	border-radius: var(--vgg-radius);
+	font-size: 12px;
+	background: var(--vgg-fill);
+	border-color: transparent;
+}
+
+.volt-git-graph .vgg-filters .volt-dropdown:hover,
+.volt-git-graph .vgg-title .volt-dropdown:hover {
+	background: var(--vgg-fill-strong);
+}
+
+.volt-git-graph .vgg-filters .volt-dropdown .codicon,
+.volt-git-graph .vgg-title .volt-dropdown .codicon {
+	font-size: 13px !important;
+}
+
+.volt-git-graph .vgg-search {
+	position: relative;
+	display: flex;
+	align-items: center;
+	flex: 1;
+	min-width: 140px;
+}
+
+.volt-git-graph .vgg-search > .codicon {
+	position: absolute;
+	left: 8px;
+	z-index: 1;
+	font-size: 13px;
+	color: var(--vgg-muted);
+	pointer-events: none;
+}
+
+.volt-git-graph .vgg-search .monaco-inputbox {
+	flex: 1;
+	border-radius: var(--vgg-radius);
+	background-color: var(--vgg-fill) !important;
+	border-color: transparent !important;
+}
+
+.volt-git-graph .vgg-search .monaco-inputbox.synthetic-focus,
+.volt-git-graph .vgg-search .monaco-inputbox:focus-within {
+	border-color: var(--vscode-focusBorder) !important;
+}
+
+.volt-git-graph .vgg-search .monaco-inputbox input {
+	padding-left: 27px !important;
+	height: 22px;
+	line-height: 22px;
+	font-size: 12px;
+}
+
+.volt-git-graph .vgg-count {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	color: var(--vgg-muted);
+	font-size: 11.5px;
+	white-space: nowrap;
+	flex-shrink: 0;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-git-graph .vgg-count .codicon {
+	font-size: 12px;
+}
+
+/* Activity: commits per day across history, one canvas plus a readout for the hovered day. */
+.volt-git-graph .vgg-activity {
+	position: relative;
+	height: 64px;
+	flex-shrink: 0;
+	border-top: 1px solid var(--vgg-hair);
+	border-bottom: 1px solid var(--vgg-hair);
+	outline: none;
+	user-select: none;
+}
+
+.volt-git-graph .vgg-activity:focus-visible {
+	box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
+	outline: none;
+}
+
+.volt-git-graph .vgg-activity canvas {
+	display: block;
+	cursor: crosshair;
+	touch-action: none;
+}
+
+/* The selected range, in the filter row: what it is, and a click clears it. */
+.volt-git-graph .vgg-range-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: var(--vgg-control);
+	padding: 0 4px 0 7px;
+	border: 1px solid color-mix(in srgb, var(--vscode-scmGraph-historyItemRefColor, var(--vscode-focusBorder)) 40%, transparent);
+	border-radius: var(--vgg-radius);
+	background: color-mix(in srgb, var(--vscode-scmGraph-historyItemRefColor, var(--vscode-focusBorder)) 14%, transparent);
+	color: var(--vgg-fg);
+	font-size: 12px;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-git-graph .vgg-range-chip > .codicon {
+	font-size: 13px;
+	color: var(--vscode-scmGraph-historyItemRefColor, var(--vscode-focusBorder));
+}
+
+.volt-git-graph .vgg-range-clear {
+	display: inline-grid;
+	place-items: center;
+	width: 16px;
+	height: 16px;
+	border-radius: 4px;
+	color: var(--vgg-muted);
+}
+
+.volt-git-graph .vgg-range-chip:hover .vgg-range-clear {
+	background: var(--vgg-hover);
+	color: var(--vgg-fg);
+}
+
+.volt-git-graph .vgg-range-clear .codicon {
+	font-size: 12px;
+}
+
+/* Commits outside the selected range: present (lanes stay whole) but quiet. */
+.volt-git-graph .vgg-cell.vgg-dim {
+	opacity: 0.32;
+}
+
+.volt-git-graph .vgg-activity-readout {
+	position: absolute;
+	top: 3px;
+	padding: 1px 7px;
+	border-radius: 5px;
+	background: var(--vscode-editorHoverWidget-background, var(--vgg-bg));
+	border: 1px solid var(--vgg-line);
+	color: var(--vgg-fg);
+	font-size: 11px;
+	line-height: 16px;
+	white-space: nowrap;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 80ms ease-out;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-git-graph .vgg-activity-readout.visible {
+	opacity: 1;
+}
+
+/* Body: the table, and the inspector beside it once a commit is selected. */
+.volt-git-graph .vgg-body {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	position: relative;
+}
+
+.volt-git-graph .vgg-table {
+	flex: 1;
+	min-width: 0;
+	position: relative;
+}
+
+.volt-git-graph .vgg-body.no-inspector > .vgg-inspector,
+.volt-git-graph .vgg-body.no-inspector > .vgg-resizer {
+	display: none;
+}
+
+.volt-git-graph .vgg-resizer {
+	width: 1px;
+	flex-shrink: 0;
+	background: var(--vgg-line);
+	position: relative;
+	cursor: ew-resize;
+}
+
+.volt-git-graph .vgg-resizer::after {
+	content: '';
+	position: absolute;
+	inset: 0 -3px;
+}
+
+.volt-git-graph .vgg-resizer:hover,
+.volt-git-graph .vgg-resizer.active {
+	background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder));
+}
+
+/* Table chrome. */
+.volt-git-graph .monaco-table {
+	background: var(--vgg-bg);
+}
+
+.volt-git-graph .monaco-table-th {
+	font-weight: 500;
+	font-size: 11.5px;
+	color: var(--vgg-muted);
+	padding-left: 8px;
+	line-height: 26px;
+}
+
+/* The header row: a divider above and below, on a faintly raised fill. */
+.volt-git-graph .monaco-table > .monaco-split-view2 {
+	border-top: 1px solid var(--vgg-line);
+	border-bottom: 1px solid var(--vgg-line) !important;
+	background: color-mix(in srgb, var(--vscode-foreground) 2.5%, var(--vgg-bg));
+}
+
+.volt-git-graph .monaco-table-td {
+	padding: 0 8px;
+}
+
+.volt-git-graph .monaco-table-td[data-col-index="1"] {
+	padding: 0 0 0 2px;
+}
+
+.volt-git-graph .vgg-cell {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+/* Branch / tag chips: tinted by the ref's colour (set as --vgg-ref), outlined by it, never solid. */
+.volt-git-graph .vgg-ref-chip {
+	--vgg-ref: var(--vscode-descriptionForeground);
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: 20px;
+	max-width: 100%;
+	min-width: 0;
+	padding: 0 7px 0 5px;
+	border: 1px solid color-mix(in srgb, var(--vgg-ref) 38%, transparent);
+	border-radius: 5px;
+	background: color-mix(in srgb, var(--vgg-ref) 16%, transparent);
+	color: color-mix(in srgb, var(--vgg-ref) 55%, var(--vscode-foreground));
+	cursor: pointer;
+	font-size: 11.5px;
+	font-weight: 500;
+	white-space: nowrap;
+	flex-shrink: 1;
+	transition: background-color 120ms ease;
+}
+
+.volt-git-graph .vgg-ref-chip:hover {
+	background: color-mix(in srgb, var(--vgg-ref) 26%, transparent);
+}
+
+.volt-git-graph .vgg-ref-chip.static {
+	cursor: default;
+}
+
+.volt-git-graph .vgg-ref-chip.static:hover {
+	background: color-mix(in srgb, var(--vgg-ref) 16%, transparent);
+}
+
+.volt-git-graph .vgg-ref-chip > .codicon {
+	font-size: 12px;
+	color: var(--vgg-ref) !important;
+	flex-shrink: 0;
+}
+
+.volt-git-graph .vgg-ref-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+
+.volt-git-graph .vgg-ref-more {
+	flex-shrink: 0;
+	font-size: 11px;
+	height: 18px;
+	line-height: 18px;
+	padding: 0 5px;
+	border-radius: 5px;
+	background: var(--vgg-fill);
+	color: var(--vgg-soft);
+	font-variant-numeric: tabular-nums;
+}
+
+/* Graph: the SCM view's lanes at 28px; nodes cut out of the row's background with a 1px ring. */
+.volt-git-graph .vgg-graph {
+	position: relative;
+	overflow: hidden;
+	gap: 0;
+}
+
+.volt-git-graph .vgg-graph > svg {
+	flex-shrink: 0;
+}
+
+.volt-git-graph .vgg-graph > svg.graph > circle {
+	stroke: var(--vgg-bg);
+}
+
+.volt-git-graph .monaco-list-row:hover .vgg-graph > svg.graph > circle:first-of-type {
+	stroke: transparent;
+}
+
+.volt-git-graph .vgg-wip-node path {
+	stroke: var(--vgg-muted);
+	stroke-width: 1px;
+	fill: none;
+}
+
+.volt-git-graph .vgg-wip-node circle {
+	fill: var(--vgg-bg);
+	stroke: var(--vgg-muted) !important;
+	stroke-width: 1px;
+	stroke-dasharray: 2 2;
+}
+
+.volt-git-graph .vgg-search-node circle {
+	fill: var(--vscode-scmGraph-historyItemRefColor, var(--vscode-focusBorder));
+}
+
+/* An agent's mark on its commit's node: a 1px ring in the lane's colour. */
+.volt-git-graph .vgg-node-agent {
+	position: absolute;
+	top: 5px;
+	width: 18px;
+	height: 18px;
+	box-sizing: border-box;
+	border-radius: 50%;
+	border: 1px solid var(--vscode-focusBorder);
+	background: var(--vgg-bg);
+	display: inline-grid;
+	place-items: center;
+	pointer-events: none;
+}
+
+.volt-git-graph .vgg-node-agent .volt-brand-icon {
+	display: inline-grid;
+	place-items: center;
+}
+
+/* Message. */
+.volt-git-graph .vgg-message .vgg-subject {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+
+.volt-git-graph .vgg-message.current .vgg-subject {
+	font-weight: 600;
+}
+
+.volt-git-graph .vgg-message.wip .vgg-subject {
+	font-style: italic;
+	color: var(--vgg-soft);
+}
+
+.volt-git-graph .vgg-subject-detail {
+	color: var(--vgg-muted);
+	font-size: 12px;
+	flex-shrink: 0;
+}
+
+/* Agent. */
+.volt-git-graph .vgg-agent .volt-brand-icon {
+	display: inline-grid;
+	place-items: center;
+	flex-shrink: 0;
+}
+
+.volt-git-graph .vgg-agent .vgg-agent-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--vgg-soft);
+	font-size: 12px;
+}
+
+/* Changes: GitHub's five-block diffstat, then +added -removed. Narrow columns keep the blocks. */
+.volt-git-graph .vgg-changes {
+	gap: 8px;
+	container-type: inline-size;
+}
+
+.volt-git-graph .vgg-diffstat {
+	display: inline-flex;
+	gap: 2px;
+	flex-shrink: 0;
+}
+
+.volt-git-graph .vgg-diffstat-block {
+	width: 7px;
+	height: 7px;
+	border-radius: 1.5px;
+	background: var(--vgg-fill-strong);
+}
+
+.volt-git-graph .vgg-diffstat-block.added {
+	background: var(--vgg-added);
+}
+
+.volt-git-graph .vgg-diffstat-block.removed {
+	background: var(--vgg-removed);
+}
+
+.volt-git-graph .vgg-changes.empty .vgg-diffstat {
+	visibility: hidden;
+}
+
+.volt-git-graph .vgg-diffstat-numbers {
+	display: inline-flex;
+	gap: 5px;
+	min-width: 0;
+	overflow: hidden;
+	font-family: var(--monaco-monospace-font);
+	font-size: 11.5px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+@container (max-width: 96px) {
+	.volt-git-graph .vgg-diffstat-numbers {
+		display: none;
+	}
+}
+
+/* Author. */
+.volt-git-graph .vgg-avatar {
+	display: inline-grid;
+	place-items: center;
+	flex-shrink: 0;
+	border-radius: 50%;
+	overflow: hidden;
+	background: var(--vgg-fill);
+	cursor: pointer;
+}
+
+.volt-git-graph .vgg-avatar img {
+	display: block;
+	border-radius: 50%;
+	object-fit: cover;
+}
+
+.volt-git-graph .vgg-avatar.initials {
+	color: #fff;
+	font-weight: 600;
+	line-height: 1;
+	letter-spacing: 0.02em;
+}
+
+.volt-git-graph .vgg-author-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--vgg-soft);
+}
+
+/* Narrow Agent / Author columns keep the mark or avatar and drop the name. */
+.volt-git-graph .vgg-agent,
+.volt-git-graph .vgg-author {
+	container-type: inline-size;
+}
+
+@container (max-width: 64px) {
+	.volt-git-graph .vgg-agent-name,
+	.volt-git-graph .vgg-author-name {
+		display: none;
+	}
+}
+
+.volt-git-graph .vgg-date {
+	color: var(--vgg-muted);
+	font-size: 12px;
+	container-type: inline-size;
+}
+
+.volt-git-graph .vgg-date > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-git-graph .vgg-date-short {
+	display: none;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Too narrow for "3 hrs ago": "3h". */
+@container (max-width: 76px) {
+	.volt-git-graph .vgg-date-long {
+		display: none;
+	}
+
+	.volt-git-graph .vgg-date-short {
+		display: inline;
+	}
+}
+
+/* SHA, with a copy button that appears on row hover. */
+.volt-git-graph .vgg-sha {
+	gap: 4px;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	color: var(--vgg-muted);
+}
+
+.volt-git-graph .vgg-sha-text {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-git-graph .vgg-sha-copy {
+	display: inline-grid;
+	place-items: center;
+	width: 20px;
+	height: 20px;
+	flex-shrink: 0;
+	padding: 0;
+	border: none;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vgg-muted);
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 80ms ease-out;
+}
+
+.volt-git-graph .vgg-sha-copy .codicon {
+	font-size: 13px;
+}
+
+.volt-git-graph .monaco-list-row:hover .vgg-sha-copy,
+.volt-git-graph .monaco-list-row.focused .vgg-sha-copy,
+.volt-git-graph .vgg-sha-copy.copied {
+	opacity: 1;
+}
+
+.volt-git-graph .vgg-sha-copy:hover {
+	background: var(--vgg-hover);
+	color: var(--vgg-fg);
+}
+
+.volt-git-graph .vgg-sha-copy.copied {
+	color: var(--vgg-added);
+}
+
+.volt-git-graph .monaco-list-row.selected .vgg-sha,
+.volt-git-graph .monaco-list-row.selected .vgg-date,
+.volt-git-graph .monaco-list-row.selected .vgg-author-name {
+	color: inherit;
+}
+
+/* Loading, empty and error states, over the table. */
+.volt-git-graph .vgg-status {
+	position: absolute;
+	inset: 26px 0 0 0;
+	display: none;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	color: var(--vgg-muted);
+	pointer-events: none;
+	text-align: center;
+	padding: 24px;
+	font-size: 12.5px;
+}
+
+.volt-git-graph .vgg-status.visible {
+	display: flex;
+}
+
+/* Inspector. */
+.volt-git-graph .vgg-inspector {
+	flex-shrink: 0;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	background: var(--vgg-bg);
+}
+
+.volt-git-graph .vgg-inspector > .volt-agent-scrollable {
+	flex: 1;
+	min-height: 0;
+}
+
+/*
+ * The scrollable's content is the element that scrolls (DomScrollableElement moves its scrollTop),
+ * so it must be exactly as tall as the panel; its children overflow it and never shrink.
+ */
+.volt-git-graph .vgg-inspector-content {
+	height: 100%;
+	box-sizing: border-box;
+	overflow: hidden;
+	padding: 14px 16px 20px;
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+
+.volt-git-graph .vgg-inspector-content > * {
+	flex-shrink: 0;
+}
+
+/* Too narrow to split: the inspector floats over the table's right side, its edge still a resizer. */
+.volt-git-graph .vgg-body.overlay-inspector > .vgg-inspector {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 2;
+	border-left: 1px solid var(--vgg-line);
+	box-shadow: -10px 0 24px rgba(0, 0, 0, 0.28);
+}
+
+.volt-git-graph .vgg-body.overlay-inspector > .vgg-resizer {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	z-index: 3;
+	background: transparent;
+}
+
+.volt-git-graph .vgg-body.overlay-inspector > .vgg-resizer:hover,
+.volt-git-graph .vgg-body.overlay-inspector > .vgg-resizer.active {
+	background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder));
+}
+
+/* A narrow inspector stacks its actions: Open Changes across the top, Explain and Review under it. */
+.volt-git-graph .vgg-inspector-content {
+	container: vgg-inspector / inline-size;
+}
+
+@container vgg-inspector (max-width: 330px) {
+	.volt-git-graph .vgg-inspector-content > .vgg-actions.vgg-commit-actions {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.monaco-workbench .volt-git-graph .vgg-actions.vgg-commit-actions > .volt-button.vgg-action:first-child {
+		grid-column: 1 / -1;
+	}
+}
+
+.volt-git-graph .vgg-inspector-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.volt-git-graph .vgg-who {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.volt-git-graph .vgg-who-name {
+	font-weight: 600;
+	font-size: 13px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-git-graph .vgg-who-when,
+.volt-git-graph .vgg-who-email {
+	color: var(--vgg-muted);
+	font-size: 11.5px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-git-graph .vgg-who-email {
+	display: none;
+}
+
+.volt-git-graph .vgg-icon-button {
+	display: inline-grid;
+	place-items: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: none;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vgg-muted);
+	cursor: pointer;
+	flex-shrink: 0;
+	align-self: flex-start;
+}
+
+.volt-git-graph .vgg-icon-button .codicon {
+	font-size: 14px;
+}
+
+.volt-git-graph .vgg-icon-button:hover {
+	background: var(--vgg-hover);
+	color: var(--vgg-fg);
+}
+
+.volt-git-graph .vgg-message-full {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.volt-git-graph .vgg-message-subject {
+	font-weight: 600;
+	font-size: 13px;
+	line-height: 18px;
+	user-select: text;
+}
+
+.volt-git-graph .vgg-message-body {
+	white-space: pre-wrap;
+	color: var(--vgg-soft);
+	font-size: 12.5px;
+	line-height: 18px;
+	user-select: text;
+	word-break: break-word;
+}
+
+/* A long body shows six lines and fades out until "Show more". */
+.volt-git-graph .vgg-message-body.folded {
+	max-height: calc(18px * 6);
+	overflow: hidden;
+	mask-image: linear-gradient(to bottom, #000 60%, transparent);
+}
+
+/* Details: label / value rows, labels in a fixed column. */
+.volt-git-graph .vgg-details {
+	display: grid;
+	grid-template-columns: 78px minmax(0, 1fr);
+	column-gap: 10px;
+	row-gap: 6px;
+	align-items: center;
+	padding: 10px 0;
+	border-top: 1px solid var(--vgg-hair);
+	border-bottom: 1px solid var(--vgg-hair);
+	font-size: 12px;
+}
+
+.volt-git-graph .vgg-detail-label {
+	color: var(--vgg-muted);
+	line-height: 20px;
+	align-self: start;
+}
+
+.volt-git-graph .vgg-detail-value {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}
+
+.volt-git-graph .vgg-sha-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 20px;
+	padding: 0 4px 0 6px;
+	border: 1px solid var(--vgg-line);
+	border-radius: 5px;
+	background: transparent;
+	font-family: var(--monaco-monospace-font);
+	font-size: 11.5px;
+	color: var(--vgg-fg);
+	cursor: pointer;
+}
+
+.volt-git-graph .vgg-sha-pill:hover {
+	background: var(--vgg-hover);
+}
+
+.volt-git-graph .vgg-sha-pill-icon {
+	display: inline-grid;
+	place-items: center;
+	color: var(--vgg-muted);
+}
+
+.volt-git-graph .vgg-sha-pill-icon .codicon {
+	font-size: 12px;
+}
+
+.volt-git-graph .vgg-sha-pill.copied .vgg-sha-pill-icon {
+	color: var(--vgg-added);
+}
+
+.volt-git-graph .vgg-sha-link {
+	height: 20px;
+	padding: 0 4px;
+	border: none;
+	border-radius: 5px;
+	background: transparent;
+	font-family: var(--monaco-monospace-font);
+	font-size: 11.5px;
+	color: var(--vscode-textLink-foreground) !important;
+	cursor: pointer;
+}
+
+.volt-git-graph .vgg-sha-link:hover {
+	background: var(--vgg-hover);
+}
+
+.volt-git-graph .vgg-agent-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 20px;
+	padding: 0 7px 0 5px;
+	border-radius: 5px;
+	background: var(--vgg-fill);
+	border: 1px solid var(--vgg-hair);
+	font-size: 11.5px;
+	font-weight: 500;
+}
+
+.volt-git-graph .vgg-agent-chip .volt-brand-icon {
+	display: inline-grid;
+	place-items: center;
+}
+
+/* Actions: one row of compact buttons. */
+.volt-git-graph .vgg-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+}
+
+/* The commit's actions: one row of equal outlined buttons, icons muted until hovered. */
+.volt-git-graph .vgg-actions.vgg-commit-actions {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 6px;
+}
+
+.monaco-workbench .volt-git-graph .volt-button.vgg-btn.vgg-action {
+	height: 28px;
+	min-width: 0;
+	padding: 0 8px;
+	justify-content: center;
+	background: transparent;
+	border: 1px solid var(--vgg-line);
+	color: var(--vgg-fg);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	transition: background-color 80ms ease, border-color 80ms ease;
+}
+
+.monaco-workbench .volt-git-graph .volt-button.vgg-btn.vgg-action:hover {
+	background: var(--vgg-hover);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+}
+
+.monaco-workbench .volt-git-graph .volt-button.vgg-btn.vgg-action:active {
+	background: var(--vgg-fill-strong);
+}
+
+.monaco-workbench .volt-git-graph .volt-button.vgg-btn.vgg-action .codicon {
+	flex-shrink: 0;
+	color: var(--vgg-muted);
+}
+
+.monaco-workbench .volt-git-graph .volt-button.vgg-btn.vgg-action:hover .codicon {
+	color: var(--vgg-fg);
+}
+
+.volt-git-graph .vgg-section {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.volt-git-graph .vgg-section-title {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 11.5px;
+	color: var(--vgg-muted);
+	padding-bottom: 6px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-git-graph .vgg-added {
+	color: var(--vgg-added);
+}
+
+.volt-git-graph .vgg-removed {
+	color: var(--vgg-removed);
+}
+
+.volt-git-graph .vgg-file {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 24px;
+	margin: 0 -6px;
+	padding: 0 6px;
+	border: none;
+	border-radius: 5px;
+	background: transparent;
+	text-align: left;
+	cursor: pointer;
+	min-width: 0;
+	font-size: 12.5px;
+}
+
+.volt-git-graph .vgg-file:hover {
+	background: var(--vgg-hover);
+}
+
+.volt-git-graph .vgg-file-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.volt-git-graph .vgg-file-label .monaco-icon-label {
+	width: 100%;
+}
+
+.volt-git-graph .vgg-file-label .monaco-icon-label .label-description {
+	font-size: 11.5px;
+	opacity: 0.8;
+}
+
+.volt-git-graph .vgg-file-status {
+	flex-shrink: 0;
+	width: 14px;
+	font-size: 11px;
+	font-weight: 600;
+	text-align: center;
+}
+
+.volt-git-graph .vgg-file-status.status-A {
+	color: var(--vscode-gitDecoration-addedResourceForeground);
+}
+
+.volt-git-graph .vgg-file-status.status-M {
+	color: var(--vscode-gitDecoration-modifiedResourceForeground);
+}
+
+.volt-git-graph .vgg-file-status.status-D {
+	color: var(--vscode-gitDecoration-deletedResourceForeground);
+}
+
+.volt-git-graph .vgg-files-loading {
+	color: var(--vgg-muted);
+	font-size: 12px;
+	padding: 4px 0;
+}
+
+.volt-git-graph .vgg-show-all {
+	align-self: flex-start;
+	border: none;
+	background: transparent;
+	color: var(--vscode-textLink-foreground) !important;
+	cursor: pointer;
+	padding: 4px 0;
+	font-size: 12px;
+}
+
+.volt-git-graph .vgg-compare-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 28px;
+	margin: 0 -6px;
+	padding: 0 6px;
+	border: none;
+	border-radius: 5px;
+	background: transparent;
+	text-align: left;
+	cursor: pointer;
+	min-width: 0;
+	font-size: 12.5px;
+}
+
+.volt-git-graph .vgg-compare-row:hover {
+	background: var(--vgg-hover);
+}
+
+.volt-git-graph .vgg-compare-subject {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
+}
+
+/* A narrow tab (the right panel beside a chat): toolbar buttons show their icons only. */
+.monaco-workbench .volt-git-graph.narrow .vgg-toolbar .volt-button.vgg-btn {
+	width: var(--vgg-control);
+	padding: 0;
+}
+
+.volt-git-graph.narrow .vgg-toolbar .volt-button > span:not(.codicon) {
+	display: none;
+}
+
+.volt-git-graph.narrow .vgg-count {
+	display: none;
+}
+
+/*
+ * Custom Range: the two-month calendar in a context view (outside .volt-git-graph, so not scoped
+ * to it). shadcn's calendar in the theme's colours: the chosen days filled with the foreground,
+ * the days between on a soft band, today ringed. Opaque (it floats over the window).
+ */
+.vgg-datepicker {
+	--vdp-fg: var(--vscode-foreground);
+	--vdp-muted: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+	--vdp-line: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	--vdp-band: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+	--vdp-hover: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	--vdp-bg: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+	display: flex;
+	flex-direction: column;
+	margin-top: 4px;
+	background: var(--vdp-bg);
+	color: var(--vdp-fg);
+	border: 1px solid var(--vdp-line);
+	border-radius: 12px;
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.2);
+	font-size: 12.5px;
+	overflow: hidden;
+	user-select: none;
+}
+
+.vgg-datepicker button {
+	font: inherit;
+	color: inherit;
+	border: none;
+	background: transparent;
+	cursor: pointer;
+}
+
+.vgg-datepicker button:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.vgg-datepicker-body {
+	display: flex;
+}
+
+.vgg-datepicker-presets {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	width: 128px;
+	padding: 10px 8px;
+	border-right: 1px solid var(--vdp-line);
+}
+
+.vgg-datepicker-preset {
+	height: 28px;
+	padding: 0 10px;
+	border-radius: 6px;
+	text-align: left;
+	color: var(--vdp-muted) !important;
+	white-space: nowrap;
+}
+
+.vgg-datepicker-preset:hover {
+	background: var(--vdp-hover);
+	color: var(--vdp-fg) !important;
+}
+
+.vgg-datepicker-preset.active {
+	background: var(--vdp-band);
+	color: var(--vdp-fg) !important;
+	font-weight: 500;
+}
+
+.vgg-datepicker-months {
+	display: flex;
+	gap: 20px;
+	padding: 12px 14px 10px;
+}
+
+.vgg-month {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.vgg-month-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	height: 28px;
+}
+
+.vgg-month-title {
+	font-weight: 600;
+	font-size: 13px;
+}
+
+.vgg-month-nav {
+	display: inline-grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 7px;
+	color: var(--vdp-muted) !important;
+}
+
+.vgg-month-nav:hover:not(:disabled) {
+	background: var(--vdp-hover);
+	color: var(--vdp-fg) !important;
+}
+
+.vgg-month-nav:disabled {
+	opacity: 0.3;
+	cursor: default;
+}
+
+.vgg-month-nav .codicon {
+	font-size: 14px;
+}
+
+.vgg-month-grid {
+	display: grid;
+	grid-template-columns: repeat(7, 34px);
+	grid-auto-rows: 34px;
+	row-gap: 2px;
+}
+
+.vgg-weekday {
+	display: grid;
+	place-items: center;
+	height: 24px;
+	align-self: end;
+	color: var(--vdp-muted);
+	font-size: 11.5px;
+}
+
+.vgg-day-cell {
+	position: relative;
+	display: grid;
+	place-items: center;
+}
+
+/* The band between the two chosen days: full width in the middle, half-cells at the ends. */
+.vgg-day-cell.in-range::before,
+.vgg-day-cell.range-start::before,
+.vgg-day-cell.range-end::before {
+	content: '';
+	position: absolute;
+	inset: 2px 0;
+	background: var(--vdp-band);
+}
+
+.vgg-day-cell.range-start::before {
+	left: 50%;
+}
+
+.vgg-day-cell.range-end::before {
+	right: 50%;
+}
+
+.vgg-day-cell.in-range:nth-child(7n + 1)::before {
+	border-radius: 7px 0 0 7px;
+}
+
+.vgg-day-cell.in-range:nth-child(7n)::before {
+	border-radius: 0 7px 7px 0;
+}
+
+.vgg-day {
+	position: relative;
+	z-index: 1;
+	width: 30px;
+	height: 30px;
+	border-radius: 7px;
+	font-variant-numeric: tabular-nums;
+	transition: background-color 80ms ease;
+}
+
+.vgg-day:hover:not(:disabled):not(.selected) {
+	background: var(--vdp-hover);
+}
+
+.vgg-day-cell.outside .vgg-day {
+	color: var(--vdp-muted) !important;
+	opacity: 0.55;
+}
+
+.vgg-day:disabled {
+	opacity: 0.28;
+	cursor: default;
+}
+
+.vgg-day.today:not(.selected) {
+	box-shadow: inset 0 0 0 1px var(--vdp-line);
+	font-weight: 600;
+}
+
+.vgg-day.selected {
+	background: var(--vdp-fg);
+	color: var(--vdp-bg) !important;
+	font-weight: 600;
+}
+
+.vgg-datepicker-footer {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 10px 14px;
+	border-top: 1px solid var(--vdp-line);
+}
+
+.vgg-datepicker-summary {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.vgg-datepicker-range {
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.vgg-datepicker-hint {
+	color: var(--vdp-muted);
+	font-size: 12px;
+}
+
+.vgg-datepicker-actions {
+	display: flex;
+	gap: 6px;
+	flex-shrink: 0;
+}
+
+.vgg-datepicker-button {
+	height: 28px;
+	padding: 0 12px;
+	border-radius: 7px;
+	font-weight: 500;
+	background: var(--vdp-hover) !important;
+}
+
+.vgg-datepicker-button:hover:not(:disabled) {
+	background: var(--vdp-band) !important;
+}
+
+.vgg-datepicker-button.primary {
+	background: var(--vdp-fg) !important;
+	color: var(--vdp-bg) !important;
+}
+
+.vgg-datepicker-button.primary:hover:not(:disabled) {
+	opacity: 0.9;
+}
+
+.vgg-datepicker-button:disabled {
+	opacity: 0.4;
+	cursor: default;
+}

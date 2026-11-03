@@ -6,28 +6,25 @@
 import './media/appearancePage.css';
 import { $, addDisposableListener, append } from '../../../../base/browser/dom.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../base/browser/ui/contextview/contextview.js';
-import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Codicon } from '../../../../base/common/codicons.js';
 import { Color } from '../../../../base/common/color.js';
 import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
 import { isMacintosh } from '../../../../base/common/platform.js';
 import { localize } from '../../../../nls.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { ConfigurationTarget, IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { IExtensionResourceLoaderService } from '../../../../platform/extensionResourceLoader/common/extensionResourceLoader.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ColorScheme, isDark } from '../../../../platform/theme/common/theme.js';
 import { ColorThemeData } from '../../../services/themes/common/colorThemeData.js';
 import { IWorkbenchColorTheme, IWorkbenchThemeService, ThemeSettings } from '../../../services/themes/common/workbenchThemeService.js';
-import { AGENT_CODE_WRAP_SETTING, AGENT_THEMED_DIFFS_SETTING, AGENT_TOOL_DENSITIES, AGENT_TOOL_DENSITY_SETTING, AgentToolDensity, readToolDensity, VOLT_REDUCE_TRANSPARENCY_SETTING, VOLT_TINT_HUE_SETTING, VOLT_TINT_INTENSITY_SETTING, VOLT_UI_FONT_FAMILY_SETTING } from '../../voltAgent/common/agentAppearanceSettings.js';
+import { AGENT_CODE_WRAP_SETTING, AGENT_THEMED_DIFFS_SETTING, AGENT_TOOL_DENSITIES, AGENT_TOOL_DENSITY_SETTING, AgentToolDensity, readToolDensity, VOLT_REDUCE_TRANSPARENCY_SETTING, VOLT_TINT_HUE_SETTING, VOLT_TINT_INTENSITY_SETTING, VOLT_UI_FONT_FAMILY_SETTING, VOLT_WINDOW_TRANSPARENCY_SETTING } from '../../voltAgent/common/agentAppearanceSettings.js';
 import { mixTint, tintAmount, tintColor } from '../common/voltTint.js';
 import { createVoltDropdown } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
 import { createSettingsIcon } from './settingsIcons.js';
-import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 
 /** What a theme card paints: a sidebar, an editor with a few lines of code, and an accent. */
-interface IThemeSwatch {
+export interface IThemeSwatch {
 	readonly sidebar: string;
 	readonly editor: string;
 	readonly foreground: string;
@@ -39,7 +36,7 @@ interface IThemeSwatch {
 }
 
 /** Volt's own themes lead each list; the rest follow by name. */
-function themeOrder(a: IWorkbenchColorTheme, b: IWorkbenchColorTheme): number {
+export function themeOrder(a: IWorkbenchColorTheme, b: IWorkbenchColorTheme): number {
 	const volt = (theme: IWorkbenchColorTheme) => theme.settingsId.startsWith('Volt ') ? 0 : 1;
 	return volt(a) - volt(b) || a.label.localeCompare(b.label);
 }
@@ -54,7 +51,7 @@ function tokenColor(theme: IWorkbenchColorTheme, scopes: readonly string[]): str
 	return undefined;
 }
 
-function swatch(theme: IWorkbenchColorTheme): IThemeSwatch {
+export function swatch(theme: IWorkbenchColorTheme): IThemeSwatch {
 	const color = (id: string, fallback: string) => theme.getColor(id, true)?.toString() ?? fallback;
 	const dark = isDark(theme.type);
 	const foreground = color('editor.foreground', dark ? '#d4d4d4' : '#1f1f1f');
@@ -118,8 +115,8 @@ const DENSITY_SAMPLE: readonly { readonly kind: 'edit' | 'run'; readonly title: 
 ];
 
 /**
- * Volt Settings > Appearance: System / Light / Dark, and every installed color theme as a card
- * drawn in its own colors. Picking a card applies it at once; under System it becomes the theme
+ * Volt Settings > Appearance: System / Light / Dark, and every installed color theme as a row
+ * drawn in its own colors. Picking a row applies it at once; under System it becomes the theme
  * for that scheme.
  */
 export class AppearancePage {
@@ -133,7 +130,6 @@ export class AppearancePage {
 	constructor(
 		instantiationService: IInstantiationService,
 		private readonly store: DisposableStore,
-		private readonly isCurrent: () => boolean,
 	) {
 		({ themes: this.themes, configuration: this.configuration, commands: this.commands, resources: this.resources, contextView: this.contextView } = instantiationService.invokeFunction(accessor => ({
 			themes: accessor.get(IWorkbenchThemeService),
@@ -177,8 +173,16 @@ export class AppearancePage {
 		return id.startsWith('Cursor ') ? `Volt ${id.slice('Cursor '.length)}` : id;
 	}
 
+	/** The theme in use, and under System the other scheme's pick (shown as "When dark" / "When light"). */
+	themeMarks(): { readonly active: string; readonly standby: ReadonlySet<string> } {
+		const active = this.themes.getColorTheme().settingsId;
+		const system = this.configuration.getValue<boolean>(ThemeSettings.DETECT_COLOR_SCHEME);
+		const standby = new Set(system ? [this.preferredTheme(ColorScheme.DARK), this.preferredTheme(ColorScheme.LIGHT)].filter(id => id !== active) : []);
+		return { active, standby };
+	}
+
 	/** Picks a theme. Under System it is saved as that scheme's theme too, so the OS switch keeps it. */
-	private async pick(theme: IWorkbenchColorTheme): Promise<void> {
+	async pick(theme: IWorkbenchColorTheme): Promise<void> {
 		if (this.configuration.getValue<boolean>(ThemeSettings.DETECT_COLOR_SCHEME)) {
 			const key = isDark(theme.type) ? ThemeSettings.PREFERRED_DARK_THEME : ThemeSettings.PREFERRED_LIGHT_THEME;
 			await this.configuration.updateValue(key, theme.settingsId);
@@ -205,79 +209,16 @@ export class AppearancePage {
 		}, this.store);
 	}
 
-	/** Theme cards, dark ones then light ones. Themes load their colors first so the cards show them. */
-	async renderGallery(host: HTMLElement, needle: string): Promise<void> {
-		const all = (await this.themes.getColorThemes()).filter(theme => !needle || theme.label.toLowerCase().includes(needle));
+	/** Every installed color theme, each with its colors loaded so its swatch can show them. */
+	async colorThemes(): Promise<IWorkbenchColorTheme[]> {
+		const all = await this.themes.getColorThemes();
 		await Promise.all(all.map(theme => theme instanceof ColorThemeData ? theme.ensureLoaded(this.resources).catch(() => undefined) : undefined));
-		if (!this.isCurrent()) {
-			return;
-		}
-		const active = this.themes.getColorTheme().settingsId;
-		const system = this.configuration.getValue<boolean>(ThemeSettings.DETECT_COLOR_SCHEME);
-		const preferred = new Set([this.preferredTheme(ColorScheme.DARK), this.preferredTheme(ColorScheme.LIGHT)]);
-		const groups: { title: string; themes: IWorkbenchColorTheme[] }[] = [
-			{ title: localize('voltSettings.appearance.darkThemes', "Dark"), themes: all.filter(theme => isDark(theme.type)).sort(themeOrder) },
-			{ title: localize('voltSettings.appearance.lightThemes', "Light"), themes: all.filter(theme => !isDark(theme.type)).sort(themeOrder) },
-		];
-		for (const group of groups) {
-			if (!group.themes.length) {
-				continue;
-			}
-			append(host, $('.volt-settings-theme-group-title')).textContent = group.title;
-			const grid = append(host, $('.volt-settings-theme-grid'));
-			for (const theme of group.themes) {
-				this.themeCard(grid, theme, theme.settingsId === active, system && preferred.has(theme.settingsId) && theme.settingsId !== active);
-			}
-		}
-		const more = this.store.add(createVoltButton(host, 'ghost', { supportIcons: true }));
-		more.element.classList.add('volt-settings-theme-more');
-		more.label = `$(${Codicon.extensions.id}) ${localize('voltSettings.appearance.more', "Browse more themes")}`;
-		// The color theme quick pick: every installed theme by scheme, plus Browse Additional Color
-		// Themes. Quick input sits above the settings overlay, so the page stays open under it.
-		this.store.add(more.onDidClick(() => void this.commands.executeCommand('workbench.action.selectTheme')));
+		return all;
 	}
 
-	private themeCard(grid: HTMLElement, theme: IWorkbenchColorTheme, active: boolean, standby: boolean): void {
-		const colors = swatch(theme);
-		const card = append(grid, $('button.volt-settings-theme')) as HTMLButtonElement;
-		card.type = 'button';
-		card.classList.toggle('active', active);
-		card.setAttribute('aria-pressed', String(active));
-		card.title = theme.label;
-
-		const preview = append(card, $('.volt-settings-theme-preview'));
-		preview.style.background = colors.editor;
-		const side = append(preview, $('.side'));
-		side.style.background = colors.sidebar;
-		for (let i = 0; i < 3; i++) {
-			const item = append(side, $('span'));
-			item.style.background = colors.muted;
-		}
-		const code = append(preview, $('.code'));
-		const line = (parts: [string, number][]) => {
-			const row = append(code, $('.line'));
-			for (const [color, width] of parts) {
-				const token = append(row, $('span'));
-				token.style.background = color;
-				token.style.width = `${width}%`;
-			}
-		};
-		line([[colors.keyword, 22], [colors.func, 34]]);
-		line([[colors.foreground, 16], [colors.string, 44]]);
-		line([[colors.keyword, 14], [colors.foreground, 26], [colors.func, 20]]);
-		line([[colors.muted, 38]]);
-		const accent = append(preview, $('.accent'));
-		accent.style.background = colors.accent;
-
-		const label = append(card, $('.volt-settings-theme-label'));
-		append(label, $('span.name')).textContent = theme.label;
-		if (active) {
-			append(label, $('span.check')).appendChild(renderIcon(Codicon.check));
-		} else if (standby) {
-			const tag = append(label, $('span.tag'));
-			tag.textContent = isDark(theme.type) ? localize('voltSettings.appearance.whenDark', "When dark") : localize('voltSettings.appearance.whenLight', "When light");
-		}
-		this.store.add(addDisposableListener(card, 'click', () => void this.pick(theme)));
+	/** The color theme quick pick, whose Browse Additional Color Themes reaches the marketplace. */
+	browseThemes(): void {
+		void this.commands.executeCommand('workbench.action.selectTheme');
 	}
 
 	//#region Agent Conversations, Colors, Typography, High Contrast, Motion
@@ -317,6 +258,7 @@ export class AppearancePage {
 			localize('voltSettings.hueDesc', "Choose a tint color"),
 			host => {
 				host.classList.add('volt-appearance-slider-row');
+				host.parentElement?.classList.add('volt-appearance-slider-setting');
 				this.slider(host, { min: 0, max: 360, value: hue, label: localize('voltSettings.hue', "Hue") }, next => {
 					hue = next;
 					paint();
@@ -331,6 +273,7 @@ export class AppearancePage {
 			localize('voltSettings.intensityDesc', "Control how strongly the tint is applied"),
 			host => {
 				host.classList.add('volt-appearance-slider-row');
+				host.parentElement?.classList.add('volt-appearance-slider-setting');
 				const value = $('span.volt-appearance-slider-value');
 				value.textContent = `${intensity}%`;
 				this.slider(host, { min: 0, max: 100, value: intensity, label: localize('voltSettings.intensity', "Intensity") }, next => {
@@ -342,6 +285,7 @@ export class AppearancePage {
 			},
 		);
 		this.toggleRow(kit, group, localize('voltSettings.reduceTransparency', "Reduce Transparency"), localize('voltSettings.reduceTransparencyDesc', "Replace translucent surfaces with opaque backgrounds"), VOLT_REDUCE_TRANSPARENCY_SETTING, false);
+		this.syncedToggleRow(kit, group, localize('voltSettings.windowTransparency', "Window Transparency"), localize('voltSettings.windowTransparencyDesc', "Show the desktop through the agent window's sidebar (macOS vibrancy, Windows acrylic). Uses more GPU memory."), VOLT_WINDOW_TRANSPARENCY_SETTING, false);
 	}
 
 	/** Sizes and families for the interface and for code, a diff drawn in the code font, and font smoothing. */
@@ -429,8 +373,21 @@ export class AppearancePage {
 		kit.settingRow(group, title, desc, host => this.toggle(host, this.configuration.getValue<boolean>(key) ?? defaultValue, title, on => void this.configuration.updateValue(key, on)));
 	}
 
-	/** A switch that flips itself: the page does not redraw for these settings. */
-	private toggle(host: HTMLElement, initial: boolean, label: string, onChange: (on: boolean) => void): void {
+	/** A switch that follows its setting when it changes elsewhere (settings.json, another window), without redrawing the page. */
+	private syncedToggleRow(kit: ISettingsPageKit, group: HTMLElement, title: string, desc: string, key: string, defaultValue: boolean): void {
+		const read = () => this.configuration.getValue<boolean>(key) ?? defaultValue;
+		kit.settingRow(group, title, desc, host => {
+			const set = this.toggle(host, read(), title, on => void this.configuration.updateValue(key, on, ConfigurationTarget.USER));
+			this.store.add(this.configuration.onDidChangeConfiguration(e => {
+				if (e.affectsConfiguration(key)) {
+					set(read());
+				}
+			}));
+		});
+	}
+
+	/** A switch that flips itself: the page does not redraw for these settings. Returns a setter for outside changes. */
+	private toggle(host: HTMLElement, initial: boolean, label: string, onChange: (on: boolean) => void): (on: boolean) => void {
 		let on = initial;
 		const toggle = append(host, $('button.volt-settings-toggle')) as HTMLButtonElement;
 		toggle.type = 'button';
@@ -446,6 +403,10 @@ export class AppearancePage {
 			paint();
 			onChange(on);
 		}));
+		return next => {
+			on = next;
+			paint();
+		};
 	}
 
 	/** A range slider: `onInput` follows the drag, `onCommit` gets the value where it was let go. */

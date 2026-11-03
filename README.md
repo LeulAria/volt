@@ -50,10 +50,10 @@ Or download an installer from **[GitHub Releases](https://github.com/LeulAria/vo
 | Windows | `volt-stable-<version>-win32-<x64 or arm64>-user-setup.exe` |
 | Linux | `volt-stable-<version>-linux-<x64, arm64 or armhf>` as `.deb`, `.rpm` or `.tar.gz` |
 
-**2. Open it past the first-launch warning.** The builds are not code-signed yet, because Volt is an independent project without a signing certificate, so your system warns you the first time. That is expected:
+**2. Open it.**
 
-- **macOS:** open **System Settings > Privacy & Security** and click **Open Anyway**. The [macOS install guide](docs/install/macos.md) has a screenshot for every step.
-- **Windows:** when SmartScreen says *Windows protected your PC*, click **More info**, then **Run anyway**.
+- **macOS:** open the `.dmg` and drag **Volt** to Applications. From 0.0.4 the builds are signed with an Apple Developer ID and notarized, and they update themselves. Volt 0.0.3 and older cannot update themselves: download the new version once and replace the app. Your settings and chats stay.
+- **Windows:** the installers are not code-signed yet. When SmartScreen says *Windows protected your PC*, click **More info**, then **Run anyway**.
 - **Linux:** `sudo apt install ./volt-stable-<version>-linux-x64.deb`, or `sudo dnf install ./volt-stable-<version>-linux-x64.rpm`.
 
 **3. Connect an agent.** Open **Volt Settings** from the command palette (<kbd>⇧</kbd><kbd>⌘</kbd><kbd>P</kbd>) and pick one:

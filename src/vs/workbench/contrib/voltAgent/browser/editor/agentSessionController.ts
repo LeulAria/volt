@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { findLast } from '../../../../../base/common/arraysFind.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, IDisposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -11,6 +12,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { alwaysAllowPattern } from '../../../../services/voltRuntime/common/access/wildcard.js';
 import { mergeToolInput } from '../../../../services/voltRuntime/common/acpToolInput.js';
+import { isRetryNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { IVoltEvent, IVoltEventEnvelope, IVoltRateLimitReading, IVoltToolDiff } from '../../../../services/voltRuntime/common/events.js';
 import type { IVoltVisualRef } from '../../../../services/voltRuntime/common/hostTools.js';
 import { runStatusLine } from '../../../../services/voltRuntime/common/harness/workLog.js';
@@ -18,7 +20,7 @@ import { AgentSessionAttention, AgentSessionStatus, IAgentHistoryService } from 
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { AgentBlock, appendProviderNotice, appendSandboxDenial, appendTextDelta, appendThoughtDelta, applyExploreInputToActivity, AgentSegment, applyExploreResultToActivity, classifyToolActivity, createApprovalBlock, createFileChangeBlock, createPlanBlock, createTerminalBlock, createToolBlock, describeExploreActivity, findBlockByCallId, findFileBlockByPath, firstCommandName, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, IPlanBlock, isCompactCommand, isExploreTool, isFileChangeTool, isNewLimitWarning, isPlanTool, isShellTool, refreshLimitWarning, ITerminalBlock, IToolBlock, looksLikeShell, parseFileTarget, parsePlanToolInput, parseShellToolInput, stringifyToolResult, unwrapOutputFence, workCountsForSegments, isHiddenExploreToolBlock } from '../blocks/agentBlocks.js';
-import { friendlyToolTitle, sameHostToolArgs } from '../blocks/agentHostToolActivity.js';
+import { friendlyToolTitle, hostToolCall, sameHostToolArgs } from '../blocks/agentHostToolActivity.js';
 import { carryTodoSteps, classifySupervisionNotice, stampTodoSteps } from '../chrome/agentTimeline.js';
 import { agentMessagePlainText } from '../context/agentContextUsage.js';
 import { extractToolImage } from '../preview/browserSnapshot.js';
@@ -33,6 +35,12 @@ import type { IAgentActivity, IAgentAssistantMessage, IAgentMessage, IAgentPromp
  * text on a crash for far less work while streaming. The final record is written at once.
  */
 const PARTIAL_RECORD_DELAY_MS = 10_000;
+
+/** The status line for a running tool: an MCP tool's name in words ("Scratch draw", not `mcp__volt__scratch_draw`). */
+function toolStatus(title: string | undefined, name: string | undefined): string {
+	const raw = title || name || '';
+	return friendlyToolTitle(raw) ?? raw;
+}
 
 /** A card a tool call draws and later events update by call id. */
 type CallBlock = ITerminalBlock | IToolBlock | IFileChangeBlock | IPlanBlock;
@@ -105,7 +113,8 @@ export interface IAgentSessionControl extends IDisposable {
 	/** The turn is on screen from `showPendingTurn` and not started yet. */
 	isPendingTurn?(turnId: string): boolean;
 	endUnstartedTurn(turnId: string, failure: string | undefined): void;
-	recordSteer(text: string): boolean;
+	/** `mentions` are the composer's chips in `text` (a pasted image's bytes), shown as in a sent message. */
+	recordSteer(text: string, mentions?: IAgentPromptDisplay['mentions']): boolean;
 	/**
 	 * Where the transcript comes from when another process owns it (the agent server): the input
 	 * loads it through this instead of reading the history log.
@@ -305,8 +314,10 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 	private mirroredRun = false;
 	/** Turns on screen since the user sent them that have not started yet ({@link showPendingTurn}). */
 	private readonly pendingTurns = new Set<string>();
-	/** The CLI agent the current run is starting, named on the live line until its first step. */
+	/** The CLI agent the current run is starting, named on the live line until it has the prompt. */
 	private startingAgent: string | undefined;
+	/** The "Starting …" line now on screen, replaced by "Thinking" once the agent has the prompt. */
+	private startingStatus: string | undefined;
 
 	constructor(
 		private host: IAgentSessionHost,
@@ -494,12 +505,12 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 	}
 
 	/** A message steered into the running turn: the reply shows where it landed. False when nothing runs. */
-	recordSteer(text: string): boolean {
+	recordSteer(text: string, mentions?: IAgentPromptDisplay['mentions']): boolean {
 		const reply = this.host.messages.at(-1);
 		if (reply?.kind !== 'agent' || !reply.activity?.streaming) {
 			return false;
 		}
-		(reply.steers ??= []).push({ text, at: reply.segments.length });
+		(reply.steers ??= []).push({ text, at: reply.segments.length, ...(mentions?.length ? { mentions } : {}) });
 		this.host.recordAssistant(reply, false, 'running', agentMessagePlainText(reply));
 		this.fire({ kind: 'render' });
 		return true;
@@ -570,7 +581,14 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 		if (last.segments.some(segment => segment.kind === 'block' && segment.block.id === id)) {
 			return;
 		}
-		last.segments.push({ kind: 'block', block: { id, type: 'visual', status: 'complete', kind: visual.kind, title: visual.title, ref: visual.ref, ...(visual.height ? { height: visual.height } : {}), ...(visual.heights?.length ? { heights: visual.heights } : {}), ...(visual.cap ? { cap: visual.cap } : {}), ...(visual.canvas ? { canvas: visual.canvas } : {}), ...(visual.detail ? { detail: visual.detail } : {}) } });
+		// A Scratch redraw: the reply shows the drawing as it is now, not each version of it.
+		for (let i = visual.replaces ? last.segments.length - 1 : -1; i >= 0; i--) {
+			const segment = last.segments[i];
+			if (segment.kind === 'block' && segment.block.type === 'visual' && segment.block.frame === visual.replaces) {
+				last.segments.splice(i, 1);
+			}
+		}
+		last.segments.push({ kind: 'block', block: { id, type: 'visual', status: 'complete', kind: visual.kind, title: visual.title, ref: visual.ref, ...(visual.height ? { height: visual.height } : {}), ...(visual.heights?.length ? { heights: visual.heights } : {}), ...(visual.cap ? { cap: visual.cap } : {}), ...(visual.canvas ? { canvas: visual.canvas } : {}), ...(visual.detail ? { detail: visual.detail } : {}), ...(visual.board ? { board: visual.board } : {}), ...(visual.frame ? { frame: visual.frame } : {}), ...(visual.size ? { size: visual.size } : {}) } });
 		for (const segment of last.segments) {
 			if (segment.kind === 'activity' && segment.item.browserTool === tool && segment.item.input && segment.item.input.length > 2000) {
 				segment.item.input = JSON.stringify({ title: visual.title });
@@ -806,7 +824,7 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 				input: event.input,
 			}));
 		}
-		activity.status = event.title || event.name;
+		activity.status = toolStatus(event.title, event.name);
 	}
 
 	private replaceCallBlock(last: IAgentAssistantMessage, callId: string, block: ITerminalBlock | IFileChangeBlock | IToolBlock | IPlanBlock): void {
@@ -830,11 +848,15 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 		if (!text) {
 			return;
 		}
+		activity.status = text;
+		activity.statusPinned = true;
+		// Retries shimmer in the status line with the turn's clock; each attempt as a row would stack up.
+		if (isRetryNotice(text)) {
+			return;
+		}
 		// A run supervisor's finding (loop, stall, budget) becomes a tray with actions, not a red line.
 		const supervision = classifySupervisionNotice(`${text}\n${description ?? ''}`);
 		appendProviderNotice(message.segments, { severity, title: text, description, ...(supervision ? { supervision } : {}), ...(rateLimit ? { rateLimit } : {}) });
-		activity.status = text;
-		activity.statusPinned = true;
 	}
 
 	/** Every reply's segments, the latest reply first. */
@@ -913,15 +935,22 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 				activity.status = localize('voltAgent.thinking', "Thinking");
 				this.runWantsPreview = false;
 				this.startingAgent = this.agentLabel(event.providerRef);
+				this.startingStatus = undefined;
 				break;
 			case 'lane':
 				this.runWantsPreview = event.wantsPreview;
 				break;
 			case 'lifecycle':
 				if (event.phase === 'planning' && this.startingAgent) {
-					// A CLI agent's run plans while its process starts and connects: say that, until it speaks.
-					activity.status = localize('voltAgent.startingAgent', "Starting {0}", this.startingAgent);
+					// A CLI agent's run plans while its process starts and connects: say that, until it has the prompt.
+					activity.status = this.startingStatus = localize('voltAgent.startingAgent', "Starting {0}", this.startingAgent);
 					this.startingAgent = undefined;
+				} else if (event.phase === 'running') {
+					// The agent has the prompt: what follows is the model thinking, not the agent starting.
+					if (this.startingStatus !== undefined && activity.status === this.startingStatus) {
+						activity.status = localize('voltAgent.thinking', "Thinking");
+					}
+					this.startingStatus = undefined;
 				} else if (event.phase === 'planning') {
 					activity.status = localize('voltAgent.planning', "Planning");
 				} else if (event.phase === 'verifying') {
@@ -1003,7 +1032,9 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 				}
 				const kind = event.kind;
 				const parsed = parseShellToolInput(event.input);
-				const shell = isShellTool(event.name, event.title, event.input, kind) || (!kind && looksLikeShell(parsed.command));
+				// Codex reports an MCP call as `execute` with the call as its title: Volt's own tools are rows, not commands.
+				const shell = !hostToolCall(event.name, event.title, event.input)
+					&& (isShellTool(event.name, event.title, event.input, kind) || (!kind && looksLikeShell(parsed.command)));
 				if (shell) {
 					const ran = firstCommandName(parsed.command);
 					activity.items.push({
@@ -1036,9 +1067,9 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 						};
 						activity.items.push(item);
 						last.segments.push({ kind: 'activity', item });
-						activity.status = [described.label, described.detail].filter(Boolean).join(' ') || event.title || event.name;
+						activity.status = [described.label, described.detail].filter(Boolean).join(' ') || toolStatus(event.title, event.name);
 					} else {
-						activity.status = event.title || event.name;
+						activity.status = toolStatus(event.title, event.name);
 					}
 				}
 				const id = `tool-${event.callId}`;
@@ -1219,7 +1250,7 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 			}
 			case 'plan': {
 				// A turn's first update continues the chat's list: Claude's task tools and Cursor's to-dos outlive a turn.
-				const previous = last.steps.length ? last.steps : carryTodoSteps(this.host.messages.findLast((message): message is IAgentAssistantMessage => message !== last && message.kind === 'agent' && message.steps.length > 0)?.steps ?? []);
+				const previous = last.steps.length ? last.steps : carryTodoSteps(findLast(this.host.messages, (message): message is IAgentAssistantMessage => message !== last && message.kind === 'agent' && message.steps.length > 0)?.steps ?? []);
 				last.title = localize('voltAgent.planTitle', "Plan");
 				// Each to-do done keeps what this reply produced while it was in progress (the Tasks card's outcome line).
 				last.steps = stampTodoSteps(previous, event.entries.map(entry => ({
@@ -1295,6 +1326,17 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 				}
 				if (this.history.get(this.host.sessionId)?.attention === 'question') {
 					this.setAttention(undefined);
+				}
+				break;
+			}
+			case 'receipt': {
+				// One per run, under the answer it proves; a second one for the same run replaces the first.
+				const block = { type: 'receipt' as const, id: `receipt-${event.runId}`, status: 'complete' as const, runId: event.runId, receipt: event.receipt };
+				const at = last.segments.findIndex(segment => segment.kind === 'block' && segment.block.id === block.id);
+				if (at >= 0) {
+					last.segments[at] = { kind: 'block', block };
+				} else {
+					last.segments.push({ kind: 'block', block });
 				}
 				break;
 			}

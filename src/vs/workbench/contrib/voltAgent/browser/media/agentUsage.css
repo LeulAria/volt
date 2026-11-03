@@ -55,6 +55,8 @@
 	--volt-usage-opencode: #5e6b45;
 	--volt-usage-grok: #4b4b55;
 	--volt-usage-panel: color-mix(in srgb, #000 4%, transparent);
+	/* 7% vanishes on a near-white page. */
+	--volt-usage-line: color-mix(in srgb, var(--vscode-foreground) 11%, transparent);
 	--volt-usage-type-input: #1baf7a;
 	--volt-usage-type-cache-read: #4a3aa7;
 	--volt-usage-type-cache-write: #eda100;
@@ -896,6 +898,11 @@
 	animation: volt-usage-fade-in 160ms ease both;
 }
 
+.vs .volt-usage-dialog-backdrop,
+.hc-light .volt-usage-dialog-backdrop {
+	background: rgba(0, 0, 0, 0.2);
+}
+
 /* The page behind an open dialog goes slightly soft. A plain filter on the page, not
  * backdrop-filter on the overlay (volt-transparent-window skill, rule 1). */
 .volt-usage-content {
@@ -922,6 +929,11 @@
 	box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
 	outline: none;
 	animation: volt-usage-dialog-in 220ms var(--volt-usage-ease) both;
+}
+
+.vs .volt-usage-dialog,
+.hc-light .volt-usage-dialog {
+	box-shadow: 0 16px 40px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.06);
 }
 
 @keyframes volt-usage-fade-in {
@@ -2084,6 +2096,143 @@
 	display: flex;
 	gap: 6px;
 	margin-top: 10px;
+}
+
+/* Accounts, at the bottom: each account with every limit window and when it resets. */
+
+.volt-usage-accounts-mode {
+	margin-left: auto;
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+	text-transform: none;
+	letter-spacing: normal;
+	font-weight: 400;
+}
+
+.volt-usage-list-row.volt-usage-account {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 12px;
+	padding: 14px 18px;
+}
+
+.volt-usage-account-top {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+}
+
+.volt-usage-account-top .who .label {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-usage-account-top .who .label > span:first-child {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-usage-account-top .who .detail.warn {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-usage-account-badge {
+	flex: none;
+	padding: 1px 6px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--vscode-testing-iconPassed, #3fb950) 16%, transparent);
+	color: var(--vscode-testing-iconPassed, #3fb950);
+	font-size: 11px;
+	font-weight: 500;
+}
+
+.volt-usage-account-credits {
+	flex: none;
+	color: var(--volt-usage-muted);
+	font-size: 12px;
+}
+
+.volt-usage-account-busy {
+	display: inline-flex;
+	color: var(--volt-usage-muted);
+}
+
+.volt-usage-account-windows {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+	gap: 12px 22px;
+	padding-left: 26px;
+}
+
+.volt-usage-account-window {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+	min-width: 0;
+}
+
+.volt-usage-account-window .line {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	font-size: 12px;
+}
+
+.volt-usage-account-window .line .name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-usage-account-window .line .value {
+	flex: none;
+	font-variant-numeric: tabular-nums;
+	color: var(--volt-usage-muted);
+}
+
+.volt-usage-account-window .bar {
+	display: block;
+	height: 4px;
+	border-radius: 2px;
+	overflow: hidden;
+	background: var(--volt-usage-line);
+}
+
+.volt-usage-account-window .bar .fill {
+	display: block;
+	height: 100%;
+	border-radius: inherit;
+	background: color-mix(in srgb, var(--vscode-foreground) 60%, transparent);
+}
+
+.volt-usage-account-window.high .bar .fill {
+	background: var(--vscode-editorWarning-foreground);
+}
+
+.volt-usage-account-window.full .bar .fill {
+	background: var(--vscode-errorForeground);
+}
+
+.volt-usage-account-window .reset,
+.volt-usage-account-empty,
+.volt-usage-account-checked {
+	color: var(--volt-usage-muted);
+	font-size: 11.5px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-usage-account-empty,
+.volt-usage-account-checked {
+	padding-left: 26px;
+}
+
+.volt-usage-account-checked {
+	color: var(--volt-usage-faint);
 }
 
 .volt-usage-row .num.custom-price {

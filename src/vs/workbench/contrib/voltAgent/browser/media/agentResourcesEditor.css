@@ -1,0 +1,1071 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Agent Resources page: a left nav of sections, then the section in a centred column. It speaks
+ * Customize's language (agentCustomize.css): pill search and buttons, 12px cards on a faint fill,
+ * 28px icon tiles, hairlines between rows.
+ */
+
+.volt-ares {
+	--volt-ares-fg: var(--vscode-foreground, #e6e6e6);
+	--volt-ares-muted: var(--vscode-descriptionForeground, #8b8b8b);
+	--volt-ares-line: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 8%, transparent);
+	--volt-ares-line-strong: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 14%, transparent);
+	--volt-ares-card: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 3%, transparent);
+	--volt-ares-hover: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 5.5%, transparent);
+	--volt-ares-tile: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 7%, transparent);
+	--volt-ares-pill: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 8%, transparent);
+	--volt-ares-column: 820px;
+	/* Scopes in one ink, by weight: white for this repository, fading out to the managed tier. */
+	--volt-ares-workspace: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 92%, transparent);
+	--volt-ares-global: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 58%, transparent);
+	--volt-ares-external: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 34%, transparent);
+	--volt-ares-managed: color-mix(in srgb, var(--vscode-foreground, #e6e6e6) 20%, transparent);
+	position: relative;
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	/* The page's top edge, under the tab strip, as the nav's right edge. */
+	border-top: 1px solid var(--volt-ares-line);
+	font-size: 13px;
+	line-height: 1.4;
+	color: var(--volt-ares-fg);
+}
+
+.volt-ares .hidden {
+	display: none !important;
+}
+
+/* Nav */
+
+.volt-ares-nav {
+	display: flex;
+	flex-direction: column;
+	/* Set by the nav's sash (agentResourcesEditor.ts). */
+	flex: 0 0 var(--volt-ares-nav-width, 236px);
+	min-height: 0;
+	box-sizing: border-box;
+	padding: 22px 0 12px;
+	border-right: 1px solid var(--volt-ares-line);
+}
+
+.volt-ares-brand {
+	padding: 0 18px 14px;
+}
+
+.volt-ares-brand-title {
+	font-size: 15px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+.volt-ares-brand-lead {
+	margin-top: 3px;
+	font-size: 12px;
+	line-height: 1.45;
+	color: var(--volt-ares-muted);
+}
+
+.volt-ares-nav-list {
+	flex: none;
+}
+
+/* Square rows, edge to edge; the selection is a fill, not a focus ring. */
+.volt-ares-nav-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.monaco-workbench .volt-ares-nav-list .monaco-list .monaco-list-row.focused,
+.monaco-workbench .volt-ares-nav-list .monaco-list:focus .monaco-list-row.focused,
+.monaco-workbench .volt-ares-nav-list .monaco-list .monaco-list-row.selected {
+	outline: none !important;
+}
+
+.monaco-workbench .volt-ares-nav-list .monaco-list .monaco-list-row.selected,
+.monaco-workbench .volt-ares-nav-list .monaco-list:focus .monaco-list-row.selected {
+	background: var(--volt-ares-pill);
+	color: var(--vscode-foreground);
+}
+
+.volt-ares-nav-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 32px;
+	padding: 0 18px;
+	cursor: pointer;
+	line-height: 18px;
+}
+
+.volt-ares-nav-icon {
+	display: inline-flex;
+	flex: none;
+}
+
+.volt-ares-nav-icon > svg {
+	width: 16px;
+	height: 16px;
+	color: color-mix(in srgb, var(--vscode-foreground) 58%, transparent);
+}
+
+.volt-ares-nav-list .monaco-list-row.selected .volt-ares-nav-icon > svg,
+.volt-ares-nav-row:hover .volt-ares-nav-icon > svg {
+	color: var(--vscode-foreground);
+}
+
+.volt-ares-nav-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
+}
+
+.volt-ares-nav-list .monaco-list-row.selected .volt-ares-nav-label {
+	color: var(--vscode-foreground);
+	font-weight: 500;
+}
+
+.volt-ares-nav-count {
+	flex: none;
+	font-size: 11.5px;
+	font-variant-numeric: tabular-nums;
+	color: var(--volt-ares-muted);
+}
+
+/* The list's selected-row rule paints every codicon in it white; the warning keeps its colour. */
+.monaco-workbench .volt-ares-nav-list .monaco-list .monaco-list-row .volt-ares-nav-issues .codicon[class*='codicon-'],
+.monaco-workbench .volt-ares-nav-list .monaco-list:focus .monaco-list-row.selected .volt-ares-nav-issues .codicon[class*='codicon-'] {
+	font-size: 12px;
+	width: 12px;
+	height: 12px;
+	color: var(--vscode-editorWarning-foreground, #e5a33a);
+}
+
+/* Content */
+
+.volt-ares-content {
+	container-type: inline-size;
+	container-name: volt-ares-content;
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 0;
+}
+
+.volt-ares-header {
+	flex: none;
+	box-sizing: border-box;
+	width: 100%;
+	max-width: calc(var(--volt-ares-column) + 64px);
+	margin: 0 auto;
+	padding: 28px 32px 6px;
+}
+
+/* The section's title and lead, with Back at the top right. */
+.volt-ares-heading-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 16px;
+}
+
+.volt-ares-heading {
+	flex: 1;
+	min-width: 0;
+}
+
+.monaco-workbench .volt-ares-heading-row .volt-button.volt-ares-back {
+	flex: none;
+	margin-top: 1px;
+}
+
+.volt-ares-title {
+	margin: 0;
+	font-size: 22px;
+	font-weight: 600;
+	letter-spacing: -0.015em;
+}
+
+.volt-ares-lead {
+	margin-top: 6px;
+	max-width: 640px;
+	color: var(--volt-ares-muted);
+	line-height: 1.5;
+}
+
+.volt-ares-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 18px;
+}
+
+.volt-ares-scope {
+	flex: none;
+}
+
+/* The agent sidebar's magnifier (createHomeSearchIcon), in the search field and on buttons. */
+.volt-ares-search > span {
+	display: inline-flex;
+	flex: none;
+}
+
+.volt-ares-search svg {
+	width: 15px;
+	height: 15px;
+}
+
+.volt-ares-btn > span:first-child:not(:last-child) {
+	display: inline-flex;
+}
+
+.volt-ares-btn svg {
+	width: 14px;
+	height: 14px;
+}
+
+.volt-ares-market-header {
+	margin-top: 4px;
+}
+
+/* The scrollable element must be as tall as its box: otherwise it grows to its content, nothing
+ * overflows and the wheel does nothing (agentCustomize.css has the same rule). */
+.volt-ares-scroll {
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+.volt-ares-scroll > .volt-ares-body {
+	height: 100%;
+}
+
+.volt-ares-body {
+	box-sizing: border-box;
+	width: 100%;
+	padding: 4px 32px 64px;
+}
+
+.volt-ares-section,
+.volt-ares-market-body {
+	max-width: var(--volt-ares-column);
+	margin: 0 auto;
+}
+
+/* Inside Customize (agentResourcesEmbed.ts): its column, under its search and chips. */
+.volt-ares-embedded .volt-ares-section {
+	max-width: none;
+	width: 100%;
+}
+
+/* Blocks: a section title (Customize's), its lead, and its buttons; they wrap rather than squeeze. */
+
+.volt-ares-block {
+	margin-top: 30px;
+}
+
+.volt-ares-block-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: 10px 16px;
+	margin-bottom: 12px;
+	padding: 0 2px;
+}
+
+.volt-ares-block-copy {
+	flex: 1 1 300px;
+	min-width: 0;
+}
+
+.volt-ares-block-title {
+	display: flex;
+	align-items: baseline;
+	gap: 7px;
+	font-size: 14.5px;
+	font-weight: 600;
+	letter-spacing: -0.005em;
+}
+
+.volt-ares-block-lead {
+	margin-top: 3px;
+	font-size: 12.5px;
+	line-height: 1.5;
+	color: var(--volt-ares-muted);
+}
+
+.volt-ares-block-actions {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-ares-count {
+	font-size: 12px;
+	font-weight: 400;
+	font-variant-numeric: tabular-nums;
+	color: var(--volt-ares-muted);
+}
+
+/* Buttons: Customize's pills. */
+
+.volt-ares-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 30px;
+	padding: 0 14px;
+	box-sizing: border-box;
+	border: 1px solid transparent;
+	border-radius: 999px;
+	background: transparent;
+	color: var(--volt-ares-fg);
+	font: inherit;
+	font-size: 12.5px;
+	font-weight: 500;
+	white-space: nowrap;
+	cursor: pointer;
+	transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.monaco-workbench .volt-ares-btn .codicon[class*='codicon-'] {
+	font-size: 14px;
+	width: 14px;
+	height: 14px;
+}
+
+.volt-ares-btn.primary {
+	padding: 0 15px 0 12px;
+	background: #f2f2f2;
+	color: #1a1a1a;
+}
+
+.volt-ares-btn.primary:hover {
+	background: #ffffff;
+}
+
+.monaco-workbench .volt-ares-btn.primary .codicon[class*='codicon-'] {
+	color: #1a1a1a;
+}
+
+.monaco-workbench.vs .volt-ares-btn.primary,
+.monaco-workbench.hc-light .volt-ares-btn.primary {
+	background: #1f1f1f;
+	color: #f5f5f5;
+}
+
+.monaco-workbench.vs .volt-ares-btn.primary .codicon[class*='codicon-'],
+.monaco-workbench.hc-light .volt-ares-btn.primary .codicon[class*='codicon-'] {
+	color: #f5f5f5;
+}
+
+.volt-ares-btn.secondary {
+	border-color: var(--volt-ares-line-strong);
+}
+
+.volt-ares-btn.secondary:hover,
+.volt-ares-btn.ghost:hover {
+	background: var(--volt-ares-hover);
+}
+
+.volt-ares-btn.ghost {
+	padding: 0 10px;
+	color: var(--volt-ares-muted);
+}
+
+.volt-ares-btn.ghost:hover {
+	color: var(--volt-ares-fg);
+}
+
+.volt-ares-btn:focus-visible {
+	outline: 2px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+/* Cards */
+
+.volt-ares-card {
+	margin-bottom: 12px;
+	border: 1px solid var(--volt-ares-line);
+	border-radius: 12px;
+	background: var(--volt-ares-card);
+	overflow: hidden;
+}
+
+.volt-ares-card-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 34px;
+	padding: 0 14px;
+	border-bottom: 1px solid var(--volt-ares-line);
+	color: var(--volt-ares-muted);
+	font-size: 12px;
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+.volt-ares-card-title {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-ares-card-head .volt-ares-count {
+	font-size: 11.5px;
+}
+
+.volt-ares-scope-dot {
+	flex: none;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+}
+
+.volt-ares-scope-dot.scope-workspace,
+.volt-ares-scope-bar > .scope-workspace { background: var(--volt-ares-workspace); }
+.volt-ares-scope-dot.scope-global,
+.volt-ares-scope-bar > .scope-global { background: var(--volt-ares-global); }
+.volt-ares-scope-dot.scope-external,
+.volt-ares-scope-bar > .scope-external { background: var(--volt-ares-external); }
+.volt-ares-scope-dot.scope-managed,
+.volt-ares-scope-bar > .scope-managed { background: var(--volt-ares-managed); }
+
+.volt-ares-empty {
+	padding: 16px;
+	border-radius: 12px;
+	background: var(--volt-ares-card);
+	border: 1px dashed var(--volt-ares-line-strong);
+	color: var(--volt-ares-muted);
+	font-size: 12.5px;
+}
+
+.volt-ares-footnote {
+	margin-top: 10px;
+	padding: 0 2px;
+	font-size: 12px;
+	color: var(--volt-ares-muted);
+}
+
+/* Rows: VS Code list rows, square and edge to edge inside their card. */
+
+.volt-ares-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.monaco-workbench .volt-ares-list .monaco-list .monaco-list-row.focused,
+.monaco-workbench .volt-ares-list .monaco-list:focus .monaco-list-row.focused {
+	outline-offset: -1px;
+}
+
+.volt-ares-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: 54px;
+	padding: 0 10px 0 14px;
+	box-sizing: border-box;
+	min-width: 0;
+	/* The list sets each row's line-height to its height; two lines need their own. */
+	line-height: 18px;
+	cursor: pointer;
+}
+
+.volt-ares-list .monaco-list-row + .monaco-list-row .volt-ares-row {
+	border-top: 1px solid var(--volt-ares-line);
+}
+
+.volt-ares-tile {
+	position: relative;
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 30px;
+	height: 30px;
+	border-radius: 8px;
+	background: var(--volt-ares-tile);
+	color: color-mix(in srgb, var(--vscode-foreground) 80%, transparent);
+}
+
+.volt-ares-tile > svg,
+.volt-ares-tile > .volt-brand-icon {
+	display: block;
+	width: 16px;
+	height: 16px;
+}
+
+.monaco-workbench .volt-ares-tile > .codicon[class*='codicon-'] {
+	font-size: 15px;
+	width: 15px;
+	height: 15px;
+}
+
+.volt-ares-tile.large {
+	width: 34px;
+	height: 34px;
+	border-radius: 9px;
+}
+
+.volt-ares-tile.large > svg {
+	width: 17px;
+	height: 17px;
+}
+
+/* A server's state as Customize shows it: a dot on the tile's corner. */
+.volt-ares-tile-status {
+	position: absolute;
+	right: -2px;
+	bottom: -2px;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	box-shadow: 0 0 0 2px var(--vscode-editor-background);
+	background: var(--volt-ares-muted);
+}
+
+.volt-ares-tile-status.ready { background: var(--vscode-foreground); }
+.volt-ares-tile-status.connecting { background: color-mix(in srgb, var(--vscode-foreground) 50%, transparent); }
+.volt-ares-tile-status.error { background: var(--vscode-errorForeground, #f14c4c); }
+.volt-ares-tile-status.off { background: transparent; box-shadow: none; }
+
+.volt-ares-row-main {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: 2px;
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-ares-row-line {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	white-space: nowrap;
+}
+
+.volt-ares-row-name {
+	flex: none;
+	max-width: 60%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: 13.5px;
+	font-weight: 500;
+	color: var(--volt-ares-fg);
+}
+
+.volt-ares-row-path {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: 12px;
+	color: color-mix(in srgb, var(--vscode-foreground) 42%, transparent);
+}
+
+.volt-ares-row-chips {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 4px;
+}
+
+.volt-ares-row-chips:empty {
+	display: none;
+}
+
+.volt-ares-row-detail {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12.5px;
+	color: var(--volt-ares-muted);
+}
+
+/* A problem reads in the row's own ink; the pill's glyph is the only colour. */
+.volt-ares-row-detail.warning {
+	color: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
+}
+
+.volt-ares-row-source {
+	flex: none;
+	font-size: 12px;
+	color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
+	white-space: nowrap;
+}
+
+.volt-ares-row-actions {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 2px;
+	width: 0;
+	overflow: hidden;
+}
+
+.volt-ares-list .monaco-list-row:hover .volt-ares-row-actions,
+.volt-ares-list .monaco-list-row.focused .volt-ares-row-actions {
+	width: auto;
+}
+
+/* On hover the actions take the source label's place. */
+.volt-ares-list .monaco-list-row:hover .volt-ares-row-source:not(.volt-ares-server-state) {
+	display: none;
+}
+
+.volt-ares-row-action {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	border-radius: 7px;
+	color: var(--volt-ares-muted);
+}
+
+.volt-ares-row-action:hover {
+	color: var(--vscode-foreground);
+	background: var(--volt-ares-pill);
+}
+
+/* Chips */
+
+.volt-ares-chip {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 4px;
+	height: 18px;
+	padding: 0 7px;
+	border-radius: 999px;
+	background: var(--volt-ares-pill);
+	color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
+	font-size: 11px;
+	font-weight: 500;
+	line-height: 18px;
+	white-space: nowrap;
+	max-width: 220px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-ares-chip > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.monaco-workbench .volt-ares-chip .codicon[class*='codicon-'] {
+	font-size: 11px;
+	width: 11px;
+	height: 11px;
+}
+
+/* Every pill is the same grey; a scope pill is outlined, a problem keeps a small amber or red glyph. */
+.volt-ares-chip.scope-workspace,
+.volt-ares-chip.scope-global,
+.volt-ares-chip.scope-external,
+.volt-ares-chip.scope-managed {
+	background: transparent;
+	box-shadow: inset 0 0 0 1px var(--volt-ares-line-strong);
+	color: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
+}
+
+.volt-ares-chip.warning,
+.volt-ares-chip.error,
+.volt-ares-chip.ok {
+	color: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
+}
+
+.monaco-workbench .volt-ares-chip.warning .codicon[class*='codicon-'] {
+	color: var(--vscode-editorWarning-foreground, #e5a33a);
+}
+
+.monaco-workbench .volt-ares-chip.error .codicon[class*='codicon-'] {
+	color: var(--vscode-editorError-foreground, #e5534b);
+}
+
+/* MCP server state at the row's end */
+
+.volt-ares-server-state.ok { color: var(--vscode-foreground); }
+.volt-ares-server-state.error { color: var(--vscode-editorError-foreground, #e5534b); }
+
+/* Overview: Customize's Discover cards. */
+
+.volt-ares-overview-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+	gap: 12px;
+	margin-top: 22px;
+}
+
+.volt-ares-tile-card {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding: 16px;
+	border: 1px solid var(--volt-ares-line);
+	border-radius: 12px;
+	background: var(--volt-ares-card);
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.volt-ares-tile-card:hover {
+	background: var(--volt-ares-hover);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+}
+
+.monaco-workbench .volt-ares-tile-card:focus-visible {
+	outline: 2px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+.volt-ares-tile-card-head {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+}
+
+.volt-ares-tile-card-copy {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+	gap: 1px;
+}
+
+.volt-ares-tile-card-title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13.5px;
+	font-weight: 500;
+}
+
+/* Wraps rather than cutting a scope off ("50 external" matters as much as the first). */
+.volt-ares-tile-card-split {
+	font-size: 12px;
+	line-height: 1.45;
+	color: var(--volt-ares-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-ares-tile-card-count {
+	flex: none;
+	align-self: flex-start;
+	font-size: 22px;
+	font-weight: 600;
+	line-height: 1;
+	letter-spacing: -0.02em;
+	font-variant-numeric: tabular-nums;
+}
+
+/* The scope split: one 3px bar in shades of the ink, nothing else. */
+.volt-ares-scope-bar {
+	display: flex;
+	gap: 2px;
+	height: 3px;
+	border-radius: 999px;
+	overflow: hidden;
+	background: var(--volt-ares-pill);
+}
+
+.volt-ares-scope-bar > span {
+	min-width: 3px;
+}
+
+.volt-ares-tile-card-issues {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: -2px;
+	font-size: 12px;
+	color: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
+}
+
+.monaco-workbench .volt-ares-tile-card-issues .codicon[class*='codicon-'] {
+	font-size: 12px;
+	width: 12px;
+	height: 12px;
+	color: var(--vscode-editorWarning-foreground, #e5a33a);
+}
+
+.volt-ares-scope-table {
+	margin-bottom: 0;
+}
+
+.volt-ares-scope-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 48px;
+	padding: 6px 14px;
+	box-sizing: border-box;
+}
+
+.volt-ares-scope-row + .volt-ares-scope-row {
+	border-top: 1px solid var(--volt-ares-line);
+}
+
+.volt-ares-scope-copy {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+	gap: 1px;
+}
+
+.volt-ares-scope-name {
+	font-weight: 500;
+}
+
+.volt-ares-scope-desc {
+	font-size: 12.5px;
+	color: var(--volt-ares-muted);
+}
+
+.volt-ares-scope-count {
+	font-size: 15px;
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Load order */
+
+.volt-ares-chain {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	border: 1px solid var(--volt-ares-line);
+	border-radius: 12px;
+	background: var(--volt-ares-card);
+	overflow: hidden;
+}
+
+.volt-ares-chain-step {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	padding: 12px 14px;
+}
+
+.volt-ares-chain-step + .volt-ares-chain-step {
+	border-top: 1px solid var(--volt-ares-line);
+}
+
+.volt-ares-chain-index {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border-radius: 50%;
+	background: var(--volt-ares-pill);
+	color: var(--volt-ares-muted);
+	font-size: 11px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-ares-chain-step.found .volt-ares-chain-index {
+	background: #f2f2f2;
+	color: #1a1a1a;
+}
+
+.monaco-workbench.vs .volt-ares-chain-step.found .volt-ares-chain-index,
+.monaco-workbench.hc-light .volt-ares-chain-step.found .volt-ares-chain-index {
+	background: #1f1f1f;
+	color: #f5f5f5;
+}
+
+.volt-ares-chain-body {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-ares-chain-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 2px 8px;
+}
+
+.volt-ares-chain-label {
+	font-weight: 500;
+}
+
+.volt-ares-chain-where {
+	font-family: var(--monaco-monospace-font);
+	font-size: 11px;
+	color: var(--volt-ares-muted);
+}
+
+.volt-ares-chain-files {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 12px;
+	margin-top: 5px;
+}
+
+.volt-ares-file-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	/* White with a faint underline, not link blue: the page stays in one ink. */
+	color: var(--vscode-foreground);
+	text-decoration: underline;
+	text-decoration-color: var(--volt-ares-line-strong);
+	text-underline-offset: 3px;
+	font: inherit;
+	font-size: 12.5px;
+	cursor: pointer;
+}
+
+.volt-ares-file-link:hover {
+	text-decoration-color: var(--vscode-foreground);
+}
+
+.volt-ares-file-link.skipped {
+	color: var(--volt-ares-muted);
+	text-decoration: line-through;
+}
+
+.monaco-workbench .volt-ares-file-link .codicon[class*='codicon-'] {
+	font-size: 12px;
+	width: 12px;
+	height: 12px;
+	color: var(--vscode-editorWarning-foreground, #e5a33a);
+}
+
+.volt-ares-chain-missing {
+	font-size: 12.5px;
+	color: var(--volt-ares-muted);
+}
+
+.volt-ares-chain-note {
+	margin-top: 5px;
+	font-size: 12px;
+	line-height: 1.45;
+	color: var(--volt-ares-muted);
+}
+
+.volt-ares-chain-actions {
+	flex: none;
+}
+
+/* The harness page's settings rows: the copy keeps a readable width; the control wraps under it.
+ * Volt Settings stacks its rows into a column under an 820px viewport (voltSettings.css), which
+ * turns this basis into a height: the page measures its own width, so it stays a wrapping row. */
+.volt-ares .volt-harness .volt-settings-row {
+	flex-direction: row;
+	flex-wrap: wrap;
+	align-items: center;
+	row-gap: 10px;
+}
+
+.volt-ares .volt-harness .volt-settings-row-copy {
+	flex: 1 1 260px;
+	min-width: 0;
+}
+
+.volt-ares .volt-harness .volt-settings-row-control {
+	margin-left: auto;
+}
+
+/* On, a toggle is the white pill with a dark knob: the page has no green. */
+.volt-ares .volt-harness .volt-settings-toggle.on {
+	background: #f2f2f2;
+}
+
+.volt-ares .volt-harness .volt-settings-toggle.on::after {
+	background: #1a1a1a;
+	box-shadow: none;
+}
+
+.monaco-workbench.vs .volt-ares .volt-harness .volt-settings-toggle.on,
+.monaco-workbench.hc-light .volt-ares .volt-harness .volt-settings-toggle.on {
+	background: #1f1f1f;
+}
+
+.monaco-workbench.vs .volt-ares .volt-harness .volt-settings-toggle.on::after,
+.monaco-workbench.hc-light .volt-ares .volt-harness .volt-settings-toggle.on::after {
+	background: #ffffff;
+}
+
+/* The page's pills, for the harness's Change / Open / Edit buttons too. */
+.volt-ares .volt-harness .monaco-button {
+	border-radius: 999px;
+	padding-left: 14px;
+	padding-right: 14px;
+}
+
+/* Narrow: the source label and lists' paths give way first, then the nav folds to its icons. */
+
+@container volt-ares-content (max-width: 620px) {
+	.volt-ares-header,
+	.volt-ares-body {
+		padding-left: 18px;
+		padding-right: 18px;
+	}
+
+	.volt-ares-row-source:not(.volt-ares-server-state),
+	.volt-ares-row-path {
+		display: none;
+	}
+
+	.volt-ares-row-name {
+		max-width: none;
+		flex: 0 1 auto;
+	}
+
+	.volt-ares-overview-grid {
+		grid-template-columns: 1fr;
+	}
+
+	/* A wrapped control sits under its copy, from the same left edge. */
+	.volt-ares .volt-harness .volt-settings-row-control {
+		margin-left: 0;
+		padding-left: 0;
+		justify-content: flex-start;
+	}
+}
+
+@container volt-customize (max-width: 860px) {
+	.volt-ares-nav {
+		flex-basis: 56px;
+		padding-top: 16px;
+	}
+
+	.volt-ares-brand,
+	.volt-ares-nav-label,
+	.volt-ares-nav-count,
+	.volt-ares-nav-issues {
+		display: none !important;
+	}
+
+	.volt-ares-nav-row {
+		justify-content: center;
+		padding: 0;
+	}
+
+	/* Folded to icons, the nav has a fixed width: no sash (the page's only one). */
+	.volt-ares > .monaco-sash {
+		display: none;
+	}
+}

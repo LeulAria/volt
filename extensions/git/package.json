@@ -1022,6 +1022,12 @@
         "enablement": "!operationInProgress"
       },
       {
+        "command": "git.graph.revert",
+        "title": "%command.graphRevert%",
+        "category": "Git",
+        "enablement": "!operationInProgress"
+      },
+      {
         "command": "git.cherryPickAbort",
         "title": "%command.cherryPickAbort%",
         "category": "Git",
@@ -1316,6 +1322,11 @@
       {
         "command": "git.blame.toggleStatusBarItem",
         "title": "%command.blameToggleStatusBarItem%",
+        "category": "Git"
+      },
+      {
+        "command": "git.blame.openFileChanges",
+        "title": "%command.blameOpenFileChanges%",
         "category": "Git"
       }
     ],
@@ -2510,6 +2521,14 @@
           "when": "false"
         },
         {
+          "command": "git.graph.revert",
+          "when": "false"
+        },
+        {
+          "command": "git.blame.openFileChanges",
+          "when": "false"
+        },
+        {
           "command": "git.diff.stageHunk",
           "when": "config.git.enabled && !git.missing && gitOpenRepositoryCount != 0 && diffEditorOriginalUri =~ /^git\\:.*%22ref%22%3A%22~%22%7D$/"
         },
@@ -3087,6 +3106,11 @@
           "command": "git.graph.cherryPick",
           "when": "scmProvider == git",
           "group": "4_modify@1"
+        },
+        {
+          "command": "git.graph.revert",
+          "when": "scmProvider == git && !listMultiSelection",
+          "group": "4_modify@2"
         },
         {
           "command": "git.copyCommitId",
@@ -4345,12 +4369,12 @@
         },
         "git.blame.editorDecoration.enabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "markdownDescription": "%config.blameEditorDecoration.enabled%"
         },
         "git.blame.editorDecoration.template": {
           "type": "string",
-          "default": "${subject}, ${authorName} (${authorDateAgo})",
+          "default": "${authorName}, ${authorDateAgo} • ${subject}",
           "markdownDescription": "%config.blameEditorDecoration.template%"
         },
         "git.blame.statusBarItem.enabled": {

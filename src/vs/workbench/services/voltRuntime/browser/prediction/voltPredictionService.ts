@@ -110,7 +110,9 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 	private readonly _onDidExtendInline = this._register(new Emitter<URI>());
 	readonly onDidExtendInline: Event<URI> = this._onDidExtendInline.event;
 
-	private readonly warmScheduler = this._register(new RunOnceScheduler(() => this.warmUp(), WARM_DELAY_MS));
+	private readonly warmScheduler = this._register(new RunOnceScheduler(() => this.rewarm(), WARM_DELAY_MS));
+	/** Someone asked for the predictor (a keystroke, a dictation); until then nothing starts. */
+	private warmed = false;
 
 	constructor(
 		@IAgentRuntimeService private readonly modelAccess: IVoltModelAccess & IAgentRuntimeService,
@@ -126,7 +128,16 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 	}
 
 	warmUp(): void {
+		this.warmed = true;
+		this.rewarm();
+	}
+
+	/** The Tab model or the settings changed: follow them, but only once the predictor was wanted. */
+	private rewarm(): void {
 		this.warmScheduler.cancel();
+		if (!this.warmed) {
+			return;
+		}
 		const wanted = this.settings.enabled || this.settings.voice;
 		this.modelAccess.warmPredictor(wanted ? this.modelAccess.resolveTabModelRef() : undefined);
 	}

@@ -39,6 +39,8 @@ export interface IDeviceScreen {
 	/** The screen's size in input units (the root's box). */
 	readonly width: number;
 	readonly height: number;
+	/** Desktop: the window's frame on screen. */
+	readonly frame?: DeviceBox;
 }
 
 /** A node as the platform reported it, before naming, roles and flattening. */
@@ -233,11 +235,56 @@ function visibleTexts(node: IRawNode, out: string[] = []): string[] {
 	return out;
 }
 
-function hasInteractive(node: IRawNode, platform: ScreenPlatform): boolean {
+/** Rows and cells: named by what they show, and a leaf when nothing inside them acts on its own. */
+const ROW_LIKE = new Set(['listitem', 'row', 'cell', 'treeitem']);
+
+/**
+ * A row's own rename field (a Finder or Notes folder name) that is not being edited: it only
+ * repeats the row's name, and renaming starts by pressing the row anyway.
+ */
+function isIdleNameField(node: IRawNode, rowName: string | undefined): boolean {
+	const role = node.role;
+	return (role === 'textbox' || role === 'searchbox') && !node.focused && !!rowName && !!node.value && rowName.toLowerCase().includes(clean(node.value).toLowerCase());
+}
+
+function hasInteractive(node: IRawNode, platform: ScreenPlatform, rowName?: string): boolean {
 	return node.children.some(child => {
 		const role = platform !== 'android' ? child.role : androidRole(child);
-		return (role !== undefined && INTERACTIVE.has(role) && role !== 'listitem') || hasInteractive(child, platform);
+		if (platform === 'desktop' && isIdleNameField(child, rowName)) {
+			return false;
+		}
+		return (role !== undefined && INTERACTIVE.has(role) && !ROW_LIKE.has(role)) || hasInteractive(child, platform, rowName);
 	});
+}
+
+/**
+ * The texts a desktop row shows, in reading order (top to bottom, then left to right), without
+ * repeats: "VOLT REQUIREMENTS, 12:44 PM, Volt. Demo…" rather than the order the app built them in.
+ */
+function rowTexts(node: IRawNode): string[] {
+	const found: { text: string; y: number; x: number }[] = [];
+	const visit = (n: IRawNode, depth: number) => {
+		const own = n.role === 'textbox' || n.role === 'searchbox' ? clean(n.value ?? '') : clean(n.text || n.desc);
+		if (own && depth > 0) {
+			found.push({ text: own, y: Math.round(n.box[1] / 6), x: n.box[0] });
+		}
+		n.children.forEach(child => visit(child, depth + 1));
+	};
+	visit(node, 0);
+	found.sort((a, b) => a.y - b.y || a.x - b.x);
+	const out: string[] = [];
+	for (const { text } of found) {
+		const lower = text.toLowerCase();
+		if (!out.some(seen => seen.toLowerCase().includes(lower))) {
+			for (let i = out.length - 1; i >= 0; i--) {
+				if (lower.includes(out[i].toLowerCase())) {
+					out.splice(i, 1);
+				}
+			}
+			out.push(text);
+		}
+	}
+	return out;
 }
 
 /** Stable refs per device: the same element keeps its ref across dumps, so diffs can follow it. */
@@ -266,7 +313,10 @@ export function readDeviceScreen(raw: IRawNode, platform: ScreenPlatform, refs: 
 	const app = raw.children.find(child => child.pkg)?.pkg ?? raw.pkg ?? '';
 	const roleOf = (node: IRawNode) => platform !== 'android' ? node.role : androidRole(node);
 	const occurrences = new Map<string, number>();
-	const walk = (node: IRawNode, depth: number, up: number, parentRef: string, labelBefore: string) => {
+	const desktop = platform === 'desktop';
+	/** Static texts shown so far, per parent. */
+	const shownTexts = new Set<string>();
+	const walk = (node: IRawNode, depth: number, up: number, parentRef: string, labelBefore: string, parentName: string) => {
 		const [, , w, h] = node.box;
 		if (node !== raw && (w <= 0 || h <= 0)) {
 			return;
@@ -276,7 +326,21 @@ export function readDeviceScreen(raw: IRawNode, platform: ScreenPlatform, refs: 
 		let name = '';
 		let value: string | undefined;
 		let leaf = false;
-		if (editable) {
+		if (desktop && editable && isIdleNameField(node, parentName)) {
+			return;
+		}
+		if (desktop && role && ROW_LIKE.has(role)) {
+			// A row and the cell filling it say the same thing: the cell passes through.
+			name = clean(node.desc || node.text) || clean(rowTexts(node).join(', '), 120);
+			if (name && name === parentName) {
+				role = undefined;
+			} else {
+				leaf = !hasInteractive(node, platform, name);
+			}
+		} else if (desktop && role === 'img' && !clean(node.desc || node.text)) {
+			// An unlabeled picture is decoration to anyone who cannot see it.
+			role = undefined;
+		} else if (editable) {
 			value = node.value ?? (node.text && node.text !== node.hint ? node.text : undefined);
 			name = clean(node.desc || node.hint || labelBefore || node.id.replace(/_/g, ' '));
 		} else if (role) {
@@ -291,6 +355,14 @@ export function readDeviceScreen(raw: IRawNode, platform: ScreenPlatform, refs: 
 			}
 			if (role === 'text' && !name) {
 				role = undefined;
+			}
+			// Calendar repeats its weekday header once per week row: the same words again say nothing new.
+			if (desktop && role === 'text') {
+				const said = `${parentRef}|${name}`;
+				if (shownTexts.has(said)) {
+					return;
+				}
+				shownTexts.add(said);
 			}
 		}
 		const texts = clean(visibleTexts(node).join(' '), 300);
@@ -338,14 +410,14 @@ export function readDeviceScreen(raw: IRawNode, platform: ScreenPlatform, refs: 
 		}
 		let label = '';
 		for (const child of node.children) {
-			walk(child, childDepth, index, childRef, label);
+			walk(child, childDepth, index, childRef, label, role ? name : parentName);
 			// The text just before a field is usually its label.
 			const childRole = roleOf(child);
 			label = childRole === 'text' || (!childRole && (child.text || child.desc)) ? clean(child.text || child.desc) : '';
 		}
 	};
-	walk(raw, 0, -1, 'root', '');
-	return { app, elements, width: screen[0] + screen[2], height: screen[1] + screen[3] };
+	walk(raw, 0, -1, 'root', '', '');
+	return { app, elements, width: screen[0] + screen[2], height: screen[1] + screen[3], ...(desktop ? { frame: screen } : {}) };
 }
 
 //#region Desktop (macOS accessibility)
@@ -379,6 +451,9 @@ const MAC_ROLES: Readonly<Record<string, string>> = {
 /** Chrome that never helps an agent and only costs tokens. */
 const MAC_SKIP = new Set(['AXScrollBar', 'AXGrowArea', 'AXValueIndicator', 'AXSplitter', 'AXMenuBar']);
 
+/** The traffic-light buttons carry no label, only a subrole. */
+const WINDOW_BUTTONS: Readonly<Record<string, string>> = { AXCloseButton: 'Close window', AXMinimizeButton: 'Minimize', AXFullScreenButton: 'Full screen', AXZoomButton: 'Zoom' };
+
 function macRole(node: IDesktopNode): string | undefined {
 	switch (node.sub) {
 		case 'AXSearchField': return 'searchbox';
@@ -402,7 +477,7 @@ function desktopRaw(node: IDesktopNode, app: string): IRawNode | undefined {
 		cls: node.role,
 		// Static text carries its words in the value; controls in the title.
 		text: textual ? node.value ?? node.title ?? '' : node.title ?? '',
-		desc: node.desc ?? '',
+		desc: node.desc ?? (node.sub && WINDOW_BUTTONS[node.sub]) ?? '',
 		id: node.id ?? '',
 		hint: node.ph ?? node.help ?? '',
 		pkg: node.role === 'AXWindow' ? app : '',

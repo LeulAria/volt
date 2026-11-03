@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { WORKSPACE_STATUS_TOOL_NAME } from './harness/workspaceContext.js';
+import { WORKSPACE_SNAPSHOT_COMMAND_ID, WORKSPACE_STATUS_TOOL_NAME } from './harness/workspaceContext.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
@@ -39,6 +39,14 @@ export const AUTOMATE_BROWSER_COMMAND_ID = 'volt.browser.automate';
 export const BROWSER_PAGE_URL_COMMAND_ID = 'volt.browser.pageUrl';
 /** `(sessionId, IVoltBrowserPreflightRequest) => IVoltBrowserPreflightResult`: the browser half of the turn primer. */
 export const PREFLIGHT_BROWSER_COMMAND_ID = 'volt.browser.preflight';
+
+/**
+ * Commands agents use that only a Volt window registers (the in-app browser, what the user has
+ * open). The agent server runs them in a connected window; the window runs only these for it.
+ */
+export const AGENT_SERVER_WINDOW_COMMANDS: ReadonlySet<string> = new Set([
+	AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, PREFLIGHT_BROWSER_COMMAND_ID, WORKSPACE_SNAPSHOT_COMMAND_ID,
+]);
 
 export interface IVoltBrowserPreflightRequest {
 	/** The chat's folder. */
@@ -100,9 +108,12 @@ export function canonicalHostToolName(name: string): string {
 
 /** A visual a render tool published: where its spec or page is stored, for the transcript to draw. */
 export interface IVoltVisualRef {
-	/** `canvas`: a design canvas update, drawn as a card that opens the canvas (its page is the canvas_render visual). */
-	readonly kind: 'chart' | 'html' | 'canvas';
-	/** `volt-attachment:<hash>.json` (chart spec) or `.html` (page); `volt-canvas:<id>@<version>` for an update. */
+	/**
+	 * `canvas`: a design canvas update, drawn as a card that opens the canvas (its page is the canvas_render visual).
+	 * `scratch`: a picture of a Scratch board drawing, with Open to see it on the board.
+	 */
+	readonly kind: 'chart' | 'html' | 'canvas' | 'scratch';
+	/** `volt-attachment:<hash>.json` (chart spec), `.html` (page) or `.png` (Scratch picture); `volt-canvas:<id>@<version>` for an update. */
 	readonly ref: string;
 	readonly title: string;
 	/** Pages: the height the page needed at the reply column's width, so the frame opens at its size. */
@@ -115,6 +126,12 @@ export interface IVoltVisualRef {
 	readonly canvas?: string;
 	/** Canvas updates: what changed, one line. */
 	readonly detail?: string;
+	/** A Scratch drawing: its board and frame, for Open, and the picture's `[width, height]` so it opens at its size. */
+	readonly board?: string;
+	readonly frame?: string;
+	readonly size?: readonly [number, number];
+	/** A redraw (`replace`): the frame it took the place of, whose picture it replaces in the reply. */
+	readonly replaces?: string;
 }
 export const BROWSER_NETWORK_TOOL_NAME = 'browser_network';
 export const BROWSER_DEVTOOLS_TOOL_NAME = 'browser_devtools';
@@ -748,7 +765,40 @@ If you know the page (you wrote it), skip browser_snapshot. Pass observe: "on_fa
 	},
 ];
 
-const TOOL_PREFIX_RE = /^(?:mcp__volt__|volt[-_:]\s*|volt\.)/i;
+const TOOL_PREFIX_RE = /^(?:mcp__volt__|volt__|volt[-_:]\s*|volt\.)/i;
+
+/**
+ * An agent's raw name for an MCP tool, split into server and tool. Agents spell it differently:
+ * `mcp__volt__wait_tasks` (Claude), `volt__wait_tasks` (Grok, Codex), `volt-wait_tasks`,
+ * `volt.wait_tasks`, and Cursor's `volt: wait_tasks`, `volt-wait_tasks: wait_tasks` or
+ * `MCP: wait_tasks`. Undefined for a name that carries no server (and for Cursor's placeholder
+ * "MCP: tool", which names no tool yet).
+ */
+export function splitMcpToolName(raw: string | undefined): { readonly server?: string; readonly tool: string } | undefined {
+	const value = (raw ?? '').trim();
+	const prefixed = /^mcp__(.+?)__(.+)$/i.exec(value) ?? /^([a-z0-9][\w.-]*?)__([a-z0-9][\w.-]*)$/i.exec(value);
+	if (prefixed) {
+		return { server: prefixed[1], tool: prefixed[2] };
+	}
+	const colon = /^([^\s:]+):\s*([a-z0-9][\w.-]*)$/i.exec(value);
+	if (colon && colon[2].toLowerCase() !== 'tool' && (/^(?:mcp|volt)\b/i.test(colon[1]) || /[-_]/.test(colon[1]) || colon[2].includes('_'))) {
+		return /^mcp$/i.test(colon[1]) ? { tool: colon[2] } : { server: /^volt\b/i.test(colon[1]) ? 'volt' : colon[1], tool: colon[2] };
+	}
+	const dashed = /^volt[-.]([a-z0-9][\w.-]*)$/i.exec(value);
+	return dashed ? { server: 'volt', tool: dashed[1] } : undefined;
+}
+
+/** A raw tool name, not words: snake_case (`wait_tasks`) or with a server (`volt__wait_tasks`). */
+export function isRawToolName(value: string): boolean {
+	const trimmed = value.trim();
+	return !!splitMcpToolName(trimmed) || (/^[A-Za-z][\w-]*$/.test(trimmed) && trimmed.includes('_'));
+}
+
+/** A tool's raw name in words: `wait_tasks` reads "Wait tasks", `getLibraryDocs` "Get library docs". */
+export function humanizeToolName(name: string): string {
+	const words = name.replace(/[_\-.]+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/\s+/g, ' ').trim().toLowerCase();
+	return words ? words.charAt(0).toUpperCase() + words.slice(1) : name;
+}
 
 /**
  * The bare host tool behind an agent's name for it: `browser_click`, `mcp__volt__browser_click`
@@ -756,6 +806,12 @@ const TOOL_PREFIX_RE = /^(?:mcp__volt__|volt[-_:]\s*|volt\.)/i;
  */
 /** Pull request tools (registered by the pull request service): safe, they only change Volt's own state. */
 export const PULL_REQUEST_TOOL_NAMES = ['link_pull_request', 'unlink_pull_request', 'list_thread_pull_requests', 'watch_pull_request', 'unwatch_pull_request', 'stack_status', 'stack_branch', 'restack_stack'] as const;
+
+/**
+ * Commit review tools (registered by the commit plan service): the user reviews proposed commits
+ * before Volt makes them, and names a worktree's placeholder branch before it is pushed.
+ */
+export const COMMIT_PLAN_TOOL_NAMES = ['propose_commits', 'await_commits', 'rename_branch'] as const;
 
 /**
  * Automation tools (registered by the automation service): `manage_automations` creates, lists,
@@ -804,7 +860,7 @@ export function voltHostToolName(name?: string, title?: string): string | undefi
 		const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
 		for (const candidate of [value.replace(TOOL_PREFIX_RE, '').trim(), tail.replace(TOOL_PREFIX_RE, '').trim()]) {
 			const id = candidate.toLowerCase();
-			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (AUTOMATION_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (DESKTOP_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || (PLAYGROUND_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id) || TERMINAL_READ_TOOL_NAMES.has(id) || id === WORKSPACE_STATUS_TOOL_NAME) {
+			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (COMMIT_PLAN_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (AUTOMATION_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (DESKTOP_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || (PLAYGROUND_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id) || TERMINAL_READ_TOOL_NAMES.has(id) || id === WORKSPACE_STATUS_TOOL_NAME) {
 				return canonicalHostToolName(id);
 			}
 		}

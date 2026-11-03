@@ -14,6 +14,7 @@ import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { buildTranscriptRows, formatThoughtDuration, hasSignInNotice, splitWorkedRows, stepsGroupTitle, subagentStatus, TranscriptRow, withoutFailureNotice } from '../../browser/chrome/agentTranscript.js';
 import { queueSendNowLabels } from '../../browser/composer/agentComposerQueue.js';
 import { attachmentPathLines, imageAttachmentsFromMentions, videoDetail } from '../../browser/composer/agentMentions.js';
+import { placeMessageMentions } from '../../browser/composer/agentMentionImages.js';
 import { formatImageSize, imageExtension } from '../../browser/composer/agentImageAttachments.js';
 import { formatDuration, keptRanges, mapRangesToSource, mergeRanges, normalizeVideoMime, rangesDuration, videoExtensionForMime, videoFrameCount, videoFrameTimes } from '../../browser/composer/agentVideoAttachments.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -261,6 +262,42 @@ suite('Agent transcript run controls', () => {
 		assert.deepStrictEqual(kinds(tail), ['steps', 'steer'], 'a steer sent after the last segment comes last');
 	});
 
+	test('a steering message keeps its pasted image for the chip', () => {
+		const image = { kind: 'image' as const, label: 'image.png', image: { id: 'img-1', mime: 'image/png', bytes: new Uint8Array([1, 2, 3]) } };
+		const rows = buildTranscriptRows([read('a.ts')], undefined, true, [{ text: 'like this image.png', at: 1, mentions: [image] }]);
+		const steer = rows.at(-1) as Extract<TranscriptRow, { kind: 'steer' }>;
+		assert.strictEqual(steer.kind, 'steer');
+		assert.deepStrictEqual(steer.mentions, [image]);
+	});
+
+	test('a sent message places its chips, and agent-facing image tags become chips', () => {
+		const image = { kind: 'image' as const, label: 'image.png', image: { id: 'img-1', mime: 'image/png', bytes: new Uint8Array([1, 2, 3]) } };
+		const named = placeMessageMentions('record it image.png  like this', [image]);
+		assert.strictEqual(named.text, 'record it image.png  like this');
+		assert.deepStrictEqual(named.placed, [{ index: 10, mention: image }]);
+
+		const tagged = placeMessageMentions('record it [Image #1: image.png] like this', [image]);
+		assert.strictEqual(tagged.text, 'record it image.png like this');
+		assert.deepStrictEqual(tagged.placed, [{ index: 10, mention: image }], 'the tag takes the attached image');
+
+		const bare = placeMessageMentions('see [Image #1: a.png] and [Image #2: b.png]', undefined);
+		assert.strictEqual(bare.text, 'see a.png and b.png');
+		assert.deepStrictEqual(bare.placed.map(item => [item.index, item.mention.kind, item.mention.label, item.mention.image]), [[4, 'image', 'a.png', undefined], [14, 'image', 'b.png', undefined]]);
+
+		const file = { kind: 'file' as const, label: 'a.ts' };
+		const mixed = placeMessageMentions('a.ts then [Image: shot.png] a.ts', [file]);
+		assert.deepStrictEqual(mixed.placed.map(item => [item.index, item.mention.label]), [[0, 'a.ts'], [10, 'shot.png']]);
+	});
+
+	test('supervisor findings the run carried on from stay out of the chat', () => {
+		const rows = buildTranscriptRows([
+			{ kind: 'notice', severity: 'info', title: 'Agent looping detected', description: 'The agent was running npm test 4 times in a row with the same result.', supervision: 'loop' },
+			{ kind: 'notice', severity: 'warning', title: 'Agent looping detected' },
+			{ kind: 'notice', severity: 'warning', title: 'Rate limit: 90% used' },
+		], undefined, false);
+		assert.deepStrictEqual(rows.map(row => row.kind === 'notice' ? row.title : row.kind), ['Rate limit: 90% used']);
+	});
+
 	test('a failed turn shows its error once, but keeps supervisor trays', () => {
 		const rows = buildTranscriptRows([
 			{ kind: 'notice', severity: 'error', title: 'The same tools were called three times', supervision: 'loop' },
@@ -268,8 +305,9 @@ suite('Agent transcript run controls', () => {
 			{ kind: 'notice', severity: 'warning', title: 'Retrying in 2s' },
 		], undefined, false);
 		const kept = withoutFailureNotice(rows, 'Provider returned 529 overloaded');
-		assert.deepStrictEqual(kept.map(row => row.kind === 'notice' ? row.title : row.kind), ['The same tools were called three times', 'Retrying in 2s']);
-		assert.strictEqual(withoutFailureNotice(rows, undefined).length, 3);
+		// Retries show in the status line, never as a row.
+		assert.deepStrictEqual(kept.map(row => row.kind === 'notice' ? row.title : row.kind), ['The same tools were called three times']);
+		assert.strictEqual(withoutFailureNotice(rows, undefined).length, 2);
 		const stop = buildTranscriptRows([{ kind: 'notice', severity: 'error', title: 'Stopped: the agent kept looping', supervision: 'loop' }], undefined, false);
 		assert.strictEqual(withoutFailureNotice(stop, 'Stopped: the agent kept looping').length, 0, 'the stop that failed the run shows only in the end tray');
 		const signIn = buildTranscriptRows([

@@ -13,6 +13,7 @@ import { URI } from '../../../base/common/uri.js';
 import { Emitter } from '../../../base/common/event.js';
 import { ProxyChannel, StaticRouter } from '../../../base/parts/ipc/common/ipc.js';
 import { IClientConnectionFilter, Server as UtilityProcessMessagePortServer, once } from '../../../base/parts/ipc/node/ipc.mp.js';
+import { PerWindowWatcherChannel } from '../../../platform/files/node/watcher/watcherChannel.js';
 import { CodeCacheCleaner } from './contrib/codeCacheCleaner.js';
 import { LanguagePackCachedDataCleaner } from './contrib/languagePackCachedDataCleaner.js';
 import { LocalizationsUpdater } from './contrib/localizationsUpdater.js';
@@ -460,6 +461,9 @@ class SharedProcessMain extends Disposable implements IClientConnectionFilter {
 		// Web Content Extractor
 		const webContentExtractorChannel = ProxyChannel.fromService(accessor.get(ISharedWebContentExtractorService), this._store);
 		this.server.registerChannel('sharedWebContentExtractor', webContentExtractorChannel);
+
+		// File Watcher (one per window, instead of a utility process per window)
+		this.server.registerChannel('watcher', this._register(new PerWindowWatcherChannel(this.server)));
 	}
 
 	private registerErrorHandler(logService: ILogService): void {

@@ -19,11 +19,10 @@ import { createSlashIcon, renderSkillCard } from './agentSkillHoverCard.js';
 const ANCHOR_GAP = 6;
 /** Width when there is no composer to line up with (menu at the cursor). */
 const CURSOR_MENU_WIDTH = 420;
-const ROW_HEIGHT = 29;
-/** Vertical padding inside the menu, above the first and below the last row. */
-const LIST_PADDING = 6;
+/** A VS Code list row: flush with the menu's edges, no inset and no rounding. */
+const ROW_HEIGHT = 24;
 /** Nine and a half rows: the half row says there is more below. */
-const MAX_LIST_HEIGHT = Math.round(ROW_HEIGHT * 9.5) + LIST_PADDING;
+const MAX_LIST_HEIGHT = Math.round(ROW_HEIGHT * 9.5);
 const CARD_GAP = 8;
 const EDGE = 8;
 /** Characters kept before a description match, after the "...". */
@@ -379,7 +378,7 @@ export class AgentSlashMenu extends Disposable {
 			}
 			return element;
 		});
-		const height = Math.min(MAX_LIST_HEIGHT, this.rows.length * ROW_HEIGHT + LIST_PADDING);
+		const height = Math.min(MAX_LIST_HEIGHT, this.rows.length * ROW_HEIGHT);
 		view.list.style.maxHeight = `${height}px`;
 		this.applyFocus(reveal);
 	}
@@ -406,10 +405,10 @@ export class AgentSlashMenu extends Disposable {
 		}
 		const top = focused.offsetTop;
 		const bottom = top + focused.offsetHeight;
-		if (top - LIST_PADDING / 2 < view.list.scrollTop) {
-			view.list.scrollTop = Math.max(0, top - LIST_PADDING / 2);
-		} else if (bottom + LIST_PADDING / 2 > view.list.scrollTop + view.list.clientHeight) {
-			view.list.scrollTop = bottom + LIST_PADDING / 2 - view.list.clientHeight;
+		if (top < view.list.scrollTop) {
+			view.list.scrollTop = top;
+		} else if (bottom > view.list.scrollTop + view.list.clientHeight) {
+			view.list.scrollTop = bottom - view.list.clientHeight;
 		}
 	}
 

@@ -69,6 +69,23 @@ export function createHomeNewChatIcon(): HTMLElement {
 	return createHomeSvgIcon('new-chat', AGENT_HOME_NEW_CHAT_ICON_PATH, { strokeWidth: '1' });
 }
 
+/** A notebook with its tabs, for Scratch beside New Chat. */
+export const AGENT_HOME_SCRATCH_ICON_PATHS = [
+	'M2 6h4',
+	'M2 10h4',
+	'M2 14h4',
+	'M2 18h4',
+	'M6 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-16a2 2 0 0 1 2 -2z',
+	'M15 2v20',
+	'M15 7h5',
+	'M15 12h5',
+	'M15 17h5',
+] as const;
+
+export function createHomeScratchIcon(): HTMLElement {
+	return createHomeStrokeIcon('scratch', AGENT_HOME_SCRATCH_ICON_PATHS, '1');
+}
+
 export function createHomeNewProjectIcon(): HTMLElement {
 	return createHomeSvgIcon('new-project', AGENT_HOME_NEW_PROJECT_ICON_PATH, {
 		strokeWidth: '2',
@@ -84,6 +101,31 @@ export function createHomeFolderIcon(): HTMLElement {
 /** Folder glyph for the chat-row hover card (stroke 1.5, round caps). */
 export function createSessionHoverFolderIcon(): HTMLElement {
 	return createHomeSvgIcon('session-folder', AGENT_SESSION_HOVER_FOLDER_ICON_PATH, { strokeWidth: '1.5' });
+}
+
+/** Git branch drawn like the hover card's folder (24 grid, round stroke) so the two rows match. */
+export const AGENT_SESSION_HOVER_BRANCH_ICON_PATHS = [
+	'M6 3v12',
+	'M21 6a3 3 0 1 1-6 0a3 3 0 0 1 6 0',
+	'M9 18a3 3 0 1 1-6 0a3 3 0 0 1 6 0',
+	'M18 9a9 9 0 0 1-9 9',
+] as const;
+
+/** Branch glyph for the chat-row hover card (stroke 1.5, round caps), the folder's twin. */
+export function createSessionHoverBranchIcon(): HTMLElement {
+	return createHomeStrokeIcon('session-branch', AGENT_SESSION_HOVER_BRANCH_ICON_PATHS, '1.5');
+}
+
+/** Edit queued message: a pencil (Edit_Pencil_01); stroke follows currentColor. */
+export const AGENT_QUEUE_EDIT_ICON_PATH = 'M12 8.00012L4 16.0001V20.0001L8 20.0001L16 12.0001M12 8.00012L14.8686 5.13146L14.8704 5.12976C15.2652 4.73488 15.463 4.53709 15.691 4.46301C15.8919 4.39775 16.1082 4.39775 16.3091 4.46301C16.5369 4.53704 16.7345 4.7346 17.1288 5.12892L18.8686 6.86872C19.2646 7.26474 19.4627 7.46284 19.5369 7.69117C19.6022 7.89201 19.6021 8.10835 19.5369 8.3092C19.4628 8.53736 19.265 8.73516 18.8695 9.13061L18.8686 9.13146L16 12.0001M12 8.00012L16 12.0001';
+
+export function createQueueEditIcon(): HTMLElement {
+	return createHomeSvgIcon('queue-edit', AGENT_QUEUE_EDIT_ICON_PATH, { strokeWidth: '1' });
+}
+
+/** Send in new chat: the sidebar's New Chat paper plane, drawn a little heavier at the queue's size. */
+export function createQueueSendIcon(): HTMLElement {
+	return createHomeSvgIcon('queue-send', AGENT_HOME_NEW_CHAT_ICON_PATH, { strokeWidth: '1.4' });
 }
 
 export function createHomeFilterIcon(): HTMLElement {
@@ -181,21 +223,54 @@ export function createHomeOpenWorkspaceIcon(): HTMLElement {
 	return createHomeStrokeIcon('open-workspace', AGENT_HOME_OPEN_WORKSPACE_ICON_PATHS, '1');
 }
 
-/** Lucide settings gear for the sidebar footer: rounded petals around a ring. */
+/** Settings gear for the sidebar footer: a toothed outline around a ring. */
 export const AGENT_HOME_SETTINGS_ICON_PATHS = [
-	'M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915',
+	'M14 21h-4l-.551-2.48a6.991 6.991 0 0 1-1.819-1.05l-2.424.763-2-3.464 1.872-1.718a7.055 7.055 0 0 1 0-2.1L3.206 9.232l2-3.464 2.424.763A6.992 6.992 0 0 1 9.45 5.48L10 3h4l.551 2.48a6.992 6.992 0 0 1 1.819 1.05l2.424-.763 2 3.464-1.872 1.718a7.05 7.05 0 0 1 0 2.1l1.872 1.718-2 3.464-2.424-.763a6.99 6.99 0 0 1-1.819 1.052L14 21z',
 	'M15 12a3 3 0 1 1-6 0a3 3 0 0 1 6 0',
 ] as const;
 
 /** Automations: a clock in a dashed ring (the run that comes round again). */
-const AGENT_HOME_AUTOMATIONS_ICON_PATH = 'M12 2C12.3375 2 12.6711 2.01672 13 2.04938M12 2C11.6625 2 11.3289 2.01672 11 2.04938M12 2C17.5228 2 22 6.47715 22 12M2.04938 11C2.01672 11.3289 2 11.6625 2 12C2 12.3375 2.01672 12.6711 2.04938 13M12 22C11.6625 22 11.3289 21.9833 11 21.9506M12 22C12.3375 22 12.6711 21.9833 13 21.9506M12 22C17.5228 22 22 17.5228 22 12M22 12C22 12.3375 21.9833 12.6711 21.9506 13M22 12C22 11.6625 21.9833 11.3289 21.9506 11M17.8413 3.88251C17.5728 3.68977 17.2923 3.5085 17 3.33975C16.7077 3.171 16.4105 3.01868 16.1093 2.88251M3.88251 6.15866C3.68977 6.42717 3.5085 6.70772 3.33975 7C3.171 7.29228 3.01868 7.58954 2.88251 7.89071M6.15866 20.1175C6.42718 20.3102 6.70772 20.4915 7 20.6603C7.29228 20.829 7.58954 20.9813 7.89071 21.1175M20.1175 17.8413C20.3102 17.5728 20.4915 17.2923 20.6603 17C20.829 16.7077 20.9813 16.4105 21.1175 16.1093M21.1175 7.89081C20.9813 7.58964 20.829 7.29238 20.6603 7.0001C20.4915 6.70781 20.3102 6.42727 20.1175 6.15876M7.89072 2.8826C7.58955 3.01878 7.29229 3.17109 7.00001 3.33984C6.70772 3.50859 6.42718 3.68987 6.15867 3.8826M2.88251 16.1094C3.01868 16.4106 3.171 16.7078 3.33975 17.0001C3.5085 17.2924 3.68978 17.5729 3.88251 17.8414M16.1093 21.1176C16.4105 20.9814 16.7077 20.8291 17 20.6604C17.2923 20.4916 17.5728 20.3103 17.8413 20.1176M12 6V12L16 16';
+export const AGENT_HOME_AUTOMATIONS_ICON_PATH = 'M12 2C12.3375 2 12.6711 2.01672 13 2.04938M12 2C11.6625 2 11.3289 2.01672 11 2.04938M12 2C17.5228 2 22 6.47715 22 12M2.04938 11C2.01672 11.3289 2 11.6625 2 12C2 12.3375 2.01672 12.6711 2.04938 13M12 22C11.6625 22 11.3289 21.9833 11 21.9506M12 22C12.3375 22 12.6711 21.9833 13 21.9506M12 22C17.5228 22 22 17.5228 22 12M22 12C22 12.3375 21.9833 12.6711 21.9506 13M22 12C22 11.6625 21.9833 11.3289 21.9506 11M17.8413 3.88251C17.5728 3.68977 17.2923 3.5085 17 3.33975C16.7077 3.171 16.4105 3.01868 16.1093 2.88251M3.88251 6.15866C3.68977 6.42717 3.5085 6.70772 3.33975 7C3.171 7.29228 3.01868 7.58954 2.88251 7.89071M6.15866 20.1175C6.42718 20.3102 6.70772 20.4915 7 20.6603C7.29228 20.829 7.58954 20.9813 7.89071 21.1175M20.1175 17.8413C20.3102 17.5728 20.4915 17.2923 20.6603 17C20.829 16.7077 20.9813 16.4105 21.1175 16.1093M21.1175 7.89081C20.9813 7.58964 20.829 7.29238 20.6603 7.0001C20.4915 6.70781 20.3102 6.42727 20.1175 6.15876M7.89072 2.8826C7.58955 3.01878 7.29229 3.17109 7.00001 3.33984C6.70772 3.50859 6.42718 3.68987 6.15867 3.8826M2.88251 16.1094C3.01868 16.4106 3.171 16.7078 3.33975 17.0001C3.5085 17.2924 3.68978 17.5729 3.88251 17.8414M16.1093 21.1176C16.4105 20.9814 16.7077 20.8291 17 20.6604C17.2923 20.4916 17.5728 20.3103 17.8413 20.1176M12 6V12L16 16';
 
 export function createHomeAutomationsIcon(): HTMLElement {
 	return createHomeStrokeIcon('automations', [AGENT_HOME_AUTOMATIONS_ICON_PATH], '1.5');
 }
 
 export function createHomeSettingsIcon(): HTMLElement {
-	return createHomeStrokeIcon('settings', AGENT_HOME_SETTINGS_ICON_PATHS, '1.5');
+	return createHomeStrokeIcon('settings', AGENT_HOME_SETTINGS_ICON_PATHS, '1');
+}
+
+/** Lucide blocks for Customize: the extensions mark as an outline, so it strokes like the footer's other icons. */
+export const AGENT_HOME_CUSTOMIZE_ICON_PATHS = [
+	'M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2',
+	'M15 2h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z',
+] as const;
+
+export function createHomeCustomizeIcon(): HTMLElement {
+	return createHomeStrokeIcon('customize', AGENT_HOME_CUSTOMIZE_ICON_PATHS, '1.5');
+}
+
+/** Lucide git-pull-request-arrow for the footer's Pull Requests, stroked like Customize beside it. */
+export const AGENT_HOME_PULL_REQUESTS_ICON_PATHS = [
+	'M8 6a3 3 0 1 1-6 0a3 3 0 0 1 6 0',
+	'M5 9v12',
+	'M22 18a3 3 0 1 1-6 0a3 3 0 0 1 6 0',
+	'm15 9-3-3 3-3',
+	'M12 6h5a2 2 0 0 1 2 2v7',
+] as const;
+
+export function createHomePullRequestsIcon(): HTMLElement {
+	return createHomeStrokeIcon('pull-requests', AGENT_HOME_PULL_REQUESTS_ICON_PATHS, '1.5');
+}
+
+/** Lucide rotate-cw for the footer's Check for Updates, stroked like the icons beside it. */
+export const AGENT_HOME_REFRESH_ICON_PATHS = [
+	'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8',
+	'M21 3v5h-5',
+] as const;
+
+export function createHomeRefreshIcon(): HTMLElement {
+	return createHomeStrokeIcon('refresh', AGENT_HOME_REFRESH_ICON_PATHS, '1.5');
 }
 
 /** Laptop outline for On This Mac. */
@@ -204,6 +279,16 @@ export const AGENT_HOME_LAPTOP_ICON_PATHS = [
 	'M2 19h20',
 ] as const;
 /** GitLab tanuki outline. */
+/** Git's diamond with its branch, for the Git Repo row of the Open Workspace menu. */
+export const AGENT_HOME_GIT_ICON_PATHS = [
+	'M13.446 2.6l7.955 7.954a2.045 2.045 0 0 1 0 2.892l-7.955 7.955a2.045 2.045 0 0 1 -2.892 0l-7.955 -7.955a2.045 2.045 0 0 1 0 -2.892l7.955 -7.955a2.045 2.045 0 0 1 2.892 0z',
+	'M15 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0',
+	'M11 8a1 1 0 1 0 2 0a1 1 0 1 0 -2 0',
+	'M11 16a1 1 0 1 0 2 0a1 1 0 1 0 -2 0',
+	'M12 15v-6',
+	'M15 11l-2 -2',
+	'M11 7l-1.9 -1.9',
+] as const;
 export const AGENT_HOME_GITLAB_ICON_PATH = 'M12 21l-9.5-7l2.5-10l3 7h8l3-7l2.5 10z';
 /** Bitbucket bucket outline. */
 export const AGENT_HOME_BITBUCKET_ICON_PATHS = [
@@ -213,6 +298,10 @@ export const AGENT_HOME_BITBUCKET_ICON_PATHS = [
 
 export function createHomeLaptopIcon(): HTMLElement {
 	return createHomeStrokeIcon('laptop', AGENT_HOME_LAPTOP_ICON_PATHS, '1.25');
+}
+
+export function createHomeGitIcon(): HTMLElement {
+	return createHomeStrokeIcon('git', AGENT_HOME_GIT_ICON_PATHS, '1.25');
 }
 
 export function createHomeGitLabIcon(): HTMLElement {

@@ -20,6 +20,7 @@ suite('Volt execution router', () => {
 		assert.strictEqual(routeExecution({ kind: 'agent', providerId: 'antigravity' }).backend, 'acp');
 		assert.strictEqual(routeExecution({ kind: 'agent', providerId: 'kimi' }).backend, 'acp');
 		assert.strictEqual(routeExecution({ kind: 'agent', providerId: 'muse' }).backend, 'acp');
+		assert.strictEqual(routeExecution({ kind: 'agent', providerId: 'fx' }).backend, 'acp');
 		assert.strictEqual(routeExecution({ kind: 'agent', providerId: 'claude-code' }).backend, 'cli');
 		assert.ok(!ownsNativeLoop(routeExecution({ kind: 'agent', providerId: 'codex' })));
 	});

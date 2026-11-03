@@ -12,8 +12,9 @@ import minimist from 'minimist';
 import { Emitter } from '../../../base/common/event.js';
 import { DisposableStore, toDisposable } from '../../../base/common/lifecycle.js';
 import { FileAccess, Schemas } from '../../../base/common/network.js';
-import { extname, join, normalize, sep } from '../../../base/common/path.js';
+import { extname, join } from '../../../base/common/path.js';
 import { joinPath } from '../../../base/common/resources.js';
+import { URI } from '../../../base/common/uri.js';
 import { ITextModelService } from '../../../editor/common/services/resolverService.js';
 import { ILanguageFeaturesService } from '../../../editor/common/services/languageFeatures.js';
 import { LanguageFeaturesService } from '../../../editor/common/services/languageFeaturesService.js';
@@ -48,9 +49,9 @@ import { ISecretStorageService } from '../../../platform/secrets/common/secrets.
 import { getResolvedShellEnv } from '../../../platform/shell/node/shellEnv.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../platform/workspace/common/workspace.js';
-import { AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo } from '../../../platform/voltAgentServer/common/protocol.js';
-import { AgentServerProtocol, tokensEqual } from '../../../platform/voltAgentServer/common/protocolServer.js';
-import { agentServerPaths, clearAgentServerRuntime, ensureAgentServerToken, preferredAgentServerPort, writeAgentServerRuntime } from '../../../platform/voltAgentServer/node/agentServerFiles.js';
+import { AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo, IVoltSshTunnelOptions } from '../../../platform/voltAgentServer/common/protocol.js';
+import { AgentServerProtocol, IClientCallOptions, tokensEqual } from '../../../platform/voltAgentServer/common/protocolServer.js';
+import { agentServerPaths, clearAgentServerRuntime, ensureAgentServerToken, isProcessAlive, preferredAgentServerPort, writeAgentServerRuntime } from '../../../platform/voltAgentServer/node/agentServerFiles.js';
 import { acceptWebSocket } from '../../../platform/voltAgentServer/node/webSocket.js';
 import { IVoltGitService } from '../../../platform/voltGit/common/voltGit.js';
 import { VoltGitService } from '../../../platform/voltGit/node/voltGitService.js';
@@ -61,7 +62,13 @@ import { VoltHostMcpService } from '../../../platform/voltHostMcp/node/voltHostM
 import { IVoltStdioService } from '../../../platform/voltStdio/common/voltStdio.js';
 import { VoltStdioService } from '../../../platform/voltStdio/node/voltStdioService.js';
 import { AgentTurnHostContribution } from '../../../workbench/contrib/voltAgent/browser/orchestration/agentTurnHost.js';
-import { AgentCheckpointService, CHECKPOINT_BEGIN_TURN_COMMAND_ID, IAgentCheckpointService } from '../../../workbench/contrib/voltAgent/browser/review/agentCheckpointService.js';
+import { HarnessSubagentChats } from '../../../workbench/contrib/voltAgent/browser/orchestration/harnessSubagentChats.js';
+import { AgentThreadToolService } from '../../../workbench/contrib/voltAgent/browser/orchestration/agentThreadToolService.js';
+import { IAgentChatForkService } from '../../../workbench/contrib/voltAgent/browser/orchestration/agentChatFork.js';
+import { AgentChatSearchService, IAgentChatSearchService } from '../../../workbench/contrib/voltAgent/browser/search/agentChatSearchService.js';
+import { IAgentRunGroupService } from '../../../workbench/services/voltRuntime/common/runGroups/runGroups.js';
+import { AgentWorkspaceMover } from '../../../workbench/contrib/voltAgent/browser/orchestration/agentWorkspaceMover.js';
+import { CHECKPOINT_BEGIN_TURN_COMMAND_ID, IAgentCheckpointService } from '../../../workbench/contrib/voltAgent/browser/review/agentCheckpointService.js';
 import { IAgentEditsService } from '../../../workbench/contrib/voltAgent/browser/review/agentEditsService.js';
 import { IAgentWorkspaceService } from '../../../workbench/contrib/voltAgent/browser/workspace/agentWorkspace.js';
 import { VoltHostMcpBridge } from '../../../workbench/contrib/voltAgent/common/voltHostMcpBridge.js';
@@ -75,14 +82,18 @@ import { VoltBrowserAccessService } from '../../../workbench/services/voltRuntim
 import { VoltMemoryService } from '../../../workbench/services/voltRuntime/browser/memory/voltMemoryService.js';
 import { IVoltBrowserAccessService } from '../../../workbench/services/voltRuntime/common/browserAccess.js';
 import { IVoltMemoryService } from '../../../workbench/services/voltRuntime/common/memory/voltMemory.js';
+import { VoltTrajectoryService } from '../../../workbench/services/voltRuntime/browser/trajectoryService.js';
+import { IVoltTrajectoryService } from '../../../workbench/services/voltRuntime/common/trajectory.js';
 import { VoltHooksService } from '../../../workbench/services/voltRuntime/browser/hooks/voltHooksService.js';
 import { IVoltHooksService } from '../../../workbench/services/voltRuntime/common/hooks/voltHooks.js';
 import { IWorkspaceTrustManagementService } from '../../../platform/workspace/common/workspaceTrust.js';
 import { IAgentWorktreeSetupService } from '../../../workbench/services/voltRuntime/common/git/worktreeSetupPlan.js';
-import { AgentHistoryService } from '../../../workbench/services/voltRuntime/browser/history/agentHistoryService.js';
+import { AgentHistoryService, setAgentHistoryAppender } from '../../../workbench/services/voltRuntime/browser/history/agentHistoryService.js';
 import { VoltHostToolService } from '../../../workbench/services/voltRuntime/browser/host/hostToolService.js';
 import { AgentOrchestratorService } from '../../../workbench/services/voltRuntime/browser/orchestration/agentOrchestratorService.js';
 import { VoltSessionContextService } from '../../../workbench/services/voltRuntime/browser/sessionContextService.js';
+import { VoltWindowScopeService } from '../../../workbench/services/voltWindowScope/common/voltWindowScopeService.js';
+import { IVoltWindowScopeService } from '../../../workbench/services/voltWindowScope/common/voltWindowScope.js';
 import { AgentRuntimeService } from '../../../workbench/services/voltRuntime/browser/voltRuntimeService.js';
 import { IAgentWorktreeService } from '../../../workbench/services/voltRuntime/common/git/agentWorktree.js';
 import { IAgentHistoryService } from '../../../workbench/services/voltRuntime/common/history/agentHistory.js';
@@ -94,11 +105,32 @@ import { RunModeTracker } from '../../../workbench/services/voltRuntime/common/h
 import { AgentServerApi, createCollections } from './serverApi.js';
 import { ServerAgentWorkspaceService } from './serverAgentWorkspace.js';
 import { IAgentServerClients } from './serverClients.js';
+import { ChildLedger } from '../../../platform/voltStdio/node/childLedger.js';
+import { ServerCodeIntel, WindowFolders } from './serverCodeIntel.js';
+import { restartWhenStale } from './serverDevRestart.js';
+import { stopWhenIdle } from './serverIdleExit.js';
+import { setBeaconProcessProbe } from '../../../workbench/services/voltRuntime/browser/jobs/workbenchBeacons.js';
+import { setRuntimeCodeIntelFactory } from '../../../workbench/services/voltRuntime/browser/host/codeIntelHost.js';
 import { ServerEditsJournal } from './serverEditsJournal.js';
 import { importDesktopStorage, ServerCommandService, ServerConsoleLogger, ServerLifecycleService, ServerNotificationService, ServerPathService, ServerSearchService, ServerSecretStorageService, ServerStorageService, ServerTextModelService, serverTextFileService, ServerWorkspaceContextService, ServerWorkspaceTrustService } from './serverPlatformServices.js';
 import { ServerSessionHost } from './serverSessionHost.js';
+import { ServerTerminals } from './serverTerminals.js';
+import { ServerRelay } from './serverRelay.js';
+import { IVoltRelayService } from '../../../platform/voltRelay/common/voltRelay.js';
+import { VoltRelayService } from '../../../platform/voltRelay/node/voltRelayService.js';
+import { AutomationHookSync, hookedTriggers } from '../../../workbench/contrib/voltAgent/browser/automations/automationHookSync.js';
+import { ServerProjectEnv } from './serverProjectEnv.js';
+import { ServerDocuments } from './serverDocuments.js';
+import { ServerAgentCheckpointService } from './serverCheckpoints.js';
+import { ProjectEnvVoltStdioService } from '../../../workbench/services/voltRuntime/common/projectEnvStdio.js';
+import { AutomationService } from '../../../workbench/contrib/voltAgent/browser/automations/automationService.js';
+import { IAutomationService } from '../../../workbench/services/voltRuntime/common/automations/automations.js';
+import { ServerAgentRunGroupService } from './serverRunGroups.js';
 import { IPairingHttpContext, machineLabel, ServerPairing } from './serverPairing.js';
+import { handleSignIn } from './serverSignIn.js';
+import { ServerTunnels } from './serverTunnels.js';
 import { ServerWorkbench } from './serverWorkbench.js';
+import { ServerRender } from './serverRender.js';
 import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
 import { IVoltPullRequestService } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { VoltPullRequestService } from '../../../platform/voltPullRequests/node/voltPullRequestService.js';
@@ -113,11 +145,10 @@ interface IServerArgs {
 	readonly host: string;
 	readonly port: number | undefined;
 	readonly logLevel: LogLevel;
-	readonly webRoot: string | undefined;
 }
 
 function parseArgs(argv: string[]): IServerArgs {
-	const args = minimist(argv, { string: ['user-data-dir', 'host', 'port', 'log', 'web-root'] });
+	const args = minimist(argv, { string: ['user-data-dir', 'host', 'port', 'log'] });
 	const userDataDir = args['user-data-dir'] || process.env['VOLT_AGENT_SERVER_USER_DATA_DIR'];
 	if (!userDataDir) {
 		throw new Error('--user-data-dir is required');
@@ -127,7 +158,6 @@ function parseArgs(argv: string[]): IServerArgs {
 		host: args.host || process.env['VOLT_AGENT_SERVER_HOST'] || '127.0.0.1',
 		port: args.port ? Number(args.port) : undefined,
 		logLevel: parseLogLevel(args.log || process.env['VOLT_AGENT_SERVER_LOG'] || 'info') ?? LogLevel.Info,
-		webRoot: args['web-root'] || undefined,
 	};
 }
 
@@ -196,8 +226,16 @@ export async function main(argv: string[]): Promise<void> {
 	services.set(ILanguageFeaturesService, new LanguageFeaturesService());
 	services.set(INotificationService, notificationService as unknown as INotificationService);
 	services.set(ICommandService, new SyncDescriptor(ServerCommandService));
-	const stdioService = disposables.add(new VoltStdioService(logService, configurationService, args.userDataDir));
-	services.set(IVoltStdioService, stdioService);
+	// Agent CLIs and commands a killed server left running would otherwise run forever, unowned.
+	const childrenFile = join(paths.dir, 'children.json');
+	const reaped = await ChildLedger.reapOrphans(childrenFile);
+	if (reaped) {
+		logService.info(`[volt agent server] stopped ${reaped} agent process group(s) the previous server left running`);
+	}
+	const childLedger = disposables.add(new ChildLedger(childrenFile));
+	const stdioService = disposables.add(new VoltStdioService(logService, configurationService, args.userDataDir, childLedger));
+	// Project Settings > Environment reaches what runs here too (windows send the settings; ServerProjectEnv).
+	services.set(IVoltStdioService, new ProjectEnvVoltStdioService(stdioService));
 	services.set(IVoltGitService, disposables.add(new VoltGitService(resolveEnv, logService, { shadowRoot: join(args.userDataDir, 'volt-checkpoints') })));
 	services.set(IVoltHostMcpService, disposables.add(new VoltHostMcpService(logService)));
 	// The phone's git and pull request screens (ServerGit), and the browser workbench's own channel, share one.
@@ -208,6 +246,9 @@ export async function main(argv: string[]): Promise<void> {
 	// Its own index folder: the desktop's index process may be writing to the desktop one.
 	const codeIndex = disposables.add(new VoltCodeIndexService(join(args.userDataDir, 'volt-index-server'), logService));
 	services.set(IVoltCodeIndexService, codeIndex);
+	// The relay connection and the local webhook URL live here (the main process leaves them alone in this mode).
+	const relay = disposables.add(new VoltRelayService(args.userDataDir, logService));
+	services.set(IVoltRelayService, relay);
 
 	//#endregion
 
@@ -234,35 +275,74 @@ export async function main(argv: string[]): Promise<void> {
 			}
 		}
 	}));
-	services.set(IAgentServerClients, {
+	// Set once the session host exists: which connections have a chat open.
+	let holdersOf: (sessionId: string) => ReadonlySet<number> = () => new Set();
+	const clients: IAgentServerClients = {
 		_serviceBrand: undefined,
 		onDidChange: clientsChanged.event,
 		list: () => protocol.listClients(),
 		has: capability => !!protocol.clientWith(capability),
 		call: <T>(capability: Parameters<AgentServerProtocol['callClient']>[0], method: string, ...params: unknown[]) => protocol.callClient<T>(capability, method, params),
-	} satisfies IAgentServerClients);
+		callWith: <T>(capability: Parameters<AgentServerProtocol['callClient']>[0], options: IClientCallOptions, method: string, ...params: unknown[]) => protocol.callClient<T>(capability, method, params, options),
+		callForChat: <T>(capability: Parameters<AgentServerProtocol['callClient']>[0], sessionId: string | undefined, method: string, ...params: unknown[]) => {
+			const holders = sessionId ? holdersOf(sessionId) : undefined;
+			return protocol.callClient<T>(capability, method, params, holders?.size ? { prefer: connectionId => holders.has(connectionId) } : undefined);
+		},
+		holders: sessionId => holdersOf(sessionId),
+	};
+	services.set(IAgentServerClients, clients);
+	// Its chat-ownership beacons name this process, so the next server takes over at once after a crash.
+	setBeaconProcessProbe({ pid: process.pid, alive: isProcessAlive });
+	// Language servers live in a window: the runtime's code tools ask the one that has the file's folder open.
+	const windowFolders = new WindowFolders();
+	disposables.add(protocol.registerMethod('codeIntel.setFolders', (ctx, folders) => {
+		if (ctx.client.role === 'owner') {
+			windowFolders.set(ctx.client.connectionId, folders);
+		}
+		return true;
+	}));
+	disposables.add(protocol.onDidChangeClients(() => windowFolders.retain(new Set(protocol.listClients().map(client => client.connectionId)))));
+	setRuntimeCodeIntelFactory(() => new ServerCodeIntel(clients, configurationService, fileService, windowFolders));
 	disposables.add(notificationService.onDidNotify(notification => protocol.publish('server', {
 		kind: 'notification',
 		severity: notification.severity,
 		message: typeof notification.message === 'string' ? notification.message : String(notification.message),
 	})));
 
+	services.set(IWorkspaceTrustManagementService, new ServerWorkspaceTrustService() as unknown as IWorkspaceTrustManagementService);
+	services.set(IVoltHooksService, new SyncDescriptor(VoltHooksService));
 	services.set(IVoltHostToolService, new SyncDescriptor(VoltHostToolService));
+	// The server has no windows: it keeps and lists every chat and project.
+	services.set(IVoltWindowScopeService, new SyncDescriptor(VoltWindowScopeService, [undefined, undefined, undefined]));
 	services.set(IVoltSessionContextService, new SyncDescriptor(VoltSessionContextService));
+	// Chat logs are on this machine's disk: a turn appends its records (synced) instead of rewriting the log.
+	setAgentHistoryAppender(appendDurably);
 	services.set(IAgentHistoryService, new SyncDescriptor(AgentHistoryService));
 	services.set(IAgentWorktreeService, new SyncDescriptor(AgentWorktreeService));
 	services.set(IAgentRuntimeService, new SyncDescriptor(AgentRuntimeService));
 	services.set(IAgentOrchestratorService, new SyncDescriptor(AgentOrchestratorService));
 	services.set(IAgentWorkspaceService, new SyncDescriptor(ServerAgentWorkspaceService));
-	services.set(IAgentCheckpointService, new SyncDescriptor(AgentCheckpointService));
+	// The thread tools (send to, wait for, fork and search other chats) and what they use: served
+	// here so agents coordinating chats work with no window open.
+	services.set(IAgentChatSearchService, new SyncDescriptor(AgentChatSearchService));
+	services.set(IAgentRunGroupService, new SyncDescriptor(ServerAgentRunGroupService));
+	services.set(IAgentChatForkService, new SyncDescriptor(AgentThreadToolService));
+	// It watches each chat's work tree itself (the server has no workspace folders), so unchanged projects reuse the last snapshot.
+	services.set(IAgentCheckpointService, new SyncDescriptor(ServerAgentCheckpointService));
 	services.set(IAgentWorktreeSetupService, new SyncDescriptor(AgentWorktreeSetupService));
 	services.set(IVoltBrowserAccessService, new SyncDescriptor(VoltBrowserAccessService));
 	services.set(IVoltMemoryService, new SyncDescriptor(VoltMemoryService));
-	services.set(IWorkspaceTrustManagementService, new SyncDescriptor(ServerWorkspaceTrustService));
-	services.set(IVoltHooksService, new SyncDescriptor(VoltHooksService));
+	// The runtime records each model request's timeline here.
+	services.set(IVoltTrajectoryService, new SyncDescriptor(VoltTrajectoryService));
+	// Scheduled automations fire here, so they run with no window open (windows claim the same slots, so each runs once).
+	services.set(IAutomationService, new SyncDescriptor(AutomationService));
 
 	const instantiationService = disposables.add(new InstantiationService(services, true));
 	services.set(IInstantiationService, instantiationService);
+	// Before any run resumes: the commands it starts get their project's environment.
+	disposables.add(instantiationService.createInstance(ServerProjectEnv, protocol));
+	// And the agents read the windows' unsaved changes (their edits go into those buffers).
+	disposables.add(instantiationService.createInstance(ServerDocuments, protocol));
 
 	const editsJournal = disposables.add(instantiationService.createInstance(ServerEditsJournal, join(paths.dir, 'edits-journal.json'), collections.get('edits')!));
 	await editsJournal.load();
@@ -276,10 +356,35 @@ export async function main(argv: string[]): Promise<void> {
 	}));
 
 	const sessionHost = disposables.add(instantiationService.createInstance(ServerSessionHost, data => protocol.publish('session', data)));
+	holdersOf = sessionId => sessionHost.holders(sessionId);
 	const [history, orchestrator] = instantiationService.invokeFunction(accessor => [accessor.get(IAgentHistoryService), accessor.get(IAgentOrchestratorService)] as const);
 	await history.whenReady;
 	await orchestrator.whenReady;
 	disposables.add(instantiationService.createInstance(AgentTurnHostContribution));
+	// Harness subagents' chats are written here, where their parent's run streams and the transcripts live.
+	const subagentChats = disposables.add(instantiationService.createInstance(HarnessSubagentChats));
+	disposables.add(protocol.registerMethod('subagents.draw', (_ctx, taskId) => subagentChats.draw(String(taskId))));
+	// Moves to another checkout run here: a window's mover does not reach the server's orchestrator.
+	disposables.add(instantiationService.createInstance(AgentWorkspaceMover));
+	instantiationService.invokeFunction(accessor => accessor.get(IAgentChatForkService));
+	// The browser menu's per-chat "Let Agents Use the Browser" lives in a window's storage: it sends its copy.
+	instantiationService.invokeFunction(accessor => {
+		const browserAccess = accessor.get(IVoltBrowserAccessService);
+		disposables.add(protocol.registerMethod('browserAccess.setChoices', (ctx, choices) => {
+			// A paired phone must not lift a block the user set on this computer.
+			if (ctx.client.role !== 'owner') {
+				throw Object.assign(new Error('Only Volt on this computer can change browser access.'), { code: 'Forbidden' });
+			}
+			const next: Record<string, boolean> = {};
+			for (const [sessionId, allowed] of Object.entries(choices && typeof choices === 'object' && !Array.isArray(choices) ? choices : {})) {
+				if (typeof allowed === 'boolean') {
+					next[sessionId] = allowed;
+				}
+			}
+			browserAccess.setChatChoices(next);
+			return true;
+		}));
+	});
 	disposables.add(instantiationService.createInstance(VoltHostMcpBridge));
 	// Mode and folder per chat for the host tools (a window's browser automation did this).
 	instantiationService.invokeFunction(accessor => accessor.get(IVoltHostToolService).setSessionResolver(disposables.add(new RunModeTracker(accessor.get(IAgentRuntimeService)))));
@@ -296,6 +401,13 @@ export async function main(argv: string[]): Promise<void> {
 		}
 		return imported;
 	}));
+	// The agents' terminals run here, in the server's own pty: dev servers outlive every window.
+	const terminals = disposables.add(instantiationService.createInstance(ServerTerminals, protocol, collections.get('terminals')!, join(paths.dir, 'terminals.json'), resolveEnv, childLedger));
+	const automations = instantiationService.invokeFunction(accessor => accessor.get(IAutomationService));
+	void automations.whenReady.catch(err => logService.warn('[volt agent server] automations did not load', err));
+	// Webhook triggers run here: deliveries the relay held while nothing was connected, and ones posted to the local URL.
+	disposables.add(new ServerRelay(protocol, relay));
+	disposables.add(instantiationService.createInstance(AutomationHookSync));
 	const ownerOnly = (role: string) => {
 		if (role !== 'owner') {
 			throw Object.assign(new Error('Only Volt on this computer can pair or remove devices.'), { code: 'Forbidden' });
@@ -341,7 +453,6 @@ export async function main(argv: string[]): Promise<void> {
 
 	// The checkout in dev, the app's Resources/app when packaged (where this module is bundled into out/).
 	const appRoot = FileAccess.asFileUri('').fsPath.replace(/[\\/]out[\\/]?$/, '');
-	const webRoot = args.webRoot ?? join(appRoot, 'out-volt-web');
 	// Usage and limits: the browser workbench's Usage page, and other machines reading this one's (`/api/usage`).
 	const usage = new VoltUsageService(resolveEnv, logService, join(args.userDataDir, 'volt-usage'));
 	// Volt's workbench for browsers (VS Code's server, started with the first page load).
@@ -359,8 +470,9 @@ export async function main(argv: string[]): Promise<void> {
 		pullRequests,
 	}));
 	httpContext = { ...httpContext, workbench: workbench.available };
-	const server = http.createServer((req, res) => void serveHttp(req, res, webRoot, token, epoch, pairing, workbench, httpContext, usage, logService));
-	server.on('upgrade', (req, socket: Socket) => {
+	// Pages, diagrams and formulas for the phone and browser apps, and KaTeX's files for them.
+	const render = disposables.add(new ServerRender(protocol, history, logService));
+	const onUpgrade = (req: http.IncomingMessage, socket: Socket) => {
 		const url = new URL(req.url ?? '/', 'http://localhost');
 		if (url.pathname !== '/ws' && workbench.handleUpgrade(req, socket)) {
 			return;
@@ -373,9 +485,64 @@ export async function main(argv: string[]): Promise<void> {
 		if (ws) {
 			protocol.accept(ws);
 		}
-	});
+	};
+	const server = http.createServer((req, res) => void serveHttp(req, res, token, epoch, pairing, workbench, render, httpContext, usage, logService));
+	server.on('upgrade', onUpgrade);
+	// Cloudflare and SSH tunnels forward to a second listener on loopback, opened with the first
+	// tunnel: the same routes, but its requests never count as this computer's own browser.
+	let tunnelListener: Promise<number> | undefined;
+	const tunnels = disposables.add(new ServerTunnels({
+		dir: paths.dir,
+		environmentId: () => pairing.environmentId,
+		resolveEnv,
+		port: () => httpContext.port,
+		network: httpContext.network,
+		childLedger,
+		logService,
+		listen: () => tunnelListener ??= (async () => {
+			const tunnelServer = http.createServer((req, res) => void serveHttp(req, res, token, epoch, pairing, workbench, render, { ...httpContext, viaTunnel: true }, usage, logService));
+			tunnelServer.on('upgrade', onUpgrade);
+			disposables.add(toDisposable(() => tunnelServer.close()));
+			const tunnelPort = await listen(tunnelServer, '127.0.0.1', httpContext.port + 1, true);
+			logService.info(`[volt agent server] tunnels forward to http://127.0.0.1:${tunnelPort}`);
+			return tunnelPort;
+		})().catch(err => {
+			tunnelListener = undefined;
+			throw err;
+		}),
+	}));
+	httpContext = { ...httpContext, tunnelUrls: () => tunnels.urls() };
+	disposables.add(protocol.registerMethods('connect', {
+		status: ctx => {
+			ownerOnly(ctx.client.role);
+			return tunnels.status();
+		},
+		listener: ctx => {
+			ownerOnly(ctx.client.role);
+			return tunnels.ensureListener();
+		},
+		start: (ctx, kind, options) => {
+			ownerOnly(ctx.client.role);
+			if (kind !== 'cloudflare' && kind !== 'ssh') {
+				throw new Error(`Unknown tunnel: ${String(kind)}`);
+			}
+			return tunnels.start(kind, options as IVoltSshTunnelOptions | undefined);
+		},
+		stop: async (ctx, kind) => {
+			ownerOnly(ctx.client.role);
+			if (kind === 'cloudflare' || kind === 'ssh') {
+				await tunnels.stop(kind);
+			}
+			return true;
+		},
+		installCloudflared: ctx => {
+			ownerOnly(ctx.client.role);
+			return tunnels.installCloudflared();
+		},
+	}));
 	const port = await listen(server, args.host, args.port ?? preferredAgentServerPort(args.userDataDir), args.port === undefined);
 	httpContext = { ...httpContext, port };
+	void tunnels.resume().catch(err => logService.warn('[volt agent server] could not start the saved tunnels', err));
 	const info: IAgentServerRuntimeInfo = {
 		version: 1,
 		pid: process.pid,
@@ -403,6 +570,8 @@ export async function main(argv: string[]): Promise<void> {
 		server.close();
 		try {
 			await lifecycleService.shutdown();
+			// Its terminals stop with the server: the next one lists them as stopped, restartable.
+			await terminals.saveRecords();
 			await editsJournal.flush();
 			await history.flushAll();
 			await storageService.close();
@@ -416,6 +585,21 @@ export async function main(argv: string[]): Promise<void> {
 	disposables.add(toDisposable(() => server.close()));
 	process.on('SIGTERM', () => void stop(0));
 	process.on('SIGINT', () => void stop(0));
+	const sessions = collections.get('sessions')!;
+	const runsIdle = () => sessions.keys().every(key => (sessions.get(key) as { activeRun?: { status?: string } } | undefined)?.activeRun?.status !== 'running');
+	if (process.env['VSCODE_DEV'] && !product.commit) {
+		disposables.add(restartWhenStale(join(appRoot, 'out'), runsIdle, () => void stop(0), logService));
+	}
+	const busy = () => terminals.hasLive()
+		? 'an agent terminal is running'
+		: tunnels.active
+			? 'a tunnel is open for other devices'
+			: automations.list().some(automation => automation.enabled && automation.triggers.some(trigger => trigger.provider === 'schedule'))
+				? 'an automation is scheduled'
+				: hookedTriggers(automations.list()).some(({ automation }) => automation.enabled)
+					? 'an automation waits for webhooks'
+					: undefined;
+	disposables.add(stopWhenIdle({ clients: () => protocol.listClients().length, runsIdle, orchestrator, network: args.host !== '127.0.0.1' && args.host !== 'localhost', busy, stop: () => void stop(0), logService }));
 	process.on('uncaughtException', err => logService.error('[volt agent server] uncaught exception', err));
 	process.on('unhandledRejection', err => logService.error('[volt agent server] unhandled rejection', err));
 }
@@ -441,7 +625,7 @@ function listen(server: http.Server, host: string, preferred: number, fallback: 
 }
 
 /**
- * The socket accepts the desktop renderer, the web app served here, and Node clients (no Origin).
+ * The socket accepts the desktop renderer, the browser workbench served here, the phone app, and Node clients (no Origin).
  * Every connection still has to present the token; this only stops other web pages from trying.
  */
 function originAllowed(origin: string | undefined, host: string | undefined): boolean {
@@ -507,7 +691,7 @@ function compressedCopy(file: string, mtime: number, data: Buffer, encoding: 'br
 	return result;
 }
 
-async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, webRoot: string, token: string, epoch: string, pairing: ServerPairing, workbench: ServerWorkbench, ctx: IPairingHttpContext, usage: VoltUsageService, logService: ILogService): Promise<void> {
+async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, token: string, epoch: string, pairing: ServerPairing, workbench: ServerWorkbench, render: ServerRender, ctx: IPairingHttpContext, usage: VoltUsageService, logService: ILogService): Promise<void> {
 	if (await pairing.handleHttp(req, res, ctx)) {
 		return;
 	}
@@ -518,6 +702,9 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, we
 	if (await workbench.handleHttp(req, res)) {
 		return;
 	}
+	if (await render.handleHttp(req, res)) {
+		return;
+	}
 	const url = new URL(req.url ?? '/', 'http://localhost');
 	if (url.pathname === '/health') {
 		// Answers only with the token, so a stray process on the port can't pass for the server.
@@ -526,18 +713,11 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, we
 		res.end(JSON.stringify(ok ? { ok: true, pid: process.pid, epoch } : { ok: false }));
 		return;
 	}
-	const relative = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
-	const file = normalize(join(webRoot, relative));
-	if (!file.startsWith(webRoot + sep)) {
-		res.writeHead(403).end();
+	// The browser's way in: `/` and pairing links sign it in, then it continues to the workbench.
+	if (handleSignIn(req, res, { label: machineLabel(), workbench: workbench.available, signedIn: request => workbench.signedIn(request) })) {
 		return;
 	}
-	// The web app routes on the client (/pair, /t/<chat>): a path without an extension is the app.
-	// Hashed bundles never change under their name: cached for good. Everything else (the page,
-	// the manifest) revalidates, so a rebuilt app never mixes with an older bundle.
-	if (!await sendFile(req, res, extname(file) ? file : join(webRoot, 'index.html'), relative.startsWith('assets/'))) {
-		res.writeHead(404, { 'Content-Type': 'text/plain' }).end(`Not found. The web app is built into ${webRoot}.`);
-	}
+	res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
 }
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
@@ -631,3 +811,13 @@ async function sendFile(req: http.IncomingMessage, res: http.ServerResponse, ser
 	}
 }
 
+/** Appends to a file and waits until the bytes are on disk. */
+async function appendDurably(file: URI, text: string): Promise<void> {
+	const handle = await fs.open(file.fsPath, 'a');
+	try {
+		await handle.appendFile(text, 'utf8');
+		await handle.datasync();
+	} finally {
+		await handle.close();
+	}
+}

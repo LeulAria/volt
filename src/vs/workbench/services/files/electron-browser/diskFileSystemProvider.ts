@@ -16,7 +16,7 @@ import { DiskFileSystemProviderClient, LOCAL_FILE_SYSTEM_CHANNEL_NAME } from '..
 import { ILogMessage, AbstractUniversalWatcherClient } from '../../../../platform/files/common/watcher.js';
 import { UniversalWatcherClient } from './watcherClient.js';
 import { ILoggerService, ILogService } from '../../../../platform/log/common/log.js';
-import { IUtilityProcessWorkerWorkbenchService } from '../../utilityProcess/electron-browser/utilityProcessWorkerWorkbenchService.js';
+import { ISharedProcessService } from '../../../../platform/ipc/electron-browser/services.js';
 import { LogService } from '../../../../platform/log/common/logService.js';
 
 /**
@@ -36,7 +36,7 @@ export class DiskFileSystemProvider extends AbstractDiskFileSystemProvider imple
 
 	constructor(
 		mainProcessService: IMainProcessService,
-		private readonly utilityProcessWorkerWorkbenchService: IUtilityProcessWorkerWorkbenchService,
+		private readonly sharedProcessService: ISharedProcessService,
 		logService: ILogService,
 		private readonly loggerService: ILoggerService
 	) {
@@ -145,7 +145,7 @@ export class DiskFileSystemProvider extends AbstractDiskFileSystemProvider imple
 		onLogMessage: (msg: ILogMessage) => void,
 		verboseLogging: boolean
 	): AbstractUniversalWatcherClient {
-		return new UniversalWatcherClient(changes => onChange(changes), msg => onLogMessage(msg), verboseLogging, this.utilityProcessWorkerWorkbenchService);
+		return new UniversalWatcherClient(changes => onChange(changes), msg => onLogMessage(msg), verboseLogging, this.sharedProcessService);
 	}
 
 	protected createNonRecursiveWatcher(): never {

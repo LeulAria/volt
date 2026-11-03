@@ -286,3 +286,9 @@ html:has(body[data-scroll-locked]) {
   }
 }
 
+/* One provider in the Models tickers. A class instead of utilities: the rows repeat it 46 times, so the
+ * utility list alone made up a large share of the landing page's HTML. */
+.ticker-item {
+  @apply flex h-[88px] shrink-0 items-center gap-3 border-r border-white/[0.07] px-10 text-[15px] font-medium whitespace-nowrap text-white/55 transition-colors duration-300 hover:text-white;
+}
+

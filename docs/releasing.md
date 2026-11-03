@@ -5,8 +5,8 @@ installed side by side without sharing settings:
 
 | Channel | App | Bundle id | Data folder | Tag | GitHub Release |
 | --- | --- | --- | --- | --- | --- |
-| stable | Volt | `com.leularia.volt` | `~/.volt` | `v0.0.2` | normal, marked latest |
-| beta | Volt Beta | `com.leularia.volt.beta` | `~/.volt-beta` | `v0.0.2-beta.1` | prerelease |
+| stable | Volt | `com.leularia.volt` | `~/.volt` | `v0.0.3` | normal, marked latest |
+| beta | Volt Beta | `com.leularia.volt.beta` | `~/.volt-beta` | `v0.0.3-beta.1` | prerelease |
 | nightly | Volt Nightly | `com.leularia.volt.nightly` | `~/.volt-nightly` | `nightly` (rolling) | prerelease, re-created each night |
 
 The identities live in `build/volt/qualities.json`. `build/volt/mixin-quality.mjs --channel <c> --version <v>`
@@ -16,7 +16,7 @@ Development builds keep the `code-oss` identity and never update.
 
 ## Versions
 
-`package.json` holds Volt's version (`0.0.2`). `product.json` keeps `vscodeVersion` (`1.105.1`): at build
+`package.json` holds Volt's version (`0.0.3`). `product.json` keeps `vscodeVersion` (`1.105.1`): at build
 time it becomes `productService.version`, which extension compatibility (`engines.vscode`) and
 `vscode.version` use, while Volt's own version is `productService.voltVersion` (About, `--version`,
 updates, release notes).
@@ -25,7 +25,7 @@ updates, release notes).
 
 | Workflow | Trigger | Channel |
 | --- | --- | --- |
-| `volt-nightly.yml` | daily at 03:00 UTC (skipped when `main` did not change), or Run workflow | nightly, version `0.0.2-nightly.<UTC yyyymmddhhmm>` |
+| `volt-nightly.yml` | daily at 03:00 UTC (skipped when `main` did not change), or Run workflow | nightly, version `0.0.3-nightly.<UTC yyyymmddhhmm>` |
 | `volt-beta.yml` | push a `v*-beta*` tag, or Run workflow | beta |
 | `volt-stable.yml` | push a `v*` tag without a `-` suffix, or Run workflow | stable |
 
@@ -44,7 +44,7 @@ All three call `volt-build.yml`:
 Run one by hand with a subset of targets:
 
 ```sh
-gh workflow run volt-beta.yml -f version=0.0.2-beta.1 -f platforms=darwin-arm64,linux-x64
+gh workflow run volt-beta.yml -f version=0.0.3-beta.1 -f platforms=darwin-arm64,linux-x64
 gh workflow run volt-stable.yml -f publish=false   # build everything, publish nothing
 ```
 
@@ -84,12 +84,12 @@ update is available, downloading or ready, the agent sidebar footer shows an upd
 2. Add the version to [`CHANGELOG.md`](../CHANGELOG.md): what was added, changed and fixed, and any known limitation.
 3. Write `docs/release-notes/<version>.md`. `build/volt/release/publish.mjs` puts it at the top of the GitHub Release (a shorter
    version of the changelog, with the install steps). Image links in it must be absolute, pinned to the tag, for example
-   `https://raw.githubusercontent.com/LeulAria/volt/v<version>/docs/install/images/01-blocked.png`.
+   `https://raw.githubusercontent.com/LeulAria/volt/v<version>/docs/<folder>/<image>.png`.
 4. Merge to `main`, then tag the commit and push the tag. A `v*` tag without a suffix starts `volt-stable.yml`; `v*-beta*` starts the beta:
 
    ```sh
-   git tag -a v0.0.2 -m "Volt 0.0.2"
-   git push origin v0.0.2
+   git tag -a v0.0.3 -m "Volt 0.0.3"
+   git push origin v0.0.3
    ```
 
 5. Watch the run (`gh run watch`). When it finishes, check that the release has every asset, that the notes read well, and that
@@ -116,5 +116,5 @@ warning in the run.
 `GITHUB_TOKEN` is provided by Actions (contents: write for releases and the feed branch). Add the rest with
 `gh secret set MACOS_CERTIFICATE < cert.p12.b64` and so on. Unsigned macOS builds need **Open Anyway**
 in System Settings > Privacy & Security (or `xattr -dr com.apple.quarantine /Applications/Volt.app`) on first launch,
-and in-place updates on macOS need the Developer ID signature. The steps users follow are in
-[install/macos.md](install/macos.md).
+and in-place updates on macOS need the Developer ID signature. The install steps users follow are in
+[install/README.md](install/README.md).

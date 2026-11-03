@@ -343,5 +343,5 @@
 }
 
 .volt-agent-empty-action:hover {
-	background: rgba(255, 255, 255, 0.06);
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
 }

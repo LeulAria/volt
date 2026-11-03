@@ -182,7 +182,7 @@ interface ISession {
 	 * The project as the chat's last finished turn left it: its final snapshot, the folder it is of,
 	 * and the change generation of the work tree when that snapshot started reading it.
 	 */
-	settled: { readonly snapshot: IVoltGitSnapshot; readonly folder: string; readonly generation: number } | undefined;
+	settled: { readonly snapshot: IVoltGitSnapshot; readonly folder: string; readonly generation: number; readonly since: number } | undefined;
 	/** Runs of this chat between `run.start` and `run.end`. */
 	readonly activeRuns: Set<string>;
 	/** Mutating tool calls still running in the current turn. */
@@ -220,7 +220,7 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 		@IWorkspaceContextService private readonly workspace: IWorkspaceContextService,
 		@ITextFileService private readonly textFileService: ITextFileService,
 		@ILogService private readonly logService: ILogService,
-		@IFileService fileService: IFileService,
+		@IFileService protected readonly fileService: IFileService,
 	) {
 		super();
 		this._register(runtime.onDidEmit(envelope => this.onEvent(envelope)));
@@ -275,7 +275,7 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 		if (!settled || !repo || !root || settled.folder !== root || session.folder?.toString() !== root) {
 			return undefined;
 		}
-		if (this.generation(repo.workTree) !== settled.generation || !this.isWatched(repo.workTree)) {
+		if (this.generation(repo.workTree) !== settled.generation || !this.isWatched(repo.workTree, settled.since)) {
 			return undefined;
 		}
 		for (const other of this.sessions.values()) {
@@ -296,8 +296,11 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 		return settled && settled.folder === session.folder?.toString() ? settled.snapshot : undefined;
 	}
 
-	/** Whether the workbench's file watcher covers `workTree` (a workspace folder is it, or holds it). */
-	private isWatched(workTree: string): boolean {
+	/**
+	 * Whether a file watcher has covered `workTree` since `since` (a snapshot started reading it then),
+	 * so no change after it went unseen. A window's watcher covers its workspace folders.
+	 */
+	protected isWatched(workTree: string, _since: number): boolean {
 		const resource = URI.file(workTree);
 		return this.workspace.getWorkspace().folders.some(folder => folder.uri.scheme === Schemas.file && isEqualOrParent(resource, folder.uri));
 	}
@@ -308,9 +311,13 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 			// Tracked from now on: later changes in this tree bump it.
 			generation = 0;
 			this.generations.set(workTree, generation);
+			this.onDidTrackWorkTree(workTree);
 		}
 		return generation;
 	}
+
+	/** A snapshot work tree is tracked from now on (the agent server starts watching it). */
+	protected onDidTrackWorkTree(_workTree: string): void { }
 
 	private bumpGenerations(affects: (workTree: string) => boolean = () => true): void {
 		for (const [workTree, generation] of this.generations) {
@@ -448,6 +455,7 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 			}
 			// Read before the scan: a change the scan may have missed bumps it past this.
 			const generation = this.generation(repo.workTree);
+			const since = Date.now();
 			const previous = turn.after ?? turn.before;
 			const after = await this.git.snapshot({
 				repoRoot: repo.repoRoot,
@@ -463,7 +471,7 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 			});
 			if (after && final && session.repo === repo && session.folder) {
 				// What the turn left: the next turn's checkpoint, for as long as nothing changes.
-				session.settled = { snapshot: after, folder: session.folder.toString(), generation };
+				session.settled = { snapshot: after, folder: session.folder.toString(), generation, since };
 			}
 			if (!after || after.commit === turn.before.commit) {
 				return;

@@ -48,9 +48,9 @@ import { AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTIN
 import { AGENT_HOME_AUTO_SETTLE_DAYS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING } from '../../voltAgent/common/agentHomeSettings.js';
 import '../../voltAgent/common/agentAwakeSettings.js';
 
-/** Settings on the Composer page whose rows redraw when they change. */
 /** Settings on the Appearance page whose controls redraw when they change. */
 const APPEARANCE_PAGE_SETTINGS = [ThemeSettings.DETECT_COLOR_SCHEME, ThemeSettings.PREFERRED_DARK_THEME, ThemeSettings.PREFERRED_LIGHT_THEME, ThemeSettings.FILE_ICON_THEME, 'editor.fontSize', 'editor.fontFamily', 'window.zoomLevel'];
+/** Settings on the Composer page whose rows redraw when they change. */
 const COMPOSER_PAGE_SETTINGS = [AGENT_PROMPT_HISTORY_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_KEEP_WORKING_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING, AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING, AGENT_HOME_AUTO_SETTLE_DAYS_SETTING];
 import { AgentModelPicker, type IModelOption, type IProviderGroup } from '../../voltAgent/browser/picker/agentModelPicker.js';
 import { appendSettingsBlock, SettingsStickyHeads } from './settingsStickyHeads.js';
@@ -61,8 +61,11 @@ import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js'
 import { AppearancePage, ISettingsPageKit } from './appearancePage.js';
 import { CodeIntelligencePage } from './codeIntelligencePage.js';
 import { GitPage } from './gitPage.js';
+import { CanvasScratchPage } from './canvasScratchPage.js';
 import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
+import { DevicesPage } from './devicesPage.js';
+import type { VoltConnectionKind } from './addDeviceModal.js';
 import { createSettingsIcon } from './settingsIcons.js';
 import { AgentUsagePage } from '../../voltAgent/browser/usage/agentUsagePage.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
@@ -71,31 +74,76 @@ import { createVoltDropdown, IVoltDropdownOption } from '../../voltAgent/browser
 import { createAgentHeaderSeparatorIcon } from '../../voltAgent/browser/chrome/agentTitlebarHeader.js';
 import { AgentFooterAction, appendAgentFooterActions } from '../../voltAgent/browser/home/agentHomeFooterActions.js';
 import { AgentCustomizeEditor, AgentCustomizeEditorInput } from '../../voltAgent/browser/customize/agentCustomizeEditor.js';
+import { AutomationsEditor, AutomationsEditorInput } from '../../voltAgent/browser/automations/automationsEditor.js';
+import { createHomeAutomationsIcon } from '../../voltAgent/browser/home/agentHomeIcons.js';
+import { RunOnceScheduler } from '../../../../base/common/async.js';
+import { ILogService } from '../../../../platform/log/common/log.js';
+import { IPreferencesService } from '../../../services/preferences/common/preferences.js';
+import { Settings2EditorModel } from '../../../services/preferences/common/preferencesModels.js';
+import { buildSettingsCatalog, extensionGroupId, EXTENSIONS_CATEGORY, ISettingsCatalogCategory, searchWords, settingMatches } from './settingsCatalog.js';
+import { attachPaneSash, IInspectorPageLink, SettingsInspectorPage } from './settingsInspectorPage.js';
+import { ISettingsNavNode, SettingsNav } from './settingsNav.js';
+import { SettingsThemeList } from './settingsThemeList.js';
 
 /** The Tab page's on/off settings. */
 type TabToggle = 'enabled' | 'partialAccepts' | 'inComments' | 'whitespaceOnly' | 'autoImport' | 'autoImportPython';
 
-type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'beta' | 'security' | 'connected' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize';
+/** Volt's own pages, then every registered setting by category (`cat:`), Extensions included. */
+type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'connected' | 'devices' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
+type CatalogSection = `cat:${string}`;
 
-/** The Modes nav glyph (a small robot face), drawn in currentColor like the codicons beside it. */
+function isCatalogSection(section: string): section is CatalogSection {
+	return section.startsWith('cat:');
+}
+
+/** Icons for the VS Code settings categories in the nav; extensions get none. */
+const CATALOG_ICONS: Record<string, ThemeIcon> = {
+	'cat:commonlyUsed': Codicon.star,
+	'cat:volt': Codicon.zap,
+	'cat:editor': Codicon.code,
+	'cat:workbench': Codicon.layout,
+	'cat:window': Codicon.window,
+	'cat:chat': Codicon.commentDiscussion,
+	'cat:features': Codicon.symbolMisc,
+	'cat:application': Codicon.vm,
+	'cat:security': Codicon.lock,
+	'cat:extensions': Codicon.extensions,
+	'cat:other': Codicon.ellipsis,
+};
+
 /** The nav, in groups separated by a gap. Icons come from settingsIcons.ts; the codicon is the fallback. */
 const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: number }[] = [
 	{ id: 'general', label: localize('voltSettings.general', "General"), icon: Codicon.settingsGear, group: 0 },
-	{ id: 'appearance', label: localize('voltSettings.appearance', "Appearance"), icon: Codicon.symbolColor, group: 0 },
 	{ id: 'usage', label: localize('voltSettings.usage', "Usage"), icon: Codicon.graph, group: 0 },
-	{ id: 'providers', label: localize('voltSettings.providers', "Providers & Models"), icon: Codicon.plug, group: 1 },
+	{ id: 'providers', label: localize('voltSettings.providers', "Providers & Models"), icon: Codicon.plug, group: 0 },
+	{ id: 'appearance', label: localize('voltSettings.appearance', "Appearance"), icon: Codicon.symbolColor, group: 0 },
 	{ id: 'modes', label: localize('voltSettings.modes', "Modes"), icon: Codicon.sparkle, group: 1 },
 	{ id: 'composer', label: localize('voltSettings.composer', "Composer"), icon: Codicon.commentDiscussion, group: 1 },
 	{ id: 'tab', label: localize('voltSettings.tab', "Tab & Prediction"), icon: Codicon.keyboard, group: 1 },
 	{ id: 'codeIntelligence', label: localize('voltSettings.codeIntelligence', "Code Intelligence"), icon: Codicon.database, group: 1 },
+	{ id: 'canvas', label: localize('voltSettings.canvasScratch', "Canvas & Scratch"), icon: Codicon.symbolColor, group: 1 },
 	{ id: 'beta', label: localize('voltSettings.betaPage', "Beta"), icon: Codicon.beaker, group: 1 },
 	{ id: 'security', label: localize('voltSettings.security', "Security"), icon: Codicon.shield, group: 2 },
 	{ id: 'connected', label: localize('voltSettings.connectedAgents', "Connected agents"), icon: Codicon.link, group: 2 },
+	{ id: 'devices', label: localize('voltSettings.devices', "Devices"), icon: Codicon.deviceMobile, group: 2 },
 	{ id: 'projects', label: localize('voltSettings.projects', "Projects"), icon: Codicon.repo, group: 2 },
 	{ id: 'git', label: localize('voltSettings.git', "Git & PRs"), icon: Codicon.gitPullRequest, group: 2 },
 	{ id: 'worktrees', label: localize('voltSettings.worktrees', "Worktrees"), icon: Codicon.repoForked, group: 2 },
 	{ id: 'storage', label: localize('voltSettings.storage', "Storage"), icon: Codicon.database, group: 2 },
 ];
+
+/** Pages that sit in the nav above Volt, not inside Volt's list. */
+const NAV_ABOVE_VOLT = new Set<string>(['providers', 'appearance']);
+
+/** Volt's own pages (Modes … Storage), listed in Volt's list rather than the nav. */
+function isVoltPage(section: string): boolean {
+	return SECTIONS.some(entry => entry.id === section && entry.group > 0);
+}
+
+/** The nav row lit for a section: Volt for Volt's pages. */
+function navSection(section: string): string {
+	return isVoltPage(section) ? 'cat:volt' : section;
+}
 
 /** Bounds for dragging the nav's edge. */
 const SIDEBAR_MIN_WIDTH = 200;
@@ -110,6 +158,8 @@ const SECTION_ALIASES: Record<string, SettingsSection> = {
 	theme: 'appearance',
 	pullRequests: 'git',
 	integrations: 'git',
+	scratch: 'canvas',
+	canvasScratch: 'canvas',
 };
 
 const MODE_COPY: Record<VoltMode, { title: string; body: string }> = {
@@ -154,8 +204,9 @@ export class VoltSettingsEditor extends EditorPane {
 	private renderDeferred = false;
 	private contentScroll!: DomScrollableElement;
 	private stickyHeads!: SettingsStickyHeads;
-	private toc!: HTMLElement;
-	private tocScroll!: DomScrollableElement;
+	private nav!: SettingsNav;
+	/** The list pane some pages put beside their content (Appearance's themes, the providers). */
+	private side!: HTMLElement;
 	private search = '';
 	private section: SettingsSection = 'general';
 	/** The page on screen; re-rendering the same page keeps its scroll position. */
@@ -163,6 +214,7 @@ export class VoltSettingsEditor extends EditorPane {
 	private providers!: ProvidersPage;
 	private appearance!: AppearancePage;
 	private connectedAgents!: ConnectedAgentsPage;
+	private devices!: DevicesPage;
 	/** Made on first visit and kept, so its data and range survive leaving the page. */
 	private usage: AgentUsagePage | undefined;
 	/**
@@ -171,6 +223,25 @@ export class VoltSettingsEditor extends EditorPane {
 	 */
 	private customizeHost!: HTMLElement;
 	private customizePane: AgentCustomizeEditor | undefined;
+	/** Automations: the agent's Automations page, hosted here like Skills & Plugins. */
+	private automationsHost!: HTMLElement;
+	private automationsPane: AutomationsEditor | undefined;
+	/** Every registered setting by category: VS Code's settings editor model, sorted for the nav. */
+	private catalogModel: Settings2EditorModel | undefined;
+	private catalog: ISettingsCatalogCategory[] = [];
+	/** The list and inspector for a catalog category; made on first visit and kept. */
+	private inspector: SettingsInspectorPage | undefined;
+	/** A subsection to pick on the next render (an extension, from an `ext:` link). */
+	private pendingGroup: string | undefined;
+	/** Volt's pages as links at the top of Volt's list; one array, so the list can tell nothing changed. */
+	private readonly voltPages: readonly IInspectorPageLink[] = SECTIONS.filter(section => section.group > 0).map(section => ({
+		id: section.id,
+		label: section.label,
+		icon: () => createSettingsIcon(section.id) ?? renderIcon(section.icon),
+	}));
+	/** Appearance's color themes; kept across renders so arrowing through them keeps focus. */
+	private themeList: SettingsThemeList | undefined;
+	private body!: HTMLElement;
 	private sidebar!: HTMLElement;
 	private crumb!: HTMLElement;
 	private footerActions!: Record<AgentFooterAction, HTMLButtonElement>;
@@ -195,6 +266,8 @@ export class VoltSettingsEditor extends EditorPane {
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IWorkbenchThemeService private readonly workbenchThemeService: IWorkbenchThemeService,
+		@IPreferencesService private readonly preferencesService: IPreferencesService,
+		@ILogService private readonly logService: ILogService,
 	) {
 		super(VoltSettingsEditor.ID, group, telemetryService, themeService, storageService);
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
@@ -266,56 +339,28 @@ export class VoltSettingsEditor extends EditorPane {
 		}));
 		this._register(search.onDidChange(value => {
 			this.search = value;
-			this.applyNavFilter();
+			this.renderNav();
 			this.renderContent();
 		}));
 
-		this.toc = $('.volt-settings-toc');
-		this.tocScroll = this._register(new DomScrollableElement(this.toc, {
-			className: 'volt-settings-toc-scroll',
-			horizontal: ScrollbarVisibility.Hidden,
-			vertical: ScrollbarVisibility.Auto,
-			useShadows: false,
-		}));
-		append(sidebar, this.tocScroll.getDomNode());
-		for (const [index, section] of SECTIONS.entries()) {
-			if (index > 0 && SECTIONS[index - 1].group !== section.group) {
-				append(this.toc, $('.volt-settings-toc-gap'));
-			}
-			const item = append(this.toc, $('button.volt-settings-toc-item')) as HTMLButtonElement;
-			item.type = 'button';
-			append(item, $('span.volt-settings-toc-icon')).appendChild(createSettingsIcon(section.id) ?? renderIcon(section.icon));
-			append(item, $('span.volt-settings-toc-text')).textContent = section.label;
-			item.dataset.section = section.id;
-			if (section.id === this.section) {
-				item.classList.add('active');
-			}
-			this._register(addDisposableListener(item, 'click', () => this.setSection(section.id)));
-		}
-		// Skills, subagents, rules, MCP servers and plugins: the agent's Customize page, shown here with
-		// the nav beside it. Same glyph as the Customize button in the agent list's footer.
-		append(this.toc, $('.volt-settings-toc-gap'));
-		const customize = append(this.toc, $('button.volt-settings-toc-item')) as HTMLButtonElement;
-		customize.type = 'button';
-		customize.dataset.section = 'customize';
-		append(customize, $('span.volt-settings-toc-icon')).appendChild(renderIcon(Codicon.extensions));
-		append(customize, $('span.volt-settings-toc-text')).textContent = localize('voltSettings.skillsPlugins', "Skills & Plugins");
-		if (this.section === 'customize') {
-			customize.classList.add('active');
-		}
-		this._register(addDisposableListener(customize, 'click', () => this.setSection('customize')));
+		// Volt's pages, then every setting VS Code and the extensions register, in one tree.
+		this.nav = this._register(this.instantiationService.createInstance(SettingsNav, sidebar));
+		this._register(this.nav.onDidOpen(id => this.showSection(id)));
+		this.loadCatalog();
 
 		// The agent list's footer row, so Usage, Automations and Customize are a click away here too.
 		const footer = append(sidebar, $('.volt-settings-footer'));
-		this.footerActions = appendAgentFooterActions(footer, commandService, this._store);
+		this.footerActions = appendAgentFooterActions(footer, commandService, this._store, this.instantiationService);
 		// Customize opens Skills & Plugins here instead of leaving Settings. A capture listener runs
 		// before the footer's own click handler on the button, and stops it.
-		this._register(addDisposableListener(this.footerActions.customize, 'click', e => {
-			e.preventDefault();
-			e.stopImmediatePropagation();
-			this.footerActions.customize.blur();
-			this.setSection('customize');
-		}, true));
+		for (const action of ['customize', 'automations'] as const) {
+			this._register(addDisposableListener(this.footerActions[action], 'click', e => {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				this.footerActions[action].blur();
+				this.setSection(action);
+			}, true));
+		}
 
 		// Where the page is, as the title bar puts it over a chat ("Settings / Usage"); the overlay covers that bar.
 		const main = append(this.container, $('.volt-settings-main'));
@@ -323,6 +368,11 @@ export class VoltSettingsEditor extends EditorPane {
 		append(topbar, $('span.volt-settings-crumb.root')).textContent = localize('voltSettings.title', "Settings");
 		createAgentHeaderSeparatorIcon(append(topbar, $('span.volt-settings-crumb-sep')));
 		this.crumb = append(topbar, $('span.volt-settings-crumb'));
+		// Under the top bar: a list pane on some pages, then the page (or the hosted Customize page,
+		// or a settings category's list and inspector).
+		this.body = append(main, $('.volt-settings-body'));
+		this.side = append(this.body, $('.volt-settings-side'));
+		this._register(attachPaneSash(this.body, this.side, 'side', 200));
 
 		const scroll = $('.volt-settings-content');
 		this.content = append(scroll, $('.volt-settings-content-inner'));
@@ -332,10 +382,12 @@ export class VoltSettingsEditor extends EditorPane {
 			vertical: ScrollbarVisibility.Auto,
 			useShadows: false,
 		}));
-		append(main, this.contentScroll.getDomNode());
-		this.customizeHost = append(main, $('.volt-settings-customize'));
+		append(this.body, this.contentScroll.getDomNode());
+		this.customizeHost = append(this.body, $('.volt-settings-customize'));
 		const customizeResize = new (getWindow(parent).ResizeObserver)(() => this.layoutCustomize());
 		customizeResize.observe(this.customizeHost);
+		this.automationsHost = append(this.body, $('.volt-settings-automations'));
+		customizeResize.observe(this.automationsHost);
 		this._register(toDisposable(() => customizeResize.disconnect()));
 		this.createSidebarSash();
 		this._register(this.layoutService.onDidLayoutMainContainer(() => this.syncSidebarWidth()));
@@ -351,12 +403,13 @@ export class VoltSettingsEditor extends EditorPane {
 			store: this.renderStore,
 			search: () => this.search,
 			rerender: () => this.renderContent(),
+			scrollToTop: () => { this.renderedSection = undefined; },
 			revealWorkbench: () => this.close(),
 			switch: (parent, on, label, onClick) => this.switch(parent, on, label, onClick),
 			inputBoxStyles: () => this.inputBoxStyles(),
 		});
 		this._register(toDisposable(() => this.providers.dispose()));
-		this.appearance = new AppearancePage(this.instantiationService, this.renderStore, () => this.section === 'appearance');
+		this.appearance = new AppearancePage(this.instantiationService, this.renderStore);
 		this.connectedAgents = new ConnectedAgentsPage(this.instantiationService, {
 			store: this.renderStore,
 			target: () => this.target,
@@ -366,6 +419,15 @@ export class VoltSettingsEditor extends EditorPane {
 			empty: text => this.empty(text),
 			switch: (parent, on, label, onClick) => this.switch(parent, on, label, onClick),
 			inputBoxStyles: () => this.inputBoxStyles(),
+			rerender: () => this.renderContent(),
+		});
+		this.devices = new DevicesPage(this.instantiationService, {
+			store: this.renderStore,
+			target: () => this.target,
+			sectionLabel: label => this.sectionLabel(label),
+			settingsGroup: () => this.settingsGroup(),
+			settingRow: (parent, title, desc, render) => this.settingRow(parent, title, desc, render),
+			empty: text => this.empty(text),
 			rerender: () => this.renderContent(),
 		});
 		this._register(this.connectedAgents.onDidChange(() => {
@@ -396,12 +458,15 @@ export class VoltSettingsEditor extends EditorPane {
 			this.usage?.setVisible(this.section === 'usage');
 			if (this.section === 'customize') {
 				this.showCustomize();
+			} else if (this.section === 'automations') {
+				this.showAutomations();
 			}
 			this.scheduleScrollSync();
 			return;
 		}
 		this.usage?.setVisible(false);
 		this.customizePane?.setVisible(false);
+		this.automationsPane?.setVisible(false);
 		this.container.classList.remove('volt-settings-overlay');
 		this.layoutService.mainContainer.classList.remove('volt-settings-open');
 		this.container.remove();
@@ -446,19 +511,100 @@ export class VoltSettingsEditor extends EditorPane {
 		}));
 	}
 
-	private applyNavFilter(): void {
+	/**
+	 * The nav's rows: General, Appearance, Usage and Skills & Plugins; then All Settings with Volt's
+	 * pages folded under Volt (whose own page is the `volt.*` settings); then each extension. A search
+	 * keeps pages whose name matches and categories with matching settings, with how many match.
+	 */
+	private renderNav(): void {
 		const needle = this.search.trim().toLowerCase();
-		for (const child of this.toc.querySelectorAll<HTMLElement>('.volt-settings-toc-item')) {
-			const label = child.querySelector('.volt-settings-toc-text')?.textContent?.toLowerCase() ?? '';
-			child.hidden = needle.length > 0 && !label.includes(needle);
+		const words = searchWords(this.search);
+		const page = (section: typeof SECTIONS[number]): ISettingsNavNode => ({ id: section.id, label: section.label, icon: () => createSettingsIcon(section.id) ?? renderIcon(section.icon) });
+		const pageShown = (node: ISettingsNavNode) => !needle || node.label.toLowerCase().includes(needle);
+		const categoryNode = (category: ISettingsCatalogCategory, pageMatch = false): ISettingsNavNode | undefined => {
+			const matches = needle ? category.settings.filter(entry => settingMatches(entry, words)).length : 0;
+			const shown = !needle || matches > 0 || category.label.toLowerCase().includes(needle) || pageMatch;
+			return shown ? { id: category.id, label: category.label, icon: () => createSettingsIcon(category.id) ?? (CATALOG_ICONS[category.id] ? renderIcon(CATALOG_ICONS[category.id]) : undefined), count: matches ? String(matches) : undefined } : undefined;
+		};
+
+		const nodes: ISettingsNavNode[] = SECTIONS.filter(section => section.group === 0 && !NAV_ABOVE_VOLT.has(section.id)).map(page).filter(pageShown);
+		const automations: ISettingsNavNode = { id: 'automations', label: localize('voltSettings.automations', "Automations"), icon: () => createHomeAutomationsIcon() };
+		const customize: ISettingsNavNode = { id: 'customize', label: localize('voltSettings.skillsPlugins', "Skills & Plugins"), icon: Codicon.extensions };
+		nodes.push(...[automations, customize].filter(pageShown));
+		// Providers and Appearance sit in the nav, above Volt, not inside its list.
+		nodes.push(...SECTIONS.filter(section => NAV_ABOVE_VOLT.has(section.id)).map(page).filter(pageShown));
+
+		const all: ISettingsNavNode[] = [];
+		// Volt's pages are listed beside the nav, in Volt's list; a search for one keeps Volt here.
+		const voltPageMatch = this.voltPages.some(link => pageShown({ id: link.id, label: link.label }));
+		for (const category of this.catalog.filter(entry => entry.group === 'settings')) {
+			const node = categoryNode(category, category.id === 'cat:volt' && voltPageMatch);
+			if (node) {
+				all.push(node);
+			}
+		}
+		if (all.length) {
+			nodes.push({ id: 'heading:all', label: localize('voltSettings.allSettings', "All Settings"), heading: true }, ...all);
+		}
+
+		// One row; the extensions are listed beside the nav, each with its settings.
+		const extensions = this.catalog.find(entry => entry.id === EXTENSIONS_CATEGORY);
+		const extensionsNode = extensions && categoryNode(extensions);
+		if (extensionsNode) {
+			nodes.push(needle ? extensionsNode : { ...extensionsNode, count: String(extensions.nodes.length) });
+		}
+		this.nav.setNodes(nodes, needle.length > 0);
+		this.nav.setActive(navSection(this.section));
+	}
+
+	/** Builds the settings catalog, and rebuilds it when extensions add or remove settings. */
+	private loadCatalog(): void {
+		if (!this.catalogModel) {
+			this.catalogModel = this._register(this.preferencesService.createSettings2EditorModel());
+			const rebuild = this._register(new RunOnceScheduler(() => this.loadCatalog(), 400));
+			this._register(this.catalogModel.onDidChangeGroups(() => rebuild.schedule()));
+		}
+		try {
+			this.catalog = buildSettingsCatalog(this.catalogModel.settingsGroups, this.logService);
+		} catch (error) {
+			this.logService.error('[voltSettings] could not sort the settings into categories', error);
+			this.catalog = [];
+		}
+		this.renderNav();
+		if (isCatalogSection(this.section)) {
+			if (!this.catalog.some(entry => entry.id === this.section)) {
+				this.section = 'general';
+				this.syncCrumb();
+			}
+			this.renderContent();
 		}
 	}
 
 	/** Opens a page by id, e.g. `storage` from Volt: Manage Storage. */
 	showSection(section: string): void {
+		// `devices:add` (or `devices:add:cloudflare`) opens Devices with Add Device on top.
+		const add = /^devices:add(?::(lan|tailscale|cloudflare|ssh))?$/.exec(section);
+		if (add) {
+			this.devices.requestAddDevice(add[1] as VoltConnectionKind | undefined);
+			section = 'devices';
+			if (this.section === 'devices') {
+				this.renderContent();
+				return;
+			}
+		}
 		const id = SECTION_ALIASES[section] ?? section;
-		if (id === 'customize') {
-			this.setSection('customize');
+		// `ext:<id>` opens Extensions on that extension's settings.
+		if (id.startsWith('ext:') && this.catalog.some(entry => entry.id === EXTENSIONS_CATEGORY)) {
+			this.pendingGroup = extensionGroupId(id.slice('ext:'.length));
+			this.setSection(EXTENSIONS_CATEGORY);
+			return;
+		}
+		if (isCatalogSection(id) && this.catalog.some(entry => entry.id === id)) {
+			this.setSection(id);
+			return;
+		}
+		if (id === 'customize' || id === 'automations') {
+			this.setSection(id);
 			return;
 		}
 		const known = SECTIONS.find(candidate => candidate.id === id);
@@ -471,20 +617,27 @@ export class VoltSettingsEditor extends EditorPane {
 	private syncCrumb(): void {
 		this.crumb.textContent = this.section === 'customize'
 			? localize('voltSettings.skillsPlugins', "Skills & Plugins")
-			: SECTIONS.find(entry => entry.id === this.section)?.label ?? '';
-		this.footerActions.settings.classList.toggle('active', this.section !== 'usage' && this.section !== 'customize');
+			: this.section === 'automations'
+				? localize('voltSettings.automations', "Automations")
+				: isCatalogSection(this.section)
+					? this.catalog.find(entry => entry.id === this.section)?.label ?? ''
+					: SECTIONS.find(entry => entry.id === this.section)?.label ?? '';
+		this.footerActions.settings.classList.toggle('active', this.section !== 'usage' && this.section !== 'customize' && this.section !== 'automations');
 		this.footerActions.usage.classList.toggle('active', this.section === 'usage');
+		this.footerActions.automations.classList.toggle('active', this.section === 'automations');
 		this.footerActions.customize.classList.toggle('active', this.section === 'customize');
 	}
 
 	private setSection(section: SettingsSection): void {
+		// Volt's list holds only its pages, so Volt opens on the first of them.
+		if (section === 'cat:volt') {
+			section = SECTIONS.find(entry => entry.group > 0)?.id ?? section;
+		}
 		this.section = section;
 		if (section === 'providers') {
 			void this.providers.checkSetup(true);
 		}
-		for (const child of this.toc.querySelectorAll('.volt-settings-toc-item')) {
-			child.classList.toggle('active', (child as HTMLElement).dataset.section === section);
-		}
+		this.nav.setActive(navSection(section));
 		this.syncCrumb();
 		this.contentScroll.setScrollPosition({ scrollTop: 0 });
 		this.renderContent();
@@ -506,10 +659,18 @@ export class VoltSettingsEditor extends EditorPane {
 		this.renderedSection = this.section;
 		this.renderStore.clear();
 		this.content.replaceChildren();
-		// Providers & Models is two panes side by side and Usage draws wide charts; they take the room
-		// the other pages leave. Every other page is one centered column.
-		this.content.classList.toggle('volt-settings-content-wide', this.section === 'providers');
-		this.content.classList.toggle('volt-settings-content-narrow', this.section !== 'providers' && this.section !== 'usage');
+		// Providers & Models and Appearance put their list (providers, color themes) in the list pane
+		// beside the page, like a settings category's list beside its inspector.
+		const split = this.section === 'providers' || this.section === 'appearance';
+		// The theme list stays put while Appearance re-renders (a theme switch redraws the page).
+		if (this.section !== 'appearance' || !this.themeList || this.themeList.element.parentElement !== this.side) {
+			this.side.replaceChildren();
+		}
+		this.container.classList.toggle('volt-settings-side-open', split);
+		this.container.classList.toggle('volt-settings-providers', this.section === 'providers');
+		// Usage draws wide charts; the other pages are one column, flush left beside a list pane.
+		this.content.classList.toggle('volt-settings-content-split', split);
+		this.content.classList.toggle('volt-settings-content-narrow', this.section !== 'usage');
 		this.block = undefined;
 		this.renderGeneration++;
 		const generation = this.renderGeneration;
@@ -522,9 +683,28 @@ export class VoltSettingsEditor extends EditorPane {
 		if (this.section !== 'customize') {
 			this.customizePane?.setVisible(false);
 		}
+		// So does Automations.
+		this.container.classList.toggle('volt-settings-automations-open', this.section === 'automations');
+		if (this.section !== 'automations') {
+			this.automationsPane?.setVisible(false);
+		}
+		// A settings category is a list beside an inspector, in place of the page. Volt's pages draw
+		// where the inspector would, with Volt's list (which links them) kept beside them.
+		const voltPage = isVoltPage(this.section);
+		const category = isCatalogSection(this.section) || voltPage ? this.catalog.find(entry => entry.id === (voltPage ? 'cat:volt' : this.section)) : undefined;
+		this.container.classList.toggle('volt-settings-inspect-open', !!category && !voltPage);
+		this.container.classList.toggle('volt-settings-volt-page', !!category && voltPage);
+		if (category) {
+			const group = this.pendingGroup;
+			this.pendingGroup = undefined;
+			this.ensureInspector().show(category, this.search, category.id === 'cat:volt' ? this.voltPages : undefined, voltPage ? this.section : undefined, group);
+		}
 		switch (this.section) {
 			case 'customize':
 				this.showCustomize();
+				break;
+			case 'automations':
+				this.showAutomations();
 				break;
 			case 'general':
 				this.renderGeneral();
@@ -536,10 +716,7 @@ export class VoltSettingsEditor extends EditorPane {
 				pending = this.renderAppearance();
 				break;
 			case 'providers':
-				this.providers.render(this.pageHead(
-					localize('voltSettings.providers', "Providers & Models"),
-					localize('voltSettings.providersLead2', "Install and sign in to coding agents, add API keys, and choose which models show up in the picker."),
-				));
+				this.providers.render(this.side, this.content);
 				break;
 			case 'modes':
 				this.renderModes();
@@ -552,6 +729,9 @@ export class VoltSettingsEditor extends EditorPane {
 				break;
 			case 'codeIntelligence':
 				this.renderCodeIntelligence();
+				break;
+			case 'canvas':
+				this.renderCanvasScratch();
 				break;
 			case 'beta':
 				this.renderBeta();
@@ -566,6 +746,15 @@ export class VoltSettingsEditor extends EditorPane {
 				);
 				const generation = this.renderGeneration;
 				pending = this.connectedAgents.render(() => generation === this.renderGeneration && this.section === 'connected').finally(() => this.scheduleScrollSync());
+				break;
+			}
+			case 'devices': {
+				this.pageHead(
+					localize('voltSettings.devices', "Devices"),
+					localize('voltSettings.devicesLead', "Phones and browsers that reach this computer's chats, files and terminals: pair a new one, rename or remove the others."),
+				);
+				const generation = this.renderGeneration;
+				pending = this.devices.render(() => generation === this.renderGeneration && this.section === 'devices').finally(() => this.scheduleScrollSync());
 				break;
 			}
 			case 'projects':
@@ -604,15 +793,22 @@ export class VoltSettingsEditor extends EditorPane {
 		}
 	}
 
+	private ensureInspector(): SettingsInspectorPage {
+		if (!this.inspector) {
+			const inspector = this.inspector = this._register(this.instantiationService.createInstance(SettingsInspectorPage, this.body, () => this.inputBoxStyles()));
+			this._register(inspector.onDidOpenPage(id => this.showSection(id)));
+			this._register(inspector.onDidPickGroup(() => this.setSection('cat:volt')));
+		}
+		return this.inspector;
+	}
+
 	private scheduleScrollSync(): void {
 		this.contentScroll?.scanDomNode();
-		this.tocScroll?.scanDomNode();
 		if (!this.container?.isConnected) {
 			return;
 		}
 		this.scrollSync.value = scheduleAtNextAnimationFrame(getWindow(this.container), () => {
 			this.contentScroll.scanDomNode();
-			this.tocScroll.scanDomNode();
 			this.stickyHeads.sync();
 		});
 	}
@@ -651,6 +847,28 @@ export class VoltSettingsEditor extends EditorPane {
 		if (this.customizePane && this.section === 'customize' && host.isConnected && host.clientWidth && host.clientHeight) {
 			this.customizePane.layout(new Dimension(host.clientWidth, host.clientHeight));
 		}
+		const automations = this.automationsHost;
+		if (this.automationsPane && this.section === 'automations' && automations.isConnected && automations.clientWidth && automations.clientHeight) {
+			this.automationsPane.layout(new Dimension(automations.clientWidth, automations.clientHeight));
+		}
+	}
+
+	/** Shows the hosted Automations page, making it on first visit. */
+	private showAutomations(): void {
+		if (!this.isVisible()) {
+			return;
+		}
+		let pane = this.automationsPane;
+		if (!pane) {
+			pane = this.automationsPane = this._register(this.instantiationService.createInstance(AutomationsEditor, this.group));
+			pane.create(this.automationsHost);
+			pane.setVisible(true);
+			const input = this._register(new AutomationsEditorInput());
+			void pane.setInput(input, undefined, {}, CancellationToken.None).then(() => this.layoutCustomize());
+		} else {
+			pane.setVisible(true);
+		}
+		this.layoutCustomize();
 	}
 
 	private get target(): HTMLElement {
@@ -755,11 +973,6 @@ export class VoltSettingsEditor extends EditorPane {
 			host => this.textGenerationPicker(host, 'git', localize('voltSettings.gitTextModel', "Git text model"), localize('voltSettings.gitTextDefault', "Default"), localize('voltSettings.gitTextDefaultDesc', "Use the text generation model")),
 		);
 		this.renderPower();
-
-		this.sectionLabel(localize('voltSettings.predictionAndVoice', "Prediction and voice"));
-		const assist = this.settingsGroup();
-		this.predictionModelRow(assist);
-		this.voiceModelRow(assist);
 		this.renderUpdates();
 	}
 
@@ -830,28 +1043,28 @@ export class VoltSettingsEditor extends EditorPane {
 		})), this.runtime.getAccessMode(), localize('voltSettings.accessMode', "Default access"), mode => void this.runtime.setAccessMode(mode), 340);
 	}
 
-	/** Resolves once the theme gallery (drawn after the themes load their colors) is in. */
+	/** Resolves once the theme list has loaded its colors. */
 	private renderAppearance(): Promise<void> {
+		// Color themes in the list pane, as VS Code's theme picker lists them; the rest on the page.
+		this.themeList ??= this._register(this.instantiationService.createInstance(SettingsThemeList, this.appearance));
+		if (this.themeList.element.parentElement !== this.side) {
+			this.side.appendChild(this.themeList.element);
+		}
+		const themesReady = this.themeList.refresh(this.search.trim().toLowerCase(), this.workbenchThemeService.getColorTheme().type).catch(() => undefined);
 		this.pageHead(
 			localize('voltSettings.appearance', "Appearance"),
-			localize('voltSettings.appearanceLead', "Pick a color theme. Volt's own themes come first; every VS Code theme you install shows up here too."),
+			localize('voltSettings.appearanceLead2', "Pick a color theme from the list. Every VS Code theme you install shows up there too."),
 		);
+		const kit = this.settingsKit();
+		const themeGroup = this.settingsGroup();
 		this.settingRow(
-			this.settingsGroup(),
+			themeGroup,
 			localize('voltSettings.appearanceMode', "Mode"),
-			localize('voltSettings.appearanceModeDesc', "System follows macOS and switches between your dark and light picks."),
+			localize('voltSettings.appearanceModeDesc', "System follows macOS and switches between your dark and light themes."),
 			host => this.appearance.renderModeControl(host),
 		);
-		this.sectionLabel(localize('voltSettings.colorTheme', "Color theme"));
-		const gallery = append(this.target, $('.volt-settings-theme-gallery'));
 		const generation = this.renderGeneration;
-		const galleryReady = this.appearance.renderGallery(gallery, this.search.trim().toLowerCase()).then(() => {
-			if (generation === this.renderGeneration) {
-				this.scheduleScrollSync();
-			}
-		}, () => undefined);
 
-		const kit = this.settingsKit();
 		this.appearance.renderAgentConversations(kit);
 		this.appearance.renderColors(kit);
 		this.appearance.renderTypography(kit);
@@ -875,7 +1088,7 @@ export class VoltSettingsEditor extends EditorPane {
 				});
 			},
 		);
-		return galleryReady;
+		return themesReady;
 	}
 
 	/** The row helpers the Appearance page's sections draw with. */
@@ -1173,6 +1386,23 @@ export class VoltSettingsEditor extends EditorPane {
 		}).render();
 	}
 
+	/** Scratch and the design canvas: on/off, new boards, drawing style, history (canvasScratchPage.ts). */
+	private renderCanvasScratch(): void {
+		this.instantiationService.createInstance(CanvasScratchPage, {
+			store: this.renderStore,
+			pageHead: (title, lead) => void this.pageHead(title, lead),
+			sectionLabel: label => this.sectionLabel(label),
+			sectionHint: text => void (append(this.target, $('.volt-settings-section-hint')).textContent = text),
+			settingsGroup: () => this.settingsGroup(),
+			settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
+			toggle: (parent, on, label, onClick) => void this.switch(parent, on, label, onClick),
+			stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
+			dropdown: (parent, options, value, label, onChange) => this.dropdown(parent, options, value, label, onChange),
+			rerender: () => this.renderContent(),
+			isCurrent: () => this.section === 'canvas',
+		}).render();
+	}
+
 	/** Pull request links and reviews, attribution, branch names and code hosts (gitPage.ts). */
 	private renderGit(): void {
 		this.instantiationService.createInstance(GitPage, {
@@ -1385,17 +1615,10 @@ export class VoltSettingsEditor extends EditorPane {
 			localize('voltSettings.securityLead', "Where keys are stored and what the agent is allowed to run."),
 		);
 
-		const basics = this.settingsGroup();
 		this.settingRow(
-			basics,
+			this.settingsGroup(),
 			localize('voltSettings.secrets', "Secrets"),
 			localize('voltSettings.securityBody', "API keys are stored in OS secret storage, never in settings.json."),
-		);
-		this.settingRow(
-			basics,
-			localize('voltSettings.accessMode', "Default access"),
-			localize('voltSettings.accessModeDescSecurity', "What agents may do without asking. Each chat can still change it from the composer."),
-			host => this.accessModeControl(host),
 		);
 
 		this.sectionLabel(localize('voltSettings.projectRules', "Project rules"));

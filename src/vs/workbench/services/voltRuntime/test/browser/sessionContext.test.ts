@@ -12,12 +12,14 @@ import { Workspace } from '../../../../../platform/workspace/common/workspace.js
 import { TestContextService } from '../../../../test/common/workbenchTestServices.js';
 import { projectIdForRoot } from '../../common/sessionContext.js';
 import { VoltSessionContextService } from '../../browser/sessionContextService.js';
+import { VoltWindowScopeService } from '../../../voltWindowScope/common/voltWindowScopeService.js';
+import { TestWindowScopesHost } from '../../../voltWindowScope/test/common/testWindowScopesHost.js';
 
 suite('Agent session context', () => {
 
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 	const emptyWindow = () => new TestContextService(new Workspace('empty', [], false, null, () => false));
-	const create = (storage: IStorageService, workspace = emptyWindow()) => store.add(new VoltSessionContextService(storage, workspace));
+	const create = (storage: IStorageService, workspace = emptyWindow()) => store.add(new VoltSessionContextService(storage, workspace, store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 
 	test('the same folder is one project, and each chat keeps its own root', () => {
 		const service = create(store.add(new InMemoryStorageService()));
@@ -66,5 +68,30 @@ suite('Agent session context', () => {
 		folderWindow.selectProject(other.id);
 		const reloaded = create(storage, new TestContextService(testWorkspace(URI.file('/pricing'))));
 		assert.strictEqual(reloaded.activeProject?.id, other.id);
+	});
+
+	test('a New Window starts with no projects and keeps the ones it creates until it closes', async () => {
+		const storage = store.add(new InMemoryStorageService());
+		const host = store.add(new TestWindowScopesHost());
+		const inWindow = (scope?: string) => store.add(new VoltSessionContextService(storage, emptyWindow(), store.add(new VoltWindowScopeService(scope, host.scopes, host))));
+		const main = inWindow();
+		const old = main.registerProject(URI.file('/old'), 'Old');
+		main.selectProject(old.id);
+
+		host.open('new-window');
+		const scoped = inWindow('new-window');
+		assert.strictEqual(scoped.projects.length, 0, 'nothing from the main window');
+		assert.strictEqual(scoped.activeProject, undefined, 'not the project used last elsewhere');
+
+		const created = scoped.registerProject(URI.file('/new'), 'New');
+		scoped.registerProject(URI.file('/old'), 'Old');
+		scoped.selectProject(created.id);
+		assert.deepStrictEqual(scoped.projects.map(project => project.displayName).sort(), ['New', 'Old']);
+		assert.strictEqual(storage.get('volt.agent.activeProject', StorageScope.APPLICATION), old.id, 'the main window keeps its last project');
+
+		const mainLater = inWindow();
+		assert.deepStrictEqual(mainLater.projects.map(project => project.displayName), ['Old'], 'the New Window\'s own project is held back');
+		host.close('new-window');
+		assert.deepStrictEqual(mainLater.projects.map(project => project.displayName).sort(), ['New', 'Old']);
 	});
 });

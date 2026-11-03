@@ -199,26 +199,18 @@ suite('Agent home list model', () => {
 		assert.ok(first?.type === 'session' && first.nested);
 	});
 
-	test('lists a side chat right under the chat it was opened in, even when it is newer', () => {
+	test('lists a side chat as a row of its own, not indented under its chat', () => {
 		const tree = buildAgentHomeTree([folder('/tmp/volt', { current: true })], [
-			session('parent', { workspaceFolder: '/tmp/volt', updatedAt: 10 }),
+			session('parent', { workspaceFolder: '/tmp/volt', updatedAt: 10, pinned: true }),
 			session('other', { workspaceFolder: '/tmp/volt', updatedAt: 15 }),
 			session('side', { workspaceFolder: '/tmp/volt', updatedAt: 30, parentId: 'parent' }),
 		], view());
+		const pinned = tree.find(node => node.element.type === 'bucket' && node.element.id === 'pinned');
+		assert.deepStrictEqual(sessionIds(pinned), ['parent'], 'the side chat does not join its chat in Pinned');
 		const project = section(tree).children?.[0];
-		assert.deepStrictEqual(sessionIds(project), ['other', 'parent', 'side']);
-		const side = project?.children?.[2].element;
-		assert.ok(side?.type === 'session' && side.sideDepth === 1 && side.nested);
-	});
-
-	test('lists a side chat on its own when its chat is not listed', () => {
-		const tree = buildAgentHomeTree([folder('/tmp/volt', { current: true })], [
-			session('side', { workspaceFolder: '/tmp/volt', parentId: 'gone' }),
-			session('a', { workspaceFolder: '/tmp/volt', parentId: 'b' }),
-			session('b', { workspaceFolder: '/tmp/volt', parentId: 'a' }),
-		], view());
-		const ids = sessionIds(section(tree).children?.[0]).sort();
-		assert.deepStrictEqual(ids, ['a', 'b', 'side']);
+		assert.deepStrictEqual(sessionIds(project), ['side', 'other']);
+		const side = project?.children?.[0].element;
+		assert.ok(side?.type === 'session' && side.sideDepth === undefined);
 	});
 
 	test('lists sessions whose folder the sidebar does not know', () => {
@@ -306,7 +298,7 @@ suite('Agent home list model', () => {
 			session('draft', { workspaceFolder: '/tmp/a', status: 'idle', turnCount: 0, hasDraft: true }),
 			session('pin', { workspaceFolder: '/tmp/a', pinned: true }),
 		], view({ grouping: 'status' }));
-		assert.deepStrictEqual(headers(tree), ['pinned', 'needsAttention', 'working', 'draft', 'done']);
+		assert.deepStrictEqual(headers(tree), ['draft', 'pinned', 'needsAttention', 'working', 'done'], 'drafts lead, above Pinned');
 		const pinned = tree.find(node => node.element.type === 'bucket' && node.element.id === 'pinned');
 		assert.ok(pinned?.element.type === 'bucket');
 		assert.deepStrictEqual(sessionIds(pinned), ['pin']);
@@ -314,6 +306,32 @@ suite('Agent home list model', () => {
 		assert.deepStrictEqual(sessionIds(done), ['done'], 'pinned tabs are not repeated');
 		const row = done?.children?.[0].element;
 		assert.ok(row?.type === 'session' && !row.nested);
+	});
+
+	test('manual chat order sorts every group by the dragged order and notes each group for dragging', () => {
+		const groupMembers = new Map<string, readonly string[]>();
+		const tree = buildAgentHomeTree([folder('/tmp/a')], [
+			session('p1', { workspaceFolder: '/tmp/a', pinned: true, updatedAt: 9 }),
+			session('p2', { workspaceFolder: '/tmp/a', pinned: true, updatedAt: 5 }),
+			session('d1', { workspaceFolder: '/tmp/a', updatedAt: 9 }),
+			session('d2', { workspaceFolder: '/tmp/a', updatedAt: 5 }),
+			session('settled', { workspaceFolder: '/tmp/a', settled: true }),
+		], view({ grouping: 'status', chatOrder: 'manual' }), { manualOrder: ['p2', 'p1', 'd2', 'd1'], groupMembers });
+		const bucket = (id: string) => tree.find(node => node.element.type === 'bucket' && node.element.id === id);
+		assert.deepStrictEqual(sessionIds(bucket('pinned')), ['p2', 'p1']);
+		assert.deepStrictEqual(sessionIds(bucket('done')), ['d2', 'd1']);
+		assert.deepStrictEqual(Object.fromEntries(groupMembers), {
+			'bucket:pinned': ['p2', 'p1'],
+			'bucket:done': ['d2', 'd1'],
+			'bucket:settled': ['settled'],
+		});
+	});
+
+	test('a group notes its rows behind More for dragging too', () => {
+		const groupMembers = new Map<string, readonly string[]>();
+		const sessions = Array.from({ length: AGENT_HOME_GROUP_LIMIT + 2 }, (_, index) => session(`s${index}`, { workspaceFolder: '/tmp/a', updatedAt: 100 - index }));
+		buildAgentHomeTree([folder('/tmp/a', { current: true })], sessions, view(), { groupMembers });
+		assert.strictEqual(groupMembers.get(`folder:${URI.file('/tmp/a').toString()}`)?.length, AGENT_HOME_GROUP_LIMIT + 2);
 	});
 
 	test('updated grouping buckets by day', () => {
@@ -523,6 +541,8 @@ suite('Agent home list model', () => {
 		const now = 10 * 60_000;
 		assert.deepStrictEqual(sessionStatusBadge(session('w', { status: 'running', lastPromptAt: now - 2 * 60_000 }), now), { kind: 'working', label: 'Working 2m' });
 		assert.deepStrictEqual(sessionStatusBadge(session('d', { status: 'done' }), now), { kind: 'done', label: 'Done' });
+		assert.strictEqual(sessionStatusBadge(session('d', { status: 'done' }), now, undefined, true), undefined, 'a reply already looked at is not news');
+		assert.deepStrictEqual(sessionStatusBadge(session('d', { status: 'error', summary: 'Connection reset' }), now, undefined, true), { kind: 'failed', label: 'Failed' }, 'failures stay after a look');
 		assert.deepStrictEqual(sessionStatusBadge(session('n', { status: 'idle', turnCount: 0 }), now), { kind: 'draft', label: 'Draft' });
 		assert.strictEqual(sessionStatusBadge(session('i', { status: 'idle', turnCount: 2 }), now), undefined);
 		assert.deepStrictEqual(sessionStatusBadge(session('c', { status: 'cancelled' }), now), { kind: 'stopped', label: 'Stopped' });

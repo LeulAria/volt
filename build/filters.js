@@ -40,7 +40,7 @@ module.exports.unicodeFilter = [
 	'!LICENSES.chromium.html',
 	'!**/LICENSE',
 
-	'!**/*.{dll,exe,png,bmp,jpg,scpt,cur,ttf,woff,eot,template,ico,icns,opus,wasm,jar}',
+	'!**/*.{dll,exe,png,bmp,jpg,scpt,cur,ttf,woff,woff2,eot,template,ico,icns,opus,wasm,jar}',
 	'!**/test/**',
 	'!**/*.test.ts',
 	'!**/*.{d.ts,json,md}',
@@ -66,6 +66,7 @@ module.exports.unicodeFilter = [
 	'!src/vs/workbench/contrib/voltAgent/browser/blocks/vendor/**',
 	'!src/vs/workbench/contrib/voltAgent/browser/ui/vendor/**',
 	'!src/vs/workbench/contrib/voltAgent/browser/devices/vendor/**',
+	'!src/vs/workbench/contrib/voltSettings/browser/vendor/**',
 	'!src/vs/workbench/services/keybinding/browser/keyboardLayouts/**',
 	'!src/vs/workbench/contrib/terminal/common/scripts/psreadline/**',
 ];
@@ -87,6 +88,7 @@ module.exports.indentationFilter = [
 	'!src/vs/workbench/contrib/voltAgent/browser/blocks/vendor/beautifulMermaid.{js,license.txt}',
 	'!src/vs/workbench/contrib/voltAgent/browser/ui/vendor/dayjs.js',
 	'!src/vs/workbench/contrib/voltAgent/browser/devices/vendor/voltDeviceViewer.{js,license.txt}',
+	'!src/vs/workbench/contrib/voltSettings/browser/vendor/qrcode.js',
 	'!build/volt/deviceViewer/src/**',
 	'!src/vs/base/node/terminateProcess.sh',
 	'!src/vs/base/node/cpuUsage.sh',
@@ -136,7 +138,7 @@ module.exports.indentationFilter = [
 	'!src/vs/*/**/*.d.ts',
 	'!src/typings/**/*.d.ts',
 	'!extensions/**/*.d.ts',
-	'!**/*.{svg,exe,png,bmp,jpg,scpt,bat,cmd,cur,ttf,woff,eot,md,ps1,psm1,template,yaml,yml,d.ts.recipe,ico,icns,plist,opus,admx,adml,wasm,jar}',
+	'!**/*.{svg,exe,png,bmp,jpg,scpt,bat,cmd,cur,ttf,woff,woff2,eot,md,ps1,psm1,template,yaml,yml,d.ts.recipe,ico,icns,plist,opus,admx,adml,wasm,jar}',
 	'!build/{lib,download,linux,darwin}/**/*.js',
 	'!build/**/*.sh',
 	'!build/azure-pipelines/**/*.js',
@@ -180,6 +182,7 @@ module.exports.copyrightFilter = [
 	'!**/*.code-workspace',
 	'!**/*.js.map',
 	'!**/*.wasm',
+	'!**/*.woff2',
 	'!**/*.jar',
 	'!build/**/*.init',
 	'!build/linux/libcxx-fetcher.*',
@@ -199,7 +202,10 @@ module.exports.copyrightFilter = [
 	'!src/vs/workbench/contrib/voltAgent/browser/blocks/vendor/beautifulMermaid.js',
 	'!src/vs/workbench/contrib/voltAgent/browser/ui/vendor/dayjs.js',
 	'!src/vs/workbench/contrib/voltAgent/browser/devices/vendor/voltDeviceViewer.js',
+	'!src/vs/workbench/contrib/voltSettings/browser/vendor/qrcode.js',
 	'!build/volt/deviceViewer/src/**',
+	// Script helpers: their comment syntax cannot hold the /* */ header (they carry it as # lines).
+	'!src/vs/platform/voltDesktop/node/helper/*.{py,ps1}',
 ];
 
 module.exports.tsFormattingFilter = [

@@ -391,7 +391,7 @@ function TurnsArt() {
       ref={ref}
       className="w-full rounded-[14px] border border-white/10 bg-[#161616] py-2.5 text-[12.5px] shadow-[0_20px_40px_rgba(0,0,0,0.4)]"
     >
-      <div className="mb-1.5 flex items-center gap-1.5 px-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-white/40">
+      <div className="mb-1.5 flex items-center gap-1.5 px-3 text-[12px] font-medium text-white/45">
         <ChevronDown className="size-3.5" />
         Agent turns
       </div>
@@ -495,7 +495,7 @@ function GitArt() {
     <div ref={ref} className="w-full">
       <CommitGraph pushed={pushed} />
       <div className="rounded-[14px] border border-white/10 bg-[#161616] p-3 text-[12.5px] shadow-[0_20px_40px_rgba(0,0,0,0.4)]">
-        <div className="mb-2.5 flex items-center gap-1.5 px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-white/40">
+        <div className="mb-2.5 flex items-center gap-1.5 px-1 text-[12px] font-medium text-white/45">
           <GitBranch className="size-3.5" />
           feat/rate-limit
           <span className="ml-auto rounded-full bg-white/[0.07] px-1.5 font-mono text-[10px] tracking-normal text-white/60">

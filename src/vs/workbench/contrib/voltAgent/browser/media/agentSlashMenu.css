@@ -5,13 +5,13 @@
 
 /*
  * The composer's `/` menu (agentSlashMenu.ts), its side card, the hover card of `/skill` tokens,
- * and the tokens themselves. Metrics follow Cursor's: 29px rows inset 6px from the border, 13px
- * text, match highlights in link blue, cards 278px (side) and 300px (hover) wide.
+ * and the tokens themselves. Rows are a VS Code list's: 24px, flush with the border, square, 13px
+ * text, match highlights in link blue; cards 278px (side) and 300px (hover) wide.
  */
 
 .volt-agent-slash-host {
 	--volt-slash-bg: var(--vscode-editorWidget-background, #222222);
-	--volt-slash-border: var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	--volt-slash-border: var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 	--volt-slash-row-hover: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.07)));
 	--volt-slash-match: color-mix(in srgb, var(--vscode-textLink-foreground, #4daafc) 70%, var(--vscode-foreground, #cccccc));
 	position: relative;
@@ -39,7 +39,6 @@
 
 .volt-agent-slash-list {
 	box-sizing: border-box;
-	padding: 3px 6px;
 	overflow-x: hidden;
 	overflow-y: auto;
 	overscroll-behavior: contain;
@@ -70,10 +69,9 @@
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	height: 29px;
-	padding: 0 8px 0 7px;
+	height: 24px;
+	padding: 0 10px;
 	box-sizing: border-box;
-	border-radius: 6px;
 	cursor: pointer;
 	white-space: nowrap;
 	overflow: hidden;
@@ -137,12 +135,9 @@
 	object-fit: cover;
 }
 
+/* The name never shrinks; only the summary beside it gives way. */
 .volt-slash-name {
-	flex: 0 1 auto;
-	min-width: 0;
-	max-width: 62%;
-	overflow: hidden;
-	text-overflow: ellipsis;
+	flex: none;
 	color: var(--vscode-foreground);
 }
 
@@ -175,7 +170,7 @@
 .volt-skill-card {
 	box-sizing: border-box;
 	padding: 9px 11px 10px;
-	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	border: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 	border-radius: 10px;
 	background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background, #1e1e1e));
 	box-shadow: 0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
@@ -248,7 +243,15 @@
 	--volt-skill-token-fg: #b8741a;
 }
 
+/* Plain text in the line: the size and baseline of the words around it, not the 20px box file mentions use. */
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-pill.skill {
+	display: inline !important;
+	height: auto !important;
+	min-height: 0 !important;
+	max-height: none !important;
+	line-height: inherit !important;
+	vertical-align: baseline !important;
+	font-size: inherit;
 	color: var(--volt-skill-token-fg) !important;
 }
 

@@ -227,7 +227,20 @@ suite('ACP provider supervision', () => {
 		const env = setup(undefined, 'claude-code');
 		const handle = await env.provider.start(request({ sessionId: 's1' }));
 		const created = env.agent.written.find(entry => entry.msg.method === 'session/new')!;
-		assert.deepStrictEqual(created.msg.params?._meta, claudeWorkRulesMeta());
+		assert.deepStrictEqual(created.msg.params?._meta, claudeWorkRulesMeta('grok-4.7'));
+		await finish(env, handle);
+	});
+
+	test('a Claude Code session starts on the exact model picked, not the adapter\'s alias or default', async () => {
+		// Claude's adapter lists only aliases: `claude-sonnet-5-5` written as a config option fails and the
+		// session would stay on the account's default (Opus); `claude-haiku-4-5` would become `haiku`.
+		const env = setup(undefined, 'claude-code');
+		const handle = await env.provider.start(request({ sessionId: 's1', modelId: 'claude-sonnet-5-5', options: { contextWindow: '1m' } }));
+		const created = env.agent.written.find(entry => entry.msg.method === 'session/new')!;
+		const meta = created.msg.params?._meta as { claudeCode?: { options?: { model?: string } } } | undefined;
+		assert.strictEqual(meta?.claudeCode?.options?.model, 'claude-sonnet-5-5[1m]');
+		const modelWrites = env.agent.written.filter(entry => entry.msg.method === 'session/set_config_option' && entry.msg.params?.configId === 'model');
+		assert.deepStrictEqual(modelWrites, [], 'no alias write undoes the exact model');
 		await finish(env, handle);
 	});
 

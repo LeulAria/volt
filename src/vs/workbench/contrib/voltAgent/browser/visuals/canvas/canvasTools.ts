@@ -6,6 +6,8 @@
 import { encodeBase64 } from '../../../../../../base/common/buffer.js';
 import { Disposable } from '../../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../../base/common/uri.js';
+import { ICommandService } from '../../../../../../platform/commands/common/commands.js';
+import { IConfigurationService } from '../../../../../../platform/configuration/common/configuration.js';
 import { IFileService } from '../../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../../platform/log/common/log.js';
@@ -17,6 +19,8 @@ import { VisualPagePublisher } from '../visualPublisher.js';
 import { CanvasTheme, describeCanvas, findFrame, ICanvasDoc, ICanvasFrame, parseCanvasArgs } from './canvasModel.js';
 import { buildCanvasPage, canvasFrameDocument } from './canvasPage.js';
 import { IVoltCanvasService } from './canvasService.js';
+import { OPEN_CANVAS_COMMAND_ID } from './canvasCard.js';
+import { CANVAS_OPEN_BESIDE_SETTING } from '../../../common/canvasScratchSettings.js';
 
 const MIB = 1024 * 1024;
 const MAX_IMAGE_BYTES = 10 * MIB;
@@ -151,6 +155,8 @@ export class AgentCanvasToolProvider extends Disposable implements IVoltHostTool
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IInstantiationService instantiationService: IInstantiationService,
 		@ILogService private readonly logService: ILogService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super();
 		this.publisher = this._register(instantiationService.createInstance(VisualPagePublisher));
@@ -208,6 +214,9 @@ export class AgentCanvasToolProvider extends Disposable implements IVoltHostTool
 		}
 		const published = await this.publisher.publish(page, doc.title, { screenshot: args.screenshot === true });
 		const errors = published.errors.filter(error => error.startsWith('[frame ') || !/^Uncaught /.test(error));
+		if (this.configurationService.getValue(CANVAS_OPEN_BESIDE_SETTING) === true) {
+			void this.commandService.executeCommand(OPEN_CANVAS_COMMAND_ID, doc.id).catch(err => this.logService.warn('[volt] could not open the canvas beside the chat', err));
+		}
 		const lines = [
 			`Shown to the user above your reply: design canvas ${doc.id} "${doc.title}" v${doc.version} with ${doc.frames.length} frame${doc.frames.length === 1 ? '' : 's'} (${doc.frames.map(frame => `${frame.id} ${frame.kind} ${frame.width}x${frame.height || 'auto'}`).join(', ')}). The user can move, resize, play and comment on it, and open it beside the chat; their comments arrive as a message with comment ids. Change it with ${CANVAS_UPDATE_TOOL_NAME} {"canvas": "${doc.id}", ...}: edits for small changes, never a new canvas. Do not describe the screens; end your turn with at most one short line.`,
 		];
@@ -282,7 +291,7 @@ export class AgentCanvasToolProvider extends Disposable implements IVoltHostTool
 
 	/** The look a frame opens in when nothing sets it. */
 	private lookOf(doc: ICanvasDoc, frame: ICanvasFrame): CanvasTheme {
-		return frame.theme ?? doc.theme ?? this.publisher.themeKind();
+		return frame.theme ?? doc.theme ?? this.canvas.defaultLook();
 	}
 
 	/** Loads each touched frame offscreen and returns the errors it logged. */

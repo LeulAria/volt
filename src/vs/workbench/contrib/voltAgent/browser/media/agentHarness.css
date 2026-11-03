@@ -1,0 +1,125 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * The Harness section reuses Volt Settings' rows; their tokens live on .volt-settings, which also
+ * lays out the whole settings editor, so the tokens are repeated here instead.
+ */
+.volt-harness {
+	--volt-settings-radius: 10px;
+	--volt-settings-border: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	--volt-settings-surface: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+	--volt-settings-hover: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-harness .volt-settings-row-control {
+	max-width: 380px;
+}
+
+.volt-harness .volt-settings-row-control > .volt-dropdown {
+	max-width: 240px;
+}
+
+.volt-harness .volt-harness-badge {
+	display: inline-block;
+	margin-left: 6px;
+	padding: 1px 5px;
+	border-radius: 4px;
+	background: var(--volt-settings-hover);
+	font-size: 10.5px;
+	vertical-align: 1px;
+	opacity: 0.75;
+}
+
+.volt-harness .volt-harness-hint {
+	margin-top: 4px;
+	font-size: 12px;
+	color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.monaco-workbench .volt-harness .volt-button.volt-harness-icon-button {
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	flex: 0 0 auto;
+}
+
+.volt-harness .volt-harness-value {
+	max-width: 160px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-harness .volt-harness-text {
+	width: 180px;
+	height: 28px;
+	box-sizing: border-box;
+	padding: 0 8px;
+	border: 1px solid var(--volt-settings-border);
+	border-radius: 8px;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	font: inherit;
+	font-size: 12px;
+	outline: none;
+}
+
+.volt-harness .volt-harness-text:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+/* Other harnesses: one card per harness, under its name. */
+.volt-harness .volt-harness-ecosystem {
+	margin: 14px 0 6px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-harness .volt-harness-file {
+	cursor: pointer;
+	min-height: 48px;
+	padding-top: 10px;
+	padding-bottom: 10px;
+}
+
+.volt-harness .volt-harness-file:hover {
+	background: var(--volt-settings-hover);
+}
+
+.volt-harness .volt-harness-file:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-harness .volt-harness-file label {
+	cursor: pointer;
+}
+
+.volt-harness .volt-harness-path {
+	overflow-wrap: anywhere;
+}
+
+.volt-harness .volt-harness-status {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	margin-top: 4px;
+	font-size: 12px;
+	color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.volt-harness .volt-harness-status.error {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-harness .volt-harness-lock,
+.volt-harness .volt-harness-chevron {
+	display: inline-flex;
+	color: var(--vscode-descriptionForeground);
+}

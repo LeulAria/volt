@@ -449,6 +449,9 @@ export class AutomationDetailView extends Disposable implements IAutomationsPage
 		this.barStore.clear();
 		clearNode(this.host.bar);
 		this.syncCrumbs();
+		// Back, at the bar's left: Run History returns to Settings, Settings to the list (which asks about unsaved changes).
+		const backLabel = this.tab === 'runs' ? localize('voltAutomations.backToSettings', "Back to Settings") : localize('voltAutomations.back', "Back to Automations");
+		iconButton(this.host.bar, Codicon.arrowLeft, backLabel, this.barStore, () => this.tab === 'runs' ? this.switchTab('settings') : this.host.navigate({ page: 'list' }), 'volt-auto-icon-button.volt-auto-back');
 		const actions = append(this.host.bar, $('.volt-auto-bar-actions'));
 		if (this.tab === 'runs') {
 			this.saveButton = undefined;

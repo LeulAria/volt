@@ -9,6 +9,9 @@
 		"../../src/vscode-dts/vscode.proposed.*.d.ts",
 		"../../src/vscode-dts/vscode.d.ts",
 		"../../node_modules/@types/trusted-types/index.d.ts",
+		// As in tsconfig.node.json: the agent server's browser services reach editor code typed against these.
+		"../../node_modules/@webgpu/types/dist/index.d.ts",
+		"../../node_modules/@types/wicg-file-system-access/index.d.ts",
 	],
 	"exclude": [
 		"../../src/**/test/**",

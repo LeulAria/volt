@@ -1,4 +1,5 @@
-import { createFileRoute, notFound } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
+import { markdownResponse, notFoundMarkdown } from "@/lib/agentMarkdown";
 import { getLLMText, source } from "@/lib/source";
 
 export const Route = createFileRoute("/llms.mdx/docs/$")({
@@ -9,13 +10,15 @@ export const Route = createFileRoute("/llms.mdx/docs/$")({
         // remove the appended "content.md"
         slugs.pop();
         const page = source.getPage(slugs);
-        if (!page) throw notFound();
+        // A 404 that still reads as Markdown: agents asking for a docs page that isn't there get pointers.
+        if (!page) {
+          return markdownResponse(
+            notFoundMarkdown(`/docs/${slugs.join("/")}`),
+            404,
+          );
+        }
 
-        return new Response(await getLLMText(page), {
-          headers: {
-            "Content-Type": "text/markdown",
-          },
-        });
+        return markdownResponse(await getLLMText(page));
       },
     },
   },

@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { CLAUDE_MAIN_RULES, CLAUDE_SUBAGENT_RULES, claudeWorkRulesMeta, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
+import { CLAUDE_MAIN_RULES, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SUBAGENT_RULES, claudeWorkRulesMeta, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
 
 /** What a POSIX shell passes to printf for `printf '%s' '<quoted>'`: single quotes, with `'\''` for a quote inside. */
 function shellArgument(command: string): string {
@@ -26,6 +26,15 @@ suite('Volt Claude work rules', () => {
 	test('quotes in the context survive the shell', () => {
 		const context = 'it\'s "quoted" \\ and $HOME `x`';
 		assert.strictEqual(JSON.parse(shellArgument(subagentStartHookCommand(context))).hookSpecificOutput.additionalContext, context);
+	});
+
+	test('the Stop hook keeps the turn going once while the task list has open tasks', () => {
+		const stop = stopHookCommand();
+		assert.ok(stop.includes('stop_hook_active'), 'the second stop always ends the turn');
+		assert.ok(stop.includes('/tasks/$sid/'));
+		const reply = /printf '%s' '([\s\S]*)'$/.exec(stop);
+		assert.ok(reply);
+		assert.deepStrictEqual(JSON.parse(reply[1].replace(/'\\''/g, '\'')), { decision: 'block', reason: CLAUDE_OPEN_TASKS_REASON });
 	});
 
 	test('session meta appends the main rules to Claude Code\'s prompt and installs the hook, the same every time', () => {

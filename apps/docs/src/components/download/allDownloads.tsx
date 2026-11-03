@@ -18,8 +18,7 @@ import type { ReleasesState } from "@/lib/useReleases";
 const GRID =
   "grid grid-cols-1 gap-px border-y border-white/[0.08] border-x border-x-transparent bg-white/[0.08] bg-clip-padding max-md:border-x-white/[0.08] md:grid-cols-3";
 
-const MONO_LABEL =
-  "font-mono text-[10.5px] tracking-[0.16em] text-white/40 uppercase";
+const ARCH_LABEL = "text-[12.5px] font-medium text-white/45";
 
 /** Stable / Beta / Nightly as three selectable cells, each with its newest version. */
 export function ChannelPicker({
@@ -142,7 +141,7 @@ export function AllDownloads({
           <div className="mt-6 flex flex-col gap-6">
             {platform.arches.map(({ arch, label }, archIndex) => (
               <div key={arch}>
-                <div className={MONO_LABEL}>{label}</div>
+                <div className={ARCH_LABEL}>{label}</div>
                 <ul className="mt-2 flex flex-col">
                   {platform.packages.map((option) => {
                     const asset = findAsset(

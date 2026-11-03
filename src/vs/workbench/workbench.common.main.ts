@@ -210,6 +210,7 @@ import './contrib/inlineChat/browser/inlineChat.contribution.js';
 import './contrib/mcp/browser/mcp.contribution.js';
 
 // Volt runtime + settings
+import './services/voltWindowScope/browser/voltWindowScopeService.js';
 import './services/voltRuntime/browser/voltRuntimeService.js';
 import './services/voltRuntime/browser/history/agentHistoryService.js';
 import './services/voltRuntime/browser/git/agentWorktreeService.js';
@@ -222,6 +223,8 @@ import './contrib/voltAgent/browser/editor/agentEditor.contribution.js';
 import './contrib/voltAgent/browser/history/agentHistory.contribution.js';
 import './contrib/voltAgent/browser/search/agentChatSearch.contribution.js';
 import './contrib/voltAgent/browser/customize/agentCustomize.contribution.js';
+// Agent Resources: instructions, skills, agents, MCP, hooks and the harness, by scope
+import './contrib/voltAgent/browser/resources/agentResources.contribution.js';
 import './contrib/voltAgent/browser/home/agentThreadLifecycle.contribution.js';
 // Per-project tokens, cost and agent time, for Project Settings
 import './contrib/voltAgent/browser/usage/agentProjectUsage.js';

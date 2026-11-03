@@ -21,10 +21,12 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../../../
 import { IThemeService } from '../../../../../../platform/theme/common/themeService.js';
 import { IWebviewElement, IWebviewService, WebviewContentPurpose } from '../../../../webview/browser/webview.js';
 import { BATCH_EDITS_STORAGE_KEY, IVoltAnnotationItem, showVoltAnnotationsMenu } from '../../chrome/voltAnnotations.js';
+import { IVoltCommentAnchor, IVoltCommentInsets, VoltCommentComposer } from '../../chrome/voltCommentComposer.js';
 import { dispatchPageChannel, IPageChannelPort, parsePageRequest } from '../agentVisualBridge.js';
 import { buildVisualPage } from '../agentVisualPage.js';
 import { themeKind, visualThemeCss } from '../visualTheme.js';
 import type { CanvasFrameKind, ICanvasAnchor, ICanvasDoc, ICanvasFrame } from './canvasModel.js';
+import { createCanvasChatIsland, ICanvasChatIsland } from './canvasAgent.js';
 import { buildCanvasPage } from './canvasPage.js';
 import { canvasStrings, IVoltCanvasService } from './canvasService.js';
 
@@ -33,6 +35,8 @@ export interface ICanvasViewOptions {
 	/** The frame to center on first. */
 	readonly focusFrame?: string;
 	readonly onTitle?: (title: string) => void;
+	/** The tab: the canvas's chat as an island at the bottom of the board (not in Expand, which sits in the chat). */
+	readonly island?: boolean;
 }
 
 let viewSeq = 0;
@@ -126,6 +130,10 @@ export class CanvasView extends Disposable {
 	private doc: ICanvasDoc | undefined;
 	private selected: readonly string[] = [];
 	private panesSized = false;
+	private readonly island: ICanvasChatIsland | undefined;
+	private readonly commentComposer: VoltCommentComposer;
+	/** Clear of the page's top bars, and of the chat island at the bottom of the tab. */
+	private composeInsets: IVoltCommentInsets = { top: 48, bottom: 12 };
 
 	constructor(
 		container: HTMLElement,
@@ -175,6 +183,20 @@ export class CanvasView extends Disposable {
 		this._register(this.frames.onMouseOut(() => this.post({ op: 'hover' })));
 
 		this.host = append(this.element, $('.volt-canvas-view-host'));
+		// Comments use the browser's comment box, over the page where the user picked (the page posts `compose`).
+		this.commentComposer = this._register(instantiationService.createInstance(VoltCommentComposer, this.host, {
+			onAdd: text => this.post({ op: 'compose-commit', text, send: false }),
+			onSend: text => this.post({ op: 'compose-commit', text, send: true }),
+			onClose: () => this.post({ op: 'compose-cancel' }),
+			onDelete: () => this.post({ op: 'compose-delete' }),
+			insets: () => this.composeInsets,
+		}));
+		if (options.island) {
+			const island = createCanvasChatIsland(instantiationService, this.host, options.canvasId);
+			if (island) {
+				this.island = this._register(island);
+			}
+		}
 
 		const observer = new (getWindow(container).ResizeObserver)(() => this.layoutLists());
 		observer.observe(this.element);
@@ -205,6 +227,11 @@ export class CanvasView extends Disposable {
 
 	focus(): void {
 		this.webview?.focus();
+	}
+
+	/** The tab is on screen (or not): its chat island holds the chat only while it is. */
+	setVisible(visible: boolean): void {
+		this.island?.setVisible(visible);
 	}
 
 	private setDoc(doc: ICanvasDoc): void {
@@ -239,7 +266,9 @@ export class CanvasView extends Disposable {
 			}
 		}));
 		const theme = this.themeService.getColorTheme();
-		webview.setHtml(buildVisualPage(buildCanvasPage(this.canvas.pageData(doc, 'panel', focus)), { themeCss: visualThemeCss(theme), kind: themeKind(theme) }));
+		webview.setHtml(buildVisualPage(buildCanvasPage({ ...this.canvas.pageData(doc, 'panel', focus), hostComposer: true }), { themeCss: visualThemeCss(theme), kind: themeKind(theme) }));
+		// A page that goes (reloads, remounts) takes its comment draft with it.
+		store.add(toDisposable(() => this.commentComposer.hide()));
 		store.add(this.themeService.onDidColorThemeChange(next => {
 			void webview.postMessage({ type: 'volt-theme', css: visualThemeCss(next), kind: themeKind(next) });
 		}));
@@ -329,7 +358,55 @@ export class CanvasView extends Disposable {
 				this.framesPane.hidden = message.layers === false;
 				this.layoutLists();
 				return;
+			case 'compose':
+				this.showComposer(payload as { rect?: unknown; chip?: unknown; text?: unknown; deletable?: unknown; keep?: unknown; top?: unknown });
+				return;
+			case 'compose-place': {
+				const rect = this.composeRect((payload as { rect?: unknown }).rect);
+				if (rect && this.commentComposer.visible) {
+					this.commentComposer.place(rect);
+				}
+				return;
+			}
+			case 'compose-close':
+				this.commentComposer.hide();
+				return;
 		}
+	}
+
+	/**
+	 * The page picked something to comment on (or a pin): the comment box opens beside it. `rect` is in
+	 * the page's pixels, which are the host's: the webview fills `.volt-canvas-view-host` from its corner.
+	 * `keep`: the same draft moved to the element around it; what was typed stays.
+	 */
+	private showComposer(message: { rect?: unknown; chip?: unknown; text?: unknown; deletable?: unknown; keep?: unknown; top?: unknown }): void {
+		const rect = this.composeRect(message.rect);
+		if (!rect) {
+			return;
+		}
+		this.composeInsets = {
+			top: typeof message.top === 'number' ? message.top : 48,
+			// The island's pill (34px and its 12px margin) stays uncovered in the tab.
+			bottom: this.island ? 58 : 12,
+		};
+		const chip = typeof message.chip === 'string' ? message.chip : '';
+		const typed = !this.commentComposer.element.classList.contains('composer-empty');
+		if (message.keep === true && this.commentComposer.visible && typed) {
+			this.commentComposer.place(rect);
+			return;
+		}
+		this.commentComposer.show(rect, chip, {
+			...(typeof message.text === 'string' && message.text ? { text: message.text } : {}),
+			deletable: message.deletable === true,
+		});
+	}
+
+	private composeRect(raw: unknown): IVoltCommentAnchor | undefined {
+		const r = raw as { x?: unknown; y?: unknown; width?: unknown; height?: unknown } | undefined;
+		if (!r || typeof r.x !== 'number' || typeof r.y !== 'number' || typeof r.width !== 'number' || typeof r.height !== 'number') {
+			return undefined;
+		}
+		return { x: r.x, y: r.y, width: Math.max(1, r.width), height: Math.max(1, r.height) };
 	}
 
 	/**

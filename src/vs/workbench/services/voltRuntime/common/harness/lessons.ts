@@ -39,6 +39,17 @@ export class LessonBook {
 		return lesson;
 	}
 
+	/** The outcome is known now: a recovery recorded as tried either worked or did not. */
+	settle(lesson: ILesson, worked: boolean, note?: string): ILesson {
+		const index = this.items.indexOf(lesson);
+		if (index < 0) {
+			return lesson;
+		}
+		const settled: ILesson = { ...lesson, worked, ...(note ? { note: note.trim().slice(0, 240) } : {}) };
+		this.items[index] = settled;
+		return settled;
+	}
+
 	/** Strategies that have already failed for this error, cheapest first is *not* implied. */
 	failedFor(error: ILesson['error']): readonly RecoveryStrategy[] {
 		return this.items.filter(item => item.error === error && !item.worked).map(item => item.strategy);
@@ -68,5 +79,10 @@ export class LessonBook {
 
 	all(): readonly ILesson[] {
 		return this.items;
+	}
+
+	/** One line per lesson, for traces and run metrics: `doom → nudge: worked (repeat of read_file)`. */
+	describe(): string[] {
+		return this.items.map(item => `${item.error} \u2192 ${item.strategy}: ${item.worked ? 'worked' : 'did not work'}${item.note ? ` (${item.note})` : ''}`);
 	}
 }

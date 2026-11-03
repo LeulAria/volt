@@ -42,6 +42,8 @@ export interface ICanvasStrings {
 	readonly fit: string;
 	readonly zoom100: string;
 	readonly zoomSelection: string;
+	/** The tool bar's menu for what a narrow canvas has no room for. */
+	readonly more: string;
 	readonly light: string;
 	readonly dark: string;
 	readonly devices: string;
@@ -145,6 +147,12 @@ export interface ICanvasPageData {
 	 * later changes show further down the chat and in the canvas's tab). Comments still update.
 	 */
 	readonly pinned?: boolean;
+	/**
+	 * The host draws the comment composer over the page (the tab: the same one the browser uses for
+	 * inspect prompts). Picking an element posts `compose` with where it is, instead of opening the
+	 * page's own popover, and the host posts the text back (`compose-commit`).
+	 */
+	readonly hostComposer?: boolean;
 }
 
 /** What every frame shares. */
@@ -167,14 +175,14 @@ interface ICanvasBridge {
 
 const CANVAS_CSS = `
 html,body{margin:0;padding:0;overflow:hidden;background:transparent}
-.cv{--cv-bg:color-mix(in srgb,var(--foreground) 4.5%,var(--background));--cv-dot:color-mix(in srgb,var(--foreground) 20%,transparent);--cv-glass:light-dark(#fff,#1d1d1d);--cv-glass-line:light-dark(rgb(0 0 0/.12),rgb(255 255 255/.12));--cv-hover-fill:light-dark(rgb(0 0 0/.06),rgb(255 255 255/.08));--cv-on-fill:light-dark(rgb(0 0 0/.1),rgb(255 255 255/.13));--cv-spring:cubic-bezier(.34,1.56,.64,1);--cv-line:color-mix(in srgb,var(--foreground) 11%,transparent);--cv-accent:var(--accent);--cv-agent:var(--chart-4,#a371f7);position:relative;display:flex;overflow:hidden;font:13px/1.4 var(--font-sans);color:var(--foreground);-webkit-user-select:none;user-select:none;outline:none;box-sizing:border-box}
+.cv{--cv-bg:color-mix(in srgb,var(--foreground) 4.5%,var(--background));--cv-dot:light-dark(rgb(0 0 0/.13),rgb(255 255 255/.13));--cv-glass:light-dark(#fff,#1d1d1d);--cv-glass-line:light-dark(rgb(0 0 0/.09),rgb(255 255 255/.1));--cv-under:48px;--cv-hover-fill:light-dark(rgb(0 0 0/.06),rgb(255 255 255/.08));--cv-on-fill:light-dark(rgb(0 0 0/.1),rgb(255 255 255/.13));--cv-spring:cubic-bezier(.34,1.56,.64,1);--cv-line:color-mix(in srgb,var(--foreground) 11%,transparent);--cv-accent:var(--accent);--cv-agent:var(--chart-4,#a371f7);position:relative;display:flex;overflow:hidden;font:13px/1.4 var(--font-sans);color:var(--foreground);-webkit-user-select:none;user-select:none;outline:none;box-sizing:border-box}
 .cv *,.cv *::before,.cv *::after{box-sizing:border-box}
 .cv [hidden]{display:none!important}
 .cv.inline{height:clamp(440px,72vw,620px);border:1px solid var(--border);border-radius:12px;background:var(--cv-bg);transition:border-color .18s ease,box-shadow .18s ease}
 .cv.inline.engaged{border-color:color-mix(in srgb,var(--foreground) 42%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--foreground) 16%,transparent)}
-.cv.panel{height:100vh;background:var(--cv-bg)}
+.cv.panel{height:100vh;--cv-bg:light-dark(#fff,#121212);background:var(--cv-bg)}
 .cv-stage{position:relative;flex:1;min-width:0;overflow:hidden}
-.cv-viewport{position:absolute;inset:0;overflow:hidden;outline:none;cursor:default;background-image:radial-gradient(circle,var(--cv-dot) 1px,transparent 1.2px);touch-action:none}
+.cv-viewport{position:absolute;inset:0;overflow:hidden;outline:none;cursor:default;background-image:radial-gradient(circle at 1px 1px,var(--cv-dot) 1px,transparent 1.6px);touch-action:none}
 .cv.tool-hand .cv-viewport,.cv.space .cv-viewport{cursor:grab}
 .cv.panning .cv-viewport{cursor:grabbing}
 .cv.tool-comment .cv-viewport{cursor:crosshair}
@@ -264,38 +272,52 @@ html,body{margin:0;padding:0;overflow:hidden;background:transparent}
 .cv-pin.outdated{opacity:.55;border:1.5px dashed currentColor}
 .cv-pin.pending{background:var(--background);color:var(--cv-accent);box-shadow:0 0 0 2px var(--cv-accent)}
 .cv-pin svg{width:12px;height:12px}
-.cv-glass{background:var(--cv-glass);color:var(--foreground);box-shadow:0 0 0 1px var(--cv-glass-line),0 8px 24px light-dark(rgb(0 0 0/.12),rgb(0 0 0/.4))}
-.cv-top{position:absolute;left:10px;top:10px;right:10px;display:flex;align-items:flex-start;justify-content:space-between;gap:8px;pointer-events:none;z-index:20}
+.cv-glass{background:var(--cv-glass);color:var(--foreground);box-shadow:0 0 0 1px var(--cv-glass-line),0 1px 2px light-dark(rgb(0 0 0/.04),transparent),0 3px 12px light-dark(rgb(0 0 0/.1),rgb(0 0 0/.36))}
+.cv-top{position:absolute;left:12px;top:12px;right:12px;display:flex;align-items:flex-start;justify-content:space-between;gap:8px;pointer-events:none;z-index:20}
 .cv-top>*{pointer-events:auto}
-.cv-title{display:flex;align-items:center;gap:7px;min-width:0;max-width:60%;height:34px;padding:0 4px;font-size:12px}
+.cv-title{display:flex;align-items:center;gap:7px;min-width:0;max-width:60%;height:28px;padding:0 4px;font-size:12px}
+.cv-fold-change .cv-change,.cv-fold-title .cv-title>b,.cv-fold-title .cv-ver,.cv-fold-title .cv-change{display:none}
+.cv-fold-labels .cv-actions .cv-btn.labeled .cv-btn-label,.cv-fold-labels .cv-send-go>span:last-child{display:none}
+.cv-fold-labels .cv-actions .cv-btn.labeled{flex:none;width:23px;min-width:23px;padding:0;gap:0}
 .cv-title b{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cv-ver{flex:none;font:500 11px/16px var(--font-sans);color:var(--muted-foreground)}
 .cv-change{min-width:0;color:var(--muted-foreground);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cv-actions{display:flex;align-items:center;gap:6px}
-.cv-group{display:flex;align-items:center;gap:2px;height:34px;padding:0 4px;border-radius:999px}
-.cv-btn{appearance:none;margin:0;border:0;display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:28px;height:26px;padding:0 7px;border-radius:999px;background:transparent;color:color-mix(in srgb,var(--foreground) 78%,transparent);font:500 12.5px/1 var(--font-sans);cursor:pointer;white-space:nowrap;transition:background .12s,color .12s}
+.cv-group{display:flex;align-items:center;gap:1px;box-sizing:border-box;height:28px;padding:0 2.5px;border-radius:999px}
+.cv button{min-height:0}
+.cv-top svg *,.cv-toolbar svg *,.cv-menu svg *{stroke-width:1px;vector-effect:non-scaling-stroke}
+.cv-btn{appearance:none;margin:0;border:0;display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:23px;height:23px;padding:0 5px;border-radius:999px;background:transparent;color:color-mix(in srgb,var(--foreground) 78%,transparent);font:500 12.5px/1 var(--font-sans);cursor:pointer;white-space:nowrap;transition:background .12s,color .12s}
 .cv-btn:hover{background:var(--cv-hover-fill);color:var(--foreground)}
 .cv-btn svg *{stroke-width:1}
 .cv-btn[aria-pressed="true"],.cv-btn.chip{background:var(--cv-on-fill);color:var(--foreground)}
-.cv-btn.chip{padding:0 11px 0 9px}
+.cv-btn.chip{padding:0 10px 0 8px}
 .cv-btn.chip:hover{background:color-mix(in srgb,var(--foreground) 18%,transparent)}
-.cv-btn.labeled{padding:0 10px 0 8px}
-.cv-btn.primary{background:var(--primary);color:var(--primary-foreground);padding:0 11px}
+.cv-btn.labeled{padding:0 9px 0 7px}
+.cv-btn.primary{background:var(--primary);color:var(--primary-foreground);padding:0 10px}
 .cv-btn.primary:hover{filter:brightness(1.1)}
 .cv-btn:disabled{opacity:.4;cursor:default}
 .cv-btn:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
-.cv-btn svg{width:15px;height:15px;flex:none}
-.cv-sep{width:1px;height:16px;margin:0 4px;background:var(--cv-glass-line)}
-.cv-zoom{min-width:52px;font-variant-numeric:tabular-nums;color:var(--foreground)}
-.cv-toolbar{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:20}
-.cv-hint{position:absolute;left:50%;bottom:60px;transform:translateX(-50%);z-index:19;padding:5px 11px;border-radius:99px;font-size:11.5px;color:var(--muted-foreground);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .2s}
+.cv-btn svg{width:14px;height:14px;flex:none}
+.cv-btn.cv-icon-btn{flex:none;box-sizing:border-box;width:23px;min-width:23px;height:23px;padding:0;aspect-ratio:1}
+.cv-sep{width:1px;height:14px;margin:0 3px;background:var(--cv-glass-line)}
+.cv-zoom{min-width:46px;font-size:12px;font-variant-numeric:tabular-nums;color:var(--foreground)}
+.cv-toolbar{position:absolute;left:50%;top:12px;transform:translateX(calc(-50% + var(--cv-tools-shift,0px)));z-index:20}
+.cv-toolbar>.cv-overflowed,.cv-actions>.cv-overflowed{display:none!important}
+.cv-menu{position:absolute;z-index:30;min-width:208px;display:flex;flex-direction:column;padding:4px;border-radius:10px;animation:cv-rise .14s cubic-bezier(.2,.8,.2,1)}
+.cv-menu-item{appearance:none;margin:0;border:0;display:flex;align-items:center;gap:9px;height:28px;padding:0 8px;border-radius:6px;background:transparent;color:var(--foreground);font:13px/1 var(--font-sans);text-align:left;white-space:nowrap;cursor:pointer}
+.cv-menu-item:hover,.cv-menu-item:focus-visible{background:var(--cv-hover-fill);outline:none}
+.cv-menu-item svg{width:15px;height:15px;flex:none}
+.cv-menu-label{flex:1}
+.cv-menu-key{display:flex;color:var(--muted-foreground);font-size:12px}
+.cv-menu-sep{height:1px;margin:4px 6px;background:var(--cv-glass-line)}
+.cv-hint{position:absolute;left:50%;top:var(--cv-under);transform:translateX(-50%);z-index:19;padding:5px 11px;border-radius:99px;font-size:11.5px;color:var(--muted-foreground);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .2s}
 .cv-hint.on{opacity:1}
 .cv-minimap{position:absolute;right:12px;bottom:12px;z-index:20;width:168px;height:112px;overflow:hidden;cursor:pointer}
 .cv.inline .cv-minimap{width:132px;height:88px}
 .cv-mini-frame{position:absolute;left:0;top:0;border-radius:1.5px;background:color-mix(in srgb,var(--foreground) 32%,transparent)}
 .cv-mini-frame.sel{background:var(--cv-accent)}
 .cv-mini-view{position:absolute;left:0;top:0;border:1.5px solid color-mix(in srgb,var(--foreground) 45%,transparent);border-radius:3px;background:color-mix(in srgb,var(--foreground) 5%,transparent)}
-.cv-send{display:flex;align-items:stretch;height:26px;border-radius:999px;background:var(--primary);color:#fff;overflow:hidden;pointer-events:auto;animation:cv-send-in .22s cubic-bezier(.22,1,.36,1)}
+.cv-send{display:flex;align-items:stretch;height:28px;border-radius:999px;background:var(--primary);color:#fff;overflow:hidden;pointer-events:auto;animation:cv-send-in .22s cubic-bezier(.22,1,.36,1)}
 .cv-send[hidden]{display:none}
 .cv-send button{appearance:none;margin:0;border:0;display:inline-flex;align-items:center;gap:6px;background:transparent;color:inherit;font:500 12.5px/1 var(--font-sans);cursor:pointer}
 .cv-send button:hover{background:color-mix(in srgb,#fff 12%,transparent)}
@@ -316,10 +338,10 @@ html,body{margin:0;padding:0;overflow:hidden;background:transparent}
 .cv-batch.on i{background:var(--primary)}
 .cv-batch.on i::after{transform:translateX(12px)}
 @keyframes cv-rise{from{opacity:0;translate:0 8px}}
-.cv-toast{position:absolute;left:50%;top:52px;transform:translateX(-50%);z-index:25;display:flex;align-items:center;gap:8px;max-width:80%;padding:6px 12px;border-radius:99px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:cv-rise .25s cubic-bezier(.2,.8,.2,1);pointer-events:none}
+.cv-toast{position:absolute;left:50%;top:calc(var(--cv-under) + 4px);transform:translateX(-50%);z-index:25;display:flex;align-items:center;gap:8px;max-width:80%;padding:6px 12px;border-radius:99px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:cv-rise .25s cubic-bezier(.2,.8,.2,1);pointer-events:none}
 .cv-toast svg{width:14px;height:14px;flex:none;color:var(--cv-agent)}
-.cv-selbar{position:absolute;left:0;top:0;z-index:18;display:flex;align-items:center;gap:2px;height:34px;padding:0 4px;border-radius:999px;transform:translate(-50%,-100%);white-space:nowrap}
-.cv-select{appearance:none;height:26px;padding:0 26px 0 11px;border:0;border-radius:999px;background:transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right 8px center;color:var(--foreground);font:500 12px var(--font-sans);cursor:pointer}
+.cv-selbar{position:absolute;left:0;top:0;z-index:18;display:flex;align-items:center;gap:1px;height:28px;padding:0 3px;border-radius:999px;transform:translate(-50%,-100%);white-space:nowrap}
+.cv-select{appearance:none;height:23px;padding:0 26px 0 11px;border:0;border-radius:999px;background:transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right 8px center;color:var(--foreground);font:500 12px var(--font-sans);cursor:pointer}
 .cv-select:hover{background-color:var(--cv-hover-fill)}
 .cv-select option{background:var(--popover);color:var(--popover-foreground,var(--foreground))}
 .cv-pop{position:absolute;left:0;top:0;z-index:30;width:316px;display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:14px;animation:cv-rise .2s cubic-bezier(.2,.8,.2,1);-webkit-user-select:text;user-select:text}
@@ -346,7 +368,12 @@ html,body{margin:0;padding:0;overflow:hidden;background:transparent}
 .cv-tweaks input[type=color]{flex:none;width:26px;height:26px;padding:0;border:1px solid var(--border);border-radius:6px;background:none;cursor:pointer}
 .cv-tweaks input[type=color]::-webkit-color-swatch-wrapper{padding:2px}.cv-tweaks input[type=color]::-webkit-color-swatch{border:0;border-radius:4px}
 .cv-back{animation:cv-rise .2s}
-@media (max-width:620px){.cv-change,.cv-viewgroup,.cv-undo,.cv-btn.labeled .cv-btn-label{display:none}.cv-btn.labeled{padding:0 7px}.cv-minimap{width:110px!important;height:74px!important}.cv-title{max-width:46%}}
+.cv-pick{position:absolute;left:0;top:0;border:1.5px solid var(--cv-accent);border-radius:3px;background:color-mix(in srgb,var(--cv-accent) 9%,transparent);pointer-events:none}
+.cv-pickbar{position:absolute;left:0;top:0;z-index:21;display:flex;align-items:center;gap:1px;height:28px;padding:0 3px;border-radius:999px;white-space:nowrap;animation:cv-rise .18s cubic-bezier(.2,.8,.2,1)}
+.cv-tweakpanel{position:absolute;right:12px;top:calc(var(--cv-under) + 4px);z-index:22;width:268px;display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:12px;animation:cv-rise .2s cubic-bezier(.2,.8,.2,1);-webkit-user-select:text;user-select:text}
+.cv-tweakpanel-head{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600}
+.cv-tweakpanel-head .cv-chip{flex:1;font-weight:500}
+@media (max-width:620px){.cv-change,.cv-btn.labeled .cv-btn-label{display:none}.cv-btn.labeled{flex:none;width:23px;min-width:23px;padding:0;gap:0}.cv-minimap{width:110px!important;height:74px!important}.cv-title{max-width:46%}}
 @media (max-width:440px){.cv-minimap{display:none}}
 @media (prefers-reduced-motion:reduce){.cv *{animation:none!important;transition:none!important}}
 `;
@@ -430,6 +457,8 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	const still = !!volt?.preview;
 	const reduced = !!win.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 	const hosted = !!volt?.channel && !volt.preview;
+	/** The tab draws the comment composer itself (ICanvasPageData.hostComposer). */
+	const hostComposer = hosted && !!boot.hostComposer;
 	let model: ICanvasDoc = boot.doc;
 	let look: CanvasTheme = model.theme ?? boot.theme;
 
@@ -479,6 +508,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		arrowUp: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3.5M3.8 7.6 8 3.4l4.2 4.2"/></svg>',
 		chevron: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="m4 6 4 4 4-4"/></svg>',
 		undo: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3 2.5 6l3 3"/><path d="M2.5 6h7a4 4 0 0 1 0 8H7"/></svg>',
+		more: '<svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3.4" r="1.25"/><circle cx="8" cy="8" r="1.25"/><circle cx="8" cy="12.6" r="1.25"/></svg>',
 	};
 	const STATUS_ICONS = '<svg width="17" height="11" viewBox="0 0 17 11"><rect y="7" width="3" height="4" rx="1"/><rect x="4.6" y="5" width="3" height="6" rx="1"/><rect x="9.2" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.8" width="3" height="11" rx="1"/></svg>'
 		+ '<svg width="15" height="11" viewBox="0 0 15 11"><path d="M7.5 2.3c2.1 0 4 .8 5.4 2.1l1.2-1.2A9.4 9.4 0 0 0 7.5.6C5 .6 2.6 1.6.9 3.2l1.2 1.2a7.7 7.7 0 0 1 5.4-2.1Zm0 3.3c1.2 0 2.3.4 3.1 1.2l1.2-1.2a6.4 6.4 0 0 0-8.6 0l1.2 1.2c.8-.8 1.9-1.2 3.1-1.2Zm0 3.2L5.7 10.6 7.5 11l1.8-.4-1.8-1.8Z"/></svg>'
@@ -523,6 +553,10 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 			node.append(el('span', 'cv-btn-label', label));
 		} else {
 			node.setAttribute('aria-label', label);
+			if (iconName) {
+				// Just an icon: a circle as wide as it is tall.
+				node.classList.add('cv-icon-btn');
+			}
 		}
 		node.title = label;
 		node.addEventListener('pointerdown', event => event.stopPropagation());
@@ -1276,8 +1310,9 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	}
 	function fitCamera(rect: IRect, padding: number, maxZ: number): { x: number; y: number; z: number } {
 		const r = viewportRect();
-		const top = 54;
-		const bottom = 60;
+		// Clear of the top bars; the tab keeps its bottom for the chat island, the chat only for the minimap's edge.
+		const top = underBars() + 6;
+		const bottom = inline ? 32 : 60;
 		const w = Math.max(40, r.width - padding * 2);
 		const h = Math.max(40, r.height - top - bottom - padding);
 		const z = clamp(Math.min(w / Math.max(1, rect.w), h / Math.max(1, rect.h), maxZ), MIN_Z, MAX_Z);
@@ -1341,12 +1376,31 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 			flyTo(fitCamera({ x: b.x, y: b.y - 24, w: b.w, h: b.h + 24 }, play ? 24 : 40, play ? 1.5 : 2));
 		}
 	}
+	/** Scratch's dot grid: 20px at 100%, five times coarser while it would be finer than 12px. */
 	function gridStep(): number {
-		let step = 24 * cam.z;
+		let step = 20 * cam.z;
 		while (step < 12) {
-			step *= 4;
+			step *= 5;
 		}
 		return step;
+	}
+	let gridDot = 0;
+	/** The top bars exist (fitBars measures them; it may be asked before they are built). */
+	let barsBuilt = false;
+	/** The grid as Scratch draws it: dots that grow with the zoom (0.8 to 1.4px), one per step. */
+	function renderGrid(): void {
+		const step = gridStep();
+		const dot = Math.round(clamp(cam.z, 0.8, 1.4) * 20) / 20;
+		if (dot !== gridDot) {
+			gridDot = dot;
+			viewport.style.backgroundImage = `radial-gradient(circle at ${dot}px ${dot}px,var(--cv-dot) ${dot}px,transparent ${dot + 0.6}px)`;
+		}
+		viewport.style.backgroundSize = `${step}px ${step}px`;
+		viewport.style.backgroundPosition = `${(cam.x % step) - dot}px ${(cam.y % step) - dot}px`;
+	}
+	/** Where the board's free space starts under the top bars (`--cv-under`). */
+	function underBars(): number {
+		return 48;
 	}
 
 	//#endregion
@@ -1356,9 +1410,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	function render(): void {
 		renderFrame = 0;
 		world.style.transform = `translate(${cam.x}px,${cam.y}px) scale(${cam.z})`;
-		const step = gridStep();
-		viewport.style.backgroundSize = `${step}px ${step}px`;
-		viewport.style.backgroundPosition = `${cam.x % step}px ${cam.y % step}px`;
+		renderGrid();
 		const r = viewportRect();
 		const vw = r.width;
 		const vh = r.height;
@@ -1399,6 +1451,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		zoomLabel.textContent = `${Math.round(cam.z * 100)}%`;
 		positionSelectionBar();
 		positionPopover();
+		renderHostDraft();
 	}
 
 	const sectionNodes = new Map<string, { box: HTMLElement; label: HTMLElement }>();
@@ -1909,7 +1962,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	}
 	/** Comment mode: outlines the element under the pointer, and says which it is. */
 	function placeHover(): void {
-		const hit = lastPointer && state.tool === 'comment' && !popover && !drag ? hitFrame(toWorld(lastPointer.x, lastPointer.y)) : undefined;
+		const hit = lastPointer && state.tool === 'comment' && !popover && !hostDraft && !drag ? hitFrame(toWorld(lastPointer.x, lastPointer.y)) : undefined;
 		const picked = hit && lastPointer ? pick(hit, lastPointer.x, lastPointer.y) : undefined;
 		if (!hit || !picked?.rect) {
 			showHover(false);
@@ -1983,6 +2036,12 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 			sendAll();
 			return;
 		}
+		if (event.altKey && !mod && key === 'arrowup' && hostDraft?.target && !hostDraft.comment) {
+			// The comment climbs to the element around the one picked.
+			event.preventDefault();
+			climbHostDraft();
+			return;
+		}
 		if (mod || event.altKey) {
 			return;
 		}
@@ -2007,7 +2066,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 			case '=': case '+': zoomStep(1.25); return;
 			case '-': case '_': zoomStep(0.8); return;
 			case 'escape':
-				if (popover) {
+				if (popover || hostDraft) {
 					closePopover();
 				} else if (state.tool !== 'move') {
 					setTool('move');
@@ -2050,7 +2109,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		root!.classList.remove('tool-move', 'tool-hand', 'tool-comment', 'tool-play');
 		root!.classList.add(`tool-${tool}`);
 		showHover(false);
-		if (tool !== 'comment' && popover?.draft) {
+		if (tool !== 'comment' && (popover?.draft || (hostDraft && !hostDraft.comment))) {
 			closePopover();
 		}
 		for (const [name, node] of toolButtons) {
@@ -2170,6 +2229,31 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	}
 	let popover: IPopover | undefined;
 	let pendingPin: { anchor: ICanvasAnchor } | undefined;
+	/** A comment in the host's composer (hostComposer): what it is on, and the style tweaks made meanwhile. */
+	interface IHostDraft {
+		anchor: ICanvasAnchor;
+		target: Element | undefined;
+		/** The open comment being edited; a new one has none. */
+		readonly comment?: string;
+		readonly tweaks: Map<string, ICanvasTweak>;
+		readonly originals: Map<string, string>;
+		/** The rect last posted to the host, to post only when it moves. */
+		placed: string;
+	}
+	let hostDraft: IHostDraft | undefined;
+	/** The picked element's outline, the controls beside it (parent, style, ask) and the style panel. */
+	const pickBox = el('div', 'cv-pick');
+	pickBox.hidden = true;
+	overlay.append(pickBox);
+	const pickBar = el('div', 'cv-pickbar cv-glass');
+	pickBar.hidden = true;
+	pickBar.addEventListener('pointerdown', event => event.stopPropagation());
+	pickBar.addEventListener('wheel', event => event.stopPropagation());
+	const tweakPanel = el('div', 'cv-tweakpanel cv-glass');
+	tweakPanel.hidden = true;
+	tweakPanel.addEventListener('pointerdown', event => event.stopPropagation());
+	tweakPanel.addEventListener('wheel', event => event.stopPropagation());
+	stage.append(pickBar, tweakPanel);
 	const pinNodes = new Map<string, HTMLElement>();
 	let nonceSeq = 0;
 
@@ -2263,7 +2347,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		return model.comments.findIndex(comment => comment.id === id) + 1;
 	}
 	function pinClass(comment: ICanvasComment, outdated: boolean): string {
-		return `cv-pin${comment.author === 'agent' ? ' agent' : ''}${comment.status === 'sent' ? ' sent' : ''}${comment.status === 'resolved' ? ' resolved' : ''}${outdated ? ' outdated' : ''}${popover?.comment === comment.id ? ' open' : ''}`;
+		return `cv-pin${comment.author === 'agent' ? ' agent' : ''}${comment.status === 'sent' ? ' sent' : ''}${comment.status === 'resolved' ? ' resolved' : ''}${outdated ? ' outdated' : ''}${popover?.comment === comment.id || hostDraft?.comment === comment.id ? ' open' : ''}`;
 	}
 
 	/** Same spot, same pin: a draft's pin becomes the saved comment's, and the store's id swap keeps it. */
@@ -2369,6 +2453,9 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		pendingPin = undefined;
 		current?.cleanup();
 		current?.node.remove();
+		if (hostDraft) {
+			closeHostDraft(true);
+		}
 		requestRender();
 	}
 	function positionPopover(): void {
@@ -2390,7 +2477,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 			x = s.x - w - 18;
 		}
 		x = clamp(x, 10, Math.max(10, vr.width - w - 10));
-		y = clamp(y, 50, Math.max(50, vr.height - h - 10));
+		y = clamp(y, underBars(), Math.max(underBars(), vr.height - h - 10));
 		node.style.transform = `translate(${x}px,${y}px)`;
 	}
 
@@ -2461,6 +2548,10 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 
 	/** A new comment on `anchor`: text, optional style tweaks on the element, Add (queue) or Send now. */
 	function openComposer(initial: ICanvasAnchor, node: Element | undefined): void {
+		if (hostComposer) {
+			openHostDraft(initial, node);
+			return;
+		}
 		closePopover();
 		let anchor = initial;
 		let target = node;
@@ -2589,6 +2680,245 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		win.setTimeout(() => area.focus(), 0);
 	}
 
+	/**
+	 * The host's composer on `anchor` (a new comment, or open comment `existing`): the page keeps the
+	 * anchor, its outline, the parent/style/ask controls and the style tweaks; the host shows the
+	 * composer at the rect posted with `compose` and posts the text back (`compose-commit`).
+	 */
+	function openHostDraft(anchor: ICanvasAnchor, node: Element | undefined, existing?: ICanvasComment): void {
+		const current = popover;
+		popover = undefined;
+		current?.cleanup();
+		current?.node.remove();
+		// The previous draft goes quietly: the host's composer moves to the new one.
+		if (hostDraft) {
+			revertHostTweaks(hostDraft);
+		}
+		hostDraft = { anchor, target: node, ...(existing ? { comment: existing.id } : {}), tweaks: new Map(), originals: new Map(), placed: '' };
+		pendingPin = existing ? undefined : { anchor };
+		tweakPanel.hidden = true;
+		buildPickBar();
+		postCompose(existing ? { text: existing.text, comment: existing.id, deletable: true } : {});
+		requestRender();
+	}
+	function postCompose(extra: Record<string, unknown>): void {
+		const d = hostDraft;
+		const rect = d ? hostDraftRect(d) : undefined;
+		if (!d || !rect) {
+			return;
+		}
+		d.placed = JSON.stringify(rect);
+		// `top`: the composer stays under the board's top bars.
+		post('compose', { rect, chip: anchorChip(d.anchor), top: underBars(), ...extra });
+	}
+	function revertHostTweaks(d: IHostDraft): void {
+		const element = d.target as HTMLElement | undefined;
+		if (element) {
+			for (const [property, before] of d.originals) {
+				if (property === 'text') {
+					element.textContent = before;
+				} else {
+					element.style.removeProperty(property);
+				}
+			}
+		}
+		d.tweaks.clear();
+		d.originals.clear();
+	}
+	/** The draft is done with (`notify`: the host's composer closes too). Unsaved tweaks go back. */
+	function closeHostDraft(notify: boolean): void {
+		const d = hostDraft;
+		if (!d) {
+			return;
+		}
+		hostDraft = undefined;
+		pendingPin = undefined;
+		revertHostTweaks(d);
+		pickBox.hidden = true;
+		pickBar.hidden = true;
+		tweakPanel.hidden = true;
+		if (notify) {
+			post('compose-close');
+		}
+		requestRender();
+	}
+	/** Where the draft's element (or region, or spot) is, in page pixels: the host places its composer by it. */
+	function hostDraftRect(d: IHostDraft): { x: number; y: number; width: number; height: number } | undefined {
+		const v = views.get(d.anchor.frame);
+		if (!v) {
+			return undefined;
+		}
+		const vr = viewportRect();
+		const o = toScreen(screenOrigin(v));
+		let local: ILocalRect | undefined;
+		if (d.anchor.w && d.anchor.h) {
+			const idoc = frameDoc(v);
+			local = { x: d.anchor.x - (idoc?.defaultView?.scrollX ?? 0), y: d.anchor.y - (idoc?.defaultView?.scrollY ?? 0), w: d.anchor.w, h: d.anchor.h };
+		} else if (d.target?.isConnected) {
+			const r = d.target.getBoundingClientRect();
+			local = { x: r.left, y: r.top, w: r.width, h: r.height };
+		}
+		if (local) {
+			return { x: Math.round(vr.left + o.x + local.x * cam.z), y: Math.round(vr.top + o.y + local.y * cam.z), width: Math.round(local.w * cam.z), height: Math.round(local.h * cam.z) };
+		}
+		const at = anchorPoint(d.anchor);
+		if (!at) {
+			return undefined;
+		}
+		const s = toScreen(at.p);
+		return { x: Math.round(vr.left + s.x), y: Math.round(vr.top + s.y - 26), width: 26, height: 26 };
+	}
+	/** Keeps the outline and controls on the element as the camera moves, and tells the host where it went. */
+	function renderHostDraft(): void {
+		const d = hostDraft;
+		if (d && !views.has(d.anchor.frame)) {
+			// Its frame is gone (the agent replaced the screens): so is the comment.
+			closeHostDraft(true);
+			return;
+		}
+		const rect = d ? hostDraftRect(d) : undefined;
+		if (!d || !rect) {
+			pickBox.hidden = true;
+			pickBar.hidden = true;
+			return;
+		}
+		const vr = viewportRect();
+		const x = rect.x - vr.left;
+		const y = rect.y - vr.top;
+		const region = !!(d.anchor.w && d.anchor.h);
+		pickBox.hidden = !d.target && !region;
+		Object.assign(pickBox.style, { transform: `translate(${x}px,${y}px)`, width: `${rect.width}px`, height: `${rect.height}px` });
+		pickBar.hidden = !pickBar.childElementCount;
+		if (!pickBar.hidden) {
+			const w = pickBar.offsetWidth;
+			const above = y - 34;
+			const top = above >= underBars() ? above : y + rect.height + 6;
+			pickBar.style.transform = `translate(${clamp(x, 8, Math.max(8, vr.width - w - 8))}px,${top}px)`;
+		}
+		const placed = JSON.stringify(rect);
+		if (placed !== d.placed) {
+			d.placed = placed;
+			post('compose-place', { rect });
+		}
+	}
+	/** Parent, Style, Ask in Chat, Next Screen: what the old popover had beside its text, by the element now. */
+	function buildPickBar(): void {
+		const d = hostDraft;
+		pickBar.replaceChildren();
+		if (!d) {
+			return;
+		}
+		// A saved comment keeps its element; a new one can move to the element around it.
+		const parent = d.comment ? undefined : d.target?.parentElement;
+		if (parent && parent.localName !== 'body' && parent.localName !== 'html') {
+			pickBar.append(button(`${S.parent} (${String.fromCharCode(0x2325, 0x2191)})`, 'up', () => climbHostDraft()));
+		}
+		const element = d.target as HTMLElement | undefined;
+		if (element?.ownerDocument.defaultView) {
+			const style = button(S.style, 'style', () => {
+				const on = style.getAttribute('aria-pressed') !== 'true';
+				style.setAttribute('aria-pressed', String(on));
+				buildTweakPanel(on);
+			});
+			style.setAttribute('aria-pressed', String(!tweakPanel.hidden));
+			pickBar.append(style);
+		}
+		const label = () => anchorLabel(d.anchor);
+		pickBar.append(
+			button(S.askInChat, 'chat', () => {
+				post('prompt', { text: fmt(S.askPrompt, label(), model.title), anchor: d.anchor });
+				closeHostDraft(true);
+			}),
+			button(S.nextScreen, 'next', () => {
+				post('prompt', { text: fmt(S.nextScreenPrompt, model.title, label()), anchor: d.anchor });
+				closeHostDraft(true);
+			}),
+		);
+	}
+	/** The style tweaks on the picked element, in a panel at the board's top right (clear of the composer). */
+	function buildTweakPanel(on: boolean): void {
+		const d = hostDraft;
+		const element = d?.target as HTMLElement | undefined;
+		tweakPanel.replaceChildren();
+		tweakPanel.hidden = !on || !d || !element?.ownerDocument.defaultView;
+		if (tweakPanel.hidden || !d || !element) {
+			return;
+		}
+		const head = el('div', 'cv-tweakpanel-head');
+		const chip = el('span', 'cv-chip', anchorChip(d.anchor));
+		chip.title = d.anchor.selector ?? '';
+		head.append(chip, button(S.close, 'close', () => {
+			tweakPanel.hidden = true;
+			pickBar.querySelector('[aria-pressed]')?.setAttribute('aria-pressed', 'false');
+		}));
+		tweakPanel.append(head, tweakEditor(element, d.tweaks, d.originals));
+	}
+	/** Alt+Up, or the bar's arrow: the comment moves to the element around the picked one. */
+	function climbHostDraft(): void {
+		const d = hostDraft;
+		const parent = d?.target?.parentElement;
+		const v = d ? views.get(d.anchor.frame) : undefined;
+		if (!d || d.comment || !parent || !v || parent.localName === 'body' || parent.localName === 'html') {
+			return;
+		}
+		const styling = !tweakPanel.hidden;
+		revertHostTweaks(d);
+		d.target = parent;
+		const r = parent.getBoundingClientRect();
+		d.anchor = anchorFor(v, parent, r.left + r.width / 2, r.top + 4).anchor;
+		if (!d.comment) {
+			pendingPin = { anchor: d.anchor };
+		}
+		buildPickBar();
+		buildTweakPanel(styling);
+		// The host keeps what was typed and shows the new element's name.
+		postCompose({ keep: true });
+		requestRender();
+	}
+	/** The host's composer added (`send` false) or sent the draft. */
+	function commitHostDraft(raw: string, send: boolean): void {
+		const d = hostDraft;
+		if (!d) {
+			return;
+		}
+		const text = raw.trim();
+		const tweaks = d.tweaks.size ? [...d.tweaks.values()] : undefined;
+		if (d.comment) {
+			const id = d.comment;
+			const existing = model.comments.find(comment => comment.id === id);
+			if (existing && (text !== existing.text || tweaks)) {
+				model = { ...model, comments: model.comments.map(comment => comment.id === id ? { ...comment, text, ...(tweaks ? { tweaks } : {}) } : comment) };
+				post('comment', { comment: { id, text, ...(tweaks ? { tweaks } : {}) } });
+			}
+			if (send) {
+				post('send', { comments: [id] });
+			}
+		} else {
+			if (!text && !tweaks) {
+				return;
+			}
+			const nonce = `n${Date.now().toString(36)}${nonceSeq++}`;
+			const comment: ICanvasComment = { id: `pending-${nonce}`, anchor: d.anchor, text, status: 'open', author: 'user', at: Date.now(), ...(tweaks ? { tweaks } : {}) };
+			model = { ...model, comments: [...model.comments, comment] };
+			post('comment', { comment: { anchor: d.anchor, text, ...(tweaks ? { tweaks } : {}) }, nonce, send });
+		}
+		// Saved: the tweaks stay applied (the agent gets them with the comment).
+		d.tweaks.clear();
+		d.originals.clear();
+		closeHostDraft(false);
+		syncComments();
+	}
+	/** The host's composer deleted the comment (or dropped the new one). */
+	function deleteHostDraft(): void {
+		const id = hostDraft?.comment;
+		if (id) {
+			post('comment-delete', { comment: id });
+			model = { ...model, comments: model.comments.filter(other => other.id !== id) };
+		}
+		closeHostDraft(false);
+		syncComments();
+	}
+
 	function colorHex(value: string): string | undefined {
 		const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?/i.exec(value);
 		if (!m || (m[4] !== undefined && Number(m[4]) === 0)) {
@@ -2696,6 +3026,13 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	function openThread(id: string): void {
 		const comment = model.comments.find(other => other.id === id);
 		if (!comment) {
+			return;
+		}
+		// The user's own open comment is edited in the host's composer; the agent's, a reply or a
+		// resolved one keep their thread here (Resolve, Reopen, the reply).
+		if (hostComposer && comment.author === 'user' && comment.status === 'open' && !comment.reply) {
+			const v = views.get(comment.anchor.frame);
+			openHostDraft(comment.anchor, v && comment.anchor.selector ? findTarget(v, comment.anchor.selector, comment.anchor.text) : undefined, comment);
 			return;
 		}
 		closePopover();
@@ -2928,6 +3265,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		for (const entry of lookButtons) {
 			entry.node.setAttribute('aria-pressed', String(entry.kind === look));
 		}
+		fitBars();
 	}
 
 	/** Where the prototype starts: the first frame nothing leads to, among frames that lead on. */
@@ -2969,12 +3307,168 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	}
 	toolbar.append(el('span', 'cv-sep'));
 	const undoButton = button(`${S.undo} (\u2318Z)`, 'undo', () => undo(), 'cv-undo');
-	toolbar.append(undoButton, el('span', 'cv-sep cv-undo'));
-	toolbar.append(button(`${S.zoomOut} (\u2212)`, 'minus', () => zoomStep(0.8)));
+	const undoSep = el('span', 'cv-sep cv-undo');
+	const zoomOutButton = button(`${S.zoomOut} (\u2212)`, 'minus', () => zoomStep(0.8));
 	const zoomLabel = button(S.zoom100, undefined, () => zoomStep(1 / cam.z), 'cv-zoom', true);
 	zoomLabel.title = `${S.zoom100} (\u21e70)`;
-	toolbar.append(zoomLabel, button(`${S.zoomIn} (+)`, 'plus', () => zoomStep(1.25)), button(`${S.fit} (\u21e71)`, 'fit', () => fitAll()));
+	const zoomInButton = button(`${S.zoomIn} (+)`, 'plus', () => zoomStep(1.25));
+	const fitButton = button(`${S.fit} (\u21e71)`, 'fit', () => fitAll());
+	// "More": whatever a narrow canvas moved off the bars, so nothing is out of reach (Scratch's "more").
+	const moreSep = el('span', 'cv-sep');
+	const moreButton = button(S.more, 'more', () => toggleMoreMenu());
+	moreButton.setAttribute('aria-haspopup', 'menu');
+	moreSep.hidden = moreButton.hidden = true;
+	toolbar.append(undoButton, undoSep, zoomOutButton, zoomLabel, zoomInButton, fitButton, moreSep, moreButton);
 	stage.append(toolbar);
+
+	let moreMenu: HTMLElement | undefined;
+	function closeMoreMenu(): void {
+		moreMenu?.remove();
+		moreMenu = undefined;
+		moreButton.setAttribute('aria-expanded', 'false');
+	}
+	function toggleMoreMenu(): void {
+		if (moreMenu) {
+			closeMoreMenu();
+			return;
+		}
+		const item = (label: string, iconName: string, run: () => void, key = '', checked?: boolean): HTMLButtonElement => {
+			const row = el('button', 'cv-menu-item');
+			row.type = 'button';
+			row.setAttribute('role', checked === undefined ? 'menuitem' : 'menuitemcheckbox');
+			if (checked !== undefined) {
+				row.setAttribute('aria-checked', String(checked));
+			}
+			const end = el('span', 'cv-menu-key', checked ? undefined : key);
+			if (checked) {
+				end.append(icon('check'));
+			}
+			row.append(icon(iconName), el('span', 'cv-menu-label', label), end);
+			row.addEventListener('pointerdown', event => event.stopPropagation());
+			row.addEventListener('click', event => {
+				event.preventDefault();
+				event.stopPropagation();
+				closeMoreMenu();
+				run();
+			});
+			return row;
+		};
+		const off = (node: HTMLElement) => node.classList.contains('cv-overflowed');
+		const sections: HTMLElement[][] = [];
+		if (off(undoButton)) {
+			// allow-any-unicode-next-line
+			sections.push([item(S.undo, 'undo', () => undo(), '⌘Z')]);
+		}
+		if (off(lookGroup)) {
+			sections.push(lookButtons.map(entry => item(entry.kind === 'light' ? S.light : S.dark, entry.kind === 'light' ? 'sun' : 'moon', () => setLook(entry.kind), '', entry.kind === look)));
+		}
+		if (off(viewGroup)) {
+			sections.push([
+				item(S.devices, 'device', () => devicesButton.click(), '', state.devices),
+				item(S.flows, 'flow', () => flowsButton.click(), '', state.flows),
+				item(S.minimap, 'map', () => minimapButton.click(), '', state.minimap),
+			]);
+		}
+		const zoomItems = [
+			// allow-any-unicode-next-line
+			off(zoomOutButton) && item(S.zoomOut, 'minus', () => zoomStep(0.8), '−'),
+			off(zoomInButton) && item(S.zoomIn, 'plus', () => zoomStep(1.25), '+'),
+			// allow-any-unicode-next-line
+			off(fitButton) && item(S.fit, 'fit', () => fitAll(), '⇧1'),
+		].filter((row): row is HTMLButtonElement => !!row);
+		if (zoomItems.length) {
+			sections.push(zoomItems);
+		}
+		const menu = el('div', 'cv-menu cv-glass');
+		menu.setAttribute('role', 'menu');
+		menu.setAttribute('aria-label', S.more);
+		sections.forEach((rows, index) => {
+			if (index) {
+				menu.append(el('div', 'cv-menu-sep'));
+			}
+			menu.append(...rows);
+		});
+		menu.addEventListener('pointerdown', event => event.stopPropagation());
+		menu.addEventListener('wheel', event => event.stopPropagation());
+		stage.append(menu);
+		moreMenu = menu;
+		moreButton.setAttribute('aria-expanded', 'true');
+		// Under the button, its right edges lined up (Scratch's menu), kept inside the canvas.
+		const anchor = moreButton.getBoundingClientRect();
+		const box = stage.getBoundingClientRect();
+		menu.style.top = `${anchor.bottom - box.top + 6}px`;
+		menu.style.left = `${clamp(anchor.right - box.left - menu.offsetWidth, 8, Math.max(8, stage.clientWidth - menu.offsetWidth - 8))}px`;
+	}
+	doc.addEventListener('pointerdown', event => {
+		if (moreMenu && !moreButton.contains(event.target as Node)) {
+			closeMoreMenu();
+		}
+	}, true);
+	doc.addEventListener('keydown', event => {
+		if (moreMenu && event.key === 'Escape') {
+			event.preventDefault();
+			event.stopPropagation();
+			closeMoreMenu();
+		}
+	}, true);
+
+	/**
+	 * Scratch's ScratchToolbar.fit: keeps the tools on the top row, clear of both sides. The title's
+	 * last change goes first, then the labels on the right, then the title. Still too narrow, the
+	 * tools centre in the room between the side bars, and the extras move to "more" one by one
+	 * (undo, the light/dark switch, the view toggles, then the zoom steps and fit) until they fit.
+	 * Measured, so it holds for any title and width.
+	 */
+	const BAR_FOLDS = ['cv-fold-change', 'cv-fold-labels', 'cv-fold-title'];
+	const BAR_OVERFLOW: readonly (readonly HTMLElement[])[] = [[undoButton, undoSep], [lookGroup], [viewGroup], [zoomOutButton], [zoomInButton], [fitButton]];
+	const overflowKey = () => BAR_OVERFLOW.map(group => group[0].classList.contains('cv-overflowed') ? 1 : 0).join('');
+	function fitBars(): void {
+		const before = overflowKey();
+		layoutBars();
+		// An open "more" lists what the bar left out; it goes stale only when that changes.
+		if (moreMenu && overflowKey() !== before) {
+			closeMoreMenu();
+		}
+	}
+	function layoutBars(): void {
+		const width = stage.clientWidth;
+		if (!barsBuilt || !width) {
+			return;
+		}
+		root!.classList.remove(...BAR_FOLDS);
+		toolbar.style.removeProperty('--cv-tools-shift');
+		for (const node of BAR_OVERFLOW.flat()) {
+			node.classList.remove('cv-overflowed');
+		}
+		moreSep.hidden = moreButton.hidden = true;
+		const centred = () => {
+			const side = (width - toolbar.offsetWidth) / 2 - 8;
+			return side >= 12 + titleBox.offsetWidth && side >= 12 + actions.offsetWidth;
+		};
+		for (const step of BAR_FOLDS) {
+			if (centred()) {
+				return;
+			}
+			root!.classList.add(step);
+		}
+		const room = () => width - (12 + titleBox.offsetWidth + 8) - (actions.offsetWidth + 8 + 12);
+		for (let i = 0; !centred() && toolbar.offsetWidth > room() && i < BAR_OVERFLOW.length; i++) {
+			for (const node of BAR_OVERFLOW[i]) {
+				node.classList.add('cv-overflowed');
+			}
+			moreSep.hidden = moreButton.hidden = false;
+		}
+		if (!centred()) {
+			toolbar.style.setProperty('--cv-tools-shift', `${Math.round(12 + titleBox.offsetWidth + 8 + room() / 2 - width / 2)}px`);
+		}
+	}
+	barsBuilt = true;
+	if (typeof win.ResizeObserver === 'function') {
+		const barsObserver = new win.ResizeObserver(() => fitBars());
+		for (const node of [stage, titleBox, actions]) {
+			barsObserver.observe(node);
+		}
+	}
 
 	const hint = el('div', 'cv-hint cv-glass');
 	stage.append(hint);
@@ -3133,7 +3627,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 		const r = viewportRect();
 		const x = clamp(s.x + b.w * cam.z / 2, selbar.offsetWidth / 2 + 8, r.width - selbar.offsetWidth / 2 - 8);
 		const y = s.y - 34;
-		selbar.style.visibility = y < 56 || y > r.height ? 'hidden' : 'visible';
+		selbar.style.visibility = y < underBars() + 36 || y > r.height ? 'hidden' : 'visible';
 		selbar.style.transform = `translate(${x}px,${y}px) translate(-50%,-100%)`;
 	}
 
@@ -3148,6 +3642,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 			sendBatch.classList.add('bump');
 		}
 		sentCount = ready;
+		fitBars();
 		for (const v of views.values()) {
 			v.rects.clear();
 		}
@@ -3210,7 +3705,7 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 	}
 
 	win.addEventListener('message', event => {
-		const data = event.data as { type?: unknown; op?: unknown; id?: unknown; doc?: ICanvasDoc; origin?: string; frame?: string; comment?: unknown; show?: unknown; on?: unknown; layers?: unknown; comments?: ICanvasComment[] | boolean; frames?: ICanvasLayout[] } | null;
+		const data = event.data as { type?: unknown; op?: unknown; id?: unknown; doc?: ICanvasDoc; origin?: string; frame?: string; comment?: unknown; show?: unknown; on?: unknown; layers?: unknown; comments?: ICanvasComment[] | boolean; frames?: ICanvasLayout[]; text?: unknown; send?: unknown } | null;
 		if (!data || data.type !== 'volt-canvas' || (data.id !== undefined && data.id !== model.id)) {
 			return;
 		}
@@ -3265,6 +3760,16 @@ export function designCanvasRuntime(win: Window & typeof globalThis, frameDocume
 				return;
 			case 'batch':
 				setBatch(!!data.on, false);
+				return;
+			// The host's comment composer (hostComposer): Add or Send, Delete, closed.
+			case 'compose-commit':
+				commitHostDraft(typeof data.text === 'string' ? data.text : '', data.send === true);
+				return;
+			case 'compose-delete':
+				deleteHostDraft();
+				return;
+			case 'compose-cancel':
+				closeHostDraft(false);
 				return;
 		}
 	});

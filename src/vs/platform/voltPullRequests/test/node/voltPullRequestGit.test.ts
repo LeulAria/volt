@@ -10,7 +10,7 @@ import { tmpdir } from 'os';
 import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { getRandomTestPath } from '../../../../base/test/node/testUtils.js';
-import { voltPrErrorMessage } from '../../common/voltPullRequests.js';
+import { voltPrErrorCode, voltPrErrorMessage } from '../../common/voltPullRequests.js';
 import { VoltPullRequestService } from '../../node/voltPullRequestService.js';
 
 /**
@@ -111,6 +111,29 @@ suite('Volt pull requests: local git', function () {
 		await assert.rejects(service.commit({ folder: work, message: 'x', newBranch: '-bad' }), /Not a valid branch name/);
 	});
 
+	test('rename keeps the changes, drops an upstream under the old name, and refuses a taken name', async () => {
+		git(work, 'checkout', '-q', '-b', 'volt/f7175242');
+		writeFileSync(join(work, 'a.txt'), 'a\n');
+		git(work, 'add', '-A');
+		git(work, 'commit', '-q', '-m', 'Add a');
+		git(work, 'push', '-q', '-u', 'origin', 'volt/f7175242');
+		writeFileSync(join(work, 'b.txt'), 'b\n');
+
+		assert.deepStrictEqual(await service.renameBranch({ folder: work, name: 'feat/add-a' }), { previous: 'volt/f7175242', branch: 'feat/add-a' });
+		assert.strictEqual(git(work, 'symbolic-ref', '--short', 'HEAD'), 'feat/add-a');
+		const status = await service.gitStatus(work);
+		assert.strictEqual(status?.upstream, undefined, 'the old name\'s upstream is gone, so a push publishes the new name');
+		assert.deepStrictEqual(status?.files.map(file => file.path), ['b.txt'], 'uncommitted work comes along');
+
+		const pushed = await service.push({ folder: work });
+		assert.strictEqual(pushed.branch, 'feat/add-a');
+		assert.ok(git(bare, 'branch', '--list', 'feat/add-a'), 'pushed under the new name');
+
+		assert.deepStrictEqual(await service.renameBranch({ folder: work, name: 'feat/add-a' }), { previous: 'feat/add-a', branch: 'feat/add-a' }, 'the same name is a no-op');
+		await assert.rejects(service.renameBranch({ folder: work, name: 'main' }), /already exists/);
+		await assert.rejects(service.renameBranch({ folder: work, name: '-bad' }), /Not a valid branch name/);
+	});
+
 	test('pull fast-forwards from the upstream and says when there is nothing new', async () => {
 		const other = join(root, 'other');
 		git(root, 'clone', '-q', bare, other);
@@ -180,6 +203,29 @@ suite('Volt pull requests: local git', function () {
 		assert.strictEqual(git(work, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
 		assert.strictEqual(git(work, 'branch', '--list', 'volt/blocked'), '');
 		assert.ok(git(work, 'status', '--porcelain').includes('a.txt'), 'the change is still there');
+	});
+
+	test('a failing commit hook says why, and skipHooks commits past it', async () => {
+		writeFileSync(join(work, 'a.txt'), 'a\n');
+		mkdirSync(join(work, '.git', 'hooks'), { recursive: true });
+		const hook = [
+			'#!/bin/sh',
+			'echo "This is not the package you are looking for: please go to http://nvm.sh" >&2',
+			'echo "> husky - npm run -s precommit"',
+			'echo "Error: Cannot find module \'gulp-filter\'" >&2',
+			'echo "    at Module._resolveFilename (node:internal/modules/cjs/loader:1420:15)" >&2',
+			'exit 1',
+		].join('\n');
+		writeFileSync(join(work, '.git', 'hooks', 'pre-commit'), `${hook}\n`, { mode: 0o755 });
+		await assert.rejects(service.commit({ folder: work, message: 'Hooked', paths: ['a.txt'] }), (err: unknown) => {
+			assert.strictEqual(voltPrErrorCode(err), 'hookFailed');
+			assert.strictEqual(voltPrErrorMessage(err), 'git commit failed in the pre-commit hook: Error: Cannot find module \'gulp-filter\'');
+			return true;
+		});
+		assert.ok(git(work, 'status', '--porcelain').includes('a.txt'), 'nothing was committed');
+		const result = await service.commit({ folder: work, message: 'Hooked', paths: ['a.txt'], skipHooks: true });
+		assert.strictEqual(result.subject, 'Hooked');
+		assert.strictEqual(git(work, 'status', '--porcelain'), '');
 	});
 
 	test('an empty remote: a new branch counts its commits as ahead', async () => {

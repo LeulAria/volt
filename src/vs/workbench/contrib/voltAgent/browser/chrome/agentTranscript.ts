@@ -12,12 +12,13 @@ import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/
 import { AgentBlock, AgentSegment, createPlanBlock, humanTerminalTitle, IAgentActivityItem, IAgentCompaction, IFileChangeBlock, ITerminalBlock, IToolBlock, isExploreTool, isPhantomFileBlock, isPlanTool, IVisualBlock, parsePlanToolInput, splitMarkdownToBlocks, SupervisionKind, terminalCommandLabels } from '../blocks/agentBlocks.js';
 import type { AgentToolDensity } from '../../common/agentAppearanceSettings.js';
 import { computeChangeStats } from '../review/fileChangePreviewModel.js';
-import { isSignInNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
-import { fileChangeSource, partitionAssistantText } from './agentTimeline.js';
+import { isRetryNotice, isSignInNotice } from '../../../../services/voltRuntime/common/acpNotices.js';
+import { classifySupervisionNotice, fileChangeSource, partitionAssistantText } from './agentTimeline.js';
 import { CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, RENDER_CHART_TOOL_NAME, SILENT_VISUAL_TOOL_NAMES, VISUAL_TOOL_NAMES } from '../../../../services/voltRuntime/common/hostTools.js';
 import { peekCanvasInput } from '../visuals/canvas/canvasModel.js';
 import { chartLoaderShape } from '../visuals/agentDotLoader.js';
-import { friendlyToolTitle } from '../blocks/agentHostToolActivity.js';
+import { friendlyToolTitle, hostToolStepKind } from '../blocks/agentHostToolActivity.js';
+import type { IAgentDisplayMention } from '../composer/agentMentions.js';
 
 /**
  * Cursor's transcript model. Between two pieces of assistant text, every tool call and
@@ -68,7 +69,7 @@ export type TranscriptRow =
 	| { readonly kind: 'subagents'; readonly id: string; readonly items: readonly { readonly id: string; readonly tool: IToolBlock; readonly live: boolean }[]; readonly live: boolean }
 	| { readonly kind: 'notice'; readonly id: string; readonly severity: 'info' | 'warning' | 'error'; readonly title: string; readonly description?: string; readonly supervision?: SupervisionKind; readonly sandbox?: ISandboxDenial }
 	/** A message the user sent into the running turn ("Steer"); the agent read it between steps. */
-	| { readonly kind: 'steer'; readonly id: string; readonly text: string }
+	| { readonly kind: 'steer'; readonly id: string; readonly text: string; readonly mentions?: readonly IAgentDisplayMention[] }
 	/** "Compacting context" while the agent summarizes the chat, then "Context compacted". */
 	| { readonly kind: 'compaction'; readonly id: string; readonly compaction: IAgentCompaction };
 
@@ -76,6 +77,8 @@ export type TranscriptRow =
 export interface ITranscriptSteer {
 	readonly text: string;
 	readonly at: number;
+	/** The composer's chips in `text` (a pasted image with its bytes), drawn as in a sent message. */
+	readonly mentions?: readonly IAgentDisplayMention[];
 }
 
 const SUBAGENT_RE = /^(task|agent|subagent|delegate|run_agent|spawn_agent)$/i;
@@ -111,7 +114,7 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 			const steer = pendingSteers.shift()!;
 			flushReply();
 			flushSteps();
-			rows.push({ kind: 'steer', id: `steer-${steerIndex++}`, text: steer.text.trim() });
+			rows.push({ kind: 'steer', id: `steer-${steerIndex++}`, text: steer.text.trim(), ...(steer.mentions?.length ? { mentions: steer.mentions } : {}) });
 		}
 	};
 
@@ -183,6 +186,15 @@ export function buildTranscriptRows(segments: readonly AgentSegment[] | undefine
 				rows.push({ kind: 'compaction', id: `compaction-${segment.compaction.id}`, compaction: segment.compaction });
 				break;
 			case 'notice':
+				// Chats saved before retries moved to the status line.
+				if (isRetryNotice(segment.title)) {
+					break;
+				}
+				// Supervisor findings the run carried on from (loop, stall, budget) are for the trajectory;
+				// the chat shows one only when it ended the run.
+				if (segment.severity !== 'error' && (segment.supervision ?? classifySupervisionNotice(segment.title))) {
+					break;
+				}
 				flushReply();
 				flushSteps();
 				rows.push({ kind: 'notice', id: `notice-${textIndex++}`, severity: segment.severity, title: segment.title, ...(segment.description ? { description: segment.description } : {}), ...(segment.supervision ? { supervision: segment.supervision } : {}), ...(segment.sandbox ? { sandbox: segment.sandbox } : {}) });
@@ -440,7 +452,8 @@ function activityStep(id: string, item: IAgentActivityItem): ITranscriptStep {
 		return { id, kind: 'visual', action: item.label, detail: item.detail, item };
 	}
 	if (item.browserTool) {
-		return { id, kind: 'browser', action: item.label, detail: item.detail, item };
+		// Commit review, pull request, thread and memory tools are Volt tools too, but no browser actions.
+		return { id, kind: hostToolStepKind(item.browserTool) ?? 'browser', action: item.label, detail: item.detail, item };
 	}
 	if (item.kind === 'browser') {
 		// Web search and fetch are lookups, counted with searches as Cursor does; only the in-app browser counts as browser actions.
@@ -449,7 +462,8 @@ function activityStep(id: string, item: IAgentActivityItem): ITranscriptStep {
 	if (item.kind === 'thought') {
 		return thoughtStep(id, item.text ?? '', undefined);
 	}
-	return { id, kind: item.kind, action: item.label, detail: cleanDetail(item.detail), item };
+	// Saved chats can hold a raw MCP name as the label ("mcp__volt__wait_tasks").
+	return { id, kind: item.kind, action: friendlyToolTitle(item.label) ?? item.label, detail: cleanDetail(item.detail), item };
 }
 
 /** Drops a bogus " in <scope>" that older chats derived from half-streamed glob input. */

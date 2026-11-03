@@ -189,6 +189,29 @@ export function ghErrorText(stderr: string): string {
 	return lines.slice(0, 3).join(' ').replace(/^gh:\s*/i, '').slice(0, 400) || 'The GitHub CLI failed.';
 }
 
+/** Lines a hook prints that say nothing about why it failed: version managers, husky's banner, stacks. */
+const HOOK_NOISE = [
+	/^this is not the package you are looking for/i,
+	/^found '.*' with version/i,
+	/^now using node/i,
+	/^>\s*husky\b/i,
+	/^at\s/,
+	/^node:internal/,
+	/^\^+$/,
+	/^throw\s/,
+	/^require stack:?$/i,
+	/^-\s+\//,
+	/^\d+\s*\|/,
+	/^node\.js v\d/i,
+];
+
+/** What a failed commit hook printed that says why: the error lines first, else its last lines. */
+export function hookFailureText(output: string): string {
+	const lines = output.replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/).map(line => line.trim()).filter(line => line && !HOOK_NOISE.some(noise => noise.test(line)));
+	const errors = lines.filter(line => /error|fail|cannot|can't|not found|denied|invalid|missing/i.test(line));
+	return (errors.length ? errors.slice(0, 2) : lines.slice(-2)).join(' ').slice(0, 300);
+}
+
 //#endregion
 
 //#region GraphQL

@@ -3,9 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { DecorationOptions, l10n, Position, Range, TextEditor, TextEditorChange, TextEditorDecorationType, TextEditorChangeKind, ThemeColor, Uri, window, workspace, EventEmitter, ConfigurationChangeEvent, StatusBarItem, StatusBarAlignment, Command, MarkdownString, languages, HoverProvider, CancellationToken, Hover, TextDocument } from 'vscode';
+import { DecorationOptions, l10n, Position, Range, TextEditor, TextEditorChange, TextEditorDecorationType, TextEditorChangeKind, ThemeColor, Uri, window, workspace, EventEmitter, ConfigurationChangeEvent, StatusBarItem, StatusBarAlignment, Command, MarkdownString, languages, HoverProvider, CancellationToken, CancellationTokenSource, Hover, TextDocument } from 'vscode';
 import { Model } from './model';
-import { dispose, fromNow, getCommitShortHash, IDisposable, truncate } from './util';
+import { dispose, fromNow, getCommitShortHash, IDisposable, relativePath, truncate } from './util';
 import { Repository } from './repository';
 import { throttle } from './decorators';
 import { BlameInformation, Commit } from './git';
@@ -15,8 +15,24 @@ import { getWorkingTreeAndIndexDiffInformation, getWorkingTreeDiffInformation } 
 import { provideSourceControlHistoryItemAvatar, provideSourceControlHistoryItemHoverCommands, provideSourceControlHistoryItemMessageLinks } from './historyItemDetailsProvider';
 import { AvatarQuery, AvatarQueryCommit } from './api/git';
 import { LRUCache } from './cache';
+import { detectCodingAgents } from './agentAttribution';
 
 const AVATAR_SIZE = 20;
+
+/** The subject length in the inline editor decoration. */
+const EDITOR_DECORATION_SUBJECT_MAX_LENGTH = 60;
+
+/** How long the hover waits for the branch of a commit (`git name-rev`). */
+const BRANCH_NAME_TIMEOUT = 800;
+
+/** Arguments of the `git.blame.openFileChanges` command, after the document and the commit hash. */
+export interface BlameFileChangesDetails {
+	/** The repository-relative path of the file in the commit. */
+	readonly path?: string;
+	/** The parent commit and the path of the file in it; missing when the commit added the file. */
+	readonly previousHash?: string;
+	readonly previousPath?: string;
+}
 
 function lineRangesContainLine(changes: readonly TextEditorChange[], lineNumber: number): boolean {
 	return changes.some(c => c.modified.startLineNumber <= lineNumber && lineNumber < c.modified.endLineNumberExclusive);
@@ -81,7 +97,8 @@ function isResourceBlameInformationEqual(a: ResourceBlameInformation | undefined
 	}
 
 	for (let index = 0; index < a.blameInformation.length; index++) {
-		if (a.blameInformation[index].lineNumber !== b.blameInformation[index].lineNumber) {
+		if (a.blameInformation[index].lineNumber !== b.blameInformation[index].lineNumber ||
+			a.blameInformation[index].blameLineNumber !== b.blameInformation[index].blameLineNumber) {
 			return false;
 		}
 
@@ -116,12 +133,25 @@ type BlameInformationTemplateTokens = {
 
 interface ResourceBlameInformation {
 	readonly resource: Uri;
+	readonly repository?: Repository;
 	readonly blameInformation: readonly LineBlameInformation[];
 }
 
 interface LineBlameInformation {
+	/** 0-based line of the editor. */
 	readonly lineNumber: number;
+	/** 1-based line in the blamed revision of the file (HEAD for files on disk). */
+	readonly blameLineNumber?: number;
 	readonly blameInformation: BlameInformation | string;
+}
+
+function getRepositoryRelativePath(repository: Repository, uri: Uri): string {
+	const fsPath = isGitUri(uri) ? fromGitUri(uri).path : uri.fsPath;
+	return relativePath(repository.root, fsPath).replace(/\\/g, '/');
+}
+
+function commandLink(label: string, command: string, args: unknown, title: string): string {
+	return `[${label}](command:${command}?${encodeURIComponent(JSON.stringify(args))} "${title}")`;
 }
 
 class GitBlameInformationCache {
@@ -173,6 +203,13 @@ export class GitBlameController {
 	private readonly _commitInformationCache = new LRUCache<string, Commit>(100);
 	private readonly _repositoryBlameCache = new GitBlameInformationCache();
 
+	/** `user.email` of each repository, lower case; an empty string when it is not set. */
+	private readonly _userEmails = new Map<Repository, string>();
+	private readonly _userEmailRequests = new Map<Repository, Promise<string>>();
+
+	/** The local branch of a commit per `root\0hash`; `null` when there is none (or it took too long). */
+	private readonly _branchNameCache = new LRUCache<string, string | null>(500);
+
 	private _editorDecoration: GitBlameEditorDecoration | undefined;
 	private _statusBarItem: GitBlameStatusBarItem | undefined;
 
@@ -185,12 +222,12 @@ export class GitBlameController {
 		this._onDidChangeConfiguration();
 	}
 
-	formatBlameInformationMessage(documentUri: Uri, template: string, blameInformation: BlameInformation): string {
+	formatBlameInformationMessage(documentUri: Uri, template: string, blameInformation: BlameInformation, repository?: Repository, subjectMaxLength = this._subjectMaxLength): string {
 		const templateTokens = {
 			hash: blameInformation.hash,
 			hashShort: getCommitShortHash(documentUri, blameInformation.hash),
-			subject: emojify(truncate(blameInformation.subject ?? '', this._subjectMaxLength)),
-			authorName: blameInformation.authorName ?? '',
+			subject: emojify(truncate(blameInformation.subject ?? '', subjectMaxLength)),
+			authorName: this._getAuthorDisplayName(repository, blameInformation.authorName, blameInformation.authorEmail) ?? '',
 			authorEmail: blameInformation.authorEmail ?? '',
 			authorDate: new Date(blameInformation.authorDate ?? new Date()).toLocaleString(),
 			authorDateAgo: fromNow(blameInformation.authorDate ?? new Date(), true, true)
@@ -201,14 +238,21 @@ export class GitBlameController {
 		});
 	}
 
-	async getBlameInformationHover(documentUri: Uri, blameInformation: BlameInformation): Promise<MarkdownString> {
+	/**
+	 * @param lineNumber 1-based line in the blamed revision of the file, for the line history and explain actions.
+	 */
+	async getBlameInformationHover(documentUri: Uri, blameInformation: BlameInformation, lineNumber?: number): Promise<MarkdownString> {
 		const remoteHoverCommands: Command[] = [];
 		let commitAvatar: string | undefined;
 		let commitInformation: Commit | undefined;
 		let commitMessageWithLinks: string | undefined;
+		let branchName: string | undefined;
 
 		const repository = this._model.getRepository(documentUri);
 		if (repository) {
+			// The branch is only needed here, and resolved next to the other details
+			const branchNamePromise = this._getBranchName(repository, blameInformation.hash);
+
 			try {
 				// Commit details
 				commitInformation = this._commitInformationCache.get(blameInformation.hash);
@@ -240,16 +284,28 @@ export class GitBlameController {
 			// Message links
 			commitMessageWithLinks = await provideSourceControlHistoryItemMessageLinks(
 				this._model, repository, commitInformation?.message ?? blameInformation.subject ?? '');
+
+			branchName = await branchNamePromise;
 		}
 
 		const markdownString = new MarkdownString();
-		markdownString.isTrusted = true;
+		markdownString.isTrusted = {
+			enabledCommands: [
+				'git.viewCommit',
+				'git.copyContentToClipboard',
+				'git.blame.openFileChanges',
+				'volt.gitGraph.open',
+				'volt.gitGraph.askAgent',
+				'workbench.action.openSettings',
+				...remoteHoverCommands.map(command => command.command)
+			]
+		};
 		markdownString.supportThemeIcons = true;
 
 		// Author, date
 		const hash = commitInformation?.hash ?? blameInformation.hash;
-		const authorName = commitInformation?.authorName ?? blameInformation.authorName;
 		const authorEmail = commitInformation?.authorEmail ?? blameInformation.authorEmail;
+		const authorName = this._getAuthorDisplayName(repository, commitInformation?.authorName ?? blameInformation.authorName, authorEmail);
 		const authorDate = commitInformation?.authorDate ?? blameInformation.authorDate;
 		const avatar = commitAvatar ? `![${authorName}](${commitAvatar}|width=${AVATAR_SIZE},height=${AVATAR_SIZE})` : '$(account)';
 
@@ -269,12 +325,29 @@ export class GitBlameController {
 				markdownString.appendMarkdown(`, $(history) ${fromNow(authorDate, true, true)} (${dateString})`);
 			}
 
+			if (branchName) {
+				markdownString.appendMarkdown(`&nbsp;&nbsp;$(git-branch) ${branchName.replace(/[\\`*_{}[\]()#+!|<>~]/g, '\\$&')}`);
+			}
+
 			markdownString.appendMarkdown('\n\n');
 		}
 
+		// Coding agents credited in the `Co-authored-by:` trailers
+		const codingAgents = detectCodingAgents(commitInformation?.message ?? '');
+		if (codingAgents.length > 0) {
+			const agentNames = codingAgents.map(agent => `**${agent.name}**`).join(', ');
+			markdownString.appendMarkdown(`$(sparkle) ${l10n.t('Written with {0}', agentNames)}\n\n`);
+		}
+
 		// Subject | Message
-		const message = commitMessageWithLinks ?? commitInformation?.message ?? blameInformation.subject ?? '';
-		markdownString.appendMarkdown(`${emojify(message.replace(/\r\n|\r|\n/g, '\n\n'))}\n\n`);
+		// A plain message is text, not Markdown (a merge's "# Conflicts:" lines would be headings);
+		// the linked one comes from a hover provider as Markdown.
+		if (commitMessageWithLinks) {
+			markdownString.appendMarkdown(`${emojify(commitMessageWithLinks.replace(/\r\n|\r|\n/g, '\n\n'))}\n\n`);
+		} else {
+			markdownString.appendText(emojify((commitInformation?.message ?? blameInformation.subject ?? '').replace(/\r\n|\r/g, '\n')));
+			markdownString.appendMarkdown('\n\n');
+		}
 		markdownString.appendMarkdown(`---\n\n`);
 
 		// Short stats
@@ -303,6 +376,30 @@ export class GitBlameController {
 		markdownString.appendMarkdown('&nbsp;');
 		markdownString.appendMarkdown(`[$(copy)](command:git.copyContentToClipboard?${encodeURIComponent(JSON.stringify(hash))} "${l10n.t('Copy Commit Hash')}")`);
 
+		// File and line actions
+		if (repository) {
+			const repositoryRoot = repository.root;
+			const relPath = getRepositoryRelativePath(repository, documentUri);
+			// History query values with spaces are quoted
+			const queryPath = /\s/.test(relPath) ? `"${relPath}"` : relPath;
+			const fileChangesDetails = this._getFileChangesDetails(blameInformation);
+
+			const actions = [
+				commandLink(`$(diff) ${l10n.t('Open Changes')}`, 'git.blame.openFileChanges', [documentUri, hash, documentUri, fileChangesDetails], l10n.t('Open the changes of this file in the commit')),
+				commandLink(`$(type-hierarchy) ${l10n.t('Open in Git Graph')}`, 'volt.gitGraph.open', [{ repositoryRoot, revealCommit: hash }], l10n.t('Reveal the commit in the Git Graph')),
+				commandLink(`$(history) ${l10n.t('File History')}`, 'volt.gitGraph.open', [{ repositoryRoot, query: `path:${queryPath}` }], l10n.t('Show the history of this file')),
+			];
+
+			if (typeof lineNumber === 'number') {
+				actions.push(
+					commandLink(`$(list-flat) ${l10n.t('Line History')}`, 'volt.gitGraph.open', [{ repositoryRoot, query: `lines:${lineNumber}-${lineNumber}:${queryPath}` }], l10n.t('Show the history of this line')),
+					commandLink(`$(sparkle) ${l10n.t('Explain')}`, 'volt.gitGraph.askAgent', [{ repositoryRoot, action: 'explain', commit: hash, path: relPath, startLine: lineNumber, endLine: lineNumber }], l10n.t('Ask an agent to explain this change')));
+			}
+
+			markdownString.appendMarkdown('&nbsp;&nbsp;|&nbsp;&nbsp;');
+			markdownString.appendMarkdown(actions.join('&nbsp;&nbsp;'));
+		}
+
 		// Remote hover commands
 		if (remoteHoverCommands.length > 0) {
 			markdownString.appendMarkdown('&nbsp;&nbsp;|&nbsp;&nbsp;');
@@ -316,6 +413,102 @@ export class GitBlameController {
 		markdownString.appendMarkdown(`[$(gear)](command:workbench.action.openSettings?%5B%22git.blame%22%5D "${l10n.t('Open Settings')}")`);
 
 		return markdownString;
+	}
+
+	/** The hover of a line that is not committed yet: the message and the settings. */
+	getUncommittedHover(message: string): MarkdownString {
+		const markdownString = new MarkdownString();
+		markdownString.isTrusted = { enabledCommands: ['workbench.action.openSettings'] };
+		markdownString.supportThemeIcons = true;
+
+		markdownString.appendText(message);
+		markdownString.appendMarkdown('\n\n---\n\n');
+		markdownString.appendMarkdown(`[$(gear)](command:workbench.action.openSettings?%5B%22git.blame%22%5D "${l10n.t('Open Settings')}")`);
+
+		return markdownString;
+	}
+
+	/** "You" when the author is the repository's `user.email`, the author name otherwise. */
+	private _getAuthorDisplayName(repository: Repository | undefined, authorName: string | undefined, authorEmail: string | undefined): string | undefined {
+		if (repository && authorEmail) {
+			const userEmail = this._userEmails.get(repository);
+			if (userEmail && userEmail === authorEmail.toLowerCase()) {
+				return l10n.t('You');
+			}
+		}
+
+		return authorName;
+	}
+
+	/** Reads `user.email` once per repository; the decorations update when it arrives. */
+	private _ensureUserEmail(repository: Repository): void {
+		if (!this._userEmails.has(repository) && !this._userEmailRequests.has(repository)) {
+			this._loadUserEmail(repository);
+		}
+	}
+
+	private _loadUserEmail(repository: Repository): void {
+		const request = repository.getEffectiveConfig('user.email')
+			.then(value => value.trim().toLowerCase(), () => '');
+		this._userEmailRequests.set(repository, request);
+
+		request.then(userEmail => {
+			if (this._userEmailRequests.get(repository) !== request) {
+				// The repository was closed, or a newer request replaced this one
+				return;
+			}
+
+			this._userEmailRequests.delete(repository);
+
+			const previousUserEmail = this._userEmails.get(repository) ?? '';
+			this._userEmails.set(repository, userEmail);
+
+			if (userEmail !== previousUserEmail && this._textEditorBlameInformation?.repository === repository) {
+				this._onDidChangeBlameInformation.fire();
+			}
+		});
+	}
+
+	private async _getBranchName(repository: Repository, hash: string): Promise<string | undefined> {
+		const key = `${repository.root}\0${hash}`;
+		const cached = this._branchNameCache.get(key);
+		if (cached !== undefined) {
+			return cached ?? undefined;
+		}
+
+		const cancellationTokenSource = new CancellationTokenSource();
+		const timeout = setTimeout(() => cancellationTokenSource.cancel(), BRANCH_NAME_TIMEOUT);
+
+		try {
+			const branchName = await repository.getBranchNameOfCommit(hash, cancellationTokenSource.token);
+			this._branchNameCache.set(key, branchName ?? null);
+			return branchName;
+		} catch {
+			// Timed out, or no branch contains the commit
+			this._branchNameCache.set(key, null);
+			return undefined;
+		} finally {
+			clearTimeout(timeout);
+			cancellationTokenSource.dispose();
+		}
+	}
+
+	private _getFileChangesDetails(blameInformation: BlameInformation): BlameFileChangesDetails | undefined {
+		// Quoted paths (unusual characters) are left to the command, which uses the document path
+		if (!blameInformation.filename || blameInformation.filename.startsWith('"')) {
+			return undefined;
+		}
+
+		const previous = blameInformation.previous;
+		if (previous?.filename.startsWith('"')) {
+			return undefined;
+		}
+
+		return {
+			path: blameInformation.filename,
+			previousHash: previous?.hash,
+			previousPath: previous?.filename
+		};
 	}
 
 	private _onDidChangeConfiguration(e?: ConfigurationChangeEvent): void {
@@ -373,6 +566,13 @@ export class GitBlameController {
 		const repositoryDisposables: IDisposable[] = [];
 		repository.onDidRunGitStatus(() => this._onDidRunGitStatus(repository), this, repositoryDisposables);
 
+		// Re-read `user.email` when the repository config changes
+		repository.onDidChangeRepository(uri => {
+			if (/[\\/]config$/.test(uri.path) && (this._userEmails.has(repository) || this._userEmailRequests.has(repository))) {
+				this._loadUserEmail(repository);
+			}
+		}, this, repositoryDisposables);
+
 		this._repositoryDisposables.set(repository, repositoryDisposables);
 	}
 
@@ -384,6 +584,8 @@ export class GitBlameController {
 
 		this._repositoryDisposables.delete(repository);
 		this._repositoryBlameCache.delete(repository);
+		this._userEmails.delete(repository);
+		this._userEmailRequests.delete(repository);
 	}
 
 	private _onDidRunGitStatus(repository: Repository): void {
@@ -432,6 +634,8 @@ export class GitBlameController {
 		if (!repository || !repository.HEAD?.commit) {
 			return;
 		}
+
+		this._ensureUserEmail(repository);
 
 		// Only support resources with `file` and `git` schemes
 		if (!isResourceSchemeSupported(textEditor.document.uri)) {
@@ -533,15 +737,15 @@ export class GitBlameController {
 			// Check if the line is contained in the working tree diff information
 			if (lineRangesContainLine(workingTreeChanges, lineNumber + 1)) {
 				if (reason === 'selection') {
-					// Only show the `Not Committed Yet` message upon selection change due to navigation
-					lineBlameInformation.push({ lineNumber, blameInformation: l10n.t('Not Committed Yet') });
+					// Only show the `Uncommitted changes` message upon selection change due to navigation
+					lineBlameInformation.push({ lineNumber, blameInformation: l10n.t('You, Uncommitted changes') });
 				}
 				continue;
 			}
 
 			// Check if the line is contained in the working tree + index diff information
 			if (lineRangesContainLine(workingTreeAndIndexChanges ?? [], lineNumber + 1)) {
-				lineBlameInformation.push({ lineNumber, blameInformation: l10n.t('Not Committed Yet (Staged)') });
+				lineBlameInformation.push({ lineNumber, blameInformation: l10n.t('You, Uncommitted changes (Staged)') });
 				continue;
 			}
 
@@ -554,12 +758,13 @@ export class GitBlameController {
 			});
 
 			if (blameInformation) {
-				lineBlameInformation.push({ lineNumber, blameInformation });
+				lineBlameInformation.push({ lineNumber, blameLineNumber: lineNumberWithDiff, blameInformation });
 			}
 		}
 
 		this.textEditorBlameInformation = {
 			resource: textEditor.document.uri,
+			repository,
 			blameInformation: lineBlameInformation
 		};
 	}
@@ -584,7 +789,9 @@ class GitBlameEditorDecoration implements HoverProvider {
 	constructor(private readonly _controller: GitBlameController) {
 		this._decoration = window.createTextEditorDecorationType({
 			after: {
-				color: new ThemeColor('git.blame.editorDecorationForeground')
+				color: new ThemeColor('git.blame.editorDecorationForeground'),
+				fontStyle: 'normal',
+				fontWeight: 'normal'
 			}
 		});
 		this._disposables.push(this._decoration);
@@ -615,11 +822,16 @@ class GitBlameEditorDecoration implements HoverProvider {
 		const blameInformation = this._controller.textEditorBlameInformation?.blameInformation;
 		const lineBlameInformation = blameInformation?.find(blame => blame.lineNumber === position.line);
 
-		if (!lineBlameInformation || typeof lineBlameInformation.blameInformation === 'string') {
+		if (!lineBlameInformation) {
 			return undefined;
 		}
 
-		const contents = await this._controller.getBlameInformationHover(textEditor.document.uri, lineBlameInformation.blameInformation);
+		if (typeof lineBlameInformation.blameInformation === 'string') {
+			const range = getEditorDecorationRange(position.line);
+			return { range, contents: [this._controller.getUncommittedHover(lineBlameInformation.blameInformation)] };
+		}
+
+		const contents = await this._controller.getBlameInformationHover(textEditor.document.uri, lineBlameInformation.blameInformation, lineBlameInformation.blameLineNumber);
 
 		if (!contents || token.isCancellationRequested) {
 			return undefined;
@@ -637,7 +849,7 @@ class GitBlameEditorDecoration implements HoverProvider {
 
 		// Cache the decoration template
 		const config = workspace.getConfiguration('git');
-		this._template = config.get<string>('blame.editorDecoration.template', '${subject}, ${authorName} (${authorDateAgo})');
+		this._template = config.get<string>('blame.editorDecoration.template', '${authorName}, ${authorDateAgo} • ${subject}');
 
 		this._registerHoverProvider();
 		this._onDidChangeBlameInformation();
@@ -662,7 +874,8 @@ class GitBlameEditorDecoration implements HoverProvider {
 		}
 
 		// Get blame information
-		const blameInformation = this._controller.textEditorBlameInformation?.blameInformation;
+		const resourceBlameInformation = this._controller.textEditorBlameInformation;
+		const blameInformation = resourceBlameInformation?.blameInformation;
 		if (!blameInformation || blameInformation.length === 0) {
 			textEditor.setDecorations(this._decoration, []);
 			return;
@@ -671,7 +884,8 @@ class GitBlameEditorDecoration implements HoverProvider {
 		// Set decorations for the editor
 		const decorations = blameInformation.map(blame => {
 			const contentText = typeof blame.blameInformation !== 'string'
-				? this._controller.formatBlameInformationMessage(textEditor.document.uri, this._template, blame.blameInformation)
+				? this._controller.formatBlameInformationMessage(textEditor.document.uri, this._template, blame.blameInformation,
+					resourceBlameInformation.repository, EDITOR_DECORATION_SUBJECT_MAX_LENGTH)
 				: blame.blameInformation;
 
 			return this._createDecoration(blame.lineNumber, contentText);
@@ -686,7 +900,7 @@ class GitBlameEditorDecoration implements HoverProvider {
 			renderOptions: {
 				after: {
 					contentText,
-					margin: '0 0 0 50px'
+					margin: '0 0 0 3em'
 				}
 			},
 		};
@@ -746,7 +960,8 @@ class GitBlameStatusBarItem {
 			return;
 		}
 
-		const blameInformation = this._controller.textEditorBlameInformation?.blameInformation;
+		const resourceBlameInformation = this._controller.textEditorBlameInformation;
+		const blameInformation = resourceBlameInformation?.blameInformation;
 		if (!blameInformation || blameInformation.length === 0) {
 			this._statusBarItem.hide();
 			return;
@@ -758,11 +973,11 @@ class GitBlameStatusBarItem {
 			this._statusBarItem.command = undefined;
 		} else {
 			this._statusBarItem.text = `$(git-commit) ${this._controller.formatBlameInformationMessage(
-				window.activeTextEditor.document.uri, this._template, blameInformation[0].blameInformation)}`;
+				window.activeTextEditor.document.uri, this._template, blameInformation[0].blameInformation, resourceBlameInformation.repository)}`;
 
 			this._statusBarItem.tooltip2 = (cancellationToken: CancellationToken) => {
 				return this._provideTooltip(window.activeTextEditor!.document.uri,
-					blameInformation[0].blameInformation as BlameInformation, cancellationToken);
+					blameInformation[0].blameInformation as BlameInformation, blameInformation[0].blameLineNumber, cancellationToken);
 			};
 
 			const uri = window.activeTextEditor.document.uri;
@@ -778,12 +993,12 @@ class GitBlameStatusBarItem {
 		this._statusBarItem.show();
 	}
 
-	private async _provideTooltip(uri: Uri, blameInformation: BlameInformation, cancellationToken: CancellationToken): Promise<MarkdownString | undefined> {
+	private async _provideTooltip(uri: Uri, blameInformation: BlameInformation, lineNumber: number | undefined, cancellationToken: CancellationToken): Promise<MarkdownString | undefined> {
 		if (cancellationToken.isCancellationRequested) {
 			return undefined;
 		}
 
-		const tooltip = await this._controller.getBlameInformationHover(uri, blameInformation);
+		const tooltip = await this._controller.getBlameInformationHover(uri, blameInformation, lineNumber);
 		return cancellationToken.isCancellationRequested ? undefined : tooltip;
 	}
 

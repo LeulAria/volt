@@ -8,7 +8,7 @@ import { ActivityIndicator, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/theme';
-import { Button, Icon, T } from '../ui/core';
+import { Button, Icon, T, VoltMark } from '../ui/core';
 
 export function Loading() {
 	const { p } = useTheme();
@@ -28,9 +28,7 @@ export function Welcome() {
 		<View style={{ flex: 1, paddingTop: insets.top + 40, paddingBottom: insets.bottom + 24, paddingHorizontal: 24 }}>
 			<Stack.Screen options={{ headerShown: false }} />
 			<Animated.View entering={FadeIn.duration(400)} style={{ flex: 1, justifyContent: 'center', gap: 16 }}>
-				<View style={{ width: 64, height: 64, borderRadius: 18, backgroundColor: p.primary, alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 20, shadowOffset: { width: 0, height: 10 } }}>
-					<Icon name="bolt" size={30} color={p.onPrimary} />
-				</View>
+				<VoltMark size={64} style={{ shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 20, shadowOffset: { width: 0, height: 10 } }} />
 				<T variant="display" weight="800" style={{ letterSpacing: -1, marginTop: 8 }}>Your agents,{'\n'}in your pocket.</T>
 				<T variant="callout" color={p.fgTertiary}>Pair with Volt on your computer to follow every chat live, answer questions, approve commands and start new work from anywhere.</T>
 				<View style={{ gap: 14, marginTop: 18 }}>

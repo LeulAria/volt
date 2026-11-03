@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { DeferredPromise, raceTimeout } from '../../../../../base/common/async.js';
+import { DeferredPromise } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, toDisposable } from '../../../../../base/common/lifecycle.js';
@@ -19,8 +19,6 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IVoltGitService } from '../../../../../platform/voltGit/common/voltGit.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
-import { IVoltUsageService } from '../../../../../platform/voltUsage/common/voltUsage.js';
-import { IVoltQueryCache } from '../../../../services/voltRuntime/browser/queryCache.js';
 import { IAgentWorktreeService } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentOrchestratorService, IOrchPrompt } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
@@ -40,6 +38,7 @@ import {
 	IRunGroupRollup,
 	IRunGroupRun,
 	IRunGroupStartRequest,
+	IRunPullRequestHandoff,
 	IRunSetup,
 	IRunSetupStep,
 	IRunStats,
@@ -69,7 +68,6 @@ import {
 } from '../../../../services/voltRuntime/common/runGroups/worktreeSetup.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { stashTurnDisplay } from '../orchestration/agentTurnDisplays.js';
-import { limitsQuery, usageQuery } from '../usage/agentUsageModel.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 
@@ -127,7 +125,7 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 		@IFileService private readonly fileService: IFileService,
 		@IEnvironmentService environmentService: IEnvironmentService,
 		@ICommandService private readonly commandService: ICommandService,
-		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@IInstantiationService protected readonly instantiationService: IInstantiationService,
 		@ILogService private readonly logService: ILogService,
 	) {
 		super();
@@ -465,12 +463,12 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 
 	//#region Control
 
-	async stop(groupId: string): Promise<void> {
+	async stop(groupId: string, runId?: string): Promise<void> {
 		const group = this.groups.get(groupId);
 		if (!group) {
 			return;
 		}
-		const plan = runStopPlan(group, runId => this.runStatus(groupId, runId));
+		const plan = runStopPlan(runId ? { runs: group.runs.filter(run => run.id === runId) } : group, id => this.runStatus(groupId, id));
 		for (const runId of plan.abortSetup) {
 			const token = this.setups.get(runId);
 			if (token) {
@@ -655,49 +653,15 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 	}
 
 	async estimate(models: readonly IRunGroupModel[]): Promise<IRunGroupEstimate> {
-		const usage = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltUsageService));
-		const empty: IRunCostHistory = { costPerSession: new Map(), limits: [] };
-		if (!usage) {
-			return estimateRunGroup(models, empty);
-		}
-		// The Usage page's cache keys: any cached numbers answer at once (refetching behind them);
-		// only a first-ever read waits on the main process.
-		const cache = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltQueryCache));
-		const [snapshot, limits] = await Promise.all([
-			raceTimeout((cache ? cache.read(usageQuery(usage)) : usage.getUsage()).catch(() => undefined), 4000),
-			raceTimeout((cache ? cache.read(limitsQuery(usage)) : usage.getLimits()).catch(() => undefined), 4000),
-		]);
-		const costPerSession = new Map<string, number>();
-		if (snapshot) {
-			const since = Date.now() - 30 * 24 * 3600_000;
-			const cost = new Map<string, number>();
-			const sessions = new Map<string, Set<number>>();
-			for (const bucket of snapshot.buckets) {
-				if (bucket.hour >= since) {
-					cost.set(bucket.provider, (cost.get(bucket.provider) ?? 0) + bucket.costUsd);
-				}
-			}
-			for (const activity of snapshot.activity) {
-				if (activity.hour >= since) {
-					const set = sessions.get(activity.provider) ?? new Set<number>();
-					activity.sessions.forEach(session => set.add(session));
-					sessions.set(activity.provider, set);
-				}
-			}
-			for (const [provider, total] of cost) {
-				const count = sessions.get(provider)?.size ?? 0;
-				if (count > 0 && total > 0) {
-					costPerSession.set(provider, total / count);
-				}
-			}
-		}
-		const windows = (limits ?? []).flatMap(group => group.windows.map(window => ({
-			family: group.provider,
-			label: `${group.provider === 'claude' ? 'Claude' : group.provider === 'codex' ? 'Codex' : 'Cursor'} ${window.label.toLowerCase()}`,
-			usedPercent: window.usedPercent,
-			...(window.resetsAt ? { resetsAt: window.resetsAt } : {}),
-		})));
-		return estimateRunGroup(models, { costPerSession, limits: windows });
+		return estimateRunGroup(models, await this.costHistory());
+	}
+
+	/**
+	 * Typical cost per session and live limits, for {@link estimate}. None here: the window's
+	 * service reads the usage history (agentRunGroupWindowService.ts); the agent server has none.
+	 */
+	protected async costHistory(): Promise<IRunCostHistory> {
+		return { costPerSession: new Map(), limits: [] };
 	}
 
 	//#endregion
@@ -715,6 +679,7 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 		}
 		let commit: string | undefined;
 		let kept: readonly string[] = [];
+		let pullRequest: IRunPullRequestHandoff | undefined;
 		for (const step of plan.steps) {
 			switch (step.kind) {
 				case 'commit': {
@@ -740,8 +705,10 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 					break;
 				}
 				case 'pr':
-					// The existing pull request flow: it pushes the branch and opens the form for the winner's chat.
-					await this.commandService.executeCommand(CREATE_PULL_REQUEST_COMMAND_ID, step.runId);
+					if (!await this.openPullRequest(step.runId)) {
+						const winner = group.runs.find(candidate => candidate.id === step.runId)!;
+						pullRequest = { runId: step.runId, branch: step.branch, ...(step.base ? { base: step.base } : {}), ...(winner.worktreePath ? { worktreePath: winner.worktreePath } : {}) };
+					}
 					break;
 				case 'archive':
 					for (const id of step.runIds) {
@@ -758,7 +725,16 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 		}
 		this.updateGroup(groupId, value => ({ ...value, winner: { runId, action, at: Date.now(), ...(commit ? { commit } : {}) } }));
 		void this.refreshStats(groupId);
-		return { ok: true, ...(kept.length ? { kept } : {}) };
+		return { ok: true, ...(kept.length ? { kept } : {}), ...(pullRequest ? { pullRequest } : {}) };
+	}
+
+	/**
+	 * The existing pull request flow: it pushes the branch and opens the form for the winner's chat.
+	 * False when nothing here can show a form (the agent server): the client that asked opens its own.
+	 */
+	protected async openPullRequest(runId: string): Promise<boolean> {
+		await this.commandService.executeCommand(CREATE_PULL_REQUEST_COMMAND_ID, runId);
+		return true;
 	}
 
 	async removeWorktrees(groupId: string, runIds: readonly string[]): Promise<IRunWinnerResult> {

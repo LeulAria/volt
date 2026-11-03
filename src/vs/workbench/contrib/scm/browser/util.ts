@@ -183,7 +183,10 @@ export function getHistoryItemHoverContent(themeService: IThemeService, historyI
 		markdown.appendMarkdown('\n\n');
 	}
 
-	markdown.appendMarkdown(`${historyItem.message.replace(/\r\n|\r|\n/g, '\n\n')}\n\n`);
+	// The message is text, not Markdown: a merge's "# Conflicts:" lines would render as headings, and
+	// links in a message must not run commands in this trusted hover.
+	markdown.appendText(historyItem.message.replace(/\r\n|\r/g, '\n'));
+	markdown.appendMarkdown('\n\n');
 
 	if (historyItem.statistics) {
 		markdown.appendMarkdown(`---\n\n`);

@@ -47,6 +47,7 @@ import { IInstantiationService } from '../../instantiation/common/instantiation.
 import { VSBuffer } from '../../../base/common/buffer.js';
 import { errorHandler } from '../../../base/common/errors.js';
 import { FocusMode } from '../../native/common/native.js';
+import { IVoltWindowScopesMainService } from '../../voltWindowScope/electron-main/voltWindowScopesMainService.js';
 
 export interface IWindowCreationOptions {
 	readonly state: IWindowState;
@@ -62,6 +63,9 @@ export interface IWindowCreationOptions {
 	 * one boots, and so a project is never a second window on the desktop.
 	 */
 	readonly hostWindow?: ICodeWindow;
+
+	/** Boot without showing: the next New Window, kept ready until `reveal`. */
+	readonly hidden?: boolean;
 }
 
 interface ITouchBarSegment extends electron.SegmentedControlSegment {
@@ -675,7 +679,7 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 	//#endregion
 
-	private readonly windowState: IWindowState;
+	private windowState: IWindowState;
 	private currentMenuBarVisibility: MenuBarVisibility | undefined;
 
 	private readonly whenReadyCallbacks: { (window: ICodeWindow): void }[] = [];
@@ -693,6 +697,8 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 	private wasLoaded = false;
 	private transparentChrome = false;
 	private backgrounded: boolean;
+	/** Booted out of sight as the next New Window; `reveal` shows it. */
+	private hidden: boolean;
 
 	private readonly jsCallStackMap: Map<string, number>;
 	private readonly jsCallStackEffectiveSampleCount: number;
@@ -724,16 +730,24 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 		@IWindowsMainService private readonly windowsMainService: IWindowsMainService,
 		@IStateService stateService: IStateService,
 		@IInstantiationService instantiationService: IInstantiationService,
-		@ICSSDevelopmentService private readonly cssDevelopmentService: ICSSDevelopmentService
+		@ICSSDevelopmentService private readonly cssDevelopmentService: ICSSDevelopmentService,
+		@IVoltWindowScopesMainService private readonly voltWindowScopes: IVoltWindowScopesMainService
 	) {
 		super(configurationService, stateService, environmentMainService, logService);
 
 		const host = config.hostWindow?.win && !config.hostWindow.win.isDestroyed() ? config.hostWindow.win : undefined;
 		this.backgrounded = !!host;
+		this.hidden = !host && !!config.hidden;
 
 		//#region create browser window
 		{
-			this.configObjectUrl = this._register(protocolMainService.createIPCObjectUrl<INativeWindowConfiguration>(configuration => this.refreshDevCssModules(configuration)));
+			this.configObjectUrl = this._register(protocolMainService.createIPCObjectUrl<INativeWindowConfiguration>(async configuration => {
+				// Every load (first, reload, crash reload) starts from the scopes as they are now.
+				if (configuration) {
+					configuration.voltWindowScopes = this.voltWindowScopes.scopes;
+				}
+				await this.refreshDevCssModules(configuration);
+			}));
 
 			// Load window state
 			const [state, hasMultipleDisplays] = this.restoreWindowState(config.state);
@@ -751,7 +765,7 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 				this._win = host;
 			} else {
 				mark('code/willCreateCodeBrowserWindow');
-				this._win = new electron.BrowserWindow(options);
+				this._win = new electron.BrowserWindow(this.hidden ? { ...options, show: false } : options);
 				mark('code/didCreateCodeBrowserWindow');
 			}
 
@@ -769,6 +783,12 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 			this._id = this.webContents.id;
 
+			// Out of sight Chromium throttles timers and skips idle callbacks, which would leave the
+			// workbench half started (no Restored phase) until the window shows.
+			if (this.hidden) {
+				this.webContents.setBackgroundThrottling(false);
+			}
+
 			// A view's web contents outlive the browser window that held it: without this, a closed
 			// window leaves its renderer running, hidden, until Volt quits. Registered before the
 			// window's own 'closed' handler, which disposes this window.
@@ -780,8 +800,8 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 			}));
 			this.setWin(this._win, options);
 
-			// Apply some state after window creation
-			if (!host) {
+			// Apply some state after window creation (a hidden window gets it when it is revealed)
+			if (!host && !this.hidden) {
 				this.applyState(this.windowState, hasMultipleDisplays);
 			}
 
@@ -902,6 +922,36 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 		this._win.setTitle(this.webContents.getTitle() || this.productService.nameLong);
 	}
 
+	reveal(state: IWindowState, drawn?: Promise<unknown>): void {
+		if (!this.hidden || this._win.isDestroyed()) {
+			return;
+		}
+		this.hidden = false;
+		this.webContents.setBackgroundThrottling(true);
+
+		// Opacity is not supported on Linux: the window shows at once there.
+		const win = this._win;
+		if (drawn && !isLinux) {
+			win.setOpacity(0);
+			drawn.finally(() => {
+				if (!win.isDestroyed()) {
+					win.setOpacity(1);
+				}
+			});
+		}
+
+		const [restored, hasMultipleDisplays] = this.restoreWindowState(state);
+		this.windowState = restored;
+		if ([restored.width, restored.height, restored.x, restored.y].every(value => typeof value === 'number')) {
+			this._win.setBounds({ x: restored.x!, y: restored.y!, width: restored.width!, height: restored.height! });
+		}
+		this.applyState(restored, hasMultipleDisplays);
+		if (!this._win.isVisible()) {
+			this._win.show();
+		}
+		this.focus({ mode: FocusMode.Force });
+	}
+
 	private layoutView(): void {
 		if (this._win.isDestroyed()) {
 			return;
@@ -1006,6 +1056,15 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 		// Handle configuration changes
 		this._register(this.configurationService.onDidChangeConfiguration(e => this.onConfigurationUpdated(e)));
+
+		// The see-through material keeps the appearance it was created with: switching between a
+		// light and a dark theme left light glass under a dark sidebar. Recreate it on the new one.
+		this._register(this.themeMainService.onDidChangeColorScheme(() => {
+			if (isMacintosh && this.transparentChrome && !this.backgrounded && !this._win.isDestroyed()) {
+				this._win.setVibrancy(null);
+				this._win.setVibrancy('under-window');
+			}
+		}));
 
 		// Handle Workspace events
 		this._register(this.workspacesManagementMainService.onDidDeleteUntitledWorkspace(e => this.onDidDeleteUntitledWorkspace(e)));
@@ -1369,7 +1428,7 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 		// Make window visible if it did not open in N seconds because this indicates an error
 		// Only do this when running out of sources and not when running tests
-		if (!this.environmentMainService.isBuilt && !this.environmentMainService.extensionTestsLocationURI && !this.backgrounded) {
+		if (!this.environmentMainService.isBuilt && !this.environmentMainService.extensionTestsLocationURI && !this.backgrounded && !this.hidden) {
 			this._register(new RunOnceScheduler(() => {
 				if (this._win && !this._win.isVisible() && !this._win.isMinimized()) {
 					this._win.show();

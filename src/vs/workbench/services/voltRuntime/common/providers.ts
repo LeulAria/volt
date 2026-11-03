@@ -187,7 +187,7 @@ export interface IAgentProvider {
 	/** The running turn takes messages without stopping (ACP `_session/steering`). */
 	canSteer?(session: IAgentSessionHandle): boolean;
 	/** Puts a message into the running turn; false when the agent refused it. */
-	steer?(session: IAgentSessionHandle, text: string): Promise<boolean>;
+	steer?(session: IAgentSessionHandle, text: string, images?: readonly IModelImage[]): Promise<boolean>;
 	/**
 	 * A `textOnly` session of this agent runs on the request's system prompt instead of the agent's
 	 * own, with no tools. Otherwise the caller teaches the session with a first prompt.

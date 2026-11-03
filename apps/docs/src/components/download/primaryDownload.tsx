@@ -19,7 +19,6 @@ import {
 } from "@/lib/releases";
 import { GITHUB_RELEASES_URL, type ReleasesState } from "@/lib/useReleases";
 import { DownloadDialog } from "./downloadDialog";
-import { MacInstallGuide } from "./macInstallGuide";
 
 const BUTTON =
   "inline-flex h-12 min-w-0 items-center justify-center gap-2.5 rounded-[6px] px-5 font-sans text-[14px] font-semibold transition-opacity duration-150 sm:h-14 sm:px-7 sm:text-[15px]";
@@ -35,7 +34,6 @@ export function PrimaryDownload({
   os,
   arch,
   onArch,
-  installGuide = false,
   toDownloadPage = false,
   className,
 }: {
@@ -45,8 +43,6 @@ export function PrimaryDownload({
   arch: Arch;
   /** When set, macOS shows an Apple Silicon / Intel switch under the button. */
   onArch?: (arch: Arch) => void;
-  /** macOS: a "How to install on Mac" button beside the download that opens the step-by-step drawer. */
-  installGuide?: boolean;
   /** The button opens /download for this platform instead of downloading (the landing page's). */
   toDownloadPage?: boolean;
   className?: string;
@@ -160,10 +156,7 @@ export function PrimaryDownload({
 
   return (
     <div className={cn("flex flex-col items-start", className)}>
-      <div className="flex flex-wrap items-center gap-3">
-        {button}
-        {installGuide && os === "darwin" ? <MacInstallGuide /> : null}
-      </div>
+      <div className="flex flex-wrap items-center gap-3">{button}</div>
       <p
         aria-live="polite"
         className="mt-4 flex min-h-5 flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-white/45"
@@ -226,16 +219,8 @@ function MacArchSwitch({
         Silicon.
       </span>
       <p className="basis-full text-pretty">
-        Mac builds are not signed with an Apple Developer ID yet, so macOS asks
-        you to confirm the first launch.{" "}
-        <Link
-          to="/docs/$"
-          params={{ _splat: "install" }}
-          className="text-white/70 underline underline-offset-4 transition-colors hover:text-white"
-        >
-          Full install guide
-        </Link>
-        .
+        Mac builds are signed with an Apple Developer ID and notarized, and they
+        update themselves.
       </p>
     </div>
   );

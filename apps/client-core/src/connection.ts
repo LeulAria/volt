@@ -5,7 +5,7 @@
 
 import { Emitter } from './events';
 import {
-	AGENT_SERVER_PROTOCOL_VERSION, CloseCode, type IEvent, type IHello, type IRemoteError, type IReturn, type IWelcome, parseFrame, RemoteError, type Topic, type ClientKind
+	AGENT_SERVER_PROTOCOL_VERSION, CloseCode, type ICall, type IEvent, type IHello, type IRemoteError, type IReturn, type IWelcome, parseFrame, RemoteError, type Topic, type ClientKind
 } from './protocol';
 
 /** The subset of `WebSocket` the connection uses (browsers and React Native both have it). */
@@ -114,6 +114,8 @@ export class VoltConnection {
 	private stableTimer: ReturnType<typeof setTimeout> | undefined;
 	private nextCallId = 1;
 	private readonly pending = new Map<number, IPendingCall>();
+	/** Methods the server may call on this client (a terminal's output, its exit). */
+	private readonly handlers = new Map<string, (...params: unknown[]) => unknown>();
 	private stopped = false;
 	private offline = false;
 	private readonly backoff: { readonly initialMs: number; readonly maxMs: number; readonly stableMs: number };
@@ -322,10 +324,40 @@ export class VoltConnection {
 				this.onReturn(frame);
 				return;
 			case 'call':
-				// A remote client offers nothing the server can call back into.
-				this.socket?.send(JSON.stringify({ t: 'ret', id: frame.id, ok: false, error: { code: 'NoMethod', message: `${frame.method} is not available on this client.` } } satisfies IReturn));
+				this.onCall(frame);
 				return;
 		}
+	}
+
+	/**
+	 * Answers `method` when the server calls it; the handler's result (or its promise) goes back as
+	 * the return. Returns the unregister function.
+	 */
+	handle(method: string, handler: (...params: unknown[]) => unknown): () => void {
+		this.handlers.set(method, handler);
+		return () => {
+			if (this.handlers.get(method) === handler) {
+				this.handlers.delete(method);
+			}
+		};
+	}
+
+	private onCall(frame: ICall): void {
+		const socket = this.socket;
+		const reply = (ret: IReturn) => {
+			if (socket && socket === this.socket) {
+				socket.send(JSON.stringify(ret));
+			}
+		};
+		const handler = this.handlers.get(frame.method);
+		if (!handler) {
+			reply({ t: 'ret', id: frame.id, ok: false, error: { code: 'NoMethod', message: `${frame.method} is not available on this client.` } });
+			return;
+		}
+		Promise.resolve().then(() => handler(...(frame.params ?? []))).then(
+			result => reply({ t: 'ret', id: frame.id, ok: true, result: result ?? null }),
+			err => reply({ t: 'ret', id: frame.id, ok: false, error: { code: 'Failed', message: err instanceof Error ? err.message : String(err) } }),
+		);
 	}
 
 	private onWelcomeFrame(welcome: IWelcome): void {

@@ -9,7 +9,8 @@ import { IAgentSessionMeta } from '../../../../services/voltRuntime/common/histo
 import type { IAgentHomeFolder } from './agentHomeModel.js';
 
 export type AgentHomeGrouping = 'repository' | 'workspace' | 'updated' | 'status' | 'environment';
-export type AgentHomeChatOrder = 'updated' | 'status';
+/** `manual`: the order chats were dragged into (see {@link placeChatInOrder}). */
+export type AgentHomeChatOrder = 'updated' | 'status' | 'manual';
 export type AgentHomeGroupOrder = 'updated' | 'manual';
 export type AgentHomeShowField = 'status' | 'updated' | 'environment' | 'pr' | 'workspace' | 'branch' | 'machine' | 'model';
 export type AgentHomeStatusFilter = 'needsAttention' | 'unread' | 'working' | 'draft' | 'done';
@@ -259,18 +260,61 @@ export function sessionPassesHomeFilters(session: IAgentSessionMeta, state: IAge
 	return state.source.has(sessionSourceTag(session, workspaceFileIds));
 }
 
-export function sortSessionsForHome(sessions: readonly IAgentSessionMeta[], order: AgentHomeChatOrder): IAgentSessionMeta[] {
+/**
+ * `manual` is the dragged order (chat ids, see {@link placeChatInOrder}). Under Manual order, chats it does not
+ * list yet (new ones) lead, newest first; the rest keep their places, so activity no longer moves them.
+ */
+export function sortSessionsForHome(sessions: readonly IAgentSessionMeta[], order: AgentHomeChatOrder, manual: readonly string[] = []): IAgentSessionMeta[] {
 	const copy = [...sessions];
 	switch (order) {
 		case 'updated':
 			return copy.sort((a, b) => sessionStamp(b) - sessionStamp(a));
 		case 'status':
 			return copy.sort((a, b) => statusRank(sessionPrimaryStatus(a)) - statusRank(sessionPrimaryStatus(b)) || sessionStamp(b) - sessionStamp(a));
+		case 'manual': {
+			const rank = new Map(manual.map((id, index) => [id, index]));
+			const at = (session: IAgentSessionMeta) => rank.get(session.id) ?? -1;
+			return copy.sort((a, b) => at(a) - at(b) || sessionStamp(b) - sessionStamp(a));
+		}
 		default: {
 			const unexpected: never = order;
 			return unexpected;
 		}
 	}
+}
+
+/** Most chats the Manual order remembers; the oldest arrangement goes first. */
+export const AGENT_HOME_MANUAL_ORDER_LIMIT = 2000;
+
+/**
+ * The Manual order after `moved` is dropped before or after `target` in a group that lists `group` (every chat of
+ * the group, in the order it shows). The whole group is written down, so its chats hold their places from now on;
+ * it takes the place of the first of them in `order`, leaving other groups' chats where they were.
+ */
+export function placeChatInOrder(order: readonly string[], group: readonly string[], moved: string, target: string, after: boolean): string[] {
+	const block = group.filter(id => id !== moved);
+	const at = block.indexOf(target);
+	if (at < 0 || moved === target) {
+		return [...order];
+	}
+	block.splice(after ? at + 1 : at, 0, moved);
+	const members = new Set(block);
+	const next: string[] = [];
+	let placed = false;
+	for (const id of order) {
+		if (!members.has(id)) {
+			next.push(id);
+		} else if (!placed) {
+			next.push(...block);
+			placed = true;
+		}
+	}
+	return (placed ? next : [...block, ...next]).slice(0, AGENT_HOME_MANUAL_ORDER_LIMIT);
+}
+
+/** The Manual order as stored: chat ids, or nothing for a damaged entry. */
+export function reviveManualChatOrder(raw: unknown): string[] {
+	return Array.isArray(raw) ? raw.filter((id): id is string => typeof id === 'string').slice(0, AGENT_HOME_MANUAL_ORDER_LIMIT) : [];
 }
 
 /** When the session last came to the user's attention: its last change, or the end of its snooze. */
@@ -375,7 +419,7 @@ function isGrouping(value: unknown): value is AgentHomeGrouping {
 }
 
 function isChatOrder(value: unknown): value is AgentHomeChatOrder {
-	return value === 'updated' || value === 'status';
+	return value === 'updated' || value === 'status' || value === 'manual';
 }
 
 function isGroupOrder(value: unknown): value is AgentHomeGroupOrder {

@@ -42,10 +42,22 @@ export interface IAgentMergeBackResult {
 	readonly outcome: MergeBackOutcome;
 }
 
+export interface IAgentContinueInNewChatResult {
+	readonly threadId: string;
+	readonly title: string;
+}
+
 export interface IAgentChatForkService {
 	readonly _serviceBrand: undefined;
 	/** Copies a chat's conversation into a new chat. Throws when there is nothing to fork from. */
 	forkChat(sourceId: string, options: IAgentForkChatOptions): Promise<IAgentForkChatResult>;
+	/**
+	 * Takes a queued message off a chat's queue and sends it in a new chat of the same project,
+	 * checkout, model and mode. The new chat starts empty; its agent is briefed with the source
+	 * conversation as a condensed handoff ahead of the message. Throws when the message is no
+	 * longer queued; when the new chat refuses it, it goes back on the source's queue.
+	 */
+	continueInNewChat(sourceId: string, itemId: string, options?: { readonly open?: boolean }): Promise<IAgentContinueInNewChatResult>;
 	/**
 	 * Tells the chat a fork came from what the fork changed, and with `apply` merges its branch into
 	 * that chat's checkout. Throws when `forkId` was not forked from another chat, or when applying

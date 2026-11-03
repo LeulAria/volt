@@ -15,6 +15,7 @@ import { Schemas } from '../../../../base/common/network.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
+import { IVoltWindowScopes } from '../../../../platform/voltWindowScope/common/voltWindowScope.js';
 
 export const INativeWorkbenchEnvironmentService = refineServiceDecorator<IEnvironmentService, INativeWorkbenchEnvironmentService>(IEnvironmentService);
 
@@ -34,6 +35,9 @@ export interface INativeWorkbenchEnvironmentService extends IBrowserWorkbenchEnv
 		isInitialStartup?: boolean;
 		isCodeCaching?: boolean;
 		perfMarks: PerformanceMark[];
+		/** Volt: this window's scope (see `IVoltWindowScopesService`), and every scope when it loaded. */
+		voltScope?: string;
+		voltScopes?: IVoltWindowScopes;
 	};
 
 	// --- Main
@@ -91,7 +95,9 @@ export class NativeWorkbenchEnvironmentService extends AbstractNativeEnvironment
 			accessibilitySupport: this.configuration.accessibilitySupport,
 			perfMarks: this.configuration.perfMarks,
 			isInitialStartup: this.configuration.isInitialStartup,
-			isCodeCaching: typeof this.configuration.codeCachePath === 'string'
+			isCodeCaching: typeof this.configuration.codeCachePath === 'string',
+			voltScope: this.configuration.voltWindowScope,
+			voltScopes: this.configuration.voltWindowScopes
 		};
 	}
 

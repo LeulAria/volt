@@ -489,8 +489,12 @@ export interface IVoltGitCommitRequest {
 	readonly message: string;
 	/** Commit only these paths; every change when undefined. */
 	readonly paths?: readonly string[];
+	/** What these paths hold in the commit, for a file committed by some of its hunks; the worktree keeps the rest. */
+	readonly contents?: readonly { readonly path: string; readonly content: string }[];
 	/** Create and check out this branch first; the changes come along. */
 	readonly newBranch?: string;
+	/** Commit with `--no-verify`: the user chose to skip a commit hook that failed. */
+	readonly skipHooks?: boolean;
 }
 
 export interface IVoltGitCommitResult {
@@ -512,6 +516,8 @@ export type VoltPrErrorCode =
 	| 'stale'
 	| 'network'
 	| 'rateLimited'
+	/** A commit hook (pre-commit, commit-msg) stopped the commit; committing with `skipHooks` gets past it. */
+	| 'hookFailed'
 	| 'failed';
 
 /**
@@ -654,6 +660,11 @@ export interface IVoltPullRequestService {
 	pull(folder: string): Promise<{ readonly updated: boolean; readonly branch: string; readonly upstream: string }>;
 	/** Creates and checks out `name` at HEAD; uncommitted changes come along. */
 	checkoutNewBranch(request: { readonly folder: string; readonly name: string }): Promise<void>;
+	/**
+	 * Renames the checked out branch to `name`. An upstream under the old name is dropped (the
+	 * next push publishes the new name). Fails when `name` is taken.
+	 */
+	renameBranch(request: { readonly folder: string; readonly name: string }): Promise<{ readonly previous: string; readonly branch: string }>;
 	/** Forget cached accounts and tokens (after the user signed in or out in a terminal). */
 	refreshAccounts(): Promise<void>;
 	/** The tokens the user gave Volt, every host (replaces the previous set). */

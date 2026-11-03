@@ -43,7 +43,7 @@
 .vs .volt-tool-detail {
 	background: #ffffff;
 	color: rgba(20, 20, 20, 0.94);
-	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 20px 50px rgba(0, 0, 0, 0.18);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 12%, transparent), 0 20px 50px rgba(0, 0, 0, 0.14);
 }
 
 .volt-tool-detail-head {
@@ -88,7 +88,7 @@
 }
 
 .volt-tool-detail-close:hover {
-	background: rgba(255, 255, 255, 0.08);
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 	color: inherit;
 }
 
@@ -114,7 +114,8 @@
 	pointer-events: none;
 }
 
-.monaco-workbench.vs .volt-tool-detail-body.clipped::after {
+.monaco-workbench.vs .volt-tool-detail-body.clipped::after,
+.monaco-workbench.hc-light .volt-tool-detail-body.clipped::after {
 	background: linear-gradient(to bottom, transparent, #ffffff);
 }
 
@@ -160,8 +161,8 @@
 	margin: 6px 0 0;
 	padding: 10px 12px;
 	border-radius: 8px;
-	border: 1px solid rgba(255, 255, 255, 0.08);
-	background: rgba(255, 255, 255, 0.02);
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	background: color-mix(in srgb, var(--vscode-foreground) 2%, transparent);
 	white-space: pre;
 	overflow-x: auto;
 	font-family: var(--volt-code-font, ui-monospace, Menlo, monospace);
@@ -173,7 +174,19 @@
 	display: block;
 	max-width: 100%;
 	border-radius: 8px;
-	border: 1px solid rgba(255, 255, 255, 0.08);
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.monaco-workbench.vs .volt-tool-detail-markdown pre,
+.monaco-workbench.hc-light .volt-tool-detail-markdown pre,
+.monaco-workbench.vs .volt-tool-detail-image,
+.monaco-workbench.hc-light .volt-tool-detail-image {
+	border-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.monaco-workbench.vs .volt-tool-detail-markdown pre,
+.monaco-workbench.hc-light .volt-tool-detail-markdown pre {
+	background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
 }
 
 .volt-tool-detail-error {

@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, DESIGN_LOOP, MOCKUP_REPLIES, SCREENS_REPLIES, TEST_INTEGRITY, VISUAL_REPLIES, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
+import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, DESIGN_LOOP, DEVICE_REPLIES, MOCKUP_REPLIES, SCRATCH_REPLIES, SCREENS_REPLIES, SURFACES, TEST_INTEGRITY, VISUAL_REPLIES, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
 import { classifyIntent } from '../../../common/harness/intent.js';
 
 suite('Volt context pack', () => {
@@ -22,12 +22,15 @@ suite('Volt context pack', () => {
 		assert.ok(!/http\.server/.test(prompt));
 		assert.ok(!/Start servers/.test(prompt));
 		assert.ok(/web_search|Look up current facts/.test(prompt));
-		assert.ok(/Do not modify the workspace/.test(prompt));
+		// A question in Agent mode stays an Agent turn: only Ask and Plan forbid edits.
+		assert.ok(!/Do not modify the workspace/.test(prompt));
+		assert.ok(/Do not modify the workspace|Read-only/.test(buildSystemPrompt({ mode: 'ask', intent: classifyIntent('how much does this cost right now', 'ask') })));
 		assert.ok(!/one or two lines/.test(prompt));
 		const lead = buildAcpLead({ mode: 'agent', intent, runPlan: { kind: 'static', start: 'python3 -m http.server 8080' } });
 		assert.ok(lead);
 		assert.ok(!/http\.server/.test(lead));
-		assert.ok(/question/i.test(lead));
+		assert.ok(/look them up/i.test(lead));
+		assert.ok(!/Do not modify the workspace/.test(lead));
 	});
 
 	test('an enumerated table asks for research, not a one-liner', () => {
@@ -198,5 +201,21 @@ suite('Volt context pack', () => {
 		const screens = classifyIntent('show all the screens of the app in light and dark', 'agent');
 		assert.ok(buildSystemPrompt({ mode: 'agent', intent: screens, visuals: true }).includes(SCREENS_REPLIES));
 		assert.ok(!buildSystemPrompt({ mode: 'agent', intent: screens, visuals: true }).includes(MOCKUP_REPLIES));
+	});
+
+	test('surface requests name the right surface, and the surfaces line comes with them', () => {
+		const scratch = buildAcpLead({ mode: 'agent', intent: classifyIntent('sketch out the auth architecture', 'agent'), visuals: true });
+		assert.ok(scratch?.includes(`[Volt] ${SURFACES}`));
+		assert.ok(scratch?.includes(`[Volt] ${SCRATCH_REPLIES}`));
+		assert.ok(!scratch?.includes(DEVICE_REPLIES));
+		const device = buildAcpLead({ mode: 'agent', intent: classifyIntent('run the ios app on the simulator', 'agent'), visuals: true });
+		assert.ok(device?.includes(DEVICE_REPLIES));
+		assert.ok(device?.includes(SURFACES));
+		assert.ok(!device?.includes(SCRATCH_REPLIES));
+		assert.ok(buildAcpLead({ mode: 'agent', intent: classifyIntent('design the onboarding flow for the mobile app', 'agent'), visuals: true })?.includes(SURFACES));
+		assert.ok(buildAcpLead({ mode: 'agent', intent: classifyIntent('run the app', 'agent'), visuals: true })?.includes(SURFACES), 'a preview is the browser surface');
+		assert.ok(buildSystemPrompt({ mode: 'agent', intent: classifyIntent('[/scratch skill] the release plan', 'agent'), visuals: true }).includes(SCRATCH_REPLIES), 'native prompts receive the same guidance');
+		assert.ok(!buildAcpLead({ mode: 'agent', intent: classifyIntent('sketch out the auth architecture', 'agent') })?.includes(SURFACES), 'not without the volt MCP server');
+		assert.ok(!buildAcpLead({ mode: 'agent', intent: classifyIntent('add pagination to the users table', 'agent'), visuals: true })?.includes(SURFACES));
 	});
 });

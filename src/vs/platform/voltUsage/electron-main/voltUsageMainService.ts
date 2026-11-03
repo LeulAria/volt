@@ -10,8 +10,6 @@ import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
 import { VoltUsageService } from '../node/voltUsageService.js';
 
-const PREWARM_DELAY_MS = 20_000;
-
 /** Usage runs in the main process: it reads hundreds of MB of transcripts and talks to the provider APIs. */
 export class VoltUsageMainService extends VoltUsageService {
 
@@ -25,13 +23,8 @@ export class VoltUsageMainService extends VoltUsageService {
 			.catch(() => process.env),
 			logService,
 			join(environmentMainService.userDataPath, 'volt-usage'));
-		// The first transcript scan takes seconds; run it once the app has settled so the Usage
-		// page and the context meter open on fresh numbers.
-		const prewarm = setTimeout(() => {
-			void this.getUsage().catch(() => undefined);
-			void this.getLimits().catch(() => undefined);
-		}, PREWARM_DELAY_MS);
-		// Which setTimeout typing wins depends on the program's file order; Node's timer has unref.
-		(prewarm as unknown as { unref?(): void }).unref?.();
+		// No scan at launch: it parses every Claude and Codex transcript (seconds of CPU, and the
+		// parsed cache stays in this process's heap). The Usage page and the usage hover open on the
+		// last saved numbers (peekUsage/peekLimits, the query cache) and scan behind them.
 	}
 }

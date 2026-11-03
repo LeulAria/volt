@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import type { IVoltEvent } from '../../../common/events.js';
-import { detectTestSniffing, LOOP_NOTICE_TITLE, normaliseOutcome, RunSupervisor, SupervisorDirective, TEST_GAMING_NOTICE_TITLE } from '../../../common/harness/supervisor.js';
+import { detectTestSniffing, isWaitTool, LOOP_NOTICE_TITLE, normaliseOutcome, RunSupervisor, SupervisorDirective, TEST_GAMING_NOTICE_TITLE } from '../../../common/harness/supervisor.js';
 import type { ToolKind } from '../../../common/harness/workLog.js';
 
 let seq = 0;
@@ -49,6 +49,15 @@ const failingTest = (output = 'FAIL test/sum.test.js\n  expected 3, received 4\n
 suite('Volt run supervisor', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('waiting tools may return the same answer any number of times', () => {
+		const supervisor = new RunSupervisor({ startedAt: 0 });
+		const wait = () => call({ name: 'mcp__volt__await_commits', kind: 'other', input: { plan_id: 'p1' }, output: 'STILL WAITING: the user is reviewing the commits.' });
+		assert.deepStrictEqual(feed(supervisor, [...wait(), ...wait(), ...wait(), ...wait(), ...wait(), ...wait()]), []);
+		assert.strictEqual(isWaitTool('volt: await_answers'), true);
+		assert.strictEqual(isWaitTool('mcp__volt__terminal_wait'), true);
+		assert.strictEqual(isWaitTool('mcp__volt__propose_commits'), false);
+	});
 
 	test('the same failing command three times in a row: steer, then stop if it continues', () => {
 		const supervisor = new RunSupervisor({ startedAt: 0 });

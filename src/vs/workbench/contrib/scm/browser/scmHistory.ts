@@ -55,6 +55,28 @@ function getLabelColorIdentifier(historyItem: ISCMHistoryItem, colorMap: Map<str
 	return undefined;
 }
 
+/**
+ * Sizes for drawing a row of the graph. The SCM view uses the defaults; bigger surfaces (the Git
+ * Graph tab) pass taller rows and wider lanes and get the same drawing scaled to them.
+ */
+export interface ISCMHistoryGraphGeometry {
+	readonly rowHeight: number;
+	readonly laneWidth: number;
+	readonly curveRadius: number;
+	readonly circleRadius: number;
+	readonly circleStrokeWidth: number;
+	readonly lineWidth: number;
+}
+
+export const DEFAULT_SCM_HISTORY_GRAPH_GEOMETRY: ISCMHistoryGraphGeometry = {
+	rowHeight: SWIMLANE_HEIGHT,
+	laneWidth: SWIMLANE_WIDTH,
+	curveRadius: SWIMLANE_CURVE_RADIUS,
+	circleRadius: CIRCLE_RADIUS,
+	circleStrokeWidth: CIRCLE_STROKE_WIDTH,
+	lineWidth: 1,
+};
+
 function createPath(colorIdentifier: string, strokeWidth = 1): SVGPathElement {
 	const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
 	path.setAttribute('fill', 'none');
@@ -65,10 +87,10 @@ function createPath(colorIdentifier: string, strokeWidth = 1): SVGPathElement {
 	return path;
 }
 
-function drawCircle(index: number, radius: number, strokeWidth: number, colorIdentifier?: string): SVGCircleElement {
+function drawCircle(index: number, radius: number, strokeWidth: number, colorIdentifier: string | undefined, g: ISCMHistoryGraphGeometry = DEFAULT_SCM_HISTORY_GRAPH_GEOMETRY): SVGCircleElement {
 	const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-	circle.setAttribute('cx', `${SWIMLANE_WIDTH * (index + 1)}`);
-	circle.setAttribute('cy', `${SWIMLANE_WIDTH}`);
+	circle.setAttribute('cx', `${g.laneWidth * (index + 1)}`);
+	circle.setAttribute('cy', `${g.rowHeight / 2}`);
 	circle.setAttribute('r', `${radius}`);
 
 	circle.style.strokeWidth = `${strokeWidth}px`;
@@ -96,10 +118,13 @@ function findLastIndex(nodes: ISCMHistoryItemGraphNode[], id: string): number {
 	return -1;
 }
 
-export function renderSCMHistoryItemGraph(historyItemViewModel: ISCMHistoryItemViewModel): SVGElement {
+export function renderSCMHistoryItemGraph(historyItemViewModel: ISCMHistoryItemViewModel, g: ISCMHistoryGraphGeometry = DEFAULT_SCM_HISTORY_GRAPH_GEOMETRY): SVGElement {
 	const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
 	svg.classList.add('graph');
 
+	const W = g.laneWidth;
+	const H = g.rowHeight;
+	const R = g.curveRadius;
 	const historyItem = historyItemViewModel.historyItem;
 	const inputSwimlanes = historyItemViewModel.inputSwimlanes;
 	const outputSwimlanes = historyItemViewModel.outputSwimlanes;
@@ -123,14 +148,14 @@ export function renderSCMHistoryItemGraph(historyItemViewModel: ISCMHistoryItemV
 			// Base commit
 			if (index !== circleIndex) {
 				const d: string[] = [];
-				const path = createPath(color);
+				const path = createPath(color, g.lineWidth);
 
 				// Draw /
-				d.push(`M ${SWIMLANE_WIDTH * (index + 1)} 0`);
-				d.push(`A ${SWIMLANE_WIDTH} ${SWIMLANE_WIDTH} 0 0 1 ${SWIMLANE_WIDTH * (index)} ${SWIMLANE_WIDTH}`);
+				d.push(`M ${W * (index + 1)} 0`);
+				d.push(`A ${W} ${H / 2} 0 0 1 ${W * (index)} ${H / 2}`);
 
 				// Draw -
-				d.push(`H ${SWIMLANE_WIDTH * (circleIndex + 1)}`);
+				d.push(`H ${W * (circleIndex + 1)}`);
 
 				path.setAttribute('d', d.join(' '));
 				svg.append(path);
@@ -143,27 +168,27 @@ export function renderSCMHistoryItemGraph(historyItemViewModel: ISCMHistoryItemV
 				inputSwimlanes[index].id === outputSwimlanes[outputSwimlaneIndex].id) {
 				if (index === outputSwimlaneIndex) {
 					// Draw |
-					const path = drawVerticalLine(SWIMLANE_WIDTH * (index + 1), 0, SWIMLANE_HEIGHT, color);
+					const path = drawVerticalLine(W * (index + 1), 0, H, color, g.lineWidth);
 					svg.append(path);
 				} else {
 					const d: string[] = [];
-					const path = createPath(color);
+					const path = createPath(color, g.lineWidth);
 
 					// Draw |
-					d.push(`M ${SWIMLANE_WIDTH * (index + 1)} 0`);
-					d.push(`V 6`);
+					d.push(`M ${W * (index + 1)} 0`);
+					d.push(`V ${H / 2 - R}`);
 
 					// Draw /
-					d.push(`A ${SWIMLANE_CURVE_RADIUS} ${SWIMLANE_CURVE_RADIUS} 0 0 1 ${(SWIMLANE_WIDTH * (index + 1)) - SWIMLANE_CURVE_RADIUS} ${SWIMLANE_HEIGHT / 2}`);
+					d.push(`A ${R} ${R} 0 0 1 ${(W * (index + 1)) - R} ${H / 2}`);
 
 					// Draw -
-					d.push(`H ${(SWIMLANE_WIDTH * (outputSwimlaneIndex + 1)) + SWIMLANE_CURVE_RADIUS}`);
+					d.push(`H ${(W * (outputSwimlaneIndex + 1)) + R}`);
 
 					// Draw /
-					d.push(`A ${SWIMLANE_CURVE_RADIUS} ${SWIMLANE_CURVE_RADIUS} 0 0 0 ${SWIMLANE_WIDTH * (outputSwimlaneIndex + 1)} ${(SWIMLANE_HEIGHT / 2) + SWIMLANE_CURVE_RADIUS}`);
+					d.push(`A ${R} ${R} 0 0 0 ${W * (outputSwimlaneIndex + 1)} ${(H / 2) + R}`);
 
 					// Draw |
-					d.push(`V ${SWIMLANE_HEIGHT}`);
+					d.push(`V ${H}`);
 
 					path.setAttribute('d', d.join(' '));
 					svg.append(path);
@@ -183,15 +208,15 @@ export function renderSCMHistoryItemGraph(historyItemViewModel: ISCMHistoryItemV
 
 		// Draw -\
 		const d: string[] = [];
-		const path = createPath(outputSwimlanes[parentOutputIndex].color);
+		const path = createPath(outputSwimlanes[parentOutputIndex].color, g.lineWidth);
 
 		// Draw \
-		d.push(`M ${SWIMLANE_WIDTH * parentOutputIndex} ${SWIMLANE_HEIGHT / 2}`);
-		d.push(`A ${SWIMLANE_WIDTH} ${SWIMLANE_WIDTH} 0 0 1 ${SWIMLANE_WIDTH * (parentOutputIndex + 1)} ${SWIMLANE_HEIGHT}`);
+		d.push(`M ${W * parentOutputIndex} ${H / 2}`);
+		d.push(`A ${W} ${H / 2} 0 0 1 ${W * (parentOutputIndex + 1)} ${H}`);
 
 		// Draw -
-		d.push(`M ${SWIMLANE_WIDTH * parentOutputIndex} ${SWIMLANE_HEIGHT / 2}`);
-		d.push(`H ${SWIMLANE_WIDTH * (circleIndex + 1)} `);
+		d.push(`M ${W * parentOutputIndex} ${H / 2}`);
+		d.push(`H ${W * (circleIndex + 1)} `);
 
 		path.setAttribute('d', d.join(' '));
 		svg.append(path);
@@ -199,42 +224,44 @@ export function renderSCMHistoryItemGraph(historyItemViewModel: ISCMHistoryItemV
 
 	// Draw | to *
 	if (inputIndex !== -1) {
-		const path = drawVerticalLine(SWIMLANE_WIDTH * (circleIndex + 1), 0, SWIMLANE_HEIGHT / 2, inputSwimlanes[inputIndex].color);
+		const path = drawVerticalLine(W * (circleIndex + 1), 0, H / 2, inputSwimlanes[inputIndex].color, g.lineWidth);
 		svg.append(path);
 	}
 
 	// Draw | from *
 	if (historyItem.parentIds.length > 0) {
-		const path = drawVerticalLine(SWIMLANE_WIDTH * (circleIndex + 1), SWIMLANE_HEIGHT / 2, SWIMLANE_HEIGHT, circleColor);
+		const path = drawVerticalLine(W * (circleIndex + 1), H / 2, H, circleColor, g.lineWidth);
 		svg.append(path);
 	}
 
 	// Draw *
+	const radius = g.circleRadius;
+	const stroke = g.circleStrokeWidth;
 	if (historyItemViewModel.isCurrent) {
 		// HEAD
-		const outerCircle = drawCircle(circleIndex, CIRCLE_RADIUS + 3, CIRCLE_STROKE_WIDTH, circleColor);
+		const outerCircle = drawCircle(circleIndex, radius + 3, stroke, circleColor, g);
 		svg.append(outerCircle);
 
-		const innerCircle = drawCircle(circleIndex, CIRCLE_STROKE_WIDTH, CIRCLE_RADIUS);
+		const innerCircle = drawCircle(circleIndex, stroke, radius, undefined, g);
 		svg.append(innerCircle);
 	} else {
 		if (historyItem.parentIds.length > 1) {
 			// Multi-parent node
-			const circleOuter = drawCircle(circleIndex, CIRCLE_RADIUS + 2, CIRCLE_STROKE_WIDTH, circleColor);
+			const circleOuter = drawCircle(circleIndex, radius + 2, stroke, circleColor, g);
 			svg.append(circleOuter);
 
-			const circleInner = drawCircle(circleIndex, CIRCLE_RADIUS - 1, CIRCLE_STROKE_WIDTH, circleColor);
+			const circleInner = drawCircle(circleIndex, radius - 1, stroke, circleColor, g);
 			svg.append(circleInner);
 		} else {
 			// Node
-			const circle = drawCircle(circleIndex, CIRCLE_RADIUS + 1, CIRCLE_STROKE_WIDTH, circleColor);
+			const circle = drawCircle(circleIndex, radius + 1, stroke, circleColor, g);
 			svg.append(circle);
 		}
 	}
 
 	// Set dimensions
-	svg.style.height = `${SWIMLANE_HEIGHT}px`;
-	svg.style.width = `${SWIMLANE_WIDTH * (Math.max(inputSwimlanes.length, outputSwimlanes.length, 1) + 1)}px`;
+	svg.style.height = `${H}px`;
+	svg.style.width = `${W * (Math.max(inputSwimlanes.length, outputSwimlanes.length, 1) + 1)}px`;
 
 	return svg;
 }

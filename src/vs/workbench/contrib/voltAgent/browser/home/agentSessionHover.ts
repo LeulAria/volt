@@ -8,7 +8,7 @@ import { localize } from '../../../../../nls.js';
 import { isUsageLimitText } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentTooltipRow } from '../chrome/agentTooltip.js';
-import { createSessionHoverFolderIcon } from './agentHomeIcons.js';
+import { createSessionHoverBranchIcon, createSessionHoverFolderIcon } from './agentHomeIcons.js';
 import { IAgentRepoInfo, repoSlug } from './agentRepoInfo.js';
 
 /** Folder facts the chat-row hover card can show. */
@@ -62,7 +62,7 @@ export function agentSessionHoverRows(
 	for (const folder of folders) {
 		const branch = folder.repo?.branch?.trim();
 		if (folder.repo && branch) {
-			rows.push({ label: repoSlug(folder.repo), detail: branch, icon: Codicon.gitBranch });
+			rows.push({ label: repoSlug(folder.repo), detail: branch, icon: createSessionHoverBranchIcon });
 		}
 		rows.push({ label: folder.pathLabel, icon: createSessionHoverFolderIcon, muted: true });
 	}

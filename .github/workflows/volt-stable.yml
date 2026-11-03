@@ -33,3 +33,17 @@ jobs:
       version: ${{ inputs.version || '' }}
       platforms: ${{ inputs.platforms || 'all' }}
       publish: ${{ github.event_name == 'push' || inputs.publish }}
+
+  # Nightly must never trail Stable: rebuild it from the default branch once a Stable release is out.
+  # A workflow_dispatch sent with GITHUB_TOKEN is one of the few events that starts another workflow.
+  nightly:
+    name: Rebuild Nightly
+    needs: build
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run volt-nightly.yml --repo "${{ github.repository }}" --ref "${{ github.event.repository.default_branch }}"

@@ -7,6 +7,7 @@ import { decodeBase64 } from '../../../../../base/common/buffer.js';
 import { isWindows } from '../../../../../base/common/platform.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { antigravityModelsToInfo, parseAntigravityModelLines } from '../../common/models/antigravityModels.js';
+import { fxModelsToInfo, fxSignedIn, IFxStatus, parseFxModelIds, parseFxStatus } from '../../common/models/fxModels.js';
 import { grokModelsToInfo, IGrokCachedModel, parseGrokModelLines } from '../../common/models/grokModels.js';
 import { parseOpenCodeAuthList, parseOpenCodeModelLines } from '../../common/models/harnessCatalog.js';
 import { isSignInNotice } from '../../common/acpNotices.js';
@@ -333,6 +334,32 @@ export async function listGrokModels(stdio: IVoltStdioService, command: string):
 	return grokModelsToInfo(parseGrokModelLines(output ?? ''), cached);
 }
 
+async function readFxStatus(stdio: IVoltStdioService, command: string): Promise<IFxStatus | undefined> {
+	return parseFxStatus(await runCli(stdio, command, ['status', '--json']) ?? '');
+}
+
+/** `fx status --json` names the login (`fx login`, `codex`, an API key); `missing` when signed out. */
+async function probeFxAuth(stdio: IVoltStdioService, command = 'fx'): Promise<{ account?: string; plan?: string } | undefined> {
+	const status = await readFxStatus(stdio, command);
+	if (!fxSignedIn(status)) {
+		return undefined;
+	}
+	return { plan: `Signed in with ${status?.auth}` };
+}
+
+/**
+ * `fx models --json`, with the model `fx status` reports first. Both are plain commands: an ACP
+ * probe would leave a saved session behind in `~/.fx/sessions`. Empty when fx is signed out.
+ */
+export async function listFxModels(stdio: IVoltStdioService, command: string): Promise<IModelInfo[]> {
+	const status = await readFxStatus(stdio, command);
+	if (fxSignedIn(status) === false) {
+		return [];
+	}
+	const ids = parseFxModelIds(await runCli(stdio, command, ['models', '--json'], MODEL_LIST_TIMEOUT_MS) ?? '');
+	return fxModelsToInfo(ids, status?.model);
+}
+
 /** Synara's discovery path: `agy models` rather than a throwaway ACP session. */
 export async function listAntigravityModels(stdio: IVoltStdioService, command: string): Promise<IModelInfo[]> {
 	const output = await runCli(stdio, command, ['models'], MODEL_LIST_TIMEOUT_MS);
@@ -460,6 +487,15 @@ export const CLI_AGENT_DEFINITIONS: readonly ICliAgentDefinition[] = [
 		acpArgs: ['acp'],
 		probeAuth: probeMuseAuth,
 	},
+	{
+		id: 'fx',
+		label: 'fx',
+		commands: ['fx'],
+		versionArgs: ['--version'],
+		acpArgs: ['acp'],
+		earlyAccess: true,
+		probeAuth: probeFxAuth,
+	},
 ];
 
 /**
@@ -492,6 +528,7 @@ const CLI_LOGIN_COMMANDS: Record<string, string> = {
 	codex: 'codex login',
 	'cursor-acp': 'cursor-agent login',
 	opencode: 'opencode auth login',
+	fx: 'fx login',
 };
 
 export interface ICliLogin {

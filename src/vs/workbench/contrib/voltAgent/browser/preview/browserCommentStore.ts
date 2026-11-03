@@ -11,6 +11,9 @@ import { createDecorator } from '../../../../../platform/instantiation/common/in
 import type { IAgentDisplayMention } from '../composer/agentMentions.js';
 import type { VoltCommentStatus } from '../chrome/voltCommentsPane.js';
 
+/** `(payload)`: scrolls the browser tab showing a picked element (a chip's browser_element block) to it. */
+export const REVEAL_BROWSER_ELEMENT_COMMAND_ID = 'volt.browser.revealElement';
+
 export interface IBrowserCommentBounds {
 	readonly x: number;
 	readonly y: number;
@@ -23,6 +26,8 @@ export interface IBrowserCommentRef {
 	readonly label: string;
 	readonly payload: string;
 	readonly bounds: IBrowserCommentBounds;
+	/** Its key in the page's tracked elements: marks and pins follow the element, not `bounds`, while the page is open. */
+	readonly track?: string;
 	/** The element's text, shortened: the message quotes it after the chip. */
 	readonly snippet?: string;
 	/** What it looked like when picked (its outline included), sent with the message. Filled in once captured. */

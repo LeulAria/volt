@@ -254,3 +254,25 @@
 	inset: auto;
 	transform-origin: 0 0;
 }
+
+/*
+ * Phone-wide windows: the chat column takes 14px gutters instead of the desktop's 20px, as the Volt
+ * phone app does. The sent prompt's sticky surround bleeds by the same amount (agentEditor.css).
+ */
+.monaco-workbench.web.volt-web-phone .volt-agent-thread-inner {
+	padding: 0 14px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-agent-turn.user {
+	margin: 0 -14px -8px;
+	padding: 10px 14px 8px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-agent-turn.user.stuck {
+	margin-bottom: 0;
+	padding-bottom: 0;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-agent-composer {
+	padding: 8px 14px max(8px, env(safe-area-inset-bottom));
+}

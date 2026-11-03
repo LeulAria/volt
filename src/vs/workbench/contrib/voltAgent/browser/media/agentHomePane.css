@@ -806,9 +806,18 @@
 	border: none !important;
 }
 
-/* Agent tab rows in flat lists start at the title (no glyph slot); the project is named on the
- * second line. Under a project the empty slot stays, so nested titles indent past their folder. */
+/* Agent tab rows start at the title (no glyph slot); a flat row names its project on the second line. */
 .volt-agent-home-row.is-session.no-glyph > .icon {
+	display: none;
+}
+
+/* Under a project the title steps in to where the folder's icon ends, short of the folder's name. Show more lines up. */
+.volt-agent-home-row.is-session.is-nested.no-glyph,
+.volt-agent-home-row.is-more.is-nested {
+	padding-left: calc(var(--volt-home-level, 0) * var(--volt-home-indent) + 10px);
+}
+
+.volt-agent-home-row.is-more.is-nested > .icon {
 	display: none;
 }
 
@@ -949,9 +958,11 @@
 	position: relative;
 }
 
+/* z-index: the chips paint over everything else in the row (unread dot, badge, age). */
 .volt-agent-home-row > .actions {
 	display: none;
 	position: absolute;
+	z-index: 1;
 	top: 50%;
 	right: 8px;
 	transform: translateY(-50%);
@@ -1042,7 +1053,7 @@
 	min-width: 200px;
 	padding: 0;
 	border-radius: 8px;
-	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	border: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 	background: var(--vscode-editor-background, #1e1e1e);
 	color: var(--vscode-menu-foreground, var(--vscode-foreground));
 	box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
@@ -1056,7 +1067,7 @@
 .monaco-workbench.hc-light .volt-agent-home-filter-menu,
 .monaco-workbench.vs .volt-agent-home-filter-flyout,
 .monaco-workbench.hc-light .volt-agent-home-filter-flyout {
-	border-color: var(--vscode-widget-border, rgba(0, 0, 0, 0.1));
+	border-color: var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
 }
 
 .volt-agent-home-filter-flyout.hidden {
@@ -1200,11 +1211,17 @@ html.volt-layout-agent-window body {
 	--volt-agent-window-bg-base: var(--vscode-sideBar-background, var(--vscode-titleBar-activeBackground, #141414));
 	/* 85% of the window shows; the desktop comes through the rest, like the sidebar. */
 	--volt-agent-window-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 85%, transparent);
-	--volt-agent-sidebar-bg: color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000) 55%, transparent);
-	--volt-agent-chat-bg: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
+	--volt-agent-sidebar-bg: color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000) 74%, transparent);
+	--volt-agent-chat-bg:var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background)));
 	--volt-agent-titlebar-height: 35px;
 	background: transparent !important;
 	background-color: transparent !important;
+}
+
+/* High contrast themes draw a window border (window.activeBorder); the see-through window has its
+ * own native edge, and the extra line read as a frame around the glass. */
+.monaco-workbench.volt-layout-agent.border:not(.fullscreen) {
+	border: 0;
 }
 
 /* Full screen has no desktop behind the window, only the vibrancy material: the see-through
@@ -1212,6 +1229,36 @@ html.volt-layout-agent-window body {
 .monaco-workbench.volt-layout-agent.fullscreen {
 	--volt-agent-window-bg: var(--volt-agent-window-bg-base);
 	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000);
+}
+
+/* Light themes: the sidebar is a shade under the chat, not 22% black (that turned it a muddy grey),
+ * and the window fill is denser so the light glass does not wash the chat out. */
+.monaco-workbench.volt-layout-agent.vs,
+.monaco-workbench.volt-layout-agent.hc-light {
+	--volt-agent-window-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 92%, transparent);
+	--volt-agent-sidebar-bg: color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base) 95%, #000) 72%, transparent);
+}
+
+.monaco-workbench.volt-layout-agent.vs.fullscreen,
+.monaco-workbench.volt-layout-agent.hc-light.fullscreen {
+	--volt-agent-window-bg: var(--volt-agent-window-bg-base);
+	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 95%, #000);
+}
+
+/* Window transparency is opt-in (volt.appearance.windowTransparency, off by default: the material
+ * costs GPU memory). voltAgentWindowChrome.contribution.ts sets `volt-window-transparent` only while
+ * the native window is see-through; without it the window under the page is the opaque theme color,
+ * so the translucent fills above paint solid, as in full screen. Kept after the light-theme rules,
+ * whose specificity the dark rule shares. */
+.monaco-workbench.volt-layout-agent:not(.volt-window-transparent) {
+	--volt-agent-window-bg: var(--volt-agent-window-bg-base);
+	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000);
+}
+
+.monaco-workbench.volt-layout-agent.vs:not(.volt-window-transparent),
+.monaco-workbench.volt-layout-agent.hc-light:not(.volt-window-transparent) {
+	--volt-agent-window-bg: var(--volt-agent-window-bg-base);
+	--volt-agent-sidebar-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 95%, #000);
 }
 
 .monaco-workbench.volt-layout-agent .monaco-grid-view,
@@ -1534,17 +1581,17 @@ html.volt-layout-agent-window body {
 	pointer-events: auto;
 }
 
-/* The toggle sits after the bolt and its "VOLT" wordmark. */
+/* The toggle comes first, then the bolt and its "VOLT" wordmark (22px on: the toggle and a 2px gap). */
 .monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle {
-	left: calc(30px + var(--volt-agent-brand-wordmark-width));
+	left: 8px;
 }
 
 .monaco-workbench.volt-layout-agent.mac:not(.web):not(.fullscreen) .part.auxiliarybar > .volt-primary-sidebar-toggle {
-	left: calc(100px + var(--volt-agent-brand-wordmark-width));
+	left: 78px;
 }
 
 .monaco-workbench.volt-layout-agent.fullscreen .part.auxiliarybar > .volt-primary-sidebar-toggle {
-	left: calc(35px + var(--volt-agent-brand-wordmark-width));
+	left: 13px;
 }
 
 /* The app icon's bolt (brand/volt-icon.svg without its tile, transparent) before the sidebar toggle: in the sidebar while it is open, in the title bar once it is closed. */
@@ -1561,7 +1608,7 @@ html.volt-layout-agent-window body {
 .monaco-workbench.volt-layout-agent:not(.volt-primary-sidebar-toggle-in-titlebar):not(.noauxiliarybar):not(.volt-agent-left-collapsed) .part.auxiliarybar > .volt-agent-brand-logo {
 	position: absolute;
 	top: calc((var(--volt-agent-titlebar-height, 35px) - 20px) / 2);
-	left: 8px;
+	left: 30px;
 	z-index: 20;
 	display: inline-flex;
 	align-items: center;
@@ -1575,15 +1622,20 @@ html.volt-layout-agent-window body {
 }
 
 .monaco-workbench.volt-layout-agent.mac:not(.web):not(.fullscreen):not(.volt-primary-sidebar-toggle-in-titlebar):not(.noauxiliarybar):not(.volt-agent-left-collapsed) .part.auxiliarybar > .volt-agent-brand-logo {
-	left: 78px;
+	left: 100px;
 }
 
-/* Full screen has no traffic lights before the logo: give it 5px off the window edge. */
+/* Full screen has no traffic lights before the toggle: it sits 5px off the window edge, the logo after it. */
 .monaco-workbench.volt-layout-agent.fullscreen:not(.volt-primary-sidebar-toggle-in-titlebar):not(.noauxiliarybar):not(.volt-agent-left-collapsed) .part.auxiliarybar > .volt-agent-brand-logo {
-	left: 13px;
+	left: 35px;
 }
 
-.monaco-workbench.volt-layout-agent.fullscreen .titlebar-left > .volt-agent-brand-logo.in-titlebar {
+/* Sidebar closed: the title bar keeps the same order, the toggle first, then the logo. */
+.monaco-workbench.volt-layout-agent .titlebar-left > .action-toolbar-container.left {
+	order: -1;
+}
+
+.monaco-workbench.volt-layout-agent.fullscreen .titlebar-left > .action-toolbar-container.left {
 	margin-left: 5px;
 }
 
@@ -1612,6 +1664,12 @@ html.volt-layout-agent-window body {
 	color: #fff;
 }
 
+/* The bolt is a white bitmap: on light themes the mark and the wordmark flip to near black together. */
+.monaco-workbench.vs .volt-agent-brand-logo,
+.monaco-workbench.hc-light .volt-agent-brand-logo {
+	filter: invert(0.86);
+}
+
 .monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle:hover {
 	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 }
@@ -1634,10 +1692,11 @@ html.volt-layout-agent-window body {
 	pointer-events: none;
 }
 
+/* The solid glyph of the right panel's toggle: a filled frame and bar, no outline. */
 .monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle svg rect,
 .monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle svg path {
-	fill: none;
-	stroke: currentColor;
+	fill: currentColor;
+	stroke: none;
 }
 
 .monaco-workbench:not(.volt-layout-agent) .part.auxiliarybar > .volt-primary-sidebar-toggle {
@@ -2006,10 +2065,18 @@ html.volt-layout-agent-window body {
 	display: none;
 }
 
-/* Under the hover actions the badge and age keep their space, so nothing shifts. */
+/* Under the hover actions the badge, age, settled row's PR pill and unread dot keep their space, so
+ * nothing shifts; the chips are see-through, so they would show through them. */
 .monaco-list-row:hover .volt-agent-home-row.is-session > .status-badge,
-.monaco-list-row:hover .volt-agent-home-row.is-session > .meta {
+.monaco-list-row:hover .volt-agent-home-row.is-session > .meta,
+.monaco-list-row:hover .volt-agent-home-row.is-session > .line-pr,
+.monaco-list-row:hover .volt-agent-home-row.is-session > .unread-dot {
 	visibility: hidden;
+}
+
+/* A dragged chat over a group that would take it (class set in agentHomePane.ts). */
+.volt-agent-home-tree .monaco-pane-view .pane.volt-agent-home-pane.drop-target {
+	background-color: var(--vscode-list-dropBackground);
 }
 
 .volt-agent-home-row > .status-badge.kind-input {
@@ -2131,4 +2198,86 @@ html.volt-layout-agent-window body {
 
 .volt-agent-home-row.is-cloud.cloud-failed > .meta {
 	color: var(--vscode-testing-iconFailed, var(--vscode-charts-red, #f14c4c));
+}
+
+/* Chrome icons, one look on both sides of the agent window: the left sidebar's title bar (sidebar
+ * toggle, back, forward), its search row, its footer, the right title bar's toggles, the files
+ * sidebar's tabs and the right panel's header buttons. Each is 16px with a 0.9px line however
+ * its SVG is drawn (non-scaling-stroke measures the stroke on screen, not in the viewBox). */
+.monaco-workbench.volt-layout-agent :is(
+	.volt-primary-sidebar-toggle,
+	.volt-agent-nav-button,
+	.volt-agent-home-row.is-action > .icon,
+	.volt-agent-home-nav-action,
+	.volt-agent-home-settings,
+	.volt-agent-titlebar-toggles > button,
+	.volt-agent-files-sidebar-tab,
+	.volt-agent-tools-files-toggle,
+	.volt-agent-tools-fullscreen,
+	.volt-agent-tools-close-panel
+) svg :is(path, line, polyline, polygon, rect, circle, ellipse) {
+	stroke-width: 0.9px;
+	vector-effect: non-scaling-stroke;
+}
+
+.monaco-workbench.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle svg,
+.monaco-workbench.volt-layout-agent .volt-agent-nav-button svg,
+.monaco-workbench.volt-layout-agent .volt-agent-home-row.is-action > .icon .volt-agent-svg-icon :is(svg, &),
+.monaco-workbench.volt-layout-agent .volt-agent-home-nav-action .volt-agent-svg-icon :is(svg, &),
+.monaco-workbench.volt-layout-agent .volt-agent-home-footer .volt-agent-home-settings :is(.volt-agent-svg-icon, .volt-agent-svg-icon svg, .volt-usage-icon, .volt-usage-icon svg, svg),
+.monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggles > .volt-agent-titlebar-toggle svg,
+.monaco-workbench.volt-layout-agent .volt-agent-files-sidebar-tab > svg {
+	flex-shrink: 0;
+	width: 15px;
+	height: 15px;
+}
+
+.monaco-workbench.volt-layout-agent :is(.volt-agent-tools-files-toggle, .volt-agent-tools-fullscreen) svg {
+	width: 14px;
+	height: 14px;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-tools-close-panel svg {
+	width: 13px;
+	height: 13px;
+}
+
+/* Back and forward are 20px around a 15px icon. */
+.monaco-workbench.volt-layout-agent .volt-agent-nav-button {
+	padding: 2px;
+}
+
+/* Near white in dark themes, full white on hover; a disabled back or forward stays faint. */
+.monaco-workbench.volt-layout-agent:is(.vs-dark, .hc-black) :is(
+	.volt-primary-sidebar-toggle,
+	.volt-agent-nav-button,
+	.volt-agent-home-row.is-action > .icon,
+	.volt-agent-home-nav-action,
+	.volt-agent-home-settings,
+	.volt-agent-titlebar-toggles > button,
+	.volt-agent-files-sidebar-tab,
+	.volt-agent-tools-files-toggle,
+	.volt-agent-tools-fullscreen,
+	.volt-agent-tools-close-panel
+) {
+	color: rgba(255, 255, 255, 0.88);
+}
+
+/* The footer dimmed its icons with opacity; the color does that now. */
+.monaco-workbench.volt-layout-agent:is(.vs-dark, .hc-black) .volt-agent-home-footer .volt-agent-home-settings {
+	opacity: 1;
+}
+
+.monaco-workbench.volt-layout-agent:is(.vs-dark, .hc-black) :is(
+	.volt-primary-sidebar-toggle,
+	.volt-agent-nav-button,
+	.volt-agent-home-nav-action,
+	.volt-agent-home-settings,
+	.volt-agent-titlebar-toggles > button,
+	.volt-agent-files-sidebar-tab,
+	.volt-agent-tools-files-toggle,
+	.volt-agent-tools-fullscreen,
+	.volt-agent-tools-close-panel
+):is(:hover, :focus-visible, .active) {
+	color: #fff;
 }

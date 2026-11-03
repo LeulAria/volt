@@ -5,7 +5,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
-	ACCESS_MODES, type AccessMode, catalogItem, COMPOSER_MODES, type ComposerMode, type Delivery, type IconName, type IMcpServerStatus, type IPromptAttachment, type IPromptMention, modelLabel
+	ACCESS_MODES, type AccessMode, catalogItem, compactNumber, COMPOSER_MODES, type ComposerMode, ComposerDraft, type Delivery, type IconName, type IDraftStore, type IMcpServerStatus, type IPromptAttachment, type IPromptMention, modelLabel
 } from '@volt/client-core';
 import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Platform, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -13,8 +13,10 @@ import Animated, { FadeIn, FadeOut, LinearTransition, useAnimatedStyle, useShare
 import { FileIcon } from '../files/FileIcon';
 import { useAttachment, useClient, useRuntime } from '../state/client';
 import { useTheme } from '../theme/theme';
+import { ModelIcon } from '../ui/BrandIcon';
 import { haptic, Icon, Pill, T, Tap } from '../ui/core';
-import { ActionSheet, type ISheetAction } from '../ui/sheets';
+import { ActionSheet, type ISheetAction, Sheet, SheetRow } from '../ui/sheets';
+import Svg, { Circle } from 'react-native-svg';
 import { type IComposerImage, imageKey, imageOnlyPrompt, pickImages, uploadImage } from './attachments';
 import { fileFacts, fileKey, type IComposerFile, type IComposerMention, isSendableImage, MAX_FILES, pickFiles, promptParts, uploadFile } from './composerFiles';
 import { ComposerSuggest, type ISlashItem, type ITrigger, triggerAt } from './ComposerSuggest';
@@ -23,6 +25,10 @@ import { McpSheet } from './McpSheet';
 import { ModelSheet } from './ModelSheet';
 
 const DRAFT_PREFIX = 'volt.draft.';
+const DRAFT_STORE: IDraftStore = {
+	get: key => AsyncStorage.getItem(key),
+	set: (key, value) => value === null ? AsyncStorage.removeItem(key) : AsyncStorage.setItem(key, value),
+};
 
 export interface IComposerProps {
 	readonly draftKey?: string;
@@ -48,12 +54,18 @@ export interface IComposerProps {
 	readonly disabled?: boolean;
 	/** Controls before the model pill (the new chat sheet's project picker). */
 	readonly leading?: ReactNode;
+	/** A new chat's "Compare models": the ticked models (undefined while off); the model sheet turns it on. */
+	readonly multiModels?: readonly string[];
+	readonly onMultiModelsChange?: (refs: readonly string[] | undefined) => void;
 	/** Replaces the composer's text and images whenever `key` changes (edit, rewind, clear). */
 	readonly prefill?: { readonly key: number; readonly text: string; readonly attachments: readonly IPromptAttachment[] };
 	/** Above the box (the "Editing message" banner). */
 	readonly banner?: ReactNode;
 	/** Images can be attached (default true). */
 	readonly allowImages?: boolean;
+	/** The chat's context: tokens in use and the model's window (the desktop's context meter). */
+	readonly contextUsed?: number;
+	readonly contextWindow?: number;
 }
 
 export interface IComposerSendExtra {
@@ -61,7 +73,7 @@ export interface IComposerSendExtra {
 	readonly displayText: string;
 }
 
-type SheetKind = 'mode' | 'model' | 'access' | 'send' | 'attach' | 'mcp' | `option:${string}`;
+type SheetKind = 'model' | 'access' | 'send' | 'attach' | 'mcp' | 'context' | `option:${string}`;
 
 const MAX_IMAGES = 8;
 
@@ -80,6 +92,7 @@ export function Composer(props: IComposerProps) {
 	const [slash, setSlash] = useState<ISlashItem | undefined>();
 	const [cursor, setCursor] = useState(0);
 	const [sheet, setSheet] = useState<SheetKind | undefined>();
+	const [focused, setFocused] = useState(false);
 	const input = useRef<TextInput>(null);
 	const dictation = useDictation(heard => {
 		setText(heard);
@@ -188,6 +201,8 @@ export function Composer(props: IComposerProps) {
 		}
 	};
 
+	// The device's copy at once; a chat's draft then follows the computer's (shared with the desktop).
+	const draft = useRef<ComposerDraft | undefined>(undefined);
 	useEffect(() => {
 		loadedKey.current = undefined;
 		if (!props.draftKey) {
@@ -195,19 +210,33 @@ export function Composer(props: IComposerProps) {
 			return;
 		}
 		const key = props.draftKey;
-		void AsyncStorage.getItem(DRAFT_PREFIX + key).then(value => {
-			loadedKey.current = key;
-			setText(value ?? '');
+		const shared = !!props.chatId && props.chatId === key;
+		const current = new ComposerDraft(DRAFT_STORE, DRAFT_PREFIX + key, shared ? client : undefined, shared ? key : undefined, remote => {
+			if (draft.current === current) {
+				setText(remote);
+			}
 		});
-	}, [props.draftKey]);
+		draft.current = current;
+		void current.load().then(value => {
+			if (draft.current === current) {
+				loadedKey.current = key;
+				setText(value);
+			}
+		});
+		return () => {
+			current.dispose();
+			if (draft.current === current) {
+				draft.current = undefined;
+			}
+		};
+	}, [props.draftKey, props.chatId, client]);
 
 	useEffect(() => {
 		const key = props.draftKey;
 		if (!key || loadedKey.current !== key) {
 			return;
 		}
-		const timer = setTimeout(() => void (text ? AsyncStorage.setItem(DRAFT_PREFIX + key, text) : AsyncStorage.removeItem(DRAFT_PREFIX + key)), 300);
-		return () => clearTimeout(timer);
+		draft.current?.change(text);
 	}, [text, props.draftKey]);
 
 	const trimmed = text.trim();
@@ -251,9 +280,7 @@ export function Composer(props: IComposerProps) {
 		setFiles([]);
 		setMentions([]);
 		setSlash(undefined);
-		if (props.draftKey) {
-			void AsyncStorage.removeItem(DRAFT_PREFIX + props.draftKey);
-		}
+		draft.current?.clear();
 	};
 
 	const tint = modeColors(props.mode);
@@ -263,30 +290,32 @@ export function Composer(props: IComposerProps) {
 	const access = ACCESS_MODES.find(a => a.id === props.accessMode) ?? ACCESS_MODES[3];
 	const showStop = props.running && !sendable && !images.length && !files.length && !!props.onStop;
 
+	// A chat's composer rests as one line (+, "Send follow-up", the model's mark, mic, send) and opens
+	// into the full box with its chips once focused or holding anything.
+	const compact = !!props.chatId && !focused && !text && !images.length && !files.length && !dictation.listening;
+
 	const sendScale = useAnimatedStyle(() => ({ transform: [{ scale: withSpring(sendable || showStop ? 1 : 0.92, { damping: 18, stiffness: 300 }) }] }), [sendable, showStop]);
+
+	const attachActions = (): ISheetAction[] => [
+		// The picker opens once the sheet has gone (iOS presents one modal at a time).
+		{ label: 'Photo Library', detail: `Up to ${MAX_IMAGES - images.length} images`, icon: 'image', onPress: () => setTimeout(() => void attach('library'), 420) },
+		{ label: 'Take Photo', icon: 'camera', onPress: () => setTimeout(() => void attach('camera'), 420) },
+		{ label: 'Files', detail: 'PDFs, logs, archives… saved on your computer for the agent', icon: 'paperclip', onPress: () => setTimeout(() => void attachFiles(), 420) },
+		...(props.folder ? [{ label: 'Mention a file', detail: 'Type @ to pick one from the project', icon: 'file' as const, onPress: () => insertToken('@') }] : []),
+		{ label: 'MCP servers', detail: 'Tools your agents can call', icon: 'server', onPress: () => setTimeout(() => setSheet('mcp'), 420) },
+		...(props.chatId ? [{ label: 'Commands', detail: 'Type / at the start of the message', icon: 'terminal' as const, onPress: () => {
+			if (!text.startsWith('/')) {
+				setText(`/${text}`);
+				setCursor(1);
+			}
+			setTimeout(() => input.current?.focus(), 380);
+		} }] : []),
+	];
 
 	const sheetActions = (): ISheetAction[] => {
 		switch (sheet) {
-			case 'mode':
-				return COMPOSER_MODES.map(m => ({ label: m.id, detail: m.description, checked: m.id === props.mode, dot: m.id === 'Agent' ? p.fgTertiary : modeColors(m.id).fg, onPress: () => props.onModeChange(m.id) }));
 			case 'access':
 				return ACCESS_MODES.map(a => ({ label: a.label, detail: a.description, icon: accessIcon(a.id), checked: a.id === access.id, onPress: () => props.onAccessChange(a.id) }));
-			case 'attach':
-				return [
-					// The picker opens once the sheet has gone (iOS presents one modal at a time).
-					{ label: 'Photo Library', detail: `Up to ${MAX_IMAGES - images.length} images`, icon: 'image', onPress: () => setTimeout(() => void attach('library'), 420) },
-					{ label: 'Take Photo', icon: 'camera', onPress: () => setTimeout(() => void attach('camera'), 420) },
-					{ label: 'Files', detail: 'PDFs, logs, archives… saved on your computer for the agent', icon: 'paperclip', onPress: () => setTimeout(() => void attachFiles(), 420) },
-					...(props.folder ? [{ label: 'Mention a file', detail: 'Type @ to pick one from the project', icon: 'file' as const, onPress: () => insertToken('@') }] : []),
-					{ label: 'MCP servers', detail: 'Tools your agents can call', icon: 'server', onPress: () => setTimeout(() => setSheet('mcp'), 420) },
-					...(props.chatId ? [{ label: 'Commands', detail: 'Type / at the start of the message', icon: 'terminal' as const, onPress: () => {
-						if (!text.startsWith('/')) {
-							setText(`/${text}`);
-							setCursor(1);
-						}
-						setTimeout(() => input.current?.focus(), 380);
-					} }] : []),
-				];
 			case 'send':
 				return [
 					{ label: 'Add to queue', detail: 'Runs after the current turn', icon: 'queue', onPress: () => void send('queue') },
@@ -303,17 +332,20 @@ export function Composer(props: IComposerProps) {
 		}
 	};
 
-	const sheetTitle = sheet === 'mode' ? 'Mode' : sheet === 'access' ? 'Access' : sheet === 'send' ? 'Send while it works' : sheet === 'attach' ? 'Add to the message' : options.find(d => sheet === `option:${d.id}`)?.label;
-	const actionSheet = sheet && sheet !== 'model' && sheet !== 'mcp' ? sheet : undefined;
+	const sheetTitle = sheet === 'access' ? 'Access' : sheet === 'send' ? 'Send while it works' : options.find(d => sheet === `option:${d.id}`)?.label;
+	const actionSheet = sheet && sheet !== 'model' && sheet !== 'mcp' && sheet !== 'attach' && sheet !== 'context' ? sheet : undefined;
+	const modelName = props.multiModels ? `${props.multiModels.length} models` : modelLabel(runtime, props.modelRef);
+	// The chip's mark already says whose model it is ("Opus 5.5", not "Opus 5.5 Claude").
+	const chipModel = props.multiModels ? modelName : catalogItem(runtime, props.modelRef)?.label ?? modelName;
 
 	return (
-		<View style={{ paddingHorizontal: 16 }}>
+		<View style={{ paddingHorizontal: 14 }}>
 			{props.banner}
 			{trigger && (trigger.kind === '/' ? !!props.chatId : true) ? (
 				<ComposerSuggest trigger={trigger} client={client} chatId={props.chatId} folder={props.folder} onPickFile={pickFile} onPickSlash={pickSlash} onPickMcp={pickMcp} />
 			) : null}
 			{/* agentEditor.css `.volt-agent-input-box`: 20px radius, a 1px edge, flat. */}
-			<View style={{ backgroundColor: p.composer, borderRadius: 20, borderWidth: 1, borderColor: props.mode === 'Agent' ? p.bubbleBorder : `${tint.fg}66` }}>
+			<View style={{ backgroundColor: p.composer, borderRadius: compact ? 26 : 20, borderWidth: 1, borderColor: props.mode === 'Agent' ? p.bubbleBorder : `${tint.fg}66` }}>
 				{images.length ? (
 					<Animated.View entering={FadeIn.duration(160)} layout={LinearTransition.duration(180)}>
 						<ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 8, paddingHorizontal: 12, paddingTop: 12 }}>
@@ -325,6 +357,13 @@ export function Composer(props: IComposerProps) {
 					<ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 8, paddingHorizontal: 12, paddingTop: 12 }}>
 						{files.map(file => <ComposerFileChip key={file.key} file={file} onRemove={() => setFiles(list => list.filter(f => f.key !== file.key))} />)}
 					</ScrollView>
+				) : null}
+				{/* The input keeps its place in this row in both shapes, so focusing it (which opens the box) keeps the keyboard up. */}
+				<View style={compact ? { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 7, minHeight: 50 } : null}>
+				{compact && props.allowImages !== false ? (
+					<Tap haptics="selection" onPress={() => setSheet('attach')} hitSlop={6} accessibilityLabel="Mode, files, images, MCP servers or commands" style={{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: p.fill }}>
+						<Icon name="plus" size={18} color={p.fgSecondary} />
+					</Tap>
 				) : null}
 				<TextInput
 					ref={input}
@@ -339,26 +378,59 @@ export function Composer(props: IComposerProps) {
 						}
 					}}
 					onSelectionChange={e => setCursor(e.nativeEvent.selection.end)}
+					onFocus={() => setFocused(true)}
+					onBlur={() => setFocused(false)}
 					multiline
 					autoFocus={props.autoFocus}
 					editable={!props.disabled}
-					placeholder={dictation.listening ? 'Listening…' : props.placeholder ?? (props.running ? 'Queue a message, or hold send to steer' : 'Plan, build, / for commands, @ for context')}
+					placeholder={dictation.listening ? 'Listening…' : compact ? (props.running ? 'Queue a follow-up' : 'Send follow-up') : props.placeholder ?? (props.running ? 'Queue a message, or hold send to steer' : 'Plan, build, / for commands, @ for context')}
 					placeholderTextColor={p.fgQuaternary}
 					selectionColor={p.accent}
 					keyboardAppearance={p.scheme}
-					style={{ color: p.fg, fontSize: 16, lineHeight: 22, minHeight: 46, maxHeight: 150, paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 13 : 10, paddingBottom: 6 }}
+					style={compact
+						? { flex: 1, color: p.fg, fontSize: 16, lineHeight: 22, paddingHorizontal: 8, paddingTop: Platform.OS === 'ios' ? 13 : 10, paddingBottom: Platform.OS === 'ios' ? 13 : 10 }
+						: { color: p.fg, fontSize: 15, lineHeight: 22, minHeight: 44, maxHeight: 160, paddingHorizontal: 14, paddingTop: Platform.OS === 'ios' ? 12 : 9, paddingBottom: 4 }}
 				/>
+				{compact ? (
+					<>
+						{props.multiModels ? null : (
+							<Tap haptics="selection" onPress={() => setSheet('model')} hitSlop={4} accessibilityLabel={`Model: ${modelName}`} style={{ width: 34, height: 36, alignItems: 'center', justifyContent: 'center' }}>
+								<ModelIcon label={catalogItem(runtime, props.modelRef)?.label ?? modelName} providerId={catalogItem(runtime, props.modelRef)?.providerId} size={20} color={p.fgSecondary} />
+							</Tap>
+						)}
+						{dictation.available ? <MicButton listening={false} onPress={() => void dictation.start(text)} /> : null}
+						{showStop ? (
+							<Tap haptics="medium" hitSlop={8} onPress={props.onStop} accessibilityLabel="Stop" style={{ width: 36, height: 36, borderRadius: 18, marginLeft: 2, backgroundColor: p.primary, alignItems: 'center', justifyContent: 'center' }}>
+								<View style={{ width: 11, height: 11, borderRadius: 2, backgroundColor: p.onPrimary }} />
+							</Tap>
+						) : (
+							<Tap haptics="selection" onPress={() => input.current?.focus()} accessibilityLabel="Write a follow-up" hitSlop={6} style={{ width: 36, height: 36, borderRadius: 18, marginLeft: 2, backgroundColor: p.primary, alignItems: 'center', justifyContent: 'center' }}>
+								<Icon name="arrowUp" size={18} color={p.onPrimary} strokeWidth={2.4} />
+							</Tap>
+						)}
+					</>
+				) : null}
+				</View>
+				{compact ? null : (
 				<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8, paddingBottom: 8, paddingTop: 2 }}>
 					{props.allowImages !== false ? (
-						<Tap haptics="selection" onPress={() => setSheet('attach')} hitSlop={6} accessibilityLabel="Add files, images, MCP servers or commands" style={{ width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: p.fill }}>
+						<Tap haptics="selection" onPress={() => setSheet('attach')} hitSlop={6} accessibilityLabel="Mode, files, images, MCP servers or commands" style={{ width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: p.fill }}>
 							<Icon name="plus" size={17} color={p.fgSecondary} />
 						</Tap>
 					) : null}
 					{/* The chips scroll sideways when the phone is too narrow for all of them. */}
 					<ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={{ flex: 1 }} contentContainerStyle={{ alignItems: 'center', gap: 6, paddingRight: 4 }}>
-						<Pill label={props.mode} color={props.mode === 'Agent' ? p.fgSecondary : tint.fg} bg={tint.bg} onPress={() => setSheet('mode')} />
+						{/* Agent is the default and goes unsaid; another mode shows in its colour (pick it under +). */}
+						{props.mode !== 'Agent' ? <Pill label={props.mode} color={tint.fg} bg={tint.bg} onPress={() => setSheet('attach')} /> : null}
 						{props.leading}
-						<Pill label={modelLabel(runtime, props.modelRef)} icon="cpu" onPress={() => setSheet('model')} maxWidth={props.leading ? 110 : 150} bg="transparent" />
+						<Pill
+							label={chipModel}
+							icon={props.multiModels ? 'layers' : undefined}
+							glyph={props.multiModels ? undefined : <ModelIcon label={catalogItem(runtime, props.modelRef)?.label ?? modelName} providerId={catalogItem(runtime, props.modelRef)?.providerId} size={14} color={p.fgSecondary} />}
+							onPress={() => setSheet('model')}
+							maxWidth={props.leading ? 130 : 170}
+							bg="transparent"
+						/>
 						{options.map(descriptor => {
 							const value = String(current[descriptor.id] ?? descriptor.options?.find(o => o.isDefault)?.value ?? '');
 							return <Pill key={descriptor.id} label={descriptor.options?.find(o => o.value === value)?.label ?? descriptor.label} onPress={() => setSheet(`option:${descriptor.id}`)} bg="transparent" maxWidth={90} />;
@@ -367,11 +439,13 @@ export function Composer(props: IComposerProps) {
 							<Icon name={accessIcon(access.id)} size={16} color={access.id === 'full-access' ? p.warning : p.fgTertiary} />
 						</Tap>
 					</ScrollView>
+					{props.contextUsed && props.contextWindow ? <ContextRing used={props.contextUsed} size={props.contextWindow} onPress={() => setSheet('context')} /> : null}
 					{dictation.available ? <MicButton listening={dictation.listening} onPress={() => dictation.listening ? dictation.stop() : void dictation.start(text)} /> : null}
 					<Animated.View style={sendScale}>
 						{showStop ? (
-							<Tap haptics="medium" onPress={props.onStop} accessibilityLabel="Stop" style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: p.fillStrong, alignItems: 'center', justifyContent: 'center' }}>
-								<Icon name="stop" size={13} color={p.fg} />
+							// agentEditor.css `.volt-agent-send.stop`: the near-white circle with a dark square.
+							<Tap haptics="medium" hitSlop={8} onPress={props.onStop} accessibilityLabel="Stop" style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: p.primary, alignItems: 'center', justifyContent: 'center' }}>
+								<View style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: p.onPrimary }} />
 							</Tap>
 						) : (
 							<Tap
@@ -384,16 +458,20 @@ export function Composer(props: IComposerProps) {
 									}
 								}}
 								accessibilityLabel={props.running ? 'Queue' : 'Send'}
-								style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: sendable ? tint.send : p.fill, alignItems: 'center', justifyContent: 'center' }}
+								hitSlop={8}
+								style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: sendable ? tint.send : p.fill, alignItems: 'center', justifyContent: 'center' }}
 							>
-								{uploading ? <ActivityIndicator size="small" color={p.fgTertiary} /> : <Icon name={props.running && sendable ? 'queue' : 'arrowUp'} size={18} color={sendable ? tint.onSend : p.fgQuaternary} strokeWidth={2.2} />}
+								{uploading ? <ActivityIndicator size="small" color={p.fgTertiary} /> : <Icon name={props.running && sendable ? 'queue' : 'arrowUp'} size={16} color={sendable ? tint.onSend : p.fgQuaternary} strokeWidth={2.4} />}
 							</Tap>
 						)}
 					</Animated.View>
 				</View>
+				)}
 			</View>
 			<ActionSheet visible={!!actionSheet} onClose={() => setSheet(undefined)} title={sheetTitle} actions={actionSheet ? sheetActions() : []} />
-			<ModelSheet visible={sheet === 'model'} onClose={() => setSheet(undefined)} modelRef={props.modelRef} onPick={props.onModelChange} />
+			<AttachSheet visible={sheet === 'attach'} onClose={() => setSheet(undefined)} mode={props.mode} onModeChange={props.onModeChange} actions={sheet === 'attach' ? attachActions() : []} />
+			{props.contextUsed && props.contextWindow ? <ContextSheet visible={sheet === 'context'} onClose={() => setSheet(undefined)} used={props.contextUsed} size={props.contextWindow} model={modelName} /> : null}
+			<ModelSheet visible={sheet === 'model'} onClose={() => setSheet(undefined)} modelRef={props.modelRef} onPick={props.onModelChange} multi={props.multiModels} onMultiChange={props.onMultiModelsChange} />
 			<McpSheet visible={sheet === 'mcp'} onClose={() => setSheet(undefined)} folder={props.folder} onMention={pickMcp} />
 		</View>
 	);
@@ -421,6 +499,109 @@ const ComposerThumb = memo(function ComposerThumb({ image, onRemove }: { readonl
 		</Animated.View>
 	);
 });
+
+/** The + sheet: the mode (Agent, Plan, Ask...) on one row of chips, then what can go in the message. */
+function AttachSheet({ visible, onClose, mode, onModeChange, actions }: {
+	readonly visible: boolean;
+	readonly onClose: () => void;
+	readonly mode: ComposerMode;
+	readonly onModeChange: (mode: ComposerMode) => void;
+	readonly actions: readonly ISheetAction[];
+}) {
+	const { p, mode: modeColors } = useTheme();
+	const picked = COMPOSER_MODES.find(m => m.id === mode);
+	return (
+		<Sheet visible={visible} onClose={onClose}>
+			<T variant="footnote" weight="700" color={p.fgTertiary} style={{ paddingHorizontal: 12, paddingTop: 12, paddingBottom: 8 }}>Mode</T>
+			<ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 8 }}>
+				{COMPOSER_MODES.map(m => {
+					const on = m.id === mode;
+					const tint = modeColors(m.id);
+					const dot = m.id === 'Agent' ? p.fgSecondary : tint.fg;
+					return (
+						<Tap key={m.id} haptics="selection" onPress={() => onModeChange(m.id)} accessibilityRole="button" accessibilityState={{ selected: on }} accessibilityLabel={`${m.id} mode`}
+							style={{ flexDirection: 'row', alignItems: 'center', gap: 7, height: 36, paddingHorizontal: 14, borderRadius: 18, backgroundColor: on ? tint.bg : 'transparent', borderWidth: 1, borderColor: on ? `${dot}88` : p.strokeFaint }}>
+							<View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: dot }} />
+							<T variant="small" weight={on ? '600' : '500'} color={on ? p.fg : p.fgSecondary}>{m.id}</T>
+						</Tap>
+					);
+				})}
+			</ScrollView>
+			{picked ? <T variant="footnote" color={p.fgTertiary} style={{ paddingHorizontal: 12, paddingTop: 8 }}>{picked.description}</T> : null}
+			<View style={{ height: StyleSheet.hairlineWidth, backgroundColor: p.strokeFaint, marginHorizontal: 12, marginTop: 14, marginBottom: 4 }} />
+			<T variant="footnote" weight="700" color={p.fgTertiary} style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 2 }}>Add to the message</T>
+			{actions.map(action => <SheetRow key={action.label} action={action} onDone={onClose} />)}
+		</Sheet>
+	);
+}
+
+function contextColor(share: number, p: ReturnType<typeof useTheme>['p']): string {
+	return share > 0.95 ? p.danger : share > 0.8 ? p.warning : p.accent;
+}
+
+/**
+ * How full the chat's context is (agentEditor.css `.volt-agent-context-meter`): a ring that fills
+ * as the context does, amber past 80% and red past 95%; tap for the numbers.
+ */
+function ContextRing({ used, size, onPress }: { readonly used: number; readonly size: number; readonly onPress: () => void }) {
+	const { p } = useTheme();
+	const share = Math.min(1, used / size);
+	const r = 6.5;
+	const c = 2 * Math.PI * r;
+	const color = share > 0.8 ? contextColor(share, p) : p.fgTertiary;
+	return (
+		<Tap hitSlop={8} haptics="selection" onPress={onPress} accessibilityRole="button" accessibilityLabel={`Context ${Math.round(share * 100)} percent full`} style={{ width: 26, height: 30, alignItems: 'center', justifyContent: 'center' }}>
+			<Svg width={16} height={16} viewBox="0 0 16 16">
+				<Circle cx={8} cy={8} r={r} stroke={p.fillStrong} strokeWidth={2} fill="none" />
+				<Circle cx={8} cy={8} r={r} stroke={color} strokeWidth={2} fill="none" strokeDasharray={`${c * share} ${c}`} strokeLinecap="round" transform="rotate(-90 8 8)" />
+			</Svg>
+		</Tap>
+	);
+}
+
+/** The context ring's numbers: a large ring with the share, then used, free and the window. */
+function ContextSheet({ visible, onClose, used, size, model }: { readonly visible: boolean; readonly onClose: () => void; readonly used: number; readonly size: number; readonly model: string }) {
+	const { p } = useTheme();
+	const share = Math.min(1, used / size);
+	const percent = Math.round(share * 100);
+	const color = contextColor(share, p);
+	const r = 34;
+	const c = 2 * Math.PI * r;
+	const state = share > 0.95 ? 'Almost full. Start a new chat soon so the agent keeps the whole conversation in view.'
+		: share > 0.8 ? 'Getting full. Long answers and big files fill it faster.'
+			: 'Plenty of room left for this chat.';
+	const rows: [string, string][] = [
+		['Used', `${compactNumber(used)} tokens`],
+		['Free', `${compactNumber(Math.max(0, size - used))} tokens`],
+		['Window', `${compactNumber(size)} tokens`],
+		['Model', model],
+	];
+	return (
+		<Sheet visible={visible} onClose={onClose} title="Context">
+			<View style={{ flexDirection: 'row', alignItems: 'center', gap: 18, paddingHorizontal: 8, paddingTop: 4, paddingBottom: 14 }}>
+				<View style={{ width: 80, height: 80, alignItems: 'center', justifyContent: 'center' }}>
+					<Svg width={80} height={80} viewBox="0 0 80 80" style={StyleSheet.absoluteFill}>
+						<Circle cx={40} cy={40} r={r} stroke={p.fill} strokeWidth={7} fill="none" />
+						<Circle cx={40} cy={40} r={r} stroke={color} strokeWidth={7} fill="none" strokeDasharray={`${c * share} ${c}`} strokeLinecap="round" transform="rotate(-90 40 40)" />
+					</Svg>
+					<T variant="title3" weight="700" style={{ fontVariant: ['tabular-nums'] }}>{`${percent}%`}</T>
+				</View>
+				<View style={{ flex: 1, gap: 4 }}>
+					<T variant="callout" weight="600">{`${compactNumber(used)} of ${compactNumber(size)} used`}</T>
+					<T variant="footnote" color={p.fgTertiary}>{state}</T>
+				</View>
+			</View>
+			<View style={{ marginHorizontal: 8, borderRadius: 14, backgroundColor: p.fillFaint, borderWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint, overflow: 'hidden' }}>
+				{rows.map(([label, value], i) => (
+					<View key={label} style={{ flexDirection: 'row', alignItems: 'center', minHeight: 44, paddingHorizontal: 14, borderTopWidth: i ? StyleSheet.hairlineWidth : 0, borderTopColor: p.strokeFaint }}>
+						<T variant="callout" color={p.fgSecondary} style={{ flex: 1 }}>{label}</T>
+						<T variant="callout" weight="500" numberOfLines={1} style={{ fontVariant: ['tabular-nums'], maxWidth: '65%' }}>{value}</T>
+					</View>
+				))}
+			</View>
+		</Sheet>
+	);
+}
 
 /** The mic: dictates into the box; red and pulsing while it listens (tap again to stop). */
 function MicButton({ listening, onPress }: { readonly listening: boolean; readonly onPress: () => void }) {

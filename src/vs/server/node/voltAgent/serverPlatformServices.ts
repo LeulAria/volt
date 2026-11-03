@@ -6,6 +6,7 @@
 import { execFile, spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
+import { raceCancellationError } from '../../../base/common/async.js';
 import { CancellationToken } from '../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
@@ -20,16 +21,15 @@ import { IInstantiationService } from '../../../platform/instantiation/common/in
 import { AbstractLogger, ILogger, LogLevel } from '../../../platform/log/common/log.js';
 import { INotification, INotificationHandle, INotificationService, NoOpNotification } from '../../../platform/notification/common/notification.js';
 import { ISecretStorageService } from '../../../platform/secrets/common/secrets.js';
-import { AbstractStorageService, IStorageService, StorageScope, StorageTarget } from '../../../platform/storage/common/storage.js';
-import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID } from '../../../workbench/services/voltRuntime/common/hostTools.js';
-import { toWire } from '../../../platform/voltAgentServer/common/wire.js';
+import { AbstractStorageService, StorageScope, StorageTarget } from '../../../platform/storage/common/storage.js';
+import { AGENT_SERVER_WINDOW_COMMANDS, BROWSER_PAGE_URL_COMMAND_ID } from '../../../workbench/services/voltRuntime/common/hostTools.js';
+import { WORKSPACE_SNAPSHOT_COMMAND_ID } from '../../../workbench/services/voltRuntime/common/harness/workspaceContext.js';
+import { fromWire, toWire } from '../../../platform/voltAgentServer/common/wire.js';
 import { IAgentServerClients } from './serverClients.js';
 import { IAnyWorkspaceIdentifier, ISingleFolderWorkspaceIdentifier, IWorkspace, IWorkspaceContextService, IWorkspaceFolder, IWorkspaceFoldersChangeEvent, IWorkspaceFoldersWillChangeEvent, IWorkspaceIdentifier, WorkbenchState } from '../../../platform/workspace/common/workspace.js';
 import { IUserDataProfile } from '../../../platform/userDataProfile/common/userDataProfile.js';
-import { IWorkspaceTrustManagementService, IWorkspaceTrustTransitionParticipant, IWorkspaceTrustUriInfo } from '../../../platform/workspace/common/workspaceTrust.js';
-import { IConfigurationService } from '../../../platform/configuration/common/configuration.js';
-import { extUriBiasedIgnorePathCase } from '../../../base/common/resources.js';
 import { IPathService } from '../../../workbench/services/path/common/pathService.js';
+import { IWorkspaceTrustManagementService, IWorkspaceTrustUriInfo } from '../../../platform/workspace/common/workspaceTrust.js';
 import { BeforeShutdownErrorEvent, BeforeShutdownEvent, ILifecycleService, LifecyclePhase, ShutdownReason, StartupKind, WillShutdownEvent, WillShutdownJoinerOrder } from '../../../workbench/services/lifecycle/common/lifecycle.js';
 import { IFileMatch, IFileQuery, ISearchComplete, ISearchProgressItem, ISearchService, ISerializedSearchComplete, ISerializedSearchProgressItem, isSerializedSearchComplete, isSerializedSearchSuccess, ITextQuery, SearchProviderType } from '../../../workbench/services/search/common/search.js';
 import { SearchService as RawSearchService } from '../../../workbench/services/search/node/rawSearchService.js';
@@ -307,54 +307,21 @@ export class ServerPathService implements IPathService {
 	}
 }
 
+/** Shutdown hooks (history flushes its logs) run when the server stops. */
 /**
- * Folder trust as the desktop decided it: the trusted folders it keeps in application storage
- * (WORKSPACE_TRUST_STORAGE_KEY), or everything when trust is turned off. The server never asks:
- * an untrusted project's own hooks simply don't run.
+ * Workspace trust is the desktop's prompt, which the server cannot show: no folder is trusted
+ * here, so a repository's own hooks never run unattended. User-level hooks still run.
  */
-export class ServerWorkspaceTrustService implements IWorkspaceTrustManagementService {
+export class ServerWorkspaceTrustService implements Partial<IWorkspaceTrustManagementService> {
 	declare readonly _serviceBrand: undefined;
-	readonly onDidChangeTrust: Event<boolean> = Event.None;
-	readonly onDidChangeTrustedFolders: Event<void> = Event.None;
+	readonly onDidChangeTrust = Event.None;
+	readonly onDidChangeTrustedFolders = Event.None;
 	readonly workspaceResolved = Promise.resolve();
 	readonly workspaceTrustInitialized = Promise.resolve();
-	acceptsOutOfWorkspaceFiles = false;
-
-	constructor(
-		@IStorageService private readonly storageService: IStorageService,
-		@IConfigurationService private readonly configurationService: IConfigurationService,
-	) { }
-
-	private enabled(): boolean {
-		return this.configurationService.getValue('security.workspace.trust.enabled') !== false;
-	}
-
-	getTrustedUris(): URI[] {
-		try {
-			const info = JSON.parse(this.storageService.get('content.trust.model.key', StorageScope.APPLICATION) ?? '{}') as { uriTrustInfo?: { uri: unknown; trusted?: boolean }[] };
-			return (info.uriTrustInfo ?? []).filter(item => item.trusted).map(item => URI.revive(item.uri as URI));
-		} catch {
-			return [];
-		}
-	}
-
-	async getUriTrustInfo(uri: URI): Promise<IWorkspaceTrustUriInfo> {
-		const trusted = !this.enabled() || this.getTrustedUris().some(root => extUriBiasedIgnorePathCase.isEqualOrParent(uri, root));
-		return { uri, trusted };
-	}
-
-	isWorkspaceTrusted(): boolean { return !this.enabled(); }
-	isWorkspaceTrustForced(): boolean { return false; }
-	canSetParentFolderTrust(): boolean { return false; }
-	async setParentFolderTrust(_trusted: boolean): Promise<void> { }
-	canSetWorkspaceTrust(): boolean { return false; }
-	async setWorkspaceTrust(_trusted: boolean): Promise<void> { }
-	async setUrisTrust(_uris: URI[], _trusted: boolean): Promise<void> { }
-	async setTrustedUris(_uris: URI[]): Promise<void> { }
-	addWorkspaceTrustTransitionParticipant(_participant: IWorkspaceTrustTransitionParticipant): IDisposable { return Disposable.None; }
+	isWorkspaceTrusted(): boolean { return false; }
+	async getUriTrustInfo(uri: URI): Promise<IWorkspaceTrustUriInfo> { return { uri, trusted: false }; }
 }
 
-/** Shutdown hooks (history flushes its logs) run when the server stops. */
 export class ServerLifecycleService extends Disposable implements ILifecycleService {
 	declare readonly _serviceBrand: undefined;
 	readonly startupKind = StartupKind.NewWindow;
@@ -451,8 +418,14 @@ export class ServerSearchService implements Partial<ISearchService> {
 
 //#region Commands, notifications, editor-only services
 
-/** Commands only a Volt window can run (the in-app browser lives there). */
-export const WINDOW_COMMANDS: ReadonlySet<string> = new Set([AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID]);
+/** Commands only a Volt window can run (the in-app browser, what the user has open). */
+export const WINDOW_COMMANDS = AGENT_SERVER_WINDOW_COMMANDS;
+
+/** Window commands that answer from memory: a hung window must not hold up a turn. The others drive the browser and take as long as it does. */
+const WINDOW_COMMAND_TIMEOUT_MS: ReadonlyMap<string, number> = new Map([
+	[WORKSPACE_SNAPSHOT_COMMAND_ID, 5_000],
+	[BROWSER_PAGE_URL_COMMAND_ID, 10_000],
+]);
 
 /**
  * Runs commands from the CommandsRegistry (the checkpoint service registers its own). Commands
@@ -478,7 +451,18 @@ export class ServerCommandService implements ICommandService {
 				return this.instantiationService.invokeFunction(command.handler, ...args) as T;
 			}
 			if (WINDOW_COMMANDS.has(id)) {
-				return await this.clients.call<T>('browser', 'command.execute', id, ...args.map(arg => toWire(arg)));
+				// A token does not cross the socket (the window runs the command with none).
+				// These all name the chat first: its browser tab is in the window that has it open.
+				const sessionId = typeof args[0] === 'string' ? args[0] : undefined;
+				const holders = sessionId ? this.clients.holders(sessionId) : undefined;
+				const answer = this.clients.callWith<unknown>('browser', {
+					prefer: holders?.size ? connectionId => holders.has(connectionId) : undefined,
+					timeoutMs: WINDOW_COMMAND_TIMEOUT_MS.get(id),
+				}, 'command.execute', id, ...args.map(arg => CancellationToken.isCancellationToken(arg) ? undefined : toWire(arg)));
+				// The caller stops waiting when it cancels, even though the window cannot be told to.
+				const token = args.find(arg => CancellationToken.isCancellationToken(arg)) as CancellationToken | undefined;
+				// The window sends its answer in wire form (screenshots as `$u8`, URIs): revive it.
+				return fromWire<T>(token ? await raceCancellationError(answer, token) : await answer);
 			}
 			throw new Error(`command '${id}' not found on the agent server`);
 		} finally {

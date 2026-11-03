@@ -332,6 +332,94 @@ async function checkedOut(run: GitRunner, repoRoot: string, branch: string): Pro
 	return ok(listed) && listed.stdout.split('\n').some(line => line.trim() === `branch refs/heads/${branch}`);
 }
 
+export interface IReleasedWorktreeBranch {
+	/** The worktree that had the branch checked out. */
+	readonly path: string;
+	/** The branch it is on now: same commit, same files, nothing staged. */
+	readonly branch: string;
+}
+
+/**
+ * Frees `branch` for the checkout at `repoRoot` when one of Volt's worktrees has it checked out:
+ * that worktree moves to a new branch at the same commit (`switch -c` carries every change
+ * along), named `nameHint` when free, and its staged changes are unstaged. Undefined when no
+ * other checkout has the branch. A checkout Volt did not make is the user's, so it is refused.
+ */
+export async function releaseWorktreeBranch(input: {
+	readonly run: GitRunner;
+	readonly repoRoot: string;
+	readonly worktreesRoot: string;
+	readonly branch: string;
+	/** A name for the worktree's new branch, from its chat. */
+	readonly nameHint?: (path: string) => string | undefined;
+}): Promise<IReleasedWorktreeBranch | undefined> {
+	const { run, repoRoot, branch } = input;
+	const commonDir = await gitCommonDir(run, repoRoot);
+	return withRepoQueue(commonDir, async () => {
+		const own = normalize(await gitStdout(run, repoRoot, ['rev-parse', '--show-toplevel']));
+		const listed = await gitStdout(run, repoRoot, ['worktree', 'list', '--porcelain']);
+		const holder = worktreeHolding(listed, branch);
+		if (!holder || normalize(holder) === own) {
+			return undefined;
+		}
+		if (!isManagedWorktreePath(holder, input.worktreesRoot)) {
+			throw new AgentWorktreeError(`${branch} is checked out in ${holder}. Switch that checkout to another branch first.`);
+		}
+		const id = MANAGED_DIR.test(basename(normalize(holder))) ? basename(normalize(holder)).slice('volt-'.length) : undefined;
+		const base = input.nameHint?.(holder) ?? (id ? `volt/${id}` : `${branch}-${basename(normalize(holder))}`);
+		const name = await freeBranchName(run, repoRoot, base);
+		const switched = await run(holder, ['switch', '-c', name]);
+		if (!ok(switched)) {
+			throw new AgentWorktreeError(gitDetail(switched) || `Could not move ${holder} off ${branch}.`);
+		}
+		// The changes stay in the files, only out of the index.
+		await run(holder, ['reset', '-q']);
+		return { path: holder, branch: name };
+	});
+}
+
+/** `volt/fix-login-bug` from "Fix login bug"; undefined when nothing usable is left. */
+export function branchNameFromTitle(title: string | undefined): string | undefined {
+	const words = (title ?? '').toLowerCase().normalize('NFKD').replace(/\p{M}/gu, '').match(/[a-z0-9]+/g);
+	// An untitled chat says nothing a `volt/<id>` name does not.
+	if (!words?.length || words.join(' ') === 'new chat') {
+		return undefined;
+	}
+	let slug = '';
+	for (const word of words) {
+		const next = slug ? `${slug}-${word}` : word;
+		if (next.length > 40) {
+			break;
+		}
+		slug = next;
+	}
+	return `volt/${slug || words[0].slice(0, 40)}`;
+}
+
+/** The worktree whose HEAD is `refs/heads/<branch>`, from `worktree list --porcelain`. */
+function worktreeHolding(porcelain: string, branch: string): string | undefined {
+	let path: string | undefined;
+	for (const line of porcelain.split('\n')) {
+		if (line.startsWith('worktree ')) {
+			path = line.slice('worktree '.length).trim();
+		} else if (line.trim() === `branch refs/heads/${branch}`) {
+			return path;
+		}
+	}
+	return undefined;
+}
+
+/** `base`, else `base-2`, `base-3`... whichever no branch has yet. */
+async function freeBranchName(run: GitRunner, repoRoot: string, base: string): Promise<string> {
+	for (let n = 1; n < 100; n++) {
+		const name = n === 1 ? base : `${base}-${n}`;
+		if (!ok(await run(repoRoot, ['show-ref', '--verify', '--quiet', `refs/heads/${name}`]))) {
+			return name;
+		}
+	}
+	throw new AgentWorktreeError(`Could not find a free branch name like ${base}.`);
+}
+
 async function createLocked(input: ICreateAgentWorktree, commonDir: string): Promise<ICreatedAgentWorktree> {
 	const plan = await planBranch(input.run, input.repoRoot, input.target);
 	const commit = plan.base;
@@ -441,6 +529,12 @@ export interface IAgentWorktreeService {
 	 * the branch too, so `deleteBranch` may delete it whatever its name.
 	 */
 	remove(repoRoot: string, path: string, branch: string, options: { readonly deleteBranch: boolean; readonly force: boolean; readonly ownsBranch?: boolean }): Promise<WorktreeRemoval>;
+	/**
+	 * Before `repoRoot` checks out `branch`: a chat worktree that has it moves to a branch named
+	 * after the chat (see {@link releaseWorktreeBranch}), and the chat records it. Undefined when
+	 * nothing had the branch.
+	 */
+	releaseBranch(repoRoot: string, branch: string): Promise<(IReleasedWorktreeBranch & { readonly sessionId?: string }) | undefined>;
 	/** Runs git in `cwd` (never throws; a failure is a non-zero exit code). */
 	git(cwd: string, args: readonly string[]): Promise<IGitRunResult>;
 	/** Runs `work` while no other worktree change of the same repository runs. */

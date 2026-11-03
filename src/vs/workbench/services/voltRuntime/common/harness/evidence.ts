@@ -35,7 +35,10 @@ export interface IEvidence {
 	/** Already truncated. Never the full tool output. */
 	readonly detail: string;
 	readonly ok: boolean;
-	/** Set on verification evidence: which criterion kind this run proves or disproves. */
+	/**
+	 * Set on verification evidence: which criterion kind this proves or disproves. A project check
+	 * run in the shell, or `browser` for a look at the page in the in-app browser.
+	 */
 	readonly proves?: EvidenceKind;
 	/** Identical evidence recorded more than once collapses, and this counts the occurrences. */
 	readonly occurrences: number;
@@ -49,10 +52,21 @@ export interface IEvidenceClassifier {
 const DETAIL_CHARS = 600;
 const DIGEST_LIMIT = 24;
 
+/** The shell tool's line for a command that outlived its wait and kept running as a job. */
+const STILL_RUNNING = /\[(?:still running after [\d.]+s|running in the background) as job ([\w-]+)/;
+/** `job_wait` / `job_output` on a job that ended: `[job sh-1a2b: exited 0 ...`. */
+const JOB_EXITED = /^\[job ([\w-]+): exited (-?\d+|\?)/;
+
 export class EvidenceStore {
 
 	private readonly items: IEvidence[] = [];
 	private readonly byKey = new Map<string, IEvidence>();
+	/**
+	 * Checks still running as background jobs (a test suite past the shell's wait), by job id, with
+	 * the placeholder recorded when they started. The job's exit replaces the placeholder in place,
+	 * so the result keeps the position of the run: an edit made while it ran still makes it stale.
+	 */
+	private readonly jobs = new Map<string, { readonly kind: EvidenceKind; placeholder: IEvidence }>();
 	private seq = 0;
 
 	constructor(private readonly classifier: IEvidenceClassifier = () => undefined) { }
@@ -68,9 +82,17 @@ export class EvidenceStore {
 
 		for (const result of results) {
 			const args = argsById.get(result.callId);
+			const settled = this.settleJob(result);
+			if (settled) {
+				recorded.push(settled);
+				continue;
+			}
 			const subject = subjectOf(result.name, args) || result.name;
 			const command = pickString(args, 'command', 'cmd');
-			const proves = command ? this.classifier(command) : undefined;
+			const classified = command ? this.classifier(command) : undefined;
+			// A check that is still running has proved nothing yet; its job's exit will.
+			const job = classified && !result.isError ? STILL_RUNNING.exec(result.text ?? '')?.[1] : undefined;
+			const proves = job ? undefined : classified ?? (result.kind === 'browser' && !result.isError ? 'browser' : undefined);
 			const tag = tagOf(result, proves);
 
 			const key = `${tag}\0${result.name}\0${subject}\0${result.isError ? 'err' : 'ok'}`;
@@ -97,8 +119,40 @@ export class EvidenceStore {
 			this.items.push(evidence);
 			this.byKey.set(key, evidence);
 			recorded.push(evidence);
+			if (job && classified) {
+				this.jobs.set(job, { kind: classified, placeholder: evidence });
+			}
 		}
 		return recorded;
+	}
+
+	/**
+	 * A `job_wait` or `job_output` that saw a check's job exit: the check's verdict, in the place
+	 * where it started. Undefined for every other result (and for a job that is still running).
+	 */
+	private settleJob(result: IToolResult): IEvidence | undefined {
+		if (result.name !== 'job_wait' && result.name !== 'job_output') {
+			return undefined;
+		}
+		const exited = JOB_EXITED.exec(result.text ?? '');
+		const job = exited ? this.jobs.get(exited[1]) : undefined;
+		if (!exited || !job) {
+			return undefined;
+		}
+		this.jobs.delete(exited[1]);
+		const verdict: IEvidence = {
+			...job.placeholder,
+			tag: 'verification',
+			proves: job.kind,
+			detail: truncateHeadTail(result.text ?? '', DETAIL_CHARS).text,
+			ok: exited[2] === '0',
+		};
+		if (this.items.includes(job.placeholder)) {
+			this.replace(job.placeholder, verdict);
+		} else {
+			this.items.push(verdict);
+		}
+		return verdict;
 	}
 
 	/** Records a mutation the loop learned about from a `file.change` event rather than a tool. */

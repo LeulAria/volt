@@ -40,7 +40,7 @@ import { turnWriteGate } from '../../common/turnWriteGate.js';
 import { accessBridgeFor } from './bridges/accessBridges.js';
 import { AcpJsonRpcClient, AcpRequestAbandonedError, IAcpIncomingRequest } from './acpJsonRpc.js';
 import { listClaudeModels } from './claudeCatalog.js';
-import { acpLaunchFor, cliAgentDefinition, forgetAcpAdapterBin, listAntigravityModels, listGrokModels, listOpenCodeModels, resolveAcpAdapterBin } from './cliAgents.js';
+import { acpLaunchFor, cliAgentDefinition, forgetAcpAdapterBin, listAntigravityModels, listFxModels, listGrokModels, listOpenCodeModels, resolveAcpAdapterBin } from './cliAgents.js';
 import { listCodexModels } from './codexAppServer.js';
 import { resolveAntigravityCliModelLabel } from '../../common/models/antigravityModels.js';
 import { IModelOptionDescriptor, MODEL_OPTION_REASONING, unionDescriptors } from '../../common/models/modelOptions.js';
@@ -339,7 +339,7 @@ function isVoltHostToolPermission(params: unknown): boolean {
 		return isVoltHostTool(raw.toolName) || !!bareTaskToolName(raw.toolName);
 	}
 	const title = typeof toolCall.title === 'string' ? toolCall.title.trim() : '';
-	return /^(volt[-:]|mcp__volt__)/i.test(title) && (isVoltHostTool(title) || !!bareTaskToolName(title));
+	return /^(volt[-:]|mcp__volt__|volt__)/i.test(title) && (isVoltHostTool(title) || !!bareTaskToolName(title));
 }
 
 function allowOncePermission(params: unknown): unknown {
@@ -495,6 +495,10 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (this.id === 'grok') {
 			const listed = await this.probeAcpModels(profile);
 			return listed.length ? listed : listGrokModels(this.stdio, profile.command || this.defaultCommand).catch(() => []);
+		}
+		if (this.id === 'fx') {
+			// Never an ACP probe: fx keeps every session it opens in ~/.fx/sessions.
+			return listFxModels(this.stdio, profile.command || this.defaultCommand).catch(() => []);
 		}
 		return this.probeAcpModels(profile);
 	}
@@ -714,7 +718,7 @@ export class AcpAgentProvider implements IAgentProvider {
 					thinking: { type: 'disabled' },
 					effort: 'low',
 					// An agent entry without a model list would run the account's default (often Opus).
-					...(req.modelId ? {} : { model: 'haiku' }),
+					...(req.modelId ? optionalModel(this.claudeModel(req)) : { model: 'haiku' }),
 				},
 			},
 		};
@@ -729,7 +733,20 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (req.textOnly) {
 			return this.textOnlyMeta(req);
 		}
-		return this.takesSystemPrompt() ? claudeWorkRulesMeta() : undefined;
+		return this.takesSystemPrompt() ? claudeWorkRulesMeta(this.claudeModel(req)) : undefined;
+	}
+
+	/**
+	 * The exact model a Claude Code session starts on, sent with `session/new`. Its adapter's model
+	 * picker lists only aliases (default, opus[1m], sonnet, haiku): `session/set_config_option` with
+	 * `claude-sonnet-5-5` fails and the session silently stays on the account's default (Opus), and
+	 * one it maps to an alias runs that alias's newest model. `_meta` takes the id itself.
+	 */
+	private claudeModel(req: IAgentStartRequest): string | undefined {
+		if (this.id !== 'claude-code' || !req.modelId || req.modelId.trim().toLowerCase() === 'default') {
+			return undefined;
+		}
+		return applyContextWindowSuffix(applyOptionsToParameterizedId(req.modelId, req.options), req.options);
 	}
 
 	/** Spawns the agent and opens a session; with `resume`, continues that session (in `req.cwd`) instead of a new one. */
@@ -805,7 +822,9 @@ export class AcpAgentProvider implements IAgentProvider {
 			processId,
 			configOptions: created.configOptions ?? initialized.configOptions,
 			modes: created.modes?.availableModes ?? initialized.agentCapabilities?.session?.modes?.availableModes,
-			currentModeId: created.modes?.currentModeId,
+			// fx reports `ask` on a new or loaded session but runs its saved permission mode until a
+			// client sets one, so its first mode write must not be skipped as already current.
+			currentModeId: this.id === 'fx' ? undefined : created.modes?.currentModeId,
 			promptImages: initialized.agentCapabilities?.promptCapabilities?.image === true,
 			promptEmbedded: initialized.agentCapabilities?.promptCapabilities?.embeddedContext === true,
 			setupKey: this.setupKey(req),
@@ -948,7 +967,11 @@ export class AcpAgentProvider implements IAgentProvider {
 	private async applySelection(session: IAcpSession, req: IAgentStartRequest): Promise<void> {
 		const sessionId = session.handle.providerSessionId ?? session.handle.id;
 		const modelConfigId = session.configOptions?.find(isModelConfigOption)?.id ?? 'model';
-		if (this.id === 'cursor-acp' && !req.modelId) {
+		const exact = this.claudeModel(req);
+		if (exact) {
+			// It started on this model (`session/new` `_meta`); a write here could only swap in an alias.
+			session.currentModel = exact;
+		} else if (this.id === 'cursor-acp' && !req.modelId) {
 			await this.setConfigOption(session, sessionId, modelConfigId, 'auto');
 		} else if (req.modelId) {
 			const selected = this.id === 'antigravity'
@@ -1715,16 +1738,22 @@ export class AcpAgentProvider implements IAgentProvider {
 	}
 
 	/** Puts `text` into the running turn. False when the agent refused (no turn, or it wants a new prompt). */
-	async steer(session: IAgentSessionHandle, text: string): Promise<boolean> {
+	async steer(session: IAgentSessionHandle, text: string, images?: readonly IModelImage[]): Promise<boolean> {
 		const live = this.sessions.get(session.id);
 		const turn = live?.turn;
 		if (!live?.steering || !turn || turn.ended) {
 			return false;
 		}
+		const blocks: IAcpPromptBlock[] = [{ type: 'text', text }];
+		if (live.promptImages) {
+			for (const image of images ?? []) {
+				blocks.push({ type: 'image', mimeType: image.mediaType, data: image.data });
+			}
+		}
 		try {
 			const result = await live.client.request<{ outcome?: string }>('_session/steering', {
 				sessionId: live.handle.providerSessionId ?? live.handle.id,
-				prompt: [{ type: 'text', text }],
+				prompt: blocks,
 				_meta: { steering: { idleBehavior: 'promptRequired' } },
 			}, 10_000);
 			if (result?.outcome === 'injected') {
@@ -2216,6 +2245,10 @@ function backgroundTaskUpdate(params: unknown): { readonly kind: 'spawned' | 'pr
 
 function nonBlank(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function optionalModel(model: string | undefined): { model?: string } {
+	return model ? { model } : {};
 }
 
 function formatQuiet(ms: number): string {

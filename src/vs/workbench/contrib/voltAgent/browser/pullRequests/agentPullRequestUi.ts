@@ -123,11 +123,8 @@ export async function openPullRequest(accessor: ServicesAccessor, target: AgentP
 	await editorService.openEditor(input, { pinned: true });
 }
 
-/**
- * Puts `text` in a chat's composer (after what is already typed) and focuses it, opening the chat
- * when needed: the user reads and sends it. T3 Code hands off PR fixes the same way.
- */
-export async function composeInChat(accessor: ServicesAccessor, sessionId: string, text: string): Promise<boolean> {
+/** The chat's pane, opening the chat when it is not on screen. */
+async function chatPane(accessor: ServicesAccessor, sessionId: string): Promise<AgentEditor | undefined> {
 	const commandService = accessor.get(ICommandService);
 	const editorGroupsService = accessor.get(IEditorGroupsService);
 	const findPane = (): AgentEditor | undefined => {
@@ -142,17 +139,46 @@ export async function composeInChat(accessor: ServicesAccessor, sessionId: strin
 		}
 		return undefined;
 	};
-	let pane = findPane();
-	if (!pane) {
-		await commandService.executeCommand(OPEN_AGENT_COMMAND_ID, sessionId);
-		pane = findPane();
+	const pane = findPane();
+	if (pane) {
+		return pane;
 	}
+	await commandService.executeCommand(OPEN_AGENT_COMMAND_ID, sessionId);
+	return findPane();
+}
+
+/**
+ * Puts `text` in a chat's composer (after what is already typed) and focuses it, opening the chat
+ * when needed: the user reads and sends it. T3 Code hands off PR fixes the same way.
+ */
+export async function composeInChat(accessor: ServicesAccessor, sessionId: string, text: string): Promise<boolean> {
+	const pane = await chatPane(accessor, sessionId);
 	if (!pane) {
 		return false;
 	}
 	const input = pane.input as AgentEditorInput;
 	const existing = (input.draft ?? '').trim();
 	pane.prefillDraft(existing ? `${existing}\n\n${text}` : text, existing ? input.draftMentions : undefined);
+	return true;
+}
+
+/**
+ * Sends `text` to a chat's agent now (queued behind a turn that is running), opening the chat when
+ * needed; its transcript shows `display` instead when given. What was typed in its composer stays.
+ */
+export async function sendInChat(accessor: ServicesAccessor, sessionId: string, text: string, display?: string): Promise<boolean> {
+	const pane = await chatPane(accessor, sessionId);
+	if (!pane) {
+		return false;
+	}
+	const input = pane.input as AgentEditorInput;
+	const draft = input.draft ?? '';
+	const mentions = input.draftMentions;
+	// Sending empties the composer: the user's own draft goes back in.
+	pane.submitPrompt(text, display ? { text: display } : undefined);
+	if (draft.trim()) {
+		pane.prefillDraft(draft, mentions);
+	}
 	return true;
 }
 

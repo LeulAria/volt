@@ -90,11 +90,13 @@ export interface IMarketplace {
 	readonly displayName: string;
 	readonly description: string;
 	readonly owner: string;
-	/** Where it was registered: Claude Code's list, or Volt's own. */
-	readonly registry: 'claude' | 'volt';
+	/** Where it was registered: Claude Code's list, Volt's own, or one Volt lists out of the box (read from GitHub). */
+	readonly registry: 'claude' | 'volt' | 'builtin';
+	/** Its filter chip, when shorter than {@link displayName}: "Claude". */
+	readonly shortName?: string;
 	/** `owner/repo` on GitHub it was cloned from, when known. */
 	readonly repo?: string;
-	/** The folder holding `.claude-plugin/marketplace.json`. */
+	/** The folder holding `.claude-plugin/marketplace.json`; a built-in one's GitHub page. */
 	readonly root: URI;
 	readonly plugins: readonly IMarketplacePlugin[];
 }
@@ -162,6 +164,23 @@ const POPULAR_SEEDS = ['skill', 'react', 'test', 'git', 'design', 'docs', 'revie
 const POPULAR_KEY = 'marketplace.popular';
 const SEARCH_KEY = 'marketplace.search:';
 const DETAIL_KEY = 'marketplace.skill:';
+const REMOTE_KEY = 'marketplace.remote:';
+
+/**
+ * Marketplaces listed without registering them first, read from GitHub. Claude Code registers
+ * Anthropic's on first use of /plugin; when it has, its copy on disk is shown instead.
+ */
+const BUILTIN_MARKETPLACES: readonly { readonly repo: string; readonly name: string; readonly displayName: string; readonly shortName: string }[] = [
+	{ repo: 'anthropics/claude-plugins-official', name: 'claude-plugins-official', displayName: 'Claude Plugins', shortName: 'Claude' },
+];
+
+interface IMarketplaceManifest {
+	readonly name?: unknown;
+	readonly description?: unknown;
+	readonly owner?: { readonly name?: unknown };
+	readonly metadata?: { readonly description?: unknown };
+	readonly plugins?: unknown[];
+}
 /** Listings change slowly; a skill's folder even more so. */
 const LISTING_STALE_MS = 30 * 60_000;
 const DETAIL_STALE_MS = 24 * 60 * 60_000;
@@ -250,6 +269,8 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 		this._register(this.cache.onDidUpdate(key => {
 			if (key === POPULAR_KEY || key.startsWith(SEARCH_KEY)) {
 				this._onDidRefresh.fire();
+			} else if (key.startsWith(REMOTE_KEY)) {
+				this._onDidChange.fire();
 			}
 		}));
 	}
@@ -434,8 +455,7 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 				roots.push({ root, registry: 'volt', name: record.name, repo: record.source.kind === 'github' ? record.source.repo : undefined });
 			}
 		}
-		const marketplaces = await Promise.all(roots.map(async ({ root, registry, name, repo }): Promise<IMarketplace | undefined> => {
-			const json = await readJsonFile(this.fileService, joinPath(root, '.claude-plugin', 'marketplace.json'), 4 * 1024 * 1024) as { name?: unknown; description?: unknown; owner?: { name?: unknown }; metadata?: { description?: unknown }; plugins?: unknown[] } | undefined;
+		const read = (json: IMarketplaceManifest | undefined, name: string, remoteRepo?: string): Omit<IMarketplace, 'registry' | 'root'> | undefined => {
 			if (!json || !Array.isArray(json.plugins)) {
 				return undefined;
 			}
@@ -446,13 +466,19 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 					return [];
 				}
 				const author = typeof plugin.author === 'string' ? plugin.author : typeof plugin.author?.name === 'string' ? plugin.author.name : '';
+				let source = pluginSourceOf(plugin.source);
+				// Not on disk: a plugin kept in the marketplace's own repository comes from GitHub.
+				if (remoteRepo && source.kind === 'path') {
+					const path = source.path.replace(/^\.?\/+|\/+$/g, '');
+					source = { kind: 'github', repo: remoteRepo, path: path || undefined };
+				}
 				return [{
 					name: plugin.name,
 					description: typeof plugin.description === 'string' ? plugin.description : '',
 					author,
 					category: typeof plugin.category === 'string' ? plugin.category : undefined,
 					homepage: typeof plugin.homepage === 'string' ? plugin.homepage : undefined,
-					source: pluginSourceOf(plugin.source),
+					source,
 					marketplace: marketplaceName,
 					installed: installedKeys.has(`${plugin.name}@${marketplaceName}`) || installedNames.has(plugin.name),
 					installedInVolt: voltNames.has(plugin.name),
@@ -460,9 +486,35 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 			});
 			const owner = typeof json.owner?.name === 'string' ? json.owner.name : '';
 			const description = typeof json.description === 'string' ? json.description : typeof json.metadata?.description === 'string' ? json.metadata.description : '';
-			return { name: marketplaceName, displayName: titleOf(marketplaceName), description, owner, registry, repo, root, plugins };
-		}));
-		return marketplaces.filter((marketplace): marketplace is IMarketplace => !!marketplace);
+			return { name: marketplaceName, displayName: titleOf(marketplaceName), description, owner, repo: remoteRepo, plugins };
+		};
+		const [local, builtin] = await Promise.all([
+			Promise.all(roots.map(async ({ root, registry, name, repo }): Promise<IMarketplace | undefined> => {
+				const marketplace = read(await readJsonFile(this.fileService, joinPath(root, '.claude-plugin', 'marketplace.json'), 4 * 1024 * 1024) as IMarketplaceManifest | undefined, name);
+				const known = BUILTIN_MARKETPLACES.find(candidate => candidate.name === marketplace?.name);
+				return marketplace && { ...marketplace, ...(known && { displayName: known.displayName, shortName: known.shortName }), registry, repo, root };
+			})),
+			Promise.all(BUILTIN_MARKETPLACES.filter(known => !roots.some(root => root.name === known.name)).map(async (known): Promise<IMarketplace | undefined> => {
+				const json = await this.remoteManifest(known.repo).catch(err => {
+					this.logService.info('[volt-marketplace] built-in marketplace unavailable', known.repo, err);
+					return undefined;
+				});
+				const marketplace = read(json, known.name, known.repo);
+				return marketplace && { ...marketplace, displayName: known.displayName, shortName: known.shortName, registry: 'builtin', root: URI.parse(`https://github.com/${known.repo}`) };
+			})),
+		]);
+		// Claude's own comes first, before what the user added.
+		return [...builtin, ...local].filter((marketplace): marketplace is IMarketplace => !!marketplace)
+			.sort((a, b) => Number(!!b.shortName) - Number(!!a.shortName));
+	}
+
+	/** A built-in marketplace's manifest from GitHub, cached like the skills.sh listing (shows at once, refetches behind). */
+	private remoteManifest(repo: string): Promise<IMarketplaceManifest> {
+		return this.cache.read({
+			key: `${REMOTE_KEY}${repo}`,
+			fetch: async () => JSON.parse(await this.rawText(repo, 'HEAD', '.claude-plugin/marketplace.json', CancellationToken.None)) as IMarketplaceManifest,
+			staleTime: LISTING_STALE_MS,
+		});
 	}
 
 	async pluginDetail(plugin: IMarketplacePlugin, token: CancellationToken): Promise<IMarketplacePluginDetail> {
@@ -553,7 +605,8 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 		} else {
 			throw new Error(localize('voltMarketplace.unsupportedSource', "Volt can't install plugins from {0} sources yet.", source.label));
 		}
-		void this.customize.refresh();
+		// Listeners read the marketplaces again, and a plugin counts as installed once Customize has seen its folder.
+		await this.customize.refresh().catch(() => undefined);
 		this._onDidChange.fire();
 		return target;
 	}
@@ -567,7 +620,7 @@ export class AgentMarketplaceService extends Disposable implements IAgentMarketp
 		if (await this.fileService.exists(target)) {
 			await this.fileService.del(target, { recursive: true, useTrash: true });
 		}
-		void this.customize.refresh();
+		await this.customize.refresh().catch(() => undefined);
 		this._onDidChange.fire();
 	}
 

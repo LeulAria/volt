@@ -43,4 +43,8 @@ export interface IVoltBrowserAccessService {
 	chatChoice(sessionId: string): boolean | undefined;
 	/** Sets the chat's choice; undefined goes back to the setting. */
 	setChatChoice(sessionId: string, allowed: boolean | undefined): void;
+	/** Every chat's own choice (the agent server gets a window's copy). */
+	chatChoices(): Record<string, boolean>;
+	/** Replaces every chat's choice at once (the agent server, from a window's copy). */
+	setChatChoices(choices: Readonly<Record<string, boolean>>): void;
 }

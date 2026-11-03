@@ -492,7 +492,8 @@ suite('Agent run state', () => {
 		assert.strictEqual(composerTasks([user, agent(finished, true)])?.done, 2, 'stays while the turn runs');
 		assert.strictEqual(composerTasks([user, agent(finished)]), undefined, 'a finished list leaves');
 		assert.strictEqual(composerTasks([user, agent(open)])?.live, false, 'a stopped run keeps its open to-dos');
-		assert.strictEqual(composerTasks([user, agent(open), user, agent([], true)])?.current, 'B', 'a later run works through the same list');
+		assert.strictEqual(composerTasks([user, agent(open), user, agent([], true)]), undefined, 'a later run does not bring back a list it has not touched');
+		assert.strictEqual(composerTasks([user, agent(open), user, agent(open, true)])?.current, 'B', 'a later run that updates the list shows it');
 		assert.strictEqual(composerTasks([user, agent(open), user, agent([])]), undefined, 'an older list stays in its turn');
 		assert.strictEqual(composerTasks([user, agent([], true)]), undefined);
 	});

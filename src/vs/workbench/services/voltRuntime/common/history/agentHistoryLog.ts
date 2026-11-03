@@ -176,7 +176,7 @@ export function foldTranscript(header: IAgentSessionHeader, entries: readonly Ag
 				if (entry.title !== undefined) {
 					title = entry.title || undefined;
 				}
-				if (entry.agentTitle) {
+				if (entry.agentTitle && !isMarkupOnlyTitle(entry.agentTitle)) {
 					agentTitle = entry.agentTitle;
 				}
 				if (entry.mode !== undefined) {
@@ -262,6 +262,11 @@ export function deriveTitle(text: string): string {
 	}
 	const capitalized = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 	return truncateAtWord(capitalized, MAX_TITLE_LENGTH);
+}
+
+/** Only tags, such as `<traced_as_tool_call>` that a title model leaked: it names nothing, so the first-line title stays. */
+export function isMarkupOnlyTitle(title: string): boolean {
+	return /^(?:<\/?[a-z_][\w:.-]*[^<>]*>\s*)+$/i.test(title.trim());
 }
 
 export function truncateAtWord(text: string, max: number): string {
@@ -396,7 +401,8 @@ export function normalizeIndex(raw: unknown): IAgentHistoryIndex | undefined {
 			continue;
 		}
 		seen.add(item.id);
-		sessions.push(item);
+		// Saved before such titles were refused: named from the first prompt instead.
+		sessions.push(!item.customTitle && isMarkupOnlyTitle(item.title) ? { ...item, title: deriveTitle(item.preview) } : item);
 	}
 	return { version: AGENT_HISTORY_FORMAT_VERSION, sessions };
 }

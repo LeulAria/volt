@@ -67,6 +67,20 @@ interface IMarkupState {
 
 interface IRect { readonly x: number; readonly y: number; readonly w: number; readonly h: number }
 
+/** A grip on the selected mark: box corners and edges, or an arrow's ends. */
+type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'from' | 'to';
+
+/** What a press picked up: a mark to move, or one of its handles to resize. */
+interface IGrab { readonly shape: Shape; readonly handle?: Handle }
+
+const HANDLE_CURSORS: Record<Handle, string> = {
+	nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize',
+	n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', from: 'move', to: 'move',
+};
+/** CSS px: the handle dot's radius, and the gap between a pen or text mark and its selection box. */
+const HANDLE_RADIUS = 4.5;
+const SELECTION_PAD = 6;
+
 const COLORS = ['#ff453a', '#ff9f0a', '#ffd60a', '#30d158', '#0a84ff', '#bf5af2', '#ffffff', '#111111'] as const;
 /** Line widths as multiples of the image-relative default; `preview` is the CSS px the menu draws. */
 const STROKES = [
@@ -163,7 +177,8 @@ export class AgentImageViewer extends Disposable {
 	private selected: Shape | undefined;
 	private draft: Shape | undefined;
 	private crop: IRect | undefined;
-	private drag: { readonly start: IPoint; readonly origin?: Shape; moved: boolean } | undefined;
+	/** A press in progress; `origin` is the mark as it was when a move or resize began. */
+	private drag: { readonly start: IPoint; readonly origin?: Shape; readonly handle?: Handle; readonly wasSelected?: boolean; moved: boolean } | undefined;
 	private textEditor: ITextEditor | undefined;
 	private loadGeneration = 0;
 	private closed = false;
@@ -760,16 +775,7 @@ export class AgentImageViewer extends Disposable {
 		}
 		const px = 1 / this.scale;
 		if (this.selected) {
-			const box = inflate(shapeBounds(ctx, this.selected), 6 * px);
-			ctx.save();
-			ctx.setLineDash([5 * px, 4 * px]);
-			ctx.lineWidth = 1.5 * px;
-			ctx.strokeStyle = '#ffffff';
-			ctx.strokeRect(box.x, box.y, box.w, box.h);
-			ctx.lineDashOffset = 4.5 * px;
-			ctx.strokeStyle = '#0a84ff';
-			ctx.strokeRect(box.x, box.y, box.w, box.h);
-			ctx.restore();
+			paintSelection(ctx, this.selected, px);
 		}
 		if (this.tool === 'crop' && this.crop) {
 			const c = this.crop;
@@ -932,6 +938,35 @@ export class AgentImageViewer extends Disposable {
 		return undefined;
 	}
 
+	/**
+	 * The mark a press at `p` picks up. The selected mark and its handles answer to every tool, so a
+	 * mark stays movable and resizable right after it's drawn; arrow and box tools also grab any line
+	 * or box they land on. The pen draws over marks, and the text tool edits text it lands on.
+	 */
+	private grabAt(p: IPoint): IGrab | undefined {
+		const ctx = this.canvas.getContext('2d');
+		if (!ctx || this.tool === 'crop' || !this.options.onSave) {
+			return undefined;
+		}
+		const px = 1 / this.scale;
+		const selected = this.selected;
+		if (selected) {
+			const reach = (HANDLE_RADIUS + 4) * px;
+			const handle = shapeHandles(ctx, selected, px).find(h => Math.hypot(h.at.x - p.x, h.at.y - p.y) <= reach);
+			if (handle) {
+				return { shape: selected, handle: handle.handle };
+			}
+			if (shapeContains(ctx, selected, p, 8 * px) || (selected.kind !== 'arrow' && selected.kind !== 'rect' && boxContains(selectionBox(ctx, selected, px), p))) {
+				return { shape: selected };
+			}
+		}
+		if (this.tool === 'select' || this.tool === 'arrow' || this.tool === 'rect') {
+			const hit = this.hitTest(p);
+			return hit ? { shape: hit } : undefined;
+		}
+		return undefined;
+	}
+
 	private onPointerDown(e: PointerEvent): void {
 		if (e.button !== 0 || !this.state || !this.options.onSave) {
 			return;
@@ -945,15 +980,23 @@ export class AgentImageViewer extends Disposable {
 		}
 		const p = this.toImage(e);
 		e.preventDefault();
+		const grab = this.grabAt(p);
+		if (grab) {
+			this.drag = { start: p, origin: grab.shape, handle: grab.handle, wasSelected: grab.shape === this.selected, moved: false };
+			this.selected = grab.shape;
+			this.syncChrome();
+			this.render();
+			this.canvas.setPointerCapture(e.pointerId);
+			return;
+		}
+		if (this.selected) {
+			this.selected = undefined;
+			this.syncChrome();
+			this.render();
+		}
 		switch (this.tool) {
-			case 'select': {
-				const hit = this.hitTest(p);
-				this.selected = hit;
-				this.drag = hit ? { start: p, origin: hit, moved: false } : undefined;
-				this.syncChrome();
-				this.render();
-				break;
-			}
+			case 'select':
+				return;
 			case 'arrow':
 			case 'rect':
 				this.draft = { kind: this.tool, color: this.color, width: this.strokeWidth(), from: p, to: p };
@@ -989,14 +1032,24 @@ export class AgentImageViewer extends Disposable {
 		if (!drag.moved) {
 			return;
 		}
+		if (drag.origin) {
+			const ctx = this.canvas.getContext('2d');
+			const current = this.selected;
+			if (!ctx || !current) {
+				return;
+			}
+			const next = drag.handle
+				? resizeShape(ctx, drag.origin, drag.handle, { x: dx, y: dy }, e.shiftKey)
+				: mapShape(drag.origin, q => ({ x: q.x + dx, y: q.y + dy }));
+			this.state = { base: this.state.base, shapes: this.state.shapes.map(shape => shape === current ? next : shape) };
+			this.selected = next;
+			if (next.kind === 'text') {
+				this.syncTextStyleMenu();
+			}
+			this.render();
+			return;
+		}
 		switch (this.tool) {
-			case 'select':
-				if (drag.origin && this.selected) {
-					const moved = mapShape(drag.origin, q => ({ x: q.x + dx, y: q.y + dy }));
-					this.state = { base: this.state.base, shapes: this.state.shapes.map(shape => shape === this.selected ? moved : shape) };
-					this.selected = moved;
-				}
-				break;
 			case 'arrow':
 			case 'rect':
 				if (this.draft && (this.draft.kind === 'arrow' || this.draft.kind === 'rect')) {
@@ -1025,18 +1078,27 @@ export class AgentImageViewer extends Disposable {
 		if (!drag || !this.state) {
 			return;
 		}
-		if (this.tool === 'select' && drag.origin && drag.moved && this.selected) {
-			// Moving rewrote the live state; record the move as one step from the original.
-			const moved = this.selected;
-			const before = { base: this.state.base, shapes: this.state.shapes.map(shape => shape === moved ? drag.origin! : shape) };
-			this.undoStack.push(before);
-			this.redoStack.length = 0;
-			this.syncChrome();
+		if (drag.origin) {
+			const changed = this.selected;
+			if (drag.moved && changed) {
+				// Moving and resizing rewrote the live state; record the gesture as one step from the original.
+				const before = { base: this.state.base, shapes: this.state.shapes.map(shape => shape === changed ? drag.origin! : shape) };
+				this.undoStack.push(before);
+				this.redoStack.length = 0;
+				this.syncChrome();
+			} else if (!drag.moved && drag.wasSelected && !drag.handle && drag.origin.kind === 'text' && e.type === 'pointerup') {
+				// A second click on selected text edits it.
+				this.selected = undefined;
+				this.openTextEditor(drag.origin.at, drag.origin);
+			}
+			this.updateHoverCursor(e);
 			return;
 		}
 		const draft = this.draft;
 		this.draft = undefined;
 		if (draft && drag.moved) {
+			// The new mark comes out selected, so it can be moved, resized or restyled straight away.
+			this.selected = draft;
 			this.commit({ base: this.state.base, shapes: [...this.state.shapes, draft] });
 			return;
 		}
@@ -1048,10 +1110,8 @@ export class AgentImageViewer extends Disposable {
 	}
 
 	private updateHoverCursor(e: PointerEvent): void {
-		if (this.tool !== 'select' || !this.options.onSave) {
-			return;
-		}
-		this.surface.classList.toggle('over-shape', !!this.hitTest(this.toImage(e)));
+		const grab = this.grabAt(this.toImage(e));
+		this.canvas.style.cursor = grab ? (grab.handle ? HANDLE_CURSORS[grab.handle] : 'move') : '';
 	}
 
 	private openTextEditor(at: IPoint, replacing?: Shape & { kind: 'text' }): void {
@@ -1143,6 +1203,8 @@ export class AgentImageViewer extends Disposable {
 			return;
 		}
 		const shape: Shape = { kind: 'text', color: editor.color, size: editor.size, weight: editor.weight, at: editor.at, text };
+		// Committed text stays selected: drag to move it, pull a corner to resize, click again to edit.
+		this.selected = shape;
 		if (replacing) {
 			this.undoStack.push({ base: this.state.base, shapes: [...this.state.shapes, replacing] });
 			this.redoStack.length = 0;
@@ -1371,6 +1433,124 @@ function shapeBounds(ctx: CanvasRenderingContext2D, shape: Shape): IRect {
 			return { x: shape.at.x, y: shape.at.y, w: width, h: lines.length * shape.size * 1.25 };
 		}
 	}
+}
+
+/** The dashed box drawn around a selected pen or text mark; its corners carry the handles. */
+function selectionBox(ctx: CanvasRenderingContext2D, shape: Shape, px: number): IRect {
+	return shape.kind === 'rect' ? normalizeRect(shape.from, shape.to) : inflate(shapeBounds(ctx, shape), SELECTION_PAD * px);
+}
+
+function boxContains(box: IRect, p: IPoint): boolean {
+	return p.x >= box.x && p.x <= box.x + box.w && p.y >= box.y && p.y <= box.y + box.h;
+}
+
+/** Arrows are held by their ends, boxes by corners and edges, pen and text by the corners of their selection box. */
+function shapeHandles(ctx: CanvasRenderingContext2D, shape: Shape, px: number): { readonly handle: Handle; readonly at: IPoint }[] {
+	if (shape.kind === 'arrow') {
+		return [{ handle: 'from', at: shape.from }, { handle: 'to', at: shape.to }];
+	}
+	const b = selectionBox(ctx, shape, px);
+	const left = b.x, right = b.x + b.w, top = b.y, bottom = b.y + b.h;
+	const corners: { readonly handle: Handle; readonly at: IPoint }[] = [
+		{ handle: 'nw', at: { x: left, y: top } },
+		{ handle: 'ne', at: { x: right, y: top } },
+		{ handle: 'se', at: { x: right, y: bottom } },
+		{ handle: 'sw', at: { x: left, y: bottom } },
+	];
+	if (shape.kind !== 'rect') {
+		return corners;
+	}
+	const midX = left + b.w / 2, midY = top + b.h / 2;
+	return [
+		...corners,
+		{ handle: 'n', at: { x: midX, y: top } },
+		{ handle: 'e', at: { x: right, y: midY } },
+		{ handle: 's', at: { x: midX, y: bottom } },
+		{ handle: 'w', at: { x: left, y: midY } },
+	];
+}
+
+/**
+ * The mark with one handle dragged by `delta` from where the drag began. Boxes move the grabbed
+ * edges, arrows the grabbed end; pen strokes stretch from the opposite corner and text scales its
+ * size from it. Shift squares a box, snaps an arrow to 45 degrees and keeps a stroke's proportions.
+ */
+function resizeShape(ctx: CanvasRenderingContext2D, origin: Shape, handle: Handle, delta: IPoint, shift: boolean): Shape {
+	switch (origin.kind) {
+		case 'arrow': {
+			const end = handle === 'from' ? origin.from : origin.to;
+			const target = { x: end.x + delta.x, y: end.y + delta.y };
+			return handle === 'from'
+				? { ...origin, from: shift ? constrain('arrow', origin.to, target) : target }
+				: { ...origin, to: shift ? constrain('arrow', origin.from, target) : target };
+		}
+		case 'rect': {
+			const r = normalizeRect(origin.from, origin.to);
+			const target = {
+				x: (handle.includes('w') ? r.x : handle.includes('e') ? r.x + r.w : r.x + r.w / 2) + delta.x,
+				y: (handle.includes('n') ? r.y : handle.includes('s') ? r.y + r.h : r.y + r.h / 2) + delta.y,
+			};
+			if (shift && handle.length === 2) {
+				const anchor = { x: handle.includes('w') ? r.x + r.w : r.x, y: handle.includes('n') ? r.y + r.h : r.y };
+				return { ...origin, from: anchor, to: constrain('rect', anchor, target) };
+			}
+			const left = handle.includes('w') ? target.x : r.x;
+			const right = handle.includes('e') ? target.x : r.x + r.w;
+			const top = handle.includes('n') ? target.y : r.y;
+			const bottom = handle.includes('s') ? target.y : r.y + r.h;
+			return { ...origin, from: { x: left, y: top }, to: { x: right, y: bottom } };
+		}
+		case 'pen':
+		case 'text': {
+			// Scale about the mark's own corner (not the padded box, and not a stroke's outer edge) so the far side stays put.
+			const box = origin.kind === 'pen' ? inflate(shapeBounds(ctx, origin), -origin.width / 2) : shapeBounds(ctx, origin);
+			const anchor = { x: handle.includes('w') ? box.x + box.w : box.x, y: handle.includes('n') ? box.y + box.h : box.y };
+			const corner = { x: handle.includes('w') ? box.x : box.x + box.w, y: handle.includes('n') ? box.y : box.y + box.h };
+			const target = { x: corner.x + delta.x, y: corner.y + delta.y };
+			const span = { x: corner.x - anchor.x, y: corner.y - anchor.y };
+			// Never flip through the anchor; a stroke with no width or height only stretches the other way.
+			const ratio = (moved: number, extent: number) => Math.abs(extent) < 1 ? 1 : Math.max(0.05, moved / extent);
+			let sx = ratio(target.x - anchor.x, span.x);
+			let sy = ratio(target.y - anchor.y, span.y);
+			if (origin.kind === 'text' || shift) {
+				sx = sy = Math.abs(span.x) < 1 ? sy : Math.abs(span.y) < 1 ? sx : Math.max(sx, sy);
+			}
+			if (origin.kind === 'text') {
+				const size = Math.max(4, Math.round(origin.size * sx));
+				const s = size / origin.size;
+				return { ...origin, size, at: { x: anchor.x + (origin.at.x - anchor.x) * s, y: anchor.y + (origin.at.y - anchor.y) * s } };
+			}
+			return mapShape(origin, q => ({ x: anchor.x + (q.x - anchor.x) * sx, y: anchor.y + (q.y - anchor.y) * sy }));
+		}
+	}
+}
+
+/** Pen and text get a dashed box; every selected mark gets round handles. */
+function paintSelection(ctx: CanvasRenderingContext2D, shape: Shape, px: number): void {
+	ctx.save();
+	if (shape.kind === 'pen' || shape.kind === 'text') {
+		const box = selectionBox(ctx, shape, px);
+		ctx.setLineDash([5 * px, 4 * px]);
+		ctx.lineWidth = 1.5 * px;
+		ctx.strokeStyle = '#ffffff';
+		ctx.strokeRect(box.x, box.y, box.w, box.h);
+		ctx.lineDashOffset = 4.5 * px;
+		ctx.strokeStyle = '#0a84ff';
+		ctx.strokeRect(box.x, box.y, box.w, box.h);
+		ctx.setLineDash([]);
+	}
+	ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+	ctx.shadowBlur = 3 * px;
+	ctx.lineWidth = 1.5 * px;
+	ctx.fillStyle = '#ffffff';
+	ctx.strokeStyle = '#0a84ff';
+	for (const { at } of shapeHandles(ctx, shape, px)) {
+		ctx.beginPath();
+		ctx.arc(at.x, at.y, HANDLE_RADIUS * px, 0, Math.PI * 2);
+		ctx.fill();
+		ctx.stroke();
+	}
+	ctx.restore();
 }
 
 function distanceToSegment(p: IPoint, a: IPoint, b: IPoint): number {

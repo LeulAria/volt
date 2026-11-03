@@ -26,7 +26,7 @@ import { IVoltProjectsService, VoltProjectCommands } from '../../voltProjects/co
 import { IVoltFolderPickerService } from '../../voltProjects/browser/folderPickerService.js';
 import { showVoltModal } from '../../voltProjects/browser/ui/voltModal.js';
 import { AgentSetupService, IAgentSetupState } from './agentSetupService.js';
-import { createVoltButton, voltButtonClasses } from '../../voltAgent/browser/chrome/voltButton.js';
+import { createVoltButton, voltButtonClasses, VoltButtonKind } from '../../voltAgent/browser/chrome/voltButton.js';
 
 export type SetupStep = 'agents' | 'projects' | 'done';
 
@@ -63,6 +63,8 @@ export class VoltSetupWizard {
 	private running: IRunningAction | undefined;
 	private home = '';
 	private changedAgents = false;
+	/** Set once the dialog is gone: CLI checks still in flight must not draw into it. */
+	private closed = false;
 
 	private panel: HTMLElement | undefined;
 	private backdrop: HTMLElement | undefined;
@@ -89,18 +91,21 @@ export class VoltSetupWizard {
 			openWizard.show(step);
 			return;
 		}
-		this.step = step;
-		const modal = showVoltModal(this.layoutService, {
+		const modal: IDisposable = showVoltModal(this.layoutService, {
 			title: localize('voltSetup.title', "Set up Volt"),
 			headless: true,
 			width: 720,
 			height: 560,
 			className: 'volt-setup',
-			render: (body, close) => this.renderShell(body, close),
+			render: (body, close) => this.renderShell(body, close, step),
 			onDidClose: () => {
 				openWizard = undefined;
-				this.watch.clear();
+				this.closed = true;
+				this.running = undefined;
+				this.watch.dispose();
 				this.renderStore.dispose();
+				// Already closed; this only marks the handle as released.
+				modal.dispose();
 				if (this.changedAgents) {
 					void this.runtime.refreshProviders();
 				}
@@ -112,10 +117,9 @@ export class VoltSetupWizard {
 				this.goTo(next);
 			},
 		};
-		void modal;
 	}
 
-	private renderShell(body: HTMLElement, close: () => void): IDisposable {
+	private renderShell(body: HTMLElement, close: () => void, step: SetupStep): IDisposable {
 		const store = new DisposableStore();
 		this.body = body;
 		this.panel = body.closest<HTMLElement>('.volt-modal') ?? undefined;
@@ -127,8 +131,13 @@ export class VoltSetupWizard {
 				this.render();
 			}
 		}));
-		void this.fsBrowse.home().then(home => this.home = home).catch(() => undefined);
-		this.render();
+		void this.fsBrowse.home().then(home => {
+			this.home = home;
+			if (this.step === 'projects') {
+				this.render();
+			}
+		}).catch(() => undefined);
+		this.goTo(step);
 		this.detectAll();
 		return store;
 	}
@@ -138,15 +147,20 @@ export class VoltSetupWizard {
 	private goTo(step: SetupStep): void {
 		this.step = step;
 		if (step === 'projects' && !this.editors) {
-			void this.editorImport.recentFolders().then(editors => {
+			const loaded = (editors: readonly IVoltImportedEditor[]) => {
 				this.editors = editors;
-				this.render();
-			}, () => {
-				this.editors = [];
-				this.render();
-			});
+				if (this.step === 'projects') {
+					this.render();
+				}
+			};
+			void this.editorImport.recentFolders().then(loaded, () => loaded([]));
 		}
 		this.render();
+	}
+
+	/** Skip: leave setup altogether, whatever step it is on. */
+	private skip(): void {
+		this.close();
 	}
 
 	//#region Agents
@@ -185,6 +199,9 @@ export class VoltSetupWizard {
 			this.expand();
 			return;
 		}
+		if (this.closed) {
+			return;
+		}
 		const def = this.agentSetup.definitions().find(candidate => candidate.id === state.id)!;
 		const store = new DisposableStore();
 		const started = Date.now();
@@ -200,14 +217,14 @@ export class VoltSetupWizard {
 				return;
 			}
 			void this.detectOne(def).then(next => {
-				if (this.running?.id === def.id && done(next)) {
+				if (!this.closed && this.running?.id === def.id && done(next)) {
 					finish();
 				}
 			});
 		}, WATCH_INTERVAL_MS);
 		store.add(toDisposable(() => mainWindow.clearInterval(handle)));
 		store.add(onClosed(() => void this.detectOne(def).then(() => {
-			if (this.running?.id === def.id) {
+			if (!this.closed && this.running?.id === def.id) {
 				finish();
 			}
 		})));
@@ -248,7 +265,7 @@ export class VoltSetupWizard {
 
 	private render(): void {
 		const body = this.body;
-		if (!body) {
+		if (!body || this.closed) {
 			return;
 		}
 		// A re-render on the same step (ticking a folder, a CLI check) keeps the list where it was
@@ -279,6 +296,11 @@ export class VoltSetupWizard {
 		}
 		this.renderedStep = this.step;
 		content.scrollTop = scrollTop;
+		// A rule under the header once the list scrolls beneath it.
+		const header = body.querySelector<HTMLElement>('.volt-setup-header');
+		const markScrolled = () => header?.classList.toggle('scrolled', content.scrollTop > 0);
+		markScrolled();
+		this.renderStore.add(addDisposableListener(content, 'scroll', markScrolled, { passive: true }));
 		if (focusedPath) {
 			[...content.querySelectorAll<HTMLElement>('.volt-setup-folder')].find(row => row.dataset.path === focusedPath)?.focus({ preventScroll: true });
 		}
@@ -308,21 +330,26 @@ export class VoltSetupWizard {
 			append(button, $('span.label')).textContent = labels[step];
 			this.renderStore.add(addDisposableListener(button, 'click', () => this.goTo(step)));
 		});
-		const close = append(header, $('button.volt-modal-close')) as HTMLButtonElement;
+		this.closeButton(header);
+	}
+
+	/** The X: skips the rest of setup, like Skip. */
+	private closeButton(parent: HTMLElement): void {
+		const close = append(parent, $('button.volt-modal-close')) as HTMLButtonElement;
 		close.type = 'button';
 		close.setAttribute('aria-label', localize('voltSetup.skipAll', "Skip setup"));
 		setAgentTooltip(close, localize('voltSetup.skipAllHint', "Skip setup. Run \"Volt: Set Up Agents and Projects\" to come back."));
 		close.appendChild(renderIcon(Codicon.close));
 		this.renderStore.add(addDisposableListener(close, 'click', e => {
 			EventHelper.stop(e, true);
-			this.close();
+			this.skip();
 		}));
 	}
 
-	private footerButtons(footer: HTMLElement, hint: string, buttons: readonly { label: string; secondary?: boolean; run: () => void; enabled?: boolean }[]): void {
+	private footerButtons(footer: HTMLElement, hint: string, buttons: readonly { label: string; kind?: VoltButtonKind; run: () => void; enabled?: boolean }[]): void {
 		append(footer, $('span.volt-add-footer-hint')).textContent = hint;
 		for (const spec of buttons) {
-			const button = this.renderStore.add(createVoltButton(footer, spec.secondary ? 'secondary' : 'primary'));
+			const button = this.renderStore.add(createVoltButton(footer, spec.kind ?? 'primary'));
 			button.label = spec.label;
 			button.enabled = spec.enabled !== false;
 			this.renderStore.add(button.onDidClick(spec.run));
@@ -353,7 +380,7 @@ export class VoltSetupWizard {
 		}
 		const total = this.agentSetup.definitions().length;
 		this.footerButtons(footer, localize('voltSetup.agentsReady', "{0} of {1} agents ready", ready, total), [
-			{ label: localize('voltSetup.skip', "Skip"), secondary: true, run: () => this.goTo('projects') },
+			{ label: localize('voltSetup.skip', "Skip"), kind: 'secondary', run: () => this.skip() },
 			{ label: localize('voltSetup.next', "Next"), run: () => this.goTo('projects') },
 		]);
 	}
@@ -375,7 +402,7 @@ export class VoltSetupWizard {
 		if (!state || state === 'checking') {
 			row.classList.add('checking');
 			append(status, $('span.volt-setup-dot.checking'));
-			append(status, $('span')).textContent = localize('voltSetup.checking', "Checking...");
+			append(status, $('span')).textContent = localize('voltSetup.checking', "Checking…");
 			return;
 		}
 		const info = state.info;
@@ -450,6 +477,7 @@ export class VoltSetupWizard {
 		append(head, $('span.title')).textContent = running.action === 'install'
 			? localize('voltSetup.installing', "Installing {0}", running.label)
 			: localize('voltSetup.signingIn', "Signing in to {0}", running.label);
+		this.closeButton(head);
 		append(card, $('code.volt-setup-command')).textContent = running.command;
 		append(card, $('.volt-setup-running-hint')).textContent = localize('voltSetup.runningHint', "Follow the prompts in the terminal. Setup comes back when it is done.");
 		const actions = append(card, $('.volt-setup-running-actions'));
@@ -481,7 +509,7 @@ export class VoltSetupWizard {
 		const sources = append(content, $('.volt-setup-sources'));
 		this.sourceButton(sources, Codicon.deviceDesktop, localize('voltSetup.thisPC', "This PC"), localize('voltSetup.thisPCHint', "Pick a folder"), () => void this.addFromThisPC());
 		this.sourceButton(sources, Codicon.link, localize('voltSetup.gitUrl', "Git URL"), localize('voltSetup.gitUrlHint', "Clone a repository"), () => void this.commandService.executeCommand(VoltProjectCommands.cloneFromUrl));
-		this.sourceButton(sources, Codicon.github, localize('voltSetup.github', "GitHub"), localize('voltSetup.githubHint', "Clone one of your repositories"), () => void this.commandService.executeCommand(VoltProjectCommands.cloneFromGitHub));
+		this.sourceButton(sources, Codicon.github, localize('voltSetup.github', "GitHub"), localize('voltSetup.githubHint', "Clone your repositories"), () => void this.commandService.executeCommand(VoltProjectCommands.cloneFromGitHub));
 
 		if (this.addedHere.size) {
 			const added = append(content, $('.volt-setup-added'));
@@ -493,7 +521,7 @@ export class VoltSetupWizard {
 		append(importHead, $('span')).textContent = localize('voltSetup.importTitle', "Recent folders in other editors");
 		const list = append(content, $('.volt-setup-list.volt-setup-import'));
 		if (!this.editors) {
-			append(list, $('.volt-setup-empty')).textContent = localize('voltSetup.reading', "Reading recent folders...");
+			append(list, $('.volt-setup-empty')).textContent = localize('voltSetup.reading', "Reading recent folders…");
 		} else if (!this.editors.length) {
 			append(list, $('.volt-setup-empty')).textContent = localize('voltSetup.noEditors', "No recent folders found in VS Code, Cursor, Windsurf or VSCodium on this machine.");
 		} else {
@@ -503,10 +531,14 @@ export class VoltSetupWizard {
 		}
 
 		const count = this.selected.size;
+		const inVolt = this.projects.list().length;
 		this.footerButtons(footer, count
 			? localize('voltSetup.selectedCount', "{0} selected", count)
-			: localize('voltSetup.projectsCount', "{0} projects in Volt", this.projects.list().length), [
-			{ label: localize('voltSetup.back', "Back"), secondary: true, run: () => this.goTo('agents') },
+			: inVolt === 1
+				? localize('voltSetup.projectsCountOne', "1 project in Volt")
+				: localize('voltSetup.projectsCount', "{0} projects in Volt", inVolt), [
+			{ label: localize('voltSetup.back', "Back"), kind: 'ghost', run: () => this.goTo('agents') },
+			{ label: localize('voltSetup.skip', "Skip"), kind: 'secondary', run: () => this.skip() },
 			...(count
 				? [{ label: localize('voltSetup.importSelected', "Import {0}", count), run: () => this.importSelected() }]
 				: [{ label: localize('voltSetup.next', "Next"), run: () => this.goTo('done') }]),
@@ -631,7 +663,7 @@ export class VoltSetupWizard {
 		line(Codicon.folder, localize('voltSetup.doneProjects', "Projects in Volt: {0}", this.projects.list().length));
 		append(done, $('.volt-setup-done-hint')).textContent = localize('voltSetup.doneHint', "Run \"Volt: Set Up Agents and Projects\" from the Command Palette, or use Volt Settings, to come back here.");
 		this.footerButtons(footer, '', [
-			{ label: localize('voltSetup.openSettings', "Volt Settings"), secondary: true, run: () => { this.close(); void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID); } },
+			{ label: localize('voltSetup.openSettings', "Volt Settings"), kind: 'secondary', run: () => { this.close(); void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID); } },
 			{ label: localize('voltSetup.finish', "Done"), run: () => this.close() },
 		]);
 	}

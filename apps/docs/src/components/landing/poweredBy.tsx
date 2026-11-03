@@ -159,7 +159,7 @@ export function PoweredBy() {
                   {layer.name}
                 </span>
                 <span
-                  className="mt-0.5 block font-mono text-[10px] tracking-[0.14em] uppercase"
+                  className="mt-0.5 block text-[12.5px]"
                   style={{
                     color: layer.accent ? ACCENT : "rgba(255,255,255,0.35)",
                   }}

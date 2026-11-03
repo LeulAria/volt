@@ -9,6 +9,7 @@ import { IAccessRequest } from './access/accessTypes.js';
 import type { HandoffReason } from './contextHandoff.js';
 import type { VoltLane } from './harness/lanes.js';
 import type { TaskPhase } from './harness/lifecycle.js';
+import type { IRunReceipt } from './harness/proofOfDone.js';
 import type { ToolKind } from './harness/workLog.js';
 import type { IVoltVisualRef } from './hostTools.js';
 import { VoltMode } from './modes.js';
@@ -160,6 +161,12 @@ export type IVoltEvent =
 	| { type: 'inbox'; claimed: number }
 	| { type: 'prefetch'; paths: readonly string[] }
 	| { type: 'proof'; covered: number; total: number; ok: boolean }
+	/**
+	 * Proof of done: what the run's finish rests on, item by item (checks that ran after the last
+	 * edit, the second opinion, what the agent says is left). One per run, as it ends; the transcript
+	 * draws it as the receipt card under the answer.
+	 */
+	| { type: 'receipt'; runId: string; receipt: IRunReceipt }
 	| { type: 'scheduler'; queued: number; running: number }
 	| { type: 'eval'; score: number; successRate: number; steps: number; tokens: number; hints: readonly string[] }
 	| { type: 'title'; text: string }

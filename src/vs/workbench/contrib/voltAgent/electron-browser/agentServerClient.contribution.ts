@@ -19,16 +19,25 @@ import { InstantiationType, registerSingleton } from '../../../../platform/insta
 import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerMainProcessRemoteService } from '../../../../platform/ipc/electron-browser/services.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
+import { Schemas } from '../../../../base/common/network.js';
 import { INativeHostService } from '../../../../platform/native/common/native.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
-import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME } from '../../../../platform/voltAgentServer/common/agentServerService.js';
+import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME, VOLT_ALLOW_NETWORK_COMMAND_ID } from '../../../../platform/voltAgentServer/common/agentServerService.js';
 import { VOLT_USAGE_SHARE_MACHINE_COMMAND_ID } from '../../../../platform/voltUsage/common/voltUsage.js';
 import { IWebSocketLike } from '../../../../platform/voltAgentServer/common/connection.js';
 import { DEFAULT_TOPICS } from '../../../../platform/voltAgentServer/common/protocol.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
+import { ITextModelService } from '../../../../editor/common/services/resolverService.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
+import { IMarkerService } from '../../../../platform/markers/common/markers.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+import { CodeIntelHost } from '../../../services/voltRuntime/browser/host/codeIntelHost.js';
+import { lspAllowedFor } from '../../../services/voltRuntime/common/codeIntelligence.js';
+import { IVoltBrowserAccessService } from '../../../services/voltRuntime/common/browserAccess.js';
 import { IHostService } from '../../../services/host/browser/host.js';
 import { AGENT_SERVER_ENABLED_SETTING, AgentServerClient, agentServerEnabled, IAgentServerClientService } from '../../../services/voltAgentServer/common/agentServerClient.js';
 import { RemoteAgentHistoryService } from '../../../services/voltAgentServer/common/remoteAgentHistoryService.js';
@@ -36,24 +45,46 @@ import { RemoteAgentOrchestratorService } from '../../../services/voltAgentServe
 import { RemoteAgentRuntimeService } from '../../../services/voltAgentServer/common/remoteAgentRuntimeService.js';
 import { RemoteVoltHostToolService } from '../../../services/voltAgentServer/common/remoteVoltHostToolService.js';
 import { RemoteVoltSessionContextService } from '../../../services/voltAgentServer/common/remoteVoltSessionContextService.js';
+import { RemoteVoltTrajectoryService } from '../../../services/voltAgentServer/common/remoteVoltTrajectoryService.js';
+import { VoltTrajectoryService } from '../../../services/voltRuntime/browser/trajectoryService.js';
+import { IVoltTrajectoryService } from '../../../services/voltRuntime/common/trajectory.js';
 import { AgentHistoryService } from '../../../services/voltRuntime/browser/history/agentHistoryService.js';
 import { VoltHostToolService } from '../../../services/voltRuntime/browser/host/hostToolService.js';
 import { AgentOrchestratorService } from '../../../services/voltRuntime/browser/orchestration/agentOrchestratorService.js';
 import { VoltSessionContextService } from '../../../services/voltRuntime/browser/sessionContextService.js';
 import { AgentRuntimeService } from '../../../services/voltRuntime/browser/voltRuntimeService.js';
 import { IAgentHistoryService } from '../../../services/voltRuntime/common/history/agentHistory.js';
-import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
+import { AGENT_SERVER_WINDOW_COMMANDS, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
 import { IAgentOrchestratorService } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IProviderProfile, secretKeyForProfile } from '../../../services/voltRuntime/common/profiles.js';
-import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
+import { IAgentRuntimeService, OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../services/voltRuntime/common/sessionContext.js';
 import { setAgentSessionControlFactory } from '../browser/editor/agentEditorInput.js';
 import { RemoteAgentSessionControl } from '../browser/editor/remoteAgentSessionControl.js';
 import { AgentCheckpointService, IAgentCheckpointService } from '../browser/review/agentCheckpointService.js';
 import { IAgentEditsService } from '../browser/review/agentEditsService.js';
 import { RemoteAgentCheckpointService } from '../browser/review/remoteAgentCheckpointService.js';
+import { AgentTerminalsService, IAgentTerminalsService } from '../browser/terminals/agentTerminals.js';
+import { RemoteAgentTerminalsService } from '../browser/terminals/remoteAgentTerminals.js';
+import { IMainProcessService } from '../../../../platform/ipc/common/mainProcessService.js';
+import { ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
+import { IVoltRelayService, VOLT_RELAY_CHANNEL_NAME } from '../../../../platform/voltRelay/common/voltRelay.js';
+import { RemoteVoltRelayService } from '../../../services/voltAgentServer/common/remoteVoltRelayService.js';
+import { WindowAgentRunGroupService } from '../browser/runGroups/agentRunGroupWindowService.js';
+import { RemoteAgentRunGroupService } from '../browser/runGroups/remoteAgentRunGroupService.js';
+import { IAgentRunGroupService } from '../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { IAgentSurfaceDraft, IAgentWorkspaceService } from '../browser/workspace/agentWorkspace.js';
 import { AgentEditsJournalEntry } from '../common/agentEditsJournal.js';
+import { ResourceMap, ResourceSet } from '../../../../base/common/map.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
+import { showRemoteControlIntro } from '../browser/remote/voltRemoteIntro.js';
+import { ITextFileService } from '../../../services/textfile/common/textfiles.js';
+import { IWorkingCopyService } from '../../../services/workingCopy/common/workingCopyService.js';
+import { PROJECT_SETTINGS_STORAGE_KEY } from '../../voltSetup/common/projectSettings.js';
+
+/** Unsaved documents larger than this stay out of the agent server's view (agents read the file on disk). */
+const MAX_SHARED_DOCUMENT_CHARS = 4_000_000;
 
 registerMainProcessRemoteService(IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME);
 
@@ -64,9 +95,9 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 	properties: {
 		[AGENT_SERVER_ENABLED_SETTING]: {
 			type: 'boolean',
-			default: false,
+			default: true,
 			scope: ConfigurationScope.APPLICATION,
-			description: localize('voltAgentServer.enabled', "Run agents in the Volt agent server, a background process that keeps them working while Volt's windows are closed, after Volt quits and across sleep. Reopening Volt shows their progress. Takes effect after a restart."),
+			description: localize('voltAgentServer.enabled', "Run agents in the Volt agent server, a background process: they keep working while a window reloads or closes, after Volt quits and across sleep, and reopening Volt shows their progress. The server stops on its own after 15 minutes with no window open and nothing left to do. Turn off to run agents inside each window instead. Takes effect after a restart."),
 		},
 	},
 });
@@ -89,7 +120,7 @@ class DesktopAgentServerClient extends AgentServerClient {
 				}
 			},
 			createSocket: url => new WebSocket(url) as unknown as IWebSocketLike,
-			client: { kind: 'desktop', id: generateUuid(), capabilities: ['browser', 'surface'], topics: [...DEFAULT_TOPICS, 'runtime.event'] },
+			client: { kind: 'desktop', id: generateUuid(), capabilities: ['browser', 'surface', 'codeIntel'], topics: [...DEFAULT_TOPICS, 'runtime.event'] },
 			onError: (method, err) => logService.warn(`[volt agent server] ${method} failed`, err),
 		});
 		this.connect();
@@ -123,13 +154,29 @@ registerSingleton(IAgentHistoryService, <never>eitherLocalOrRemote(AgentHistoryS
 registerSingleton(IVoltSessionContextService, <never>eitherLocalOrRemote(VoltSessionContextService, RemoteVoltSessionContextService), InstantiationType.Delayed);
 registerSingleton(IVoltHostToolService, <never>eitherLocalOrRemote(VoltHostToolService, RemoteVoltHostToolService), InstantiationType.Delayed);
 registerSingleton(IAgentCheckpointService, <never>eitherLocalOrRemote(AgentCheckpointService, RemoteAgentCheckpointService), InstantiationType.Delayed);
+// Agents' terminals run where the agents do: in the server they outlive this window, which shows them attached.
+registerSingleton(IAgentTerminalsService, <never>eitherLocalOrRemote(AgentTerminalsService, RemoteAgentTerminalsService), InstantiationType.Delayed);
+// Runs record their model requests where they run: the Trajectory panel reads the server's.
+registerSingleton(IVoltTrajectoryService, <never>eitherLocalOrRemote(VoltTrajectoryService, RemoteVoltTrajectoryService), InstantiationType.Delayed);
+
+/** The main process's relay, for windows that run their agents themselves. */
+class MainProcessRelayService {
+	constructor(@IMainProcessService mainProcessService: IMainProcessService) {
+		return ProxyChannel.toService<IVoltRelayService>(mainProcessService.getChannel(VOLT_RELAY_CHANNEL_NAME));
+	}
+}
+
+// The relay lives with the agents: in the server, webhook automations run with no window open.
+registerSingleton(IVoltRelayService, <never>eitherLocalOrRemote(MainProcessRelayService, RemoteVoltRelayService), InstantiationType.Delayed);
+// Run groups live in the server with the chats they start, so every client sees the same ones.
+registerSingleton(IAgentRunGroupService, <never>eitherLocalOrRemote(WindowAgentRunGroupService, RemoteAgentRunGroupService), InstantiationType.Delayed);
 
 // Chats' transcripts come from the server's session controllers.
 setAgentSessionControlFactory((input, instantiationService) => instantiationService.invokeFunction(accessor =>
 	agentServerEnabled(accessor.get(IConfigurationService)) ? instantiationService.createInstance(RemoteAgentSessionControl, input) : undefined));
 
-/** Commands the server may ask this window to run: the in-app browser's. */
-const WINDOW_COMMANDS = new Set([AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID]);
+/** Commands the server may ask this window to run: the in-app browser's, and what the user has open. */
+const WINDOW_COMMANDS = AGENT_SERVER_WINDOW_COMMANDS;
 
 /**
  * What a window does for the agent server: the things only a window can (the in-app browser,
@@ -177,7 +224,17 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 			// Cancellation stays on the server; a token does not cross the socket.
 			return commands.executeCommand(id, ...args.map(arg => withoutToken(arg)));
 		}));
+		this.serveCodeIntel(client, accessor, logService);
+		this.shareDocuments(client, accessor);
+		this.shareProjectSettings(client, accessor, logService);
+		const browserAccess = accessor.get(IVoltBrowserAccessService);
+		const sendBrowserChoices = () => client.call('browserAccess.setChoices', browserAccess.chatChoices()).catch(err => logService.warn('[volt agent server] could not send the browser access choices', err));
+		this._register(browserAccess.onDidChange(() => void sendBrowserChoices()));
+		if (client.isReady) {
+			void sendBrowserChoices();
+		}
 		this._register(client.onDidResync(() => {
+			void sendBrowserChoices();
 			void this.handOverKeys(client, secrets, logService);
 			this.applyEdits(client, edits, logService);
 		}));
@@ -209,6 +266,122 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 		};
 		globalThis.addEventListener?.('online', online);
 		this._register({ dispose: () => globalThis.removeEventListener?.('online', online) });
+	}
+
+	/**
+	 * Agents in the server ask this window's language servers (go to definition, references,
+	 * outline, diagnostics). Worktrees outside this window's folders follow Settings > Code Intelligence.
+	 */
+	private serveCodeIntel(client: IAgentServerClientService, accessor: ServicesAccessor, logService: ILogService): void {
+		const configuration = accessor.get(IConfigurationService);
+		const workspace = accessor.get(IWorkspaceContextService);
+		// The server sends a file's queries to the window that has its folder open.
+		const sendFolders = () => client.call('codeIntel.setFolders', workspace.getWorkspace().folders.filter(folder => folder.uri.scheme === Schemas.file).map(folder => folder.uri.fsPath))
+			.catch(err => logService.trace('[volt agent server] could not send this window\'s folders', err));
+		this._register(workspace.onDidChangeWorkspaceFolders(() => void sendFolders()));
+		this._register(client.onDidResync(() => void sendFolders()));
+		if (client.isReady) {
+			void sendFolders();
+		}
+		const host = this._register(new CodeIntelHost(accessor.get(IMarkerService), accessor.get(ITextModelService), accessor.get(ILanguageFeaturesService), accessor.get(IFileService)));
+		host.setLspPolicy(uri => lspAllowedFor(configuration, !workspace.isInsideWorkspace(uri)));
+		const allowed = (uri: unknown): uri is URI => URI.isUri(uri) && host.lspAllowed(uri);
+		this._register(client.registerHandler('codeIntel.noteWrite', uri => {
+			if (URI.isUri(uri)) {
+				host.noteWrite(uri);
+			}
+			return true;
+		}));
+		this._register(client.registerHandler('codeIntel.errorCounts', uri => URI.isUri(uri) ? [...host.errorCounts(uri)] : []));
+		this._register(client.registerHandler('codeIntel.newErrors', (uri, baseline) =>
+			allowed(uri) ? host.newErrors(uri, new Map(Array.isArray(baseline) ? baseline as [string, number][] : [])) : []));
+		this._register(client.registerHandler('codeIntel.diagnostics', (uris, severity) => {
+			const list = Array.isArray(uris) ? uris.filter(allowed) : undefined;
+			if (Array.isArray(uris) && uris.length && !list?.length) {
+				throw new Error('Language servers are off for this checkout (Settings > Code Intelligence), so the editor has no diagnostics for it. Run the project\'s type checker or linter instead.');
+			}
+			return host.diagnostics(list?.length ? list : undefined, severity === 'warning' || severity === 'all' ? severity : 'error');
+		}));
+		const position = (line: unknown, column: unknown) => Number.isInteger(line) && Number.isInteger(column) && (line as number) >= 1 && (column as number) >= 1;
+		this._register(client.registerHandler('codeIntel.definitions', (uri, line, column) => allowed(uri) && position(line, column) ? host.definitions(uri, line as number, column as number) : []));
+		this._register(client.registerHandler('codeIntel.references', (uri, line, column) => allowed(uri) && position(line, column) ? host.references(uri, line as number, column as number) : []));
+		this._register(client.registerHandler('codeIntel.symbols', uri => allowed(uri) ? host.symbols(uri) : []));
+	}
+
+	/**
+	 * Agents in the server read what the user sees: this window's unsaved changes go to the server as
+	 * they happen, and an agent's edit to such a file lands in the buffer here (and saves) instead of
+	 * behind it on disk.
+	 */
+	private shareDocuments(client: IAgentServerClientService, accessor: ServicesAccessor): void {
+		const textFiles = accessor.get(ITextFileService);
+		const workingCopies = accessor.get(IWorkingCopyService);
+		/** Unsaved documents the server has, by the version it has. */
+		const sent = new ResourceMap<number>();
+		const send = (reset: boolean) => {
+			if (!client.isReady) {
+				return;
+			}
+			const changes: [URI, string | null][] = [];
+			const dirty = new ResourceSet();
+			for (const model of textFiles.files.models) {
+				const text = model.textEditorModel;
+				if (model.resource.scheme !== Schemas.file || !model.isDirty() || !text || text.getValueLength() > MAX_SHARED_DOCUMENT_CHARS) {
+					continue;
+				}
+				dirty.add(model.resource);
+				const version = text.getAlternativeVersionId();
+				if (!reset && sent.get(model.resource) === version) {
+					continue;
+				}
+				sent.set(model.resource, version);
+				changes.push([model.resource, text.getValue()]);
+			}
+			for (const uri of [...sent.keys()]) {
+				if (!dirty.has(uri)) {
+					sent.delete(uri);
+					changes.push([uri, null]);
+				}
+			}
+			if (reset) {
+				client.send('documents.reset');
+			}
+			if (changes.length) {
+				client.send('documents.update', changes);
+			}
+		};
+		const soon = this._register(new RunOnceScheduler(() => send(false), 300));
+		this._register(workingCopies.onDidChangeDirty(() => soon.schedule()));
+		this._register(workingCopies.onDidChangeContent(() => soon.schedule()));
+		this._register(client.onDidResync(() => {
+			sent.clear();
+			send(true);
+		}));
+		if (client.isReady) {
+			send(true);
+		}
+		this._register(client.registerHandler('documents.writeOpen', async (uri, text) => {
+			const model = URI.isUri(uri) && typeof text === 'string' ? textFiles.files.get(uri) : undefined;
+			const editor = model?.textEditorModel;
+			if (!model || !editor || typeof text !== 'string') {
+				return false;
+			}
+			editor.pushEditOperations([], [{ range: editor.getFullModelRange(), text }], () => null);
+			await model.save();
+			return true;
+		}));
+	}
+
+	/** Project Settings > Environment applies to what the server runs: it gets this window's settings when they change. */
+	private shareProjectSettings(client: IAgentServerClientService, accessor: ServicesAccessor, logService: ILogService): void {
+		const storage = accessor.get(IStorageService);
+		const send = () => client.call('projectSettings.set', storage.get(PROJECT_SETTINGS_STORAGE_KEY, StorageScope.APPLICATION, '{}'))
+			.catch(err => logService.warn('[volt agent server] could not send the project settings', err));
+		this._register(storage.onDidChangeValue(StorageScope.APPLICATION, PROJECT_SETTINGS_STORAGE_KEY, this._store)(() => void send()));
+		this._register(client.onDidResync(() => void send()));
+		if (client.isReady) {
+			void send();
+		}
 	}
 
 	/** The desktop keeps provider keys encrypted for this app; the server gets the ones it lacks. */
@@ -306,10 +479,13 @@ registerAction2(class extends Action2 {
 	}
 });
 
-/** The web app on this machine. It signs itself in over loopback, so no token goes in the URL. */
+/** Volt in the browser on this machine. It signs itself in over loopback, so no token goes in the URL. */
 function localWebUrl(port: number, path = '/'): string {
 	return `http://127.0.0.1:${port}${path}`;
 }
+
+/** The browser workbench opened on Volt Settings > Devices (for when this window is not the agent server's client). */
+const DEVICES_PAGE_PATH = `/?next=${encodeURIComponent('/code/?voltSettings=devices')}`;
 
 /** Turns the agent server on (it needs a restart) when it is off. Resolves whether it is on. */
 async function ensureServerMode(configurationService: IConfigurationService, dialogs: IDialogService, host: IHostService): Promise<boolean> {
@@ -328,6 +504,9 @@ async function ensureServerMode(configurationService: IConfigurationService, dia
 	return false;
 }
 
+/** Set once the user turns Remote Control on from its introduction; until then pairing shows it. */
+const REMOTE_INTRO_SEEN_KEY = 'volt.remoteControl.introSeen';
+
 registerAction2(class extends Action2 {
 	constructor() {
 		super({ id: 'volt.agentServer.pairDevice', title: localize2('voltAgentServer.pairDevice', "Pair a Phone or Browser..."), category: localize2('volt', "Volt"), f1: true });
@@ -336,25 +515,25 @@ registerAction2(class extends Action2 {
 		const mainService = accessor.get(IVoltAgentServerMainService);
 		const configurationService = accessor.get(IConfigurationService);
 		const dialogs = accessor.get(IDialogService);
-		const nativeHost = accessor.get(INativeHostService);
+		const commands = accessor.get(ICommandService);
 		const notifications = accessor.get(INotificationService);
 		const host = accessor.get(IHostService);
+		const storage = accessor.get(IStorageService);
+		const layout = accessor.get(ILayoutService);
+		// The first time, a full introduction instead of going straight to the confirmations.
+		if (!storage.getBoolean(REMOTE_INTRO_SEEN_KEY, StorageScope.APPLICATION, false)) {
+			if (!await showRemoteControlIntro(layout.activeContainer)) {
+				return;
+			}
+			storage.store(REMOTE_INTRO_SEEN_KEY, true, StorageScope.APPLICATION, StorageTarget.USER);
+		}
 		if (!await ensureServerMode(configurationService, dialogs, host)) {
 			return;
 		}
 		try {
-			let endpoint = await mainService.ensureRunning();
-			if (!endpoint.network) {
-				const { confirmed } = await dialogs.confirm({
-					message: localize('voltAgentServer.allowNetwork', "Let your devices on this network connect?"),
-					detail: localize('voltAgentServer.allowNetworkDetail', "Phones and computers on this Wi-Fi or your Tailscale network can reach Volt once you pair them with a one-time code. Each device gets its own key, which you can remove at any time. The agent server restarts; running turns can be resumed."),
-					primaryButton: localize({ key: 'voltAgentServer.allowNetworkButton', comment: ['&& denotes a mnemonic'] }, "&&Allow"),
-				});
-				if (confirmed) {
-					endpoint = await mainService.setNetworkAccess(true);
-				}
-			}
-			await nativeHost.openExternal(localWebUrl(endpoint.port, '/devices'));
+			await mainService.ensureRunning();
+			// Add Device picks the connection (Wi-Fi, Tailscale, Cloudflare, SSH) and asks for network access when one needs it.
+			await commands.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID, 'devices:add');
 		} catch (err) {
 			notifications.error(localize('voltAgentServer.pairFailed', "Could not open pairing: {0}", err instanceof Error ? err.message : String(err)));
 		}
@@ -379,8 +558,23 @@ registerAction2(class extends Action2 {
 			const endpoint = await mainService.ensureRunning();
 			await nativeHost.openExternal(localWebUrl(endpoint.port));
 		} catch (err) {
-			notifications.error(localize('voltAgentServer.openWebFailed', "Could not open the web app: {0}", err instanceof Error ? err.message : String(err)));
+			notifications.error(localize('voltAgentServer.openWebFailed', "Could not open Volt in the browser: {0}", err instanceof Error ? err.message : String(err)));
 		}
+	}
+});
+
+/** Add Device's "Allow Wi-Fi Connections": the user already chose it there, so no second prompt. */
+registerAction2(class extends Action2 {
+	constructor() {
+		super({ id: VOLT_ALLOW_NETWORK_COMMAND_ID, title: localize2('voltAgentServer.allowNetworkCommand', "Let Devices on This Network Connect"), category: localize2('volt', "Volt"), f1: false });
+	}
+	override async run(accessor: ServicesAccessor): Promise<boolean> {
+		const mainService = accessor.get(IVoltAgentServerMainService);
+		const configurationService = accessor.get(IConfigurationService);
+		if (!agentServerEnabled(configurationService)) {
+			return false;
+		}
+		return (await mainService.setNetworkAccess(true)).network;
 	}
 });
 
@@ -432,10 +626,10 @@ registerAction2(class extends Action2 {
 				}
 				endpoint = await mainService.setNetworkAccess(true);
 			}
-			await nativeHost.openExternal(localWebUrl(endpoint.port, '/devices'));
+			await nativeHost.openExternal(localWebUrl(endpoint.port, DEVICES_PAGE_PATH));
 			notifications.notify({
 				severity: Severity.Info,
-				message: localize('voltUsage.shareNext', "Make a pairing code on the Devices page and copy its link. On your other computer, open Settings > Usage, choose Add Machine and paste it."),
+				message: localize('voltUsage.shareNext', "Choose Add Device on the Devices page and copy its link. On your other computer, open Settings > Usage, choose Add Machine and paste it."),
 			});
 		} catch (err) {
 			notifications.error(localize('voltUsage.shareFailed', "Could not share this machine: {0}", err instanceof Error ? err.message : String(err)));

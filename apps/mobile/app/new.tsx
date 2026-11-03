@@ -4,11 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { type AccessMode, type ComposerMode, type IPromptAttachment, selectProjects, shortPath } from '@volt/client-core';
+import { type AccessMode, type ComposerMode, errorMessage, type IPromptAttachment, runSelectionProblem, selectProjects, shortPath, startRunGroup } from '@volt/client-core';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Composer, type IComposerSendExtra } from '../src/chat/Composer';
 import { expandHome } from '../src/home/paths';
@@ -22,7 +23,7 @@ const LAST_PROJECT_KEY = 'volt.lastProject';
 const SUGGESTIONS = [
 	{ icon: 'search' as const, text: 'Explain how this project is structured' },
 	{ icon: 'alertCircle' as const, text: 'Find and fix the failing tests' },
-	{ icon: 'sparkles' as const, text: 'Review my uncommitted changes' },
+	{ icon: 'fileDiff' as const, text: 'Review my uncommitted changes' },
 	{ icon: 'listChecks' as const, text: 'Plan the next feature with me' },
 ];
 
@@ -44,9 +45,16 @@ function NewChat() {
 	const [mode, setMode] = useState<ComposerMode>('Agent');
 	const [modelRef, setModelRef] = useState<string | undefined>();
 	const [modelTouched, setModelTouched] = useState(false);
+	const [multi, setMulti] = useState<readonly string[] | undefined>();
+	const [starting, setStarting] = useState(false);
 	const [access, setAccess] = useState<AccessMode | undefined>();
 	const [picking, setPicking] = useState(false);
 	const [adding, setAdding] = useState(false);
+	// The composer rides on the keyboard. A KeyboardAvoidingView measured itself inside the modal
+	// sheet (which starts below the status bar) and lifted the box too little, hiding its chips.
+	const keyboard = useReanimatedKeyboardAnimation();
+	const restPad = Math.max(insets.bottom, 10);
+	const lift = useAnimatedStyle(() => ({ paddingBottom: Math.max(restPad, -keyboard.height.value + 8) }), [restPad]);
 
 	useEffect(() => {
 		void AsyncStorage.getItem(LAST_PROJECT_KEY).then(id => {
@@ -71,10 +79,41 @@ function NewChat() {
 			return false;
 		}
 		void AsyncStorage.setItem(LAST_PROJECT_KEY, projectId);
+		if (multi) {
+			return compare(projectId, text, attachments, extra);
+		}
 		const id = client.startChat({ projectId, text, mode, ...(effectiveModel ? { modelRef: effectiveModel } : {}), ...(access ? { accessMode: access } : {}), ...(attachments.length ? { attachments } : {}), ...(extra?.mentions.length ? { mentions: extra.mentions } : {}), ...(extra?.displayText && extra.displayText !== text ? { displayText: extra.displayText } : {}) });
 		haptic.success();
 		router.dismiss();
 		router.push({ pathname: '/chat/[id]', params: { id } });
+		return true;
+	};
+
+	/** One prompt on every ticked model: a chat, branch and worktree each, then the comparison opens. */
+	const compare = (project: string, text: string, attachments: readonly IPromptAttachment[], extra?: IComposerSendExtra) => {
+		const problem = runSelectionProblem(multi ?? []);
+		if (problem || starting) {
+			if (problem) {
+				client.toast('info', problem);
+			}
+			return false;
+		}
+		setStarting(true);
+		void startRunGroup(client, {
+			projectId: project, text, mode, models: multi!,
+			...(access ? { accessMode: access } : {}),
+			...(attachments.length ? { attachments } : {}),
+			...(extra?.mentions.length ? { mentions: extra.mentions } : {}),
+			...(extra?.displayText && extra.displayText !== text ? { displayText: extra.displayText } : {}),
+		}).then(group => {
+			haptic.success();
+			if (router.canDismiss()) {
+				router.dismiss();
+				router.push({ pathname: '/group/[id]', params: { id: group.id } });
+			} else {
+				router.replace({ pathname: '/group/[id]', params: { id: group.id } });
+			}
+		}, err => client.toast('error', `Could not start the runs: ${errorMessage(err)}`)).finally(() => setStarting(false));
 		return true;
 	};
 
@@ -90,7 +129,7 @@ function NewChat() {
 				<T variant="title3" weight="700" align="center" style={{ flex: 1 }}>New chat</T>
 				<View style={{ width: 36 }} />
 			</View>
-			<KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
+			<View style={{ flex: 1 }}>
 				<ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 18 }} keyboardShouldPersistTaps="handled">
 					<Tap haptics="selection" onPress={() => projects.length ? setPicking(true) : setAdding(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 16, backgroundColor: p.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: p.stroke }}>
 						<View style={{ width: 40, height: 40, borderRadius: 11, backgroundColor: p.fill, alignItems: 'center', justifyContent: 'center' }}>
@@ -131,7 +170,7 @@ function NewChat() {
 						</View>
 					) : null}
 				</ScrollView>
-				<View style={{ paddingBottom: Math.max(insets.bottom, 10), paddingTop: 6 }}>
+				<Animated.View style={[{ paddingTop: 6 }, lift]}>
 					<Composer
 						draftKey="new"
 						autoFocus
@@ -142,15 +181,17 @@ function NewChat() {
 							setModelTouched(true);
 							setModelRef(ref);
 						}}
+						multiModels={multi}
+						onMultiModelsChange={setMulti}
 						accessMode={access ?? runtime.accessMode}
 						onAccessChange={setAccess}
 						onSend={(text, _delivery, attachments, extra) => start(text, attachments, extra)}
 						folder={project?.path}
-						placeholder={project ? `What should Volt do in ${project.name}?` : 'Add a project to start'}
+						placeholder={!project ? 'Add a project to start' : multi ? `One prompt for ${multi.length} models in ${project.name}` : `What should Volt do in ${project.name}?`}
 						leading={project ? <Pill label={project.name} icon="folder" onPress={() => setPicking(true)} maxWidth={110} /> : undefined}
 					/>
-				</View>
-			</KeyboardAvoidingView>
+				</Animated.View>
+			</View>
 			<ActionSheet visible={picking} onClose={() => setPicking(false)} title="Project" actions={projectActions} />
 			<InputSheet visible={adding} onClose={() => setAdding(false)} title="Add a project folder" placeholder="~/code/my-app" confirm="Add" onSubmit={path => {
 				if (!path.trim()) {

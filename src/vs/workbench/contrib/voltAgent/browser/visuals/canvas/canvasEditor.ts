@@ -136,9 +136,10 @@ export class CanvasEditor extends EditorPane {
 		input.focusFrame = undefined;
 		const store = new DisposableStore();
 		this.session.value = store;
-		const view = store.add(this.instantiationService.createInstance(CanvasView, container, { canvasId: input.canvasId, focusFrame: focus, onTitle: title => input.setTitle(title) }));
+		const view = store.add(this.instantiationService.createInstance(CanvasView, container, { canvasId: input.canvasId, focusFrame: focus, onTitle: title => input.setTitle(title), island: true }));
 		this.view = view;
 		view.element.classList.add('volt-canvas-editor-host');
+		view.setVisible(this.isVisible());
 		store.add(toDisposable(() => {
 			if (this.view === view) {
 				this.view = undefined;
@@ -159,6 +160,11 @@ export class CanvasEditor extends EditorPane {
 	override focus(): void {
 		super.focus();
 		this.view?.focus();
+	}
+
+	protected override setEditorVisible(visible: boolean): void {
+		super.setEditorVisible(visible);
+		this.view?.setVisible(visible);
 	}
 
 	override layout(_dimension: Dimension): void {

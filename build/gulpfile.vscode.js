@@ -76,9 +76,12 @@ const vscodeResourceIncludes = [
 	// Node Scripts
 	'out-build/vs/base/node/{terminateProcess.sh,cpuUsage.sh,ps.sh}',
 
-	// Volt: the desktop helper's source (compiled on first use) and the Android UI reader
-	'out-build/vs/platform/voltDesktop/node/helper/VoltDesktop.swift',
+	// Volt: the desktop helpers' sources (macOS and Windows compile theirs on first use) and the Android UI reader
+	'out-build/vs/platform/voltDesktop/node/helper/{VoltDesktop.swift,VoltDesktop.windows.cs,VoltDesktop.windows.ps1,volt_desktop_linux.py}',
 	'out-build/vs/platform/voltDevices/node/android/volt-ui.jar',
+
+	// Scratch board hand-drawn font (loaded at runtime with FontFace)
+	'out-build/vs/workbench/contrib/voltAgent/browser/media/fonts/excalifont/*.woff2',
 
 	// Touchbar
 	'out-build/vs/workbench/browser/parts/editor/media/*.png',
@@ -258,12 +261,10 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 
 		const extensions = gulp.src(['.build/extensions/**', ...platformSpecificBuiltInExtensionsExclusions], { base: '.build', dot: true });
 
-		// Volt's web app (apps/web, built into out-volt-web), served by the agent server to browsers and phones.
-		const voltWeb = gulp.src('out-volt-web/**', { base: '.', dot: true });
 		// The browser workbench's icon and manifest.
 		const serverResources = gulp.src('resources/server/*.{png,ico,json}', { base: '.' });
 
-		const sources = es.merge(src, extensions, voltWeb, serverResources)
+		const sources = es.merge(src, extensions, serverResources)
 			.pipe(filter(['**', '!**/*.{js,mjs,cjs,css}.map'], { dot: true }));
 
 		let version = packageJson.version;

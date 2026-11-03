@@ -25,6 +25,10 @@ export interface IChatContext {
 	readonly onRedo: () => void;
 	/** Shown, not driven from here (a subagent's transcript): no edit, retry or rewind. */
 	readonly readOnly?: boolean;
+	/** Stops the running turn (the Stop button in the running prompt's corner). */
+	readonly onStop?: () => void;
+	/** Opens or folds a finished turn's "Worked for" (the transcript keeps which are open). */
+	readonly onToggleWorked?: (turnKey: string, open: boolean) => void;
 }
 
 export const ChatContext = createContext<IChatContext | undefined>(undefined);

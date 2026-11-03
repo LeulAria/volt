@@ -94,6 +94,8 @@ export interface IAgentForkOrigin {
 	readonly title: string;
 	readonly turns: number;
 	readonly base?: string;
+	/** The last turn the fork copied: the source hides its fork button there until it moves on. */
+	readonly lastTurn?: string;
 }
 
 /** Session-level metadata changes. */
@@ -233,6 +235,12 @@ export interface IAgentHistoryListOptions extends IAgentSessionSearchOptions {
 	readonly workspaceId?: string;
 	readonly includeArchived?: boolean;
 	readonly limit?: number;
+	/**
+	 * Only chats this window lists. A window opened with New Window lists only the chats started
+	 * in it, and the main window leaves those out until it closes. For lists the user sees; leave
+	 * it off where every chat matters (cleanup, usage).
+	 */
+	readonly inWindow?: boolean;
 }
 
 export interface IAgentSessionAppendAssistant {
@@ -333,6 +341,11 @@ export interface IAgentHistoryService {
 	markAllRead(): Promise<void>;
 	/** Recorded by the session controller from harness events (`access.ask`, `clarify`). */
 	setAttention(id: string, attention: AgentSessionAttention | undefined): Promise<void>;
+	/**
+	 * The run is over but the record still says `running` (its final reply was never saved): the
+	 * record takes the run's outcome, so the chat stops reading "Working" in the sidebar.
+	 */
+	settleRunning(id: string, status: Exclude<AgentSessionStatus, 'running' | 'idle'>): Promise<void>;
 	rename(id: string, title: string | undefined): Promise<void>;
 	/** The agent named the chat. Shown unless the user renamed it. */
 	setAgentTitle(id: string, title: string): Promise<void>;

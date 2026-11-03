@@ -48,6 +48,7 @@ import { stampLayoutModeChrome } from './parts/titlebar/agentLayoutChrome.js';
 import { AGENT_SIDEBAR_RAIL_CLASS, AGENT_SIDEBAR_RAIL_EVENT, AGENT_SIDEBAR_RAIL_KEY, AGENT_SIDEBAR_RAIL_WIDTH, AGENT_TOOLS_VISIBILITY_EVENT, agentNeedsSidebarDrawer, agentStartupSidebarWidth, isNewEmptyWindow, LAYOUT_MODE_STORAGE_KEY, markNewEmptyWindowSidebarHidden, readAgentLeftSidebarHidden, readStoredLayoutModeValue } from './parts/titlebar/layoutModeStartup.js';
 import { ITelemetryService } from '../../platform/telemetry/common/telemetry.js';
 import { IAuxiliaryWindowService } from '../services/auxiliaryWindow/browser/auxiliaryWindowService.js';
+import { IVoltWindowScopeService } from '../services/voltWindowScope/common/voltWindowScope.js';
 import { CodeWindow, mainWindow } from '../../base/browser/window.js';
 
 //#region Layout Implementation
@@ -286,6 +287,7 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 	private extensionService!: IExtensionService;
 	private configurationService!: IConfigurationService;
 	private storageService!: IStorageService;
+	private voltWindowScope: IVoltWindowScopeService | undefined;
 	private hostService!: IHostService;
 	private editorService!: IEditorService;
 	private mainPartEditorService!: IEditorService;
@@ -321,6 +323,7 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		this.hostService = accessor.get(IHostService);
 		this.contextService = accessor.get(IWorkspaceContextService);
 		this.storageService = accessor.get(IStorageService);
+		this.voltWindowScope = accessor.getIfExists(IVoltWindowScopeService);
 		this.themeService = accessor.get(IThemeService);
 		this.extensionService = accessor.get(IExtensionService);
 		this.logService = accessor.get(ILogService);
@@ -798,7 +801,9 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 	 * already has the final sidebars, title bar, and status bar.
 	 */
 	private primeLayoutMode(): void {
-		const stored = this.storageService.get(LAYOUT_MODE_STORAGE_KEY, StorageScope.PROFILE, '');
+		// A New Window with a scope of its own comes back in the mode it was left in.
+		const own = this.voltWindowScope?.scope ? this.voltWindowScope.layoutMode : undefined;
+		const stored = own ?? this.storageService.get(LAYOUT_MODE_STORAGE_KEY, StorageScope.PROFILE, '');
 		const location = this.configurationService.getValue<string>(LegacyWorkbenchLayoutSettings.SIDEBAR_POSITION);
 		const mode = readStoredLayoutModeValue(stored, location !== 'left');
 		if (mode === 'ide') {

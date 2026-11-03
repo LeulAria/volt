@@ -31,7 +31,7 @@
 
 .volt-agent-snooze-dialog {
 	/* Every edge in the dialog uses the menus' hairline (voltMenu.css), not a brighter foreground mix. */
-	--volt-dt-line: var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	--volt-dt-line: var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 	position: relative;
 	display: flex;
 	flex-direction: column;

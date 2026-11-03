@@ -4,9 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 /*
- * The branch dropdown (agentBranchMenu.ts), drawn like Cursor's: a search field over the list,
- * rows inset from the menu's edge with a rounded neutral highlight, names only, and a check at
- * the end of the current branch. Its flyouts (Create new branch from, Checkout detached) match.
+ * The branch dropdown (agentBranchMenu.ts): a search field over the list, names only, and a check
+ * at the end of the current branch. Its rows are the menu's VS Code list rows, edge to edge with
+ * no padding around the list and no rounded corners, in the theme's selection color (volt-lists).
+ * Its flyouts (Create new branch from, Checkout detached) match.
  */
 .volt-menu.volt-agent-branch-menu {
 	border-radius: 10px;
@@ -16,28 +17,16 @@
 	height: 38px;
 }
 
-.volt-menu.volt-agent-branch-menu .volt-menu-list {
-	padding: 4px 0;
-}
-
+/* The names line up with the search field's text. */
 .volt-menu.volt-agent-branch-menu .volt-menu-row,
 .volt-menu.volt-agent-branch-menu .volt-menu-header,
 .volt-menu.volt-agent-branch-menu .volt-menu-message {
-	margin: 0 4px;
-	padding-left: 8px;
-	padding-right: 8px;
+	padding-left: 12px;
+	padding-right: 12px;
 }
 
 .volt-menu.volt-agent-branch-menu .volt-menu-row {
-	border-radius: 6px;
 	font-weight: 400;
-}
-
-.volt-menu.volt-agent-branch-menu .volt-menu-list .monaco-list-row.focused .volt-menu-row,
-.volt-menu.volt-agent-branch-menu .volt-menu-list .volt-menu-row.flyout-open,
-.volt-menu.volt-agent-branch-menu .volt-menu-list .monaco-list-row:has(.flyout-open) .volt-menu-row {
-	background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
-	color: var(--vscode-foreground);
 }
 
 .volt-menu.volt-agent-branch-menu .volt-menu-row.checked .volt-menu-trailing {

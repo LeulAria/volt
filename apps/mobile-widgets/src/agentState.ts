@@ -65,7 +65,7 @@ const FAMILIES: Record<string, string> = {
 	codex: 'codex', openai: 'codex', claude: 'claude', 'claude-code': 'claude', anthropic: 'claude',
 	cursor: 'cursor', 'cursor-acp': 'cursor', grok: 'grok', xai: 'grok', opencode: 'opencode',
 	antigravity: 'antigravity', agy: 'antigravity', gemini: 'antigravity', 'gemini-cli': 'antigravity', 'gemini-acp': 'antigravity',
-	kimi: 'kimi', muse: 'muse', ollama: 'local', lmstudio: 'local', 'openai-compat': 'local', openrouter: 'openrouter',
+	kimi: 'kimi', muse: 'muse', fx: 'fx', ollama: 'local', lmstudio: 'local', 'openai-compat': 'local', openrouter: 'openrouter',
 };
 
 export function providerFamily(providerId: string | undefined): string {

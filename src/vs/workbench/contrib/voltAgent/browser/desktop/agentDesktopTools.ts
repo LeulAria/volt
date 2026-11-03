@@ -5,16 +5,18 @@
 
 import { Sequencer } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
-import { IVoltDesktopService, IVoltDesktopTree, VoltDesktopAction } from '../../../../../platform/voltDesktop/common/voltDesktop.js';
+import { IVoltDesktopService, IVoltDesktopTree, VOLT_COMPUTER_USE_ENABLED_SETTING, VoltDesktopAction } from '../../../../../platform/voltDesktop/common/voltDesktop.js';
 import type { VoltDeviceButton } from '../../../../../platform/voltDevices/common/voltDevices.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { DESKTOP_TOOLS, VoltDesktopToolName } from '../../../../services/voltRuntime/common/desktopTools.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
-import { DeviceRefs, deviceView, IDeviceScreen, readDesktopScreen } from '../../../../services/voltRuntime/common/tools/deviceUi.js';
+import { scaleScreenshot } from '../../../../services/voltRuntime/browser/host/imageCodec.js';
+import { DeviceBox, DeviceRefs, deviceView, IDeviceScreen, readDesktopScreen } from '../../../../services/voltRuntime/common/tools/deviceUi.js';
 import { IPageView, observePage, renderPage } from '../../../../services/voltRuntime/common/tools/pageModel.js';
 import { fileFlowStore, resolveActInput } from '../actFlows.js';
 import { DeviceActRunner, IDeviceDriver } from '../devices/deviceAct.js';
@@ -24,6 +26,12 @@ import { formatActRun, formatFlowRuns, IFlowRun, unsafeToSave } from '../preview
 const TRUST_TTL_MS = 15_000;
 
 const KEY_FOR_BUTTON: Partial<Record<VoltDeviceButton, string>> = { enter: 'enter', delete: 'delete', back: 'escape', home: 'cmd+h' };
+
+/** Text at least this long is pasted (one keystroke) rather than typed key by key. */
+const PASTE_FROM_CHARS = 48;
+
+/** Longest side of a screenshot the agent asks for: enough to judge a drawing, few tokens. */
+const SHOT_MAX_SIDE = 1024;
 
 function errorText(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
@@ -55,15 +63,37 @@ export class AgentDesktopTools extends Disposable {
 	 */
 	private readonly queue = new Sequencer();
 
+	/** The tools while desktop control is turned on (`volt.computerUse.enabled`). */
+	private readonly provider = this._register(new MutableDisposable());
+
 	constructor(
 		@IVoltDesktopService private readonly desktop: IVoltDesktopService,
-		@IVoltHostToolService hostTools: IVoltHostToolService,
+		@IVoltHostToolService private readonly hostTools: IVoltHostToolService,
 		@IFileService private readonly fileService: IFileService,
 		@IWorkspaceContextService private readonly workspace: IWorkspaceContextService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+		@IConfigurationService private readonly configuration: IConfigurationService,
 	) {
 		super();
-		this._register(hostTools.registerToolProvider({
+		this.update();
+		this._register(configuration.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(VOLT_COMPUTER_USE_ENABLED_SETTING)) {
+				this.update();
+			}
+		}));
+	}
+
+	/** Offers the tools when desktop control is on, and takes them away (agents stop seeing them) when it is off. */
+	private update(): void {
+		const enabled = this.configuration.getValue<boolean>(VOLT_COMPUTER_USE_ENABLED_SETTING) !== false;
+		if (!enabled) {
+			this.provider.clear();
+			return;
+		}
+		if (this.provider.value) {
+			return;
+		}
+		this.provider.value = this.hostTools.registerToolProvider({
 			tools: DESKTOP_TOOLS,
 			invoke: (name, args, call) => this.invoke(name as VoltDesktopToolName, args, call).catch(err => ({ error: errorText(err) })),
 			needsApproval: async (name, args, call) => {
@@ -80,7 +110,21 @@ export class AgentDesktopTools extends Disposable {
 					this.allowed.add(this.runtime.chatFor(call.sessionId));
 				}
 			},
-		}));
+		});
+	}
+
+	/** A screenshot of part of the screen, sized for the model; undefined when it cannot be taken. */
+	private async shot(box: DeviceBox | undefined): Promise<{ readonly image: string; readonly line: string } | undefined> {
+		if (!box || box[2] <= 0 || box[3] <= 0) {
+			return undefined;
+		}
+		try {
+			const raw = await this.desktop.capture({ x: Math.round(box[0]), y: Math.round(box[1]), w: Math.round(box[2]), h: Math.round(box[3]) });
+			const scaled = await scaleScreenshot(`data:image/png;base64,${raw.png}`, { maxSide: SHOT_MAX_SIDE, targetWidth: Math.round(box[2]), format: 'jpeg', quality: 0.82 });
+			return { image: scaled.dataUrl, line: `- Screenshot: ${scaled.width}×${scaled.height} of the ${Math.round(box[2])}×${Math.round(box[3])} area at ${Math.round(box[0])},${Math.round(box[1])}` };
+		} catch (err) {
+			return { image: '', line: `- No screenshot: ${errorText(err)}` };
+		}
 	}
 
 	/** The permission check every call makes; the first refusal asks macOS to show its prompt. */
@@ -125,7 +169,7 @@ export class AgentDesktopTools extends Disposable {
 	/** Window lines for the agent: all of it the first time, else the changes since its last read. */
 	private windowLines(tree: IVoltDesktopTree, screen: IDeviceScreen, observe: 'auto' | 'full', unfold?: boolean): string[] {
 		const key = tree.bundle || tree.app;
-		const view = deviceView(screen);
+		const view: IPageView = { ...deviceView(screen), compact: true };
 		const observation = observe === 'full' ? { lines: ['- Window:', '```yaml', ...renderPage(view, { unfold }), '```'] } : observePage(this.seen.get(key), view, undefined, unfold);
 		this.seen.set(key, view);
 		const minimized = new Set(tree.minimized ?? []);
@@ -165,7 +209,12 @@ export class AgentDesktopTools extends Disposable {
 		if (name === 'desktop_snapshot') {
 			const tree = await this.desktop.tree({ app: str(args.app), window: str(args.window) });
 			const screen = this.screenOf(tree);
-			return { text: [`### Window of ${tree.app}`, ...this.windowLines(tree, screen, 'full', args.unfold === true)].join('\n') };
+			const lines = [`### Window of ${tree.app}`, ...this.windowLines(tree, screen, 'full', args.unfold === true)];
+			const shot = args.screenshot === true ? await this.shot(screen.frame) : undefined;
+			if (shot) {
+				lines.push(shot.line);
+			}
+			return { text: lines.join('\n'), ...(shot?.image ? { image: shot.image } : {}) };
 		}
 		return this.act(args, call);
 	}
@@ -204,7 +253,7 @@ export class AgentDesktopTools extends Disposable {
 			},
 			tap: (x, y) => act({ kind: 'click', x, y }),
 			swipe: (x1, y1, x2, y2) => act({ kind: 'scroll', x: x1, y: Math.round((y1 + y2) / 2), dx: x1 - x2, dy: y1 - y2 }),
-			type: text => keyboard(() => act({ kind: 'type', text })),
+			type: text => keyboard(() => act(text.length >= PASTE_FROM_CHARS ? { kind: 'paste', text } : { kind: 'type', text })),
 			clear: () => keyboard(async () => {
 				await act({ kind: 'key', combo: 'cmd+a' });
 				await act({ kind: 'key', combo: 'delete' });
@@ -212,8 +261,9 @@ export class AgentDesktopTools extends Disposable {
 			press: button => keyboard(() => act({ kind: 'key', combo: KEY_FOR_BUTTON[button] ?? button })),
 			launch: async target => {
 				const opened = await desktop.act({ kind: 'activate', app: target });
-				// A URL opens in the user's browser: read whichever app came to the front.
-				app = /^[a-z][a-z0-9+.-]*:/i.test(target) ? undefined : target;
+				// A URL opens in the user's browser and a file in its app: read whichever app came to the front.
+				const file = /^[/~]/.test(target) && !/\.app\/?$/i.test(target);
+				app = /^[a-z][a-z0-9+.-]*:/i.test(target) ? undefined : file ? opened.app || undefined : target;
 				windowTitle = undefined;
 				front = true;
 				if (opened.ready === false) {
@@ -237,6 +287,13 @@ export class AgentDesktopTools extends Disposable {
 			},
 			key: combo => keyboard(() => act({ kind: 'key', combo })),
 			menu: path => act({ kind: 'menu', app, path }),
+			settle: async () => {
+				const settled = await desktop.settle({ app });
+				return settled.supported ? { changed: settled.changed } : undefined;
+			},
+			// The pointer lands on whatever window is on top there: bring the app up first, like for keys.
+			drag: (strokes, options) => keyboard(() => act({ kind: 'drag', strokes, ...(options?.modifiers ? { modifiers: options.modifiers } : {}), ...(options?.button ? { button: options.button } : {}) })),
+			hover: (x, y) => keyboard(() => act({ kind: 'move', x, y })),
 		};
 		const runner = new DeviceActRunner(driver, call?.token ?? CancellationToken.None);
 		const runs: IFlowRun[] = [];
@@ -259,6 +316,11 @@ export class AgentDesktopTools extends Disposable {
 				lines.push('', ...this.windowLines(tree, screen, observe));
 			}
 		}
-		return { text: lines.join('\n') };
+		// What a drawing looks like is in its pixels, not its accessibility tree.
+		const shot = args.screenshot === true ? await this.shot(runner.lastDrawn ?? runner.last?.frame) : undefined;
+		if (shot) {
+			lines.push(shot.line);
+		}
+		return { text: lines.join('\n'), ...(shot?.image ? { image: shot.image } : {}) };
 	}
 }

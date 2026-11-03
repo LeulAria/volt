@@ -24,7 +24,9 @@ import { isNewEmptyWindow } from '../../../../browser/parts/titlebar/layoutModeS
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { markAgentSwitch } from '../editor/agentSwitchTiming.js';
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
+import { AgentPullRequestsPageInput } from '../pullRequests/agentPullRequestsPageInput.js';
 import { AutomationsEditorInput } from '../automations/automationsEditor.js';
+import { ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
 import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js';
 import { AGENT_NEW_CHAT_DRAFT_SETTING } from '../../common/agentComposerSettings.js';
 import { agentPanelTabsMode, isBlankNewChat, latestSessionForFolder, unsentDraftForFolder } from '../home/agentHomeModel.js';
@@ -251,7 +253,7 @@ export async function activateAgentProject(
 	sessionContext.selectProject(project.id);
 	const latest = latestSessionForFolder(
 		{ uri: project.root, name: project.displayName, current: true, workspace: false },
-		history.list({ includeArchived: false }),
+		history.list({ includeArchived: false, inWindow: true }),
 	);
 	const input = await openAgentPanel(editorGroups, instantiation, latest?.id);
 	attachSessionToProject(sessionContext, workspace, history, input.sessionId, project);
@@ -293,7 +295,7 @@ function unsentDraftChat(
 	const showing = findAgentPanelGroup(editorGroups.mainPart).activeEditor;
 	return unsentDraftForFolder(
 		{ uri: project.root, name: project.displayName, current: true, workspace: false },
-		history.list({ includeArchived: false }),
+		history.list({ includeArchived: false, inWindow: true }),
 		showing instanceof AgentEditorInput ? showing.sessionId : undefined,
 	)?.id;
 }
@@ -336,23 +338,36 @@ export async function startAgentChat(
 
 registerWorkbenchContribution2(AgentPanelsContribution.ID, AgentPanelsContribution, WorkbenchPhase.AfterRestored);
 
-/** A new empty agent window (New Window) opens on the New Agent composer with no project, not the watermark. */
-class NewWindowAgentContribution {
+/**
+ * The agent window's main panel is never empty: on startup, after its last editor closes, and on
+ * a switch into agent mode it opens the New Agent composer instead of the editor watermark.
+ * A new empty window (New Window) starts it with no project; any other window as New Agent does.
+ */
+class NewWindowAgentContribution extends Disposable {
 
 	static readonly ID = 'workbench.contrib.voltAgentNewWindow';
+
+	private ready = false;
+	private opening = false;
+	private readonly fillTimer = this._register(new MutableDisposable());
 
 	constructor(
 		@IStorageService storageService: IStorageService,
 		@IWorkspaceContextService contextService: IWorkspaceContextService,
-		@IWorkbenchLayoutService layoutService: IWorkbenchLayoutService,
-		@IVoltSessionContextService sessionContext: IVoltSessionContextService,
-		@IAgentWorkspaceService workspace: IAgentWorkspaceService,
-		@IAgentHistoryService history: IAgentHistoryService,
-		@IEditorGroupsService editorGroups: IEditorGroupsService,
-		@IInstantiationService instantiation: IInstantiationService,
+		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
+		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
+		@IAgentWorkspaceService private readonly workspace: IAgentWorkspaceService,
+		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IEditorGroupsService private readonly editorGroups: IEditorGroupsService,
+		@IEditorService editorService: IEditorService,
+		@IInstantiationService private readonly instantiation: IInstantiationService,
 	) {
-		if (getLayoutMode(layoutService) !== 'agent'
-			|| !isNewEmptyWindow(storageService, contextService.getWorkbenchState() === WorkbenchState.EMPTY)) {
+		super();
+		const newEmptyWindow = isNewEmptyWindow(storageService, contextService.getWorkbenchState() === WorkbenchState.EMPTY);
+		this._register(editorService.onDidEditorsChange(() => this.scheduleFill()));
+		this._register(onDidChangeLayoutMode(() => this.scheduleFill()));
+		if (getLayoutMode(layoutService) !== 'agent') {
+			void editorGroups.mainPart.whenReady.then(() => this.ready = true);
 			return;
 		}
 		// Until the composer is open the empty editor would draw its watermark for a frame or more.
@@ -360,10 +375,39 @@ class NewWindowAgentContribution {
 		container.classList.add('volt-new-window-starting');
 		// The groups exist once the editor part is ready, which is before the restore ends.
 		void editorGroups.mainPart.whenReady
-			.then(() => editorGroups.mainPart.groups.some(group => !group.isEmpty)
-				? undefined
-				: startAgentChat(sessionContext, workspace, history, editorGroups, instantiation, { kind: 'none' }))
-			.finally(() => container.classList.remove('volt-new-window-starting'));
+			.then(() => this.isMainEmpty()
+				? this.fill(newEmptyWindow ? { kind: 'none' } : { kind: 'active' })
+				: undefined)
+			.finally(() => {
+				this.ready = true;
+				container.classList.remove('volt-new-window-starting');
+			});
+	}
+
+	private isMainEmpty(): boolean {
+		return this.editorGroups.mainPart.groups.every(group => group.isEmpty);
+	}
+
+	/** Waits a moment so a close followed by an open (switching chats) never flashes a new one in. */
+	private scheduleFill(): void {
+		if (!this.ready || this.opening) {
+			return;
+		}
+		const handle = setTimeout(() => {
+			if (getLayoutMode(this.layoutService) === 'agent' && !this.layoutService.isAuxiliaryBarMaximized() && this.isMainEmpty()) {
+				void this.fill({ kind: 'active' });
+			}
+		}, 50);
+		this.fillTimer.value = { dispose: () => clearTimeout(handle) };
+	}
+
+	private async fill(start: AgentChatStart): Promise<void> {
+		this.opening = true;
+		try {
+			await startAgentChat(this.sessionContext, this.workspace, this.history, this.editorGroups, this.instantiation, start);
+		} finally {
+			this.opening = false;
+		}
 	}
 }
 
@@ -403,11 +447,11 @@ class AgentPanelTabsContribution extends Disposable {
 		}
 		// Only an editor on screen needs a title. A file left behind in a background group would
 		// otherwise bring the chat's own tab row back under the titlebar, which already names it.
-		// Usage, Automations and Customize need none either: the titlebar names them (and their trail).
+		// Usage, Automations, Customize and Scratch need none either: the titlebar names them (and their trail).
 		let nonAgentEditors = 0;
 		for (const group of this.editorGroupsService.mainPart.groups) {
 			const active = group.activeEditor;
-			if (active && !(active instanceof AgentEditorInput) && !(active instanceof AgentUsageEditorInput) && !(active instanceof AutomationsEditorInput) && !(active instanceof AgentCustomizeEditorInput)) {
+			if (active && !(active instanceof AgentEditorInput) && !(active instanceof AgentUsageEditorInput) && !(active instanceof AutomationsEditorInput) && !(active instanceof AgentCustomizeEditorInput) && !(active instanceof ScratchBoardEditorInput) && !(active instanceof AgentPullRequestsPageInput)) {
 				nonAgentEditors++;
 			}
 		}

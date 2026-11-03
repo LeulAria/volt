@@ -80,9 +80,9 @@ function actionItem(action: AgentPlusMenuAction, modelName: string | undefined):
 	const data: PlusPick = { kind: 'action', id: action };
 	switch (action) {
 		case 'files':
-			return { id: action, label: localize('voltAgent.plusFiles', "Files"), keywords: 'file attach', icon: createPaperclipIcon, data };
+			return { id: action, label: localize('voltAgent.plusFiles', "Files"), keywords: 'file folder attach', icon: createFolderIcon, data };
 		case 'attachFile':
-			return { id: action, label: localize('voltAgent.plusAttachFile', "File\u2026"), detail: localize('voltAgent.plusAttachFileDetail', "From your computer"), keywords: 'attach upload pdf zip document archive computer disk', icon: createUploadIcon, data };
+			return { id: action, label: localize('voltAgent.plusAttachFile', "File\u2026"), detail: localize('voltAgent.plusAttachFileDetail', "From your computer"), keywords: 'attach upload pdf zip document archive computer disk', icon: createUploadFileIcon, data };
 		case 'image':
 			return { id: action, label: localize('voltAgent.plusImage', "Image"), keywords: 'picture screenshot photo attach', icon: createImageIcon, data };
 		case 'video':
@@ -102,12 +102,14 @@ function actionItem(action: AgentPlusMenuAction, modelName: string | undefined):
 	}
 }
 
-function createPaperclipIcon(): HTMLElement {
-	return createStrokeIcon('paperclip', ['M16 6v9.5a3.5 3.5 0 0 1-7 0V6a2.5 2.5 0 0 1 5 0v9']);
+/** Aria Icons lucide:folder: files and folders from the project. */
+function createFolderIcon(): HTMLElement {
+	return createStrokeIcon('folder', ['M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z']);
 }
 
-function createUploadIcon(): HTMLElement {
-	return createStrokeIcon('upload', ['M12 15V4.5', 'M7.5 9L12 4.5L16.5 9', 'M5 14.5v3A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-3']);
+/** Aria Icons lucide:file-up: a file uploaded from the computer. */
+function createUploadFileIcon(): HTMLElement {
+	return createStrokeIcon('upload', ['M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z', 'M14 2v5a1 1 0 0 0 1 1h5', 'M12 12v6', 'M15 15l-3-3-3 3']);
 }
 
 function createImageIcon(): HTMLElement {

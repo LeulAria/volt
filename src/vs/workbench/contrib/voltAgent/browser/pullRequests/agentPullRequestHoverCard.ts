@@ -8,10 +8,14 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IVoltPullRequest } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
-import { blockedReason, IAgentPrLink, isOpenState, isReadyToMerge } from '../../common/agentPullRequests.js';
+import { blockedReason, IAgentPrLink, isOpenState, isReadyToMerge, visibleLinks } from '../../common/agentPullRequests.js';
+import { OPEN_PULL_REQUEST_COMMAND_ID } from './agentPullRequestCommands.js';
+import { orderPullRequestLinks, renderPullRequestList } from './agentPullRequestList.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { voltButtonClasses } from '../chrome/voltButton.js';
 import { CHANGES_ICON_PATH, createSurfaceStrokeIcon } from '../workspace/agentSurfaceMenu.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
 import { checkIcon, checksLabel, iconSpan, mergePullRequest, prStateIcon, prStateLabel } from './agentPullRequestUi.js';
@@ -36,8 +40,11 @@ export class AgentPullRequestHoverCard extends Disposable {
 	constructor(
 		private readonly anchor: HTMLElement,
 		private readonly getLink: () => IAgentPrLink | undefined,
+		/** The chat the chip belongs to: with several pull requests the card lists them all. */
+		private readonly getSessionId: () => string | undefined = () => undefined,
 		@IAgentPullRequestService private readonly pullRequests: IAgentPullRequestService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super();
 		this.card = $('.volt-pr-hover-card');
@@ -144,6 +151,13 @@ export class AgentPullRequestHoverCard extends Disposable {
 		this.content.clear();
 		const card = this.card;
 		card.replaceChildren();
+		const sessionId = this.getSessionId();
+		const links = sessionId ? visibleLinks(this.pullRequests.links(sessionId)) : [];
+		card.classList.toggle('list', links.length > 1);
+		if (sessionId && links.length > 1) {
+			this.renderList(sessionId, links);
+			return;
+		}
 		card.setAttribute('aria-label', localize('voltPr.hoverAria', "Pull request #{0}: {1}", pr.number, pr.title));
 
 		const head = append(card, $('.volt-pr-hover-head'));
@@ -200,8 +214,8 @@ export class AgentPullRequestHoverCard extends Disposable {
 			const actions = append(card, $('.volt-pr-hover-actions'));
 			const merge = append(actions, $('button.volt-pr-hover-merge')) as HTMLButtonElement;
 			merge.type = 'button';
-			merge.appendChild(renderIcon(Codicon.gitMerge));
-			append(merge, $('span')).textContent = localize('voltPr.hoverMerge', "Merge");
+			merge.classList.add(...voltButtonClasses('ghost'), 'volt-button-small');
+			merge.textContent = localize('voltPr.hoverMerge', "Merge");
 			setAgentTooltip(merge, localize('voltPr.hoverMergeTip', "Merge into {0}. Hold Shift to skip the confirmation.", pr.baseRefName));
 			this.content.add(addDisposableListener(merge, 'click', e => {
 				e.preventDefault();
@@ -211,6 +225,17 @@ export class AgentPullRequestHoverCard extends Disposable {
 				void this.instantiationService.invokeFunction(accessor => mergePullRequest(accessor, pr, skipConfirm));
 			}));
 		}
+		this.place();
+	}
+
+	/** The chat's pull requests as a list, the chip's own first, then the latest updated; opening one shows it. */
+	private renderList(sessionId: string, links: IAgentPrLink[]): void {
+		const card = this.card;
+		card.setAttribute('aria-label', localize('voltPr.hoverListAria', "{0} pull requests", links.length));
+		this.content.add(renderPullRequestList(this.instantiationService, card, orderPullRequestLinks(links, this.getLink()), link => {
+			this.hide();
+			void this.commandService.executeCommand(OPEN_PULL_REQUEST_COMMAND_ID, { host: link.repo.host, owner: link.repo.owner, name: link.repo.name, number: link.number }, sessionId);
+		}));
 		this.place();
 	}
 

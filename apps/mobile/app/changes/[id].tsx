@@ -11,7 +11,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChangeRow, changeTotals } from '../../src/chat/ChangeRow';
 import { useClient, useCollections, useOptionalClient, useTranscript } from '../../src/state/client';
 import { useTheme } from '../../src/theme/theme';
-import { EmptyState, Segmented, T } from '../../src/ui/core';
+import { EmptyState, Tabs, T } from '../../src/ui/core';
 
 export default function ChangesScreen() {
 	const { id, turn } = useLocalSearchParams<{ id: string; turn?: string }>();
@@ -104,7 +104,7 @@ function Changes({ chatId, turn }: { readonly chatId: string; readonly turn?: st
 				}} />}
 				ListHeaderComponent={
 					<View style={{ gap: 12, paddingTop: 12, paddingBottom: 4 }}>
-						<Segmented<Scope> value={scope} onChange={setScope} options={[
+						<Tabs<Scope> value={scope} onChange={setScope} options={[
 							{ id: 'session', label: 'By turn' },
 							{ id: 'lastTurn', label: 'Last turn' },
 							...(turn ? [{ id: 'turn' as const, label: 'This turn' }] : []),

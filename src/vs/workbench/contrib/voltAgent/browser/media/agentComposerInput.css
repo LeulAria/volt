@@ -18,8 +18,8 @@
 .monaco-workbench.vs .volt-paste-preview,
 .monaco-workbench.hc-light .volt-paste-preview {
 	background: #f6f6f6;
-	border-color: rgba(0, 0, 0, 0.1);
-	box-shadow: 0 14px 32px rgba(0, 0, 0, 0.12);
+	border-color: rgba(0, 0, 0, 0.12);
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 
 .volt-paste-preview-head {
@@ -32,7 +32,7 @@
 
 .monaco-workbench.vs .volt-paste-preview-head,
 .monaco-workbench.hc-light .volt-paste-preview-head {
-	border-bottom-color: rgba(0, 0, 0, 0.06);
+	border-bottom-color: rgba(0, 0, 0, 0.08);
 }
 
 .volt-paste-preview-icon {
@@ -66,7 +66,7 @@
 
 .monaco-workbench.vs .volt-paste-preview-actions,
 .monaco-workbench.hc-light .volt-paste-preview-actions {
-	border-top-color: rgba(0, 0, 0, 0.06);
+	border-top-color: rgba(0, 0, 0, 0.08);
 }
 
 .volt-paste-preview-spacer {
@@ -105,7 +105,12 @@
 .monaco-workbench.vs .volt-paste-preview-btn:not(.primary),
 .monaco-workbench.hc-light .volt-paste-preview-btn:not(.primary) {
 	background: rgba(0, 0, 0, 0.04);
-	border-color: rgba(0, 0, 0, 0.08);
+	border-color: rgba(0, 0, 0, 0.1);
+}
+
+.monaco-workbench.vs .volt-paste-preview-btn:not(.primary):hover,
+.monaco-workbench.hc-light .volt-paste-preview-btn:not(.primary):hover {
+	background: rgba(0, 0, 0, 0.08);
 }
 
 /* The button's own color: `.monaco-workbench .codicon` paints icons with icon.foreground, grey on the blue Paste as Text. */
@@ -209,6 +214,11 @@
 .monaco-workbench.vs .volt-agent-mic-btn.recording,
 .monaco-workbench.hc-light .volt-agent-mic-btn.recording {
 	background: rgba(0, 0, 0, 0.06);
+}
+
+.monaco-workbench.vs .volt-agent-mic-btn.recording:hover,
+.monaco-workbench.hc-light .volt-agent-mic-btn.recording:hover {
+	background: rgba(0, 0, 0, 0.1);
 }
 
 .volt-agent-mic-btn.recording .volt-agent-svg-icon {

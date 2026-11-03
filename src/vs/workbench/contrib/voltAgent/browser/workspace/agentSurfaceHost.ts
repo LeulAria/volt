@@ -16,7 +16,9 @@ import { basename } from '../../../../../base/common/resources.js';
 import { URI, UriComponents } from '../../../../../base/common/uri.js';
 import { localize, localize2 } from '../../../../../nls.js';
 import { Action2, MenuId, registerAction2 } from '../../../../../platform/actions/common/actions.js';
-import { CommandsRegistry } from '../../../../../platform/commands/common/commands.js';
+import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
 import { ContextKeyExpr, IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
@@ -58,9 +60,9 @@ import { BROWSER_PRESENT_EVENT, BROWSER_PRESENTATION_EVENT, BrowserPresentation,
 import { sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { AgentChangesEditorInput, isAgentChangesDiffFor, openAgentChangesDiff } from '../review/agentChangesEditor.js';
 import { AgentChangesScope } from '../review/agentSessionChanges.js';
-import { AgentFilesSidebar, AgentFilesSidebarView } from './agentFilesSidebar.js';
-import { AgentSurfaceAddMenu, IAgentSurfaceAddMenuHost } from './agentSurfaceAddMenu.js';
-import { type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
+import { AgentFilesSidebar, AgentFilesSidebarView, filesSidebarTabs, filesSidebarViewCommandId } from './agentFilesSidebar.js';
+import { AgentSurfaceAddMenu, IAgentSurfaceAddMenuHost, renderSurfaceOpenList, visibleSurfaceMenuItems } from './agentSurfaceAddMenu.js';
+import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
 import { AgentToolsEditorPart, AgentToolsPartContext, hasSavedAgentTools } from './agentToolsEditorPart.js';
 import { attachSessionToProject } from './agentShell.js';
 import { registerAgentFileEditorRouting } from './agentFileEditorRouting.js';
@@ -89,18 +91,20 @@ const TOGGLE_TOOLS_PANEL_ID = 'workbench.action.voltAgentTools.togglePanel';
 export const SHOW_AGENT_FILES_COMMAND_ID = 'workbench.action.voltAgentTools.showFiles';
 /** The floating preview's gap to the chat's edges, and its smallest size. */
 const FLOAT_MARGIN = 12;
-const FLOAT_MIN_WIDTH = 260;
-const FLOAT_MIN_HEIGHT = 180;
+const FLOAT_MIN_WIDTH = 200;
+const FLOAT_MIN_HEIGHT = 125;
+/** A new preview's width: a small 16:10 screen. */
+const FLOAT_WIDTH = 256;
 /**
  * A browser window narrower than this (a phone, a tablet in split view) has no room for the chat
  * and the tools side by side: the tools lie over the chat, below its title bar, and close back to it.
  */
 const TOOLS_OVER_CHAT_MAX_WIDTH = 600;
 
-/** Where the floating preview sits, from the chat's top-right corner. Shared by every chat in the window. */
+/** Where the floating preview sits, from the chat's bottom-right corner. Shared by every chat in the window. */
 interface IFloatRect {
 	readonly right: number;
-	readonly top: number;
+	readonly bottom: number;
 	readonly width: number;
 	readonly height: number;
 }
@@ -316,6 +320,24 @@ export function openInAgentTools(input: EditorInput, sessionId?: string, options
 	return host?.openEditorInTools(input, options);
 }
 
+/**
+ * A new side chat in the tools of the chat on screen (preferring `sessionId`'s), bound to that
+ * chat's project. Undefined when no chat is on screen (the IDE layout, the home page).
+ */
+export function openSideChatOnScreen(sessionId?: string): Promise<IEditorPane | undefined> | undefined {
+	const candidates = [...hosts].filter(host => host.canOpenTools());
+	const host = (sessionId ? candidates.find(candidate => candidate.showsSession(sessionId)) : undefined) ?? candidates.find(isChatToolsHost);
+	return host?.openSideChat();
+}
+
+/**
+ * A new side chat in the tools area that holds `element` (a tab's content), bound to that chat's
+ * project. Works with the tools full screen, when the chat itself is not on screen.
+ */
+export function openSideChatBeside(element: HTMLElement): Promise<IEditorPane | undefined> | undefined {
+	return [...hosts].find(host => host.holdsInTools(element))?.openSideChat();
+}
+
 /** The chat whose tools are on screen, if any. */
 export function agentToolsSessionOnScreen(): string | undefined {
 	return [...hosts].find(host => host.canOpenTools() && isChatToolsHost(host))?.currentSessionId;
@@ -442,10 +464,13 @@ export class AgentSurfaceHost extends Disposable {
 	private toolsHidden = false;
 	/** Close Right Panel with the files sidebar open: the tabs go, the sidebar stays and fills the area. */
 	private tabsHidden = false;
+	/** The panel stays open with no tab (its empty area lists what can open) until it is closed or the chat changes. */
+	private keepOpen = false;
 	/** How the tools are drawn: beside the chat, floating over it (a preview), or across the whole window. */
 	private presentation: BrowserPresentation = 'split';
 	private readonly closePanelButton: HTMLButtonElement;
 	private readonly fullscreenButton: HTMLButtonElement;
+	private readonly emptyAddButton: HTMLButtonElement;
 	/** Explorer, Source Control or Search at the right edge of the tools. */
 	private readonly filesSidebar: AgentFilesSidebar;
 	/** Full screen: room for the window's traffic lights, then the chat's own tab. */
@@ -453,6 +478,8 @@ export class AgentSurfaceHost extends Disposable {
 	private readonly leadTitle: HTMLElement;
 	private floatBarTimer: number | undefined;
 	private floatDrag: { kind: string; startX: number; startY: number; start: IFloatRect } | undefined;
+	private composerObserver: ResizeObserver | undefined;
+	private observedComposer: HTMLElement | undefined;
 	/** A preview is opening to float: the area has its tab before that tab is the active one. */
 	private openingFloat = false;
 	private ratio = 0.5;
@@ -506,6 +533,20 @@ export class AgentSurfaceHost extends Disposable {
 		this.fullscreenButton = $('button.volt-agent-tools-fullscreen') as HTMLButtonElement;
 		this.fullscreenButton.type = 'button';
 		this._register(addDisposableListener(this.fullscreenButton, 'click', () => this.toggleFullscreen()));
+		// An empty group has no editor actions, so its + is ours; agentEditor.css shows it only while the area is empty.
+		this.emptyAddButton = $('button.volt-agent-tools-fullscreen.volt-agent-tools-empty-add') as HTMLButtonElement;
+		this.emptyAddButton.type = 'button';
+		const addLabel = localize('voltAgent.toolsAdd.empty', "Open in Tools");
+		this.emptyAddButton.setAttribute('aria-label', addLabel);
+		setAgentTooltip(this.emptyAddButton, addLabel);
+		this.emptyAddButton.appendChild(renderIcon(Codicon.add));
+		this._register(addDisposableListener(this.emptyAddButton, 'click', () => {
+			if (this.addMenu.isVisible) {
+				this.addMenu.hide();
+			} else {
+				this.addMenu.show(this.emptyAddButton);
+			}
+		}));
 		this.grip = append(this.area, $('.volt-agent-tools-grip'));
 		this.grip.title = this.sash.title;
 		this.partsHost = append(this.area, $('.volt-agent-tools-parts'));
@@ -587,12 +628,13 @@ export class AgentSurfaceHost extends Disposable {
 		return this.canOpenTools() && this.sessionId === sessionId;
 	}
 
-	/** Its right panel is open on `sessionId` with Source Control, or a tab of the chat's changes. */
+	/** Its right panel is open on `sessionId` with Source Control, or a tab of the chat's changes in front. */
 	showsChangesFor(sessionId: string): boolean {
 		const entry = this.shown;
 		return !!entry && entry.sessionId === sessionId && this.announcedOpen
+			// The tab in front, not any open tab: a file opened over the Changes tab brings the chip back.
 			&& (this.filesSidebar.showsScmFor(sessionId) || entry.part.groups.some(group => group.activeEditor instanceof AgentChangesEditorInput
-				|| group.editors.some(editor => isAgentChangesDiffFor(editor, sessionId))));
+				|| isAgentChangesDiffFor(group.activeEditor ?? undefined, sessionId)));
 	}
 
 	/** Its right panel is open on `sessionId` with Source Control: in the files sidebar, or the Changes tab in front. */
@@ -607,6 +649,11 @@ export class AgentSurfaceHost extends Disposable {
 		return this.sessionId;
 	}
 
+	/** Whether `element` lives in this host's tools area (one of its tabs). */
+	holdsInTools(element: HTMLElement): boolean {
+		return !this.disposed && !this.nested() && this.area.contains(element);
+	}
+
 	/** A chat the user can see, so a click in its dock can open the right panel. */
 	canOpenTools(): boolean {
 		return !this.disposed && !this.nested() && !!this.sessionId && this.isOnScreen();
@@ -616,13 +663,12 @@ export class AgentSurfaceHost extends Disposable {
 		if (this.disposed || this.nested() || !this.isOnScreen() || !this.sessionId) {
 			return false;
 		}
-		const group = this.toolsGroup();
-		if (this.shown?.part.groups.some(candidate => candidate.count > 0)) {
-			this.setPresentation('split');
-			group?.focus();
-		} else {
-			this.openBrowser();
+		if (!this.shown?.part.groups.some(candidate => candidate.count > 0)) {
+			this.keepOpen = true;
 		}
+		const group = this.toolsGroup();
+		this.setPresentation('split');
+		group?.focus();
 		return true;
 	}
 
@@ -631,6 +677,7 @@ export class AgentSurfaceHost extends Disposable {
 	 * panel leaves it filling the area. Without it, the whole right panel closes.
 	 */
 	private closeTabs(): void {
+		this.keepOpen = false;
 		if (this.filesSidebarOpen() && this.presentation === 'split') {
 			this.tabsHidden = true;
 		} else {
@@ -661,6 +708,7 @@ export class AgentSurfaceHost extends Disposable {
 		if (this.sessionId !== sessionId) {
 			this.toolsHidden = false;
 			this.tabsHidden = false;
+			this.keepOpen = false;
 			this.setPresentation('split', false);
 			this.hidePart();
 			this.sessionId = sessionId;
@@ -783,12 +831,14 @@ export class AgentSurfaceHost extends Disposable {
 		if (!owner || !owner.requireSession()) {
 			return Promise.resolve(undefined);
 		}
+		// Shows the tabs first: with them hidden (the files sidebar alone) or the panel closed, an
+		// existing tab coming to the front would change nothing on screen.
+		const group = owner.toolsGroup();
 		const resource = input.resource?.toString();
 		const existing = resource ? owner.findInShown(editor => editor.resource?.toString() === resource) : undefined;
 		if (existing) {
 			return existing.group.openEditor(existing.editor, { ...options, pinned: true });
 		}
-		const group = owner.toolsGroup();
 		return group ? group.openEditor(input, { ...options, pinned: true }) : Promise.resolve(undefined);
 	}
 
@@ -797,6 +847,20 @@ export class AgentSurfaceHost extends Disposable {
 		AgentFilesSidebar.show(this.storageService, view);
 		// Already open on that view: the tools may still be closed.
 		this.onDidChangeFilesSidebar();
+	}
+
+	/**
+	 * A tab's shortcut: opens the sidebar on `view` with the keyboard in it. Pressed again while the
+	 * keyboard is already there, it closes the sidebar.
+	 */
+	toggleFilesSidebarView(view: AgentFilesSidebarView): void {
+		if (this.filesSidebarOpen() && this.filesSidebar.showsView(view) && this.filesSidebar.hasFocus()) {
+			AgentFilesSidebar.setOpen(this.storageService, false);
+			return;
+		}
+		this.showFilesSidebar(view);
+		// The view is lent in and laid out by the tools' next layout pass.
+		getWindow(this.container).requestAnimationFrame(() => this.filesSidebar.focusView());
 	}
 
 	/** Opening the sidebar opens the tools beside the chat on screen, even with no tab in them. */
@@ -972,9 +1036,12 @@ export class AgentSurfaceHost extends Disposable {
 
 	//#region Tools area
 
-	/** A side chat hosted in another chat's tools: it hands its tool requests to that chat. */
+	/**
+	 * A side chat hosted in another chat's tools: it hands its tool requests to that chat. A chat in a
+	 * toolless slot (Scratch's agent dock) opens no tools of its own either; Open in Agents shows them.
+	 */
 	private nested(): boolean {
-		return !!this.container.closest('.volt-agent-tools-area');
+		return !!this.container.closest('.volt-agent-tools-area, .volt-agent-toolless');
 	}
 
 	private target(): AgentSurfaceHost | undefined {
@@ -1034,8 +1101,19 @@ export class AgentSurfaceHost extends Disposable {
 		}));
 		// The editor service does not report editor changes in areas made after startup, so watch each group.
 		const groupListeners = store.add(new DisposableMap<number>());
+		const openLists = store.add(new DisposableMap<number>());
 		const entry: IToolsPart = { sessionId, part, element, store, lastUsed: ++partClock, holder: undefined };
 		const watchGroup = (group: IEditorGroup) => {
+			// An empty group lists what can open here in its watermark (agentEditor.css hides the stock shortcuts).
+			const watermark = part.getGroup(group.id)?.element.querySelector<HTMLElement>(':scope > .editor-group-watermark');
+			if (watermark && !openLists.has(group.id)) {
+				openLists.set(group.id, this.instantiationService.invokeFunction(accessor => renderSurfaceOpenList(
+					watermark,
+					visibleSurfaceMenuItems(accessor.get(IConfigurationService)),
+					accessor.get(IKeybindingService),
+					id => entry.holder?.runMenuAction(id),
+				)));
+			}
 			if (!groupListeners.has(group.id)) {
 				groupListeners.set(group.id, group.onDidModelChange(() => {
 					entry.holder?.syncOpen();
@@ -1051,6 +1129,7 @@ export class AgentSurfaceHost extends Disposable {
 		}));
 		store.add(part.onDidRemoveGroup(group => {
 			groupListeners.deleteAndDispose(group.id);
+			openLists.deleteAndDispose(group.id);
 			entry.holder?.syncOpen();
 			notifyAgentToolEditors();
 		}));
@@ -1141,9 +1220,14 @@ export class AgentSurfaceHost extends Disposable {
 	/** Whether the shown area has a tab to show, and the user has not closed it. */
 	private hasTools(): boolean {
 		const entry = this.shown;
+		if (this.presentation !== 'floating' && entry?.part.groups.some(group => group.count > 0)) {
+			// Docked beside the chat, closing the last tab leaves the panel open on its list. A preview
+			// floating over the chat is not the panel, so it does not keep one open.
+			this.keepOpen = true;
+		}
 		// In the IDE layout a chat's tools are tabs in the middle (see agentIdeWorkspace), not a split beside it.
 		return !this.toolsHidden && !this.nested() && !!entry && entry.sessionId === this.sessionId
-			&& (entry.part.groups.some(group => group.count > 0) || this.filesSidebarOpen())
+			&& (entry.part.groups.some(group => group.count > 0) || this.filesSidebarOpen() || this.keepOpen)
 			&& getLayoutMode(this.layoutService) === 'agent';
 	}
 
@@ -1153,7 +1237,13 @@ export class AgentSurfaceHost extends Disposable {
 			return;
 		}
 		const hasTools = this.hasTools();
+		const empty = !this.shown?.part.groups.some(group => group.count > 0);
+		// The empty area is see-through like the chat beside it (agentEditor.css); tabs keep the solid fill.
+		this.area.classList.toggle('tools-empty', empty);
 		if (!hasTools && this.presentation !== 'split') {
+			this.setPresentation('split', false);
+		} else if (empty && this.presentation === 'fullscreen') {
+			// The last tab closed in full screen: the list sits beside the chat, not over it.
 			this.setPresentation('split', false);
 		} else if (this.presentation === 'floating' && !this.openingFloat && !(this.shown?.part.activeGroup.activeEditor instanceof VoltBrowserEditorInput)) {
 			// Only a preview floats; another tool coming to the front docks the area beside the chat.
@@ -1203,7 +1293,9 @@ export class AgentSurfaceHost extends Disposable {
 
 	/** Whether the tabs show beside the files sidebar: they have one, and Close Right Panel did not hide them. */
 	private showsTabs(entry: IToolsPart): boolean {
-		return !(this.tabsHidden && this.presentation === 'split') && entry.part.groups.some(group => group.count > 0);
+		// Opened with no tab (Open Right Panel, or the last tab closed), the area beside the files
+		// sidebar shows its list of what can open instead of the sidebar taking the whole area.
+		return !(this.tabsHidden && this.presentation === 'split') && (entry.part.groups.some(group => group.count > 0) || this.keepOpen);
 	}
 
 	/** The room the chat and the tabs split: the row less the split line and a sidebar beside the tabs. */
@@ -1400,8 +1492,9 @@ export class AgentSurfaceHost extends Disposable {
 		const toggle = this.filesSidebar.toggleButton;
 		toggle.style.display = isPseudoToolsSession(this.sessionId) ? 'none' : '';
 		if (toggle.parentElement !== actions || this.fullscreenButton.parentElement !== actions || this.closePanelButton.parentElement !== actions
+			|| this.emptyAddButton.parentElement !== actions
 			|| toggle.nextSibling !== this.fullscreenButton || this.fullscreenButton.nextSibling !== this.closePanelButton) {
-			actions.append(toggle, this.fullscreenButton, this.closePanelButton);
+			actions.append(this.emptyAddButton, toggle, this.fullscreenButton, this.closePanelButton);
 		}
 		this.scheduleOpenToolsButton(entry);
 	}
@@ -1631,7 +1724,7 @@ export class AgentSurfaceHost extends Disposable {
 		}
 	}
 
-	/** A preview over the chat's top-right corner, without its tab row or address bar. */
+	/** A preview over the chat's bottom-right corner, without its tab row or address bar. */
 	private placeFloating(entry: IToolsPart): void {
 		const box = this.container.getBoundingClientRect();
 		this.releaseTitlebar();
@@ -1650,16 +1743,97 @@ export class AgentSurfaceHost extends Disposable {
 	private floatBounds(box: DOMRect): { left: number; top: number; width: number; height: number } {
 		const maxWidth = Math.max(FLOAT_MIN_WIDTH, box.width - FLOAT_MARGIN * 2);
 		const maxHeight = Math.max(FLOAT_MIN_HEIGHT, box.height - FLOAT_MARGIN * 2);
-		let rect = floatRect;
-		if (!rect) {
-			const width = Math.min(640, Math.max(320, Math.round(box.width * 0.42)));
-			rect = { right: FLOAT_MARGIN, top: FLOAT_MARGIN, width, height: Math.round(width * 0.98) };
-		}
+		const rect = floatRect ?? this.defaultFloatRect(box);
 		const width = Math.min(maxWidth, Math.max(FLOAT_MIN_WIDTH, rect.width));
 		const height = Math.min(maxHeight, Math.max(FLOAT_MIN_HEIGHT, rect.height));
 		const right = Math.min(Math.max(FLOAT_MARGIN, rect.right), Math.max(FLOAT_MARGIN, box.width - width - FLOAT_MARGIN));
-		const top = Math.min(Math.max(FLOAT_MARGIN, rect.top), Math.max(FLOAT_MARGIN, box.height - height - FLOAT_MARGIN));
-		return { left: box.right - right - width, top: box.top + top, width, height };
+		const bottom = Math.min(Math.max(FLOAT_MARGIN, rect.bottom), Math.max(FLOAT_MARGIN, box.height - height - FLOAT_MARGIN));
+		return { left: box.right - right - width, top: box.bottom - bottom - height, width, height };
+	}
+
+	/**
+	 * Until the preview is moved: in the room beside the chat column, under the side toolbar, when it
+	 * fits there; otherwise in the corner, above the composer's cards and chips.
+	 * The page shows at a desktop width scaled down (browserEditor.ts), so the preview is a 16:10 screen.
+	 */
+	private defaultFloatRect(box: DOMRect): IFloatRect {
+		const composer = this.chat.querySelector<HTMLElement>(':scope > .volt-agent-composer');
+		if (composer) {
+			this.observeComposer(composer);
+		}
+		const column = composer?.getBoundingClientRect();
+		const side = column && column.width > 0 ? Math.floor(box.right - column.right - FLOAT_MARGIN * 2) : 0;
+		if (side >= FLOAT_MIN_WIDTH) {
+			const width = Math.min(FLOAT_WIDTH, side);
+			const height = Math.round(width * 0.625);
+			const toolbar = this.sideToolbar();
+			const top = toolbar ? Math.round(toolbar.getBoundingClientRect().bottom - box.top + FLOAT_MARGIN) : FLOAT_MARGIN;
+			const bottom = Math.round(box.height - top - height);
+			if (bottom >= FLOAT_MARGIN) {
+				return { right: FLOAT_MARGIN, bottom, width, height };
+			}
+		}
+		const width = Math.min(FLOAT_WIDTH, Math.max(FLOAT_MIN_WIDTH, box.width - FLOAT_MARGIN * 2));
+		return { right: FLOAT_MARGIN, bottom: this.composerClearance(box, width), width, height: Math.round(width * 0.625) };
+	}
+
+	/** The chat's side toolbar (multitasks, open tabs, pull requests) while it shows beside the chat. */
+	private sideToolbar(): HTMLElement | undefined {
+		const toolbar = this.container.querySelector<HTMLElement>('.volt-agent-quick-open-actions');
+		if (!toolbar || !this.container.classList.contains('has-quick-open') || this.container.classList.contains('quick-open-user-hidden')) {
+			return undefined;
+		}
+		const rect = toolbar.getBoundingClientRect();
+		return rect.width > 0 && rect.height > 0 ? toolbar : undefined;
+	}
+
+	/** Until the preview is moved it sits in the corner, above the composer's cards and chips when it would cover them. */
+	private composerClearance(box: DOMRect, width: number): number {
+		const composer = this.chat.querySelector<HTMLElement>(':scope > .volt-agent-composer');
+		if (!composer) {
+			return FLOAT_MARGIN;
+		}
+		this.observeComposer(composer);
+		// The chips row and the Tasks card hang above the composer's own top edge; popups don't count.
+		let top = Infinity;
+		let right = -Infinity;
+		for (const child of composer.children) {
+			const rect = child.getBoundingClientRect();
+			const position = getWindow(composer).getComputedStyle(child).position;
+			if (rect.width > 0 && rect.height > 0 && position !== 'absolute' && position !== 'fixed') {
+				top = Math.min(top, rect.top);
+				right = Math.max(right, rect.right);
+			}
+		}
+		if (right <= box.right - FLOAT_MARGIN - width) {
+			return FLOAT_MARGIN;
+		}
+		return Math.max(FLOAT_MARGIN, Math.round(box.bottom - top + FLOAT_MARGIN));
+	}
+
+	/** The composer grows with the prompt and gains cards and chips; a preview resting above it moves with them. */
+	private observeComposer(composer: HTMLElement): void {
+		if (this.observedComposer === composer) {
+			return;
+		}
+		this.observedComposer = composer;
+		if (!this.composerObserver) {
+			const observer = this.composerObserver = new (getWindow(composer).ResizeObserver)(() => {
+				if (this.presentation === 'floating' && !floatRect && !this.floatDrag) {
+					this.place();
+				}
+			});
+			this._register(toDisposable(() => observer.disconnect()));
+		}
+		this.composerObserver.disconnect();
+		for (const element of [composer, ...composer.children]) {
+			this.composerObserver.observe(element);
+		}
+		// The side toolbar grows and shrinks with its lists; a preview under it moves with it.
+		const toolbar = this.container.querySelector<HTMLElement>('.volt-agent-quick-open-actions');
+		if (toolbar) {
+			this.composerObserver.observe(toolbar);
+		}
 	}
 
 	/**
@@ -1721,7 +1895,7 @@ export class AgentSurfaceHost extends Disposable {
 			kind,
 			startX: event.clientX,
 			startY: event.clientY,
-			start: { right: box.right - current.left - current.width, top: current.top - box.top, width: current.width, height: current.height },
+			start: { right: box.right - current.left - current.width, bottom: box.bottom - current.top - current.height, width: current.width, height: current.height },
 		};
 		// The page would take the pointer as it passes over it.
 		this.area.classList.add('float-dragging');
@@ -1733,10 +1907,10 @@ export class AgentSurfaceHost extends Disposable {
 			}
 			const dx = e.clientX - drag.startX;
 			const dy = e.clientY - drag.startY;
-			let { right, top, width, height } = drag.start;
+			let { right, bottom, width, height } = drag.start;
 			if (drag.kind === 'move') {
 				right -= dx;
-				top += dy;
+				bottom -= dy;
 			} else {
 				if (drag.kind.includes('e')) {
 					width += dx;
@@ -1747,10 +1921,10 @@ export class AgentSurfaceHost extends Disposable {
 				}
 				if (drag.kind.includes('s')) {
 					height += dy;
+					bottom -= dy;
 				}
 				if (drag.kind.includes('n')) {
 					height -= dy;
-					top += dy;
 				}
 				// Past the minimum the opposite edge stays put.
 				if (width < FLOAT_MIN_WIDTH) {
@@ -1760,13 +1934,13 @@ export class AgentSurfaceHost extends Disposable {
 					width = FLOAT_MIN_WIDTH;
 				}
 				if (height < FLOAT_MIN_HEIGHT) {
-					if (drag.kind.includes('n')) {
-						top -= FLOAT_MIN_HEIGHT - height;
+					if (drag.kind.includes('s')) {
+						bottom -= FLOAT_MIN_HEIGHT - height;
 					}
 					height = FLOAT_MIN_HEIGHT;
 				}
 			}
-			floatRect = { right, top, width, height };
+			floatRect = { right, bottom, width, height };
 			this.place();
 		};
 		const end = () => {
@@ -1776,7 +1950,7 @@ export class AgentSurfaceHost extends Disposable {
 			// Keep what was clamped, so the next drag starts from what is on screen.
 			const settled = this.floatBounds(this.container.getBoundingClientRect());
 			const now = this.container.getBoundingClientRect();
-			floatRect = { right: now.right - settled.left - settled.width, top: settled.top - now.top, width: settled.width, height: settled.height };
+			floatRect = { right: now.right - settled.left - settled.width, bottom: now.bottom - settled.top - settled.height, width: settled.width, height: settled.height };
 		};
 		store.add(addDisposableListener(handle, 'pointermove', move));
 		store.add(addDisposableListener(handle, 'pointerup', end));
@@ -2235,6 +2409,15 @@ export class AgentSurfaceHost extends Disposable {
 		return true;
 	}
 
+	/** A + menu row from its Ctrl+Option shortcut: opens it in the right panel of the chat on screen. */
+	runSurfaceShortcut(id: AgentSurfaceMenuActionId): boolean {
+		if (this.disposed || this.nested() || !this.isOnScreen() || !this.sessionId) {
+			return false;
+		}
+		this.runMenuAction(id);
+		return true;
+	}
+
 	private runMenuAction(id: AgentSurfaceMenuActionId): void {
 		switch (id) {
 			case 'file':
@@ -2246,8 +2429,23 @@ export class AgentSurfaceHost extends Disposable {
 			case 'browser':
 				this.openBrowser();
 				return;
+			case 'device':
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_DEVICE_PREVIEW_COMMAND_ID));
+				return;
 			case 'changes':
 				this.openChanges();
+				return;
+			case 'gitGraph':
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, this.sessionId));
+				return;
+			case 'scratch':
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, this.sessionId));
+				return;
+			case 'canvas':
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_CANVAS_IN_TOOLS_COMMAND_ID, this.sessionId));
+				return;
+			case 'automations':
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, this.sessionId));
 				return;
 			case 'sideChat':
 				void this.openSideChat();
@@ -2314,6 +2512,7 @@ export class AgentSurfaceHost extends Disposable {
 		this.disposed = true;
 		this.closePanelButton.remove();
 		this.fullscreenButton.remove();
+		this.emptyAddButton.remove();
 		this.filesSidebar.hide();
 		hosts.delete(this);
 		this.addMenu.hide();
@@ -2411,6 +2610,67 @@ registerAction2(class ToggleAgentToolsFullScreenAction extends Action2 {
 			}
 		}
 	}
+});
+
+// Ctrl+Option + a letter opens each + menu row in the agent layout (Ctrl+Alt+Shift off a Mac, where Ctrl+Alt is AltGr).
+for (const item of agentSurfaceMenuItems()) {
+	const key = SURFACE_OPEN_KEYS[item.id];
+	registerAction2(class extends Action2 {
+		constructor() {
+			super({
+				id: surfaceOpenCommandId(item.id),
+				title: localize2('voltAgent.tools.openSurface', "Open {0} in Right Panel", item.label),
+				category: localize2('voltAgent.category', "Agent"),
+				f1: true,
+				precondition: LayoutModeContext.isEqualTo('agent'),
+				keybinding: {
+					primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyMod.Shift | key,
+					mac: { primary: KeyMod.WinCtrl | KeyMod.Alt | key },
+					weight: KeybindingWeight.WorkbenchContrib + 50,
+					when: LayoutModeContext.isEqualTo('agent'),
+				},
+			});
+		}
+
+		override run(): void {
+			for (const host of hosts) {
+				if (isChatToolsHost(host) && host.runSurfaceShortcut(item.id)) {
+					return;
+				}
+			}
+		}
+	});
+}
+
+// Ctrl+Option + 1 to 4: the right sidebar's tabs, left to right (Explorer, Source Control, Pull Requests,
+// Search). Same family as the letters above, one hand on the left; Ctrl+Alt+Shift off a Mac.
+const SIDEBAR_TAB_KEYS = [KeyCode.Digit1, KeyCode.Digit2, KeyCode.Digit3, KeyCode.Digit4];
+filesSidebarTabs().forEach((tab, index) => {
+	const key = SIDEBAR_TAB_KEYS[index];
+	if (key === undefined) {
+		return;
+	}
+	registerAction2(class extends Action2 {
+		constructor() {
+			super({
+				id: filesSidebarViewCommandId(tab.id),
+				title: localize2('voltAgent.tools.showSidebarTab', "Show {0} in Right Sidebar", tab.label),
+				category: localize2('voltAgent.category', "Agent"),
+				f1: true,
+				precondition: LayoutModeContext.isEqualTo('agent'),
+				keybinding: {
+					primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyMod.Shift | key,
+					mac: { primary: KeyMod.WinCtrl | KeyMod.Alt | key },
+					weight: KeybindingWeight.WorkbenchContrib + 50,
+					when: LayoutModeContext.isEqualTo('agent'),
+				},
+			});
+		}
+
+		override run(): void {
+			[...hosts].find(candidate => candidate.canOpenTools())?.toggleFilesSidebarView(tab.id);
+		}
+	});
 });
 
 registerAction2(class ToggleAgentToolsPanelAction extends Action2 {

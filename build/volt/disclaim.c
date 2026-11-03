@@ -9,8 +9,10 @@
 // into .build/volt-disclaim. Same pid as an exec, so signals and output behave as before.
 
 #include <dlfcn.h>
+#include <limits.h>
 #include <spawn.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 extern char **environ;
@@ -27,6 +29,12 @@ int main(int argc, char **argv) {
 		setDisclaim(&attributes, 1);
 	}
 	posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETEXEC);
+	// A disclaimed spawn from a relative path ("./.build/electron/...") leaves Electron unable to
+	// find its bundle, and it aborts with "Unable to find helper app". Give it the absolute path.
+	char program[PATH_MAX];
+	if (realpath(argv[1], program)) {
+		argv[1] = program;
+	}
 	pid_t pid;
 	posix_spawn(&pid, argv[1], NULL, &attributes, argv + 1, environ);
 	// Only reached when the spawn failed: run it the ordinary way.

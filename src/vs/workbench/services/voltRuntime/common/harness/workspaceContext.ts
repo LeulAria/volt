@@ -16,16 +16,18 @@ export const WORKSPACE_SNAPSHOT_COMMAND_ID = 'volt.workspace.contextSnapshot';
 
 export const WORKSPACE_STATUS_TOOL_NAME = 'workspace_status';
 
-export type WorkspaceTabKind = 'browser' | 'device' | 'terminal' | 'file' | 'changes' | 'chat' | 'other';
+export type WorkspaceTabKind = 'browser' | 'device' | 'terminal' | 'file' | 'changes' | 'chat' | 'scratch' | 'canvas' | 'other';
 
 export interface IWorkspaceTab {
 	readonly kind: WorkspaceTabKind;
-	/** The tab's title as the user sees it. */
+	/** The tab's title as the user sees it. Scratch board: the board's title. */
 	readonly title: string;
 	/** The tab in front of the right panel. */
 	readonly focused: boolean;
 	/** Browser: its URL. File: its workspace-relative path. */
 	readonly target?: string;
+	/** Scratch board: its boardId. Design canvas: its canvasId. What the agent passes to those tools. */
+	readonly surfaceId?: string;
 	/** Device: name, runtime and state joined by middle dots ("iPhone 16 / iOS 18.5 simulator / booted" with U+00B7 for "/"), and the app in front when known. */
 	readonly device?: IWorkspaceDevice;
 	/** Terminal: the command running now, else the last one and how it ended. */
@@ -44,6 +46,10 @@ export interface IWorkspaceDevice {
 	readonly foreground?: string;
 	/** The machine it runs on, when it is not this one. */
 	readonly host?: string;
+	/** What the device_* tools take as `device` (UDID or AVD name). */
+	readonly id?: string;
+	/** Shown as the mini device over the chat while the right panel is closed. */
+	readonly floating?: boolean;
 }
 
 export interface IWorkspaceTerminal {
@@ -107,7 +113,10 @@ export function appLabel(foreground: string): string {
 
 function describeDevice(device: IWorkspaceDevice): string {
 	const kind = device.platform === 'ios' ? `${device.runtime ?? 'iOS'} ${device.kind}` : `${device.runtime ?? 'Android'} ${device.kind}`;
-	const parts = [`${device.name} (${kind}${device.host ? ` on ${device.host}` : ''}, ${device.state})`];
+	const parts = [`${device.name} (${kind}${device.host ? ` on ${device.host}` : ''}, ${device.state}${device.id ? `, device: "${device.id}"` : ''})`];
+	if (device.floating) {
+		parts.push('floating over the chat as a mini device');
+	}
 	if (device.foreground) {
 		parts.push(`app in front: ${appLabel(device.foreground)}`);
 	}
@@ -141,6 +150,10 @@ export function describeTab(tab: IWorkspaceTab): string {
 			return 'Changes (the diff of this chat\'s edits)';
 		case 'chat':
 			return `Side chat: ${clip(tab.title, 60)}`;
+		case 'scratch':
+			return `Scratch board "${clip(tab.title, 60)}"${tab.surfaceId ? ` (boardId ${clip(tab.surfaceId, 60)})` : ''}`;
+		case 'canvas':
+			return `Design canvas "${clip(tab.title, 60)}"${tab.surfaceId ? ` (canvasId ${clip(tab.surfaceId, 60)})` : ''}`;
 		default:
 			return clip(tab.title);
 	}
@@ -168,9 +181,10 @@ export function formatWorkspaceContext(snapshot: IWorkspaceSnapshot): string | u
 		'Automatically supplied state of the Volt window around this chat, not part of the user\'s request; it may or may not be relevant. When a request is short or does not say where ("open maps", "reload it", "what does it say"), it most likely means the tab in front. The user\'s explicit wording always wins.',
 	];
 	if (tabs.length) {
-		const focused = snapshot.panelOpen ? tabs.find(tab => tab.focused) : undefined;
+		// The mini device over the chat is in front while the panel is closed.
+		const focused = snapshot.panelOpen ? tabs.find(tab => tab.focused) : tabs.find(tab => tab.device?.floating);
 		const others = tabs.filter(tab => tab !== focused);
-		lines.push(snapshot.panelOpen ? 'Right panel tabs:' : 'Right panel tabs (panel closed, so none is in front):');
+		lines.push(snapshot.panelOpen ? 'Right panel tabs:' : focused ? 'Right panel tabs (panel closed; its device floats over the chat):' : 'Right panel tabs (panel closed, so none is in front):');
 		if (focused) {
 			lines.push(`- In front: ${describeTab(focused)}`);
 		}
@@ -181,9 +195,13 @@ export function formatWorkspaceContext(snapshot: IWorkspaceSnapshot): string | u
 			lines.push(`- [${others.length - MAX_TABS} more tabs omitted]`);
 		}
 		if (focused?.kind === 'device' && focused.device?.state === 'booted') {
-			lines.push('The device is in front: requests about apps ("open maps", "tap...", "test the app") mean this device. Use the device_* tools (device_launch_app, device_tap, device_screenshot), not the browser.');
+			lines.push('The device is in front: requests about apps ("open maps", "tap...", "test the app") mean this device. Use the device_* tools, not the browser: device_install_app installs a build (.app for a simulator, .apk), device_launch_app opens an app or URL, device_snapshot reads the screen, device_act taps, types, swipes and checks text in one call. The user watches every action live.');
 		} else if (focused?.kind === 'browser') {
 			lines.push('The browser is in front: requests about "the page" or "the site" mean this tab (browser_* tools).');
+		} else if (focused?.kind === 'scratch' && focused.surfaceId) {
+			lines.push('The scratch board is in front: requests about "the board" or a diagram mean this board: scratch_read / scratch_draw with its boardId (redraw a frame with replace).');
+		} else if (focused?.kind === 'canvas' && focused.surfaceId) {
+			lines.push('The design canvas is in front: requests about "the design" or screens mean this canvas: canvas_read / canvas_update with its canvasId (canvas_render to see it).');
 		}
 	}
 	if (snapshot.git) {
@@ -202,7 +220,7 @@ export function formatWorkspaceContext(snapshot: IWorkspaceSnapshot): string | u
 export function workspaceContextKey(snapshot: IWorkspaceSnapshot): string {
 	return JSON.stringify({
 		open: snapshot.panelOpen,
-		tabs: snapshot.tabs.map(tab => [tab.kind, tab.title, tab.focused, tab.target, tab.device?.name, tab.device?.state, tab.device?.foreground, tab.terminal?.running]),
+		tabs: snapshot.tabs.map(tab => [tab.kind, tab.title, tab.focused, tab.target, tab.surfaceId, tab.device?.name, tab.device?.state, tab.device?.foreground, tab.device?.floating, tab.terminal?.running]),
 		branch: snapshot.git?.branch,
 	});
 }
@@ -220,10 +238,16 @@ export function formatWorkspaceStatus(snapshot: IWorkspaceSnapshot): string {
 		for (const tab of snapshot.tabs) {
 			lines.push(`- ${tab.focused && snapshot.panelOpen ? '[in front] ' : ''}${describeTab(tab)}`);
 			if (tab.kind === 'device' && tab.device?.state === 'booted') {
-				lines.push('  device_screenshot shows its screen; device_launch_app opens an app by bundle id or URL.');
+				lines.push('  device_install_app installs a build; device_launch_app opens an app by bundle id or URL; device_snapshot reads the screen; device_act drives it; device_screenshot shows it.');
 			}
 			if (tab.kind === 'browser') {
 				lines.push('  browser_snapshot reads the page; browser_navigate / browser_click drive it.');
+			}
+			if (tab.kind === 'scratch' && tab.surfaceId) {
+				lines.push('  scratch_read reads the board; scratch_draw draws on it (pass the boardId; replace redraws a frame).');
+			}
+			if (tab.kind === 'canvas' && tab.surfaceId) {
+				lines.push('  canvas_read reads the design; canvas_update edits it by canvasId; canvas_render shows it.');
 			}
 			const output = tab.terminal?.output?.trim();
 			if (output) {

@@ -3,10 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, MutableDisposable } from '../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { localize } from '../../../../nls.js';
 import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
@@ -22,8 +23,8 @@ import { IVoltHostToolService } from '../../../services/voltRuntime/common/hostT
 import { AgentGalleryToolProvider } from '../browser/visuals/agentGalleryTools.js';
 import { disposeLiveVisuals } from '../browser/visuals/agentVisuals.js';
 import { AgentVisualToolProvider } from '../browser/visuals/agentVisualTools.js';
-import { setCanvasAgentChatFactory } from '../browser/visuals/canvas/canvasAgent.js';
-import { createCanvasAgentChat } from '../browser/visuals/canvas/canvasAgentChat.js';
+import { setCanvasChatIslandFactory } from '../browser/visuals/canvas/canvasAgent.js';
+import { CanvasChatIsland } from '../browser/visuals/canvas/canvasAgentChat.js';
 import { OPEN_CANVAS_COMMAND_ID } from '../browser/visuals/canvas/canvasCard.js';
 import { CANVAS_EDITOR_ID, CanvasEditor, CanvasEditorInput, CanvasEditorInputSerializer } from '../browser/visuals/canvas/canvasEditor.js';
 import { IVoltCanvasService, setCanvasChatPrompter, VoltCanvasService } from '../browser/visuals/canvas/canvasService.js';
@@ -31,7 +32,9 @@ import { AgentEditor } from '../browser/editor/agentEditor.js';
 import { openAgentPanel } from '../browser/workspace/agentPanels.js';
 import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
 import { AgentCanvasToolProvider } from '../browser/visuals/canvas/canvasTools.js';
-import { agentToolsSessionOnScreen, openInAgentTools } from '../browser/workspace/agentSurfaceHost.js';
+import { CANVAS_ENABLED_SETTING } from '../common/canvasScratchSettings.js';
+import { agentToolsSessionOnScreen, isPseudoToolsSession, openInAgentTools } from '../browser/workspace/agentSurfaceHost.js';
+import { OPEN_CANVAS_IN_TOOLS_COMMAND_ID } from '../browser/workspace/agentSurfaceMenu.js';
 
 // Pages are measured and screenshotted offscreen in the main process.
 registerMainProcessRemoteService(IVoltVisualPreviewService, VOLT_VISUAL_PREVIEW_CHANNEL_NAME);
@@ -51,14 +54,30 @@ class AgentVisualsContribution extends Disposable implements IWorkbenchContribut
 		@INativeWorkbenchEnvironmentService environmentService: INativeWorkbenchEnvironmentService,
 		@IEditorService editorService: IEditorService,
 		@IEditorGroupsService editorGroupsService: IEditorGroupsService,
+		@IConfigurationService configurationService: IConfigurationService,
 	) {
 		super();
 		const provider = this._register(instantiationService.createInstance(AgentVisualToolProvider));
 		this._register(hostTools.registerToolProvider(provider));
 		const galleries = this._register(instantiationService.createInstance(AgentGalleryToolProvider, joinPath(environmentService.tmpDir, 'volt-screens')));
 		this._register(hostTools.registerToolProvider(galleries));
+		// Settings > Canvas & Scratch can take the canvas tools off the agents' list.
 		const canvases = this._register(instantiationService.createInstance(AgentCanvasToolProvider));
-		this._register(hostTools.registerToolProvider(canvases));
+		const canvasTools = this._register(new MutableDisposable());
+		const syncCanvasTools = () => {
+			const on = configurationService.getValue(CANVAS_ENABLED_SETTING) !== false;
+			if (on && !canvasTools.value) {
+				canvasTools.value = hostTools.registerToolProvider(canvases);
+			} else if (!on) {
+				canvasTools.clear();
+			}
+		};
+		syncCanvasTools();
+		this._register(configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(CANVAS_ENABLED_SETTING)) {
+				syncCanvasTools();
+			}
+		}));
 		this._register(disposeLiveVisuals());
 		// A canvas's comments and requests go to its chat: the one it belongs to, else the one on screen.
 		this._register(setCanvasChatPrompter(async (chat, text, send) => {
@@ -96,8 +115,8 @@ registerWorkbenchContribution2(AgentVisualsContribution.ID, AgentVisualsContribu
 
 // The design canvas: one store per window, a tab beside the chat, and the command that opens it.
 registerSingleton(IVoltCanvasService, VoltCanvasService, InstantiationType.Delayed);
-// Each canvas's own agent, in its sidebar, is a real chat.
-setCanvasAgentChatFactory(createCanvasAgentChat);
+// The canvas tab's chat island is a real chat: the canvas's own (the chat editor provides it).
+setCanvasChatIslandFactory((instantiationService, parent, canvasId) => instantiationService.createInstance(CanvasChatIsland, parent, canvasId));
 
 Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
 	EditorPaneDescriptor.create(CanvasEditor, CANVAS_EDITOR_ID, localize('voltCanvas.editorLabel', "Design Canvas")),
@@ -121,6 +140,30 @@ CommandsRegistry.registerCommand(OPEN_CANVAS_COMMAND_ID, async (accessor, canvas
 	}
 	// Beside the chat in the agent layout; a normal editor tab in the IDE layout.
 	const opened = openInAgentTools(input, agentToolsSessionOnScreen());
+	if (opened) {
+		await opened;
+	} else {
+		await editorService.openEditor(input, { pinned: true });
+	}
+});
+
+/**
+ * The right panel's + menu: chat `sessionId`'s newest design canvas, else an empty one made for it,
+ * as a tab beside the chat. Reopening reuses that canvas rather than piling up empty ones.
+ */
+CommandsRegistry.registerCommand(OPEN_CANVAS_IN_TOOLS_COMMAND_ID, async (accessor, sessionId: unknown) => {
+	if (accessor.get(IConfigurationService).getValue(CANVAS_ENABLED_SETTING) === false) {
+		return;
+	}
+	const editorService = accessor.get(IEditorService);
+	const canvases = accessor.get(IVoltCanvasService);
+	// A page's tools area (New Chat before it sends) has no chat to keep the canvas with.
+	const chat = typeof sessionId === 'string' && sessionId && !isPseudoToolsSession(sessionId) ? sessionId : undefined;
+	const doc = (chat ? (await canvases.listFor(chat))[0] : undefined)
+		?? await canvases.create({ title: localize('voltCanvas.untitled', "Untitled design"), frames: [], links: [] }, chat);
+	const existing = editorService.editors.find((editor): editor is CanvasEditorInput => editor instanceof CanvasEditorInput && editor.canvasId === doc.id);
+	const input = existing ?? new CanvasEditorInput(doc.id, doc.title);
+	const opened = openInAgentTools(input, typeof sessionId === 'string' ? sessionId : agentToolsSessionOnScreen());
 	if (opened) {
 		await opened;
 	} else {
