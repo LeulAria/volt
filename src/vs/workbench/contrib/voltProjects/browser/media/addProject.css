@@ -146,11 +146,13 @@
 	border-radius: 14px;
 }
 
+/* A full-width hairline under it, like the one over the footer. */
 .volt-folder-head {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	padding: 12px 12px 8px 14px;
+	padding: 12px 12px 12px 14px;
+	border-bottom: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
 	flex-shrink: 0;
 }
 
@@ -253,7 +255,7 @@
 
 /* Lined up with the top rows' icons, past the row padding, indent and twistie. */
 .volt-folder-section {
-	padding: 6px 24px 4px 40px;
+	padding: 10px 24px 4px 40px;
 	color: var(--vscode-descriptionForeground);
 	font-size: 12px;
 	flex-shrink: 0;
