@@ -47,6 +47,23 @@ test('starts Volt in the foreground and stops it on Ctrl+C', async t => {
 	assert.equal(await exists(s.runtimeFile), false);
 });
 
+test('a server that stops to load its recompiled code is started again, on the same port', async t => {
+	const s = await setup(t);
+	const run = cli([...s.args, '--no-open'], s.env);
+	await run.waitFor('Press Ctrl+C to stop Volt.');
+	const first = await readJson(s.runtimeFile);
+	process.kill(first.pid, 'SIGUSR2');
+	await run.waitFor('Restarted Volt\'s agent server with its recompiled code.');
+	const second = await readJson(s.runtimeFile);
+	assert.notEqual(second.pid, first.pid);
+	assert.equal(second.port, first.port);
+	assert.equal(second.env.idleExit, '0');
+
+	run.child.kill('SIGINT');
+	assert.equal(await run.exited, 0);
+	assert.equal(isAlive(second.pid), false);
+});
+
 test('--detach leaves it running; later runs attach, status reports, stop stops', async t => {
 	const s = await setup(t);
 	const detached = await cliRun([...s.args, '--no-open', '-d'], s.env);

@@ -159,6 +159,8 @@ export const VOLT_PAIR_PATH = '/api/auth/pair';
 export const VOLT_LOCAL_SESSION_PATH = '/api/auth/local';
 /** `POST` with the server's own token as a bearer: a one-time pairing code ({@link IVoltPairingCode}), for tools on this machine (`npx volt-run pair`). */
 export const VOLT_PAIRING_CODE_PATH = '/api/auth/code';
+/** The server exits with this when it stops only to load recompiled code (a checkout): whatever runs it starts it again. */
+export const AGENT_SERVER_RESTART_EXIT_CODE = 75;
 
 export interface IVoltEnvironmentDescriptor {
 	/** Stable per profile: a client never sends its token to an address that answers with another id. */

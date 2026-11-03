@@ -49,7 +49,7 @@ import { ISecretStorageService } from '../../../platform/secrets/common/secrets.
 import { getResolvedShellEnv } from '../../../platform/shell/node/shellEnv.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../platform/workspace/common/workspace.js';
-import { AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo, IVoltSshTunnelOptions, VOLT_PAIRING_CODE_PATH } from '../../../platform/voltAgentServer/common/protocol.js';
+import { AGENT_SERVER_RESTART_EXIT_CODE, AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo, IVoltSshTunnelOptions, VOLT_PAIRING_CODE_PATH } from '../../../platform/voltAgentServer/common/protocol.js';
 import { AgentServerProtocol, IClientCallOptions, tokensEqual } from '../../../platform/voltAgentServer/common/protocolServer.js';
 import { SessionTopicData } from '../../../platform/voltAgentServer/common/sessionPatch.js';
 import { agentServerPaths, clearAgentServerRuntime, ensureAgentServerToken, isProcessAlive, preferredAgentServerPort, writeAgentServerRuntime } from '../../../platform/voltAgentServer/node/agentServerFiles.js';
@@ -597,7 +597,7 @@ export async function main(argv: string[]): Promise<void> {
 	const sessions = collections.get('sessions')!;
 	const runsIdle = () => sessions.keys().every(key => (sessions.get(key) as { activeRun?: { status?: string } } | undefined)?.activeRun?.status !== 'running');
 	if (process.env['VSCODE_DEV'] && !product.commit) {
-		disposables.add(restartWhenStale(join(appRoot, 'out'), runsIdle, () => void stop(0), logService));
+		disposables.add(restartWhenStale(join(appRoot, 'out'), runsIdle, () => void stop(AGENT_SERVER_RESTART_EXIT_CODE), logService));
 	}
 	const busy = () => terminals.hasLive()
 		? 'an agent terminal is running'

@@ -5,7 +5,8 @@
 
 // Stands in for out/volt-agent-server-main.js in tests: the same files (token, runtime.json), the
 // same routes volt-run uses, and a clean stop on SIGTERM. FAKE_SERVER_OLD=1 acts like Volt 0.0.5
-// (no sign-in page, no pairing codes); FAKE_SERVER_CRASH=1 exits while starting.
+// (no sign-in page, no pairing codes); FAKE_SERVER_CRASH=1 exits while starting. SIGUSR2 stops it
+// the way a checkout's server stops to load its recompiled code.
 
 import { randomBytes, createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -55,10 +56,11 @@ const listen = port => server.listen(port, host, () => {
 server.once('error', err => err.code === 'EADDRINUSE' && !value('--port') ? listen(0) : process.exit(4));
 listen(value('--port') ? Number(value('--port')) : preferred);
 
-const stop = () => {
+const stop = (code = 0) => {
 	fs.rmSync(path.join(dir, 'runtime.json'), { force: true });
 	fs.writeFileSync(path.join(dir, 'stopped'), String(process.pid));
-	process.exit(0);
+	process.exit(code);
 };
-process.on('SIGTERM', stop);
-process.on('SIGINT', stop);
+process.on('SIGTERM', () => stop());
+process.on('SIGINT', () => stop());
+process.on('SIGUSR2', () => stop(75));

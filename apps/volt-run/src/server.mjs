@@ -15,6 +15,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 const LOOPBACK = '127.0.0.1';
 
+/** A checkout's server exits with this to load its recompiled code (AGENT_SERVER_RESTART_EXIT_CODE in protocol.ts). */
+export const RESTART_EXIT_CODE = 75;
+
 /** @param {string} host */
 export function isLoopbackHost(host) {
 	return host === LOOPBACK || host === 'localhost' || host === '::1';

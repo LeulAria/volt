@@ -18,7 +18,7 @@ import { openBrowser } from './browser.mjs';
 import { agentServerPaths, channelProduct, runtimeCacheDir, tildify, userDataDir } from './paths.mjs';
 import { MIN_RUNTIME_VERSION, targetId } from './release.mjs';
 import { cachedRuntimes, locate, resolveRuntime } from './runtime.mjs';
-import { browserSupport, createPairingCode, findServer, isAlive, isLoopbackHost, localBase, logTail, readNetworkAccess, readServerFiles, startServer, stopServer, waitForServer, writeNetworkAccess } from './server.mjs';
+import { browserSupport, createPairingCode, findServer, isAlive, isLoopbackHost, localBase, logTail, readNetworkAccess, readServerFiles, RESTART_EXIT_CODE, startServer, stopServer, waitForServer, writeNetworkAccess } from './server.mjs';
 import { ARROW, bold, CHECK, cyan, dim, formatBytes, formatDuration, green, qrLines, red, Status, yellow } from './ui.mjs';
 
 function readJson(file) {
@@ -124,10 +124,11 @@ async function start(o) {
 
 	let owned = false;
 	let logOffset = 0;
+	let runtime;
 	if (!running) {
 		let label = '';
 		let downloadStarted = 0;
-		const runtime = await resolveRuntime({
+		runtime = await resolveRuntime({
 			app: o.app,
 			download: o.download,
 			channel,
@@ -212,18 +213,20 @@ async function start(o) {
 	if (o.verbose) {
 		followLog(paths.logFile, logOffset);
 	}
-	return foreground(child, running, paths);
+	// Same address, so the open tabs reconnect to the new server.
+	const restart = () => startServer({ runtime, paths, host, port: running.info.port, keepAlive: true });
+	return foreground(child, running, paths, restart);
 }
 
 /** Keeps the server this run started until Ctrl+C, or until it stops on its own. */
-function foreground(child, running, paths) {
+function foreground(child, running, paths, restart) {
 	return new Promise(resolve => {
 		let stopping = false;
 		const stop = async () => {
 			if (stopping) {
 				// A second Ctrl+C: don't wait for it to save.
 				try {
-					process.kill(running.info.pid, 'SIGKILL');
+					process.kill(child.pid, 'SIGKILL');
 				} catch {
 					// gone
 				}
@@ -232,15 +235,32 @@ function foreground(child, running, paths) {
 			}
 			stopping = true;
 			status.set('Stopping Volt (saving your chats)');
-			await stopServer(running.info.pid);
+			await stopServer(child.pid);
 			status.done(`${green(CHECK)} Stopped Volt.`);
 			resolve(0);
 		};
 		process.on('SIGINT', stop);
 		process.on('SIGTERM', stop);
 		process.on('SIGHUP', stop);
-		child.once('exit', async (code, signal) => {
+		const follow = server => server.once('exit', async (code, signal) => {
 			if (stopping) {
+				return;
+			}
+			if (code === RESTART_EXIT_CODE) {
+				// A checkout's server reloading its recompiled code: start it again.
+				try {
+					child = await restart();
+					if (stopping) {
+						await stopServer(child.pid);
+						return;
+					}
+					running = await waitForServer(paths, { child, previousPid: running.info.pid });
+					out(`  ${dim(`${CHECK} Restarted Volt's agent server with its recompiled code.`)}`);
+					follow(child);
+				} catch (err) {
+					process.stderr.write(`${red('volt-run:')} ${err.message}\n${err.log ? `${dim(indent(err.log))}\n` : ''}`);
+					resolve(1);
+				}
 				return;
 			}
 			// Volt's desktop app replaces a server from another build with its own: find that one.
@@ -255,6 +275,7 @@ function foreground(child, running, paths) {
 			process.stderr.write(`${red('volt-run:')} Volt's agent server stopped (${signal ?? `exit code ${code}`}).\n${tail ? `${dim(indent(tail))}\n` : ''}`);
 			resolve(code || 1);
 		});
+		follow(child);
 	});
 }
 
