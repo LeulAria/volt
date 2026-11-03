@@ -53,7 +53,10 @@ export function extractReplacementCode(text: string): string {
 		return fenced[1].replace(/\s+$/, '');
 	}
 	const inner = trimmed.match(/```(?:[\w.+\-]*)?\r?\n([\s\S]*?)\r?\n?```/);
-	if (inner?.[1] && inner[1].trim().length >= Math.min(12, trimmed.length * 0.35)) {
+	// The block's share is measured against the prose around it, not its own fence lines, so a
+	// short block after a one-line lead-in still counts as the reply's code.
+	const prose = inner ? (trimmed.slice(0, inner.index) + trimmed.slice((inner.index ?? 0) + inner[0].length)).trim() : '';
+	if (inner?.[1] && inner[1].trim().length >= Math.min(12, (inner[1].trim().length + prose.length) * 0.35)) {
 		return inner[1].replace(/\s+$/, '');
 	}
 	return trimmed;

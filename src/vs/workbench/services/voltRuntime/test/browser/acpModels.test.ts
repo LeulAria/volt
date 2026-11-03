@@ -207,28 +207,23 @@ suite('ACP model option parsing', () => {
 		assert.strictEqual(descriptors[0].options?.find(choice => choice.isDefault)?.value, 'high');
 	});
 
-	test('per-model overlay wins over shared session effort', () => {
-		const descriptors = descriptorsFromAcpModel(
-			{ name: 'Hy3 Free' },
-			{},
-			[{
-				id: MODEL_OPTION_REASONING,
-				label: 'Reasoning',
-				type: 'select',
-				options: [
-					{ value: 'low', label: 'Low' },
-					{ value: 'medium', label: 'Medium' },
-					{ value: 'high', label: 'High' },
-					{ value: 'max', label: 'Max' },
-				],
-			}],
-			'opencode',
-			'opencode/hy3-free',
-			'Hy3 Free',
-		);
-		assert.deepStrictEqual(
-			descriptors.find(option => option.id === MODEL_OPTION_REASONING)?.options?.map(choice => choice.value),
-			['low', 'medium', 'high'],
-		);
+	test('a model\'s own effort ladder wins over shared session effort', () => {
+		// The static catalog overlay is gone (4882014caaf): the per-model ladder is what the agent
+		// advertised for that model, and a model that advertised none takes the session's list as sent.
+		const shared = [{
+			id: MODEL_OPTION_REASONING,
+			label: 'Reasoning',
+			type: 'select' as const,
+			options: [
+				{ value: 'low', label: 'Low' },
+				{ value: 'medium', label: 'Medium' },
+				{ value: 'high', label: 'High' },
+				{ value: 'max', label: 'Max' },
+			],
+		}];
+		const efforts = (model: Parameters<typeof descriptorsFromAcpModel>[0]) => descriptorsFromAcpModel(model, {}, shared, 'opencode', 'opencode/hy3-free', 'Hy3 Free')
+			.find(option => option.id === MODEL_OPTION_REASONING)?.options?.map(choice => choice.value);
+		assert.deepStrictEqual(efforts({ name: 'Hy3 Free', variants: { low: {}, medium: {}, high: {} } } as never), ['low', 'medium', 'high']);
+		assert.deepStrictEqual(efforts({ name: 'Hy3 Free' }), ['low', 'medium', 'high', 'max']);
 	});
 });

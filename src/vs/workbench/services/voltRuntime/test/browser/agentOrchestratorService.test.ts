@@ -65,7 +65,8 @@ class FakeRuntime {
 		assert.ok(last, `no run in ${threadId}`);
 		this.replies.set(threadId, reply);
 		if (reason === 'fail') {
-			this.emit(threadId, last.runId, { type: 'error', message: 'Provider returned 529' });
+			// Not a passing error (an overload, a 5xx, a dropped connection): those continue the turn by themselves (isTransientFailure).
+			this.emit(threadId, last.runId, { type: 'error', message: 'Provider returned 400' });
 		}
 		this.emit(threadId, last.runId, { type: 'run.end', runId: last.runId, reason });
 	}
@@ -173,7 +174,7 @@ suite('Agent orchestrator service', () => {
 		await settle();
 		assert.strictEqual(host.started.length, 1);
 		assert.strictEqual(service.getThread('chat')?.pause, 'failed');
-		assert.strictEqual(service.getThread('chat')?.last?.error, 'Provider returned 529');
+		assert.strictEqual(service.getThread('chat')?.last?.error, 'Provider returned 400');
 	});
 
 	test('Stop while a turn is still starting ends it without sending anything', async () => {
