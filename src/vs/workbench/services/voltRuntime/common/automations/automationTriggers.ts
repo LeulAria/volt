@@ -90,11 +90,12 @@ const CHANNEL = { label: 'Channel', placeholder: '#alerts or C0123 (empty: any c
 const PROJECT = { label: 'Project', placeholder: 'ENG (empty: any project)' };
 const SPACE = { label: 'Space', placeholder: 'DOCS (empty: any space)' };
 
-export const SCHEDULE_EVENTS = ['hourly', 'daily', 'weekly', 'cron'] as const;
+export const SCHEDULE_EVENTS = ['minutes', 'hourly', 'daily', 'weekly', 'cron'] as const;
 export type AutomationScheduleKind = typeof SCHEDULE_EVENTS[number];
 
 export const AUTOMATION_EVENTS: Readonly<Record<AutomationProvider, readonly IAutomationEventNode[]>> = {
 	schedule: [
+		{ label: 'Every few minutes', event: 'minutes' },
 		{ label: 'Hourly', event: 'hourly' },
 		{ label: 'Daily', event: 'daily' },
 		{ label: 'Weekly', event: 'weekly' },

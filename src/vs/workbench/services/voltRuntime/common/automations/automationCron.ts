@@ -159,6 +159,27 @@ export function nextCronRun(schedule: ICronSchedule, after: number): number | un
 	return undefined;
 }
 
+/** The schedule's minutes on the local day starting at `dayStart` and after `after`, in order, at most `cap`. */
+export function cronSlotsOnDay(schedule: ICronSchedule, dayStart: number, cap: number, after = -Infinity): number[] {
+	const day = new Date(dayStart);
+	const out: number[] = [];
+	if (!dayMatches(schedule, day)) {
+		return out;
+	}
+	for (const hour of schedule.hours) {
+		for (const minute of schedule.minutes) {
+			if (out.length >= cap) {
+				return out;
+			}
+			const at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour, minute, 0, 0).getTime();
+			if (at > after && new Date(at).getHours() === hour) {
+				out.push(at);
+			}
+		}
+	}
+	return out;
+}
+
 /** "Every 15 minutes", "At 09:00 on weekdays", else the expression itself. */
 export function describeCron(expression: string): string {
 	const text = expression.trim();
