@@ -7,34 +7,42 @@ import { $, addDisposableListener, append, clearNode } from '../../../../../base
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
-import { IAutomation, IAutomationService, isActiveRun } from '../../../../services/voltRuntime/common/automations/automations.js';
+import { IAutomation, IAutomationService, isActiveRun, nextRunOf } from '../../../../services/voltRuntime/common/automations/automations.js';
 import { AUTOMATION_TEMPLATE_CATEGORIES, automationTemplate, AutomationTemplateCategory, IAutomationTemplate, templatesIn } from '../../../../services/voltRuntime/common/automations/automationTemplates.js';
 import { providerLabel } from '../../../../services/voltRuntime/common/automations/automationTriggers.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { showVoltMenu } from '../ui/menu/voltMenu.js';
+import { AutomationCalendarView, CalendarView } from './automationCalendarView.js';
 import { automationJson } from './automationDetailView.js';
-import { formatAge } from './automationFormat.js';
+import { formatAge, formatNextShort, formatScheduleWhen } from './automationFormat.js';
 import { arrowUpRightIcon, clockIcon, providerIcon, templateIcon, toolKindIcon } from './automationIcons.js';
-import { IAutomationsHost, IAutomationsPage } from './automationRoutes.js';
+import { AutomationsRoute, AutomationsView, IAutomationsHost, IAutomationsPage } from './automationRoutes.js';
 import { button, iconButton, pillTabs } from './automationUi.js';
 
-/** Volt's own agents, shown above the table: each opens its automation (made from the template on first use). */
+/** Volt's own agents, shown under the table: each opens its automation (made from the template on first use). */
 const BUILT_IN: readonly string[] = ['review-prs', 'fix-ci', 'triage-sentry'];
 
-type Scope = 'mine' | 'team';
+const VIEWS: readonly { readonly id: AutomationsView; readonly label: string }[] = [
+	{ id: 'list', label: localize('voltAutomations.viewList', "List") },
+	{ id: 'day', label: localize('voltAutomations.viewDay', "Day") },
+	{ id: 'week', label: localize('voltAutomations.viewWeek', "Week") },
+	{ id: 'month', label: localize('voltAutomations.viewMonth', "Month") },
+];
 
-let lastScope: Scope = 'mine';
+let lastView: AutomationsView = 'list';
+let lastDate: number | undefined;
 let lastCategory: AutomationTemplateCategory = 'popular';
 
 /**
- * The Automations page: title and New Automation, Volt's built-in agents, the automations table
- * (Mine / Team, search, All Runs), and templates by category.
+ * The Automations page: title and New Automation; the automations as a table or on a calendar
+ * (List · Day · Week · Month, search, All Runs); Volt's built-in agents; templates by category.
  */
 export class AutomationListView extends Disposable implements IAutomationsPage {
 
@@ -42,40 +50,40 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 	private readonly tableStore = this._register(new DisposableStore());
 	private readonly builtInStore = this._register(new DisposableStore());
 	private readonly templateStore = this._register(new DisposableStore());
+	private readonly calendar = this._register(new MutableDisposable<AutomationCalendarView>());
+	private readonly page: HTMLElement;
+	private readonly tabs: HTMLElement;
 	private readonly table: HTMLElement;
+	private readonly calendarSlot: HTMLElement;
 	private readonly builtIns: HTMLElement;
 	private readonly searchInput: HTMLInputElement;
-	private scope: Scope = lastScope;
+	private view: AutomationsView;
+	private date: number;
 	private readonly redraw = this._register(new RunOnceScheduler(() => this.renderDynamic(), 50));
 
 	constructor(
 		private readonly host: IAutomationsHost,
+		route: Extract<AutomationsRoute, { page: 'list' }>,
 		@IAutomationService private readonly automations: IAutomationService,
 		@IContextViewService private readonly contextView: IContextViewService,
 		@IClipboardService private readonly clipboard: IClipboardService,
 		@IDialogService private readonly dialogs: IDialogService,
 		@INotificationService private readonly notifications: INotificationService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
 	) {
 		super();
-		const page = append(host.content, $('.volt-auto-page.list'));
+		this.view = route.view ?? lastView;
+		this.date = route.date ?? lastDate ?? Date.now();
+		this.page = append(host.content, $('.volt-auto-page.list'));
 
-		const head = append(page, $('.volt-auto-list-head'));
+		const head = append(this.page, $('.volt-auto-list-head'));
 		const titles = append(head, $('.titles'));
 		append(titles, $('h1.volt-auto-title')).textContent = localize('voltAutomations.tab', "Automations");
 		append(titles, $('p.volt-auto-subtitle')).textContent = localize('voltAutomations.subtitle', "Automate repetitive tasks with always-on agents and configure Volt's built-in agents for your team.");
 		button(head, 'volt-auto-primary', localize('voltAutomations.new', "New Automation"), this.store, () => host.navigate({ page: 'detail', tab: 'settings' }));
 
-		append(page, $('.volt-auto-group-label')).textContent = localize('voltAutomations.fromVolt', "From Volt");
-		this.builtIns = append(page, $('.volt-auto-builtins'));
-
-		const tabsRow = append(page, $('.volt-auto-tabs-row'));
-		pillTabs<Scope>(tabsRow, [
-			{ id: 'mine', label: localize('voltAutomations.mine', "Mine") },
-			{ id: 'team', label: localize('voltAutomations.team', "Team") },
-		], this.scope, this.store, scope => {
-			this.scope = lastScope = scope;
-			this.renderTable();
-		});
+		const tabsRow = append(this.page, $('.volt-auto-tabs-row'));
+		this.tabs = pillTabs<AutomationsView>(tabsRow, VIEWS, this.view, this.store, view => this.setView(view));
 		append(tabsRow, $('span.volt-auto-spacer'));
 		const allRuns = append(tabsRow, $('a.volt-auto-all-runs'));
 		allRuns.tabIndex = 0;
@@ -85,11 +93,19 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 		this.searchInput = append(tabsRow, $('input.volt-auto-search')) as HTMLInputElement;
 		this.searchInput.placeholder = localize('voltAutomations.searchPlaceholder', "Search...");
 		this.searchInput.setAttribute('aria-label', localize('voltAutomations.searchAutomations', "Search automations"));
-		this.store.add(addDisposableListener(this.searchInput, 'input', () => this.renderTable()));
+		this.store.add(addDisposableListener(this.searchInput, 'input', () => {
+			this.renderTable();
+			this.calendar.value?.refresh();
+		}));
 
-		this.table = append(page, $('.volt-auto-card.volt-auto-table'));
+		this.table = append(this.page, $('.volt-auto-card.volt-auto-table'));
+		this.calendarSlot = append(this.page, $('.volt-auto-calendar-slot'));
 
-		const templates = append(page, $('.volt-auto-templates'));
+		append(this.page, $('.volt-auto-group-label')).textContent = localize('voltAutomations.fromVolt', "From Volt");
+		this.builtIns = append(this.page, $('.volt-auto-builtins'));
+
+		const templates = append(this.page, $('.volt-auto-templates'));
+		append(templates, $('.volt-auto-group-label.templates')).textContent = localize('voltAutomations.templates', "Start from a template");
 		const grid = $('.volt-auto-template-grid');
 		pillTabs<AutomationTemplateCategory>(templates, AUTOMATION_TEMPLATE_CATEGORIES, lastCategory, this.store, category => {
 			lastCategory = category;
@@ -99,17 +115,80 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 		this.renderTemplates(grid, lastCategory);
 
 		this._register(automations.onDidChange(() => this.redraw.schedule()));
-		this.renderDynamic();
+		this.applyView();
+		this.renderBuiltIns();
 	}
 
 	focus(): void {
-		this.searchInput.focus();
+		if (this.calendar.value) {
+			this.calendar.value.focus();
+		} else {
+			this.searchInput.focus();
+		}
+	}
+
+	//#region View
+
+	private setView(view: AutomationsView, date = this.date): void {
+		this.view = lastView = view;
+		this.date = date;
+		lastDate = view === 'list' ? lastDate : date;
+		this.host.setRoute({ page: 'list', view, ...(view === 'list' ? {} : { date }) });
+		this.applyView();
+	}
+
+	/** Shows the table or the calendar (made on first use, then kept and re-pointed). */
+	private syncTabs(): void {
+		[...this.tabs.children].forEach((tab, index) => {
+			const active = VIEWS[index]?.id === this.view;
+			tab.classList.toggle('active', active);
+			tab.setAttribute('aria-selected', String(active));
+		});
+	}
+
+	private applyView(): void {
+		this.syncTabs();
+		const calendarView = this.view === 'list' ? undefined : this.view;
+		this.page.classList.toggle('wide', !!calendarView);
+		this.table.classList.toggle('hidden', !!calendarView);
+		this.calendarSlot.classList.toggle('hidden', !calendarView);
+		if (!calendarView) {
+			this.calendar.clear();
+			clearNode(this.calendarSlot);
+			this.renderTable();
+			return;
+		}
+		if (this.calendar.value) {
+			this.calendar.value.show(calendarView, this.date);
+		} else {
+			this.calendar.value = this.instantiationService.createInstance(AutomationCalendarView, this.calendarSlot, {
+				view: calendarView,
+				date: this.date,
+				automations: () => this.visible(),
+				host: this.host,
+				onDidNavigate: (view: CalendarView, date: number) => {
+					this.view = lastView = view;
+					this.date = lastDate = date;
+					this.host.setRoute({ page: 'list', view, date });
+					this.syncTabs();
+				},
+			});
+		}
+		this.host.relayout();
 	}
 
 	private renderDynamic(): void {
 		this.renderBuiltIns();
-		this.renderTable();
+		if (this.calendar.value) {
+			this.calendar.value.refresh();
+		} else {
+			this.renderTable();
+		}
 	}
+
+	//#endregion
+
+	//#region Built-ins
 
 	private renderBuiltIns(): void {
 		this.builtInStore.clear();
@@ -134,12 +213,16 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 				? { page: 'detail', id: existing.id, tab: 'settings' }
 				: { page: 'detail', tab: 'settings', seed: { templateId: id } })));
 		}
+		this.host.relayout();
 	}
+
+	//#endregion
+
+	//#region Table
 
 	private visible(): IAutomation[] {
 		const query = this.searchInput.value.trim().toLowerCase();
 		return this.automations.list()
-			.filter(automation => (this.scope === 'team') === !!automation.shared)
 			.filter(automation => !query || automation.name.toLowerCase().includes(query) || automation.instructions.toLowerCase().includes(query) || automation.createdBy.toLowerCase().includes(query))
 			.sort((a, b) => b.updatedAt - a.updatedAt);
 	}
@@ -147,8 +230,11 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 	private renderTable(): void {
 		this.tableStore.clear();
 		clearNode(this.table);
+		if (this.view !== 'list') {
+			return;
+		}
 		const head = append(this.table, $('.volt-auto-row.head'));
-		for (const column of [localize('voltAutomations.colName', "Name"), localize('voltAutomations.colCreatedBy', "Created By"), localize('voltAutomations.colStatus', "Status"), localize('voltAutomations.colTools', "Tools"), '']) {
+		for (const column of [localize('voltAutomations.colName', "Name"), localize('voltAutomations.colNextRun', "Next Run"), localize('voltAutomations.colCreatedBy', "Created By"), localize('voltAutomations.colStatus', "Status"), localize('voltAutomations.colTools', "Tools"), '']) {
 			append(head, $('span.cell')).textContent = column;
 		}
 		const rows = this.visible();
@@ -156,9 +242,7 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 			const empty = append(this.table, $('.volt-auto-empty.small'));
 			empty.textContent = this.searchInput.value.trim()
 				? localize('voltAutomations.noneMatch', "No automations match.")
-				: this.scope === 'team'
-					? localize('voltAutomations.noTeam', "Nothing shared with the team yet. Use Share with Team in an automation's menu.")
-					: localize('voltAutomations.none', "No automations yet. Start from a template below or create one.");
+				: localize('voltAutomations.none', "No automations yet. Start from a template below or create one.");
 			this.host.relayout();
 			return;
 		}
@@ -177,6 +261,17 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 			name.textContent = automation.name;
 			if (automation.runs.some(isActiveRun)) {
 				append(name, $('span.volt-auto-live')).title = localize('voltAutomations.runningNow', "Running now");
+			}
+			const next = append(row, $('span.cell.next'));
+			const nextAt = nextRunOf(automation);
+			if (nextAt !== undefined) {
+				next.textContent = formatNextShort(nextAt, now);
+				setAgentTooltip(next, formatScheduleWhen(nextAt, now));
+			} else {
+				next.classList.add('muted');
+				next.textContent = !automation.enabled
+					? '-'
+					: automation.triggers.length ? localize('voltAutomations.onEvent', "On event") : localize('voltAutomations.manualOnly', "Manual");
 			}
 			const by = append(row, $('span.cell.by'));
 			append(by, $('span')).textContent = automation.createdBy;
@@ -208,7 +303,7 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 	}
 
 	private showRowMenu(anchor: HTMLElement, automation: IAutomation): void {
-		type Action = 'open' | 'run' | 'toggle' | 'duplicate' | 'json' | 'share' | 'delete';
+		type Action = 'open' | 'run' | 'toggle' | 'duplicate' | 'json' | 'delete';
 		showVoltMenu<Action>(this.contextView, {
 			anchor,
 			align: 'right',
@@ -224,7 +319,6 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 						{ id: 'toggle', label: automation.enabled ? localize('voltAutomations.deactivate', "Deactivate") : localize('voltAutomations.activate', "Activate"), data: 'toggle' },
 						{ id: 'duplicate', label: localize('voltAutomations.duplicate', "Duplicate"), data: 'duplicate' },
 						{ id: 'json', label: localize('voltAutomations.copyJson', "Copy as JSON"), data: 'json' },
-						{ id: 'share', label: automation.shared ? localize('voltAutomations.moveToMine', "Move to Mine") : localize('voltAutomations.share', "Share with Team"), data: 'share' },
 					],
 				},
 				{ id: 'danger', items: [{ id: 'delete', label: localize('voltAutomations.delete', "Delete"), className: 'danger', data: 'delete' }] },
@@ -242,7 +336,6 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 					case 'toggle': await this.automations.setEnabled(automation.id, !automation.enabled); return;
 					case 'duplicate': await this.automations.duplicate(automation.id); return;
 					case 'json': await this.clipboard.writeText(automationJson(automation)); return;
-					case 'share': await this.automations.update(automation.id, { shared: !automation.shared }); return;
 					case 'delete': {
 						const { confirmed } = await this.dialogs.confirm({
 							message: localize('voltAutomations.deleteConfirm', "Delete \"{0}\"?", automation.name),
@@ -258,6 +351,10 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 			},
 		});
 	}
+
+	//#endregion
+
+	//#region Templates
 
 	private renderTemplates(grid: HTMLElement, category: AutomationTemplateCategory): void {
 		this.templateStore.clear();
@@ -297,4 +394,6 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 		}
 		this.templateStore.add(addDisposableListener(card, 'click', () => this.host.navigate({ page: 'detail', tab: 'settings', seed: { templateId: template.id } })));
 	}
+
+	//#endregion
 }

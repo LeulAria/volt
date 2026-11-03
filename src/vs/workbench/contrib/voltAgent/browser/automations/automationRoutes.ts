@@ -4,19 +4,25 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IDisposable } from '../../../../../base/common/lifecycle.js';
+import type { AutomationSchedule } from '../../../../services/voltRuntime/common/automations/automations.js';
 import type { IAgentPageCrumb } from '../customize/agentMarketplaceView.js';
 
-/** A new automation's starting point: a template, or a prompt from a chat's composer. */
+/** A new automation's starting point: a template, a prompt from a chat's composer, or a time picked on the calendar. */
 export interface IAutomationSeed {
 	readonly templateId?: string;
 	readonly threadId?: string;
 	readonly instructions?: string;
 	readonly mode?: string;
 	readonly modelRef?: string;
+	/** Replaces the template's schedule (or is the only trigger without one). */
+	readonly schedule?: AutomationSchedule;
 }
 
+/** How the list page shows automations: the table, or a calendar of their runs. */
+export type AutomationsView = 'list' | 'day' | 'week' | 'month';
+
 export type AutomationsRoute =
-	| { readonly page: 'list' }
+	| { readonly page: 'list'; readonly view?: AutomationsView; readonly date?: number }
 	/** No `id`: a new automation, unsaved until Save. */
 	| { readonly page: 'detail'; readonly id?: string; readonly tab: 'settings' | 'runs'; readonly seed?: IAutomationSeed }
 	| { readonly page: 'runs' };

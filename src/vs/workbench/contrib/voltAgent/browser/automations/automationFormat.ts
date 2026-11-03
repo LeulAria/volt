@@ -57,3 +57,25 @@ export function formatAge(at: number, now: number): string {
 export function formatNextRun(at: number): string {
 	return dateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(at);
 }
+
+/** "in 5 min", "Today 9:00 AM", "Tomorrow 9:00 AM", "Wed 9:00 AM", "Dec 2": the Next Run column, short enough for its cell. */
+export function formatNextShort(at: number, now: number): string {
+	const delta = at - now;
+	if (delta >= 0 && delta < 60 * 60_000) {
+		return localize('voltAutomations.inMinutes', "in {0} min", Math.max(1, Math.round(delta / 60_000)));
+	}
+	const time = formatTimeLabel(minutesOfDay(at));
+	const day = startOfDay(at);
+	const today = startOfDay(now);
+	if (day === today) {
+		return localize('voltAutomations.todayShort', "Today {0}", time);
+	}
+	if (day === addDays(today, 1)) {
+		return localize('voltAutomations.tomorrowShort', "Tomorrow {0}", time);
+	}
+	if (day > today && day < addDays(today, 7)) {
+		return `${dateTimeFormat(undefined, { weekday: 'short' }).format(at)} ${time}`;
+	}
+	const sameYear = new Date(at).getFullYear() === new Date(now).getFullYear();
+	return dateTimeFormat(undefined, sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' }).format(at);
+}
