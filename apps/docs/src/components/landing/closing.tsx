@@ -377,7 +377,7 @@ export function SiteFooter() {
   return (
     <footer className={cn(COLUMN, "py-10")}>
       <div className="flex flex-col gap-6 text-[13px] text-white/40 md:flex-row md:items-center lg:mx-5">
-        <span className="font-mono text-[15px] font-semibold tracking-wide text-white/80">
+        <span className="font-sans text-[16px] font-semibold tracking-[-0.02em] text-white/80">
           volt
         </span>
         <nav className="flex flex-wrap gap-x-6 gap-y-2 md:ml-8">
