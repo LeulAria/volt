@@ -27,9 +27,9 @@ import { IAgentHistoryService } from '../../../services/voltRuntime/common/histo
 import { IVoltSessionContextService } from '../../../services/voltRuntime/common/sessionContext.js';
 import { DEVICE_REMOTE_HOSTS_SETTING } from '../common/agentDevices.js';
 import { AgentDevicesService, IAgentDevicesService } from '../browser/devices/agentDevicesService.js';
-import { DEVICE_EDITOR_ID, DevicePreviewEditor, DevicePreviewEditorInput, DevicePreviewEditorInputSerializer } from '../browser/devices/deviceEditor.js';
+import { DEVICE_EDITOR_ID, DeviceFloat, DevicePreviewEditor, DevicePreviewEditorInput, DevicePreviewEditorInputSerializer } from '../browser/devices/deviceEditor.js';
 import { startAgentChat } from '../browser/workspace/agentPanels.js';
-import { agentToolsSessionOnScreen, openInAgentTools } from '../browser/workspace/agentSurfaceHost.js';
+import { agentToolsSessionOnScreen, openInAgentTools, revealAgentToolEditor } from '../browser/workspace/agentSurfaceHost.js';
 import { IAgentWorkspaceService } from '../browser/workspace/agentWorkspace.js';
 import '../browser/preview/browserCookieImport.js';
 import '../browser/workspace/agentWorkspaceContext.js';
@@ -127,6 +127,7 @@ class VoltDevicesContribution extends Disposable implements IWorkbenchContributi
 	) {
 		super();
 		void devices;
+		this._register(this.instantiationService.createInstance(DeviceFloat));
 		this._register(this.editorService.onDidEditorsChange(() => void this.moveOutOfMiddle()));
 		this._register(onDidChangeLayoutMode(() => void this.moveOutOfMiddle()));
 		void this.moveOutOfMiddle();
@@ -162,10 +163,15 @@ registerAction2(class extends Action2 {
 		super({ id: OPEN_DEVICE_PREVIEW_COMMAND_ID, title: localize2('voltDevices.open', "Open Device Preview (iOS Simulator / Android Emulator)"), category: localize2('volt', "Volt"), f1: true });
 	}
 
+	/** Opens a new device tab, or brings forward the tab that already shows `deviceKey`. */
 	async run(accessor: ServicesAccessor, deviceKey?: string): Promise<void> {
 		const editorService = accessor.get(IEditorService);
-		const existing = editorService.editors.find((editor): editor is DevicePreviewEditorInput => editor instanceof DevicePreviewEditorInput);
-		const input = existing ?? new DevicePreviewEditorInput(typeof deviceKey === 'string' ? deviceKey : undefined);
+		const key = typeof deviceKey === 'string' ? deviceKey : undefined;
+		const existing = key ? editorService.editors.find((editor): editor is DevicePreviewEditorInput => editor instanceof DevicePreviewEditorInput && editor.deviceKey === key) : undefined;
+		if (existing && revealAgentToolEditor(existing)) {
+			return;
+		}
+		const input = existing ?? new DevicePreviewEditorInput(key);
 		// Beside the chat in the agent layout; a normal editor tab in the IDE layout.
 		if (!await openDevicePreview(accessor, input)) {
 			await editorService.openEditor(input, { pinned: true });

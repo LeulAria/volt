@@ -72,9 +72,19 @@ export default function Connect() {
 	};
 
 	const submitManual = () => {
-		const baseUrl = normalizeBaseUrl(address);
+		// A pasted pairing link carries its own code.
+		const link = parsePairingLink(address);
+		if (link?.kind === 'code' && !normalizeCode(code)) {
+			void pair(link);
+			return;
+		}
+		if (!address.trim()) {
+			setError('Type the computer\'s address in Address, like 192.168.1.20:47321.');
+			return;
+		}
+		const baseUrl = link?.baseUrl ?? normalizeBaseUrl(address);
 		if (!baseUrl) {
-			setError('Enter the address Volt shows, like 192.168.1.20:47321.');
+			setError(`"${address.trim()}" isn't an address. Type it like 192.168.1.20:47321.`);
 			return;
 		}
 		if (normalizeCode(code).length < 8) {

@@ -13,7 +13,7 @@ import { AgentTooltip, bindTruncatedHoverTooltip, setAgentTooltip } from '../chr
 import { groupSummary, isLiveSubagentState, ISubagentView, renderCursorCardRow, tickSubagentClocks } from '../chrome/agentSubagents.js';
 import { ITasksCard } from '../chrome/agentTimeline.js';
 import { AgentTasksCard, closeOnOutsideClick } from './agentTasksCard.js';
-import { createQueueSendIcon } from '../home/agentHomeIcons.js';
+import { createQueueEditIcon, createQueueSendIcon } from '../home/agentHomeIcons.js';
 import type { IAgentDisplayMention } from './agentMentions.js';
 
 export interface IQueuedPrompt {
@@ -654,7 +654,7 @@ export class AgentComposerQueue extends Disposable {
 			const onSendNow = this.options.onSendNow;
 			const onSendToNewChat = this.options.onSendToNewChat;
 			if (!isEditing && onEdit) {
-				this.appendRowAction(row, Codicon.edit, localize('voltAgent.queue.edit', "Edit queued message"), () => onEdit(item.id));
+				this.appendRowAction(row, createQueueEditIcon(), localize('voltAgent.queue.edit', "Edit queued message"), () => onEdit(item.id));
 			}
 			if (!isEditing && !picking && onSendToNewChat) {
 				this.appendRowAction(row, createQueueSendIcon(), localize('voltAgent.queue.newChatHint', "Send in a new chat, with this conversation handed over condensed"), () => onSendToNewChat(item.id), 'new-chat', localize('voltAgent.queue.newChat', "Send in new chat"));

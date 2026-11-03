@@ -7,11 +7,11 @@ import { $ } from '../../../../../base/browser/dom.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-/**
- * Hatched bar chart from the usage spec. The source art lies on its side (bars grow to the
- * right); it is turned a quarter so the bars stand up from a baseline.
- */
-const USAGE_ICON_PATH = 'M4.5 20.25V3.75M9 9.75V5.25M9 18.75V14.25M15 14.25V9.75M4.5 5.25H16.5V9.75M4.5 9.75H21V14.25H4.5M13.5 14.25V18.75H4.5M12.3138 5.31372L16.0384 9.03828M9.04895 6.54907L11.8888 9.38895';
+/** Three bars in a rounded square, the same art as Usage in Settings. */
+const USAGE_ICON_PATHS = [
+	'M7 17v-4m5 4V7m5 10v-6',
+	'M2.5 12c0-4.478 0-6.718 1.391-8.109S7.521 2.5 12 2.5c4.478 0 6.718 0 8.109 1.391S21.5 7.521 21.5 12c0 4.478 0 6.718-1.391 8.109S16.479 21.5 12 21.5c-4.478 0-6.718 0-8.109-1.391S2.5 16.479 2.5 12Z',
+];
 
 /** Clockwise arrow before a reset countdown. */
 const RESET_ICON_PATH = 'M20 11.5A8 8 0 1 1 17.66 6.34M20 4v4.5h-4.5';
@@ -49,7 +49,7 @@ function svgIcon(className: string, paths: string[], options: { size?: number; s
 }
 
 export function createUsageIcon(size = 16): HTMLElement {
-	return svgIcon('usage', [USAGE_ICON_PATH], { size, strokeWidth: 1.5, transform: 'rotate(-90 12 12)' });
+	return svgIcon('usage', USAGE_ICON_PATHS, { size, strokeWidth: 1.5 });
 }
 
 export function createResetIcon(): HTMLElement {

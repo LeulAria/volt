@@ -8,6 +8,8 @@ export const OPEN_PULL_REQUEST_COMMAND_ID = 'volt.pullRequest.open';
 export const OPEN_CHAT_PULL_REQUEST_COMMAND_ID = 'volt.pullRequest.openForChat';
 export const CREATE_PULL_REQUEST_COMMAND_ID = 'volt.pullRequest.create';
 export const SHOW_PULL_REQUESTS_COMMAND_ID = 'volt.pullRequest.showList';
+/** `(sessionId?: string)`: the full-page Pull Requests dashboard, in the main panel like Usage. */
+export const OPEN_PULL_REQUESTS_PAGE_COMMAND_ID = 'volt.pullRequest.openPage';
 export const LINK_PULL_REQUEST_COMMAND_ID = 'volt.pullRequest.link';
 export const GENERATE_COMMIT_MESSAGE_COMMAND_ID = 'volt.scm.generateCommitMessage';
 export const FIX_PR_SELECTION_COMMAND_ID = 'volt.pullRequest.fixSelection';

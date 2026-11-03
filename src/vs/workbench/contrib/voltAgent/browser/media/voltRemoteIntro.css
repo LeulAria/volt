@@ -1,0 +1,434 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Remote Control first-run modal (voltRemoteIntro.ts). No backdrop-filter: the agent window is
+ * see-through (volt-transparent-window skill). The scrim holds nothing that scrolls and the card is
+ * opaque. */
+
+.volt-remote-intro-layer {
+	position: absolute;
+	inset: 0;
+	/* Above quick input (2550), below the menus its dropdowns open (context views, 2575). */
+	z-index: 2570;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 24px;
+	box-sizing: border-box;
+}
+
+.volt-remote-intro-scrim {
+	position: absolute;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.55);
+	animation: volt-remote-intro-fade 180ms ease both;
+}
+
+.vs .volt-remote-intro-scrim,
+.hc-light .volt-remote-intro-scrim {
+	background: rgba(0, 0, 0, 0.25);
+}
+
+.volt-remote-intro {
+	position: relative;
+	width: min(520px, 100%);
+	max-height: 100%;
+	overflow: hidden auto;
+	box-sizing: border-box;
+	border-radius: 12px;
+	background: var(--volt-agent-window-bg-base, var(--vscode-editor-background));
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	box-shadow: 0 30px 80px -10px rgba(0, 0, 0, 0.6), 0 10px 24px rgba(0, 0, 0, 0.3);
+	color: var(--vscode-foreground);
+	outline: none;
+	animation: volt-remote-intro-enter 260ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+@keyframes volt-remote-intro-fade {
+	from { opacity: 0; }
+}
+
+@keyframes volt-remote-intro-enter {
+	from { opacity: 0; transform: translateY(10px) scale(0.98); }
+}
+
+/* Hero: always dark, a halftone dot field behind the devices. */
+
+.volt-remote-intro .hero {
+	position: relative;
+	height: 300px;
+	overflow: hidden;
+	background: #0d0d0e;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.volt-remote-intro .hero::after {
+	content: '';
+	position: absolute;
+	inset: auto 0 0 0;
+	height: 90px;
+	background: linear-gradient(to bottom, transparent, #0d0d0e);
+	pointer-events: none;
+}
+
+.volt-remote-intro .dots {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	background-image: radial-gradient(circle, rgba(255, 255, 255, 0.16) 0.9px, transparent 1.3px);
+	background-size: 6px 6px;
+	mask-image: radial-gradient(ellipse 70% 60% at 30% 25%, #000 0%, rgba(0, 0, 0, 0.35) 55%, transparent 85%), radial-gradient(ellipse 50% 50% at 85% 80%, rgba(0, 0, 0, 0.7), transparent 70%);
+}
+
+.volt-remote-intro .dots.faint {
+	background-image: radial-gradient(circle, rgba(255, 255, 255, 0.07) 0.8px, transparent 1.2px);
+	background-position: 3px 3px;
+	mask-image: none;
+}
+
+.volt-remote-intro .hero .close {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+	z-index: 5;
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	border: none;
+	border-radius: 13px;
+	background: rgba(255, 255, 255, 0.08);
+	color: #a1a1a6;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+}
+
+.volt-remote-intro .hero .close:hover {
+	background: rgba(255, 255, 255, 0.14);
+	color: #f5f5f7;
+}
+
+.volt-remote-intro .hero .close:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+}
+
+.volt-remote-intro .volt-mark {
+	display: block;
+	flex: none;
+}
+
+/* Laptop */
+
+.volt-remote-intro .laptop {
+	position: absolute;
+	z-index: 2;
+	left: 88px;
+	top: 38px;
+	width: 270px;
+}
+
+.volt-remote-intro .lid {
+	position: relative;
+	height: 168px;
+	box-sizing: border-box;
+	border-radius: 10px 10px 3px 3px;
+	background: #1a1a1c;
+	border: 1px solid #2c2c2e;
+	padding: 7px 7px 9px;
+	box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+}
+
+.volt-remote-intro .lid::before {
+	content: '';
+	position: absolute;
+	top: 3px;
+	left: 50%;
+	width: 4px;
+	height: 4px;
+	margin-left: -2px;
+	border-radius: 2px;
+	background: #2a2a2c;
+}
+
+.volt-remote-intro .screen {
+	display: flex;
+	height: 100%;
+	border-radius: 4px;
+	background: #0f0f10;
+	overflow: hidden;
+}
+
+.volt-remote-intro .base {
+	position: relative;
+	height: 9px;
+	margin: 0 -22px;
+	border-radius: 0 0 9px 9px;
+	background: linear-gradient(#3a3a3c, #232325);
+	border-top: 1px solid #4a4a4c;
+}
+
+.volt-remote-intro .base::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 50%;
+	width: 60px;
+	height: 4px;
+	margin-left: -30px;
+	border-radius: 0 0 4px 4px;
+	background: #1c1c1e;
+}
+
+.volt-remote-intro .side {
+	width: 30%;
+	padding: 8px 6px;
+	background: #151516;
+	border-right: 1px solid #222;
+}
+
+.volt-remote-intro .side .volt-mark {
+	margin-bottom: 8px;
+}
+
+.volt-remote-intro .side .row {
+	height: 5px;
+	margin-bottom: 6px;
+	border-radius: 2px;
+	background: #2a2a2c;
+}
+
+.volt-remote-intro .side .row.on {
+	background: #3a3a3d;
+}
+
+.volt-remote-intro .main {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 9px 10px;
+}
+
+.volt-remote-intro .main .line {
+	height: 5px;
+	border-radius: 2px;
+	background: #2a2a2c;
+}
+
+.volt-remote-intro .main .bubble {
+	align-self: flex-end;
+	width: 46%;
+	height: 14px;
+	border-radius: 6px;
+	background: #26262a;
+}
+
+.volt-remote-intro .main .composer {
+	margin-top: auto;
+	height: 16px;
+	border-radius: 5px;
+	border: 1px solid #2c2c2e;
+	background: #141415;
+}
+
+/* Phone, in front of the laptop's corner */
+
+.volt-remote-intro .phone {
+	position: absolute;
+	z-index: 3;
+	left: 318px;
+	top: 66px;
+	width: 108px;
+	height: 218px;
+	box-sizing: border-box;
+	padding: 4px;
+	border-radius: 24px;
+	background: #0a0a0a;
+	border: 1px solid #3a3a3c;
+	box-shadow: 0 24px 50px rgba(0, 0, 0, 0.75), inset 0 0 0 1.5px #1c1c1e;
+}
+
+.volt-remote-intro .phone-screen {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	height: 100%;
+	box-sizing: border-box;
+	padding: 24px 8px 8px;
+	border-radius: 20px;
+	background: #0f0f10;
+	overflow: hidden;
+}
+
+.volt-remote-intro .island {
+	position: absolute;
+	top: 6px;
+	left: 50%;
+	width: 34px;
+	height: 10px;
+	margin-left: -17px;
+	border-radius: 6px;
+	background: #000;
+}
+
+.volt-remote-intro .phone-head {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 7.5px;
+	font-weight: 600;
+	color: #e5e5ea;
+	white-space: nowrap;
+}
+
+.volt-remote-intro .phone-bubble {
+	height: 20px;
+	border-radius: 7px;
+	background: #1f1f22;
+}
+
+.volt-remote-intro .phone-bubble.mine {
+	align-self: flex-end;
+	width: 70%;
+	background: #2c2c30;
+}
+
+.volt-remote-intro .phone-status {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 7px;
+	color: #8e8e93;
+	white-space: nowrap;
+}
+
+.volt-remote-intro .phone-composer {
+	margin-top: auto;
+	height: 20px;
+	border-radius: 10px;
+	border: 1px solid #2c2c2e;
+	background: #151516;
+}
+
+.volt-remote-intro .connected {
+	position: absolute;
+	z-index: 4;
+	left: 166px;
+	top: 236px;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 5px 10px 5px 8px;
+	border-radius: 999px;
+	background: #1c1c1e;
+	border: 1px solid #2c2c2e;
+	font-size: 11px;
+	font-weight: 500;
+	color: #e5e5ea;
+	box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+}
+
+.volt-remote-intro .live-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 3px;
+	background: #30d158;
+	box-shadow: 0 0 0 3px rgba(48, 209, 88, 0.18);
+}
+
+.volt-remote-intro .live-dot.small {
+	width: 4px;
+	height: 4px;
+	box-shadow: none;
+}
+
+/* Copy and actions, in the theme's colours */
+
+.volt-remote-intro .body {
+	padding: 22px 28px 24px;
+}
+
+.volt-remote-intro .eyebrow {
+	margin-bottom: 6px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-remote-intro h2 {
+	margin: 0;
+	font-size: 22px;
+	line-height: 1.2;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+}
+
+.volt-remote-intro .subtitle {
+	margin: 8px 0 0;
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-remote-intro .features {
+	display: grid;
+	gap: 12px;
+	margin: 18px 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.volt-remote-intro .features li {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	font-size: 12.5px;
+	line-height: 1.4;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-remote-intro .features b {
+	display: block;
+	font-weight: 600;
+	color: var(--vscode-foreground);
+}
+
+.volt-remote-intro .feature-icon {
+	flex: none;
+	width: 28px;
+	height: 28px;
+	box-sizing: border-box;
+	border-radius: 7px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-remote-intro .actions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 22px;
+}
+
+.volt-remote-intro .footnote {
+	margin-right: auto;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-remote-intro,
+	.volt-remote-intro-scrim {
+		animation: none;
+	}
+}

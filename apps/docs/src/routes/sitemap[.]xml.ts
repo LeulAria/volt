@@ -2,7 +2,7 @@ import changelogSource from "virtual:changelog";
 import { createFileRoute } from "@tanstack/react-router";
 import { parseChangelog } from "@/lib/changelog";
 import { absoluteUrl } from "@/lib/seo";
-import { INFO_PAGES } from "@/lib/sitePages";
+import { DONORS_PAGE, INFO_PAGES } from "@/lib/sitePages";
 import { source } from "@/lib/source";
 
 /**
@@ -25,6 +25,11 @@ export const Route = createFileRoute("/sitemap.xml")({
             lastmod: page.updated,
             priority: "0.5",
           })),
+          {
+            path: DONORS_PAGE.path,
+            lastmod: DONORS_PAGE.updated,
+            priority: "0.5",
+          },
           ...source.getPages().map((page) => ({
             path: page.url,
             lastmod: built,

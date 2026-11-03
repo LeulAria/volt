@@ -940,7 +940,7 @@ class VoltMenuWidget<T> extends Disposable {
 		this.flyout.clear();
 	}
 
-	/** Beside the row with a small gap (never over this menu); flipped to the left, or over the menu only when the window is too narrow for either side. */
+	/** Beside the row, 4px clear of this menu as the agent list's filter menu does; flipped to the left, or over the menu, when the window is too narrow. */
 	private placeFlyout(host: HTMLElement, row: HTMLElement): void {
 		const hostRect = this.host.getBoundingClientRect();
 		const menuRect = this.root.getBoundingClientRect();
@@ -950,11 +950,10 @@ class VoltMenuWidget<T> extends Disposable {
 		const height = isHTMLElement(menu) ? menu.offsetHeight : 0;
 		const win = getWindow(this.root);
 		// Right of the menu, else left of it; with no room on either side, inside the window over the menu.
-		const gap = 4;
-		const right = menuRect.right + gap;
+		const right = menuRect.right + 4;
 		let left = right;
 		if (right + width > win.innerWidth - 8) {
-			left = menuRect.left - width - gap >= 8 ? menuRect.left - width - gap : Math.max(8, win.innerWidth - 8 - width);
+			left = menuRect.left - width - 4 >= 8 ? menuRect.left - width - 4 : Math.max(8, win.innerWidth - 8 - width);
 		}
 		const top = Math.max(8, Math.min(rowRect.top - 1, win.innerHeight - height - 8));
 		host.style.left = `${left - hostRect.left}px`;

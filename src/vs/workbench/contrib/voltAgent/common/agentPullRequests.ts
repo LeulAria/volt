@@ -600,6 +600,20 @@ export function findPullRequestUrls(text: string): string[] {
 	return [...found];
 }
 
+/**
+ * The pull request a command opened: `gh pr create` ends by printing its URL alone on the last
+ * line. Output that only mentions a pull request (a log, `gh pr view`, a list) is not one.
+ */
+export function createdPullRequestUrl(output: string): string | undefined {
+	const last = output.trimEnd().split(/\r?\n/).pop()?.trim() ?? '';
+	return /^https?:\/\/[a-z0-9.-]+\/[\w.-]+\/[\w.-]+\/pull\/\d+$/i.test(last) ? last : undefined;
+}
+
+/** A command's output is a `git push` that sent commits: "To <remote>" and then a ref line ("a..b  x -> x"). */
+export function isGitPushOutput(output: string): boolean {
+	return /^To \S+$/m.test(output) && /^\s*(?:[+*-]\s+)?(?:[0-9a-f]{7,}\.\.\.?[0-9a-f]{7,}|\[new branch\])\s+\S+\s+->\s+\S+/m.test(output);
+}
+
 //#endregion
 
 //#region Ranking

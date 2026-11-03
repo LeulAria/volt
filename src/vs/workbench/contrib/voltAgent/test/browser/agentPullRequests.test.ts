@@ -18,10 +18,12 @@ import {
 	collectRemarks,
 	commitMessageFrom,
 	currentLink,
+	createdPullRequestUrl,
 	discoveredPrBelongs,
 	evaluateWatch,
 	findPullRequestUrls,
 	groupAndRank,
+	isGitPushOutput,
 	IAgentPrLink,
 	isReadyToMerge,
 	isTrunkBranch,
@@ -348,6 +350,19 @@ suite('Volt agent pull requests', () => {
 		assert.ok(discoveredPrBelongs({ createdAt: 1, state: 'merged' }, { ...chat, ownBranch: true }));
 
 		assert.deepStrictEqual(findPullRequestUrls('Opened https://github.com/a/b/pull/12 and https://github.com/a/b/pull/12, see https://github.com/a/b/issues/3 and https://ghe.io/x/y/pull/4.'), ['https://github.com/a/b/pull/12', 'https://ghe.io/x/y/pull/4']);
+
+		// `gh pr create` ends with the new pull request's URL alone; other output only mentions one.
+		assert.strictEqual(createdPullRequestUrl('\nCreating pull request for feat/donors-page into main in LeulAria/volt\n\nhttps://github.com/LeulAria/volt/pull/45\n'), 'https://github.com/LeulAria/volt/pull/45');
+		assert.strictEqual(createdPullRequestUrl('title:\tFix it\nurl:\thttps://github.com/a/b/pull/3\nstate:\tOPEN'), undefined);
+		assert.strictEqual(createdPullRequestUrl('see https://github.com/a/b/pull/3'), undefined);
+		assert.strictEqual(createdPullRequestUrl(''), undefined);
+
+		// A push that sent commits (new branch or fast-forward) refreshes the chat's pull requests; nothing sent does not.
+		assert.ok(isGitPushOutput('To https://github.com/a/b.git\n * [new branch]      feat/x -> feat/x\nbranch \'feat/x\' set up to track \'origin/feat/x\'.'));
+		assert.ok(isGitPushOutput('To github.com:a/b.git\n   38d1087..dbd750c  feat/x -> feat/x'));
+		assert.ok(isGitPushOutput('To https://github.com/a/b.git\n + 1a2b3c4...5d6e7f8 feat/x -> feat/x (forced update)'));
+		assert.ok(!isGitPushOutput('Everything up-to-date'));
+		assert.ok(!isGitPushOutput('To https://github.com/a/b.git\n ! [rejected]        feat/x -> feat/x (fetch first)'));
 	});
 
 	test('ranking: blocked on me, review requests, readiness and the plain sorts', () => {

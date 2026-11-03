@@ -82,6 +82,22 @@ suite('Act script', () => {
 		assert.deepStrictEqual(steps(formatActScript(steps('menu Edit > Find > Find…'))), steps('menu Edit > Find > Find…'));
 	});
 
+	test('desktop drawing and dragging', () => {
+		const [draw] = steps('draw in "Canvas" line 10,10 90,90 | circle 50,50 10');
+		assert.strictEqual(draw.action, 'draw');
+		assert.deepStrictEqual(draw.target, { text: 'Canvas' });
+		assert.strictEqual(draw.strokes?.length, 2);
+		assert.deepStrictEqual(draw.strokes?.[0], [[10, 10], [90, 90]]);
+		assert.deepStrictEqual(steps('drag "Report.pdf" to "Archive"')[0], { action: 'drag', target: { text: 'Report.pdf' }, to: { text: 'Archive' } });
+		assert.deepStrictEqual(steps('drag in d4 10,10 50,50 90,10')[0].strokes, [[[10, 10], [50, 50], [90, 10]]]);
+		assert.deepStrictEqual(steps('draw path "M10 10 L20 20" => "Saved"')[0].expect, { text: 'Saved' });
+		assert.match(error('draw in "Canvas" circle 50,50'), /circle \(center, radius\) needs a number, got "nothing"/);
+		assert.match(error('drag "Report.pdf"'), /drag <target> to <target>/);
+		for (const script of ['draw in "Canvas" circle 50,50 10 | path "M10 10 Q 50 0 90 10"', 'drag "a" to "b"', 'drag in "Canvas" 10,10 90,90']) {
+			assert.deepStrictEqual(steps(formatActScript(steps(script))), steps(script), script);
+		}
+	});
+
 	test('several steps on one line, comments and blank lines', () => {
 		assert.deepStrictEqual(steps('# sign up\ntype "Name" Ada; type "Email" a@b.co ; click "Next"\n\n// done').map(step => step.action), ['type', 'type', 'click']);
 		assert.deepStrictEqual(steps('type "Note" a; b').map(step => step.text), ['a; b'], 'a ; not followed by a step word is text');

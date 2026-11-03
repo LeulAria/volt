@@ -510,6 +510,9 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 				this.setProgress(folder, status.remote ? localize('voltGit.stage.pushTo', "Pushing to {0}…", `${status.remote}/${branch}`) : localize('voltGit.stage.push', "Pushing…"));
 				const pushed = await this.pullRequests.api.push({ folder });
 				result.pushed = { branch: pushed.branch, remote: pushed.remote };
+				if (sessionId) {
+					this.pullRequests.didPush(sessionId);
+				}
 			}
 			if (actionIncludesPr(action)) {
 				this.setProgress(folder, localize('voltGit.stage.prepare', "Preparing pull request…"));

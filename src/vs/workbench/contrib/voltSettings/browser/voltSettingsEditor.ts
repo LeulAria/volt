@@ -64,6 +64,8 @@ import { GitPage } from './gitPage.js';
 import { CanvasScratchPage } from './canvasScratchPage.js';
 import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
+import { DevicesPage } from './devicesPage.js';
+import type { VoltConnectionKind } from './addDeviceModal.js';
 import { createSettingsIcon } from './settingsIcons.js';
 import { AgentUsagePage } from '../../voltAgent/browser/usage/agentUsagePage.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
@@ -87,7 +89,7 @@ import { SettingsThemeList } from './settingsThemeList.js';
 type TabToggle = 'enabled' | 'partialAccepts' | 'inComments' | 'whitespaceOnly' | 'autoImport' | 'autoImportPython';
 
 /** Volt's own pages, then every registered setting by category (`cat:`), Extensions included. */
-type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'connected' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
+type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'connected' | 'devices' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
 type CatalogSection = `cat:${string}`;
 
 function isCatalogSection(section: string): section is CatalogSection {
@@ -123,6 +125,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: nu
 	{ id: 'beta', label: localize('voltSettings.betaPage', "Beta"), icon: Codicon.beaker, group: 1 },
 	{ id: 'security', label: localize('voltSettings.security', "Security"), icon: Codicon.shield, group: 2 },
 	{ id: 'connected', label: localize('voltSettings.connectedAgents', "Connected agents"), icon: Codicon.link, group: 2 },
+	{ id: 'devices', label: localize('voltSettings.devices', "Devices"), icon: Codicon.deviceMobile, group: 2 },
 	{ id: 'projects', label: localize('voltSettings.projects', "Projects"), icon: Codicon.repo, group: 2 },
 	{ id: 'git', label: localize('voltSettings.git', "Git & PRs"), icon: Codicon.gitPullRequest, group: 2 },
 	{ id: 'worktrees', label: localize('voltSettings.worktrees', "Worktrees"), icon: Codicon.repoForked, group: 2 },
@@ -211,6 +214,7 @@ export class VoltSettingsEditor extends EditorPane {
 	private providers!: ProvidersPage;
 	private appearance!: AppearancePage;
 	private connectedAgents!: ConnectedAgentsPage;
+	private devices!: DevicesPage;
 	/** Made on first visit and kept, so its data and range survive leaving the page. */
 	private usage: AgentUsagePage | undefined;
 	/**
@@ -417,6 +421,15 @@ export class VoltSettingsEditor extends EditorPane {
 			inputBoxStyles: () => this.inputBoxStyles(),
 			rerender: () => this.renderContent(),
 		});
+		this.devices = new DevicesPage(this.instantiationService, {
+			store: this.renderStore,
+			target: () => this.target,
+			sectionLabel: label => this.sectionLabel(label),
+			settingsGroup: () => this.settingsGroup(),
+			settingRow: (parent, title, desc, render) => this.settingRow(parent, title, desc, render),
+			empty: text => this.empty(text),
+			rerender: () => this.renderContent(),
+		});
 		this._register(this.connectedAgents.onDidChange(() => {
 			if (this.section === 'connected') {
 				this.renderContent();
@@ -569,6 +582,16 @@ export class VoltSettingsEditor extends EditorPane {
 
 	/** Opens a page by id, e.g. `storage` from Volt: Manage Storage. */
 	showSection(section: string): void {
+		// `devices:add` (or `devices:add:cloudflare`) opens Devices with Add Device on top.
+		const add = /^devices:add(?::(lan|tailscale|cloudflare|ssh))?$/.exec(section);
+		if (add) {
+			this.devices.requestAddDevice(add[1] as VoltConnectionKind | undefined);
+			section = 'devices';
+			if (this.section === 'devices') {
+				this.renderContent();
+				return;
+			}
+		}
 		const id = SECTION_ALIASES[section] ?? section;
 		// `ext:<id>` opens Extensions on that extension's settings.
 		if (id.startsWith('ext:') && this.catalog.some(entry => entry.id === EXTENSIONS_CATEGORY)) {
@@ -723,6 +746,15 @@ export class VoltSettingsEditor extends EditorPane {
 				);
 				const generation = this.renderGeneration;
 				pending = this.connectedAgents.render(() => generation === this.renderGeneration && this.section === 'connected').finally(() => this.scheduleScrollSync());
+				break;
+			}
+			case 'devices': {
+				this.pageHead(
+					localize('voltSettings.devices', "Devices"),
+					localize('voltSettings.devicesLead', "Phones and browsers that reach this computer's chats, files and terminals: pair a new one, rename or remove the others."),
+				);
+				const generation = this.renderGeneration;
+				pending = this.devices.render(() => generation === this.renderGeneration && this.section === 'devices').finally(() => this.scheduleScrollSync());
 				break;
 			}
 			case 'projects':

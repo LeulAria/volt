@@ -83,7 +83,7 @@ const RUNTIME_METHODS = [
 const ORCHESTRATOR_METHODS = ['submit', 'move', 'resumeLimit', 'configureLimit', 'notify', 'multitaskQueue', 'cancel', 'dispatch', 'ensureThreadLoaded'] as const;
 const HISTORY_METHODS = [
 	'search', 'rename', 'setAgentTitle', 'delete', 'setPinned', 'setArchived', 'setSettled', 'setAutoSettle', 'setSnoozed', 'restoreLifecycle',
-	'setUnread', 'clearWoke', 'markAllRead', 'setAttention', 'pinSessionWorkspace', 'pinSessionParent', 'putAttachment', 'getAttachment',
+	'setUnread', 'clearWoke', 'markAllRead', 'setAttention', 'settleRunning', 'pinSessionWorkspace', 'pinSessionParent', 'putAttachment', 'getAttachment',
 	'attachmentResource', 'flushAll', 'readTranscript',
 ] as const;
 const HANDLE_METHODS = ['load', 'loadDraft', 'saveDraft', 'setMeta', 'appendUser', 'appendAssistant', 'truncate', 'flush'] as const;

@@ -2,7 +2,7 @@ import math, random, sys
 
 # `python3 volt-icon.py` writes the release icon; `--beta` writes the early-access
 # galaxy variant (same bolt and gravity-well grid, deep-space background). `--ios` writes the
-# full-bleed square the iOS and Android app icons start from (the OS masks the corners).
+# old flat-bolt full-bleed square; the mobile app icon now comes from volt-icon-fold.py --ios.
 BETA = "--beta" in sys.argv
 IOS = "--ios" in sys.argv
 def squircle(cx, cy, r, n=5.0, steps=720):

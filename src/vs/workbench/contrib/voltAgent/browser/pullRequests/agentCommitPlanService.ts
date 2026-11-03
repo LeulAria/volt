@@ -12,7 +12,7 @@ import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
-import { IVoltGitStatusFile, voltPrErrorMessage } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
+import { IVoltGitStatusFile, voltPrErrorCode, voltPrErrorMessage } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { IVoltGitService } from '../../../../../platform/voltGit/common/voltGit.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
@@ -72,6 +72,8 @@ export interface IAgentCommitPlan {
 	busy?: string;
 	/** Why the last Commit stopped; the commits before it are in and gone from the plan. */
 	error?: string;
+	/** The last Commit was stopped by a commit hook: the review offers to commit without hooks. */
+	hookFailed?: boolean;
 	/** A passing note for the footer (a regenerate that brought nothing new). */
 	notice?: string;
 	/** What was committed so far, for the agent's answer. */
@@ -96,8 +98,8 @@ export interface IAgentCommitPlanService {
 	setMessage(planId: string, commitId: string, message: string): void;
 	/** Writes a new message for the commit's files (the ones left in, or all when none are). */
 	regenerate(planId: string, commitId: string): Promise<void>;
-	/** Commits every commit with a file left in, in order, then tells the agent. */
-	commit(planId: string): Promise<void>;
+	/** Commits every commit with a file left in, in order, then tells the agent. `skipHooks` commits with `--no-verify`. */
+	commit(planId: string, options?: { readonly skipHooks?: boolean }): Promise<void>;
 	/** Closes the review without committing what is left. */
 	dismiss(planId: string): void;
 	/** The text of a file split by hunks before or after one commit of the plan (its diff in the review). */
@@ -279,7 +281,7 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 		});
 	}
 
-	async commit(planId: string): Promise<void> {
+	async commit(planId: string, options?: { readonly skipHooks?: boolean }): Promise<void> {
 		const plan = this.plans.get(planId);
 		if (!plan || plan.busy) {
 			return;
@@ -289,6 +291,8 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 			return;
 		}
 		plan.error = undefined;
+		plan.hookFailed = undefined;
+		plan.notice = undefined;
 		const attribute = this.configurationService.getValue<boolean>(AGENT_COMMIT_ATTRIBUTION_SETTING) !== false;
 		try {
 			for (const [index, commit] of todo.entries()) {
@@ -303,7 +307,7 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 						|| localize('voltCommitPlan.fallbackMessage', "Update {0}", paths.map(path => path.split('/').pop()).slice(0, 3).join(', '));
 				}
 				const contents = await this.hunkContents(plan, commit, paths);
-				const result = await this.pullRequests.api.commit({ folder: plan.root, message: attribute ? withCommitAttribution(message) : message, paths, ...(contents.length ? { contents } : {}) });
+				const result = await this.pullRequests.api.commit({ folder: plan.root, message: attribute ? withCommitAttribution(message) : message, paths, ...(contents.length ? { contents } : {}), ...(options?.skipHooks ? { skipHooks: true } : {}) });
 				for (const path of paths) {
 					if (commit.parts[path]) {
 						plan.applied.set(path, new Set([...(plan.applied.get(path) ?? []), ...commit.parts[path]]));
@@ -321,6 +325,8 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 		} catch (err) {
 			plan.busy = undefined;
 			plan.error = voltPrErrorMessage(err);
+			plan.hookFailed = voltPrErrorCode(err) === 'hookFailed';
+			this.logService.warn('[volt-git] commit review stopped', plan.error);
 			this._onDidChange.fire(plan.sessionId);
 			return;
 		}
@@ -530,7 +536,7 @@ export const COMMIT_PLAN_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: PROPOSE_COMMITS_TOOL_NAME,
 		title: 'Proposed commits',
 		group: 'pullRequests',
-		description: 'Commit the working tree as commits the user reviews first. Use it whenever the user asks you to commit (instead of running git commit yourself). Read `git status` and the diff, then group the changed files into commits that each do one thing, in the order they should land; when the changes are one change or belong together, propose a single commit, and split only where they really are separate changes. Each commit gets a Conventional Commits message: type(scope): summary, type one of feat, fix, refactor, perf, docs, test, style, build, ci, chore (e.g. feat(cart): apply discount at checkout), under 72 characters, with a body after a blank line when it helps. Volt shows the commits above the composer: the user opens each one\'s files and diffs, ticks commits or files out, edits or regenerates messages, and commits them. Volt makes the commits and the call returns what was committed. A file can be in one commit only (whole, or split by hunks as above); changed files you leave out of every commit are offered unticked. A file that holds changes for two commits can be split by hunks: list it under `hunks` in each commit with the hunk numbers (the N of each `@@ -a,b +N,c @@` header of `git diff HEAD -- file`). Every hunk of it must be listed in some commit or it stays uncommitted. Only tracked files with text changes can be split that way; new, untracked, renamed and deleted files go whole under `files`. The call waits for the user; if it returns STILL WAITING, call await_commits with the plan_id and keep calling it until the review ends. Never end your turn while the review is open.',
+		description: 'Commit the working tree as commits the user reviews first. Use it only when the user asks to review the commits before they are made: draft commits, /draft-commit, "split into commits for me to review", or a Volt commit button that names this tool. A plain "commit", "commit and push" or "commit and open a PR" does not: then run git commit yourself. Read `git status` and the diff, then group the changed files into commits that each do one thing, in the order they should land; when the changes are one change or belong together, propose a single commit, and split only where they really are separate changes. Each commit gets a Conventional Commits message: type(scope): summary, type one of feat, fix, refactor, perf, docs, test, style, build, ci, chore (e.g. feat(cart): apply discount at checkout), under 72 characters, with a body after a blank line when it helps. Volt shows the commits above the composer: the user opens each one\'s files and diffs, ticks commits or files out, edits or regenerates messages, and commits them. Volt makes the commits and the call returns what was committed. A file can be in one commit only (whole, or split by hunks as above); changed files you leave out of every commit are offered unticked. A file that holds changes for two commits can be split by hunks: list it under `hunks` in each commit with the hunk numbers (the N of each `@@ -a,b +N,c @@` header of `git diff HEAD -- file`). Every hunk of it must be listed in some commit or it stays uncommitted. Only tracked files with text changes can be split that way; new, untracked, renamed and deleted files go whole under `files`. The call waits for the user; if it returns STILL WAITING, call await_commits with the plan_id and keep calling it until the review ends. Never end your turn while the review is open.',
 		inputSchema: {
 			type: 'object',
 			properties: {
