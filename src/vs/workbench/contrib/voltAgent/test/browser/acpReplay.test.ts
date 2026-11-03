@@ -16,6 +16,7 @@ import { IAgentHistoryService } from '../../../../services/voltRuntime/common/hi
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { RunSupervisor } from '../../../../services/voltRuntime/common/harness/supervisor.js';
+import { AgentTrajectoryRecorder, ITrajectoryRequest, newTrajectoryRequest } from '../../../../services/voltRuntime/common/harness/trajectory.js';
 import type { AgentSegment } from '../../browser/blocks/agentBlocks.js';
 import type { IAgentAssistantMessage, IAgentMessage } from '../../browser/editor/agentEditor.js';
 import { AgentSessionController, IAgentSessionHost } from '../../browser/editor/agentSessionController.js';
@@ -225,5 +226,65 @@ suite('ACP replay', () => {
 			const directives = turn.flatMap(update => mapUpdate(provider, update)).flatMap(event => supervisor.observe(event, 1_000));
 			assert.deepStrictEqual(directives, []);
 		}
+	});
+
+	/** A recorded turn as the Trajectory panel records it: one line per request, `agent: input -> answer`. */
+	function replayTrajectory(providerId: string, label: string, turn: readonly Record<string, unknown>[]) {
+		const provider = new AcpAgentProvider(providerId, label, providerId, [], {} as unknown as IVoltStdioService,
+			undefined as unknown as IWorkspaceContextService, undefined as unknown as IFileService, undefined as unknown as ILogService);
+		const requests: ITrajectoryRequest[] = [];
+		let clock = 0;
+		const trace = new AgentTrajectoryRecorder({
+			begin: input => {
+				const request = newTrajectoryRequest({ ...input, id: `r${requests.length + 1}`, index: requests.length + 1 }, clock);
+				requests.push(request);
+				return request;
+			},
+			changed: () => { },
+		}, { sessionId: 's1', runId: 'run-1', provider: providerId, model: 'default', harness: label }, undefined, () => clock);
+		trace.prompt('Edit the file');
+		for (const update of turn) {
+			clock += 10;
+			for (const event of mapUpdate(provider, update)) {
+				trace.event(event);
+			}
+		}
+		trace.end('done');
+		const lines = requests.map(request => {
+			const input = request.messages.map(message => message.role).join('+');
+			const answer = [
+				request.response.reasoning ? 'thinks' : undefined,
+				request.response.text ? 'says' : undefined,
+				...request.toolRuns.map(run => `${run.name}${run.cancelled ? ' (no result)' : run.isError ? ' (failed)' : ''}`),
+			].filter(Boolean).join(', ');
+			return `${input} -> ${answer}`;
+		});
+		return { requests, lines };
+	}
+
+	test('a Claude turn becomes one Trajectory request per answer of its model', () => {
+		const { requests, lines } = replayTrajectory('claude-code', 'Claude', CLAUDE_EDIT_TURN);
+		assert.deepStrictEqual(lines.map(line => line.replace(/ -> .*/, '')), ['user', ...Array(lines.length - 1).fill('assistant+tool')], lines.join('\n'));
+		assert.ok(requests.length >= 3, lines.join('\n'));
+		assert.ok(lines.at(-1)!.endsWith('-> says'), 'the turn ends on its answer in words');
+		assert.ok(requests.every(request => request.endedAt !== undefined && request.toolRuns.every(run => run.endedAt !== undefined && !run.cancelled)), 'every request and call finished');
+		assert.ok(requests.slice(1).every(request => request.startedAt <= request.firstChunkAt!), 'each went out before it answered');
+		assert.strictEqual(requests.at(-1)!.finish, 'stop');
+		assert.ok(requests.slice(0, -1).every(request => request.finish === 'tool_calls'));
+		// What each request was given is what the previous one asked for.
+		for (let i = 1; i < requests.length; i++) {
+			const asked = requests[i - 1].toolRuns.map(run => run.callId);
+			const given = requests[i].messages.filter(message => message.role === 'tool').map(message => message.callId);
+			assert.deepStrictEqual(given, asked, lines.join('\n'));
+		}
+	});
+
+	test('a Cursor turn with thinking between its tools reads the same way', () => {
+		const { requests, lines } = replayTrajectory('cursor-acp', 'Cursor', CURSOR_EDIT_TURN);
+		assert.strictEqual(lines[0].split(' -> ')[0], 'user');
+		assert.ok(lines[0].includes('thinks'), lines.join('\n'));
+		assert.ok(requests.length >= 3, lines.join('\n'));
+		assert.ok(requests.every(request => request.toolRuns.every(run => !run.cancelled)), lines.join('\n'));
+		assert.strictEqual(requests.at(-1)!.finish, 'stop');
 	});
 });

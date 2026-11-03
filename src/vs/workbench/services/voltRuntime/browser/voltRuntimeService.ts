@@ -127,7 +127,7 @@ import { deepseekKnobs, resolveApproval } from '../common/deepseek/approval.js';
 import { VoltLlmAdapter } from './deepseek/voltLlmAdapter.js';
 import { buildSubagentPrompt, customSubagentPrompt, nativeModelTurn } from '../common/deepseek/prompt.js';
 import { ApprovalOutcome, StreamChunk } from '../common/deepseek/protocol.js';
-import { endToolRun, ITrajectoryRequest, ITrajectoryRequestInput, recordStream, startToolRun } from '../common/harness/trajectory.js';
+import { AgentTrajectoryRecorder, endToolRun, ITrajectoryRequest, ITrajectoryRequestInput, recordStream, startToolRun } from '../common/harness/trajectory.js';
 import { IVoltTrajectoryService } from '../common/trajectory.js';
 import './trajectoryService.js';
 import { turnWriteGate } from '../common/turnWriteGate.js';
@@ -4743,7 +4743,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					// An agent with no /compact of its own writes a hand-off summary that replaces the history.
 					voltCompaction = isCompactCommand(request.text) && !(provider.supportsCommand?.(handle, 'compact') ?? false);
 					const text = voltCompaction ? agentCompactionPrompt(compactInstructions(request.text)) : request.text;
-					const first = await this.agentTurn(session, run, provider, handle, profile, { text: request.mode === 'plan' ? withPlanModeInstruction(text) : text, mode: request.mode, lead, ...(images ? { images } : {}), ...(request.resources?.length ? { resources: request.resources } : {}) }, attempt === 0);
+					const first = await this.agentTurn(session, run, provider, handle, profile, item, { text: request.mode === 'plan' ? withPlanModeInstruction(text) : text, mode: request.mode, lead, ...(images ? { images } : {}), ...(request.resources?.length ? { resources: request.resources } : {}) }, attempt === 0);
 					if (first.kind === 'stale') {
 						return;
 					}
@@ -4762,7 +4762,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						if (!message || !this.isCurrent(session, run)) {
 							break;
 						}
-						const next = await this.agentTurn(session, run, provider, handle, profile, { text: message, mode: request.mode }, false);
+						const next = await this.agentTurn(session, run, provider, handle, profile, item, { text: message, mode: request.mode }, false);
 						if (next.kind === 'stale') {
 							return;
 						}
@@ -4821,7 +4821,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * provider's prompt settles on its own once the cancel reaches the agent, and the run is
 	 * settled only then, so the next prompt never overlaps it.
 	 */
-	private async agentTurn(session: ISessionState, run: IRunState, provider: IAgentProvider, handle: IAgentSessionHandle, profile: IProviderProfile, message: IAgentMessage, mayRestart: boolean): Promise<AgentTurnResult> {
+	private async agentTurn(session: ISessionState, run: IRunState, provider: IAgentProvider, handle: IAgentSessionHandle, profile: IProviderProfile, item: IVoltCatalogItem, message: IAgentMessage, mayRestart: boolean): Promise<AgentTurnResult> {
 		const token = run.cancel.token;
 		let assistant = '';
 		let textId: string | undefined;
@@ -4834,44 +4834,59 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			run.prompted = true;
 			this.emit(session, run.runId, { type: 'lifecycle', phase: 'running' });
 		}
-		for await (const event of provider.send(handle, message, profile, token)) {
-			if (!this.isCurrent(session, run)) {
-				continue;
-			}
-			if (event.type === 'run.end') {
-				if (!reason) {
-					reason = event.reason;
-					incomplete = event.incomplete;
+		// The agent keeps its own model requests; the Trajectory panel gets each answer as Volt sees it.
+		const trace = new AgentTrajectoryRecorder({
+			begin: input => this.trajectory.begin(input),
+			changed: () => this.trajectory.changed(session.sessionId),
+		}, { sessionId: session.sessionId, runId: run.runId, provider: provider.id, model: item.id, modelLabel: item.label, harness: provider.label });
+		trace.prompt(message.lead ? `${message.lead}\n\n${message.text}` : message.text, message.images);
+		try {
+			for await (const event of provider.send(handle, message, profile, token)) {
+				if (!this.isCurrent(session, run)) {
+					continue;
 				}
-				continue;
-			}
-			if (event.type === 'error' && mayRestart && !token.isCancellationRequested && isAcpTurnRestartable(event.message)) {
-				restart = true;
-				continue;
-			}
-			if (restart) {
-				continue;
-			}
-			if (event.type === 'text.delta' && event.delta) {
-				// Another message of the same turn is another paragraph, as the transcript shows it.
-				if (textId !== undefined && event.id !== textId && assistant && !assistant.endsWith('\n')) {
-					assistant += '\n\n';
+				if (event.type === 'run.end') {
+					if (!reason) {
+						reason = event.reason;
+						incomplete = event.incomplete;
+					}
+					continue;
 				}
-				textId = event.id;
-				assistant += event.delta;
+				if (event.type === 'error' && mayRestart && !token.isCancellationRequested && isAcpTurnRestartable(event.message)) {
+					restart = true;
+					continue;
+				}
+				if (restart) {
+					continue;
+				}
+				if (event.type === 'text.delta' && event.delta) {
+					// Another message of the same turn is another paragraph, as the transcript shows it.
+					if (textId !== undefined && event.id !== textId && assistant && !assistant.endsWith('\n')) {
+						assistant += '\n\n';
+					}
+					textId = event.id;
+					assistant += event.delta;
+				}
+				if (event.type === 'title' && session.agentJoinedLate === handle) {
+					// Codex titled a handed-off chat "<conversation_so_far> This conversation started...".
+					continue;
+				}
+				trace.event(event);
+				this.emitEngine(session, run, event);
 			}
-			if (event.type === 'title' && session.agentJoinedLate === handle) {
-				// Codex titled a handed-off chat "<conversation_so_far> This conversation started...".
-				continue;
-			}
-			this.emitEngine(session, run, event);
+		} catch (err) {
+			trace.end(token.isCancellationRequested ? 'abort' : 'fail', err instanceof Error ? err.message : String(err));
+			throw err;
 		}
 		if (!this.isCurrent(session, run)) {
+			trace.end('abort');
 			return { kind: 'stale' };
 		}
 		if (restart && reason !== 'done') {
+			trace.end('fail', 'The agent process died; Volt restarted it and sent the prompt again.');
 			return { kind: 'restart' };
 		}
+		trace.end(reason ?? 'done');
 		return { kind: 'end', reason: reason ?? 'done', assistant, ...(incomplete ? { incomplete } : {}) };
 	}
 

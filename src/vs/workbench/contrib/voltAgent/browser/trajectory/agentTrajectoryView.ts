@@ -21,7 +21,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IViewPaneOptions, ViewPane } from '../../../../browser/parts/views/viewPane.js';
 import { IViewDescriptorService } from '../../../../common/views.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
-import { cacheHitRatio, contextBreakdown, diffRequests, exportTrajectory, IRequestDiff, ITrajectoryRequest, ITrajectoryToolRun, messageText, promptTokens, summarize } from '../../../../services/voltRuntime/common/harness/trajectory.js';
+import { cacheHitRatio, contextBreakdown, diffRequests, exportTrajectory, IRequestDiff, ITrajectoryRequest, ITrajectoryToolRun, messageText, promptTokens, summarize, trajectoryRevision } from '../../../../services/voltRuntime/common/harness/trajectory.js';
 import { estimateTokens } from '../../../../services/voltRuntime/common/harness/contextEngine.js';
 import { INativeLoopMessage } from '../../../../services/voltRuntime/common/harness/nativeLoop.js';
 import { IVoltTrajectoryService } from '../../../../services/voltRuntime/common/trajectory.js';
@@ -150,7 +150,7 @@ export class AgentTrajectoryViewPane extends ViewPane {
 	private readonly expanded = new Set<string>();
 	/** Folds the user opened or closed, so a redraw while a request streams keeps them. */
 	private readonly folds = new Map<string, boolean>();
-	private renderedDetail: { id?: string; tab?: DetailTab } = {};
+	private renderedDetail: { id?: string; tab?: DetailTab; revision?: string } = {};
 
 	constructor(
 		options: IViewPaneOptions,
@@ -331,7 +331,7 @@ export class AgentTrajectoryViewPane extends ViewPane {
 				? localize('voltTrajectory.empty', "No model requests recorded for this chat yet")
 				: localize('voltTrajectory.off', "Trajectory recording is off");
 			append(empty, $('.hint')).textContent = this.trajectory.enabled
-				? localize('voltTrajectory.emptyHint', "Send a message to a model Volt runs itself (Claude, OpenAI, OpenRouter, Ollama and other API models). External agents such as Claude Code or Codex keep their own requests.")
+				? localize('voltTrajectory.emptyHint', "Send a message in this chat. Models Volt runs itself (Claude, OpenAI, OpenRouter, Ollama and other API models) show every request in full; agents such as Claude Code or Codex show each answer with its tool calls and usage.")
 				: localize('voltTrajectory.offHint', "Turn on volt.agent.trajectory.enabled to record model requests.");
 			return;
 		}
@@ -369,13 +369,16 @@ export class AgentTrajectoryViewPane extends ViewPane {
 			}
 			const meta = append(row, $('span.volt-traj-meta'));
 			const prompt = promptTokens(request.usage);
+			const tokens = prompt !== undefined ? `${formatTokens(prompt)}${ARROW}${formatTokens(request.usage?.output)}` : undefined;
 			const parts = [
 				request.step !== undefined ? localize('voltTrajectory.step', "step {0}", request.step) : undefined,
 				formatMs((request.endedAt ?? Date.now()) - request.startedAt),
-				prompt !== undefined ? `${formatTokens(prompt)}${ARROW}${formatTokens(request.usage?.output)}` : undefined,
+				tokens && request.usageScope === 'turn' ? localize('voltTrajectory.turnTokens', "turn {0}", tokens) : tokens,
 				cacheHitRatio(request.usage) !== undefined ? localize('voltTrajectory.cached', "{0} cached", formatPercent(cacheHitRatio(request.usage))) : undefined,
+				request.contextTokens !== undefined ? localize('voltTrajectory.contextShort', "context {0}", formatTokens(request.contextTokens)) : undefined,
 			].filter(Boolean);
 			meta.textContent = parts.join(DOT);
+			setAgentTooltip(meta, meta.textContent);
 			bar(row, request.startedAt, request.endedAt, `model.${state.className}`, request.firstChunkAt);
 			this.listStore.add(addDisposableListener(row, EventType.CLICK, () => this.select(request.id)));
 			for (const run of request.toolRuns) {
@@ -423,12 +426,14 @@ export class AgentTrajectoryViewPane extends ViewPane {
 
 	private renderDetail(requests: readonly ITrajectoryRequest[]): void {
 		const request = this.current(requests);
-		// A finished request on the same tab draws the same thing; keep its scroll and open folds.
-		if (request && this.renderedDetail.id === request.id && this.renderedDetail.tab === this.tab && !isLive(request) && this.detail.childElementCount) {
+		// A request that has not changed since it was drawn on this tab draws the same thing; keep its
+		// scroll and open folds. One drawn while live is drawn once more when it ends.
+		const revision = request && !isLive(request) ? trajectoryRevision(request) : undefined;
+		if (request && revision !== undefined && this.renderedDetail.id === request.id && this.renderedDetail.tab === this.tab && this.renderedDetail.revision === revision && this.detail.childElementCount) {
 			return;
 		}
 		const scrollTop = this.renderedDetail.id === request?.id ? this.detail.querySelector('.volt-traj-pane')?.scrollTop ?? 0 : 0;
-		this.renderedDetail = { id: request?.id, tab: this.tab };
+		this.renderedDetail = { id: request?.id, tab: this.tab, revision };
 		this.detailStore.clear();
 		clearNode(this.detail);
 		if (!request) {
@@ -449,7 +454,8 @@ export class AgentTrajectoryViewPane extends ViewPane {
 		}
 		const pane = append(this.detail, $('.volt-traj-pane'));
 		const previous = requests.slice(0, requests.indexOf(request)).reverse().find(candidate => candidate.agent === request.agent);
-		const diff = previous ? diffRequests(previous, request) : undefined;
+		// An agent's request holds only its new input: there is no whole prompt to compare.
+		const diff = previous && !request.harness && !previous.harness ? diffRequests(previous, request) : undefined;
 		switch (this.tab) {
 			case 'overview': this.renderOverview(pane, request, diff); break;
 			case 'prompt': this.renderPrompt(pane, request, diff); break;
@@ -515,6 +521,7 @@ export class AgentTrajectoryViewPane extends ViewPane {
 		const timing = this.section(pane, localize('voltTrajectory.timing', "Request"));
 		this.grid(timing, [
 			[localize('voltTrajectory.model', "Model"), `${request.modelLabel ?? request.model} (${request.provider}${DOT}${request.model})`],
+			request.harness ? [localize('voltTrajectory.harness', "Run by"), request.harness] : undefined,
 			request.agent ? [localize('voltTrajectory.agent', "Subagent"), request.agent] : undefined,
 			request.step !== undefined ? [localize('voltTrajectory.stepKey', "Step"), String(request.step)] : undefined,
 			[localize('voltTrajectory.started', "Started"), new Date(request.startedAt).toLocaleTimeString()],
@@ -525,22 +532,33 @@ export class AgentTrajectoryViewPane extends ViewPane {
 			request.maxOutputTokens ? [localize('voltTrajectory.maxOutput', "Output limit"), formatTokens(request.maxOutputTokens)] : undefined,
 		]);
 
-		const usage = this.section(pane, localize('voltTrajectory.usage', "Usage"));
+		const usage = this.section(pane, request.usageScope === 'turn' ? localize('voltTrajectory.turnUsage', "Usage of the whole turn") : localize('voltTrajectory.usage', "Usage"));
+		if (request.usageScope === 'turn') {
+			append(usage, $('.volt-traj-note')).textContent = localize('voltTrajectory.turnUsageNote', "{0} reports tokens once a turn, so these count every request of the turn.", request.harness ?? request.provider);
+		}
 		const prompt = promptTokens(request.usage);
 		this.grid(usage, [
-			[localize('voltTrajectory.prompt', "Prompt"), prompt !== undefined ? prompt.toLocaleString() : localize('voltTrajectory.notReported', "not reported yet")],
+			request.contextTokens !== undefined ? [localize('voltTrajectory.contextAfter', "Context after it"), request.contextWindow ? `${request.contextTokens.toLocaleString()} / ${request.contextWindow.toLocaleString()} (${formatPercent(request.contextTokens / request.contextWindow)})` : request.contextTokens.toLocaleString()] : undefined,
+			[localize('voltTrajectory.prompt', "Prompt"), prompt !== undefined ? prompt.toLocaleString() : request.harness && request.endedAt !== undefined ? localize('voltTrajectory.inTurnTotal', "in the turn's last request") : localize('voltTrajectory.notReported', "not reported yet")],
 			[localize('voltTrajectory.uncached', "Uncached input"), request.usage ? request.usage.input.toLocaleString() : '-'],
 			[localize('voltTrajectory.cacheRead', "Cache read"), request.usage?.cache !== undefined ? `${request.usage.cache.toLocaleString()} (${formatPercent(cacheHitRatio(request.usage))})` : '-'],
 			[localize('voltTrajectory.cacheWrite', "Cache write"), request.usage?.cacheWrite !== undefined ? request.usage.cacheWrite.toLocaleString() : '-'],
 			[localize('voltTrajectory.output', "Output"), request.usage ? request.usage.output.toLocaleString() : '-'],
 			request.costUsd !== undefined ? [localize('voltTrajectory.cost', "Cost"), formatCost(request.costUsd)] : undefined,
-			request.endedAt !== undefined && request.firstChunkAt !== undefined && request.usage?.output
+			// A turn's output came over all its requests, not this one's stream.
+			request.endedAt !== undefined && request.firstChunkAt !== undefined && request.usage?.output && request.usageScope !== 'turn'
 				? [localize('voltTrajectory.speed', "Speed"), localize('voltTrajectory.tokensPerSecond', "{0} tokens/s", Math.round(request.usage.output / Math.max(0.001, (request.endedAt - request.firstChunkAt) / 1_000)))]
 				: undefined,
 		]);
 
 		const change = this.section(pane, localize('voltTrajectory.sincePrevious', "Since the previous request"));
-		if (!diff) {
+		if (request.harness) {
+			const info = append(change, $('.volt-traj-callout.info'));
+			append(info, renderIcon(Codicon.info));
+			append(info, $('span')).textContent = localize('voltTrajectory.harnessPrompt', "{0} builds its own prompt (system prompt, tools and history). Volt sees what went into this request: {1}.", request.harness, request.messages.some(message => message.role === 'user')
+				? localize('voltTrajectory.harnessPromptUser', "the message sent to it")
+				: localize('voltTrajectory.harnessPromptTools', "the previous answer and {0} tool results", request.messages.filter(message => message.role === 'tool').length));
+		} else if (!diff) {
 			append(change, $('.volt-traj-note')).textContent = localize('voltTrajectory.first', "The first request of this agent here: everything in the prompt is new.");
 		} else {
 			if (diff.cacheBreak) {
@@ -589,6 +607,12 @@ export class AgentTrajectoryViewPane extends ViewPane {
 	}
 
 	private renderPrompt(pane: HTMLElement, request: ITrajectoryRequest, diff: IRequestDiff | undefined): void {
+		if (request.harness) {
+			append(pane, $('.volt-traj-note')).textContent = localize('voltTrajectory.harnessPromptTab', "{0} keeps its system prompt, tools and history to itself. This is the input new to this request, as Volt saw it.", request.harness);
+			const input = this.section(pane, localize('voltTrajectory.newInput', "New input ({0})", request.messages.length));
+			request.messages.forEach((message, i) => this.message(input, request, message, i, false, true));
+			return;
+		}
 		const system = this.section(pane, localize('voltTrajectory.systemPrompt', "System prompt ({0} tokens)", formatTokens(estimateTokens(request.system))));
 		this.fold(system, localize('voltTrajectory.systemFold', "System"), request.system, `${request.id}:system`, diff?.systemChanged ? 'changed' : undefined, !diff);
 		const messages = this.section(pane, localize('voltTrajectory.messages', "Messages ({0})", request.messages.length));
@@ -693,6 +717,12 @@ export class AgentTrajectoryViewPane extends ViewPane {
 				this.toolLine(summary, run);
 			}
 		}
+		if (request.harness) {
+			append(pane, $('.volt-traj-note')).textContent = request.toolRuns.length
+				? localize('voltTrajectory.harnessTools', "{0} offers its model its own tools; their schemas are not visible to Volt.", request.harness)
+				: localize('voltTrajectory.harnessNoTools', "This answer asked for no tools. {0} offers its model its own tools; their schemas are not visible to Volt.", request.harness);
+			return;
+		}
 		const schemas = this.section(pane, localize('voltTrajectory.schemas', "Tools offered ({0}, {1} tokens)", request.tools.length, formatTokens(estimateTokens(JSON.stringify(request.tools)))));
 		const sorted = request.tools.slice().sort((a, b) => JSON.stringify(b).length - JSON.stringify(a).length);
 		for (const tool of sorted) {
@@ -702,6 +732,20 @@ export class AgentTrajectoryViewPane extends ViewPane {
 	}
 
 	private renderContext(pane: HTMLElement, request: ITrajectoryRequest): void {
+		if (request.harness) {
+			const section = this.section(pane, localize('voltTrajectory.harnessContext', "Context"));
+			if (request.contextTokens !== undefined) {
+				this.grid(section, [
+					[localize('voltTrajectory.contextAfter', "Context after it"), request.contextTokens.toLocaleString()],
+					request.contextWindow ? [localize('voltTrajectory.contextWindow', "Context window"), `${request.contextWindow.toLocaleString()} (${formatPercent(request.contextTokens / request.contextWindow)} used)`] : undefined,
+				]);
+			}
+			append(section, $('.volt-traj-note')).textContent = request.contextTokens !== undefined
+				? localize('voltTrajectory.harnessContextNote', "As {0} reported it. Its prompt is its own, so Volt cannot break it down by source.", request.harness)
+				: localize('voltTrajectory.harnessNoContext', "{0} did not report its context size for this request, and its prompt is its own, so Volt cannot break it down by source.", request.harness);
+			this.largestMessages(pane, request, localize('voltTrajectory.largestInput', "Largest new input"));
+			return;
+		}
 		const breakdown = contextBreakdown(request);
 		const prompt = promptTokens(request.usage);
 		const section = this.section(pane, prompt !== undefined
@@ -729,13 +773,17 @@ export class AgentTrajectoryViewPane extends ViewPane {
 			append(item, $('span.value')).textContent = `${formatTokens(part.value)} (${formatPercent(part.value / Math.max(1, breakdown.total))})`;
 		}
 		// The heaviest messages: what compaction or clearing would free first.
+		this.largestMessages(pane, request, localize('voltTrajectory.largest', "Largest messages"));
+	}
+
+	private largestMessages(pane: HTMLElement, request: ITrajectoryRequest, title: string): void {
 		const heavy = request.messages
 			.map((message, index) => ({ message, index, tokens: estimateTokens(messageText(message)) }))
 			.sort((a, b) => b.tokens - a.tokens)
 			.slice(0, 8)
 			.filter(entry => entry.tokens > 0);
 		if (heavy.length) {
-			const largest = this.section(pane, localize('voltTrajectory.largest', "Largest messages"));
+			const largest = this.section(pane, title);
 			for (const entry of heavy) {
 				const line = append(largest, $('.volt-traj-tool-line'));
 				append(line, $('span.index')).textContent = `#${entry.index + 1}`;
