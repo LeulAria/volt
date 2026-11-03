@@ -51,6 +51,7 @@ import { createBrandIcon } from '../../../../services/voltRuntime/browser/provid
 import { canonicalProjectRoot, IVoltProjectRecord, IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { IRecentFolder, IRecentWorkspace, IWorkspacesService, isRecentFolder, isRecentWorkspace } from '../../../../../platform/workspaces/common/workspaces.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID, OPEN_AGENT_IN_NEW_WINDOW_COMMAND_ID } from '../editor/agentEditorInput.js';
+import { onDidChangeShownAgentChat, shownAgentChat } from '../editor/agentShownChat.js';
 import { OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
 import { appendAgentFooterActions } from './agentHomeFooterActions.js';
@@ -332,6 +333,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.settings.classList.add('hidden');
 		template.add.classList.add('hidden');
 		template.container.classList.remove(...ROW_STATE_CLASSES);
+		delete template.container.dataset.chatId;
 		template.container.style.setProperty('--volt-home-level', String(rowLevel(node.element)));
 		template.container.classList.toggle('collapsed', !!node.collapsed);
 
@@ -522,7 +524,8 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.container.classList.toggle('unread', !!session.unread);
 		template.container.classList.toggle('archived', !!session.archived);
 		template.container.classList.toggle('pinned', !!session.pinned);
-		template.container.classList.toggle('active-chat', this.host.isActiveChat(session.id));
+		template.container.dataset.chatId = session.id;
+		template.container.classList.toggle('active-chat', this.host.isShownChat(session.id));
 
 		// Agent tabs start at the title: no glyph slot. A flat row names its project on the second line;
 		// under a project the row steps in past the folder's icon instead (agentHomePane.css).
@@ -625,7 +628,8 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.container.classList.add('is-session', 'is-run-member', element.nested ? 'is-nested' : 'is-flat', 'shelf-active');
 		template.container.classList.toggle('run-winner', !!member.winner);
 		template.container.classList.toggle('run-discarded', !!member.discarded);
-		template.container.classList.toggle('active-chat', this.host.isActiveChat(member.sessionId));
+		template.container.dataset.chatId = member.sessionId;
+		template.container.classList.toggle('active-chat', this.host.isShownChat(member.sessionId));
 		template.glyph.appendChild(createBrandIcon(member.family, 13));
 		template.name.textContent = member.winner ? localize('voltAgent.home.runWinner', "{0} · Winner", member.label) : member.label;
 		const twoLine = this.host.twoLine;
@@ -1210,11 +1214,10 @@ export class AgentHomePane extends Disposable {
 		this.cloudAnchor = parent;
 		this.cloudMenu = instantiationService.createInstance(AgentCloudTaskMenu);
 		this._register(this.editorService.onDidEditorsChange(() => this.scheduleRefresh()));
-		// A switch moves the highlight on the next frame; the rebuild waits for the chat to draw.
-		this._register(this.editorService.onDidActiveEditorChange(() => {
-			this.scheduleRowsRerender();
-			this.scheduleRefresh();
-		}));
+		// The highlight moves in the task that draws the chat, so row and transcript change in one frame;
+		// the rebuild waits until the window is idle.
+		this._register(onDidChangeShownAgentChat(() => this.syncShownRows()));
+		this._register(this.editorService.onDidActiveEditorChange(() => this.scheduleRefresh()));
 		this._register(onDidChangeAgentToolEditors(() => this.scheduleRefresh()));
 		this._register(this.voltSessionContext.onDidChangeProjects(() => this.scheduleRefresh()));
 		this._register(this.voltSessionContext.onDidChangeActiveProject(() => {
@@ -1902,10 +1905,76 @@ export class AgentHomePane extends Disposable {
 		void showAgentProjectMenu(this.instantiationService, anchor, this.voltSessionContext.activeProject?.root);
 	}
 
-	/** The open chat keeps its highlight from the active editor, not list selection (clicking elsewhere clears that). */
+	/** The chat picked last: a press on it does not open it again. It may still be loading (see isShownChat). */
 	isActiveChat(sessionId: string): boolean {
 		const active = this.editorGroupsService.mainPart.activeGroup?.activeEditor;
 		return active instanceof AgentEditorInput && active.sessionId === sessionId;
+	}
+
+	/**
+	 * The chat on screen keeps the highlight, not list selection (clicking elsewhere clears that). A
+	 * picked chat takes it once its transcript is drawn, never before.
+	 */
+	isShownChat(sessionId: string): boolean {
+		return shownAgentChat() === sessionId;
+	}
+
+	/** The chat on screen a build was asked to add a row for (see syncShownRows). */
+	private rowBuiltFor: string | undefined;
+	/** That build scrolls the new row into view. */
+	private revealAfterBuild: string | undefined;
+
+	/**
+	 * Moves the highlight on the rows drawn now, in the task that drew the chat. A chat whose row is
+	 * scrolled out of its list is scrolled into view, so the highlight is always there to see.
+	 */
+	private syncShownRows(): void {
+		const shown = shownAgentChat();
+		for (const row of this.element.querySelectorAll<HTMLElement>('.volt-agent-home-row.active-chat')) {
+			if (row.dataset.chatId !== shown) {
+				row.classList.remove('active-chat');
+			}
+		}
+		if (!shown) {
+			return;
+		}
+		let drawn = false;
+		for (const row of this.element.querySelectorAll<HTMLElement>('.volt-agent-home-row[data-chat-id]')) {
+			if (row.dataset.chatId === shown) {
+				row.classList.add('active-chat');
+				drawn = true;
+			}
+		}
+		if (drawn) {
+			return;
+		}
+		if (this.findSession(shown)) {
+			this.revealShownRow(shown);
+			return;
+		}
+		// Past its group's Show more the chat has no row yet: a build now adds one (see `keep`), before
+		// this frame paints, rather than when the window is next idle. Once per chat: one a filter
+		// hides has no row after the build either.
+		if (this.rowBuiltFor !== shown && this.history.get(shown)) {
+			this.rowBuiltFor = shown;
+			this.revealAfterBuild = shown;
+			void this.refresh();
+		}
+	}
+
+	/** Scrolls the chat's row into view in its group's list. A group the user folded stays folded. */
+	private revealShownRow(sessionId: string): void {
+		const found = this.findSession(sessionId);
+		const tree = found?.pane.isExpanded() ? found.pane.tree : undefined;
+		if (!found || !tree?.hasElement(found.element)) {
+			return;
+		}
+		for (let parent = tree.getParentElement(found.element); parent; parent = tree.getParentElement(parent)) {
+			if (tree.isCollapsed(parent)) {
+				return;
+			}
+		}
+		tree.reveal(found.element);
 	}
 
 	/** Where a session lives, as far as the row can tell: repository or folder name, branch, short project name. */
@@ -2394,7 +2463,7 @@ export class AgentHomePane extends Disposable {
 		const runGroups = this.homeRunGroups(sessions);
 		this.live = agentHomeLiveWork(this.orchestrator.getState());
 		const groupMembers = new Map<string, readonly string[]>();
-		const tree = [...buildCloudHomeNodes(this.cloud.tasks), ...buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, prTags, runGroups, workingShelf: this.workingSection, live: this.live, manualOrder: this.manualOrder, groupMembers })];
+		const tree = [...buildCloudHomeNodes(this.cloud.tasks), ...buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, keep: shownAgentChat(), prTags, runGroups, workingShelf: this.workingSection, live: this.live, manualOrder: this.manualOrder, groupMembers })];
 		this.groupMembers = groupMembers;
 		const reinsert = this.builtTwoLine !== undefined && this.builtTwoLine !== this.twoLine;
 		this.builtTwoLine = this.twoLine;
@@ -2402,6 +2471,11 @@ export class AgentHomePane extends Disposable {
 		this.revealActiveNewChat();
 		this.syncFilterButton();
 		this.layout();
+		const reveal = this.revealAfterBuild;
+		this.revealAfterBuild = undefined;
+		if (reveal !== undefined && reveal === shownAgentChat()) {
+			this.revealShownRow(reveal);
+		}
 	}
 
 	/**

@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { deriveTitle } from '../../common/history/agentHistoryLog.js';
-import { buildTitlePrompt, sanitizeTitle, titleCommandFor } from '../../common/history/titleGeneration.js';
+import { buildTitlePrompt, isNeutralTitle, isVagueMessage, sanitizeTitle, titleCommandFor } from '../../common/history/titleGeneration.js';
 
 suite('Volt chat title generation', () => {
 	ensureNoDisposablesAreLeakedInTestSuite();
@@ -30,6 +30,38 @@ suite('Volt chat title generation', () => {
 		assert.ok(prompt.length < 6000);
 	});
 
+	test('the prompt asks for a title that says what the task is', () => {
+		const prompt = buildTitlePrompt('hi');
+		assert.ok(prompt.includes('start with a verb (Fix, Add, Speed up, Refactor, Debug, Explain, Compare, Write)'));
+		assert.ok(prompt.includes('3 to 7 words, under 50 characters, sentence case'));
+		assert.ok(prompt.includes('title the main task (the first or the largest), not a list'));
+		assert.ok(prompt.includes('"How the stash restores chats"'));
+		assert.ok(prompt.includes('-> Fix doubled run command card borders'));
+		assert.ok(prompt.includes('such as "Quick question"'));
+	});
+
+	test('a retry carries the first and the latest message, the latest with the room left', () => {
+		const prompt = buildTitlePrompt(['hey\n[Image #1 "a.png" is saved at: /tmp/a.png]', 'skip', `the sidebar jumps ${'y'.repeat(10_000)} on finish`], ['b.png']);
+		assert.ok(prompt.includes('First message:\nhey\n\nLatest message:\nthe sidebar jumps'));
+		assert.ok(prompt.includes('on finish'));
+		assert.ok(!prompt.includes('User message:'));
+		assert.ok(!prompt.includes('skip'));
+		assert.ok(!prompt.includes('/tmp/a.png'));
+		assert.ok(prompt.endsWith('Attached: b.png'));
+		assert.ok(prompt.length < 6000);
+		assert.ok(buildTitlePrompt(['', 'fix it']).includes('First message:\n(no text)'));
+	});
+
+	test('a message of a few words is vague, and so is a neutral title', () => {
+		assert.strictEqual(isVagueMessage('hi'), true);
+		assert.strictEqual(isVagueMessage('[Image #1: shot.png] fix this'), true);
+		assert.strictEqual(isVagueMessage('[Image #1 "a.png" is saved at: /tmp/a.png]\ncontinue please ?'), true);
+		assert.strictEqual(isVagueMessage('fix the doubled card borders'), false);
+		assert.strictEqual(isNeutralTitle('Quick question'), true);
+		assert.strictEqual(isNeutralTitle(' quick question '), true);
+		assert.strictEqual(isNeutralTitle('Fix doubled run command card borders'), false);
+	});
+
 	test('replies are cleaned into one short line', () => {
 		assert.strictEqual(sanitizeTitle('"Run command card border fix."\n'), 'Run command card border fix');
 		assert.strictEqual(sanitizeTitle('Title: **GitHub OAuth login**'), 'GitHub OAuth login');
@@ -40,7 +72,10 @@ suite('Volt chat title generation', () => {
 		assert.strictEqual(sanitizeTitle('<traced_as_tool_call>'), undefined);
 		assert.strictEqual(sanitizeTitle('<tool_call name="x"></tool_call>'), undefined);
 		assert.strictEqual(sanitizeTitle('Fix <Button> focus ring'), 'Fix <Button> focus ring');
-		assert.ok(sanitizeTitle('word '.repeat(30))!.length <= 48);
+		const long = sanitizeTitle('word '.repeat(30))!;
+		assert.ok(long.length <= 56 && long.length > 48, 'cut at 56 characters');
+		assert.ok(long.endsWith('word…'), 'at a word boundary');
+		assert.strictEqual(sanitizeTitle('Add GitHub OAuth login to the settings page header'), 'Add GitHub OAuth login to the settings page header');
 	});
 
 	test('only agents with a print mode get a title command', () => {

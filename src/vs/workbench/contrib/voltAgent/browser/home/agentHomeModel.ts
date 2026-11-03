@@ -123,6 +123,8 @@ export interface IAgentHomeTreeOptions {
 	readonly repos?: ReadonlyMap<string, IAgentRepoInfo>;
 	/** Rows shown per group, by group key; groups start at {@link AGENT_HOME_GROUP_LIMIT}. */
 	readonly limits?: ReadonlyMap<string, number>;
+	/** The chat on screen: its row shows even past its group's Show more, so its highlight is always there. */
+	readonly keep?: string;
 	/** What each session's linked pull requests add up to, for the PR filter. Absent: "No PR". */
 	readonly prTags?: ReadonlyMap<string, AgentHomePrFilter>;
 	/** Run groups: each replaces its runs' rows with one row that folds out into them. */
@@ -534,7 +536,7 @@ function buildHomeTree(
 		if (shelvesAsBuckets) {
 			if (working.length) {
 				// Working keeps the order work was sent in; its rows do not drag into another order.
-				body.push(bucketNode('working', statusBucketLabel('working'), working, { limits: options.limits }, { add: true, collapsed: true, count: working.length }));
+				body.push(bucketNode('working', statusBucketLabel('working'), working, { limits: options.limits, keep: options.keep }, { add: true, collapsed: true, count: working.length }));
 			}
 			body.push(...done);
 			for (const shelf of AGENT_HOME_SHELVES) {
@@ -597,8 +599,8 @@ interface IBucketNodeOptions {
 	readonly count?: number;
 }
 
-/** How a group pages its rows, and where it notes its whole list for dragging (see {@link IAgentHomeTreeOptions}). */
-type AgentHomePaging = Pick<IAgentHomeTreeOptions, 'limits' | 'groupMembers'>;
+/** How a group pages its rows, the row that shows regardless, and where it notes its whole list for dragging (see {@link IAgentHomeTreeOptions}). */
+type AgentHomePaging = Pick<IAgentHomeTreeOptions, 'limits' | 'keep' | 'groupMembers'>;
 
 function bucketNode(
 	id: string,
@@ -684,6 +686,11 @@ function pagedSessionNodes(
 	paging.groupMembers?.set(groupKey, sessions.map(session => session.id));
 	const max = paging.limits?.get(groupKey) ?? defaultLimit;
 	const shown = sessions.slice(0, max);
+	// The chat on screen keeps its row past Show more: it goes last, above the Show more row.
+	const kept = paging.keep !== undefined && sessions.length > max ? sessions.slice(max).find(session => session.id === paging.keep) : undefined;
+	if (kept) {
+		shown.push(kept);
+	}
 	const nodes: IAgentHomeNode[] = shown.map(session => ({ element: { type: 'session' as const, session, folderKey: groupKey, nested } }));
 	if (sessions.length > shown.length) {
 		nodes.push({ element: { type: 'more', groupKey, hidden: sessions.length - shown.length, nested } });

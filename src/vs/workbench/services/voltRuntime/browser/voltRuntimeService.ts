@@ -22,7 +22,7 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../platfo
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IAgentWorktreeService } from '../common/git/agentWorktree.js';
 import { IAgentHistoryService } from '../common/history/agentHistory.js';
-import { buildTitlePrompt, sanitizeTitle, titleCommandFor } from '../common/history/titleGeneration.js';
+import { buildTitlePrompt, isNeutralTitle, isVagueMessage, sanitizeTitle, titleCommandFor } from '../common/history/titleGeneration.js';
 import { PREDICTOR_SKILL, predictorRequest, PredictorTask } from '../common/prediction/predictorSkill.js';
 import { IPredictorLaunch, PredictorAgent } from './prediction/predictorAgent.js';
 import { normalizeCursorModelId } from '../common/harness/cursorQuota.js';
@@ -348,6 +348,12 @@ interface ISessionState extends IVoltSession {
 	moved?: { readonly model: string; readonly announce: string; readonly announced?: boolean };
 	/** A title was requested from the first message; set once it landed, so the agent's own titles stop replacing it. */
 	titleState?: 'pending' | 'done';
+	/**
+	 * The first message named little or its title came back neutral ("Quick question"): 'due' titles
+	 * the chat again from the first two messages on the next send, once. 'sent' once that call
+	 * started, 'named' once its title landed, so a late first title cannot replace it.
+	 */
+	titleRetry?: 'due' | 'sent' | 'named';
 	/** Agent sessions of models the chat moved away from; switching back resumes one with only the turns it missed. */
 	parkedAgents?: IParkedAgent[];
 	/** The chat was forked from another: its first agent is briefed as a fork. */
@@ -1103,22 +1109,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		session.messages.push({ role: 'user', content: request.text });
 		const catalogItem = this.catalog.find(item => item.ref === session.providerRef && item.enabled) ?? this.catalog.find(item => item.enabled);
-		if (!session.titleState && session.messages.filter(message => message.role === 'user').length === 1) {
+		const userMessages = session.messages.filter(message => message.role === 'user');
+		if (!session.titleState && userMessages.length === 1) {
 			session.titleState = 'pending';
-			const pinned = this.taskModels.title ? this.catalog.find(item => item.ref === this.taskModels.title && item.enabled) : undefined;
-			const titleItem = pinned ?? catalogItem;
-			const start = () => void this.generateTitle(session, request, titleItem, !!pinned);
-			if (titleItem?.kind === 'agent') {
-				// A CLI title is a process start (`claude -p`, `codex exec`): it waits for the first reply
-				// text, or the end of the run, so it does not compete with the turn's own startup.
-				this.deferredTitles.set(session.sessionId, { start, until: 'reply' });
-			} else if (titleItem && titleItem.profileId === catalogItem?.profileId && servedLocally(this.profiles.find(p => p.id === titleItem.profileId))) {
-				// One local server runs one request at a time: sent first, the title would hold up the
-				// run's first step, and between steps it would evict the run's cached prompt.
-				this.deferredTitles.set(session.sessionId, { start, until: 'end' });
-			} else {
-				start();
-			}
+			session.titleRetry = isVagueMessage(request.text) ? 'due' : undefined;
+			this.startTitle(session, catalogItem, buildTitlePrompt(request.text, attachmentNames(request)), true);
+		} else if (session.titleRetry === 'due' && userMessages.length > 1) {
+			// The first message named little; with the next one the title can say what the chat is for.
+			session.titleRetry = 'sent';
+			this.startTitle(session, catalogItem, buildTitlePrompt([userMessages[0].content, request.text], attachmentNames(request)), false);
 		}
 		const engine = catalogItem?.kind === 'agent' ? 'agent' : 'native';
 		const run = this.beginRun(session, request.mode, engine, sendAt);
@@ -1165,20 +1164,40 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return run.runId;
 	}
 
+	/** Starts a title call for the send being made, or holds it where it would slow the run down. */
+	private startTitle(session: ISessionState, catalogItem: IVoltCatalogItem | undefined, prompt: string, first: boolean): void {
+		const pinned = this.taskModels.title ? this.catalog.find(item => item.ref === this.taskModels.title && item.enabled) : undefined;
+		const titleItem = pinned ?? catalogItem;
+		const start = () => void this.generateTitle(session, prompt, titleItem, !!pinned, first);
+		if (titleItem?.kind === 'agent') {
+			// A CLI title is a process start (`claude -p`, `codex exec`): it waits for the first reply
+			// text, or the end of the run, so it does not compete with the turn's own startup.
+			this.deferredTitles.set(session.sessionId, { start, until: 'reply' });
+		} else if (titleItem && titleItem.profileId === catalogItem?.profileId && servedLocally(this.profiles.find(p => p.id === titleItem.profileId))) {
+			// One local server runs one request at a time: sent first, the title would hold up the
+			// run's first step, and between steps it would evict the run's cached prompt.
+			this.deferredTitles.set(session.sessionId, { start, until: 'end' });
+		} else {
+			start();
+		}
+	}
+
 	/**
 	 * Names the chat from its first message while the agent works on it: one small call with no
 	 * tools. It runs on the text generation model when one is pinned in Settings, as that model
 	 * with its saved options; otherwise on the chat's own provider (Haiku for Claude, low effort
 	 * for Codex, the native model at its lowest reasoning). Failures keep the first-line title.
+	 * `first` is false for the one retry from the first two messages (see titleRetry).
 	 */
-	private async generateTitle(session: ISessionState, request: IVoltSendRequest, item: IVoltCatalogItem | undefined, pinned: boolean): Promise<void> {
+	private async generateTitle(session: ISessionState, prompt: string, item: IVoltCatalogItem | undefined, pinned: boolean, first: boolean): Promise<void> {
 		// cursor-agent has no light print mode: a title call carries its whole ~16k-token agent prompt
 		// (5 cents on Grok 4.7, measured 2026-10-09). Without a pinned title model the first line stays the title.
 		if (!pinned && this.profiles.find(p => p.id === item?.profileId)?.providerId === 'cursor-acp') {
-			session.titleState = undefined;
+			if (session.titleState === 'pending') {
+				session.titleState = undefined;
+			}
 			return;
 		}
-		const prompt = buildTitlePrompt(request.text, attachmentNames(request));
 		let raw: string | undefined;
 		try {
 			raw = await this.generateWith(item, pinned, prompt, TITLE_TIMEOUT_MS, 2000);
@@ -1187,8 +1206,19 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		const title = sanitizeTitle(raw);
 		if (!title) {
-			session.titleState = undefined;
+			// A failed retry keeps the title the first message got.
+			if (session.titleState === 'pending') {
+				session.titleState = undefined;
+			}
 			return;
+		}
+		if (!first) {
+			session.titleRetry = 'named';
+		} else if (session.titleRetry === 'named') {
+			// A slow first title landing after the retry's would put the vague one back.
+			return;
+		} else if (!session.titleRetry && isNeutralTitle(title)) {
+			session.titleRetry = 'due';
 		}
 		session.titleState = 'done';
 		await this.history.setAgentTitle(session.sessionId, title);

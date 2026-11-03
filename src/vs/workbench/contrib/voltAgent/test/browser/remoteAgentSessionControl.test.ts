@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
-import { Emitter } from '../../../../../base/common/event.js';
+import { Emitter, Event } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { ISessionPatch, ISessionState, SessionPatcher, SessionTopicData } from '../../../../../platform/voltAgentServer/common/sessionPatch.js';
@@ -30,6 +30,10 @@ class FakeServer {
 	readonly onDidResync = new Emitter<IAgentServerResync>();
 	/** Patches published while the next `session.open` is in flight. */
 	duringOpen: (() => void) | undefined;
+	/** Publishes patches as edits (what Volt's windows get) instead of whole messages. */
+	compact = false;
+	/** While set, `session.open` waits for it. */
+	openGate: Promise<void> | undefined;
 
 	constructor() {
 		this.patcher.reset(this.json());
@@ -41,7 +45,8 @@ class FakeServer {
 
 	/** The server changed its messages: publish what changed. */
 	publish(): ISessionPatch | undefined {
-		const patch = this.patcher.diff(this.json());
+		const patches = this.patcher.diffPatches(this.json());
+		const patch = this.compact ? patches?.compact : patches?.full;
 		if (patch) {
 			this.onSessionEvent.fire({ type: 'patch', ...patch });
 		}
@@ -54,9 +59,11 @@ class FakeServer {
 			isReady: true,
 			onSessionEvent: this.onSessionEvent.event,
 			onDidResync: this.onDidResync.event,
+			onDidChangeState: Event.None,
 			call: async (method: string, ...args: unknown[]) => {
 				this.calls.push({ method, args });
 				if (method === 'session.open') {
+					await this.openGate;
 					const state: ISessionState = { id: 's1', rev: this.patcher.rev, messages: this.json(), running: true };
 					const during = this.duringOpen;
 					this.duringOpen = undefined;
@@ -118,6 +125,36 @@ suite('RemoteAgentSessionControl', () => {
 		assert.deepStrictEqual(changes, ['render']);
 	});
 
+	test('chats on one client share one listener, and each hears only its own events', async () => {
+		const server = new FakeServer();
+		store.add({ dispose: () => server.dispose() });
+		let subscriptions = 0;
+		const client = {
+			...server.client(),
+			onSessionEvent: (listener: (data: SessionTopicData) => void) => {
+				subscriptions++;
+				return server.onSessionEvent.event(listener);
+			},
+		} as IAgentServerClientService;
+		const hostOf = (sessionId: string) => ({ sessionId, messages: [] as IAgentMessage[], contextUsed: undefined, contextWindow: undefined, recordAssistant: () => { } });
+		const first = new RemoteAgentSessionControl(hostOf('s1') as never, client);
+		const second = new RemoteAgentSessionControl(hostOf('s2') as never, client);
+		const heard: string[] = [];
+		const listeners = new DisposableStore();
+		listeners.add(first.onDidChange(() => heard.push('s1')));
+		listeners.add(second.onDidChange(() => heard.push('s2')));
+		await first.loadTranscript();
+		server.messages.push(reply('t1', 'Hi'));
+		server.publish();
+		assert.deepStrictEqual(heard, ['s1']);
+		assert.strictEqual(subscriptions, 1);
+		first.dispose();
+		assert.ok(server.onSessionEvent.hasListeners(), 'the other chat still listens');
+		second.dispose();
+		listeners.dispose();
+		assert.ok(!server.onSessionEvent.hasListeners(), 'the listener goes with the last chat');
+	});
+
 	test('a missed patch reopens the chat and catches up', async () => {
 		const { server, host, control } = setUp(store);
 		await control.loadTranscript();
@@ -157,6 +194,73 @@ suite('RemoteAgentSessionControl', () => {
 		server.publish();
 		assert.deepStrictEqual(local.blockState['b1'], { expanded: true });
 		assert.strictEqual((local.segments[1] as { block: { expanded: boolean } }).block.expanded, true);
+	});
+
+	test('edits stream a reply in place and keep what the reader opened', async () => {
+		const { server, host, control, changes } = setUp(store);
+		server.compact = true;
+		const agent = reply('t1', 'He');
+		agent.segments.push({ kind: 'block', block: { type: 'tool', id: 'b1', expanded: false, output: 'o'.repeat(2000) } } as never);
+		server.messages.push(agent);
+		server.patcher.reset(server.json());
+		await control.loadTranscript();
+		const local = host.messages[1] as IAgentAssistantMessage;
+		const segments = local.segments;
+		local.blockState['b1'] = { expanded: true };
+		(local.segments[1] as { block: { expanded: boolean } }).block.expanded = true;
+		(server.messages[1] as IAgentAssistantMessage).segments[0] = { kind: 'text', text: 'Hello' };
+		(server.messages[1] as IAgentAssistantMessage).blockState = { b1: { expanded: false } };
+		const patch = server.publish()!;
+		assert.ok(patch.edit?.length && !patch.set.length, 'sent as edits');
+		assert.strictEqual(host.messages[1], local);
+		assert.strictEqual(local.segments, segments);
+		assert.deepStrictEqual(local.segments[0], { kind: 'text', text: 'Hello' });
+		assert.deepStrictEqual(local.blockState['b1'], { expanded: true });
+		assert.strictEqual((local.segments[1] as { block: { expanded: boolean } }).block.expanded, true);
+		assert.deepStrictEqual(changes, ['render']);
+	});
+
+	test('an edit that does not fit what the window holds reloads the chat', async () => {
+		const { server, host, control } = setUp(store);
+		server.compact = true;
+		server.messages.push(reply('t1', 'a reply that is long enough for edits'));
+		server.patcher.reset(server.json());
+		await control.loadTranscript();
+		(host.messages[1] as IAgentAssistantMessage).segments[0] = { kind: 'text', text: 'drifted' };
+		(server.messages[1] as IAgentAssistantMessage).segments[0] = { kind: 'text', text: 'a reply that is long enough for edits, and more' };
+		server.publish();
+		await new Promise(resolve => setTimeout(resolve, 0));
+		assert.strictEqual(server.calls.filter(c => c.method === 'session.open').length, 2);
+		assert.deepStrictEqual((host.messages[1] as IAgentAssistantMessage).segments[0], { kind: 'text', text: 'a reply that is long enough for edits, and more' });
+	});
+
+	test('the chat on screen is told to the server; after a reconnect it reloads first and the rest take turns', async () => {
+		const server = new FakeServer();
+		store.add({ dispose: () => server.dispose() });
+		const client = server.client();
+		const controls = Array.from({ length: 7 }, (_, n) => store.add(new RemoteAgentSessionControl({ sessionId: `s${n}`, messages: [], contextUsed: undefined, contextWindow: undefined, recordAssistant: () => { } } as never, client)));
+		for (const control of controls) {
+			await control.loadTranscript();
+		}
+		const shown = controls[6].watch();
+		assert.deepStrictEqual(server.calls.filter(c => c.method === 'session.watch').map(c => c.args[0]), [['s6']]);
+
+		let release!: () => void;
+		server.openGate = new Promise(resolve => release = resolve);
+		const before = server.calls.length;
+		server.onDidResync.fire({ newEpoch: true });
+		const reopened = () => server.calls.slice(before).filter(c => c.method === 'session.open').length;
+		await new Promise(resolve => setTimeout(resolve, 0));
+		assert.strictEqual(reopened(), 1 + 4, 'the shown chat, then four of the others at a time');
+		release();
+		server.openGate = undefined;
+		for (let i = 0; i < 20 && reopened() < 7; i++) {
+			await new Promise(resolve => setTimeout(resolve, 0));
+		}
+		assert.strictEqual(reopened(), 7);
+
+		shown.dispose();
+		assert.deepStrictEqual(server.calls.filter(c => c.method === 'session.watch').map(c => c.args[0]), [['s6'], []]);
 	});
 
 	test('a view\'s own change to the transcript goes to the server; lifecycle events pass through', async () => {

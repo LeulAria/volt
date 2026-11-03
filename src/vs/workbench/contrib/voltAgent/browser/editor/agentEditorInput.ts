@@ -262,8 +262,10 @@ export class AgentEditorInput extends EditorInput {
 
 	/** Matches the runtime session key so history and runtime share one id. */
 	get sessionId(): string {
-		return this.resource.path.replace(/\//g, '') || 'agent';
+		// Read for every event of every chat: worked out once, as the resource never changes.
+		return this._sessionId ??= this.resource.path.replace(/\//g, '') || 'agent';
 	}
+	private _sessionId: string | undefined;
 
 	//#region History
 

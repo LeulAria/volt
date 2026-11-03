@@ -115,7 +115,9 @@ export class AgentServerClient extends Disposable implements IAgentServerClientS
 				case 'col':
 					this.mirror.applyDelta(fromWire<ICollectionDelta>(event.data));
 					break;
+				// The same events; a server that has `sessionEdits` sends this window only those.
 				case 'session':
+				case 'sessionEdits':
 					this._onSessionEvent.fire(event.data as SessionTopicData);
 					break;
 				case 'runtime.event':

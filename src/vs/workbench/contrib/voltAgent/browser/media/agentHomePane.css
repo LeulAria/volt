@@ -478,8 +478,8 @@
 	box-shadow: none !important;
 }
 
-/* No solid row fills: the sidebar is see-through. Hover and list selection paint nothing; the open chat
- * gets a faint tint from the active editor (.active-chat), so clicking elsewhere in the sidebar keeps it. */
+/* No solid row fills: the sidebar is see-through. Hover and list selection paint nothing; the chat on
+ * screen gets a faint tint (.active-chat, set once its transcript is drawn), so clicking elsewhere keeps it. */
 .volt-agent-home-tree .monaco-list-row,
 .volt-agent-home-tree .monaco-list-row:hover,
 .volt-agent-home-tree .monaco-list-row.selected,
@@ -2091,8 +2091,14 @@ html.volt-layout-agent-window body {
 	color: var(--vscode-charts-blue, #3794ff);
 }
 
-.volt-agent-home-row > .status-badge.kind-working .status-icon svg,
-.volt-agent-tooltip-card-icon.volt-agent-svg-icon.status-working svg {
+/*
+ * The ring's square box spins, not its <svg>: Chromium runs an animation on an SVG element on the
+ * main thread (a restyle and repaint every frame per ring, about a fifth of the main thread with
+ * ten agents at work), and one on an HTML box on the compositor. The box is the svg's size and
+ * centered on it, so the turn looks the same.
+ */
+.volt-agent-home-row > .status-badge.kind-working > .status-icon,
+.volt-agent-tooltip-card-icon.volt-agent-svg-icon.status-working {
 	animation: volt-agent-home-spin 2.4s linear infinite;
 }
 

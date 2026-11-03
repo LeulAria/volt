@@ -36,10 +36,19 @@ class FakeModel implements IModelProvider {
 	readonly label = 'Fake model';
 	readonly turns: Turn<IModelRequest>[] = [];
 	readonly requests: IModelRequest[] = [];
+	/** Replies to title calls (no tools), in order. Unset, a title call takes the next turn like a run. */
+	titles?: string[];
+	readonly titlePrompts: string[] = [];
 	async detect() { return { available: true, authenticated: true }; }
 	async listModels() { return [{ id: 'fm', label: 'FM', capabilities: DEFAULT_MODEL_CAPABILITIES }]; }
 	async *stream(request: IModelRequest, token: CancellationToken): AsyncIterable<IVoltEvent> {
 		this.requests.push(request);
+		if (this.titles && !request.tools?.length) {
+			this.titlePrompts.push(String(request.messages[0]?.content));
+			yield { type: 'text.delta', id: 'title', delta: this.titles.shift() ?? '' };
+			yield { type: 'finish', reason: 'stop' };
+			return;
+		}
 		const turn = this.turns.shift();
 		if (turn) {
 			yield* turn(request, token);
@@ -121,6 +130,25 @@ class FakeStdio {
 	}
 }
 
+/** Chat titles kept the way AgentHistoryService keeps them: once the user renamed a chat, agent titles are ignored. */
+class FakeHistory {
+	readonly agentTitles: string[] = [];
+	userTitle: string | undefined;
+	get shown(): string | undefined {
+		return this.userTitle ?? this.agentTitles.at(-1);
+	}
+	asService(): object {
+		return {
+			open: () => ({ setMeta: () => { } }),
+			setAgentTitle: async (_id: string, title: string) => {
+				if (!this.userTitle) {
+					this.agentTitles.push(title);
+				}
+			},
+		};
+	}
+}
+
 interface IRuntimeInternals {
 	modelProviders: Map<string, IModelProvider>;
 	agentProviders: Map<string, IAgentProvider>;
@@ -163,6 +191,7 @@ suite('Agent runtime orchestration', () => {
 		const stdio = new FakeStdio();
 		const model = new FakeModel();
 		const agent = new FakeAgent();
+		const history = new FakeHistory();
 		const stub = <T>(value: object) => value as unknown as T;
 		const service = disposables.add(new AgentRuntimeService(
 			disposables.add(new InMemoryStorageService()),
@@ -176,7 +205,7 @@ suite('Agent runtime orchestration', () => {
 			stub({ context: async () => undefined }),
 			stub({}),
 			stub({ rootFor: () => undefined }),
-			stub({ open: () => ({ setMeta: () => { } }), setAgentTitle: async () => { } }),
+			stub(history.asService()),
 			stub({}),
 			stub({ run: async () => undefined, needsRetry: () => false }),
 			stub({ files: { get: () => undefined } }),
@@ -212,7 +241,7 @@ suite('Agent runtime orchestration', () => {
 			await waitFor(() => !!ended(runId), `run ${runId} to end`);
 			return ended(runId)!.event as Extract<IVoltEvent, { type: 'run.end' }>;
 		};
-		return { service, internals, model, agent, stdio, events, ref, waitEnd, ended, fileService };
+		return { service, internals, model, agent, stdio, history, events, ref, waitEnd, ended, fileService };
 	}
 
 	test('a native run streams, ends done, keeps the reply and records its timings', async () => {
@@ -234,6 +263,44 @@ suite('Agent runtime orchestration', () => {
 		const [run, title] = model.requests;
 		assert.ok(run.tools?.length, 'the run went first');
 		assert.ok(!title.tools?.length && title.messages.length === 1, 'then the title call');
+	});
+
+	test('a first message that got a neutral title is titled again, once, from the first two messages', async () => {
+		const { service, model, history, ref, waitEnd } = await setup('model');
+		model.titles = ['Quick question', 'Fix sidebar list jumping to top', 'Never asked'];
+		await waitEnd(await service.send('chat', { text: 'hi, got a minute for something?', mode: 'agent', providerRef: ref }));
+		await waitFor(() => history.agentTitles.length === 1, 'the first title');
+		await waitEnd(await service.send('chat', { text: 'the sidebar list jumps to the top when a chat finishes', mode: 'agent', providerRef: ref }));
+		await waitFor(() => history.agentTitles.length === 2, 'the second title');
+		assert.ok(model.titlePrompts[1].includes('First message:\nhi, got a minute for something?\n\nLatest message:\nthe sidebar list jumps'));
+		await waitEnd(await service.send('chat', { text: 'and keep the selection too', mode: 'agent', providerRef: ref }));
+		await timeout(20);
+		assert.deepStrictEqual(history.agentTitles, ['Quick question', 'Fix sidebar list jumping to top']);
+		assert.strictEqual(model.titlePrompts.length, 2, 'no third title call');
+	});
+
+	test('a specific first message keeps its title through the next messages', async () => {
+		const { service, model, history, ref, waitEnd } = await setup('model');
+		model.titles = ['Fix doubled run command card borders', 'Never asked'];
+		await waitEnd(await service.send('chat', { text: 'the borders on the run command card look doubled, polish it', mode: 'agent', providerRef: ref }));
+		await waitFor(() => history.agentTitles.length === 1, 'the first title');
+		await waitEnd(await service.send('chat', { text: 'ok', mode: 'agent', providerRef: ref }));
+		await timeout(20);
+		assert.deepStrictEqual(history.agentTitles, ['Fix doubled run command card borders']);
+		assert.strictEqual(model.titlePrompts.length, 1);
+	});
+
+	test('a chat the user renamed keeps its name when a short first message is titled again', async () => {
+		const { service, model, history, ref, waitEnd } = await setup('model');
+		model.titles = ['Greeting', 'Fix sidebar list jumping to top'];
+		await waitEnd(await service.send('chat', { text: 'hey', mode: 'agent', providerRef: ref }));
+		await waitFor(() => history.agentTitles.length === 1, 'the first title');
+		history.userTitle = 'Scroll bug';
+		await waitEnd(await service.send('chat', { text: 'the sidebar list jumps to the top when a chat finishes', mode: 'agent', providerRef: ref }));
+		await waitFor(() => model.titlePrompts.length === 2, 'the retry');
+		await timeout(20);
+		assert.strictEqual(history.shown, 'Scroll bug');
+		assert.deepStrictEqual(history.agentTitles, ['Greeting']);
 	});
 
 	test('cancel then immediate resend (native): the cancelled loop cannot write into the new run', async () => {

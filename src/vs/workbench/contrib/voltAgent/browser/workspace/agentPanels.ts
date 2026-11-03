@@ -22,6 +22,7 @@ import { IVoltProjectRecord, IVoltSessionContextService } from '../../../../serv
 import { getLayoutMode, onDidChangeLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { isNewEmptyWindow } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
+import { onDidChangeShownAgentChat, shownAgentChat } from '../editor/agentShownChat.js';
 import { markAgentSwitch } from '../editor/agentSwitchTiming.js';
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
 import { AgentPullRequestsPageInput } from '../pullRequests/agentPullRequestsPageInput.js';
@@ -119,6 +120,7 @@ class AgentPanelsContribution extends Disposable {
 	) {
 		super();
 		this._register(this.editorService.onDidActiveEditorChange(() => this.onActiveEditor()));
+		this._register(onDidChangeShownAgentChat(() => this.onShownChat()));
 		this._register(this.editorService.onDidVisibleEditorsChange(() => this.markVisibleRead()));
 		this._register(this.history.onDidChange(() => this.markVisibleRead()));
 		void this.history.whenReady.then(() => {
@@ -175,8 +177,11 @@ class AgentPanelsContribution extends Disposable {
 		if (!(active instanceof AgentEditorInput)) {
 			return;
 		}
-		this.workspaceService.activate(active.sessionId);
-		this.bindSession(active.sessionId);
+		// A picked chat shows once its history is read. Its project (files, branch) and its tools and
+		// terminals move with its transcript (onShownChat), never over the last chat's.
+		if (shownAgentChat() === active.sessionId) {
+			this.followChat(active.sessionId);
+		}
 		// Opening a chat that woke from its snooze is seeing it; the sidebar drops "Woke".
 		if (this.history.get(active.sessionId)?.wokeAt !== undefined) {
 			void this.history.clearWoke(active.sessionId);
@@ -187,6 +192,23 @@ class AgentPanelsContribution extends Disposable {
 				void group.closeEditors(release, { preserveFocus: true });
 			}
 		}
+	}
+
+	/** The main panel drew a chat: its project, tools and terminals follow in the same task, so the same frame. */
+	private onShownChat(): void {
+		if (getLayoutMode(this.layoutService) !== 'agent') {
+			return;
+		}
+		const shown = shownAgentChat();
+		const active = this.editorGroupsService.mainPart.activeGroup?.activeEditor;
+		if (shown !== undefined && active instanceof AgentEditorInput && active.sessionId === shown) {
+			this.followChat(shown);
+		}
+	}
+
+	private followChat(sessionId: string): void {
+		this.workspaceService.activate(sessionId);
+		this.bindSession(sessionId);
 	}
 
 	/** A new chat still waiting for its first word. Typed text keeps the sidebar row. */

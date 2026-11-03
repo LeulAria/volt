@@ -10,7 +10,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/c
 import { CollectionMirror, ReplicatedCollection } from '../../common/collections.js';
 import { AgentServerConnection, backoffDelay, DEFAULT_BACKOFF, IAgentServerWelcomeEvent, IWebSocketLike } from '../../common/connection.js';
 import { AgentServerCloseCode, AgentServerTopic, IAgentServerEvent, ICollectionDelta } from '../../common/protocol.js';
-import { AgentServerProtocol, IServerSocket, tokensEqual } from '../../common/protocolServer.js';
+import { AgentServerProtocol, IServerSocket, tokensEqual, UNHEARD_GRACE_MS } from '../../common/protocolServer.js';
 
 const tick = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 
@@ -135,7 +135,7 @@ suite('Agent server protocol', () => {
 		readonly threads: ReplicatedCollection;
 	}
 
-	function startServer(disposables: Pick<DisposableStore, 'add'>, network: FakeNetwork, epoch: string, opts: { maxEvents?: number; token?: string } = {}): IServer {
+	function startServer(disposables: Pick<DisposableStore, 'add'>, network: FakeNetwork, epoch: string, opts: { maxEvents?: number; token?: string; now?: () => number } = {}): IServer {
 		const cols = new Map<string, ReplicatedCollection>();
 		const protocol = disposables.add(new AgentServerProtocol({
 			token: opts.token ?? 'secret',
@@ -144,6 +144,7 @@ suite('Agent server protocol', () => {
 			pid: 1,
 			snapshot: () => ({ collections: Object.fromEntries([...cols].map(([name, col]) => [name, col.snapshot()])) }),
 			logLimits: { maxEvents: opts.maxEvents ?? 1000, maxBytes: Number.MAX_SAFE_INTEGER },
+			now: opts.now,
 		}));
 		const threads = new ReplicatedCollection('threads', delta => protocol.publish('col', delta));
 		cols.set('threads', threads);
@@ -319,6 +320,51 @@ suite('Agent server protocol', () => {
 		await until(() => client.connection.isOpen, 'open');
 		assert.deepStrictEqual(await server.protocol.callClient('browser', 'browser.snapshot', ['http://x']), { url: 'http://x', title: 'Page' });
 		await assert.rejects(server.protocol.callClient('codeIntel', 'markers', []), /No Volt window/);
+	});
+
+	test('a client that takes session edits gets only those; an older client gets whole messages', async () => {
+		const network = new FakeNetwork();
+		const server = startServer(store, network, 'e1');
+		const window = connectClient(store, network, { topics: ['col', 'session', 'sessionEdits'] });
+		await until(() => window.connection.isOpen, 'window open');
+		const phone = connectClient(store, network, { topics: ['col', 'session'] });
+		await until(() => phone.connection.isOpen, 'phone open');
+
+		server.protocol.publish('sessionEdits', { form: 'edits' });
+		server.protocol.publishIfHeard('session', () => ({ form: 'whole' }));
+		await until(() => window.events.length === 1 && phone.events.length === 1, 'events');
+		assert.deepStrictEqual(window.events.map(e => [e.topic, e.data]), [['sessionEdits', { form: 'edits' }]]);
+		assert.deepStrictEqual(phone.events.map(e => [e.topic, e.data]), [['session', { form: 'whole' }]]);
+	});
+
+	test('events nobody hears are not built; a client resuming across them reloads a snapshot', async () => {
+		let now = 0;
+		const network = new FakeNetwork();
+		const server = startServer(store, network, 'e1', { now: () => now });
+		let built = 0;
+		const whole = () => ({ n: ++built });
+		assert.strictEqual(server.protocol.publishIfHeard('session', whole), undefined, 'nobody has ever listened');
+		assert.strictEqual(built, 0);
+
+		const phone = connectClient(store, network, { topics: ['col', 'session'] });
+		await until(() => phone.connection.isOpen, 'open');
+		server.protocol.publishIfHeard('session', whole);
+		await until(() => phone.events.length === 1, 'heard');
+
+		// The phone drops; for a while its events are still logged, then they are dropped.
+		const listening = network.server;
+		network.server = undefined;
+		network.live.close(1006, 'network');
+		await until(() => !phone.connection.isOpen, 'drop');
+		now += 1000;
+		assert.ok(server.protocol.publishIfHeard('session', whole) !== undefined, 'kept for a resume');
+		now += UNHEARD_GRACE_MS;
+		assert.strictEqual(server.protocol.publishIfHeard('session', whole), undefined, 'dropped after the grace');
+		assert.strictEqual(built, 2);
+
+		network.server = listening;
+		await until(() => phone.welcomes.length === 2, 'reconnect');
+		assert.strictEqual(phone.welcomes[1].resumed, false, 'a hole cannot be replayed');
 	});
 
 	test('a wrong token is refused and reported', async () => {

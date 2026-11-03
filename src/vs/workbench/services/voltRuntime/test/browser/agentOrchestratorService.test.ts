@@ -149,6 +149,21 @@ suite('Agent orchestrator service', () => {
 		assert.strictEqual(service.getThread('chat')?.active?.id, 't2');
 	});
 
+	test('a prompt sent without a turn id gets one, also when it arrives as null from a window', async () => {
+		const { service, runtime, host } = await setup();
+		await service.submit('chat', { text: 'one' }, 'auto');
+		await settle();
+		runtime.finish('chat');
+		await settle();
+		// What a call through the agent server's socket makes of an omitted argument.
+		await service.submit('chat', { text: 'two' }, 'auto', null as unknown as string);
+		await settle();
+		const ids = host.started.map(request => request.turn.id);
+		assert.strictEqual(ids.length, 2);
+		assert.ok(ids.every(id => typeof id === 'string' && id.length > 0), JSON.stringify(ids));
+		assert.notStrictEqual(ids[0], ids[1]);
+	});
+
 	test('a failed run pauses the queue instead of resending into the failing provider', async () => {
 		const { service, runtime, host } = await setup();
 		await service.submit('chat', { text: 'one' }, 'auto', 't1');
