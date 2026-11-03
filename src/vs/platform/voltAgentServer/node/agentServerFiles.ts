@@ -20,6 +20,8 @@ export interface IAgentServerPaths {
 	readonly runtimeFile: string;
 	readonly storageDir: string;
 	readonly logFile: string;
+	/** Node's compile cache for the server's own code: a warm start skips compiling its bundle. */
+	readonly compileCacheDir: string;
 	/** launchd label (and other platforms' service name), unique per user data dir. */
 	readonly label: string;
 }
@@ -33,6 +35,7 @@ export function agentServerPaths(userDataDir: string): IAgentServerPaths {
 		runtimeFile: join(dir, 'runtime.json'),
 		storageDir: dir,
 		logFile: join(userDataDir, 'logs', 'agent-server.log'),
+		compileCacheDir: join(dir, 'compile-cache'),
 		label: `com.volt.agent-server.${createHash('sha256').update(userDataDir).digest('hex').slice(0, 12)}`,
 	};
 }
