@@ -70,7 +70,8 @@ import { AgentPullRequestCodeDiff, canShowInCodeDiff } from './agentPullRequestC
 import { openPullRequestDiff } from './agentPullRequestDiff.js';
 import { AgentPullRequestEditorInput } from './agentPullRequestEditorInput.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
-import { ago, avatar, checkDuration, checkIcon, composeInChat, iconSpan, MERGE_LABELS, openPullRequest, problemText, prStateIcon, sendInChat, signInWithGh, visibleChatSession } from './agentPullRequestUi.js';
+import { ago, avatar, checkIcon, composeInChat, iconSpan, MERGE_LABELS, openPullRequest, problemText, prStateIcon, sendInChat, signInWithGh, visibleChatSession } from './agentPullRequestUi.js';
+import { renderPrCheckList, renderPrCommitList } from './agentPullRequestViewLists.js';
 import { openOnHost } from './agentPrLinks.js';
 
 type Tab = 'summary' | 'timeline' | 'code';
@@ -78,6 +79,8 @@ type Order = 'newest' | 'oldest';
 
 /** While the view is on screen, it re-reads the pull request this often. */
 const POLL_MS = 20_000;
+/** Summary lists this many commits, newest first, until Show All. */
+const COMMITS_SHOWN = 10;
 /** Viewed ticks are sent together after this pause, like T3 Code. */
 const VIEWED_FLUSH_MS = 400;
 
@@ -156,6 +159,8 @@ export class AgentPullRequestView extends Disposable {
 	private readonly folded = new Set<string>(['checks']);
 	private commentOrder: Order = 'newest';
 	private timelineOrder: Order = 'newest';
+	/** Summary's Commits shows every commit, not only the newest {@link COMMITS_SHOWN}. */
+	private allCommits = false;
 	/** Code tab: the commit shown (undefined: all of them), and the files opened. */
 	private codeCommit: string | undefined;
 	private readonly codeDiffWidget = this._register(new MutableDisposable<AgentPullRequestCodeDiff>());
@@ -312,6 +317,7 @@ export class AgentPullRequestView extends Disposable {
 		this.drafts.clear();
 		this.deleteBranch = undefined;
 		this.codeCommit = undefined;
+		this.allCommits = false;
 		this.composeOpen = false;
 		this.element.classList.remove('scrolled');
 		this.queryStore.clear();
@@ -597,6 +603,14 @@ export class AgentPullRequestView extends Disposable {
 		append(branches, $('span.volt-pr-arrow')).appendChild(renderIcon(Codicon.arrowLeft));
 		this.branchName(branches, pr.crossRepository && pr.headOwner ? `${pr.headOwner}:${pr.headRefName}` : pr.headRefName);
 		append(branches, $('.volt-pr-spacer'));
+		if (pr.commits.length) {
+			const commits = append(branches, $('button.volt-pr-filestat.commits')) as HTMLButtonElement;
+			commits.type = 'button';
+			commits.appendChild(renderIcon(Codicon.gitCommit));
+			append(commits, $('span')).textContent = pr.commits.length === 1 ? localize('voltPr.oneCommit', "1 commit") : localize('voltPr.commitsStat', "{0} commits", pr.commits.length);
+			setAgentTooltip(commits, localize('voltPr.showCommits', "Show the commits"));
+			this.onClick(commits, () => this.revealSection('commits'));
+		}
 		const files = append(branches, $('button.volt-pr-filestat')) as HTMLButtonElement;
 		files.type = 'button';
 		files.appendChild(renderIcon(Codicon.diffMultiple));
@@ -696,20 +710,30 @@ export class AgentPullRequestView extends Disposable {
 		button.type = 'button';
 		iconSpan(button, checks.state === 'pending' ? ThemeIcon.modify(Codicon.loading, 'spin') : checks.state === 'none' ? Codicon.circleLarge : checkIcon(checks.state), `check-${checks.state}`);
 		const counted = checks.passed + checks.failed + checks.pending;
-		append(button, $('span')).textContent = checks.state === 'none' ? localize('voltPr.noChecksReported', "No checks reported")
+		const full = checks.state === 'none' ? localize('voltPr.noChecksReported', "No checks reported")
 			: checks.state === 'failure' ? localize('voltPr.checksFailing', "{0} of {1} failing", checks.failed, counted)
 				: checks.state === 'pending' ? localize('voltPr.checksRunning', "{0} of {1} running", checks.pending, counted)
 					: checks.passed === 1 ? localize('voltPr.checkPassing', "1 check passing") : localize('voltPr.checksPassing', "{0} checks passing", checks.passed);
+		// A narrow view shows the short form ("1/3", "2"), so the tabs keep their room.
+		append(button, $('span.volt-pr-checks-full')).textContent = full;
+		append(button, $('span.volt-pr-checks-short')).textContent = checks.state === 'none' ? ''
+			: checks.state === 'failure' ? `${checks.failed}/${counted}`
+				: checks.state === 'pending' ? `${checks.pending}/${counted}`
+					: String(checks.passed);
+		setAgentTooltip(button, full);
 		if (checks.state === 'none') {
 			button.disabled = true;
 			return;
 		}
-		this.onClick(button, () => {
-			this.folded.delete('checks');
-			this.tab = 'summary';
-			this.render();
-			this.body.querySelector('.volt-pr-fold-section.checks')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-		});
+		this.onClick(button, () => this.revealSection('checks'));
+	}
+
+	/** Summary with the section unfolded and scrolled to: from the header's checks and commit counts. */
+	private revealSection(id: 'checks' | 'commits'): void {
+		this.folded.delete(id);
+		this.tab = 'summary';
+		this.render();
+		this.body.querySelector(`.volt-pr-fold-section.${id}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
 	}
 
 	/** The stack this pull request sits in, from the chat's links: position and the other layers. */
@@ -727,8 +751,11 @@ export class AgentPullRequestView extends Disposable {
 		const pill = append(parent, $('button.volt-pr-pill')) as HTMLButtonElement;
 		pill.type = 'button';
 		pill.appendChild(renderIcon(Codicon.layers));
-		append(pill, $('span')).textContent = localize('voltPr.stack', "Stack {0}/{1}", position, chain.length);
+		const label = localize('voltPr.stack', "Stack {0}/{1}", position, chain.length);
+		append(pill, $('span')).textContent = label;
 		append(pill, renderIcon(Codicon.chevronDown)).classList.add('chevron');
+		pill.setAttribute('aria-label', label);
+		setAgentTooltip(pill, label);
 		this.onClick(pill, () => {
 			type Pick = { kind: 'open'; link: IAgentPrLink } | { kind: 'rebase' } | { kind: 'merge' };
 			const layers: IVoltMenuItem<Pick>[] = [...chain].reverse().map(link => ({
@@ -1100,6 +1127,8 @@ export class AgentPullRequestView extends Disposable {
 			}
 		}
 
+		this.renderCommits(body, pr);
+
 		const checksTitle = pr.checkRuns.length ? localize('voltPr.checksCount', "Checks ({0})", pr.checkRuns.length) : localize('voltPr.checksTitle', "Checks");
 		const checks = this.foldSection(body, 'checks', checksTitle, header => {
 			const failing = pr.checkRuns.filter(check => check.state === 'failure');
@@ -1264,32 +1293,45 @@ export class AgentPullRequestView extends Disposable {
 			return;
 		}
 		const order: Record<IVoltPrCheck['state'], number> = { failure: 0, cancelled: 1, pending: 2, success: 3, neutral: 4, skipped: 5 };
-		const list = append(parent, $('.volt-pr-checks'));
-		for (const check of [...pr.checkRuns].sort((a, b) => order[a.state] - order[b.state] || a.name.localeCompare(b.name))) {
-			const row = append(list, $('.volt-pr-check-row'));
-			iconSpan(row, check.state === 'pending' ? ThemeIcon.modify(Codicon.loading, 'spin') : checkIcon(check.state), `check-${check.state}`);
-			const name = append(row, $('span.volt-pr-check-name'));
-			name.textContent = check.workflow ? `${check.workflow} / ${check.name}` : check.name;
-			if (check.summary) {
-				name.title = check.summary;
-			}
-			if (check.required) {
-				append(row, $('span.volt-pr-tag')).textContent = localize('voltPr.required', "required");
-			}
-			append(row, $('.volt-pr-spacer'));
-			const duration = checkDuration(check);
-			if (duration) {
-				append(row, $('span.muted.volt-pr-check-time')).textContent = duration;
-			}
-			append(row, $(`span.volt-pr-check-state.check-${check.state}`)).textContent = checkStateLabel(check.state);
-			if (check.state === 'failure' && isOpenState(pr.state)) {
-				const fix = this.button(row, localize('voltPr.fix', "Fix"), () => this.toAgent(buildFixChecksPrompt(pr, [check])), 'ghost', Codicon.wrench);
-				setAgentTooltip(fix, localize('voltPr.fixTip', "Ask the chat's agent to fix {0}", check.name));
-			}
-			if (check.url) {
-				const details = this.iconButton(row, Codicon.linkExternal, localize('voltPr.details', "Details"), () => this.openerService.open(check.url!));
-				details.classList.add('subtle');
-			}
+		const checks = [...pr.checkRuns].sort((a, b) => order[a.state] - order[b.state] || a.name.localeCompare(b.name));
+		this.renderStore.add(renderPrCheckList(this.instantiationService, parent, checks, {
+			canFix: isOpenState(pr.state),
+			fix: check => void this.toAgent(buildFixChecksPrompt(pr, [check])),
+			open: check => check.url && void this.openerService.open(check.url),
+			stateLabel: checkStateLabel,
+		}));
+	}
+
+	/** The commits, newest first like the Code tab's picker; a long branch shows the newest until Show All. */
+	private renderCommits(parent: HTMLElement, pr: IVoltPullRequestDetail): void {
+		const count = pr.commits.length;
+		const section = this.foldSection(parent, 'commits', count ? localize('voltPr.commitsCount', "Commits ({0})", count) : localize('voltPr.commitsTitle', "Commits"));
+		if (!section) {
+			return;
+		}
+		if (!count) {
+			append(section, $('.muted.volt-pr-empty')).textContent = localize('voltPr.noCommits', "No commits.");
+			return;
+		}
+		const newest = [...pr.commits].reverse();
+		const shown = this.allCommits ? newest : newest.slice(0, COMMITS_SHOWN);
+		this.renderStore.add(renderPrCommitList(this.instantiationService, section, shown, {
+			host: pr.repo.host,
+			open: commit => void this.revealCommit(commit.oid),
+			showChanges: commit => {
+				this.codeCommit = commit.oid;
+				this.showTab('code');
+			},
+			copyId: commit => void this.copy(commit.oid, localize('voltPr.copiedSha', "Copied {0}", commit.oid.slice(0, 7))),
+		}));
+		if (shown.length < count) {
+			const more = append(section, $('button.volt-pr-more-rows')) as HTMLButtonElement;
+			more.type = 'button';
+			more.textContent = localize('voltPr.showAllCommits', "Show All {0} Commits", count);
+			this.onClick(more, () => {
+				this.allCommits = true;
+				this.render();
+			});
 		}
 	}
 
@@ -1350,7 +1392,7 @@ export class AgentPullRequestView extends Disposable {
 			append(list, $('span.muted')).textContent = localize('voltPr.noLabels', "None");
 		}
 		if (pr.viewerCanUpdate && pr.repoLabels.length) {
-			this.iconButton(list, Codicon.tag, localize('voltPr.editLabels', "Edit Labels"), button => {
+			this.iconButton(list, Codicon.edit, localize('voltPr.editLabels', "Edit Labels"), button => {
 				const current = new Set(pr.labels.map(item => item.name));
 				showVoltMenu<string>(this.contextViewService, {
 					anchor: button,

@@ -7,7 +7,7 @@ import { $, addDisposableListener, append, isHTMLElement } from '../../../../../
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
-import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
 import { AgentTooltip, bindTruncatedHoverTooltip, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { groupSummary, isLiveSubagentState, ISubagentView, renderCursorCardRow, tickSubagentClocks } from '../chrome/agentSubagents.js';
@@ -178,8 +178,16 @@ export class AgentComposerQueue extends Disposable {
 	private readonly queueEl: HTMLElement;
 	/** The agent's to-dos, last in the stack so it tucks under the input box. */
 	private readonly tasksCard: AgentTasksCard;
+	/** The queue rows' listeners, and the agents card's: each is drawn again only when what it shows changed. */
 	private readonly listeners = this._register(new DisposableStore());
+	private readonly agentListeners = this._register(new DisposableStore());
 	private readonly dragListeners = this._register(new DisposableStore());
+	/** What each card last drew, so a render that would draw the same leaves its rows (and a click on them) alone. */
+	private drawnQueue = '';
+	private drawnAgents = '';
+	/** A pointer is down on a card: redraws wait until its click has landed on the row it pressed. */
+	private pressed = false;
+	private readonly pressListeners = this._register(new MutableDisposable<DisposableStore>());
 	private items: IQueuedPrompt[] = [];
 	private agents: IAgentComposerAgents = { views: [], conflicts: [] };
 	private agentsSignature = '';
@@ -210,6 +218,38 @@ export class AgentComposerQueue extends Disposable {
 		this.queueEl = append(this.element, $('.volt-agent-queue-card.hidden'));
 		this.tasksCard = this._register(new AgentTasksCard(() => this.syncStackClass()));
 		append(this.element, this.tasksCard.element);
+		// A row rebuilt between pointer down and up gets no click (down and up hit different elements),
+		// so the press on Edit or Remove was lost while the agent streamed. Redraws wait for the click.
+		for (const card of [this.queueEl, this.agentsElement]) {
+			this._register(addDisposableListener(card, 'pointerdown', e => {
+				if (e.button === 0) {
+					this.holdRenders(card);
+				}
+			}, true));
+		}
+	}
+
+	private holdRenders(card: HTMLElement): void {
+		const targetWindow = card.ownerDocument.defaultView;
+		if (!targetWindow || this.pressed) {
+			return;
+		}
+		this.pressed = true;
+		const store = this.pressListeners.value = new DisposableStore();
+		const release = () => {
+			store.clear();
+			// After the click: it is dispatched in the same task as pointerup.
+			const timer = targetWindow.setTimeout(() => {
+				this.pressed = false;
+				if (this.renderPending) {
+					this.render();
+				}
+			}, 0);
+			store.add({ dispose: () => targetWindow.clearTimeout(timer) });
+		};
+		store.add(addDisposableListener(targetWindow, 'pointerup', release, true));
+		store.add(addDisposableListener(targetWindow, 'pointercancel', release, true));
+		store.add(addDisposableListener(targetWindow, 'blur', release));
 	}
 
 	setMode(mode: string): void {
@@ -312,15 +352,11 @@ export class AgentComposerQueue extends Disposable {
 	}
 
 	private render(): void {
-		if (this.dragging) {
+		if (this.dragging || this.pressed) {
 			this.renderPending = true;
 			return;
 		}
 		this.renderPending = false;
-		this.listeners.clear();
-		this.clockStore.clear();
-		this.queueEl.replaceChildren();
-		this.agentsElement.replaceChildren();
 		const count = this.items.length;
 		// The agents live in the composer's chip (its menu lists them and their file conflicts); the card
 		// keeps them only while their reports wait for Resume.
@@ -329,13 +365,31 @@ export class AgentComposerQueue extends Disposable {
 		this.agentsElement.classList.toggle('hidden', agents === 0);
 		this.agentsElement.classList.toggle('expanded', !this.agentsCollapsed);
 		this.syncStackClass();
-		this.queueEl.classList.toggle('paused', false);
-		this.queueEl.classList.toggle('editing', false);
-		if (agents) {
-			this.renderAgents(append(this.agentsElement, $('.volt-agent-work-section.agents')));
+		// Subagent progress changes many times a second while they work: it redraws their card, not the queue's rows.
+		const agentsKey = agents ? JSON.stringify([this.agentsSignature, this.agentsInDock, this.agentsCollapsed, this.state.paused, this.state.running, count > 0]) : '';
+		if (agentsKey !== this.drawnAgents) {
+			this.drawnAgents = agentsKey;
+			this.agentListeners.clear();
+			this.clockStore.clear();
+			this.agentsElement.replaceChildren();
+			if (agents) {
+				this.renderAgents(append(this.agentsElement, $('.volt-agent-work-section.agents')));
+			}
 		}
-		if (count) {
-			this.renderQueue(append(this.queueEl, $('.volt-agent-work-section.queue')));
+		const queueKey = count ? JSON.stringify([
+			this.items.map(item => [item.id, item.text, item.preview, item.modelRef, item.modelLabel]),
+			this.state.editingId, this.state.paused, this.state.running, this.state.steer,
+			this.picking, [...this.unpicked], this.configuring, this.queueCollapsed,
+		]) : '';
+		if (queueKey !== this.drawnQueue) {
+			this.drawnQueue = queueKey;
+			this.listeners.clear();
+			this.queueEl.replaceChildren();
+			this.queueEl.classList.toggle('paused', false);
+			this.queueEl.classList.toggle('editing', false);
+			if (count) {
+				this.renderQueue(append(this.queueEl, $('.volt-agent-work-section.queue')));
+			}
 		}
 	}
 
@@ -379,7 +433,7 @@ export class AgentComposerQueue extends Disposable {
 			summary.textContent = groupSummary(views.filter(view => !isLiveSubagentState(view.state)));
 			setAgentTooltip(summary, summary.textContent);
 		}
-		this.listeners.add(addDisposableListener(toggle, 'click', e => {
+		this.agentListeners.add(addDisposableListener(toggle, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
 			this.agentsCollapsed = !this.agentsCollapsed;
@@ -397,7 +451,7 @@ export class AgentComposerQueue extends Disposable {
 				resume.type = 'button';
 				resume.textContent = localize('voltAgent.queue.resume', "Resume");
 				setAgentTooltip(resume, localize('voltAgent.work.resumeHint', "Send the subagents' reports to the agent"));
-				this.listeners.add(addDisposableListener(resume, 'click', e => {
+				this.agentListeners.add(addDisposableListener(resume, 'click', e => {
 					e.preventDefault();
 					e.stopPropagation();
 					this.options.onResume?.();
@@ -409,7 +463,7 @@ export class AgentComposerQueue extends Disposable {
 			stop.type = 'button';
 			stop.textContent = localize('voltAgent.work.stopAll', "Stop all");
 			setAgentTooltip(stop, localize('voltAgent.work.stopAllHint', "Stop every running subagent of this chat"));
-			this.listeners.add(addDisposableListener(stop, 'click', e => {
+			this.agentListeners.add(addDisposableListener(stop, 'click', e => {
 				e.preventDefault();
 				e.stopPropagation();
 				this.options.onStopAllAgents?.();
@@ -418,7 +472,7 @@ export class AgentComposerQueue extends Disposable {
 		if (this.agentsCollapsed) {
 			return;
 		}
-		this.listeners.add(closeOnOutsideClick(this.agentsElement, () => {
+		this.agentListeners.add(closeOnOutsideClick(this.agentsElement, () => {
 			this.agentsCollapsed = true;
 			this.render();
 		}));
@@ -426,7 +480,7 @@ export class AgentComposerQueue extends Disposable {
 		const now = Date.now();
 		for (const view of views) {
 			renderCursorCardRow(list, view, {
-				store: this.listeners,
+				store: this.agentListeners,
 				now,
 				tooltip: this.agentTooltip,
 				onOpen: this.options.onOpenAgent,
@@ -452,7 +506,7 @@ export class AgentComposerQueue extends Disposable {
 		file.type = 'button';
 		file.textContent = name;
 		setAgentTooltip(file, localize('voltAgent.work.conflictOpen', "Open {0}", conflict.path));
-		this.listeners.add(addDisposableListener(file, 'click', e => {
+		this.agentListeners.add(addDisposableListener(file, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
 			this.options.onOpenFile?.(conflict.path);
@@ -468,7 +522,7 @@ export class AgentComposerQueue extends Disposable {
 				link.type = 'button';
 				link.textContent = short;
 				setAgentTooltip(link, localize('voltAgent.work.conflictOpenAgent', "Open {0}", title));
-				this.listeners.add(addDisposableListener(link, 'click', e => {
+				this.agentListeners.add(addDisposableListener(link, 'click', e => {
 					e.preventDefault();
 					e.stopPropagation();
 					this.options.onOpenAgent?.(view);
@@ -777,6 +831,8 @@ export class AgentComposerQueue extends Disposable {
 				this.items = order.map(id => byId.get(id)).filter((item): item is IQueuedPrompt => !!item);
 				this.options.onReorder(order);
 			} else if (!commit && changed) {
+				// The rows were moved by hand: draw them again in the queue's order.
+				this.drawnQueue = '';
 				this.renderPending = true;
 			}
 			if (this.renderPending) {

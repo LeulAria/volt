@@ -191,7 +191,7 @@
 }
 
 /* A Context or Session Usage card is its own surface: no fade band around it on the transcript. */
-.volt-agent-editor.has-turns:has(.volt-agent-composer > .volt-agent-context-panel) .volt-agent-thread > .monaco-scrollable-element {
+.volt-agent-editor.has-turns.has-context-panel .volt-agent-thread > .monaco-scrollable-element {
 	-webkit-mask-image: none;
 	mask-image: none;
 }
@@ -3940,7 +3940,8 @@ pre.volt-agent-searchable {
 	z-index: 6;
 	flex: 0 0 auto;
 	width: 100%;
-	max-width: 720px;
+	/* Edge to edge with the chips and the composer. */
+	max-width: 728px;
 	margin: 0 auto 6px;
 	box-sizing: border-box;
 	color: var(--vscode-foreground);
@@ -10174,6 +10175,8 @@ pre.volt-agent-searchable {
 	display: flex;
 	flex-direction: column;
 	font-size: 13px;
+	/* The last row's highlight sits on the bottom edge; the radius clips its corners. */
+	overflow: hidden;
 }
 
 .monaco-workbench.vs .volt-agent-turn-files,
@@ -10186,7 +10189,7 @@ pre.volt-agent-searchable {
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	padding: 8px 12px 0;
+	padding: 8px 12px 4px;
 	min-height: 20px;
 	line-height: 20px;
 }
@@ -10288,14 +10291,20 @@ pre.volt-agent-searchable {
 	background: rgba(0, 0, 0, 0.05);
 }
 
-/* The rows are a workbench tree sized to its content (agentTurnFilesTree.ts). Margin, not padding: the tree takes the box's width. */
-.volt-agent-turn-files-rows {
-	margin: 4px 6px 6px;
+/* The rows are a workbench tree sized to its content (agentTurnFilesTree.ts), edge to edge and square like a VS Code list. */
+/* The side padding is inside each row, so names and stats line up with the header's 12px. */
+.volt-agent-turn-files-rows .monaco-list-row {
+	border-radius: 0;
+	cursor: pointer;
 }
 
-.volt-agent-turn-files-rows .monaco-list-row {
-	border-radius: 6px;
-	cursor: pointer;
+.volt-agent-turn-files-rows .monaco-tl-row {
+	padding-left: 6px;
+}
+
+/* Indent guides are placed from the row's edge (tree.css left: 16px): move them with the padding. */
+.volt-agent-turn-files-rows .monaco-tl-indent {
+	left: 22px;
 }
 
 /* List view: no twistie gutter. !important beats tree.css's display: flex !important. */
@@ -10312,7 +10321,7 @@ pre.volt-agent-searchable {
 	align-items: center;
 	gap: 6px;
 	height: 100%;
-	padding-right: 6px;
+	padding-right: 12px;
 	min-width: 0;
 	color: var(--vscode-descriptionForeground);
 }

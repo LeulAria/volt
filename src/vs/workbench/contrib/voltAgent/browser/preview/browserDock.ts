@@ -105,6 +105,8 @@ export class BrowserAgentDock extends Disposable {
 		this.chips = this._register(instantiationService.createInstance(AgentComposerChips, {
 			dock: true,
 			onMultitaskPickCancel: () => this.composerQueue.stopPicking(),
+			// "N to multitask" goes in the composer's input, as in the chat's, not in the chip row.
+			multitaskInInput: true,
 			onStatusClick: () => {
 				this.setFloatOpen(true);
 				this.setExpanded(true);
@@ -166,6 +168,10 @@ export class BrowserAgentDock extends Disposable {
 			},
 			onMode: id => this.composerQueue.setMode(id),
 		}));
+		const multitaskToken = this.chips.multitaskToken;
+		if (multitaskToken) {
+			this.composer.addInputToken(multitaskToken);
+		}
 		// A queued message is edited here, in the dock's own composer, as the chat edits it in its own.
 		this.editSurface = {
 			content: () => ({ text: this.composer.getDisplayText(), mentions: cloneDisplayMentions(this.composer.getDisplayMentions()) }),
@@ -512,10 +518,16 @@ export class BrowserAgentDock extends Disposable {
 		}
 	}
 
-	/** Start Multitasking is on: the chip counts the ticked messages and Send (over Stop) starts them. */
+	/** Start Multitasking is on: the token in the input counts the ticked messages and Send (over Stop) starts them. */
 	private setMultitaskPick(ids: readonly string[] | undefined): void {
+		const started = !this.multitaskPick && !!ids;
 		this.multitaskPick = ids;
 		this.chips.setMultitaskPick(ids?.length);
+		this.composer.setInputTokenShown(!!ids);
+		// The count and Send live in the composer: open it when picking starts.
+		if (started) {
+			this.setExpanded(true);
+		}
 		this.syncPendingSend();
 	}
 

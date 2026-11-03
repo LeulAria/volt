@@ -690,6 +690,10 @@ interface IContextPopupRefs {
  */
 function floatAboveComposer(panel: HTMLElement, composer: HTMLElement): IDisposable {
 	panel.classList.add('floating');
+	// The transcript drops its fade band while a card is open. A class, not a :has() on the editor:
+	// that restyled every paragraph and icon in the window for each node a streaming reply added.
+	const editor = composer.closest('.volt-agent-editor');
+	editor?.classList.add('has-context-panel');
 	const win = getWindow(panel);
 	const place = () => {
 		const box = composer.getBoundingClientRect();
@@ -722,5 +726,9 @@ function floatAboveComposer(panel: HTMLElement, composer: HTMLElement): IDisposa
 	return toDisposable(() => {
 		resizes.disconnect();
 		mutations.disconnect();
+		panel.classList.remove('floating');
+		if (!editor?.querySelector('.volt-agent-composer > .volt-agent-context-panel.floating')) {
+			editor?.classList.remove('has-context-panel');
+		}
 	});
 }
