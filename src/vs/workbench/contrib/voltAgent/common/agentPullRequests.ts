@@ -614,6 +614,28 @@ export function isGitPushOutput(output: string): boolean {
 	return /^To \S+$/m.test(output) && /^\s*(?:[+*-]\s+)?(?:[0-9a-f]{7,}\.\.\.?[0-9a-f]{7,}|\[new branch\])\s+\S+\s+->\s+\S+/m.test(output);
 }
 
+/**
+ * The pull requests a command says it merged, closed or reopened, as `gh pr merge`, `gh pr close` and
+ * `gh pr reopen` print it ("Squashed and merged pull request owner/name#12 (title)", "Pull request
+ * owner/name#12 (title) was already merged"). `repo` is `owner/name` when the command named it.
+ */
+export function changedPullRequestsInOutput(output: string): { readonly repo?: string; readonly number: number }[] {
+	const found: { repo?: string; number: number }[] = [];
+	const patterns = [
+		/\b(?:merged|closed|reopened) pull request ([\w.-]+\/[\w.-]+)?#(\d+)\b/gi,
+		/\bpull request ([\w.-]+\/[\w.-]+)?#(\d+)\b[^\n]*\bwas already (?:merged|closed)\b/gi,
+	];
+	for (const pattern of patterns) {
+		for (const match of output.matchAll(pattern)) {
+			const number = Number(match[2]);
+			if (!found.some(pr => pr.number === number && pr.repo === match[1])) {
+				found.push(match[1] ? { repo: match[1], number } : { number });
+			}
+		}
+	}
+	return found;
+}
+
 //#endregion
 
 //#region Ranking

@@ -57,6 +57,7 @@ import {
 	buildPullRequestTextPrompt,
 	buildCommitMessagePrompt,
 	buildWatchMessage,
+	changedPullRequestsInOutput,
 	collectRemarks,
 	commitMessageFrom,
 	createdPullRequestUrl,
@@ -67,6 +68,7 @@ import {
 	findPullRequestUrls,
 	IAgentPrLink,
 	isOpenState,
+	isReadyToMerge,
 	isTerminalState,
 	isTrunkBranch,
 	newLink,
@@ -171,6 +173,13 @@ const TICK_MS = 15_000;
 /** How long after a push its pull request is read again: GitHub moves the head a moment later. */
 const PUSH_SETTLE_MS = 4_000;
 const OPEN_SYNC_MS = 60_000;
+/**
+ * A pull request ready to merge is the one most likely to be merged next, often in a browser while
+ * Volt keeps focus: it is read on every tick (one batched query per repository).
+ */
+const READY_SYNC_MS = TICK_MS;
+/** Coming back to the window re-reads open pull requests older than this: one may have been merged meanwhile. */
+const FOCUS_SYNC_MS = 10_000;
 const PENDING_SYNC_MS = 40_000;
 const WATCH_SYNC_MS = 45_000;
 const CLOSED_SYNC_MS = 15 * 60_000;
@@ -317,6 +326,11 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 				} else if (isGitPushOutput(event.output)) {
 					this.didPush(this.runtime.chatFor(sessionId));
 				}
+				// `gh pr merge` in any chat: every chat linking that pull request shows it merged now.
+				const changed = changedPullRequestsInOutput(event.output);
+				if (changed.length) {
+					this.refreshNowAndSoon(this.keysNamed(changed));
+				}
 			}
 		}));
 		// A finished turn may have pushed a branch or opened a pull request (also one that failed or
@@ -355,6 +369,7 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 				for (const folder of this.origins.keys()) {
 					void this.readOrigin(folder);
 				}
+				this.syncOpenOnFocus();
 			}
 		}));
 		this._register(new IntervalTimer()).cancelAndSet(() => void this.tick(false), TICK_MS);
@@ -871,6 +886,9 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		if (force) {
 			return age > 5_000;
 		}
+		if (isReadyToMerge(snapshot)) {
+			return age >= READY_SYNC_MS;
+		}
 		return age > (snapshot.checks.state === 'pending' || snapshot.mergeable === 'unknown' ? PENDING_SYNC_MS : OPEN_SYNC_MS);
 	}
 
@@ -1213,18 +1231,55 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 	}
 
 	didPush(sessionId: string): void {
-		const keys = visibleLinks(this.links(sessionId)).map(link => link.key);
+		this.refreshNowAndSoon(visibleLinks(this.links(sessionId)).map(link => link.key));
+	}
+
+	/** Reads these pull requests now, and again a moment later: GitHub shows a push or a merge a moment after it lands. */
+	private refreshNowAndSoon(keys: readonly string[]): void {
 		if (!keys.length) {
 			return;
 		}
-		const refresh = () => void this.refresh(keys).catch(err => this.logService.trace('[volt-pr] could not refresh after a push', err));
+		const refresh = () => void this.refresh(keys).catch(err => this.logService.trace('[volt-pr] could not refresh after a push or merge', err));
 		refresh();
-		// GitHub moves the pull request's head a moment after the push lands.
 		const timer = setTimeout(() => {
 			this.pushTimers.delete(timer);
 			refresh();
 		}, PUSH_SETTLE_MS);
 		this.pushTimers.add(timer);
+	}
+
+	/** The linked pull requests a command named: by number, and by repository when it printed one. */
+	private keysNamed(named: readonly { readonly repo?: string; readonly number: number }[]): string[] {
+		const keys = new Set<string>();
+		for (const links of this.chats.values()) {
+			for (const link of links) {
+				const repo = `${link.repo.owner}/${link.repo.name}`.toLowerCase();
+				if (link.source !== 'dismissed' && named.some(pr => pr.number === link.number && (!pr.repo || pr.repo.toLowerCase() === repo))) {
+					keys.add(link.key);
+				}
+			}
+		}
+		return [...keys];
+	}
+
+	/** Re-reads open pull requests not read in the last few seconds: the user may have merged or closed one in the browser. */
+	private syncOpenOnFocus(): void {
+		if (!this.loaded || this._store.isDisposed) {
+			return;
+		}
+		const now = Date.now();
+		const due = new Map<string, IAgentPrLink>();
+		for (const [sessionId, links] of this.chats) {
+			const archived = this.history.get(sessionId)?.archived;
+			for (const link of links) {
+				if (link.source !== 'dismissed' && !archived && isOpenState(link.snapshot?.state) && now - (link.syncedAt ?? 0) > FOCUS_SYNC_MS) {
+					due.set(link.key, link);
+				}
+			}
+		}
+		if (due.size) {
+			void this.readSummaries([...due.values()], false);
+		}
 	}
 
 	/** A command in the chat printed the pull request it opened. */
