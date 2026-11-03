@@ -10,7 +10,7 @@ import { isEqual } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
-import { IVoltMenuItem, IVoltMenuSection, IVoltSubmenu, showVoltMenu } from '../ui/menu/voltMenu.js';
+import { IVoltMenuItem, IVoltMenuPromptDestination, IVoltMenuSection, IVoltSubmenu, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { createHomeBitbucketIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeGitIcon, createHomeGitLabIcon, createHomeLaptopIcon, createHomeSearchIcon } from './agentHomeIcons.js';
 import {
 	AGENT_CLONE_PROVIDERS,
@@ -29,7 +29,7 @@ export interface IAgentHomeWorkspaceMenuHost {
 	readonly current?: URI;
 	/** Where cloned and new projects are made, as a path label. */
 	location(): string;
-	/** Asks for another location and keeps it for next time. */
+	/** Asks for another location in Volt's folder picker and keeps it for next time. */
 	changeLocation(): Promise<void>;
 	/** One folder opens as its project; several open one new chat across all of them. */
 	openFolders(folders: readonly URI[], current?: URI): Promise<void>;
@@ -138,6 +138,14 @@ export function showAgentHomeWorkspaceMenu(
 		},
 	};
 
+	/** Under the New project and clone prompts: where the folder is made, and a way to pick another. */
+	const location: IVoltMenuPromptDestination = {
+		label: () => host.location(),
+		icon: createHomeFolderIcon,
+		tooltip: localize('voltAgent.workspace.changeLocation', "Change where new projects and clones go"),
+		change: () => host.changeLocation(),
+	};
+
 	const cloneItem = (provider: AgentCloneProvider): WorkspaceItem => provider === 'github'
 		// GitHub lists your repositories; the other hosts take a URL.
 		? { id: provider, label: cloneProviderLabel(provider), icon: Codicon.github, data: { kind: 'github' } }
@@ -147,9 +155,10 @@ export function showAgentHomeWorkspaceMenu(
 			icon: provider === 'gitlab' ? createHomeGitLabIcon : provider === 'bitbucket' ? createHomeBitbucketIcon : Codicon.repoClone,
 			prompt: {
 				placeholder: cloneProviderPlaceholder(provider),
-				hint: localize('voltAgent.workspace.clonesInto', "Clones into {0}", host.location()),
+				hint: localize('voltAgent.workspace.clonesIntoFolder', "Clones into"),
 				validate: value => resolveCloneUrl(provider, value) ? undefined : localize('voltAgent.workspace.badUrl', "Paste a repository URL."),
 				onSubmit: value => submit(() => host.clone(resolveCloneUrl(provider, value)!)),
+				destination: location,
 			},
 			data: NONE,
 		};
@@ -183,9 +192,10 @@ export function showAgentHomeWorkspaceMenu(
 		icon: Codicon.add,
 		prompt: {
 			placeholder: localize('voltAgent.workspace.projectName', "Project name"),
-			hint: localize('voltAgent.workspace.createsIn', "Creates a Git repository in {0}", host.location()),
+			hint: localize('voltAgent.workspace.createsInFolder', "Creates a Git repository in"),
 			validate: newProjectNameProblem,
 			onSubmit: value => submit(() => host.createProject(value.trim())),
+			destination: location,
 		},
 		data: NONE,
 	}, {

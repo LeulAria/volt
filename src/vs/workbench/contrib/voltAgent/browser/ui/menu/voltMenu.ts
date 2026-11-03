@@ -92,6 +92,22 @@ export interface IVoltMenuPrompt {
 	readonly validate?: (value: string) => string | undefined;
 	/** A rejection's message is shown and the menu stays open; otherwise the menu closes. */
 	readonly onSubmit: (value: string) => Promise<void>;
+	/** Where the value goes, as a row under the hint (the folder a new project is made in). */
+	readonly destination?: IVoltMenuPromptDestination;
+}
+
+/**
+ * A row under a prompt's hint that says where its value goes and changes it: a click, or ↓ then
+ * Enter, runs `change` with the menu set aside (hidden, but its prompt and typed value kept) and
+ * comes back to the prompt.
+ */
+export interface IVoltMenuPromptDestination {
+	/** Read again after `change`, e.g. "~/Desktop/Projects". */
+	readonly label: () => string;
+	readonly icon?: ThemeIcon | (() => HTMLElement | SVGElement);
+	readonly tooltip?: string;
+	/** Asks for another one, e.g. in Volt's folder picker. */
+	readonly change: () => Promise<void>;
 }
 
 export type VoltMenuSections<T> = readonly IVoltMenuSection<T>[] | ((query: string, token: CancellationToken) => Promise<readonly IVoltMenuSection<T>[]> | readonly IVoltMenuSection<T>[]);
@@ -148,7 +164,8 @@ type Row<T> =
 	| { readonly kind: 'header'; readonly id: string; readonly title: string; readonly collapsible: boolean; readonly collapsed: boolean }
 	| { readonly kind: 'item'; readonly id: string; readonly item: IVoltMenuItem<T>; readonly matches?: IMatch[] }
 	| { readonly kind: 'separator'; readonly id: string }
-	| { readonly kind: 'message'; readonly id: string; readonly text: string; readonly error?: boolean };
+	| { readonly kind: 'message'; readonly id: string; readonly text: string; readonly error?: boolean }
+	| { readonly kind: 'destination'; readonly id: string; readonly destination: IVoltMenuPromptDestination; readonly label: string };
 
 const ROW_HEIGHT = 30;
 const TWO_LINE_ROW_HEIGHT = 46;
@@ -180,6 +197,8 @@ export function showVoltMenu<T>(contextViewService: IContextViewService, options
 	}
 	let widget: VoltMenuWidget<T> | undefined;
 	let hidden = false;
+	/** Hidden while a dialog it opened is up (the folder picker): presses in that dialog keep it. */
+	let setAside = false;
 	const hide = () => {
 		if (!hidden) {
 			hidden = true;
@@ -221,7 +240,7 @@ export function showVoltMenu<T>(contextViewService: IContextViewService, options
 			// The context view only reports events inside itself, so watch the page for a press
 			// anywhere else. The trigger toggles the menu on its own click.
 			store.add(addDisposableListener(getWindow(options.anchor).document, 'mousedown', e => {
-				if (!(e.target instanceof Node) || contextViewService.getContextViewElement().contains(e.target) || options.anchor.contains(e.target)) {
+				if (setAside || !(e.target instanceof Node) || contextViewService.getContextViewElement().contains(e.target) || options.anchor.contains(e.target)) {
 					return;
 				}
 				hide();
@@ -245,6 +264,16 @@ export function showVoltMenu<T>(contextViewService: IContextViewService, options
 				hide,
 				relayout: () => contextViewService.layout(),
 				room,
+				setAside: async run => {
+					setAside = true;
+					host.classList.add('set-aside');
+					try {
+						await run();
+					} finally {
+						setAside = false;
+						host.classList.remove('set-aside');
+					}
+				},
 				pick: item => options.onPick(item),
 				className: options.className,
 				ariaLabel: options.ariaLabel,
@@ -274,6 +303,8 @@ interface IWidgetContext<T> {
 	readonly relayout: () => void;
 	/** Set on root menus: the room around the anchor, which caps the list's height. */
 	readonly room?: () => IVoltMenuRoom;
+	/** Set on root menus: hides the menu while `run` is busy, without closing it. */
+	readonly setAside?: (run: () => Promise<void>) => Promise<void>;
 	readonly pick: (item: IVoltMenuItem<T>) => void | Promise<void>;
 	readonly className?: string;
 	readonly ariaLabel: string;
@@ -311,7 +342,7 @@ class VoltMenuWidget<T> extends Disposable {
 	private loadCts: CancellationTokenSource | undefined;
 	private loadTimer: ReturnType<typeof setTimeout> | undefined;
 	private busy = false;
-	private prompting: { readonly prompt: IVoltMenuPrompt; error?: string; submitting: boolean } | undefined;
+	private prompting: { readonly prompt: IVoltMenuPrompt; error?: string; submitting: boolean; changing?: boolean } | undefined;
 	private syncHeading: (() => void) | undefined;
 
 	constructor(
@@ -397,6 +428,7 @@ class VoltMenuWidget<T> extends Disposable {
 			new ItemRenderer<T>(),
 			new SeparatorRenderer<T>(),
 			new MessageRenderer<T>(),
+			new DestinationRenderer<T>(),
 		], {
 			identityProvider: { getId: row => row.id },
 			multipleSelectionSupport: false,
@@ -408,10 +440,11 @@ class VoltMenuWidget<T> extends Disposable {
 			accessibilityProvider: {
 				getWidgetAriaLabel: () => context.ariaLabel,
 				getWidgetRole: () => 'listbox',
-				getRole: row => row.kind === 'item' ? 'option' : 'presentation',
+				getRole: row => row.kind === 'item' || row.kind === 'destination' ? 'option' : 'presentation',
 				getAriaLabel: row => row.kind === 'item'
 					? [row.item.label, row.item.description, row.item.checked ? localize('voltMenu.current', "current") : undefined].filter(Boolean).join(', ')
-					: row.kind === 'header' ? row.title : row.kind === 'message' ? row.text : null,
+					: row.kind === 'destination' ? localize('voltMenu.destinationAria', "{0}, Enter to change", row.label)
+						: row.kind === 'header' ? row.title : row.kind === 'message' ? row.text : null,
 			},
 		}));
 		this.list.style(getListStyles({
@@ -434,6 +467,10 @@ class VoltMenuWidget<T> extends Disposable {
 				return;
 			}
 			pointer = point;
+			// A prompt's Enter submits; a pointer resting on its destination row must not take that over.
+			if (this.prompting) {
+				return;
+			}
 			if (e.index !== undefined && e.index !== this.active && this.isNavigable(e.index)) {
 				this.idle = false;
 				this.setActive(e.index, false);
@@ -447,6 +484,8 @@ class VoltMenuWidget<T> extends Disposable {
 			const row = this.rows[e.index];
 			if (row?.kind === 'header' && row.collapsible) {
 				this.toggleSection(row.id);
+			} else if (row?.kind === 'destination') {
+				void this.changeDestination();
 			} else if (row?.kind === 'item') {
 				const target = e.browserEvent.target;
 				const action = row.item.action;
@@ -683,10 +722,11 @@ class VoltMenuWidget<T> extends Disposable {
 	private isNavigable(index: number): boolean {
 		if (index < this.rows.length) {
 			const row = this.rows[index];
-			return row?.kind === 'item' && !row.item.disabled;
+			return row?.kind === 'item' ? !row.item.disabled : row?.kind === 'destination';
 		}
+		// A prompt hides the footer.
 		const footer = this.footerRows[index - this.rows.length];
-		return !!footer && !footer.item.disabled;
+		return !!footer && !footer.item.disabled && !this.prompting;
 	}
 
 	private firstNavigable(): number {
@@ -758,10 +798,17 @@ class VoltMenuWidget<T> extends Disposable {
 		}
 		const event = new StandardKeyboardEvent(e);
 		if (this.prompting) {
+			// ↓ or Tab steps from the field onto the destination row, ↑ or Shift+Tab back.
+			const destination = this.rows.findIndex(row => row.kind === 'destination');
+			const onDestination = destination >= 0 && this.active === destination;
 			if (event.keyCode === KeyCode.Enter) {
-				void this.submitPrompt();
+				void (onDestination ? this.changeDestination() : this.submitPrompt());
 			} else if (event.keyCode === KeyCode.Escape) {
 				this.endPrompt();
+			} else if (destination >= 0 && (event.equals(KeyCode.DownArrow) || event.equals(KeyCode.Tab))) {
+				this.setActive(destination, true);
+			} else if (onDestination && (event.equals(KeyCode.UpArrow) || event.equals(KeyMod.Shift | KeyCode.Tab))) {
+				this.setActive(-1, false);
 			} else {
 				return;
 			}
@@ -990,15 +1037,43 @@ class VoltMenuWidget<T> extends Disposable {
 			?? (prompting.submitting ? localize('voltMenu.working', "Working...") : undefined)
 			?? prompting.prompt.hint
 			?? localize('voltMenu.promptHint', "Press Enter to confirm or Escape to cancel");
-		this.showRows([{ kind: 'message', id: 'prompt', text, error: !!problem }]);
+		const rows: Row<T>[] = [{ kind: 'message', id: 'prompt', text, error: !!problem }];
+		const destination = prompting.prompt.destination;
+		if (destination) {
+			rows.push({ kind: 'destination', id: 'destination', destination, label: destination.label() });
+		}
+		this.showRows(rows);
 		this.setActive(-1, false);
 		scheduleAtNextAnimationFrame(getWindow(this.root), () => this.context.relayout());
+	}
+
+	/** Runs the prompt's destination change with the menu set aside, then picks up the prompt where it was. */
+	private async changeDestination(): Promise<void> {
+		const prompting = this.prompting;
+		const destination = prompting?.prompt.destination;
+		if (!prompting || !destination || prompting.submitting || prompting.changing) {
+			return;
+		}
+		prompting.changing = true;
+		prompting.error = undefined;
+		try {
+			await (this.context.setAside ?? (run => run()))(() => destination.change());
+		} catch (err) {
+			prompting.error = err instanceof Error ? err.message : String(err);
+		} finally {
+			prompting.changing = false;
+		}
+		if (this._store.isDisposed || this.prompting !== prompting) {
+			return;
+		}
+		this.renderPrompt();
+		this.input?.focus();
 	}
 
 	private async submitPrompt(): Promise<void> {
 		const prompting = this.prompting;
 		const value = this.input?.value.trim() ?? '';
-		if (!prompting || prompting.submitting || !value || prompting.prompt.validate?.(value)) {
+		if (!prompting || prompting.submitting || prompting.changing || !value || prompting.prompt.validate?.(value)) {
 			return;
 		}
 		prompting.submitting = true;
@@ -1186,6 +1261,33 @@ class SeparatorRenderer<T> implements IListRenderer<Row<T>, HTMLElement> {
 	}
 
 	renderElement(): void { }
+
+	disposeTemplate(): void { }
+}
+
+/** A prompt's destination: its icon and value, and "Change" at the end. */
+class DestinationRenderer<T> implements IListRenderer<Row<T>, HTMLElement> {
+	readonly templateId = 'destination';
+
+	renderTemplate(container: HTMLElement): HTMLElement {
+		return append(container, $('.volt-menu-row.volt-menu-item.volt-menu-destination'));
+	}
+
+	renderElement(row: Row<T>, _index: number, element: HTMLElement): void {
+		if (row.kind !== 'destination') {
+			return;
+		}
+		clearNode(element);
+		renderItem(element, {
+			id: row.id,
+			// Marked left-to-right so a long path keeps its slashes while it ellipsizes on the left.
+			label: `\u200e${row.label}\u200e`,
+			icon: row.destination.icon ?? Codicon.folder,
+			keybinding: localize('voltMenu.change', "Change"),
+			tooltip: row.destination.tooltip,
+			data: undefined,
+		}, undefined);
+	}
 
 	disposeTemplate(): void { }
 }
