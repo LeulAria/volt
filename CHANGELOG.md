@@ -8,6 +8,178 @@ Volt is built on VS Code (Code - OSS 1.105). Changes to that base come from upst
 Download a build from [Releases](https://github.com/LeulAria/volt/releases). From 0.0.4, Mac builds are signed with an Apple
 Developer ID and notarized.
 
+## [0.0.6] - 2026-11-04
+
+A hundred agents at once, a calendar for Automations, and run and debug in the agent window. The agent window keeps the
+right chat on screen with 100+ agents at work, Automations get Day, Week and Month views and a visual Workflows builder, and
+apps run and debug from the agent window. Pull requests get a full page, phones pair over Wi-Fi, Tailscale, Cloudflare or
+SSH, and computer use works on macOS, Windows and Linux.
+
+### Highlights
+
+- **100+ agents at once.** Switching chats always shows the chat you picked, with its project, branch, files and terminals.
+  With 110 agents streaming, the window gets 27 times less transcript traffic and a chat's transcript arrives in 30 ms
+  instead of 311 ms (median).
+- **Automations calendar and Workflows.** List, Day, Week and Month views you can schedule from, every-few-minutes
+  schedules, and a visual Workflows builder with YAML, templates and run history.
+- **Run and debug in the agent window.** Run rows for your project's scripts and launch configs, a device picker, the debug
+  toolbar, and browser DevTools docked under the page.
+- **Volt in the browser.** The browser client is now the real workbench served by the agent server, with a sign-in page and
+  device pairing.
+- **Pull Requests page.** A full-page view with search, filters and grouping, and merged pull requests show as merged within
+  seconds.
+- **Remote Control.** Add Device pairs a phone or browser over the same Wi-Fi, Tailscale, a Cloudflare Tunnel or an SSH
+  tunnel, with a QR code or an 8-character code.
+- **Computer use everywhere.** The `desktop_*` tools run on macOS, Windows and Linux, read windows with about half the
+  tokens, and can draw.
+- **A new release notes page.** The version drawn as a blueprint, a short summary, then every detail.
+
+### Performance
+
+| With 110 agents streaming | 0.0.5 | 0.0.6 |
+| --- | ---: | ---: |
+| Transcript traffic to the window | 675 KB/s | 25 KB/s |
+| Updates to the window | 485/s | 98/s |
+| Agent server CPU | 16.8% | 11.9% |
+| Wait for a chat's transcript on switch (median / p90) | 311 / 1,126 ms | 30 / 471 ms |
+
+Measured on one dev instance with 110 chats streaming from test agents, the same chats back to back. The window's renderer
+now costs the same with 110 chats streaming as with one.
+
+Also faster:
+- The agent server starts warm in about 0.35 s instead of 0.6 to 1.2 s (Node compile cache), and the first browser load
+  after a server start no longer waits about 5 s for compression.
+- Computer use reads a window in 3,247 tokens instead of 6,702 (five common apps), a 10-step Calculator flow takes about
+  140 ms a step instead of 302 ms, and a 1,000 px drag takes 270 ms instead of 2.1 s.
+- The folder picker draws `node_modules` (894 folders) in 28 ms.
+
+### Added
+
+**Agents and chats**
+- Chats nobody looks at update once a second; the chats on screen update every 50 ms. Updates are sent as small edits,
+  streamed text is joined per chat, and a reconnect reopens chats four at a time, the one on screen first.
+- Titles say what the chat's task is (a verb, the thing and the goal, 3 to 7 words), a vague first message is titled again
+  from the first two messages, and the title bar shows six words. Chats on providers with no cheap one-shot mode (Cursor,
+  Grok, OpenCode) get their title from another signed-in provider.
+- Each agent tab has a ... menu with Open in New Window, Rename and Archive. Rename edits the title in its row.
+- Drag chats into your own order (Sort > Manual), per profile and synced across windows. Draft now sits above Pinned.
+- Watched tasks: `task_watch` runs a long command (a build, a bundle, `docker build`) and gives the agent control back. On a
+  failure Volt wakes the agent with the error, runs the command again after its fix, and stops after 3 identical failures,
+  5 attempts or 2 hours. A live card shows each watch with its output, attempts and Run Again / Stop Watching.
+- Queue changes (send, Send now, edit, reorder, remove, Start Multitasking) show in the card at once and keep their order.
+  On the agent server, a prompt sent to an idle chat shows as its turn right away.
+- Recent projects under a new chat's composer (Cmd+1 to Cmd+3), including folders Claude Code has worked in.
+- New project asks where the project goes, and remembers it; the Git URL, GitLab and Bitbucket clone prompts get the same
+  row. The folder picker looks like the Explorer: file icon theme icons, files listed dimmed after the folders
+  (`volt.projects.folderPickerShowFiles`), 28px rows.
+
+**Automations and Workflows**
+- Automations has List, Day, Week and Month views. Day shows a lane per automation with runs coloured by result, Week an
+  hour grid, Month a six-week grid. Click an empty time to schedule a new automation, a template, or another time for an
+  existing one. A Filter menu, keyboard navigation (arrows, T, D, W, M) and a Next Run column.
+- One-time schedules, "Every few minutes" (1 minute to 12 hours) and cron presets; weekly and monthly cron schedules show
+  on the right days.
+- The instructions box works like the composer: voice, `/` skills with automation snippets, `@` tools, the model picker
+  and a Workflow picker. A `/skill` in the instructions loads that skill when the run starts. Save shows Saved, and Cmd+S
+  saves.
+- Workflows: a visual node builder with square-routed edges, a minimap, an Add node panel, a node inspector, a YAML tab
+  kept in sync, undo and revision history. The engine checks the graph, simulates, runs step by step, retries and cancels.
+  A library with a template gallery and an executions panel with logs. A pasted or imported workflow lists the exact
+  commands it would run before you accept it.
+- 30 more automation templates, in new Docs & Release, Team Updates and Monitoring categories.
+
+**Run, debug and the browser**
+- Run rows under "On <project>" in the chat's side toolbar: detected npm, pnpm and yarn scripts, Flutter, Expo, React
+  Native, Django, Go and Cargo, `launch.json` entries, recent debug configurations and extension debuggers, plus "Let Agent
+  Debug and Run the App".
+- A device row and picker for Flutter, React Native and Expo (booted and offline simulators and emulators, Volt Browser).
+- Extension status bar items (for example Live Server's Go Live) show in the side toolbar. The debug toolbar sits under Run,
+  or floats in the title bar when the side toolbar is collapsed. `volt.agent.statusBar.visible` brings the bottom status
+  bar back.
+- Local addresses from runs, debug sessions and extensions open in Volt's browser.
+- Toggle Developer Tools and Inspect Element dock DevTools under the page in a resizable pane.
+- Browser annotations: Send with the chat open puts the annotation in that chat's composer; sent annotations stay as
+  numbered pins; holding the pointer on an element chip scrolls the browser to it.
+
+**Git and pull requests**
+- A Pull Requests button in the agent sidebar opens a full-page view: search, a repository menu, filter chips, and a filter
+  menu (grouping, order, status, checks, review, involvement, author, label, size, updated, Has Conflicts, Linked to Chats)
+  that is saved. Opening a pull request shows it with its own sidebar and Back.
+- Suggest branch names: a sparkle on a chat's worktree branch offers four AI names from the chat, its commits and its
+  changes; Confirm renames the branch and the chats on it.
+- PR Summary lists the newest commits (Show All) and shows checks as a list.
+
+**Devices and Remote Control**
+- A Remote Control intro the first time you pair a phone or browser.
+- Add Device in Settings > Devices: Same Wi-Fi, Tailscale, Cloudflare Tunnel or SSH Tunnel, each with its checklist, then a
+  QR code with the Volt logo or an 8-character code that renews while the dialog is open. Addresses stay blurred until
+  hovered. SSH works both ways (`ssh -R` through your server, `ssh -L` from another computer), and Volt can install
+  `cloudflared`.
+- Device previews in 3D for every iPhone, iPad and Android phone, tablet and foldable, with a controls rail (Home, Back,
+  Recents, Rotate, appearance, text size, screenshot, 3D or flat, Duo postures, fold). With the right panel closed the
+  running device floats over the chat, and several devices can be open as tabs.
+
+**Web and mobile**
+- The browser client is the real workbench served by the agent server, with a sign-in page (automatic on the same
+  computer, or a pairing link or code). The React web app is gone.
+- Settings > Devices pairs phones and browsers and lists paired devices.
+- Mobile: a Pull Requests tab, adding a project by browsing the computer's folders, layouts for tablets and foldables (a
+  tab rail, two columns, split at the hinge), a bundled diff viewer and Monaco for files, the desktop's file icons and app
+  icon, iOS 27 support, and chat polish (Files Changed card, sticky pinned prompt, model picker with favourites).
+- The Android and iOS apps are built by the release workflows and attached to the release.
+
+**Computer use**
+- The `desktop_*` tools run on macOS, Windows (UI Automation) and Linux (AT-SPI) through one protocol, and turn off with
+  `volt.computerUse.enabled`.
+- `draw` takes lines, polygons, rectangles, circles, ellipses, arcs, stars and SVG paths in one step; also `drag A to B`,
+  `hover`, clipboard paste for long text and `screenshot: true`.
+- Actions wait for the app's own change events instead of polling, and snapshots are smaller: only the focused element is
+  marked, rows are named in reading order, repeated and offscreen elements are pruned, and Electron apps expose their trees.
+
+### Changed
+
+- Agents open Review Draft Commits only when you ask for draft commits, use `/draft-commit` or ask to review them. "Commit
+  and open a PR" just commits; the Commit, Push & PR button still asks.
+- New Agent always opens a fresh chat (`volt.agent.composer.restoreUnsentDraft` brings back the old behaviour).
+- Quick pick lists (Cmd+P, Cmd+Shift+P, pickers) have 26px edge-to-edge rows and quieter group labels.
+- Volt submenus open beside their parent menu instead of over it.
+- Release notes open as a page with the version drawn as a blueprint, a short summary and the details; Help > Show Release
+  Notes opens this version's notes instead of the GitHub releases page.
+- Mermaid diagrams show their card with "Drawing..." while they stream, and the model picker's loading state matches it.
+- The website has a Support page, a download count and an agent flow diagram, and uses Apple's system fonts.
+- Pull requests now run CI: lint, type checks, unit tests, the app builds and a free AI review.
+- Building the mobile app locally reuses its native build: about 5 s instead of 8 to 10 minutes when only JavaScript
+  changed, and a release build repacks in under 20 s.
+
+### Fixed
+
+- With 10+ agents running, switching chats could show one chat's transcript under another's highlight and stay mixed up,
+  and the branch pill could keep the previous project's branch for seconds.
+- Turns started without an id (automations, agent-launched threads and forks, run groups, `/compact`, PR-review fixes, the
+  Scratch board) lost their reply when the agent server restarted.
+- The Trajectory panel was empty for Claude Code, Codex and Cursor chats: it now records one request per answer, with tool
+  calls, context size and subagents. A finished request no longer stays on "Streaming".
+- A merged pull request could show as Open for over a minute.
+- Commit review showed only the first line of a failing pre-commit hook. It now shows the hook's real reason and offers
+  Commit Without Hooks; Commit is disabled while it runs.
+- PR links from `gh pr create` link as soon as the URL prints, merge across windows and refresh after a push; the branch
+  pill follows `rename_branch`.
+- A chat could keep saying Working after its turn ended.
+- Source Control showed "spawn git ENOENT" when a chat's worktree folder was missing; it now waits for the folder, names it
+  and offers Try Again, and git always finds the system folders on its PATH.
+- An unsent worktree chat showed the main checkout's changes, and the Changes tab used the wrong folder.
+- Keep or Undo on a hunk was lost if the window reloaded or quit within half a second.
+- Inline comment edits whose reply wrapped short code in a fence after a lead-in line applied the whole reply.
+- Clicking Edit or Remove on a queued message could be lost while the agent streamed.
+- Mobile Connect rejected addresses with spaces or commas from phone keyboards, and pasted pairing links.
+- Tunnel traffic is served on its own loopback listener, so it never gets the automatic sign-in that this computer gets.
+
+### Known limitations
+
+- macOS is the platform Volt is developed and tested on. Windows and Linux builds come from CI and have had little testing;
+  computer use on Windows has not yet run on a real Windows machine.
+- The Android app is signed with a debug key and the iOS app is a simulator build until release signing is set up.
+
 ## [0.0.5] - 2026-10-31
 
 Commits by the hunk, a model for each multitask, and a working Trajectory panel. Draft commits can now split one file
@@ -445,6 +617,7 @@ mode, Git views for branches and worktrees, several Claude accounts, and a good 
 The first tagged build of Volt, which added the release pipeline with Stable, Beta and Nightly channels. It was never published to
 GitHub Releases.
 
+[0.0.6]: https://github.com/LeulAria/volt/releases/tag/v0.0.6
 [0.0.5]: https://github.com/LeulAria/volt/releases/tag/v0.0.5
 [0.0.4]: https://github.com/LeulAria/volt/releases/tag/v0.0.4
 [0.0.3]: https://github.com/LeulAria/volt/releases/tag/v0.0.3
