@@ -8,13 +8,13 @@ import { $, addDisposableListener, append, getWindow, isHTMLElement } from '../.
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, IReference, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
-import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
+import { isMacintosh } from '../../../../../base/common/platform.js';
 import { localize } from '../../../../../nls.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { SCRATCH_HIGHLIGHT_CONNECTIONS_SETTING } from '../../common/canvasScratchSettings.js';
+import { IVoltImageClipboardService } from '../../common/voltImageClipboard.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { INativeHostService } from '../../../../../platform/native/common/native.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
@@ -64,8 +64,6 @@ import { SHAPE_LABELS } from './scratchIcons.js';
 import { ScratchToolbar } from './scratchToolbar.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-/** The platform's name for PNG data on the system clipboard (what Electron's `clipboard.writeBuffer` takes). */
-const NATIVE_PNG_FORMAT = isMacintosh ? 'public.png' : isWindows ? 'PNG' : 'image/png';
 const DRAG_THRESHOLD = 3;
 const HIT_TOLERANCE = 6;
 const SNAP_THRESHOLD = 6;
@@ -3174,15 +3172,15 @@ export class ScratchCanvas extends Disposable {
 	 * the web clipboard is the fallback. False when neither could.
 	 */
 	private async writePngToClipboard(blob: Blob): Promise<boolean> {
-		let nativeHost: INativeHostService | undefined;
+		let imageClipboard: IVoltImageClipboardService | undefined;
 		try {
-			nativeHost = this.instantiationService.invokeFunction(accessor => accessor.get(INativeHostService));
+			imageClipboard = this.instantiationService.invokeFunction(accessor => accessor.get(IVoltImageClipboardService));
 		} catch {
 			// Not in the desktop app.
 		}
-		if (nativeHost) {
+		if (imageClipboard) {
 			try {
-				await nativeHost.writeClipboardBuffer(NATIVE_PNG_FORMAT, VSBuffer.wrap(new Uint8Array(await blob.arrayBuffer())));
+				await imageClipboard.writePng(VSBuffer.wrap(new Uint8Array(await blob.arrayBuffer())));
 				return true;
 			} catch {
 				// Try the web clipboard.

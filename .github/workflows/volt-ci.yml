@@ -218,6 +218,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # The runner restricts unprivileged user namespaces, so Chromium falls back to the setuid
+      # sandbox helper, which must be owned by root and setuid or Electron aborts at launch.
+      - name: Set up Chromium's sandbox helper
+        run: |
+          sudo chown root .build/electron/chrome-sandbox
+          sudo chmod 4755 .build/electron/chrome-sandbox
+
       - name: Run Electron unit tests
         run: xvfb-run -a ./scripts/test.sh --tfs "Unit Tests"
 
@@ -351,10 +358,11 @@ jobs:
         working-directory: apps/mobile
         run: npm run typecheck
 
+      # The widgets ship inside the app and install without TypeScript of their own, so the app's
+      # TypeScript and @types check them.
       - name: Type check the widgets
         if: ${{ !cancelled() }}
-        working-directory: apps/mobile-widgets
-        run: npm run typecheck
+        run: apps/mobile/node_modules/.bin/tsc --noEmit -p apps/mobile-widgets/tsconfig.json --typeRoots apps/mobile/node_modules/@types
 
       - name: Widget tests
         if: ${{ !cancelled() }}
@@ -464,14 +472,35 @@ jobs:
             .github/workflows/volt-labels.yml .github/workflows/volt-stale.yml .github/actions
 
   # New or updated dependencies with a known high or critical vulnerability fail. Uses GitHub's
-  # dependency graph, so it needs no install and only runs for pull requests.
+  # dependency graph, so it needs no install and only runs for pull requests. Until the graph is
+  # turned on (Settings, Advanced Security, Dependency graph) it only leaves a notice.
   dependencies:
     name: Dependency Review
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+      - name: Is the dependency graph on?
+        id: graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/dependency-graph/compare/$BASE...$HEAD" --silent 2> "$RUNNER_TEMP/graph.err"; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          elif grep -qE "HTTP 40[34]" "$RUNNER_TEMP/graph.err"; then
+            # The compare API answers 403 Forbidden while the graph is off.
+            echo "::notice title=Dependency review is off::Turn on the dependency graph in https://github.com/$GITHUB_REPOSITORY/settings/security_analysis to check new dependencies for known vulnerabilities."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            # Anything else: let the action run and report it.
+            cat "$RUNNER_TEMP/graph.err"
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.graph.outputs.enabled == 'true'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
           comment-summary-in-pr: never
