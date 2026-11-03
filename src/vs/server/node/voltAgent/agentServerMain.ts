@@ -49,7 +49,7 @@ import { ISecretStorageService } from '../../../platform/secrets/common/secrets.
 import { getResolvedShellEnv } from '../../../platform/shell/node/shellEnv.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../platform/workspace/common/workspace.js';
-import { AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo, IVoltSshTunnelOptions } from '../../../platform/voltAgentServer/common/protocol.js';
+import { AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo, IVoltSshTunnelOptions, VOLT_PAIRING_CODE_PATH } from '../../../platform/voltAgentServer/common/protocol.js';
 import { AgentServerProtocol, IClientCallOptions, tokensEqual } from '../../../platform/voltAgentServer/common/protocolServer.js';
 import { SessionTopicData } from '../../../platform/voltAgentServer/common/sessionPatch.js';
 import { agentServerPaths, clearAgentServerRuntime, ensureAgentServerToken, isProcessAlive, preferredAgentServerPort, writeAgentServerRuntime } from '../../../platform/voltAgentServer/node/agentServerFiles.js';
@@ -736,6 +736,18 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, to
 		const ok = req.headers.authorization === `Bearer ${token}`;
 		res.writeHead(ok ? 200 : 401, { 'Content-Type': 'application/json' });
 		res.end(JSON.stringify(ok ? { ok: true, pid: process.pid, epoch } : { ok: false }));
+		return;
+	}
+	if (url.pathname === VOLT_PAIRING_CODE_PATH) {
+		// Tools on this computer (`npx volt-run pair`) make pairing codes with the server's own token; Volt's windows ask over the socket.
+		const header = req.headers.authorization ?? '';
+		if (req.method !== 'POST') {
+			sendJson(res, 405, { error: 'method_not_allowed' });
+		} else if (ctx.viaTunnel || !header.startsWith('Bearer ') || !tokensEqual(header.slice('Bearer '.length), token)) {
+			sendJson(res, 401, { error: 'unauthorized' });
+		} else {
+			sendJson(res, 200, pairing.createCode(ctx));
+		}
 		return;
 	}
 	// The browser's way in: `/` and pairing links sign it in, then it continues to the workbench.
