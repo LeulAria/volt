@@ -123,7 +123,7 @@ import { IAction } from '../../../../../base/common/actions.js';
 import { IActionViewItem } from '../../../../../base/browser/ui/actionbar/actionbar.js';
 import { IBaseActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { getSimpleCodeEditorWidgetOptions } from '../../../codeEditor/browser/simpleEditorOptions.js';
-import { IVoltBrowserComments, REVEAL_BROWSER_ELEMENT_COMMAND_ID } from '../preview/browserCommentStore.js';
+import { IVoltBrowserComments, REVEAL_BROWSER_ELEMENT_COMMAND_ID, revealBrowserElementOnHover } from '../preview/browserCommentStore.js';
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { completeStreamingBlocks } from './agentSessionController.js';
 import { AgentSurfaceHost, agentSideChatParents } from '../workspace/agentSurfaceHost.js';
@@ -2660,9 +2660,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 					}));
 				}
 			} else if (mention.kind === 'browser' && mention.value) {
-				// A picked element: the browser beside the chat scrolls to it.
+				// A picked element: the browser beside the chat scrolls to it, on a click or a hover.
 				const payload = mention.value;
 				chip.setAttribute('data-open', 'true');
+				this.threadListeners.add(revealBrowserElementOnHover(chip, () => payload, this.commandService));
 				this.threadListeners.add(addDisposableListener(chip, 'click', e => {
 					e.preventDefault();
 					e.stopPropagation();

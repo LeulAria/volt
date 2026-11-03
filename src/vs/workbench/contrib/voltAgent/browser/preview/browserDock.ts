@@ -336,6 +336,13 @@ export class BrowserAgentDock extends Disposable {
 		return this.chatEditor()?.composerModelRef();
 	}
 
+	/** Puts the cursor in the owning chat's composer when that chat is on screen. False when it isn't. */
+	focusChat(): boolean {
+		const editor = this.chatEditor();
+		editor?.focus();
+		return !!editor;
+	}
+
 	/** The open chat that owns this browser's tools area. */
 	private chatEditor(): AgentEditor | undefined {
 		const sessionId = this.chatResolver?.();
