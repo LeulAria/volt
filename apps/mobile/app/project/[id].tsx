@@ -3,18 +3,24 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { type IFileContent, type IGitStatus, selectProjects, shortPath } from '@volt/client-core';
+import { basename, dirname, type IChatListItem, type IFileContent, type IGitStatus, relativeTime, selectProjects, shortPath, statusColor } from '@volt/client-core';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Markdown } from '../../src/chat/Markdown';
+import { FileIcon } from '../../src/files/FileIcon';
 import { ChatRow } from '../../src/home/ChatRow';
 import { openChat, useChatMenu } from '../../src/home/useChatMenu';
 import { useChatItems, useClient, useCollections, useOptionalClient, useStatus } from '../../src/state/client';
 import { useTheme } from '../../src/theme/theme';
-import { Button, EmptyState, Icon, T } from '../../src/ui/core';
-import { NavRow, ProjectAvatar, RowList, SectionTitle } from '../../src/ui/rows';
+import { useReadableInset } from '../../src/ui/adaptive';
+import { Button, EmptyState, Icon, Ripple, StatusIcon, T } from '../../src/ui/core';
+import { useHeaderScroll } from '../../src/ui/header';
+import { ListItem, ListRow } from '../../src/ui/list';
+import { CardGroup, CardRow, ProjectAvatar, RowList, SectionTitle } from '../../src/ui/rows';
+import { Sheet } from '../../src/ui/sheets';
 
 const RECENT = 5;
 const README_NAMES = ['README.md', 'readme.md', 'Readme.md', 'README'];
@@ -40,6 +46,10 @@ function Project({ projectId }: { readonly projectId: string }) {
 	const [git, setGit] = useState<IGitStatus | undefined>();
 	const [readme, setReadme] = useState<{ readonly name: string; readonly text: string } | undefined>();
 	const path = project?.path;
+	// The name scrolls away under the header, which then shows it.
+	const onScroll = useHeaderScroll(52);
+	const [detail, setDetail] = useState<Detail | undefined>();
+	const inset = useReadableInset();
 
 	useEffect(() => {
 		if (!path || !status.live) {
@@ -75,37 +85,36 @@ function Project({ projectId }: { readonly projectId: string }) {
 
 	return (
 		<View style={{ flex: 1, backgroundColor: p.canvas }}>
-			<Stack.Screen options={{ title: '' }} />
-			<ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}>
-				<View style={{ paddingHorizontal: 16, paddingTop: 8, gap: 10 }}>
+			<Stack.Screen options={{ title: project.name }} />
+			<Animated.ScrollView onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: insets.bottom + 32, paddingHorizontal: inset }}>
+				<Animated.View entering={FadeIn.duration(220)} style={{ paddingHorizontal: 16, paddingTop: 4, gap: 12 }}>
 					<View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-						<ProjectAvatar name={project.name} size={44} />
-						<View style={{ flex: 1, minWidth: 0 }}>
-							<T variant="title1" weight="800" numberOfLines={1} style={{ letterSpacing: -0.5 }}>{project.name}</T>
+						<ProjectAvatar name={project.name} size={42} git={!!git?.branch} />
+						<View style={{ flex: 1, minWidth: 0, gap: 1 }}>
+							<T variant="title2" weight="700" numberOfLines={1} style={{ letterSpacing: -0.4 }}>{project.name}</T>
 							<T variant="footnote" mono color={p.fgTertiary} numberOfLines={1} ellipsizeMode="head">{shortPath(project.path, 60)}</T>
 						</View>
 					</View>
-					<View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14 }}>
-						{git?.branch ? <Fact icon="branch" text={git.branch} /> : null}
-						<Fact icon="message" text={`${chats.length} ${chats.length === 1 ? 'chat' : 'chats'}`} />
-						{working ? <Fact icon="circleDashed" text={`${working} working`} color={p.info} /> : null}
-						{needs ? <Fact icon="shieldAlert" text={`${needs} need you`} color={p.warning} /> : null}
-						{git?.changes.length ? <Fact icon="fileDiff" text={`${git.changes.length} changed`} color={p.warning} /> : null}
-					</View>
-					<View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
-						<Button label="New chat" icon="compose" variant="primary" flex onPress={() => router.push({ pathname: '/new', params: { project: project.id } })} />
-						<Button label="Files" icon="folder" flex onPress={files} />
-					</View>
+				</Animated.View>
+				{/* What's going on, as chips: each opens its details in a sheet. */}
+				<ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 16, paddingTop: 14 }}>
+					{git?.branch ? <Fact icon="branch" text={git.branch} onPress={() => setDetail('branch')} /> : null}
+					<Fact icon="message" text={`${chats.length} ${chats.length === 1 ? 'chat' : 'chats'}`} onPress={() => setDetail('chats')} />
+					{working ? <Fact icon="circleDashed" text={`${working} working`} color={p.info} onPress={() => setDetail('working')} /> : null}
+					{needs ? <Fact icon="shieldAlert" text={`${needs} need you`} color={p.warning} onPress={() => setDetail('needs')} /> : null}
+					{git?.changes.length ? <Fact icon="fileDiff" text={`${git.changes.length} changed`} color={p.warning} onPress={() => setDetail('changed')} /> : null}
+				</ScrollView>
+				<View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 16 }}>
+					<Button label="New chat" icon="messagePlus" variant="primary" size="lg" flex onPress={() => router.push({ pathname: '/new', params: { project: project.id } })} />
+					<Button label="Files" icon="folderTree" size="lg" flex onPress={files} />
 				</View>
 
-				<View style={{ marginTop: 14, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint }}>
-					<RowList>
-						<NavRow icon="message" color={p.accent} label="Chats" count={chats.length} onPress={() => router.push({ pathname: '/chats', params: { filter: 'all', project: project.id } })} />
-						<NavRow icon="fileDiff" color={p.warning} label="Source control" detail={git ? git.changes.length ? `${git.changes.length} uncommitted ${git.changes.length === 1 ? 'change' : 'changes'}` : 'No uncommitted changes' : undefined} count={git?.changes.length} onPress={scm} />
-						<NavRow icon="pullRequest" color={p.success} label="Pull requests" onPress={() => router.push({ pathname: '/pulls', params: { root: project.path, name: project.name } })} />
-						<NavRow icon="folder" color={p.violet} label="Browse files" onPress={files} />
-					</RowList>
-				</View>
+				<CardGroup style={{ marginTop: 18 }}>
+					<CardRow icon="message" label="Chats" count={chats.length} onPress={() => router.push({ pathname: '/chats', params: { filter: 'all', project: project.id } })} />
+					<CardRow icon="branch" label="Source control" detail={git ? git.changes.length ? `${git.changes.length} uncommitted ${git.changes.length === 1 ? 'change' : 'changes'}` : 'No uncommitted changes' : undefined} count={git?.changes.length} onPress={scm} />
+					<CardRow icon="pullRequest" label="Pull requests" onPress={() => router.push({ pathname: '/pulls', params: { root: project.path, name: project.name } })} />
+					<CardRow icon="files" label="Browse files" onPress={files} />
+				</CardGroup>
 
 				<SectionTitle title="Chats" action={chats.length > RECENT ? 'See all' : undefined} onAction={() => router.push({ pathname: '/chats', params: { filter: 'all', project: project.id } })} />
 				{chats.length ? (
@@ -117,28 +126,91 @@ function Project({ projectId }: { readonly projectId: string }) {
 				)}
 
 				{readme ? (
-					<View style={{ marginTop: 26, marginHorizontal: 16, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: p.stroke, overflow: 'hidden' }}>
-						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint, backgroundColor: p.surface }}>
-							<Icon name="book" size={15} color={p.fgSecondary} />
-							<T variant="small" weight="600">{readme.name}</T>
+					<View style={{ marginTop: 28 }}>
+						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, paddingBottom: 10 }}>
+							<Icon name="book" size={15} color={p.fgTertiary} />
+							<T variant="small" weight="600" color={p.fgSecondary}>{readme.name}</T>
 						</View>
-						<View style={{ padding: 14 }}>
-							<Markdown text={readme.text.slice(0, 20_000)} docKey={`readme:${project.id}`} />
+						<View style={{ paddingHorizontal: 20 }}>
+							<Markdown text={readme.text.slice(0, 20_000)} docKey={`readme:${project.id}`} baseDir={project.path} />
 						</View>
 					</View>
 				) : null}
-			</ScrollView>
+			</Animated.ScrollView>
 			{menu.sheets}
+			<DetailSheet detail={detail} onClose={() => setDetail(undefined)} project={project} chats={chats} git={git} />
 		</View>
 	);
 }
 
-function Fact({ icon, text, color }: { readonly icon: 'branch' | 'message' | 'circleDashed' | 'shieldAlert' | 'fileDiff'; readonly text: string; readonly color?: string }) {
+type Detail = 'branch' | 'chats' | 'working' | 'needs' | 'changed';
+
+/** One fact about the project as a chip; tapping it opens the details. */
+function Fact({ icon, text, color, onPress }: { readonly icon: 'branch' | 'message' | 'circleDashed' | 'shieldAlert' | 'fileDiff'; readonly text: string; readonly color?: string; readonly onPress: () => void }) {
 	const { p } = useTheme();
 	return (
-		<View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-			<Icon name={icon} size={14} color={color ?? p.fgTertiary} />
-			<T variant="small" color={color ?? p.fgSecondary} weight={color ? '600' : '400'}>{text}</T>
-		</View>
+		<Ripple onPress={onPress} accessibilityRole="button" accessibilityLabel={text}
+			style={{ flexDirection: 'row', alignItems: 'center', gap: 6, height: 34, paddingHorizontal: 13, borderRadius: 17, backgroundColor: color ? `${color}14` : p.fillFaint, borderWidth: StyleSheet.hairlineWidth, borderColor: color ? `${color}40` : p.strokeFaint }}>
+			<Icon name={icon} size={14} color={color ?? p.fgSecondary} />
+			<T variant="small" color={color ?? p.fg} weight="500" numberOfLines={1}>{text}</T>
+		</Ripple>
+	);
+}
+
+/** A fact's details in a bottom sheet: the chats it counts, the changed files, or the branch's places. */
+function DetailSheet({ detail, onClose, project, chats, git }: {
+	readonly detail: Detail | undefined;
+	readonly onClose: () => void;
+	readonly project: { readonly id: string; readonly name: string; readonly path: string };
+	readonly chats: readonly IChatListItem[];
+	readonly git: IGitStatus | undefined;
+}) {
+	const { p } = useTheme();
+	const go = (fn: () => void) => {
+		onClose();
+		setTimeout(fn, 260);
+	};
+	const list = detail === 'working' ? chats.filter(item => item.status === 'working' || item.status === 'queued')
+		: detail === 'needs' ? chats.filter(item => item.status === 'approval' || item.status === 'question')
+			: chats;
+	const title = detail === 'branch' ? git?.branch ?? 'Branch'
+		: detail === 'changed' ? `${git?.changes.length ?? 0} changed ${git?.changes.length === 1 ? 'file' : 'files'}`
+			: detail === 'working' ? `${list.length} working` : detail === 'needs' ? `${list.length} need you` : `${list.length} ${list.length === 1 ? 'chat' : 'chats'}`;
+	return (
+		<Sheet visible={!!detail} onClose={onClose} title={title} subtitle={project.name}>
+			{detail === 'branch' ? (
+				<View>
+					<ListRow icon="fileDiff" label="Source control" value={git?.changes.length ? `${git.changes.length} changed` : 'Clean'} chevron onPress={() => go(() => router.push({ pathname: '/scm', params: { root: project.path, name: project.name } }))} />
+					<ListRow icon="pullRequest" label="Pull requests" chevron onPress={() => go(() => router.push({ pathname: '/pulls', params: { root: project.path, name: project.name } }))} />
+					<ListRow icon="folder" label="Repository" value={shortPath(git?.repoRoot ?? project.path, 40)} />
+				</View>
+			) : detail === 'changed' ? (
+				<View>
+					{(git?.changes ?? []).map(change => (
+						<ListItem key={`${change.staged ? 's' : 'w'}:${change.path}`} onPress={() => go(() => router.push({ pathname: '/diff', params: { file: change.path, title: change.rel, mode: 'git' } }))} accessibilityLabel={change.rel} style={{ minHeight: 42, gap: 10 }}>
+							<FileIcon path={change.rel} size={18} />
+							<View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'baseline', gap: 7 }}>
+								<T variant="body" numberOfLines={1} style={{ flexShrink: 1, maxWidth: '75%' }}>{basename(change.rel)}</T>
+								<T variant="footnote" color={p.fgQuaternary} numberOfLines={1} ellipsizeMode="head" style={{ flex: 1 }}>{dirname(change.rel) === '.' ? '' : dirname(change.rel)}</T>
+							</View>
+							<T variant="footnote" weight="700" mono color={change.status === 'D' ? p.danger : change.status === 'A' || change.status === '?' ? p.success : p.warning}>{change.status === '?' ? 'U' : change.status}</T>
+						</ListItem>
+					))}
+				</View>
+			) : (
+				<View>
+					{list.map(item => (
+						<ListItem key={item.id} onPress={() => go(() => openChat(item))} accessibilityLabel={item.title} style={{ minHeight: 54, gap: 10, alignItems: 'flex-start', paddingVertical: 8 }}>
+							<View style={{ width: 16, alignItems: 'center', paddingTop: 3 }}><StatusIcon status={item.status} size={14} /></View>
+							<View style={{ flex: 1, minWidth: 0, gap: 1 }}>
+								<T variant="body" weight={item.unread ? '600' : '500'} numberOfLines={1} style={{ fontSize: 15 }}>{item.title}</T>
+								<T variant="footnote" color={p.fgTertiary} numberOfLines={1}>{item.branch ?? item.preview ?? ' '}</T>
+							</View>
+							<T variant="footnote" color={item.status !== 'idle' && item.status !== 'unread' ? statusColor(item.status, p) : p.fgQuaternary}>{item.status !== 'idle' && item.status !== 'unread' ? item.statusLabel : relativeTime(item.updatedAt)}</T>
+						</ListItem>
+					))}
+				</View>
+			)}
+		</Sheet>
 	);
 }

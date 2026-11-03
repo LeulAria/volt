@@ -123,8 +123,8 @@ function Subagent({ taskId }: { readonly taskId: string }) {
 								<T variant="small" mono color={p.diffRemovedFg}>{'−'}{totals.del}</T>
 								{task.worktreeBranch ? <T variant="footnote" mono color={p.fgTertiary} numberOfLines={1} style={{ flex: 1, textAlign: 'right' }}>{task.worktreeBranch}</T> : null}
 							</View>
-							<View style={{ gap: StyleSheet.hairlineWidth, backgroundColor: p.strokeFaint, borderRadius: 14 }}>
-								{changes.map((change, i) => <ChangeRow key={`${change.turnId}:${change.path}`} change={change} first={i === 0} last={i === changes.length - 1} />)}
+							<View style={{ marginHorizontal: -16 }}>
+								{changes.map(change => <ChangeRow key={`${change.turnId}:${change.path}`} change={change} />)}
 							</View>
 						</>
 					) : null}

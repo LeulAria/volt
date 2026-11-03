@@ -189,7 +189,7 @@ const COLLAPSED_LINES = 60;
 /** A unified diff inside the transcript (an edit block): the first lines, then "Show all". */
 export const InlineDiff = memo(function InlineDiff({ diff, fence }: { readonly diff: string; readonly fence?: string }) {
 	const { p } = useTheme();
-	const { themedDiffs } = useConversationPrefs();
+	const { themedDiffs, codeWrap } = useConversationPrefs();
 	const [expanded, setExpanded] = useState(false);
 	const items = useMemo(() => parseUnifiedDiff(diff).flatMap((file, f) => diffItems(file.hunks, `f${f}:`)), [diff]);
 	const gutter = useMemo(() => gutterWidth(items), [items]);
@@ -201,11 +201,17 @@ export const InlineDiff = memo(function InlineDiff({ diff, fence }: { readonly d
 	const shown = long && !expanded ? items.slice(0, COLLAPSED_LINES - 15) : items.slice(0, 1500);
 	return (
 		<View style={{ backgroundColor: p.codeBg }}>
-			<StickyXScroll showsHorizontalScrollIndicator={false} bounces={false}>
-				<View style={{ minWidth: width, paddingVertical: 4 }}>
-					{shown.map(item => <DiffRow key={item.key} item={item} gutter={gutter} wrap={false} fence={fence} plain={!themedDiffs} />)}
+			{codeWrap ? (
+				<View style={{ paddingVertical: 4 }}>
+					{shown.map(item => <DiffRow key={item.key} item={item} gutter={gutter} wrap fence={fence} plain={!themedDiffs} />)}
 				</View>
-			</StickyXScroll>
+			) : (
+				<StickyXScroll showsHorizontalScrollIndicator={false} bounces={false}>
+					<View style={{ minWidth: width, paddingVertical: 4 }}>
+						{shown.map(item => <DiffRow key={item.key} item={item} gutter={gutter} wrap={false} fence={fence} plain={!themedDiffs} />)}
+					</View>
+				</StickyXScroll>
+			)}
 			{long ? (
 				<Tap haptics="selection" onPress={() => setExpanded(e => !e)} style={{ height: 38, alignItems: 'center', justifyContent: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint }}>
 					<T variant="footnote" weight="600" color={p.fgSecondary}>{expanded ? 'Show less' : `Show all ${items.filter(i => i.type === 'line').length} lines`}</T>
