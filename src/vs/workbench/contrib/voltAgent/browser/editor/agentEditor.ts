@@ -90,6 +90,7 @@ import { IVoltProject, IVoltProjectsService, VoltProjectCommands } from '../../.
 import { createAccessIcon } from '../chrome/accessIcons.js';
 import { AgentAccessPicker } from '../context/agentAccessPicker.js';
 import { AgentTerminalChips } from '../terminals/agentTerminalChips.js';
+import { AgentWatchedTaskCard } from '../terminals/agentWatchedTaskCard.js';
 import { IAgentTerminalsService } from '../terminals/agentTerminals.js';
 import { mountAgentQuickOpenActions } from '../chrome/agentViewSidebars.js';
 import { agentMessagePlainText, formatContextTokens, IContextUsageInput, resolveModelContextWindow } from '../context/agentContextUsage.js';
@@ -793,6 +794,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private runGroupBar: HTMLElement | undefined;
 	/** The chat's servers and watchers, as chips at the top. */
 	private terminalChips: AgentTerminalChips | undefined;
+	private watchedTaskCard: AgentWatchedTaskCard | undefined;
 	private readonly runGroupBarStore = this._register(new MutableDisposable());
 	/** Compact context was clicked and its turn has not started yet. */
 	private compactRequested = false;
@@ -1339,6 +1341,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			? void this.openWorkspaceFile(target.path)
 			: void this.commandService.executeCommand(OPEN_CANVAS_COMMAND_ID, target.id)));
 		append(this.composerEl, this.tasksCard.element);
+		// Long builds Volt watches for the agent (task_watch): their state and latest output.
+		this.watchedTaskCard = this._register(this.instantiationService.createInstance(AgentWatchedTaskCard, () => this.layoutInputEditor()));
+		append(this.composerEl, this.watchedTaskCard.element);
 		append(this.composerEl, this.composerQueue.agentsElement);
 		// The same run status chip the browser's dock shows ("Waiting for approval", "Worked 2m").
 		this._register(this.onDidChangeDock(() => this.syncStatusChip()));
@@ -8054,6 +8059,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private syncQueueStack(): void {
 		this.syncQuestionTray();
 		this.commitPlanTray?.setSession(this.sessionKey);
+		this.watchedTaskCard?.setChat(this.sessionKey ? this.runtime.chatFor(this.sessionKey) : undefined);
 		if (!this.composerQueue) {
 			return;
 		}

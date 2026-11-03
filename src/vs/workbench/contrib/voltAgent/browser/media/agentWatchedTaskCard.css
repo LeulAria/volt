@@ -1,0 +1,378 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * A watched task above the composer: laid out like the Tasks card (agentEditor.css places
+ * .volt-agent-tasks-card and opens its panel upward, opaque, over the chat). Here: its colours,
+ * the header's parts and the open card's output, timeline and actions.
+ */
+
+.volt-watch-card {
+	--volt-watch-live: var(--vscode-charts-blue, #4f8cff);
+	--volt-watch-pass: var(--vscode-charts-green, #3fb950);
+	--volt-watch-fail: var(--vscode-charts-red, #f85149);
+	--volt-watch-fix: var(--vscode-charts-yellow, #d29922);
+	--volt-watch-muted: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+	--volt-watch-faint: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+	--volt-watch-tone: var(--volt-watch-live);
+}
+
+.volt-watch-card.state-fixing { --volt-watch-tone: var(--volt-watch-fix); }
+.volt-watch-card.state-passed { --volt-watch-tone: var(--volt-watch-pass); }
+.volt-watch-card:is(.state-failed, .state-stuck, .state-exhausted) { --volt-watch-tone: var(--volt-watch-fail); }
+.volt-watch-card.state-stopped { --volt-watch-tone: var(--volt-watch-muted); }
+
+/* The edge takes a little of the state's colour. */
+.volt-watch-card:not(.state-running):not(.state-stopped) > .volt-watch-panel {
+	border-color: color-mix(in srgb, var(--volt-watch-tone) 38%, var(--vscode-widget-border, transparent));
+}
+
+/* While it runs, a thin band sweeps along the bottom of the header line. */
+.volt-watch-head {
+	position: relative;
+	overflow: hidden;
+}
+
+.volt-watch-card.state-running .volt-watch-head::after {
+	content: '';
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	width: 30%;
+	height: 1px;
+	background: linear-gradient(90deg, transparent, var(--volt-watch-live), transparent);
+	animation: volt-watch-sweep 2.4s ease-in-out infinite;
+	pointer-events: none;
+}
+
+@keyframes volt-watch-sweep {
+	from { transform: translateX(-100%); }
+	to { transform: translateX(340%); }
+}
+
+.volt-watch-mark {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	color: var(--volt-watch-tone);
+}
+
+.volt-watch-mark .codicon {
+	font-size: 14px;
+}
+
+.volt-watch-card.state-fixing .volt-watch-mark {
+	animation: volt-watch-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes volt-watch-breathe {
+	50% { opacity: 0.45; }
+}
+
+.volt-watch-spinner {
+	animation: volt-watch-spin 0.9s linear infinite;
+}
+
+.volt-watch-spinner circle {
+	fill: none;
+	stroke-width: 1.5;
+}
+
+.volt-watch-spinner .track {
+	stroke: var(--volt-watch-faint);
+}
+
+.volt-watch-spinner .arc {
+	stroke: currentColor;
+	stroke-linecap: round;
+	stroke-dasharray: 9 26;
+}
+
+@keyframes volt-watch-spin {
+	to { transform: rotate(360deg); }
+}
+
+.volt-watch-title {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-watch-state {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-watch-muted);
+}
+
+.volt-watch-card:not(.state-running):not(.state-stopped) .volt-watch-state {
+	color: var(--volt-watch-tone);
+}
+
+.volt-watch-state.shimmer {
+	--volt-shimmer-base: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
+	--volt-shimmer-hi: var(--vscode-foreground);
+	color: var(--volt-shimmer-base);
+	background-image: linear-gradient(90deg,
+		var(--volt-shimmer-base) 0%,
+		var(--volt-shimmer-base) calc(var(--volt-shimmer) - 40%),
+		var(--volt-shimmer-hi) var(--volt-shimmer),
+		var(--volt-shimmer-base) calc(var(--volt-shimmer) + 40%),
+		var(--volt-shimmer-base) 100%);
+	-webkit-background-clip: text;
+	background-clip: text;
+	-webkit-text-fill-color: transparent;
+	animation: volt-agent-shimmer 0.9s linear infinite;
+}
+
+/* One dot per attempt it may take. */
+.volt-watch-dots {
+	flex: none;
+	display: inline-flex;
+	gap: 3px;
+}
+
+.volt-watch-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--volt-watch-faint);
+}
+
+.volt-watch-dot.passed { background: var(--volt-watch-pass); }
+.volt-watch-dot.failed { background: var(--volt-watch-fail); }
+
+.volt-watch-dot.live {
+	background: var(--volt-watch-tone);
+	animation: volt-watch-breathe 1.2s ease-in-out infinite;
+}
+
+.volt-watch-time,
+.volt-watch-more {
+	flex: none;
+	color: var(--volt-watch-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+/* Empties until the next check. */
+.volt-watch-ring-holder {
+	flex: none;
+	display: inline-flex;
+}
+
+.volt-watch-ring {
+	transform: rotate(-90deg);
+}
+
+.volt-watch-ring circle {
+	fill: none;
+	stroke-width: 1.5;
+}
+
+.volt-watch-ring .track {
+	stroke: var(--volt-watch-faint);
+}
+
+.volt-watch-ring .left {
+	stroke: var(--volt-watch-muted);
+	stroke-linecap: round;
+	stroke-dashoffset: 0;
+}
+
+@keyframes volt-watch-countdown {
+	from { stroke-dashoffset: 0; }
+	to { stroke-dashoffset: var(--volt-watch-ring, 34.56); }
+}
+
+/* The open card, above the header line. */
+.volt-watch-detail {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 12px 12px 10px;
+	border-bottom: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+}
+
+.volt-watch-top {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-watch-command {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	color: var(--volt-watch-muted);
+}
+
+.volt-watch-pager {
+	flex: none;
+	display: inline-flex;
+	gap: 2px;
+}
+
+.volt-watch-page {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--volt-watch-muted);
+	cursor: pointer;
+}
+
+.volt-watch-page:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-foreground);
+}
+
+/* The run's latest output, like a small terminal: the newest line at the bottom, the oldest fading out. */
+.volt-watch-screen {
+	position: relative;
+	border-radius: 7px;
+	background: var(--vscode-terminal-background, var(--vscode-editor-background, #181818));
+	border: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
+	overflow: hidden;
+}
+
+.volt-watch-output {
+	margin: 0;
+	padding: 10px 12px;
+	max-height: 152px;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+	justify-content: flex-end;
+	white-space: pre;
+	font-family: var(--monaco-monospace-font);
+	font-size: 11.5px;
+	line-height: 17px;
+	color: var(--vscode-terminal-foreground, var(--vscode-foreground));
+	-webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 34px);
+	mask-image: linear-gradient(to bottom, transparent 0, #000 34px);
+}
+
+.volt-watch-output.empty {
+	color: var(--volt-watch-muted);
+	-webkit-mask-image: none;
+	mask-image: none;
+}
+
+.volt-watch-caret {
+	position: absolute;
+	right: 10px;
+	bottom: 10px;
+	width: 7px;
+	height: 13px;
+	background: var(--volt-watch-live);
+	opacity: 0.7;
+	animation: volt-watch-blink 1s steps(2, start) infinite;
+}
+
+@keyframes volt-watch-blink {
+	to { visibility: hidden; }
+}
+
+/* Every attempt on one track, as wide as it ran. */
+.volt-watch-timeline {
+	display: flex;
+	gap: 3px;
+	height: 18px;
+}
+
+.volt-watch-segment {
+	flex: 1 1 0;
+	min-width: 26px;
+	display: inline-flex;
+	align-items: center;
+	padding: 0 6px;
+	border-radius: 4px;
+	box-sizing: border-box;
+	font-size: 10.5px;
+	font-variant-numeric: tabular-nums;
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--volt-watch-live) 28%, transparent);
+	overflow: hidden;
+}
+
+.volt-watch-segment.passed { background: color-mix(in srgb, var(--volt-watch-pass) 30%, transparent); }
+.volt-watch-segment.failed { background: color-mix(in srgb, var(--volt-watch-fail) 28%, transparent); }
+
+.volt-watch-segment.live {
+	background-image: linear-gradient(90deg, transparent, color-mix(in srgb, var(--volt-watch-live) 40%, transparent), transparent);
+	background-size: 50% 100%;
+	background-repeat: no-repeat;
+	animation: volt-watch-segment-sweep 1.8s linear infinite;
+}
+
+@keyframes volt-watch-segment-sweep {
+	from { background-position: -100% 0; }
+	to { background-position: 200% 0; }
+}
+
+.volt-watch-segment.pending {
+	flex: 0.12 1 0;
+	min-width: 10px;
+	background: transparent;
+	border: 1px dashed var(--volt-watch-faint);
+}
+
+.volt-watch-segment-label {
+	white-space: nowrap;
+	opacity: 0.85;
+}
+
+.volt-watch-note {
+	color: var(--volt-watch-muted);
+	font-size: 12px;
+	line-height: 17px;
+}
+
+.volt-watch-note:empty {
+	display: none;
+}
+
+.volt-watch-card:not(.state-running):not(.state-stopped) .volt-watch-note {
+	color: color-mix(in srgb, var(--volt-watch-tone) 80%, var(--vscode-foreground));
+}
+
+.volt-watch-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-watch-spacer {
+	flex: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-watch-card *,
+	.volt-watch-card .volt-watch-head::after {
+		animation: none !important;
+	}
+
+	.volt-watch-state.shimmer {
+		background-image: none;
+		-webkit-text-fill-color: unset;
+		color: var(--volt-watch-muted);
+	}
+}
