@@ -48,19 +48,23 @@ suite('Browser comment store', () => {
 		assert.ok(!message.agentText.includes('bigger title'));
 		// One annotation reads as itself.
 		assert.strictEqual(message.displayText, 'button tighter padding');
-		assert.strictEqual(comments.get(first.id), undefined);
-		assert.deepStrictEqual(comments.list({ viewId: 'tab-1' }).map(comment => comment.id), [second.id]);
+		// Sent: it stays (its pin marks the element) but no longer goes with a message.
+		assert.strictEqual(comments.get(first.id)?.status, 'sent');
+		assert.deepStrictEqual(comments.pending({ viewId: 'tab-1' }), []);
+		comments.update(second.id, { picked: true });
+		assert.deepStrictEqual(comments.pending({ viewId: 'tab-1' }).map(comment => comment.id), [second.id]);
 	});
 
-	test('a batch reads as a numbered list, and numbering starts over once it is sent', () => {
+	test('a batch reads as a numbered list, and numbering goes on after it is sent', () => {
 		const comments = store.add(new VoltBrowserComments());
 		comments.add(init('tighter padding'));
 		comments.add(init('bigger title'));
 		const message = comments.take({ viewId: 'tab-1' });
 		assert.strictEqual(message?.displayText, '1. button tighter padding\n2. button bigger title');
 		assert.strictEqual(message?.mentions.length, 2);
-		assert.deepStrictEqual(comments.list({ viewId: 'tab-1' }), []);
-		assert.strictEqual(comments.add(init('third')).number, 1);
+		assert.deepStrictEqual(comments.list({ viewId: 'tab-1' }).map(comment => comment.status), ['sent', 'sent']);
+		assert.strictEqual(comments.take({ viewId: 'tab-1' }), undefined);
+		assert.strictEqual(comments.add(init('third')).number, 3);
 	});
 
 	test('canvas: archiving marks resolved comments and leaves the rest', () => {

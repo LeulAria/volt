@@ -3477,10 +3477,9 @@ webview.volt-browser-devtools-frame {
 	background: #ececec;
 }
 
-/* A sent comment keeps its pin, drawn hollow, until it is resolved; a resolved one (Resolved toggle) gets the passed colour. */
+/* A sent comment keeps its numbered pin (no outline) to show the element was annotated; a resolved one gets the passed colour. */
 .volt-browser-comment.sent:not(.expanded) .volt-browser-comment-badge {
-	border-style: dashed;
-	opacity: 0.85;
+	opacity: 0.9;
 }
 
 .volt-browser-comment.resolved:not(.expanded) .volt-browser-comment-badge {
