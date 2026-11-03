@@ -5,11 +5,13 @@
 
 import type { ICatalogItem } from '@volt/client-core';
 import { useState } from 'react';
-import { RefreshControl, ScrollView, Switch, View } from 'react-native';
+import { RefreshControl, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useClient, useOptionalClient, useRuntime } from '../../src/state/client';
 import { useTheme } from '../../src/theme/theme';
-import { haptic, T } from '../../src/ui/core';
+import { haptic, Switch, T } from '../../src/ui/core';
+import { useHeaderScroll } from '../../src/ui/header';
 import { Group, ListRow } from '../../src/ui/list';
 
 const STATE_LABEL: Record<string, string> = { authenticated: 'Signed in', available: 'Available', disabled: 'Off', missing: 'Not installed', checking: 'Checking…' };
@@ -19,6 +21,7 @@ export default function ModelsScreen() {
 }
 
 function Models() {
+	const onHeaderScroll = useHeaderScroll();
 	const { p } = useTheme();
 	const insets = useSafeAreaInsets();
 	const client = useClient();
@@ -33,7 +36,7 @@ function Models() {
 	const providers = runtime.providerStatuses ?? [];
 	const stateColor = (state: string) => state === 'authenticated' ? p.success : state === 'available' ? p.info : state === 'missing' ? p.danger : state === 'checking' ? p.warning : p.fgQuaternary;
 	return (
-		<ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
+		<Animated.ScrollView onScroll={onHeaderScroll} scrollEventThrottle={16} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
 			refreshControl={<RefreshControl refreshing={refreshing} tintColor={p.fgTertiary} onRefresh={async () => {
 				setRefreshing(true);
 				await client.refreshProviders();
@@ -46,31 +49,33 @@ function Models() {
 			) : providers.map(provider => {
 				const models = byProfile.get(provider.profileId) ?? provider.models ?? [];
 				return (
-					<Group key={provider.profileId} title={provider.label} footer={[STATE_LABEL[provider.state] ?? provider.state, provider.account, provider.plan].filter(Boolean).join(' · ')}>
+					<Group key={provider.profileId} title={provider.label} footer={[provider.account, provider.plan].filter(Boolean).join(' · ') || undefined}
+						right={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+							<View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: stateColor(provider.state) }} />
+							<T variant="caption" color={p.fgTertiary}>{STATE_LABEL[provider.state] ?? provider.state}</T>
+						</View>}>
 						<ListRow
-							icon="cpu"
-							iconColor={stateColor(provider.state)}
 							label={provider.enabled ? 'On' : 'Off'}
-							right={<Switch value={provider.enabled} onValueChange={next => {
+							detail={provider.enabled ? `${models.length} ${models.length === 1 ? 'model' : 'models'}` : 'Its models are hidden from the picker'}
+							right={<Switch value={provider.enabled} accessibilityLabel={`${provider.label} on`} onValueChange={next => {
 								haptic.selection();
 								void client.setProfileEnabled(provider.profileId, next);
-							}} trackColor={{ true: p.success, false: p.fillStrong }} />}
+							}} />}
 						/>
 						{provider.enabled ? models.map(model => (
-							<View key={model.ref} style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 54, paddingRight: 14, minHeight: 46, gap: 10 }}>
-								<View style={{ flex: 1 }}>
-									<T variant="body">{model.qualifier ? `${model.label} ${model.qualifier}` : model.label}</T>
-									{model.contextLabel ? <T variant="footnote" color={p.fgTertiary}>{model.contextLabel}</T> : null}
-								</View>
-								<Switch value={runtime.enabledModels?.[model.ref] ?? model.enabled} onValueChange={next => {
+							<ListRow
+								key={model.ref}
+								label={model.qualifier ? `${model.label} ${model.qualifier}` : model.label}
+								detail={model.contextLabel}
+								right={<Switch value={runtime.enabledModels?.[model.ref] ?? model.enabled} accessibilityLabel={model.label} onValueChange={next => {
 									haptic.selection();
 									void client.setModelEnabled(model.ref, next);
-								}} trackColor={{ true: p.success, false: p.fillStrong }} />
-							</View>
+								}} />}
+							/>
 						)) : null}
 					</Group>
 				);
 			})}
-		</ScrollView>
+		</Animated.ScrollView>
 	);
 }

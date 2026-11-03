@@ -7,14 +7,14 @@ import { ACCESS_MODES, type IVoltPalette, VOLT_THEMES, DENSITY_PREVIEW_STEPS, DE
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Platform, ScrollView, StyleSheet, Switch, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useConnectionTone } from '../home/Connection';
 import { useClient, useOptionalClient, useRuntime, useStatus } from '../state/client';
 import { activate, forget, useEnvironments } from '../state/environments';
 import { conversationPrefs, useConversationPrefs } from '../state/prefs';
 import { type ThemePreference, useTheme } from '../theme/theme';
-import { haptic, Icon, Tabs, T, Tap } from '../ui/core';
+import { haptic, Icon, Switch, T, Tabs, Tap } from '../ui/core';
 import { Group, ListRow } from '../ui/list';
 import { ActionSheet, ConfirmSheet, type ISheetAction } from '../ui/sheets';
 
@@ -166,7 +166,7 @@ function AgentConversations() {
 		<Switch value={value} onValueChange={next => {
 			haptic.selection();
 			set(next);
-		}} trackColor={{ true: p.success, false: p.fillStrong }} />
+		}} />
 	);
 	return (
 		<Group title="Agent conversations" footer="These apply to chats on this phone.">
@@ -178,7 +178,7 @@ function AgentConversations() {
 				<Tabs value={prefs.toolDensity} onChange={toolDensity => conversationPrefs.set({ toolDensity })} options={TOOL_DENSITIES.map(id => ({ id, label: TOOL_DENSITY_LABELS[id] }))} />
 				<DensityPreview density={prefs.toolDensity} />
 			</View>
-			<ListRow label="Code block word wrap" detail="Wrap long lines in code blocks" right={toggle(prefs.codeWrap, codeWrap => conversationPrefs.set({ codeWrap }))} />
+			<ListRow label="Wrap long lines" detail="Code blocks, diffs, files and the editor; also the wrap button above a file" right={toggle(prefs.codeWrap, codeWrap => conversationPrefs.set({ codeWrap }))} />
 			<ListRow label="Themed diff backgrounds" detail="Use themed background colors for inline code diffs" right={toggle(prefs.themedDiffs, themedDiffs => conversationPrefs.set({ themedDiffs }))} />
 		</Group>
 	);

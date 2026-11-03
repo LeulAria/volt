@@ -489,6 +489,14 @@ export interface IFileEntry {
 	readonly link?: boolean;
 }
 
+/** A folder on the computer and the folders in it (`files.folders`). */
+export interface IFolderListing {
+	readonly path: string;
+	readonly home: string;
+	readonly parent?: string;
+	readonly folders: readonly { readonly name: string; readonly path: string; readonly git?: boolean }[];
+}
+
 export type IFileContent =
 	| { readonly path: string; readonly size: number; readonly mtime: number; readonly kind: 'text'; readonly text: string }
 	| { readonly path: string; readonly size: number; readonly mtime: number; readonly kind: 'image'; readonly mime: string; readonly base64: string }

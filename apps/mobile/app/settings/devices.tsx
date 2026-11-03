@@ -5,11 +5,13 @@
 
 import { type IPairedDevice, relativeTime } from '@volt/client-core';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, RefreshControl, ScrollView, View } from 'react-native';
+import { ActivityIndicator, RefreshControl, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useClient, useOptionalClient, useStatus } from '../../src/state/client';
 import { useTheme } from '../../src/theme/theme';
 import { T } from '../../src/ui/core';
+import { useHeaderScroll } from '../../src/ui/header';
 import { Group, ListRow } from '../../src/ui/list';
 import { ConfirmSheet } from '../../src/ui/sheets';
 
@@ -18,6 +20,7 @@ export default function DevicesScreen() {
 }
 
 function Devices() {
+	const onHeaderScroll = useHeaderScroll();
 	const { p } = useTheme();
 	const insets = useSafeAreaInsets();
 	const client = useClient();
@@ -41,7 +44,7 @@ function Devices() {
 	}, [status.live, refresh]);
 
 	return (
-		<ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
+		<Animated.ScrollView onScroll={onHeaderScroll} scrollEventThrottle={16} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
 			refreshControl={<RefreshControl refreshing={refreshing} tintColor={p.fgTertiary} onRefresh={async () => {
 				setRefreshing(true);
 				await refresh();
@@ -68,6 +71,6 @@ function Devices() {
 						void client.revokeDevice(removing.id).then(() => refresh());
 					}
 				}} />
-		</ScrollView>
+		</Animated.ScrollView>
 	);
 }

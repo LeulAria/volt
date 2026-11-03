@@ -5,9 +5,9 @@
 
 import type { IconName } from '@volt/client-core';
 import { Children, type ReactNode, useEffect, useRef } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { ScrollView, type StyleProp, StyleSheet, View, type ViewStyle } from 'react-native';
 import { useTheme } from '../theme/theme';
-import { Icon, T, Tap } from './core';
+import { Icon, Ripple, T, Tap } from './core';
 
 /**
  * Flat lists in the GitHub app's manner, in Volt's surfaces: bold section titles, rows with a
@@ -72,7 +72,7 @@ export function NavRow({ icon, color, tile, label, detail, count, countTone, rig
 	const { p } = useTheme();
 	const countBg = countTone === 'attention' ? p.warning : countTone === 'live' ? p.info : undefined;
 	return (
-		<Tap haptics="selection" onPress={onPress} onLongPress={onLongPress} disabled={!onPress && !onLongPress} style={{ flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 54, paddingHorizontal: 16, paddingVertical: 10 }}>
+		<Ripple haptics="selection" onPress={onPress} onLongPress={onLongPress} disabled={!onPress && !onLongPress} style={{ flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 54, paddingHorizontal: 16, paddingVertical: 10 }}>
 			{tile ?? (icon ? <Tile icon={icon} color={color ?? p.fgTertiary} /> : null)}
 			<View style={{ flex: 1, minWidth: 0 }}>
 				<T variant="callout" weight="500" numberOfLines={1}>{label}</T>
@@ -85,7 +85,7 @@ export function NavRow({ icon, color, tile, label, detail, count, countTone, rig
 			) : null}
 			{right}
 			{chevron ? <Icon name="chevronRight" size={16} color={p.fgQuaternary} /> : null}
-		</Tap>
+		</Ripple>
 	);
 }
 
@@ -104,7 +104,7 @@ export function Chips<V extends string>({ value, options, onChange }: { readonly
 			{options.map(option => {
 				const on = option.id === value;
 				return (
-					<Tap key={option.id} haptics="selection" onPress={() => onChange(option.id)} accessibilityRole="button" accessibilityState={{ selected: on }}
+					<Ripple key={option.id} haptics="selection" onPress={() => onChange(option.id)} accessibilityRole="button" accessibilityState={{ selected: on }}
 						onLayout={e => {
 							const first = offsets.current[option.id] === undefined;
 							offsets.current[option.id] = e.nativeEvent.layout.x;
@@ -119,25 +119,67 @@ export function Chips<V extends string>({ value, options, onChange }: { readonly
 								<T variant="caption" weight="700" color={option.attention ? '#111' : p.fgSecondary}>{option.count}</T>
 							</View>
 						) : null}
-					</Tap>
+					</Ripple>
 				);
 			})}
 		</ScrollView>
 	);
 }
 
-/** A project's avatar: its initials on a colour picked from its name (stable across devices). */
-export function ProjectAvatar({ name, size = 30 }: { readonly name: string; readonly size?: number }) {
-	const initials = name.split(/[\s_\-./]+/).filter(Boolean).slice(0, 2).map(part => part[0]!.toUpperCase()).join('') || '?';
-	return <Tile color={projectColor(name)} glyph={initials} size={size} />;
+/**
+ * A project's avatar: a folder glyph in a hairline circle, no colour (a git repository gets the
+ * branching folder). The name is only its label for screen readers.
+ */
+export function ProjectAvatar({ name, size = 30, git }: { readonly name: string; readonly size?: number; readonly git?: boolean }) {
+	const { p } = useTheme();
+	return (
+		<View accessibilityLabel={name} style={{ width: size, height: size, borderRadius: size / 2, borderWidth: 1, borderColor: p.stroke, alignItems: 'center', justifyContent: 'center' }}>
+			<Icon name={git ? 'folderGit' : 'folder'} size={Math.round(size * 0.46)} color={p.fgSecondary} />
+		</View>
+	);
 }
 
-const PROJECT_COLORS = ['#5B7FC7', '#3F9C6D', '#C77B3F', '#8E68D6', '#C44B68', '#2F8B8B', '#A0883A', '#6A7A8C'];
+/**
+ * Rows on one rounded surface with inset hairlines (Home's All chats / Projects / Settled list):
+ * bare glyphs, no coloured tiles.
+ */
+export function CardGroup({ children, inset = 52, style }: { readonly children: ReactNode; readonly inset?: number; readonly style?: StyleProp<ViewStyle> }) {
+	const { p } = useTheme();
+	const rows = Children.toArray(children).filter(Boolean);
+	return (
+		<View style={[{ marginHorizontal: 16, marginTop: 12, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden', backgroundColor: p.surface, borderColor: p.strokeFaint }, style]}>
+			{rows.map((row, i) => (
+				<View key={i}>
+					{i ? <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: p.strokeFaint, marginLeft: inset }} /> : null}
+					{row}
+				</View>
+			))}
+		</View>
+	);
+}
 
-export function projectColor(name: string): string {
-	let hash = 0;
-	for (let i = 0; i < name.length; i++) {
-		hash = (hash * 31 + name.charCodeAt(i)) | 0;
-	}
-	return PROJECT_COLORS[Math.abs(hash) % PROJECT_COLORS.length]!;
+/** One row of a {@link CardGroup}: a bare glyph, the label (and a detail), a count, a chevron. */
+export function CardRow({ icon, tile, label, detail, count, countColor, onPress }: {
+	readonly icon?: IconName;
+	readonly tile?: ReactNode;
+	readonly label: string;
+	readonly detail?: string;
+	readonly count?: number;
+	readonly countColor?: string;
+	readonly onPress: () => void;
+}) {
+	const { p } = useTheme();
+	return (
+		<Ripple onPress={onPress} accessibilityRole="button" accessibilityLabel={count ? `${label}, ${count}` : label}
+			unstable_pressDelay={40}
+			style={{ flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 52, paddingHorizontal: 14, paddingVertical: 9 }}>
+			{tile ?? (icon ? <View style={{ width: 24, alignItems: 'center' }}><Icon name={icon} size={20} color={p.fgSecondary} /></View> : null)}
+			<View style={{ flex: 1, minWidth: 0 }}>
+				<T variant="callout" weight="500" numberOfLines={1}>{label}</T>
+				{detail ? <T variant="footnote" color={p.fgTertiary} numberOfLines={1}>{detail}</T> : null}
+			</View>
+			{count ? <T variant="callout" color={countColor ?? p.fgTertiary} style={{ fontVariant: ['tabular-nums'] }}>{count}</T> : null}
+			<Icon name="chevronRight" size={16} color={p.fgQuaternary} />
+		</Ripple>
+	);
 }

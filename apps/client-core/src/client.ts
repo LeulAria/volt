@@ -16,7 +16,7 @@ import type { IPendingSend, PendingState } from './rows';
 import type { Collections } from './selectors';
 import { threadsOf } from './selectors';
 import type {
-	AccessMode, AgentMessage, ComposerMode, IAgentChange, ICheckpointState, IFileContent, IFileEntry, IFileRoot, IGitStatus, IGrepMatch, IGrepOptions, IOrchPrompt, IOrchQueueItem, IProjectRecord,
+	AccessMode, AgentMessage, ComposerMode, IAgentChange, ICheckpointState, IFileContent, IFileEntry, IFolderListing, IFileRoot, IGitStatus, IGrepMatch, IGrepOptions, IOrchPrompt, IOrchQueueItem, IProjectRecord,
 	IMcpServerStatus, IPromptAttachment, IPromptFile, IPromptMention, IQuestionResponse, IRestorePreview, IUserMessage
 } from './types';
 import type { IGitCommitResult, IGitRepoStatus, IPullRequestCreate, IPullRequestDetail, IPullRequestFilePatch, IPullRequestMerge, IPullRequestSummary, ISlashCommand } from './git';
@@ -1273,6 +1273,14 @@ export class VoltClient {
 
 	listDir(path: string): Promise<readonly IFileEntry[]> {
 		return this.connection.call<readonly IFileEntry[]>('files.list', [path]);
+	}
+
+	/**
+	 * The folders inside a folder on the computer (its home folder by default), to pick one to add as
+	 * a project. Servers older than this answer with an unknown-method error.
+	 */
+	listFolders(path?: string, options: { readonly hidden?: boolean } = {}): Promise<IFolderListing> {
+		return this.connection.call<IFolderListing>('files.folders', [path ?? '', options]);
 	}
 
 	readFile(path: string): Promise<IFileContent> {

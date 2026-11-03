@@ -18,6 +18,7 @@ import { useConversationPrefs } from '../state/prefs';
 import { FONT, useTheme } from '../theme/theme';
 import { haptic, Icon, LiveTimer, ShimmerText, Spinner, Tap } from '../ui/core';
 import { showImage } from '../ui/ImageViewer';
+import { openEditDiff } from './ChangeRow';
 import { openFile, useChatContext } from './context';
 import { CodeBlock, copyWithHaptic, Inline, Markdown, TableView } from './Markdown';
 import { VisualCard } from './Visuals';
@@ -268,8 +269,9 @@ function UserRow({ row, chatId }: { readonly row: RowOf<'user'>; readonly chatId
 						</View>
 						{row.chips.length ? (
 							<View style={styles.chips}>
-								{row.chips.map(chip => (
-									<View key={chip} style={[styles.chip, { backgroundColor: p.fill }]}>
+								{row.chips.map((chip, i) => (
+									// Two attachments can share a name (Home.png twice).
+									<View key={`${i}:${chip}`} style={[styles.chip, { backgroundColor: p.fill }]}>
 										<FileIcon path={chip} size={14} />
 										<Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: p.fgSecondary, flexShrink: 1 }}>{chip}</Text>
 									</View>
@@ -424,9 +426,11 @@ function EditCard({ row }: { readonly row: RowOf<'file'> }) {
 	const [open, setOpen] = useState(toolDensity === 'detailed');
 	const running = row.status === 'running';
 	const toggle = () => setOpen(o => !o);
+	// A finished edit opens the whole file with its changes marked; a running or deleted one opens in place.
+	const show = running || row.verb === 'Deleted' ? toggle : () => openEditDiff(row.path, row.diff, row.verb === 'Created', row);
 	return (
 		<View style={[styles.card, { backgroundColor: p.card, borderColor: p.stroke, marginVertical: 2 }]}>
-			<Tap haptics="selection" onPress={toggle} onLongPress={() => row.verb !== 'Deleted' ? openFile(row.path) : copyWithHaptic(row.path)} delayLongPress={350} style={styles.editHeader}>
+			<Tap haptics="selection" onPress={show} onLongPress={() => row.verb !== 'Deleted' ? openFile(row.path) : copyWithHaptic(row.path)} delayLongPress={350} style={styles.editHeader}>
 				<FileIcon path={row.path} size={16} />
 				<ShimmerText active={running} color={p.fgSecondary} numberOfLines={1} style={[styles.step, { flexShrink: 1, lineHeight: 30 }]}>
 					{basename(row.path)}
@@ -437,7 +441,7 @@ function EditCard({ row }: { readonly row: RowOf<'file'> }) {
 				<Chevron open={open} />
 			</Tap>
 			{row.diff || running ? (
-				<Tap disabled={open} onPress={toggle} style={{ borderTopWidth: 1, borderColor: p.strokeFaint }}>
+				<Tap disabled={open} onPress={show} style={{ borderTopWidth: 1, borderColor: p.strokeFaint }}>
 					<TrDiff diff={row.diff ?? ''} peek={!open} streaming={running} />
 				</Tap>
 			) : null}

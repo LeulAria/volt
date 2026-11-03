@@ -6,12 +6,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { type ICatalogItem, type IModelGroup, type IModelOptionDescriptor, modelLabel, RUN_GROUP_MAX_MODELS, RUN_GROUP_MIN_MODELS, selectModelGroups, toggleRunModel } from '@volt/client-core';
 import { router } from 'expo-router';
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { Modal, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import Animated, { FadeIn, FadeOut, SlideInDown, SlideOutDown, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useClient, useRuntime } from '../state/client';
 import { useTheme } from '../theme/theme';
 import { ProviderIcon } from '../ui/BrandIcon';
-import { Button, haptic, Icon, T, Tap } from '../ui/core';
+import { Button, haptic, Icon, IconButton, Ripple, Switch, T, Tap } from '../ui/core';
+import { ListItem, SectionHeader } from '../ui/list';
+import { SearchField } from '../ui/SearchField';
 import { Sheet } from '../ui/sheets';
 
 const FAVORITES = 'favorites';
@@ -82,7 +86,7 @@ function useFavorites(): readonly [ReadonlySet<string>, (ref: string) => void] {
  * The model picker, as the desktop's: a search, a tab per provider (Favorites first, a gear to
  * Settings at the end), then that provider's models as plain rows named with their effort and
  * Fast, a check on the chosen one and a star to keep it in Favorites. The chosen model's sliders
- * open its options (effort, fast, context) under its row.
+ * open its options (effort, fast, context) in their own popup over the picker.
  *
  * With `onMultiChange` (a new chat), "Compare models" turns it into the desktop's multi mode: tick
  * 2-4 models and the prompt runs on each in its own worktree and chat.
@@ -130,6 +134,7 @@ export function ModelSheet({ visible, onClose, modelRef, onPick, multi, onMultiC
 	}, [groups, tab, q, favorites]);
 
 	const optionsOf = (ref: string): ModelOptions => runtime.modelOptions?.[ref] ?? {};
+	const editingItem = editing ? groups.flatMap(group => group.models).find(item => item.ref === editing) : undefined;
 	const setOption = (ref: string, descriptor: IModelOptionDescriptor, value: string | boolean) => {
 		haptic.selection();
 		void client.setModelOptions(ref, { ...optionsOf(ref), [descriptor.id]: value });
@@ -145,11 +150,7 @@ export function ModelSheet({ visible, onClose, modelRef, onPick, multi, onMultiC
 
 	const header = (
 		<View>
-			<View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, height: 44, paddingHorizontal: 8 }}>
-				<Icon name="search" size={18} color={p.fgTertiary} />
-				<TextInput value={query} onChangeText={setQuery} placeholder="Search models..." placeholderTextColor={p.fgQuaternary} style={{ flex: 1, color: p.fg, fontSize: 16 }} autoCorrect={false} autoCapitalize="none" keyboardAppearance={p.scheme} clearButtonMode="while-editing" returnKeyType="search" />
-			</View>
-			<View style={[styles.rule, { backgroundColor: p.strokeFaint }]} />
+			<SearchField value={query} onChange={setQuery} placeholder="Search models" inset={8} bleed={12} />
 			<View style={{ flexDirection: 'row', alignItems: 'center', height: 46 }}>
 				<ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ alignItems: 'center' }} style={{ flex: 1 }}>
 					<ProviderTab label="Favorites" active={!q && tab === FAVORITES} onPress={() => setTab(FAVORITES)}>
@@ -208,16 +209,10 @@ export function ModelSheet({ visible, onClose, modelRef, onPick, multi, onMultiC
 								disabled={comparing && !checked && multi.length >= RUN_GROUP_MAX_MODELS}
 								starred={favorites.has(item.ref)}
 								onStar={() => toggleFavorite(item.ref)}
-								onEdit={editable ? () => {
-									haptic.selection();
-									setEditing(open => open === item.ref ? undefined : item.ref);
-								} : undefined}
+								onEdit={editable ? () => setEditing(item.ref) : undefined}
 								editing={editing === item.ref}
 								onPress={() => pick(item.ref)}
 							/>
-							{editable && editing === item.ref ? (
-								<ModelOptionsPanel descriptors={item.optionDescriptors!} options={optionsOf(item.ref)} onChange={(descriptor, value) => setOption(item.ref, descriptor, value)} />
-							) : null}
 						</View>
 					);
 				})}
@@ -240,11 +235,18 @@ export function ModelSheet({ visible, onClose, modelRef, onPick, multi, onMultiC
 								haptic.selection();
 								// Comparing starts from the model already chosen, as the desktop's picker does.
 								onMultiChange(on ? (modelRef ? [modelRef] : []) : undefined);
-							}} trackColor={{ true: p.accent, false: p.fillStrong }} accessibilityLabel="Compare models" />
+							}} accessibilityLabel="Compare models" />
 						</View>
 					</>
 				) : null}
 			</View>
+			{/* Inside the sheet's own modal, so it opens over the picker rather than behind it. */}
+			<ModelOptionsPopup
+				item={editingItem}
+				options={editingItem ? optionsOf(editingItem.ref) : {}}
+				onChange={(descriptor, value) => editingItem && setOption(editingItem.ref, descriptor, value)}
+				onClose={() => setEditing(undefined)}
+			/>
 		</Sheet>
 	);
 }
@@ -253,11 +255,11 @@ export function ModelSheet({ visible, onClose, modelRef, onPick, multi, onMultiC
 function ProviderTab({ label, active, onPress, children }: { readonly label: string; readonly active: boolean; readonly onPress: () => void; readonly children: ReactNode }) {
 	const { p } = useTheme();
 	return (
-		<Tap haptics="selection" onPress={onPress} accessibilityRole="tab" accessibilityState={{ selected: active }} accessibilityLabel={label}
+		<Ripple centered haptics="selection" onPress={onPress} accessibilityRole="tab" accessibilityState={{ selected: active }} accessibilityLabel={label}
 			style={{ width: 52, height: 46, alignItems: 'center', justifyContent: 'center' }}>
 			{children}
 			<View style={{ position: 'absolute', bottom: 4, width: 18, height: 2, borderRadius: 1, backgroundColor: active ? p.fgTertiary : 'transparent' }} />
-		</Tap>
+		</Ripple>
 	);
 }
 
@@ -275,7 +277,7 @@ function ModelRow({ label, detail, checked, multi, disabled, starred, onStar, on
 }) {
 	const { p } = useTheme();
 	return (
-		<Tap haptics="selection" onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityState={{ selected: !!checked }} accessibilityLabel={label}
+		<Ripple haptics="selection" onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityState={{ selected: !!checked }} accessibilityLabel={label}
 			style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 50, paddingLeft: 8, opacity: disabled ? 0.45 : 1 }}>
 			{multi ? (
 				<View style={{ width: 20, height: 20, borderRadius: 6, marginRight: 6, alignItems: 'center', justifyContent: 'center', borderWidth: checked ? 0 : 1.5, borderColor: p.fgQuaternary, backgroundColor: checked ? p.accent : 'transparent' }}>
@@ -287,64 +289,110 @@ function ModelRow({ label, detail, checked, multi, disabled, starred, onStar, on
 				{detail ? <T variant="footnote" color={p.fgTertiary} numberOfLines={1}>{detail}</T> : null}
 			</View>
 			{onEdit ? (
-				<Tap onPress={onEdit} accessibilityRole="button" accessibilityLabel="Model options" hitSlop={6} style={styles.trailing}>
+				<Ripple centered onPress={onEdit} accessibilityRole="button" accessibilityLabel="Model options" hitSlop={6} style={styles.trailing}>
 					<Icon name="settings" size={18} color={editing ? p.fg : p.fgTertiary} />
-				</Tap>
+				</Ripple>
 			) : null}
 			{checked && !multi ? <View style={styles.trailing}><Icon name="check" size={20} color={p.fg} /></View> : null}
 			{onStar ? (
-				<Tap onPress={onStar} accessibilityRole="button" accessibilityLabel={starred ? 'Remove from favorites' : 'Add to favorites'} hitSlop={6} style={styles.trailing}>
+				<Ripple centered onPress={onStar} accessibilityRole="button" accessibilityLabel={starred ? 'Remove from favorites' : 'Add to favorites'} hitSlop={6} style={styles.trailing}>
 					<Icon name={starred ? 'starFilled' : 'star'} size={19} color={starred ? p.warning : p.fgQuaternary} />
-				</Tap>
+				</Ripple>
 			) : <View style={styles.trailing} />}
-		</Tap>
+		</Ripple>
 	);
 }
 
-/** The chosen model's options under its row: effort and context as tracks, Fast as a switch. */
-function ModelOptionsPanel({ descriptors, options, onChange }: { readonly descriptors: readonly IModelOptionDescriptor[]; readonly options: ModelOptions; readonly onChange: (descriptor: IModelOptionDescriptor, value: string | boolean) => void }) {
+/**
+ * The chosen model's options in a sheet of its own floating over the picker, rounded all round:
+ * each choice (context, effort) as a list of rows with a radio, Fast as a switch row. A pick applies
+ * at once; tap outside, swipe the grabber's area or the close button to go back.
+ */
+function ModelOptionsPopup({ item, options, onChange, onClose }: {
+	readonly item: ICatalogItem | undefined;
+	readonly options: ModelOptions;
+	readonly onChange: (descriptor: IModelOptionDescriptor, value: string | boolean) => void;
+	readonly onClose: () => void;
+}) {
 	const { p } = useTheme();
+	const insets = useSafeAreaInsets();
+	const { width, height } = useWindowDimensions();
+	// Keeps the last model while the sheet slides away.
+	const shown = useRef(item);
+	if (item) {
+		shown.current = item;
+	}
+	const model = shown.current;
 	return (
-		<View style={{ marginHorizontal: 8, marginBottom: 8, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint, overflow: 'hidden' }}>
-			{descriptors.map((descriptor, i) => (
-				<View key={descriptor.id} style={{ paddingHorizontal: 12, paddingVertical: 10, gap: 8, borderTopWidth: i ? StyleSheet.hairlineWidth : 0, borderTopColor: p.strokeFaint }}>
-					{descriptor.type === 'boolean' ? (
-						<View style={{ flexDirection: 'row', alignItems: 'center' }}>
-							<T variant="callout" style={{ flex: 1 }}>{descriptor.label}</T>
-							<Switch value={Boolean(optionValue(descriptor, options))} onValueChange={value => onChange(descriptor, value)} trackColor={{ true: p.accent, false: p.fillStrong }} accessibilityLabel={descriptor.label} />
+		<Modal visible={!!item} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
+			{item && model ? (
+				<View style={{ flex: 1, justifyContent: 'flex-end' }}>
+					<Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(160)} style={[StyleSheet.absoluteFill, { backgroundColor: p.overlay }]}>
+						<Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
+					</Animated.View>
+					<Animated.View entering={SlideInDown.springify().damping(22).stiffness(240).mass(0.8)} exiting={SlideOutDown.duration(200)}
+						style={[styles.floating, { width: Math.min(width - 16, 560), backgroundColor: p.raised, borderColor: p.stroke, marginBottom: Math.max(insets.bottom, 10), maxHeight: height * 0.78 }]}>
+						<View style={{ alignItems: 'center', paddingTop: 8 }}>
+							<View style={{ width: 36, height: 5, borderRadius: 3, backgroundColor: p.fillStrong }} />
 						</View>
-					) : (
-						<>
-							<T variant="footnote" weight="600" color={p.fgTertiary}>{descriptor.label}</T>
-							<Choice value={String(optionValue(descriptor, options) ?? '')} options={descriptor.options ?? []} onChange={value => onChange(descriptor, value)} />
-						</>
-					)}
+						<View style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 20, paddingRight: 8, paddingTop: 6, paddingBottom: 2 }}>
+							<View style={{ flex: 1, minWidth: 0 }}>
+								<T variant="title3" weight="600" numberOfLines={1}>{rowLabel(model, options)}</T>
+								<T variant="footnote" color={p.fgTertiary}>Model options</T>
+							</View>
+							<IconButton icon="close" size={18} label="Close" color={p.fgSecondary} onPress={onClose} />
+						</View>
+						<ScrollView bounces={false} contentContainerStyle={{ paddingBottom: 14 }}>
+							{(model.optionDescriptors ?? []).map(descriptor => descriptor.type === 'boolean' ? (
+								<View key={descriptor.id} style={{ marginTop: 10 }}>
+									<ListItem onPress={() => onChange(descriptor, !optionValue(descriptor, options))} accessibilityLabel={descriptor.label} style={styles.optionRow}>
+										<T variant="body" style={{ flex: 1, fontSize: 15 }}>{descriptor.label}</T>
+										<Switch value={Boolean(optionValue(descriptor, options))} onValueChange={value => onChange(descriptor, value)} accessibilityLabel={descriptor.label} />
+									</ListItem>
+								</View>
+							) : (
+								<View key={descriptor.id} style={{ marginTop: 10 }}>
+									<SectionHeader title={descriptor.label} />
+									{(descriptor.options ?? []).map(option => {
+										const on = String(optionValue(descriptor, options) ?? '') === option.value;
+										return (
+											<ListItem key={option.value} onPress={() => !on && onChange(descriptor, option.value)} accessibilityLabel={`${descriptor.label}: ${option.label}`} style={styles.optionRow}>
+												<T variant="body" weight={on ? '600' : '400'} color={on ? p.fg : p.fgSecondary} style={{ flex: 1, fontSize: 15 }}>{option.label}</T>
+												<Radio on={on} />
+											</ListItem>
+										);
+									})}
+								</View>
+							))}
+						</ScrollView>
+					</Animated.View>
 				</View>
-			))}
-		</View>
+			) : null}
+		</Modal>
 	);
 }
 
-/** A model option's values on one track, the picked one raised (Context: 200K | 1M). */
-function Choice({ value, options, onChange }: { readonly value: string; readonly options: readonly { readonly value: string; readonly label: string }[]; readonly onChange: (value: string) => void }) {
+/** A radio: a ring, filled with a dot that springs in when picked. */
+function Radio({ on }: { readonly on: boolean }) {
 	const { p } = useTheme();
+	const fill = useSharedValue(on ? 1 : 0);
+	useEffect(() => {
+		fill.value = withSpring(on ? 1 : 0, { damping: 16, stiffness: 320, mass: 0.6 });
+	}, [on, fill]);
+	const dot = useAnimatedStyle(() => ({ transform: [{ scale: fill.value }], opacity: fill.value }));
 	return (
-		<View style={{ flexDirection: 'row', padding: 3, gap: 3, borderRadius: 11, backgroundColor: p.fill }}>
-			{options.map(option => {
-				const on = option.value === value;
-				return (
-					<Tap key={option.value} onPress={() => onChange(option.value)} accessibilityRole="button" accessibilityState={{ selected: on }} accessibilityLabel={option.label}
-						style={{ flex: 1, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, backgroundColor: on ? p.raised : 'transparent', ...(on ? styles.raised : {}) }}>
-						<T variant="small" weight={on ? '600' : '500'} color={on ? p.fg : p.fgTertiary} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{option.label}</T>
-					</Tap>
-				);
-			})}
+		<View accessibilityRole="radio" accessibilityState={{ checked: on }} style={[styles.radio, { borderColor: on ? p.fg : p.fgQuaternary }]}>
+			<Animated.View style={[styles.radioDot, { backgroundColor: p.fg }, dot]} />
 		</View>
 	);
 }
 
 const styles = StyleSheet.create({
 	rule: { height: StyleSheet.hairlineWidth, marginHorizontal: -12 },
-	trailing: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-	raised: { shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+	trailing: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+	raised: { shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 2 },
+	floating: { alignSelf: 'center', borderRadius: 30, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.45, shadowRadius: 30, shadowOffset: { width: 0, height: 10 }, elevation: 14 },
+	optionRow: { minHeight: 48, paddingHorizontal: 20 },
+	radio: { width: 21, height: 21, borderRadius: 11, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+	radioDot: { width: 11, height: 11, borderRadius: 6 },
 });

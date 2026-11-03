@@ -6,13 +6,15 @@
 import { errorMessage, type IPullRequestSummary } from '@volt/client-core';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, RefreshControl, StyleSheet, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GitActions } from '../src/git/GitActions';
 import { PullRequestRow } from '../src/git/PullRequestBits';
 import { useClient, useOptionalClient } from '../src/state/client';
 import { useTheme } from '../src/theme/theme';
 import { EmptyState } from '../src/ui/core';
+import { useHeaderScroll } from '../src/ui/header';
 import { Chips } from '../src/ui/rows';
 
 type StateFilter = 'open' | 'closed' | 'all';
@@ -24,6 +26,7 @@ export default function PullsScreen() {
 
 /** A project's pull requests, GitHub app style, with its branch control on top. */
 function Pulls({ root, name }: { readonly root: string; readonly name?: string }) {
+	const onHeaderScroll = useHeaderScroll();
 	const { p } = useTheme();
 	const insets = useSafeAreaInsets();
 	const client = useClient();
@@ -49,7 +52,7 @@ function Pulls({ root, name }: { readonly root: string; readonly name?: string }
 	return (
 		<View style={{ flex: 1, backgroundColor: p.canvas }}>
 			<Stack.Screen options={{ title: name ? `${name} · Pull requests` : 'Pull requests' }} />
-			<FlatList
+			<Animated.FlatList onScroll={onHeaderScroll} scrollEventThrottle={16}
 				data={list as IPullRequestSummary[] | undefined}
 				keyExtractor={pr => pr.key}
 				refreshControl={<RefreshControl refreshing={loading && !!list} onRefresh={load} tintColor={p.fgTertiary} />}

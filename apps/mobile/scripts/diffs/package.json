@@ -1,0 +1,13 @@
+{
+	"name": "volt-mobile-diffs",
+	"private": true,
+	"description": "Builds the phone's diff and file viewer page script (see build-diffs.mjs).",
+	"type": "module",
+	"scripts": {
+		"build": "node build-diffs.mjs"
+	},
+	"devDependencies": {
+		"@pierre/diffs": "1.6.2",
+		"vite": "8.3.4"
+	}
+}

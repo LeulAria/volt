@@ -14,6 +14,7 @@ import { ActivityIndicator, Alert, Platform, StyleSheet, Text, View } from 'reac
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import Animated, { FadeInDown, FadeOutDown, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ChatListPane } from '../../src/chat/ChatListPane';
 import { CHAT_TABS_HEIGHT, ChatSwitcher, ChatTabs } from '../../src/chat/ChatTabs';
 import { Composer, type IComposerSendExtra } from '../../src/chat/Composer';
 import { touchRecentChat, useRecentChats } from '../../src/chat/recentChats';
@@ -25,7 +26,8 @@ import { ApprovalCard, LimitBanner, PausedBanner, QuestionCard, QueueChip } from
 import { useCheckpoints, useClient, useCollections, useOptionalClient, useStatus, useTranscript } from '../../src/state/client';
 import { openRunGroup, useRunGroupOfChat } from '../../src/home/RunGroups';
 import { useTheme } from '../../src/theme/theme';
-import { haptic, Icon, IconButton, LiveTimer, T, Tap } from '../../src/ui/core';
+import { leadingPaneWidth, useAdaptive } from '../../src/ui/adaptive';
+import { haptic, Icon, IconButton, LiveTimer, ShimmerText, StatusIcon, T, Tap } from '../../src/ui/core';
 import { ActionSheet, type ISheetAction } from '../../src/ui/sheets';
 
 const CHAT_COLLECTIONS = ['history', 'orch.threads', 'orch.tasks', 'sessions', 'access', 'questions', 'projects', 'runtime', 'terminals'];
@@ -35,13 +37,24 @@ export default function ChatScreen() {
 	const { id } = useLocalSearchParams<{ id: string }>();
 	const client = useOptionalClient();
 	const { p } = useTheme();
+	const layout = useAdaptive();
 	if (!client || !id) {
 		return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={p.fgTertiary} /></View>;
 	}
-	return <ChatView chatId={id} />;
+	// On a wide window the chat list stands beside the chat (on a fold, exactly up to the hinge).
+	// Keyed panes: folding or unfolding adds or drops the list without remounting the chat.
+	return (
+		<View style={{ flex: 1, flexDirection: 'row', backgroundColor: p.canvas }}>
+			{layout.expanded ? <ChatListPane key="list" chatId={id} width={leadingPaneWidth(layout)} /> : null}
+			<View key="chat" style={{ flex: 1 }}>
+				<ChatView key={id} chatId={id} split={layout.expanded} />
+			</View>
+		</View>
+	);
 }
 
-function ChatView({ chatId }: { readonly chatId: string }) {
+/** One chat; `split`: the chat list stands beside it, so it drops its own back button and tabs. */
+function ChatView({ chatId, split }: { readonly chatId: string; readonly split?: boolean }) {
 	const { p } = useTheme();
 	const insets = useSafeAreaInsets();
 	const client = useClient();
@@ -248,9 +261,10 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 		}
 	}, [client, chatId, meta?.unread]);
 
-	const tabsShown = tabCount > 1;
+	const tabsShown = tabCount > 1 && !split;
 	const top = insets.top + HEADER_HEIGHT + (tabsShown ? CHAT_TABS_HEIGHT : 0);
-	const subtitle = [project?.displayName ?? meta?.workspaceLabel, session?.worktreeBranch ?? meta?.worktreeBranch].filter(Boolean).join(' · ');
+	const projectName = project?.displayName ?? meta?.workspaceLabel;
+	const branch = session?.worktreeBranch ?? meta?.worktreeBranch;
 	const tone = status.status === 'idle' ? undefined : statusColor(status.status, p);
 	// One of a comparison's runs: the header leads back to the comparison.
 	const runGroup = useRunGroupOfChat(chatId);
@@ -308,31 +322,34 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 				{Platform.OS === 'ios'
 					? <BlurView intensity={80} tint={p.scheme === 'dark' ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'} style={StyleSheet.absoluteFill} />
 					: <View style={[StyleSheet.absoluteFill, { backgroundColor: p.canvas, opacity: Platform.OS === 'web' ? 1 : 0.97 }]} />}
-				<View style={{ position: 'absolute', left: 0, right: 0, bottom: tabsShown ? CHAT_TABS_HEIGHT : 0, height: HEADER_HEIGHT, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, gap: 2 }}>
-					<IconButton icon="chevronLeft" label="Back" size={24} color={p.fg} onPress={() => router.back()} />
-					<Tap haptics="selection" onPress={() => setSwitcher(true)} style={{ flex: 1, minWidth: 0, paddingHorizontal: 4 }} accessibilityLabel="Switch chat">
-						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-							<Text numberOfLines={1} style={{ fontSize: 15, lineHeight: 20, fontWeight: '500', color: p.fg, flexShrink: 1 }}>{meta?.title || 'New chat'}</Text>
-							<Icon name="chevronDown" size={12} color={p.iconTertiary} />
+				<View style={{ position: 'absolute', left: 0, right: 0, bottom: tabsShown ? CHAT_TABS_HEIGHT : 0, height: HEADER_HEIGHT, flexDirection: 'row', alignItems: 'center', paddingLeft: 4, paddingRight: 6 }}>
+					{split ? <View style={{ width: 10 }} /> : <IconButton icon="chevronLeft" label="Back" size={25} color={p.fg} onPress={() => router.back()} />}
+					<Tap haptics="selection" onPress={() => setSwitcher(true)} style={{ flex: 1, minWidth: 0, paddingLeft: 2, paddingRight: 6, gap: 1 }} accessibilityLabel="Switch chat">
+						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+							<Text numberOfLines={1} maxFontSizeMultiplier={1.4} style={{ fontSize: 15.5, lineHeight: 20, fontWeight: '600', letterSpacing: -0.2, color: p.fg, flexShrink: 1 }}>{meta?.title || 'New chat'}</Text>
+							<Icon name="chevronDown" size={11} color={p.fgTertiary} />
 						</View>
-						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-							{tone ? <T variant="footnote" weight="600" color={tone}>{status.label}</T> : null}
-							{tone && subtitle ? <T variant="footnote" color={p.fgQuaternary}>{'·'}</T> : null}
-							{subtitle ? <T variant="footnote" color={p.fgTertiary} numberOfLines={1} style={{ flexShrink: 1 }}>{subtitle}</T> : null}
+						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 16 }}>
+							{tone ? <StatusIcon status={status.status} size={11} /> : null}
+							{tone ? (
+								<ShimmerText active={status.status === 'working'} color={tone} from={`${tone}99`} to={tone} style={styles.meta}>{status.label}</ShimmerText>
+							) : null}
+							{running && thread?.active ? <LiveTimer since={thread.active.at} color={p.fgTertiary} variant="footnote" /> : null}
+							{tone && (projectName || branch) ? <View style={[styles.sep, { backgroundColor: p.fgQuaternary }]} /> : null}
+							{projectName ? <T variant="footnote" color={p.fgTertiary} numberOfLines={1} style={{ flexShrink: 2 }}>{projectName}</T> : null}
+							{branch ? (
+								<View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 1, minWidth: 0 }}>
+									<Icon name="branch" size={11} color={p.fgQuaternary} />
+									<T variant="footnote" color={p.fgTertiary} numberOfLines={1} style={{ flexShrink: 1 }}>{branch}</T>
+								</View>
+							) : null}
 						</View>
 					</Tap>
-					{running && thread?.active ? (
-						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, height: 26, paddingHorizontal: 9, borderRadius: 13, backgroundColor: `${p.info}22` }}>
-							<ActivityIndicator size="small" color={p.info} style={{ transform: [{ scale: 0.6 }], width: 12 }} />
-							<LiveTimer since={thread.active.at} color={p.info} />
-						</View>
-					) : null}
 					{runGroup ? <IconButton icon="layers" label={`Compare models: ${runGroup.runs.length} runs`} color={p.fg} onPress={() => openRunGroup(runGroup.id)} /> : null}
 					{terminals.length ? (
-						<View>
-							<IconButton icon="terminal" label={`Terminals, ${terminals.length}`} color={p.fg} onPress={() => router.push({ pathname: '/terminals/[id]', params: { id: chatId } })} />
-							{liveTerminals ? <View pointerEvents="none" style={{ position: 'absolute', top: 7, right: 6, width: 7, height: 7, borderRadius: 4, backgroundColor: p.info, borderWidth: 1.5, borderColor: p.canvas }} /> : null}
-						</View>
+						<IconButton icon="terminal" label={`Terminals, ${terminals.length}`} color={p.fg} onPress={() => router.push({ pathname: '/terminals/[id]', params: { id: chatId } })}>
+							{liveTerminals ? <View pointerEvents="none" style={{ position: 'absolute', top: 8, right: 7, width: 6, height: 6, borderRadius: 3, backgroundColor: p.info }} /> : null}
+						</IconButton>
 					) : null}
 					<IconButton icon="fileDiff" label="Changes" color={p.fg} onPress={() => router.push({ pathname: '/changes/[id]', params: { id: chatId } })} />
 					<IconButton icon="settings" label="Chat details" color={p.fg} onPress={() => router.push({ pathname: '/details/[id]', params: { id: chatId } })} />
@@ -350,6 +367,11 @@ function ChatView({ chatId }: { readonly chatId: string }) {
 		</View>
 	);
 }
+
+const styles = StyleSheet.create({
+	meta: { fontSize: 12, lineHeight: 16, fontWeight: '600' },
+	sep: { width: 2.5, height: 2.5, borderRadius: 1.25, marginHorizontal: 2 },
+});
 
 /** A sent message's images, ready to send again. */
 function rowAttachments(row: UserRowData): IPromptAttachment[] {

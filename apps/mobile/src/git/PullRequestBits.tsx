@@ -7,7 +7,7 @@ import { type IPullRequestChecks, type IPullRequestSummary, type IVoltPalette, t
 import { memo } from 'react';
 import { View } from 'react-native';
 import { useTheme } from '../theme/theme';
-import { Icon, T, Tap } from '../ui/core';
+import { Icon, Ripple, T } from '../ui/core';
 
 export function pullRequestColor(state: PullRequestState, p: IVoltPalette): string {
 	return state === 'open' ? p.success : state === 'merged' ? p.violet : state === 'draft' ? p.fgTertiary : p.danger;
@@ -51,7 +51,7 @@ export function ChecksBadge({ checks }: { readonly checks: IPullRequestChecks })
 export const PullRequestRow = memo(function PullRequestRow({ pr, onPress }: { readonly pr: IPullRequestSummary; readonly onPress: (pr: IPullRequestSummary) => void }) {
 	const { p } = useTheme();
 	return (
-		<Tap haptics="selection" onPress={() => onPress(pr)} style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingVertical: 12 }}>
+		<Ripple haptics="selection" onPress={() => onPress(pr)} style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingVertical: 12 }}>
 			<View style={{ width: 22, alignItems: 'center', paddingTop: 2 }}><PullRequestStateIcon state={pr.state} /></View>
 			<View style={{ flex: 1, minWidth: 0, gap: 2 }}>
 				<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -67,6 +67,6 @@ export const PullRequestRow = memo(function PullRequestRow({ pr, onPress }: { re
 					{pr.comments ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Icon name="message" size={12} color={p.fgQuaternary} /><T variant="footnote" color={p.fgQuaternary}>{pr.comments}</T></View> : null}
 				</View>
 			</View>
-		</Tap>
+		</Ripple>
 	);
 });

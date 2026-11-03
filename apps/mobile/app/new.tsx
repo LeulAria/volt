@@ -20,13 +20,6 @@ import { ActionSheet, InputSheet, type ISheetAction } from '../src/ui/sheets';
 
 const LAST_PROJECT_KEY = 'volt.lastProject';
 
-const SUGGESTIONS = [
-	{ icon: 'search' as const, text: 'Explain how this project is structured' },
-	{ icon: 'alertCircle' as const, text: 'Find and fix the failing tests' },
-	{ icon: 'fileDiff' as const, text: 'Review my uncommitted changes' },
-	{ icon: 'listChecks' as const, text: 'Plan the next feature with me' },
-];
-
 export default function NewChatScreen() {
 	const client = useOptionalClient();
 	return client ? <NewChat /> : null;
@@ -142,17 +135,6 @@ function NewChat() {
 						</View>
 						<Icon name="chevronsUpDown" size={16} color={p.fgTertiary} />
 					</Tap>
-
-					<View style={{ gap: 8 }}>
-						<T variant="caption" weight="700" color={p.fgTertiary} style={{ letterSpacing: 0.6, marginLeft: 4 }}>TRY</T>
-						{SUGGESTIONS.map(s => (
-							<Tap key={s.text} haptics="light" onPress={() => start(s.text)} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, height: 48, borderRadius: 14, backgroundColor: p.fillFaint, borderWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint }}>
-								<Icon name={s.icon} size={17} color={p.fgTertiary} />
-								<T variant="body" color={p.fgSecondary} style={{ flex: 1 }} numberOfLines={1}>{s.text}</T>
-								<Icon name="arrowUp" size={15} color={p.fgQuaternary} />
-							</Tap>
-						))}
-					</View>
 
 					{recent.length ? (
 						<View style={{ gap: 4 }}>

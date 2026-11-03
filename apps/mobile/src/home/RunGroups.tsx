@@ -9,7 +9,7 @@ import { memo } from 'react';
 import { View } from 'react-native';
 import { useCollections } from '../state/client';
 import { useTheme } from '../theme/theme';
-import { Icon, StatusIcon, T, Tap } from '../ui/core';
+import { Icon, Ripple, StatusIcon, T } from '../ui/core';
 
 const GROUP_COLLECTIONS = ['runGroups'];
 
@@ -46,7 +46,7 @@ export function groupTone(group: IRunGroup): 'question' | 'working' | 'failed' |
 export const RunGroupRow = memo(function RunGroupRow({ group, projectName }: { readonly group: IRunGroup; readonly projectName?: string }) {
 	const { p } = useTheme();
 	return (
-		<Tap haptics="selection" onPress={() => openRunGroup(group.id)} style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingVertical: 12 }}>
+		<Ripple haptics="selection" onPress={() => openRunGroup(group.id)} style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingVertical: 12 }}>
 			<View style={{ width: 22, alignItems: 'center', paddingTop: 2 }}>
 				<StatusIcon status={groupTone(group)} size={17} />
 			</View>
@@ -63,6 +63,6 @@ export const RunGroupRow = memo(function RunGroupRow({ group, projectName }: { r
 				<T variant="small" color={p.fgTertiary} numberOfLines={1}>{runGroupSummary(group)}</T>
 			</View>
 			<Icon name="chevronRight" size={15} color={p.fgQuaternary} />
-		</Tap>
+		</Ripple>
 	);
 });
