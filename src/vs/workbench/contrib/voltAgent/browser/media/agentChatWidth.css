@@ -16,6 +16,8 @@
 	.volt-agent-turn.user.editing .volt-agent-edit-slot,
 	.volt-agent-worked,
 	.volt-agent-composer-chips,
+	.volt-agent-tasks-card,
+	.volt-agent-agents-card,
 	.volt-agent-composer-stack,
 	.volt-agent-suggest,
 	.volt-agent-composer-status,
@@ -30,9 +32,4 @@
 
 .monaco-workbench.volt-chat-width-custom .volt-agent-editor.has-turns:not(.browser-hosted):not(.zoomed) .volt-agent-input-box:not(.editing) {
 	max-width: var(--volt-chat-max-width, 728px);
-}
-
-/* The tasks and subagents cards sit 4px inside the composer on each side. */
-.monaco-workbench.volt-chat-width-custom .volt-agent-editor:not(.browser-hosted) :is(.volt-agent-tasks-card, .volt-agent-agents-card) {
-	max-width: calc(var(--volt-chat-max-width, 728px) - 8px);
 }

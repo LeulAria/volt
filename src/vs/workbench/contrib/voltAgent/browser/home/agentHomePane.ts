@@ -224,10 +224,11 @@ interface IHomeTemplate {
 	readonly snooze: HTMLButtonElement;
 	readonly settle: HTMLButtonElement;
 	readonly wake: HTMLButtonElement;
-	/** Open in New Window (desktop only). */
-	readonly newWindow: HTMLButtonElement;
 	readonly pin: HTMLButtonElement;
+	/** Archive on run group rows; agent tabs archive from {@link more}. */
 	readonly archive: HTMLButtonElement;
+	/** The last button on an agent tab: Open in New Window, Rename, Archive. */
+	readonly more: HTMLButtonElement;
 	readonly badge: HTMLElement;
 	readonly meta: HTMLElement;
 	/** The second line of an agent tab: branch, pull request badge, model. */
@@ -246,7 +247,7 @@ const ROW_STATE_CLASSES = [
 	'is-new', 'is-action', 'is-section', 'is-folder', 'is-bucket', 'is-group', 'is-session', 'is-more', 'is-empty',
 	'is-nested', 'is-flat', 'is-collapsible', 'current', 'unread', 'archived', 'pinned',
 	'status-needsAttention', 'status-working', 'status-draft', 'status-done',
-	'actions-cover-name', 'active-chat', 'shelf-active', 'shelf-settled', 'shelf-snooze', 'group-working', 'group-settled', 'group-snooze', 'two-line',
+	'actions-cover-name', 'menu-open', 'renaming', 'active-chat', 'shelf-active', 'shelf-settled', 'shelf-snooze', 'group-working', 'group-settled', 'group-snooze', 'two-line',
 	'is-run-group', 'is-run-member', 'run-winner', 'run-discarded', 'no-glyph',
 ];
 
@@ -302,12 +303,12 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		settle.tabIndex = -1;
 		const wake = append(actions, $('button.row-action.wake')) as HTMLButtonElement;
 		wake.tabIndex = -1;
-		const newWindow = append(actions, $('button.row-action.new-window')) as HTMLButtonElement;
-		newWindow.tabIndex = -1;
 		const pin = append(actions, $('button.row-action.pin')) as HTMLButtonElement;
 		pin.tabIndex = -1;
 		const archive = append(actions, $('button.row-action.archive')) as HTMLButtonElement;
 		archive.tabIndex = -1;
+		const more = append(actions, $('button.row-action.more')) as HTMLButtonElement;
+		more.tabIndex = -1;
 		const keybinding = append(container, $('span.keybinding'));
 		const settings = append(container, $('button.settings')) as HTMLButtonElement;
 		settings.appendChild(renderIcon(Codicon.settingsGear));
@@ -315,7 +316,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		const add = append(container, $('button.add')) as HTMLButtonElement;
 		add.appendChild(renderIcon(Codicon.add));
 		add.tabIndex = -1;
-		return { container, icon, twist, glyph, name, linePr, actions, snooze, settle, wake, newWindow, pin, archive, badge, meta, sub, subBranch, subPr, subModel, keybinding, settings, add, elementDisposables: new DisposableStore() };
+		return { container, icon, twist, glyph, name, linePr, actions, snooze, settle, wake, pin, archive, more, badge, meta, sub, subBranch, subPr, subModel, keybinding, settings, add, elementDisposables: new DisposableStore() };
 	}
 
 	renderElement(node: ITreeNode<AgentHomeElement, void>, _index: number, template: IHomeTemplate): void {
@@ -530,7 +531,12 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		// Agent tabs start at the title: no glyph slot. A flat row names its project on the second line;
 		// under a project the row steps in past the folder's icon instead (agentHomePane.css).
 		template.container.classList.add('no-glyph');
-		template.name.textContent = session.title || localize('voltAgent.home.untitled', "New Agent");
+		const renaming = this.host.renamingId === session.id;
+		if (renaming) {
+			this.renderRename(template);
+		} else {
+			template.name.textContent = this.host.titleOf(session) || localize('voltAgent.home.untitled', "New Agent");
+		}
 		const oneLine = isOneLineSession(session);
 		const twoLine = this.host.twoLine && !oneLine;
 		template.container.classList.toggle('two-line', twoLine);
@@ -568,19 +574,59 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 				() => this.host.wake(session), renderIcon(Codicon.bellSlash));
 		}
 		// Run rows hide these; a recycled template must show them again.
-		template.newWindow.classList.toggle('hidden', !this.host.canOpenInNewWindow);
 		template.pin.classList.remove('hidden');
-		template.archive.classList.remove('hidden');
-		if (this.host.canOpenInNewWindow) {
-			this.renderRowAction(template, template.newWindow, localize('voltAgent.home.openInNewWindow', "Open in New Window"),
-				() => this.host.openInNewWindow(session), renderIcon(Codicon.linkExternal));
-		}
+		template.archive.classList.add('hidden');
+		template.more.classList.remove('hidden');
 		this.renderRowAction(template, template.pin, session.pinned ? localize('voltAgent.home.unpin', "Unpin") : localize('voltAgent.home.pin', "Pin"),
 			() => this.host.togglePin(session), renderIcon(session.pinned ? Codicon.pinned : Codicon.pin));
-		this.renderRowAction(template, template.archive, session.archived ? localize('voltAgent.home.unarchive', "Unarchive") : localize('voltAgent.home.archive', "Archive"),
-			() => this.host.toggleArchive(session), renderIcon(Codicon.archive));
+		this.renderRowAction(template, template.more, localize('voltAgent.home.moreActions', "More Actions"),
+			button => this.host.openRowMenu(button, template.container, session), renderIcon(Codicon.ellipsis));
+		if (renaming) {
+			return;
+		}
 		template.elementDisposables.add(this.host.bindSessionHover(template.container, session));
 		template.elementDisposables.add(addDisposableListener(template.container, 'mouseenter', () => this.fadeNameUnderActions(template)));
+	}
+
+	/**
+	 * The title as a field, in place: Enter or leaving it saves, Escape keeps the old name. The text
+	 * typed so far lives on the pane, so a row drawn again (scrolled away and back) keeps it.
+	 */
+	private renderRename(template: IHomeTemplate): void {
+		template.container.classList.add('renaming');
+		const input = append(template.name, $('input.rename-input')) as HTMLInputElement;
+		input.type = 'text';
+		input.spellcheck = false;
+		input.value = this.host.renameValue;
+		input.setAttribute('aria-label', localize('voltAgent.home.renameLabel', "Agent name"));
+		const store = template.elementDisposables;
+		let done = false;
+		const finish = (value: string | undefined, refocus: boolean) => {
+			if (!done) {
+				done = true;
+				this.host.finishRename(value, refocus);
+			}
+		};
+		store.add(addDisposableListener(input, 'input', () => this.host.renameValue = input.value));
+		// The list's keys (arrows, Enter opens, type to find) and the row's clicks stay out of the field.
+		store.add(addDisposableListener(input, 'keydown', e => {
+			e.stopPropagation();
+			if (e.key === 'Enter' && !e.isComposing) {
+				e.preventDefault();
+				finish(input.value, true);
+			} else if (e.key === 'Escape') {
+				e.preventDefault();
+				finish(undefined, true);
+			}
+		}));
+		store.add(addDisposableListener(input, 'blur', () => finish(input.value, false)));
+		for (const type of ['mousedown', 'click', 'dblclick', 'contextmenu']) {
+			store.add(addDisposableListener(input, type, e => e.stopPropagation()));
+		}
+		input.focus();
+		if (this.host.takeRenameSelectAll()) {
+			input.select();
+		}
 	}
 
 	/** One prompt, several models: their icons stacked, the prompt, and how far the runs are. */
@@ -612,8 +658,8 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			e.stopPropagation();
 			this.host.toggleRunGroup(element);
 		}));
-		// Rows are recycled: a session row may have left its snooze, settle and pin buttons showing.
-		for (const button of [template.snooze, template.settle, template.wake, template.newWindow, template.pin]) {
+		// Rows are recycled: a session row may have left its snooze, settle, pin and more buttons showing.
+		for (const button of [template.snooze, template.settle, template.wake, template.pin, template.more]) {
 			button.classList.add('hidden');
 		}
 		template.archive.classList.remove('hidden');
@@ -643,7 +689,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		if (badge) {
 			this.renderStatusBadge(template.badge, badge);
 		}
-		for (const button of [template.snooze, template.settle, template.wake, template.newWindow, template.pin, template.archive]) {
+		for (const button of [template.snooze, template.settle, template.wake, template.pin, template.archive, template.more]) {
 			button.classList.add('hidden');
 		}
 		setAgentTooltip(template.container, `${member.label} · ${member.branch}\n${live.label}`);
@@ -1117,6 +1163,14 @@ export class AgentHomePane extends Disposable {
 	private builtTwoLine: boolean | undefined;
 	/** Chats the orchestrator sees busy: a turn starting or running, or subagents still at work. */
 	private live = new Map<string, AgentHomeWorkState>();
+	/**
+	 * The agent tab whose title is a field, and the text typed so far. `selectAll` is spent by the
+	 * first draw. Rebuilds wait while it lasts ({@link refreshAfterRename}): they would redraw the field.
+	 */
+	private rename: { readonly id: string; value: string; selectAll: boolean } | undefined;
+	private refreshAfterRename = false;
+	/** Names saved from a row and not yet in history: the row shows them instead of the old title. */
+	private readonly savingTitles = new Map<string, string>();
 
 	constructor(
 		parent: HTMLElement,
@@ -1813,6 +1867,98 @@ export class AgentHomePane extends Disposable {
 		void this.lifecycle.setSettled(session.id, true);
 	}
 
+	/** The … at the end of an agent tab. The row keeps its buttons while the menu is open. */
+	openRowMenu(anchor: HTMLElement, row: HTMLElement, session: IAgentSessionMeta): void {
+		this.hover.hide();
+		const actions: IAction[] = [
+			...(this.canOpenInNewWindow ? [
+				new Action('volt.home.openInNewWindow', localize('voltAgent.home.openInNewWindow', "Open in New Window"), undefined, true, () => this.openInNewWindow(session)),
+			] : []),
+			this.renameAction(session),
+			new Separator(),
+			new Action('volt.home.archive', session.archived ? localize('voltAgent.home.unarchive', "Unarchive") : localize('voltAgent.home.archive', "Archive"), undefined, true, () => this.toggleArchive(session)),
+		];
+		row.classList.add('menu-open');
+		this.contextMenuService.showContextMenu({
+			getAnchor: () => anchor,
+			getActions: () => actions,
+			onHide: () => row.classList.remove('menu-open'),
+		});
+	}
+
+	/** A chat not sent yet has no stored title to rename. */
+	private renameAction(session: IAgentSessionMeta): IAction {
+		return new Action('volt.home.rename', localize('voltAgent.home.rename', "Rename"), undefined, !!this.history.get(session.id), () => this.startRename(session));
+	}
+
+	get renamingId(): string | undefined {
+		return this.rename?.id;
+	}
+
+	/** The title an agent tab shows: a name just saved from its row, else the stored one. */
+	titleOf(session: IAgentSessionMeta): string {
+		return this.savingTitles.get(session.id) ?? session.title;
+	}
+
+	get renameValue(): string {
+		return this.rename?.value ?? '';
+	}
+
+	set renameValue(value: string) {
+		if (this.rename) {
+			this.rename.value = value;
+		}
+	}
+
+	/** True once per rename: its first draw selects the whole title. */
+	takeRenameSelectAll(): boolean {
+		const select = !!this.rename?.selectAll;
+		if (this.rename) {
+			this.rename.selectAll = false;
+		}
+		return select;
+	}
+
+	/** Turns the chat's title into a field in its row. */
+	startRename(session: IAgentSessionMeta): void {
+		this.hover.hide();
+		if (this.rename) {
+			this.finishRename(this.rename.value, false);
+		}
+		this.rename = { id: session.id, value: this.titleOf(session), selectAll: true };
+		for (const pane of this.panes) {
+			pane.tree?.rerender();
+		}
+	}
+
+	/**
+	 * Saves the name typed (`undefined` cancels). An empty name hands the chat back to its automatic
+	 * title. `refocus`: Enter and Escape leave the keyboard in the list; a click elsewhere keeps its focus.
+	 */
+	finishRename(value: string | undefined, refocus: boolean): void {
+		const rename = this.rename;
+		if (!rename) {
+			return;
+		}
+		this.rename = undefined;
+		const meta = this.history.get(rename.id);
+		const title = value?.trim();
+		if (meta && title !== undefined && title !== meta.title) {
+			if (title) {
+				this.savingTitles.set(rename.id, title);
+			}
+			void this.history.rename(rename.id, title || undefined).finally(() => this.savingTitles.delete(rename.id));
+		}
+		if (refocus) {
+			this.panes.find(pane => pane.findSession(rename.id))?.tree?.domFocus();
+		}
+		this.rerenderRows();
+		if (this.refreshAfterRename) {
+			this.refreshAfterRename = false;
+			this.scheduleRefresh();
+		}
+	}
+
 	/** The clock on an agent tab: quick picks, or Custom… for a date or a duration. */
 	openSnoozeMenu(anchor: HTMLElement, session: IAgentSessionMeta): void {
 		this.hover.hide();
@@ -1875,6 +2021,7 @@ export class AgentHomePane extends Disposable {
 			...(this.canOpenInNewWindow ? [
 				new Action('volt.home.openInNewWindow', localize('voltAgent.home.openInNewWindow', "Open in New Window"), undefined, true, () => this.openInNewWindow(session)),
 			] : []),
+			this.renameAction(session),
 			new Action('volt.home.pin', session.pinned ? localize('voltAgent.home.unpin', "Unpin") : localize('voltAgent.home.pin', "Pin"), undefined, !session.archived, () => this.lifecycle.setPinned(session.id, !session.pinned)),
 			new Separator(),
 			new Action('volt.home.settle', session.settled ? localize('voltAgent.home.unsettle', "Move Out of Settled") : localize('voltAgent.home.settle', "Move to Settled"), undefined, true, () => this.lifecycle.setSettled(session.id, !session.settled)),
@@ -2334,6 +2481,9 @@ export class AgentHomePane extends Disposable {
 	}
 
 	private rerenderRows(): void {
+		if (this.rename) {
+			return;
+		}
 		for (const pane of this.panes) {
 			pane.tree?.rerender();
 		}
@@ -2412,6 +2562,10 @@ export class AgentHomePane extends Disposable {
 		// Wait out the index load so a restored chat is not briefly called a draft.
 		await this.history.whenReady.catch(() => undefined);
 		if (seq !== this.refreshSeq || this._store.isDisposed) {
+			return;
+		}
+		if (this.rename) {
+			this.refreshAfterRename = true;
 			return;
 		}
 		const current = this.currentKeys();

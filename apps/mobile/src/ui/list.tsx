@@ -3,35 +3,63 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { type IconName, RADIUS } from '@volt/client-core';
-import { Children, type ReactNode } from 'react';
-import { StyleSheet, View } from 'react-native';
+import type { IconName } from '@volt/client-core';
+import type { ReactNode } from 'react';
+import { type StyleProp, StyleSheet, View, type ViewStyle } from 'react-native';
 import { useTheme } from '../theme/theme';
-import { Icon, T, Tap } from './core';
+import { Icon, Ripple, T } from './core';
 
-/** A grouped list section, iOS Settings style in Volt's surfaces. */
-export function Group({ title, footer, children }: { readonly title?: string; readonly footer?: string; readonly children: ReactNode }) {
+/**
+ * Lists in VS Code's manner: a small uppercase section header, then square rows that run edge to
+ * edge with no card, no tile and no separators; a pressed row ripples from the finger.
+ */
+export function Group({ title, footer, right, children }: { readonly title?: string; readonly footer?: string; readonly right?: ReactNode; readonly children: ReactNode }) {
 	const { p } = useTheme();
-	const items = Children.toArray(children).filter(Boolean);
 	return (
-		<View style={{ marginTop: 22, marginHorizontal: 16 }}>
-			{title ? <T variant="caption" weight="700" color={p.fgTertiary} style={{ letterSpacing: 0.6, marginLeft: 14, marginBottom: 7 }}>{title.toUpperCase()}</T> : null}
-			<View style={{ backgroundColor: p.surface, borderRadius: RADIUS.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: p.strokeFaint, overflow: 'hidden' }}>
-				{items.map((child, i) => (
-					<View key={i}>
-						{i ? <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: p.strokeFaint, marginLeft: 52 }} /> : null}
-						{child}
-					</View>
-				))}
-			</View>
-			{footer ? <T variant="footnote" color={p.fgTertiary} style={{ marginHorizontal: 14, marginTop: 7 }}>{footer}</T> : null}
+		<View style={{ marginTop: 18 }}>
+			{title ? <SectionHeader title={title} right={right} /> : null}
+			{children}
+			{footer ? <T variant="footnote" color={p.fgTertiary} style={{ marginHorizontal: 16, marginTop: 6, marginBottom: 2 }}>{footer}</T> : null}
 		</View>
 	);
 }
 
-export function ListRow({ icon, iconColor, iconBg, label, detail, value, chevron, onPress, right, destructive, checked }: {
+/** VS Code's pane header: an uppercase caption, with room for a value or action at the right. */
+export function SectionHeader({ title, right }: { readonly title: string; readonly right?: ReactNode }) {
+	const { p } = useTheme();
+	return (
+		<View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 30, paddingHorizontal: 16, paddingTop: 4 }}>
+			<T variant="caption" weight="700" color={p.fgTertiary} numberOfLines={1} style={{ flex: 1, letterSpacing: 0.7 }}>{title.toUpperCase()}</T>
+			{right}
+		</View>
+	);
+}
+
+/** A row that answers a press with an ink ripple from the finger; `selected` keeps it filled. */
+export function ListItem({ onPress, onLongPress, disabled, style, children, accessibilityLabel, selected }: {
+	readonly onPress?: () => void;
+	readonly onLongPress?: () => void;
+	readonly disabled?: boolean;
+	readonly style?: StyleProp<ViewStyle>;
+	readonly children: ReactNode;
+	readonly accessibilityLabel?: string;
+	readonly selected?: boolean;
+}) {
+	const { p } = useTheme();
+	if (!onPress && !onLongPress) {
+		return <View style={[styles.row, selected ? { backgroundColor: p.fill } : null, style]}>{children}</View>;
+	}
+	return (
+		<Ripple onPress={onPress} onLongPress={onLongPress} disabled={disabled} accessibilityRole="button" accessibilityLabel={accessibilityLabel} unstable_pressDelay={40} selected={selected} style={[styles.row, style]}>
+			{children}
+		</Ripple>
+	);
+}
+
+export function ListRow({ icon, iconColor, label, detail, value, chevron, onPress, right, destructive, checked }: {
 	readonly icon?: IconName;
 	readonly iconColor?: string;
+	/** @deprecated Rows draw bare glyphs now; kept so callers compile. */
 	readonly iconBg?: string;
 	readonly label: string;
 	readonly detail?: string;
@@ -44,27 +72,25 @@ export function ListRow({ icon, iconColor, iconBg, label, detail, value, chevron
 }) {
 	const { p } = useTheme();
 	return (
-		<Row onPress={onPress}>
+		<ListItem onPress={onPress} accessibilityLabel={label}>
 			{icon ? (
-				<View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: iconBg ?? p.fill, alignItems: 'center', justifyContent: 'center' }}>
-					<Icon name={icon} size={16} color={iconColor ?? (destructive ? p.danger : p.fgSecondary)} />
+				<View style={styles.glyph}>
+					<Icon name={icon} size={19} color={iconColor ?? (destructive ? p.danger : p.fgSecondary)} />
 				</View>
 			) : null}
 			<View style={{ flex: 1, minWidth: 0 }}>
-				<T variant="body" color={destructive ? p.danger : p.fg} numberOfLines={1}>{label}</T>
+				<T variant="body" color={destructive ? p.danger : p.fg} numberOfLines={1} style={{ fontSize: 15 }}>{label}</T>
 				{detail ? <T variant="footnote" color={p.fgTertiary} numberOfLines={2}>{detail}</T> : null}
 			</View>
 			{value ? <T variant="small" color={p.fgTertiary} numberOfLines={1} style={{ maxWidth: '45%' }}>{value}</T> : null}
 			{right}
-			{checked ? <Icon name="check" size={18} color={p.accent} strokeWidth={2.2} /> : null}
+			{checked ? <Icon name="check" size={18} color={p.fg} /> : null}
 			{chevron ? <Icon name="chevronRight" size={15} color={p.fgQuaternary} /> : null}
-		</Row>
+		</ListItem>
 	);
 }
 
-const ROW = { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 50, paddingHorizontal: 14, paddingVertical: 9 } as const;
-
-/** A row that only presses when it does something (an info row isn't drawn dimmed as disabled). */
-function Row({ onPress, children }: { readonly onPress?: () => void; readonly children: ReactNode }) {
-	return onPress ? <Tap haptics="selection" onPress={onPress} style={ROW}>{children}</Tap> : <View style={ROW}>{children}</View>;
-}
+const styles = StyleSheet.create({
+	row: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 46, paddingHorizontal: 16, paddingVertical: 7 },
+	glyph: { width: 22, alignItems: 'center' },
+});

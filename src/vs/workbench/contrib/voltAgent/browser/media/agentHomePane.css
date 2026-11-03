@@ -2011,6 +2011,50 @@ html.volt-layout-agent-window body {
 	line-height: 20px;
 }
 
+/* The … menu is open: its row keeps the buttons after the pointer leaves for the menu. */
+.monaco-list-row .volt-agent-home-row.is-session.menu-open > .actions {
+	display: flex;
+}
+
+.monaco-list-row .volt-agent-home-row.is-session.menu-open > .actions > .row-action.more {
+	background: var(--vscode-toolbar-activeBackground, color-mix(in srgb, var(--vscode-foreground) 16%, transparent));
+	opacity: 1;
+}
+
+/* Rename in place: the title is a field; the buttons, age and status step aside until it closes. */
+.monaco-list-row .volt-agent-home-row.is-session.renaming > .actions,
+.volt-agent-home-row.is-session.renaming > .meta,
+.volt-agent-home-row.is-session.renaming > .status-badge,
+.volt-agent-home-row.is-session.renaming > .line-pr,
+.volt-agent-home-row.is-session.renaming > .unread-dot {
+	display: none;
+}
+
+.volt-agent-home-row.is-session.renaming > .name {
+	display: flex;
+	align-items: center;
+	mask-image: none;
+}
+
+.volt-agent-home-row.is-session > .name > .rename-input {
+	flex: 1;
+	min-width: 0;
+	height: 20px;
+	margin: 0;
+	padding: 0 4px;
+	box-sizing: border-box;
+	border: 0;
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground, var(--vscode-foreground));
+	font: inherit;
+}
+
+.volt-agent-home-row.is-session.two-line > .name > .rename-input {
+	height: 18px;
+}
+
 /* Status badge after the age: one empty span on every row; only active agent tabs that are not idle fill it. */
 .volt-agent-home-row > .status-badge:empty {
 	display: none;

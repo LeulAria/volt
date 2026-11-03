@@ -7,7 +7,7 @@ import { type ChatStatus, type IconName, ICONS, RADIUS, statusColor, timer, TYPE
 import * as Haptics from 'expo-haptics';
 import { memo, type ReactNode, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, type PressableProps, type StyleProp, StyleSheet, Text, type TextProps, type TextStyle, View, type ViewStyle } from 'react-native';
-import Animated, { cancelAnimation, Easing, interpolate, makeMutable, type SharedValue, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import Animated, { cancelAnimation, Easing, interpolate, interpolateColor, makeMutable, type SharedValue, useAnimatedStyle, useSharedValue, withRepeat, withSpring, withTiming } from 'react-native-reanimated';
 import Svg, { Path } from 'react-native-svg';
 import { useNow } from '../state/client';
 import { FONT, useTheme } from '../theme/theme';
@@ -21,13 +21,16 @@ export const haptic = {
 	error: () => void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined),
 };
 
-export const Icon = memo(function Icon({ name, size = 18, color, strokeWidth = 1.75 }: { readonly name: IconName; readonly size?: number; readonly color?: string; readonly strokeWidth?: number }) {
+/** Every glyph draws its lines this wide on screen, whatever its size (lucide's absolute stroke width). */
+export const ICON_LINE = 1;
+
+export const Icon = memo(function Icon({ name, size = 18, color, strokeWidth }: { readonly name: IconName; readonly size?: number; readonly color?: string; readonly strokeWidth?: number }) {
 	const { p } = useTheme();
 	const def = ICONS[name];
 	const fill = 'fill' in def && def.fill;
 	const c = color ?? p.fg;
 	return (
-		<Svg width={size} height={size} viewBox="0 0 24 24" fill={fill ? c : 'none'} stroke={fill ? 'none' : c} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+		<Svg width={size} height={size} viewBox="0 0 24 24" fill={fill ? c : 'none'} stroke={fill ? 'none' : c} strokeWidth={strokeWidth ?? ICON_LINE * 24 / size} strokeLinecap="round" strokeLinejoin="round">
 			{def.paths.map((d, i) => <Path key={i} d={d} />)}
 		</Svg>
 	);
@@ -54,6 +57,76 @@ export function T({ variant = 'body', color, weight, mono, align, style, ...rest
 			maxFontSizeMultiplier={1.6}
 			{...rest}
 		/>
+	);
+}
+
+/**
+ * Material's ink ripple: pressed, a soft circle grows from the finger across the surface and
+ * fades once let go, clipped to the surface's shape (give it a `borderRadius`). `centered` grows it
+ * from the middle instead (icon buttons, tabs). Rows, icon buttons and tabs all press this way.
+ */
+export function Ripple({ style, children, haptics = 'selection', onPress, onPressIn, onPressOut, centered, rippleColor, selectedColor, selected, ...rest }: Omit<PressableProps, 'style' | 'children'> & {
+	readonly style?: StyleProp<ViewStyle>;
+	readonly children?: ReactNode;
+	readonly haptics?: keyof typeof haptic | false;
+	readonly centered?: boolean;
+	readonly rippleColor?: string;
+	/** A resting fill for the chosen item (no flash on press). */
+	readonly selected?: boolean;
+	readonly selectedColor?: string;
+}) {
+	const { p } = useTheme();
+	const host = useRef<View>(null);
+	const x = useSharedValue(0);
+	const y = useSharedValue(0);
+	const radius = useSharedValue(0);
+	const spread = useSharedValue(0);
+	const ink = useSharedValue(0);
+	const start = (px: number, py: number, width: number, height: number) => {
+		// Far enough to reach the farthest corner from the touch.
+		radius.value = Math.hypot(Math.max(px, width - px), Math.max(py, height - py));
+		x.value = px;
+		y.value = py;
+		spread.value = 0;
+		spread.value = withTiming(1, { duration: 420, easing: Easing.out(Easing.cubic) });
+		ink.value = withTiming(1, { duration: 70 });
+	};
+	const wave = useAnimatedStyle(() => ({
+		width: radius.value * 2,
+		height: radius.value * 2,
+		borderRadius: radius.value,
+		left: x.value - radius.value,
+		top: y.value - radius.value,
+		opacity: ink.value,
+		transform: [{ scale: 0.08 + 0.92 * spread.value }],
+	}));
+	return (
+		<Pressable
+			ref={host}
+			{...rest}
+			onPressIn={e => {
+				const { pageX, pageY, locationX, locationY } = e.nativeEvent;
+				// A touch's location is relative to the view under the finger, so measure from the page.
+				host.current?.measure((_x, _y, width, height, left, top) => {
+					start(centered ? width / 2 : (left === undefined ? locationX : pageX - left), centered ? height / 2 : (top === undefined ? locationY : pageY - top), width, height);
+				});
+				onPressIn?.(e);
+			}}
+			onPressOut={e => {
+				ink.value = withTiming(0, { duration: 360, easing: Easing.out(Easing.quad) });
+				onPressOut?.(e);
+			}}
+			onPress={e => {
+				if (haptics) {
+					haptic[haptics]();
+				}
+				onPress?.(e);
+			}}
+			style={[styles.rippleHost, selected ? { backgroundColor: selectedColor ?? p.fill } : null, rest.disabled ? styles.disabled : null, style]}
+		>
+			<Animated.View pointerEvents="none" style={[styles.wave, { backgroundColor: rippleColor ?? p.fillStrong }, wave]} />
+			{children}
+		</Pressable>
 	);
 }
 
@@ -93,17 +166,18 @@ export function Button({ label, onPress, variant = 'secondary', icon, busy, disa
 	const fg = variant === 'primary' ? p.onPrimary : variant === 'danger' ? p.danger : variant === 'ghost' ? p.fgSecondary : p.fg;
 	const height = size === 'sm' ? 32 : size === 'lg' ? 50 : 42;
 	return (
-		<Tap
+		<Ripple
 			onPress={onPress}
 			disabled={disabled || busy}
 			haptics="light"
 			accessibilityRole="button"
 			accessibilityLabel={label}
+			rippleColor={variant === 'primary' ? `${p.onPrimary}26` : undefined}
 			style={[{ height, paddingHorizontal: size === 'sm' ? 12 : 18, borderRadius: size === 'lg' ? 14 : 11, backgroundColor: bg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderWidth: variant === 'secondary' ? StyleSheet.hairlineWidth : 0, borderColor: p.stroke }, flex ? { flex: 1 } : null, style]}
 		>
 			{busy ? <ActivityIndicator size="small" color={fg} /> : icon ? <Icon name={icon} size={size === 'sm' ? 15 : 17} color={fg} /> : null}
 			<T variant={size === 'lg' ? 'callout' : size === 'sm' ? 'small' : 'body'} weight="600" color={fg}>{label}</T>
-		</Tap>
+		</Ripple>
 	);
 }
 
@@ -116,23 +190,105 @@ export function VoltMark({ size, style }: { readonly size: number; readonly styl
 	);
 }
 
-export function IconButton({ icon, onPress, label, size = 20, color, style, haptics = 'selection', disabled }: {
+/**
+ * A bare glyph in a round button that answers a press with an ink ripple from its middle (no tile,
+ * no dimming); `active` keeps a soft fill behind it while a toggle is on.
+ */
+export function IconButton({ icon, onPress, onLongPress, label, size = 20, color, style, haptics = 'selection', disabled, active, children }: {
 	readonly icon: IconName;
 	readonly onPress?: () => void;
+	readonly onLongPress?: () => void;
 	readonly label: string;
 	readonly size?: number;
 	readonly color?: string;
 	readonly style?: StyleProp<ViewStyle>;
 	readonly haptics?: keyof typeof haptic;
 	readonly disabled?: boolean;
+	/** Keeps the wash showing (a toggle that is on, a menu that is open). */
+	readonly active?: boolean;
+	/** Drawn over the glyph (a badge dot). */
+	readonly children?: ReactNode;
 }) {
 	const { p } = useTheme();
 	return (
-		<Tap onPress={onPress} haptics={haptics} disabled={disabled} accessibilityRole="button" accessibilityLabel={label} hitSlop={8} style={[{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' }, style]}>
+		<Ripple
+			centered
+			haptics={haptics}
+			onPress={onPress}
+			onLongPress={onLongPress}
+			disabled={disabled}
+			accessibilityRole="button"
+			accessibilityLabel={label}
+			accessibilityState={{ disabled: !!disabled, ...(active !== undefined ? { selected: active } : {}) }}
+			hitSlop={6}
+			selected={active}
+			style={[styles.iconButton, style]}
+		>
 			<Icon name={icon} size={size} color={color ?? p.fgSecondary} />
-		</Tap>
+			{children}
+		</Ripple>
 	);
 }
+
+/**
+ * Volt's on/off switch: a small round track with a round knob that springs across and stretches
+ * while held. On, the track takes the text colour and the knob the canvas (the primary button's
+ * look); `danger` paints it red.
+ */
+export function Switch({ value, onValueChange, disabled, tone = 'default', accessibilityLabel }: {
+	readonly value: boolean;
+	readonly onValueChange: (value: boolean) => void;
+	readonly disabled?: boolean;
+	readonly tone?: 'default' | 'danger';
+	readonly accessibilityLabel?: string;
+}) {
+	const { p } = useTheme();
+	const on = useSharedValue(value ? 1 : 0);
+	const held = useSharedValue(0);
+	useEffect(() => {
+		on.value = withSpring(value ? 1 : 0, { damping: 20, stiffness: 320, mass: 0.7 });
+	}, [value, on]);
+	const onTrack = tone === 'danger' ? p.danger : p.fg;
+	const onKnob = tone === 'danger' ? '#FFFFFF' : p.canvas;
+	const track = useAnimatedStyle(() => ({
+		backgroundColor: interpolateColor(on.value, [0, 1], [p.fillStrong, onTrack]),
+		borderColor: interpolateColor(on.value, [0, 1], [p.stroke, onTrack]),
+	}), [p, onTrack]);
+	const knob = useAnimatedStyle(() => {
+		const stretch = SWITCH.stretch * held.value;
+		return {
+			width: SWITCH.knob + stretch,
+			backgroundColor: interpolateColor(on.value, [0, 1], [p.fgSecondary, onKnob]),
+			transform: [{ translateX: on.value * (SWITCH.width - SWITCH.knob - SWITCH.inset * 2 - stretch) }],
+		};
+	}, [p, onKnob]);
+	return (
+		<Pressable
+			onPress={() => {
+				haptic.selection();
+				onValueChange(!value);
+			}}
+			onPressIn={() => {
+				held.value = withTiming(1, { duration: 120 });
+			}}
+			onPressOut={() => {
+				held.value = withTiming(0, { duration: 180 });
+			}}
+			disabled={disabled}
+			hitSlop={8}
+			accessibilityRole="switch"
+			accessibilityLabel={accessibilityLabel}
+			accessibilityState={{ checked: value, disabled: !!disabled }}
+			style={disabled ? styles.disabled : null}
+		>
+			<Animated.View style={[styles.switchTrack, track]}>
+				<Animated.View style={[styles.switchKnob, knob]} />
+			</Animated.View>
+		</Pressable>
+	);
+}
+
+const SWITCH = { width: 42, height: 26, knob: 20, inset: 3, stretch: 5 } as const;
 
 export const STATUS_ICON: Record<ChatStatus, IconName> = {
 	approval: 'shieldAlert',
@@ -356,17 +512,17 @@ export function Tabs<V extends string>({ value, options, onChange }: { readonly 
 			{options.map(option => {
 				const on = option.id === value;
 				return (
-					<Pressable key={option.id} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={option.label}
+					<Ripple key={option.id} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={option.label}
+						haptics={on ? false : 'selection'}
 						onPress={() => {
 							if (!on) {
-								haptic.selection();
 								onChange(option.id);
 							}
 						}}
-						style={({ pressed }) => [styles.tab, pressed ? { backgroundColor: p.fillFaint } : null]}>
+						style={styles.tab}>
 						{option.icon ? <Icon name={option.icon} size={15} color={on ? p.fg : p.fgTertiary} /> : null}
 						<T variant="small" weight={on ? '600' : '500'} color={on ? p.fg : p.fgTertiary} numberOfLines={1}>{option.label}</T>
-					</Pressable>
+					</Ripple>
 				);
 			})}
 			{slot ? (
@@ -379,6 +535,11 @@ export function Tabs<V extends string>({ value, options, onChange }: { readonly 
 }
 
 const styles = StyleSheet.create({
+	iconButton: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
+	rippleHost: { overflow: 'hidden' },
+	wave: { position: 'absolute' },
+	switchTrack: { width: SWITCH.width, height: SWITCH.height, borderRadius: SWITCH.height / 2, borderWidth: StyleSheet.hairlineWidth, padding: SWITCH.inset - StyleSheet.hairlineWidth, justifyContent: 'center' },
+	switchKnob: { height: SWITCH.knob, borderRadius: SWITCH.knob / 2, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 2, shadowOffset: { width: 0, height: 1 }, elevation: 2 },
 	pressed: { opacity: 0.6, transform: [{ scale: 0.985 }] },
 	disabled: { opacity: 0.4 },
 	tab: { flex: 1, height: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 6 },

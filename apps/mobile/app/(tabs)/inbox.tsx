@@ -4,15 +4,17 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { useMemo, useState } from 'react';
-import { FlatList, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { ChatRow } from '../../src/home/ChatRow';
 import { OfflineBanner } from '../../src/home/Connection';
 import { INBOX_FILTERS, type InboxFilter, inboxItems } from '../../src/home/inbox';
 import { openChat, useChatMenu } from '../../src/home/useChatMenu';
 import { useChatItems, useClient } from '../../src/state/client';
 import { useTheme } from '../../src/theme/theme';
+import { useReadableInset } from '../../src/ui/adaptive';
 import { EmptyState, IconButton } from '../../src/ui/core';
-import { LargeHeader } from '../../src/ui/header';
+import { LargeHeader, LargeTitle, useLargeTitleScroll } from '../../src/ui/header';
 import { Chips } from '../../src/ui/rows';
 
 const EMPTY: Record<InboxFilter, { title: string; body: string }> = {
@@ -36,15 +38,19 @@ export default function Inbox() {
 		return { ...option, count: n || undefined, attention: option.id === 'needs' };
 	}), [items]);
 	const unread = items.some(item => item.unread);
+	const { scroll, onScroll } = useLargeTitleScroll();
+	const inset = useReadableInset(true);
 
 	return (
 		<View style={{ flex: 1, backgroundColor: p.canvas }}>
-			<LargeHeader title="Inbox" right={unread ? <IconButton icon="listChecks" label="Mark all as read" color={p.fg} onPress={() => void client.markAllRead()} /> : undefined} />
-			<FlatList
+			<LargeHeader title="Inbox" scroll={scroll} right={unread ? <IconButton icon="listChecks" label="Mark all as read" color={p.fg} onPress={() => void client.markAllRead()} /> : undefined} />
+			<Animated.FlatList
+				onScroll={onScroll}
+				scrollEventThrottle={16}
 				data={list}
 				keyExtractor={item => item.id}
-				contentContainerStyle={{ paddingBottom: 32 }}
-				ListHeaderComponent={<View style={{ gap: 6, paddingBottom: 6 }}><OfflineBanner /><Chips value={filter} options={options} onChange={setFilter} /></View>}
+				contentContainerStyle={{ paddingBottom: 32, paddingHorizontal: inset }}
+				ListHeaderComponent={<View style={{ gap: 6, paddingBottom: 6 }}><LargeTitle title="Inbox" scroll={scroll} /><OfflineBanner /><Chips value={filter} options={options} onChange={setFilter} /></View>}
 				ItemSeparatorComponent={() => <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: p.strokeFaint, marginLeft: 50 }} />}
 				renderItem={({ item }) => <ChatRow item={item} onPress={openChat} onLongPress={menu.show} />}
 				ListEmptyComponent={<EmptyState icon="inbox" title={EMPTY[filter].title} body={EMPTY[filter].body} />}

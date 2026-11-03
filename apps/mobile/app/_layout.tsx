@@ -17,6 +17,7 @@ import { loadEnvironments, useActiveEnvironment, useEnvironments } from '../src/
 import { loadFonts, ThemeProvider, useTheme } from '../src/theme/theme';
 import { ImageViewerHost } from '../src/ui/ImageViewer';
 import { FrameViewerHost } from '../src/chat/Visuals';
+import { StackHeader } from '../src/ui/header';
 import { Toasts } from '../src/ui/sheets';
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
@@ -77,6 +78,8 @@ function Root() {
 				<StatusBar style={dark ? 'light' : 'dark'} />
 				<Stack
 					screenOptions={{
+						// Volt's own header everywhere: bare glyph buttons and a back chevron, not the system bar's glass buttons.
+						header: props => <StackHeader {...props} />,
 						headerStyle: { backgroundColor: p.canvas },
 						headerTintColor: p.fg,
 						headerTitleStyle: { color: p.fg, fontWeight: '600' },
@@ -93,6 +96,7 @@ function Root() {
 					<Stack.Screen name="group/[id]" options={{ title: 'Compare models' }} />
 					<Stack.Screen name="project/index" options={{ title: 'Projects' }} />
 					<Stack.Screen name="project/[id]" options={{ title: '' }} />
+					<Stack.Screen name="project/add" options={{ title: 'Add a project', presentation: 'modal', contentStyle: { backgroundColor: p.canvas } }} />
 					<Stack.Screen name="scm" options={{ title: 'Source control' }} />
 					<Stack.Screen name="pulls" options={{ title: 'Pull requests' }} />
 					<Stack.Screen name="pull" options={{ title: 'Pull request' }} />
@@ -104,7 +108,7 @@ function Root() {
 					<Stack.Screen name="new" options={{ headerShown: false, presentation: 'modal', contentStyle: { backgroundColor: p.canvas } }} />
 					<Stack.Screen name="connect" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
 					<Stack.Screen name="pair" options={{ headerShown: false }} />
-					<Stack.Screen name="settings/index" options={{ title: 'Settings', headerLargeTitle: Platform.OS === 'ios' }} />
+					<Stack.Screen name="settings/index" options={{ title: 'Settings' }} />
 					<Stack.Screen name="settings/devices" options={{ title: 'Devices' }} />
 					<Stack.Screen name="settings/models" options={{ title: 'Models' }} />
 					<Stack.Screen name="changes/[id]" options={{ title: 'Changes' }} />

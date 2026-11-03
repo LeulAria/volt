@@ -275,14 +275,37 @@ export function renderMermaidDiagram(parent: HTMLElement, source: string, option
 	draw(host, source, options);
 }
 
+/** The "Drawing…" shimmer's period; on the page clock so a redrawn placeholder does not restart it. */
+const DRAWING_SWEEP_MS = 2200;
+
+/**
+ * The diagram's card before the diagram: the finished card's frame and head ("Flowchart ·
+ * Drawing…") over the dot loader, so when the drawing lands only the inside changes.
+ */
 function renderDiagramLoader(host: HTMLElement, source: string): void {
 	host.classList.add('loading');
+	const card = append(host, $('.volt-md-code-block.mermaid.volt-diagram.volt-diagram-pending'));
+	const head = append(card, $('.volt-diagram-head'));
+	const title = append(head, $('.volt-diagram-title'));
+	title.appendChild(renderIcon(Codicon.typeHierarchy));
+	append(title, $('span.volt-diagram-kind'));
+	const drawing = append(title, $('span.volt-diagram-summary.volt-diagram-drawing'));
+	drawing.textContent = localize('voltAgent.mermaid.drawingShort', "Drawing…");
+	drawing.style.animationDelay = `-${Math.round(getWindow(host).performance.now() % DRAWING_SWEEP_MS)}ms`;
+	updateDiagramLoaderKind(host, source);
 	const { shape, height } = mermaidLoaderShape(source);
-	renderDotLoader(host, {
-		shape,
-		height,
-		caption: localize('voltAgent.mermaid.drawing', "Drawing diagram"),
-	});
+	renderDotLoader(card, { shape, height, ariaLabel: localize('voltAgent.mermaid.drawing', "Drawing diagram") });
+}
+
+/** The fence's first line may arrive after the placeholder: name the diagram once it does. */
+function updateDiagramLoaderKind(host: HTMLElement, source: string): void {
+	const kind = diagramKind(source);
+	const label = host.querySelector<HTMLElement>('.volt-diagram-pending .volt-diagram-kind');
+	if (!label || label.textContent === kind.label) {
+		return;
+	}
+	label.textContent = kind.label;
+	label.parentElement?.querySelector(':scope > .codicon')?.replaceWith(renderIcon(kind.icon));
 }
 
 /** Draws `source` into `host`: the diagram, or its source as a code card when it cannot be drawn. True for a diagram. */
@@ -456,6 +479,8 @@ function renderDiagramCard(host: HTMLElement, svg: SVGSVGElement, source: string
 	if (options.onExpand) {
 		headButton(tools, Codicon.screenFull, localize('voltAgent.mermaid.expand', "Expand diagram"), options.store, () => options.onExpand?.(svg.cloneNode(true) as SVGSVGElement, source));
 	}
+	// The switch keeps the right edge; Copy and Expand show to its left on hover.
+	tools.appendChild(views);
 
 	const content = append(shell.scroll, $('.volt-md-mermaid-content'));
 	svg.classList.add('volt-md-mermaid-svg');
@@ -529,6 +554,8 @@ export class MermaidDiagramView implements IDisposable {
 			if (this.shown === undefined) {
 				this.showPlaceholder(source);
 				void preloadMermaid();
+			} else if (this.shown === 'placeholder') {
+				updateDiagramLoaderKind(this.element, source);
 			}
 			return;
 		}

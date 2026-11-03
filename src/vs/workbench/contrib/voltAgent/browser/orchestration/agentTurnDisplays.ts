@@ -21,6 +21,11 @@ export function stashTurnDisplay(turnId: string, display: IAgentPromptDisplay | 
 	}
 }
 
+/** The live display stashed for `turnId`, left in place (a queued prompt opened for editing). */
+export function peekTurnDisplay(turnId: string): IAgentPromptDisplay | undefined {
+	return liveDisplays.get(turnId);
+}
+
 /** Takes the live display stashed for `turnId` (once). */
 export function takeTurnDisplay(turnId: string): IAgentPromptDisplay | undefined {
 	const display = liveDisplays.get(turnId);

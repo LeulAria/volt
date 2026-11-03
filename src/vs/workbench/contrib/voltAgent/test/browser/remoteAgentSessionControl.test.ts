@@ -263,6 +263,72 @@ suite('RemoteAgentSessionControl', () => {
 		assert.deepStrictEqual(server.calls.filter(c => c.method === 'session.watch').map(c => c.args[0]), [['s6'], []]);
 	});
 
+	test('a sent prompt shows at once; the server\'s turn takes over the same rows', async () => {
+		const { server, host, control, changes } = setUp(store);
+		server.messages.push(reply('t1', 'done', false));
+		server.patcher.reset(server.json());
+		await control.loadTranscript();
+		control.showPendingTurn({ turnId: 't2', text: 'next', mode: 'Agent' });
+		assert.deepStrictEqual(host.messages.map(m => m.id), ['t1', 't1', 't2', 't2']);
+		assert.deepStrictEqual(changes, ['turnStart']);
+		assert.ok(control.isPendingTurn('t2') && control.isRunning, 'Enter now queues behind it');
+		const [user, pending] = host.messages.slice(2);
+
+		// A patch from before the turn started applies to the server's messages; the rows stay last.
+		(server.messages[1] as IAgentAssistantMessage).segments = [{ kind: 'text', text: 'done!' }];
+		server.publish();
+		assert.deepStrictEqual(host.messages.map(m => m.id), ['t1', 't1', 't2', 't2']);
+		assert.deepStrictEqual((host.messages[1] as IAgentAssistantMessage).segments, [{ kind: 'text', text: 'done!' }]);
+
+		server.messages.push({ kind: 'user', id: 't2', text: 'next' } as IAgentMessage, reply('t2', 'Hi'));
+		server.publish();
+		assert.strictEqual(host.messages.length, 4);
+		assert.strictEqual(host.messages[2], user, 'the prompt on screen is the server\'s now');
+		assert.strictEqual(host.messages[3], pending);
+		assert.deepStrictEqual((host.messages[3] as IAgentAssistantMessage).segments, [{ kind: 'text', text: 'Hi' }]);
+		assert.strictEqual(control.isPendingTurn('t2'), false);
+
+		// Later patches find the transcript where the server has it.
+		(server.messages[3] as IAgentAssistantMessage).segments = [{ kind: 'text', text: 'Hi there' }];
+		server.publish();
+		assert.deepStrictEqual((host.messages[3] as IAgentAssistantMessage).segments, [{ kind: 'text', text: 'Hi there' }]);
+		assert.strictEqual(server.calls.filter(c => c.method === 'session.open').length, 1, 'no reopen');
+	});
+
+	test('a pending turn the server did not start goes away; none is shown over a live reply', async () => {
+		const { server, host, control, changes } = setUp(store);
+		server.messages.push(reply('t1', 'done', false));
+		server.patcher.reset(server.json());
+		await control.loadTranscript();
+		control.showPendingTurn({ turnId: 't2', text: 'next', mode: 'Agent' });
+		control.dropPendingTurn('t2');
+		assert.deepStrictEqual(host.messages.map(m => m.id), ['t1', 't1']);
+		assert.deepStrictEqual(changes, ['turnStart', 'render']);
+
+		server.messages[1] = reply('t1', 'working');
+		server.publish();
+		control.showPendingTurn({ turnId: 't3', text: 'later', mode: 'Agent' });
+		assert.deepStrictEqual(host.messages.map(m => m.id), ['t1', 't1']);
+		assert.strictEqual(control.isPendingTurn('t3'), false);
+	});
+
+	test('a pending turn survives a reopen and is handed over by it', async () => {
+		const { server, host, control } = setUp(store);
+		server.messages.push(reply('t1', 'done', false));
+		server.patcher.reset(server.json());
+		await control.loadTranscript();
+		control.showPendingTurn({ turnId: 't2', text: 'next', mode: 'Agent' });
+		const user = host.messages[2];
+		server.messages.push({ kind: 'user', id: 't2', text: 'next' } as IAgentMessage, reply('t2', 'Hi'));
+		server.patcher.diff(server.json()); // lost on the way: the next patch does not fit
+		(server.messages[3] as IAgentAssistantMessage).segments = [{ kind: 'text', text: 'Hi!' }];
+		server.publish();
+		await new Promise(resolve => setTimeout(resolve, 0));
+		assert.deepStrictEqual(host.messages.map(m => m.id), ['t1', 't1', 't2', 't2']);
+		assert.strictEqual(host.messages[2], user);
+		assert.strictEqual(control.isPendingTurn('t2'), false);
+	});
+
 	test('a view\'s own change to the transcript goes to the server; lifecycle events pass through', async () => {
 		const { server, host, control, changes } = setUp(store);
 		server.messages.push(reply('t1', 'working'));

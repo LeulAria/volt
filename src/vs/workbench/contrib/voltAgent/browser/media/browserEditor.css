@@ -2025,6 +2025,37 @@ the background paints a solid square) and keep the glyph in the accent. */
 	justify-self: end;
 }
 
+/*
+ * Start Multitasking's "N to multitask" (agentComposerChips' token), placed as in the chat's
+ * composer: right after the + (and mode chip) on one line, a line of its own above a multiline prompt.
+ */
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock:not(.multiline) > .volt-agent-multitask-token {
+	order: 0;
+	align-self: center;
+	margin: 0 0 0 8px;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline.has-input-token {
+	grid-template-areas:
+		"token token token token token"
+		"input input input input input"
+		"plus model mode . actions";
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline.has-media.has-input-token {
+	grid-template-areas:
+		"media media media media media"
+		"token token token token token"
+		"input input input input input"
+		"plus model mode . actions";
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline > .volt-agent-multitask-token {
+	grid-area: token;
+	order: unset;
+	margin: 0 2px -2px;
+}
+
 .volt-browser-dock-session {
 	position: absolute;
 	width: 1px;
@@ -3477,10 +3508,9 @@ webview.volt-browser-devtools-frame {
 	background: #ececec;
 }
 
-/* A sent comment keeps its pin, drawn hollow, until it is resolved; a resolved one (Resolved toggle) gets the passed colour. */
+/* A sent comment keeps its numbered pin (no outline) to show the element was annotated; a resolved one gets the passed colour. */
 .volt-browser-comment.sent:not(.expanded) .volt-browser-comment-badge {
-	border-style: dashed;
-	opacity: 0.85;
+	opacity: 0.9;
 }
 
 .volt-browser-comment.resolved:not(.expanded) .volt-browser-comment-badge {

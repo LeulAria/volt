@@ -17,7 +17,7 @@ export const TOOL_DENSITIES: readonly ToolDensity[] = ['compact', 'standard', 'd
 /** The conversation choices this device keeps (per install, not synced with the computer). */
 export interface IConversationPrefs {
 	readonly toolDensity: ToolDensity;
-	/** Wrap long lines in code blocks instead of scrolling them sideways. */
+	/** Wrap long lines instead of scrolling them sideways: code blocks, diffs, files and the editor. */
 	readonly codeWrap: boolean;
 	/** Tint added and removed lines in diffs; off leaves only the +/- markers coloured. */
 	readonly themedDiffs: boolean;

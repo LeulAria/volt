@@ -114,7 +114,8 @@
 
 .volt-traj-row {
 	display: grid;
-	grid-template-columns: 16px 34px minmax(80px, 1fr) auto minmax(80px, 34%);
+	/* The meta gives way (ellipsis) before the timeline does. */
+	grid-template-columns: 16px 34px minmax(80px, 1fr) minmax(0, max-content) minmax(80px, 34%);
 	align-items: center;
 	gap: 6px;
 	height: 22px;
@@ -138,7 +139,8 @@
 }
 
 .volt-traj-row.tool {
-	grid-template-columns: 16px 34px minmax(80px, 1fr) auto minmax(80px, 34%);
+	/* The meta gives way (ellipsis) before the timeline does. */
+	grid-template-columns: 16px 34px minmax(80px, 1fr) minmax(0, max-content) minmax(80px, 34%);
 	height: 20px;
 	color: var(--volt-traj-muted);
 }
@@ -167,6 +169,10 @@
 }
 
 .volt-traj-meta {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 	color: var(--volt-traj-muted);
 	font-variant-numeric: tabular-nums;
 }

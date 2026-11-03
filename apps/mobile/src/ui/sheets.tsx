@@ -10,7 +10,10 @@ import Animated, { FadeInUp, FadeOutUp, SlideInDown } from 'react-native-reanima
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useOptionalClient, useToasts } from '../state/client';
 import { useTheme } from '../theme/theme';
-import { Button, haptic, Icon, T, Tap } from './core';
+import { Button, haptic, Icon, Ripple, T, Tap } from './core';
+
+/** The widest a bottom sheet grows. */
+const SHEET_MAX_WIDTH = 560;
 
 /** A bottom sheet in Volt's raised surface, for pickers and action lists. */
 export function Sheet({ visible, onClose, title, subtitle, children, scroll = true, header, footer }: {
@@ -31,7 +34,8 @@ export function Sheet({ visible, onClose, title, subtitle, children, scroll = tr
 		<Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
 			<KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end' }}>
 				<Pressable style={[StyleSheet.absoluteFill, { backgroundColor: p.overlay }]} onPress={onClose} accessibilityLabel="Close" />
-				<Animated.View entering={SlideInDown.duration(260)} style={{ backgroundColor: p.raised, borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '86%', paddingBottom: Math.max(insets.bottom, 12), borderWidth: StyleSheet.hairlineWidth, borderColor: p.stroke }}>
+				{/* Phone width at most: on an open fold or a tablet the sheet stays centred instead of spanning the hinge. */}
+				<Animated.View entering={SlideInDown.duration(260)} style={{ width: '100%', maxWidth: SHEET_MAX_WIDTH, alignSelf: 'center', backgroundColor: p.raised, borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '86%', paddingBottom: Math.max(insets.bottom, 12), borderWidth: StyleSheet.hairlineWidth, borderColor: p.stroke }}>
 					<View style={{ alignItems: 'center', paddingTop: 8 }}>
 						<View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: p.fillStrong }} />
 					</View>
@@ -71,7 +75,7 @@ export function SheetRow({ action, onDone }: { readonly action: ISheetAction; re
 	}
 	const color = action.destructive ? p.danger : p.fg;
 	return (
-		<Tap
+		<Ripple
 			disabled={action.disabled}
 			haptics="selection"
 			onPress={() => {
@@ -86,7 +90,7 @@ export function SheetRow({ action, onDone }: { readonly action: ISheetAction; re
 				{action.detail ? <T variant="footnote" color={p.fgTertiary} numberOfLines={2}>{action.detail}</T> : null}
 			</View>
 			{action.checked ? <Icon name="check" size={18} color={p.accent} strokeWidth={2.2} /> : null}
-		</Tap>
+		</Ripple>
 	);
 }
 

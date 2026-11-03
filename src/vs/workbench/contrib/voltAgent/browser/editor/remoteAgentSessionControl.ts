@@ -9,8 +9,8 @@ import { Disposable, IDisposable, MutableDisposable, toDisposable } from '../../
 import { applySessionEdits, ISessionPatch, ISessionState, reconcile, SessionEdit, SessionTopicData } from '../../../../../platform/voltAgentServer/common/sessionPatch.js';
 import { fromWire } from '../../../../../platform/voltAgentServer/common/wire.js';
 import { IAgentServerClientService } from '../../../../services/voltAgentServer/common/agentServerClient.js';
-import type { IAgentAssistantMessage, IAgentMessage } from './agentEditor.js';
-import { AgentSessionRecord, IAgentSessionChange, IAgentSessionControl, IAgentSessionHost, IAgentTurnSpec } from './agentSessionController.js';
+import type { IAgentAssistantMessage, IAgentMessage, IAgentUserMessage } from './agentEditor.js';
+import { AgentSessionRecord, IAgentSessionChange, IAgentSessionControl, IAgentSessionHost, IAgentTurnSpec, turnMessagesFor } from './agentSessionController.js';
 
 /**
  * Folds and expanded blocks are this window's: a patch for a streaming reply must not close what
@@ -215,6 +215,11 @@ export class RemoteAgentSessionControl extends Disposable implements IAgentSessi
 	private readonly route = this._register(new MutableDisposable());
 	/** A reload waits its turn behind other chats' (queued), or is under way. */
 	private reload: 'queued' | 'running' | undefined;
+	/**
+	 * Turns on screen since the user sent them, until the server's transcript has them
+	 * ({@link showPendingTurn}). They stay last: patches apply to the server's messages before them.
+	 */
+	private readonly pendingTurns = new Map<string, { readonly user: IAgentUserMessage; readonly reply: IAgentAssistantMessage }>();
 
 	constructor(
 		private host: IAgentSessionHost,
@@ -261,17 +266,19 @@ export class RemoteAgentSessionControl extends Disposable implements IAgentSessi
 		// Straight into the input's own array, in the same task the answer arrived in: a patch that
 		// comes next finds the transcript at `state.rev`.
 		const messages = this.host.messages;
-		reconcile(messages, state.messages);
-		this.host.contextUsed = state.contextUsed;
-		this.host.contextWindow = state.contextWindow;
-		this.rev = state.rev;
-		const early = this.early.filter(patch => patch.rev > state.rev).sort((a, b) => a.rev - b.rev);
-		this.early = [];
-		for (const patch of early) {
-			if (!this.applyTo(messages, patch)) {
-				break;
+		this.withoutPendingTurns(() => {
+			reconcile(messages, state.messages);
+			this.host.contextUsed = state.contextUsed;
+			this.host.contextWindow = state.contextWindow;
+			this.rev = state.rev;
+			const early = this.early.filter(patch => patch.rev > state.rev).sort((a, b) => a.rev - b.rev);
+			this.early = [];
+			for (const patch of early) {
+				if (!this.applyTo(messages, patch)) {
+					break;
+				}
 			}
-		}
+		});
 		return { messages, contextUsed: this.host.contextUsed, contextWindow: this.host.contextWindow };
 	}
 
@@ -343,7 +350,7 @@ export class RemoteAgentSessionControl extends Disposable implements IAgentSessi
 				if (this.rev < 0 || data.rev <= this.rev || this.reload === 'queued') {
 					return;
 				}
-				if (data.rev !== this.rev + 1 || !this.applyTo(this.host.messages, data)) {
+				if (data.rev !== this.rev + 1 || !this.withoutPendingTurns(() => this.applyTo(this.host.messages, data))) {
 					this.requestReopen();
 					return;
 				}
@@ -389,6 +396,77 @@ export class RemoteAgentSessionControl extends Disposable implements IAgentSessi
 		}
 		this.rev = patch.rev;
 		return true;
+	}
+
+	/**
+	 * Shows a prompt the user just sent as its turn now. The server starts it after a round trip,
+	 * its write and the checkpoint, seconds while it is busy; its transcript then takes over these
+	 * rows (same objects, so nothing redraws from scratch).
+	 */
+	showPendingTurn(spec: IAgentTurnSpec): void {
+		const messages = this.host.messages;
+		// Only onto an idle transcript the server has sent: a live reply's patches land on the last message.
+		if (this.rev < 0 || this.isRunning || messages.some(message => message.id === spec.turnId)) {
+			return;
+		}
+		const { user, reply } = turnMessagesFor(spec);
+		messages.push(user, reply);
+		this.pendingTurns.set(spec.turnId, { user, reply });
+		this._onDidChange.fire({ kind: 'turnStart', turnId: spec.turnId });
+	}
+
+	isPendingTurn(turnId: string): boolean {
+		return this.pendingTurns.has(turnId);
+	}
+
+	dropPendingTurn(turnId: string): void {
+		const pending = this.pendingTurns.get(turnId);
+		if (!pending) {
+			return;
+		}
+		this.pendingTurns.delete(turnId);
+		const messages = this.host.messages;
+		const index = messages.indexOf(pending.user);
+		if (index >= 0) {
+			messages.splice(index, messages[index + 1] === pending.reply ? 2 : 1);
+			this._onDidChange.fire({ kind: 'render' });
+		}
+	}
+
+	/** Runs `apply` on the server's messages alone, then puts the pending turns back after them, or hands them over. */
+	private withoutPendingTurns<T>(apply: () => T): T {
+		if (!this.pendingTurns.size) {
+			return apply();
+		}
+		const messages = this.host.messages;
+		const rows = new Set<IAgentMessage>();
+		for (const { user, reply } of this.pendingTurns.values()) {
+			rows.add(user);
+			rows.add(reply);
+		}
+		for (let i = messages.length - 1; i >= 0; i--) {
+			if (rows.has(messages[i])) {
+				messages.splice(i, 1);
+			}
+		}
+		try {
+			return apply();
+		} finally {
+			for (const [turnId, pending] of this.pendingTurns) {
+				const index = messages.findIndex(message => message.kind === 'user' && message.id === turnId);
+				if (index < 0) {
+					messages.push(pending.user, pending.reply);
+					continue;
+				}
+				// The server started the turn: its rows go into the objects already on screen.
+				this.pendingTurns.delete(turnId);
+				messages[index] = reconcileKeepingViewState(pending.user, messages[index]);
+				const reply = messages[index + 1];
+				if (reply?.kind === 'agent' && reply.id === turnId) {
+					messages[index + 1] = reconcileKeepingViewState(pending.reply, reply);
+				}
+			}
+		}
 	}
 
 	skipCurrentRun(): void {

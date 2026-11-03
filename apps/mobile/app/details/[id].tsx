@@ -67,14 +67,15 @@ function Details({ chatId }: { readonly chatId: string }) {
 
 	return (
 		<View style={{ flex: 1, backgroundColor: p.raised }}>
-			<View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 18, paddingBottom: 4, gap: 8 }}>
-				<View style={{ flex: 1 }}>
+			{/* A solid header the list can't run under (the sheet's own scroll adjustments slid it beneath the title). */}
+			<View style={{ flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 16, paddingTop: 20, paddingBottom: 10, gap: 10, backgroundColor: p.raised, zIndex: 1, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: p.strokeFaint }}>
+				<View style={{ flex: 1, minWidth: 0, paddingTop: 4 }}>
 					<T variant="title3" weight="700" numberOfLines={2}>{meta?.title || 'Chat'}</T>
 					{project?.displayName || meta?.workspaceLabel ? <T variant="small" color={p.fgTertiary}>{project?.displayName ?? meta?.workspaceLabel}</T> : null}
 				</View>
 				<IconButton icon="close" label="Close" onPress={() => router.back()} style={{ backgroundColor: p.fill }} />
 			</View>
-			<ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 24 }}>
+			<ScrollView style={{ flex: 1 }} contentInsetAdjustmentBehavior="never" automaticallyAdjustContentInsets={false} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 24 }}>
 				<Section title="Chat">
 					<Line icon="cpu" label="Model" value={modelLabel(runtime, session?.providerRef ?? thread?.modelRef)} />
 					{folder ? <Line icon="folder" label="Folder" value={shortPath(folder, 34)} mono /> : null}

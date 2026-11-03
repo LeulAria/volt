@@ -6,14 +6,17 @@
 import { basename, dirname, errorMessage, type IGitChange, type IGitStatus } from '@volt/client-core';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, RefreshControl, StyleSheet, TextInput, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FileIcon } from '../src/files/FileIcon';
 import { useClient, useOptionalClient } from '../src/state/client';
 import { useTheme } from '../src/theme/theme';
-import { Button, EmptyState, haptic, T, Tap } from '../src/ui/core';
+import { Button, EmptyState, haptic, T } from '../src/ui/core';
 import { GitActions } from '../src/git/GitActions';
+import { useHeaderScroll } from '../src/ui/header';
+import { ListItem } from '../src/ui/list';
 
 export default function ScmScreen() {
 	const { root, name } = useLocalSearchParams<{ root: string; name?: string }>();
@@ -24,6 +27,7 @@ const STATUS_LABEL: Record<IGitChange['status'], string> = { M: 'Modified', A: '
 
 /** A project's uncommitted changes (VS Code's Source Control): diffs against HEAD and a commit box. */
 function SourceControl({ root, name }: { readonly root: string; readonly name?: string }) {
+	const onHeaderScroll = useHeaderScroll();
 	const { p } = useTheme();
 	const insets = useSafeAreaInsets();
 	const client = useClient();
@@ -67,7 +71,7 @@ function SourceControl({ root, name }: { readonly root: string; readonly name?: 
 	return (
 		<KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: p.canvas }}>
 			<Stack.Screen options={{ title: name ? `${name}` : 'Source control' }} />
-			<FlatList
+			<Animated.FlatList onScroll={onHeaderScroll} scrollEventThrottle={16}
 				data={changes as IGitChange[]}
 				keyExtractor={change => `${change.staged ? 's' : 'w'}:${change.path}`}
 				refreshControl={<RefreshControl refreshing={loading && !!status} onRefresh={load} tintColor={p.fgTertiary} />}
@@ -78,19 +82,18 @@ function SourceControl({ root, name }: { readonly root: string; readonly name?: 
 						{changes.length ? <T variant="small" weight="700" color={p.fgSecondary}>{changes.length} {changes.length === 1 ? 'change' : 'changes'}</T> : null}
 					</View>
 				}
-				ItemSeparatorComponent={() => <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: p.strokeFaint, marginLeft: 48 }} />}
 				renderItem={({ item: change }) => (
-					<Tap haptics="selection" onPress={() => router.push({ pathname: '/diff', params: { file: change.path, title: change.rel, mode: 'git' } })}
-						style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 10, minHeight: 50 }}>
+					// VS Code's Source Control row: icon, name with its folder dimmed beside it, counts, status letter.
+					<ListItem onPress={() => router.push({ pathname: '/diff', params: { file: change.path, title: change.rel, mode: 'git' } })} accessibilityLabel={`${basename(change.rel)}, ${STATUS_LABEL[change.status]}`} style={{ minHeight: 42, gap: 10, paddingVertical: 6 }}>
 						<FileIcon path={change.rel} size={18} />
-						<View style={{ flex: 1, minWidth: 0 }}>
-							<T variant="body" numberOfLines={1} style={{ textDecorationLine: change.status === 'D' ? 'line-through' : 'none' }}>{basename(change.rel)}</T>
-							<T variant="caption" mono color={p.fgQuaternary} numberOfLines={1} ellipsizeMode="head">{dirname(change.rel) === '.' ? STATUS_LABEL[change.status] : dirname(change.rel)}</T>
+						<View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'baseline', gap: 7 }}>
+							<T variant="body" numberOfLines={1} style={{ flexShrink: 1, maxWidth: '75%', textDecorationLine: change.status === 'D' ? 'line-through' : 'none' }}>{basename(change.rel)}</T>
+							<T variant="footnote" color={p.fgQuaternary} numberOfLines={1} ellipsizeMode="head" style={{ flex: 1 }}>{dirname(change.rel) === '.' ? '' : dirname(change.rel)}</T>
 						</View>
-						{change.additions ? <T variant="footnote" color={p.diffAddedFg}>+{change.additions}</T> : null}
-						{change.deletions ? <T variant="footnote" color={p.diffRemovedFg}>-{change.deletions}</T> : null}
-						<View style={{ width: 20, alignItems: 'center' }}><T variant="small" weight="700" mono color={statusColor(change.status)}>{change.status === '?' ? 'U' : change.status}</T></View>
-					</Tap>
+						{change.additions ? <T variant="footnote" mono color={p.diffAddedFg}>+{change.additions}</T> : null}
+						{change.deletions ? <T variant="footnote" mono color={p.diffRemovedFg}>{'−'}{change.deletions}</T> : null}
+						<T variant="footnote" weight="700" mono color={statusColor(change.status)} style={{ width: 12, textAlign: 'center' }}>{change.status === '?' ? 'U' : change.status}</T>
+					</ListItem>
 				)}
 				ListEmptyComponent={loading && !status
 					? <ActivityIndicator style={{ marginTop: 40 }} color={p.fgTertiary} />

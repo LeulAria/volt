@@ -3013,10 +3013,10 @@ export class VoltBrowserView extends Disposable {
 		this.syncPins();
 	}
 
-	/** Pins for this page's batched annotations; sending them takes them off the page. */
+	/** Pins for this page's annotations: batched ones with their outlines, sent ones as the number alone. */
 	private syncPins(): void {
 		const page = this.commentPage(this.browserInput()?.url);
-		const shown = this.commentStore.list({ viewId: this.viewId }).filter(comment => this.commentPage(comment.url) === page && comment.status === 'open');
+		const shown = this.commentStore.list({ viewId: this.viewId }).filter(comment => this.commentPage(comment.url) === page && comment.status !== 'resolved');
 		for (const [id, pin] of this.pins) {
 			if (!shown.some(comment => comment.id === id)) {
 				this.disposePin(pin);
@@ -3081,11 +3081,11 @@ export class VoltBrowserView extends Disposable {
 		for (const id of pin.markIds) {
 			this.removeMark(id);
 		}
-		comment.refs.forEach((ref, index) => this.addBoundsMark(ids[index], ref.bounds, comment.number - 1, ref.track));
-		for (const id of ids) {
-			this.marks.get(id)?.box.classList.toggle('settled', comment.status !== 'open');
+		// A sent annotation is marked by its pin only; hovering its chip in the chat flashes the outline.
+		if (comment.status === 'open') {
+			comment.refs.forEach((ref, index) => this.addBoundsMark(ids[index], ref.bounds, comment.number - 1, ref.track));
 		}
-		pin.markIds = ids;
+		pin.markIds = comment.status === 'open' ? ids : [];
 		pin.track = comment.refs[0]?.track;
 		pin.bounds = this.liveBounds(pin.track, comment.refs[0]?.bounds ?? pin.bounds);
 	}
@@ -3304,8 +3304,13 @@ export class VoltBrowserView extends Disposable {
 			if (!comment) {
 				return;
 			}
-			// Batch edits: it waits on the page, numbered, for the toolbar's Send. Otherwise it goes now,
-			// with its pictures (they land on the annotation as they are taken).
+			// Batch edits: it waits on the page, numbered, for the toolbar's Send. With the chat open
+			// beside the browser it waits in that chat's composer (its comments chip) for the user's Send.
+			// Otherwise it goes now, with its pictures (they land on the annotation as they are taken).
+			if (!this.batchEdits && !model && this.presentation !== 'fullscreen' && this.dock?.focusChat()) {
+				this.clearHover();
+				return;
+			}
 			if (!this.batchEdits) {
 				await this.waitForCaptures();
 				await this.sendComments([comment.id], model);
