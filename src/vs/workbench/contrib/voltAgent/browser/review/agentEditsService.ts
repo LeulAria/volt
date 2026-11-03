@@ -576,6 +576,20 @@ export class AgentEditsService extends Disposable implements IAgentEditsService 
 			this.entries.clear();
 		}));
 		this.restore();
+		this._register(this.storageService.onWillSaveState(() => this.flushPersist()));
+	}
+
+	override dispose(): void {
+		// A window reload or quit right after Keep or Undo must not lose it to the 500 ms debounce.
+		this.flushPersist();
+		super.dispose();
+	}
+
+	private flushPersist(): void {
+		if (this.persistScheduler.isScheduled()) {
+			this.persistScheduler.cancel();
+			this.persist();
+		}
 	}
 
 	/** The folders files are tracked under, and the other paths they go by. */

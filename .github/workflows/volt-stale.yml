@@ -1,0 +1,34 @@
+name: Stale
+
+# Closes an issue 7 days after a maintainer labels it "needs more info", unless the reporter replies
+# (any update removes the label). Nothing else is ever marked stale or closed.
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  stale:
+    name: Close Unanswered Issues
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
+        with:
+          only-issue-labels: needs more info
+          stale-issue-label: needs more info
+          days-before-issue-stale: -1
+          days-before-issue-close: 7
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+          remove-issue-stale-when-updated: true
+          close-issue-reason: not_planned
+          close-issue-message: >-
+            Closing: no reply in the 7 days since we asked for more information.
+            Comment with the missing details and we will reopen it.
+          operations-per-run: 200

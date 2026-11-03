@@ -1,0 +1,5 @@
+# actionlint configuration (the Workflows job in volt-ci.yml).
+self-hosted-runner:
+  # The macOS runner with Xcode 27 that volt-mobile-build.yml builds the iOS app on.
+  labels:
+    - xcode-27

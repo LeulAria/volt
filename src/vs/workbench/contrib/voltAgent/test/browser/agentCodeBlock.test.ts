@@ -57,7 +57,9 @@ suite('Agent code cards: cost', () => {
 	test('a card renders highlighted lines and creates no editor before it is on screen', () => {
 		const disposables = store.add(new DisposableStore());
 		let editors = 0;
-		const instantiationService = { invokeFunction: () => { editors++; }, createInstance: () => { editors++; } } as unknown as IInstantiationService;
+		// Reading the editor font settings is fine; creating the editor widget is what costs.
+		const accessor = { get: () => ({ getValue: () => undefined }) };
+		const instantiationService = { invokeFunction: (fn: (a: typeof accessor) => unknown) => fn(accessor), createInstance: () => { editors++; } } as unknown as IInstantiationService;
 		const card = renderCodeCard(mainWindow.document.createElement('div'), 'ts', 'const a = 1;\nconst b = 2;\n', { store: disposables, instantiationService });
 		assert.strictEqual(editors, 0);
 		assert.ok(!card.classList.contains('has-editor'));

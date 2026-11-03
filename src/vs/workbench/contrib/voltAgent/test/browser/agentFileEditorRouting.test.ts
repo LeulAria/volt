@@ -111,7 +111,7 @@ suite('Agent file editor routing', () => {
 	test('explicit tools destinations and the window\'s own pages keep their destination', async () => {
 		const otherGroup = part.addGroup(toolsGroup.id, GroupDirection.DOWN);
 		assert.strictEqual((await service.openEditor({ resource: URI.file('/workspace/explicit.ts') }, otherGroup))?.group, otherGroup);
-		for (const uri of ['volt-settings:/settings', 'volt-customize:customize', 'volt-usage:usage', 'volt-schedules:schedules', 'volt-run-group:/group', 'volt-agent:/other-chat']) {
+		for (const uri of ['volt-settings:/settings', 'volt-customize:customize', 'volt-usage:usage', 'volt-automations:automations', 'volt-run-group:/group', 'volt-agent:/other-chat']) {
 			part.activateGroup(chatGroup.id);
 			const page = store.add(new TestFileEditorInput(URI.parse(uri), fileType));
 			assert.strictEqual((await service.openEditor(page))?.group, chatGroup, uri);

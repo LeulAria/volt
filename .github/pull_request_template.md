@@ -1,6 +1,7 @@
 <!--
 Thanks for contributing to Volt. Please read CONTRIBUTING.md first.
 For a larger change, open an issue to agree on the approach before you invest the time.
+Title it like a conventional commit, it becomes the squash commit: "fix(agent): keep the composer focused after a send".
 -->
 
 ## What and why

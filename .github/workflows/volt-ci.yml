@@ -1,0 +1,535 @@
+name: CI
+
+# Runs on every pull request and every push to main, with no manual step. Each job checks one part
+# of the repository, and `changes` skips the jobs a change cannot affect (build/volt/ci/changes.mjs):
+# a README edit runs only Lint, an apps/docs change runs Lint and the docs job. Pushes to main,
+# merge queue runs, manual runs and edits to this workflow run everything.
+#
+# Lint is a ratchet (build/volt/ci/ratchet.mjs): main has lint problems that predate CI, so a PR
+# fails only on problems it adds, never on old ones in a file it touches.
+#
+# Branch protection should require the `Check` job only: it passes when every other job passed or
+# was skipped by `changes`, so adding or splitting jobs never needs a settings change.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  BUN_VERSION: 1.3.13
+
+jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      base: ${{ steps.base.outputs.sha }}
+      src: ${{ steps.detect.outputs.src }}
+      extensions: ${{ steps.detect.outputs.extensions }}
+      cli: ${{ steps.detect.outputs.cli }}
+      docs: ${{ steps.detect.outputs.docs }}
+      mobile: ${{ steps.detect.outputs.mobile }}
+      relay: ${{ steps.detect.outputs.relay }}
+      govern: ${{ steps.detect.outputs.govern }}
+      workflows: ${{ steps.detect.outputs.workflows }}
+    steps:
+      # A pull request checks out its merge commit, so depth 2 brings the base branch tip (HEAD^1).
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+          sparse-checkout: build/volt/ci
+
+      # The commit lint compares against: the base branch for a PR, the previous main for a push.
+      - name: Base commit
+        id: base
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          base=$(git rev-parse HEAD^1 2>/dev/null || true)
+          if [ "$EVENT" = "push" ] && [ -n "$BEFORE" ] && ! [[ "$BEFORE" =~ ^0+$ ]]; then
+            base=$BEFORE
+          fi
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+          echo "Base: ${base:-none}"
+
+      - name: Detect affected jobs
+        id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ steps.base.outputs.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            node build/volt/ci/changes.mjs --base "$BASE" --head HEAD >> "$GITHUB_OUTPUT"
+          else
+            node build/volt/ci/changes.mjs --all >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+
+  # The repository's own hygiene (eslint, CSS variables, formatting, copyright headers, indentation,
+  # unicode) on the changed files, failing only on new problems. Runs for every change.
+  lint:
+    name: Lint
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Fetch the base commit
+        env:
+          BASE: ${{ needs.changes.outputs.base }}
+        run: git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE"
+
+      - uses: ./.github/actions/setup-volt
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lint changed files
+        env:
+          BASE: ${{ needs.changes.outputs.base }}
+        run: node build/volt/ci/lintDiff.mjs --base "$BASE" --head HEAD
+
+  typecheck:
+    name: Typecheck
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-volt
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Type check src/
+        run: npm run compile-check-ts-native
+
+      - name: Layer rules (common, browser, node, electron-*)
+        if: ${{ !cancelled() }}
+        run: npm run valid-layers-check
+
+      - name: Class field initialization order
+        if: ${{ !cancelled() }}
+        run: npm run define-class-fields-check
+
+  # Volt's test/common suites straight from src/*.ts with Bun: no compile, about ten seconds.
+  test-volt:
+    name: Unit Tests (Volt)
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-volt
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Run Volt unit tests
+        run: npm run test-volt-bun
+
+  test-node:
+    name: Unit Tests (Node)
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-volt
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Transpile src/
+        run: npm run gulp transpile-client-esbuild
+
+      - name: Run Node unit tests
+        run: npm run test-node
+
+  # Not part of `Check` yet: ten tests that predate CI still fail on main (LeulAria/volt#75). It runs
+  # on every PR and shows its own result; add it back to `check.needs` and the gate map once green.
+  test-electron:
+    name: Unit Tests (Electron)
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-volt
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install a virtual display
+        run: |
+          set -e
+          ./build/azure-pipelines/linux/apt-retry.sh sudo apt-get update
+          ./build/azure-pipelines/linux/apt-retry.sh sudo apt-get install -y xvfb libgbm1 libxkbfile1
+
+      - name: Transpile src/
+        run: npm run gulp transpile-client-esbuild
+
+      # .build/electron is keyed by the Electron version, which .npmrc pins.
+      - name: Cache Electron
+        uses: actions/cache@v6
+        with:
+          path: .build/electron
+          key: volt-electron-linux-x64-${{ hashFiles('.npmrc', 'build/checksums/electron.txt') }}
+
+      - name: Download Electron
+        run: |
+          set -e
+          for i in {1..3}; do
+            npm run electron x64 && break
+            if [ "$i" -eq 3 ]; then echo "Electron download failed" >&2; exit 1; fi
+            sleep 5
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The runner restricts unprivileged user namespaces, so Chromium falls back to the setuid
+      # sandbox helper, which must be owned by root and setuid or Electron aborts at launch.
+      - name: Set up Chromium's sandbox helper
+        run: |
+          sudo chown root .build/electron/chrome-sandbox
+          sudo chmod 4755 .build/electron/chrome-sandbox
+
+      - name: Run Electron unit tests
+        run: xvfb-run -a ./scripts/test.sh --tfs "Unit Tests"
+
+      - name: Upload crash reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: crashes-electron-unit-${{ github.run_attempt }}
+          path: .build/crashes
+          if-no-files-found: ignore
+          retention-days: 7
+
+  extensions:
+    name: Extensions
+    needs: changes
+    if: needs.changes.outputs.extensions == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-volt
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compile built-in extensions
+        run: npm run gulp compile-extensions
+
+  cli:
+    name: Rust CLI
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The toolchain VS Code's own CLI job uses (pr.yml); newer Clippy releases add lints the CLI predates.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: '1.85'
+          components: clippy
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: cli
+
+      - name: Clippy
+        working-directory: cli
+        run: cargo clippy --locked -- -D warnings
+
+      - name: Test
+        working-directory: cli
+        run: cargo test --locked
+
+  docs:
+    name: Docs Site
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/docs
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Fetch the base commit
+        working-directory: .
+        env:
+          BASE: ${{ needs.changes.outputs.base }}
+        run: git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/docs/package-lock.json
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Biome (changed files, new problems only)
+        working-directory: .
+        env:
+          BASE: ${{ needs.changes.outputs.base }}
+        run: node build/volt/ci/biomeDiff.mjs --app apps/docs --base "$BASE" --head HEAD
+
+      - name: Type check
+        if: ${{ !cancelled() }}
+        run: npm run types:check
+
+      - name: Release list tests
+        if: ${{ !cancelled() }}
+        run: npm run test:releases
+
+      - name: Build
+        if: ${{ !cancelled() }}
+        run: npm run build
+
+  mobile:
+    name: Mobile App
+    needs: changes
+    if: needs.changes.outputs.mobile == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      # postinstall also installs apps/mobile-widgets, which the app imports.
+      - name: Install
+        working-directory: apps/mobile
+        run: npm ci --no-audit --no-fund
+
+      - name: Type check the app
+        working-directory: apps/mobile
+        run: npm run typecheck
+
+      # The widgets ship inside the app and install without TypeScript of their own, so the app's
+      # TypeScript and @types check them.
+      - name: Type check the widgets
+        if: ${{ !cancelled() }}
+        run: apps/mobile/node_modules/.bin/tsc --noEmit -p apps/mobile-widgets/tsconfig.json --typeRoots apps/mobile/node_modules/@types
+
+      - name: Widget tests
+        if: ${{ !cancelled() }}
+        working-directory: apps/mobile-widgets
+        run: npm test
+
+      # client-core has no dependencies of its own; the app's TypeScript checks it.
+      - name: Type check client-core
+        if: ${{ !cancelled() }}
+        run: apps/mobile/node_modules/.bin/tsc --noEmit -p apps/client-core/tsconfig.json
+
+  relay:
+    name: Relay
+    needs: changes
+    if: needs.changes.outputs.relay == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            apps/relay
+            .nvmrc
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Test
+        working-directory: apps/relay
+        run: npm test
+
+  govern:
+    name: Volt Govern
+    needs: changes
+    if: needs.changes.outputs.govern == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/volt-govern
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/volt-govern/package-lock.json
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Build
+        if: ${{ !cancelled() }}
+        run: npm run build
+
+  # The workflows themselves and the scripts they run (CI, release naming, AI review).
+  workflows:
+    name: Workflows
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Script tests
+        run: node --test 'build/volt/ci/**/*.test.mjs' 'build/volt/release/*.test.mjs'
+
+      # Checks expressions, `needs`, permissions and the shell in `run:` (with shellcheck).
+      # Pinned by checksum: bump the version and the hash together. Shellcheck style notes (info)
+      # are left out; warnings and errors fail.
+      - name: actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          SHELLCHECK_OPTS: --severity=warning
+        run: |
+          set -e
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$archive"
+          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color .github/workflows/volt-*.yml
+
+      # Workflow security: script injection, unpinned third-party actions, risky triggers, for the CI
+      # and pull request workflows. The release workflows (volt-build, -beta, -nightly, -stable) are not
+      # listed yet: they interpolate workflow inputs into scripts, which zizmor reports.
+      - name: zizmor
+        run: |
+          pipx run zizmor==1.32.0 --offline --no-progress --config .github/zizmor.yml --min-severity low \
+            .github/workflows/volt-ci.yml .github/workflows/volt-pr.yml .github/workflows/volt-pr-review.yml \
+            .github/workflows/volt-labels.yml .github/workflows/volt-stale.yml .github/actions
+
+  # New or updated dependencies with a known high or critical vulnerability fail. Uses GitHub's
+  # dependency graph, so it needs no install and only runs for pull requests. Until the graph is
+  # turned on (Settings, Advanced Security, Dependency graph) it only leaves a notice.
+  dependencies:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Is the dependency graph on?
+        id: graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/dependency-graph/compare/$BASE...$HEAD" --silent 2> "$RUNNER_TEMP/graph.err"; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          elif grep -qE "HTTP 40[34]" "$RUNNER_TEMP/graph.err"; then
+            # The compare API answers 403 Forbidden while the graph is off.
+            echo "::notice title=Dependency review is off::Turn on the dependency graph in https://github.com/$GITHUB_REPOSITORY/settings/security_analysis to check new dependencies for known vulnerabilities."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            # Anything else: let the action run and report it.
+            cat "$RUNNER_TEMP/graph.err"
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.graph.outputs.enabled == 'true'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: never
+
+  # Branch protection requires this job by its name, `Check`. It fails when any job failed, was
+  # cancelled, or was skipped although `changes` said it was needed. `always()` rather than
+  # `!cancelled()`: a skipped job reports success, so a cancelled run must still fail here.
+  # Add every new job to `needs` and, if `changes` gates it, to the map below.
+  check:
+    name: Check
+    if: always()
+    needs: [changes, lint, typecheck, test-volt, test-node, extensions, cli, docs, mobile, relay, govern, workflows, dependencies]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to pass
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$RESULTS" | jq -e --arg event "$EVENT" '
+            {typecheck: "src", "test-volt": "src", "test-node": "src",
+             extensions: "extensions", cli: "cli", docs: "docs", mobile: "mobile",
+             relay: "relay", govern: "govern", workflows: "workflows"} as $gate
+            | .changes.outputs as $areas
+            | all(to_entries[];
+                .value.result == "success"
+                or (.value.result == "skipped" and $gate[.key] != null and $areas[$gate[.key]] == "false")
+                or (.value.result == "skipped" and .key == "dependencies" and $event != "pull_request"))' > /dev/null

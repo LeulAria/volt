@@ -180,6 +180,8 @@ suite('AgentEditsService', () => {
 		events = store.add(new Emitter<IVoltEventEnvelope>());
 		instantiation.stub(IAgentRuntimeService, { onDidEmit: events.event } as Partial<IAgentRuntimeService>);
 		instantiation.stub(IVoltGitService, { readBlob: async () => VSBuffer.fromString('') } as Partial<IVoltGitService>);
+		// No projects: paths resolve against the workspace folders only.
+		instantiation.stub(IVoltSessionContextService, { projects: [], onDidChangeProjects: Event.None } as Partial<IVoltSessionContextService>);
 		worker = new DiffingWorkerService(() => instantiation.get(IModelService));
 		instantiation.stub(IEditorWorkerService, worker);
 		dialogs = new TestDialogService();
@@ -649,6 +651,8 @@ suite('Discard changes', () => {
 		} as Partial<IAgentCheckpointService>);
 		instantiation.stub(IAgentEditsService, {
 			onDidChange: Event.None,
+			onDidResolve: Event.None,
+			canonicalUri: (uri: URI) => uri,
 			getPendingFiles: () => [],
 			getPendingFile: (uri: URI) => pending && uri.toString() === pending.toString() ? { uri } as ReturnType<IAgentEditsService['getPendingFile']> : undefined,
 			undoFile: async (uri: URI, sessionId?: string) => {

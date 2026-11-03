@@ -122,7 +122,8 @@ function createProgram(tsconfigPath) {
 const program = createProgram(TS_CONFIG_PATH);
 for (const sourceFile of program.getSourceFiles()) {
     for (const rule of RULES) {
-        if ((0, minimatch_1.match)([sourceFile.fileName], rule.target).length > 0) {
+        // dot: a checkout under a dot folder (~/.volt/worktrees) must still match '**/vs/**/browser/**'.
+        if ((0, minimatch_1.match)([sourceFile.fileName], rule.target, { dot: true }).length > 0) {
             if (!rule.skip) {
                 checkFile(program, sourceFile, rule);
             }
