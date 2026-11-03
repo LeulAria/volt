@@ -178,7 +178,8 @@ Also faster:
 
 - macOS is the platform Volt is developed and tested on. Windows and Linux builds come from CI and have had little testing;
   computer use on Windows has not yet run on a real Windows machine.
-- The Android app is signed with a debug key and the iOS app is a simulator build until release signing is set up.
+- The iOS app is a simulator build (it runs in the iOS Simulator on Apple silicon) until iOS release signing is set up. The
+  Android app is signed for release, with an `.aab` for Google Play.
 
 ## [0.0.5] - 2026-10-31
 
