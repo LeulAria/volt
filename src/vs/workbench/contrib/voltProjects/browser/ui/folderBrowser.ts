@@ -90,6 +90,9 @@ export class FolderBrowser extends Disposable {
 	private readonly tree: WorkbenchAsyncDataTree<TreeRoot, Row>;
 	/** Only the latest refresh of the tree's top rows moves the focus. */
 	private renderGeneration = 0;
+	private renderedGeneration = 0;
+	/** Enter came before the typed path's folder was listed: accept once it is. */
+	private acceptWhenListed = false;
 	private readonly generation = new BrowseGeneration();
 	private readonly newFolderStore = this._register(new DisposableStore());
 	private readonly searchScheduler: RunOnceScheduler;
@@ -245,7 +248,8 @@ export class FolderBrowser extends Disposable {
 		if (row?.kind === 'folder') {
 			return row.entry.path;
 		}
-		return this.searching ? undefined : this.dir ? stripTrailing(this.dir) : undefined;
+		// A typed name that matches no folder adds nothing, not the folder it is typed in.
+		return this.searching || browseLeaf(this.input.value) ? undefined : this.dir ? stripTrailing(this.dir) : undefined;
 	}
 
 	get currentFolder(): string {
@@ -308,8 +312,13 @@ export class FolderBrowser extends Disposable {
 			return;
 		}
 		this.home = cachedHome = home;
-		const start = this.options.initialPath || roots.find(root => root.id === 'code')?.path || home;
-		this.setPath(ensureTrailingSeparator(start));
+		if (this.input.value) {
+			// Typed or pasted while the start folder was looked up (a round trip in the browser): keep it.
+			this.onInput();
+		} else {
+			const start = this.options.initialPath || roots.find(root => root.id === 'code')?.path || home;
+			this.setPath(ensureTrailingSeparator(start));
+		}
 		if (this.newFolderRequested) {
 			this.newFolderRequested = false;
 			this.startNewFolder();
@@ -336,8 +345,12 @@ export class FolderBrowser extends Disposable {
 
 	private accept(): void {
 		const target = this.target;
+		this.acceptWhenListed = false;
 		if (target) {
 			this.options.onAccept(target);
+		} else if (!this.searching && browseLeaf(this.input.value)) {
+			// Enter right after pasting or typing a path: its folder is still being listed.
+			this.acceptWhenListed = !this.listing || this.renderedGeneration !== this.renderGeneration;
 		}
 	}
 
@@ -354,6 +367,7 @@ export class FolderBrowser extends Disposable {
 	}
 
 	private onInput(): void {
+		this.acceptWhenListed = false;
 		if (this.searching) {
 			this.searchScheduler.schedule();
 			return;
@@ -469,7 +483,11 @@ export class FolderBrowser extends Disposable {
 					this.tree.scrollTop = 0;
 				}
 			}
+			this.renderedGeneration = generation;
 			this.fireTarget();
+			if (this.acceptWhenListed && this.listing) {
+				this.accept();
+			}
 		}, err => {
 			if (!isCancellationError(err)) {
 				onUnexpectedError(err);
@@ -655,11 +673,12 @@ export class FolderBrowser extends Disposable {
 				return;
 			}
 		} else if (event.equals(KeyCode.Enter) || event.equals(KeyMod.CtrlCmd | KeyCode.Enter)) {
-			// The focused folder, else the folder being shown.
-			if (!this.target) {
+			// The focused folder, else the folder being shown; a path just typed, once its folder is listed.
+			const target = this.target;
+			this.accept();
+			if (!target && !this.acceptWhenListed) {
 				return;
 			}
-			this.accept();
 		} else if (event.equals(KeyCode.Tab) && row?.kind === 'folder') {
 			this.enter(row.entry.path);
 		} else if (event.equals(KeyMod.Alt | KeyCode.UpArrow) || event.equals(KeyMod.CtrlCmd | KeyCode.UpArrow)) {
