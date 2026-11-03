@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { mainWindow } from '../../../../../base/browser/window.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
@@ -49,6 +50,42 @@ suite('Agent composer stack', () => {
 
 		view.setAgents({ views: [], conflicts: [] });
 		assert.strictEqual(view.agentsElement.classList.contains('hidden'), true);
+	});
+
+	test('redraws that change nothing the queue shows leave its rows alone', () => {
+		const view = queue();
+		view.setState({ running: true, steer: false, paused: 'interrupted' });
+		view.setQueue([{ id: 'q1', text: 'Next' }]);
+		const row = view.element.querySelector('.volt-agent-queue-item');
+		assert.ok(row);
+		view.setQueue([{ id: 'q1', text: 'Next' }]);
+		view.setAgents({ views: [agent('a', 'Inventory')], conflicts: [] });
+		view.setAgents({ views: [{ ...agent('a', 'Inventory'), detail: 'Read home.html' }], conflicts: [] });
+		view.setMode('Plan');
+		assert.strictEqual(view.element.querySelector('.volt-agent-queue-item'), row, 'subagent progress does not rebuild the queue rows');
+		view.setQueue([{ id: 'q1', text: 'Next, changed' }]);
+		assert.notStrictEqual(view.element.querySelector('.volt-agent-queue-item'), row);
+	});
+
+	test('a click lands on the row it pressed even when a redraw comes between press and release', async () => {
+		const edited: string[] = [];
+		const view = store.add(new AgentComposerQueue({ onRemove: () => { }, onClear: () => { }, onMultitask: () => { }, onReorder: () => { }, onEdit: id => edited.push(id) }));
+		const container = mainWindow.document.body.appendChild(mainWindow.document.createElement('div'));
+		store.add({ dispose: () => container.remove() });
+		container.appendChild(view.element);
+		view.setQueue([{ id: 'q1', text: 'Next' }]);
+		const edit = view.element.querySelector<HTMLElement>('.volt-agent-queue-item button.volt-agent-queue-remove');
+		assert.ok(edit);
+		edit.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
+		// The agent streams on: the card is asked to show a new state mid-press.
+		view.setState({ running: true, steer: true });
+		assert.ok(edit.isConnected, 'the pressed button is still there');
+		edit.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0 }));
+		edit.click();
+		assert.deepStrictEqual(edited, ['q1']);
+		await new Promise(resolve => setTimeout(resolve, 0));
+		assert.strictEqual(edit.isConnected, false, 'the redraw it held back happened after the click');
+		assert.ok(view.element.querySelector('.volt-agent-queue-item'));
 	});
 
 	suite('terminal chip', () => {
