@@ -269,6 +269,18 @@ export class DevicePreview extends Disposable {
 		this.refreshSoon(0);
 	}
 
+	/** Switches to the device with this key (a fresh list when it is not known yet). */
+	async showDevice(key: string): Promise<void> {
+		if (this.target && this.devices.keyOf(this.target) === key) {
+			this.refreshSoon(0);
+			return;
+		}
+		const found = this.devices.find(key) ?? (await this.devices.list(true), this.devices.find(key));
+		if (found) {
+			this.select(found);
+		}
+	}
+
 	private firstBooted(): IDeviceTarget | undefined {
 		for (const entry of this.devices.cached()) {
 			const device = entry.devices.find(candidate => candidate.state === 'booted');

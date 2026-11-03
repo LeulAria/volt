@@ -24,7 +24,7 @@ import { ILifecycleService, LifecyclePhase } from '../../../services/lifecycle/c
 import { IVoltWindowScopeService } from '../../../services/voltWindowScope/common/voltWindowScope.js';
 import { AGENT_SIDE_PANEL_ID, stampLayoutModeChrome } from './agentLayoutChrome.js';
 import { LAYOUT_MODE_CONTEXT_KEY } from './layoutKeybindingMode.js';
-import { AGENT_LIST_WIDTH, AGENT_SIDEBAR_MIN_WIDTH, LAYOUT_MODE_STORAGE_KEY, readAgentLeftSidebarHidden, readStoredLayoutModeValue, SIDEBAR_LOCATION_KEY, writeAgentLeftSidebarHidden, type LayoutMode } from './layoutModeStartup.js';
+import { AGENT_LIST_WIDTH, AGENT_SIDEBAR_MIN_WIDTH, AGENT_STATUS_BAR_VISIBLE_KEY, LAYOUT_MODE_STORAGE_KEY, readAgentLeftSidebarHidden, readStoredLayoutModeValue, SIDEBAR_LOCATION_KEY, writeAgentLeftSidebarHidden, type LayoutMode } from './layoutModeStartup.js';
 
 export type { LayoutMode } from './layoutModeStartup.js';
 export { AGENT_LEFT_SIDEBAR_HIDDEN_KEY } from './layoutModeStartup.js';
@@ -184,7 +184,8 @@ export function applyLayoutModeChrome(
 		changed = true;
 	}
 	const statusBarHiddenByUser = configurationService.getValue<boolean>(STATUSBAR_VISIBLE_KEY) === false;
-	if (hidePartIfNeeded(layoutService, Parts.STATUSBAR_PART, agent || statusBarHiddenByUser)) {
+	const agentHidesStatusBar = agent && configurationService.getValue<boolean>(AGENT_STATUS_BAR_VISIBLE_KEY) !== true;
+	if (hidePartIfNeeded(layoutService, Parts.STATUSBAR_PART, agentHidesStatusBar || statusBarHiddenByUser)) {
 		changed = true;
 	}
 	if (agent && !hideLeftSidebar && !isAgentDrawerMode(layoutService) && layoutService.isVisible(Parts.AUXILIARYBAR_PART)) {
@@ -308,7 +309,7 @@ class LayoutModeChromeContribution extends Disposable {
 		this.layoutModeKey.set(mode);
 		this._register(onDidChangeLayoutMode(next => this.layoutModeKey.set(next)));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration(SIDEBAR_LOCATION_KEY)) {
+			if (e.affectsConfiguration(SIDEBAR_LOCATION_KEY) || e.affectsConfiguration(AGENT_STATUS_BAR_VISIBLE_KEY)) {
 				applyLayoutModeChrome(this.layoutService, this.configurationService, this.storageService);
 				this.layoutModeKey.set(getLayoutMode(this.layoutService));
 				this.keepAgentsOnAuxiliaryBar();

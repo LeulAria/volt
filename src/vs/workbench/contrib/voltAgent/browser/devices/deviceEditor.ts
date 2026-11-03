@@ -32,9 +32,18 @@ export class DevicePreviewEditorInput extends EditorInput {
 
 	readonly resource = URI.from({ scheme: DEVICE_PREVIEW_SCHEME, path: '/devices' });
 	private title: string | undefined;
+	private readonly _onDidRequestDevice = this._register(new Emitter<string>());
+	/** Something asked the open tab to show another device (the Run picker, an agent's boot). */
+	readonly onDidRequestDevice = this._onDidRequestDevice.event;
 
 	constructor(public deviceKey: string | undefined) {
 		super();
+	}
+
+	/** Shows this device in the tab, in place of the one it shows now. */
+	requestDevice(key: string): void {
+		this.deviceKey = key;
+		this._onDidRequestDevice.fire(key);
 	}
 
 	override get typeId(): string {
@@ -96,6 +105,7 @@ export class DevicePreviewEditor extends EditorPane {
 
 	private container: HTMLElement | undefined;
 	private readonly preview = this._register(new MutableDisposable<DevicePreview>());
+	private readonly inputListener = this._register(new MutableDisposable());
 	private readonly _onDidChangeSize = this._register(new Emitter<void>());
 
 	constructor(
@@ -125,10 +135,12 @@ export class DevicePreviewEditor extends EditorPane {
 			input.setTitle(title);
 			input.deviceKey = preview.deviceKey;
 		});
+		this.inputListener.value = input.onDidRequestDevice(key => void preview.showDevice(key));
 		preview.setVisible(this.isVisible());
 	}
 
 	override clearInput(): void {
+		this.inputListener.clear();
 		this.preview.clear();
 		super.clearInput();
 	}

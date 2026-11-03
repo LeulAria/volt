@@ -28,6 +28,8 @@ import { VIEWLET_ID as SEARCH_VIEWLET_ID } from '../../../../services/search/com
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { agentRunOnStorageKey, normalizeAgentRunOn } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
+import { countUserTurns } from '../../../../services/voltRuntime/common/session.js';
 import { VIEWLET_ID as EXPLORER_VIEWLET_ID } from '../../../files/common/files.js';
 import { IExplorerService } from '../../../files/browser/files.js';
 import { ISearchViewModelWorkbenchService } from '../../../search/browser/searchTreeModel/searchViewModelWorkbenchService.js';
@@ -172,6 +174,8 @@ export class AgentFilesSidebar extends Disposable {
 	/** The chat whose repository Source Control shows. */
 	private scmSession: string | undefined;
 	private scmFolder: URI | undefined;
+	/** The chat waits for its worktree (see {@link awaitsWorktree}), so Source Control shows no repository. */
+	private scmAwaitsWorktree = false;
 	private readonly scmRepository: AgentScmRepositoryFocus;
 	private readonly pullRequests: IAgentPullRequestService | undefined;
 	private shown = false;
@@ -304,6 +308,18 @@ export class AgentFilesSidebar extends Disposable {
 
 		this._register(addDisposableListener(this.sash, 'pointerdown', e => this.beginResize(e)));
 		this._register(AgentFilesSidebar.onDidChange(() => this.sync()));
+		// Run on switched to or from Worktree, or the first message created the worktree.
+		const syncWorktree = () => {
+			if (this.scmSession && this.scmSession === this.sessionId && this.awaitsWorktree(this.scmSession) !== this.scmAwaitsWorktree) {
+				this.sync();
+			}
+		};
+		this._register(this.storageService.onDidChangeValue(StorageScope.APPLICATION, undefined, this._store)(event => {
+			if (this.scmSession && event.key === agentRunOnStorageKey(this.sessionContext.bindingFor(this.scmSession)?.projectId)) {
+				syncWorktree();
+			}
+		}));
+		this._register(this.history.onDidChange(syncWorktree));
 		// The workbench gave a part back (back to agent layout): take it again.
 		this._register(layoutService.onDidChangePartVisibility(() => this.sync()));
 		this.syncChrome();
@@ -480,19 +496,27 @@ export class AgentFilesSidebar extends Disposable {
 			setPullRequestsViewSession(this.sessionId);
 		}
 		const scmSession = want === 'scm' && this.lent.value ? this.sessionId : undefined;
-		const scmFolder = scmSession ? this.folderOf(scmSession) : undefined;
-		if (scmSession && (this.scmSession !== scmSession || !this.uriIdentityService.extUri.isEqual(scmFolder, this.scmFolder))) {
+		// An unsent chat set to run in a worktree has none yet: the project's checkout is not its repository.
+		const scmAwaitsWorktree = !!scmSession && this.awaitsWorktree(scmSession);
+		const scmFolder = scmSession && !scmAwaitsWorktree ? this.folderOf(scmSession) : undefined;
+		if (scmSession && (this.scmSession !== scmSession || this.scmAwaitsWorktree !== scmAwaitsWorktree || !this.uriIdentityService.extUri.isEqual(scmFolder, this.scmFolder))) {
 			this.scmSession = scmSession;
 			this.scmFolder = scmFolder;
+			this.scmAwaitsWorktree = scmAwaitsWorktree;
 			setAgentChangesSession(scmSession);
-			void this.scmRepository.show(scmSession, () => this.showsScmFor(scmSession), scmFolder, state => this.showRepositoryState(state, scmFolder));
+			if (scmAwaitsWorktree) {
+				this.scmRepository.clear();
+				this.showRepositoryState({ kind: 'worktreePending' }, undefined);
+			} else {
+				void this.scmRepository.show(scmSession, () => this.showsScmFor(scmSession), scmFolder, state => this.showRepositoryState(state, scmFolder));
+			}
 		}
 		this.layoutLent();
 		this.announceShownView();
 	}
 
 	/** Says why Source Control has no repository, in git's own words, with the one action that fixes it. */
-	private showRepositoryState(state: AgentScmRepositoryState, folder: URI | undefined): void {
+	private showRepositoryState(state: AgentScmRepositoryState | { readonly kind: 'worktreePending' }, folder: URI | undefined): void {
 		this.body.classList.toggle('repository-pending', state.kind !== 'ready');
 		let message = '';
 		let action: { label: string; run: () => Promise<unknown> } | undefined;
@@ -502,6 +526,13 @@ export class AgentFilesSidebar extends Disposable {
 				break;
 			case 'noFolder':
 				message = localize('voltAgent.filesSidebar.noFolder', "This chat has no local folder.");
+				break;
+			case 'worktreePending':
+				message = localize('voltAgent.filesSidebar.worktreePending', "This chat runs in a new worktree, created when you send the first message. Its changes show here then.");
+				break;
+			case 'folderMissing':
+				message = localize('voltAgent.filesSidebar.folderMissing', "This chat's folder no longer exists: {0}", state.folder);
+				action = { label: localize('voltAgent.filesSidebar.retry', "Try Again"), run: async () => this.reopenRepository() };
 				break;
 			case 'notRepository':
 				message = localize('voltAgent.filesSidebar.notRepository', "This folder is not a Git repository.");
@@ -604,6 +635,17 @@ export class AgentFilesSidebar extends Disposable {
 			this.announcedView = view;
 			shownViewEmitter.fire();
 		}
+	}
+
+	/** An unsent chat whose project runs new chats in a worktree: the worktree comes with the first message. */
+	private awaitsWorktree(sessionId: string): boolean {
+		const session = this.runtime.getOrCreateSession(sessionId);
+		const meta = this.history.get(sessionId);
+		if (meta?.worktreePath || session.worktreePath || (meta?.turnCount ?? 0) > 0 || countUserTurns(session.messages) > 0) {
+			return false;
+		}
+		const projectId = this.sessionContext.bindingFor(sessionId)?.projectId;
+		return !!projectId && normalizeAgentRunOn(this.storageService.get(agentRunOnStorageKey(projectId), StorageScope.APPLICATION)) === 'worktree';
 	}
 
 	/** Where a chat runs: its worktree, else its project. Matches agentIdeWorkspace.ts. */

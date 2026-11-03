@@ -45,7 +45,7 @@ import { IBannerService } from '../services/banner/browser/bannerService.js';
 import { IPaneCompositePartService } from '../services/panecomposite/browser/panecomposite.js';
 import { AuxiliaryBarPart } from './parts/auxiliarybar/auxiliaryBarPart.js';
 import { stampLayoutModeChrome } from './parts/titlebar/agentLayoutChrome.js';
-import { AGENT_SIDEBAR_RAIL_CLASS, AGENT_SIDEBAR_RAIL_EVENT, AGENT_SIDEBAR_RAIL_KEY, AGENT_SIDEBAR_RAIL_WIDTH, AGENT_TOOLS_VISIBILITY_EVENT, agentNeedsSidebarDrawer, agentStartupSidebarWidth, isNewEmptyWindow, LAYOUT_MODE_STORAGE_KEY, markNewEmptyWindowSidebarHidden, readAgentLeftSidebarHidden, readStoredLayoutModeValue } from './parts/titlebar/layoutModeStartup.js';
+import { AGENT_SIDEBAR_RAIL_CLASS, AGENT_SIDEBAR_RAIL_EVENT, AGENT_SIDEBAR_RAIL_KEY, AGENT_SIDEBAR_RAIL_WIDTH, AGENT_STATUS_BAR_VISIBLE_KEY, AGENT_TOOLS_VISIBILITY_EVENT, agentNeedsSidebarDrawer, agentStartupSidebarWidth, isNewEmptyWindow, LAYOUT_MODE_STORAGE_KEY, markNewEmptyWindowSidebarHidden, readAgentLeftSidebarHidden, readStoredLayoutModeValue } from './parts/titlebar/layoutModeStartup.js';
 import { ITelemetryService } from '../../platform/telemetry/common/telemetry.js';
 import { IAuxiliaryWindowService } from '../services/auxiliaryWindow/browser/auxiliaryWindowService.js';
 import { IVoltWindowScopeService } from '../services/voltWindowScope/common/voltWindowScope.js';
@@ -1653,9 +1653,10 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 	}
 
 	private setStatusBarHidden(hidden: boolean): void {
-		// Agent layout never shows the status bar. The visibility setting is left
-		// alone so IDE layout can restore whatever the user had configured.
-		const effectiveHidden = hidden || this.mainContainer.classList.contains('volt-layout-agent');
+		// Agent layout shows the status bar only when its own setting asks for it. The visibility
+		// setting is left alone so IDE layout can restore whatever the user had configured.
+		const agentHides = this.mainContainer.classList.contains('volt-layout-agent') && this.configurationService.getValue<boolean>(AGENT_STATUS_BAR_VISIBLE_KEY) !== true;
+		const effectiveHidden = hidden || agentHides;
 		this.stateModel.setRuntimeValue(LayoutStateKeys.STATUSBAR_HIDDEN, effectiveHidden);
 
 		// Adjust CSS

@@ -53,13 +53,26 @@ export function withCliDirsOnPath(path: string | undefined): string | undefined 
 	return [...current, ...extra.filter(dir => !current.includes(dir))].join(delimiter);
 }
 
-/** `env` with a working git first on PATH when the macOS git shim is broken; otherwise `env` itself. */
+/**
+ * `path` with the system folders appended when missing. A shell environment resolved from a broken
+ * profile can come back with an empty or partial PATH, and every spawn of `git` then fails with ENOENT.
+ */
+function withSystemDirsOnPath(path: string | undefined): string | undefined {
+	if (isWindows) {
+		return path;
+	}
+	const current = (path ?? '').split(delimiter).filter(Boolean);
+	const extra = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+	return withCliDirsOnPath([...current, ...extra.filter(dir => !current.includes(dir))].join(delimiter));
+}
+
+/** `env` with git findable on PATH, and a working git first when the macOS git shim is broken. */
 export async function withWorkingGitOnPath(env: NodeJS.ProcessEnv): Promise<NodeJS.ProcessEnv> {
 	fallbackDir ??= findFallbackDir();
 	const dir = await fallbackDir;
+	const path = withSystemDirsOnPath(env.PATH) ?? '';
 	if (!dir) {
-		return env;
+		return path === (env.PATH ?? '') ? env : { ...env, PATH: path };
 	}
-	const path = env.PATH ?? '';
-	return path.split(delimiter)[0] === dir ? env : { ...env, PATH: path ? `${dir}${delimiter}${path}` : dir };
+	return { ...env, PATH: path.split(delimiter)[0] === dir ? path : path ? `${dir}${delimiter}${path}` : dir };
 }

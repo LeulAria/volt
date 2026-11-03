@@ -165,7 +165,12 @@ registerAction2(class extends Action2 {
 	async run(accessor: ServicesAccessor, deviceKey?: string): Promise<void> {
 		const editorService = accessor.get(IEditorService);
 		const existing = editorService.editors.find((editor): editor is DevicePreviewEditorInput => editor instanceof DevicePreviewEditorInput);
-		const input = existing ?? new DevicePreviewEditorInput(typeof deviceKey === 'string' ? deviceKey : undefined);
+		const key = typeof deviceKey === 'string' ? deviceKey : undefined;
+		// The open tab switches to the device asked for (the Run picker, an agent's boot).
+		if (existing && key && existing.deviceKey !== key) {
+			existing.requestDevice(key);
+		}
+		const input = existing ?? new DevicePreviewEditorInput(key);
 		// Beside the chat in the agent layout; a normal editor tab in the IDE layout.
 		if (!await openDevicePreview(accessor, input)) {
 			await editorService.openEditor(input, { pinned: true });

@@ -35,6 +35,8 @@ export type AgentScmRepositoryState =
 	| { readonly kind: 'ready' }
 	/** The chat has no local folder. */
 	| { readonly kind: 'noFolder' }
+	/** The chat's folder is gone from disk (a removed worktree, a moved project). */
+	| { readonly kind: 'folderMissing'; readonly folder: string }
 	/** Git ran and the folder is in no repository. */
 	| { readonly kind: 'notRepository' }
 	/** Git could not run: not installed, or a broken shim (an unaccepted Xcode license). */
@@ -155,6 +157,13 @@ export class AgentScmRepositoryFocus extends Disposable {
 				return false;
 			}
 			// Git did not register it. Ask git itself why, so the message says what is really wrong.
+			// A missing folder comes first: git reports it only as `spawn git ENOENT`, which reads as git missing.
+			if (!await this.fileService.exists(root).catch(() => true)) {
+				if (current()) {
+					setState({ kind: 'folderMissing', folder: repoRoot });
+				}
+				return false;
+			}
 			const repo = await this.gitService.resolveRepo(repoRoot).then(found => found ?? null, (error: unknown) => toErrorMessage(error));
 			if (!current()) {
 				return false;

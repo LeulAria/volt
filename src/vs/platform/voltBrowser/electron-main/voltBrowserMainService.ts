@@ -12,6 +12,7 @@ import { ILifecycleMainService } from '../../lifecycle/electron-main/lifecycleMa
 import { IVoltDevServer, IVoltEmulation, IVoltLocalServer, IVoltMockHit, IVoltMockRoute, IVoltPlayground, IVoltPlaygroundRequest, IVoltPlaygroundUpdate, matchMockRoute, NETWORK_PRESETS } from '../common/browserAgent.js';
 import { BrowserPlaygrounds, listLocalServers } from '../node/browserPlaygrounds.js';
 import { DevServers } from '../node/devServers.js';
+import { BrowserDevToolsBridge } from './browserDevToolsBridge.js';
 import { isPreviewPartition, IVoltCookieImportRequest, IVoltCookieImportResult, IVoltCookieSource, matchesDomainFilter, parseDomainFilter, siteOf, toElectronCookie } from '../common/browserCookies.js';
 import { IVoltBrowserService, IVoltSiteData, VOLT_BROWSER_PARTITION, VoltBrowserColorScheme, VoltBrowserDataKind, VoltSiteDataKind } from '../common/voltBrowser.js';
 import { listCookieSources, readCookies } from '../node/browserCookieReader.js';
@@ -34,6 +35,8 @@ export class VoltBrowserMainService implements IVoltBrowserService {
 	private readonly userSchemes = new Map<number, VoltBrowserColorScheme>();
 	private readonly playgrounds: BrowserPlaygrounds;
 	private readonly devServers: DevServers;
+	/** DevTools docked in a browser tab's pane, relayed to the page's debugger. */
+	private readonly devtools: BrowserDevToolsBridge;
 	private shellEnv: Promise<NodeJS.ProcessEnv> | undefined;
 
 	constructor(
@@ -45,7 +48,11 @@ export class VoltBrowserMainService implements IVoltBrowserService {
 		this.playgrounds = new BrowserPlaygrounds(message => this.logService.info(message));
 		// Started from the Dock, the main process lacks the user's PATH (nvm, Homebrew); a dev server needs it.
 		this.devServers = new DevServers(() => this.shellEnv ??= getResolvedShellEnv(this.configurationService, this.logService, this.environmentMainService.args, process.env).then(env => ({ ...process.env, ...env }), () => process.env), message => this.logService.info(message));
+		// Volt's own emulation, mocks and color scheme ride the same debugger: closing DevTools keeps it for them.
+		// Letting go also drops what DevTools turned on (breakpoints, domains) once they close.
+		this.devtools = new BrowserDevToolsBridge((message, error) => this.logService.warn(message, error), page => !this.pages.has(page.id) && (this.userSchemes.get(page.id) ?? 'system') === 'system');
 		lifecycleMainService.onWillShutdown(event => {
+			this.devtools.dispose();
 			event.join('voltPlaygrounds', this.playgrounds.dispose());
 			event.join('voltDevServers', this.devServers.dispose());
 		});
@@ -237,6 +244,30 @@ export class VoltBrowserMainService implements IVoltBrowserService {
 			this.logService.warn('[volt] browser emulation failed', err);
 			return undefined;
 		}
+	}
+
+	async attachDevTools(webContentsId: number, devtoolsWebContentsId: number): Promise<boolean> {
+		const page = this.browserPage(webContentsId);
+		const host = this.browserPage(devtoolsWebContentsId);
+		// Both in the same window: a page cannot pull another window's view in as its DevTools.
+		if (!page || !host || page === host || page.hostWebContents !== host.hostWebContents) {
+			return false;
+		}
+		try {
+			if (page.isDevToolsOpened()) {
+				page.closeDevTools();
+			}
+			await this.devtools.open(page, host);
+			return true;
+		} catch (err) {
+			this.logService.warn('[volt] docking browser DevTools failed', err);
+			return false;
+		}
+	}
+
+	async inspectInDevTools(webContentsId: number, x: number, y: number): Promise<boolean> {
+		const page = this.browserPage(webContentsId);
+		return page ? this.devtools.inspect(page, x, y) : false;
 	}
 
 	async captureFullPage(webContentsId: number, maxHeight = 8000): Promise<{ dataUrl: string; width: number; height: number; clipped: boolean } | undefined> {

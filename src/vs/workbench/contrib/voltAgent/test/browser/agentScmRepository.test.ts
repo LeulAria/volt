@@ -36,6 +36,8 @@ suite('Agent repository switching', () => {
 		const repositories: ISCMRepository[] = [];
 		const opened: string[] = [];
 		const pending = new Map<string, DeferredPromise<void>>();
+		/** Folders gone from disk. */
+		const missing = new Set<string>();
 		let visible: ISCMRepository[] = [];
 		const view = {
 			get visibleRepositories() { return visible; },
@@ -72,7 +74,7 @@ suite('Agent repository switching', () => {
 				getExtensionsStatus: () => extension.gitRunning ? { 'vscode.git': { activationTimes: {} } } : {},
 			} as unknown as IExtensionService,
 			{ getValue: () => undefined } as unknown as IConfigurationService,
-			{} as IFileService,
+			{ exists: async (resource: URI) => !missing.has(resource.fsPath) } as unknown as IFileService,
 			{} as IProductService,
 		));
 		const add = (path: string) => {
@@ -85,7 +87,7 @@ suite('Agent repository switching', () => {
 			extension.gitRunning = true;
 			extensionsChanged.fire([new ExtensionIdentifier('vscode.git')]);
 		};
-		return { focus, opened, pending, view, add, git, extension, startGit };
+		return { focus, opened, pending, view, add, git, extension, startGit, missing };
 	}
 
 	test('returning to a loaded project selects its live repository synchronously without reopening it', async () => {
@@ -162,6 +164,17 @@ suite('Agent repository switching', () => {
 		assert.deepStrictEqual(states.map(state => state.kind), ['loading', 'gitFailed']);
 		const failed = states[1];
 		assert.ok(failed.kind === 'gitFailed' && failed.detail.includes('Xcode license'));
+	});
+
+	test('a folder gone from disk says so instead of blaming git (spawn git ENOENT)', async () => {
+		const { focus, pending, git, missing } = setup();
+		missing.add('/worktrees/removed');
+		git.set('/worktrees/removed', new Error('git rev-parse could not run: spawn git ENOENT'));
+		const states: AgentScmRepositoryState[] = [];
+		const result = focus.show('a', () => true, URI.file('/worktrees/removed'), state => states.push(state));
+		await pending.get('/worktrees/removed')!.complete();
+		await result;
+		assert.deepStrictEqual(states, [{ kind: 'loading' }, { kind: 'folderMissing', folder: '/worktrees/removed' }]);
 	});
 
 	test('a repository the running Git extension did not open is reported as not opened', async () => {

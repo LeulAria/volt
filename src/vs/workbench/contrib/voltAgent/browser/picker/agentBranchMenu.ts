@@ -228,7 +228,8 @@ export function showAgentBranchMenu(accessor: ServicesAccessor, options: IAgentB
 				// Git that cannot run is not a folder without a repository: say so instead of offering git init.
 				const gitError = repoRoot ? await gitService.resolveRepo(repoRoot).then(() => undefined, (error: unknown) => toErrorMessage(error)) : undefined;
 				if (gitError) {
-					return [{ id: 'none', items: [{ id: 'gitFailed', label: localize('voltAgent.gitFailed', "Git could not run"), icon: Codicon.warning, tooltip: gitError, disabled: true, data: NO_PICK }] }];
+					const missing = gitError.includes('does not exist');
+					return [{ id: 'none', items: [{ id: 'gitFailed', label: missing ? localize('voltAgent.folderMissing', "Folder no longer exists") : localize('voltAgent.gitFailed', "Git could not run"), icon: Codicon.warning, tooltip: gitError, disabled: true, data: NO_PICK }] }];
 				}
 				return repoRoot
 					? [{ id: 'none', items: [{ id: 'init', label: localize('voltAgent.initRepository', "Initialize Repository"), icon: Codicon.repo, tooltip: localize('voltAgent.noRepository', "No git repository"), data: { kind: 'init' } }] }]
