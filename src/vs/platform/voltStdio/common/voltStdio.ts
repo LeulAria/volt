@@ -16,7 +16,10 @@ export interface IVoltStdioSpawnOptions {
 	args?: string[];
 	cwd?: string;
 	env?: Record<string, string>;
-	/** Run the process tree in the OS sandbox (Seatbelt / Landlock). */
+	/**
+	 * Run the process tree in the OS sandbox (Seatbelt / bubblewrap). The spawn is rejected with a
+	 * `SandboxUnavailableError` when the sandbox cannot be established; it never runs without it.
+	 */
 	sandbox?: IVoltSandboxRequest;
 }
 
@@ -30,7 +33,7 @@ export interface IVoltSandboxEvent {
 
 export interface IVoltSandboxSupportInfo {
 	readonly platform: string;
-	readonly mechanism: 'seatbelt' | 'landlock' | 'bwrap' | 'none';
+	readonly mechanism: 'seatbelt' | 'bwrap' | 'none';
 	readonly filesystem: boolean;
 	readonly network: boolean;
 	readonly detail: string;
@@ -61,6 +64,11 @@ export interface IVoltExecRequest {
 	readonly inlineChars?: number;
 	/** Directory for the full log when output is shaped. */
 	readonly spillDir?: string;
+	/**
+	 * Run the shell in the OS sandbox of this chat (the agent profile). A command that cannot be
+	 * sandboxed does not run: the result has `exitCode: null` and says why in `stderr`.
+	 */
+	readonly sandbox?: IVoltSandboxRequest;
 }
 
 /** A program run directly, without a shell: its arguments are passed as they are, never parsed. */
