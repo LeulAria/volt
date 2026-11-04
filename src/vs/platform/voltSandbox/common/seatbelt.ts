@@ -3,94 +3,225 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ISandboxPlan } from './sandboxPolicy.js';
+import { IResolvedPattern, IResolvedSandboxPolicy } from './sandboxResolved.js';
+
+/**
+ * Seatbelt (SBPL) profiles from a resolved policy. Every path reaches the profile through
+ * `sbplString` or `sbplRegex`, never raw, and the profile text is the only input to
+ * `sandbox-exec -p`. Rules are evaluated last-match-wins, so each section narrows the one before.
+ *
+ * Verified on macOS 26.6 (see docs/security/sandbox/03-security-findings.md):
+ * - a deny-default process needs read access to `/` itself, or dyld aborts it (SIGABRT);
+ * - `(deny signal (target others))` does not stop signals; `(deny signal)` then
+ *   `(allow signal (target same-sandbox))` does;
+ * - under `(allow default)`, `defaults write` lands through cfprefsd even when the preferences
+ *   folder is write-denied, so the cfprefsd lookup is denied;
+ * - denying the network also stops DNS (mDNSResponder is reached through a unix socket);
+ * - hard links into a read-denied folder are refused; case variants of a denied path are denied.
+ */
 
 /** Codex hard-codes this path rather than searching PATH, in case a copy there was tampered with. */
 export const SANDBOX_EXEC_PATH = '/usr/bin/sandbox-exec';
 
-/** Every Volt denial carries this prefix plus the spawn's tag, so `log stream` can attribute it. */
+/** Every Volt denial carries this prefix plus the run's tag, so `log stream` can attribute it. */
 export const SEATBELT_TAG_PREFIX = 'VOLTSBX-';
 
-/** Device files every process writes (terminals, /dev/null, dtrace helpers Node and git open). */
-const DEVICE_WRITES = '#"^/dev/(null|zero|tty|ttys[0-9]+|ptmx|dtracehelper|fd/[0-9]+|stdout|stderr|stdin|random|urandom)$"';
+/** Device files every process reads or writes (terminals, /dev/null, the dtrace helper Node and git open). */
+const DEVICE_FILES = '#"^/dev/(null|zero|tty|ttys[0-9]+|ptmx|dtracehelper|fd/[0-9]+|stdout|stderr|stdin|random|urandom)$"';
 
-/** A string literal for SBPL: backslashes and quotes escaped. */
+/** mDNSResponder: DNS for every process, reached as a unix socket. Only allowed with an open network. */
+const MDNS_SOCKET = '/private/var/run/mDNSResponder';
+
+/** Mach services that run code or act for us outside the sandbox. Denied even with system services on. */
+const ESCAPE_SERVICES = [
+	'com.apple.coreservices.appleevents',
+	// Synthetic keyboard and mouse input to other apps (Volt itself may hold Accessibility).
+	'com.apple.windowserver.active',
+	'com.apple.pasteboard.1',
+	// Writes preferences of any app for us, past the file write rules (Terminal startup commands).
+	'com.apple.cfprefsd.agent',
+];
+
+/** A string literal for SBPL: backslashes and quotes escaped (string literals honour `\"`; regex literals do not). */
 export function sbplString(value: string): string {
+	if (/[\u0000-\u001f\u007f]/.test(value)) {
+		throw new Error('A control character cannot be expressed in a Seatbelt profile');
+	}
 	return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
+/**
+ * Regex source matching `value` literally; with `caseInsensitive`, letters match either case.
+ * A `"` cannot be escaped inside an SBPL `#"…"` literal (it ends the literal: verified on macOS
+ * 26.6), so a path containing one is refused rather than risk profile injection. The resolver
+ * refuses such paths first; this is the second line.
+ */
+function regexBody(value: string, caseInsensitive: boolean): string {
+	let out = '';
+	for (const ch of value) {
+		if (ch === '"' || ch.charCodeAt(0) < 0x20 || ch === '\u007f') {
+			throw new Error('A path with a double quote or a control character cannot be expressed in a Seatbelt profile');
+		}
+		if (caseInsensitive && /[a-z]/i.test(ch) && ch.toLowerCase() !== ch.toUpperCase()) {
+			out += `[${ch.toLowerCase()}${ch.toUpperCase()}]`;
+		} else if (/[.*+?^${}()|[\]\\]/.test(ch)) {
+			out += `\\${ch}`;
+		} else {
+			out += ch;
+		}
+	}
+	return out;
+}
+
 /** A regex literal for SBPL matching `value` exactly (and, with `suffix`, what follows it). */
-export function sbplRegex(value: string, suffix = ''): string {
-	const escaped = value.replace(/[.*+?^${}()|[\]\\/]/g, ch => ch === '/' ? '/' : `\\${ch}`);
-	return `#"^${escaped.replace(/"/g, '\\"')}${suffix}$"`;
+export function sbplRegex(value: string, suffix = '', caseInsensitive = false): string {
+	return `#"^${regexBody(value, caseInsensitive)}${suffix}$"`;
+}
+
+/** `<root>/(…/)?a/b` and everything below it. */
+function patternRegex(pattern: IResolvedPattern, caseInsensitive: boolean): string {
+	const root = pattern.root === '/' ? '' : regexBody(pattern.root, caseInsensitive);
+	const names = pattern.names.map(name => regexBody(name, caseInsensitive)).join('/');
+	return `#"^${root}/(.*/)?${names}(/.*)?$"`;
 }
 
 /**
- * The Seatbelt profile for one agent process tree.
- *
- * The base is `(allow default)`, as Gemini CLI's original whole-process profiles were: an agent
- * CLI needs the Keychain, launchd, fonts and much more, and a deny-default profile written for
- * single shell commands (Codex, srt) breaks them. What it closes is what matters for an agent:
- * - every write outside the plan's folders, and writes to code that runs later outside the
- *   sandbox (git hooks and config, shell rc files, the CLI's own hook and MCP configs);
- * - reads of cloud and signing credentials;
- * - outbound network except loopback when the chat's network is off (the agent then reaches its
- *   API through Volt's filtering proxy);
- * - the escape hatches: Apple Events (Terminal / Finder `do shell script`), LaunchServices `open`,
- *   and launchd job submission run code outside the sandbox.
- * Each deny carries `(with message "<tag>")`, which lands in the unified log with the path.
+ * A path and everything below it. On a case-insensitive volume (the macOS default) a different
+ * spelling reaches the same file, so denies match either case; allows stay exact, which can only
+ * refuse more.
  */
-export function buildSeatbeltProfile(plan: ISandboxPlan, tag: string): string {
-	const message = `(with message ${sbplString(`${SEATBELT_TAG_PREFIX}${tag}`)})`;
-	const lines: string[] = [
-		'(version 1)',
-		`; Volt agent sandbox (${plan.level}, network ${plan.network === 'all' ? 'on' : 'via proxy'})`,
-		'(allow default)',
-		'',
-		'; Writes: only the plan\'s folders and files.',
-		`(deny file-write* ${message})`,
-	];
-	const allow: string[] = [`(regex ${DEVICE_WRITES})`];
-	for (const path of plan.writableSubpaths) {
-		allow.push(`(subpath ${sbplString(path)})`);
+function subpathFilter(path: string, caseInsensitive: boolean): string {
+	if (!caseInsensitive || !/[a-z]/i.test(path)) {
+		return `(subpath ${sbplString(path)})`;
 	}
-	for (const file of plan.writableFiles) {
-		allow.push(`(literal ${sbplString(file)})`);
-		allow.push(`(regex ${sbplRegex(file, '\\.(lock|tmp|backup|bak|swp)[^/]*')})`);
-	}
-	lines.push(`(allow file-write*\n\t${allow.join('\n\t')})`);
-	if (plan.denyWriteSubpaths.length || plan.denyWriteFiles.length) {
-		const deny = [
-			...plan.denyWriteSubpaths.map(path => `(subpath ${sbplString(path)})`),
-			...plan.denyWriteFiles.map(path => `(literal ${sbplString(path)})`),
-		];
-		lines.push('', '; Never writable: runs later outside the sandbox.', `(deny file-write* ${message}\n\t${deny.join('\n\t')})`);
-	}
-	if (plan.denyReadSubpaths.length) {
-		lines.push('', '; Credentials.', `(deny file-read* ${message}\n\t${plan.denyReadSubpaths.map(path => `(subpath ${sbplString(path)})`).join('\n\t')})`);
-	}
-	lines.push(
-		'',
-		'; Escape hatches: these run code outside the sandbox.',
-		`(deny appleevent-send ${message})`,
-		`(deny mach-lookup ${message} (global-name "com.apple.coreservices.appleevents"))`,
-		`(deny lsopen ${message})`,
-	);
-	if (plan.network === 'proxy') {
-		lines.push(
-			'',
-			'; Network off: loopback only (Volt\'s proxy, Volt\'s MCP server, local dev servers).',
-			`(deny network-outbound ${message})`,
-			'(allow network-outbound (remote ip "localhost:*"))',
-			'(allow network-outbound (remote unix-socket))',
-		);
-	}
-	return lines.join('\n') + '\n';
+	return `(regex ${sbplRegex(path, '(/.*)?', true)})`;
 }
 
-/** `sandbox-exec -p <profile> -- <command> <args>`. */
-export function seatbeltCommand(profile: string, command: string, args: readonly string[]): { command: string; args: string[] } {
-	return { command: SANDBOX_EXEC_PATH, args: ['-p', profile, '--', command, ...args] };
+export interface ISeatbeltProfileOptions {
+	readonly tag: string;
+	/** Volt's filtering proxy on the host loopback (network `proxy`). */
+	readonly proxyPort?: number;
+}
+
+/** The SBPL profile for one run. */
+export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: ISeatbeltProfileOptions): string {
+	const message = `(with message ${sbplString(`${SEATBELT_TAG_PREFIX}${options.tag}`)})`;
+	const ci = true;
+	const out: string[] = ['(version 1)', `; Volt sandbox: ${policy.name.replace(/[^\w .-]/g, '')}${policy.systemServices ? ' (system services)' : ''}`];
+
+	if (policy.systemServices) {
+		// Agent CLIs need the Keychain, launchd lookups and much more: allow by default, then deny what matters.
+		out.push('(allow default)');
+	} else {
+		out.push(
+			`(deny default ${message})`,
+			'(allow process-exec process-fork)',
+			// dyld reads the root folder itself before anything runs.
+			'(allow file-read* (literal "/"))',
+			'(allow file-read-metadata)',
+			'(allow sysctl-read)',
+			// User and group lookups (whoami, git, ssh), the system logger, power assertions.
+			'(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.system.logger") (global-name "com.apple.PowerManagement.control"))',
+			// Python's multiprocessing semaphores.
+			'(allow ipc-posix-sem)',
+			'(allow pseudo-tty)',
+			'(allow file-read* file-write* file-ioctl (literal "/dev/ptmx") (regex #"^/dev/ttys[0-9]+$"))',
+			`(allow file-read* file-write-data file-ioctl (regex ${DEVICE_FILES}))`,
+		);
+	}
+
+	// Processes: only this sandbox's own may be signalled or inspected.
+	out.push(`(deny signal ${message})`, '(allow signal (target same-sandbox))');
+	if (!policy.systemServices) {
+		out.push('(allow process-info* (target same-sandbox))');
+	}
+
+	// Reads.
+	if (policy.readAll) {
+		out.push('(allow file-read*)');
+	} else {
+		if (policy.systemServices) {
+			out.push(`(deny file-read* ${message})`, '(allow file-read* (literal "/"))', '(allow file-read-metadata)');
+		}
+		const read = [...policy.read, ...policy.unixSockets].map(path => `(subpath ${sbplString(path)})`);
+		if (read.length) {
+			out.push(`(allow file-read*\n\t${read.join('\n\t')})`);
+		}
+	}
+
+	// Writes: everything else is denied (by default, or explicitly with system services on).
+	if (policy.systemServices) {
+		out.push(`(deny file-write* ${message})`);
+	}
+	const write = [
+		`(regex ${DEVICE_FILES})`,
+		...policy.write.map(path => `(subpath ${sbplString(path)})`),
+		...policy.writeFiles.flatMap(file => [`(literal ${sbplString(file)})`, `(regex ${sbplRegex(file, '\\.(lock|tmp|backup|bak|swp)[^/]*')})`]),
+	];
+	out.push(`(allow file-read* file-write*\n\t${write.join('\n\t')})`);
+
+	// Protected: readable, never writable, even inside a writable folder.
+	const protect = [
+		...policy.protect.map(path => subpathFilter(path, ci)),
+		...policy.protectPatterns.map(pattern => `(regex ${patternRegex(pattern, ci)})`),
+	];
+	if (protect.length) {
+		out.push(`(deny file-write* ${message}\n\t${protect.join('\n\t')})`);
+	}
+	// A new repository brings its own config and hooks: no `.git` entry may be created below a workspace.
+	if (policy.newRepositoryGuard.length) {
+		const guards = policy.newRepositoryGuard.map(root => `(regex #"^${regexBody(root, ci)}/(.*/)?${regexBody('.git', ci)}$")`);
+		out.push(`(deny file-write-create ${message}\n\t${guards.join('\n\t')})`);
+	}
+
+	// Denied: neither readable nor writable, last so nothing above re-allows it.
+	const deny = [
+		...policy.deny.map(path => subpathFilter(path, ci)),
+		...policy.denyPatterns.map(pattern => `(regex ${patternRegex(pattern, ci)})`),
+	];
+	if (deny.length) {
+		out.push(`(deny file-read* file-write* ${message}\n\t${deny.join('\n\t')})`);
+	}
+
+	// Network.
+	if (policy.network.mode === 'host') {
+		if (!policy.systemServices) {
+			out.push(
+				'(allow network* system-socket)',
+				// DNS, certificate checks and proxy settings for an open network.
+				'(allow mach-lookup (global-name "com.apple.dnssd.service") (global-name "com.apple.trustd") (global-name "com.apple.trustd.agent") (global-name "com.apple.SystemConfiguration.configd") (global-name "com.apple.SystemConfiguration.DNSConfiguration"))',
+			);
+		}
+	} else {
+		if (policy.systemServices) {
+			out.push(`(deny network* ${message})`);
+		}
+		const ports = [...(options.proxyPort ? [options.proxyPort] : []), ...policy.network.loopbackPorts];
+		if (ports.length) {
+			out.push('(allow system-socket)', `(allow network-outbound\n\t${[...new Set(ports)].map(port => `(remote ip ${sbplString(`localhost:${port}`)})`).join('\n\t')})`);
+		}
+		if (policy.network.listen) {
+			// Listening only. Connecting to loopback stays limited to the ports above: an
+			// unauthenticated local service (Redis `CONFIG SET dir`) is a way to write files outside.
+			out.push('(allow system-socket)', '(allow network-bind network-inbound (local ip "localhost:*"))');
+		}
+	}
+
+	// Unix sockets: none but the granted ones (and DNS with an open network), whatever the mode.
+	out.push(`(deny network-outbound ${message} (remote unix-socket))`);
+	const sockets = [...policy.unixSockets, ...(policy.network.mode === 'host' ? [MDNS_SOCKET] : [])];
+	if (sockets.length) {
+		out.push(`(allow network-outbound\n\t${sockets.map(socket => `(remote unix-socket (path-literal ${sbplString(socket)}))`).join('\n\t')})`);
+	}
+
+	// Escape hatches: these run code or act for us outside the sandbox.
+	out.push(
+		`(deny appleevent-send ${message})`,
+		`(deny lsopen ${message})`,
+		`(deny job-creation ${message})`,
+		`(deny mach-lookup ${message}\n\t${ESCAPE_SERVICES.map(name => `(global-name ${sbplString(name)})`).join('\n\t')})`,
+	);
+	return out.join('\n') + '\n';
 }
 
 export interface ISeatbeltViolation {
@@ -133,3 +264,19 @@ export function parseSeatbeltLogLine(line: string): ISeatbeltViolation | undefin
 		tag: match[5],
 	};
 }
+
+/**
+ * The prologue that runs inside the sandbox before the workload: sets limits, proves the sandbox
+ * is applied by writing to fd 3 (sandbox-exec only execs after `sandbox_init` succeeded), closes
+ * fd 3 and execs. Constant text: values arrive as positional arguments only.
+ * Arguments: <cpu seconds|-> <file size in 512-byte blocks|-> <open files|-> <command> <args...>
+ */
+export const SEATBELT_PROLOGUE = [
+	'c=$1 f=$2 n=$3; shift 3',
+	'[ "$c" = - ] || ulimit -t "$c" || exit 125',
+	'[ "$f" = - ] || ulimit -f "$f" || exit 125',
+	'[ "$n" = - ] || ulimit -n "$n" || exit 125',
+	'printf "volt-sandbox-ready %s\\n" "$$" >&3 || exit 125',
+	'exec 3>&-',
+	'exec "$@"',
+].join('\n');
