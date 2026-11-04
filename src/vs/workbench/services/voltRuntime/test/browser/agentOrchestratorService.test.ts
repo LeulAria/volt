@@ -17,6 +17,7 @@ import { IVoltEvent, IVoltEventEnvelope } from '../../common/events.js';
 import { IVoltHostToolProvider } from '../../common/hostTools.js';
 import { IOrchStartTurnRequest, IOrchTurnHost } from '../../common/orchestration/orchestrator.js';
 import { IVoltSendRequest } from '../../common/session.js';
+import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 
 /** A runtime that runs nothing: the test starts and ends runs and says what the reply was. */
 class FakeRuntime {
@@ -39,6 +40,9 @@ class FakeRuntime {
 	chatFor(id: string) { return id; }
 	getModelOptions() { return {}; }
 	rememberWorktree() { }
+	readonly sandboxes = new Map<string, IVoltSandboxSettings>();
+	getSandboxSettings(threadId: string): IVoltSandboxSettings { return this.sandboxes.get(threadId) ?? DEFAULT_SANDBOX_SETTINGS; }
+	async setSandboxSettings(threadId: string, settings: IVoltSandboxSettings) { this.sandboxes.set(threadId, settings); }
 	getOrCreateSession(threadId: string) {
 		const reply = this.replies.get(threadId);
 		return { providerRef: undefined, messages: reply ? [{ role: 'assistant', content: reply }] : [] };
@@ -212,6 +216,23 @@ suite('Agent orchestrator service', () => {
 		assert.strictEqual(wake?.threadId, 'parent');
 		assert.strictEqual(wake?.turn.kind, 'notification');
 		assert.ok(wake?.turn.prompt.text.includes('README written: 40 lines.'));
+	});
+
+	test('a subagent of a sandboxed chat is confined at least as tightly before its first turn', async () => {
+		const { service, runtime, host, tool } = await setup();
+		runtime.sandboxes.set('parent', { level: 'read-only', network: false });
+		runtime.sandboxes.set('other', { level: 'workspace-write', network: true });
+		const gate = new DeferredPromise<void>();
+		await service.submit('parent', { text: 'go' }, 'auto', 'p1');
+		await settle();
+		host.gate = gate.p;
+		await tool('parent', 'delegate_task', { task: 'Count the tests' });
+		await settle();
+		const task = service.tasksOf('parent')[0];
+		assert.ok(host.started.some(request => request.threadId === task.childId), 'its brief turn is starting');
+		assert.deepStrictEqual(runtime.getSandboxSettings(task.childId!), { level: 'read-only', network: false }, 'confined before the host starts it');
+		gate.complete();
+		await settle();
 	});
 
 	test('wait_tasks returns the report as soon as the subagent finishes, and it is not delivered again', async () => {

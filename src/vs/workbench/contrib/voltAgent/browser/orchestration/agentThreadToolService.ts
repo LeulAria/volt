@@ -43,6 +43,8 @@ import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { IAgentChatForkService, IAgentContinueInNewChatResult, IAgentForkChatOptions, IAgentForkChatResult, IAgentMergeBackResult } from './agentChatFork.js';
 import { IAgentThreadSourceHost, modeLabel, threadSourceOf } from './agentTurnHost.js';
+import { confineChatSandbox, sandboxedInstructionRefusal } from '../../../../services/voltRuntime/common/access/chatSandbox.js';
+import { stricterSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxInheritance.js';
 
 /** Chats an agent may start (launch or fork) in one of its turns: a runaway loop stops here. */
 const MAX_STARTS_PER_TURN = 8;
@@ -520,6 +522,10 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		if (task) {
 			return { error: `That chat runs delegated task ${task.id}. Use message_task with task_id ${task.id} for a follow-up, or delegate_task with previous_task_id for a new round.` };
 		}
+		const refusal = caller.external ? undefined : sandboxedInstructionRefusal(this.runtime, caller.id, id, this.titleOf(id));
+		if (refusal) {
+			return { error: refusal };
+		}
 		this.spend(caller, 'sends');
 		const mode = sendModeArg(args.mode);
 		const key = stringArg(args.client_request_id, 200);
@@ -750,6 +756,11 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		});
 		await handle.flush();
 		await this.history.rename(forkId, title);
+		// The fork carries on the source's conversation (and, for thread_fork, the asking chat's work):
+		// it is confined at least as tightly as both.
+		const askedBy = options.from && !options.from.external ? options.from.id : undefined;
+		const sourceSandbox = this.runtime.getSandboxSettings(sourceId);
+		await confineChatSandbox(this.runtime, forkId, askedBy ? stricterSandboxSettings(sourceSandbox, this.runtime.getSandboxSettings(askedBy)) : sourceSandbox);
 		// The fork's first prompt carries the copied conversation to its agent as a recap.
 		this.runtime.seedSession(forkId, turns.flatMap(turn => [
 			{ role: 'user' as const, content: turn.user.text },
@@ -816,6 +827,8 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			const model = queued ? { ref: queued.ref, label: queued.label } : this.modelOf(sourceId);
 			const mode = modeLabel(item.prompt.mode ?? sourceMeta?.mode);
 			const threadId = `${CHILD_ID_PREFIX}${generateUuid()}`;
+			// It continues the source's work: never less confined than the source.
+			await confineChatSandbox(this.runtime, threadId, this.runtime.getSandboxSettings(sourceId));
 			const project = this.projectOf(sourceId);
 			if (project) {
 				attachSessionToProject(this.sessionContext, this.workspace, this.history, threadId, project);
@@ -951,6 +964,10 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		this.spend(caller, 'starts');
 		const model = this.resolveModel(models[0] ?? args.model) ?? this.defaultModel(caller);
 		const threadId = `${CHILD_ID_PREFIX}${generateUuid()}`;
+		if (!caller.external) {
+			// A chat launched by a sandboxed chat is confined at least as tightly.
+			await confineChatSandbox(this.runtime, threadId, this.runtime.getSandboxSettings(caller.id));
+		}
 		attachSessionToProject(this.sessionContext, this.workspace, this.history, threadId, project);
 		this.history.open(threadId).setMeta({ title, ...(model ? { model: model.label } : {}), mode: modeLabel(mode) });
 		await this.orchestrator.dispatch({ type: 'thread.upsert', threadId, title, ...(model ? { modelRef: model.ref, modelLabel: model.label } : {}) });
@@ -1015,6 +1032,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			repoRoot: project.root.fsPath,
 			projectId: project.id,
 			...(workspace.type === 'worktree' && workspace.baseRef ? { baseRef: workspace.baseRef } : {}),
+			...(caller.external ? {} : { sandbox: this.runtime.getSandboxSettings(caller.id) }),
 		});
 		return {
 			text: [
@@ -1225,6 +1243,11 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		const text = typeof args.text === 'string' ? args.text.trim() : '';
 		if (!text) {
 			return { error: 'Pass the new `text` (to drop the message, use queue_cancel).' };
+		}
+		// Rewriting another chat's queued prompt instructs that chat, like thread_send.
+		const refusal = caller.external ? undefined : sandboxedInstructionRefusal(this.runtime, caller.id, id, this.titleOf(id));
+		if (refusal) {
+			return { error: refusal };
 		}
 		if (item.held) {
 			return { error: 'The user is editing that message right now; leave it to them.' };

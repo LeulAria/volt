@@ -25,6 +25,7 @@ import { parseTokenUsage } from '../../common/tokenUsage.js';
 import { VoltMode } from '../../common/modes.js';
 import { IProviderProfile } from '../../common/profiles.js';
 import { IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo } from '../../common/providers.js';
+import { sandboxPlatformUnavailable, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 import { DEFAULT_ACP_CAPABILITIES } from '../../common/capabilities.js';
 import { IVoltSandboxEvent, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { codexSandboxValue, IVoltSandboxRequest, loopbackPort, sandboxLaunchKey, sandboxStrategy, SandboxStrategy } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
@@ -80,6 +81,8 @@ interface IAcpSession {
 	settling?: Promise<void>;
 	/** The to-do list as it changed between turns (a background subagent's TaskUpdate): the next turn starts from it. */
 	pendingPlan?: Extract<IVoltEvent, { type: 'plan' }>;
+	/** Sandbox warnings and denials from before a turn ran (a spawn's `partial` warning): the next turn shows them. */
+	pendingSandbox?: IVoltSandboxEvent[];
 	/** Pool key of the setup this session was started with (spares are matched on it). */
 	setupKey?: string;
 	/** The host MCP servers `session/new` connected (JSON), and what they were derived from. */
@@ -278,6 +281,10 @@ const TEXT_ONLY_CANCEL_LINGER_MS = 750;
 /** A spare session nobody adopted is stopped after this long; its process holds a model connection. */
 const SPARE_TTL_MS = 10 * 60_000;
 const MAX_SPARES = 2;
+/** Sandbox events kept per session (or spawn) until a turn shows them. */
+const MAX_PENDING_SANDBOX_EVENTS = 20;
+/** Spawn ids whose sandbox events wait for a session; older ones are dropped first. */
+const MAX_EARLY_SANDBOX_SPAWNS = 16;
 
 const STALL_RESUME_TEXT = 'Your previous response stopped making progress and was interrupted. Continue exactly where you left off; do not repeat work that is already done.';
 
@@ -364,6 +371,15 @@ export class AcpAgentProvider implements IAgentProvider {
 	private questionAsker: AcpQuestionAsker | undefined;
 	private supervision: IAcpSupervisionOptions = {};
 	private readonly spares = new Map<string, IAcpSpare>();
+	/** Every live agent process of this provider (spares too), by spawn id: where its sandbox events go. */
+	private readonly byProcess = new Map<string, IAcpSession>();
+	/**
+	 * Sandbox events for a spawn id no session holds yet. The stdio layer warns about `partial`
+	 * isolation as it spawns, before `spawn` has even answered; these wait for the session.
+	 */
+	private readonly earlySandboxEvents = new Map<string, IVoltSandboxEvent[]>();
+	/** Spawns in flight: only while one is, an unknown spawn id may be one of ours. */
+	private spawning = 0;
 	private readonly _onDidChangeBackgroundTasks = new Emitter<IAcpBackgroundTask>();
 	/**
 	 * A background task of one of this provider's sessions started, reported progress or ended,
@@ -674,7 +690,13 @@ export class AcpAgentProvider implements IAgentProvider {
 
 	private async stopSession(live: IAcpSession): Promise<void> {
 		live.client.dispose();
+		this.forgetProcess(live.processId);
 		await this.stdio.kill(live.processId).catch(() => undefined);
+	}
+
+	private forgetProcess(processId: string): void {
+		this.byProcess.delete(processId);
+		this.earlySandboxEvents.delete(processId);
 	}
 
 	/** Everything that makes two sessions interchangeable before their first prompt. */
@@ -754,8 +776,24 @@ export class AcpAgentProvider implements IAgentProvider {
 		const { command, args } = await this.launchFor(req.profile, this.startArgs(req));
 		const cwd = req.cwd || req.profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
 		const env = cliAgentDefinition(this.id)?.acpEnv;
+		const settings = req.sandbox?.settings;
+		if (settings && settings.level !== 'off' && sandboxStrategy(this.id, settings.level, this.sandboxPlatform()) === 'none') {
+			// No OS sandbox here (Windows): a sandboxed chat is refused, never run unconfined.
+			throw sandboxUnavailableError(sandboxPlatformUnavailable(this.sandboxPlatform()) ?? `${this.label} cannot run in an OS sandbox on this machine.`);
+		}
 		const sandbox = this.sandboxRequest(req);
-		const processId = await this.stdio.spawn({ command, args, cwd, ...(env ? { env: { ...env } } : {}), ...(sandbox ? { sandbox } : {}) });
+		let processId: string;
+		this.spawning++;
+		try {
+			// Rejects with a SandboxUnavailableError when the sandbox cannot be enforced; the runtime shows it.
+			processId = await this.stdio.spawn({ command, args, cwd, ...(env ? { env: { ...env } } : {}), ...(sandbox ? { sandbox } : {}) });
+		} finally {
+			this.spawning--;
+		}
+		// Ours now: its events wait here through initialize and session/new.
+		if (!this.earlySandboxEvents.has(processId)) {
+			this.earlySandboxEvents.set(processId, []);
+		}
 		const client = new AcpJsonRpcClient(this.stdio, processId);
 		this.bindClientRequests(client);
 		client.whenDead(() => {
@@ -764,6 +802,7 @@ export class AcpAgentProvider implements IAgentProvider {
 					this.sessions.delete(id);
 				}
 			}
+			this.forgetProcess(processId);
 			// Its listeners filter every stdout chunk of every process: a dead client lets go of them,
 			// after the other death handlers (a spare's) have run.
 			queueMicrotask(() => {
@@ -808,6 +847,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			}
 		} catch (err) {
 			client.dispose();
+			this.forgetProcess(processId);
 			void this.stdio.kill(processId);
 			throw err;
 		}
@@ -834,6 +874,15 @@ export class AcpAgentProvider implements IAgentProvider {
 			resumable: !!initialized.agentCapabilities?.sessionCapabilities?.resume,
 			...(req.textOnly ? { textOnly: { ownPrompt: this.takesSystemPrompt() } } : {}),
 		};
+		// What the sandbox said while the process started waits for the session's first turn.
+		const early = this.earlySandboxEvents.get(processId);
+		this.earlySandboxEvents.delete(processId);
+		if (early?.length) {
+			live.pendingSandbox = early;
+		}
+		if (!client.isDead) {
+			this.byProcess.set(processId, live);
+		}
 		// One listener for the life of the session; it routes to whichever turn is current.
 		client.handleNotifications(note => {
 			if (note.method === 'session/update') {
@@ -899,11 +948,35 @@ export class AcpAgentProvider implements IAgentProvider {
 	}
 
 	private onSandboxEvent(event: IVoltSandboxEvent): void {
-		const session = [...this.sessions.values()].find(candidate => candidate.processId === event.id);
-		const turn = session?.turn && !session.turn.ended ? session.turn : undefined;
-		if (!session || !turn) {
+		const session = this.byProcess.get(event.id);
+		if (!session) {
+			// Before the session exists (often before `spawn` answers): kept for it, within bounds, as
+			// the id may belong to another provider's spawn.
+			if (this.spawning > 0 || this.earlySandboxEvents.has(event.id)) {
+				const list = this.earlySandboxEvents.get(event.id) ?? [];
+				if (list.length < MAX_PENDING_SANDBOX_EVENTS) {
+					list.push(event);
+				}
+				this.earlySandboxEvents.set(event.id, list);
+				while (this.earlySandboxEvents.size > MAX_EARLY_SANDBOX_SPAWNS) {
+					this.earlySandboxEvents.delete(this.earlySandboxEvents.keys().next().value!);
+				}
+			}
 			return;
 		}
+		const turn = session.turn && !session.turn.ended ? session.turn : undefined;
+		if (!turn) {
+			// Between turns (a spare, or a session before its first prompt): the next turn shows it.
+			session.pendingSandbox ??= [];
+			if (session.pendingSandbox.length < MAX_PENDING_SANDBOX_EVENTS) {
+				session.pendingSandbox.push(event);
+			}
+			return;
+		}
+		this.deliverSandboxEvent(session, turn, event);
+	}
+
+	private deliverSandboxEvent(session: IAcpSession, turn: AcpPromptTurn, event: IVoltSandboxEvent): void {
 		if (event.denial) {
 			this.pushActivity(session, turn, { type: 'sandbox.denial', denial: event.denial });
 		} else if (event.warning) {
@@ -1143,6 +1216,11 @@ export class AcpAgentProvider implements IAgentProvider {
 		live.pendingPlan = undefined;
 		if (pendingPlan) {
 			this.pushActivity(live, turn, pendingPlan);
+		}
+		const pendingSandbox = live.pendingSandbox;
+		live.pendingSandbox = undefined;
+		for (const event of pendingSandbox ?? []) {
+			this.deliverSandboxEvent(live, turn, event);
 		}
 		const cancel = token.onCancellationRequested(() => this.cancelTurn(live, turn, 'user'));
 		// Not awaited at the end: once `run.end` is out, a cancelled prompt may still be settling.

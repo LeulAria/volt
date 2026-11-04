@@ -9,6 +9,7 @@ import { describeCron, nextCronRun, parseCron } from './automationCron.js';
 import { civilDay, formatGmtOffset, isLocalTimeZone, timeZoneLabel, wallClock } from './automationTime.js';
 import { AUTOMATION_PROVIDERS, AutomationProvider, AutomationTriggerGroup, eventLabel, triggerGroupOf } from './automationTriggers.js';
 import { IAgentWebhookTrigger, parseWebhookTrigger } from './automationWebhooks.js';
+import { IVoltSandboxSettings, normalizeSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 
 /**
  * Automations: an agent with instructions, a repository, a model and tools, started by triggers
@@ -163,6 +164,11 @@ export interface IAutomation extends IAutomationDraft {
 	readonly createdByAgent?: boolean;
 	/** The chat an agent created it from. */
 	readonly sourceThreadId?: string;
+	/**
+	 * The sandbox of the sandboxed chat that created or last changed it (the stricter of them): its
+	 * runs are confined at least as tightly, so an agent cannot schedule work outside its sandbox.
+	 */
+	readonly sandbox?: IVoltSandboxSettings;
 	/** Schedule trigger id → its next run. */
 	readonly nextRuns: Readonly<Record<string, number>>;
 	/**
@@ -890,6 +896,7 @@ export function parseAutomation(value: unknown): IAutomation | undefined {
 		...strings(value, ['modelRef', 'mode', 'templateId', 'threadId', 'sourceThreadId', 'workflowId']),
 		...(value.shared === true ? { shared: true } : {}),
 		...(value.createdByAgent === true ? { createdByAgent: true } : {}),
+		...(isRecord(value.sandbox) && normalizeSandboxSettings(value.sandbox).level !== 'off' ? { sandbox: normalizeSandboxSettings(value.sandbox) } : {}),
 		createdAt: value.createdAt,
 		updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : value.createdAt,
 		createdBy: typeof value.createdBy === 'string' && value.createdBy ? value.createdBy : 'You',
@@ -1071,6 +1078,7 @@ export const IAutomationService = createDecorator<IAutomationService>('automatio
 export interface IAutomationCreateInput extends Partial<IAutomationDraft> {
 	readonly createdByAgent?: boolean;
 	readonly sourceThreadId?: string;
+	readonly sandbox?: IVoltSandboxSettings;
 }
 
 export interface IAutomationDeliveryInput {

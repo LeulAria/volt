@@ -70,6 +70,8 @@ import { IVoltSessionContextService } from '../../../../services/voltRuntime/com
 import { stashTurnDisplay } from '../orchestration/agentTurnDisplays.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
+import { confineChatSandbox } from '../../../../services/voltRuntime/common/access/chatSandbox.js';
+import type { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 
 const STORE_VERSION = 1;
 /** Why a run's chat is held: its worktree or setup is not ready. */
@@ -241,18 +243,20 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 		this._onDidChange.fire(group.id);
 		// Each run starts on its own: one failing never holds back or rolls back the others.
 		for (const run of group.runs) {
-			void this.launch(group.id, run.id, request.liveDisplay).catch(err => this.failSetup(group.id, run.id, err));
+			void this.launch(group.id, run.id, request.liveDisplay, request.sandbox).catch(err => this.failSetup(group.id, run.id, err));
 		}
 		return group;
 	}
 
 	/** The run's chat: bound to the project, held by a block with its prompt queued, then its worktree. */
-	private async launch(groupId: string, runId: string, liveDisplay: unknown): Promise<void> {
+	private async launch(groupId: string, runId: string, liveDisplay: unknown, sandbox: IVoltSandboxSettings | undefined): Promise<void> {
 		// Registered before the first await, so Stop finds the run's setup however early it comes.
 		const token: ISetupToken = { cancelled: false };
 		this.setups.set(runId, token);
 		const group = this.groups.get(groupId)!;
 		const run = group.runs.find(candidate => candidate.id === runId)!;
+		// Started by a sandboxed chat: the run's chat is confined at least as tightly before its prompt is queued.
+		await confineChatSandbox(this.runtime, runId, sandbox);
 		const project = this.projectFor(group);
 		if (project) {
 			attachSessionToProject(this.sessionContext, this.workspace, this.history, runId, project);
@@ -301,7 +305,7 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 			this.history.open(runId).setMeta({ worktreePath: path, worktreeBranch: run.branch, model: run.model.label });
 			this.throwIfCancelled(token);
 
-			const config = await this.readSetupConfig(path, group.repoRoot);
+			const config = await this.readSetupConfig(group.repoRoot);
 			if (config) {
 				const steps: IRunSetupStep[] = config.steps.map((command, index) => {
 					const previous = run.setup.steps[index];
@@ -344,27 +348,29 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 		}
 	}
 
-	/** `.volt/worktrees.json`, else Cursor's `.cursor/worktrees.json`; the worktree's copy first, then the checkout's. */
-	private async readSetupConfig(worktreePath: string, repoRoot: string): Promise<IWorktreeSetupConfig | undefined> {
+	/**
+	 * `.volt/worktrees.json`, else Cursor's `.cursor/worktrees.json`, from the project checkout only:
+	 * a branch's own copy is never read, or a sandboxed agent could commit setup commands that run
+	 * outside its sandbox.
+	 */
+	private async readSetupConfig(repoRoot: string): Promise<IWorktreeSetupConfig | undefined> {
 		const platform = isWindows ? 'windows' : 'unix';
-		for (const folder of [worktreePath, repoRoot]) {
-			for (const source of WORKTREE_SETUP_FILES) {
-				const file = setupFileIn(folder, source);
-				let text: string;
-				try {
-					text = (await this.fileService.readFile(URI.file(file))).value.toString();
-				} catch {
-					continue;
-				}
-				const parsed = parseWorktreeSetup(text, source, dirname(file), platform);
-				switch (parsed.kind) {
-					case 'none':
-						return undefined;
-					case 'error':
-						throw new Error(parsed.error);
-					case 'config':
-						return parsed.config;
-				}
+		for (const source of WORKTREE_SETUP_FILES) {
+			const file = setupFileIn(repoRoot, source);
+			let text: string;
+			try {
+				text = (await this.fileService.readFile(URI.file(file))).value.toString();
+			} catch {
+				continue;
+			}
+			const parsed = parseWorktreeSetup(text, source, dirname(file), platform);
+			switch (parsed.kind) {
+				case 'none':
+					return undefined;
+				case 'error':
+					throw new Error(parsed.error);
+				case 'config':
+					return parsed.config;
 			}
 		}
 		return undefined;

@@ -8,8 +8,8 @@ import { createDecorator } from '../../../../../platform/instantiation/common/in
 
 /**
  * Worktree setup: what runs in a new worktree before an agent works there. A project describes it
- * in one of three files, read from the new worktree first (its branch may change it), then from
- * the project checkout:
+ * in one of three files, read from the project checkout only, never from the new worktree (a
+ * sandboxed agent could commit a setup file to a branch and have it run outside the sandbox):
  *
  * - `t3.json` (T3 Code's project file; Volt also reads the same shape as `volt.json`):
  *   `{ "worktreeSubmodules": "recursive" | "top-level" | "none", "scripts": [{ "name", "command",
