@@ -3,13 +3,14 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { randomBytes, timingSafeEqual } from 'crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import * as http from 'http';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable, toDisposable } from '../../../base/common/lifecycle.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
 import { IVoltHostMcpCall, IVoltHostMcpEndpoint, IVoltHostMcpResult, IVoltHostMcpService, IVoltHostMcpToolInfo } from '../common/voltHostMcp.js';
+import { hostMcpSessionMessage, normalizeHostMcpGroups } from '../common/voltHostMcpAuth.js';
 
 interface IJsonRpc {
 	jsonrpc?: string;
@@ -32,7 +33,8 @@ const CALL_TIMEOUT_MS = 30 * 60_000;
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
 export type HostMcpRequestVerdict =
-	| { readonly ok: true }
+	/** `sessionId` and `groups` are the ones the token was issued for; the URL alone never sets them. */
+	| { readonly ok: true; readonly sessionId?: string; readonly groups?: ReadonlySet<string> }
 	| { readonly ok: false; readonly status: 401 | 403 | 404; readonly message: string };
 
 function isLoopbackHost(host: string | undefined, port: number): boolean {
@@ -56,9 +58,12 @@ function sameSecret(given: string, expected: string): boolean {
  *   Origin or Sec-Fetch-Site / Sec-Fetch-Dest. Node's fetch (undici), which agents such as
  *   cursor-agent use, sends Sec-Fetch-Mode alone on every request, so that one header is not a
  *   browser. No CORS headers are ever sent, so a preflight fails too.
- * - The bearer token Volt handed the agent in its MCP server config.
+ * - The bearer token Volt handed the agent in its MCP server config. On `/mcp/<sessionId>` that is
+ *   the session's own token (`hostMcpSessionToken`), which also covers `?groups=`: another chat's
+ *   token, or the right one with other groups, is refused. A request without a session needs
+ *   `secret` itself, which only Volt holds.
  */
-export function checkHostMcpRequest(method: string | undefined, path: string | undefined, headers: http.IncomingHttpHeaders, port: number, token: string): HostMcpRequestVerdict {
+export function checkHostMcpRequest(method: string | undefined, path: string | undefined, headers: http.IncomingHttpHeaders, port: number, secret: string): HostMcpRequestVerdict {
 	if (!isLoopbackHost(headers.host, port)) {
 		return { ok: false, status: 403, message: 'Host not allowed' };
 	}
@@ -73,10 +78,24 @@ export function checkHostMcpRequest(method: string | undefined, path: string | u
 	}
 	const auth = headers.authorization;
 	const match = typeof auth === 'string' ? /^Bearer\s+(\S+)\s*$/i.exec(auth) : null;
-	if (!match || !sameSecret(match[1], token)) {
+	if (!match) {
 		return { ok: false, status: 401, message: 'Missing or wrong bearer token' };
 	}
-	return { ok: true };
+	const session = sessionFromPath(path);
+	if (session === null) {
+		return { ok: false, status: 401, message: 'Missing or wrong bearer token' };
+	}
+	const groups = groupsFromPath(path);
+	const expected = session === undefined ? secret : sessionToken(secret, session, groups);
+	if (!sameSecret(match[1], expected)) {
+		return { ok: false, status: 401, message: 'Missing or wrong bearer token' };
+	}
+	return { ok: true, ...(session !== undefined ? { sessionId: session } : {}), ...(groups ? { groups } : {}) };
+}
+
+/** Node's HMAC of the same message `hostMcpSessionToken` signs in the window. */
+function sessionToken(secret: string, sessionId: string, groups: ReadonlySet<string> | undefined): string {
+	return createHmac('sha256', secret).update(hostMcpSessionMessage(sessionId, groups)).digest('hex');
 }
 
 export class VoltHostMcpService extends Disposable implements IVoltHostMcpService {
@@ -106,6 +125,7 @@ export class VoltHostMcpService extends Disposable implements IVoltHostMcpServic
 			existing.tools = tools;
 			return existing.endpoint;
 		}
+		// The server secret: only Volt holds it. Agents get per-session tokens derived from it.
 		const token = randomBytes(32).toString('base64url');
 		const server = http.createServer((req, res) => void this.handle(serverId, req, res));
 		const endpoint = new Promise<IVoltHostMcpEndpoint>((resolve, reject) => {
@@ -167,8 +187,8 @@ export class VoltHostMcpService extends Disposable implements IVoltHostMcpServic
 			res.end();
 			return;
 		}
-		const sessionId = sessionFromPath(req.url);
-		const groups = groupsFromPath(req.url);
+		// Verified against the token: an agent cannot name another chat or widen its groups.
+		const { sessionId, groups } = verdict;
 		let body: string;
 		try {
 			body = await readBody(req, MAX_BODY_BYTES);
@@ -270,7 +290,8 @@ function ok(id: string | number | null, result: unknown): unknown {
 	return { jsonrpc: '2.0', id, result };
 }
 
-function sessionFromPath(url: string | undefined): string | undefined {
+/** The chat in `/mcp/<sessionId>`; undefined without one, null when it does not decode (never read as "no session"). */
+function sessionFromPath(url: string | undefined): string | undefined | null {
 	const match = /^\/mcp\/([^/?#]+)/.exec(url ?? '');
 	if (!match) {
 		return undefined;
@@ -278,18 +299,18 @@ function sessionFromPath(url: string | undefined): string | undefined {
 	try {
 		return decodeURIComponent(match[1]);
 	} catch {
-		return undefined;
+		return null;
 	}
 }
 
-/** `?groups=core,image` limits the listed tools; absent means all. */
+/** `?groups=core,image` limits the listed tools; absent means all. The session token covers it. */
 function groupsFromPath(url: string | undefined): ReadonlySet<string> | undefined {
 	const query = (url ?? '').split('?')[1]?.split('#')[0];
 	if (!query) {
 		return undefined;
 	}
 	const value = new URLSearchParams(query).get('groups');
-	return value === null ? undefined : new Set(value.split(',').map(group => group.trim()).filter(Boolean));
+	return value === null ? undefined : new Set(normalizeHostMcpGroups(value.split(',')));
 }
 
 function readBody(req: http.IncomingMessage, limit: number): Promise<string> {

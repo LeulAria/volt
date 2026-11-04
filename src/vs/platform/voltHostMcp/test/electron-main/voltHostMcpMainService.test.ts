@@ -4,10 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { createHash, createHmac, randomBytes } from 'crypto';
 import * as http from 'http';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { NullLogService } from '../../../log/common/log.js';
 import { IVoltHostMcpCall } from '../../common/voltHostMcp.js';
+import { hmacSha256, hostMcpSessionMessage, hostMcpSessionToken, sha256 } from '../../common/voltHostMcpAuth.js';
 import { checkHostMcpRequest, VoltHostMcpMainService } from '../../electron-main/voltHostMcpMainService.js';
 
 interface IReply {
@@ -59,7 +61,7 @@ suite('Volt host MCP server', () => {
 
 	test('request check: loopback Host, no browser headers, bearer token', () => {
 		const ok = { host: '127.0.0.1:4000', authorization: 'Bearer secret' };
-		assert.deepStrictEqual(checkHostMcpRequest('POST', '/mcp/s1', ok, 4000, 'secret'), { ok: true });
+		assert.deepStrictEqual(checkHostMcpRequest('POST', '/mcp/s1', { ...ok, authorization: `Bearer ${hostMcpSessionToken('secret', 's1')}` }, 4000, 'secret'), { ok: true, sessionId: 's1' });
 		assert.deepStrictEqual(checkHostMcpRequest('POST', '/mcp', { ...ok, host: 'localhost:4000' }, 4000, 'secret'), { ok: true });
 		const status = (method: string, path: string, headers: http.IncomingHttpHeaders) => {
 			const verdict = checkHostMcpRequest(method, path, headers, 4000, 'secret');
@@ -80,13 +82,75 @@ suite('Volt host MCP server', () => {
 		assert.strictEqual(status('POST', '/.well-known/oauth-protected-resource', ok), 404);
 	});
 
+	test('session tokens: each chat\'s agent can act only as that chat, with the groups it was given', () => {
+		const status = (path: string, token: string | undefined) => {
+			const verdict = checkHostMcpRequest('POST', path, { host: '127.0.0.1:4000', ...(token !== undefined ? { authorization: `Bearer ${token}` } : {}) }, 4000, 'secret');
+			return verdict.ok ? 200 : verdict.status;
+		};
+		const s1 = hostMcpSessionToken('secret', 's1');
+		const s2 = hostMcpSessionToken('secret', 's2');
+		assert.notStrictEqual(s1, s2);
+		assert.strictEqual(status('/mcp/s1', s1), 200, 'its own session');
+		assert.strictEqual(status('/mcp/s1?x=1#y', s1), 200, 'query and fragment do not matter');
+		assert.strictEqual(status('/mcp/s2', s1), 401, 'another chat\'s session with this chat\'s token (a tampered path)');
+		assert.strictEqual(status('/mcp/s1', s2), 401, 'another chat\'s token');
+		assert.strictEqual(status('/mcp/s1', undefined), 401, 'no token');
+		assert.strictEqual(status('/mcp/s1', ''), 401, 'empty token');
+		assert.strictEqual(status('/mcp/s1', `${s1}0`), 401, 'a longer token');
+		assert.strictEqual(status('/mcp/s1', s1.slice(0, -1)), 401, 'a shorter token');
+		assert.strictEqual(status('/mcp/s1', 'secret'), 401, 'the server secret is not a session token');
+		assert.strictEqual(status('/mcp/s1', hostMcpSessionToken('other secret', 's1')), 401, 'another server\'s token');
+		assert.strictEqual(status('/mcp/%E0%A4%A', s1), 401, 'a session id that does not decode is not "no session"');
+
+		// The token covers the groups: an agent handed `core` cannot list or call the rest.
+		const core = hostMcpSessionToken('secret', 's1', ['core']);
+		assert.strictEqual(status('/mcp/s1?groups=core', core), 200);
+		assert.strictEqual(status('/mcp/s1?groups=core,browser', core), 401, 'widened groups');
+		assert.strictEqual(status('/mcp/s1', core), 401, 'all groups');
+		assert.strictEqual(status('/mcp/s1?groups=core', s1), 401, 'an all-groups token for a narrower URL');
+		const both = hostMcpSessionToken('secret', 's1', ['image', 'core']);
+		assert.strictEqual(status('/mcp/s1?groups=core,image', both), 200, 'group order and spacing do not matter');
+		assert.strictEqual(status('/mcp/s1?groups=%20image,core', both), 200);
+		const verdict = checkHostMcpRequest('POST', '/mcp/s1?groups=core', { host: '127.0.0.1:4000', authorization: `Bearer ${core}` }, 4000, 'secret');
+		assert.ok(verdict.ok && verdict.sessionId === 's1' && [...verdict.groups ?? []].join() === 'core');
+
+		// No session: only the server secret, which agents never get.
+		assert.strictEqual(status('/mcp', 'secret'), 200);
+		assert.strictEqual(status('/mcp', s1), 401);
+		assert.strictEqual(status('/mcp/', s1), 401);
+	});
+
+	test('session tokens: the window\'s HMAC matches Node\'s, and SHA-256/HMAC match the published vectors', () => {
+		const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
+		const utf8 = (value: string) => new TextEncoder().encode(value);
+		assert.strictEqual(hex(sha256(utf8(''))), 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+		assert.strictEqual(hex(sha256(utf8('abc'))), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+		assert.strictEqual(hex(sha256(utf8('abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq'))), '248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1');
+		// RFC 4231 test cases 2 and 6 (a key longer than a block).
+		assert.strictEqual(hex(hmacSha256(utf8('Jefe'), utf8('what do ya want for nothing?'))), '5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843');
+		assert.strictEqual(hex(hmacSha256(new Uint8Array(131).fill(0xaa), utf8('Test Using Larger Than Block-Size Key - Hash Key First'))), '60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54');
+		for (const [secret, session, groups] of [
+			['s', 'chat', undefined],
+			[randomBytes(32).toString('base64url'), 'agent-1d2c', ['core', 'image']],
+			[randomBytes(32).toString('base64url'), 'chat 1/ü?#', []],
+			['k'.repeat(200), 'x'.repeat(1000), ['browser']],
+		] as const) {
+			const expected = createHmac('sha256', secret).update(hostMcpSessionMessage(session, groups)).digest('hex');
+			assert.strictEqual(hostMcpSessionToken(secret, session, groups), expected, `${session}`);
+		}
+		for (let length = 0; length < 140; length++) {
+			const data = randomBytes(length);
+			assert.strictEqual(hex(sha256(data)), createHash('sha256').update(data).digest('hex'), `length ${length}`);
+		}
+	});
+
 	test('serves JSON-RPC only to callers with the token and never sends CORS headers', async () => {
 		const service = store.add(new VoltHostMcpMainService(new NullLogService()));
 		try {
 			const endpoint = await service.start('w1', TOOLS);
 			assert.match(endpoint.url, /^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
 			assert.ok(endpoint.token.length >= 32);
-			const auth = { Authorization: `Bearer ${endpoint.token}` };
+			const auth = { Authorization: `Bearer ${hostMcpSessionToken(endpoint.token, 's1')}` };
 
 			const good = await post(`${endpoint.url}/s1`, INIT, auth);
 			assert.strictEqual(good.status, 200);
@@ -119,18 +183,25 @@ suite('Volt host MCP server', () => {
 		}));
 		try {
 			const endpoint = await service.start('w2', TOOLS);
-			const auth = { Authorization: `Bearer ${endpoint.token}` };
-			const list = async (suffix: string) => (JSON.parse((await post(`${endpoint.url}/chat%201${suffix}`, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, auth)).body) as IRpcReply).result.tools;
+			const auth = (groups?: string[]) => ({ Authorization: `Bearer ${hostMcpSessionToken(endpoint.token, 'chat 1', groups)}` });
+			const list = async (suffix: string, groups?: string[]) => (JSON.parse((await post(`${endpoint.url}/chat%201${suffix}`, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, auth(groups))).body) as IRpcReply).result.tools;
 			assert.deepStrictEqual((await list('')).map(tool => tool.name), ['ask_question', 'browser_snapshot']);
-			assert.deepStrictEqual((await list('?groups=core')).map(tool => tool.name), ['ask_question']);
+			assert.deepStrictEqual((await list('?groups=core', ['core'])).map(tool => tool.name), ['ask_question']);
 			assert.ok((await list('')).every(tool => tool.group === undefined), 'groups stay internal');
 
-			const called = await post(`${endpoint.url}/chat%201`, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'browser_snapshot', arguments: { interactive: true } } }, auth);
+			const called = await post(`${endpoint.url}/chat%201`, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'browser_snapshot', arguments: { interactive: true } } }, auth());
 			assert.strictEqual((JSON.parse(called.body) as IRpcReply).result.content[0].text, 'ran browser_snapshot');
 			assert.deepStrictEqual(calls.map(call => ({ sessionId: call.sessionId, name: call.name, args: call.args })), [{ sessionId: 'chat 1', name: 'browser_snapshot', args: { interactive: true } }]);
 
-			const hidden = await post(`${endpoint.url}/chat%201?groups=core`, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'browser_snapshot', arguments: {} } }, auth);
+			const hidden = await post(`${endpoint.url}/chat%201?groups=core`, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'browser_snapshot', arguments: {} } }, auth(['core']));
 			assert.strictEqual((JSON.parse(hidden.body) as IRpcReply).result.isError, true, 'a tool outside the listed groups is not callable');
+			assert.strictEqual(calls.length, 1);
+
+			// An agent that drops its groups, or names another chat, is turned away before anything runs.
+			const widened = await post(`${endpoint.url}/chat%201`, { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'browser_snapshot', arguments: {} } }, auth(['core']));
+			assert.strictEqual(widened.status, 401);
+			const impersonated = await post(`${endpoint.url}/chat%202`, { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'ask_question', arguments: {} } }, auth());
+			assert.strictEqual(impersonated.status, 401);
 			assert.strictEqual(calls.length, 1);
 		} finally {
 			await service.stop('w2');
@@ -141,7 +212,7 @@ suite('Volt host MCP server', () => {
 		const service = store.add(new VoltHostMcpMainService(new NullLogService()));
 		try {
 			const endpoint = await service.start('w3', TOOLS);
-			const reply = await post(`${endpoint.url}/s`, { jsonrpc: '2.0', id: 1, method: 'ping', params: { pad: 'x'.repeat(5 * 1024 * 1024) } }, { Authorization: `Bearer ${endpoint.token}` });
+			const reply = await post(`${endpoint.url}/s`, { jsonrpc: '2.0', id: 1, method: 'ping', params: { pad: 'x'.repeat(5 * 1024 * 1024) } }, { Authorization: `Bearer ${hostMcpSessionToken(endpoint.token, 's')}` });
 			assert.strictEqual(reply.status, 413);
 		} finally {
 			await service.stop('w3');

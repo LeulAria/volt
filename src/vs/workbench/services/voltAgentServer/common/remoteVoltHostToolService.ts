@@ -18,6 +18,8 @@ export interface IRemoteHostToolCall {
 	readonly cwd?: string;
 	readonly source?: 'mcp' | 'native';
 	readonly external?: IVoltHostToolCall['external'];
+	/** The calling chat's sandbox: a window's tool and the nested calls it makes stay confined. */
+	readonly sandbox?: IVoltHostToolCall['sandbox'];
 	/** Set on calls the server may cancel (`hostTools.cancel`). */
 	readonly cancelKey?: string;
 }
@@ -32,6 +34,7 @@ export function toRemoteHostToolCall(call: IVoltHostToolCall | undefined): IRemo
 		...(call.cwd ? { cwd: call.cwd } : {}),
 		...(call.source ? { source: call.source } : {}),
 		...(call.external ? { external: call.external } : {}),
+		...(call.sandbox ? { sandbox: call.sandbox } : {}),
 	};
 }
 
@@ -187,6 +190,7 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 	setQuestionHandler(): void { }
 	setSessionResolver(): void { }
 	setApprover(): void { }
+	setSandboxResolver(): void { }
 }
 
 function asRecord(args: unknown): Record<string, unknown> {
