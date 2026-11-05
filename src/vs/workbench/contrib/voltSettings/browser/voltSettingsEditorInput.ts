@@ -10,7 +10,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
-import { IEditorSerializer, IUntypedEditorInput } from '../../../common/editor.js';
+import { EditorInputCapabilities, IEditorSerializer, IUntypedEditorInput } from '../../../common/editor.js';
 import { EditorInput } from '../../../common/editor/editorInput.js';
 
 const VoltSettingsIcon = registerIcon('volt-settings-editor-label-icon', Codicon.settings, localize('voltSettingsIcon', 'Icon of the Volt Settings editor tab.'));
@@ -25,6 +25,10 @@ export class VoltSettingsEditorInput extends EditorInput {
 	static readonly EditorID = VOLT_SETTINGS_EDITOR_ID;
 
 	readonly resource = URI.from({ scheme: Schemas.voltSettings, path: 'settings' });
+
+	override get capabilities(): EditorInputCapabilities {
+		return super.capabilities | EditorInputCapabilities.Singleton;
+	}
 
 	override get typeId(): string {
 		return VoltSettingsEditorInput.TypeID;

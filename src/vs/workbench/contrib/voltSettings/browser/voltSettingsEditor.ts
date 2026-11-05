@@ -31,7 +31,7 @@ import { ITelemetryService } from '../../../../platform/telemetry/common/telemet
 import { getInputBoxStyle } from '../../../../platform/theme/browser/defaultStyles.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
-import { IEditorOpenContext } from '../../../common/editor.js';
+import { GroupModelChangeKind, IEditorOpenContext } from '../../../common/editor.js';
 import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { Orientation, Sash } from '../../../../base/browser/ui/sash/sash.js';
@@ -270,6 +270,11 @@ export class VoltSettingsEditor extends EditorPane {
 		@ILogService private readonly logService: ILogService,
 	) {
 		super(VoltSettingsEditor.ID, group, telemetryService, themeService, storageService);
+		this._register(group.onDidModelChange(event => {
+			if (event.kind === GroupModelChangeKind.EDITOR_ACTIVE) {
+				this.syncOverlay();
+			}
+		}));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (this.section === 'composer' && COMPOSER_PAGE_SETTINGS.some(key => e.affectsConfiguration(key))) {
 				this.renderContent();
@@ -438,18 +443,29 @@ export class VoltSettingsEditor extends EditorPane {
 
 	private close(): void {
 		const input = this.input;
-		if (input) {
+		if (input && this.group.activeEditor === input) {
 			void this.group.closeEditor(input);
 		}
 	}
 
-	protected override setEditorVisible(visible: boolean): void {
+	protected override setEditorVisible(): void {
+		this.syncOverlay();
+	}
+
+	private syncOverlay(): void {
 		if (!this.container) {
 			return;
 		}
+		// Editor panes become visible before they receive their input. The group may have already
+		// switched editors by then, so only an active Settings input can cover the workbench.
+		const visible = this.isVisible() && this.input !== undefined && this.group.activeEditor === this.input;
+		const parent = this.layoutService.mainContainer;
 		if (visible) {
+			if (this.container.parentElement === parent) {
+				return;
+			}
 			this.container.classList.add('volt-settings-overlay');
-			this.layoutService.mainContainer.appendChild(this.container);
+			parent.appendChild(this.container);
 			this.syncSidebarWidth();
 			this.usage?.setVisible(this.section === 'usage');
 			if (this.section === 'customize') {
@@ -458,6 +474,9 @@ export class VoltSettingsEditor extends EditorPane {
 				this.showAutomations();
 			}
 			this.scheduleScrollSync();
+			return;
+		}
+		if (!this.container.parentElement) {
 			return;
 		}
 		this.usage?.setVisible(false);
@@ -1737,7 +1756,17 @@ export class VoltSettingsEditor extends EditorPane {
 
 	override async setInput(input: VoltSettingsEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
-		this.renderContent();
+		if (!token.isCancellationRequested && this.input === input) {
+			this.syncOverlay();
+			if (this.group.activeEditor === input) {
+				this.renderContent();
+			}
+		}
+	}
+
+	override clearInput(): void {
+		super.clearInput();
+		this.syncOverlay();
 	}
 
 	override layout(_dimension: Dimension): void {
