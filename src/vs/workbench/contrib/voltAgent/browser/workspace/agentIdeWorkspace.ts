@@ -31,6 +31,7 @@ import { SidebarEditorPart } from '../editor/sidebarEditorPart.js';
 import { AgentChangesEditorInput } from '../review/agentChangesEditor.js';
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
 import { TerminalEditorInput } from '../../../terminal/browser/terminalEditorInput.js';
+import { VoltSettingsEditorInput } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
 import { ISCMRepository, ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
 import { findAgentPanelGroup, MAX_BACKGROUND_AGENT_PANELS } from './agentPanels.js';
 import { VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
@@ -193,9 +194,16 @@ class AgentIdeWorkspaceContribution extends Disposable {
 
 	/** The chat the agent layout was showing, which the IDE layout opens on. */
 	private frontChat(side: IEditorPart | undefined): AgentEditorInput | undefined {
-		const main = findAgentPanelGroup(this.editorGroupsService.mainPart).activeEditor;
+		const group = findAgentPanelGroup(this.editorGroupsService.mainPart);
+		const main = group.activeEditor;
 		if (main instanceof AgentEditorInput) {
 			return main;
+		}
+		if (main instanceof VoltSettingsEditorInput) {
+			const behindSettings = group.getEditors(EditorsOrder.MOST_RECENTLY_ACTIVE).find(editor => editor instanceof AgentEditorInput);
+			if (behindSettings) {
+				return behindSettings;
+			}
 		}
 		const inSide = side?.activeGroup.activeEditor;
 		return inSide instanceof AgentEditorInput ? inSide : undefined;
@@ -374,7 +382,7 @@ class AgentIdeWorkspaceContribution extends Disposable {
 		}
 		// The tab the chat in front had in front is in front here; the others' terminals only join.
 		const show = frontActive ?? frontFirst;
-		if (show) {
+		if (show && !(center.activeEditor instanceof VoltSettingsEditorInput)) {
 			void center.openEditor(show, { pinned: true, preserveFocus: true });
 		}
 	}
@@ -392,8 +400,9 @@ class AgentIdeWorkspaceContribution extends Disposable {
 		const front = this.returnTools(side);
 		if (side) {
 			const target = findAgentPanelGroup(this.editorGroupsService.mainPart);
+			const settingsOpen = target.activeEditor instanceof VoltSettingsEditorInput;
 			for (const { editor, group } of this.chatsIn(side)) {
-				group.moveEditor(editor, target, { inactive: editor !== front, preserveFocus: true, pinned: true });
+				group.moveEditor(editor, target, { inactive: settingsOpen || editor !== front, preserveFocus: true, pinned: true });
 			}
 			const open = new Set(this.chatsIn(this.editorGroupsService.mainPart).map(({ editor }) => editor.sessionId));
 			const room = Math.max(0, MAX_BACKGROUND_AGENT_PANELS + 1 - open.size);
@@ -401,7 +410,7 @@ class AgentIdeWorkspaceContribution extends Disposable {
 			await Promise.all(this.setAside.filter(id => !open.has(id) && this.isKept(id)).slice(0, room)
 				.map(id => target.openEditor(this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.uriForSession(id)), { inactive: true, preserveFocus: true, pinned: true })));
 			this.rememberSetAside([]);
-			if (front) {
+			if (front && !(target.activeEditor instanceof VoltSettingsEditorInput)) {
 				await target.openEditor(front, { pinned: true });
 			}
 		}
@@ -445,7 +454,7 @@ class AgentIdeWorkspaceContribution extends Disposable {
 		const main = this.editorGroupsService.mainPart;
 		for (const group of main.getGroups(GroupsOrder.GRID_APPEARANCE)) {
 			for (const editor of [...group.getEditors(EditorsOrder.SEQUENTIAL)]) {
-				if (editor instanceof AgentEditorInput) {
+				if (editor instanceof AgentEditorInput || editor instanceof VoltSettingsEditorInput) {
 					continue;
 				}
 				const owner = this.owners.get(editor) ?? front?.sessionId;
@@ -481,7 +490,7 @@ class AgentIdeWorkspaceContribution extends Disposable {
 		const previous = scope.front;
 		for (const group of this.editorGroupsService.mainPart.getGroups(GroupsOrder.GRID_APPEARANCE)) {
 			for (const editor of [...group.getEditors(EditorsOrder.SEQUENTIAL)]) {
-				if (editor instanceof AgentEditorInput || editor instanceof TerminalEditorInput) {
+				if (editor instanceof AgentEditorInput || editor instanceof TerminalEditorInput || editor instanceof VoltSettingsEditorInput) {
 					continue;
 				}
 				const owner = this.owners.get(editor) ?? previous;

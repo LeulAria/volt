@@ -9,15 +9,16 @@ import { localize, localize2 } from '../../../../nls.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
 import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
-import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
 import { EditorExtensions, IEditorFactoryRegistry } from '../../../common/editor.js';
+import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { VoltSettingsEditor } from './voltSettingsEditor.js';
 import './voltAppearance.contribution.js';
-import { OPEN_VOLT_SETTINGS_COMMAND_ID, VOLT_SETTINGS_EDITOR_ID, VoltSettingsEditorInput, VoltSettingsEditorInputSerializer } from './voltSettingsEditorInput.js';
+import { OPEN_VOLT_SETTINGS_COMMAND_ID, openVoltSettingsEditor, VOLT_SETTINGS_EDITOR_ID, VoltSettingsEditorInput, VoltSettingsEditorInputSerializer } from './voltSettingsEditorInput.js';
 
 Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
 	EditorPaneDescriptor.create(
@@ -67,11 +68,9 @@ registerAction2(class OpenVoltSettingsAction extends Action2 {
 
 	/** `section`: the page to open on (`devices`, `usage`, …). */
 	override async run(accessor: ServicesAccessor, section?: unknown): Promise<void> {
-		const editorService = accessor.get(IEditorService);
-		const instantiationService = accessor.get(IInstantiationService);
-		const pane = await editorService.openEditor(instantiationService.createInstance(VoltSettingsEditorInput), { pinned: true });
-		if (typeof section === 'string') {
-			(pane as { showSection?(id: string): void } | undefined)?.showSection?.(section);
+		const pane = await openVoltSettingsEditor(accessor.get(IEditorService), accessor.get(IEditorGroupsService));
+		if (typeof section === 'string' && pane instanceof VoltSettingsEditor) {
+			pane.showSection(section);
 		}
 	}
 });

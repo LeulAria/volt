@@ -38,10 +38,10 @@
 	-webkit-app-region: no-drag;
 }
 
-/* The window under the overlay stays laid out, but must not show through the menu. */
-.monaco-workbench.volt-settings-open > .monaco-grid-view,
-.monaco-workbench.volt-settings-open > .volt-agent-tools-area,
-.monaco-workbench.volt-settings-open > .volt-agent-drawer-scrim {
+/* Keep the workbench laid out and hidden until the last Settings overlay closes. */
+.monaco-workbench:has(> .volt-settings-overlay) > .monaco-grid-view,
+.monaco-workbench:has(> .volt-settings-overlay) > .volt-agent-tools-area,
+.monaco-workbench:has(> .volt-settings-overlay) > .volt-agent-drawer-scrim {
 	visibility: hidden !important;
 }
 
@@ -71,15 +71,23 @@
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
-	padding: 52px 0 0;
+	padding: 12px 0 0;
 	background: var(--volt-agent-sidebar-bg, color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base, #141414) 78%, #000) 55%, transparent));
 	border-right: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
 }
 
 .volt-settings-sidebar-head {
+	display: none;
+	margin: 0 10px 8px;
+}
+
+.volt-settings-overlay .volt-settings-sidebar {
+	padding-top: 52px;
+}
+
+.volt-settings-overlay .volt-settings-sidebar-head {
 	flex: none;
 	display: flex;
-	margin: 0 10px 8px;
 }
 
 /* The agent list's footer row (agentHomePane.css styles the buttons). */
@@ -200,6 +208,9 @@
 	font-size: 13px;
 	line-height: 18px;
 	white-space: nowrap;
+}
+
+.volt-settings-overlay .volt-settings-topbar {
 	-webkit-app-region: drag;
 }
 
