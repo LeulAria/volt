@@ -120,7 +120,7 @@ export function renderVoltReleaseNotesBody(info: IVoltReleaseInfo, parts: IVoltR
 		return `<p class="volt-release-link"><span class="mark" aria-hidden="true">${SPARKLE}</span><a href="${escape(href)}">${escape(text)}</a></p>`;
 	}).join('');
 	const hasSummary = !!parts.lead || !!parts.summary || !!links;
-	return `<div class="volt-release">
+	return `<div class="volt-release volt-palette-${voltReleasePaletteIndex(info.version)}">
 		<section class="volt-hero" role="img" aria-label="Volt ${escape(info.version)}" data-glyphs="${escape(glyphs)}" data-caption="${escape(caption)}">
 			<svg aria-hidden="true"></svg>
 		</section>
@@ -137,14 +137,33 @@ export function renderVoltReleaseNotesBody(info: IVoltReleaseInfo, parts: IVoltR
 	</div>`;
 }
 
+/**
+ * Each release gets its own blueprint colour: a deep ground the white drawing reads on, and a light
+ * accent for the `+` marks and the link mark on dark themes (light themes use the ground itself).
+ */
+const VOLT_RELEASE_PALETTES: readonly { readonly blueprint: string; readonly accent: string }[] = [
+	{ blueprint: '#2434ee', accent: '#9aa2ff' }, // cobalt
+	{ blueprint: '#c8203a', accent: '#ff9aa8' }, // crimson
+	{ blueprint: '#0b7a55', accent: '#7fe0b8' }, // emerald
+	{ blueprint: '#6a2be0', accent: '#c3a6ff' }, // violet
+	{ blueprint: '#c2410c', accent: '#ffb08a' }, // ember
+	{ blueprint: '#0e7490', accent: '#7fd6ea' }, // teal
+	{ blueprint: '#b8217a', accent: '#ff9fd2' }, // magenta
+];
+
+/** Palette index for a version; consecutive patch, minor and major releases always land on different colours. */
+export function voltReleasePaletteIndex(version: string): number {
+	const [major = 0, minor = 0, patch = 0] = version.replace(/[-+].*$/, '').split('.').map(n => parseInt(n, 10) || 0);
+	return (major * 3 + minor * 5 + patch) % VOLT_RELEASE_PALETTES.length;
+}
+
 export const VOLT_RELEASE_NOTES_STYLES = `
 	.volt-release {
-		--volt-blueprint: #2434ee;
-		--volt-accent: #9aa2ff;
 		--volt-mono: var(--vscode-editor-font-family, ui-monospace, "SF Mono", Menlo, monospace);
 		padding-bottom: 48px;
 	}
-	body.vscode-light .volt-release { --volt-accent: #2434ee; }
+	${VOLT_RELEASE_PALETTES.map((p, i) => `.volt-release.volt-palette-${i} { --volt-blueprint: ${p.blueprint}; --volt-accent: ${p.accent}; }
+	body.vscode-light .volt-release.volt-palette-${i} { --volt-accent: ${p.blueprint}; }`).join('\n\t')}
 	body.vscode-high-contrast .volt-release { --volt-accent: var(--vscode-textLink-foreground); }
 
 	.volt-hero {
