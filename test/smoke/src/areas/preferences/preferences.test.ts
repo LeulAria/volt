@@ -33,6 +33,34 @@ export function setup(logger: Logger) {
 		});
 	});
 
+	describe('Volt Settings overlay', () => {
+		installAllHandlers(logger);
+
+		it('keeps the workbench hidden until all Settings overlays close', async function () {
+			const app = this.app as Application;
+			const page = app.code.driver.currentPage;
+			const workbenchGrid = page.locator('.monaco-workbench > .monaco-grid-view');
+			const overlays = page.locator('.monaco-workbench > .volt-settings-overlay');
+			const back = () => overlays.last().getByRole('button', { name: 'Close settings' }).click();
+
+			await app.workbench.quickaccess.runCommand('View: IDE Mode', { exactLabelMatch: true });
+			await app.workbench.quickaccess.runCommand('Preferences: Volt Settings', { exactLabelMatch: true });
+			await overlays.first().waitFor();
+			await workbenchGrid.waitFor({ state: 'hidden' });
+
+			await app.workbench.quickaccess.runCommand('View: Split Editor into Right Group', { exactLabelMatch: true });
+			await overlays.nth(1).waitFor();
+			await back();
+			await overlays.nth(1).waitFor({ state: 'detached' });
+			await overlays.first().waitFor();
+			await workbenchGrid.waitFor({ state: 'hidden', timeout: 3000 });
+
+			await back();
+			await overlays.first().waitFor({ state: 'detached' });
+			await workbenchGrid.waitFor({ state: 'visible' });
+		});
+	});
+
 	describe('Settings editor', () => {
 
 		// Shared before/after handling

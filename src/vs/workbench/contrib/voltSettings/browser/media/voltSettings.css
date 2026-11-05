@@ -38,10 +38,10 @@
 	-webkit-app-region: no-drag;
 }
 
-/* The window under the overlay stays laid out, but must not show through the menu. */
-.monaco-workbench.volt-settings-open > .monaco-grid-view,
-.monaco-workbench.volt-settings-open > .volt-agent-tools-area,
-.monaco-workbench.volt-settings-open > .volt-agent-drawer-scrim {
+/* Keep the workbench laid out and hidden until the last Settings overlay closes. */
+.monaco-workbench:has(> .volt-settings-overlay) > .monaco-grid-view,
+.monaco-workbench:has(> .volt-settings-overlay) > .volt-agent-tools-area,
+.monaco-workbench:has(> .volt-settings-overlay) > .volt-agent-drawer-scrim {
 	visibility: hidden !important;
 }
 

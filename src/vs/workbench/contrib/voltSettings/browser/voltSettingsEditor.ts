@@ -313,10 +313,7 @@ export class VoltSettingsEditor extends EditorPane {
 
 	protected override createEditor(parent: HTMLElement): void {
 		this.container = append(parent, $('.volt-settings'));
-		this._register(toDisposable(() => {
-			this.container.remove();
-			this.layoutService.mainContainer.classList.remove('volt-settings-open');
-		}));
+		this._register(toDisposable(() => this.container.remove()));
 
 		const sidebar = this.sidebar = append(this.container, $('.volt-settings-sidebar'));
 		const commandService = this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService));
@@ -452,7 +449,6 @@ export class VoltSettingsEditor extends EditorPane {
 		}
 		if (visible) {
 			this.container.classList.add('volt-settings-overlay');
-			this.layoutService.mainContainer.classList.add('volt-settings-open');
 			this.layoutService.mainContainer.appendChild(this.container);
 			this.syncSidebarWidth();
 			this.usage?.setVisible(this.section === 'usage');
@@ -468,7 +464,6 @@ export class VoltSettingsEditor extends EditorPane {
 		this.customizePane?.setVisible(false);
 		this.automationsPane?.setVisible(false);
 		this.container.classList.remove('volt-settings-overlay');
-		this.layoutService.mainContainer.classList.remove('volt-settings-open');
 		this.container.remove();
 	}
 
