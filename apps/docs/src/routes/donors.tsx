@@ -17,7 +17,7 @@ import {
   SectionRule,
 } from "@/components/landing/geometry";
 import { focusRing, GithubMarkIcon } from "@/components/landing/install";
-import { HEADING_INSET } from "@/components/landing/primitives";
+import { HEADING_INSET, PageBackdrop } from "@/components/landing/primitives";
 import { SiteHeader } from "@/components/landing/siteHeader";
 import { cn } from "@/lib/cn";
 import { sitePageLinks, sitePageMeta } from "@/lib/seo";
@@ -71,41 +71,49 @@ function DonorsPage() {
       <SiteHeader />
       <main className="relative">
         <Guides />
-        <section
-          className={cn(COLUMN, "relative pt-20 pb-20 md:pt-28 md:pb-28")}
-        >
-          <div className={HEADING_INSET}>
-            <Eyebrow>{DONORS_PAGE.eyebrow}</Eyebrow>
-            <h1 className="mt-6 text-balance text-[40px] font-semibold leading-[1.02] tracking-[-0.035em] text-white sm:text-[56px] md:text-[68px]">
-              {DONORS_PAGE.title}
-              <span className="block text-white/35">
-                {DONORS_PAGE.subtitle}
-              </span>
-            </h1>
-            <p className="mt-5 max-w-xl text-pretty text-[15px] leading-[1.65] text-white/50 md:text-[17px]">
-              {DONORS_PAGE.description}
-            </p>
-            <div className="mt-10 flex flex-wrap gap-2">
-              <a
-                href={SPONSOR_URL}
-                target="_blank"
-                rel="noreferrer"
-                className={PRIMARY}
-              >
-                <Heart className="size-4" />
-                Sponsor on GitHub
-              </a>
-              <a
-                href={tierUrl(ONE_TIME)}
-                target="_blank"
-                rel="noreferrer"
-                className={SECONDARY}
-              >
-                Give once
-              </a>
+        <div className="relative">
+          {/* darker than the other pages: the sunset is far brighter than their night skies */}
+          <PageBackdrop
+            src="/support-backdrop.webp"
+            position="50% 40%"
+            dim={0.8}
+          />
+          <section
+            className={cn(COLUMN, "relative pt-20 pb-20 md:pt-28 md:pb-28")}
+          >
+            <div className={HEADING_INSET}>
+              <Eyebrow>{DONORS_PAGE.eyebrow}</Eyebrow>
+              <h1 className="mt-6 text-balance text-[40px] font-semibold leading-[1.02] tracking-[-0.035em] text-white sm:text-[56px] md:text-[68px]">
+                {DONORS_PAGE.title}
+                <span className="block text-white/35">
+                  {DONORS_PAGE.subtitle}
+                </span>
+              </h1>
+              <p className="mt-5 max-w-xl text-pretty text-[15px] leading-[1.65] text-white md:text-[17px]">
+                {DONORS_PAGE.description}
+              </p>
+              <div className="mt-10 flex flex-wrap gap-2">
+                <a
+                  href={SPONSOR_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={PRIMARY}
+                >
+                  <Heart className="size-4" />
+                  Sponsor on GitHub
+                </a>
+                <a
+                  href={tierUrl(ONE_TIME)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={SECONDARY}
+                >
+                  Give once
+                </a>
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        </div>
 
         <SectionRule />
         <section

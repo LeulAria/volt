@@ -11,6 +11,7 @@ import { HeroGeometry } from "@/components/landing/heroGeometry";
 import { DownloadButtons, InstallCommand } from "@/components/landing/install";
 import { Models } from "@/components/landing/models";
 import { SiteHeader } from "@/components/landing/siteHeader";
+import { WorkspaceScale } from "@/components/landing/workspaceScale";
 import { WaveField } from "@/components/waveField";
 import { gsap, REDUCED, SplitText, useGSAP } from "@/lib/gsap";
 import { homeRouteLinks, homeRouteMeta } from "@/lib/seo";
@@ -80,6 +81,17 @@ function Home() {
         className="scroll-progress pointer-events-none fixed inset-x-0 top-0 z-50 h-px bg-[#ff8a5a]"
       />
       <section className="home-shell relative min-h-dvh md:h-[100vh] md:overflow-hidden">
+        <img
+          src="/hero-backdrop.webp"
+          alt=""
+          width={1672}
+          height={941}
+          fetchPriority="high"
+          decoding="async"
+          draggable={false}
+          className="pointer-events-none absolute inset-0 size-full select-none object-cover object-[31%_50%] md:object-center"
+        />
+        <div className="hero-pixels" aria-hidden />
         <div className="home-grain" aria-hidden />
         <WaveField />
         <div
@@ -128,7 +140,7 @@ function Home() {
                     </div>
 
                     <div data-hero="rest">
-                      <div className="mt-4 w-full text-[14px] leading-relaxed text-white/55 sm:mt-3 sm:text-sm md:text-[15px] md:leading-snug">
+                      <div className="mt-4 w-full text-[14px] leading-relaxed text-white sm:mt-3 sm:text-sm md:text-[15px] md:leading-snug">
                         <p className="max-w-xl text-pretty">
                           Workspace, editor, Git, and terminal, unified in one
                           lightning-fast surface.
@@ -185,6 +197,7 @@ function Home() {
         <AgentFlow />
         <AgentShowcase />
         <AgentIde />
+        <WorkspaceScale />
         <Models />
         <SectionRule className="-mt-px" />
         <ClosingCta />
