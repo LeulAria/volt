@@ -35,6 +35,7 @@ export function PrimaryDownload({
   arch,
   onArch,
   toDownloadPage = false,
+  overPhoto = false,
   className,
 }: {
   state: ReleasesState;
@@ -45,6 +46,8 @@ export function PrimaryDownload({
   onArch?: (arch: Arch) => void;
   /** The button opens /download for this platform instead of downloading (the landing page's). */
   toDownloadPage?: boolean;
+  /** On a photo backdrop: everything under the button in white, so it stays readable. */
+  overPhoto?: boolean;
   className?: string;
 }) {
   const platform = platformOf(os);
@@ -104,7 +107,7 @@ export function PrimaryDownload({
     );
     meta = (
       <>
-        <span className="text-white/75">
+        <span className={overPhoto ? "text-white" : "text-white/75"}>
           {info.app} {asset.version}
         </span>
         <Dot />
@@ -159,12 +162,15 @@ export function PrimaryDownload({
       <div className="flex flex-wrap items-center gap-3">{button}</div>
       <p
         aria-live="polite"
-        className="mt-4 flex min-h-5 flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-white/45"
+        className={cn(
+          "mt-4 flex min-h-5 flex-wrap items-center gap-x-2 gap-y-1 text-[13px]",
+          overPhoto ? "text-white" : "text-white/45",
+        )}
       >
         {meta}
       </p>
       {onArch && os === "darwin" ? (
-        <MacArchSwitch arch={arch} onArch={onArch} />
+        <MacArchSwitch arch={arch} onArch={onArch} overPhoto={overPhoto} />
       ) : null}
       {asset && !toDownloadPage ? (
         <DownloadDialog
@@ -184,12 +190,19 @@ function Dot() {
 function MacArchSwitch({
   arch,
   onArch,
+  overPhoto,
 }: {
   arch: Arch;
   onArch: (arch: Arch) => void;
+  overPhoto: boolean;
 }) {
   return (
-    <div className="mt-6 flex flex-wrap items-center gap-3 text-[13px] text-white/45">
+    <div
+      className={cn(
+        "mt-6 flex flex-wrap items-center gap-3 text-[13px]",
+        overPhoto ? "text-white" : "text-white/45",
+      )}
+    >
       <fieldset className="inline-flex rounded-[6px] border border-white/15 p-0.5">
         <legend className="sr-only">Mac processor</legend>
         {(["arm64", "x64"] as const).map((a) => (
@@ -199,7 +212,9 @@ function MacArchSwitch({
               "cursor-pointer rounded-[4px] px-3 py-1.5 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-white/35",
               arch === a
                 ? "bg-white/[0.12] text-white"
-                : "text-white/55 hover:text-white",
+                : overPhoto
+                  ? "text-white"
+                  : "text-white/55 hover:text-white",
             )}
           >
             <input

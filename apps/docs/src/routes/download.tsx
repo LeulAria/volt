@@ -14,7 +14,8 @@ import {
   SectionRule,
 } from "@/components/landing/geometry";
 import { focusRing, InstallCommand } from "@/components/landing/install";
-import { HEADING_INSET } from "@/components/landing/primitives";
+import { PagePlace, PLACES } from "@/components/landing/photoPlace";
+import { HEADING_INSET, PageBackdrop } from "@/components/landing/primitives";
 import { SiteHeader } from "@/components/landing/siteHeader";
 import { cn } from "@/lib/cn";
 import {
@@ -85,38 +86,44 @@ function DownloadPage() {
       <SiteHeader />
       <main className="relative">
         <Guides />
-        <section
-          className={cn(COLUMN, "relative pt-20 pb-20 md:pt-28 md:pb-28")}
-        >
-          <div className={HEADING_INSET}>
-            <Eyebrow>Download</Eyebrow>
-            <h1 className="mt-6 text-balance text-[40px] font-semibold leading-[1.02] tracking-[-0.035em] text-white sm:text-[56px] md:text-[68px]">
-              Get Volt.
-            </h1>
-            <p className="mt-5 max-w-xl text-pretty text-[15px] leading-[1.65] text-white/50 md:text-[17px]">
-              {unsupported
-                ? "Volt is a desktop app for macOS, Windows, and Linux. Open this page on your computer, or grab a build below."
-                : `Here is the build for ${platformLabel}; every other platform and channel is listed below.`}
-            </p>
-            {downloads ? (
-              <p className="mt-3 inline-flex items-center gap-2 text-[13px] text-white/40">
-                <span
-                  className="size-1.5 rounded-full bg-[#3ecf8e]"
-                  aria-hidden
-                />
-                {downloads}
+        <div className="relative">
+          <PageBackdrop src="/download-backdrop.webp" position="50% 40%" />
+          <section
+            // pb-32 on phones: room under the download details for the place pin
+            className={cn(COLUMN, "relative pt-20 pb-32 md:pt-28 md:pb-28")}
+          >
+            <div className={HEADING_INSET}>
+              <Eyebrow>Download</Eyebrow>
+              <h1 className="mt-6 text-balance text-[40px] font-semibold leading-[1.02] tracking-[-0.035em] text-white sm:text-[56px] md:text-[68px]">
+                Get Volt.
+              </h1>
+              <p className="mt-5 max-w-xl text-pretty text-[15px] leading-[1.65] text-white md:text-[17px]">
+                {unsupported
+                  ? "Volt is a desktop app for macOS, Windows, and Linux. Open this page on your computer, or grab a build below."
+                  : `Here is the build for ${platformLabel}; every other platform and channel is listed below.`}
               </p>
-            ) : null}
-            <PrimaryDownload
-              state={state}
-              channel={channel}
-              os={os}
-              arch={arch}
-              onArch={setArchChoice}
-              className="mt-10"
-            />
-          </div>
-        </section>
+              {downloads ? (
+                <p className="mt-3 inline-flex items-center gap-2 text-[13px] text-white">
+                  <span
+                    className="size-1.5 rounded-full bg-[#3ecf8e]"
+                    aria-hidden
+                  />
+                  {downloads}
+                </p>
+              ) : null}
+              <PrimaryDownload
+                state={state}
+                channel={channel}
+                os={os}
+                arch={arch}
+                onArch={setArchChoice}
+                overPhoto
+                className="mt-10"
+              />
+            </div>
+          </section>
+          <PagePlace place={PLACES.gondar} />
+        </div>
 
         <SectionRule />
         <section

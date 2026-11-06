@@ -30,6 +30,19 @@ html:has(body[data-scroll-locked]) {
   color: #fff;
 }
 
+/* Photo backdrops (the home hero, the tops of Changelog, Download and Support): the photo under 40%
+   black (Support: 60%, through PageBackdrop's dim), seen through a grid of square pixels. */
+.hero-pixels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-color: rgba(0, 0, 0, 0.4);
+  background-image:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.5) 1px, transparent 1px),
+    linear-gradient(rgba(0, 0, 0, 0.5) 1px, transparent 1px);
+  background-size: 6px 6px;
+}
+
 .home-grain {
   position: absolute;
   inset: -8px;
@@ -169,6 +182,22 @@ html:has(body[data-scroll-locked]) {
   }
 }
 
+/* Photo place pins: a ring spreading slowly from under the pin's tip. */
+.place-pulse {
+  animation: place-pulse 2.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+@keyframes place-pulse {
+  from {
+    transform: scale(0.5);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
 /* Feature index: the active row's rule fills for exactly one turn. */
 .demo-progress {
   transform-origin: left center;
@@ -195,7 +224,8 @@ html:has(body[data-scroll-locked]) {
   .cap-spin,
   .cap-ping,
   .cap-pulse,
-  .demo-progress {
+  .demo-progress,
+  .place-pulse {
     animation: none;
   }
 }
