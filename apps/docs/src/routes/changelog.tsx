@@ -11,6 +11,7 @@ import {
   SectionRule,
 } from "@/components/landing/geometry";
 import { focusRing } from "@/components/landing/install";
+import { PagePlace, PLACES } from "@/components/landing/photoPlace";
 import { HEADING_INSET, PageBackdrop } from "@/components/landing/primitives";
 import { SiteHeader } from "@/components/landing/siteHeader";
 import {
@@ -49,7 +50,8 @@ function ChangelogPage() {
         <div className="relative">
           <PageBackdrop src="/changelog-backdrop.webp" position="50% 30%" />
           <section
-            className={cn(COLUMN, "relative pt-20 pb-16 md:pt-28 md:pb-20")}
+            // pb-32 on phones: room under the buttons for the place pin
+            className={cn(COLUMN, "relative pt-20 pb-32 md:pt-28 md:pb-20")}
           >
             <div className={HEADING_INSET}>
               <Eyebrow>Changelog</Eyebrow>
@@ -79,6 +81,7 @@ function ChangelogPage() {
               </div>
             </div>
           </section>
+          <PagePlace place={PLACES.lalibela} />
         </div>
         <div className="relative">
           {/* From lg, the versions run down the left of the entries. Above them, so the rail takes

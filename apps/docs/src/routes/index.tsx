@@ -10,6 +10,7 @@ import { Guides, SectionRule } from "@/components/landing/geometry";
 import { HeroGeometry } from "@/components/landing/heroGeometry";
 import { DownloadButtons, InstallCommand } from "@/components/landing/install";
 import { Models } from "@/components/landing/models";
+import { PagePlace, PhotoPlace, PLACES } from "@/components/landing/photoPlace";
 import { SiteHeader } from "@/components/landing/siteHeader";
 import { WorkspaceScale } from "@/components/landing/workspaceScale";
 import { WaveField } from "@/components/waveField";
@@ -117,7 +118,7 @@ function Home() {
               <div className="mx-auto w-full max-w-[1200px]">
                 <div className="flex flex-col">
                   <div className="min-w-0">
-                    <div data-hero="title">
+                    <div data-hero="title" className="relative">
                       <h1 className="font-sans font-semibold tracking-tight">
                         <div className="h-[40px] min-h-[36px]">
                           <DynamicText />
@@ -137,6 +138,11 @@ function Home() {
                           </span>
                         </div>
                       </h1>
+                      <PhotoPlace
+                        place={PLACES.axum}
+                        compact
+                        className="absolute top-0 right-0 md:hidden"
+                      />
                     </div>
 
                     <div data-hero="rest">
@@ -190,6 +196,12 @@ function Home() {
             </div>
           </div>
         </div>
+        {/* from md; from lg lifted over the composer row. Phones get it beside the wordmark. */}
+        <PagePlace
+          place={PLACES.axum}
+          intro
+          className="max-md:hidden lg:bottom-[120px]"
+        />
       </section>
 
       <main className="relative">

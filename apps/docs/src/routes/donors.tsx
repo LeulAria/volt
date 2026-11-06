@@ -17,6 +17,7 @@ import {
   SectionRule,
 } from "@/components/landing/geometry";
 import { focusRing, GithubMarkIcon } from "@/components/landing/install";
+import { PagePlace, PLACES } from "@/components/landing/photoPlace";
 import { HEADING_INSET, PageBackdrop } from "@/components/landing/primitives";
 import { SiteHeader } from "@/components/landing/siteHeader";
 import { cn } from "@/lib/cn";
@@ -76,10 +77,11 @@ function DonorsPage() {
           <PageBackdrop
             src="/support-backdrop.webp"
             position="50% 40%"
-            dim={0.8}
+            dim={0.6}
           />
           <section
-            className={cn(COLUMN, "relative pt-20 pb-20 md:pt-28 md:pb-28")}
+            // pb-32 on phones: room under the buttons for the place pin
+            className={cn(COLUMN, "relative pt-20 pb-32 md:pt-28 md:pb-28")}
           >
             <div className={HEADING_INSET}>
               <Eyebrow>{DONORS_PAGE.eyebrow}</Eyebrow>
@@ -113,6 +115,7 @@ function DonorsPage() {
               </div>
             </div>
           </section>
+          <PagePlace place={PLACES.harar} />
         </div>
 
         <SectionRule />

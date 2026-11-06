@@ -14,6 +14,7 @@ import {
   SectionRule,
 } from "@/components/landing/geometry";
 import { focusRing, InstallCommand } from "@/components/landing/install";
+import { PagePlace, PLACES } from "@/components/landing/photoPlace";
 import { HEADING_INSET, PageBackdrop } from "@/components/landing/primitives";
 import { SiteHeader } from "@/components/landing/siteHeader";
 import { cn } from "@/lib/cn";
@@ -88,7 +89,8 @@ function DownloadPage() {
         <div className="relative">
           <PageBackdrop src="/download-backdrop.webp" position="50% 40%" />
           <section
-            className={cn(COLUMN, "relative pt-20 pb-20 md:pt-28 md:pb-28")}
+            // pb-32 on phones: room under the download details for the place pin
+            className={cn(COLUMN, "relative pt-20 pb-32 md:pt-28 md:pb-28")}
           >
             <div className={HEADING_INSET}>
               <Eyebrow>Download</Eyebrow>
@@ -120,6 +122,7 @@ function DownloadPage() {
               />
             </div>
           </section>
+          <PagePlace place={PLACES.gondar} />
         </div>
 
         <SectionRule />
