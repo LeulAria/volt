@@ -117,7 +117,6 @@ export class FileMatchImpl extends Disposable implements ISearchTreeFileMatch {
 	createMatches(): void {
 		const model = this.modelService.getModel(this._resource);
 		if (model) {
-			// todo: handle better when ai contributed results has model, currently, createMatches does not work for this
 			this.bindModel(model);
 			this.updateMatchesForModel();
 		} else {
@@ -126,7 +125,7 @@ export class FileMatchImpl extends Disposable implements ISearchTreeFileMatch {
 				this.rawMatch.results
 					.filter(resultIsMatch)
 					.forEach(rawMatch => {
-						textSearchResultToMatches(rawMatch, this, false)
+						textSearchResultToMatches(rawMatch, this)
 							.forEach(m => this.add(m));
 					});
 			}
@@ -171,7 +170,7 @@ export class FileMatchImpl extends Disposable implements ISearchTreeFileMatch {
 		const matches = this._model
 			.findMatches(this._query.pattern, this._model.getFullModelRange(), !!this._query.isRegExp, !!this._query.isCaseSensitive, wordSeparators, false, this._maxResults ?? DEFAULT_MAX_SEARCH_RESULTS);
 
-		this.updateMatches(matches, true, this._model, false);
+		this.updateMatches(matches, true, this._model);
 	}
 
 
@@ -191,15 +190,15 @@ export class FileMatchImpl extends Disposable implements ISearchTreeFileMatch {
 
 		const wordSeparators = this._query.isWordMatch && this._query.wordSeparators ? this._query.wordSeparators : null;
 		const matches = this._model.findMatches(this._query.pattern, range, !!this._query.isRegExp, !!this._query.isCaseSensitive, wordSeparators, false, this._maxResults ?? DEFAULT_MAX_SEARCH_RESULTS);
-		this.updateMatches(matches, modelChange, this._model, false);
+		this.updateMatches(matches, modelChange, this._model);
 	}
 
 
 
-	private updateMatches(matches: FindMatch[], modelChange: boolean, model: ITextModel, isAiContributed: boolean): void {
+	private updateMatches(matches: FindMatch[], modelChange: boolean, model: ITextModel): void {
 		const textSearchResults = editorMatchesToTextSearchResults(matches, model, this._previewOptions);
 		textSearchResults.forEach(textSearchResult => {
-			textSearchResultToMatches(textSearchResult, this, isAiContributed).forEach(match => {
+			textSearchResultToMatches(textSearchResult, this).forEach(match => {
 				if (!this._removedTextMatches.has(match.id())) {
 					this.add(match);
 					if (this.isMatchSelected(match)) {

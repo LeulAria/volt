@@ -538,7 +538,6 @@ class CodeActionAdapter {
 					edit: toConvert.edit && typeConvert.WorkspaceEdit.from(toConvert.edit, undefined),
 					kind: toConvert.kind && toConvert.kind.value,
 					isPreferred: toConvert.isPreferred,
-					isAI: isProposedApiEnabled(this._extension, 'codeActionAI') ? toConvert.isAI : false,
 					ranges: isProposedApiEnabled(this._extension, 'codeActionRanges') ? coalesce(range.map(typeConvert.Range.from)) : undefined,
 					disabled: toConvert.disabled?.reason
 				});

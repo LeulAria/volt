@@ -80,19 +80,8 @@ import { NodePtyHostStarter } from '../../platform/terminal/node/nodePtyHostStar
 import { CSSDevelopmentService, ICSSDevelopmentService } from '../../platform/cssDev/node/cssDevService.js';
 import { AllowedExtensionsService } from '../../platform/extensionManagement/common/allowedExtensionsService.js';
 import { TelemetryLogAppender } from '../../platform/telemetry/common/telemetryLogAppender.js';
-import { INativeMcpDiscoveryHelperService, NativeMcpDiscoveryHelperChannelName } from '../../platform/mcp/common/nativeMcpDiscoveryHelper.js';
-import { NativeMcpDiscoveryHelperChannel } from '../../platform/mcp/node/nativeMcpDiscoveryHelperChannel.js';
-import { NativeMcpDiscoveryHelperService } from '../../platform/mcp/node/nativeMcpDiscoveryHelperService.js';
 import { IExtensionGalleryManifestService } from '../../platform/extensionManagement/common/extensionGalleryManifest.js';
 import { ExtensionGalleryManifestIPCService } from '../../platform/extensionManagement/common/extensionGalleryManifestServiceIpc.js';
-import { IAllowedMcpServersService, IMcpGalleryService, IMcpManagementService } from '../../platform/mcp/common/mcpManagement.js';
-import { McpManagementService } from '../../platform/mcp/node/mcpManagementService.js';
-import { McpGalleryService } from '../../platform/mcp/common/mcpGalleryService.js';
-import { IMcpResourceScannerService, McpResourceScannerService } from '../../platform/mcp/common/mcpResourceScannerService.js';
-import { McpManagementChannel } from '../../platform/mcp/common/mcpManagementIpc.js';
-import { AllowedMcpServersService } from '../../platform/mcp/common/allowedMcpServersService.js';
-import { IMcpGalleryManifestService } from '../../platform/mcp/common/mcpGalleryManifest.js';
-import { McpGalleryManifestIPCService } from '../../platform/mcp/common/mcpGalleryManifestServiceIpc.js';
 
 const eventPrefix = 'monacoworkbench';
 
@@ -197,7 +186,6 @@ export async function setupServerServices(connectionToken: ServerConnectionToken
 	}
 
 	services.set(IExtensionGalleryManifestService, new ExtensionGalleryManifestIPCService(socketServer, productService));
-	services.set(IMcpGalleryManifestService, new McpGalleryManifestIPCService(socketServer));
 	services.set(IExtensionGalleryService, new SyncDescriptor(ExtensionGalleryServiceWithNoStorageService));
 
 	const downloadChannel = socketServer.getChannel('download', router);
@@ -208,7 +196,6 @@ export async function setupServerServices(connectionToken: ServerConnectionToken
 	services.set(IExtensionSignatureVerificationService, new SyncDescriptor(ExtensionSignatureVerificationService));
 	services.set(IAllowedExtensionsService, new SyncDescriptor(AllowedExtensionsService));
 	services.set(INativeServerExtensionManagementService, new SyncDescriptor(ExtensionManagementService));
-	services.set(INativeMcpDiscoveryHelperService, new SyncDescriptor(NativeMcpDiscoveryHelperService));
 
 	const instantiationService: IInstantiationService = new InstantiationService(services);
 	services.set(ILanguagePackService, instantiationService.createInstance(NativeLanguagePackService));
@@ -224,13 +211,8 @@ export async function setupServerServices(connectionToken: ServerConnectionToken
 	const ptyHostService = instantiationService.createInstance(PtyHostService, ptyHostStarter);
 	services.set(IPtyService, ptyHostService);
 
-	services.set(IAllowedMcpServersService, new SyncDescriptor(AllowedMcpServersService));
-	services.set(IMcpResourceScannerService, new SyncDescriptor(McpResourceScannerService));
-	services.set(IMcpGalleryService, new SyncDescriptor(McpGalleryService));
-	services.set(IMcpManagementService, new SyncDescriptor(McpManagementService));
 
 	instantiationService.invokeFunction(accessor => {
-		const mcpManagementService = accessor.get(IMcpManagementService);
 		const extensionManagementService = accessor.get(INativeServerExtensionManagementService);
 		const extensionsScannerService = accessor.get(IExtensionsScannerService);
 		const extensionGalleryService = accessor.get(IExtensionGalleryService);
@@ -246,7 +228,6 @@ export async function setupServerServices(connectionToken: ServerConnectionToken
 		const remoteExtensionsScanner = new RemoteExtensionsScannerService(instantiationService.createInstance(ExtensionManagementCLI, logService), environmentService, userDataProfilesService, extensionsScannerService, logService, extensionGalleryService, languagePackService, extensionManagementService);
 		socketServer.registerChannel(RemoteExtensionsScannerChannelName, new RemoteExtensionsScannerChannel(remoteExtensionsScanner, (ctx: RemoteAgentConnectionContext) => getUriTransformer(ctx.remoteAuthority)));
 
-		socketServer.registerChannel(NativeMcpDiscoveryHelperChannelName, instantiationService.createInstance(NativeMcpDiscoveryHelperChannel, (ctx: RemoteAgentConnectionContext) => getUriTransformer(ctx.remoteAuthority)));
 
 		const remoteFileSystemChannel = disposables.add(new RemoteAgentFileSystemProviderChannel(logService, environmentService, configurationService));
 		socketServer.registerChannel(REMOTE_FILE_SYSTEM_CHANNEL_NAME, remoteFileSystemChannel);
@@ -256,7 +237,6 @@ export async function setupServerServices(connectionToken: ServerConnectionToken
 		const channel = new ExtensionManagementChannel(extensionManagementService, (ctx: RemoteAgentConnectionContext) => getUriTransformer(ctx.remoteAuthority));
 		socketServer.registerChannel('extensions', channel);
 
-		socketServer.registerChannel('mcpManagement', new McpManagementChannel(mcpManagementService, (ctx: RemoteAgentConnectionContext) => getUriTransformer(ctx.remoteAuthority)));
 
 		// clean up extensions folder
 		remoteExtensionsScanner.whenExtensionsReady().then(() => extensionManagementService.cleanUp());

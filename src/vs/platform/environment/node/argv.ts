@@ -14,8 +14,7 @@ import { NativeParsedArgs } from '../common/argv.js';
 const helpCategories = {
 	o: localize('optionsUpperCase', "Options"),
 	e: localize('extensionsManagement', "Extensions Management"),
-	t: localize('troubleshooting', "Troubleshooting"),
-	m: localize('mcp', "Model Context Protocol")
+	t: localize('troubleshooting', "Troubleshooting")
 };
 
 export interface Option<OptionType> {
@@ -48,20 +47,6 @@ export type OptionDescriptions<T> = {
 export const NATIVE_CLI_COMMANDS = ['tunnel', 'serve-web'] as const;
 
 export const OPTIONS: OptionDescriptions<Required<NativeParsedArgs>> = {
-	'chat': {
-		type: 'subcommand',
-		description: 'Pass in a prompt to run in a chat session in the current working directory.',
-		options: {
-			'_': { type: 'string[]', description: localize('prompt', "The prompt to use as chat.") },
-			'mode': { type: 'string', cat: 'o', alias: 'm', args: 'mode', description: localize('chatMode', "The mode to use for the chat session. Available options: 'ask', 'edit', 'agent', or the identifier of a custom mode. Defaults to 'agent'.") },
-			'add-file': { type: 'string[]', cat: 'o', alias: 'a', args: 'path', description: localize('addFile', "Add files as context to the chat session.") },
-			'maximize': { type: 'boolean', cat: 'o', description: localize('chatMaximize', "Maximize the chat session view.") },
-			'reuse-window': { type: 'boolean', cat: 'o', alias: 'r', description: localize('reuseWindowForChat', "Force to use the last active window for the chat session.") },
-			'new-window': { type: 'boolean', cat: 'o', alias: 'n', description: localize('newWindowForChat', "Force to open an empty window for the chat session.") },
-			'profile': { type: 'string', 'cat': 'o', args: 'profileName', description: localize('profileName', "Opens the provided folder or workspace with the given profile and associates the profile with the workspace. If the profile does not exist, a new empty one is created.") },
-			'help': { type: 'boolean', alias: 'h', description: localize('help', "Print usage.") }
-		}
-	},
 	'serve-web': {
 		type: 'subcommand',
 		description: 'Run a server that displays the editor UI in browsers.',
@@ -118,7 +103,6 @@ export const OPTIONS: OptionDescriptions<Required<NativeParsedArgs>> = {
 	'update-extensions': { type: 'boolean', cat: 'e', description: localize('updateExtensions', "Update the installed extensions.") },
 	'enable-proposed-api': { type: 'string[]', allowEmptyValue: true, cat: 'e', args: 'ext-id', description: localize('experimentalApis', "Enables proposed API features for extensions. Can receive one or more extension IDs to enable individually.") },
 
-	'add-mcp': { type: 'string[]', cat: 'm', args: 'json', description: localize('addMcp', "Adds a Model Context Protocol server definition to the user profile. Accepts JSON input in the form '{\"name\":\"server-name\",\"command\":...}'") },
 
 	'version': { type: 'boolean', cat: 't', alias: 'v', description: localize('version', "Print version.") },
 	'verbose': { type: 'boolean', cat: 't', global: true, description: localize('verbose', "Print verbose output (implies --wait).") },
@@ -443,17 +427,16 @@ function wrapText(text: string, columns: number): string[] {
 	return lines;
 }
 
-export function buildHelpMessage(productName: string, executableName: string, version: string, options: OptionDescriptions<any>, capabilities?: { noPipe?: boolean; noInputFiles?: boolean; isChat?: boolean }): string {
+export function buildHelpMessage(productName: string, executableName: string, version: string, options: OptionDescriptions<any>, capabilities?: { noPipe?: boolean; noInputFiles?: boolean }): string {
 	const columns = (process.stdout).isTTY && (process.stdout).columns || 80;
-	const inputFiles = capabilities?.noInputFiles ? '' : capabilities?.isChat ? ` [${localize('cliPrompt', 'prompt')}]` : ` [${localize('paths', 'paths')}...]`;
-	const subcommand = capabilities?.isChat ? ' chat' : '';
+	const inputFiles = capabilities?.noInputFiles ? '' : ` [${localize('paths', 'paths')}...]`;
 
 	const help = [`${productName} ${version}`];
 	help.push('');
-	help.push(`${localize('usage', "Usage")}: ${executableName}${subcommand} [${localize('options', "options")}]${inputFiles}`);
+	help.push(`${localize('usage', "Usage")}: ${executableName} [${localize('options', "options")}]${inputFiles}`);
 	help.push('');
 	if (capabilities?.noPipe !== true) {
-		help.push(buildStdinMessage(executableName, capabilities?.isChat));
+		help.push(buildStdinMessage(executableName));
 		help.push('');
 	}
 	const optionsByCategory: { [P in keyof typeof helpCategories]?: OptionDescriptions<any> } = {};
@@ -493,20 +476,12 @@ export function buildHelpMessage(productName: string, executableName: string, ve
 	return help.join('\n');
 }
 
-export function buildStdinMessage(executableName: string, isChat?: boolean): string {
+export function buildStdinMessage(executableName: string): string {
 	let example: string;
 	if (isWindows) {
-		if (isChat) {
-			example = `echo Hello World | ${executableName} chat <prompt> -`;
-		} else {
-			example = `echo Hello World | ${executableName} -`;
-		}
+		example = `echo Hello World | ${executableName} -`;
 	} else {
-		if (isChat) {
-			example = `ps aux | grep code | ${executableName} chat <prompt> -`;
-		} else {
-			example = `ps aux | grep code | ${executableName} -`;
-		}
+		example = `ps aux | grep code | ${executableName} -`;
 	}
 
 	return localize('stdinUsage', "To read from stdin, append '-' (e.g. '{0}')", example);

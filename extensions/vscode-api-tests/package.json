@@ -7,16 +7,12 @@
   "enabledApiProposals": [
     "activeComment",
     "authSession",
-    "chatParticipantPrivate",
-    "chatProvider",
     "contribStatusBarItems",
     "contribViewsRemote",
     "customEditorMove",
-    "defaultChatParticipant",
     "diffCommand",
     "documentFiltersExclusive",
     "editorInsets",
-    "embeddings",
     "extensionRuntime",
     "extensionsAny",
     "externalUriOpener",
@@ -24,7 +20,6 @@
     "findFiles2",
     "findTextInFiles",
     "fsChunks",
-    "interactive",
     "languageStatusText",
     "nativeWindowHandle",
     "notebookDeprecated",
@@ -61,46 +56,6 @@
   },
   "icon": "media/icon.png",
   "contributes": {
-    "languageModelChatProviders": [
-      {
-        "vendor": "test-lm-vendor",
-        "displayName": "Test LM Vendor"
-      }
-    ],
-    "chatParticipants": [
-      {
-        "id": "api-test.participant",
-        "name": "participant",
-        "description": "test",
-        "isDefault": true,
-        "commands": [
-          {
-            "name": "hello",
-            "description": "Hello"
-          }
-        ],
-        "modes": [
-          "agent", "ask", "edit"
-        ]
-      },
-      {
-        "id": "api-test.participant2",
-        "name": "participant2",
-        "description": "test",
-        "commands": []
-      }
-    ],
-    "languageModelTools": [
-			{
-				"name": "requires_confirmation_tool",
-				"toolReferenceName": "requires_confirmation_tool",
-				"displayName": "Requires Confirmation Tool",
-				"modelDescription": "A noop tool to trigger confirmation.",
-				"canBeReferencedInPrompt": true,
-				"icon": "$(files)",
-				"inputSchema": {}
-			}
-    ],
     "configuration": {
       "type": "object",
       "title": "Test Config",

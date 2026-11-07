@@ -118,7 +118,7 @@ import { IEditorOpenContext } from '../../../../common/editor.js';
 import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { ISearchService } from '../../../../services/search/common/search.js';
-import { searchFilesAndFolders } from '../../../search/browser/searchChatContext.js';
+import { searchFilesAndFolders } from '../../../search/browser/searchFilesAndFolders.js';
 import { AGENT_EDITOR_LINE_NUMBERS_SETTING, AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from './agentEditorInput.js';
 import { OPEN_CONNECTED_AGENTS_COMMAND_ID } from '../orchestration/agentExternalCaller.js';
 import { createAgentTitleActionViewItem } from './agentTitleActions.js';

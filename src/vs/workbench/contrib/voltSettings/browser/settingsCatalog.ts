@@ -6,7 +6,7 @@
 import { localize } from '../../../../nls.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { ISetting, ISettingsGroup } from '../../../services/preferences/common/preferences.js';
-import { getCommonlyUsedData, isHiddenCopilotSetting, ITOCEntry, tocData } from '../../preferences/browser/settingsLayout.js';
+import { getCommonlyUsedData, ITOCEntry, tocData } from '../../preferences/browser/settingsLayout.js';
 import { resolveSettingsTree } from '../../preferences/browser/settingsTree.js';
 import { settingKeyToDisplayFormat } from '../../preferences/browser/settingsTreeModels.js';
 
@@ -61,7 +61,7 @@ export function buildSettingsCatalog(groups: readonly ISettingsGroup[], logServi
 	const core = all.filter(group => !group.extensionInfo);
 	const categories: ISettingsCatalogCategory[] = [];
 
-	const commonly = resolveSettingsTree(getCommonlyUsedData(undefined), core, logService).tree;
+	const commonly = resolveSettingsTree(getCommonlyUsedData(), core, logService).tree;
 	categories.push(category(`cat:${commonly.id}`, commonly.label, 'settings', tocNodes(commonly, [])));
 
 	const { tree, leftoverSettings } = resolveSettingsTree(tocData, core, logService);
@@ -79,7 +79,7 @@ export function buildSettingsCatalog(groups: readonly ISettingsGroup[], logServi
 	const extensions = new Map<string, { label: string; groups: SettingsCatalogNode[]; own: SettingsCatalogNode[] }>();
 	for (const group of all) {
 		const info = group.extensionInfo;
-		if (!info || isHiddenCopilotSetting('', info.id)) {
+		if (!info) {
 			continue;
 		}
 		let ext = extensions.get(info.id);
@@ -87,7 +87,7 @@ export function buildSettingsCatalog(groups: readonly ISettingsGroup[], logServi
 			ext = { label: info.displayName || group.title || info.id, groups: [], own: [] };
 			extensions.set(info.id, ext);
 		}
-		const settings = group.sections.flatMap(section => section.settings).filter(setting => !setting.overrides?.length && !isHiddenCopilotSetting(setting.key, info.id));
+		const settings = group.sections.flatMap(section => section.settings).filter(setting => !setting.overrides?.length);
 		if (!settings.length) {
 			continue;
 		}

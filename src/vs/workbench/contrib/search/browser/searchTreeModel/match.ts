@@ -9,11 +9,11 @@ import { ISearchRange, ITextSearchMatch, OneLineRange } from '../../../../servic
 import { ISearchTreeMatch, ISearchTreeFileMatch, MATCH_PREFIX } from './searchTreeCommon.js';
 import { Range } from '../../../../../editor/common/core/range.js';
 
-export function textSearchResultToMatches(rawMatch: ITextSearchMatch, fileMatch: ISearchTreeFileMatch, isAiContributed: boolean): ISearchTreeMatch[] {
+export function textSearchResultToMatches(rawMatch: ITextSearchMatch, fileMatch: ISearchTreeFileMatch): ISearchTreeMatch[] {
 	const previewLines = rawMatch.previewText.split('\n');
 	return rawMatch.rangeLocations.map((rangeLocation) => {
 		const previewRange: ISearchRange = rangeLocation.preview;
-		return new MatchImpl(fileMatch, previewLines, previewRange, rangeLocation.source, isAiContributed);
+		return new MatchImpl(fileMatch, previewLines, previewRange, rangeLocation.source);
 	});
 }
 

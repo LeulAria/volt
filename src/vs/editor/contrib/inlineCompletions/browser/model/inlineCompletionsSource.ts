@@ -12,14 +12,12 @@ import { Disposable, DisposableStore, IDisposable, MutableDisposable, toDisposab
 import { derived, IObservable, IObservableWithChange, ITransaction, observableValue, recordChangesLazy, transaction } from '../../../../../base/common/observable.js';
 // eslint-disable-next-line local/code-no-deep-import-of-internal
 import { observableReducerSettable } from '../../../../../base/common/observableInternal/experimental/reducer.js';
-import { isDefined, isObject } from '../../../../../base/common/types.js';
+import { isDefined } from '../../../../../base/common/types.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
-import { DataChannelForwardingTelemetryService, forwardToChannelIf, isCopilotLikeExtension } from '../../../../../platform/dataChannel/browser/forwardingTelemetryService.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { observableConfigValue } from '../../../../../platform/observable/common/platformObservableUtils.js';
-import product from '../../../../../platform/product/common/product.js';
 import { StringEdit } from '../../../../common/core/edits/stringEdit.js';
 import { Position } from '../../../../common/core/position.js';
 import { InlineCompletionEndOfLifeReasonKind, InlineCompletionTriggerKind, InlineCompletionsProvider } from '../../../../common/languages.js';
@@ -29,7 +27,6 @@ import { offsetEditFromContentChanges } from '../../../../common/model/textModel
 import { IFeatureDebounceInformation } from '../../../../common/services/languageFeatureDebounce.js';
 import { IModelContentChangedEvent } from '../../../../common/textModelEvents.js';
 import { formatRecordableLogEntry, IRecordableEditorLogEntry, IRecordableLogEntry, StructuredLogger } from '../structuredLogger.js';
-import { InlineCompletionEndOfLifeEvent, sendInlineCompletionsEndOfLifeTelemetry } from '../telemetry.js';
 import { wait } from '../utils.js';
 import { InlineSuggestionIdentity, InlineSuggestionItem } from './inlineSuggestionItem.js';
 import { InlineCompletionContextWithoutUuid, InlineSuggestRequestInfo, provideInlineCompletions, runWhenCancelled } from './provideInlineCompletions.js';
@@ -40,7 +37,6 @@ export class InlineCompletionsSource extends Disposable {
 	private readonly _updateOperation = this._register(new MutableDisposable<UpdateOperation>());
 
 	private readonly _loggingEnabled;
-	private readonly _sendRequestData;
 
 	private readonly _structuredFetchLogger;
 
@@ -75,7 +71,6 @@ export class InlineCompletionsSource extends Disposable {
 	public readonly inlineCompletions = this._state.map(this, v => v.inlineCompletions);
 	public readonly suggestWidgetInlineCompletions = this._state.map(this, v => v.suggestWidgetInlineCompletions);
 
-	private _completionsEnabled: Record<string, boolean> | undefined = undefined;
 
 	constructor(
 		private readonly _textModel: ITextModel,
@@ -90,7 +85,6 @@ export class InlineCompletionsSource extends Disposable {
 	) {
 		super();
 		this._loggingEnabled = observableConfigValue('editor.inlineSuggest.logFetch', false, this._configurationService).recomputeInitiallyAndOnChange(this._store);
-		this._sendRequestData = observableConfigValue('editor.inlineSuggest.emptyResponseInformation', true, this._configurationService).recomputeInitiallyAndOnChange(this._store);
 		this._structuredFetchLogger = this._register(this._instantiationService.createInstance(StructuredLogger.cast<
 			{ kind: 'start'; requestId: number; context: unknown } & IRecordableEditorLogEntry
 			| { kind: 'end'; error: unknown; durationMs: number; result: unknown; requestId: number } & IRecordableLogEntry
@@ -99,25 +93,6 @@ export class InlineCompletionsSource extends Disposable {
 		));
 
 		this.clearOperationOnTextModelChange.recomputeInitiallyAndOnChange(this._store);
-
-		const enablementSetting = product.defaultChatAgent?.completionsEnablementSetting ?? undefined;
-		if (enablementSetting) {
-			this._updateCompletionsEnablement(enablementSetting);
-			this._register(this._configurationService.onDidChangeConfiguration(e => {
-				if (e.affectsConfiguration(enablementSetting)) {
-					this._updateCompletionsEnablement(enablementSetting);
-				}
-			}));
-		}
-	}
-
-	private _updateCompletionsEnablement(enalementSetting: string) {
-		const result = this._configurationService.getValue<Record<string, boolean>>(enalementSetting);
-		if (!isObject(result)) {
-			this._completionsEnabled = undefined;
-		} else {
-			this._completionsEnabled = result;
-		}
 	}
 
 	public readonly clearOperationOnTextModelChange = derived(this, reader => {
@@ -335,7 +310,6 @@ export class InlineCompletionsSource extends Disposable {
 			} finally {
 				store.dispose();
 				decreaseLoadingCount();
-				this.sendInlineCompletionsRequestTelemetry(requestResponseInfo);
 			}
 
 			return true;
@@ -378,72 +352,6 @@ export class InlineCompletionsSource extends Disposable {
 			}
 			this.clearSuggestWidgetInlineCompletions(tx);
 		});
-	}
-
-	private sendInlineCompletionsRequestTelemetry(
-		requestResponseInfo: RequestResponseData
-	): void {
-		if (!this._sendRequestData.get() && !this._contextKeyService.getContextKeyValue<boolean>('isRunningUnificationExperiment')) {
-			return;
-		}
-
-		if (requestResponseInfo.requestUuid === undefined || requestResponseInfo.hasProducedSuggestion) {
-			return;
-		}
-
-
-		if (!isCompletionsEnabled(this._completionsEnabled, this._textModel.getLanguageId())) {
-			return;
-		}
-
-		if (!requestResponseInfo.providers.some(p => isCopilotLikeExtension(p.providerId?.extensionId))) {
-			return;
-		}
-
-		const emptyEndOfLifeEvent: InlineCompletionEndOfLifeEvent = {
-			id: requestResponseInfo.requestUuid,
-			opportunityId: requestResponseInfo.requestUuid,
-			noSuggestionReason: requestResponseInfo.noSuggestionReason ?? 'unknown',
-			extensionId: 'vscode-core',
-			extensionVersion: '0.0.0',
-			groupId: 'empty',
-			shown: false,
-			editorType: requestResponseInfo.requestInfo.editorType,
-			requestReason: requestResponseInfo.requestInfo.reason,
-			typingInterval: requestResponseInfo.requestInfo.typingInterval,
-			typingIntervalCharacterCount: requestResponseInfo.requestInfo.typingIntervalCharacterCount,
-			languageId: requestResponseInfo.requestInfo.languageId,
-			selectedSuggestionInfo: !!requestResponseInfo.context.selectedSuggestionInfo,
-			availableProviders: requestResponseInfo.providers.map(p => p.providerId?.toString()).filter(isDefined).join(','),
-			...forwardToChannelIf(requestResponseInfo.providers.some(p => isCopilotLikeExtension(p.providerId?.extensionId))),
-			timeUntilProviderRequest: undefined,
-			timeUntilProviderResponse: undefined,
-			viewKind: undefined,
-			preceeded: undefined,
-			error: undefined,
-			superseded: undefined,
-			reason: undefined,
-			correlationId: undefined,
-			shownDuration: undefined,
-			shownDurationUncollapsed: undefined,
-			timeUntilShown: undefined,
-			partiallyAccepted: undefined,
-			partiallyAcceptedCountSinceOriginal: undefined,
-			partiallyAcceptedRatioSinceOriginal: undefined,
-			partiallyAcceptedCharactersSinceOriginal: undefined,
-			cursorColumnDistance: undefined,
-			cursorLineDistance: undefined,
-			lineCountOriginal: undefined,
-			lineCountModified: undefined,
-			characterCountOriginal: undefined,
-			characterCountModified: undefined,
-			disjointReplacements: undefined,
-			sameShapeReplacements: undefined,
-			notShownReason: undefined,
-		};
-
-		const dataChannel = this._instantiationService.createInstance(DataChannelForwardingTelemetryService);
-		sendInlineCompletionsEndOfLifeTelemetry(dataChannel, emptyEndOfLifeEvent);
 	}
 
 	public clearSuggestWidgetInlineCompletions(tx: ITransaction): void {
@@ -506,18 +414,6 @@ class RequestResponseData {
 
 function isSubset<T>(set1: Set<T>, set2: Set<T>): boolean {
 	return [...set1].every(item => set2.has(item));
-}
-
-function isCompletionsEnabled(completionsEnablementObject: Record<string, boolean> | undefined, modeId: string = '*'): boolean {
-	if (completionsEnablementObject === undefined) {
-		return false; // default to disabled if setting is not available
-	}
-
-	if (typeof completionsEnablementObject[modeId] !== 'undefined') {
-		return Boolean(completionsEnablementObject[modeId]); // go with setting if explicitly defined
-	}
-
-	return Boolean(completionsEnablementObject['*']); // fallback to global setting otherwise
 }
 
 class UpdateOperation implements IDisposable {

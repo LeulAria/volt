@@ -444,32 +444,6 @@ const apiMenus: IAPIMenu[] = [
 		description: localize('menus.diffEditorGutterToolBarMenus', "The gutter toolbar in the diff editor"),
 		proposed: 'contribDiffEditorGutterToolBarMenus'
 	},
-	{
-		key: 'searchPanel/aiResults/commands',
-		id: MenuId.SearchActionMenu,
-		description: localize('searchPanel.aiResultsCommands', "The commands that will contribute to the menu rendered as buttons next to the AI search title"),
-	},
-	{
-		key: 'editor/context/chat',
-		id: MenuId.ChatTextEditorMenu,
-		description: localize('menus.chatTextEditor', "The Chat submenu in the text editor context menu."),
-		supportsSubmenus: false,
-		proposed: 'chatParticipantPrivate'
-	},
-	{
-		key: 'chat/chatSessions',
-		id: MenuId.ChatSessionsMenu,
-		description: localize('menus.chatSessions', "The Chat Sessions menu."),
-		supportsSubmenus: false,
-		proposed: 'chatSessionsProvider'
-	},
-	{
-		key: 'chat/multiDiff/context',
-		id: MenuId.ChatMultiDiffContext,
-		description: localize('menus.chatMultiDiffContext', "The Chat Multi-Diff context menu."),
-		supportsSubmenus: false,
-		proposed: 'chatSessionsProvider',
-	},
 ];
 
 namespace schema {

@@ -54,8 +54,7 @@ export class UserDataSyncEnablementService extends Disposable implements IUserDa
 
 	isResourceEnabled(resource: SyncResource, defaultValue?: boolean): boolean {
 		const storedValue = this.storageService.getBoolean(getEnablementKey(resource), StorageScope.APPLICATION);
-		defaultValue = defaultValue ?? resource !== SyncResource.Prompts;
-		return storedValue ?? defaultValue;
+		return storedValue ?? defaultValue ?? true;
 	}
 
 	isResourceEnablementConfigured(resource: SyncResource): boolean {

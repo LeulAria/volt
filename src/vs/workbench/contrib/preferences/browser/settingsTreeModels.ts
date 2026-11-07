@@ -13,14 +13,13 @@ import { URI } from '../../../../base/common/uri.js';
 import { ILanguageService } from '../../../../editor/common/languages/language.js';
 import { ConfigurationTarget, getLanguageTagSettingPlainKey, IConfigurationValue } from '../../../../platform/configuration/common/configuration.js';
 import { ConfigurationDefaultValueSource, ConfigurationScope, EditPresentationTypes, Extensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
-import { IProductService } from '../../../../platform/product/common/productService.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { USER_LOCAL_AND_REMOTE_SETTINGS } from '../../../../platform/request/common/request.js';
 import { APPLICATION_SCOPES, FOLDER_SCOPES, IWorkbenchConfigurationService, LOCAL_MACHINE_SCOPES, REMOTE_MACHINE_SCOPES, WORKSPACE_SCOPES } from '../../../services/configuration/common/configuration.js';
 import { IWorkbenchEnvironmentService } from '../../../services/environment/common/environmentService.js';
 import { IExtensionSetting, ISearchResult, ISetting, ISettingMatch, SettingMatchType, SettingValueType } from '../../../services/preferences/common/preferences.js';
 import { IUserDataProfileService } from '../../../services/userDataProfile/common/userDataProfile.js';
-import { ENABLE_EXTENSION_TOGGLE_SETTINGS, ENABLE_LANGUAGE_FILTER, MODIFIED_SETTING_TAG, POLICY_SETTING_TAG, REQUIRE_TRUSTED_WORKSPACE_SETTING_TAG, compareTwoNullableNumbers, wordifyKey } from '../common/preferences.js';
+import { ENABLE_LANGUAGE_FILTER, MODIFIED_SETTING_TAG, POLICY_SETTING_TAG, REQUIRE_TRUSTED_WORKSPACE_SETTING_TAG, compareTwoNullableNumbers, wordifyKey } from '../common/preferences.js';
 import { SettingsTarget } from './preferencesWidgets.js';
 import { ITOCEntry, tocData } from './settingsLayout.js';
 
@@ -173,7 +172,6 @@ export class SettingsTreeSettingElement extends SettingsTreeElement {
 		private readonly isWorkspaceTrusted: boolean,
 		private readonly languageFilter: string | undefined,
 		private readonly languageService: ILanguageService,
-		private readonly productService: IProductService,
 		private readonly userDataProfileService: IUserDataProfileService,
 		private readonly configurationService: IWorkbenchConfigurationService,
 	) {
@@ -224,9 +222,7 @@ export class SettingsTreeSettingElement extends SettingsTreeElement {
 	}
 
 	private initSettingValueType() {
-		if (isExtensionToggleSetting(this.setting, this.productService)) {
-			this.valueType = SettingValueType.ExtensionToggle;
-		} else if (this.setting.enum && (!this.setting.type || settingTypeEnumRenderable(this.setting.type))) {
+		if (this.setting.enum && (!this.setting.type || settingTypeEnumRenderable(this.setting.type))) {
 			this.valueType = SettingValueType.Enum;
 		} else if (this.setting.type === 'string') {
 			if (this.setting.editPresentation === EditPresentationTypes.Multiline) {
@@ -521,8 +517,7 @@ export class SettingsTreeModel implements IDisposable {
 		private _isWorkspaceTrusted: boolean,
 		@IWorkbenchConfigurationService private readonly _configurationService: IWorkbenchConfigurationService,
 		@ILanguageService private readonly _languageService: ILanguageService,
-		@IUserDataProfileService private readonly _userDataProfileService: IUserDataProfileService,
-		@IProductService private readonly _productService: IProductService
+		@IUserDataProfileService private readonly _userDataProfileService: IUserDataProfileService
 	) {
 	}
 
@@ -636,7 +631,6 @@ export class SettingsTreeModel implements IDisposable {
 			this._isWorkspaceTrusted,
 			this._viewState.languageFilter,
 			this._languageService,
-			this._productService,
 			this._userDataProfileService,
 			this._configurationService);
 
@@ -779,12 +773,6 @@ function trimCategoryForGroup(category: string, groupId: string): string {
 	return trimmed;
 }
 
-function isExtensionToggleSetting(setting: ISetting, productService: IProductService): boolean {
-	return ENABLE_EXTENSION_TOGGLE_SETTINGS &&
-		!!productService.extensionRecommendations &&
-		!!setting.displayExtensionId;
-}
-
 function isExcludeSetting(setting: ISetting): boolean {
 	return setting.key === 'files.exclude' ||
 		setting.key === 'search.exclude' ||
@@ -913,18 +901,15 @@ function settingTypeEnumRenderable(_type: string | string[]) {
 export const enum SearchResultIdx {
 	Local = 0,
 	Remote = 1,
-	NewExtensions = 2,
-	Embeddings = 3,
-	AiSelected = 4
+	NewExtensions = 2
 }
 
 export class SearchResultModel extends SettingsTreeModel {
 	private rawSearchResults: ISearchResult[] | null = null;
-	private cachedUniqueSearchResults: Map<boolean, ISearchResult | null>;
+	private cachedUniqueSearchResults: ISearchResult | null = null;
 	private newExtensionSearchResults: ISearchResult | null = null;
 	private searchResultCount: number | null = null;
 	private settingsOrderByTocIndex: Map<string, number> | null;
-	private aiFilterEnabled: boolean = false;
 
 	readonly id = 'searchResultModel';
 
@@ -935,18 +920,11 @@ export class SearchResultModel extends SettingsTreeModel {
 		@IWorkbenchConfigurationService configurationService: IWorkbenchConfigurationService,
 		@IWorkbenchEnvironmentService private readonly environmentService: IWorkbenchEnvironmentService,
 		@ILanguageService languageService: ILanguageService,
-		@IUserDataProfileService userDataProfileService: IUserDataProfileService,
-		@IProductService productService: IProductService
+		@IUserDataProfileService userDataProfileService: IUserDataProfileService
 	) {
-		super(viewState, isWorkspaceTrusted, configurationService, languageService, userDataProfileService, productService);
+		super(viewState, isWorkspaceTrusted, configurationService, languageService, userDataProfileService);
 		this.settingsOrderByTocIndex = settingsOrderByTocIndex;
-		this.cachedUniqueSearchResults = new Map();
 		this.update({ id: 'searchResultModel', label: '' });
-	}
-
-	set showAiResults(show: boolean) {
-		this.aiFilterEnabled = show;
-		this.updateChildren();
 	}
 
 	private sortResults(filterMatches: ISettingMatch[]): ISettingMatch[] {
@@ -989,9 +967,8 @@ export class SearchResultModel extends SettingsTreeModel {
 	}
 
 	getUniqueSearchResults(): ISearchResult | null {
-		const cachedResults = this.cachedUniqueSearchResults.get(this.aiFilterEnabled);
-		if (cachedResults) {
-			return cachedResults;
+		if (this.cachedUniqueSearchResults) {
+			return this.cachedUniqueSearchResults;
 		}
 
 		if (!this.rawSearchResults) {
@@ -999,27 +976,6 @@ export class SearchResultModel extends SettingsTreeModel {
 		}
 
 		let combinedFilterMatches: ISettingMatch[] = [];
-
-		if (this.aiFilterEnabled) {
-			const aiSelectedKeys = new Set<string>();
-			const aiSelectedResult = this.rawSearchResults[SearchResultIdx.AiSelected];
-			if (aiSelectedResult) {
-				aiSelectedResult.filterMatches.forEach(m => aiSelectedKeys.add(m.setting.key));
-				combinedFilterMatches = aiSelectedResult.filterMatches;
-			}
-
-			const embeddingsResult = this.rawSearchResults[SearchResultIdx.Embeddings];
-			if (embeddingsResult) {
-				embeddingsResult.filterMatches = embeddingsResult.filterMatches.filter(m => !aiSelectedKeys.has(m.setting.key));
-				combinedFilterMatches = combinedFilterMatches.concat(embeddingsResult.filterMatches);
-			}
-			const result = {
-				filterMatches: combinedFilterMatches,
-				exactMatch: false
-			};
-			this.cachedUniqueSearchResults.set(true, result);
-			return result;
-		}
 
 		const localMatchKeys = new Set<string>();
 		const localResult = this.rawSearchResults[SearchResultIdx.Local];
@@ -1040,7 +996,7 @@ export class SearchResultModel extends SettingsTreeModel {
 			filterMatches: combinedFilterMatches,
 			exactMatch: localResult.exactMatch // remote results should never have an exact match
 		};
-		this.cachedUniqueSearchResults.set(false, result);
+		this.cachedUniqueSearchResults = result;
 		return result;
 	}
 
@@ -1095,7 +1051,7 @@ export class SearchResultModel extends SettingsTreeModel {
 	}
 
 	setResult(order: SearchResultIdx, result: ISearchResult | null): void {
-		this.cachedUniqueSearchResults.clear();
+		this.cachedUniqueSearchResults = null;
 		this.newExtensionSearchResults = null;
 
 		if (this.rawSearchResults && order === SearchResultIdx.Local) {

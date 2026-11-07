@@ -119,7 +119,6 @@ interface IInitialEditorsState {
 }
 
 const COMMAND_CENTER_SETTINGS = [
-	'chat.commandCenter.enabled',
 	'workbench.navigationControl.enabled',
 	'workbench.experimental.share.enabled',
 ];
@@ -412,10 +411,6 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 				// Show Command Center if command center actions enabled
 				const shareEnabled = e.affectsConfiguration('workbench.experimental.share.enabled') && this.configurationService.getValue<boolean>('workbench.experimental.share.enabled');
 				const navigationControlEnabled = e.affectsConfiguration('workbench.navigationControl.enabled') && this.configurationService.getValue<boolean>('workbench.navigationControl.enabled');
-
-				// Currently not supported for "chat.commandCenter.enabled" as we
-				// programatically set this during setup and could lead to unwanted titlebar appearing
-				// const chatControlsEnabled = e.affectsConfiguration('chat.commandCenter.enabled') && this.configurationService.getValue<boolean>('chat.commandCenter.enabled');
 
 				if (shareEnabled || navigationControlEnabled) {
 					if (this.configurationService.getValue<boolean>(LayoutSettings.COMMAND_CENTER) === false) {

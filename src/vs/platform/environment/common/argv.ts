@@ -24,16 +24,6 @@ export interface NativeParsedArgs {
 		};
 	};
 	'serve-web'?: INativeCliOptions;
-	chat?: {
-		_: string[];
-		'add-file'?: string[];
-		mode?: string;
-		maximize?: boolean;
-		'reuse-window'?: boolean;
-		'new-window'?: boolean;
-		profile?: string;
-		help?: boolean;
-	};
 
 	// arguments
 	_: string[];
@@ -106,7 +96,6 @@ export interface NativeParsedArgs {
 	'disable-telemetry'?: boolean;
 	'export-default-configuration'?: string;
 	'install-source'?: string;
-	'add-mcp'?: string[];
 	'disable-updates'?: boolean;
 	'transient'?: boolean;
 	'use-inmemory-secretstorage'?: boolean;

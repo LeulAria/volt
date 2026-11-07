@@ -27,7 +27,7 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { EditorResourceAccessor } from '../../../../common/editor.js';
 import { IHistoryService } from '../../../../services/history/common/history.js';
 import { ISearchService } from '../../../../services/search/common/search.js';
-import { searchFilesAndFolders } from '../../../search/browser/searchChatContext.js';
+import { searchFilesAndFolders } from '../../../search/browser/searchFilesAndFolders.js';
 import { CANVAS_ENABLED_SETTING, SCRATCH_ENABLED_SETTING } from '../../common/canvasScratchSettings.js';
 import { createHomeSearchIcon } from '../home/agentHomeIcons.js';
 import { agentSurfaceMenuItems, createSurfaceStrokeIcon, IAgentSurfaceMenuItem, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';

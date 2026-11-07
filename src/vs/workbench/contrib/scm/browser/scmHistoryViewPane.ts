@@ -73,9 +73,7 @@ import { ICompressibleKeyboardNavigationLabelProvider, ICompressibleTreeRenderer
 import { ICompressedTreeNode } from '../../../../base/browser/ui/tree/compressedObjectTreeModel.js';
 import { ILabelService } from '../../../../platform/label/common/label.js';
 import { IDragAndDropData } from '../../../../base/browser/dnd.js';
-import { ElementsDragAndDropData, ListViewTargetSector } from '../../../../base/browser/ui/list/listView.js';
-import { CodeDataTransfers } from '../../../../platform/dnd/browser/dnd.js';
-import { SCMHistoryItemTransferData } from './scmHistoryChatContext.js';
+import { ListViewTargetSector } from '../../../../base/browser/ui/list/listView.js';
 
 const PICK_REPOSITORY_ACTION_ID = 'workbench.scm.action.graph.pickRepository';
 const PICK_HISTORY_ITEM_REFS_ACTION_ID = 'workbench.scm.action.graph.pickHistoryItemRefs';
@@ -964,19 +962,6 @@ class SCMHistoryTreeDragAndDrop implements ITreeDragAndDrop<TreeElement> {
 		return uri ? uri.toString() : null;
 	}
 
-	onDragStart(data: IDragAndDropData, originalEvent: DragEvent): void {
-		if (!originalEvent.dataTransfer) {
-			return;
-		}
-
-		const historyItems = this._getDragAndDropData(data as ElementsDragAndDropData<TreeElement, TreeElement[]>);
-		if (historyItems.length === 0) {
-			return;
-		}
-
-		originalEvent.dataTransfer.setData(CodeDataTransfers.SCM_HISTORY_ITEM, JSON.stringify(historyItems));
-	}
-
 	getDragLabel(elements: TreeElement[], originalEvent: DragEvent): string | undefined {
 		if (elements.length === 1) {
 			const element = elements[0];
@@ -991,27 +976,6 @@ class SCMHistoryTreeDragAndDrop implements ITreeDragAndDrop<TreeElement> {
 	}
 
 	drop(data: IDragAndDropData, targetElement: TreeElement | undefined, targetIndex: number | undefined, targetSector: ListViewTargetSector | undefined, originalEvent: DragEvent): void { }
-
-	private _getDragAndDropData(data: ElementsDragAndDropData<TreeElement, TreeElement[]>): SCMHistoryItemTransferData[] {
-		const historyItems: SCMHistoryItemTransferData[] = [];
-		for (const element of [...data.context ?? [], ...data.elements]) {
-			if (!isSCMHistoryItemViewModelTreeElement(element)) {
-				continue;
-			}
-
-			const provider = element.repository.provider;
-			const historyItem = element.historyItemViewModel.historyItem;
-			const attachmentName = `$(${Codicon.repo.id})\u00A0${provider.name}\u00A0$(${Codicon.gitCommit.id})\u00A0${historyItem.displayId ?? historyItem.id}`;
-
-			historyItems.push({
-				name: attachmentName,
-				resource: ScmHistoryItemResolver.getMultiDiffSourceUri(provider, historyItem),
-				historyItem: historyItem
-			});
-		}
-
-		return historyItems;
-	}
 
 	private _getTreeElementLabel(element: TreeElement): string | undefined {
 		if (isSCMHistoryItemViewModelTreeElement(element)) {

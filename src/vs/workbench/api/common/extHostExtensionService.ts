@@ -36,7 +36,6 @@ import { IExtHostRpcService } from './extHostRpcService.js';
 import { ServiceCollection } from '../../../platform/instantiation/common/serviceCollection.js';
 import { IExtHostTunnelService } from './extHostTunnelService.js';
 import { IExtHostTerminalService } from './extHostTerminalService.js';
-import { IExtHostLanguageModels } from './extHostLanguageModels.js';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { IExtensionActivationHost, checkActivateWorkspaceContainsExtension } from '../../services/extensions/common/workspaceContains.js';
 import { ExtHostSecretState, IExtHostSecretState } from './extHostSecretState.js';
@@ -138,7 +137,6 @@ export abstract class AbstractExtHostExtensionService extends Disposable impleme
 		@IExtHostTerminalService extHostTerminalService: IExtHostTerminalService,
 		@IExtHostLocalizationService extHostLocalizationService: IExtHostLocalizationService,
 		@IExtHostManagedSockets private readonly _extHostManagedSockets: IExtHostManagedSockets,
-		@IExtHostLanguageModels private readonly _extHostLanguageModels: IExtHostLanguageModels,
 	) {
 		super();
 		this._hostUtils = hostUtils;
@@ -512,7 +510,6 @@ export abstract class AbstractExtHostExtensionService extends Disposable impleme
 
 	private _loadExtensionContext(extensionDescription: IExtensionDescription, extensionInternalStore: DisposableStore): Promise<vscode.ExtensionContext> {
 
-		const languageModelAccessInformation = this._extHostLanguageModels.createLanguageModelAccessInformation(extensionDescription);
 		const globalState = extensionInternalStore.add(new ExtensionGlobalMemento(extensionDescription, this._storage));
 		const workspaceState = extensionInternalStore.add(new ExtensionMemento(extensionDescription.identifier.value, false, this._storage));
 		const secrets = extensionInternalStore.add(new ExtensionSecrets(extensionDescription, this._secretState));
@@ -541,7 +538,6 @@ export abstract class AbstractExtHostExtensionService extends Disposable impleme
 				workspaceState,
 				secrets,
 				subscriptions: [],
-				get languageModelAccessInformation() { return languageModelAccessInformation; },
 				get extensionUri() { return extensionDescription.extensionLocation; },
 				get extensionPath() { return extensionDescription.extensionLocation.fsPath; },
 				asAbsolutePath(relativePath: string) { return path.join(extensionDescription.extensionLocation.fsPath, relativePath); },

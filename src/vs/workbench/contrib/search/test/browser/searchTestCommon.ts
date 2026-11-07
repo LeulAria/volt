@@ -66,5 +66,5 @@ export function stubNotebookEditorService(instantiationService: TestInstantiatio
 }
 
 export function addToSearchResult(searchResult: ISearchResult, allRaw: IFileMatch[], searchInstanceID = '') {
-	searchResult.add(allRaw, searchInstanceID, false);
+	searchResult.add(allRaw, searchInstanceID);
 }
