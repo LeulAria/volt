@@ -213,14 +213,15 @@ export class AgentPullRequestDockControl extends Disposable {
 			this.label.textContent = link
 				? localize('voltPr.dockNumber', "#{0}", link.number)
 				: this.options.emptyLabel;
-			setAgentTooltip(this.main, undefined);
+			this.main.removeAttribute('aria-label');
 			this.setVisible(this.checksSep, this.checks, false);
 			this.setVisible(this.mergeSep, this.merge, false);
 			return;
 		}
 		iconSpan(this.icon, prStateIcon(pr.state), `state-${pr.state}`);
 		this.label.textContent = `#${pr.number}: ${pr.title}`;
-		setAgentTooltip(this.main, localize('voltPr.dockOpenTip', "{0}: open #{1} {2}", prStateLabel(pr.state), pr.number, pr.title));
+		// No tooltip: the row already reads "#8: title", and hovering a row should not pop a card.
+		this.main.setAttribute('aria-label', localize('voltPr.dockOpenTip', "{0}: open #{1} {2}", prStateLabel(pr.state), pr.number, pr.title));
 
 		const showChecks = pr.checks.state !== 'none';
 		this.setVisible(this.checksSep, this.checks, showChecks);

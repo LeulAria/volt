@@ -37,7 +37,7 @@ import { showVoltMenu } from '../ui/menu/voltMenu.js';
 import { agentToolsSessionOnScreen } from '../workspace/agentSurfaceHost.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
 import { onDidChangePullRequestsViewSession, pullRequestsViewSession } from './agentPullRequestsViewState.js';
-import { ago, avatar, checkIcon, checksLabel, iconSpan, openPullRequest, problemText, prStateIcon, signInWithGh } from './agentPullRequestUi.js';
+import { ago, avatar, checkIcon, iconSpan, openPullRequest, problemText, prStateIcon, signInWithGh } from './agentPullRequestUi.js';
 
 const SORT_KEY = 'volt.pullRequests.sort';
 const STATE_KEY = 'volt.pullRequests.state';
@@ -684,7 +684,7 @@ export class AgentPullRequestsViewPane extends ViewPane {
 				(next ?? (e.key === 'ArrowUp' ? this.searchInput : undefined))?.focus();
 			}
 		}));
-		setAgentTooltip(row, `#${pr.number} ${pr.title}\n${pr.baseRefName} ← ${pr.headRefName} · ${pr.author.login}\n+${pr.additions} \u2212${pr.deletions} · ${pr.changedFiles} files`);
+		row.setAttribute('aria-label', `#${pr.number} ${pr.title}\n${pr.baseRefName} ← ${pr.headRefName} · ${pr.author.login}\n+${pr.additions} \u2212${pr.deletions} · ${pr.changedFiles} files`);
 		return { pr, group, row, number, title, author, branch, lit: false };
 	}
 
@@ -769,9 +769,9 @@ export function buildPullRequestRow(pr: IVoltPullRequest, watching: boolean): IP
 	row.setAttribute('role', 'button');
 	const glyph = append(row, $('.volt-pr-list-glyph'));
 	iconSpan(glyph, prStateIcon(pr.state), `state-${pr.state}`);
+	// No tooltips on a row or its icons: the second line already says conflicts, checks and age.
 	if (pr.mergeable === 'conflicting' && isOpenState(pr.state)) {
-		const conflict = iconSpan(glyph, Codicon.warning, 'conflict');
-		setAgentTooltip(conflict, localize('voltPr.list.conflicts', "Has conflicts with {0}", pr.baseRefName));
+		iconSpan(glyph, Codicon.warning, 'conflict');
 	}
 	const lines = append(row, $('.volt-pr-list-lines'));
 	const line1 = append(lines, $('.volt-pr-list-line'));
@@ -780,12 +780,10 @@ export function buildPullRequestRow(pr: IVoltPullRequest, watching: boolean): IP
 	const title = append(line1, $('span.volt-pr-list-title'));
 	title.textContent = pr.title;
 	if (pr.checks.state !== 'none' && isOpenState(pr.state)) {
-		const checks = iconSpan(line1, checkIcon(pr.checks.state), `check-${pr.checks.state}`);
-		setAgentTooltip(checks, checksLabel(pr));
+		iconSpan(line1, checkIcon(pr.checks.state), `check-${pr.checks.state}`);
 	}
 	if (watching) {
-		const eye = iconSpan(line1, Codicon.eye, 'watching');
-		setAgentTooltip(eye, localize('voltPr.list.watched', "This chat's agent is watching it"));
+		iconSpan(line1, Codicon.eye, 'watching');
 	}
 	append(line1, $('.volt-pr-spacer'));
 	const size = append(line1, $('span.volt-pr-stats'));
