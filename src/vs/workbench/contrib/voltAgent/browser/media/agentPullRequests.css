@@ -3495,7 +3495,7 @@
 
 /* ---- The chat's pull request in the side panel (Quick Open Actions) ------------------------ */
 
-/* One list row in three parts, as Cursor draws it: #8: title | checks menu | Merge. */
+/* One list row in two parts: #8: title | checks menu. Merging is on the pull request's page. */
 .volt-agent-quick-open-actions .volt-agent-dock-row.volt-pr-dock {
 	gap: 0;
 	padding: 0;
@@ -3553,7 +3553,7 @@
 .volt-pr-dock > .volt-pr-dock-checks {
 	flex: none;
 	gap: 2px;
-	padding: 0 6px 0 8px;
+	padding: 0 12px 0 8px;
 }
 
 .volt-pr-dock-checks-icon {
@@ -3564,25 +3564,6 @@
 	font-size: 12px;
 	width: 12px;
 	height: 12px;
-}
-
-.volt-pr-dock > .volt-pr-dock-merge {
-	flex: none;
-	padding: 0 12px 0 8px;
-	color: var(--volt-pr-muted);
-	font-size: 12.5px;
-}
-
-.volt-pr-dock > .volt-pr-dock-merge:disabled {
-	cursor: default;
-}
-
-.volt-pr-dock > .volt-pr-dock-merge.ready {
-	color: var(--volt-pr-merge-accent);
-}
-
-.volt-pr-dock > .volt-pr-dock-merge.ready:hover {
-	color: var(--volt-pr-merge-accent-hover);
 }
 
 .volt-pr-dock-main:hover .volt-pr-dock-label,
@@ -3613,15 +3594,14 @@
 	color: inherit;
 }
 
-.volt-pr-dock {
-	--volt-pr-merge-accent: #d4537e;
-	--volt-pr-merge-accent-hover: #ec6f98;
+/* "Show more" after the first two rows: muted text, lined up with the titles above it. */
+.volt-pr-dock-link.volt-pr-dock-more {
+	padding-left: 32px;
+	color: var(--volt-pr-muted);
 }
 
-.monaco-workbench.vs .volt-pr-dock,
-.monaco-workbench.hc-light .volt-pr-dock {
-	--volt-pr-merge-accent: #b42d5a;
-	--volt-pr-merge-accent-hover: #8f1f45;
+.volt-pr-dock-links .monaco-list-row:hover .volt-pr-dock-more {
+	color: var(--vscode-foreground);
 }
 
 

@@ -17,12 +17,12 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { WorkbenchList } from '../../../../../platform/list/browser/listService.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { IVoltPrCheck, voltPrErrorMessage } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
-import { blockedReason, currentLink, IAgentPrLink, isOpenState, isReadyToMerge, visibleLinks } from '../../common/agentPullRequests.js';
+import { currentLink, IAgentPrLink, visibleLinks } from '../../common/agentPullRequests.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from './agentPullRequestCommands.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
-import { checkDuration, checkIcon, checksLabel, iconSpan, mergePullRequest, prStateIcon, prStateLabel } from './agentPullRequestUi.js';
+import { checkDuration, checkIcon, checksLabel, iconSpan, prStateIcon, prStateLabel } from './agentPullRequestUi.js';
 
 export interface IAgentPullRequestDockOptions {
 	/** Run with the chat's session id when the row's title part is clicked. */
@@ -32,13 +32,23 @@ export interface IAgentPullRequestDockOptions {
 }
 
 const LINK_ROW_HEIGHT = 26;
+/** Rows before "Show more": the chat's pull request and the latest of its others. */
+const COLLAPSED_ROWS = 2;
 
-class LinkDelegate implements IListVirtualDelegate<IAgentPrLink> {
+/** The "Show more" row after the first few of the chat's other pull requests. */
+interface IShowMoreRow {
+	readonly showMore: true;
+}
+type DockLinkRow = IAgentPrLink | IShowMoreRow;
+const SHOW_MORE_ROW: IShowMoreRow = { showMore: true };
+const isShowMore = (row: DockLinkRow): row is IShowMoreRow => 'showMore' in row;
+
+class LinkDelegate implements IListVirtualDelegate<DockLinkRow> {
 	getHeight(): number {
 		return LINK_ROW_HEIGHT;
 	}
-	getTemplateId(): string {
-		return LinkRenderer.TEMPLATE_ID;
+	getTemplateId(row: DockLinkRow): string {
+		return isShowMore(row) ? ShowMoreRenderer.TEMPLATE_ID : LinkRenderer.TEMPLATE_ID;
 	}
 }
 
@@ -73,11 +83,26 @@ class LinkRenderer implements IListRenderer<IAgentPrLink, ILinkTemplate> {
 	disposeTemplate(): void { }
 }
 
+class ShowMoreRenderer implements IListRenderer<IShowMoreRow, void> {
+	static readonly TEMPLATE_ID = 'voltPrDockShowMore';
+	readonly templateId = ShowMoreRenderer.TEMPLATE_ID;
+
+	renderTemplate(container: HTMLElement): void {
+		container.classList.add('volt-pr-dock-link', 'volt-pr-dock-more');
+		append(container, $('span.volt-pr-dock-label')).textContent = localize('voltPr.dockShowMore', "Show more");
+	}
+
+	renderElement(): void { }
+
+	disposeTemplate(): void { }
+}
+
 /**
  * The chat's pull request in the side panel's Pull requests group, the way Cursor shows it: the
- * state and "#8: title" (opens it), its checks (the list drops down), and Merge when nothing blocks
- * it. Without a linked pull request it is a plain row with `emptyLabel`. The chat's other pull
- * requests (merged ones, a stack's lower layers) list under it; each opens its pull request.
+ * state and "#8: title" (opens it) and its checks (the list drops down). Merging is on the pull
+ * request's own page. Without a linked pull request it is a plain row with `emptyLabel`. The chat's
+ * other pull requests (merged ones, a stack's lower layers) list under it, latest first; each opens
+ * its pull request. Past two rows in all, "Show more" lists the rest.
  */
 export class AgentPullRequestDockControl extends Disposable {
 
@@ -88,13 +113,11 @@ export class AgentPullRequestDockControl extends Disposable {
 	private readonly checksSep: HTMLElement;
 	private readonly checks: HTMLButtonElement;
 	private readonly checksIcon: HTMLElement;
-	private readonly mergeSep: HTMLElement;
-	private readonly merge: HTMLButtonElement;
 	private readonly othersHost: HTMLElement;
-	private readonly others: WorkbenchList<IAgentPrLink>;
+	private readonly others: WorkbenchList<DockLinkRow>;
 	private sessionId: string | undefined;
 	private link: IAgentPrLink | undefined;
-	private merging = false;
+	private expanded = false;
 	private _linkCount = 0;
 
 	private readonly _onDidRender = this._register(new Emitter<void>());
@@ -107,7 +130,7 @@ export class AgentPullRequestDockControl extends Disposable {
 		private readonly options: IAgentPullRequestDockOptions,
 		@ICommandService private readonly commandService: ICommandService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
-		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@IInstantiationService instantiationService: IInstantiationService,
 		@IOpenerService private readonly openerService: IOpenerService,
 	) {
 		super();
@@ -121,24 +144,25 @@ export class AgentPullRequestDockControl extends Disposable {
 		this.checks.type = 'button';
 		this.checksIcon = append(this.checks, $('span.volt-pr-dock-checks-icon'));
 		append(this.checks, renderIcon(Codicon.chevronDown)).classList.add('volt-pr-dock-chevron');
-		this.mergeSep = append(this.element, $('span.volt-pr-dock-sep'));
-		this.merge = append(this.element, $('button.volt-pr-dock-merge')) as HTMLButtonElement;
-		this.merge.type = 'button';
-		this.merge.textContent = localize('voltPr.dockMerge', "Merge");
 		this.othersHost = append(parent, $('.volt-pr-dock-links'));
-		this.others = this._register(instantiationService.createInstance(WorkbenchList<IAgentPrLink>, 'VoltAgentDockPullRequests', this.othersHost, new LinkDelegate(), [new LinkRenderer()], {
-			identityProvider: { getId: (link: IAgentPrLink) => link.key },
+		this.others = this._register(instantiationService.createInstance(WorkbenchList<DockLinkRow>, 'VoltAgentDockPullRequests', this.othersHost, new LinkDelegate(), [new LinkRenderer(), new ShowMoreRenderer()], {
+			identityProvider: { getId: (row: DockLinkRow) => isShowMore(row) ? 'showMore' : row.key },
 			multipleSelectionSupport: false,
 			horizontalScrolling: false,
 			alwaysConsumeMouseWheel: false,
 			accessibilityProvider: {
 				getWidgetAriaLabel: () => localize('voltPr.dockOthersAria', "Other pull requests of this chat"),
-				getAriaLabel: (link: IAgentPrLink) => link.snapshot ? `${prStateLabel(link.snapshot.state)}, #${link.number}: ${link.snapshot.title}` : `#${link.number}`,
+				getAriaLabel: (row: DockLinkRow) => isShowMore(row)
+					? localize('voltPr.dockShowMore', "Show more")
+					: row.snapshot ? `${prStateLabel(row.snapshot.state)}, #${row.number}: ${row.snapshot.title}` : `#${row.number}`,
 			},
 		}));
 		this._register(this.others.onDidOpen(e => {
 			const link = e.element;
-			if (link) {
+			if (link && isShowMore(link)) {
+				this.expanded = true;
+				this.renderOthers();
+			} else if (link) {
 				void this.commandService.executeCommand(OPEN_PULL_REQUEST_COMMAND_ID, { host: link.repo.host, owner: link.repo.owner, name: link.repo.name, number: link.number }, this.sessionId);
 			}
 		}));
@@ -149,10 +173,6 @@ export class AgentPullRequestDockControl extends Disposable {
 		this._register(addDisposableListener(this.checks, 'click', e => {
 			e.stopPropagation();
 			void this.showChecks();
-		}));
-		this._register(addDisposableListener(this.merge, 'click', e => {
-			e.stopPropagation();
-			void this.runMerge(e.shiftKey);
 		}));
 		if (pullRequests) {
 			this._register(pullRequests.onDidChange(sessionIds => {
@@ -174,6 +194,7 @@ export class AgentPullRequestDockControl extends Disposable {
 			return;
 		}
 		this.sessionId = sessionId;
+		this.expanded = false;
 		this.render();
 	}
 
@@ -194,11 +215,13 @@ export class AgentPullRequestDockControl extends Disposable {
 		const others = links
 			.filter(link => link.key !== this.link?.key)
 			.sort((a, b) => (b.snapshot?.updatedAt ?? b.linkedAt) - (a.snapshot?.updatedAt ?? a.linkedAt));
-		const height = others.length * LINK_ROW_HEIGHT;
+		const shown = COLLAPSED_ROWS - 1;
+		const rows: DockLinkRow[] = this.expanded || others.length <= shown ? others : [...others.slice(0, shown), SHOW_MORE_ROW];
+		const height = rows.length * LINK_ROW_HEIGHT;
 		this.othersHost.style.height = `${height}px`;
 		this.othersHost.style.display = height ? '' : 'none';
 		this.others.layout(height);
-		this.others.splice(0, this.others.length, others);
+		this.others.splice(0, this.others.length, rows);
 	}
 
 	private renderRow(): void {
@@ -215,7 +238,6 @@ export class AgentPullRequestDockControl extends Disposable {
 				: this.options.emptyLabel;
 			this.main.removeAttribute('aria-label');
 			this.setVisible(this.checksSep, this.checks, false);
-			this.setVisible(this.mergeSep, this.merge, false);
 			return;
 		}
 		iconSpan(this.icon, prStateIcon(pr.state), `state-${pr.state}`);
@@ -231,36 +253,11 @@ export class AgentPullRequestDockControl extends Disposable {
 			iconSpan(this.checksIcon, pr.checks.state === 'success' ? Codicon.pass : checkIcon(pr.checks.state), `check-${pr.checks.state}`);
 			setAgentTooltip(this.checks, checksLabel(pr));
 		}
-
-		const open = isOpenState(pr.state);
-		this.setVisible(this.mergeSep, this.merge, open);
-		const ready = isReadyToMerge(pr);
-		this.merge.classList.toggle('ready', ready && !this.merging);
-		this.merge.disabled = !ready || this.merging;
-		this.merge.textContent = this.merging ? localize('voltPr.dockMerging', "Merging…") : localize('voltPr.dockMerge', "Merge");
-		setAgentTooltip(this.merge, ready
-			? localize('voltPr.dockMergeTip', "Merge into {0}. Hold Shift to skip the confirmation.", pr.baseRefName)
-			: blockedReason(pr) ?? localize('voltPr.dockNotReady', "Not ready to merge"));
 	}
 
 	private setVisible(sep: HTMLElement, part: HTMLElement, visible: boolean): void {
 		sep.classList.toggle('hidden', !visible);
 		part.classList.toggle('hidden', !visible);
-	}
-
-	private async runMerge(skipConfirm: boolean): Promise<void> {
-		const pr = this.link?.snapshot;
-		if (!pr || this.merging) {
-			return;
-		}
-		this.merging = true;
-		this.render();
-		try {
-			await this.instantiationService.invokeFunction(accessor => mergePullRequest(accessor, pr, skipConfirm));
-		} finally {
-			this.merging = false;
-			this.render();
-		}
 	}
 
 	/** The checks of the latest commit, from a fresh read; picking one opens its run. */
