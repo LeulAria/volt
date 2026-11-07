@@ -41,9 +41,11 @@ registerAction2(class OpenVoltSettingsAction extends Action2 {
 			category: Categories.Preferences,
 			f1: true,
 			icon: Codicon.settings,
+			// ⌘, opens these Settings, not VS Code's settings editor (registered at WorkbenchContrib), which they list under All Settings.
 			keybinding: {
-				primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.Comma,
-				weight: KeybindingWeight.WorkbenchContrib,
+				primary: KeyMod.CtrlCmd | KeyCode.Comma,
+				secondary: [KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.Comma],
+				weight: KeybindingWeight.WorkbenchContrib + 1,
 			},
 			menu: [
 				{
