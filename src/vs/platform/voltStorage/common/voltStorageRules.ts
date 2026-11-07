@@ -170,18 +170,26 @@ export function overWorktreeLimits(count: number, bytes: number, limits: IVoltWo
 	return count > limits.maxCount || (limits.maxBytes > 0 && bytes > limits.maxBytes);
 }
 
+/** An open chat active this recently keeps its checkout under the worktree limits, whatever the count. */
+export const WORKTREE_LIMIT_RECENT_MS = 3 * 24 * 60 * 60 * 1000;
+
 /**
  * The checkouts the worktree limits may remove, in the order they go: archived chats' first,
- * then idle chats', each oldest activity first. One a running chat uses, and one no chat here
- * knows (another profile's), never is. Dirty ones are listed; removal refuses them.
+ * then idle chats', each oldest activity first. One a running chat uses, one an open chat used in
+ * the last {@link WORKTREE_LIMIT_RECENT_MS} (it may be open in another window, between turns), and
+ * one no chat here knows (another profile's), never is. Dirty ones are listed; removal refuses them,
+ * and the walk goes on to newer ones, which is why recent ones must stay off the list.
  */
-export function worktreeLimitCandidates<E extends { readonly path: string }>(entries: readonly E[], context: Pick<IVoltStorageContext, 'worktrees' | 'runningSessionIds'>): E[] {
+export function worktreeLimitCandidates<E extends { readonly path: string }>(entries: readonly E[], context: Pick<IVoltStorageContext, 'worktrees' | 'runningSessionIds'>, now = Date.now()): E[] {
 	const running = new Set(context.runningSessionIds);
 	const ranked: { readonly entry: E; readonly open: boolean; readonly updatedAt: number }[] = [];
 	for (const entry of entries) {
 		const key = samePathKey(entry.path);
 		const refs = context.worktrees.filter(ref => samePathKey(ref.path) === key);
 		if (!refs.length || refs.some(ref => running.has(ref.sessionId))) {
+			continue;
+		}
+		if (refs.some(ref => !ref.archived && now - (ref.updatedAt ?? 0) < WORKTREE_LIMIT_RECENT_MS)) {
 			continue;
 		}
 		ranked.push({ entry, open: refs.some(ref => !ref.archived), updatedAt: Math.max(...refs.map(ref => ref.updatedAt ?? 0)) });

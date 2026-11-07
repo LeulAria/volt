@@ -9261,6 +9261,13 @@ pre.volt-agent-searchable {
 	display: none;
 }
 
+/* The IDE's empty editor lists the same rows (ideWatermarkOpenList.ts), hidden wherever the stock shortcuts would be. */
+.monaco-workbench .part.editor > .content .editor-group-container > .editor-group-watermark.volt-ide-open-list > .shortcuts,
+.monaco-workbench .part.editor > .content:not(.empty) .editor-group-container > .editor-group-watermark.volt-ide-open-list > .volt-agent-tools-open-list,
+.monaco-workbench .part.editor > .content .editor-group-container.max-height-478px > .editor-group-watermark.volt-ide-open-list > .volt-agent-tools-open-list {
+	display: none;
+}
+
 .volt-agent-tools-open-list {
 	display: flex;
 	flex-direction: column;

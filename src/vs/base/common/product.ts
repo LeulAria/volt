@@ -37,14 +37,6 @@ export interface IFeaturedExtension {
 	readonly imagePath: string;
 }
 
-export interface IChatSessionRecommendation {
-	readonly extensionId: string;
-	readonly extensionName: string;
-	readonly displayName: string;
-	readonly name: string;
-	readonly description: string;
-}
-
 export type ConfigurationSyncStore = {
 	url: string;
 	insidersUrl: string;
@@ -126,17 +118,6 @@ export interface IProductConfiguration {
 		readonly extensionUrlTemplate: string;
 		readonly resourceUrlTemplate: string;
 		readonly nlsBaseUrl: string;
-		readonly accessSKUs?: string[];
-	};
-
-	readonly mcpGallery?: {
-		readonly serviceUrl: string;
-		readonly itemWebUrl: string;
-		readonly publisherUrl: string;
-		readonly supportUrl: string;
-		readonly privacyPolicyUrl: string;
-		readonly termsOfServiceUrl: string;
-		readonly reportUrl: string;
 	};
 
 	readonly extensionPublisherOrgs?: readonly string[];
@@ -153,7 +134,6 @@ export interface IProductConfiguration {
 	readonly languageExtensionTips?: readonly string[];
 	readonly trustedExtensionUrlPublicKeys?: IStringDictionary<string[]>;
 	readonly trustedExtensionAuthAccess?: string[] | IStringDictionary<string[]>;
-	readonly trustedMcpAuthAccess?: string[] | IStringDictionary<string[]>;
 	readonly inheritAuthAccountPreference?: IStringDictionary<string[]>;
 	readonly trustedExtensionProtocolHandlers?: readonly string[];
 
@@ -225,18 +205,6 @@ export interface IProductConfiguration {
 	readonly msftInternalDomains?: string[];
 	readonly linkProtectionTrustedDomains?: readonly string[];
 
-	readonly defaultAccount?: {
-		readonly authenticationProvider: {
-			readonly id: string;
-			readonly enterpriseProviderId: string;
-			readonly enterpriseProviderConfig: string;
-			readonly scopes: string[];
-		};
-		readonly tokenEntitlementUrl: string;
-		readonly chatEntitlementUrl: string;
-		readonly mcpRegistryDataUrl: string;
-	};
-
 	readonly 'configurationSync.store'?: ConfigurationSyncStore;
 
 	readonly 'editSessions.store'?: Omit<ConfigurationSyncStore, 'insidersUrl' | 'stableUrl'>;
@@ -245,11 +213,7 @@ export interface IProductConfiguration {
 	readonly profileTemplatesUrl?: string;
 
 	readonly commonlyUsedSettings?: string[];
-	readonly aiGeneratedWorkspaceTrust?: IAiGeneratedWorkspaceTrust;
 
-	readonly defaultChatAgent?: IDefaultChatAgent;
-	readonly chatParticipantRegistry?: string;
-	readonly chatSessionRecommendations?: IChatSessionRecommendation[];
 	readonly emergencyAlertUrl?: string;
 
 	readonly remoteDefaultExtensionsIfInstalledLocally?: string[];
@@ -350,55 +314,4 @@ export interface ISurveyData {
 	languageId: string;
 	editCount: number;
 	userProbability: number;
-}
-
-export interface IAiGeneratedWorkspaceTrust {
-	readonly title: string;
-	readonly checkboxText: string;
-	readonly trustOption: string;
-	readonly dontTrustOption: string;
-	readonly startupTrustRequestLearnMore: string;
-}
-
-export interface IDefaultChatAgent {
-	readonly extensionId: string;
-	readonly chatExtensionId: string;
-
-	readonly documentationUrl: string;
-	readonly skusDocumentationUrl: string;
-	readonly publicCodeMatchesUrl: string;
-	readonly manageSettingsUrl: string;
-	readonly managePlanUrl: string;
-	readonly manageOverageUrl: string;
-	readonly upgradePlanUrl: string;
-	readonly signUpUrl: string;
-	readonly termsStatementUrl: string;
-	readonly privacyStatementUrl: string;
-
-	readonly provider: {
-		default: { id: string; name: string };
-		enterprise: { id: string; name: string };
-		google: { id: string; name: string };
-		apple: { id: string; name: string };
-	};
-
-	readonly providerUriSetting: string;
-	readonly providerScopes: string[][];
-
-	readonly entitlementUrl: string;
-	readonly entitlementSignupLimitedUrl: string;
-
-	readonly chatQuotaExceededContext: string;
-	readonly completionsQuotaExceededContext: string;
-
-	readonly walkthroughCommand: string;
-	readonly completionsMenuCommand: string;
-	readonly completionsRefreshTokenCommand: string;
-	readonly chatRefreshTokenCommand: string;
-	readonly generateCommitMessageCommand: string;
-	readonly resolveMergeConflictsCommand: string;
-
-	readonly completionsAdvancedSetting: string;
-	readonly completionsEnablementSetting: string;
-	readonly nextEditSuggestionsSetting: string;
 }

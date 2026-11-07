@@ -189,6 +189,8 @@ const DISCOVERY_RECENT_MS = 7 * 24 * 3_600_000;
 const REPO_TTL_MS = 30_000;
 /** Remotes are re-read on config edits and focus; this only catches what neither saw. */
 const ORIGIN_TTL_MS = 60_000;
+/** A remotes read that failed (git busy or briefly unavailable) is tried again this soon. */
+const ORIGIN_RETRY_MS = 5_000;
 const DETAIL_TTL_MS = 8_000;
 const MAX_BACKOFF_MS = 10 * 60_000;
 /**
@@ -667,12 +669,17 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 			return undefined;
 		});
 		state.reading = false;
-		const configFile = remotes?.configFile;
+		if (!remotes) {
+			// Not an answer: keep the last one, so one failed git call does not hide the pull requests.
+			state.at = Date.now() - ORIGIN_TTL_MS + ORIGIN_RETRY_MS;
+			return;
+		}
+		const configFile = remotes.configFile;
 		if (configFile && !this.configWatches.has(configFile)) {
 			this.configWatches.set(configFile, this.fileService.watch(URI.file(configFile)));
 		}
 		state.configFile = configFile;
-		const shows = showsPullRequests(remotes?.remotes);
+		const shows = showsPullRequests(remotes.remotes);
 		if (state.shows !== shows) {
 			const known = state.shows !== undefined;
 			state.shows = shows;

@@ -49,6 +49,7 @@ import '../chrome/agentNav.contribution.js';
 import './agentChatNavigation.contribution.js';
 import '../workspace/agentTerminalCwd.js';
 import '../workspace/agentIdeWorkspace.js';
+import '../workspace/ideWatermarkOpenList.js';
 import '../workspace/agentMarkdownToggle.js';
 import '../workspace/agentTerminalScope.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';

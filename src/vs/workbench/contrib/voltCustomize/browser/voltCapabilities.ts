@@ -32,7 +32,6 @@ import { EditorExtensions } from '../../../common/editor.js';
 import { Extensions as ViewExtensions, IViewContainersRegistry, IViewsRegistry } from '../../../common/views.js';
 import { EnablementState } from '../../../services/extensionManagement/common/extensionManagement.js';
 import { IWorkbenchThemeService } from '../../../services/themes/common/workbenchThemeService.js';
-import { ILanguageModelToolsService } from '../../chat/common/languageModelToolsService.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { providerFamily } from '../../../services/voltRuntime/browser/providers/providerFamily.js';
 import { CODE_INTELLIGENCE_TOOLS } from '../../../services/voltRuntime/common/codeIntelligence.js';
@@ -87,7 +86,7 @@ const PROVIDER_STATES: Readonly<Record<string, string>> = {
  * The Capabilities tab: everything this window can do, as one tree. Volt's features (each a
  * built-in extension that can be turned off, with the agent tools, commands, settings and buttons it
  * brings), then everything VS Code registers (views, editors, commands, settings, shortcuts,
- * languages, themes, chat tools), then every extension and what it contributes. A filter narrows it;
+ * languages, themes), then every extension and what it contributes. A filter narrows it;
  * any row drags into the chat (or Add to Chat) so the agent gets what it is and how to change it.
  */
 
@@ -269,7 +268,6 @@ export class VoltCapabilitiesView extends Disposable {
 		@IKeybindingService private readonly keybindingService: IKeybindingService,
 		@ILanguageService private readonly languageService: ILanguageService,
 		@IWorkbenchThemeService private readonly themeService: IWorkbenchThemeService,
-		@ILanguageModelToolsService private readonly toolsService: ILanguageModelToolsService,
 		@IExtensionsWorkbenchService private readonly extensionsService: IExtensionsWorkbenchService,
 		@IVoltFeatureService private readonly features: IVoltFeatureService,
 		@IVoltHostToolService private readonly hostTools: IVoltHostToolService,
@@ -503,7 +501,6 @@ export class VoltCapabilitiesView extends Disposable {
 			group('vscode/colorThemes', localize('voltCapabilities.colorThemes', "Color themes"), Codicon.symbolColor, this.themes.color),
 			group('vscode/fileIconThemes', localize('voltCapabilities.fileIconThemes', "File icon themes"), Codicon.fileMedia, this.themes.file),
 			group('vscode/productIconThemes', localize('voltCapabilities.productIconThemes', "Product icon themes"), Codicon.symbolMisc, this.themes.product),
-			this.chatToolsGroup(),
 		];
 		return group('vscode', localize('voltCapabilities.vscode', "VS Code"), Codicon.vscode, children, { open: true, description: localize('voltCapabilities.vscodeDesc', "Everything the workbench registers. Volt runs all of it; the agent window shows a part of it.") });
 	}
@@ -620,13 +617,6 @@ export class VoltCapabilitiesView extends Disposable {
 		return group('vscode/languages', localize('voltCapabilities.languages', "Languages"), Codicon.symbolKey, this.languageService.getSortedRegisteredLanguageNames().map(language => ({
 			id: `vscode/languages/${language.languageId}`, kind: 'entry' as const, label: language.languageName, detail: language.languageId, icon: Codicon.symbolKey,
 		})));
-	}
-
-	private chatToolsGroup(): ICapability {
-		const tools = [...this.toolsService.getTools()].sort((a, b) => (a.displayName ?? a.id).localeCompare(b.displayName ?? b.id));
-		return group('vscode/chatTools', localize('voltCapabilities.chatTools', "Chat tools"), Codicon.tools, tools.map(tool => ({
-			id: `vscode/chatTools/${tool.id}`, kind: 'entry' as const, label: tool.displayName || tool.id, detail: tool.toolReferenceName ?? tool.id, description: tool.userDescription ?? tool.modelDescription, icon: Codicon.symbolMethod,
-		})), { description: localize('voltCapabilities.chatToolsDesc', "Tools VS Code's own chat can call. Volt's agents get Volt's tools (under each Volt feature) and their own.") });
 	}
 
 	private async loadThemes(): Promise<void> {

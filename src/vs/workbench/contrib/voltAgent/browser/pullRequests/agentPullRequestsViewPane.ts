@@ -19,6 +19,8 @@ import { IContextMenuService, IContextViewService } from '../../../../../platfor
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
+import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
@@ -29,7 +31,7 @@ import { IViewDescriptorService } from '../../../../common/views.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IVoltQuery, IVoltQueryCache, IVoltQueryHandle } from '../../../../services/voltRuntime/browser/queryCache.js';
 import { compilePrSearch, IPrSearch, IPrSearchHit, rankBySearch } from '../../common/agentPullRequestSearch.js';
-import { AgentPrInvolvement, AgentPrSort, blockedReason, groupAndRank, IAgentPrLink, isOpenState, resolveMergeMethod, visibleLinks } from '../../common/agentPullRequests.js';
+import { AgentPrInvolvement, AgentPrSort, blockedReason, buildResolveConflictsPrompt, groupAndRank, IAgentPrLink, isOpenState, resolveMergeMethod, visibleLinks } from '../../common/agentPullRequests.js';
 import { AGENT_HEADER_SEARCH_PATH } from '../chrome/agentTitlebarHeader.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
@@ -37,7 +39,7 @@ import { showVoltMenu } from '../ui/menu/voltMenu.js';
 import { agentToolsSessionOnScreen } from '../workspace/agentSurfaceHost.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
 import { onDidChangePullRequestsViewSession, pullRequestsViewSession } from './agentPullRequestsViewState.js';
-import { ago, avatar, checkIcon, iconSpan, openPullRequest, problemText, prStateIcon, signInWithGh } from './agentPullRequestUi.js';
+import { ago, avatar, checkIcon, composeInChat, iconSpan, openPullRequest, problemText, prStateIcon, signInWithGh } from './agentPullRequestUi.js';
 
 const SORT_KEY = 'volt.pullRequests.sort';
 const STATE_KEY = 'volt.pullRequests.state';
@@ -213,6 +215,8 @@ export class AgentPullRequestsViewPane extends ViewPane {
 		@IEditorService private readonly editorService: IEditorService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IVoltQueryCache private readonly cache: IVoltQueryCache,
+		@IDialogService private readonly dialogService: IDialogService,
+		@IClipboardService private readonly clipboardService: IClipboardService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 		const sort = this.storageService.get(SORT_KEY, StorageScope.PROFILE);
@@ -709,16 +713,69 @@ export class AgentPullRequestsViewPane extends ViewPane {
 			add(localize('voltPr.readyShort', "Ready"), Codicon.eye, () => this.pullRequests.api.setDraft({ ...request, draft: false }));
 		} else if (pr.state === 'open') {
 			add(localize('voltPr.closeShort', "Close"), Codicon.gitPullRequestClosed, () => this.pullRequests.api.setState({ ...request, state: 'closed' }));
-			add(localize('voltPr.mergeShort', "Merge"), Codicon.gitMerge, async () => {
-				// Fresh detail first: the merge goes in only on the head and method the repository allows now.
-				const detail = await this.pullRequests.detail(request, true);
-				if (detail.state !== 'open') {
-					throw new Error(localize('voltPr.notMergeable', "#{0} is {1} now.", pr.number, detail.state));
-				}
-				const method = resolveMergeMethod(detail.mergeOptions, this.pullRequests.lastMergeMethod(pr.repo));
-				await this.pullRequests.api.merge({ ...request, method, headOid: detail.headRefOid, deleteBranch: detail.mergeOptions.deleteBranchOnMerge && !detail.crossRepository });
-			});
+			add(localize('voltPr.mergeShort', "Merge"), Codicon.gitMerge, () => this.merge(pr));
+			if (pr.mergeable === 'conflicting') {
+				this.hoverFixConflicts(row, pr);
+			} else {
+				this.hoverMerge(row, pr);
+			}
 		}
+	}
+
+	/** The plain-hover button at the row's right end, over the size and age (hidden meanwhile). */
+	private hoverButton(row: HTMLElement, icon: ThemeIcon, label: string, kind: 'merge' | 'conflicts'): HTMLButtonElement {
+		row.classList.add('has-hover-action', `hover-${kind}`);
+		const button = append(append(row, $('.volt-pr-hover')), $(`button.volt-pr-hover-button.${kind}`)) as HTMLButtonElement;
+		button.type = 'button';
+		button.appendChild(renderIcon(icon));
+		append(button, $('span')).textContent = label;
+		return button;
+	}
+
+	/** Conflicts: the chat on screen gets the resolve-conflicts prompt, as the pull request's own Resolve Conflicts does. */
+	private hoverFixConflicts(row: HTMLElement, pr: IVoltPullRequest): void {
+		const button = this.hoverButton(row, Codicon.warning, localize('voltPr.fixConflictsShort', "Fix Conflicts"), 'conflicts');
+		this.renderStore.add(addDisposableListener(button, 'click', async e => {
+			EventHelper.stop(e, true);
+			const prompt = buildResolveConflictsPrompt(pr);
+			const sessionId = this.sessionId();
+			const composed = !!sessionId && await this.instantiationService.invokeFunction(accessor => composeInChat(accessor, sessionId, prompt));
+			if (!composed) {
+				await this.clipboardService.writeText(prompt);
+				this.notificationService.info(localize('voltPr.fixConflictsCopied', "No chat is open for #{0}; the prompt to fix its conflicts was copied.", pr.number));
+			}
+		}));
+	}
+
+	/** Merge: it asks first, unless Shift is held, as with the other quick actions. */
+	private hoverMerge(row: HTMLElement, pr: IVoltPullRequest): void {
+		const label = localize('voltPr.mergeShort', "Merge");
+		const button = this.hoverButton(row, Codicon.gitMerge, label, 'merge');
+		this.renderStore.add(addDisposableListener(button, 'click', async e => {
+			EventHelper.stop(e, true);
+			if (!e.shiftKey) {
+				const { confirmed } = await this.dialogService.confirm({
+					message: localize('voltPr.mergeConfirm', "Merge #{0} into {1}?", pr.number, pr.baseRefName),
+					detail: pr.title,
+					primaryButton: localize({ key: 'voltPr.mergeConfirmButton', comment: ['&& denotes a mnemonic'] }, "&&Merge"),
+				});
+				if (!confirmed) {
+					return;
+				}
+			}
+			void this.quick(pr, label, () => this.merge(pr));
+		}));
+	}
+
+	/** Fresh detail first: the merge goes in only on the head and method the repository allows now. */
+	private async merge(pr: IVoltPullRequest): Promise<void> {
+		const request = { repo: pr.repo, number: pr.number };
+		const detail = await this.pullRequests.detail(request, true);
+		if (detail.state !== 'open') {
+			throw new Error(localize('voltPr.notMergeable', "#{0} is {1} now.", pr.number, detail.state));
+		}
+		const method = resolveMergeMethod(detail.mergeOptions, this.pullRequests.lastMergeMethod(pr.repo));
+		await this.pullRequests.api.merge({ ...request, method, headOid: detail.headRefOid, deleteBranch: detail.mergeOptions.deleteBranchOnMerge && !detail.crossRepository });
 	}
 
 	private async quick(pr: IVoltPullRequest, label: string, run: () => Promise<unknown>): Promise<void> {
@@ -795,21 +852,31 @@ export function buildPullRequestRow(pr: IVoltPullRequest, watching: boolean): IP
 	avatar(line2, pr.author.login, pr.author.avatarUrl, 14);
 	const author = append(line2, $('span.volt-pr-list-author'));
 	author.textContent = pr.author.login;
-	const branch = append(line2, $('span.volt-pr-list-branch'));
+	// One thing between the author and the age, so a narrow list never crushes it: what the pull request
+	// waits on, else its labels (a dot in the label's color and the name), else its branch.
+	const branch = $('span.volt-pr-list-branch');
 	branch.textContent = pr.headRefName;
-	for (const label of pr.labels.slice(0, 2)) {
-		const chip = append(line2, $('span.volt-pr-label.small'));
-		chip.style.setProperty('--volt-pr-label', `#${/^[0-9a-f]{6}$/i.test(label.color) ? label.color : '888888'}`);
-		chip.textContent = label.name;
+	const reason = blockedReason(pr);
+	// A size label repeats the +/- counts on the first line, so the row leaves it out.
+	const labels = pr.labels.filter(label => !/^size[:/ ]/i.test(label.name)).slice(0, 2);
+	if (reason) {
+		append(line2, $(`span.volt-pr-list-reason.reason-${reasonClass(pr)}`)).textContent = reason;
+	} else if (labels.length) {
+		const list = append(line2, $('span.volt-pr-list-labels'));
+		for (const label of labels) {
+			const chip = append(list, $('span.volt-pr-list-label'));
+			chip.style.setProperty('--volt-pr-label', `#${/^[0-9a-f]{6}$/i.test(label.color) ? label.color : '888888'}`);
+			append(chip, $('span.dot'));
+			append(chip, $('span.name')).textContent = label.name;
+			setAgentTooltip(chip, label.name);
+		}
+	} else {
+		append(line2, branch);
 	}
 	if (pr.unresolvedThreads) {
 		const threads = append(line2, $('span.volt-pr-list-threads'));
 		threads.appendChild(renderIcon(Codicon.commentUnresolved));
 		append(threads, $('span')).textContent = String(pr.unresolvedThreads);
-	}
-	const reason = blockedReason(pr);
-	if (reason) {
-		append(line2, $(`span.volt-pr-list-reason.reason-${reasonClass(pr)}`)).textContent = reason;
 	}
 	append(line2, $('.volt-pr-spacer'));
 	append(line2, $('span.volt-pr-list-age')).textContent = ago(pr.updatedAt);
@@ -817,6 +884,10 @@ export function buildPullRequestRow(pr: IVoltPullRequest, watching: boolean): IP
 }
 
 export function reasonClass(pr: IVoltPullRequest): string {
+	// Merged or closed is the end of it: no red for checks or reviews that no longer matter.
+	if (!isOpenState(pr.state)) {
+		return 'neutral';
+	}
 	if (pr.mergeable === 'conflicting' || pr.checks.state === 'failure' || pr.reviewDecision === 'changesRequested') {
 		return 'bad';
 	}

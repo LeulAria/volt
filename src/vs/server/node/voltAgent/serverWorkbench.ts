@@ -445,7 +445,7 @@ function initialColorTheme(theme: unknown): { readonly themeType: 'dark' | 'ligh
 
 /** The product the page shows (name, icons, data folder), not the server's dev defaults. */
 function productForWeb(): Record<string, unknown> {
-	const keys = ['nameShort', 'nameLong', 'applicationName', 'dataFolderName', 'urlProtocol', 'version', 'commit', 'quality', 'date', 'licenseUrl', 'reportIssueUrl', 'documentationUrl', 'extensionsGallery', 'linkProtectionTrustedDomains', 'defaultChatAgent'] as const;
+	const keys = ['nameShort', 'nameLong', 'applicationName', 'dataFolderName', 'urlProtocol', 'version', 'commit', 'quality', 'date', 'licenseUrl', 'reportIssueUrl', 'documentationUrl', 'extensionsGallery', 'linkProtectionTrustedDomains'] as const;
 	const result: Record<string, unknown> = {};
 	for (const key of keys) {
 		const value = (product as unknown as Record<string, unknown>)[key];

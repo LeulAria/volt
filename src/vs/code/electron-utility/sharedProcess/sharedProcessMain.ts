@@ -123,16 +123,6 @@ import { DefaultExtensionsInitializer } from './contrib/defaultExtensionsInitial
 import { AllowedExtensionsService } from '../../../platform/extensionManagement/common/allowedExtensionsService.js';
 import { IExtensionGalleryManifestService } from '../../../platform/extensionManagement/common/extensionGalleryManifest.js';
 import { ExtensionGalleryManifestIPCService } from '../../../platform/extensionManagement/common/extensionGalleryManifestServiceIpc.js';
-import { ISharedWebContentExtractorService } from '../../../platform/webContentExtractor/common/webContentExtractor.js';
-import { SharedWebContentExtractorService } from '../../../platform/webContentExtractor/node/sharedWebContentExtractorService.js';
-import { McpManagementService } from '../../../platform/mcp/node/mcpManagementService.js';
-import { IAllowedMcpServersService, IMcpGalleryService, IMcpManagementService } from '../../../platform/mcp/common/mcpManagement.js';
-import { IMcpResourceScannerService, McpResourceScannerService } from '../../../platform/mcp/common/mcpResourceScannerService.js';
-import { McpGalleryService } from '../../../platform/mcp/common/mcpGalleryService.js';
-import { McpManagementChannel } from '../../../platform/mcp/common/mcpManagementIpc.js';
-import { AllowedMcpServersService } from '../../../platform/mcp/common/allowedMcpServersService.js';
-import { IMcpGalleryManifestService } from '../../../platform/mcp/common/mcpGalleryManifest.js';
-import { McpGalleryManifestIPCService } from '../../../platform/mcp/common/mcpGalleryManifestServiceIpc.js';
 
 class SharedProcessMain extends Disposable implements IClientConnectionFilter {
 
@@ -343,12 +333,6 @@ class SharedProcessMain extends Disposable implements IClientConnectionFilter {
 		services.set(IAllowedExtensionsService, new SyncDescriptor(AllowedExtensionsService, undefined, true));
 		services.set(INativeServerExtensionManagementService, new SyncDescriptor(ExtensionManagementService, undefined, true));
 
-		// MCP Management
-		services.set(IAllowedMcpServersService, new SyncDescriptor(AllowedMcpServersService, undefined, true));
-		services.set(IMcpGalleryManifestService, new McpGalleryManifestIPCService(this.server));
-		services.set(IMcpGalleryService, new SyncDescriptor(McpGalleryService, undefined, true));
-		services.set(IMcpResourceScannerService, new SyncDescriptor(McpResourceScannerService, undefined, true));
-		services.set(IMcpManagementService, new SyncDescriptor(McpManagementService, undefined, true));
 
 		// Extension Gallery
 		services.set(IExtensionGalleryManifestService, new ExtensionGalleryManifestIPCService(this.server, productService));
@@ -393,7 +377,6 @@ class SharedProcessMain extends Disposable implements IClientConnectionFilter {
 		services.set(IRemoteTunnelService, new SyncDescriptor(RemoteTunnelService));
 
 		// Web Content Extractor
-		services.set(ISharedWebContentExtractorService, new SyncDescriptor(SharedWebContentExtractorService));
 
 		return new InstantiationService(services);
 	}
@@ -404,9 +387,6 @@ class SharedProcessMain extends Disposable implements IClientConnectionFilter {
 		const channel = new ExtensionManagementChannel(accessor.get(IExtensionManagementService), () => null);
 		this.server.registerChannel('extensions', channel);
 
-		// Mcp Management
-		const mcpManagementChannel = new McpManagementChannel(accessor.get(IMcpManagementService), () => null);
-		this.server.registerChannel('mcpManagement', mcpManagementChannel);
 
 		// Language Packs
 		const languagePacksChannel = ProxyChannel.fromService(accessor.get(ILanguagePackService), this._store);
@@ -459,8 +439,6 @@ class SharedProcessMain extends Disposable implements IClientConnectionFilter {
 		this.server.registerChannel('remoteTunnel', remoteTunnelChannel);
 
 		// Web Content Extractor
-		const webContentExtractorChannel = ProxyChannel.fromService(accessor.get(ISharedWebContentExtractorService), this._store);
-		this.server.registerChannel('sharedWebContentExtractor', webContentExtractorChannel);
 
 		// File Watcher (one per window, instead of a utility process per window)
 		this.server.registerChannel('watcher', this._register(new PerWindowWatcherChannel(this.server)));

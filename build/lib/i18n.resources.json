@@ -167,14 +167,6 @@
 			"project": "vscode-workbench"
 		},
 		{
-			"name": "vs/workbench/contrib/inlineChat",
-			"project": "vscode-workbench"
-		},
-		{
-			"name": "vs/workbench/contrib/chat",
-			"project": "vscode-workbench"
-		},
-		{
 			"name": "vs/workbench/contrib/quickaccess",
 			"project": "vscode-workbench"
 		},

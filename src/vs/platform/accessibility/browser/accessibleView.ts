@@ -15,14 +15,9 @@ export const IAccessibleViewService = createDecorator<IAccessibleViewService>('a
 
 export const enum AccessibleViewProviderId {
 	Terminal = 'terminal',
-	TerminalChat = 'terminal-chat',
 	TerminalHelp = 'terminal-help',
 	DiffEditor = 'diffEditor',
 	MergeEditor = 'mergeEditor',
-	PanelChat = 'panelChat',
-	InlineChat = 'inlineChat',
-	AgentChat = 'agentChat',
-	QuickChat = 'quickChat',
 	InlineCompletions = 'inlineCompletions',
 	KeybindingsEditor = 'keybindingsEditor',
 	Notebook = 'notebook',
@@ -124,7 +119,6 @@ export interface IAccessibleViewService {
 	showAccessibleViewHelp(): void;
 	next(): void;
 	previous(): void;
-	navigateToCodeBlock(type: 'next' | 'previous'): void;
 	goToSymbol(): void;
 	disableHint(): void;
 	getPosition(id: AccessibleViewProviderId): IPosition | undefined;
@@ -135,17 +129,8 @@ export interface IAccessibleViewService {
 	 * @param verbositySettingKey The setting key for the verbosity of the feature
 	 */
 	getOpenAriaHint(verbositySettingKey: string): string | null;
-	getCodeBlockContext(): ICodeBlockActionContext | undefined;
 	configureKeybindings(unassigned: boolean): void;
 	openHelpLink(): void;
-}
-
-
-export interface ICodeBlockActionContext {
-	code: string;
-	languageId?: string;
-	codeBlockIndex: number;
-	element: unknown;
 }
 
 export type AccesibleViewContentProvider = AccessibleContentProvider | ExtensionContentProvider;

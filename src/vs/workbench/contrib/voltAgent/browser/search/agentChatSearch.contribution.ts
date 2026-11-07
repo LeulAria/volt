@@ -16,16 +16,18 @@ import { localize, localize2 } from '../../../../../nls.js';
 import { Categories } from '../../../../../platform/action/common/actionCommonCategories.js';
 import { Action2, registerAction2 } from '../../../../../platform/actions/common/actions.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IQuickInputButton, IQuickInputService, IQuickPick, IQuickPickItem, IQuickPickSeparator } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { defaultToggleStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
 import { IAgentHistoryService, IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { IChatContentHit, IChatTitleCandidate, IChatTitleHit, searchChatTitles } from '../../common/agentChatSearch.js';
 import { OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { sessionFolders } from '../home/agentHomeFilter.js';
 import { folderPath } from '../home/agentHomeModel.js';
+import { AgentRepoResolver } from '../home/agentRepoInfo.js';
 import { IAgentChatSearchService, SEARCH_AGENT_CHATS_COMMAND_ID } from './agentChatSearchService.js';
 import { IAgentTurnReveal, requestAgentTurnReveal } from './agentTurnReveal.js';
 
@@ -73,6 +75,9 @@ class AgentChatSearchPicker extends Disposable {
 	private sessions = new Map<string, IAgentSessionMeta>();
 	private candidates: IChatTitleCandidate[] = [];
 	private readonly projectNames = new Map<string, string>();
+	/** Each project folder's checked-out branch, read once per picker; chats in a worktree name their own. */
+	private readonly branches = new Map<string, string | undefined>();
+	private readonly repoResolver: AgentRepoResolver;
 	private titleHits: IChatTitleHit[] = [];
 	private contentHits: IChatContentHit[] = [];
 	/** Chats asked for snippet text under the current query. */
@@ -85,8 +90,10 @@ class AgentChatSearchPicker extends Disposable {
 		@IVoltSessionContextService sessionContext: IVoltSessionContextService,
 		@ICommandService private readonly commandService: ICommandService,
 		@IStorageService private readonly storageService: IStorageService,
+		@IFileService fileService: IFileService,
 	) {
 		super();
+		this.repoResolver = new AgentRepoResolver(fileService);
 		for (const project of sessionContext.projects) {
 			this.projectNames.set(folderPath(project.root), project.displayName || uriBasename(project.root));
 		}
@@ -269,8 +276,10 @@ class AgentChatSearchPicker extends Disposable {
 
 	private item(row: IChatRow, withProject: boolean): IChatPick {
 		const { meta, content } = row;
+		const branch = this.branchOf(meta);
 		const description = [
 			withProject ? this.projectName(meta) : undefined,
+			branch ? `$(git-branch) ${branch.replace(/\$\(/g, '\\$(')}` : undefined,
 			fromNow(meta.updatedAt, true),
 			meta.archived ? localize('voltAgent.chatSearch.archived', "Archived") : undefined,
 		].filter(Boolean).join(' · ');
@@ -286,8 +295,9 @@ class AgentChatSearchPicker extends Disposable {
 		} else if (row.kind === 'content') {
 			detail = localize('voltAgent.chatSearch.inReply', "Found in a reply…");
 		}
+		// A running chat turns the sidebar's working ring (agentHomePane.css), not the codicon spinner.
 		const icon = meta.status === 'running'
-			? ThemeIcon.modify(Codicon.loading, 'spin')
+			? undefined
 			: meta.archived ? Codicon.archive : row.kind === 'content' ? Codicon.quote : Codicon.commentDiscussion;
 		return {
 			id: meta.id,
@@ -296,7 +306,7 @@ class AgentChatSearchPicker extends Disposable {
 			description,
 			detail,
 			// iconClass, not iconClasses: iconClasses lands on the label itself and turns the whole row into a codicon glyph.
-			iconClass: ThemeIcon.asClassName(icon),
+			iconClass: icon ? ThemeIcon.asClassName(icon) : 'volt-chat-search-running',
 			highlights: {
 				label: row.title ? [...row.title.highlights] : undefined,
 				detail: detailHighlights,
@@ -304,6 +314,33 @@ class AgentChatSearchPicker extends Disposable {
 			// A title hit opens the chat as usual; a message hit lands on the message.
 			reveal: row.kind === 'content' && content ? { turnId: content.turnId, find: snippet?.find ?? '' } : undefined,
 		};
+	}
+
+	/** The chat's branch: its worktree's, else its project's checkout (read in the background, then drawn again). */
+	private branchOf(meta: IAgentSessionMeta): string | undefined {
+		if (meta.worktreeBranch) {
+			return meta.worktreeBranch;
+		}
+		const folder = sessionFolders(meta)[0];
+		if (!folder) {
+			return undefined;
+		}
+		if (!this.branches.has(folder)) {
+			this.branches.set(folder, undefined);
+			let uri;
+			try {
+				uri = uriFromStoredRoot(folder);
+			} catch {
+				return undefined;
+			}
+			void this.repoResolver.resolve(uri).then(repo => {
+				if (!this._store.isDisposed && repo?.branch) {
+					this.branches.set(folder, repo.branch);
+					this.render(false);
+				}
+			}, () => undefined);
+		}
+		return this.branches.get(folder);
 	}
 
 	private projectName(meta: IAgentSessionMeta): string {

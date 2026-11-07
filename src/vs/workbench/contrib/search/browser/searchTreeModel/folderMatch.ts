@@ -101,10 +101,6 @@ export class FolderMatchImpl extends Disposable implements ISearchTreeFolderMatc
 		return this._parent;
 	}
 
-	isAIContributed(): boolean {
-		return false;
-	}
-
 	get hasChildren(): boolean {
 		return this._fileMatches.size > 0 || this._folderMatches.size > 0;
 	}
@@ -363,7 +359,7 @@ export class FolderMatchImpl extends Disposable implements ISearchTreeFolderMatc
 						.results
 						.filter(resultIsMatch)
 						.forEach(m => {
-							textSearchResultToMatches(m, existingFileMatch, false)
+							textSearchResultToMatches(m, existingFileMatch)
 								.forEach(m => existingFileMatch.add(m));
 						});
 				}
@@ -534,12 +530,10 @@ export class FolderMatchWorkspaceRootImpl extends FolderMatchWithResourceImpl im
 			}
 			parent = folderMatch;
 		}
-		const contentPatternToUse = typeof (this._query.contentPattern) === 'string' ? { pattern: this._query.contentPattern } : this._query.contentPattern;
-		return this.createFileMatch(contentPatternToUse, this._query.previewOptions, this._query.maxResults, parent, rawFileMatch, root, searchInstanceID);
+		return this.createFileMatch(this._query.contentPattern, this._query.previewOptions, this._query.maxResults, parent, rawFileMatch, root, searchInstanceID);
 	}
 }
 
-// currently, no support for AI results in out-of-workspace files
 export class FolderMatchNoRootImpl extends FolderMatchImpl implements ISearchTreeFolderMatchNoRoot {
 	constructor(_id: string, _index: number, _query: ITextQuery, _parent: ITextSearchHeading,
 		@IReplaceService replaceService: IReplaceService,
@@ -552,11 +546,10 @@ export class FolderMatchNoRootImpl extends FolderMatchImpl implements ISearchTre
 	}
 
 	createAndConfigureFileMatch(rawFileMatch: IFileMatch, searchInstanceID: string): ISearchTreeFileMatch {
-		const contentPatternToUse = typeof (this._query.contentPattern) === 'string' ? { pattern: this._query.contentPattern } : this._query.contentPattern;
 		// TODO: can probably just create FileMatchImpl if we don't expect cell results from the file.
 		const fileMatch = this._register(this.instantiationService.createInstance(
 			NotebookCompatibleFileMatch,
-			contentPatternToUse,
+			this._query.contentPattern,
 			this._query.previewOptions,
 			this._query.maxResults,
 			this, rawFileMatch,

@@ -7,7 +7,6 @@ import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { basename } from '../../../../../base/common/path.js';
 import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
-import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -20,23 +19,22 @@ import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase 
 import { agentServerEnabled } from '../../../../services/voltAgentServer/common/agentServerClient.js';
 import { IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
-import { TERMINAL_TOOLS, VoltTerminalToolName } from '../../../../services/voltRuntime/common/terminalTools.js';
+import { isTerminalLive, TERMINAL_TOOLS, VoltTerminalToolName } from '../../../../services/voltRuntime/common/terminalTools.js';
 import {
 	AGENT_TERMINAL_ENV, IAgentTerminalInfo, IAgentTerminalStart, IManagedTerminalBackend, IManagedTerminalExit, IManagedTerminalLaunch, IManagedTerminalProcess, ManagedTerminals, ManagedTerminalTools,
 } from '../../../../services/voltRuntime/common/terminals/managedTerminals.js';
 import { ITerminalEditorService, ITerminalInstance, ITerminalInstanceService } from '../../../terminal/browser/terminal.js';
 import { ITerminalProfileService } from '../../../terminal/common/terminal.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
+import { createAgentTaskTerminal } from './agentTaskTerminal.js';
 
 export { describeAgentTerminalStatus } from '../../../../services/voltRuntime/common/terminals/managedTerminals.js';
 export type { IAgentTerminalInfo, IAgentTerminalStart } from '../../../../services/voltRuntime/common/terminals/managedTerminals.js';
 
 export interface IAgentTerminalRevealRequest {
 	readonly chatId: string;
-	/** A Volt terminal. */
-	readonly instance?: ITerminalInstance;
-	/** An agent's background task: the file it writes its output to. */
-	readonly file?: URI;
+	/** A Volt terminal, or the view of an agent's background task. */
+	readonly instance: ITerminalInstance;
 	readonly preserveFocus: boolean;
 }
 
@@ -46,9 +44,9 @@ export const IAgentTerminalsService = createDecorator<IAgentTerminalsService>('a
  * Long-running commands of a chat (dev servers, watchers, `docker compose up`) in real terminals.
  * The process runs in this window's pty host, or in the agent server when agents run there (they
  * then outlive the window, which shows them through a terminal attached to the server). Either way
- * the chat shows them as chips; while the chat has a Terminals tab its running terminals are
- * listed there (marked as the agent's); the tab itself opens only when the user asks (a chip
- * click), never on start.
+ * the chat shows them as chips and lists them in its Terminals tab (marked as the agent's). A
+ * terminal opens that tab once, when it starts; after the user closes the tab it opens again only
+ * from a chip click or the next terminal. Closing it never stops the agent's terminals.
  */
 export interface IAgentTerminalsService {
 	readonly _serviceBrand: undefined;
@@ -167,24 +165,35 @@ export class AgentTerminalsService extends Disposable implements IAgentTerminals
 
 	readonly core: ManagedTerminals;
 	private readonly instances = new Map<string, ITerminalInstance>();
+	/** Terminals that already opened their chat's Terminals tab once. */
+	private readonly shown = new Set<string>();
 	readonly onDidChange: Event<string>;
 	private readonly _onDidRequestReveal = this._register(new Emitter<IAgentTerminalRevealRequest>());
 	readonly onDidRequestReveal: Event<IAgentTerminalRevealRequest> = this._onDidRequestReveal.event;
 
 	constructor(
-		@ITerminalInstanceService instanceService: ITerminalInstanceService,
-		@ITerminalEditorService terminalEditorService: ITerminalEditorService,
+		@ITerminalInstanceService private readonly instanceService: ITerminalInstanceService,
+		@ITerminalEditorService private readonly terminalEditorService: ITerminalEditorService,
 		@ITerminalProfileService profileService: ITerminalProfileService,
 		@IAgentWorkspaceService workspaceService: IAgentWorkspaceService,
 		@IWorkspaceContextService workspaceContext: IWorkspaceContextService,
 		@IAgentRuntimeService runtime: IAgentRuntimeService,
-		@IFileService fileService: IFileService,
+		@IFileService private readonly fileService: IFileService,
 	) {
 		super();
 		const backend = new WindowTerminalBackend(instanceService, terminalEditorService, profileService, (id, instance) => this.instances.set(id, instance));
 		this.core = this._register(new ManagedTerminals(backend, runtime, fileService, () => workspaceContext.getWorkspace().folders[0]?.uri.fsPath));
 		this.onDidChange = this.core.onDidChange;
-		this._register(this.core.onDidForget(terminal => this.instances.delete(terminal.id)));
+		this._register(this.core.onDidChange(chatId => this.showStarted(chatId)));
+		this._register(this.core.onDidForget(terminal => {
+			const instance = this.instances.get(terminal.id);
+			this.instances.delete(terminal.id);
+			this.shown.delete(terminal.id);
+			// A background task's view goes with the task; a Volt terminal's tab closes on its own.
+			if (terminal.task && instance && !instance.isDisposed) {
+				instance.dispose();
+			}
+		}));
 		// A deleted chat takes its terminals with it.
 		this._register(workspaceService.onDidChange(e => {
 			if (e.slot === undefined && !workspaceService.get(e.sessionId)) {
@@ -195,6 +204,17 @@ export class AgentTerminalsService extends Disposable implements IAgentTerminals
 
 	list(chatId: string): readonly IAgentTerminalInfo[] {
 		return this.core.list(chatId);
+	}
+
+	/** A terminal that just started shows in its chat's Terminals tab, once it has something to show. */
+	private showStarted(chatId: string): void {
+		for (const info of this.core.list(chatId)) {
+			if (this.shown.has(info.id) || !isTerminalLive(info.status) || (info.kind === 'agent-task' ? !info.outputFile : !this.instanceOf(info.id))) {
+				continue;
+			}
+			this.shown.add(info.id);
+			this.reveal(info.id, true);
+		}
 	}
 
 	get(id: string): IAgentTerminalInfo | undefined {
@@ -237,8 +257,15 @@ export class AgentTerminalsService extends Disposable implements IAgentTerminals
 
 	reveal(id: string, preserveFocus = true): void {
 		const terminal = this.core.managed(id);
-		if (terminal?.task?.file) {
-			this._onDidRequestReveal.fire({ chatId: terminal.chatId, file: terminal.task.file, preserveFocus });
+		const info = this.core.get(id);
+		if (terminal?.task && info?.outputFile) {
+			// A CLI agent's background command shows in the Terminals tab too, as a terminal that follows its output.
+			let instance = this.instanceOf(id);
+			if (!instance) {
+				instance = createAgentTaskTerminal({ ...info, outputFile: info.outputFile }, () => this.core.get(id), this.instanceService, this.terminalEditorService, this.fileService);
+				this.instances.set(id, instance);
+			}
+			this._onDidRequestReveal.fire({ chatId: terminal.chatId, instance, preserveFocus });
 			return;
 		}
 		const instance = this.instanceOf(id);

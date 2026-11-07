@@ -26,9 +26,7 @@ import { LineRangeMapping } from '../../../../editor/common/diff/rangeMapping.js
 import { IDiffEditorModel } from '../../../../editor/common/editorCommon.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IProgressService, ProgressLocation } from '../../../../platform/progress/common/progress.js';
-import { IChatEditingService, ModifiedFileEntryState } from '../../chat/common/chatEditingService.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
-import { autorun, autorunWithStore } from '../../../../base/common/observable.js';
 
 export const IQuickDiffModelService = createDecorator<IQuickDiffModelService>('IQuickDiffModelService');
 
@@ -131,7 +129,6 @@ export class QuickDiffModel extends Disposable {
 		@IEditorWorkerService private readonly editorWorkerService: IEditorWorkerService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@ITextModelService private readonly textModelResolverService: ITextModelService,
-		@IChatEditingService private readonly _chatEditingService: IChatEditingService,
 		@IProgressService private readonly progressService: IProgressService,
 	) {
 		super();
@@ -158,17 +155,6 @@ export class QuickDiffModel extends Disposable {
 		}));
 
 		this._register(this.quickDiffService.onDidChangeQuickDiffProviders(() => this.triggerDiff()));
-
-		this._register(autorunWithStore((r, store) => {
-			for (const session of this._chatEditingService.editingSessionsObs.read(r)) {
-				store.add(autorun(r => {
-					for (const entry of session.entries.read(r)) {
-						entry.state.read(r); // signal
-					}
-					this.triggerDiff();
-				}));
-			}
-		}));
 
 		this.triggerDiff();
 	}
@@ -406,13 +392,6 @@ export class QuickDiffModel extends Disposable {
 			return Promise.resolve([]);
 		}
 		const uri = this._model.resource;
-
-		// disable dirty diff when doing chat edits
-		const isBeingModifiedByChatEdits = this._chatEditingService.editingSessionsObs.get()
-			.some(session => session.getEntry(uri)?.state.get() === ModifiedFileEntryState.Modified);
-		if (isBeingModifiedByChatEdits) {
-			return Promise.resolve([]);
-		}
 
 		const isSynchronized = this._model.textEditorModel ? shouldSynchronizeModel(this._model.textEditorModel) : undefined;
 		return this.quickDiffService.getQuickDiffs(uri, this._model.getLanguageId(), isSynchronized);
