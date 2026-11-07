@@ -201,8 +201,8 @@ function Home() {
 
       <main className="relative">
         <Guides />
-        <AgentFlow />
         <AgentShowcase />
+        <AgentFlow />
         <AgentIde />
         <WorkspaceScale />
         <Models />
