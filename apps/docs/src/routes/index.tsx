@@ -35,7 +35,7 @@ function Home() {
   const version = latestVersion(releases);
   const downloads = downloadsLabel(releases);
 
-  // Opening sequence: chrome settles, the wordmark rises letter by letter, then the rest follows.
+  // Opening sequence: the wordmark rises letter by letter, then the rest follows. The header stays still.
   useGSAP(
     () => {
       gsap.matchMedia().add(`not ${REDUCED}`, () => {
@@ -49,11 +49,6 @@ function Home() {
             delay: 0.3,
             defaults: { duration: 1.3, ease: "expo.out" },
           })
-          .fromTo(
-            "[data-hero='head']",
-            { autoAlpha: 0, y: -12 },
-            { autoAlpha: 1, y: 0, stagger: 0.06 },
-          )
           .set("[data-hero='title']", { autoAlpha: 1 }, 0.1)
           .from(
             chars.chars,
@@ -100,7 +95,7 @@ function Home() {
           className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-40 bg-gradient-to-b from-transparent to-[#0a0d0c]"
         />
         <div className="relative z-10 flex min-h-dvh flex-col md:h-[100vh] md:min-h-0 md:overflow-hidden">
-          <SiteHeader animate />
+          <SiteHeader />
 
           <div className="relative z-0 flex min-h-0 flex-1 flex-col md:min-h-0 md:flex-1">
             <div className="relative z-0 flex flex-1 items-center justify-center px-4 py-2 sm:px-5 sm:py-6 md:flex-none md:px-4 md:py-1">
