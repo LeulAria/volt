@@ -1535,6 +1535,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			} else if (!onLanding && accessPicker.element.parentElement !== statusStart) {
 				statusStart.prepend(accessPicker.element);
 			}
+			accessPicker.setInLandingRow(onLanding);
 		};
 		statusStart.prepend(accessPicker.element);
 		const landingObserver = new (getWindow(this.container).ResizeObserver)(placeAccess);

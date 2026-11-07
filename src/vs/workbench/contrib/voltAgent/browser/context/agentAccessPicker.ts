@@ -37,6 +37,8 @@ export class AgentAccessPicker extends Disposable {
 	readonly element: HTMLButtonElement;
 	private readonly icon: HTMLElement;
 	private readonly label: HTMLElement;
+	/** In a new chat's picker row it has no tooltip, like project, branch and machine beside it. */
+	private inLandingRow = false;
 
 	constructor(
 		private readonly host: IAgentAccessPickerHost,
@@ -68,8 +70,16 @@ export class AgentAccessPicker extends Disposable {
 		this.element.dataset.mode = option.id;
 		const sandbox = this.runtime.getSandboxSettings(sessionId);
 		const tooltip = this.host.isAgent() && sandbox.level !== 'off' ? `${option.description}\n${describeSandbox(sandbox)}` : option.description;
-		setAgentTooltip(this.element, tooltip);
+		setAgentTooltip(this.element, this.inLandingRow ? undefined : tooltip);
 		this.element.setAttribute('aria-label', localize('voltAgent.accessAria', "Permissions: {0}", option.label));
+	}
+
+	/** The editor moved it into or out of a new chat's picker row (placeAccess in agentEditor.ts). */
+	setInLandingRow(inLandingRow: boolean): void {
+		if (this.inLandingRow !== inLandingRow) {
+			this.inLandingRow = inLandingRow;
+			this.render();
+		}
 	}
 
 	private open(): void {
