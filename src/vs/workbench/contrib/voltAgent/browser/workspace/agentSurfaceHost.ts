@@ -322,6 +322,25 @@ export function openInAgentTools(input: EditorInput, sessionId?: string, options
 }
 
 /**
+ * Opens `input` as a tab in `sessionId`'s own tools and nowhere else: on screen when that chat is,
+ * else as a background tab it finds when the user opens it. Undefined when this window has no
+ * view to host that chat's tools (the IDE layout).
+ */
+export function openInChatTools(input: EditorInput, sessionId: string, options?: IEditorOptions): Promise<IEditorPane | undefined> | undefined {
+	const host = [...hosts].find(candidate => candidate.canOpenTools() && candidate.showsSession(sessionId));
+	if (host) {
+		return host.openEditorInTools(input, options);
+	}
+	const part = ensureAgentToolsPart(sessionId);
+	return part?.activeGroup.openEditor(input, { ...options, pinned: true, preserveFocus: true, inactive: !!part.activeGroup.activeEditor });
+}
+
+/** Whether `sessionId`'s chat is the one on screen in this window. */
+export function isAgentChatOnScreen(sessionId: string): boolean {
+	return [...hosts].some(host => host.canOpenTools() && host.showsSession(sessionId));
+}
+
+/**
  * A new side chat in the tools of the chat on screen (preferring `sessionId`'s), bound to that
  * chat's project. Undefined when no chat is on screen (the IDE layout, the home page).
  */

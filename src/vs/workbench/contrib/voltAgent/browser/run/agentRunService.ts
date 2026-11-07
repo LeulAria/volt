@@ -34,8 +34,8 @@ import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../servi
 import { IDebugService, ILaunch, State } from '../../../debug/common/debug.js';
 import { ITerminalInstance, ITerminalService } from '../../../terminal/browser/terminal.js';
 import { AGENT_RUN_SHOW_IN_VOLT_SETTING } from '../../common/agentRunSettings.js';
-import { agentRunPrompt, AgentRunDeviceKind, detectRunScripts, findLocalUrl, IAgentRunDevice, IAgentRunScript, RUN_DESCRIPTION_SEPARATOR, runCommandFor, runOpensBrowser } from '../../common/agentRunTargets.js';
-import { IAgentDevicesService, IDeviceTarget } from '../devices/agentDevicesService.js';
+import { agentRunPrompt, AgentRunDeviceKind, detectRunScripts, findLocalUrl, IAgentRunDevice, IAgentRunScript, RUN_DESCRIPTION_SEPARATOR, runCommandFor, RunDevicePlatform, runOpensBrowser } from '../../common/agentRunTargets.js';
+import { IAgentDevicesService, IDeviceTarget, IHostDevices } from '../devices/agentDevicesService.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../preview/browserEditorInput.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { OPEN_DEVICE_PREVIEW_COMMAND_ID } from '../workspace/agentSurfaceMenu.js';
@@ -49,6 +49,8 @@ const CHOICES_KEY = 'volt.agent.run.choices';
 const DEVICE_WATCH_MS = 4000;
 /** A Volt-started simulator or emulator gets this long to boot. */
 const DEVICE_BOOT_MS = 180_000;
+/** How long a picked device may boot before the waiting agent gets it anyway (its tools wait at most 45 s). */
+const AGENT_PICK_BOOT_MS = 40_000;
 /** Debug types that run mobile apps: their sessions show the booted device inside Volt. */
 const MOBILE_DEBUG_TYPES = new Set(['dart', 'flutter', 'reactnative', 'reactnativedirect', 'expo']);
 
@@ -116,6 +118,12 @@ export interface IAgentRunService {
 	pickRunner(target: IAgentRunTarget): Promise<void>;
 	/** Flutter's "Select a device to use": booted devices, Volt's browser, the desktop, then offline emulators. */
 	pickDevice(target: IAgentRunTarget): Promise<IAgentRunDeviceChoice | undefined>;
+	/**
+	 * The quick pick of simulators and emulators for a chat ("run it on iOS", the toolbar's device
+	 * button): the picked one boots headless, opens beside the chat and becomes the chat's device,
+	 * which its agent's device tools wait for and then use. Resolves with the picked device's key.
+	 */
+	pickChatDevice(sessionId: string, platforms?: readonly RunDevicePlatform[]): Promise<string | undefined>;
 	/** Sends the chat's agent off to find how the project runs and run it (the chat shows a chip). */
 	askAgent(target: IAgentRunTarget): Promise<void>;
 	/** The run the toolbar controls: this project's, else the latest still running. */
@@ -147,6 +155,11 @@ interface IRunState {
 
 type LauncherPick = IQuickPickItem & {
 	run: () => Promise<void> | void;
+};
+
+/** A device, or none: "Let the Agent Choose". */
+type ChatDevicePick = IQuickPickItem & {
+	target?: IDeviceTarget;
 };
 
 type DevicePick = IQuickPickItem & {
@@ -222,10 +235,11 @@ export class AgentRunService extends Disposable implements IAgentRunService {
 		}));
 		this._register(this.orchestrator.onDidChange(() => this.syncWatchSoon.schedule()));
 		if (this.devices) {
-			// An agent started a device or an app on it with the device tools: show it beside the chat.
+			// An agent started a device or an app on it with the device tools: show it beside that
+			// agent's chat, in the window that has the chat (never beside whatever chat is on screen).
 			this._register(this.devices.onDidAct(activity => {
-				if (activity.by === 'agent' && activity.action && this.showsInVolt()) {
-					this.showDevice(activity.key);
+				if (activity.by === 'agent' && activity.action && activity.sessionId && this.showsInVolt()) {
+					this.showDevice(activity.key, activity.sessionId, true);
 				}
 			}));
 		}
@@ -409,7 +423,7 @@ export class AgentRunService extends Disposable implements IAgentRunService {
 					return;
 				}
 			}
-			device = await this.prepareDevice(choice);
+			device = await this.prepareDevice(choice, target.sessionId);
 			if (!device) {
 				return;
 			}
@@ -490,7 +504,7 @@ export class AgentRunService extends Disposable implements IAgentRunService {
 	}
 
 	/** Boots a simulator or emulator inside Volt (its screen comes up in the device panel) and says how the runner names it. */
-	private async prepareDevice(choice: IAgentRunDeviceChoice): Promise<IAgentRunDevice | undefined> {
+	private async prepareDevice(choice: IAgentRunDeviceChoice, sessionId: string | undefined): Promise<IAgentRunDevice | undefined> {
 		if (choice.kind === 'browser') {
 			return { kind: 'browser', name: choice.label };
 		}
@@ -510,7 +524,7 @@ export class AgentRunService extends Disposable implements IAgentRunService {
 			this.notificationService.warn(localize('agentRun.deviceGone', "{0} is no longer available. Pick another device.", choice.label));
 			return undefined;
 		}
-		this.showDevice(choice.key);
+		this.showDevice(choice.key, sessionId);
 		if (target.device.state !== 'booted') {
 			const found = target;
 			const state = await this.progressService.withProgress({
@@ -655,9 +669,105 @@ export class AgentRunService extends Disposable implements IAgentRunService {
 		this.setChoice(target.project, { device: picked.choice.key });
 		if (picked.offline) {
 			// Starts now, inside Volt, while the run gets ready.
-			this.showDevice(picked.choice.key);
+			this.showDevice(picked.choice.key, target.sessionId);
 		}
 		return picked.choice;
+	}
+
+	async pickChatDevice(sessionId: string, platforms?: readonly RunDevicePlatform[]): Promise<string | undefined> {
+		const devices = this.devices;
+		if (!devices) {
+			return undefined;
+		}
+		// The agent's device tools wait for this pick instead of guessing.
+		const done = devices.beginPick(sessionId);
+		let picked: IDeviceTarget | undefined;
+		try {
+			const kinds = new Set<RunDevicePlatform>(platforms?.length ? platforms : ['ios', 'android']);
+			const quickPick = this.quickInputService.createQuickPick<ChatDevicePick>({ useSeparators: true });
+			quickPick.placeholder = kinds.size === 1
+				? localize('agentRun.pickChatDeviceFor', "Select the {0} device to run on", kinds.has('ios') ? 'iOS' : 'Android')
+				: localize('agentRun.pickChatDevice', "Select a device to run on");
+			quickPick.matchOnDescription = true;
+			quickPick.busy = true;
+			const chosen = devices.chatDevices(sessionId);
+			const render = (lists: readonly IHostDevices[]) => {
+				const running: ChatDevicePick[] = [];
+				const offline: ChatDevicePick[] = [];
+				for (const entry of lists) {
+					for (const device of entry.devices) {
+						if (!kinds.has(device.platform) || device.kind === 'physical' && device.state !== 'booted') {
+							continue;
+						}
+						const target = { host: entry.host, device };
+						const key = devices.keyOf(target);
+						const where = entry.host.id === 'local' ? '' : `${RUN_DESCRIPTION_SEPARATOR}${entry.host.label}`;
+						const mine = chosen.includes(key) ? `${RUN_DESCRIPTION_SEPARATOR}${localize('agentRun.thisChat', "this chat")}` : '';
+						if (device.state === 'booted' || device.state === 'booting') {
+							running.push({ label: `$(${Codicon.deviceMobile.id}) ${device.name}`, description: `${deviceKindLabel(device)}${where}${mine}`, target });
+						} else if (device.state === 'shutdown') {
+							offline.push({ label: `$(${Codicon.play.id}) ${device.name}`, description: `${deviceKindLabel(device)}${where}`, target });
+						}
+					}
+				}
+				const items: Array<ChatDevicePick | IQuickPickSeparator> = [];
+				if (running.length) {
+					items.push({ type: 'separator', label: localize('agentRun.runningDevices', "Running") }, ...running);
+				}
+				if (offline.length) {
+					items.push({ type: 'separator', label: kinds.has('ios') && !kinds.has('android') ? localize('agentRun.simulators', "Simulators") : kinds.has('android') && !kinds.has('ios') ? localize('agentRun.emulators', "Emulators") : localize('agentRun.simulatorsAndEmulators', "Simulators and Emulators") }, ...offline);
+				}
+				items.push({ type: 'separator' }, { label: `$(${Codicon.robot.id}) ${localize('agentRun.agentChooses', "Let the Agent Choose")}`, alwaysShow: true });
+				quickPick.items = items;
+				const current = [...running, ...offline].find(item => item.target && chosen.includes(devices.keyOf(item.target)));
+				quickPick.activeItems = [current ?? running[0] ?? offline[0]].filter((item): item is ChatDevicePick => !!item);
+			};
+			render(devices.cached());
+			const accepted = new Promise<ChatDevicePick | undefined>(resolve => {
+				const store = new DisposableStore();
+				store.add(quickPick.onDidAccept(() => resolve(quickPick.selectedItems[0] ?? quickPick.activeItems[0])));
+				store.add(quickPick.onDidHide(() => {
+					resolve(undefined);
+					store.dispose();
+					quickPick.dispose();
+				}));
+			});
+			quickPick.show();
+			void devices.list(true).then(lists => {
+				render(lists);
+				quickPick.busy = false;
+			}, () => quickPick.busy = false);
+			const item = await accepted;
+			quickPick.hide();
+			picked = item?.target;
+			if (picked) {
+				await this.openChatDevice(sessionId, picked);
+			}
+		} finally {
+			done(picked ? devices.keyOf(picked) : undefined);
+		}
+		return picked ? devices.keyOf(picked) : undefined;
+	}
+
+	/** The chat's device: started headless, shown beside the chat at once, ready before the agent gets it. */
+	private async openChatDevice(sessionId: string, target: IDeviceTarget): Promise<void> {
+		const devices = this.devices!;
+		const key = devices.keyOf(target);
+		devices.attachToChat(sessionId, key);
+		if (target.device.state !== 'booted' && target.device.kind !== 'physical') {
+			try {
+				await devices.boot(target, DEVICE_BOOT_MS, { waitUntilReady: false });
+			} catch (err) {
+				this.notificationService.warn(localize('agentRun.bootFailed', "Could not start {0}: {1}", target.device.name, err instanceof Error ? err.message : String(err)));
+				return;
+			}
+		}
+		this.showDevice(key, sessionId);
+		if (target.device.state !== 'booted' && target.device.kind !== 'physical') {
+			// Its screen streams the boot beside the chat; the agent's tools get it once it is up.
+			await devices.boot(target, AGENT_PICK_BOOT_MS).catch(() => undefined);
+			await devices.list(true).catch(() => undefined);
+		}
 	}
 
 	//#endregion
@@ -750,8 +860,19 @@ export class AgentRunService extends Disposable implements IAgentRunService {
 		return this.configurationService.getValue<boolean>(AGENT_RUN_SHOW_IN_VOLT_SETTING) !== false;
 	}
 
-	private showDevice(key: string): void {
-		void this.commandService.executeCommand(OPEN_DEVICE_PREVIEW_COMMAND_ID, key);
+	/**
+	 * Beside `sessionId`'s chat (a background tab when another chat is on screen); without one,
+	 * beside the chat on screen. `onlyIfHere`: nothing when this window does not have the chat
+	 * (another window, another project, shows it).
+	 */
+	private showDevice(key: string, sessionId?: string, onlyIfHere = false): void {
+		void this.commandService.executeCommand(OPEN_DEVICE_PREVIEW_COMMAND_ID, key, sessionId, onlyIfHere ? { onlyIfHere } : undefined);
+	}
+
+	/** Booted by no Volt chat yet (a shell started it), or by `sessionId` itself. */
+	private unclaimedOrOwn(key: string, sessionId: string | undefined): boolean {
+		const users = this.devices?.chatsUsing(key) ?? [];
+		return !users.length || (!!sessionId && users.includes(sessionId));
 	}
 
 	/** A mobile debug session began: show the device it runs on (the picked one, else the first booted). */
@@ -759,12 +880,15 @@ export class AgentRunService extends Disposable implements IAgentRunService {
 		if (!this.devices || !this.showsInVolt()) {
 			return;
 		}
+		const sessionId = this.workspaceService.active?.sessionId;
 		const lists = await this.devices.list(true);
 		for (const entry of lists) {
-			const device = entry.devices.find(candidate => candidate.state === 'booted' && candidate.kind !== 'physical');
-			if (device) {
-				this.showDevice(this.devices.keyOf({ host: entry.host, device }));
-				return;
+			for (const device of entry.devices) {
+				const key = this.devices.keyOf({ host: entry.host, device });
+				if (device.state === 'booted' && device.kind !== 'physical' && this.unclaimedOrOwn(key, sessionId)) {
+					this.showDevice(key, sessionId);
+					return;
+				}
 			}
 		}
 	}
@@ -793,27 +917,47 @@ export class AgentRunService extends Disposable implements IAgentRunService {
 		const tick = async () => {
 			const lists = await devices.list(true);
 			const booted = new Set<string>();
+			let localIos = false;
 			for (const entry of lists) {
 				for (const device of entry.devices) {
 					if (device.state === 'booted' && device.kind !== 'physical') {
 						booted.add(devices.keyOf({ host: entry.host, device }));
+						localIos ||= !entry.host.ssh && device.platform === 'ios';
 					}
 				}
+			}
+			if (localIos) {
+				// Expo and `flutter emulators --launch` open Simulator.app: Volt shows the simulator itself.
+				devices.hideSimulatorApp();
 			}
 			const before = this.watchedBooted;
 			this.watchedBooted = booted;
 			if (!before) {
 				return;
 			}
-			const fresh = [...booted].find(key => !before.has(key));
+			for (const key of before) {
+				if (!booted.has(key)) {
+					devices.releaseDevice(key);
+				}
+			}
+			// A shell started it: it goes to this window's chat that runs or works on a mobile app,
+			// unless a chat (here or in another window) already has it.
+			const sessionId = this.watchSession();
+			const fresh = [...booted].find(key => !before.has(key) && this.unclaimedOrOwn(key, sessionId));
 			if (fresh) {
-				this.showDevice(fresh);
+				this.showDevice(fresh, sessionId);
 			}
 		};
 		void tick();
 		const timer = store.add(new IntervalTimer());
 		timer.cancelAndSet(() => void tick(), DEVICE_WATCH_MS, mainWindow);
 		this.deviceWatch.value = store;
+	}
+
+	/** The chat a device booted from a shell belongs to: the live run's chat, else the agent working on screen. */
+	private watchSession(): string | undefined {
+		const live = [...this.runs.values()].filter(run => !run.ended && run.target.sessionId);
+		return live[live.length - 1]?.target.sessionId ?? this.workspaceService.active?.sessionId;
 	}
 
 	private agentWorksOnMobile(): boolean {

@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { agentRunPrompt, detectRunScripts, findLocalUrl, IAgentRunProjectFiles, runCommandFor, runOpensBrowser } from '../../common/agentRunTargets.js';
+import { agentRunPrompt, detectRunScripts, findLocalUrl, IAgentRunProjectFiles, runCommandFor, runDeviceIntent, runOpensBrowser } from '../../common/agentRunTargets.js';
 
 function files(names: string[], extra: Partial<IAgentRunProjectFiles> = {}): IAgentRunProjectFiles {
 	return { names: new Set(names), platform: 'mac', ...extra };
@@ -98,5 +98,15 @@ suite('agentRunTargets', () => {
 		assert.ok(unpicked.includes('ask_question'));
 		assert.ok(unpicked.includes('device_boot'));
 		assert.ok(unpicked.includes('browser_navigate'));
+	});
+
+	test('a message that asks to run on a phone offers the device picker', () => {
+		assert.deepStrictEqual(runDeviceIntent('run the app on ios'), ['ios']);
+		assert.deepStrictEqual(runDeviceIntent('Launch it in the Android emulator please'), ['android']);
+		assert.deepStrictEqual(runDeviceIntent('can you test this on a phone?'), ['ios', 'android']);
+		assert.deepStrictEqual(runDeviceIntent('Fix the login bug. Then run it on iPhone and Pixel'), ['ios', 'android']);
+		assert.strictEqual(runDeviceIntent('fix the iOS build error in AppDelegate'), undefined);
+		assert.strictEqual(runDeviceIntent('how does the android emulator work'), undefined);
+		assert.strictEqual(runDeviceIntent('run the tests'), undefined);
 	});
 });

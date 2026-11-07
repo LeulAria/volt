@@ -145,6 +145,35 @@
 	margin-right: 2px;
 }
 
+/* The chat's running device: its name after a status dot (green running, amber booting). */
+.volt-run-toolbar .monaco-action-bar .action-item .action-label.volt-run-device-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	width: auto;
+	max-width: 160px;
+	padding: 3px 6px;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--vscode-foreground);
+}
+
+.volt-run-toolbar .action-label.volt-run-device-chip::before {
+	content: '';
+	flex: none;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--vscode-testing-iconPassed, #73c991);
+}
+
+.volt-run-toolbar .action-label.volt-run-device-chip.booting::before {
+	background: var(--vscode-charts-yellow, #cca700);
+}
+
 /* Flutter's hot reload is a yellow bolt. */
 .monaco-workbench .volt-run-toolbar .action-label.codicon.codicon-zap {
 	color: var(--vscode-charts-yellow, #cca700);

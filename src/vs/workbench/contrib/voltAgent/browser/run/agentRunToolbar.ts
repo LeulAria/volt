@@ -31,6 +31,12 @@ import { IDebugService, State } from '../../../debug/common/debug.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../preview/browserEditorInput.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IAgentActiveRun, IAgentRunService } from './agentRunService.js';
+import { IAgentDevicesService, IDeviceTarget } from '../devices/agentDevicesService.js';
+import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
+import { OPEN_DEVICE_PREVIEW_COMMAND_ID } from '../workspace/agentSurfaceMenu.js';
+
+/** Device chips past this many would crowd the title bar; the picker lists the rest. */
+const MAX_DEVICE_CHIPS = 3;
 
 //#region Inline or floating
 
@@ -69,6 +75,10 @@ export class AgentRunToolbar extends Disposable {
 	readonly onDidChangeContent: Event<void> = this._onDidChangeContent.event;
 	private project: URI | undefined;
 	private runKey = '';
+	private readonly devices: IAgentDevicesService | undefined;
+	private readonly deviceStore = this._register(new DisposableStore());
+	private deviceActions: IAction[] = [];
+	private deviceKey = '';
 
 	constructor(
 		parent: HTMLElement,
@@ -78,6 +88,7 @@ export class AgentRunToolbar extends Disposable {
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IAgentRunService private readonly runService: IAgentRunService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IAgentWorkspaceService private readonly workspaceService: IAgentWorkspaceService,
 	) {
 		super();
 		this.element = append(parent, $('.volt-run-toolbar.hidden'));
@@ -100,7 +111,52 @@ export class AgentRunToolbar extends Disposable {
 		this._register(this.debugService.onDidChangeState(() => this.update.schedule()));
 		this._register(this.debugMenu.onDidChange(() => this.update.schedule()));
 		this._register(this.runService.onDidChange(() => this.update.schedule()));
+		this.devices = instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentDevicesService));
+		if (this.devices) {
+			this._register(this.devices.onDidChangeChatDevices(() => this.update.schedule()));
+			this._register(this.devices.onDidChangeDevices(() => this.update.schedule()));
+		}
+		this._register(this.workspaceService.onDidChangeActive(() => this.update.schedule()));
 		this.doUpdate();
+	}
+
+	/**
+	 * The chat on screen's running devices, by name (each brings its tab forward), and a button
+	 * that opens the device picker to switch or add one.
+	 */
+	private createDeviceActions(): IAction[] {
+		const sessionId = this.workspaceService.active?.sessionId;
+		const devices = this.devices;
+		if (!sessionId || !devices) {
+			this.deviceKey = '';
+			return [];
+		}
+		const running = devices.chatDevices(sessionId)
+			.map(key => devices.find(key))
+			.filter((target): target is IDeviceTarget => !!target && (target.device.state === 'booted' || target.device.state === 'booting'));
+		const key = `${sessionId}\0${running.map(target => `${devices.keyOf(target)}:${target.device.state}`).join(',')}`;
+		if (key === this.deviceKey) {
+			return this.deviceActions;
+		}
+		this.deviceKey = key;
+		this.deviceStore.clear();
+		const actions: IAction[] = running.slice(0, MAX_DEVICE_CHIPS).map(target => {
+			const deviceKey = devices.keyOf(target);
+			const state = target.device.state === 'booting' ? localize('agentRun.deviceBooting', "Booting") : localize('agentRun.deviceRunning', "Running");
+			const action = this.deviceStore.add(new Action(`volt.run.device:${deviceKey}`, target.device.name, `volt-run-device-chip ${target.device.state}`, true, async () => {
+				await this.commandService.executeCommand(OPEN_DEVICE_PREVIEW_COMMAND_ID, deviceKey, sessionId);
+			}));
+			action.tooltip = localize('agentRun.deviceChipTip', "{0} ({1}) is this chat's device. Show it", target.device.name, state);
+			return action;
+		});
+		if (running.length) {
+			const pick = this.deviceStore.add(new Action('volt.run.pickChatDevice', localize('agentRun.pickAnotherDevice', "Run on Another Device"), ThemeIcon.asClassName(Codicon.add), true, async () => {
+				await this.runService.pickChatDevice(sessionId);
+			}));
+			actions.push(pick);
+		}
+		this.deviceActions = actions;
+		return actions;
 	}
 
 	get hasActions(): boolean {
@@ -119,7 +175,7 @@ export class AgentRunToolbar extends Disposable {
 		const debugging = this.debugService.state !== State.Inactive
 			&& !this.debugService.getModel().getSessions().every(session => session.suppressDebugToolbar);
 		let next: IAction[] = [];
-		let mode: 'debug' | 'run' | '' = '';
+		let mode: 'debug' | 'run' | 'device' | '' = '';
 		if (debugging) {
 			mode = 'debug';
 			// Focus Session is a native select: the side toolbar has no room for it, and one session needs none.
@@ -137,11 +193,22 @@ export class AgentRunToolbar extends Disposable {
 				}
 			}
 		}
+		const deviceActions = this.createDeviceActions();
+		if (!mode && deviceActions.length) {
+			mode = 'device';
+		}
 		this.element.dataset.mode = mode;
-		const same = equals(next, this.actions, (a, b) => a.id === b.id && a.enabled === b.enabled);
+		const all = [...next, ...deviceActions];
+		const same = equals(all, this.actions, (a, b) => a.id === b.id && a.enabled === b.enabled && a.class === b.class);
 		if (!same) {
+			next = all;
 			this.actionBar.clear();
-			this.actionBar.push(next, { icon: true, label: false });
+			this.actionBar.push(next.filter(action => !action.id.startsWith('volt.run.device:')), { icon: true, label: false });
+			// Device chips read as names with a status dot, after the run's controls.
+			const chips = next.filter(action => action.id.startsWith('volt.run.device:'));
+			if (chips.length) {
+				this.actionBar.push(chips, { icon: true, label: true, index: next.indexOf(chips[0]) });
+			}
 			const had = this.actions.length > 0;
 			this.actions = next;
 			this.element.classList.toggle('hidden', !next.length);
