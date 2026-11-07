@@ -11,7 +11,7 @@ import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/c
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { AccessibilityCommandId } from '../common/accessibilityCommands.js';
-import { accessibilityHelpIsShown, accessibleViewContainsCodeBlocks, accessibleViewCurrentProviderId, accessibleViewGoToSymbolSupported, accessibleViewHasAssignedKeybindings, accessibleViewHasUnassignedKeybindings, accessibleViewIsShown, accessibleViewSupportsNavigation, accessibleViewVerbosityEnabled } from './accessibilityConfiguration.js';
+import { accessibilityHelpIsShown, accessibleViewCurrentProviderId, accessibleViewGoToSymbolSupported, accessibleViewHasAssignedKeybindings, accessibleViewHasUnassignedKeybindings, accessibleViewIsShown, accessibleViewSupportsNavigation, accessibleViewVerbosityEnabled } from './accessibilityConfiguration.js';
 import { AccessibleViewProviderId, IAccessibleViewService } from '../../../../platform/accessibility/browser/accessibleView.js';
 import { ICodeEditorService } from '../../../../editor/browser/services/codeEditorService.js';
 import { InlineCompletionsController } from '../../../../editor/contrib/inlineCompletions/browser/controller/inlineCompletionsController.js';
@@ -50,57 +50,6 @@ class AccessibleViewNextAction extends Action2 {
 	}
 }
 registerAction2(AccessibleViewNextAction);
-
-
-class AccessibleViewNextCodeBlockAction extends Action2 {
-	constructor() {
-		super({
-			id: AccessibilityCommandId.NextCodeBlock,
-			precondition: ContextKeyExpr.and(accessibleViewContainsCodeBlocks, ContextKeyExpr.or(ContextKeyExpr.equals(accessibleViewCurrentProviderId.key, AccessibleViewProviderId.PanelChat), ContextKeyExpr.equals(accessibleViewCurrentProviderId.key, AccessibleViewProviderId.InlineChat), ContextKeyExpr.equals(accessibleViewCurrentProviderId.key, AccessibleViewProviderId.QuickChat))),
-			keybinding: {
-				primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.PageDown,
-				mac: { primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.PageDown, },
-				weight: KeybindingWeight.WorkbenchContrib,
-			},
-			icon: Codicon.arrowRight,
-			menu:
-			{
-				...accessibleViewMenu,
-				when: ContextKeyExpr.and(accessibleViewIsShown, accessibleViewContainsCodeBlocks),
-			},
-			title: localize('editor.action.accessibleViewNextCodeBlock', "Accessible View: Next Code Block")
-		});
-	}
-	run(accessor: ServicesAccessor): void {
-		accessor.get(IAccessibleViewService).navigateToCodeBlock('next');
-	}
-}
-registerAction2(AccessibleViewNextCodeBlockAction);
-
-
-class AccessibleViewPreviousCodeBlockAction extends Action2 {
-	constructor() {
-		super({
-			id: AccessibilityCommandId.PreviousCodeBlock,
-			precondition: ContextKeyExpr.and(accessibleViewContainsCodeBlocks, ContextKeyExpr.or(ContextKeyExpr.equals(accessibleViewCurrentProviderId.key, AccessibleViewProviderId.PanelChat), ContextKeyExpr.equals(accessibleViewCurrentProviderId.key, AccessibleViewProviderId.InlineChat), ContextKeyExpr.equals(accessibleViewCurrentProviderId.key, AccessibleViewProviderId.QuickChat))),
-			keybinding: {
-				primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.PageUp,
-				mac: { primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.PageUp, },
-				weight: KeybindingWeight.WorkbenchContrib,
-			},
-			icon: Codicon.arrowLeft,
-			menu: {
-				...accessibleViewMenu,
-				when: ContextKeyExpr.and(accessibleViewIsShown, accessibleViewContainsCodeBlocks),
-			},
-			title: localize('editor.action.accessibleViewPreviousCodeBlock', "Accessible View: Previous Code Block")
-		});
-	}
-	run(accessor: ServicesAccessor): void {
-		accessor.get(IAccessibleViewService).navigateToCodeBlock('previous');
-	}
-}
-registerAction2(AccessibleViewPreviousCodeBlockAction);
 
 class AccessibleViewPreviousAction extends Action2 {
 	constructor() {

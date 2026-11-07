@@ -22,8 +22,6 @@ export const accessibleViewVerbosityEnabled = new RawContextKey<boolean>('access
 export const accessibleViewGoToSymbolSupported = new RawContextKey<boolean>('accessibleViewGoToSymbolSupported', false, true);
 export const accessibleViewOnLastLine = new RawContextKey<boolean>('accessibleViewOnLastLine', false, true);
 export const accessibleViewCurrentProviderId = new RawContextKey<string>('accessibleViewCurrentProviderId', undefined, undefined);
-export const accessibleViewInCodeBlock = new RawContextKey<boolean>('accessibleViewInCodeBlock', undefined, undefined);
-export const accessibleViewContainsCodeBlocks = new RawContextKey<boolean>('accessibleViewContainsCodeBlocks', undefined, undefined);
 export const accessibleViewHasUnassignedKeybindings = new RawContextKey<boolean>('accessibleViewHasUnassignedKeybindings', undefined, undefined);
 export const accessibleViewHasAssignedKeybindings = new RawContextKey<boolean>('accessibleViewHasAssignedKeybindings', undefined, undefined);
 
@@ -36,7 +34,6 @@ export const enum AccessibilityWorkbenchSettingId {
 	DimUnfocusedOpacity = 'accessibility.dimUnfocused.opacity',
 	HideAccessibleView = 'accessibility.hideAccessibleView',
 	AccessibleViewCloseOnKeyPress = 'accessibility.accessibleView.closeOnKeyPress',
-	VerboseChatProgressUpdates = 'accessibility.verboseChatProgressUpdates'
 }
 
 export const enum ViewDimUnfocusedOpacityProperties {
@@ -49,9 +46,6 @@ export const enum AccessibilityVerbositySettingId {
 	Terminal = 'accessibility.verbosity.terminal',
 	DiffEditor = 'accessibility.verbosity.diffEditor',
 	MergeEditor = 'accessibility.verbosity.mergeEditor',
-	Chat = 'accessibility.verbosity.panelChat',
-	InlineChat = 'accessibility.verbosity.inlineChat',
-	TerminalChat = 'accessibility.verbosity.terminalChat',
 	InlineCompletions = 'accessibility.verbosity.inlineCompletions',
 	KeybindingsEditor = 'accessibility.verbosity.keybindingsEditor',
 	Notebook = 'accessibility.verbosity.notebook',
@@ -131,14 +125,6 @@ const configuration: IConfigurationNode = {
 		},
 		[AccessibilityVerbositySettingId.DiffEditor]: {
 			description: localize('verbosity.diffEditor.description', 'Provide information about how to navigate changes in the diff editor when it is focused.'),
-			...baseVerbosityProperty
-		},
-		[AccessibilityVerbositySettingId.Chat]: {
-			description: localize('verbosity.chat.description', 'Provide information about how to access the chat help menu when the chat input is focused.'),
-			...baseVerbosityProperty
-		},
-		[AccessibilityVerbositySettingId.InlineChat]: {
-			description: localize('verbosity.interactiveEditor.description', 'Provide information about how to access the inline editor chat accessibility help menu and alert with hints that describe how to use the feature when the input is focused.'),
 			...baseVerbosityProperty
 		},
 		[AccessibilityVerbositySettingId.InlineCompletions]: {
@@ -522,16 +508,6 @@ const configuration: IConfigurationNode = {
 				}
 			}
 		},
-		'accessibility.signals.chatEditModifiedFile': {
-			...defaultNoAnnouncement,
-			'description': localize('accessibility.signals.chatEditModifiedFile', "Plays a sound / audio cue when revealing a file with changes from chat edits"),
-			'properties': {
-				'sound': {
-					'description': localize('accessibility.signals.chatEditModifiedFile.sound', "Plays a sound when revealing a file with changes from chat edits"),
-					...soundFeatureBase
-				}
-			}
-		},
 		'accessibility.signals.notebookCellCompleted': {
 			...signalFeatureBase,
 			'description': localize('accessibility.signals.notebookCellCompleted', "Plays a signal - sound (audio cue) and/or announcement (alert) - when a notebook cell execution is successfully completed."),
@@ -573,30 +549,6 @@ const configuration: IConfigurationNode = {
 					...announcementFeatureBase
 				},
 			},
-		},
-		'accessibility.signals.chatRequestSent': {
-			...signalFeatureBase,
-			'description': localize('accessibility.signals.chatRequestSent', "Plays a signal - sound (audio cue) and/or announcement (alert) - when a chat request is made."),
-			'properties': {
-				'sound': {
-					'description': localize('accessibility.signals.chatRequestSent.sound', "Plays a sound when a chat request is made."),
-					...soundFeatureBase
-				},
-				'announcement': {
-					'description': localize('accessibility.signals.chatRequestSent.announcement', "Announces when a chat request is made."),
-					...announcementFeatureBase
-				},
-			}
-		},
-		'accessibility.signals.chatResponseReceived': {
-			...defaultNoAnnouncement,
-			'description': localize('accessibility.signals.chatResponseReceived', "Plays a sound / audio cue when the response has been received."),
-			'properties': {
-				'sound': {
-					'description': localize('accessibility.signals.chatResponseReceived.sound', "Plays a sound on when the response has been received."),
-					...soundFeatureBase
-				},
-			}
 		},
 		'accessibility.signals.codeActionTriggered': {
 			...defaultNoAnnouncement,
@@ -652,34 +604,6 @@ const configuration: IConfigurationNode = {
 				},
 				'announcement': {
 					'description': localize('accessibility.signals.clear.announcement', "Announces when a feature is cleared."),
-					...announcementFeatureBase
-				},
-			},
-		},
-		'accessibility.signals.editsUndone': {
-			...signalFeatureBase,
-			'description': localize('accessibility.signals.editsUndone', "Plays a signal - sound (audio cue) and/or announcement (alert) - when edits have been undone."),
-			'properties': {
-				'sound': {
-					'description': localize('accessibility.signals.editsUndone.sound', "Plays a sound when edits have been undone."),
-					...soundFeatureBase
-				},
-				'announcement': {
-					'description': localize('accessibility.signals.editsUndone.announcement', "Announces when edits have been undone."),
-					...announcementFeatureBase
-				},
-			},
-		},
-		'accessibility.signals.editsKept': {
-			...signalFeatureBase,
-			'description': localize('accessibility.signals.editsKept', "Plays a signal - sound (audio cue) and/or announcement (alert) - when edits are kept."),
-			'properties': {
-				'sound': {
-					'description': localize('accessibility.signals.editsKept.sound', "Plays a sound when edits are kept."),
-					...soundFeatureBase
-				},
-				'announcement': {
-					'description': localize('accessibility.signals.editsKept.announcement', "Announces when edits are kept."),
 					...announcementFeatureBase
 				},
 			},
@@ -752,31 +676,6 @@ const configuration: IConfigurationNode = {
 				'announcement': 'never'
 			}
 		},
-		'accessibility.signals.chatUserActionRequired': {
-			...signalFeatureBase,
-			'markdownDescription': localize('accessibility.signals.chatUserActionRequired', "Plays a signal - sound (audio cue) and/or announcement (alert) - when user action is required in the chat."),
-			'properties': {
-				'sound': {
-					'description': localize('accessibility.signals.chatUserActionRequired.sound', "Plays a sound when user action is required in the chat."),
-					'type': 'string',
-					'enum': ['auto', 'on', 'off'],
-					'enumDescriptions': [
-						localize('sound.enabled.autoWindow', "Enable sound when a screen reader is attached."),
-						localize('sound.enabled.on', "Enable sound."),
-						localize('sound.enabled.off', "Disable sound.")
-					],
-				},
-				'announcement': {
-					'description': localize('accessibility.signals.chatUserActionRequired.announcement', "Announces when a user action is required in the chat - including information about the action and how to take it."),
-					...announcementFeatureBase
-				},
-			},
-			default: {
-				'sound': 'auto',
-				'announcement': 'auto'
-			},
-			tags: ['accessibility']
-		},
 		'accessibility.underlineLinks': {
 			'type': 'boolean',
 			'description': localize('accessibility.underlineLinks', "Controls whether links should be underlined in the workbench."),
@@ -802,16 +701,6 @@ const configuration: IConfigurationNode = {
 			'type': 'boolean',
 			'default': true,
 			'markdownDescription': localize('accessibility.windowTitleOptimized', "Controls whether the {0} should be optimized for screen readers when in screen reader mode. When enabled, the window title will have {1} appended to the end.", '`#window.title#`', '`activeEditorState`')
-		},
-		'accessibility.openChatEditedFiles': {
-			'type': 'boolean',
-			'default': true,
-			'markdownDescription': localize('accessibility.openChatEditedFiles', "Controls whether files should be opened when the chat agent has applied edits to them.")
-		},
-		'accessibility.verboseChatProgressUpdates': {
-			'type': 'boolean',
-			'default': true,
-			'markdownDescription': localize('accessibility.verboseChatProgressUpdates', "Controls whether verbose progress announcements should be made when a chat request is in progress, including information like searched text for <search term> with X results, created file <file_name>, or read file <file path>.")
 		}
 	}
 };
@@ -844,11 +733,6 @@ export function registerAccessibilityConfiguration() {
 				type: 'boolean',
 				default: false,
 				tags: ['accessibility']
-			},
-			[AccessibilityWorkbenchSettingId.VerboseChatProgressUpdates]: {
-				'type': 'boolean',
-				'default': true,
-				'markdownDescription': localize('accessibility.verboseChatProgressUpdates', "Controls whether verbose progress announcements should be made when a chat request is in progress, including information like searched text for <search term> with X results, created file <file_name>, or read file <file path>.")
 			}
 		}
 	});
@@ -885,16 +769,10 @@ export class DynamicSpeechAccessibilityConfiguration extends Disposable implemen
 			...accessibilityConfigurationNodeBase,
 			properties: {
 				[AccessibilityVoiceSettingId.SpeechTimeout]: {
-					'markdownDescription': localize('voice.speechTimeout', "The duration in milliseconds that voice speech recognition remains active after you stop speaking. For example in a chat session, the transcribed text is submitted automatically after the timeout is met. Set to `0` to disable this feature."),
+					'markdownDescription': localize('voice.speechTimeout', "The duration in milliseconds that voice speech recognition remains active after you stop speaking. Set to `0` to disable this feature."),
 					'type': 'number',
 					'default': SpeechTimeoutDefault,
 					'minimum': 0,
-					'tags': ['accessibility']
-				},
-				[AccessibilityVoiceSettingId.IgnoreCodeBlocks]: {
-					'markdownDescription': localize('voice.ignoreCodeBlocks', "Whether to ignore code snippets in text-to-speech synthesis."),
-					'type': 'boolean',
-					'default': false,
 					'tags': ['accessibility']
 				},
 				[AccessibilityVoiceSettingId.SpeechLanguage]: {
@@ -905,17 +783,6 @@ export class DynamicSpeechAccessibilityConfiguration extends Disposable implemen
 					'tags': ['accessibility'],
 					'enumDescriptions': languagesSorted.map(key => languages[key].name),
 					'enumItemLabels': languagesSorted.map(key => languages[key].name)
-				},
-				[AccessibilityVoiceSettingId.AutoSynthesize]: {
-					'type': 'string',
-					'enum': ['on', 'off'],
-					'enumDescriptions': [
-						localize('accessibility.voice.autoSynthesize.on', "Enable the feature. When a screen reader is enabled, note that this will disable aria updates."),
-						localize('accessibility.voice.autoSynthesize.off', "Disable the feature."),
-					],
-					'markdownDescription': localize('autoSynthesize', "Whether a textual response should automatically be read out aloud when speech was used as input. For example in a chat session, a response is automatically synthesized when voice was used as chat request."),
-					'default': 'off',
-					'tags': ['accessibility']
 				}
 			}
 		});
@@ -1017,24 +884,6 @@ function getVolumeFromConfig(accessor: (key: string) => any): string | undefined
 function getDebouncePositionChangesFromConfig(accessor: (key: string) => any): number | undefined {
 	return accessor('accessibility.signalOptions.debouncePositionChanges') || accessor('accessibility.signalOptions')?.debouncePositionChanges || accessor('accessibility.signals.debouncePositionChanges') || accessor('audioCues.debouncePositionChanges');
 }
-
-Registry.as<IConfigurationMigrationRegistry>(WorkbenchExtensions.ConfigurationMigration)
-	.registerConfigurationMigrations([{
-		key: AccessibilityVoiceSettingId.AutoSynthesize,
-		migrateFn: (value: boolean) => {
-			let newValue: string | undefined;
-			if (value === true) {
-				newValue = 'on';
-			} else if (value === false) {
-				newValue = 'off';
-			} else {
-				return [];
-			}
-			return [
-				[AccessibilityVoiceSettingId.AutoSynthesize, { value: newValue }],
-			];
-		}
-	}]);
 
 Registry.as<IConfigurationMigrationRegistry>(WorkbenchExtensions.ConfigurationMigration)
 	.registerConfigurationMigrations([{

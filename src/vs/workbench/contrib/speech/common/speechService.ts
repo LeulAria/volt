@@ -136,9 +136,7 @@ export interface ISpeechService {
 
 export const enum AccessibilityVoiceSettingId {
 	SpeechTimeout = 'accessibility.voice.speechTimeout',
-	AutoSynthesize = 'accessibility.voice.autoSynthesize',
-	SpeechLanguage = 'accessibility.voice.speechLanguage',
-	IgnoreCodeBlocks = 'accessibility.voice.ignoreCodeBlocks'
+	SpeechLanguage = 'accessibility.voice.speechLanguage'
 }
 
 export const SPEECH_LANGUAGE_CONFIG = AccessibilityVoiceSettingId.SpeechLanguage;
