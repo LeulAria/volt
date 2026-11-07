@@ -17,7 +17,7 @@ const root = path.join(__dirname, '..');
 
 // Files linted with type information (see the last block of eslint.config.js). Each worker that
 // sees one builds those TypeScript programs, so they all go to the same worker.
-const typedLintFolders = ['markdown-language-features', 'mermaid-chat-features', 'media-preview', 'simple-browser', 'typescript-language-features']
+const typedLintFolders = ['markdown-language-features', 'media-preview', 'simple-browser', 'typescript-language-features']
 	.map(name => `extensions${path.sep}${name}${path.sep}`);
 
 /** @param {string} file */
