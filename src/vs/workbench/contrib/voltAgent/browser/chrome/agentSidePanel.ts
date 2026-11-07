@@ -93,7 +93,7 @@ export class AgentSidePanel extends ViewPane {
 		this.bodyEl = container;
 
 		this.mainEl = append(container, $('.volt-agent-side-main'));
-		this.home = this._register(this.instantiationService.createInstance(AgentHomePane, this.mainEl));
+		this.home = this._register(this.instantiationService.createInstance(AgentHomePane, this.mainEl, {}));
 		this.hostEl = append(this.mainEl, $('.part.editor.volt-agent-side-host', { role: 'main' }));
 		this.hostEl.style.position = 'relative';
 

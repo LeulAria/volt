@@ -90,6 +90,8 @@ const TOGGLE_TOOLS_FULLSCREEN_ID = 'workbench.action.voltAgentTools.toggleFullSc
 const TOGGLE_TOOLS_PANEL_ID = 'workbench.action.voltAgentTools.togglePanel';
 /** Opens the Explorer in the files sidebar of the chat on screen. */
 export const SHOW_AGENT_FILES_COMMAND_ID = 'workbench.action.voltAgentTools.showFiles';
+/** Opens Related Chats (the chat's project's chats) in the explorer sidebar, with the keyboard in its search. */
+export const SHOW_AGENT_RELATED_CHATS_COMMAND_ID = 'workbench.action.voltAgentTools.showRelatedChats';
 /** The floating preview's gap to the chat's edges, and its smallest size. */
 const FLOAT_MARGIN = 12;
 const FLOAT_MIN_WIDTH = 200;
@@ -2584,6 +2586,22 @@ registerAction2(class ShowAgentSourceControlAction extends Action2 {
 	}
 });
 
+registerAction2(class ShowAgentRelatedChatsAction extends Action2 {
+	constructor() {
+		super({
+			id: SHOW_AGENT_RELATED_CHATS_COMMAND_ID,
+			title: localize2('voltAgent.tools.showRelatedChats', "Show Related Chats in Tools"),
+			f1: true,
+			precondition: LayoutModeContext.isEqualTo('agent'),
+		});
+	}
+
+	override run(_accessor: ServicesAccessor): void {
+		const host = [...hosts].find(candidate => candidate.canOpenTools());
+		host?.toggleFilesSidebarView('chats');
+	}
+});
+
 /** Opens the right sidebar on `view` beside the chat on screen; false when no chat can open tools (IDE layout). */
 export function showAgentFilesSidebar(view: AgentFilesSidebarView): boolean {
 	const host = [...hosts].find(candidate => candidate.canOpenTools());
@@ -2646,9 +2664,9 @@ for (const item of agentSurfaceMenuItems()) {
 	});
 }
 
-// Ctrl+Option + 1 to 4: the right sidebar's tabs, left to right (Explorer, Source Control, Pull Requests,
-// Search). Same family as the letters above, one hand on the left; Ctrl+Alt+Shift off a Mac.
-const SIDEBAR_TAB_KEYS = [KeyCode.Digit1, KeyCode.Digit2, KeyCode.Digit3, KeyCode.Digit4];
+// Ctrl+Option + 1 to 5: the right sidebar's tabs, left to right (Explorer, Search, Source Control, Pull
+// Requests, Related Chats). Same family as the letters above, one hand on the left; Ctrl+Alt+Shift off a Mac.
+const SIDEBAR_TAB_KEYS = [KeyCode.Digit1, KeyCode.Digit2, KeyCode.Digit3, KeyCode.Digit4, KeyCode.Digit5];
 filesSidebarTabs().forEach((tab, index) => {
 	const key = SIDEBAR_TAB_KEYS[index];
 	if (key === undefined) {

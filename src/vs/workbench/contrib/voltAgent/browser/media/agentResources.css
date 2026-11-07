@@ -45,7 +45,7 @@
 	color: var(--vscode-editorError-foreground, #e5534b);
 }
 
-/* Files sidebar: the spacer pushes the filter and the buttons after it to the far end. */
+/* Explorer sidebar: the spacer pushes the filter and the buttons after it to the far end. */
 .volt-agent-files-sidebar-spacer {
 	flex: 1;
 	align-self: stretch;

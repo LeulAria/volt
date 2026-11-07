@@ -72,6 +72,27 @@
 	opacity: 1;
 }
 
+/* Related Chats: the Search row is a field that narrows the list as you type. */
+.volt-agent-home-nav-row.volt-agent-home-search-field {
+	cursor: text;
+}
+
+.volt-agent-home-search-field input.name {
+	height: 22px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	outline: none;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	opacity: 1;
+}
+
+.volt-agent-home-search-field input.name::placeholder {
+	color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+}
+
 .volt-agent-home-nav-action {
 	display: flex;
 	align-items: center;

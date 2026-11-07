@@ -355,11 +355,11 @@ class AgentViewSidebarsContribution extends Disposable {
 		this._register(layoutService.onDidChangePartVisibility(() => this.syncPanelToggle()));
 		this.syncPanelToggle();
 
-		// The files sidebar's own toggle, beside the right panel's: each opens on its own.
+		// The explorer sidebar's own toggle, beside the right panel's: each opens on its own.
 		this.filesToggle = append(this.titlebarToggles, $('button.volt-agent-titlebar-toggle.volt-agent-files-panel-toggle.volt-titlebar-control')) as HTMLButtonElement;
 		this.filesToggle.type = 'button';
 		this.filesToggle.appendChild(createSurfaceStrokeIcon(this.filesToggle.ownerDocument, FOLDER_ICON_SHAPES));
-		const filesLabel = localize('voltAgent.filesSidebar.show', "Show Files Sidebar");
+		const filesLabel = localize('voltAgent.filesSidebar.show', "Show Explorer Sidebar");
 		this.filesToggle.setAttribute('aria-label', filesLabel);
 		setAgentTooltip(this.filesToggle, filesLabel);
 		this._register(addDisposableListener(this.filesToggle, 'click', () => void this.commandService.executeCommand(SHOW_AGENT_FILES_COMMAND_ID)));

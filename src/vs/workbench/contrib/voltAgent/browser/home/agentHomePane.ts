@@ -5,7 +5,7 @@
 
 import '../media/agentHomePane.css';
 import '../media/agentPullRequests.css';
-import { $, addDisposableListener, append, getWindow, isHTMLElement, isKeyboardEvent, isMouseEvent, runWhenWindowIdle, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, EventHelper, getWindow, isHTMLElement, isKeyboardEvent, isMouseEvent, runWhenWindowIdle, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IDragAndDropData } from '../../../../../base/browser/dnd.js';
 import { IIdentityProvider, IListVirtualDelegate, ListDragOverEffectPosition, ListDragOverEffectType } from '../../../../../base/browser/ui/list/list.js';
@@ -63,6 +63,7 @@ import { showAgentSnoozeMenu } from './agentSnoozeMenu.js';
 import { activateAgentProject, findAgentPanelGroup, startAgentChat } from '../workspace/agentPanels.js';
 import { AgentChatStart } from '../workspace/agentShell.js';
 import { agentSideChatParents, onDidChangeAgentToolEditors } from '../workspace/agentSurfaceHost.js';
+import { registerRelatedChatsPane } from '../workspace/agentFilesSidebar.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { AgentTooltip, IAgentTooltipRow, setAgentTooltip } from '../chrome/agentTooltip.js';
 import {
@@ -108,6 +109,7 @@ import {
 	sessionMetaParts,
 	sessionShowsStatusBadge,
 	sessionStatusBadge,
+	sessionInProject,
 	sessionsWithOpenDrafts,
 	shortProjectName,
 } from './agentHomeModel.js';
@@ -387,9 +389,11 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 				break;
 			case 'empty':
 				template.container.classList.add('is-empty');
-				template.name.textContent = element.filtered
-					? localize('voltAgent.home.noMatches', "No agents match these filters")
-					: localize('voltAgent.home.noAgents', "No agents yet");
+				template.name.textContent = this.host.searching
+					? localize('voltAgent.relatedChats.noMatches', "No chats match your search")
+					: element.filtered
+						? localize('voltAgent.home.noMatches', "No agents match these filters")
+						: localize('voltAgent.home.noAgents', "No agents yet");
 				break;
 			default: {
 				const unexpected: never = element;
@@ -543,7 +547,8 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		// On two lines the branch moves to the second line, beside the pull request and the model.
 		template.meta.textContent = sessionMetaParts(session, twoLine || oneLine ? { workspace: context.workspace } : context, this.host.view, now).join(' · ');
 		if (twoLine) {
-			this.renderSecondLine(template, session, context, element.nested ? undefined : context.project);
+			// Related Chats is one project: naming it on every row says nothing.
+			this.renderSecondLine(template, session, context, element.nested || this.host.scopedToProject ? undefined : context.project);
 		} else if (oneLine) {
 			const pr = this.host.view.show.has('pr') ? this.host.prBadge(session.id) : undefined;
 			if (pr) {
@@ -915,6 +920,17 @@ const PANE_HEADER_HEIGHT = 22;
 const PANE_MIN_BODY = 2 * ROW_HEIGHT;
 /** Which groups are open, by pane id; a group without an entry starts as the list model says. */
 const AGENT_HOME_PANES_STORAGE_KEY = 'volt.agent.home.panes';
+/** The same, for Related Chats in the right sidebar: its groups and filters are its own. */
+const RELATED_CHATS_PANES_STORAGE_KEY = 'volt.agent.relatedChats.panes';
+const RELATED_CHATS_VIEW_STORAGE_KEY = 'volt.agent.relatedChats.view';
+
+export interface IAgentHomePaneOptions {
+	/**
+	 * Related Chats in the right sidebar: only one project's chats ({@link AgentHomePane.setScope}), with a
+	 * search field that narrows the list. No project rows, Cloud, Open Workspace or footer.
+	 */
+	readonly scoped?: boolean;
+}
 
 /** Every group folded: this headerless pane takes the space above them, so their headers sit at the bottom. */
 class AgentHomeSpacerPane extends Pane {
@@ -1171,9 +1187,17 @@ export class AgentHomePane extends Disposable {
 	private refreshAfterRename = false;
 	/** Names saved from a row and not yet in history: the row shows them instead of the old title. */
 	private readonly savingTitles = new Map<string, string>();
+	/** Related Chats: one project's chats only. */
+	private readonly scoped: boolean;
+	/** The project Related Chats lists, and its name. */
+	private scope: { readonly root: URI; readonly name: string } | undefined;
+	/** What the Related Chats search field holds, trimmed. */
+	private query = '';
+	private searchInput: HTMLInputElement | undefined;
 
 	constructor(
 		parent: HTMLElement,
+		options: IAgentHomePaneOptions,
 		@ICommandService private readonly commandService: ICommandService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@IContextMenuService private readonly contextMenuService: IContextMenuService,
@@ -1199,6 +1223,7 @@ export class AgentHomePane extends Disposable {
 		@IAgentThreadAttentionService private readonly attention: IAgentThreadAttentionService,
 	) {
 		super();
+		this.scoped = !!options.scoped;
 		this._register(this.attention.onDidChange(() => this.scheduleRefresh()));
 		this._register(this.voltProjects.onDidChange(() => this.scheduleRefresh()));
 		this._register(this.runtime.onDidChangeCatalog(() => this.scheduleRefresh()));
@@ -1242,12 +1267,17 @@ export class AgentHomePane extends Disposable {
 			this.scheduleRefresh();
 		}));
 		this.element = append(parent, $('.volt-agent-home'));
-		this.keepSingleHome(parent);
+		this.element.classList.toggle('scoped', this.scoped);
+		if (!this.scoped) {
+			this.keepSingleHome(parent);
+		}
 
 		this.nav = append(this.element, $('.volt-agent-home-nav'));
 		this.installNav(keybindingService);
 		this.treeContainer = append(this.element, $('.volt-agent-home-tree'));
-		this.installSettingsButton(keybindingService);
+		if (!this.scoped) {
+			this.installSettingsButton(keybindingService);
+		}
 
 		this.paneExpanded = this.readPaneState();
 		this.paneView = this._register(new PaneView(this.treeContainer));
@@ -1662,22 +1692,11 @@ export class AgentHomePane extends Disposable {
 	 */
 	private installNav(keybindingService: IKeybindingService): void {
 		const bar = append(this.nav, $('.volt-agent-home-nav-bar'));
-
-		const searchLabel = actionSpec('search').label;
-		const search = append(bar, $('button.volt-agent-home-nav-row')) as HTMLButtonElement;
-		search.type = 'button';
-		search.setAttribute('aria-label', searchLabel);
-		const row = append(search, $('.volt-agent-home-row.is-action'));
-		const icon = append(row, $('span.icon'));
-		append(icon, $('span.twist'));
-		append(icon, $('span.glyph')).appendChild(createHomeSearchIcon());
-		append(row, $('span.name')).textContent = searchLabel;
-		this._register(addDisposableListener(search, 'click', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			void this.runAction('search');
-			search.blur();
-		}));
+		if (this.scoped) {
+			this.installSearchField(bar);
+		} else {
+			this.installSearchButton(bar);
+		}
 
 		const button = (className: string, label: string, glyph: HTMLElement, run: (button: HTMLButtonElement) => void) => {
 			const button = append(bar, $(`button.volt-agent-home-nav-action.${className}`)) as HTMLButtonElement;
@@ -1697,13 +1716,149 @@ export class AgentHomePane extends Disposable {
 			button.blur();
 		});
 		this.navFilter.classList.toggle('active', anyHomeFilterActive(this.viewState));
-		button('volt-agent-home-open-workspace', localize('voltAgent.home.openWorkspace', "Open Workspace"), createHomeOpenWorkspaceIcon(), button => this.openWorkspaceMenu(button));
+		if (!this.scoped) {
+			button('volt-agent-home-open-workspace', localize('voltAgent.home.openWorkspace', "Open Workspace"), createHomeOpenWorkspaceIcon(), button => this.openWorkspaceMenu(button));
+		}
 		const shortcut = keybindingService.lookupKeybinding(NEW_AGENT_COMMAND_ID)?.getLabel();
-		const newChatLabel = localize('voltAgent.home.newChat', "New Chat");
-		button('volt-agent-home-new-chat', shortcut ? `${newChatLabel} (${shortcut})` : newChatLabel, createHomeNewChatIcon(), button => {
-			void this.activate({ type: 'newChat' });
+		const newChatLabel = this.scoped
+			? localize('voltAgent.relatedChats.newChat', "New Chat in This Project")
+			: localize('voltAgent.home.newChat', "New Chat");
+		button('volt-agent-home-new-chat', shortcut && !this.scoped ? `${newChatLabel} (${shortcut})` : newChatLabel, createHomeNewChatIcon(), button => {
+			if (this.scoped) {
+				void this.startChat(this.scope ? { kind: 'folder', root: this.scope.root, name: this.scope.name } : { kind: 'active' });
+			} else {
+				void this.activate({ type: 'newChat' });
+			}
 			button.blur();
 		});
+	}
+
+	/** The agent list's Search: opens the chat search over every chat. */
+	private installSearchButton(bar: HTMLElement): void {
+		const searchLabel = actionSpec('search').label;
+		const search = append(bar, $('button.volt-agent-home-nav-row')) as HTMLButtonElement;
+		search.type = 'button';
+		search.setAttribute('aria-label', searchLabel);
+		const row = append(search, $('.volt-agent-home-row.is-action'));
+		const icon = append(row, $('span.icon'));
+		append(icon, $('span.twist'));
+		append(icon, $('span.glyph')).appendChild(createHomeSearchIcon());
+		append(row, $('span.name')).textContent = searchLabel;
+		this._register(addDisposableListener(search, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			void this.runAction('search');
+			search.blur();
+		}));
+	}
+
+	/**
+	 * Related Chats' Search: the same row as the agent list's, but typing narrows this list as you go
+	 * (titles, branches and what the chats said). Escape clears it; Enter opens the first chat.
+	 */
+	private installSearchField(bar: HTMLElement): void {
+		const field = append(bar, $('label.volt-agent-home-nav-row.volt-agent-home-search-field'));
+		const row = append(field, $('.volt-agent-home-row.is-action'));
+		const icon = append(row, $('span.icon'));
+		append(icon, $('span.twist'));
+		append(icon, $('span.glyph')).appendChild(createHomeSearchIcon());
+		const input = append(row, $('input.name')) as HTMLInputElement;
+		input.type = 'text';
+		input.spellcheck = false;
+		input.placeholder = localize('voltAgent.relatedChats.search', "Search chats");
+		input.setAttribute('aria-label', localize('voltAgent.relatedChats.searchAria', "Search this project's chats"));
+		this.searchInput = input;
+		const apply = this._register(new RunOnceScheduler(() => this.setQuery(input.value), 80));
+		this._register(addDisposableListener(input, 'input', () => apply.schedule()));
+		this._register(addDisposableListener(input, 'keydown', e => {
+			if (e.key === 'Escape' && input.value) {
+				EventHelper.stop(e, true);
+				input.value = '';
+				this.setQuery('');
+			} else if (e.key === 'Enter') {
+				EventHelper.stop(e, true);
+				apply.flush();
+				const first = this.firstSession();
+				if (first) {
+					void this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, first.id);
+				}
+			} else if (e.key === 'ArrowDown') {
+				EventHelper.stop(e, true);
+				this.focus();
+			}
+		}));
+	}
+
+	/** Narrows Related Chats to chats matching `query`. */
+	setQuery(query: string): void {
+		const next = query.trim();
+		if (next !== this.query) {
+			this.query = next;
+			void this.refresh();
+		}
+	}
+
+	get searching(): boolean {
+		return !!this.query;
+	}
+
+	/** Related Chats: every row is in the same project. */
+	get scopedToProject(): boolean {
+		return this.scoped;
+	}
+
+	/** Shows `root`'s chats (Related Chats only); none empties the list. */
+	setScope(root: URI | undefined, name: string): void {
+		const same = root && this.scope ? canonicalProjectRoot(root).toString() === canonicalProjectRoot(this.scope.root).toString() : root === this.scope;
+		if (same) {
+			return;
+		}
+		this.scope = root ? { root, name } : undefined;
+		void this.refresh();
+	}
+
+	/** Puts the keyboard in the search field (Related Chats), else in the list. */
+	focusSearch(): void {
+		if (this.searchInput) {
+			this.searchInput.focus();
+			this.searchInput.select();
+		} else {
+			this.focus();
+		}
+	}
+
+	/** Which chats the search keeps: a title, branch or summary with the words, or a transcript history search finds them in. */
+	private queryMatcher(): (session: IAgentSessionMeta) => boolean {
+		const query = this.query.toLowerCase();
+		if (!query) {
+			return () => true;
+		}
+		const found = new Set(this.history.search(this.query, { includeArchived: this.viewState.archived === 'show', inWindow: true }).map(session => session.id));
+		return session => found.has(session.id)
+			|| [session.title, session.worktreeBranch, session.summary].some(text => !!text && text.toLowerCase().includes(query));
+	}
+
+	/** The first chat row on screen, top to bottom. */
+	private firstSession(): IAgentSessionMeta | undefined {
+		for (const pane of this.panes) {
+			const walk = (nodes: readonly ITreeNode<AgentHomeElement | null, void>[]): IAgentSessionMeta | undefined => {
+				for (const node of nodes) {
+					if (node.element?.type === 'session') {
+						return node.element.session;
+					}
+					const nested = walk(node.children);
+					if (nested) {
+						return nested;
+					}
+				}
+				return undefined;
+			};
+			const found = pane.isExpanded() && pane.tree ? walk(pane.tree.getNode(null).children) : undefined;
+			if (found) {
+				return found;
+			}
+		}
+		return undefined;
 	}
 
 	get view(): IAgentHomeViewState {
@@ -1817,7 +1972,7 @@ export class AgentHomePane extends Disposable {
 
 	setView(next: IAgentHomeViewState): void {
 		this.viewState = next;
-		this.storageService.store(AGENT_HOME_VIEW_STORAGE_KEY, JSON.stringify(serializeAgentHomeViewState(next)), StorageScope.PROFILE, StorageTarget.USER);
+		this.storageService.store(this.scoped ? RELATED_CHATS_VIEW_STORAGE_KEY : AGENT_HOME_VIEW_STORAGE_KEY, JSON.stringify(serializeAgentHomeViewState(next)), StorageScope.PROFILE, StorageTarget.USER);
 		this.syncFilterButton();
 		void this.refresh();
 	}
@@ -2145,7 +2300,7 @@ export class AgentHomePane extends Disposable {
 	bindSessionHover(anchor: HTMLElement, session: IAgentSessionMeta): IDisposable {
 		// With pull requests the pointer can cross to the card to open one; without, it hides on leaving the row.
 		const interactive = () => !!this.pullRequests && visibleLinks(this.pullRequests.links(session.id)).length > 0;
-		return this.hover.bind(anchor, () => this.sessionHoverRows(session), { placement: 'end', variant: 'card', delay: SESSION_HOVER_DELAY_MS, interactive });
+		return this.hover.bind(anchor, () => this.sessionHoverRows(session), { placement: this.scoped ? 'start' : 'end', variant: 'card', delay: SESSION_HOVER_DELAY_MS, interactive });
 	}
 
 	private sessionHoverRows(session: IAgentSessionMeta): IAgentTooltipRow[] {
@@ -2558,7 +2713,7 @@ export class AgentHomePane extends Disposable {
 	private async refresh(): Promise<void> {
 		this.refreshFrame.clear();
 		const seq = ++this.refreshSeq;
-		const recents = await this.recentlyOpened();
+		const recents = this.scoped ? [] : await this.recentlyOpened();
 		// Wait out the index load so a restored chat is not briefly called a draft.
 		await this.history.whenReady.catch(() => undefined);
 		if (seq !== this.refreshSeq || this._store.isDisposed) {
@@ -2590,7 +2745,12 @@ export class AgentHomePane extends Disposable {
 			}
 			extras.push(folder);
 		}
-		const folders = [...projects, ...extras];
+		const scope = this.scope;
+		const matches = this.queryMatcher();
+		// Related Chats: the one project, as the open one.
+		const folders = this.scoped
+			? (scope ? [{ uri: scope.root, name: scope.name, current: true, workspace: false }] : [])
+			: [...projects, ...extras];
 		// A side chat tab in a chat's tools belongs to that chat even before its log records it.
 		// Side chats opened before chats recorded their parent learn it here.
 		const toolsParents = agentSideChatParents();
@@ -2603,7 +2763,8 @@ export class AgentHomePane extends Disposable {
 			this.history.list({ includeArchived: this.viewState.archived === 'show', inWindow: true }),
 			this.openDrafts(),
 		).map(session => !session.parentId && toolsParents.has(session.id) ? { ...session, parentId: toolsParents.get(session.id) } : session)
-			.filter(session => !this.isSubagentSession(session));
+			.filter(session => !this.isSubagentSession(session))
+			.filter(session => !this.scoped || (!!scope && sessionInProject(session, scope.root) && matches(session)));
 		this.resolveRepos(folders, sessions);
 		const prTags = new Map<string, AgentHomePrFilter>();
 		if (this.pullRequests) {
@@ -2614,10 +2775,11 @@ export class AgentHomePane extends Disposable {
 				}
 			}
 		}
-		const runGroups = this.homeRunGroups(sessions);
+		const runGroups = this.homeRunGroups(sessions)
+			.filter(group => !this.scoped || (!!scope && sessionInProject(group.session, scope.root) && matches(group.session)));
 		this.live = agentHomeLiveWork(this.orchestrator.getState());
 		const groupMembers = new Map<string, readonly string[]>();
-		const tree = [...buildCloudHomeNodes(this.cloud.tasks), ...buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, keep: shownAgentChat(), prTags, runGroups, workingShelf: this.workingSection, live: this.live, manualOrder: this.manualOrder, groupMembers })];
+		const tree = [...(this.scoped ? [] : buildCloudHomeNodes(this.cloud.tasks)), ...buildAgentHomeTree(folders, sessions, this.viewState, { repos: this.repos, limits: this.limits, keep: shownAgentChat(), prTags, runGroups, workingShelf: this.workingSection, live: this.live, manualOrder: this.manualOrder, groupMembers })];
 		this.groupMembers = groupMembers;
 		const reinsert = this.builtTwoLine !== undefined && this.builtTwoLine !== this.twoLine;
 		this.builtTwoLine = this.twoLine;
@@ -2878,7 +3040,7 @@ export class AgentHomePane extends Disposable {
 
 	onPaneExpansion(pane: AgentHomeSectionPane, open: boolean): void {
 		this.paneExpanded.set(pane.id, open);
-		this.storageService.store(AGENT_HOME_PANES_STORAGE_KEY, JSON.stringify(Object.fromEntries(this.paneExpanded)), StorageScope.PROFILE, StorageTarget.USER);
+		this.storageService.store(this.scoped ? RELATED_CHATS_PANES_STORAGE_KEY : AGENT_HOME_PANES_STORAGE_KEY, JSON.stringify(Object.fromEntries(this.paneExpanded)), StorageScope.PROFILE, StorageTarget.USER);
 		// After the pane has given the split view its own size for the fold.
 		this.scheduleBalance();
 	}
@@ -2931,7 +3093,7 @@ export class AgentHomePane extends Disposable {
 
 	private readPaneState(): Map<string, boolean> {
 		try {
-			const raw = this.storageService.get(AGENT_HOME_PANES_STORAGE_KEY, StorageScope.PROFILE);
+			const raw = this.storageService.get(this.scoped ? RELATED_CHATS_PANES_STORAGE_KEY : AGENT_HOME_PANES_STORAGE_KEY, StorageScope.PROFILE);
 			const parsed: unknown = raw ? JSON.parse(raw) : undefined;
 			if (parsed && typeof parsed === 'object') {
 				return new Map(Object.entries(parsed).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'));
@@ -2957,7 +3119,7 @@ export class AgentHomePane extends Disposable {
 
 	private readViewState(): IAgentHomeViewState {
 		try {
-			const raw = this.storageService.get(AGENT_HOME_VIEW_STORAGE_KEY, StorageScope.PROFILE);
+			const raw = this.storageService.get(this.scoped ? RELATED_CHATS_VIEW_STORAGE_KEY : AGENT_HOME_VIEW_STORAGE_KEY, StorageScope.PROFILE);
 			return raw ? reviveAgentHomeViewState(JSON.parse(raw)) : defaultAgentHomeViewState();
 		} catch {
 			return defaultAgentHomeViewState();
@@ -3004,6 +3166,8 @@ export class AgentHomePane extends Disposable {
 		this.balancePanes();
 	}
 }
+
+registerRelatedChatsPane((instantiationService, parent) => instantiationService.createInstance(AgentHomePane, parent, { scoped: true }));
 
 function toTreeElement(node: IAgentHomeNode): IObjectTreeElement<AgentHomeElement> {
 	const children = node.children?.map(toTreeElement);
