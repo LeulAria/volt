@@ -5,7 +5,6 @@
 
 import { isWeb, isWindows } from '../../../../base/common/platform.js';
 import { localize } from '../../../../nls.js';
-import { ExtensionToggleData } from '../common/preferences.js';
 
 export interface ITOCEntry<T> {
 	id: string;
@@ -14,16 +13,6 @@ export interface ITOCEntry<T> {
 	children?: ITOCEntry<T>[];
 	settings?: Array<T>;
 	hide?: boolean;
-}
-
-export function isHiddenCopilotSetting(key: string, extensionId?: string): boolean {
-	if (extensionId && /copilot/i.test(extensionId)) {
-		return true;
-	}
-	if (key.startsWith('chat.mcp.') || key === 'mcp' || key.startsWith('mcp.')) {
-		return false;
-	}
-	return /copilot/i.test(key) || key.startsWith('chat.') || key.startsWith('inlineChat.');
 }
 
 const defaultCommonlyUsedSettings: string[] = [
@@ -40,11 +29,11 @@ const defaultCommonlyUsedSettings: string[] = [
 	'editor.formatOnPaste'
 ];
 
-export function getCommonlyUsedData(toggleData: ExtensionToggleData | undefined): ITOCEntry<string> {
+export function getCommonlyUsedData(): ITOCEntry<string> {
 	return {
 		id: 'commonlyUsed',
 		label: localize('commonlyUsed', "Commonly Used"),
-		settings: toggleData?.commonlyUsed ?? defaultCommonlyUsedSettings
+		settings: defaultCommonlyUsedSettings
 	};
 }
 
@@ -241,17 +230,6 @@ export const tocData: ITOCEntry<string> = {
 					id: 'features/mergeEditor',
 					label: localize('mergeEditor', 'Merge Editor'),
 					settings: ['mergeEditor.*']
-				},
-				{
-					id: 'features/mcp',
-					label: localize('mcp', 'MCP'),
-					settings: ['mcp', 'mcp.*', 'chat.mcp.*']
-				},
-				{
-					id: 'features/chat',
-					label: localize('chat', 'Chat'),
-					settings: ['chat.*', 'inlineChat.*'],
-					hide: true
 				},
 				{
 					id: 'features/issueReporter',
