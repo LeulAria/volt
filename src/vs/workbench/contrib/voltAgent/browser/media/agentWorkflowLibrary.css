@@ -1234,6 +1234,18 @@
 	}
 }
 
+/* Library header: when the buttons leave the text too little room, the text stays on top at */
+/* full width and the buttons wrap below it. */
+.volt-wf-library > .volt-auto-list-head {
+	flex-wrap: wrap;
+	row-gap: 16px;
+}
+
+.volt-wf-library > .volt-auto-list-head > .titles {
+	flex: 1 1 320px;
+	min-width: 0;
+}
+
 /* Library: My Workflows. */
 .volt-wf-lib-section {
 	min-height: 120px;
