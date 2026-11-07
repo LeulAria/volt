@@ -35,7 +35,6 @@ import { DiagnosticsMainService, IDiagnosticsMainService } from '../../platform/
 import { DialogMainService, IDialogMainService } from '../../platform/dialogs/electron-main/dialogMainService.js';
 import { IEncryptionMainService } from '../../platform/encryption/common/encryptionService.js';
 import { EncryptionMainService } from '../../platform/encryption/electron-main/encryptionMainService.js';
-import { NativeBrowserElementsMainService, INativeBrowserElementsMainService } from '../../platform/browserElements/electron-main/nativeBrowserElementsMainService.js';
 import { NativeParsedArgs } from '../../platform/environment/common/argv.js';
 import { IEnvironmentMainService } from '../../platform/environment/electron-main/environmentMainService.js';
 import { isLaunchedFromCli } from '../../platform/environment/node/argvHelper.js';
@@ -117,10 +116,6 @@ import { IAuxiliaryWindowsMainService } from '../../platform/auxiliaryWindow/ele
 import { AuxiliaryWindowsMainService } from '../../platform/auxiliaryWindow/electron-main/auxiliaryWindowsMainService.js';
 import { normalizeNFC } from '../../base/common/normalization.js';
 import { ICSSDevelopmentService, CSSDevelopmentService } from '../../platform/cssDev/node/cssDevService.js';
-import { INativeMcpDiscoveryHelperService, NativeMcpDiscoveryHelperChannelName } from '../../platform/mcp/common/nativeMcpDiscoveryHelper.js';
-import { NativeMcpDiscoveryHelperService } from '../../platform/mcp/node/nativeMcpDiscoveryHelperService.js';
-import { IWebContentExtractorService } from '../../platform/webContentExtractor/common/webContentExtractor.js';
-import { NativeWebContentExtractorService } from '../../platform/webContentExtractor/electron-main/webContentExtractorService.js';
 import { IVoltStdioService, VOLT_STDIO_CHANNEL_NAME } from '../../platform/voltStdio/common/voltStdio.js';
 import { createVoltStdioChannel, VoltStdioMainService } from '../../platform/voltStdio/electron-main/voltStdioMainService.js';
 import { IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME } from '../../platform/voltHostMcp/common/voltHostMcp.js';
@@ -1083,7 +1078,6 @@ export class CodeApplication extends Disposable {
 		services.set(IEncryptionMainService, new SyncDescriptor(EncryptionMainService));
 
 		// Browser Elements
-		services.set(INativeBrowserElementsMainService, new SyncDescriptor(NativeBrowserElementsMainService, undefined, false /* proxied to other processes */));
 
 		// Keyboard Layout
 		services.set(IKeyboardLayoutMainService, new SyncDescriptor(KeyboardLayoutMainService));
@@ -1092,7 +1086,6 @@ export class CodeApplication extends Disposable {
 		services.set(INativeHostMainService, new SyncDescriptor(NativeHostMainService, undefined, false /* proxied to other processes */));
 
 		// Web Contents Extractor
-		services.set(IWebContentExtractorService, new SyncDescriptor(NativeWebContentExtractorService, undefined, false /* proxied to other processes */));
 
 		// Volt ACP stdio
 		services.set(IVoltStdioService, new SyncDescriptor(VoltStdioMainService, undefined, false /* proxied to other processes */));
@@ -1220,8 +1213,6 @@ export class CodeApplication extends Disposable {
 		// Proxy Auth
 		services.set(IProxyAuthService, new SyncDescriptor(ProxyAuthService));
 
-		// MCP
-		services.set(INativeMcpDiscoveryHelperService, new SyncDescriptor(NativeMcpDiscoveryHelperService));
 
 
 		// Dev Only: CSS service (for ESM)
@@ -1284,9 +1275,6 @@ export class CodeApplication extends Disposable {
 		mainProcessElectronServer.registerChannel('encryption', encryptionChannel);
 
 		// Browser Elements
-		const browserElementsChannel = ProxyChannel.fromService(accessor.get(INativeBrowserElementsMainService), disposables);
-		mainProcessElectronServer.registerChannel('browserElements', browserElementsChannel);
-		sharedProcessClient.then(client => client.registerChannel('browserElements', browserElementsChannel));
 
 		// Signing
 		const signChannel = ProxyChannel.fromService(accessor.get(ISignService), disposables);
@@ -1303,8 +1291,6 @@ export class CodeApplication extends Disposable {
 		sharedProcessClient.then(client => client.registerChannel('nativeHost', nativeHostChannel));
 
 		// Web Content Extractor
-		const webContentExtractorChannel = ProxyChannel.fromService(accessor.get(IWebContentExtractorService), disposables);
-		mainProcessElectronServer.registerChannel('webContentExtractor', webContentExtractorChannel);
 
 		// Volt ACP stdio
 		const voltStdioChannel = createVoltStdioChannel(accessor.get(IVoltStdioService) as VoltStdioMainService, disposables);
@@ -1398,9 +1384,6 @@ export class CodeApplication extends Disposable {
 		const externalTerminalChannel = ProxyChannel.fromService(accessor.get(IExternalTerminalMainService), disposables);
 		mainProcessElectronServer.registerChannel('externalTerminal', externalTerminalChannel);
 
-		// MCP
-		const mcpDiscoveryChannel = ProxyChannel.fromService(accessor.get(INativeMcpDiscoveryHelperService), disposables);
-		mainProcessElectronServer.registerChannel(NativeMcpDiscoveryHelperChannelName, mcpDiscoveryChannel);
 
 		// Logger
 		const loggerChannel = new LoggerChannel(accessor.get(ILoggerMainService),);

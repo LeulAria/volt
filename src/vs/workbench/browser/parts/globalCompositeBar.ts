@@ -386,7 +386,6 @@ export class AccountsActivityActionViewItem extends AbstractGlobalActivityAction
 					continue;
 				}
 
-				const canUseMcp = !!provider.authorizationServers?.length;
 				for (const account of accounts) {
 					const manageExtensionsAction = toAction({
 						id: `configureSessions${account.label}`,
@@ -397,15 +396,6 @@ export class AccountsActivityActionViewItem extends AbstractGlobalActivityAction
 
 
 					const providerSubMenuActions: IAction[] = [manageExtensionsAction];
-					if (canUseMcp) {
-						const manageMCPAction = toAction({
-							id: `configureSessions${account.label}`,
-							label: localize('manageTrustedMCPServers', "Manage Trusted MCP Servers"),
-							enabled: true,
-							run: () => this.commandService.executeCommand('_manageTrustedMCPServersForAccount', { providerId, accountLabel: account.label })
-						});
-						providerSubMenuActions.push(manageMCPAction);
-					}
 					if (account.canSignOut) {
 						providerSubMenuActions.push(toAction({
 							id: 'signOut',
@@ -461,13 +451,6 @@ export class AccountsActivityActionViewItem extends AbstractGlobalActivityAction
 					// });
 
 					const providerSubMenuActions: IAction[] = [];
-					const manageMCPAction = toAction({
-						id: `configureSessions${account.label}`,
-						label: localize('manageTrustedMCPServers', "Manage Trusted MCP Servers"),
-						enabled: true,
-						run: () => this.commandService.executeCommand('_manageTrustedMCPServersForAccount', { providerId, accountLabel: account.label })
-					});
-					providerSubMenuActions.push(manageMCPAction);
 					providerSubMenuActions.push(manageDynamicAuthProvidersAction);
 					if (account.canSignOut) {
 						providerSubMenuActions.push(toAction({

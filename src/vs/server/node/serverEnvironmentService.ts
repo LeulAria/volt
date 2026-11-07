@@ -228,7 +228,6 @@ export const IServerEnvironmentService = refineServiceDecorator<IEnvironmentServ
 
 export interface IServerEnvironmentService extends INativeEnvironmentService {
 	readonly machineSettingsResource: URI;
-	readonly mcpResource: URI;
 	readonly args: ServerParsedArgs;
 }
 
@@ -237,7 +236,5 @@ export class ServerEnvironmentService extends NativeEnvironmentService implement
 	override get userRoamingDataHome(): URI { return this.appSettingsHome; }
 	@memoize
 	get machineSettingsResource(): URI { return joinPath(URI.file(join(this.userDataPath, 'Machine')), 'settings.json'); }
-	@memoize
-	get mcpResource(): URI { return joinPath(URI.file(join(this.userDataPath, 'User')), 'mcp.json'); }
 	override get args(): ServerParsedArgs { return super.args as ServerParsedArgs; }
 }
