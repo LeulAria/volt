@@ -106,6 +106,8 @@
 }
 
 .volt-agent-home-hover-message {
+	/* Room under the last line, so it does not sit on the card's edge. */
+	padding-bottom: 4px;
 	overflow-y: auto;
 	overflow-wrap: anywhere;
 	user-select: text;
