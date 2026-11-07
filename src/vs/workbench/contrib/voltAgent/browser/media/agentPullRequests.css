@@ -2702,8 +2702,57 @@
 	font-size: 10.5px;
 }
 
-.volt-pr-list-reason {
+/* A row's labels: a dot in the label's color and its name in the line's muted text, no pill. */
+.volt-pr-list-labels {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.volt-pr-list-label {
+	--volt-pr-label: #888888;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	white-space: nowrap;
+}
+
+.volt-pr-list-label > .dot {
 	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--volt-pr-label);
+}
+
+/* The second label gives way first; the first keeps a few letters beside its dot. */
+.volt-pr-list-label:first-child {
+	min-width: 4em;
+}
+
+.volt-pr-list-label + .volt-pr-list-label {
+	flex-shrink: 10;
+}
+
+.volt-pr-list-label > .name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-pr-list-age {
+	white-space: nowrap;
+}
+
+.volt-pr-list-reason {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 

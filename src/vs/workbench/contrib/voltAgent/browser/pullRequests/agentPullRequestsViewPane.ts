@@ -795,21 +795,31 @@ export function buildPullRequestRow(pr: IVoltPullRequest, watching: boolean): IP
 	avatar(line2, pr.author.login, pr.author.avatarUrl, 14);
 	const author = append(line2, $('span.volt-pr-list-author'));
 	author.textContent = pr.author.login;
-	const branch = append(line2, $('span.volt-pr-list-branch'));
+	// One thing between the author and the age, so a narrow list never crushes it: what the pull request
+	// waits on, else its labels (a dot in the label's color and the name), else its branch.
+	const branch = $('span.volt-pr-list-branch');
 	branch.textContent = pr.headRefName;
-	for (const label of pr.labels.slice(0, 2)) {
-		const chip = append(line2, $('span.volt-pr-label.small'));
-		chip.style.setProperty('--volt-pr-label', `#${/^[0-9a-f]{6}$/i.test(label.color) ? label.color : '888888'}`);
-		chip.textContent = label.name;
+	const reason = blockedReason(pr);
+	// A size label repeats the +/- counts on the first line, so the row leaves it out.
+	const labels = pr.labels.filter(label => !/^size[:/ ]/i.test(label.name)).slice(0, 2);
+	if (reason) {
+		append(line2, $(`span.volt-pr-list-reason.reason-${reasonClass(pr)}`)).textContent = reason;
+	} else if (labels.length) {
+		const list = append(line2, $('span.volt-pr-list-labels'));
+		for (const label of labels) {
+			const chip = append(list, $('span.volt-pr-list-label'));
+			chip.style.setProperty('--volt-pr-label', `#${/^[0-9a-f]{6}$/i.test(label.color) ? label.color : '888888'}`);
+			append(chip, $('span.dot'));
+			append(chip, $('span.name')).textContent = label.name;
+			setAgentTooltip(chip, label.name);
+		}
+	} else {
+		append(line2, branch);
 	}
 	if (pr.unresolvedThreads) {
 		const threads = append(line2, $('span.volt-pr-list-threads'));
 		threads.appendChild(renderIcon(Codicon.commentUnresolved));
 		append(threads, $('span')).textContent = String(pr.unresolvedThreads);
-	}
-	const reason = blockedReason(pr);
-	if (reason) {
-		append(line2, $(`span.volt-pr-list-reason.reason-${reasonClass(pr)}`)).textContent = reason;
 	}
 	append(line2, $('.volt-pr-spacer'));
 	append(line2, $('span.volt-pr-list-age')).textContent = ago(pr.updatedAt);
@@ -817,6 +827,10 @@ export function buildPullRequestRow(pr: IVoltPullRequest, watching: boolean): IP
 }
 
 export function reasonClass(pr: IVoltPullRequest): string {
+	// Merged or closed is the end of it: no red for checks or reviews that no longer matter.
+	if (!isOpenState(pr.state)) {
+		return 'neutral';
+	}
 	if (pr.mergeable === 'conflicting' || pr.checks.state === 'failure' || pr.reviewDecision === 'changesRequested') {
 		return 'bad';
 	}
