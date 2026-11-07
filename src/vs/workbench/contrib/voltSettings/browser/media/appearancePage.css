@@ -49,7 +49,7 @@
 	transition: box-shadow 0.12s ease;
 }
 
-/* The black the chat lays over the picture (agentChatBackground.css), live while Dim is dragged. */
+/* The dark or light the chat lays over the picture (agentChatBackground.css), live while Dim is dragged. */
 .volt-appearance-backdrop .thumb.picture::after {
 	content: '';
 	position: absolute;
@@ -58,7 +58,11 @@
 }
 
 .monaco-workbench.vs .volt-appearance-backdrop .thumb.picture::after {
-	background: color-mix(in srgb, var(--volt-agent-window-bg-base, #ffffff) calc((0.6 + var(--volt-chat-backdrop-dim, 0.4) * 0.4) * 100%), transparent);
+	background: rgb(255 255 255 / var(--volt-chat-backdrop-dim, 0.4));
+}
+
+.monaco-workbench.vs .volt-appearance-backdrop .thumb.picture:not(.drawn)::after {
+	background: rgb(255 255 255 / calc(1 - (1 - var(--volt-chat-backdrop-dim, 0.55)) * (1 - var(--volt-chat-backdrop-dim, 0.55)) * (1 - var(--volt-chat-backdrop-dim, 0.55))));
 }
 
 .volt-appearance-backdrop .thumb .codicon {

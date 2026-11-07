@@ -5,14 +5,19 @@
 
 /*
  * The chat background (volt.chat.background.*, Settings > Appearance > Chat Background): a picture
- * under the agent window's chat column, under black and a grid of square pixels like the photos on
- * the Volt site. agentChatBackground.ts sets the root classes and variables; the backdrop is the
+ * under the agent window's chat column, under the theme's dark or light (Dim, 40%) and a grid of
+ * square pixels like the photos on the Volt site. agentChatBackground.ts sets the root classes and variables; the backdrop is the
  * first child of .volt-agent-editor-main (agentEditor.ts), which marks the main chat `backdrop-host`
  * (not a chat in another chat's tools or in a board's dock). A new chat shows the picture. Once it
  * has messages the picture goes, or stays darker (volt.chat.background.inConversations).
  *
+ * When the title bar sits right on top of the column, AgentChatBackdrop lays the backdrop fixed over
+ * both and the title bar lets it through, so the picture runs to the window's top edge. Orbit, Volt
+ * and Halftone are drawn live in the backdrop (agentChatDrawings.ts), with no picture under them.
+ *
  * The backdrop paints opaque and holds nothing that scrolls: safe in the see-through window
- * (volt-transparent-window skill). No backdrop-filter.
+ * (volt-transparent-window skill). The title bar is see-through only while the backdrop shows under
+ * it. No backdrop-filter.
  */
 
 .volt-agent-chat-backdrop {
@@ -45,10 +50,104 @@
 	inset: 0;
 }
 
+/* The drawn backgrounds (agentChatDrawings.ts), under the dim layer, fading in each time a chat shows them. */
+.volt-agent-chat-orbit,
+.volt-agent-chat-halftone {
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	width: 100%;
+	height: 100%;
+	animation: volt-agent-chat-drawing-in 480ms ease both;
+}
+
+/* Volt: the app icon's bolt nearly as tall as the chat, in hairlines fading out toward the bottom. */
+.volt-agent-chat-volt {
+	position: absolute;
+	z-index: -1;
+	top: 7%;
+	left: 50%;
+	height: 86%;
+	max-width: 92%;
+	aspect-ratio: 374 / 558;
+	transform: translateX(-50%);
+	overflow: visible;
+	color: rgb(255 255 255 / 0.3);
+	mask-image: linear-gradient(to bottom, #000 30%, transparent 96%);
+	animation: volt-agent-chat-drawing-in 480ms ease both;
+}
+
+.volt-agent-chat-volt .folds {
+	opacity: 0.55;
+}
+
+@keyframes volt-agent-chat-drawing-in {
+	from {
+		opacity: 0;
+	}
+}
+
+/* Light themes: dark hairlines, and the halftone's white dots turned dark. */
+.monaco-workbench.vs .volt-agent-chat-volt {
+	color: rgb(0 0 0 / 0.3);
+}
+
+.monaco-workbench.vs .volt-agent-chat-halftone {
+	filter: invert(1);
+}
+
+.monaco-workbench.reduce-motion :is(.volt-agent-chat-orbit, .volt-agent-chat-volt, .volt-agent-chat-halftone) {
+	animation: none;
+}
+
 /* The black over the picture, and the title bar's color fading into it at the top edge. */
 .volt-agent-chat-backdrop::before {
 	background-color: rgb(0 0 0 / var(--volt-chat-backdrop-dim, 0.4));
 	background-image: linear-gradient(to bottom, var(--volt-agent-window-bg-base, #141414) 0, transparent 72px);
+}
+
+/* Under the title bar as well: the picture runs to the top edge, with no title bar color over it. */
+.volt-agent-chat-backdrop.under-titlebar::before {
+	background-image: none;
+}
+
+/* The title bar lets the picture through while it shows under it, and takes its color back as the picture fades. */
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop .part.titlebar {
+	transition: background-color 420ms ease;
+}
+
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.volt-chat-backdrop-titlebar:not(.volt-chat-backdrop-titlebar-turns):not(.hc-black):not(.hc-light) .part.titlebar,
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.volt-chat-backdrop-in-chats.volt-chat-backdrop-titlebar:not(.hc-black):not(.hc-light) .part.titlebar {
+	background: transparent !important;
+	background-color: transparent !important;
+}
+
+/*
+ * Over the picture the title bar's controls, the chat's title and the wordmark are white (near black in
+ * light themes) with a soft shadow, focused or not: the plain bar's dim grays get lost on a picture.
+ * A disabled control keeps its fade.
+ */
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.volt-chat-backdrop-titlebar:not(.volt-chat-backdrop-titlebar-turns).vs-dark .part.titlebar :is(.volt-titlebar-control, .volt-agent-primary-header-title, .volt-agent-brand-wordmark, .action-item .action-label),
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.volt-chat-backdrop-in-chats.volt-chat-backdrop-titlebar.vs-dark .part.titlebar :is(.volt-titlebar-control, .volt-agent-primary-header-title, .volt-agent-brand-wordmark, .action-item .action-label) {
+	color: rgb(255 255 255 / 0.94);
+	text-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+}
+
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.volt-chat-backdrop-titlebar:not(.volt-chat-backdrop-titlebar-turns).vs-dark .part.titlebar :is(.volt-titlebar-control, .volt-agent-primary-header-title) svg,
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.volt-chat-backdrop-in-chats.volt-chat-backdrop-titlebar.vs-dark .part.titlebar :is(.volt-titlebar-control, .volt-agent-primary-header-title) svg {
+	filter: drop-shadow(0 1px 1.5px rgb(0 0 0 / 0.5));
+}
+
+/* Light themes leave the wordmark alone: the brand logo's invert filter already turns its white near black. */
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.volt-chat-backdrop-titlebar:not(.volt-chat-backdrop-titlebar-turns).vs .part.titlebar :is(.volt-titlebar-control, .volt-agent-primary-header-title, .action-item .action-label),
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.volt-chat-backdrop-in-chats.volt-chat-backdrop-titlebar.vs .part.titlebar :is(.volt-titlebar-control, .volt-agent-primary-header-title, .action-item .action-label) {
+	color: rgb(0 0 0 / 0.86);
+	text-shadow: 0 1px 2px rgb(255 255 255 / 0.7);
+}
+
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.volt-chat-backdrop-titlebar:not(.volt-chat-backdrop-titlebar-turns):is(.vs, .vs-dark) .part.titlebar .volt-agent-primary-header-laptop,
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.volt-chat-backdrop-in-chats.volt-chat-backdrop-titlebar:is(.vs, .vs-dark) .part.titlebar .volt-agent-primary-header-laptop {
+	opacity: 0.85;
 }
 
 /* The pixel grid: a 1px line every 6px each way. */
@@ -78,17 +177,27 @@
 }
 
 .monaco-workbench.reduce-motion .volt-agent-chat-backdrop,
-.monaco-workbench.reduce-motion .volt-agent-chat-backdrop::before {
+.monaco-workbench.reduce-motion .volt-agent-chat-backdrop::before,
+.monaco-workbench.reduce-motion.volt-chat-backdrop .part.titlebar {
 	transition: none !important;
 }
 
-/* Light themes: the picture under the theme's own color instead of black, so dark text reads. */
+/* Light themes: white over the background instead of black. */
 .monaco-workbench.vs .volt-agent-chat-backdrop::before {
-	background-color: color-mix(in srgb, var(--volt-agent-window-bg-base, #ffffff) calc((0.6 + var(--volt-chat-backdrop-dim, 0.4) * 0.4) * 100%), transparent);
+	background-color: rgb(255 255 255 / var(--volt-chat-backdrop-dim, 0.4));
 }
 
 .monaco-workbench.vs.volt-chat-backdrop-in-chats .volt-agent-editor.has-turns > .volt-agent-editor-main > .volt-agent-chat-backdrop::before {
-	background-color: color-mix(in srgb, var(--volt-agent-window-bg-base, #ffffff) calc((0.84 + var(--volt-chat-backdrop-dim, 0.4) * 0.16) * 100%), transparent);
+	background-color: rgb(255 255 255 / calc(var(--volt-chat-backdrop-dim, 0.4) + (1 - var(--volt-chat-backdrop-dim, 0.4)) * 0.6));
+}
+
+/* A photo goes nearly white, so the chat reads as a white theme: 1 - (1 - Dim) cubed, 91% at the default. */
+.monaco-workbench.vs.volt-chat-backdrop:not(.volt-chat-backdrop-live) .volt-agent-chat-backdrop::before {
+	background-color: rgb(255 255 255 / calc(1 - (1 - var(--volt-chat-backdrop-dim, 0.55)) * (1 - var(--volt-chat-backdrop-dim, 0.55)) * (1 - var(--volt-chat-backdrop-dim, 0.55))));
+}
+
+.monaco-workbench.vs.volt-chat-backdrop.volt-chat-backdrop-in-chats:not(.volt-chat-backdrop-live) .volt-agent-editor.has-turns > .volt-agent-editor-main > .volt-agent-chat-backdrop::before {
+	background-color: rgb(255 255 255 / calc(1 - (1 - var(--volt-chat-backdrop-dim, 0.55)) * (1 - var(--volt-chat-backdrop-dim, 0.55)) * (1 - var(--volt-chat-backdrop-dim, 0.55)) * 0.4));
 }
 
 .monaco-workbench.vs.volt-chat-backdrop-pixels .volt-agent-chat-backdrop::after {
@@ -102,6 +211,22 @@
 	text-shadow: 0 1px 2px rgb(0 0 0 / 0.6);
 }
 
+/* Every picker is white over the picture, chosen or not (a plain new chat fades an empty one). */
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.vs-dark .volt-agent-editor.backdrop-host:not(.browser-hosted):not(.has-turns) .volt-agent-landing-chrome :is(.volt-agent-landing-pick, .volt-agent-status-access) {
+	color: rgb(255 255 255 / 0.92);
+	opacity: 1;
+}
+
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.vs .volt-agent-editor.backdrop-host:not(.browser-hosted):not(.has-turns) .volt-agent-landing-chrome :is(.volt-agent-landing-pick, .volt-agent-status-access) {
+	color: rgb(0 0 0 / 0.84);
+	opacity: 1;
+}
+
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop:is(.vs, .vs-dark) .volt-agent-editor.backdrop-host:not(.browser-hosted):not(.has-turns) .volt-agent-landing-chrome :is(.volt-agent-landing-pick, .volt-agent-status-access) .chevron {
+	color: inherit;
+	opacity: 0.8;
+}
+
 .monaco-workbench.volt-layout-agent.volt-chat-backdrop.vs-dark .volt-agent-editor.backdrop-host:not(.browser-hosted):not(.has-turns) .volt-agent-suggest-chip {
 	background: rgb(0 0 0 / 0.3);
 	border-color: rgb(255 255 255 / 0.14);
@@ -109,4 +234,84 @@
 
 .monaco-workbench.volt-layout-agent.volt-chat-backdrop.vs-dark .volt-agent-editor.backdrop-host:not(.browser-hosted):not(.has-turns) .volt-agent-suggest-chip:hover {
 	border-color: rgb(255 255 255 / 0.26);
+}
+
+/*
+ * The composer over the picture is frosted glass, tinted so its text reads. No backdrop-filter
+ * (volt-transparent-window): AgentChatBackdrop lays a copy of the backdrop inside the composer where
+ * the backdrop is, blurred with a plain filter. Orbit is drawn, so it only shows through the tint.
+ */
+.volt-agent-chat-frost {
+	display: none;
+}
+
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop:not(.hc-black):not(.hc-light) .volt-agent-editor.backdrop-host:not(.browser-hosted):not(.has-turns) .volt-agent-input-box:not(.editing),
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.volt-chat-backdrop-in-chats:not(.hc-black):not(.hc-light) .volt-agent-editor.backdrop-host:not(.browser-hosted) .volt-agent-input-box:not(.editing) {
+	--volt-composer-bg: color-mix(in srgb, var(--volt-surface-raised-solid, #1f1f1f) 58%, transparent);
+	position: relative;
+	isolation: isolate;
+}
+
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop:not(.volt-chat-backdrop-live):not(.hc-black):not(.hc-light) .volt-agent-editor.backdrop-host:not(.browser-hosted):not(.has-turns) .volt-agent-input-box:not(.editing) > .volt-agent-chat-frost,
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.volt-chat-backdrop-in-chats:not(.volt-chat-backdrop-live):not(.hc-black):not(.hc-light) .volt-agent-editor.backdrop-host:not(.browser-hosted) .volt-agent-input-box:not(.editing) > .volt-agent-chat-frost {
+	display: block;
+	position: absolute;
+	z-index: -1;
+	pointer-events: none;
+	background: var(--volt-chat-backdrop-image) var(--volt-chat-backdrop-position, 50% 50%) / cover no-repeat, var(--volt-agent-window-bg-base, #141414);
+	filter: blur(24px);
+}
+
+.volt-agent-chat-frost::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	background: color-mix(in srgb, var(--volt-surface-raised-solid, #1f1f1f) 72%, transparent);
+}
+
+/* Light themes: white glass, as white as the veiled picture around it, so dark text reads. */
+.monaco-workbench.vs .volt-agent-chat-frost::after {
+	background: rgb(255 255 255 / 0.92);
+}
+
+/*
+ * A Volt modal over the chat's picture is frosted glass as well (frostOverChatBackdrop): the blurred
+ * copy under the panel's own color at about 60%, all of it opaque over the panel's fill.
+ */
+.volt-modal.volt-chat-frosted > .volt-agent-chat-frost {
+	display: block;
+	position: absolute;
+	z-index: -1;
+	pointer-events: none;
+	background: var(--volt-chat-backdrop-image) var(--volt-chat-backdrop-position, 50% 50%) / cover no-repeat, var(--volt-agent-window-bg-base, #141414);
+	filter: blur(24px);
+}
+
+.volt-modal.volt-chat-frosted > .volt-agent-chat-frost::after {
+	background: color-mix(in srgb, var(--vscode-quickInput-background, #1f1f1f) 62%, transparent);
+}
+
+.monaco-workbench.vs .volt-modal.volt-chat-frosted > .volt-agent-chat-frost::after {
+	background: color-mix(in srgb, var(--vscode-quickInput-background, #ffffff) 80%, transparent);
+}
+
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.vs .volt-agent-editor.backdrop-host:not(.browser-hosted):not(.has-turns) :is(.volt-agent-landing-pick, .volt-agent-suggest-chip) {
+	text-shadow: 0 0 6px rgb(255 255 255 / 0.9);
+}
+
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.vs .volt-agent-editor.backdrop-host:not(.browser-hosted):not(.has-turns) .volt-agent-suggest-chip {
+	background: rgb(255 255 255 / 0.6);
+}
+
+/* The composer's + reads as part of the glass: a light wash instead of its solid dark gray. */
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.vs-dark .volt-agent-editor.backdrop-host:not(.browser-hosted):not(.has-turns) .volt-agent-input-box:not(.editing) .volt-agent-plus,
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.volt-chat-backdrop-in-chats.vs-dark .volt-agent-editor.backdrop-host:not(.browser-hosted) .volt-agent-input-box:not(.editing) .volt-agent-plus {
+	background: rgb(255 255 255 / 0.14);
+	color: #d4d4d4;
+}
+
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.vs-dark .volt-agent-editor.backdrop-host:not(.browser-hosted):not(.has-turns) .volt-agent-input-box:not(.editing) .volt-agent-plus:hover,
+.monaco-workbench.volt-layout-agent.volt-chat-backdrop.volt-chat-backdrop-in-chats.vs-dark .volt-agent-editor.backdrop-host:not(.browser-hosted) .volt-agent-input-box:not(.editing) .volt-agent-plus:hover {
+	background: rgb(255 255 255 / 0.22);
+	color: #ffffff;
 }

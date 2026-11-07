@@ -26,7 +26,7 @@ import { IPathService } from '../../../services/path/common/pathService.js';
 import { ColorThemeData } from '../../../services/themes/common/colorThemeData.js';
 import { IWorkbenchColorTheme, IWorkbenchThemeService, ThemeSettings } from '../../../services/themes/common/workbenchThemeService.js';
 import { AGENT_CODE_WRAP_SETTING, AGENT_THEMED_DIFFS_SETTING, AGENT_TOOL_DENSITIES, AGENT_TOOL_DENSITY_SETTING, AgentToolDensity, readToolDensity, VOLT_REDUCE_TRANSPARENCY_SETTING, VOLT_TINT_HUE_SETTING, VOLT_TINT_INTENSITY_SETTING, VOLT_UI_FONT_FAMILY_SETTING, VOLT_WINDOW_TRANSPARENCY_SETTING } from '../../voltAgent/common/agentAppearanceSettings.js';
-import { AGENT_CHAT_BACKGROUND_DEFAULT_DIM, AGENT_CHAT_BACKGROUND_DIM_SETTING, AGENT_CHAT_BACKGROUND_IN_CHATS_SETTING, AGENT_CHAT_BACKGROUND_MAX_DIM, AGENT_CHAT_BACKGROUND_NONE, AGENT_CHAT_BACKGROUND_PIXELS_SETTING, AGENT_CHAT_BACKGROUND_PRESETS, AGENT_CHAT_BACKGROUND_SETTING, AgentChatBackground, agentChatBackgroundDim, resolveAgentChatBackground } from '../../voltAgent/common/agentChatBackground.js';
+import { AGENT_CHAT_BACKGROUND_DEFAULT_DIM, AGENT_CHAT_BACKGROUND_DIM_SETTING, AGENT_CHAT_BACKGROUND_IN_CHATS_SETTING, AGENT_CHAT_BACKGROUND_MAX_DIM, AGENT_CHAT_BACKGROUND_NONE, AGENT_CHAT_BACKGROUND_PIXELS_SETTING, AGENT_CHAT_BACKGROUND_PRESETS, AGENT_CHAT_BACKGROUND_SETTING, AgentChatBackground, agentChatBackgroundDim, agentChatDrawing, resolveAgentChatBackground } from '../../voltAgent/common/agentChatBackground.js';
 import { agentChatBackgroundPresetUrl, agentChatBackgroundResource, chooseAgentChatBackground, importedAgentChatBackground, loadAgentChatBackground } from '../../voltAgent/browser/chat/agentChatBackground.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
@@ -304,6 +304,8 @@ export class AppearancePage {
 				const thumb = append(tile, $('span.thumb'));
 				if (thumbnail) {
 					thumb.classList.add('picture');
+					// A drawn background takes the plain veil; a photo goes nearly white in light themes (agentChatBackground.css).
+					thumb.classList.toggle('drawn', !!agentChatDrawing(background));
 					thumb.style.backgroundImage = `url('${CSS.escape(thumbnail)}')`;
 				} else {
 					thumb.appendChild(renderIcon(Codicon.circleSlash));
@@ -357,7 +359,7 @@ export class AppearancePage {
 		kit.settingRow(
 			group,
 			localize('voltSettings.chatBackgroundDim', "Dim"),
-			localize('voltSettings.chatBackgroundDimDesc', "How much black lies over the picture"),
+			localize('voltSettings.chatBackgroundDimDesc', "How much black, or white in a light theme, lies over a photo. Drawn ones take less."),
 			host => {
 				host.classList.add('volt-appearance-slider-row');
 				host.parentElement?.classList.add('volt-appearance-slider-setting');
@@ -371,7 +373,7 @@ export class AppearancePage {
 				host.appendChild(value);
 			},
 		);
-		this.syncedToggleRow(kit, group, localize('voltSettings.chatBackgroundPixels', "Pixel Grid"), localize('voltSettings.chatBackgroundPixelsDesc', "See the picture through a grid of square pixels"), AGENT_CHAT_BACKGROUND_PIXELS_SETTING, true);
+		this.syncedToggleRow(kit, group, localize('voltSettings.chatBackgroundPixels', "Pixel Grid"), localize('voltSettings.chatBackgroundPixelsDesc', "See a photo through a grid of square pixels (drawn backgrounds go without it)"), AGENT_CHAT_BACKGROUND_PIXELS_SETTING, true);
 		this.syncedToggleRow(kit, group, localize('voltSettings.chatBackgroundInChats', "Behind Conversations"), localize('voltSettings.chatBackgroundInChatsDesc', "Keep the picture, darker, behind chats that have messages"), AGENT_CHAT_BACKGROUND_IN_CHATS_SETTING, false);
 	}
 

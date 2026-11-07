@@ -281,6 +281,11 @@
 	white-space: nowrap;
 }
 
+/* Over the chat's picture the dialog is frosted glass (voltModal.ts): the footer lets it through. */
+.volt-modal.volt-chat-frosted .volt-folder-foot {
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
 .volt-folder-foot-hint {
 	display: inline-flex;
 	align-items: center;

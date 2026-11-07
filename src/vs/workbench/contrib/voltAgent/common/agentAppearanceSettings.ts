@@ -113,12 +113,12 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			default: AGENT_CHAT_BACKGROUND_DEFAULT_DIM,
 			minimum: 0,
 			maximum: AGENT_CHAT_BACKGROUND_MAX_DIM,
-			description: localize('voltAppearance.chatBackgroundDim', "How much black lies over the chat background picture, in percent."),
+			description: localize('voltAppearance.chatBackgroundDim', "How much black lies over the chat background picture, in percent; a light theme lays more white. Orbit, Volt and Halftone, already faint, take less of it."),
 		},
 		[AGENT_CHAT_BACKGROUND_PIXELS_SETTING]: {
 			type: 'boolean',
 			default: true,
-			description: localize('voltAppearance.chatBackgroundPixelGrid', "Show the chat background picture through a grid of square pixels."),
+			description: localize('voltAppearance.chatBackgroundPixelGrid', "Show a chat background photo through a grid of square pixels. Orbit, Volt and Halftone are drawn without it."),
 		},
 		[AGENT_CHAT_BACKGROUND_IN_CHATS_SETTING]: {
 			type: 'boolean',

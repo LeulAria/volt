@@ -33,6 +33,7 @@ import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownR
 import { preloadMarkdownExtras } from '../blocks/agentMarkdown.js';
 import { createDiagramViewer, diagramKind } from '../blocks/agentMermaid.js';
 import { createMessageCopyIcon } from '../blocks/agentCodeBlock.js';
+import { AgentChatBackdrop } from '../chat/agentChatBackground.js';
 import { IAgentChatForkService } from '../orchestration/agentChatFork.js';
 import { buildTranscriptRows, hasSignInNotice, ITranscriptSteer, TranscriptRow, withoutFailureNotice } from '../chrome/agentTranscript.js';
 import { fallbackSubagentView, ITranscriptHost, LiveTranscript, renderTranscript, tickElapsed } from '../chrome/agentTranscriptView.js';
@@ -1134,8 +1135,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this._register(addDisposableListener(this.threadEl, 'copy', e => this.copyUserMessageSelection(e)));
 		this._register(registerCitationTarget(this.citationTarget));
 		this.editorMainEl = append(this.container, $('.volt-agent-editor-main'));
-		// The chat background picture (Settings > Appearance), under everything in the column (agentChatBackground.css).
-		append(this.editorMainEl, $('.volt-agent-chat-backdrop', { 'aria-hidden': 'true' }));
+		// The chat background (Settings > Appearance), under everything in the column and up under the title bar.
+		this._register(this.instantiationService.createInstance(AgentChatBackdrop, this.editorMainEl, this.container));
 		this.runGroupBar = append(this.editorMainEl, $('.volt-agent-group-bar.hidden'));
 		// A chat stopped at the provider's usage limit: when it resumes, or one click to resume it when the provider is back.
 		// The first chip of the row above the composer (placed by AgentComposerChips).
