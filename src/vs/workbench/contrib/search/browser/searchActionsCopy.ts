@@ -116,12 +116,7 @@ registerAction2(class GetSearchResultsAction extends Action2 {
 		const searchView = getSearchView(viewsService);
 		if (searchView) {
 			const root = searchView.searchResult;
-			const textSearchResult = allFolderMatchesToString(root.folderMatches(), labelService);
-			const aiSearchResult = allFolderMatchesToString(root.folderMatches(true), labelService);
-
-			const text = `${textSearchResult}${lineDelimiter}${lineDelimiter}${aiSearchResult}`;
-
-			return text;
+			return allFolderMatchesToString(root.folderMatches(), labelService);
 		}
 
 		return undefined;

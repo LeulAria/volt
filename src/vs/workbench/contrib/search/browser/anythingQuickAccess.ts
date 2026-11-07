@@ -53,8 +53,6 @@ import { stripIcons } from '../../../../base/common/iconLabels.js';
 import { Lazy } from '../../../../base/common/lazy.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
-import { ASK_QUICK_QUESTION_ACTION_ID } from '../../chat/browser/actions/chatQuickInputActions.js';
-import { IQuickChatService } from '../../chat/browser/chat.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { ICustomEditorLabelService } from '../../../services/editor/common/customEditorLabelService.js';
 
@@ -136,7 +134,6 @@ export class AnythingQuickAccessProvider extends PickerQuickAccessProvider<IAnyt
 		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@IKeybindingService private readonly keybindingService: IKeybindingService,
-		@IQuickChatService private readonly quickChatService: IQuickChatService,
 		@ILogService private readonly logService: ILogService,
 		@ICustomEditorLabelService private readonly customEditorLabelService: ICustomEditorLabelService
 	) {
@@ -835,17 +832,6 @@ export class AnythingQuickAccessProvider extends PickerQuickAccessProvider<IAnyt
 						}
 					};
 				}));
-
-		// TODO: There has to be a better place for this, but it's the first time we are adding a non-quick access provider
-		// to the command center, so for now, let's do this.
-		if (this.quickChatService.enabled) {
-			providers.push({
-				label: localize('chat', "Open Quick Chat"),
-				commandCenterOrder: 30,
-				keybinding: this.keybindingService.lookupKeybinding(ASK_QUICK_QUESTION_ACTION_ID),
-				accept: () => this.quickChatService.toggle()
-			});
-		}
 
 		return providers.sort((a, b) => a.commandCenterOrder - b.commandCenterOrder);
 	}

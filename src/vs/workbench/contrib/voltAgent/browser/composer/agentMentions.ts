@@ -51,7 +51,7 @@ import { IAgentHistoryService } from '../../../../services/voltRuntime/common/hi
 import { IAgentRuntimeService, IVoltMcpServerStatus } from '../../../../services/voltRuntime/common/runtime.js';
 import { attachmentSavedLine, fileTypeLabel, formatAttachmentSize, MAX_FILE_ATTACHMENT_BYTES } from '../../../../services/voltRuntime/common/fileAttachments.js';
 import { extensionForMime } from '../../../../services/voltRuntime/common/history/agentHistoryLog.js';
-import { searchFilesAndFolders } from '../../../search/browser/searchChatContext.js';
+import { searchFilesAndFolders } from '../../../search/browser/searchFilesAndFolders.js';
 import { ITerminalService } from '../../../terminal/browser/terminal.js';
 import { compactSessionAge } from '../home/agentHomeModel.js';
 import { AgentMentionMenu, AgentMentionMenuContent, AgentMentionRow, IAgentMentionFileRow, IAgentMentionSearch, IAgentMentionTreeEntry } from './agentMentionMenu.js';

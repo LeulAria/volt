@@ -12,14 +12,14 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { IProgress, IProgressStep } from '../../../../../platform/progress/common/progress.js';
 import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
 import { IReplaceService } from '../replace.js';
-import { IFileMatch, ISearchComplete, ITextQuery, ITextSearchQuery } from '../../../../services/search/common/search.js';
+import { IFileMatch, ISearchComplete, ITextQuery } from '../../../../services/search/common/search.js';
 import { RangeHighlightDecorations } from './rangeDecorations.js';
 import { FolderMatchNoRootImpl, FolderMatchWorkspaceRootImpl } from './folderMatch.js';
 import { IChangeEvent, ISearchTreeFileMatch, ISearchTreeFolderMatch, ISearchTreeFolderMatchWithResource, ISearchTreeFolderMatchWorkspaceRoot, IPlainTextSearchHeading, ISearchResult, isSearchTreeFileMatch, isSearchTreeFolderMatch, ITextSearchHeading, ISearchTreeMatch, TEXT_SEARCH_HEADING_PREFIX, PLAIN_TEXT_SEARCH__RESULT_ID, ISearchTreeFolderMatchNoRoot } from './searchTreeCommon.js';
 import { isNotebookFileMatch } from '../notebookSearch/notebookSearchModelBase.js';
 
 
-export abstract class TextSearchHeadingImpl<QueryType extends ITextSearchQuery> extends Disposable implements ITextSearchHeading {
+export abstract class TextSearchHeadingImpl<QueryType extends ITextQuery> extends Disposable implements ITextSearchHeading {
 	protected _onChange = this._register(new Emitter<IChangeEvent>());
 	readonly onChange: Event<IChangeEvent> = this._onChange.event;
 	private _isDirty = false;
@@ -65,7 +65,6 @@ export abstract class TextSearchHeadingImpl<QueryType extends ITextSearchQuery> 
 		return this._folderMatches.length > 0;
 	}
 
-	abstract get isAIContributed(): boolean;
 	abstract id(): string;
 	abstract name(): string;
 
@@ -91,18 +90,15 @@ export abstract class TextSearchHeadingImpl<QueryType extends ITextSearchQuery> 
 				return;
 			}
 
-			// ai results go into the respective folder
 			const folderMatch = this.getFolderMatch(raw[0].resource);
 			folderMatch?.addFileMatch(raw, silent, searchInstanceID);
 		});
 
-		if (!this.isAIContributed) {
-			this._otherFilesMatch?.addFileMatch(other, silent, searchInstanceID);
-		}
+		this._otherFilesMatch?.addFileMatch(other, silent, searchInstanceID);
 		this.disposePastResults();
 	}
 
-	remove(matches: ISearchTreeFileMatch | ISearchTreeFolderMatch | (ISearchTreeFileMatch | ISearchTreeFolderMatch)[], ai = false): void {
+	remove(matches: ISearchTreeFileMatch | ISearchTreeFolderMatch | (ISearchTreeFileMatch | ISearchTreeFolderMatch)[]): void {
 		if (!Array.isArray(matches)) {
 			matches = [matches];
 		}
@@ -277,10 +273,6 @@ export class PlainTextSearchHeadingImpl extends TextSearchHeadingImpl<ITextQuery
 
 	id(): string {
 		return TEXT_SEARCH_HEADING_PREFIX + PLAIN_TEXT_SEARCH__RESULT_ID;
-	}
-
-	get isAIContributed(): boolean {
-		return false;
 	}
 
 	replace(match: ISearchTreeFileMatch): Promise<any> {
