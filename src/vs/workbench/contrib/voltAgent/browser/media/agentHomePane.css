@@ -107,11 +107,18 @@
 
 .volt-agent-home-hover-message {
 	overflow-y: auto;
-	white-space: pre-wrap;
 	overflow-wrap: anywhere;
-	opacity: 0.85;
 	user-select: text;
 	-webkit-user-select: text;
+}
+
+/* The chat's markdown, tightened for a card: no gap above the first block or below the last. */
+.volt-agent-home-hover-message > .volt-agent-markdown > :first-child {
+	margin-top: 0;
+}
+
+.volt-agent-home-hover-message > .volt-agent-markdown > :last-child {
+	margin-bottom: 0;
 }
 
 .volt-agent-home-search-field input.name::placeholder {

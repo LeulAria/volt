@@ -64,6 +64,10 @@ import { activateAgentProject, findAgentPanelGroup, startAgentChat } from '../wo
 import { AgentChatStart } from '../workspace/agentShell.js';
 import { agentSideChatParents, onDidChangeAgentToolEditors } from '../workspace/agentSurfaceHost.js';
 import { registerRelatedChatsPane } from '../workspace/agentFilesSidebar.js';
+import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
+import { ILanguageService } from '../../../../../editor/common/languages/language.js';
+import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
+import { renderMarkdownInto } from '../blocks/agentBlockRenderers.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { AgentTooltip, IAgentTooltipRow, setAgentTooltip } from '../chrome/agentTooltip.js';
 import {
@@ -143,9 +147,9 @@ const LAST_MESSAGE_MAX_HEIGHT = 300;
 /** Longest last message the card holds; the rest is cut with an ellipsis. */
 const LAST_MESSAGE_MAX_CHARS = 6000;
 
-/** A message as the card shows it: trimmed, blank-line runs folded to one, cut at {@link LAST_MESSAGE_MAX_CHARS}. */
+/** A message's markdown as the card shows it: trimmed, cut at {@link LAST_MESSAGE_MAX_CHARS} (an open code fence is closed when drawn). */
 function lastMessageText(text: string): string {
-	const tidy = text.trim().replace(/\n{3,}/g, '\n\n');
+	const tidy = text.trim();
 	// allow-any-unicode-next-line
 	return tidy.length > LAST_MESSAGE_MAX_CHARS ? `${tidy.slice(0, LAST_MESSAGE_MAX_CHARS - 1)}…` : tidy;
 }
@@ -1209,6 +1213,8 @@ export class AgentHomePane extends Disposable {
 	/** Each chat's last message for its hover card, and the chat's `updatedAt` it was read at. */
 	private readonly lastMessages = new Map<string, { readonly updatedAt: number; readonly text: string }>();
 	private readonly readingLastMessage = new Set<string>();
+	/** Draws the last message's markdown; made the first time a card shows one. */
+	private markdownRenderer: MarkdownRenderer | undefined;
 
 	constructor(
 		parent: HTMLElement,
@@ -2359,8 +2365,24 @@ export class AgentHomePane extends Disposable {
 				append(parent, $('.volt-agent-home-hover-message-label')).textContent = localize('voltAgent.home.lastMessage', "Last message");
 				const message = append(parent, $('.volt-agent-home-hover-message'));
 				message.style.maxHeight = `${LAST_MESSAGE_MAX_HEIGHT}px`;
-				message.textContent = text;
-				return Disposable.None;
+				// Drawn as the chat draws it: code, lists, tables and links, not the markdown source.
+				const store = new DisposableStore();
+				this.markdownRenderer ??= this.instantiationService.createInstance(MarkdownRenderer, {});
+				const [languageService, openerService] = this.instantiationService.invokeFunction(accessor => [accessor.get(ILanguageService), accessor.get(IOpenerService)] as const);
+				renderMarkdownInto(message, text, {
+					markdownRenderer: this.markdownRenderer,
+					store,
+					blockState: {},
+					onToggle: () => undefined,
+					onScroll: () => undefined,
+					instantiationService: this.instantiationService,
+					languageService,
+					onOpenUrl: url => {
+						this.hover.hide();
+						void openerService.open(url);
+					},
+				});
+				return store;
 			},
 		};
 	}
