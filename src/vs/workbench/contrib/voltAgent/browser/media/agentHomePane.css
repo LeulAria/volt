@@ -1994,6 +1994,12 @@ html.volt-layout-agent-window body {
 	background-color: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-activityBar-background))) !important;
 }
 
+/* The IDE sidebar's title reads "Explorer", not "EXPLORER". */
+.monaco-workbench:not(.volt-layout-agent) .part.sidebar > .title > .title-label h2 {
+	text-transform: none;
+	font-size: 12px;
+}
+
 /* Hover actions that do not apply to a tab's shelf (snooze on Snoozed, Settle off the inbox). */
 .volt-agent-home-row > .actions > .row-action.hidden {
 	display: none;

@@ -44,7 +44,7 @@ import { DeferredPromise, Promises } from '../../base/common/async.js';
 import { IBannerService } from '../services/banner/browser/bannerService.js';
 import { IPaneCompositePartService } from '../services/panecomposite/browser/panecomposite.js';
 import { AuxiliaryBarPart } from './parts/auxiliarybar/auxiliaryBarPart.js';
-import { stampLayoutModeChrome } from './parts/titlebar/agentLayoutChrome.js';
+import { LAYOUT_MODE_CHROME_EVENT, stampLayoutModeChrome } from './parts/titlebar/agentLayoutChrome.js';
 import { AGENT_SIDEBAR_RAIL_CLASS, AGENT_SIDEBAR_RAIL_EVENT, AGENT_SIDEBAR_RAIL_KEY, AGENT_SIDEBAR_RAIL_WIDTH, AGENT_STATUS_BAR_VISIBLE_KEY, AGENT_TOOLS_VISIBILITY_EVENT, agentNeedsSidebarDrawer, agentStartupSidebarWidth, isNewEmptyWindow, LAYOUT_MODE_STORAGE_KEY, markNewEmptyWindowSidebarHidden, readAgentLeftSidebarHidden, readStoredLayoutModeValue } from './parts/titlebar/layoutModeStartup.js';
 import { ITelemetryService } from '../../platform/telemetry/common/telemetry.js';
 import { IAuxiliaryWindowService } from '../services/auxiliaryWindow/browser/auxiliaryWindowService.js';
@@ -349,6 +349,16 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 	}
 
 	private registerLayoutListeners(): void {
+		// Agent / IDE switch: the title bar, status bar and the rest drop their own background in the agent
+		// layout and take the theme's back in the IDE, but only restyle on a theme change otherwise.
+		this._register(addDisposableListener(this.mainContainer, LAYOUT_MODE_CHROME_EVENT, () => {
+			if (!this.initialized) {
+				return;
+			}
+			for (const part of this.parts.values()) {
+				part.updateStyles();
+			}
+		}));
 		this._register(addDisposableListener(this.mainContainer, AGENT_TOOLS_VISIBILITY_EVENT, () => {
 			if (this.initialized && this.updateAgentDrawerMode()) {
 				this.layout();

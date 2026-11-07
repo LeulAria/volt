@@ -75,6 +75,13 @@ export interface ICreatedAgentWorktree {
 	readonly commit: string;
 }
 
+export interface IEnsuredAgentWorktree {
+	/** Where the chat works: its own checkout, or the one that has its branch checked out now. */
+	readonly path: string;
+	/** The checkout was missing and was made again from its branch. */
+	readonly recreated: boolean;
+}
+
 export interface IManagedWorktreeRef {
 	readonly sessionId: string;
 	readonly path?: string;
@@ -165,6 +172,11 @@ export async function createAgentWorktree(input: ICreateAgentWorktree): Promise<
 	return withRepoQueue(commonDir, () => createLocked(input, commonDir));
 }
 
+/**
+ * The checkout a chat works in, made again from its branch when its folder is gone. Git checks a
+ * branch out in one place at a time, so when another checkout has the branch now (the folder was
+ * removed and the branch opened elsewhere), the chat works there too: chats can share a checkout.
+ */
 export async function ensureAgentWorktree(input: {
 	readonly run: GitRunner;
 	readonly files: IWorktreeFiles;
@@ -172,25 +184,34 @@ export async function ensureAgentWorktree(input: {
 	readonly worktreesRoot: string;
 	readonly path: string;
 	readonly branch: string;
-}): Promise<boolean> {
+}): Promise<IEnsuredAgentWorktree> {
 	// A checkout that is there needs nothing, whoever made it (a chat may move into the user's own worktree).
 	if (await input.files.exists(input.path)) {
-		return false;
-	}
-	if (!isManagedWorktree(input.path, input.worktreesRoot)) {
-		throw new AgentWorktreeError('Refusing to restore a worktree Volt did not create.');
+		return { path: input.path, recreated: false };
 	}
 	const commonDir = await gitCommonDir(input.run, input.repoRoot);
 	return withRepoQueue(commonDir, async () => {
 		if (await input.files.exists(input.path)) {
-			return false;
+			return { path: input.path, recreated: false };
+		}
+		const listed = await input.run(input.repoRoot, ['worktree', 'list', '--porcelain']);
+		const holder = ok(listed) ? worktreeHolding(listed.stdout, input.branch) : undefined;
+		if (holder && await input.files.exists(holder)) {
+			return { path: holder, recreated: false };
+		}
+		if (!isManagedWorktree(input.path, input.worktreesRoot)) {
+			throw new AgentWorktreeError('Refusing to restore a worktree Volt did not create.');
+		}
+		// A checkout deleted without git (Finder, rm -rf) keeps its branch and path until pruned.
+		if (holder || (ok(listed) && porcelainHas(listed.stdout, input.path))) {
+			await input.run(input.repoRoot, ['worktree', 'prune']);
 		}
 		await input.files.ensureDir(dirname(input.path));
 		const added = await input.run(input.repoRoot, ['worktree', 'add', input.path, input.branch]);
 		if (!ok(added)) {
 			throw new AgentWorktreeError(gitDetail(added) || 'Could not restore the worktree.');
 		}
-		return true;
+		return { path: input.path, recreated: true };
 	});
 }
 
@@ -520,8 +541,11 @@ export interface IAgentWorktreeService {
 	readonly _serviceBrand: undefined;
 	/** A new checkout on `target`'s branch, else a fresh `volt/<id>` at HEAD. */
 	create(repoRoot: string, target?: AgentWorktreeTarget): Promise<ICreatedAgentWorktree>;
-	/** Recreates a pruned checkout from its kept branch. True when the directory was missing. */
-	ensure(repoRoot: string, path: string, branch: string): Promise<boolean>;
+	/**
+	 * Recreates a pruned checkout from its kept branch, or points to the checkout that has the
+	 * branch now (see {@link ensureAgentWorktree}); the caller records a changed path.
+	 */
+	ensure(repoRoot: string, path: string, branch: string): Promise<IEnsuredAgentWorktree>;
 	pruneArchived(): Promise<void>;
 	removeForDeletedChat(repoRoot: string | undefined, path: string | undefined, branch: string | undefined): Promise<void>;
 	/**

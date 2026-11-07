@@ -18,6 +18,7 @@ import {
 	agentRunOnStorageKey,
 	archivedWorktreeCandidates,
 	createAgentWorktree,
+	ensureAgentWorktree,
 	isManagedWorktree,
 	normalizeAgentRunOn,
 	removeAgentWorktree,
@@ -306,6 +307,28 @@ suite('Agent worktrees', () => {
 			(err: unknown) => err instanceof AgentWorktreeError && /already exists/.test(err.message),
 		);
 		assert.ok(!taken.calls.some(call => call.args[0] === 'worktree' && call.args[1] === 'add'));
+	});
+
+	test('a missing checkout moves to the one that has its branch, else is made again after a prune', async () => {
+		const path = expectedPath('abcd1234');
+		const holder = `${ROOT}/repo/volt-chat-bg`;
+		const shared = fakeGit({ porcelain: `worktree ${REPO}\nbranch refs/heads/main\n\nworktree ${holder}\nbranch refs/heads/feature\n`, exists: candidate => candidate === holder });
+		assert.deepStrictEqual(await ensureAgentWorktree({ run: shared.run, files: shared.files, repoRoot: REPO, worktreesRoot: ROOT, path, branch: 'feature' }), { path: holder, recreated: false });
+		assert.ok(!shared.calls.some(call => call.args[0] === 'worktree' && call.args[1] !== 'list'), 'nothing is added or pruned');
+
+		// A checkout the user made is never recreated, but another one with its branch is used all the same.
+		const own = fakeGit({ porcelain: `worktree ${holder}\nbranch refs/heads/feature\n`, exists: candidate => candidate === holder });
+		assert.deepStrictEqual(await ensureAgentWorktree({ run: own.run, files: own.files, repoRoot: REPO, worktreesRoot: ROOT, path: '/somewhere/own', branch: 'feature' }), { path: holder, recreated: false });
+		const gone = fakeGit({ porcelain: '' });
+		await assert.rejects(
+			() => ensureAgentWorktree({ run: gone.run, files: gone.files, repoRoot: REPO, worktreesRoot: ROOT, path: '/somewhere/own', branch: 'feature' }),
+			(err: unknown) => err instanceof AgentWorktreeError && /did not create/.test(err.message),
+		);
+
+		// Deleted without git: its registration still holds the branch, so it is pruned before the add.
+		const stale = fakeGit({ porcelain: `worktree ${REPO}\nbranch refs/heads/main\n\nworktree ${path}\nbranch refs/heads/feature\nprunable gitdir file points to non-existent location\n` });
+		assert.deepStrictEqual(await ensureAgentWorktree({ run: stale.run, files: stale.files, repoRoot: REPO, worktreesRoot: ROOT, path, branch: 'feature' }), { path, recreated: true });
+		assert.deepStrictEqual(stale.calls.filter(call => call.args[0] === 'worktree').map(call => call.args.slice(0, 2).join(' ')), ['worktree list', 'worktree prune', 'worktree add']);
 	});
 
 	test('a failed add keeps a picked branch', async () => {
