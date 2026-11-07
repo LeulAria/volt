@@ -69,11 +69,14 @@ export function visibleSurfaceMenuItems(configurationService: IConfigurationServ
 	return agentSurfaceMenuItems().filter(action => !(action.id === 'scratch' && off(SCRATCH_ENABLED_SETTING)) && !(action.id === 'canvas' && off(CANVAS_ENABLED_SETTING)));
 }
 
+/** A row of the open list: a + menu row, or another action drawn the same way. */
+export type ISurfaceOpenListItem<T extends string> = Omit<IAgentSurfaceMenuItem, 'id'> & { readonly id: T };
+
 /**
  * The empty tools area's list: what the + menu opens, drawn like the editor watermark (name on
  * the left, shortcut keys on the right). Returns a disposable for its listeners and labels.
  */
-export function renderSurfaceOpenList(container: HTMLElement, items: readonly IAgentSurfaceMenuItem[], keybindingService: IKeybindingService, run: (id: AgentSurfaceMenuActionId) => void): IDisposable {
+export function renderSurfaceOpenList<T extends string>(container: HTMLElement, items: readonly ISurfaceOpenListItem<T>[], keybindingService: IKeybindingService, run: (id: T) => void): IDisposable {
 	const store = new DisposableStore();
 	const list = append(container, $('.volt-agent-tools-open-list'));
 	list.setAttribute('role', 'list');
