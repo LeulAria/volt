@@ -29,7 +29,7 @@ import { DEVICE_REMOTE_HOSTS_SETTING } from '../common/agentDevices.js';
 import { AgentDevicesService, IAgentDevicesService } from '../browser/devices/agentDevicesService.js';
 import { DEVICE_EDITOR_ID, DeviceFloat, DevicePreviewEditor, DevicePreviewEditorInput, DevicePreviewEditorInputSerializer } from '../browser/devices/deviceEditor.js';
 import { startAgentChat } from '../browser/workspace/agentPanels.js';
-import { agentToolsSessionOnScreen, openInAgentTools, revealAgentToolEditor } from '../browser/workspace/agentSurfaceHost.js';
+import { agentSessionToolTabs, agentToolsSessionOnScreen, isAgentChatOnScreen, liveAgentToolsPart, openInAgentTools, openInChatTools, revealAgentToolEditor } from '../browser/workspace/agentSurfaceHost.js';
 import { IAgentWorkspaceService } from '../browser/workspace/agentWorkspace.js';
 import '../browser/preview/browserCookieImport.js';
 import '../browser/workspace/agentWorkspaceContext.js';
@@ -163,10 +163,37 @@ registerAction2(class extends Action2 {
 		super({ id: OPEN_DEVICE_PREVIEW_COMMAND_ID, title: localize2('voltDevices.open', "Open Device Preview (iOS Simulator / Android Emulator)"), category: localize2('volt', "Volt"), f1: true });
 	}
 
-	/** Opens a new device tab, or brings forward the tab that already shows `deviceKey`. */
-	async run(accessor: ServicesAccessor, deviceKey?: string): Promise<void> {
+	/**
+	 * Opens a new device tab, or brings forward the tab that already shows `deviceKey`. With
+	 * `sessionId` the tab goes to that chat's right panel only (a background tab when another chat
+	 * is on screen), and the chat uses the device from then on.
+	 */
+	async run(accessor: ServicesAccessor, deviceKey?: string, sessionId?: string, options?: { onlyIfHere?: boolean }): Promise<void> {
 		const editorService = accessor.get(IEditorService);
 		const key = typeof deviceKey === 'string' ? deviceKey : undefined;
+		const chat = typeof sessionId === 'string' && sessionId ? sessionId : undefined;
+		// An agent's device: only the window that has its chat (on screen, its panel made here, or opened here) shows it.
+		if (chat && options?.onlyIfHere && !isAgentChatOnScreen(chat) && !liveAgentToolsPart(chat) && !accessor.get(IAgentWorkspaceService).get(chat)) {
+			return;
+		}
+		if (chat) {
+			if (key) {
+				accessor.get(IAgentDevicesService).attachToChat(chat, key);
+			}
+			const tab = key ? agentSessionToolTabs(chat)?.tabs.find(entry => entry.input instanceof DevicePreviewEditorInput && entry.input.deviceKey === key)?.input : undefined;
+			if (tab) {
+				if (isAgentChatOnScreen(chat)) {
+					revealAgentToolEditor(tab);
+				}
+				return;
+			}
+			const opened = openInChatTools(new DevicePreviewEditorInput(key), chat);
+			if (opened) {
+				await opened;
+				return;
+			}
+			// No chat view here (the IDE layout): a normal editor tab below.
+		}
 		const existing = key ? editorService.editors.find((editor): editor is DevicePreviewEditorInput => editor instanceof DevicePreviewEditorInput && editor.deviceKey === key) : undefined;
 		if (existing && revealAgentToolEditor(existing)) {
 			return;

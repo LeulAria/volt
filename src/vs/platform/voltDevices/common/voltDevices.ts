@@ -176,4 +176,9 @@ export interface IVoltDevicesService {
 	 * (Android). Undefined when it cannot be told cheaply (an iOS simulator Volt has not streamed).
 	 */
 	foregroundApp(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<string | undefined>;
+	/**
+	 * Hides Simulator.app on this Mac when it is open (Expo and `flutter emulators` open it): Volt
+	 * shows the simulator itself. The simulators keep running; it never quits the app.
+	 */
+	hideSimulatorApp(): Promise<void>;
 }

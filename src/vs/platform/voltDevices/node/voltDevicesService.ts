@@ -511,7 +511,9 @@ export class VoltDevicesService implements IVoltDevicesService {
 	 * whether or not anyone still waits for the boot. `cold` skips the snapshot.
 	 */
 	private async startEmulator(host: IVoltDeviceHost, avd: string, cold: boolean): Promise<IEmulatorLaunch | undefined> {
-		const args = ['-avd', avd, '-no-boot-anim', ...(cold ? ['-no-snapshot-load'] : [])];
+		// Headless, as Expo's device hub starts them: Volt shows the screen beside the chat, so no
+		// emulator window opens on the desktop.
+		const args = ['-avd', avd, '-no-window', '-no-boot-anim', ...(cold ? ['-no-snapshot-load'] : [])];
 		if (host.ssh) {
 			// Detached on the remote machine, with every stream closed so ssh does not wait for it.
 			await this.remote(host, `nohup emulator ${shellJoin(args)} >/dev/null 2>&1 </dev/null &`, { timeout: 15_000 });
@@ -947,6 +949,19 @@ export class VoltDevicesService implements IVoltDevicesService {
 	}
 
 	//#endregion
+
+	async hideSimulatorApp(): Promise<void> {
+		if (process.platform !== 'darwin') {
+			return;
+		}
+		const running = await this.exec({ file: 'pgrep', args: ['-x', 'Simulator'] }, { allowFail: true, timeout: 5000 }).catch(() => undefined);
+		if (!running || running.code !== 0) {
+			return;
+		}
+		// NSRunningApplication.hide needs no Automation permission, unlike System Events.
+		const script = 'ObjC.import("AppKit"); const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier("com.apple.iphonesimulator"); for (let i = 0; i < apps.count; i++) { apps.objectAtIndex(i).hide; }';
+		await this.exec({ file: 'osascript', args: ['-l', 'JavaScript', '-e', script] }, { allowFail: true, timeout: 5000 }).catch(() => undefined);
+	}
 
 	async foregroundApp(host: IVoltDeviceHost, device: IVoltDeviceRef): Promise<string | undefined> {
 		if (device.platform === 'ios') {

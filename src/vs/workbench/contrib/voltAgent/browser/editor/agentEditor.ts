@@ -207,6 +207,8 @@ import { fitImageStripToOneRow } from './agentMessageImageRow.js';
 import { DEFAULT_LABELS_CONTAINER, ResourceLabels } from '../../../../browser/labels.js';
 import { chooseFileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
 import { VOLT_FONT_FAMILY } from '../../common/agentTypography.js';
+import { RUN_DEVICE_PICK_NOTE, runDeviceIntent } from '../../common/agentRunTargets.js';
+import { IAgentRunService } from '../run/agentRunService.js';
 
 /**
  * The Compact first chip shows from this fill on (setting `volt.agent.compactChipThreshold`), when
@@ -6712,8 +6714,28 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		return { agentText, display: mentions.length ? { text: displayText, mentions } : undefined };
 	}
 
+	/**
+	 * "Run it on iOS": the agent hears that the user is picking the device, and Volt shows its
+	 * device picker as the turn starts. Not when the prompt already names a device (`/device`).
+	 */
+	private withDevicePick(agentText: string, display: IAgentPromptDisplay | undefined, typed: string): { agentText: string; display: IAgentPromptDisplay | undefined } {
+		const platforms = runDeviceIntent(typed);
+		const runService = platforms && !agentText.includes('<attached_device') ? this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentRunService)) : undefined;
+		if (!platforms || !runService) {
+			return { agentText, display };
+		}
+		const sessionId = this.sessionKey;
+		// After this keystroke, so Enter does not accept the picker's first row.
+		setTimeout(() => void runService.pickChatDevice(sessionId, platforms), 0);
+		// The bubble shows what was typed, not the note.
+		return { agentText: `${agentText}\n\n${RUN_DEVICE_PICK_NOTE}`, display: display ?? { text: typed } };
+	}
+
 	private doSend(): void {
 		let { agentText, display } = this.readComposer();
+		if (agentText && !this.editingQueueHere) {
+			({ agentText, display } = this.withDevicePick(agentText, display, this.inputModel?.getValue() ?? ''));
+		}
 		if (this.editingQueueHere) {
 			// The composer holds a queued prompt being edited: Enter saves it back into the queue.
 			if (agentText) {

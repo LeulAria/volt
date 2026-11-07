@@ -179,6 +179,38 @@ export function runOpensBrowser(script: IAgentRunScript, device: IAgentRunDevice
 	return script.devices[0] === 'browser';
 }
 
+export type RunDevicePlatform = 'ios' | 'android';
+
+const RUN_VERB = /\b(run|re-?run|launch|start|open|boot|test|try|debug|preview|install|deploy)\b/i;
+const IOS_WORDS = /\b(ios|iphone|ipad|ipados|simulator|xcode sim(ulator)?)\b/i;
+const ANDROID_WORDS = /\b(android|pixel|emulator|galaxy|apk)\b/i;
+const MOBILE_WORDS = /\b(mobile|phone|tablet|device|on (a|my|the) (phone|device))\b/i;
+
+/**
+ * Which platforms a message asks to run or open something on ("run the app on iOS", "launch it
+ * in the Android emulator", "test it on a phone"), so Volt can offer its device picker. Undefined
+ * when no sentence pairs a run verb with a phone. Both platforms when it does not say which.
+ */
+export function runDeviceIntent(text: string): readonly RunDevicePlatform[] | undefined {
+	for (const sentence of text.split(/[.!?\n]+/)) {
+		if (!RUN_VERB.test(sentence)) {
+			continue;
+		}
+		const ios = IOS_WORDS.test(sentence);
+		const android = ANDROID_WORDS.test(sentence);
+		if (ios || android) {
+			return [...(ios ? ['ios' as const] : []), ...(android ? ['android' as const] : [])];
+		}
+		if (MOBILE_WORDS.test(sentence)) {
+			return ['ios', 'android'];
+		}
+	}
+	return undefined;
+}
+
+/** Sent with a prompt that `runDeviceIntent` matched while Volt shows the user its device picker. */
+export const RUN_DEVICE_PICK_NOTE = '[Volt] The user is picking the device for this in Volt\'s device picker right now. Call device_list before you run anything on a simulator or emulator: it waits for their pick and marks it as this chat\'s device, and the device_* tools then use it by default. Volt boots it headless and shows it beside this chat, so never open Simulator.app or an emulator window. If they pick none, choose one from device_list yourself.';
+
 /**
  * The prompt behind "Let Agent Debug and Run the App": the agent finds how the project runs, starts
  * it, shows it inside Volt, and fixes what stops it. The chat shows a chip, not this text.
@@ -191,6 +223,7 @@ export function agentRunPrompt(options: { readonly folder: string; readonly devi
 		options.device
 			? `Run it on ${options.device} (I picked it in Volt's Run menu).`
 			: 'If it is a mobile app (Flutter, React Native, Expo, iOS or Android), list the simulators and emulators with device_list and ask me which one to use with ask_question (add Volt\'s browser when it also runs on the web), then start it with device_boot so it shows in Volt\'s device panel, and run the app on it.',
+		'Volt shows simulators and emulators beside this chat: never open Simulator.app (`open -a Simulator`) or an emulator window.',
 		'If it is a web app, open its local address in Volt\'s browser with browser_navigate.',
 		'If it fails to start, read the error, fix the cause and start it again.',
 		'When it is running, reply with one short line: what runs and where.',

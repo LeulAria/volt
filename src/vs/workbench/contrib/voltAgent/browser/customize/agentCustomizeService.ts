@@ -22,7 +22,7 @@ import { parseFrontmatterDocument } from './agentFrontmatter.js';
 export const IAgentCustomizeService = createDecorator<IAgentCustomizeService>('voltAgentCustomizeService');
 
 /** How a `/` entry is drawn in the menu. Plugin entries show the plugin's logo when it has one. */
-export type AgentSlashIcon = 'volt' | 'model' | 'skill' | 'subagent' | 'rule' | 'command' | 'customize' | 'new-chat' | 'usage';
+export type AgentSlashIcon = 'volt' | 'model' | 'skill' | 'subagent' | 'rule' | 'command' | 'customize' | 'new-chat' | 'usage' | 'device';
 
 /** One entry of the composer's `/` menu. */
 export interface IAgentSlashItem {
