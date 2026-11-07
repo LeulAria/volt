@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { Emitter } from '../../../../../base/common/event.js';
 import { IReference } from '../../../../../base/common/lifecycle.js';
 import { basename, dirname, isEqual } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -30,6 +31,9 @@ export class AgentSkillEditorInput extends EditorInput {
 	readonly kind: AgentCustomizationKind;
 	private reference: Promise<IReference<IResolvedTextEditorModel>> | undefined;
 	private disposedReference = false;
+	private readonly _onDidChangeSkillListReturn = this._register(new Emitter<void>());
+	readonly onDidChangeSkillListReturn = this._onDidChangeSkillListReturn.event;
+	private skillListReturn: (() => Promise<void>) | undefined;
 
 	constructor(
 		readonly resource: URI,
@@ -54,6 +58,16 @@ export class AgentSkillEditorInput extends EditorInput {
 
 	override get typeId(): string {
 		return AgentSkillEditorInput.ID;
+	}
+
+	get returnToSkillList(): (() => Promise<void>) | undefined {
+		return this.skillListReturn;
+	}
+
+	/** A navigation target for this open tab, kept only for its lifetime. */
+	setSkillListReturn(action: (() => Promise<void>) | undefined): void {
+		this.skillListReturn = action;
+		this._onDidChangeSkillListReturn.fire();
 	}
 
 	override get editorId(): string {

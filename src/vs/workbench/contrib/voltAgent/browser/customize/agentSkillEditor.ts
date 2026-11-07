@@ -12,6 +12,7 @@ import { Action, IAction, Separator } from '../../../../../base/common/actions.j
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { toErrorMessage } from '../../../../../base/common/errorMessage.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
 import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { FileAccess, Schemas } from '../../../../../base/common/network.js';
@@ -31,6 +32,7 @@ import { IConfigurationService } from '../../../../../platform/configuration/com
 import { IContextMenuService, IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
@@ -130,6 +132,7 @@ export class AgentSkillEditor extends EditorPane {
 	private segmented!: HTMLElement;
 	private previewButton!: HTMLButtonElement;
 	private sourceButton!: HTMLButtonElement;
+	private browseButton!: HTMLButtonElement;
 	private moreButton!: HTMLButtonElement;
 	private content!: HTMLElement;
 	private preview!: HTMLElement;
@@ -176,6 +179,7 @@ export class AgentSkillEditor extends EditorPane {
 		@IClipboardService private readonly clipboardService: IClipboardService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
+		@INotificationService private readonly notificationService: INotificationService,
 		@IOpenerService private readonly openerService: IOpenerService,
 		@ILanguageService private readonly languageService: ILanguageService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
@@ -198,6 +202,12 @@ export class AgentSkillEditor extends EditorPane {
 		this.sourceButton.textContent = localize('voltSkillEditor.source', "Source");
 		this._register(addDisposableListener(this.previewButton, EventType.CLICK, () => this.setMode('preview', true)));
 		this._register(addDisposableListener(this.sourceButton, EventType.CLICK, () => this.setMode('source', true)));
+		const browseLabel = localize('voltSkillEditor.backToSkills', "Back to Skills");
+		this.browseButton = append(end, $('button.volt-skill-editor-icon-button.volt-skill-editor-back-to-skills', { type: 'button', 'aria-label': browseLabel })) as HTMLButtonElement;
+		this.browseButton.hidden = true;
+		this.browseButton.appendChild(renderIcon(Codicon.arrowLeft));
+		setAgentTooltip(this.browseButton, browseLabel);
+		this._register(addDisposableListener(this.browseButton, EventType.CLICK, () => void this.returnToSkillList()));
 		this.moreButton = append(end, $('button.volt-skill-editor-icon-button', { type: 'button' })) as HTMLButtonElement;
 		this.moreButton.appendChild(renderIcon(Codicon.ellipsis));
 		this.moreButton.setAttribute('aria-label', localize('voltSkillEditor.more', "More Actions"));
@@ -289,10 +299,14 @@ export class AgentSkillEditor extends EditorPane {
 	override async setInput(input: AgentSkillEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
 		this.inputStore.clear();
+		this.browseButton.hidden = true;
 		const model = await input.resolveModel();
 		if (token.isCancellationRequested || this.input !== input) {
 			return;
 		}
+		const syncBrowseButton = () => { this.browseButton.hidden = !input.returnToSkillList; };
+		this.inputStore.add(input.onDidChangeSkillListReturn(syncBrowseButton));
+		syncBrowseButton();
 		this.model = model;
 		this.kind = input.kind;
 		// `.mdc` rules open as plain text unless something maps them; they are markdown.
@@ -329,12 +343,28 @@ export class AgentSkillEditor extends EditorPane {
 	override clearInput(): void {
 		this.flushHeader();
 		this.flushBody();
+		this.browseButton.hidden = true;
 		this.inputStore.clear();
 		this.headerStore.clear();
 		this.sourceEditor.setModel(null);
 		this.model = undefined;
 		this.hideToolbar();
 		super.clearInput();
+	}
+
+	private async returnToSkillList(): Promise<void> {
+		const action = this.input instanceof AgentSkillEditorInput ? this.input.returnToSkillList : undefined;
+		if (!action || this.browseButton.disabled) {
+			return;
+		}
+		this.browseButton.disabled = true;
+		try {
+			await action();
+		} catch (error) {
+			this.notificationService.error(toErrorMessage(error));
+		} finally {
+			this.browseButton.disabled = false;
+		}
 	}
 
 	protected override setEditorVisible(visible: boolean): void {

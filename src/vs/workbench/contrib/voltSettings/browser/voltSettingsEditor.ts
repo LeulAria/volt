@@ -31,11 +31,12 @@ import { ITelemetryService } from '../../../../platform/telemetry/common/telemet
 import { getInputBoxStyle } from '../../../../platform/theme/browser/defaultStyles.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
-import { IEditorOpenContext } from '../../../common/editor.js';
-import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
+import { GroupModelChangeKind, IEditorOpenContext } from '../../../common/editor.js';
+import { IEditorGroup, IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
+import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { Orientation, Sash } from '../../../../base/browser/ui/sash/sash.js';
-import { getLayoutMode } from '../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { getLayoutMode, onDidChangeLayoutMode } from '../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { settingsTextInputBackground, settingsTextInputBorder, settingsTextInputForeground } from '../../preferences/common/settingsEditorColorRegistry.js';
 import { ACCESS_MODE_OPTIONS, accessModeOption } from '../../../services/voltRuntime/common/access/accessModes.js';
 import { IPermissionRule } from '../../../services/voltRuntime/common/access/accessTypes.js';
@@ -54,7 +55,7 @@ const APPEARANCE_PAGE_SETTINGS = [ThemeSettings.DETECT_COLOR_SCHEME, ThemeSettin
 const COMPOSER_PAGE_SETTINGS = [AGENT_PROMPT_HISTORY_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_KEEP_WORKING_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING, AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING, AGENT_HOME_AUTO_SETTLE_DAYS_SETTING];
 import { AgentModelPicker, type IModelOption, type IProviderGroup } from '../../voltAgent/browser/picker/agentModelPicker.js';
 import { appendSettingsBlock, SettingsStickyHeads } from './settingsStickyHeads.js';
-import { VoltSettingsEditorInput } from './voltSettingsEditorInput.js';
+import { openVoltSettingsEditor, VoltSettingsEditorInput } from './voltSettingsEditorInput.js';
 import { renderProjectsSection, renderStorageSection } from '../../voltSetup/browser/settingsSections.js';
 import { clampWorktreeMaxCount, clampWorktreeMaxSizeGB, WORKTREE_MAX_COUNT_SETTING, WORKTREE_MAX_SIZE_GB_SETTING } from '../../voltSetup/common/worktreeLimits.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
@@ -270,6 +271,12 @@ export class VoltSettingsEditor extends EditorPane {
 		@ILogService private readonly logService: ILogService,
 	) {
 		super(VoltSettingsEditor.ID, group, telemetryService, themeService, storageService);
+		this._register(group.onDidModelChange(event => {
+			if (event.kind === GroupModelChangeKind.EDITOR_ACTIVE) {
+				this.syncPresentation();
+			}
+		}));
+		this._register(onDidChangeLayoutMode(() => this.syncPresentation()));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (this.section === 'composer' && COMPOSER_PAGE_SETTINGS.some(key => e.affectsConfiguration(key))) {
 				this.renderContent();
@@ -313,22 +320,18 @@ export class VoltSettingsEditor extends EditorPane {
 
 	protected override createEditor(parent: HTMLElement): void {
 		this.container = append(parent, $('.volt-settings'));
-		this._register(toDisposable(() => {
-			this.container.remove();
-			this.layoutService.mainContainer.classList.remove('volt-settings-open');
-		}));
+		this._register(toDisposable(() => this.container.remove()));
 
 		const sidebar = this.sidebar = append(this.container, $('.volt-settings-sidebar'));
 		const commandService = this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService));
 
-		// Back to the chat, above the search.
+		// Close the whole Settings surface, above the search.
 		const head = append(sidebar, $('.volt-settings-sidebar-head'));
 		const back = append(head, $('button.volt-settings-back')) as HTMLButtonElement;
 		back.type = 'button';
 		back.appendChild(renderIcon(Codicon.arrowLeft));
-		append(back, $('span')).textContent = localize('voltSettings.back', "Back");
-		back.setAttribute('aria-label', localize('voltSettings.backToChat', "Close settings"));
-		this._register(addDisposableListener(back, 'click', () => this.close()));
+		append(back, $('span')).textContent = localize('voltSettings.backToChat', "Close settings");
+		this._register(addDisposableListener(back, 'click', () => void this.close()));
 
 		const searchHost = append(sidebar, $('.volt-settings-search'));
 		append(searchHost, $('span.volt-settings-search-icon')).appendChild(createSettingsIcon('search') ?? renderIcon(Codicon.search));
@@ -404,7 +407,11 @@ export class VoltSettingsEditor extends EditorPane {
 			search: () => this.search,
 			rerender: () => this.renderContent(),
 			scrollToTop: () => { this.renderedSection = undefined; },
-			revealWorkbench: () => this.close(),
+			revealWorkbench: () => {
+				if (this.container.classList.contains('volt-settings-overlay')) {
+					void this.close();
+				}
+			},
 			switch: (parent, on, label, onClick) => this.switch(parent, on, label, onClick),
 			inputBoxStyles: () => this.inputBoxStyles(),
 		});
@@ -439,37 +446,41 @@ export class VoltSettingsEditor extends EditorPane {
 		this.renderContent();
 	}
 
-	private close(): void {
+	private async close(): Promise<boolean> {
 		const input = this.input;
-		if (input) {
-			void this.group.closeEditor(input);
-		}
+		return input && this.group.activeEditor === input ? this.group.closeEditor(input) : false;
 	}
 
-	protected override setEditorVisible(visible: boolean): void {
-		if (!this.container) {
+	protected override setEditorVisible(): void {
+		this.syncPresentation();
+	}
+
+	private syncPresentation(): void {
+		const editorContainer = this.getContainer();
+		if (!this.container || !editorContainer) {
 			return;
 		}
-		if (visible) {
-			this.container.classList.add('volt-settings-overlay');
-			this.layoutService.mainContainer.classList.add('volt-settings-open');
-			this.layoutService.mainContainer.appendChild(this.container);
-			this.syncSidebarWidth();
-			this.usage?.setVisible(this.section === 'usage');
-			if (this.section === 'customize') {
-				this.showCustomize();
-			} else if (this.section === 'automations') {
-				this.showAutomations();
-			}
-			this.scheduleScrollSync();
+		// The editor group owns the pane. Agent mode temporarily presents its content over the workbench.
+		const visible = this.isVisible() && this.input !== undefined && this.group.activeEditor === this.input;
+		const overlay = visible && getLayoutMode(this.layoutService) === 'agent';
+		const parent = overlay ? this.layoutService.mainContainer : editorContainer;
+		this.container.classList.toggle('volt-settings-overlay', overlay);
+		if (this.container.parentElement !== parent) {
+			parent.appendChild(this.container);
+		}
+		this.usage?.setVisible(visible && this.section === 'usage');
+		if (!visible) {
+			this.customizePane?.setVisible(false);
+			this.automationsPane?.setVisible(false);
 			return;
 		}
-		this.usage?.setVisible(false);
-		this.customizePane?.setVisible(false);
-		this.automationsPane?.setVisible(false);
-		this.container.classList.remove('volt-settings-overlay');
-		this.layoutService.mainContainer.classList.remove('volt-settings-open');
-		this.container.remove();
+		this.syncSidebarWidth();
+		if (this.section === 'customize') {
+			this.showCustomize();
+		} else if (this.section === 'automations') {
+			this.showAutomations();
+		}
+		this.scheduleScrollSync();
 	}
 
 	/**
@@ -831,7 +842,21 @@ export class VoltSettingsEditor extends EditorPane {
 		}
 		let pane = this.customizePane;
 		if (!pane) {
+			const [editorService, editorGroupsService] = this.instantiationService.invokeFunction(accessor => [accessor.get(IEditorService), accessor.get(IEditorGroupsService)] as const);
 			pane = this.customizePane = this._register(this.instantiationService.createInstance(AgentCustomizeEditor, this.group));
+			pane.setSkillEditorHost({
+				reopen: async state => {
+					const settings = await openVoltSettingsEditor(editorService, editorGroupsService);
+					if (settings instanceof VoltSettingsEditor) {
+						settings.setSection('customize');
+						if (settings.customizePane) {
+							settings.customizePane.restoreSkillList(state);
+							return;
+						}
+					}
+					throw new Error(localize('voltSettings.skillsUnavailable', "Couldn't return to Skills in Settings."));
+				},
+			});
 			pane.create(this.customizeHost);
 			pane.setVisible(true);
 			const input = this._register(new AgentCustomizeEditorInput());
@@ -1742,7 +1767,17 @@ export class VoltSettingsEditor extends EditorPane {
 
 	override async setInput(input: VoltSettingsEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
-		this.renderContent();
+		if (!token.isCancellationRequested && this.input === input) {
+			this.syncPresentation();
+			if (this.group.activeEditor === input) {
+				this.renderContent();
+			}
+		}
+	}
+
+	override clearInput(): void {
+		super.clearInput();
+		this.syncPresentation();
 	}
 
 	override layout(_dimension: Dimension): void {
