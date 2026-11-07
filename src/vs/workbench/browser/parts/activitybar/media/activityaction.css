@@ -61,13 +61,13 @@
 
 .monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-label.codicon,
 .monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-label.codicon[class*='codicon-'] {
-	font-size: 18px;
+	font-size: 16px;
 	align-items: center;
 	justify-content: center;
 }
 
 .monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-label.codicon::before {
-	font-size: 18px;
+	font-size: 16px;
 	position: relative;
 	z-index: 1;
 }
@@ -89,26 +89,6 @@
 	mask-position: center;
 	mask-size: 18px 18px;
 	mask-mode: alpha;
-}
-
-.monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item.checked .action-label,
-.monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item:hover .action-label {
-	border-radius: 8px;
-}
-
-.monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item.checked .action-label::after,
-.monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item:hover .action-label::after {
-	content: '';
-	position: absolute;
-	inset: 2px 8px;
-	border-radius: 8px;
-	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
-	z-index: 0;
-	pointer-events: none;
-}
-
-.monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item:hover:not(.checked) .action-label::after {
-	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 }
 
 .monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item.active .action-label.codicon,
