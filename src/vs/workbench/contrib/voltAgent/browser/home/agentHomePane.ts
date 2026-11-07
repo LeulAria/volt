@@ -21,7 +21,13 @@ import { Disposable, DisposableStore, dispose, IDisposable, MutableDisposable, t
 import { basename } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
-import { localize } from '../../../../../nls.js';
+import { localize, localize2 } from '../../../../../nls.js';
+import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
+import { Action2, registerAction2 } from '../../../../../platform/actions/common/actions.js';
+import { ContextKeyExpr, RawContextKey } from '../../../../../platform/contextkey/common/contextkey.js';
+import { InputFocusedContext } from '../../../../../platform/contextkey/common/contextkeys.js';
+import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
+import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { showAgentProjectMenu } from './agentHomeWorkspaceActions.js';
 import { isScratchSession, scratchProjectLabel } from './agentHomeWorkspace.js';
 import { IVoltProjectsService, VoltProjectCommands } from '../../../voltProjects/common/projects.js';
@@ -940,6 +946,12 @@ const AGENT_HOME_PANES_STORAGE_KEY = 'volt.agent.home.panes';
 const RELATED_CHATS_PANES_STORAGE_KEY = 'volt.agent.relatedChats.panes';
 const RELATED_CHATS_VIEW_STORAGE_KEY = 'volt.agent.relatedChats.view';
 
+/** An agent list's rows have the keyboard (set on each group's list): the row shortcuts apply. */
+export const AgentHomeListFocusContext = new RawContextKey<boolean>('voltAgentHomeListFocus', false);
+export const RENAME_AGENT_CHAT_COMMAND_ID = 'volt.agent.home.renameChat';
+export const ARCHIVE_AGENT_CHAT_COMMAND_ID = 'volt.agent.home.archiveChat';
+const OPEN_AGENT_CHAT_IN_NEW_WINDOW_FROM_LIST_COMMAND_ID = 'volt.agent.home.openChatInNewWindow';
+
 export interface IAgentHomePaneOptions {
 	/**
 	 * Related Chats in the right sidebar: only one project's chats ({@link AgentHomePane.setScope}), with a
@@ -1245,6 +1257,8 @@ export class AgentHomePane extends Disposable {
 	) {
 		super();
 		this.scoped = !!options.scoped;
+		livePanes.add(this);
+		this._register(toDisposable(() => livePanes.delete(this)));
 		this._register(this.attention.onDidChange(() => this.scheduleRefresh()));
 		this._register(this.voltProjects.onDidChange(() => this.scheduleRefresh()));
 		this._register(this.runtime.onDidChangeCatalog(() => this.scheduleRefresh()));
@@ -1368,6 +1382,8 @@ export class AgentHomePane extends Disposable {
 				dnd: this.createDragAndDrop(pane),
 			}
 		));
+		// The row shortcuts (Rename, Archive, Open in New Window) apply while this list has the keyboard.
+		AgentHomeListFocusContext.bindTo(tree.contextKeyService).set(true);
 
 		// Rows still below the fold dissolve into the footer; the fade lifts at the end of the list.
 		store.add(tree.onDidScroll(e => {
@@ -2043,23 +2059,52 @@ export class AgentHomePane extends Disposable {
 		void this.lifecycle.setSettled(session.id, true);
 	}
 
-	/** The … at the end of an agent tab. The row keeps its buttons while the menu is open. */
+	/**
+	 * The … at the end of an agent tab: the Volt menu, with each action's icon and the shortcut that
+	 * runs it on the focused row. The row keeps its buttons while the menu is open.
+	 */
 	openRowMenu(anchor: HTMLElement, row: HTMLElement, session: IAgentSessionMeta): void {
 		this.hover.hide();
-		const actions: IAction[] = [
-			...(this.canOpenInNewWindow ? [
-				new Action('volt.home.openInNewWindow', localize('voltAgent.home.openInNewWindow', "Open in New Window"), undefined, true, () => this.openInNewWindow(session)),
-			] : []),
-			this.renameAction(session),
-			new Separator(),
-			new Action('volt.home.archive', session.archived ? localize('voltAgent.home.unarchive', "Unarchive") : localize('voltAgent.home.archive', "Archive"), undefined, true, () => this.toggleArchive(session)),
-		];
+		const shortcut = (commandId: string) => this.keybindingService.lookupKeybinding(commandId)?.getLabel() ?? undefined;
+		const item = (id: string, label: string, icon: ThemeIcon, commandId: string, run: () => void, disabled = false): IVoltMenuItem<() => void> =>
+			({ id, label, icon, keybinding: shortcut(commandId), disabled, data: run });
 		row.classList.add('menu-open');
-		this.contextMenuService.showContextMenu({
-			getAnchor: () => anchor,
-			getActions: () => actions,
+		showVoltMenu<() => void>(this.contextViewService, {
+			anchor,
+			align: 'right',
+			gap: 4,
+			width: 260,
+			ariaLabel: localize('voltAgent.home.moreActions', "More Actions"),
+			sections: [
+				{
+					id: 'open',
+					items: [
+						...(this.canOpenInNewWindow ? [item('openInNewWindow', localize('voltAgent.home.openInNewWindow', "Open in New Window"), Codicon.linkExternal, OPEN_AGENT_CHAT_IN_NEW_WINDOW_FROM_LIST_COMMAND_ID, () => this.openInNewWindow(session))] : []),
+						// A chat not sent yet has no stored title to rename.
+						item('rename', localize('voltAgent.home.rename', "Rename"), Codicon.edit, RENAME_AGENT_CHAT_COMMAND_ID, () => this.startRename(session), !this.history.get(session.id)),
+					],
+				},
+				{
+					id: 'archive',
+					items: [item('archive', session.archived ? localize('voltAgent.home.unarchive', "Unarchive") : localize('voltAgent.home.archive', "Archive"), Codicon.archive, ARCHIVE_AGENT_CHAT_COMMAND_ID, () => this.toggleArchive(session))],
+				},
+			],
+			onPick: picked => picked.data(),
 			onHide: () => row.classList.remove('menu-open'),
 		});
+	}
+
+	/** The chat whose row has the keyboard in one of this list's groups, for the row shortcuts. */
+	focusedSession(): IAgentSessionMeta | undefined {
+		const active = getWindow(this.element).document.activeElement;
+		for (const pane of this.panes) {
+			const tree = pane.tree;
+			if (tree && active && tree.getHTMLElement().contains(active)) {
+				const focused = tree.getFocus()[0];
+				return focused?.type === 'session' && !focused.runMember ? focused.session : undefined;
+			}
+		}
+		return undefined;
 	}
 
 	/** A chat not sent yet has no stored title to rename. */
@@ -3268,6 +3313,77 @@ export class AgentHomePane extends Disposable {
 }
 
 registerRelatedChatsPane((instantiationService, parent) => instantiationService.createInstance(AgentHomePane, parent, { scoped: true }));
+
+/** The agent lists on screen: the left sidebar's and Related Chats. */
+const livePanes = new Set<AgentHomePane>();
+
+/** The chat row with the keyboard in an agent list, and that list. */
+function focusedAgentRow(): { readonly pane: AgentHomePane; readonly session: IAgentSessionMeta } | undefined {
+	for (const pane of livePanes) {
+		const session = pane.focusedSession();
+		if (session) {
+			return { pane, session };
+		}
+	}
+	return undefined;
+}
+
+/** In an agent list's rows, not typing in a field (a row's rename box, the search). */
+const agentRowShortcutWhen = ContextKeyExpr.and(AgentHomeListFocusContext, InputFocusedContext.negate());
+
+registerAction2(class RenameAgentChatAction extends Action2 {
+	constructor() {
+		super({
+			id: RENAME_AGENT_CHAT_COMMAND_ID,
+			title: localize2('voltAgent.home.renameChatCommand', "Rename Chat"),
+			f1: false,
+			keybinding: { primary: KeyCode.F2, weight: KeybindingWeight.WorkbenchContrib, when: agentRowShortcutWhen },
+		});
+	}
+
+	override run(): void {
+		const row = focusedAgentRow();
+		if (row) {
+			row.pane.startRename(row.session);
+		}
+	}
+});
+
+registerAction2(class ArchiveAgentChatAction extends Action2 {
+	constructor() {
+		super({
+			id: ARCHIVE_AGENT_CHAT_COMMAND_ID,
+			title: localize2('voltAgent.home.archiveChatCommand', "Archive Chat"),
+			f1: false,
+			keybinding: { primary: KeyCode.Delete, mac: { primary: KeyMod.CtrlCmd | KeyCode.Backspace }, weight: KeybindingWeight.WorkbenchContrib, when: agentRowShortcutWhen },
+		});
+	}
+
+	override run(): void {
+		const row = focusedAgentRow();
+		if (row) {
+			row.pane.toggleArchive(row.session);
+		}
+	}
+});
+
+registerAction2(class OpenAgentChatInNewWindowFromListAction extends Action2 {
+	constructor() {
+		super({
+			id: OPEN_AGENT_CHAT_IN_NEW_WINDOW_FROM_LIST_COMMAND_ID,
+			title: localize2('voltAgent.home.openInNewWindowCommand', "Open Chat in New Window"),
+			f1: false,
+			keybinding: { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.Enter, weight: KeybindingWeight.WorkbenchContrib, when: agentRowShortcutWhen },
+		});
+	}
+
+	override run(): void {
+		const row = focusedAgentRow();
+		if (row?.pane.canOpenInNewWindow) {
+			row.pane.openInNewWindow(row.session);
+		}
+	}
+});
 
 function toTreeElement(node: IAgentHomeNode): IObjectTreeElement<AgentHomeElement> {
 	const children = node.children?.map(toTreeElement);
