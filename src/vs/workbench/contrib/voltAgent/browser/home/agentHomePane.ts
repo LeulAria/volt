@@ -138,6 +138,18 @@ const REFRESH_IDLE_TIMEOUT_MS = 120;
 const PRESS_OPEN_WINDOW_MS = 1_500;
 /** How long the pointer rests on an agent tab before its details card opens. */
 const SESSION_HOVER_DELAY_MS = 500;
+/** Tallest the last message in a chat's hover card gets before it scrolls. */
+const LAST_MESSAGE_MAX_HEIGHT = 300;
+/** Longest last message the card holds; the rest is cut with an ellipsis. */
+const LAST_MESSAGE_MAX_CHARS = 6000;
+
+/** A message as the card shows it: trimmed, blank-line runs folded to one, cut at {@link LAST_MESSAGE_MAX_CHARS}. */
+function lastMessageText(text: string): string {
+	const tidy = text.trim().replace(/\n{3,}/g, '\n\n');
+	// allow-any-unicode-next-line
+	return tidy.length > LAST_MESSAGE_MAX_CHARS ? `${tidy.slice(0, LAST_MESSAGE_MAX_CHARS - 1)}…` : tidy;
+}
+
 /** How long a dragged chat rests on a folded group's header before the group opens (the Explorer's delay). */
 const DROP_EXPAND_DELAY_MS = 500;
 
@@ -1194,6 +1206,9 @@ export class AgentHomePane extends Disposable {
 	/** What the Related Chats search field holds, trimmed. */
 	private query = '';
 	private searchInput: HTMLInputElement | undefined;
+	/** Each chat's last message for its hover card, and the chat's `updatedAt` it was read at. */
+	private readonly lastMessages = new Map<string, { readonly updatedAt: number; readonly text: string }>();
+	private readonly readingLastMessage = new Set<string>();
 
 	constructor(
 		parent: HTMLElement,
@@ -2298,12 +2313,59 @@ export class AgentHomePane extends Disposable {
 
 	/** Details card beside an agent tab: title, last-run note, branch, and the folder on disk. */
 	bindSessionHover(anchor: HTMLElement, session: IAgentSessionMeta): IDisposable {
-		// With pull requests the pointer can cross to the card to open one; without, it hides on leaving the row.
-		const interactive = () => !!this.pullRequests && visibleLinks(this.pullRequests.links(session.id)).length > 0;
-		return this.hover.bind(anchor, () => this.sessionHoverRows(session), { placement: this.scoped ? 'start' : 'end', variant: 'card', delay: SESSION_HOVER_DELAY_MS, interactive });
+		// With pull requests (to open one) or a last message (to scroll it) the pointer can cross to the card;
+		// without, it hides on leaving the row.
+		const interactive = () => (!!this.pullRequests && visibleLinks(this.pullRequests.links(session.id)).length > 0)
+			|| !!this.lastMessages.get(session.id)?.text;
+		return this.hover.bind(anchor, () => this.sessionHoverRows(session, anchor), { placement: this.scoped ? 'start' : 'end', variant: 'card', delay: SESSION_HOVER_DELAY_MS, interactive });
 	}
 
-	private sessionHoverRows(session: IAgentSessionMeta): IAgentTooltipRow[] {
+	/**
+	 * The chat's last message under a hairline, at most {@link LAST_MESSAGE_MAX_HEIGHT} tall (it scrolls).
+	 * Read from the chat's log the first time the card opens after the chat changed; the card on screen
+	 * draws again once it is in.
+	 */
+	private lastMessageRow(session: IAgentSessionMeta, anchor: HTMLElement): IAgentTooltipRow | undefined {
+		if (session.turnCount === 0) {
+			return undefined;
+		}
+		const cached = this.lastMessages.get(session.id);
+		if ((!cached || cached.updatedAt !== session.updatedAt) && !this.readingLastMessage.has(session.id)) {
+			this.readingLastMessage.add(session.id);
+			void this.history.readTranscript(session.id).then(transcript => {
+				const turn = transcript?.turns.at(-1);
+				// The reply's own words: the entry's text also carries the tools' output.
+				const reply = turn?.assistant?.message as { readonly text?: unknown } | undefined;
+				return lastMessageText((typeof reply?.text === 'string' ? reply.text : '') || turn?.assistant?.text || turn?.user.text || '');
+			}, () => '').then(text => {
+				this.readingLastMessage.delete(session.id);
+				if (this._store.isDisposed) {
+					return;
+				}
+				this.lastMessages.set(session.id, { updatedAt: session.updatedAt, text });
+				if (text !== cached?.text) {
+					this.hover.refresh(anchor, this.sessionHoverRows(session, anchor));
+				}
+			});
+		}
+		const text = cached?.text;
+		if (!text) {
+			return undefined;
+		}
+		return {
+			label: localize('voltAgent.home.lastMessage', "Last message"),
+			separator: true,
+			render: parent => {
+				append(parent, $('.volt-agent-home-hover-message-label')).textContent = localize('voltAgent.home.lastMessage', "Last message");
+				const message = append(parent, $('.volt-agent-home-hover-message'));
+				message.style.maxHeight = `${LAST_MESSAGE_MAX_HEIGHT}px`;
+				message.textContent = text;
+				return Disposable.None;
+			},
+		};
+	}
+
+	private sessionHoverRows(session: IAgentSessionMeta, anchor: HTMLElement): IAgentTooltipRow[] {
 		const folders = sessionFolders(session).map((path, index) => {
 			const repo = this.repos.get(path);
 			return {
@@ -2319,6 +2381,10 @@ export class AgentHomePane extends Disposable {
 			folders,
 			session.workspaceLabel,
 		);
+		const lastMessage = this.lastMessageRow(session, anchor);
+		if (lastMessage) {
+			rows.push(lastMessage);
+		}
 		// Every pull request of the chat, under a hairline, as a list (agentPullRequestList.ts); opening one shows it.
 		const links = this.pullRequests ? visibleLinks(this.pullRequests.links(session.id)) : [];
 		if (links.length) {

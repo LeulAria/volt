@@ -98,6 +98,22 @@
 	border-bottom: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
 }
 
+/* The chat's last message in its hover card (agentHomePane.ts sets the max height). */
+.volt-agent-home-hover-message-label {
+	margin-bottom: 4px;
+	font-size: 11px;
+	opacity: 0.6;
+}
+
+.volt-agent-home-hover-message {
+	overflow-y: auto;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	opacity: 0.85;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
 .volt-agent-home-search-field input.name::placeholder {
 	color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
 }
