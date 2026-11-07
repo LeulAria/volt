@@ -61,6 +61,7 @@ import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js'
 import { AppearancePage, ISettingsPageKit } from './appearancePage.js';
 import { CodeIntelligencePage } from './codeIntelligencePage.js';
 import { GitPage } from './gitPage.js';
+import { CustomizeVoltPage } from './customizeVoltPage.js';
 import { CanvasScratchPage } from './canvasScratchPage.js';
 import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
@@ -76,6 +77,7 @@ import { AgentFooterAction, appendAgentFooterActions } from '../../voltAgent/bro
 import { AgentCustomizeEditor, AgentCustomizeEditorInput } from '../../voltAgent/browser/customize/agentCustomizeEditor.js';
 import { AutomationsEditor, AutomationsEditorInput } from '../../voltAgent/browser/automations/automationsEditor.js';
 import { createHomeAutomationsIcon } from '../../voltAgent/browser/home/agentHomeIcons.js';
+import { IVoltFeatureService } from '../../voltCustomize/common/voltFeatures.js';
 import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IPreferencesService } from '../../../services/preferences/common/preferences.js';
@@ -89,7 +91,7 @@ import { SettingsThemeList } from './settingsThemeList.js';
 type TabToggle = 'enabled' | 'partialAccepts' | 'inComments' | 'whitespaceOnly' | 'autoImport' | 'autoImportPython';
 
 /** Volt's own pages, then every registered setting by category (`cat:`), Extensions included. */
-type SettingsSection = 'general' | 'appearance' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'connected' | 'devices' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
+type SettingsSection = 'general' | 'appearance' | 'customizeVolt' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'connected' | 'devices' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
 type CatalogSection = `cat:${string}`;
 
 function isCatalogSection(section: string): section is CatalogSection {
@@ -117,6 +119,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: nu
 	{ id: 'usage', label: localize('voltSettings.usage', "Usage"), icon: Codicon.graph, group: 0 },
 	{ id: 'providers', label: localize('voltSettings.providers', "Providers & Models"), icon: Codicon.plug, group: 0 },
 	{ id: 'appearance', label: localize('voltSettings.appearance', "Appearance"), icon: Codicon.symbolColor, group: 0 },
+	{ id: 'customizeVolt', label: localize('voltSettings.customizeVolt', "Customize Volt"), icon: Codicon.layout, group: 0 },
 	{ id: 'modes', label: localize('voltSettings.modes', "Modes"), icon: Codicon.sparkle, group: 1 },
 	{ id: 'composer', label: localize('voltSettings.composer', "Composer"), icon: Codicon.commentDiscussion, group: 1 },
 	{ id: 'tab', label: localize('voltSettings.tab', "Tab & Prediction"), icon: Codicon.keyboard, group: 1 },
@@ -133,7 +136,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: nu
 ];
 
 /** Pages that sit in the nav above Volt, not inside Volt's list. */
-const NAV_ABOVE_VOLT = new Set<string>(['providers', 'appearance']);
+const NAV_ABOVE_VOLT = new Set<string>(['providers', 'appearance', 'customizeVolt']);
 
 /** Volt's own pages (Modes … Storage), listed in Volt's list rather than the nav. */
 function isVoltPage(section: string): boolean {
@@ -233,12 +236,11 @@ export class VoltSettingsEditor extends EditorPane {
 	private inspector: SettingsInspectorPage | undefined;
 	/** A subsection to pick on the next render (an extension, from an `ext:` link). */
 	private pendingGroup: string | undefined;
-	/** Volt's pages as links at the top of Volt's list; one array, so the list can tell nothing changed. */
-	private readonly voltPages: readonly IInspectorPageLink[] = SECTIONS.filter(section => section.group > 0).map(section => ({
-		id: section.id,
-		label: section.label,
-		icon: () => createSettingsIcon(section.id) ?? renderIcon(section.icon),
-	}));
+	/**
+	 * Volt's pages that are on, as links at the top of Volt's list; one array until a feature turns
+	 * on or off, so the list can tell nothing changed.
+	 */
+	private voltPages: readonly IInspectorPageLink[];
 	/** Appearance's color themes; kept across renders so arrowing through them keeps focus. */
 	private themeList: SettingsThemeList | undefined;
 	private body!: HTMLElement;
@@ -268,8 +270,25 @@ export class VoltSettingsEditor extends EditorPane {
 		@IWorkbenchThemeService private readonly workbenchThemeService: IWorkbenchThemeService,
 		@IPreferencesService private readonly preferencesService: IPreferencesService,
 		@ILogService private readonly logService: ILogService,
+		@IVoltFeatureService private readonly features: IVoltFeatureService,
 	) {
 		super(VoltSettingsEditor.ID, group, telemetryService, themeService, storageService);
+		this.voltPages = this.voltPageLinks();
+		// A feature turned on or off adds or takes away its pages; a page on screen that went away
+		// gives way to General.
+		this._register(this.features.onDidChange(() => {
+			this.voltPages = this.voltPageLinks();
+			if (!this.container) {
+				return;
+			}
+			this.renderNav();
+			if (!this.features.isOn('section', this.section)) {
+				this.setSection('general');
+			} else if (isVoltPage(this.section)) {
+				// Volt's list beside the page links the pages that are on.
+				this.renderContent();
+			}
+		}));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (this.section === 'composer' && COMPOSER_PAGE_SETTINGS.some(key => e.affectsConfiguration(key))) {
 				this.renderContent();
@@ -403,6 +422,7 @@ export class VoltSettingsEditor extends EditorPane {
 			store: this.renderStore,
 			search: () => this.search,
 			rerender: () => this.renderContent(),
+			isCurrent: () => this.section === 'providers',
 			scrollToTop: () => { this.renderedSection = undefined; },
 			revealWorkbench: () => this.close(),
 			switch: (parent, on, label, onClick) => this.switch(parent, on, label, onClick),
@@ -437,6 +457,14 @@ export class VoltSettingsEditor extends EditorPane {
 		}));
 		this.syncCrumb();
 		this.renderContent();
+	}
+
+	private voltPageLinks(): readonly IInspectorPageLink[] {
+		return SECTIONS.filter(section => section.group > 0 && this.features.isOn('section', section.id)).map(section => ({
+			id: section.id,
+			label: section.label,
+			icon: () => createSettingsIcon(section.id) ?? renderIcon(section.icon),
+		}));
 	}
 
 	private close(): void {
@@ -520,7 +548,8 @@ export class VoltSettingsEditor extends EditorPane {
 		const needle = this.search.trim().toLowerCase();
 		const words = searchWords(this.search);
 		const page = (section: typeof SECTIONS[number]): ISettingsNavNode => ({ id: section.id, label: section.label, icon: () => createSettingsIcon(section.id) ?? renderIcon(section.icon) });
-		const pageShown = (node: ISettingsNavNode) => !needle || node.label.toLowerCase().includes(needle);
+		// A page whose feature is off is left out.
+		const pageShown = (node: ISettingsNavNode) => this.features.isOn('section', node.id) && (!needle || node.label.toLowerCase().includes(needle));
 		const categoryNode = (category: ISettingsCatalogCategory, pageMatch = false): ISettingsNavNode | undefined => {
 			const matches = needle ? category.settings.filter(entry => settingMatches(entry, words)).length : 0;
 			const shown = !needle || matches > 0 || category.label.toLowerCase().includes(needle) || pageMatch;
@@ -585,11 +614,14 @@ export class VoltSettingsEditor extends EditorPane {
 		// `devices:add` (or `devices:add:cloudflare`) opens Devices with Add Device on top.
 		const add = /^devices:add(?::(lan|tailscale|cloudflare|ssh))?$/.exec(section);
 		if (add) {
-			this.devices.requestAddDevice(add[1] as VoltConnectionKind | undefined);
 			section = 'devices';
-			if (this.section === 'devices') {
-				this.renderContent();
-				return;
+			// With Devices off, setSection opens General instead.
+			if (this.features.isOn('section', 'devices')) {
+				this.devices.requestAddDevice(add[1] as VoltConnectionKind | undefined);
+				if (this.section === 'devices') {
+					this.renderContent();
+					return;
+				}
 			}
 		}
 		const id = SECTION_ALIASES[section] ?? section;
@@ -629,6 +661,10 @@ export class VoltSettingsEditor extends EditorPane {
 	}
 
 	private setSection(section: SettingsSection): void {
+		// A page whose feature is off (a link, a footer button, a command) opens General instead.
+		if (!this.features.isOn('section', section)) {
+			section = 'general';
+		}
 		// Volt's list holds only its pages, so Volt opens on the first of them.
 		if (section === 'cat:volt') {
 			section = SECTIONS.find(entry => entry.group > 0)?.id ?? section;
@@ -714,6 +750,9 @@ export class VoltSettingsEditor extends EditorPane {
 				break;
 			case 'appearance':
 				pending = this.renderAppearance();
+				break;
+			case 'customizeVolt':
+				pending = this.renderCustomizeVolt();
 				break;
 			case 'providers':
 				this.providers.render(this.side, this.content);
@@ -1402,6 +1441,23 @@ export class VoltSettingsEditor extends EditorPane {
 			rerender: () => this.renderContent(),
 			isCurrent: () => this.section === 'canvas',
 		}).render();
+	}
+
+	/** Layout, look, every look token, the Playground and ~/.volt/customize (customizeVoltPage.ts). */
+	private renderCustomizeVolt(): Promise<void> {
+		return this.instantiationService.createInstance(CustomizeVoltPage, {
+			store: this.renderStore,
+			pageHead: (title, lead) => void this.pageHead(title, lead),
+			sectionLabel: label => this.sectionLabel(label),
+			sectionHint: text => void (append(this.target, $('.volt-settings-section-hint')).textContent = text),
+			settingsGroup: () => this.settingsGroup(),
+			settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
+			toggle: (parent, on, label, onClick) => void this.switch(parent, on, label, onClick),
+			stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
+			dropdown: (host, options, value, ariaLabel, onChange, width) => this.dropdown(host, options, value, ariaLabel, onChange, width),
+			rerender: () => this.renderContent(),
+			isCurrent: () => this.section === 'customizeVolt',
+		}).render().finally(() => this.scheduleScrollSync());
 	}
 
 	/** Pull request links and reviews, attribution, branch names and code hosts (gitPage.ts). */

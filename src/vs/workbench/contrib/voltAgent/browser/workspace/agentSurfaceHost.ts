@@ -49,6 +49,7 @@ import { IAgentHistoryService } from '../../../../services/voltRuntime/common/hi
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { isTerminalLive } from '../../../../services/voltRuntime/common/terminalTools.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { IVoltFeatureService } from '../../../voltCustomize/common/voltFeatures.js';
 import { ITerminalEditorService, ITerminalInstance, ITerminalInstanceService, ITerminalService, TerminalDataTransfers } from '../../../terminal/browser/terminal.js';
 import { TerminalEditorInput } from '../../../terminal/browser/terminalEditorInput.js';
 import { ITerminalProfileService } from '../../../terminal/common/terminal.js';
@@ -871,6 +872,15 @@ export class AgentSurfaceHost extends Disposable {
 		this.onDidChangeFilesSidebar();
 	}
 
+	/** An activity bar icon: opens the sidebar on `view`, or closes it when it already shows that view. */
+	clickFilesSidebarView(view: AgentFilesSidebarView): void {
+		if (this.filesSidebarOpen() && AgentFilesSidebar.view(this.storageService) === view) {
+			AgentFilesSidebar.setOpen(this.storageService, false);
+			return;
+		}
+		this.showFilesSidebar(view);
+	}
+
 	/**
 	 * A tab's shortcut: opens the sidebar on `view` with the keyboard in it. Pressed again while the
 	 * keyboard is already there, it closes the sidebar.
@@ -1131,7 +1141,7 @@ export class AgentSurfaceHost extends Disposable {
 			if (watermark && !openLists.has(group.id)) {
 				openLists.set(group.id, this.instantiationService.invokeFunction(accessor => renderSurfaceOpenList(
 					watermark,
-					visibleSurfaceMenuItems(accessor.get(IConfigurationService)),
+					visibleSurfaceMenuItems(accessor.get(IConfigurationService), accessor.get(IVoltFeatureService)),
 					accessor.get(IKeybindingService),
 					id => entry.holder?.runMenuAction(id),
 				)));
@@ -1144,6 +1154,11 @@ export class AgentSurfaceHost extends Disposable {
 			}
 		};
 		part.groups.forEach(watchGroup);
+		// A feature turned off or on changes what the watermark lists.
+		store.add(this.instantiationService.invokeFunction(accessor => accessor.get(IVoltFeatureService)).onDidChange(() => {
+			openLists.clearAndDisposeAll();
+			part.groups.forEach(watchGroup);
+		}));
 		store.add(part.onDidAddGroup(group => {
 			watchGroup(group);
 			entry.holder?.syncOpen();
@@ -2625,6 +2640,13 @@ registerAction2(class ShowAgentRelatedChatsAction extends Action2 {
 export function showAgentFilesSidebar(view: AgentFilesSidebarView): boolean {
 	const host = [...hosts].find(candidate => candidate.canOpenTools());
 	host?.showFilesSidebar(view);
+	return !!host;
+}
+
+/** The activity bar's click: the sidebar on `view`, or closed when it already shows it. False in the IDE layout. */
+export function toggleAgentFilesSidebar(view: AgentFilesSidebarView): boolean {
+	const host = [...hosts].find(candidate => candidate.canOpenTools());
+	host?.clickFilesSidebarView(view);
 	return !!host;
 }
 

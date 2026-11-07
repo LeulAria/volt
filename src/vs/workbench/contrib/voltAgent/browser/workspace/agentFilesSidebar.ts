@@ -48,13 +48,14 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
+import { IVoltFeatureService } from '../../../voltCustomize/common/voltFeatures.js';
 import { AGENT_RESOURCE_FILTER_ICON, AGENT_RESOURCE_GROUPS, agentResourceGroup } from '../../common/agentResources.js';
 import { AgentResourceTree, openAgentResource } from '../resources/agentResourceTree.js';
 import { AgentResourceFilter, IAgentResourcesService } from '../resources/agentResourcesService.js';
 import { agentResourcesSectionFor, OPEN_AGENT_RESOURCES_COMMAND_ID } from '../resources/agentResourcesPage.js';
 import { showVoltMenu } from '../ui/menu/voltMenu.js';
 
-export type AgentFilesSidebarView = 'explorer' | 'scm' | 'search' | 'pullRequests' | 'chats';
+export type AgentFilesSidebarView = 'explorer' | 'scm' | 'search' | 'pullRequests' | 'chats' | 'debug' | 'extensions';
 
 /** Related Chats' list: the agent list scoped to one project. */
 export interface IRelatedChatsPane extends IDisposable {
@@ -86,10 +87,11 @@ const MIN_WIDTH = 200;
 const MIN_TABS_WIDTH = 320;
 
 /**
- * The tabs left to right, which is also their shortcut's digit (Explorer 1 … Related Chats 5). Each but
- * Related Chats lends in the workbench's own view container; Related Chats is the agent list, scoped.
+ * The views the sidebar can show. The tabs left to right, which is also their shortcut's digit
+ * (Explorer 1 … Related Chats 5); `tab: false` views have no tab and open from the activity bar slot.
+ * Each but Related Chats lends in the workbench's own view container; Related Chats is the agent list, scoped.
  */
-const VIEWS: readonly { readonly id: AgentFilesSidebarView; readonly container?: string; readonly icon: SvgIconShapes; readonly label: string }[] = [
+const VIEWS: readonly { readonly id: AgentFilesSidebarView; readonly container?: string; readonly icon: SvgIconShapes; readonly label: string; readonly tab?: false }[] = [
 	{
 		id: 'explorer', container: EXPLORER_VIEWLET_ID, label: localize('voltAgent.filesSidebar.explorer', "Explorer"), icon: EXPLORER_ICON_SHAPES
 	},
@@ -120,11 +122,34 @@ const VIEWS: readonly { readonly id: AgentFilesSidebarView; readonly container?:
 	{
 		id: 'chats', label: localize('voltAgent.filesSidebar.relatedChats', "Related Chats"), icon: RELATED_CHATS_ICON_SHAPES
 	},
+	{
+		// VIEWLET_ID in debug/common/debug.ts.
+		id: 'debug', container: 'workbench.view.debug', label: localize('voltAgent.filesSidebar.debug', "Run and Debug"), tab: false, icon: [
+			['path', { d: 'M13 4l8 6-8 6V4z' }],
+			['path', { d: 'M7 11a3 3 0 0 1 3 3v3a3 3 0 0 1-6 0v-3a3 3 0 0 1 3-3z' }],
+			['path', { d: 'M4 15H2M12 15h-2M4 18.5l-1.5 1M10 18.5l1.5 1M5.5 11.5 4.5 10M8.5 11.5l1-1.5' }],
+		]
+	},
+	{
+		// VIEWLET_ID in extensions/common/extensions.ts.
+		id: 'extensions', container: 'workbench.view.extensions', label: localize('voltAgent.filesSidebar.extensions', "Extensions"), tab: false, icon: [
+			['rect', { x: 3, y: 11, width: 5, height: 5 }],
+			['rect', { x: 8, y: 11, width: 5, height: 5 }],
+			['rect', { x: 3, y: 16, width: 5, height: 5 }],
+			['rect', { x: 14, y: 3, width: 6, height: 6, transform: 'rotate(15 17 6)' }],
+		]
+	},
 ];
 
 /** The tabs in order, for their shortcuts: Ctrl+Option+1 is the first. */
 export function filesSidebarTabs(): readonly { readonly id: AgentFilesSidebarView; readonly label: string }[] {
-	return VIEWS;
+	return VIEWS.filter(view => view.tab !== false);
+}
+
+/** A view's name and icon, for buttons elsewhere that open it (the activity bar slot). */
+export function filesSidebarViewInfo(view: AgentFilesSidebarView): { readonly label: string; readonly icon: (doc: Document) => SVGSVGElement } {
+	const entry = VIEWS.find(candidate => candidate.id === view)!;
+	return { label: entry.label, icon: doc => createTabIcon(doc, entry.icon) };
 }
 
 /** Open, view and width are the window's, not a chat's: every chat's tools show the same sidebar. */
@@ -237,6 +262,7 @@ export class AgentFilesSidebar extends Disposable {
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IKeybindingService private readonly keybindingService: IKeybindingService,
+		@IVoltFeatureService private readonly features: IVoltFeatureService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@ILabelService private readonly labelService: ILabelService,
 	) {
@@ -260,7 +286,7 @@ export class AgentFilesSidebar extends Disposable {
 		this.sash = append(this.element, $('.volt-agent-files-sidebar-sash'));
 		this.sash.title = localize('voltAgent.filesSidebar.resize', "Resize sidebar");
 		this.header = append(this.element, $('.volt-agent-files-sidebar-header'));
-		for (const view of VIEWS) {
+		for (const view of VIEWS.filter(candidate => candidate.tab !== false)) {
 			const button = append(this.header, $('button.volt-agent-files-sidebar-tab')) as HTMLButtonElement;
 			button.type = 'button';
 			button.setAttribute('aria-label', view.label);
@@ -330,6 +356,8 @@ export class AgentFilesSidebar extends Disposable {
 		this._register(this.sessionContext.onDidChangeProjects(() => this.syncChatsScope()));
 		this._register(this.filterTree.onDidOpen(({ item, preserveFocus }) => openAgentResource(this.editorService, item, preserveFocus)));
 		this._register(this.resources.onDidChangeFilter(() => this.sync()));
+		// Disabling Agent Resources takes away the filter and lifts one in use.
+		this._register(this.features.onDidChange(() => this.sync()));
 		this._register(this.resources.onDidChange(folder => {
 			if (this.uriIdentityService.extUri.isEqual(folder, this.filterFolder)) {
 				this.renderFilter();
@@ -527,7 +555,7 @@ export class AgentFilesSidebar extends Disposable {
 			this.searchScope.value = searchFolder ? this.searchViewModel.scopeToFolder(searchFolder) : undefined;
 		}
 		// A filter narrows the Explorer to the chat folder's agent resources.
-		const filterFolder = want === 'explorer' && agentLayout && this.resources.filter ? this.resources.folderForSession(this.sessionId!) : undefined;
+		const filterFolder = want === 'explorer' && agentLayout && this.resources.filter && this.features.isEnabled('agentResources') ? this.resources.folderForSession(this.sessionId!) : undefined;
 		if (!this.uriIdentityService.extUri.isEqual(filterFolder, this.filterFolder)) {
 			this.filterFolder = filterFolder;
 			if (filterFolder) {
@@ -822,7 +850,8 @@ export class AgentFilesSidebar extends Disposable {
 					id: 'files',
 					items: [{ id: 'files', label: localize('voltAgent.filesSidebar.allFiles', "All Files"), icon: () => createTabIcon(this.filterButton.ownerDocument, EXPLORER_ICON_SHAPES), checked: !current, data: undefined }],
 				},
-				{
+				// Agent Resources is a feature the user can disable: its groups go with it.
+				...(this.features.isEnabled('agentResources') ? [{
 					id: 'resources',
 					title: localize('voltAgent.filesSidebar.agentResources', "Agent Resources"),
 					items: [
@@ -836,7 +865,7 @@ export class AgentFilesSidebar extends Disposable {
 							data: group.id as AgentResourceFilter,
 						})),
 					],
-				},
+				}] : []),
 			];
 		};
 		const handle = showVoltMenu<AgentResourceFilter | undefined | 'manage'>(this.contextViewService, {
@@ -866,9 +895,10 @@ export class AgentFilesSidebar extends Disposable {
 			button.classList.toggle('active', active);
 			button.setAttribute('aria-pressed', String(active));
 		}
-		// The filter narrows the Explorer only.
-		const filter = this.resources.filter;
-		this.filterButton.style.display = shown === 'explorer' ? '' : 'none';
+		// The filter narrows the Explorer only. With Agent Resources disabled it would hold All Files alone.
+		const resourcesOn = this.features.isEnabled('agentResources');
+		const filter = resourcesOn ? this.resources.filter : undefined;
+		this.filterButton.style.display = shown === 'explorer' && resourcesOn ? '' : 'none';
 		this.filterButton.classList.toggle('filtered', !!filter);
 		const filterLabel = filter
 			? localize('voltAgent.filesSidebar.filterOn', "Filter Files: {0}", filter === 'all' ? localize('voltAgent.filesSidebar.agentResources', "Agent Resources") : agentResourceGroup(filter).label)

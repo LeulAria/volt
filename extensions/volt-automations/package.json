@@ -1,0 +1,25 @@
+{
+	"name": "automations",
+	"displayName": "Volt: Automations",
+	"description": "Scheduled and triggered runs, the calendar, the Automations button and page, and the tools agents manage them with. Disable this extension to turn the feature off.",
+	"version": "0.0.1",
+	"publisher": "volt",
+	"license": "MIT",
+	"engines": {
+		"vscode": "*"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"volt",
+		"feature"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {}
+}

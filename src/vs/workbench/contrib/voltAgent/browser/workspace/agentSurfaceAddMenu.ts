@@ -28,6 +28,7 @@ import { EditorResourceAccessor } from '../../../../common/editor.js';
 import { IHistoryService } from '../../../../services/history/common/history.js';
 import { ISearchService } from '../../../../services/search/common/search.js';
 import { searchFilesAndFolders } from '../../../search/browser/searchFilesAndFolders.js';
+import { IVoltFeatureService } from '../../../voltCustomize/common/voltFeatures.js';
 import { CANVAS_ENABLED_SETTING, SCRATCH_ENABLED_SETTING } from '../../common/canvasScratchSettings.js';
 import { createHomeSearchIcon } from '../home/agentHomeIcons.js';
 import { agentSurfaceMenuItems, createSurfaceStrokeIcon, IAgentSurfaceMenuItem, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
@@ -63,10 +64,10 @@ export function looksLikeUrl(value: string): boolean {
 		|| (/^[\w-]+(\.[\w-]+)+(\/|$)/.test(text) && !/\.(ts|tsx|js|jsx|json|md|css|html?|py|rs|go|java|c|h|cpp)$/i.test(text));
 }
 
-/** The + menu's rows less what Settings > Canvas & Scratch turned off. */
-export function visibleSurfaceMenuItems(configurationService: IConfigurationService): readonly IAgentSurfaceMenuItem[] {
+/** The + menu's rows less what Settings > Canvas & Scratch, or a disabled feature, turned off. */
+export function visibleSurfaceMenuItems(configurationService: IConfigurationService, features: IVoltFeatureService): readonly IAgentSurfaceMenuItem[] {
 	const off = (setting: string) => configurationService.getValue(setting) === false;
-	return agentSurfaceMenuItems().filter(action => !(action.id === 'scratch' && off(SCRATCH_ENABLED_SETTING)) && !(action.id === 'canvas' && off(CANVAS_ENABLED_SETTING)));
+	return agentSurfaceMenuItems().filter(action => !(action.id === 'scratch' && off(SCRATCH_ENABLED_SETTING)) && !(action.id === 'canvas' && off(CANVAS_ENABLED_SETTING)) && features.isOn('surface', action.id));
 }
 
 /** A row of the open list: a + menu row, or another action drawn the same way. */
@@ -126,6 +127,7 @@ export class AgentSurfaceAddMenu extends Disposable {
 		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
 		@IModelService private readonly modelService: IModelService,
 		@ILanguageService private readonly languageService: ILanguageService,
+		@IVoltFeatureService private readonly features: IVoltFeatureService,
 	) {
 		super();
 	}
@@ -220,14 +222,16 @@ export class AgentSurfaceAddMenu extends Disposable {
 			list.replaceChildren();
 			const q = query.trim().toLowerCase();
 			// Settings > Canvas & Scratch can turn either off: its row goes too.
-			const actions = visibleSurfaceMenuItems(this.configurationService)
+			const actions = visibleSurfaceMenuItems(this.configurationService, this.features)
 				.filter(action => !q || action.label.toLowerCase().includes(q) || action.id.toLowerCase().includes(q));
 			for (const action of actions) {
 				addRow(this.actionRow(list, action), () => this.host.runAction(action.id));
 			}
 			if (q) {
-				const tabs = this.host.browserTabs.filter(tab => tab.title.toLowerCase().includes(q) || tab.url.toLowerCase().includes(q));
-				const url = looksLikeUrl(query) ? query.trim() : undefined;
+				// With the Browser feature off there is nothing to open a URL or tab in.
+				const browserOn = this.features.isOn('surface', 'browser');
+				const tabs = browserOn ? this.host.browserTabs.filter(tab => tab.title.toLowerCase().includes(q) || tab.url.toLowerCase().includes(q)) : [];
+				const url = browserOn && looksLikeUrl(query) ? query.trim() : undefined;
 				if (url || tabs.length) {
 					this.section(list, localize('voltAgent.surfaceMenu.browserSection', "Browser"), rows.length > 0);
 					if (url) {
@@ -275,6 +279,7 @@ export class AgentSurfaceAddMenu extends Disposable {
 		};
 
 		store.add(addDisposableListener(search, 'input', update));
+		store.add(this.features.onDidChange(update));
 		store.add(addDisposableListener(search, 'keydown', e => {
 			switch (e.key) {
 				case 'ArrowDown':

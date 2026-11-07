@@ -60,7 +60,8 @@ import { AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGE
 import { onDidChangeShownAgentChat, shownAgentChat } from '../editor/agentShownChat.js';
 import { OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
-import { appendAgentFooterActions } from './agentHomeFooterActions.js';
+import { AGENT_FOOTER_ACTIONS, AgentFooterAction, wireAgentFooterAction } from './agentHomeFooterActions.js';
+import { IVoltSlotService, VoltSlotPlacement } from '../../../voltCustomize/common/voltSlots.js';
 import { SEARCH_AGENT_CHATS_COMMAND_ID } from '../search/agentChatSearchService.js';
 import { createHomeAutomationsIcon, createHomeFilterIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeNewChatIcon, createHomeOpenWorkspaceIcon, createHomeSearchIcon, createHomeStatusBadgeIcon, createQueueEditIcon } from './agentHomeIcons.js';
 import { OPEN_SCRATCH_BOARD_COMMAND_ID, ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
@@ -68,8 +69,8 @@ import { IScratchSessionLinks } from '../scratchBoard/scratchSessionLinks.js';
 import { showAgentSnoozeMenu } from './agentSnoozeMenu.js';
 import { activateAgentProject, findAgentPanelGroup, startAgentChat } from '../workspace/agentPanels.js';
 import { AgentChatStart } from '../workspace/agentShell.js';
-import { agentSideChatParents, onDidChangeAgentToolEditors } from '../workspace/agentSurfaceHost.js';
-import { registerRelatedChatsPane } from '../workspace/agentFilesSidebar.js';
+import { agentSideChatParents, onDidChangeAgentToolEditors, toggleAgentFilesSidebar } from '../workspace/agentSurfaceHost.js';
+import { AgentFilesSidebar, AgentFilesSidebarView, filesSidebarViewInfo, registerRelatedChatsPane } from '../workspace/agentFilesSidebar.js';
 import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownRenderer/browser/markdownRenderer.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
@@ -1148,6 +1149,15 @@ export class AgentHomePane extends Disposable {
 	readonly element: HTMLElement;
 	private readonly nav: HTMLElement;
 	private navFilter: HTMLButtonElement | undefined;
+	/** Where the header's and footer's slot items go, and the buttons placed there now. */
+	private headerSlot: Comment | undefined;
+	private footerSlot: Comment | undefined;
+	/** VS Code's activity bar at the left edge: shown while its slots hold an item. */
+	private readonly activityBar: HTMLElement;
+	private readonly activityTopSlot: Comment;
+	private readonly activityBottomSlot: Comment;
+	private slotButtons: HTMLButtonElement[] = [];
+	private readonly slotStore = this._register(new DisposableStore());
 	private readonly treeContainer: HTMLElement;
 	/** The groups, as Source Control's views: folded headers stack, open groups share the height. */
 	private readonly paneView: PaneView;
@@ -1254,6 +1264,7 @@ export class AgentHomePane extends Disposable {
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IAgentThreadLifecycleService private readonly lifecycle: IAgentThreadLifecycleService,
 		@IAgentThreadAttentionService private readonly attention: IAgentThreadAttentionService,
+		@IVoltSlotService private readonly slotService: IVoltSlotService,
 	) {
 		super();
 		this.scoped = !!options.scoped;
@@ -1307,11 +1318,22 @@ export class AgentHomePane extends Disposable {
 			this.keepSingleHome(parent);
 		}
 
+		this.activityBar = append(this.element, $('.volt-agent-activity-bar.hidden'));
+		this.activityBar.setAttribute('role', 'toolbar');
+		this.activityBar.setAttribute('aria-orientation', 'vertical');
+		this.activityBar.setAttribute('aria-label', localize('voltAgent.activityBar', "Activity Bar"));
+		const activityTop = append(this.activityBar, $('.volt-agent-activity-bar-top'));
+		this.activityTopSlot = activityTop.appendChild(activityTop.ownerDocument.createComment('slot activityBar.top'));
+		const activityBottom = append(this.activityBar, $('.volt-agent-activity-bar-bottom'));
+		this.activityBottomSlot = activityBottom.appendChild(activityBottom.ownerDocument.createComment('slot activityBar.bottom'));
+
 		this.nav = append(this.element, $('.volt-agent-home-nav'));
-		this.installNav(keybindingService);
+		this.installNav();
 		this.treeContainer = append(this.element, $('.volt-agent-home-tree'));
 		if (!this.scoped) {
 			this.installSettingsButton(keybindingService);
+		} else {
+			this.renderSlots();
 		}
 
 		this.paneExpanded = this.readPaneState();
@@ -1662,8 +1684,10 @@ export class AgentHomePane extends Disposable {
 			void this.closeUsage();
 		}));
 
-		const store = this._register(new DisposableStore());
-		appendAgentFooterActions(footer, this.commandService, store, this.instantiationService);
+		// Settings, Usage, Automations and Customize go here by slot (renderSlots).
+		this.footerSlot = footer.appendChild(footer.ownerDocument.createComment('slot sidebar.footer'));
+		this.renderSlots();
+		this._register(this.slotService.onDidChange(() => this.renderSlots()));
 
 		let wasOpen = false;
 		const sync = () => {
@@ -1727,7 +1751,7 @@ export class AgentHomePane extends Disposable {
 	 * Header bar outside the virtualized tree so it pins while chats scroll: Search on the left,
 	 * then Filter, Open Workspace and New Chat. Padding lives on `.volt-agent-home-nav`.
 	 */
-	private installNav(keybindingService: IKeybindingService): void {
+	private installNav(): void {
 		const bar = append(this.nav, $('.volt-agent-home-nav-bar'));
 		if (this.scoped) {
 			this.installSearchField(bar);
@@ -1735,39 +1759,151 @@ export class AgentHomePane extends Disposable {
 			this.installSearchButton(bar);
 		}
 
-		const button = (className: string, label: string, glyph: HTMLElement, run: (button: HTMLButtonElement) => void) => {
-			const button = append(bar, $(`button.volt-agent-home-nav-action.${className}`)) as HTMLButtonElement;
-			button.type = 'button';
-			button.appendChild(glyph);
+		// Filter, Open Workspace and New Chat go here by slot (renderSlots, once the footer is built).
+		this.headerSlot = bar.appendChild(bar.ownerDocument.createComment('slot sidebar.header'));
+	}
+
+	/** What each slot item is and does here; the slot it sits in decides its look (renderSlots). */
+	private slotItem(id: string): { readonly label: string; readonly icon: () => Element; readonly headerClass?: string; readonly footerAction?: AgentFooterAction; wire(button: HTMLButtonElement, store: DisposableStore): void } | undefined {
+		const run = (button: HTMLButtonElement, store: DisposableStore, action: (button: HTMLButtonElement) => void, label: string) => {
 			button.setAttribute('aria-label', label);
 			setAgentTooltip(button, label);
-			this._register(addDisposableListener(button, 'click', e => {
+			store.add(addDisposableListener(button, 'click', e => {
 				e.preventDefault();
 				e.stopPropagation();
-				run(button);
+				action(button);
 			}));
-			return button;
 		};
-		this.navFilter = button('volt-agent-home-filter', localize('voltAgent.home.filter', "Filter and sort"), createHomeFilterIcon(), button => {
-			this.openFilterMenu(button);
-			button.blur();
+		const footer = (action: AgentFooterAction) => ({
+			label: AGENT_FOOTER_ACTIONS[action].label,
+			icon: AGENT_FOOTER_ACTIONS[action].icon,
+			footerAction: action,
+			wire: (button: HTMLButtonElement, store: DisposableStore) => wireAgentFooterAction(button, action, this.commandService, store, this.instantiationService),
 		});
-		this.navFilter.classList.toggle('active', anyHomeFilterActive(this.viewState));
-		if (!this.scoped) {
-			button('volt-agent-home-open-workspace', localize('voltAgent.home.openWorkspace', "Open Workspace"), createHomeOpenWorkspaceIcon(), button => this.openWorkspaceMenu(button));
-		}
-		const shortcut = keybindingService.lookupKeybinding(NEW_AGENT_COMMAND_ID)?.getLabel();
-		const newChatLabel = this.scoped
-			? localize('voltAgent.relatedChats.newChat', "New Chat in This Project")
-			: localize('voltAgent.home.newChat', "New Chat");
-		button('volt-agent-home-new-chat', shortcut && !this.scoped ? `${newChatLabel} (${shortcut})` : newChatLabel, createHomeNewChatIcon(), button => {
-			if (this.scoped) {
-				void this.startChat(this.scope ? { kind: 'folder', root: this.scope.root, name: this.scope.name } : { kind: 'active' });
-			} else {
-				void this.activate({ type: 'newChat' });
+		const filesView = (view: AgentFilesSidebarView) => this.filesViewSlotItem(view);
+		switch (id) {
+			case 'volt.filter': {
+				const label = localize('voltAgent.home.filter', "Filter and sort");
+				return {
+					label, icon: createHomeFilterIcon, headerClass: 'volt-agent-home-filter', wire: (button, store) => {
+						run(button, store, b => { this.openFilterMenu(b); b.blur(); }, label);
+						this.navFilter = button;
+						button.classList.toggle('active', anyHomeFilterActive(this.viewState));
+					},
+				};
 			}
-			button.blur();
-		});
+			case 'volt.openWorkspace': {
+				const label = localize('voltAgent.home.openWorkspace', "Open Workspace");
+				return { label, icon: createHomeOpenWorkspaceIcon, headerClass: 'volt-agent-home-open-workspace', wire: (button, store) => run(button, store, b => this.openWorkspaceMenu(b), label) };
+			}
+			case 'volt.newChat': {
+				const shortcut = this.keybindingService.lookupKeybinding(NEW_AGENT_COMMAND_ID)?.getLabel();
+				const newChatLabel = this.scoped
+					? localize('voltAgent.relatedChats.newChat', "New Chat in This Project")
+					: localize('voltAgent.home.newChat', "New Chat");
+				const label = shortcut && !this.scoped ? `${newChatLabel} (${shortcut})` : newChatLabel;
+				const newChat = () => this.scoped
+					? this.startChat(this.scope ? { kind: 'folder', root: this.scope.root, name: this.scope.name } : { kind: 'active' })
+					: this.activate({ type: 'newChat' });
+				return { label, icon: createHomeNewChatIcon, headerClass: 'volt-agent-home-new-chat', wire: (button, store) => run(button, store, b => { void newChat(); b.blur(); }, label) };
+			}
+			case 'volt.settings': return footer('settings');
+			case 'volt.usage': return footer('usage');
+			case 'volt.pullRequestsPage': return footer('pullRequests');
+			case 'volt.automations': return footer('automations');
+			case 'volt.customize': return footer('customize');
+			case 'volt.explorer': return filesView('explorer');
+			case 'volt.search': return filesView('search');
+			case 'volt.sourceControl': return filesView('scm');
+			case 'volt.runAndDebug': return filesView('debug');
+			case 'volt.pullRequests': return filesView('pullRequests');
+			case 'volt.extensions': return filesView('extensions');
+		}
+		return undefined;
+	}
+
+	/** A files sidebar view as a button (the activity bar's own items): lit while the sidebar shows it. */
+	private filesViewSlotItem(view: AgentFilesSidebarView) {
+		const info = filesSidebarViewInfo(view);
+		return {
+			label: info.label,
+			icon: () => info.icon(this.element.ownerDocument),
+			wire: (button: HTMLButtonElement, store: DisposableStore) => {
+				button.setAttribute('aria-label', info.label);
+				setAgentTooltip(button, info.label, undefined, undefined, 'end');
+				store.add(addDisposableListener(button, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					toggleAgentFilesSidebar(view);
+					button.blur();
+				}));
+				const sync = () => {
+					const active = AgentFilesSidebar.isOpen(this.storageService) && AgentFilesSidebar.view(this.storageService) === view;
+					button.classList.toggle('active', active);
+					button.setAttribute('aria-pressed', String(active));
+				};
+				store.add(AgentFilesSidebar.onDidChange(sync));
+				sync();
+			},
+		};
+	}
+
+	/**
+	 * Puts Volt's buttons where the layout's `slots` say (voltSlots.ts): each one right before its
+	 * slot's marker, as a direct child so the header's and footer's own rules (rail mode) still
+	 * apply. A button keeps its classes in its own slot and takes the slot's look when moved.
+	 */
+	private renderSlots(): void {
+		if (!this.headerSlot || (!this.scoped && !this.footerSlot)) {
+			return;
+		}
+		this.slotStore.clear();
+		for (const button of this.slotButtons) {
+			button.remove();
+		}
+		this.slotButtons = [];
+		this.navFilter = undefined;
+		// Related Chats keeps its own header (Filter, New Chat in this project) and no footer or
+		// activity bar; layouts place only the agent list's buttons.
+		const placement: VoltSlotPlacement = this.scoped
+			? { 'sidebar.header': ['volt.filter', 'volt.newChat'], 'sidebar.footer': [], 'activityBar.top': [], 'activityBar.bottom': [], hidden: [] }
+			: this.slotService.placement;
+		const place = (slot: 'sidebar.header' | 'sidebar.footer' | 'activityBar.top' | 'activityBar.bottom', marker: Comment) => {
+			for (const id of placement[slot]) {
+				const item = this.slotItem(id);
+				if (!item) {
+					continue;
+				}
+				const footerAction = item.footerAction;
+				const footerClass = footerAction ? AGENT_FOOTER_ACTIONS[footerAction].className ?? '' : 'volt-slot-item';
+				const className = slot === 'sidebar.header'
+					? `volt-agent-home-nav-action ${item.headerClass ?? 'volt-slot-item'}`
+					: slot === 'sidebar.footer'
+						? `volt-agent-home-settings ${footerClass}`
+						// The activity bar draws its own items; a footer button keeps its class for its hover card.
+						: `volt-agent-activity-item ${footerClass}`;
+				const button = $('button') as HTMLButtonElement;
+				button.type = 'button';
+				button.className = className.trim();
+				button.dataset.voltItem = id;
+				if (footerAction && slot !== 'sidebar.header') {
+					button.dataset.action = footerAction;
+				}
+				button.appendChild(item.icon());
+				item.wire(button, this.slotStore);
+				marker.parentNode?.insertBefore(button, marker);
+				this.slotButtons.push(button);
+			}
+		};
+		place('sidebar.header', this.headerSlot);
+		if (this.footerSlot) {
+			place('sidebar.footer', this.footerSlot);
+		}
+		place('activityBar.top', this.activityTopSlot);
+		place('activityBar.bottom', this.activityBottomSlot);
+		const activity = placement['activityBar.top'].length + placement['activityBar.bottom'].length > 0;
+		this.activityBar.classList.toggle('hidden', !activity);
+		this.element.classList.toggle('has-activity-bar', activity);
 	}
 
 	/** The agent list's Search: opens the chat search over every chat. */

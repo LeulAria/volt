@@ -557,13 +557,13 @@
 	--volt-home-indent: 6px;
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: var(--volt-look-sidebar-row-gap, 8px);
 	height: 100%;
 	min-width: 0;
 	padding: 0 8px 0 calc(var(--volt-home-level, 0) * var(--volt-home-indent));
 	box-sizing: border-box;
 	color: inherit;
-	font-size: 13px;
+	font-size: var(--volt-look-sidebar-font-size, 13px);
 	font-weight: 400;
 	overflow: hidden;
 }
@@ -1263,7 +1263,9 @@ html.volt-layout-agent-window body {
 }
 
 .monaco-workbench.volt-layout-agent {
-	--volt-agent-window-bg-base: var(--vscode-sideBar-background, var(--vscode-titleBar-activeBackground, #141414));
+	/* voltAgent.background / voltAgent.sidebarBackground (registered in voltCustomize) are unset unless a
+	 * theme, look or colorCustomizations names them; then they color the window and the agent list alone. */
+	--volt-agent-window-bg-base: var(--vscode-voltAgent-background, var(--vscode-sideBar-background, var(--vscode-titleBar-activeBackground, #141414)));
 	/* 85% of the window shows; the desktop comes through the rest, like the sidebar. */
 	--volt-agent-window-bg: color-mix(in srgb, var(--volt-agent-window-bg-base) 85%, transparent);
 	--volt-agent-sidebar-bg: color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base) 78%, #000) 74%, transparent);
@@ -1516,7 +1518,7 @@ html.volt-layout-agent-window body {
 	height: 100% !important;
 	z-index: 100 !important;
 	overflow: hidden !important;
-	background: var(--volt-agent-sidebar-bg);
+	background: var(--vscode-voltAgent-sidebarBackground, var(--volt-agent-sidebar-bg));
 	box-shadow: 8px 0 24px rgba(0, 0, 0, 0.35);
 	border-radius: var(--volt-agent-window-radius, 0);
 }
@@ -1878,8 +1880,8 @@ html.volt-layout-agent-window body {
 .monaco-workbench.volt-layout-agent .activitybar.left,
 .monaco-workbench.volt-layout-agent .activitybar.right,
 .monaco-workbench .part.auxiliarybar.volt-agent-home {
-	background: var(--volt-agent-sidebar-bg) !important;
-	background-color: var(--volt-agent-sidebar-bg) !important;
+	background: var(--vscode-voltAgent-sidebarBackground, var(--volt-agent-sidebar-bg)) !important;
+	background-color: var(--vscode-voltAgent-sidebarBackground, var(--volt-agent-sidebar-bg)) !important;
 }
 
 .monaco-workbench.volt-layout-agent .part.sidebar:not(.volt-lent-part) {
@@ -1906,8 +1908,8 @@ html.volt-layout-agent-window body {
 .monaco-workbench.volt-layout-agent .part.auxiliarybar,
 .monaco-workbench.volt-layout-agent .part.auxiliarybar.volt-agent-home,
 .monaco-workbench.volt-layout-agent .part.auxiliarybar.volt-agent-editor-tabs {
-	background: var(--volt-agent-sidebar-bg) !important;
-	background-color: var(--volt-agent-sidebar-bg) !important;
+	background: var(--vscode-voltAgent-sidebarBackground, var(--volt-agent-sidebar-bg)) !important;
+	background-color: var(--vscode-voltAgent-sidebarBackground, var(--volt-agent-sidebar-bg)) !important;
 	background-image: none !important;
 }
 
@@ -2402,4 +2404,100 @@ html.volt-layout-agent-window body {
 	.volt-agent-tools-close-panel
 ):is(:hover, :focus-visible, .active) {
 	color: #fff;
+}
+
+/* Activity bar: VS Code's icon column at the left edge of the agent list, filled by a layout's
+ * `activityBar.top` / `activityBar.bottom` slots (voltSlots.ts) and hidden while both are empty.
+ * It sits over the list's own fill (voltAgent.activityBarBackground, unset by default, paints it)
+ * and holds no scrolling content, so the see-through sidebar is unaffected. */
+.volt-agent-home.has-activity-bar {
+	position: relative;
+	padding-left: var(--volt-look-activity-bar-width, 48px);
+}
+
+.volt-agent-activity-bar {
+	--volt-activity-width: var(--volt-look-activity-bar-width, 48px);
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	display: flex;
+	flex-direction: column;
+	justify-content: space-between;
+	width: var(--volt-activity-width);
+	padding: 4px 0 8px;
+	box-sizing: border-box;
+	background: var(--vscode-voltAgent-activityBarBackground, none);
+	border-right: 1px solid var(--vscode-activityBar-border, transparent);
+}
+
+.volt-agent-activity-bar.hidden {
+	display: none;
+}
+
+.volt-agent-activity-bar-top,
+.volt-agent-activity-bar-bottom {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 4px;
+	min-height: 0;
+}
+
+.volt-agent-activity-bar-top {
+	overflow: hidden;
+}
+
+.volt-agent-activity-item {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--volt-activity-width);
+	height: var(--volt-activity-width);
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: var(--vscode-activityBar-inactiveForeground, var(--vscode-icon-foreground));
+	cursor: pointer;
+}
+
+.volt-agent-activity-item:hover,
+.volt-agent-activity-item:focus-visible,
+.volt-agent-activity-item.active {
+	color: var(--vscode-activityBar-foreground, var(--vscode-foreground));
+}
+
+.volt-agent-activity-item:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+/* The lit view: a bar on the edge, as in VS Code. */
+.volt-agent-activity-item.active::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: 2px;
+	background: var(--vscode-activityBar-activeBorder, var(--vscode-focusBorder));
+}
+
+/* Half the bar's width, whichever way the item draws its icon. */
+.volt-agent-activity-item :is(svg, .volt-agent-svg-icon, .volt-usage-icon) {
+	flex-shrink: 0;
+	width: calc(var(--volt-activity-width) / 2);
+	height: calc(var(--volt-activity-width) / 2);
+}
+
+.volt-agent-activity-item svg :is(path, line, polyline, polygon, rect, circle, ellipse) {
+	stroke-width: 1px;
+	vector-effect: non-scaling-stroke;
+}
+
+.volt-agent-activity-item .codicon {
+	font-size: calc(var(--volt-activity-width) / 2) !important;
 }

@@ -18,6 +18,7 @@ import { IVoltTokenRates, IVoltUsageService } from '../../../../../platform/volt
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IPathService } from '../../../../services/path/common/pathService.js';
 import { IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
+import { IVoltFeatureService } from '../../../voltCustomize/common/voltFeatures.js';
 import { AgentCustomizationScanner } from '../customize/agentCustomize.js';
 import {
 	buildContextUsageSnapshot,
@@ -127,6 +128,7 @@ export class AgentContextUsageView extends Disposable {
 		@IClipboardService private readonly clipboardService: IClipboardService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@IVoltFeatureService private readonly features: IVoltFeatureService,
 	) {
 		super();
 		this.scanner = new AgentCustomizationScanner(fileService);
@@ -191,6 +193,8 @@ export class AgentContextUsageView extends Disposable {
 		}));
 		this._register(this.hostTools.onDidChangeMcp(() => void this.refreshOverhead()));
 		this._register(this.workspaceContextService.onDidChangeWorkspaceFolders(() => void this.refreshOverhead()));
+		// The Session Usage button belongs to the Usage feature.
+		this._register(this.features.onDidChange(() => this.refresh()));
 
 		this.refreshBranch();
 		this.refresh();
@@ -478,9 +482,9 @@ export class AgentContextUsageView extends Disposable {
 		});
 	}
 
-	/** The chart button beside the meter: the session's cost when it has one. */
+	/** The chart button beside the meter: the session's cost when it has one. Gone with the Usage feature. */
 	private refreshSession(hasChat: boolean): void {
-		const summary = hasChat ? this.sessionSummary() : undefined;
+		const summary = hasChat && this.features.isEnabled('usage') ? this.sessionSummary() : undefined;
 		const show = !!summary && summary.turns.length > 0;
 		this.sessionButton.hidden = !show;
 		if (!summary || !show) {

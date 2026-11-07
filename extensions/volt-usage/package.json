@@ -1,0 +1,25 @@
+{
+	"name": "usage",
+	"displayName": "Volt: Usage",
+	"description": "Usage limits and runway for every account: the Usage page and button, the side toolbar section and the Session Usage card. Disable this extension to turn the feature off.",
+	"version": "0.0.1",
+	"publisher": "volt",
+	"license": "MIT",
+	"engines": {
+		"vscode": "*"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"volt",
+		"feature"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {}
+}

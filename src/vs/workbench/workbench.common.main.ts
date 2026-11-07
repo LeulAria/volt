@@ -219,6 +219,9 @@ import './contrib/voltSetup/browser/voltSetup.contribution.js';
 // Volt themes (picker, import from VS Code / Cursor, contrast)
 import './contrib/voltThemes/browser/voltThemes.contribution.js';
 
+// Volt Customize: look tokens, layouts, ~/.volt/customize, the Playground
+import './contrib/voltCustomize/browser/voltCustomize.contribution.js';
+
 // Volt Prediction (Tab / NES / cross-file edits)
 import './contrib/voltPrediction/browser/voltPrediction.contribution.js';
 

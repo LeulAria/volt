@@ -86,6 +86,7 @@ import type { ICanvasDoc } from '../visuals/canvas/canvasModel.js';
 import { IPathService } from '../../../../services/path/common/pathService.js';
 import { AgentSlashMenu, rankSlashItems } from './agentSlashMenu.js';
 import { AgentSkillHoverCard } from './agentSkillHoverCard.js';
+import { decodeVoltContextDrag, REVEAL_VOLT_PART_COMMAND_ID, VOLT_CONTEXT_MIME, voltPartIdFromContext } from '../../../voltCustomize/common/voltCustomizeContext.js';
 
 /** `action`: a prompt Volt sent for a button (Generate Draft Commits); the chip stands for it and `value` holds the prompt. */
 export type AgentMentionKind = 'file' | 'folder' | 'terminal' | 'chat' | 'branch' | 'browser' | 'image' | 'video' | 'mcp' | 'selection' | 'skill' | 'scratch' | 'canvas' | 'action' | 'device';
@@ -1325,6 +1326,9 @@ export class AgentMentionController extends Disposable {
 				this.openVideoViewer(mention);
 			} else if (mention.kind === 'file' || mention.kind === 'folder' || mention.kind === 'scratch' || mention.kind === 'canvas') {
 				void this.openMention(mention);
+			} else if (mention.kind === 'browser' && voltPartIdFromContext(mention.value)) {
+				// A part of Volt from the Playground devtools: the devtools open on it.
+				void this.commandService.executeCommand(REVEAL_VOLT_PART_COMMAND_ID, voltPartIdFromContext(mention.value));
 			} else if (mention.kind === 'browser' && mention.value) {
 				// A picked element: the browser scrolls to it.
 				void this.commandService.executeCommand(REVEAL_BROWSER_ELEMENT_COMMAND_ID, mention.value);
@@ -2331,7 +2335,7 @@ export class AgentMentionController extends Disposable {
 		}
 
 		if (view === 'devices:ios' || view === 'devices:android' || view === 'devices:physical') {
-			const up: AgentMentionRow = { ...back, run: () => this.setMenuView('devices') } as AgentMentionRow;
+			const up: AgentMentionRow = { ...back, run: () => this.setMenuView('devices') };
 			const devices = this.deviceRows(view, query);
 			return {
 				kind: 'list', rows: [up, ...(devices.length ? devices : [this.message(this.deviceLists === undefined
@@ -3836,6 +3840,12 @@ export class AgentMentionController extends Disposable {
 			return;
 		}
 		this.lastDropAt = now;
+		// A part of Volt dragged from the Playground devtools: a chip that sends its context block.
+		const part = decodeVoltContextDrag(e.dataTransfer?.getData(VOLT_CONTEXT_MIME));
+		if (part) {
+			this.addBrowserMention(part.label, part.value);
+			return;
+		}
 		const insertAt = position ?? this.editor.getPosition() ?? { lineNumber: 1, column: 1 };
 		const range: IRange = { startLineNumber: insertAt.lineNumber, startColumn: insertAt.column, endLineNumber: insertAt.lineNumber, endColumn: insertAt.column };
 		const editors = extractEditorsDropData(e);

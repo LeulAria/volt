@@ -372,13 +372,13 @@
 	 * which would leave a strip above pinned sent cards where content scrolls through.
 	 * The 8px breathing room lives on the first exchange instead.
 	 */
-	padding: 0 20px;
+	padding: 0 var(--volt-look-chat-gutter, 20px);
 	box-sizing: border-box;
 	display: flex;
 	flex-direction: column;
 	align-items: stretch;
 	/* Room between one turn and the next sent message; user card vertical bleed cancels itself. */
-	gap: 20px;
+	gap: var(--volt-look-chat-turn-gap, 20px);
 	overflow: hidden;
 }
 
@@ -421,7 +421,7 @@
 	flex-direction: column;
 	align-items: stretch;
 	flex-shrink: 0;
-	gap: 6px;
+	gap: var(--volt-look-chat-message-gap, 6px);
 	width: 100%;
 	min-width: 0;
 	overflow: visible;
@@ -446,12 +446,12 @@
 	max-width: 728px;
 	min-width: 0;
 	margin: 0 auto;
-	gap: 6px;
+	gap: var(--volt-look-chat-message-gap, 6px);
 }
 
 .volt-agent-bubble {
-	line-height: 1.55;
-	font-size: 14px;
+	line-height: var(--volt-look-chat-line-height, 1.55);
+	font-size: var(--volt-look-chat-font-size, 14px);
 	min-width: 0;
 	max-width: 100%;
 }
@@ -469,8 +469,8 @@
 	z-index: 5;
 	width: auto;
 	max-width: none;
-	margin: 0 -20px -8px;
-	padding: 10px 20px 8px;
+	margin: 0 calc(-1 * var(--volt-look-chat-gutter, 20px)) -8px;
+	padding: 10px var(--volt-look-chat-gutter, 20px) 8px;
 	box-sizing: border-box;
 	background: transparent;
 	pointer-events: none;
@@ -532,9 +532,9 @@
 	min-height: 0;
 	border: 1px solid rgba(255, 255, 255, 0.1);
 	/* Same corners as the edit composer it turns into (.volt-agent-edit-slot .volt-agent-input-box). */
-	border-radius: 8px !important;
+	border-radius: var(--volt-look-chat-user-bubble-radius, 8px) !important;
 	background: var(--volt-user-bubble-bg);
-	padding: 8px 12px;
+	padding: var(--volt-look-chat-user-bubble-padding-y, 8px) var(--volt-look-chat-user-bubble-padding-x, 12px);
 	box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
 	box-sizing: border-box;
 	overflow: hidden;
@@ -682,7 +682,7 @@
 	margin: 0 !important;
 	padding: 8px 10px !important;
 	border: 1px solid rgba(255, 255, 255, 0.1) !important;
-	border-radius: 8px !important;
+	border-radius: var(--volt-look-chat-user-bubble-radius, 8px) !important;
 	background: var(--volt-surface-raised) !important;
 	box-shadow: none !important;
 	backdrop-filter: none !important;
@@ -1752,7 +1752,7 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-changes-files.cards > .volt-file-preview.card {
-	border-radius: 12px;
+	border-radius: var(--volt-look-chat-card-radius, 12px);
 	overflow: hidden;
 }
 
@@ -1766,7 +1766,7 @@ pre.volt-agent-searchable {
 .volt-agent-card {
 	margin: 4px 0 8px;
 	border: 1px solid rgba(255, 255, 255, 0.12);
-	border-radius: 12px;
+	border-radius: var(--volt-look-chat-card-radius, 12px);
 	overflow: hidden;
 	background: color-mix(in srgb, var(--vscode-foreground) 4%, var(--vscode-editor-background));
 }
@@ -2400,7 +2400,7 @@ pre.volt-agent-searchable {
 .volt-agent-block.terminal {
 	border: 1px solid rgba(255, 255, 255, 0.12);
 	background: transparent;
-	border-radius: 12px;
+	border-radius: var(--volt-look-chat-card-radius, 12px);
 	overflow: hidden;
 	isolation: isolate;
 	min-width: 0;
@@ -2413,11 +2413,11 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-block.terminal:not(.has-term-body) .volt-agent-term-bar {
-	border-radius: 12px;
+	border-radius: var(--volt-look-chat-card-radius, 12px);
 }
 
 .volt-agent-block.terminal.has-term-body .volt-agent-term-bar {
-	border-radius: 12px 12px 0 0;
+	border-radius: var(--volt-look-chat-card-radius, 12px) var(--volt-look-chat-card-radius, 12px) 0 0;
 }
 
 .volt-agent-code-lang {
@@ -2959,7 +2959,7 @@ pre.volt-agent-searchable {
 	--volt-composer-bg: var(--volt-surface-raised);
 	position: relative;
 	flex-shrink: 0;
-	padding: 10px 20px 8px;
+	padding: 10px var(--volt-look-chat-gutter, 20px) 8px;
 	box-sizing: border-box;
 	width: 100%;
 	display: flex;
@@ -3059,16 +3059,16 @@ pre.volt-agent-searchable {
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-	height: 30px;
+	height: var(--volt-look-composer-chip-height, 30px);
 	padding: 0 12px;
 	border: 1px solid rgba(255, 255, 255, 0.12);
-	border-radius: 999px;
+	border-radius: var(--volt-look-composer-chip-radius, 999px);
 	background: var(--volt-composer-bg, #222222);
 	color: #9a9a9a;
 	font: inherit;
 	font-size: 13px;
 	font-weight: 300;
-	line-height: 30px;
+	line-height: var(--volt-look-composer-chip-height, 30px);
 	cursor: pointer;
 	box-shadow: none;
 	backdrop-filter: none;
@@ -3469,7 +3469,7 @@ pre.volt-agent-searchable {
 	height: auto !important;
 	min-height: 0 !important;
 	max-height: none !important;
-	border-radius: 20px !important;
+	border-radius: var(--volt-look-composer-radius, 20px) !important;
 	padding: 0 !important;
 	overflow: hidden !important;
 }
@@ -3556,7 +3556,7 @@ pre.volt-agent-searchable {
 
 .volt-agent-editor.follow-up:not(.has-turns):not(.zoomed):not(.resized) .volt-agent-composer {
 	margin-top: auto;
-	padding: 10px 20px 8px;
+	padding: 10px var(--volt-look-chat-gutter, 20px) 8px;
 }
 
 .volt-agent-editor:not(.has-turns):not(.zoomed):not(.resized) .monaco-sash.horizontal {
@@ -3578,7 +3578,7 @@ pre.volt-agent-searchable {
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer {
 	flex: 0 0 auto;
 	margin-top: 0;
-	padding: 0 20px 8px;
+	padding: 0 var(--volt-look-chat-gutter, 20px) 8px;
 }
 
 .volt-agent-input-box {
@@ -3589,8 +3589,8 @@ pre.volt-agent-searchable {
 	width: 100%;
 	max-width: 728px;
 	margin: 0 auto;
-	border: 1px solid rgba(255, 255, 255, 0.1);
-	border-radius: 20px;
+	border: var(--volt-look-composer-border-width, 1px) solid rgba(255, 255, 255, 0.1);
+	border-radius: var(--volt-look-composer-radius, 20px);
 	background: var(--volt-composer-bg);
 	display: flex;
 	flex-direction: column;
@@ -3652,9 +3652,9 @@ pre.volt-agent-searchable {
 	align-items: center;
 	justify-content: flex-start;
 	height: auto;
-	min-height: 40px;
+	min-height: var(--volt-look-composer-min-height, 40px);
 	max-height: 62px;
-	border-radius: 999px;
+	border-radius: var(--volt-look-composer-pill-radius, 999px);
 	padding: 0 7px;
 	box-sizing: border-box;
 	overflow: hidden;
@@ -3911,7 +3911,7 @@ pre.volt-agent-searchable {
 	width: 100%;
 	box-sizing: border-box;
 	padding: 8px 10px 8px;
-	border-radius: 12px;
+	border-radius: var(--volt-look-chat-card-radius, 12px);
 	background: transparent;
 	border: 1px solid rgba(255, 255, 255, 0.1);
 	color: var(--vscode-foreground);
@@ -4434,7 +4434,7 @@ pre.volt-agent-searchable {
 	min-height: 0;
 	width: 100%;
 	overflow: hidden;
-	padding: 8px 10px;
+	padding: var(--volt-look-composer-input-padding-y, 8px) var(--volt-look-composer-input-padding-x, 10px);
 	box-sizing: border-box;
 	background: transparent;
 }
@@ -4450,12 +4450,13 @@ pre.volt-agent-searchable {
 	display: flex;
 	align-items: flex-start;
 	min-height: 0;
-	padding: 8px 10px;
+	padding: var(--volt-look-composer-input-padding-y, 8px) var(--volt-look-composer-input-padding-x, 10px);
 }
 
 .volt-agent-input-box:not(.follow-up) .volt-agent-monaco {
 	min-height: 72px;
-	padding: 8px 12px;
+	/* The new-chat composer has 2px more room each side; a set token gives every composer the same. */
+	padding: var(--volt-look-composer-input-padding-y, 8px) var(--volt-look-composer-input-padding-x, 12px);
 }
 
 .volt-agent-input-box:not(.follow-up) .volt-agent-monaco .monaco-editor {
@@ -5133,8 +5134,8 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-send {
-	width: 26px;
-	height: 26px;
+	width: var(--volt-look-composer-send-size, 26px);
+	height: var(--volt-look-composer-send-size, 26px);
 	border: 0;
 	border-radius: 50%;
 	background: var(--volt-mode-send-bg);

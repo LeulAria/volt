@@ -127,6 +127,7 @@ import { IActionViewItem } from '../../../../../base/browser/ui/actionbar/action
 import { IBaseActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { getSimpleCodeEditorWidgetOptions } from '../../../codeEditor/browser/simpleEditorOptions.js';
 import { IVoltBrowserComments, REVEAL_BROWSER_ELEMENT_COMMAND_ID, revealBrowserElementOnHover } from '../preview/browserCommentStore.js';
+import { REVEAL_VOLT_PART_COMMAND_ID, voltPartIdFromContext } from '../../../voltCustomize/common/voltCustomizeContext.js';
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { completeStreamingBlocks } from './agentSessionController.js';
 import { AgentSurfaceHost, agentSideChatParents } from '../workspace/agentSurfaceHost.js';
@@ -2677,14 +2678,20 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 					}));
 				}
 			} else if (mention.kind === 'browser' && mention.value) {
-				// A picked element: the browser beside the chat scrolls to it, on a click or a hover.
+				// A picked element: the browser beside the chat scrolls to it, on a click or a hover. A part
+				// of Volt from the Playground devtools: the devtools open on it, on a click.
 				const payload = mention.value;
+				const partId = voltPartIdFromContext(payload);
 				chip.setAttribute('data-open', 'true');
-				this.threadListeners.add(revealBrowserElementOnHover(chip, () => payload, this.commandService));
+				if (!partId) {
+					this.threadListeners.add(revealBrowserElementOnHover(chip, () => payload, this.commandService));
+				}
 				this.threadListeners.add(addDisposableListener(chip, 'click', e => {
 					e.preventDefault();
 					e.stopPropagation();
-					void this.commandService.executeCommand(REVEAL_BROWSER_ELEMENT_COMMAND_ID, payload);
+					void (partId
+						? this.commandService.executeCommand(REVEAL_VOLT_PART_COMMAND_ID, partId)
+						: this.commandService.executeCommand(REVEAL_BROWSER_ELEMENT_COMMAND_ID, payload));
 				}));
 			} else if (mention.kind === 'skill') {
 				this.bindSkillChip(chip, mention);
@@ -6288,6 +6295,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.ensureInputEditor();
 		await this.mentionController?.addResourceMentions(resources);
 		this.inputEditor?.focus();
+	}
+
+	/** A context chip (a part of Volt from the Playground devtools): shows `label`, sends `value`. */
+	addContextMention(label: string, value: string): boolean {
+		this.ensureInputEditor();
+		const added = !!this.mentionController?.addBrowserMention(label, value);
+		this.inputEditor?.focus();
+		return added;
 	}
 
 	private ensureInputEditor(): void {

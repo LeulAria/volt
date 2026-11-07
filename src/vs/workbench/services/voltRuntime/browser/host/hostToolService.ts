@@ -61,6 +61,7 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 	private readonly _onDidChangeTools = this._register(new Emitter<void>());
 	readonly onDidChangeTools: Event<void> = this._onDidChangeTools.event;
 	private readonly providers = new Set<IVoltHostToolProvider>();
+	private disabledTools = new Set<string>();
 
 	constructor(
 		@ICommandService private readonly commandService: ICommandService,
@@ -72,7 +73,17 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 	}
 
 	listTools(): readonly IVoltHostToolInfo[] {
-		return this.providers.size ? [...VOLT_HOST_TOOLS, ...[...this.providers].flatMap(provider => provider.tools)] : VOLT_HOST_TOOLS;
+		const tools = this.providers.size ? [...VOLT_HOST_TOOLS, ...[...this.providers].flatMap(provider => provider.tools)] : VOLT_HOST_TOOLS;
+		return this.disabledTools.size ? tools.filter(tool => !this.disabledTools.has(tool.name)) : tools;
+	}
+
+	setDisabledTools(names: Iterable<string>): void {
+		const next = new Set(names);
+		if (next.size === this.disabledTools.size && [...next].every(name => this.disabledTools.has(name))) {
+			return;
+		}
+		this.disabledTools = next;
+		this._onDidChangeTools.fire();
 	}
 
 	registerToolProvider(provider: IVoltHostToolProvider): IDisposable {
@@ -107,6 +118,9 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 	private async run(name: string, args: Record<string, unknown>, requested: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
 		// Calls over MCP carry no folder: a chat's tools work in its worktree or project.
 		const call = requested?.sessionId && !requested.cwd ? { ...requested, cwd: this.sessions?.cwd(requested.sessionId) } : requested;
+		if (this.disabledTools.has(name)) {
+			return { error: `${name} belongs to a Volt feature the user turned off (Capabilities or Extensions). Do not call it again in this chat.` };
+		}
 		for (const provider of this.providers) {
 			const tool = provider.tools.find(candidate => candidate.name === name);
 			if (tool) {

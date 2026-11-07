@@ -1,0 +1,25 @@
+{
+	"name": "computer-use",
+	"displayName": "Volt: Computer Use",
+	"description": "Agents read and drive native apps on this Mac through accessibility. Disable this extension to turn the feature off.",
+	"version": "0.0.1",
+	"publisher": "volt",
+	"license": "MIT",
+	"engines": {
+		"vscode": "*"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"volt",
+		"feature"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {}
+}

@@ -1,0 +1,25 @@
+{
+	"name": "visuals",
+	"displayName": "Volt: Charts, HTML and Canvas",
+	"description": "Charts, HTML pages, mockups and the canvas, drawn in the chat. Disable this extension to turn the feature off.",
+	"version": "0.0.1",
+	"publisher": "volt",
+	"license": "MIT",
+	"engines": {
+		"vscode": "*"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"volt",
+		"feature"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {}
+}

@@ -22,6 +22,7 @@ import { IVoltAccountsService, IVoltClaudeAccountsState } from '../../../../../p
 import { IVoltUsageLimitGroup, IVoltUsageService } from '../../../../../platform/voltUsage/common/voltUsage.js';
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { IAutomation, IAutomationService } from '../../../../services/voltRuntime/common/automations/automations.js';
+import { IVoltFeatureService } from '../../../voltCustomize/common/voltFeatures.js';
 import { NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
 import { showVoltMenu } from '../ui/menu/voltMenu.js';
 import { AgentUsageHoverCard, usageAccountRows } from '../usage/agentUsageHoverCard.js';
@@ -98,32 +99,45 @@ export const DOCK_SECTIONS: readonly IDockSectionInfo[] = [
 /** The user's picks that differ from the defaults, by section. */
 const DOCK_SECTIONS_KEY = 'volt.agent.sideToolbar.sections';
 
-/** Which of the side toolbar's sections show, as the user picked in its tune menu (per profile). */
+/**
+ * Which of the side toolbar's sections show, as the user picked in its tune menu (per profile).
+ * A section whose feature is disabled never shows, and leaves the menu, whatever the pick.
+ */
 export class DockSectionPrefs extends Disposable {
 
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	readonly onDidChange: Event<void> = this._onDidChange.event;
 	private picks: Partial<Record<DockSectionId, boolean>>;
 
-	constructor(private readonly storage: IStorageService) {
+	constructor(private readonly storage: IStorageService, private readonly features: IVoltFeatureService) {
 		super();
 		this.picks = this.read();
 		this._register(storage.onDidChangeValue(StorageScope.PROFILE, DOCK_SECTIONS_KEY, this._store)(() => {
 			this.picks = this.read();
 			this._onDidChange.fire();
 		}));
+		this._register(features.onDidChange(() => this._onDidChange.fire()));
+	}
+
+	/** Whether the section's feature is on (a section no feature owns always is). */
+	isAvailable(id: DockSectionId): boolean {
+		return this.features.isOn('dock', id);
 	}
 
 	isShown(id: DockSectionId): boolean {
-		return this.picks[id] ?? DOCK_SECTIONS.find(section => section.id === id)?.shownByDefault ?? true;
+		return this.isAvailable(id) && this.isPicked(id);
 	}
 
 	isDefault(): boolean {
-		return DOCK_SECTIONS.every(section => this.isShown(section.id) === section.shownByDefault);
+		return DOCK_SECTIONS.every(section => this.isPicked(section.id) === section.shownByDefault);
+	}
+
+	private isPicked(id: DockSectionId): boolean {
+		return this.picks[id] ?? DOCK_SECTIONS.find(section => section.id === id)?.shownByDefault ?? true;
 	}
 
 	toggle(id: DockSectionId): void {
-		const shown = !this.isShown(id);
+		const shown = !this.isPicked(id);
 		const next = { ...this.picks };
 		if (shown === DOCK_SECTIONS.find(section => section.id === id)?.shownByDefault) {
 			delete next[id];
@@ -187,7 +201,7 @@ export function showDockSectionsMenu(contextViewService: IContextViewService, an
 			{
 				id: 'sections',
 				title: localize('voltAgent.dockSections.title', "Show in side toolbar"),
-				items: DOCK_SECTIONS.map(section => ({ id: section.id, label: section.label, checked: prefs.isShown(section.id), keepOpen: true, data: section.id })),
+				items: DOCK_SECTIONS.filter(section => prefs.isAvailable(section.id)).map(section => ({ id: section.id, label: section.label, checked: prefs.isShown(section.id), keepOpen: true, data: section.id })),
 			},
 			...(statusBar ? [{
 				id: 'window',

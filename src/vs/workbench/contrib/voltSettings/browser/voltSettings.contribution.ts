@@ -67,13 +67,13 @@ registerAction2(class OpenVoltSettingsAction extends Action2 {
 		});
 	}
 
-	/** `section`: the page to open on (`devices`, `usage`, …). */
+	/** `section`: the page to open on (`devices`, `usage`, `customizeVolt`, …). */
 	override async run(accessor: ServicesAccessor, section?: unknown): Promise<void> {
 		const editorService = accessor.get(IEditorService);
 		const instantiationService = accessor.get(IInstantiationService);
 		const pane = await editorService.openEditor(instantiationService.createInstance(VoltSettingsEditorInput), { pinned: true });
-		if (typeof section === 'string') {
-			(pane as { showSection?(id: string): void } | undefined)?.showSection?.(section);
+		if (typeof section === 'string' && pane instanceof VoltSettingsEditor) {
+			pane.showSection(section);
 		}
 	}
 });

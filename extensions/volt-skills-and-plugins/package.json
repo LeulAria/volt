@@ -1,0 +1,25 @@
+{
+	"name": "skills-and-plugins",
+	"displayName": "Volt: Skills & Plugins",
+	"description": "Skills, subagents, rules, hooks and MCP servers, and installing more from skills.sh and plugin marketplaces. Disable this extension to turn the feature off.",
+	"version": "0.0.1",
+	"publisher": "volt",
+	"license": "MIT",
+	"engines": {
+		"vscode": "*"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"volt",
+		"feature"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {}
+}

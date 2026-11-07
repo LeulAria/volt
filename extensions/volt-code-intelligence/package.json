@@ -1,0 +1,25 @@
+{
+	"name": "code-intelligence",
+	"displayName": "Volt: Code Intelligence",
+	"description": "Volt's code index: instant grep, symbol and file search for agents, and its Settings page. Disable this extension to turn the feature off.",
+	"version": "0.0.1",
+	"publisher": "volt",
+	"license": "MIT",
+	"engines": {
+		"vscode": "*"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"volt",
+		"feature"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {}
+}

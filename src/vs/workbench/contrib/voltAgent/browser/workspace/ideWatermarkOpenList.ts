@@ -13,6 +13,7 @@ import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../comm
 import { IEditorGroupView } from '../../../../browser/parts/editor/editor.js';
 import { EditorPart } from '../../../../browser/parts/editor/editorPart.js';
 import { IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
+import { IVoltFeatureService } from '../../../voltCustomize/common/voltFeatures.js';
 import { CANVAS_ENABLED_SETTING, SCRATCH_ENABLED_SETTING } from '../../common/canvasScratchSettings.js';
 import { OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
 import { NEW_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
@@ -57,6 +58,7 @@ class IdeWatermarkOpenListContribution extends Disposable {
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IKeybindingService private readonly keybindingService: IKeybindingService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IVoltFeatureService private readonly features: IVoltFeatureService,
 	) {
 		super();
 		const part = this.editorGroupsService.mainPart;
@@ -67,6 +69,7 @@ class IdeWatermarkOpenListContribution extends Disposable {
 		this._register(part.onDidAddGroup(() => this.renderAll(part)));
 		this._register(part.onDidRemoveGroup(() => this.renderAll(part)));
 		this._register(this.keybindingService.onDidUpdateKeybindings(() => this.renderAll(part, true)));
+		this._register(this.features.onDidChange(() => this.renderAll(part, true)));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration('workbench.tips.enabled') || e.affectsConfiguration(SCRATCH_ENABLED_SETTING) || e.affectsConfiguration(CANVAS_ENABLED_SETTING)) {
 				this.renderAll(part, true);
@@ -107,7 +110,7 @@ class IdeWatermarkOpenListContribution extends Disposable {
 			svgPath: SIDE_CHAT_ICON_PATH,
 			keybindingCommand: NEW_AGENT_COMMAND_ID,
 		}];
-		for (const item of visibleSurfaceMenuItems(this.configurationService)) {
+		for (const item of visibleSurfaceMenuItems(this.configurationService, this.features)) {
 			if (item.id === 'sideChat') {
 				continue;
 			}

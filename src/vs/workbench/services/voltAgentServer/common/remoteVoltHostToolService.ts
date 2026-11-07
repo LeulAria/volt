@@ -57,6 +57,7 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 	private readonly publishTools: RunOnceScheduler;
 	/** Calls the server is running here, by `cancelKey`. */
 	private readonly running = new Map<string, CancellationTokenSource>();
+	private disabledTools = new Set<string>();
 
 	constructor(@IAgentServerClientService private readonly client: IAgentServerClientService) {
 		super();
@@ -103,7 +104,22 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 	}
 
 	listTools(): readonly IVoltHostToolInfo[] {
-		return this.client.mirror.get<IVoltHostToolInfo[]>('runtime', 'hostTools') ?? VOLT_HOST_TOOLS;
+		const tools = this.client.mirror.get<IVoltHostToolInfo[]>('runtime', 'hostTools') ?? VOLT_HOST_TOOLS;
+		return this.disabledTools.size ? tools.filter(tool => !this.disabledTools.has(tool.name)) : tools;
+	}
+
+	/**
+	 * This window's tools of a turned-off feature are not sent to the server. The server's own tools
+	 * (browser, terminals, memory, tasks) are listed there and stay on.
+	 */
+	setDisabledTools(names: Iterable<string>): void {
+		const next = new Set(names);
+		if (next.size === this.disabledTools.size && [...next].every(name => this.disabledTools.has(name))) {
+			return;
+		}
+		this.disabledTools = next;
+		this.publishTools.schedule();
+		this._onDidChangeTools.fire();
 	}
 
 	registerToolProvider(provider: IVoltHostToolProvider): IDisposable {
@@ -120,7 +136,7 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 		if (!this.client.isReady) {
 			return; // onDidResync sends them once connected
 		}
-		const tools = [...this.providers].flatMap(provider => provider.tools);
+		const tools = [...this.providers].flatMap(provider => provider.tools).filter(tool => !this.disabledTools.has(tool.name));
 		this.client.send('hostTools.setClientTools', tools);
 	}
 

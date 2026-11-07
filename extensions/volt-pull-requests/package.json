@@ -1,0 +1,25 @@
+{
+	"name": "pull-requests",
+	"displayName": "Volt: Pull Requests",
+	"description": "Pull request links, watching and stacks, the Pull Requests page and buttons, and the agent tools for them. Disable this extension to turn the feature off.",
+	"version": "0.0.1",
+	"publisher": "volt",
+	"license": "MIT",
+	"engines": {
+		"vscode": "*"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"volt",
+		"feature"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {}
+}
