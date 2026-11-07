@@ -293,7 +293,10 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 				// The base travels with the branch, so diffs and merges read it from git too.
 				void this.worktrees.git(group.repoRoot, ['config', `branch.${run.branch}.volt-base`, group.base.ref ?? group.base.commit]);
 			} else {
-				await this.worktrees.ensure(group.repoRoot, run.worktreePath, run.branch);
+				const ensured = await this.worktrees.ensure(group.repoRoot, run.worktreePath, run.branch);
+				if (ensured.path !== run.worktreePath) {
+					this.updateRun(groupId, runId, current => ({ ...current, worktreePath: ensured.path }));
+				}
 			}
 			run = this.groups.get(groupId)!.runs.find(candidate => candidate.id === runId)!;
 			const path = run.worktreePath!;

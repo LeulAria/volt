@@ -112,7 +112,7 @@ suite('Agent orchestrator service', () => {
 			new NullLogService(),
 			stub({ whenReady: Promise.resolve(), get: () => undefined, sessionParent: () => undefined, open: () => ({ setMeta: () => undefined }) }),
 			stub({ registerToolProvider: (provider: IVoltHostToolProvider) => { tools = provider; return toDisposable(() => tools = undefined); } }),
-			stub({ create: async () => ({ path: '/wt/a', branch: 'volt/a' }), ensure: async () => false }),
+			stub({ create: async () => ({ path: '/wt/a', branch: 'volt/a' }), ensure: async (_root: string, path: string) => ({ path, recreated: false }) }),
 			stub({ rootFor: () => URI.file('/repo') }),
 			stub({ getValue: () => existing?.resume ?? 'off', onDidChangeConfiguration: () => toDisposable(() => undefined) }),
 			stub({ run: async () => undefined, needsRetry: () => false }),

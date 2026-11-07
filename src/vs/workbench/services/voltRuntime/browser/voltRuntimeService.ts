@@ -21,6 +21,7 @@ import { ISecretStorageService } from '../../../../platform/secrets/common/secre
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IAgentWorktreeService } from '../common/git/agentWorktree.js';
+import { describeMoveResult, workspaceMoveNote } from '../common/git/workspaceMove.js';
 import { IAgentHistoryService } from '../common/history/agentHistory.js';
 import { buildTitlePrompt, isNeutralTitle, isVagueMessage, sanitizeTitle, titleCommandFor } from '../common/history/titleGeneration.js';
 import { PREDICTOR_SKILL, predictorRequest, PredictorTask } from '../common/prediction/predictorSkill.js';
@@ -2733,8 +2734,18 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			if (!project) {
 				throw new Error('Open a folder before using a worktree.');
 			}
-			const recreated = await this.worktrees.ensure(project.fsPath, session.worktreePath, session.worktreeBranch);
-			if (recreated) {
+			const ensured = await this.worktrees.ensure(project.fsPath, session.worktreePath, session.worktreeBranch);
+			if (ensured.path !== session.worktreePath) {
+				// Its checkout is gone and another one has its branch: the chat works there now, alongside whoever else does.
+				const from = session.worktreePath;
+				session.worktreePath = ensured.path;
+				session.moved = {
+					model: workspaceMoveNote({ fromPath: from, toPath: ensured.path, branch: session.worktreeBranch, worktree: true, files: 0, left: 0 }),
+					announce: describeMoveResult({ ok: true, worktree: true, branch: session.worktreeBranch }),
+				};
+				this.history.open(session.sessionId).setMeta({ worktreePath: ensured.path });
+				this.logService.info(`[volt] ${session.sessionId}: ${from} is gone, so it works in ${ensured.path}, which has ${session.worktreeBranch}`);
+			} else if (ensured.recreated) {
 				session.announceWorktree = true;
 				// A checkout recreated from its branch has none of what setup installed.
 				await this.worktreeSetup.run(session.sessionId, { repoRoot: project.fsPath, worktreePath: session.worktreePath, branch: session.worktreeBranch, isCancelled });

@@ -93,7 +93,7 @@ class FakeWorktrees {
 		}
 		return { path: `/wt/${name.replace(/\//g, '-')}`, branch: name, commit: 'base1' };
 	}
-	async ensure() { return false; }
+	async ensure(_repoRoot: string, path: string) { return { path, recreated: false }; }
 	async remove(_repoRoot: string, path: string, branch: string, options: unknown) {
 		this.removed.push({ path, branch, options });
 		return 'removed' as const;
@@ -180,7 +180,7 @@ suite('Run group service', () => {
 			new NullLogService(),
 			history,
 			stub({ registerToolProvider: () => toDisposable(() => undefined) }),
-			stub({ create: async () => ({ path: '/wt/a', branch: 'volt/a' }), ensure: async () => false }),
+			stub({ create: async () => ({ path: '/wt/a', branch: 'volt/a' }), ensure: async (_root: string, path: string) => ({ path, recreated: false }) }),
 			stub({ rootFor: () => URI.file('/repo') }),
 			stub({ getValue: () => undefined, onDidChangeConfiguration: () => toDisposable(() => undefined) }),
 			stub({ run: async () => undefined }),

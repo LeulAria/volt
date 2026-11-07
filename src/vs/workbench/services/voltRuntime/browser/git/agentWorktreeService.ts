@@ -19,6 +19,7 @@ import {
 	AgentWorktreeTarget,
 	IAgentWorktreeService,
 	ICreatedAgentWorktree,
+	IEnsuredAgentWorktree,
 	IGitRunResult,
 	IReleasedWorktreeBranch,
 	IWorktreeFiles,
@@ -58,7 +59,7 @@ export class AgentWorktreeService implements IAgentWorktreeService {
 		});
 	}
 
-	async ensure(repoRoot: string, path: string, branch: string): Promise<boolean> {
+	async ensure(repoRoot: string, path: string, branch: string): Promise<IEnsuredAgentWorktree> {
 		return ensureAgentWorktree({
 			run: (cwd, args) => this.git(cwd, args),
 			files: this.files(),
@@ -107,6 +108,11 @@ export class AgentWorktreeService implements IAgentWorktreeService {
 
 	async removeForDeletedChat(repoRoot: string | undefined, path: string | undefined, branch: string | undefined): Promise<void> {
 		if (!repoRoot || !path || !branch) {
+			return;
+		}
+		// Chats can share a checkout; it goes with the last of them (the deleted chat is still listed here).
+		await this.history.whenReady;
+		if (this.history.list({ includeArchived: true }).filter(meta => meta.worktreePath && normalize(meta.worktreePath) === normalize(path)).length > 1) {
 			return;
 		}
 		try {
