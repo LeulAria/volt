@@ -3,7 +3,95 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-/* Settings > Appearance: sliders, the tool call density preview, the code font preview. */
+/* Settings > Appearance: the chat background gallery, sliders, the tool call density preview, the code font preview. */
+
+/* Chat Background: the pictures under the row's title, each a 16:9 thumbnail over its name. */
+.volt-settings-row.volt-appearance-backdrop-row {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 14px;
+}
+
+.volt-appearance-backdrops {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+	gap: 14px 12px;
+}
+
+.volt-appearance-backdrop {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-appearance-backdrop:focus {
+	outline: none;
+}
+
+.volt-appearance-backdrop .thumb {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	aspect-ratio: 16 / 9;
+	border-radius: 8px;
+	overflow: hidden;
+	background: var(--volt-agent-window-bg-base, var(--vscode-editor-background)) center / cover no-repeat;
+	box-shadow: 0 0 0 1px var(--volt-settings-border);
+	transition: box-shadow 0.12s ease;
+}
+
+/* The black the chat lays over the picture (agentChatBackground.css), live while Dim is dragged. */
+.volt-appearance-backdrop .thumb.picture::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	background: rgb(0 0 0 / var(--volt-chat-backdrop-dim, 0.4));
+}
+
+.monaco-workbench.vs .volt-appearance-backdrop .thumb.picture::after {
+	background: color-mix(in srgb, var(--volt-agent-window-bg-base, #ffffff) calc((0.6 + var(--volt-chat-backdrop-dim, 0.4) * 0.4) * 100%), transparent);
+}
+
+.volt-appearance-backdrop .thumb .codicon {
+	font-size: 16px;
+	opacity: 0.45;
+}
+
+.volt-appearance-backdrop:hover .thumb {
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 32%, transparent);
+}
+
+/* The picture in use: a ring around it, clear of its edge. Keyboard focus rings it in the focus color. */
+.volt-appearance-backdrop.selected .thumb {
+	outline: 2px solid color-mix(in srgb, var(--vscode-foreground) 85%, transparent);
+	outline-offset: 2px;
+}
+
+.volt-appearance-backdrop:focus-visible .thumb {
+	outline: 2px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+.volt-appearance-backdrop .label {
+	overflow: hidden;
+	font-size: 12px;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	opacity: 0.72;
+}
+
+.volt-appearance-backdrop.selected .label {
+	opacity: 1;
+}
 
 .volt-appearance-slider {
 	-webkit-appearance: none;

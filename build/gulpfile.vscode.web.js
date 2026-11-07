@@ -49,6 +49,9 @@ const vscodeWebResourceIncludes = [
 	// Webview
 	'out-build/vs/workbench/contrib/webview/browser/pre/*.{js,html}',
 
+	// Chat background pictures (loaded at runtime by agentChatBackground.ts)
+	'out-build/vs/workbench/contrib/voltAgent/browser/media/chatBackgrounds/*.webp',
+
 	// Tree Sitter highlights
 	'out-build/vs/editor/common/languages/highlights/*.scm',
 

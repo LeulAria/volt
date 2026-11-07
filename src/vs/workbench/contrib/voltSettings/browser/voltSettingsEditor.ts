@@ -1033,6 +1033,7 @@ export class VoltSettingsEditor extends EditorPane {
 		);
 		const generation = this.renderGeneration;
 
+		this.appearance.renderChatBackground(kit);
 		this.appearance.renderAgentConversations(kit);
 		this.appearance.renderColors(kit);
 		this.appearance.renderTypography(kit);

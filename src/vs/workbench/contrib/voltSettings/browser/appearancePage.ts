@@ -4,9 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import './media/appearancePage.css';
-import { $, addDisposableListener, append } from '../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, getWindow } from '../../../../base/browser/dom.js';
+import { StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
+import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../base/browser/ui/contextview/contextview.js';
+import { Codicon } from '../../../../base/common/codicons.js';
 import { Color } from '../../../../base/common/color.js';
+import { KeyCode } from '../../../../base/common/keyCodes.js';
 import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
 import { isMacintosh } from '../../../../base/common/platform.js';
 import { localize } from '../../../../nls.js';
@@ -14,11 +18,18 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { ConfigurationTarget, IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { IExtensionResourceLoaderService } from '../../../../platform/extensionResourceLoader/common/extensionResourceLoader.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ColorScheme, isDark } from '../../../../platform/theme/common/theme.js';
+import { IWorkbenchEnvironmentService } from '../../../services/environment/common/environmentService.js';
+import { IPathService } from '../../../services/path/common/pathService.js';
 import { ColorThemeData } from '../../../services/themes/common/colorThemeData.js';
 import { IWorkbenchColorTheme, IWorkbenchThemeService, ThemeSettings } from '../../../services/themes/common/workbenchThemeService.js';
 import { AGENT_CODE_WRAP_SETTING, AGENT_THEMED_DIFFS_SETTING, AGENT_TOOL_DENSITIES, AGENT_TOOL_DENSITY_SETTING, AgentToolDensity, readToolDensity, VOLT_REDUCE_TRANSPARENCY_SETTING, VOLT_TINT_HUE_SETTING, VOLT_TINT_INTENSITY_SETTING, VOLT_UI_FONT_FAMILY_SETTING, VOLT_WINDOW_TRANSPARENCY_SETTING } from '../../voltAgent/common/agentAppearanceSettings.js';
+import { AGENT_CHAT_BACKGROUND_DEFAULT_DIM, AGENT_CHAT_BACKGROUND_DIM_SETTING, AGENT_CHAT_BACKGROUND_IN_CHATS_SETTING, AGENT_CHAT_BACKGROUND_MAX_DIM, AGENT_CHAT_BACKGROUND_NONE, AGENT_CHAT_BACKGROUND_PIXELS_SETTING, AGENT_CHAT_BACKGROUND_PRESETS, AGENT_CHAT_BACKGROUND_SETTING, AgentChatBackground, agentChatBackgroundDim, resolveAgentChatBackground } from '../../voltAgent/common/agentChatBackground.js';
+import { agentChatBackgroundPresetUrl, agentChatBackgroundResource, chooseAgentChatBackground, importedAgentChatBackground, loadAgentChatBackground } from '../../voltAgent/browser/chat/agentChatBackground.js';
+import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
+import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { mixTint, tintAmount, tintColor } from '../common/voltTint.js';
 import { createVoltDropdown } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
 import { createSettingsIcon } from './settingsIcons.js';
@@ -126,17 +137,23 @@ export class AppearancePage {
 	private readonly commands: ICommandService;
 	private readonly resources: IExtensionResourceLoaderService;
 	private readonly contextView: IContextViewService;
+	private readonly files: IFileService;
+	private readonly paths: IPathService;
+	private readonly environment: IWorkbenchEnvironmentService;
 
 	constructor(
-		instantiationService: IInstantiationService,
+		private readonly instantiationService: IInstantiationService,
 		private readonly store: DisposableStore,
 	) {
-		({ themes: this.themes, configuration: this.configuration, commands: this.commands, resources: this.resources, contextView: this.contextView } = instantiationService.invokeFunction(accessor => ({
+		({ themes: this.themes, configuration: this.configuration, commands: this.commands, resources: this.resources, contextView: this.contextView, files: this.files, paths: this.paths, environment: this.environment } = instantiationService.invokeFunction(accessor => ({
 			themes: accessor.get(IWorkbenchThemeService),
 			configuration: accessor.get(IConfigurationService),
 			commands: accessor.get(ICommandService),
 			resources: accessor.get(IExtensionResourceLoaderService),
 			contextView: accessor.get(IContextViewService),
+			files: accessor.get(IFileService),
+			paths: accessor.get(IPathService),
+			environment: accessor.get(IWorkbenchEnvironmentService),
 		})));
 	}
 
@@ -220,6 +237,145 @@ export class AppearancePage {
 	browseThemes(): void {
 		void this.commands.executeCommand('workbench.action.selectTheme');
 	}
+
+	//#region Chat Background
+
+	/**
+	 * The picture behind the chat (agentChatBackground.ts): a gallery of the built-in pictures and
+	 * your own, a button to choose your own, how much black lies over it, the pixel grid, and
+	 * whether it stays behind chats with messages.
+	 */
+	renderChatBackground(kit: ISettingsPageKit): void {
+		kit.sectionLabel(localize('voltSettings.chatBackground', "Chat Background"));
+		const group = kit.settingsGroup();
+		const row = kit.settingRow(
+			group,
+			localize('voltSettings.chatBackgroundPicture', "Picture"),
+			localize('voltSettings.chatBackgroundPictureDesc', "Shown behind a new chat in the agent window."),
+		);
+		row.classList.add('volt-appearance-backdrop-row');
+		const gallery = append(row, $('.volt-appearance-backdrops'));
+		gallery.setAttribute('role', 'radiogroup');
+		gallery.setAttribute('aria-label', localize('voltSettings.chatBackground', "Chat Background"));
+		let dim = this.configuration.getValue<number>(AGENT_CHAT_BACKGROUND_DIM_SETTING) ?? AGENT_CHAT_BACKGROUND_DEFAULT_DIM;
+		const tiles: { readonly background: AgentChatBackground; readonly element: HTMLElement }[] = [];
+		// Each picture's thumbnail under the black the chat lays over it, live while Dim is dragged.
+		const paintDim = () => {
+			for (const tile of tiles) {
+				tile.element.style.setProperty('--volt-chat-backdrop-dim', String(agentChatBackgroundDim(dim, tile.background)));
+			}
+		};
+		const drawStore = this.store.add(new DisposableStore());
+		let generation = 0;
+		const draw = async () => {
+			const drawn = ++generation;
+			const current = resolveAgentChatBackground(this.configuration.getValue(AGENT_CHAT_BACKGROUND_SETTING));
+			// Your own picture: the one in use, else the last one chosen, so you can switch back to it.
+			const custom = current.kind === 'file' ? current.location : await importedAgentChatBackground(this.files, this.environment);
+			let customUrl: string | undefined;
+			if (custom) {
+				try {
+					customUrl = await loadAgentChatBackground(await agentChatBackgroundResource(custom, this.paths, this.environment), this.files);
+				} catch {
+					customUrl = undefined;
+				}
+			}
+			if (drawn !== generation || this.store.isDisposed) {
+				if (customUrl) {
+					URL.revokeObjectURL(customUrl);
+				}
+				return;
+			}
+			drawStore.clear();
+			if (customUrl) {
+				const url = customUrl;
+				drawStore.add(toDisposable(() => URL.revokeObjectURL(url)));
+			}
+			gallery.replaceChildren();
+			tiles.length = 0;
+			const choice = (background: AgentChatBackground, label: string, description: string | undefined, thumbnail: string | undefined, selected: boolean, value: string) => {
+				const tile = append(gallery, $('button.volt-appearance-backdrop')) as HTMLButtonElement;
+				tile.type = 'button';
+				tile.setAttribute('role', 'radio');
+				tile.setAttribute('aria-checked', String(selected));
+				tile.setAttribute('aria-label', description ? `${label}, ${description}` : label);
+				tile.tabIndex = selected ? 0 : -1;
+				tile.classList.toggle('selected', selected);
+				const thumb = append(tile, $('span.thumb'));
+				if (thumbnail) {
+					thumb.classList.add('picture');
+					thumb.style.backgroundImage = `url('${CSS.escape(thumbnail)}')`;
+				} else {
+					thumb.appendChild(renderIcon(Codicon.circleSlash));
+				}
+				append(tile, $('span.label')).textContent = label;
+				setAgentTooltip(tile, description);
+				drawStore.add(addDisposableListener(tile, 'click', () => void this.configuration.updateValue(AGENT_CHAT_BACKGROUND_SETTING, value)));
+				tiles.push({ background, element: tile });
+			};
+			choice({ kind: 'none' }, localize('voltSettings.chatBackgroundNone', "None"), undefined, undefined, current.kind === 'none', AGENT_CHAT_BACKGROUND_NONE);
+			for (const preset of AGENT_CHAT_BACKGROUND_PRESETS) {
+				choice({ kind: 'preset', preset }, preset.label, preset.description, agentChatBackgroundPresetUrl(preset, true), current.kind === 'preset' && current.preset.id === preset.id, preset.id);
+			}
+			if (custom && customUrl) {
+				choice({ kind: 'file', location: custom }, localize('voltSettings.chatBackgroundCustom', "Your Picture"), undefined, customUrl, current.kind === 'file', custom);
+			}
+			// A file that could not be read selects no tile: Tab still reaches the gallery.
+			if (!tiles.some(tile => tile.element.tabIndex === 0)) {
+				tiles[0].element.tabIndex = 0;
+			}
+			paintDim();
+		};
+		// Arrow keys move along the gallery, as in any radio group; the pick waits for Enter or a click.
+		this.store.add(addDisposableListener(gallery, 'keydown', e => {
+			const event = new StandardKeyboardEvent(e);
+			const step = event.equals(KeyCode.RightArrow) || event.equals(KeyCode.DownArrow) ? 1 : event.equals(KeyCode.LeftArrow) || event.equals(KeyCode.UpArrow) ? -1 : 0;
+			const index = tiles.findIndex(tile => tile.element === e.target);
+			if (!step || index < 0) {
+				return;
+			}
+			event.preventDefault();
+			tiles[(index + step + tiles.length) % tiles.length].element.focus();
+		}));
+		this.store.add(this.configuration.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(AGENT_CHAT_BACKGROUND_SETTING)) {
+				void draw();
+			}
+		}));
+		void draw();
+
+		kit.settingRow(
+			group,
+			localize('voltSettings.chatBackgroundOwn', "Your Own Picture"),
+			localize('voltSettings.chatBackgroundOwnDesc', "PNG, JPEG, WebP, GIF or BMP. Volt keeps a copy, so you can move or delete the original."),
+			host => {
+				const choose = this.store.add(createVoltButton(host, 'secondary'));
+				choose.label = localize('voltSettings.chatBackgroundChoose', "Choose Image");
+				this.store.add(choose.onDidClick(() => void this.instantiationService.invokeFunction(accessor => chooseAgentChatBackground(accessor, getWindow(host)))));
+			},
+		);
+		kit.settingRow(
+			group,
+			localize('voltSettings.chatBackgroundDim', "Dim"),
+			localize('voltSettings.chatBackgroundDimDesc', "How much black lies over the picture"),
+			host => {
+				host.classList.add('volt-appearance-slider-row');
+				host.parentElement?.classList.add('volt-appearance-slider-setting');
+				const value = $('span.volt-appearance-slider-value');
+				value.textContent = `${dim}%`;
+				this.slider(host, { min: 0, max: AGENT_CHAT_BACKGROUND_MAX_DIM, value: dim, label: localize('voltSettings.chatBackgroundDim', "Dim") }, next => {
+					dim = next;
+					value.textContent = `${next}%`;
+					paintDim();
+				}, next => void this.configuration.updateValue(AGENT_CHAT_BACKGROUND_DIM_SETTING, next));
+				host.appendChild(value);
+			},
+		);
+		this.syncedToggleRow(kit, group, localize('voltSettings.chatBackgroundPixels', "Pixel Grid"), localize('voltSettings.chatBackgroundPixelsDesc', "See the picture through a grid of square pixels"), AGENT_CHAT_BACKGROUND_PIXELS_SETTING, true);
+		this.syncedToggleRow(kit, group, localize('voltSettings.chatBackgroundInChats', "Behind Conversations"), localize('voltSettings.chatBackgroundInChatsDesc', "Keep the picture, darker, behind chats that have messages"), AGENT_CHAT_BACKGROUND_IN_CHATS_SETTING, false);
+	}
+
+	//#endregion
 
 	//#region Agent Conversations, Colors, Typography, High Contrast, Motion
 

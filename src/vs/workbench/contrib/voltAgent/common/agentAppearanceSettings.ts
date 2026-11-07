@@ -7,6 +7,7 @@ import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { Extensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
+import { AGENT_CHAT_BACKGROUND_DEFAULT, AGENT_CHAT_BACKGROUND_DEFAULT_DIM, AGENT_CHAT_BACKGROUND_DIM_SETTING, AGENT_CHAT_BACKGROUND_IN_CHATS_SETTING, AGENT_CHAT_BACKGROUND_MAX_DIM, AGENT_CHAT_BACKGROUND_NONE, AGENT_CHAT_BACKGROUND_PIXELS_SETTING, AGENT_CHAT_BACKGROUND_PRESETS, AGENT_CHAT_BACKGROUND_SETTING } from './agentChatBackground.js';
 
 /**
  * How much of the agent's tool work a chat shows. Compact folds each stretch of calls into one
@@ -100,6 +101,29 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			type: 'boolean',
 			default: false,
 			description: localize('voltAppearance.windowTransparency', "Show the desktop through the agent window's sidebar (macOS vibrancy, Windows acrylic). Uses more GPU memory."),
+		},
+		[AGENT_CHAT_BACKGROUND_SETTING]: {
+			type: 'string',
+			default: AGENT_CHAT_BACKGROUND_DEFAULT,
+			examples: [AGENT_CHAT_BACKGROUND_NONE, ...AGENT_CHAT_BACKGROUND_PRESETS.map(preset => preset.id)],
+			markdownDescription: localize('voltAppearance.chatBackground', "The picture behind the agent chat: `none`, a built-in picture ({0}), or the path of an image file (PNG, JPEG, WebP, GIF or BMP).", AGENT_CHAT_BACKGROUND_PRESETS.map(preset => `\`${preset.id}\``).join(', ')),
+		},
+		[AGENT_CHAT_BACKGROUND_DIM_SETTING]: {
+			type: 'number',
+			default: AGENT_CHAT_BACKGROUND_DEFAULT_DIM,
+			minimum: 0,
+			maximum: AGENT_CHAT_BACKGROUND_MAX_DIM,
+			description: localize('voltAppearance.chatBackgroundDim', "How much black lies over the chat background picture, in percent."),
+		},
+		[AGENT_CHAT_BACKGROUND_PIXELS_SETTING]: {
+			type: 'boolean',
+			default: true,
+			description: localize('voltAppearance.chatBackgroundPixelGrid', "Show the chat background picture through a grid of square pixels."),
+		},
+		[AGENT_CHAT_BACKGROUND_IN_CHATS_SETTING]: {
+			type: 'boolean',
+			default: false,
+			description: localize('voltAppearance.chatBackgroundInConversations', "Keep the chat background picture, darker, behind chats that have messages. Off, only a new chat shows it."),
 		},
 	},
 });
