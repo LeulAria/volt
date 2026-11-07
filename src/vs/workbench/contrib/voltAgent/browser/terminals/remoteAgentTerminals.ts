@@ -6,8 +6,8 @@
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
-import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IProcessDataEvent, IProcessProperty, IProcessPropertyMap, IProcessReadyEvent, IShellLaunchConfig, ITerminalChildProcess, ITerminalLaunchError, ProcessPropertyType, TerminalExitReason, TerminalLocation } from '../../../../../platform/terminal/common/terminal.js';
 import { ILifecycleService } from '../../../../services/lifecycle/common/lifecycle.js';
@@ -15,6 +15,7 @@ import { IAgentServerClientService } from '../../../../services/voltAgentServer/
 import { isTerminalLive } from '../../../../services/voltRuntime/common/terminalTools.js';
 import { AGENT_TERMINAL_ENV, IAgentTerminalInfo, IAgentTerminalStart } from '../../../../services/voltRuntime/common/terminals/managedTerminals.js';
 import { ITerminalEditorService, ITerminalInstance, ITerminalInstanceService } from '../../../terminal/browser/terminal.js';
+import { createAgentTaskTerminal } from './agentTaskTerminal.js';
 import { IAgentTerminalRevealRequest, IAgentTerminalsService } from './agentTerminals.js';
 
 /** The agent server's terminals collection (see ServerTerminals). */
@@ -199,6 +200,8 @@ export class RemoteAgentTerminalsService extends Disposable implements IAgentTer
 	private readonly processes = new Map<string, ServerTerminalProcess>();
 	/** Tabs this service closes itself: closing them must not stop their process. */
 	private readonly closing = new Set<ITerminalInstance>();
+	/** Terminals that already opened their chat's Terminals tab once (or were running when this window came up). */
+	private readonly shown = new Set<string>();
 
 	constructor(
 		@IAgentServerClientService private readonly client: IAgentServerClientService,
@@ -206,6 +209,7 @@ export class RemoteAgentTerminalsService extends Disposable implements IAgentTer
 		@ITerminalEditorService private readonly terminalEditorService: ITerminalEditorService,
 		@ILifecycleService private readonly lifecycleService: ILifecycleService,
 		@ILogService private readonly logService: ILogService,
+		@IFileService private readonly fileService: IFileService,
 	) {
 		super();
 		this._register(client.onDidChangeCollection(e => {
@@ -273,8 +277,14 @@ export class RemoteAgentTerminalsService extends Disposable implements IAgentTer
 			return;
 		}
 		if (info.kind === 'agent-task') {
+			// The task's output file is on this machine: a terminal here follows it.
 			if (info.outputFile) {
-				this._onDidRequestReveal.fire({ chatId: info.chatId, file: URI.file(info.outputFile), preserveFocus });
+				let instance = this.instances.get(id);
+				if (!instance || instance.isDisposed) {
+					instance = createAgentTaskTerminal({ ...info, outputFile: info.outputFile }, () => this.get(id), this.instanceService, this.terminalEditorService, this.fileService);
+					this.instances.set(id, instance);
+				}
+				this._onDidRequestReveal.fire({ chatId: info.chatId, instance, preserveFocus });
 			}
 			return;
 		}
@@ -379,6 +389,7 @@ export class RemoteAgentTerminalsService extends Disposable implements IAgentTer
 			}
 			// Forgotten by the server: its tab goes too.
 			this.chats.delete(id);
+			this.shown.delete(id);
 			this.processes.get(id)?.exit(undefined);
 			const instance = this.instances.get(id);
 			if (instance && !instance.isDisposed) {
@@ -389,6 +400,25 @@ export class RemoteAgentTerminalsService extends Disposable implements IAgentTer
 		}
 		for (const chat of changed) {
 			this._onDidChange.fire(chat);
+		}
+		for (const chat of changed) {
+			this.showStarted(chat, !keys);
+		}
+	}
+
+	/**
+	 * A terminal that just started shows in its chat's Terminals tab. Ones already running when this
+	 * window loads (a full resync) are only noted: a reload must not open every chat's tab.
+	 */
+	private showStarted(chatId: string, quiet: boolean): void {
+		for (const info of this.list(chatId)) {
+			if (this.shown.has(info.id) || !isTerminalLive(info.status) || (info.kind === 'agent-task' && !info.outputFile)) {
+				continue;
+			}
+			this.shown.add(info.id);
+			if (!quiet) {
+				this.reveal(info.id, true);
+			}
 		}
 	}
 }

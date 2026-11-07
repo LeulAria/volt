@@ -48,7 +48,7 @@ const STATUS_WEIGHT: Record<AgentTerminalStatus, number> = {
  * The chat's managed terminals as one chip in the composer's chip row (agentComposerChips.ts):
  * "1 terminal" or "2 terminals" (the running count), with a chevron for the menu. A live
  * terminal, stopping ones included, leads with the row's dot loader. Clicking opens
- * the terminal in the chat's tools on the right; starting a terminal never opens them by itself.
+ * the terminal in the chat's Terminals tab on the right (a terminal also opens it once when it starts).
  */
 export class AgentTerminalChips extends Disposable {
 

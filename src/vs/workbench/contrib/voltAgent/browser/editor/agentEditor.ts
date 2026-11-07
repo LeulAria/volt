@@ -1197,17 +1197,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// The chat's terminals: a chip in the row above the composer (placed by AgentComposerChips).
 		this.terminalChips = this._register(this.instantiationService.createInstance(AgentTerminalChips, { chatId: () => this.runtime.chatFor(this.sessionKey) }));
 		this.surfaceHost = this._register(this.instantiationService.createInstance(AgentSurfaceHost, this.container, this.editorMainEl));
-		// A chip click opens that terminal beside this chat; starting one never does.
+		// A terminal opens beside this chat when it starts (once) and on a chip click.
 		this._register(this.instantiationService.invokeFunction(accessor => accessor.get(IAgentTerminalsService)).onDidRequestReveal(e => {
 			if (e.chatId !== this.runtime.chatFor(this.sessionKey)) {
 				return;
 			}
-			if (e.instance) {
-				this.surfaceHost.revealTerminal(e.instance, e.preserveFocus);
-			} else if (e.file) {
-				// A CLI agent's own background command: its output file, which the editor keeps current.
-				this.surfaceHost.openFile(e.file);
-			}
+			this.surfaceHost.revealTerminal(e.instance, e.preserveFocus);
 		}));
 		append(this.editorMainEl, this.threadEl);
 		this.threadView.rememberHome();
