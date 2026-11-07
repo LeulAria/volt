@@ -1105,6 +1105,7 @@
 		"--volt-pr-closed",
 		"--volt-pr-del",
 		"--volt-pr-draft",
+		"--volt-pr-hover-room",
 		"--volt-pr-label",
 		"--volt-pr-merge-accent",
 		"--volt-pr-merge-accent-hover",
