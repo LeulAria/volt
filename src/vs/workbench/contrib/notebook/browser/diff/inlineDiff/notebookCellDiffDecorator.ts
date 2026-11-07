@@ -23,7 +23,6 @@ import { minimapGutterAddedBackground, minimapGutterDeletedBackground, minimapGu
 import { INotebookOriginalCellModelFactory } from './notebookOriginalCellModelFactory.js';
 import { InlineDecoration, InlineDecorationType } from '../../../../../../editor/common/viewModel/inlineDecorations.js';
 
-//TODO: allow client to set read-only - chateditsession should set read-only while making changes
 export class NotebookCellDiffDecorator extends DisposableStore {
 	private _viewZones: string[] = [];
 	private readonly throttledDecorator = new ThrottledDelayer(50);
@@ -151,17 +150,17 @@ export class NotebookCellDiffDecorator extends DisposableStore {
 
 		this.diffForPreviouslyAppliedDecorators = diff;
 
-		const chatDiffAddDecoration = ModelDecorationOptions.createDynamic({
+		const inlineDiffAddDecoration = ModelDecorationOptions.createDynamic({
 			...diffAddDecoration,
 			stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
 		});
-		const chatDiffWholeLineAddDecoration = ModelDecorationOptions.createDynamic({
+		const inlineDiffWholeLineAddDecoration = ModelDecorationOptions.createDynamic({
 			...diffWholeLineAddDecoration,
 			stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
 		});
 		const createOverviewDecoration = (overviewRulerColor: string, minimapColor: string) => {
 			return ModelDecorationOptions.createDynamic({
-				description: 'chat-editing-decoration',
+				description: 'notebook-inline-diff-decoration',
 				overviewRuler: { color: themeColorFromId(overviewRulerColor), position: OverviewRulerLane.Left },
 				minimap: { color: themeColorFromId(minimapColor), position: MinimapPosition.Gutter },
 			});
@@ -202,7 +201,7 @@ export class NotebookCellDiffDecorator extends DisposableStore {
 					// If the original range is empty, the start line number is 1 and the new range spans the entire file, don't draw an Added decoration
 					if (!(i.originalRange.isEmpty() && i.originalRange.startLineNumber === 1 && i.modifiedRange.endLineNumber === editorLineCount) && !i.modifiedRange.isEmpty()) {
 						modifiedVisualDecorations.push({
-							range: i.modifiedRange, options: chatDiffAddDecoration
+							range: i.modifiedRange, options: inlineDiffAddDecoration
 						});
 					}
 				}
@@ -214,7 +213,7 @@ export class NotebookCellDiffDecorator extends DisposableStore {
 				if (!diffEntry.modified.isEmpty && !(isCreatedContent && (diffEntry.modified.endLineNumberExclusive - 1) === editorLineCount)) {
 					modifiedVisualDecorations.push({
 						range: diffEntry.modified.toInclusiveRange()!,
-						options: chatDiffWholeLineAddDecoration
+						options: inlineDiffWholeLineAddDecoration
 					});
 				}
 
@@ -239,7 +238,7 @@ export class NotebookCellDiffDecorator extends DisposableStore {
 				}
 
 				const domNode = document.createElement('div');
-				domNode.className = 'chat-editing-original-zone view-lines line-delete monaco-mouse-cursor-text';
+				domNode.className = 'notebook-inline-diff-original-zone view-lines line-delete monaco-mouse-cursor-text';
 				const result = renderLines(source, renderOptions, decorations, domNode);
 
 				if (!isCreatedContent) {
@@ -248,7 +247,7 @@ export class NotebookCellDiffDecorator extends DisposableStore {
 						afterLineNumber: diffEntry.modified.startLineNumber - 1,
 						heightInLines: result.heightInLines,
 						domNode,
-						ordinal: 50000 + 2 // more than https://github.com/microsoft/vscode/blob/bf52a5cfb2c75a7327c9adeaefbddc06d529dcad/src/vs/workbench/contrib/inlineChat/browser/inlineChatZoneWidget.ts#L42
+						ordinal: 50000 + 2
 					};
 
 					this._viewZones.push(viewZoneChangeAccessor.addZone(viewZoneData));
