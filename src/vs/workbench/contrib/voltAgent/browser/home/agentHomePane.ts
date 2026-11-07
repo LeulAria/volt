@@ -62,7 +62,7 @@ import { OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.j
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
 import { appendAgentFooterActions } from './agentHomeFooterActions.js';
 import { SEARCH_AGENT_CHATS_COMMAND_ID } from '../search/agentChatSearchService.js';
-import { createHomeAutomationsIcon, createHomeFilterIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeNewChatIcon, createHomeOpenWorkspaceIcon, createHomeSearchIcon, createHomeStatusBadgeIcon } from './agentHomeIcons.js';
+import { createHomeAutomationsIcon, createHomeFilterIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeNewChatIcon, createHomeOpenWorkspaceIcon, createHomeSearchIcon, createHomeStatusBadgeIcon, createQueueEditIcon } from './agentHomeIcons.js';
 import { OPEN_SCRATCH_BOARD_COMMAND_ID, ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
 import { IScratchSessionLinks } from '../scratchBoard/scratchSessionLinks.js';
 import { showAgentSnoozeMenu } from './agentSnoozeMenu.js';
@@ -2066,7 +2066,7 @@ export class AgentHomePane extends Disposable {
 	openRowMenu(anchor: HTMLElement, row: HTMLElement, session: IAgentSessionMeta): void {
 		this.hover.hide();
 		const shortcut = (commandId: string) => this.keybindingService.lookupKeybinding(commandId)?.getLabel() ?? undefined;
-		const item = (id: string, label: string, icon: ThemeIcon, commandId: string, run: () => void, disabled = false): IVoltMenuItem<() => void> =>
+		const item = (id: string, label: string, icon: ThemeIcon | (() => HTMLElement), commandId: string, run: () => void, disabled = false): IVoltMenuItem<() => void> =>
 			({ id, label, icon, keybinding: shortcut(commandId), disabled, data: run });
 		row.classList.add('menu-open');
 		showVoltMenu<() => void>(this.contextViewService, {
@@ -2082,7 +2082,7 @@ export class AgentHomePane extends Disposable {
 					items: [
 						...(this.canOpenInNewWindow ? [item('openInNewWindow', localize('voltAgent.home.openInNewWindow', "Open in New Window"), Codicon.linkExternal, OPEN_AGENT_CHAT_IN_NEW_WINDOW_FROM_LIST_COMMAND_ID, () => this.openInNewWindow(session))] : []),
 						// A chat not sent yet has no stored title to rename.
-						item('rename', localize('voltAgent.home.rename', "Rename"), Codicon.edit, RENAME_AGENT_CHAT_COMMAND_ID, () => this.startRename(session), !this.history.get(session.id)),
+						item('rename', localize('voltAgent.home.rename', "Rename"), createQueueEditIcon, RENAME_AGENT_CHAT_COMMAND_ID, () => this.startRename(session), !this.history.get(session.id)),
 					],
 				},
 				{
