@@ -83,6 +83,9 @@ const vscodeResourceIncludes = [
 	// Scratch board hand-drawn font (loaded at runtime with FontFace)
 	'out-build/vs/workbench/contrib/voltAgent/browser/media/fonts/excalifont/*.woff2',
 
+	// Chat background pictures (loaded at runtime by agentChatBackground.ts)
+	'out-build/vs/workbench/contrib/voltAgent/browser/media/chatBackgrounds/*.webp',
+
 	// Touchbar
 	'out-build/vs/workbench/browser/parts/editor/media/*.png',
 	'out-build/vs/workbench/contrib/debug/browser/media/*.png',

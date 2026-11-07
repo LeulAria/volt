@@ -5588,7 +5588,9 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-landing-pick:hover,
-.volt-agent-landing-pick.open {
+.volt-agent-landing-pick.open,
+.volt-agent-landing-chrome .volt-agent-status-access:hover,
+.volt-agent-landing-chrome .volt-agent-status-access.open {
 	color: var(--vscode-foreground);
 	background: var(--vscode-toolbar-hoverBackground);
 }

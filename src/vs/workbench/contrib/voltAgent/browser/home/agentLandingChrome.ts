@@ -262,9 +262,6 @@ export class AgentLandingChrome extends Disposable {
 			? cloning ? localize('voltAgent.projectCloning', "{0} · Cloning {1}%", name, cloning.percent) : name
 			: localize('voltAgent.selectProject', "Select project");
 		this.projectButton.classList.toggle('empty', !name);
-		setAgentTooltip(this.projectButton, name
-			? localize('voltAgent.switchProject', "Project: {0}", root ? this.labelService.getUriLabel(root, { noPrefix: true }) : name)
-			: localize('voltAgent.chooseProject', "Choose a project"));
 	}
 
 	/** The sidebar's project menu, as in Cursor; a single folder loads into this new chat. */
@@ -340,9 +337,6 @@ export class AgentLandingChrome extends Disposable {
 		if (target) {
 			this.branchLabel.textContent = target.name;
 			this.branchButton.classList.remove('empty');
-			setAgentTooltip(this.branchButton, target.kind === 'new'
-				? localize('voltAgent.worktreeNewBranch', "The worktree gets a new branch: {0}", target.name)
-				: localize('voltAgent.worktreeBranch', "The worktree checks out {0}", target.name));
 			return;
 		}
 		const { name, detached, unborn } = this.branch;
@@ -350,9 +344,6 @@ export class AgentLandingChrome extends Disposable {
 			? unborn ? localize('voltAgent.unbornBranch', "{0} (no commits)", name) : name
 			: detached ? localize('voltAgent.detached', "{0} (detached)", detached) : localize('voltAgent.noBranch', "No branch");
 		this.branchButton.classList.toggle('empty', !name && !detached);
-		setAgentTooltip(this.branchButton, name
-			? unborn ? localize('voltAgent.unbornBranchTooltip', "Branch: {0}. It has no commits yet.", name) : localize('voltAgent.switchBranch', "Branch: {0}", name)
-			: detached ? localize('voltAgent.detachedTooltip', "Detached at {0}", detached) : localize('voltAgent.noRepository', "No git repository"));
 	}
 
 	/** Run on is Worktree, but a worktree starts from a commit and this repo has none yet. */
@@ -418,13 +409,8 @@ export class AgentLandingChrome extends Disposable {
 		this.envButton.classList.toggle('worktree', worktree);
 		this.envButton.classList.toggle('cloud', cloud);
 		this.envButton.classList.toggle('blocked', blocked);
-		setAgentTooltip(this.envButton, blocked
-			? localize('voltAgent.worktreeNeedsCommit', "This repository has no commits yet. Make a first commit to use a worktree.")
-			: worktree
-				? localize('voltAgent.env.worktreeTooltip', "Runs in a new worktree, so your checkout is untouched")
-				: cloud
-					? localize('voltAgent.env.cloudTooltip', "Runs on a Volt Relay runner; your checkout goes along as a bundle")
-					: localize('voltAgent.env.localTooltip', "Runs in your checkout"));
+		// The pickers show no tooltips; only the warning icon says why.
+		setAgentTooltip(this.envButton, blocked ? localize('voltAgent.worktreeNeedsCommit', "This repository has no commits yet. Make a first commit to use a worktree.") : undefined);
 		// The branch button shows the worktree's branch only in Worktree mode.
 		this.renderBranch();
 		if (cloud && this.cloudMachine !== CLOUD_AUTO) {

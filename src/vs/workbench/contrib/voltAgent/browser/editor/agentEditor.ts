@@ -33,6 +33,7 @@ import { MarkdownRenderer } from '../../../../../editor/browser/widget/markdownR
 import { preloadMarkdownExtras } from '../blocks/agentMarkdown.js';
 import { createDiagramViewer, diagramKind } from '../blocks/agentMermaid.js';
 import { createMessageCopyIcon } from '../blocks/agentCodeBlock.js';
+import { AgentChatBackdrop } from '../chat/agentChatBackground.js';
 import { IAgentChatForkService } from '../orchestration/agentChatFork.js';
 import { buildTranscriptRows, hasSignInNotice, ITranscriptSteer, TranscriptRow, withoutFailureNotice } from '../chrome/agentTranscript.js';
 import { fallbackSubagentView, ITranscriptHost, LiveTranscript, renderTranscript, tickElapsed } from '../chrome/agentTranscriptView.js';
@@ -325,6 +326,8 @@ const DRAWN_EXCHANGES_KEEP = 24;
 const STASHED_DRAWN_EXCHANGES = 12;
 /** Shows the pane even if the first chat's history never finishes loading. */
 const RESTORE_REVEAL_TIMEOUT_MS = 1500;
+/** How long the background picture's fade on a new chat's first send may run (420ms in agentChatBackground.css). */
+const CHAT_BACKDROP_FADE_MS = 600;
 
 /** The streaming reply as drawn: its turn element and the transcript that patches its rows. */
 interface ILiveTurn {
@@ -826,6 +829,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private readonly compactRequestTimeout = this._register(new MutableDisposable());
 	/** Waits for the thread to render before landing on a turn Search Chats picked. */
 	private readonly turnRevealTimer = this._register(new MutableDisposable());
+	/** Ends the background picture's fade after a new chat's first send. */
+	private readonly backdropFade = this._register(new MutableDisposable());
 	/** The chip showed a running compaction; when it ends, the chip says so for a moment. */
 	private compactChipWasRunning = false;
 	private readonly compactChipDone = this._register(new MutableDisposable());
@@ -1180,6 +1185,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this._register(addDisposableListener(this.threadEl, 'copy', e => this.copyUserMessageSelection(e)));
 		this._register(registerCitationTarget(this.citationTarget));
 		this.editorMainEl = append(this.container, $('.volt-agent-editor-main'));
+		// The chat background (Settings > Appearance), under everything in the column and up under the title bar.
+		this._register(this.instantiationService.createInstance(AgentChatBackdrop, this.editorMainEl, this.container));
 		this.runGroupBar = append(this.editorMainEl, $('.volt-agent-group-bar.hidden'));
 		// A chat stopped at the provider's usage limit: when it resumes, or one click to resume it when the provider is back.
 		// The first chip of the row above the composer (placed by AgentComposerChips).
@@ -1581,6 +1588,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			} else if (!onLanding && accessPicker.element.parentElement !== statusStart) {
 				statusStart.prepend(accessPicker.element);
 			}
+			accessPicker.setInLandingRow(onLanding);
 		};
 		statusStart.prepend(accessPicker.element);
 		const landingObserver = new (getWindow(this.container).ResizeObserver)(placeAccess);
@@ -6799,6 +6807,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 		if (!this.messages.length) {
 			this.adoptVisibleProject();
+			// The new chat's background picture fades as the conversation starts, instead of cutting out.
+			this.container.classList.add('backdrop-animate');
+			this.backdropFade.value = disposableTimeout(() => this.container.classList.remove('backdrop-animate'), CHAT_BACKDROP_FADE_MS);
 		}
 		withComments();
 		this._onDidComposerSend.fire();
@@ -8929,6 +8940,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// A side chat opened in another chat's tools uses the compact chat chrome; a subagent's chat
 		// keeps its transcript there, since it is opened to watch the subagent work.
 		this.syncHostedChrome();
+		// Only the main chat shows the background picture: not one in another chat's tools or in a board's dock.
+		this.container.classList.toggle('backdrop-host', !this.container.closest('.volt-agent-tools-area, .volt-agent-toolless'));
 		this.container.style.height = `${dimension.height}px`;
 		this.layoutWidth = dimension.width;
 		this.surfaceHost.layout(dimension);
