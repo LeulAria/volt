@@ -249,6 +249,12 @@ export class AgentFilesSidebar extends Disposable {
 					this.sync();
 				}
 			}));
+			// A chat's first pull request brings the tab, whatever its folder's remotes say.
+			this._register(this.pullRequests.onDidChange(sessionIds => {
+				if (this.sessionId && sessionIds.includes(this.sessionId)) {
+					this.sync();
+				}
+			}));
 		}
 		this.element = append(parent, $('.volt-agent-files-sidebar.hidden'));
 		this.sash = append(this.element, $('.volt-agent-files-sidebar-sash'));
@@ -661,9 +667,13 @@ export class AgentFilesSidebar extends Disposable {
 		return state.view === 'pullRequests' && !this.showsPullRequests() ? 'scm' : state.view;
 	}
 
+	/** A repository with an `origin`, or a chat that already has pull requests (its chip opens them here). */
 	private showsPullRequests(): boolean {
 		const folder = this.sessionId ? this.folderOf(this.sessionId) : undefined;
-		return folder?.scheme === 'file' && !!this.pullRequests?.hasOrigin(folder.fsPath);
+		if (folder?.scheme === 'file' && this.pullRequests?.hasOrigin(folder.fsPath)) {
+			return true;
+		}
+		return !!this.sessionId && !!this.pullRequests?.links(this.sessionId).length;
 	}
 
 	private announceShownView(): void {

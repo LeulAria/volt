@@ -2217,6 +2217,17 @@ html.volt-layout-agent-window body {
 	to { transform: rotate(360deg); }
 }
 
+/* Search Chats: a running chat turns the same working ring, on a square box inside the list's icon slot. */
+.quick-input-list .quick-input-list-icon.volt-chat-search-running::before {
+	content: '';
+	width: 14px;
+	height: 14px;
+	background-color: var(--vscode-charts-blue, #3794ff);
+	-webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M10.1 2.18a9.93 9.93 0 0 1 3.8 0M17.6 3.71a9.95 9.95 0 0 1 2.69 2.7M21.82 10.1a9.93 9.93 0 0 1 0 3.8M20.29 17.6a9.95 9.95 0 0 1-2.7 2.69M13.9 21.82a9.94 9.94 0 0 1-3.8 0M6.4 20.29a9.95 9.95 0 0 1-2.69-2.7M2.18 13.9a9.93 9.93 0 0 1 0-3.8M3.71 6.4a9.95 9.95 0 0 1 2.7-2.69'/%3E%3C/svg%3E") center / contain no-repeat;
+	mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M10.1 2.18a9.93 9.93 0 0 1 3.8 0M17.6 3.71a9.95 9.95 0 0 1 2.69 2.7M21.82 10.1a9.93 9.93 0 0 1 0 3.8M20.29 17.6a9.95 9.95 0 0 1-2.7 2.69M13.9 21.82a9.94 9.94 0 0 1-3.8 0M6.4 20.29a9.95 9.95 0 0 1-2.69-2.7M2.18 13.9a9.93 9.93 0 0 1 0-3.8M3.71 6.4a9.95 9.95 0 0 1 2.7-2.69'/%3E%3C/svg%3E") center / contain no-repeat;
+	animation: volt-agent-home-spin 2.4s linear infinite;
+}
+
 /* Warning, not charts-orange: some themes leave charts-orange a faint tint. */
 .volt-agent-home-row > .status-badge.kind-woke,
 .volt-agent-home-row > .status-badge.kind-limited,

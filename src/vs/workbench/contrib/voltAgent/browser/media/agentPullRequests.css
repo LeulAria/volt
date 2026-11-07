@@ -1227,6 +1227,70 @@
 	background: color-mix(in srgb, var(--vscode-foreground) 14%, var(--vscode-editorWidget-background, #252526));
 }
 
+/* Plain hover on an open pull request: Merge, or Fix Conflicts when it has them, centered at the row's right end over the size and age. */
+.volt-pr-hover {
+	position: absolute;
+	right: 8px;
+	top: 50%;
+	transform: translateY(-50%);
+	display: none;
+}
+
+.volt-pr-list-view:not(.shift-held) .volt-pr-list-row.has-hover-action:hover .volt-pr-hover,
+.volt-pr-list-view:not(.shift-held) .volt-pr-list-row.has-hover-action:focus-within .volt-pr-hover {
+	display: flex;
+}
+
+/* The sidebar is see-through, so the button has nothing solid to cover with: the size and age step
+ * out, and the lines stop short of the button, the title and status ending in an ellipsis there. */
+.volt-pr-list-row.hover-merge {
+	--volt-pr-hover-room: 88px;
+}
+
+.volt-pr-list-row.hover-conflicts {
+	--volt-pr-hover-room: 122px;
+}
+
+.volt-pr-list-view:not(.shift-held) .volt-pr-list-row.has-hover-action:is(:hover, :focus-within) :is(.volt-pr-stats, .volt-pr-list-age) {
+	display: none;
+}
+
+.volt-pr-list-view:not(.shift-held) .volt-pr-list-row.has-hover-action:is(:hover, :focus-within) > .volt-pr-list-lines {
+	padding-right: var(--volt-pr-hover-room);
+}
+
+.volt-pr-hover-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 26px;
+	padding: 0 10px 0 8px;
+	border: 0;
+	border-radius: 6px;
+	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-pr-hover-button:hover {
+	background: var(--vscode-toolbar-activeBackground, color-mix(in srgb, var(--vscode-foreground) 16%, transparent));
+}
+
+.volt-pr-hover-button .codicon {
+	font-size: 14px;
+}
+
+.volt-pr-hover-button.merge .codicon {
+	color: var(--volt-pr-merged, inherit);
+}
+
+/* Conflicts: the warning in the closed red, as on the pull request's own Resolve Conflicts. */
+.volt-pr-hover-button.conflicts .codicon {
+	color: var(--volt-pr-closed, inherit);
+}
+
 .volt-pr-quick-button .codicon {
 	font-size: 13px;
 	color: inherit;
@@ -2702,8 +2766,57 @@
 	font-size: 10.5px;
 }
 
-.volt-pr-list-reason {
+/* A row's labels: a dot in the label's color and its name in the line's muted text, no pill. */
+.volt-pr-list-labels {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.volt-pr-list-label {
+	--volt-pr-label: #888888;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	white-space: nowrap;
+}
+
+.volt-pr-list-label > .dot {
 	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--volt-pr-label);
+}
+
+/* The second label gives way first; the first keeps a few letters beside its dot. */
+.volt-pr-list-label:first-child {
+	min-width: 4em;
+}
+
+.volt-pr-list-label + .volt-pr-list-label {
+	flex-shrink: 10;
+}
+
+.volt-pr-list-label > .name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-pr-list-age {
+	white-space: nowrap;
+}
+
+.volt-pr-list-reason {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
@@ -3382,7 +3495,7 @@
 
 /* ---- The chat's pull request in the side panel (Quick Open Actions) ------------------------ */
 
-/* One list row in three parts, as Cursor draws it: #8: title | checks menu | Merge. */
+/* One list row in two parts: #8: title | checks menu. Merging is on the pull request's page. */
 .volt-agent-quick-open-actions .volt-agent-dock-row.volt-pr-dock {
 	gap: 0;
 	padding: 0;
@@ -3440,7 +3553,7 @@
 .volt-pr-dock > .volt-pr-dock-checks {
 	flex: none;
 	gap: 2px;
-	padding: 0 6px 0 8px;
+	padding: 0 12px 0 8px;
 }
 
 .volt-pr-dock-checks-icon {
@@ -3451,25 +3564,6 @@
 	font-size: 12px;
 	width: 12px;
 	height: 12px;
-}
-
-.volt-pr-dock > .volt-pr-dock-merge {
-	flex: none;
-	padding: 0 12px 0 8px;
-	color: var(--volt-pr-muted);
-	font-size: 12.5px;
-}
-
-.volt-pr-dock > .volt-pr-dock-merge:disabled {
-	cursor: default;
-}
-
-.volt-pr-dock > .volt-pr-dock-merge.ready {
-	color: var(--volt-pr-merge-accent);
-}
-
-.volt-pr-dock > .volt-pr-dock-merge.ready:hover {
-	color: var(--volt-pr-merge-accent-hover);
 }
 
 .volt-pr-dock-main:hover .volt-pr-dock-label,
@@ -3500,15 +3594,14 @@
 	color: inherit;
 }
 
-.volt-pr-dock {
-	--volt-pr-merge-accent: #d4537e;
-	--volt-pr-merge-accent-hover: #ec6f98;
+/* "Show more" after the first two rows: muted text, lined up with the titles above it. */
+.volt-pr-dock-link.volt-pr-dock-more {
+	padding-left: 32px;
+	color: var(--volt-pr-muted);
 }
 
-.monaco-workbench.vs .volt-pr-dock,
-.monaco-workbench.hc-light .volt-pr-dock {
-	--volt-pr-merge-accent: #b42d5a;
-	--volt-pr-merge-accent-hover: #8f1f45;
+.volt-pr-dock-links .monaco-list-row:hover .volt-pr-dock-more {
+	color: var(--vscode-foreground);
 }
 
 

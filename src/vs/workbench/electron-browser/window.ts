@@ -17,7 +17,7 @@ import { WindowMinimumSize, IOpenFileRequest, IAddRemoveFoldersRequest, INativeR
 import { ITitleService } from '../services/title/browser/titleService.js';
 import { IWorkbenchThemeService } from '../services/themes/common/workbenchThemeService.js';
 import { ApplyZoomTarget, applyZoom } from '../../platform/window/electron-browser/window.js';
-import { setFullscreen, getZoomLevel, onDidChangeZoomLevel, getZoomFactor } from '../../base/browser/browser.js';
+import { setFullscreen, isFullscreen, getZoomLevel, onDidChangeZoomLevel, getZoomFactor } from '../../base/browser/browser.js';
 import { ICommandService, CommandsRegistry } from '../../platform/commands/common/commands.js';
 import { IResourceEditorInput } from '../../platform/editor/common/editor.js';
 import { ipcRenderer, process } from '../../base/parts/sandbox/electron-browser/globals.js';
@@ -278,6 +278,16 @@ export class NativeWindow extends BaseWindow {
 		// Fullscreen Events
 		ipcRenderer.on('vscode:enterFullScreen', () => setFullscreen(true, mainWindow));
 		ipcRenderer.on('vscode:leaveFullScreen', () => setFullscreen(false, mainWindow));
+
+		// A missed event leaves the title bar holding room for traffic lights full screen
+		// does not show (or the reverse). Every transition resizes the window, so recheck then.
+		const fullscreenCheck = this._register(new RunOnceScheduler(async () => {
+			const fullscreen = await this.nativeHostService.isFullScreen();
+			if (fullscreen !== isFullscreen(mainWindow)) {
+				setFullscreen(fullscreen, mainWindow);
+			}
+		}, 500));
+		this._register(addDisposableListener(mainWindow, EventType.RESIZE, () => fullscreenCheck.schedule()));
 
 		// Proxy Login Dialog
 		ipcRenderer.on('vscode:openProxyAuthenticationDialog', async (event: unknown, payload: { authInfo: AuthInfo; username?: string; password?: string; replyChannel: string }) => {

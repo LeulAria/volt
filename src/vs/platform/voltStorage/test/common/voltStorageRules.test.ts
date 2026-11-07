@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { browserDataBytes, cachedDataKeep, checkpointKeep, fileUriToPath, formatBytes, IVoltStorageLayout, logKeep, machineRows, nativeTranscriptKeep, sessionIdFromFile, summarizeRow, traceKeep, workspaceStorageKeep, workspaceStorageTarget, worktreeKeep } from '../../common/voltStorageRules.js';
+import { browserDataBytes, cachedDataKeep, checkpointKeep, fileUriToPath, formatBytes, IVoltStorageLayout, logKeep, machineRows, nativeTranscriptKeep, sessionIdFromFile, summarizeRow, traceKeep, workspaceStorageKeep, workspaceStorageTarget, WORKTREE_LIMIT_RECENT_MS, worktreeKeep, worktreeLimitCandidates } from '../../common/voltStorageRules.js';
 
 const layout: IVoltStorageLayout = {
 	userDataPath: '/data',
@@ -99,6 +99,24 @@ suite('Volt storage rules', () => {
 		assert.strictEqual(info.cleanableBytes, 0);
 		assert.strictEqual(browserDataBytes(300, 120), 180);
 		assert.strictEqual(browserDataBytes(100, 120), 0);
+	});
+
+	test('worktree limits: archived first, then the oldest idle ones; running and recently used open chats stay', () => {
+		const now = 10 * WORKTREE_LIMIT_RECENT_MS;
+		const day = 24 * 60 * 60 * 1000;
+		const entries = ['/w/archived', '/w/old', '/w/older', '/w/recent', '/w/running', '/w/foreign'].map(path => ({ path }));
+		const candidates = worktreeLimitCandidates(entries, {
+			worktrees: [
+				{ path: '/w/archived', sessionId: 'a', archived: true, updatedAt: now - day },
+				{ path: '/w/old', sessionId: 'b', archived: false, updatedAt: now - 5 * day },
+				{ path: '/w/older', sessionId: 'c', archived: false, updatedAt: now - 9 * day },
+				// Between turns, maybe open in another window: minutes ago is not idle.
+				{ path: '/w/recent/', sessionId: 'd', archived: false, updatedAt: now - 5 * 60 * 1000 },
+				{ path: '/w/running', sessionId: 'e', archived: false, updatedAt: now - 9 * day },
+			],
+			runningSessionIds: ['e'],
+		}, now);
+		assert.deepStrictEqual(candidates.map(entry => entry.path), ['/w/archived', '/w/older', '/w/old']);
 	});
 
 	test('formats sizes like Finder', () => {
