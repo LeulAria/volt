@@ -220,9 +220,7 @@ async function loadTests(opts) {
 		'benchmark: browser_act against the single-step tools',
 	]);
 
-	const _allowedSuitesWithOutput = new Set([
-		'InlineChatController'
-	]);
+	const _allowedSuitesWithOutput = new Set([]);
 
 	let _testsWithUnexpectedOutput = false;
 
