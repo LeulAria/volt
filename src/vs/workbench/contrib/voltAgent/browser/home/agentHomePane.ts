@@ -2071,7 +2071,8 @@ export class AgentHomePane extends Disposable {
 		row.classList.add('menu-open');
 		showVoltMenu<() => void>(this.contextViewService, {
 			anchor,
-			align: 'right',
+			// Opens toward the chat, from the … rightward; at the window's right edge (Related Chats) it flips.
+			align: 'left',
 			gap: 4,
 			width: 260,
 			ariaLabel: localize('voltAgent.home.moreActions', "More Actions"),
