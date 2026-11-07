@@ -505,10 +505,25 @@ function appendCheckRow(parent: HTMLElement, options: {
 	}));
 }
 
+/**
+ * Beside its row, 4px clear of the menu: on the right, else on the left when the window has no room
+ * there (the Related Chats list sits at the window's right edge), else inside the window over the menu.
+ */
 function placeFlyout(menu: HTMLElement, flyout: HTMLElement, row: HTMLElement | null): void {
 	flyout.style.position = 'absolute';
-	flyout.style.left = `${menu.offsetWidth + 4}px`;
 	flyout.style.top = `${row?.offsetTop ?? 0}px`;
+	const win = getWindow(menu);
+	const menuRect = menu.getBoundingClientRect();
+	const width = flyout.offsetWidth;
+	const gap = 4;
+	const pad = 8;
+	let left = menuRect.right + gap;
+	if (left + width > win.innerWidth - pad) {
+		left = menuRect.left - gap - width >= pad ? menuRect.left - gap - width : Math.max(pad, win.innerWidth - pad - width);
+	}
+	// Relative to the menu's container, which the flyout is placed in.
+	const offsetParent = (flyout.offsetParent as HTMLElement | null)?.getBoundingClientRect().left ?? menuRect.left;
+	flyout.style.left = `${Math.round(left - offsetParent)}px`;
 }
 
 function toggleSet<T>(set: ReadonlySet<T>, value: T): Set<T> {

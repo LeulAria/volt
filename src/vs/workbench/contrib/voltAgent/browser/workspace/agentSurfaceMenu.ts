@@ -69,6 +69,12 @@ export const EXPLORER_ICON_SHAPES: SvgIconShapes = [
 	['path', { d: 'M2 10h20' }],
 ];
 
+/** Related Chats (lucide messages-square): two speech bubbles, one behind the other, for a project's chats. */
+export const RELATED_CHATS_ICON_SHAPES: SvgIconShapes = [
+	['path', { d: 'M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z' }],
+	['path', { d: 'M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1' }],
+];
+
 /** Lucide square-terminal, globe and smartphone: strokes like the other rows, instead of filled codicons. */
 const TERMINAL_ICON_SHAPES: SvgIconShapes = [
 	['rect', { x: 3, y: 3, width: 18, height: 18, rx: 2 }],

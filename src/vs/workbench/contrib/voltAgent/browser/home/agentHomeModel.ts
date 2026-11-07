@@ -9,7 +9,7 @@ import { localize } from '../../../../../nls.js';
 import { IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { isLiveTaskState } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import type { IOrchState } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
-import { uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { canonicalProjectRoot, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { isUsageLimitText } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { combineDayAndTime, MINUTES_PER_DAY } from '../ui/dateTime/voltDateTime.js';
 import dayjs from '../ui/vendor/dayjs.js';
@@ -290,6 +290,18 @@ export function sessionsForFolder(folder: IAgentHomeFolder, sessions: readonly I
 	return sessions
 		.filter(session => sessionMatchesFolder(session, folderUri, folderPathValue, folder.name))
 		.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** A chat of `root`'s project: one of its folders is the project's (a chat in a worktree records its project's folder). */
+export function sessionInProject(session: IAgentSessionMeta, root: URI): boolean {
+	const key = canonicalProjectRoot(root).toString();
+	return sessionFolders(session).some(path => {
+		try {
+			return canonicalProjectRoot(uriFromStoredRoot(path)).toString() === key;
+		} catch {
+			return false;
+		}
+	});
 }
 
 export function latestSessionForFolder(folder: IAgentHomeFolder, sessions: readonly IAgentSessionMeta[]): IAgentSessionMeta | undefined {

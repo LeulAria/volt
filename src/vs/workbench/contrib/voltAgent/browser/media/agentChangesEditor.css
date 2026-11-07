@@ -901,7 +901,7 @@
 }
 
 
-/* ---- Files sidebar ---------------------------------------------------------------------- */
+/* ---- Explorer sidebar ------------------------------------------------------------------- */
 
 /*
  * The files sidebar at the right edge of a chat's tools (agentFilesSidebar.ts): icons for Files,
@@ -1020,6 +1020,38 @@
 	flex: 1 1 auto;
 	min-height: 0;
 	overflow: hidden;
+}
+
+/* Related Chats: the agent list scoped to the chat's project, in place of a lent view. Nothing is
+ * lent while it shows, so it paints no fill of its own, like the lent views. */
+.volt-agent-files-chats {
+	display: none;
+}
+
+.volt-agent-files-sidebar-body.chats > :not(.volt-agent-files-chats) {
+	display: none !important;
+}
+
+.volt-agent-files-sidebar-body.chats > .volt-agent-files-chats {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+/* The lent views' title row ("PULL REQUESTS"). */
+.volt-agent-files-chats-title {
+	flex: none;
+	height: 35px;
+	line-height: 35px;
+	padding: 0 8px 0 20px;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	color: var(--vscode-sideBarTitle-foreground, var(--vscode-foreground));
 }
 
 /* The left edge drags to resize, like the split line between the chat and the tools. */

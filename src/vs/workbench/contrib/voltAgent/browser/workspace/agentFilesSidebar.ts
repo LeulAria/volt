@@ -6,7 +6,7 @@
 import { $, addDisposableListener, append } from '../../../../../base/browser/dom.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, IDisposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
@@ -14,6 +14,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { ConfigurationTarget, IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
+import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
@@ -39,7 +40,7 @@ import { INIT_TIMEOUT_MS, runGit } from '../home/agentHomeWorkspaceActions.js';
 import { trackLentPanesCollapsed } from '../review/agentChangesEditor.js';
 import { AgentScmRepositoryFocus, type AgentScmRepositoryState } from '../review/agentScmRepository.js';
 import { setAgentChangesSession } from '../review/agentTurnsView.js';
-import { EXPLORER_ICON_SHAPES, type SvgIconShapes } from './agentSurfaceMenu.js';
+import { EXPLORER_ICON_SHAPES, RELATED_CHATS_ICON_SHAPES, type SvgIconShapes } from './agentSurfaceMenu.js';
 import { createPrimarySidebarToggleIcon } from '../../../../browser/parts/titlebar/sidebarToggleIcon.js';
 import { AGENT_PULL_REQUESTS_CONTAINER_ID, setPullRequestsViewSession } from '../pullRequests/agentPullRequestsViewState.js';
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
@@ -53,7 +54,22 @@ import { AgentResourceFilter, IAgentResourcesService } from '../resources/agentR
 import { agentResourcesSectionFor, OPEN_AGENT_RESOURCES_COMMAND_ID } from '../resources/agentResourcesPage.js';
 import { showVoltMenu } from '../ui/menu/voltMenu.js';
 
-export type AgentFilesSidebarView = 'explorer' | 'scm' | 'search' | 'pullRequests';
+export type AgentFilesSidebarView = 'explorer' | 'scm' | 'search' | 'pullRequests' | 'chats';
+
+/** Related Chats' list: the agent list scoped to one project. */
+export interface IRelatedChatsPane extends IDisposable {
+	setScope(root: URI | undefined, name: string): void;
+	focusSearch(): void;
+	layout(): void;
+}
+
+type RelatedChatsPaneFactory = (instantiationService: IInstantiationService, parent: HTMLElement) => IRelatedChatsPane;
+let relatedChatsPaneFactory: RelatedChatsPaneFactory | undefined;
+
+/** The agent list registers Related Chats (agentHomePane.ts); importing it here would loop back through agentSurfaceHost.ts. */
+export function registerRelatedChatsPane(factory: RelatedChatsPaneFactory): void {
+	relatedChatsPaneFactory = factory;
+}
 
 /** The command behind each tab's Ctrl+Option+digit (agentSurfaceHost.ts registers them); tooltips show its keybinding. */
 export function filesSidebarViewCommandId(view: AgentFilesSidebarView): string {
@@ -69,10 +85,19 @@ const MIN_WIDTH = 200;
 /** Room the tabs beside the sidebar always keep. */
 const MIN_TABS_WIDTH = 320;
 
-/** The tabs left to right, which is also their shortcut's digit (Explorer 1 … Search 4). */
-const VIEWS: readonly { readonly id: AgentFilesSidebarView; readonly container: string; readonly icon: SvgIconShapes; readonly label: string }[] = [
+/**
+ * The tabs left to right, which is also their shortcut's digit (Explorer 1 … Related Chats 5). Each but
+ * Related Chats lends in the workbench's own view container; Related Chats is the agent list, scoped.
+ */
+const VIEWS: readonly { readonly id: AgentFilesSidebarView; readonly container?: string; readonly icon: SvgIconShapes; readonly label: string }[] = [
 	{
 		id: 'explorer', container: EXPLORER_VIEWLET_ID, label: localize('voltAgent.filesSidebar.explorer', "Explorer"), icon: EXPLORER_ICON_SHAPES
+	},
+	{
+		id: 'search', container: SEARCH_VIEWLET_ID, label: localize('voltAgent.filesSidebar.search', "Search"), icon: [
+			['path', { d: 'M17 17L21 21' }],
+			['path', { d: 'M3 11C3 15.4183 6.58172 19 11 19C13.213 19 15.2161 18.1015 16.6644 16.6493C18.1077 15.2022 19 13.2053 19 11C19 6.58172 15.4183 3 11 3C6.58172 3 3 6.58172 3 11Z' }],
+		]
 	},
 	{
 		id: 'scm', container: SCM_VIEWLET_ID, label: localize('voltAgent.filesSidebar.scm', "Source Control"), icon: [
@@ -93,10 +118,7 @@ const VIEWS: readonly { readonly id: AgentFilesSidebarView; readonly container: 
 		]
 	},
 	{
-		id: 'search', container: SEARCH_VIEWLET_ID, label: localize('voltAgent.filesSidebar.search', "Search"), icon: [
-			['path', { d: 'M17 17L21 21' }],
-			['path', { d: 'M3 11C3 15.4183 6.58172 19 11 19C13.213 19 15.2161 18.1015 16.6644 16.6493C18.1077 15.2022 19 13.2053 19 11C19 6.58172 15.4183 3 11 3C6.58172 3 3 6.58172 3 11Z' }],
-		]
+		id: 'chats', label: localize('voltAgent.filesSidebar.relatedChats', "Related Chats"), icon: RELATED_CHATS_ICON_SHAPES
 	},
 ];
 
@@ -178,6 +200,9 @@ export class AgentFilesSidebar extends Disposable {
 	private scmAwaitsWorktree = false;
 	private readonly scmRepository: AgentScmRepositoryFocus;
 	private readonly pullRequests: IAgentPullRequestService | undefined;
+	/** Related Chats: the agent list, scoped to the chat's project. Made the first time the tab shows. */
+	private readonly chatsHost: HTMLElement;
+	private chats: IRelatedChatsPane | undefined;
 	private shown = false;
 	/** No tab beside it: it is the whole tools area. */
 	private fills = false;
@@ -194,7 +219,6 @@ export class AgentFilesSidebar extends Disposable {
 	constructor(
 		parent: HTMLElement,
 		@IStorageService private readonly storageService: IStorageService,
-		@IInstantiationService instantiationService: IInstantiationService,
 		@IViewDescriptorService private readonly viewDescriptorService: IViewDescriptorService,
 		@IPaneCompositePartService private readonly paneCompositeService: IPaneCompositePartService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
@@ -213,6 +237,8 @@ export class AgentFilesSidebar extends Disposable {
 		@IContextViewService private readonly contextViewService: IContextViewService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IKeybindingService private readonly keybindingService: IKeybindingService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@ILabelService private readonly labelService: ILabelService,
 	) {
 		super();
 		this.scmRepository = this._register(instantiationService.createInstance(AgentScmRepositoryFocus));
@@ -257,7 +283,7 @@ export class AgentFilesSidebar extends Disposable {
 		this._register(addDisposableListener(showTabs, 'click', () => this.showTabsEmitter.fire()));
 		const hide = append(this.header, $('button.volt-agent-files-sidebar-tab.hide')) as HTMLButtonElement;
 		hide.type = 'button';
-		const hideLabel = localize('voltAgent.filesSidebar.hide', "Hide Files Sidebar");
+		const hideLabel = localize('voltAgent.filesSidebar.hide', "Hide Explorer Sidebar");
 		hide.setAttribute('aria-label', hideLabel);
 		setAgentTooltip(hide, hideLabel);
 		// The title bar's sidebar glyph (thin frame, filled bar), mirrored by CSS to sit on the right.
@@ -292,6 +318,10 @@ export class AgentFilesSidebar extends Disposable {
 		this.filterEmpty = append(this.filterPane, $('.volt-agent-files-resources-empty'));
 		this.filterTreeHost = append(this.filterPane, $('.volt-agent-files-resources-tree'));
 		this.filterTree = this._register(instantiationService.createInstance(AgentResourceTree, this.filterTreeHost, 'VoltAgentFilesSidebarResources'));
+		this.chatsHost = append(this.body, $('.volt-agent-files-chats'));
+		// A chat learns its project after it opens (history loads, a draft gets bound).
+		this._register(this.history.onDidChange(() => this.syncChatsScope()));
+		this._register(this.sessionContext.onDidChangeProjects(() => this.syncChatsScope()));
 		this._register(this.filterTree.onDidOpen(({ item, preserveFocus }) => openAgentResource(this.editorService, item, preserveFocus)));
 		this._register(this.resources.onDidChangeFilter(() => this.sync()));
 		this._register(this.resources.onDidChange(folder => {
@@ -416,7 +446,7 @@ export class AgentFilesSidebar extends Disposable {
 
 	/** On screen with `view` in it. */
 	showsView(view: AgentFilesSidebarView): boolean {
-		return this.shown && this.lentView === view && !!this.lent.value;
+		return this.shown && this.lentView === view && (view === 'chats' || !!this.lent.value);
 	}
 
 	hasFocus(): boolean {
@@ -425,8 +455,12 @@ export class AgentFilesSidebar extends Disposable {
 
 	/** Moves the keyboard into the view shown: the Explorer's tree, the commit message, Search's field, the pull requests' search. */
 	focusView(): void {
+		if (this.lentView === 'chats') {
+			this.chats?.focusSearch();
+			return;
+		}
 		const view = this.lentView && this.lent.value ? VIEWS.find(candidate => candidate.id === this.lentView) : undefined;
-		const container = view ? this.viewDescriptorService.getViewContainerById(view.container) : undefined;
+		const container = view?.container ? this.viewDescriptorService.getViewContainerById(view.container) : undefined;
 		const location = container ? this.viewDescriptorService.getViewContainerLocation(container) : null;
 		if (location !== null) {
 			this.paneCompositeService.getActivePaneComposite(location)?.focus();
@@ -462,12 +496,15 @@ export class AgentFilesSidebar extends Disposable {
 		this.syncChrome();
 		const state = readState(this.storageService);
 		const want = this.shown && state.open ? this.viewFor(state) : undefined;
-		if (this.lentView !== want || (want && !this.lent.value)) {
+		if (this.lentView !== want || (want && want !== 'chats' && !this.lent.value)) {
 			this.giveBack();
-			if (want) {
+			if (want === 'chats') {
+				this.showChats();
+			} else if (want) {
 				this.borrow(want);
 			}
 		}
+		this.syncChatsScope();
 		// Source Control opens the repository directly. Explorer borrows a cached folder tree and
 		// Search looks in the chat's folder. None of them moves the whole workspace: that stops and
 		// restarts the extension host, seconds on every switch to another project.
@@ -658,8 +695,38 @@ export class AgentFilesSidebar extends Disposable {
 		return this.sessionContext.rootFor(sessionId) ?? (meta?.workspaceFolder ? uriFromStoredRoot(meta.workspaceFolder) : undefined);
 	}
 
+	/** The project a chat belongs to: its project's folder, even when it runs in a worktree of it. */
+	private projectOf(sessionId: string): URI | undefined {
+		const meta = this.history.get(sessionId);
+		return this.sessionContext.rootFor(sessionId) ?? (meta?.workspaceFolder ? uriFromStoredRoot(meta.workspaceFolder) : undefined);
+	}
+
+	/** Related Chats: the agent list, scoped, in place of a lent view. */
+	private showChats(): void {
+		this.lentView = 'chats';
+		this.body.classList.add('chats');
+		if (!this.chats && relatedChatsPaneFactory) {
+			const title = append(this.chatsHost, $('.volt-agent-files-chats-title'));
+			title.textContent = localize('voltAgent.filesSidebar.relatedChats', "Related Chats");
+			this.chats = this._register(relatedChatsPaneFactory(this.instantiationService, this.chatsHost));
+		}
+		this.syncChatsScope();
+	}
+
+	/** Related Chats follows the chat on screen to its project. */
+	private syncChatsScope(): void {
+		if (this.lentView !== 'chats' || !this.chats || !this.sessionId) {
+			return;
+		}
+		const project = this.projectOf(this.sessionId);
+		const record = this.sessionContext.bindingFor(this.sessionId);
+		const name = (record ? this.sessionContext.getProject(record.projectId)?.displayName : undefined)
+			?? (project ? this.labelService.getUriBasenameLabel(project) : '');
+		this.chats.setScope(project, name);
+	}
+
 	private borrow(view: AgentFilesSidebarView): void {
-		const id = VIEWS.find(candidate => candidate.id === view)!.container;
+		const id = VIEWS.find(candidate => candidate.id === view)!.container!;
 		const container = this.viewDescriptorService.getViewContainerById(id);
 		const location = container ? this.viewDescriptorService.getViewContainerLocation(container) : null;
 		const lent = location !== null ? this.paneCompositeService.lendPaneComposite(id, location, this.body) : undefined;
@@ -695,12 +762,15 @@ export class AgentFilesSidebar extends Disposable {
 		this.lentView = undefined;
 		this.lentPanesCollapsed.clear();
 		this.lent.clear();
-		this.body.classList.remove('unavailable');
+		this.body.classList.remove('unavailable', 'chats');
 	}
 
 	private layoutLent(): void {
 		if (this.size) {
 			this.lent.value?.layout(this.size.width, this.size.height);
+			if (this.lentView === 'chats') {
+				this.chats?.layout();
+			}
 			if (this.body.classList.contains('resource-filtered')) {
 				this.filterTree.layout(Math.max(0, this.size.height - FILTER_BAR_HEIGHT), this.size.width);
 			}
@@ -796,8 +866,8 @@ export class AgentFilesSidebar extends Disposable {
 		this.filterButton.setAttribute('aria-label', filterLabel);
 		setAgentTooltip(this.filterButton, filterLabel);
 		const label = state.open
-			? localize('voltAgent.filesSidebar.hide', "Hide Files Sidebar")
-			: localize('voltAgent.filesSidebar.show', "Show Files Sidebar");
+			? localize('voltAgent.filesSidebar.hide', "Hide Explorer Sidebar")
+			: localize('voltAgent.filesSidebar.show', "Show Explorer Sidebar");
 		this.toggleButton.setAttribute('aria-label', label);
 		this.toggleButton.setAttribute('aria-pressed', String(state.open));
 		this.toggleButton.classList.toggle('active', state.open);

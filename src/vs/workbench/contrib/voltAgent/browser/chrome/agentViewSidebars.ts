@@ -34,8 +34,8 @@ import { SHOW_PULL_REQUESTS_COMMAND_ID } from '../pullRequests/agentPullRequestC
 import { AgentPullRequestDockControl } from '../pullRequests/agentPullRequestDockControl.js';
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
 import { setAgentTooltip } from './agentTooltip.js';
-import { closeAgentToolEditor, onDidChangeAgentToolEditors, openAgentToolsPanel, revealAgentToolEditor, SHOW_AGENT_FILES_COMMAND_ID, shownAgentToolEditors } from '../workspace/agentSurfaceHost.js';
-import { CHANGES_ICON_PATH, createSurfaceStrokeIcon, EXPLORER_ICON_SHAPES, SCRATCH_ICON_SHAPES, type SvgIconShapes } from '../workspace/agentSurfaceMenu.js';
+import { closeAgentToolEditor, onDidChangeAgentToolEditors, openAgentToolsPanel, revealAgentToolEditor, SHOW_AGENT_FILES_COMMAND_ID, SHOW_AGENT_RELATED_CHATS_COMMAND_ID, shownAgentToolEditors } from '../workspace/agentSurfaceHost.js';
+import { CHANGES_ICON_PATH, createSurfaceStrokeIcon, EXPLORER_ICON_SHAPES, RELATED_CHATS_ICON_SHAPES, SCRATCH_ICON_SHAPES, type SvgIconShapes } from '../workspace/agentSurfaceMenu.js';
 import { AGENT_STATUS_BAR_VISIBLE_KEY, AGENT_TOOLS_VISIBILITY_EVENT } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { AgentLineageDock } from './agentLineageDock.js';
@@ -355,11 +355,11 @@ class AgentViewSidebarsContribution extends Disposable {
 		this._register(layoutService.onDidChangePartVisibility(() => this.syncPanelToggle()));
 		this.syncPanelToggle();
 
-		// The files sidebar's own toggle, beside the right panel's: each opens on its own.
+		// The explorer sidebar's own toggle, beside the right panel's: each opens on its own.
 		this.filesToggle = append(this.titlebarToggles, $('button.volt-agent-titlebar-toggle.volt-agent-files-panel-toggle.volt-titlebar-control')) as HTMLButtonElement;
 		this.filesToggle.type = 'button';
 		this.filesToggle.appendChild(createSurfaceStrokeIcon(this.filesToggle.ownerDocument, FOLDER_ICON_SHAPES));
-		const filesLabel = localize('voltAgent.filesSidebar.show', "Show Files Sidebar");
+		const filesLabel = localize('voltAgent.filesSidebar.show', "Show Explorer Sidebar");
 		this.filesToggle.setAttribute('aria-label', filesLabel);
 		setAgentTooltip(this.filesToggle, filesLabel);
 		this._register(addDisposableListener(this.filesToggle, 'click', () => void this.commandService.executeCommand(SHOW_AGENT_FILES_COMMAND_ID)));
@@ -471,7 +471,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		}
 
 		// Sections like Cursor's project menu: the project's tools, then git, then the agents.
-		const [files, terminal, browser, resources, changes] = this.dockActions();
+		const [files, terminal, browser, relatedChats, resources, changes] = this.dockActions();
 		const workspaceSection = append(body, $('.volt-agent-dock-section.volt-agent-dock-workspace'));
 		// The same pane header as Pull requests and Previous agents: chevron, then the title.
 		this.workspaceHeading = append(workspaceSection, $('button.volt-agent-lineage-divider.volt-agent-dock-group-head')) as HTMLButtonElement;
@@ -492,6 +492,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.createActionRow(workspace, files);
 		this.createActionRow(workspace, terminal);
 		this.createActionRow(workspace, browser);
+		this.createActionRow(workspace, relatedChats);
 		this.createActionRow(workspace, resources);
 		// What the project runs with, as VS Code's Run and Debug and its status bar show it.
 		this.run = this._register(instantiationService.createInstance(AgentDockRun, workspace));
@@ -706,6 +707,8 @@ class AgentViewSidebarsContribution extends Disposable {
 			{ id: 'files', label: localize('voltAgent.dock.explorer', "Explorer"), iconPath: EXPLORER_ICON_SHAPES, command: SHOW_AGENT_FILES_COMMAND_ID },
 			{ id: 'terminal', label: localize('voltAgent.dock.terminal', "Terminal"), icon: Codicon.terminal, command: 'workbench.action.terminal.toggleTerminal' },
 			{ id: 'browser', label: localize('voltAgent.dock.browser', "Browser"), icon: Codicon.globe, command: OPEN_BROWSER_COMMAND_ID },
+			// The chat's project's other chats, in the explorer sidebar's Related Chats tab.
+			{ id: 'relatedChats', label: localize('voltAgent.dock.relatedChats', "Related Chats"), iconPath: RELATED_CHATS_ICON_SHAPES, command: SHOW_AGENT_RELATED_CHATS_COMMAND_ID },
 			// The home sidebar footer's Customize icon. Opens the page on the chat's folder.
 			{
 				id: 'resources', label: localize('voltAgent.dock.agentResources', "Agent Resources"), icon: Codicon.extensions, command: OPEN_AGENT_RESOURCES_COMMAND_ID,

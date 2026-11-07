@@ -72,6 +72,61 @@
 	opacity: 1;
 }
 
+/* Related Chats: the Search row is a field that narrows the list as you type. */
+.volt-agent-home-nav-row.volt-agent-home-search-field {
+	cursor: text;
+}
+
+/* No focus ring: the field is the row itself, and the caret says it has the keyboard. */
+.monaco-workbench .volt-agent-home-search-field input.name,
+.monaco-workbench .volt-agent-home-search-field input.name:focus {
+	height: 22px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	outline: none;
+	box-shadow: none;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	opacity: 1;
+}
+
+/* A full-width hairline between the search and the list. */
+.volt-agent-home.scoped > .volt-agent-home-nav {
+	padding-bottom: 6px;
+	border-bottom: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
+}
+
+/* The chat's last message in its hover card (agentHomePane.ts sets the max height). */
+.volt-agent-home-hover-message-label {
+	margin-bottom: 4px;
+	font-size: 11px;
+	opacity: 0.6;
+}
+
+.volt-agent-home-hover-message {
+	/* Room under the last line, so it does not sit on the card's edge. */
+	padding-bottom: 4px;
+	overflow-y: auto;
+	overflow-wrap: anywhere;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+/* The chat's markdown, tightened for a card: no gap above the first block or below the last. */
+.volt-agent-home-hover-message > .volt-agent-markdown > :first-child {
+	margin-top: 0;
+}
+
+.volt-agent-home-hover-message > .volt-agent-markdown > :last-child {
+	margin-bottom: 0;
+}
+
+.volt-agent-home-search-field input.name::placeholder {
+	color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+}
+
 .volt-agent-home-nav-action {
 	display: flex;
 	align-items: center;

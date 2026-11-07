@@ -32,6 +32,7 @@ import {
 	sessionMetaParts,
 	sessionShowsStatusBadge,
 	sessionStatusBadge,
+	sessionInProject,
 	sessionInWorkingShelf,
 	sessionsWithOpenDrafts,
 	sessionWorkState,
@@ -149,6 +150,18 @@ suite('Agent home list model', () => {
 			session('old', { workspaceFolder: '/tmp/volt', updatedAt: 10 }),
 			session('new', { workspaceFolder: '/tmp/volt', updatedAt: 20 }),
 		])?.id, 'new');
+	});
+
+	test('Related Chats keeps the chats of one project, worktree chats included', () => {
+		const root = URI.file('/tmp/volt');
+		assert.strictEqual(sessionInProject(session('a', { workspaceFolder: '/tmp/volt' }), root), true);
+		assert.strictEqual(sessionInProject(session('slash', { workspaceFolder: '/tmp/volt/' }), root), true);
+		// A chat in its own worktree records its project's folder.
+		assert.strictEqual(sessionInProject(session('wt', { workspaceFolder: '/tmp/volt', worktreePath: '/tmp/wt/volt-1' }), root), true);
+		assert.strictEqual(sessionInProject(session('multi', { workspaceFolders: ['/tmp/other', '/tmp/volt'] }), root), true);
+		assert.strictEqual(sessionInProject(session('other', { workspaceFolder: '/tmp/other' }), root), false);
+		assert.strictEqual(sessionInProject(session('prefix', { workspaceFolder: '/tmp/volt-server' }), root), false);
+		assert.strictEqual(sessionInProject(session('none'), root), false);
 	});
 
 	test('New Agent finds the newest chat holding only unsent text, never the one on screen', () => {
