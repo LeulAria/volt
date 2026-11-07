@@ -8,6 +8,9 @@ import { agentPrimarySidebarToggleInTitlebar } from './sidebarToggleIcon.js';
 
 export const AGENT_SIDE_PANEL_ID = 'workbench.panel.voltAgent';
 
+/** Fired on the workbench root when it switches between agent and IDE chrome, so the parts restyle. */
+export const LAYOUT_MODE_CHROME_EVENT = 'volt-layout-mode-chrome';
+
 export function applyAgentStatusbarShift(root: HTMLElement, sidebarWidth: number, titlebarHeight?: number): void {
 	const width = Math.max(0, Math.round(sidebarWidth));
 	setCssPx(root, '--volt-agent-sidebar-width', width);
@@ -26,12 +29,17 @@ export function stampLayoutModeChrome(root: HTMLElement, agent: boolean, sidebar
 	if (root.dataset.voltLayoutMode !== mode) {
 		root.dataset.voltLayoutMode = mode;
 	}
+	const switched = root.classList.contains('volt-layout-agent') !== agent;
 	root.classList.toggle('volt-layout-agent', agent);
 	// For the document's own background. A class, not `html:has(.volt-layout-agent)`: a :has() on the
 	// root restyles the whole window whenever a list anywhere adds a row.
 	root.ownerDocument.documentElement.classList.toggle('volt-layout-agent-window', agent);
 	const sidebarOpen = agent && sidebarWidth > 0;
 	root.classList.toggle('volt-primary-sidebar-toggle-in-titlebar', agentPrimarySidebarToggleInTitlebar(agent, sidebarOpen));
+	if (switched) {
+		// The parts paint their own background only in the IDE layout, read from this class when they style.
+		root.dispatchEvent(new CustomEvent(LAYOUT_MODE_CHROME_EVENT));
+	}
 	if (!agent) {
 		resetAgentStatusbarShift(root);
 		return;
