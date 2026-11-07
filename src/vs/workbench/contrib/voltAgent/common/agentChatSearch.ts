@@ -72,37 +72,42 @@ function undouble(word: string): string {
 }
 
 /**
- * Calls `fn` with each searchable term of `text` and the word it came from. With `parts`, a camelCase
- * or snake_case identifier also gives its parts, so "agentHomePane" is found by "home pane".
+ * Calls `fn` with each searchable term of `text` and where it is: the whole word, or for a part of a
+ * camelCase or snake_case identifier (with `parts`) just that part, so "agentHomePane" is found by
+ * "home pane" and only "Home" and "Pane" are marked.
  */
 export function forEachTerm(text: string, parts: boolean, fn: (term: string, start: number, end: number) => void): void {
 	const pattern = new RegExp(WORD_PATTERN);
 	let match: RegExpExecArray | null;
 	while ((match = pattern.exec(text))) {
-		const word = match[0];
-		for (const term of wordTerms(word, parts)) {
-			fn(term, match.index, match.index + word.length);
+		for (const { term, start, end } of wordTermRanges(match[0], parts)) {
+			fn(term, match.index + start, match.index + end);
 		}
 	}
 }
 
 /** The terms one word gives: none for stop words and hash-like runs, its stem, and its camelCase parts. */
 function wordTerms(word: string, parts: boolean): string[] {
+	return wordTermRanges(word, parts).map(range => range.term);
+}
+
+/** {@link wordTerms} with where in the word each term came from. */
+function wordTermRanges(word: string, parts: boolean): { term: string; start: number; end: number }[] {
 	if (word.length > MAX_TERM_LENGTH || (word.length >= 12 && HASH_LIKE.test(word))) {
 		return [];
 	}
-	const terms: string[] = [];
+	const terms: { term: string; start: number; end: number }[] = [];
 	const low = word.toLowerCase();
 	if (low.length > 1 && !STOP_WORDS.has(low)) {
-		terms.push(stemTerm(low));
+		terms.push({ term: stemTerm(low), start: 0, end: word.length });
 	}
 	if (parts && word.length > 3 && CAMEL_BOUNDARY.test(word)) {
 		for (const part of word.matchAll(CAMEL_PART)) {
 			const partLow = part[0].toLowerCase();
 			if (partLow !== low && partLow.length > 1 && !STOP_WORDS.has(partLow)) {
 				const term = stemTerm(partLow);
-				if (!terms.includes(term)) {
-					terms.push(term);
+				if (!terms.some(existing => existing.term === term)) {
+					terms.push({ term, start: part.index ?? 0, end: (part.index ?? 0) + part[0].length });
 				}
 			}
 		}
@@ -621,7 +626,7 @@ export function buildSnippet(fields: readonly { readonly role: 'user' | 'agent';
 		}
 		const hits: { start: number; end: number; term: string }[] = [];
 		forEachTerm(text, true, (term, start, end) => {
-			if (hitTerms.has(term) && hits.at(-1)?.start !== start) {
+			if (hitTerms.has(term) && !hits.some(hit => hit.start === start && hit.end === end)) {
 				hits.push({ start, end, term });
 			}
 		});
@@ -650,6 +655,10 @@ export function buildSnippet(fields: readonly { readonly role: 'user' | 'agent';
 	if (start > 0) {
 		const space = text.indexOf(' ', start);
 		start = space >= 0 && space < focus ? space + 1 : start;
+		// Not a table's "| " or a quote's "> " in front of the words.
+		while (start < focus && /[\s|>*#`~:;,.)\]-]/.test(text[start])) {
+			start++;
+		}
 	}
 	let end = Math.min(text.length, start + SNIPPET_CHARS);
 	if (end < text.length) {
