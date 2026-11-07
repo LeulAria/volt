@@ -9,9 +9,16 @@ import {
   Smartphone,
 } from "lucide-react";
 import { useInView, useReducedMotion } from "motion/react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { BrandIcon, type BrandId } from "./brandIcons";
+import {
+  ChalkCircle,
+  ChalkLine,
+  ChalkPath,
+  ChalkPolygon,
+  ChalkRect,
+} from "./chalk";
 import { COLUMN } from "./geometry";
 import { Reveal } from "./primitives";
 
@@ -21,8 +28,9 @@ import { Reveal } from "./primitives";
  * own subscriptions, switching Claude accounts near a limit; the result comes back for review and
  * ships as a pull request.
  *
- * Mostly monochrome: orange is work moving, green is work shipped. A small simulation drives it on
- * its own clock, which only runs while the drawing is on screen.
+ * Chalked on the page's blackboard (chalk.tsx): white chalk, with orange for work moving and green
+ * for work shipped. A small simulation drives it on its own clock, which only runs while the
+ * drawing is on screen.
  */
 
 type Box = { x: number; y: number; w: number; h: number };
@@ -151,6 +159,16 @@ const QUEUE_ROWS = 3;
 /** An agent row's progress bar starts under its text and stops 16px short of the card edge. */
 const ROW_BAR_INSET = 68;
 const PACKETS = 10;
+/** The bolt of Volt's icon (brand/volt-icon.svg) by its six corners, as fractions of its height
+ * around its centre. The icon rounds its tips; chalk draws them as points. */
+const BOLT: readonly [number, number][] = [
+  [0.12, -0.5],
+  [-0.326, 0.048],
+  [-0.056, 0.098],
+  [-0.12, 0.5],
+  [0.326, -0.048],
+  [0.056, -0.098],
+];
 
 type Task = { id: number; source: Source; text: string };
 type Run = {
@@ -475,8 +493,8 @@ export function AgentFlow() {
     <section
       id="how-it-works"
       aria-label="How Volt runs your agents"
-      // opaque so the column guides stop at this section; the showcase below brings its own top padding
-      className={cn(COLUMN, "relative bg-[#0a0d0c] pt-24 md:pt-32")}
+      // opaque so the column guides stop at this section; no top padding: the showcase above ends with its own
+      className={cn(COLUMN, "relative bg-[#0a0d0c] pb-24 md:pb-32")}
     >
       <Reveal>
         <FlowDrawing />
@@ -498,6 +516,7 @@ function FlowDrawing() {
   const lines = useRef<Partial<Record<LineKey, SVGPathElement | null>>>({});
   const packets = useRef<(SVGGElement | null)[]>([]);
   const bars = useRef<(SVGRectElement | null)[]>([]);
+  const clipId = useId();
 
   useEffect(() => {
     const s = sim.current;
@@ -567,11 +586,11 @@ function FlowDrawing() {
             <text className="fl-index" x={h.x} y={h.y}>
               {h.index}
             </text>
-            <line
+            <ChalkLine
               className="fl-index-rule"
               x1={h.x + 22}
-              x2={h.x + 38}
               y1={h.y - 4}
+              x2={h.x + 38}
               y2={h.y - 4}
             />
             <text className="fl-header" x={h.x + 46} y={h.y}>
@@ -581,17 +600,23 @@ function FlowDrawing() {
         ))}
 
         {(Object.keys(layout.lines) as LineKey[]).map((key) => (
-          <path
-            key={key}
-            ref={(el) => {
-              lines.current[key] = el;
-            }}
-            className={cn(
-              "fl-line",
-              live.has(key) && (key === "ship" ? "is-ship" : "is-live"),
-            )}
-            d={layout.lines[key]}
-          />
+          <g key={key}>
+            {/* the exact route packets travel, under its chalk line */}
+            <path
+              ref={(el) => {
+                lines.current[key] = el;
+              }}
+              className="fl-route"
+              d={layout.lines[key]}
+            />
+            <ChalkPath
+              className={cn(
+                "fl-line",
+                live.has(key) && (key === "ship" ? "is-ship" : "is-live"),
+              )}
+              d={layout.lines[key]}
+            />
+          </g>
         ))}
 
         {/* 01: where work starts */}
@@ -648,7 +673,8 @@ function FlowDrawing() {
         <g
           transform={`translate(${layout.pairChip.x - 30} ${layout.pairChip.y - 10})`}
         >
-          <rect className="fl-chip" width={60} height={20} rx={10} />
+          <rect className="fl-chip-bg" width={60} height={20} rx={10} />
+          <ChalkRect className="fl-chip" width={60} height={20} rx={10} />
           <path
             className="fl-chip-icon"
             d="M10.5 9.5v-2a3 3 0 0 1 6 0v2M9.5 9.5h8v6h-8z"
@@ -699,7 +725,7 @@ function FlowDrawing() {
 
         {/* 03: agents on your own subscriptions, one row each */}
         <g className="fl-node">
-          <rect
+          <ChalkRect
             className="fl-card"
             x={layout.agents.x}
             y={layout.agents.y}
@@ -731,7 +757,7 @@ function FlowDrawing() {
                   run ? "is-running" : next ? "is-starting" : "is-done",
                 )}
               >
-                <rect
+                <ChalkRect
                   className="fl-tile"
                   x={x + 14}
                   y={ry + 4}
@@ -763,25 +789,34 @@ function FlowDrawing() {
                     ? `${short(run.task.text, 19 - ACCOUNTS[run.account].length)} · ${ACCOUNTS[run.account]}`
                     : shown.task.text}
                 </text>
-                <rect
+                <ChalkLine
                   className="fl-track"
-                  x={x + 52}
-                  y={ry + 40}
-                  width={track}
-                  height={2}
-                  rx={1}
+                  x1={x + 52}
+                  y1={ry + 41}
+                  x2={x + 52 + track}
+                  y2={ry + 41}
                 />
-                <rect
-                  ref={(el) => {
-                    bars.current[i] = el;
-                  }}
-                  className="fl-bar"
-                  x={x + 52}
-                  y={ry + 40}
-                  width={track * (run ? s.progress(run) : next ? 0 : 1)}
-                  height={2}
-                  rx={1}
-                />
+                {/* the bar is chalked full length and uncovered as the run goes */}
+                <clipPath id={`${clipId}-run-${i}`}>
+                  <rect
+                    ref={(el) => {
+                      bars.current[i] = el;
+                    }}
+                    x={x + 52}
+                    y={ry + 35}
+                    width={track * (run ? s.progress(run) : next ? 0 : 1)}
+                    height={12}
+                  />
+                </clipPath>
+                <g clipPath={`url(#${clipId}-run-${i})`}>
+                  <ChalkLine
+                    className="fl-bar"
+                    x1={x + 52}
+                    y1={ry + 41}
+                    x2={x + 52 + track}
+                    y2={ry + 41}
+                  />
+                </g>
               </g>
             );
           })}
@@ -805,7 +840,7 @@ function FlowDrawing() {
         <Review box={layout.review} hit={!!s.hits.review} review={s.review} />
 
         <Card box={layout.pr} hit={!!s.hits.pr}>
-          <rect
+          <ChalkRect
             className="fl-tile"
             x={layout.pr.x + 12}
             y={layout.pr.y + layout.pr.h / 2 - 18}
@@ -834,7 +869,7 @@ function FlowDrawing() {
           <g
             transform={`translate(${layout.pr.x + layout.pr.w - 56} ${layout.pr.y + 12})`}
           >
-            <rect className="fl-open-chip" width={44} height={18} rx={9} />
+            <ChalkRect className="fl-open-chip" width={44} height={18} rx={9} />
             <text className="fl-open-text" x={22} y={12.5} textAnchor="middle">
               Open
             </text>
@@ -916,7 +951,7 @@ function Card({
 }) {
   return (
     <g className={cn("fl-node", hit && "is-hit")}>
-      <rect
+      <ChalkRect
         className="fl-card"
         x={box.x}
         y={box.y}
@@ -940,7 +975,14 @@ function IconTile({
 }) {
   return (
     <>
-      <rect className="fl-tile" x={x} y={y} width={36} height={36} rx={10} />
+      <ChalkRect
+        className="fl-tile"
+        x={x}
+        y={y}
+        width={36}
+        height={36}
+        rx={10}
+      />
       <Icon
         x={x + 9}
         y={y + 9}
@@ -972,14 +1014,31 @@ function Hub({
   const gap = (w - 40 - AGENTS.length * tile) / (AGENTS.length - 1);
   return (
     <g className={cn("fl-hub", hit && "is-hit")}>
-      <rect className="fl-hub-card" x={x} y={y} width={w} height={h} rx={22} />
-      {/* Volt's app icon; the PNG's squircle fills 84% of its canvas, so this lands it at 54px */}
-      <image
-        href="/volt-icon-256.png"
-        x={x + 20}
-        y={y + 20}
-        width={64}
-        height={64}
+      <ChalkRect
+        className="fl-hub-card"
+        x={x}
+        y={y}
+        width={w}
+        height={h}
+        rx={22}
+      />
+      {/* Volt's app icon in chalk: its 54px tile and the bolt, 34px tall as on the icon */}
+      <ChalkRect
+        className="fl-hub-icon"
+        x={x + 25}
+        y={y + 25}
+        width={54}
+        height={54}
+        rx={15}
+      />
+      <ChalkPolygon
+        className="fl-bolt"
+        hatch={{ gap: 2.4 }}
+        hatchClassName="fl-bolt-hatch"
+        points={BOLT.map(([bx, by]): [number, number] => [
+          x + 52 + bx * 34,
+          y + 52 + by * 34,
+        ])}
       />
       <text className="fl-hub-title" x={x + 96} y={y + 48}>
         Agent server
@@ -988,18 +1047,18 @@ function Hub({
         On your Mac or a VPS
       </text>
       <g transform={`translate(${x + 20} ${y + 98})`}>
-        <rect className="fl-status" width={w - 40} height={28} rx={14} />
+        <ChalkRect className="fl-status" width={w - 40} height={28} rx={14} />
         <circle className="fl-live-pulse" cx={16} cy={14} r={3} />
         <circle className="fl-live-dot" cx={16} cy={14} r={3} />
         <text className="fl-status-text" x={28} y={18}>
           Keeps running when windows close
         </text>
       </g>
-      <line
+      <ChalkLine
         className="fl-divider"
         x1={x}
-        x2={x + w}
         y1={y + 146}
+        x2={x + w}
         y2={y + 146}
       />
       <text className="fl-label" x={x + 20} y={y + 172}>
@@ -1019,7 +1078,7 @@ function Hub({
               routing.includes(i) && "is-routing",
             )}
           >
-            <rect
+            <ChalkRect
               className="fl-tile"
               x={tx}
               y={y + 184}
@@ -1036,11 +1095,11 @@ function Hub({
           </g>
         );
       })}
-      <line
+      <ChalkLine
         className="fl-divider"
         x1={x}
-        x2={x + w}
         y1={y + 236}
+        x2={x + w}
         y2={y + 236}
       />
       <text className="fl-label" x={x + 20} y={y + 262}>
@@ -1056,7 +1115,7 @@ function Hub({
         return (
           // biome-ignore lint/suspicious/noArrayIndexKey: queue rows are fixed positions
           <g key={i} className={cn("fl-qrow", task ? "is-on" : "is-empty")}>
-            <rect
+            <ChalkRect
               className="fl-qrow-bg"
               x={x + 14}
               y={ry}
@@ -1090,11 +1149,11 @@ function Hub({
           </g>
         );
       })}
-      <line
+      <ChalkLine
         className="fl-divider"
         x1={x}
-        x2={x + w}
         y1={y + 386}
+        x2={x + w}
         y2={y + 386}
       />
       <text className="fl-foot" x={x + 20} y={y + h - 24}>
@@ -1117,9 +1176,10 @@ function Accounts({
   justSwitched: boolean;
 }) {
   const { x, y, w, h } = box;
+  const clipId = useId();
   return (
     <g className="fl-node">
-      <rect className="fl-card" x={x} y={y} width={w} height={h} rx={14} />
+      <ChalkRect className="fl-card" x={x} y={y} width={w} height={h} rx={14} />
       <g transform={`translate(${x + 16} ${y + 15})`}>
         <BrandIcon id="claude" size={15} />
       </g>
@@ -1127,8 +1187,15 @@ function Accounts({
         Usage
       </text>
       <g transform={`translate(${x + w - 42} ${y + 15})`}>
-        <rect className="fl-toggle" width={26} height={15} rx={7.5} />
-        <circle className="fl-toggle-knob" cx={18.5} cy={7.5} r={5.5} />
+        <ChalkRect
+          className="fl-toggle"
+          hatch={{ gap: 2.6 }}
+          hatchClassName="fl-toggle-hatch"
+          width={26}
+          height={15}
+          rx={7.5}
+        />
+        <circle className="fl-toggle-knob" cx={18.5} cy={7.5} r={4.5} />
       </g>
       {ACCOUNTS.map((name, i) => {
         const ry = y + 48 + i * 56;
@@ -1138,7 +1205,12 @@ function Accounts({
             key={name}
             className={cn("fl-account", i === active && "is-active")}
           >
-            <circle className="fl-avatar" cx={x + 27} cy={ry + 18} r={11} />
+            <ChalkCircle
+              className="fl-avatar"
+              cx={x + 27}
+              cy={ry + 18}
+              r={11}
+            />
             <text
               className="fl-avatar-text"
               x={x + 27}
@@ -1158,22 +1230,30 @@ function Accounts({
             >
               {`${pct}%`}
             </text>
-            <rect
+            <ChalkLine
               className="fl-track"
-              x={x + 16}
-              y={ry + 34}
-              width={w - 32}
-              height={4}
-              rx={2}
+              x1={x + 16}
+              y1={ry + 36}
+              x2={x + w - 16}
+              y2={ry + 36}
             />
-            <rect
-              className={cn("fl-usage", pct >= SWITCH_AT - 5 && "is-hot")}
-              x={x + 16}
-              y={ry + 34}
-              width={((w - 32) * Math.min(100, usage[i])) / 100}
-              height={4}
-              rx={2}
-            />
+            <clipPath id={`${clipId}-usage-${i}`}>
+              <rect
+                x={x + 16}
+                y={ry + 29}
+                width={((w - 32) * Math.min(100, usage[i])) / 100}
+                height={14}
+              />
+            </clipPath>
+            <g clipPath={`url(#${clipId}-usage-${i})`}>
+              <ChalkLine
+                className={cn("fl-usage", pct >= SWITCH_AT - 5 && "is-hot")}
+                x1={x + 16}
+                y1={ry + 36}
+                x2={x + w - 16}
+                y2={ry + 36}
+              />
+            </g>
           </g>
         );
       })}
@@ -1204,7 +1284,14 @@ function Review({
   const del = review.files.reduce((n, f) => n + f.del, 0);
   return (
     <g className={cn("fl-node", hit && "is-hit")}>
-      <rect className="fl-card" x={x} y={y} width={w} height={box.h} rx={14} />
+      <ChalkRect
+        className="fl-card"
+        x={x}
+        y={y}
+        width={w}
+        height={box.h}
+        rx={14}
+      />
       <text className="fl-title" x={x + 16} y={y + 27}>
         Review
       </text>
@@ -1216,7 +1303,7 @@ function Review({
         <tspan className="is-del" dx={6}>{`−${del}`}</tspan>
       </text>
       <g transform={`translate(${x + 12} ${y + 40})`}>
-        <rect className="fl-proof" width={w - 24} height={28} rx={8} />
+        <ChalkRect className="fl-proof" width={w - 24} height={28} rx={8} />
         <Check
           x={9}
           y={7}
@@ -1246,12 +1333,18 @@ function Review({
         </g>
       ))}
       <g transform={`translate(${x + 12} ${y + 132})`}>
-        <rect className="fl-btn" width={62} height={24} rx={12} />
+        <ChalkRect className="fl-btn" width={62} height={24} rx={12} />
         <text className="fl-btn-text" x={31} y={16} textAnchor="middle">
           Keep all
         </text>
-        <rect
+        {/* the main button is chalked in */}
+        <ChalkRect
           className={cn("fl-btn-primary", review.pressed && "is-pressed")}
+          hatch={{ gap: 3.5 }}
+          hatchClassName={cn(
+            "fl-btn-primary-hatch",
+            review.pressed && "is-pressed",
+          )}
           x={70}
           width={w - 24 - 70}
           height={24}
@@ -1282,7 +1375,7 @@ function Activity({
   const { x, y, w, h } = box;
   return (
     <g className="fl-node">
-      <rect className="fl-card" x={x} y={y} width={w} height={h} rx={14} />
+      <ChalkRect className="fl-card" x={x} y={y} width={w} height={h} rx={14} />
       <text className="fl-label" x={x + 16} y={y + 26}>
         Activity
       </text>
@@ -1328,21 +1421,20 @@ function MiniChat({
     <g>
       {sidebar ? (
         <>
-          <rect className="fl-ui-pane" width={44} height={h} />
+          <ChalkLine className="fl-ui-pane" x1={44} y1={4} x2={44} y2={h - 4} />
           {[30, 22, 26, 18].map((lw, i) => (
-            <rect
+            <ChalkLine
               key={lw}
               className={cn("fl-ui-line", i === 0 && "is-accent")}
-              x={7}
-              y={12 + i * 10}
-              width={lw}
-              height={3}
-              rx={1.5}
+              x1={8.5}
+              y1={13.5 + i * 10}
+              x2={5.5 + lw}
+              y2={13.5 + i * 10}
             />
           ))}
         </>
       ) : null}
-      <rect
+      <ChalkRect
         className="fl-ui-bubble"
         x={cx + cw * 0.5}
         y={10}
@@ -1351,17 +1443,16 @@ function MiniChat({
         rx={4.5}
       />
       {[0.92, 0.74, 0.84].map((lw, i) => (
-        <rect
+        <ChalkLine
           key={lw}
           className="fl-ui-line"
-          x={cx}
-          y={28 + i * 7}
-          width={cw * lw}
-          height={3}
-          rx={1.5}
+          x1={cx + 1.5}
+          y1={29.5 + i * 7}
+          x2={cx + cw * lw - 1.5}
+          y2={29.5 + i * 7}
         />
       ))}
-      <rect
+      <ChalkRect
         className="fl-ui-tool"
         x={cx}
         y={52}
@@ -1370,7 +1461,7 @@ function MiniChat({
         rx={3}
       />
       <circle className="fl-ui-live" cx={cx + 6} cy={57.5} r={2} />
-      <rect
+      <ChalkRect
         className="fl-ui-composer"
         x={cx - 2}
         y={h - 22}
@@ -1386,7 +1477,7 @@ function MiniChat({
 function LaptopArt() {
   return (
     <g>
-      <rect
+      <ChalkRect
         className="fl-bezel"
         x={14}
         y={0}
@@ -1394,7 +1485,7 @@ function LaptopArt() {
         height={122}
         rx={10}
       />
-      <rect
+      <ChalkRect
         className="fl-screen"
         x={20}
         y={6}
@@ -1405,18 +1496,11 @@ function LaptopArt() {
       <g transform="translate(20 6)">
         <MiniChat w={180} h={110} sidebar />
       </g>
-      <path
+      <ChalkPath
         className="fl-base"
         d="M0 122 H220 L214 130 Q213 132 210 132 H10 Q7 132 6 130 Z"
       />
-      <rect
-        className="fl-notch"
-        x={92}
-        y={122}
-        width={36}
-        height={3}
-        rx={1.5}
-      />
+      <ChalkLine className="fl-notch" x1={94} y1={124} x2={126} y2={124} />
     </g>
   );
 }
@@ -1424,12 +1508,12 @@ function LaptopArt() {
 function BrowserArt() {
   return (
     <g>
-      <rect className="fl-bezel" width={150} height={100} rx={10} />
-      <line className="fl-divider" x1={0} x2={150} y1={20} y2={20} />
+      <ChalkRect className="fl-bezel" width={150} height={100} rx={10} />
+      <ChalkLine className="fl-divider" x1={0} y1={20} x2={150} y2={20} />
       {[12, 21, 30].map((cx) => (
         <circle key={cx} className="fl-ui-dot" cx={cx} cy={10} r={2.5} />
       ))}
-      <rect
+      <ChalkRect
         className="fl-ui-url"
         x={42}
         y={5.5}
@@ -1448,56 +1532,64 @@ function BrowserArt() {
 function PhoneArt() {
   return (
     <g>
-      <rect className="fl-bezel" width={56} height={112} rx={14} />
-      <rect className="fl-screen" x={4} y={4} width={48} height={104} rx={10} />
-      <rect
+      <ChalkRect className="fl-bezel" width={56} height={112} rx={14} />
+      <ChalkRect
+        className="fl-screen"
+        x={4}
+        y={4}
+        width={48}
+        height={104}
+        rx={10}
+      />
+      <ChalkLine
         className="fl-island"
-        x={21}
-        y={8}
-        width={14}
-        height={4.5}
-        rx={2.25}
+        x1={23.25}
+        y1={10.25}
+        x2={32.75}
+        y2={10.25}
       />
-      <rect
+      <ChalkLine
         className="fl-ui-line is-strong"
-        x={10}
-        y={20}
-        width={22}
-        height={3}
-        rx={1.5}
+        x1={11.5}
+        y1={21.5}
+        x2={30.5}
+        y2={21.5}
       />
-      <rect
+      <ChalkLine
         className="fl-ui-line"
-        x={10}
-        y={30}
-        width={36}
-        height={3}
-        rx={1.5}
+        x1={11.5}
+        y1={31.5}
+        x2={44.5}
+        y2={31.5}
       />
-      <rect
+      <ChalkLine
         className="fl-ui-line"
-        x={10}
-        y={37}
-        width={28}
-        height={3}
-        rx={1.5}
+        x1={11.5}
+        y1={38.5}
+        x2={36.5}
+        y2={38.5}
       />
-      <rect className="fl-ui-card" x={8} y={50} width={40} height={34} rx={6} />
-      <rect
+      <ChalkRect
+        className="fl-ui-card"
+        x={8}
+        y={50}
+        width={40}
+        height={34}
+        rx={6}
+      />
+      <ChalkLine
         className="fl-ui-line is-strong"
-        x={12}
-        y={56}
-        width={26}
-        height={3}
-        rx={1.5}
+        x1={13.5}
+        y1={57.5}
+        x2={36.5}
+        y2={57.5}
       />
-      <rect
+      <ChalkLine
         className="fl-ui-line"
-        x={12}
-        y={62}
-        width={20}
-        height={3}
-        rx={1.5}
+        x1={13.5}
+        y1={63.5}
+        x2={30.5}
+        y2={63.5}
       />
       <rect
         className="fl-ui-btn"
@@ -1515,14 +1607,7 @@ function PhoneArt() {
         height={7}
         rx={3.5}
       />
-      <rect
-        className="fl-ui-home"
-        x={20}
-        y={101}
-        width={16}
-        height={2}
-        rx={1}
-      />
+      <ChalkLine className="fl-ui-home" x1={21} y1={102} x2={35} y2={102} />
     </g>
   );
 }
