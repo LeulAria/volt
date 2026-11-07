@@ -1,0 +1,50 @@
+name: Workflow Templates
+
+# Validates the workflow templates repository (workflow-templates/) with Volt's own parser and
+# checks: index.json, every template it lists, unlisted files, ids that match file names, the
+# built-in templates' copies and the generated schema files. Runs from source with Bun: no
+# npm install, no build.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'workflow-templates/**'
+      - 'src/vs/workbench/services/voltRuntime/common/workflows/**'
+      - 'src/vs/workbench/services/voltRuntime/common/automations/automationCron.ts'
+      - 'src/vs/workbench/services/voltRuntime/common/automations/automationTriggers.ts'
+      - 'src/vs/workbench/services/voltRuntime/common/automations/automationWebhooks.ts'
+      - 'build/volt/workflows/**'
+      - '.github/workflows/workflow-templates.yml'
+  pull_request:
+    paths:
+      - 'workflow-templates/**'
+      - 'src/vs/workbench/services/voltRuntime/common/workflows/**'
+      - 'src/vs/workbench/services/voltRuntime/common/automations/automationCron.ts'
+      - 'src/vs/workbench/services/voltRuntime/common/automations/automationTriggers.ts'
+      - 'src/vs/workbench/services/voltRuntime/common/automations/automationWebhooks.ts'
+      - 'build/volt/workflows/**'
+      - '.github/workflows/workflow-templates.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflow-templates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate templates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - name: Validate workflow templates
+        run: bun build/volt/workflows/validateTemplates.ts

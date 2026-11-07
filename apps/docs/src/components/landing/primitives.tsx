@@ -8,6 +8,50 @@ export const EASE_OUT = [0.22, 1, 0.36, 1] as const;
 /** Pulls section titles off the column guides. */
 export const HEADING_INSET = "pl-4 sm:pl-6 md:pl-8";
 
+/**
+ * A photo behind a page's opening section, under the home hero's black and pixel grid
+ * (.hero-pixels). It reaches up behind the header (44px, 48px from sm) to the top of the page
+ * and fades into the page at the section's bottom edge. Goes first in a `relative` wrapper
+ * around that section.
+ */
+export function PageBackdrop({
+  src,
+  position,
+  dim,
+}: {
+  src: string;
+  /** `object-position` of the crop. */
+  position: string;
+  /** How much black lies over the photo, 0 to 1; .hero-pixels' 0.4 when unset. */
+  dim?: number;
+}) {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute inset-x-0 -top-11 bottom-0 sm:-top-12"
+    >
+      <img
+        src={src}
+        alt=""
+        fetchPriority="high"
+        decoding="async"
+        draggable={false}
+        className="absolute inset-0 size-full select-none object-cover"
+        style={{ objectPosition: position }}
+      />
+      <div
+        className="hero-pixels"
+        style={
+          dim === undefined
+            ? undefined
+            : { backgroundColor: `rgba(0, 0, 0, ${dim})` }
+        }
+      />
+      <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-b from-transparent to-[#0a0d0c]" />
+    </div>
+  );
+}
+
 /** Rises content into place once it scrolls into view. */
 export function Reveal({
   children,

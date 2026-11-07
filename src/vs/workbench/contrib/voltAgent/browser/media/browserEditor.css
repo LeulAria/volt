@@ -2025,6 +2025,37 @@ the background paints a solid square) and keep the glyph in the accent. */
 	justify-self: end;
 }
 
+/*
+ * Start Multitasking's "N to multitask" (agentComposerChips' token), placed as in the chat's
+ * composer: right after the + (and mode chip) on one line, a line of its own above a multiline prompt.
+ */
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock:not(.multiline) > .volt-agent-multitask-token {
+	order: 0;
+	align-self: center;
+	margin: 0 0 0 8px;
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline.has-input-token {
+	grid-template-areas:
+		"token token token token token"
+		"input input input input input"
+		"plus model mode . actions";
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline.has-media.has-input-token {
+	grid-template-areas:
+		"media media media media media"
+		"token token token token token"
+		"input input input input input"
+		"plus model mode . actions";
+}
+
+.volt-agent-input-box.follow-up.volt-browser-agent-composer.dock.multiline > .volt-agent-multitask-token {
+	grid-area: token;
+	order: unset;
+	margin: 0 2px -2px;
+}
+
 .volt-browser-dock-session {
 	position: absolute;
 	width: 1px;
@@ -2037,6 +2068,51 @@ the background paints a solid square) and keep the glyph in the accent. */
 /* While a tab or file is dragged, the page lets the pointer through to the editor drop zones. */
 .volt-browser-editor.drag-passthrough webview.volt-browser-frame {
 	pointer-events: none !important;
+}
+
+/* DevTools docked under the page, in the tab: a solid pane of its own (the window is see-through). */
+.volt-browser-devtools {
+	position: relative;
+	flex: none;
+	min-height: 120px;
+	border-top: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)));
+	background: var(--vscode-editor-background);
+	isolation: isolate;
+	contain: paint;
+}
+
+webview.volt-browser-devtools-frame {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	border: 0;
+	display: flex;
+}
+
+/* The top edge drags the height; it reaches over the border so it is easy to catch. */
+.volt-browser-devtools-sash {
+	position: absolute;
+	top: -3px;
+	left: 0;
+	right: 0;
+	height: 6px;
+	z-index: 2;
+	cursor: ns-resize;
+}
+
+.volt-browser-devtools-sash:hover,
+.volt-browser-editor.devtools-resizing .volt-browser-devtools-sash {
+	background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder));
+}
+
+/* While dragging, neither webview takes the pointer, or the drag stops at the first one it crosses. */
+.volt-browser-editor.devtools-resizing webview {
+	pointer-events: none !important;
+}
+
+.volt-browser-editor.devtools-resizing {
+	cursor: ns-resize;
 }
 
 /*
@@ -3432,10 +3508,9 @@ the background paints a solid square) and keep the glyph in the accent. */
 	background: #ececec;
 }
 
-/* A sent comment keeps its pin, drawn hollow, until it is resolved; a resolved one (Resolved toggle) gets the passed colour. */
+/* A sent comment keeps its numbered pin (no outline) to show the element was annotated; a resolved one gets the passed colour. */
 .volt-browser-comment.sent:not(.expanded) .volt-browser-comment-badge {
-	border-style: dashed;
-	opacity: 0.85;
+	opacity: 0.9;
 }
 
 .volt-browser-comment.resolved:not(.expanded) .volt-browser-comment-badge {

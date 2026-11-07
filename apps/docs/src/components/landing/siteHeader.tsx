@@ -15,18 +15,10 @@ const PILL =
 const TEXT_LINK =
   "inline-flex h-6 items-center justify-center rounded-md px-2 leading-none text-[12px] font-medium text-white/65 transition-colors duration-150 hover:text-white";
 
-/** Logo, the beta label with the newest GitHub release, Changelog / Download / Support as text links, and the Discord / GitHub pills (GitHub with its live star count). Below md the text links move into the menu sheet. */
-export function SiteHeader({
-  animate = false,
-  className,
-}: {
-  /** Mark the items for the landing's opening sequence (they stay hidden until it runs). */
-  animate?: boolean;
-  className?: string;
-}) {
+/** The Volt bolt, the beta label with the newest GitHub release, Changelog / Download / Support as text links, and the Discord / GitHub pills (GitHub with its live star count). Below md the text links move into the menu sheet. */
+export function SiteHeader({ className }: { className?: string }) {
   const version = latestVersion(useReleases());
   const stars = useGithubStars();
-  const hero = animate ? { "data-hero": "head" } : {};
   return (
     <header
       className={cn(
@@ -35,21 +27,19 @@ export function SiteHeader({
       )}
     >
       <Link
-        {...hero}
         to="/"
         aria-label="Volt home"
         className={`mr-auto inline-flex items-center gap-2 rounded-md ${focusRing}`}
       >
         <img
-          src="/volt-icon-256.png"
+          src="/volt-bolt.svg"
           alt=""
-          width={256}
-          height={256}
-          className="size-7"
+          width={360}
+          height={552}
+          className="h-7 w-auto"
         />
       </Link>
       <a
-        {...hero}
         href={GITHUB_RELEASES_URL}
         target="_blank"
         rel="noreferrer"
@@ -77,28 +67,21 @@ export function SiteHeader({
         ) : null}
       </a>
       <Link
-        {...hero}
         to="/changelog"
         className={`${TEXT_LINK} max-md:hidden ${focusRing}`}
       >
         Changelog
       </Link>
       <Link
-        {...hero}
         to="/download"
         className={`${TEXT_LINK} max-md:hidden ${focusRing}`}
       >
         Download
       </Link>
-      <Link
-        {...hero}
-        to="/donors"
-        className={`${TEXT_LINK} max-md:hidden ${focusRing}`}
-      >
+      <Link to="/donors" className={`${TEXT_LINK} max-md:hidden ${focusRing}`}>
         Support
       </Link>
       <a
-        {...hero}
         href={DISCORD_URL}
         target="_blank"
         rel="noreferrer"
@@ -110,7 +93,6 @@ export function SiteHeader({
         <span className="max-sm:sr-only">Discord</span>
       </a>
       <a
-        {...hero}
         href={`https://github.com/${gitConfig.user}/${gitConfig.repo}`}
         target="_blank"
         rel="noreferrer"
@@ -140,7 +122,7 @@ export function SiteHeader({
           </>
         ) : null}
       </a>
-      <SiteMenu hero={hero} version={version} stars={stars} />
+      <SiteMenu version={version} stars={stars} />
     </header>
   );
 }

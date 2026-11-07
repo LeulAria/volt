@@ -17,7 +17,7 @@ import { EditorExtensions, IEditorFactoryRegistry } from '../../../../common/edi
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IAutomationService } from '../../../../services/voltRuntime/common/automations/automations.js';
 import { openInAgentTools } from '../workspace/agentSurfaceHost.js';
-import { OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID } from '../workspace/agentSurfaceMenu.js';
+import { OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID } from '../workspace/agentSurfaceMenu.js';
 import { NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATION_RUNS_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID } from './automationCommands.js';
 import { AutomationsRoute, IAutomationSeed } from './automationRoutes.js';
 import { AutomationService } from './automationService.js';
@@ -90,6 +90,25 @@ registerAction2(class OpenAutomationsInToolsAction extends Action2 {
 		} else {
 			input.dispose();
 			await openAutomations(accessor, { page: 'list' });
+		}
+	}
+});
+
+registerAction2(class OpenWorkflowsInToolsAction extends Action2 {
+	constructor() {
+		super({ id: OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, title: localize2('voltAutomations.openWorkflowsInTools', "Open Workflows Beside Chat") });
+	}
+
+	/** The workflow library in the chat's right panel; no chat on screen opens the usual Automations tab there. */
+	override async run(accessor: ServicesAccessor, sessionId?: unknown): Promise<void> {
+		const input = accessor.get(IInstantiationService).createInstance(AutomationsEditorInput);
+		input.route = { page: 'workflows' };
+		const opened = openInAgentTools(input, typeof sessionId === 'string' ? sessionId : undefined, { pinned: true });
+		if (opened) {
+			await opened;
+		} else {
+			input.dispose();
+			await openAutomations(accessor, { page: 'workflows' });
 		}
 	}
 });

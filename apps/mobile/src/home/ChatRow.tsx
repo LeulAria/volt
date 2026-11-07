@@ -11,7 +11,7 @@ import Animated, { interpolate, type SharedValue, useAnimatedStyle } from 'react
 import { useClient } from '../state/client';
 import { useRunGroupOfChat } from './RunGroups';
 import { useTheme } from '../theme/theme';
-import { haptic, Icon, LiveTimer, StatusIcon, T, Tap } from '../ui/core';
+import { haptic, Icon, LiveTimer, Ripple, StatusIcon, T, Tap } from '../ui/core';
 
 function SwipeAction({ icon, label, color, progress, onPress, align }: { readonly icon: IconName; readonly label: string; readonly color: string; readonly progress: SharedValue<number>; readonly onPress: () => void; readonly align: 'left' | 'right' }) {
 	const { p } = useTheme();
@@ -71,7 +71,7 @@ export const ChatRow = memo(function ChatRow({ item, onPress, onLongPress }: { r
 				</View>
 			)}
 		>
-			<Tap
+			<Ripple
 				onPress={() => onPress(item)}
 				onLongPress={() => {
 					haptic.medium();
@@ -112,7 +112,7 @@ export const ChatRow = memo(function ChatRow({ item, onPress, onLongPress }: { r
 						</View>
 					) : null}
 				</View>
-			</Tap>
+			</Ripple>
 		</ReanimatedSwipeable>
 	);
 });

@@ -15,6 +15,7 @@ If you only want to report a bug or suggest an idea, you don't need any of the s
 - [Checks before you push](#checks-before-you-push)
 - [Testing](#testing)
 - [Commits and pull requests](#commits-and-pull-requests)
+- [Continuous integration](#continuous-integration)
 - [AI-assisted contributions](#ai-assisted-contributions)
 - [Working on the docs site](#working-on-the-docs-site)
 - [Licensing](#licensing)
@@ -187,19 +188,18 @@ The agent window is transparent (macOS vibrancy), and some CSS makes Chromium st
 
 ## Checks before you push
 
-Run these from the repository root, with Node 22:
+[CI](#continuous-integration) runs all of this on every pull request; running it first saves a round trip. From the repository root, with Node 22:
 
 ```bash
+node build/volt/ci/lintDiff.mjs --base origin/main   # what CI's Lint runs (git add new files first)
 npm run compile-check-ts-native   # type-check src/ (fast, native)
-npm run eslint                    # lint
-npm run stylelint                 # CSS lint
-npm run hygiene                   # license headers, formatting, file rules
 npm run valid-layers-check        # layering rules
+npm run test-volt-bun             # Volt's unit tests straight from src/ (needs Bun)
 ```
 
-> **Known baseline.** As of October 2026 the type check reports about 43 diagnostics, mostly fallout from the move to TypeScript 6 (`module` vs `namespace`, stale test fixtures). They're tracked and being cleaned up. **Your change must not add new ones.** Run the check before and after, and compare.
+`lintDiff.mjs` runs the same hygiene as the pre-commit hook (eslint, the CSS variable check, formatting, license headers, tab indentation, stray unicode) on the files you changed, at `origin/main` and in your working tree, and reports only the problems your change adds. Like the hook, it covers `src/`, `build/`, `extensions/`, `scripts/`, `test/` and top-level files; `apps/docs` has its own Biome check in CI. `npm run eslint` also lints `apps/` with the VS Code rules and reports about 1,700 warnings there that no check enforces.
 
-Because of that baseline, a strict release build fails. For local packaging only, `VOLT_BUILD_IGNORE_TYPE_ERRORS=1` reports the errors and still builds. Never use it to hide an error you introduced.
+> The type check is clean as of November 2026, and CI fails on any error. For local packaging only, `VOLT_BUILD_IGNORE_TYPE_ERRORS=1` reports type errors and still builds. Never use it to hide an error you introduced.
 
 ## Testing
 
@@ -246,7 +246,9 @@ fix: lay out the agent pane once when switching chats
 style: tighten the table copy menu
 ```
 
-Common prefixes are `feat`, `fix`, `perf`, `refactor`, `style` (visual only), `test`, `docs`, `build`, and `chore`. Add a scope in parentheses when it helps, for example `fix(docs):`. Put the *why* in the body when it isn't obvious.
+Common prefixes are `feat`, `fix`, `perf`, `refactor`, `style` (visual only), `test`, `docs`, `build`, `ci`, `revert`, and `chore`. Add a lowercase scope in parentheses when it helps, for example `fix(docs):`. Put the *why* in the body when it isn't obvious.
+
+Pull requests are squash-merged, so the **PR title** becomes the commit subject, and CI checks that it follows the same format.
 
 ### Pull requests
 
@@ -271,6 +273,29 @@ Common prefixes are `feat`, `fix`, `perf`, `refactor`, `style` (visual only), `t
 - Is it as small as it can be, especially where it touches upstream VS Code files?
 
 Volt is maintained by a small team, so reviews take as long as they take. If you haven't heard back after two weeks, a polite nudge on the PR is welcome. Not every PR can be merged, even good ones, because a change can be right in isolation and wrong for the project's direction. When we decline, we'll tell you why.
+
+## Continuous integration
+
+Every pull request and every push to `main` runs these on GitHub Actions, with nothing to start by hand:
+
+| Workflow | Job | What it checks |
+| --- | --- | --- |
+| **CI** | Lint | Hygiene on the changed files, failing only on problems the change adds |
+| | Typecheck | `src/` type check, layer rules, class field order |
+| | Unit Tests (Volt, Node, Electron) | Volt's Bun suites, the Node mocha suites, the Electron suites under a virtual display. Electron is not part of Check until [the tests that predate CI](https://github.com/LeulAria/volt/issues/75) pass |
+| | Extensions | Built-in extensions compile |
+| | Rust CLI | Clippy and tests for `cli/` |
+| | Docs Site, Mobile App, Relay, Volt Govern | Each app's own type check, tests, build, and Biome for the docs site |
+| | Workflows | The CI scripts' tests, actionlint and zizmor (workflow security) |
+| | Dependency Review | New dependencies with a known high or critical vulnerability |
+| | **Check** | Passes when every job passed or was skipped because the change can't affect it |
+| **PR** | Title and Description | A conventional commit title and a filled-in description |
+| | Size Label, Area Labels | `size:*` and `area:*` labels from the diff |
+| **AI Review** | Review | A summary comment and inline comments from a model on a free tier |
+
+CI skips jobs a change cannot affect: a README edit runs only Lint, an `apps/docs` change runs Lint and the docs job. Pushes to `main` and changes to the CI itself run everything. `build/volt/ci/changes.mjs` holds the rules.
+
+**The AI review** posts a summary of the change, a walkthrough of the files, and inline comments on lines with real problems, ranked by severity. Each push is reviewed incrementally, so it only reads the new commits. It is advisory and can be wrong; treat it like a comment from a colleague who skimmed the diff. A maintainer can comment `/review` to review new commits, or `/review full` for the whole PR. The `skip-ai-review` label turns it off for one PR. It reads [`.github/review-guidelines.md`](.github/review-guidelines.md) on every run; add a rule there when it keeps missing something. To set it up, add a free [Google AI Studio](https://aistudio.google.com/apikey) key as the repository secret `GEMINI_API_KEY` (or `OPENROUTER_API_KEY`, or any OpenAI-compatible endpoint through `AI_REVIEW_API_KEY` and the variable `AI_REVIEW_BASE_URL`).
 
 ## AI-assisted contributions
 

@@ -1,0 +1,240 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Suggest branch names (agentBranchSuggest.ts): the hover card's look, a list of names with radios, Confirm. */
+.volt-branch-suggest {
+	display: flex;
+	flex-direction: column;
+	/* List rows give the card no width. */
+	width: 280px;
+	max-width: calc(100vw - 16px);
+	box-sizing: border-box;
+	margin-top: 4px;
+	padding: 0 12px;
+	overflow: hidden;
+	border-radius: 10px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	/* Opaque: it floats over the transparent agent window. */
+	background: #1c1c1c;
+	color: #f5f5f5;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+	font-size: 13px;
+	line-height: 18px;
+	-webkit-font-smoothing: antialiased;
+}
+
+.monaco-workbench.vs .volt-branch-suggest,
+.monaco-workbench.hc-light .volt-branch-suggest {
+	background: #ececec;
+	color: #1a1a1a;
+	border-color: rgba(0, 0, 0, 0.1);
+	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.volt-branch-suggest-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: none;
+	height: 32px;
+	color: color-mix(in srgb, currentColor 60%, transparent);
+	font-size: 12px;
+}
+
+.volt-branch-suggest-head > svg {
+	flex: none;
+}
+
+.volt-branch-suggest-title {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Rows run edge to edge: the list cancels the card's side padding. */
+.volt-branch-suggest-list {
+	flex: none;
+	margin: 0 -12px;
+}
+
+.volt-branch-suggest-list.hidden,
+.volt-branch-suggest-note.hidden {
+	display: none;
+}
+
+.volt-branch-suggest-list .monaco-list,
+.volt-branch-suggest-list .monaco-list-rows {
+	background: transparent;
+}
+
+.volt-branch-suggest-list .monaco-list:focus {
+	outline: none;
+}
+
+.volt-branch-suggest-list .monaco-list-row {
+	border-radius: 0;
+}
+
+/* The radio shows the pick; themes with a contrast border would still box the picked row. */
+.volt-branch-suggest-list .monaco-list .monaco-list-row.selected,
+.volt-branch-suggest-list .monaco-list .monaco-list-row.focused {
+	outline: none !important;
+}
+
+.volt-branch-suggest-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 100%;
+	padding: 0 12px;
+	box-sizing: border-box;
+	cursor: pointer;
+}
+
+.volt-branch-suggest-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: color-mix(in srgb, currentColor 80%, transparent);
+}
+
+.volt-branch-suggest-list .monaco-list-row.selected .volt-branch-suggest-name {
+	color: inherit;
+}
+
+/* The radio: a thin ring, filled with a dot on the picked name. */
+.volt-branch-suggest-radio {
+	position: relative;
+	flex: none;
+	width: 14px;
+	height: 14px;
+	box-sizing: border-box;
+	border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+	border-radius: 50%;
+}
+
+.volt-branch-suggest-list .monaco-list-row.selected .volt-branch-suggest-row:not(.skeleton) .volt-branch-suggest-radio {
+	border-color: currentColor;
+}
+
+.volt-branch-suggest-list .monaco-list-row.selected .volt-branch-suggest-row:not(.skeleton) .volt-branch-suggest-radio::after {
+	content: '';
+	position: absolute;
+	inset: 3px;
+	border-radius: 50%;
+	background: currentColor;
+}
+
+/* Placeholders while the model thinks: a faint ring and a bar a light sweeps across. */
+.volt-branch-suggest-row.skeleton {
+	cursor: default;
+}
+
+.volt-branch-suggest-row.skeleton .volt-branch-suggest-radio {
+	border-color: color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.volt-branch-suggest-row.skeleton .volt-branch-suggest-name {
+	flex: none;
+	height: 8px;
+	border-radius: 4px;
+	background: linear-gradient(90deg,
+		color-mix(in srgb, currentColor 7%, transparent) 0%,
+		color-mix(in srgb, currentColor 16%, transparent) 50%,
+		color-mix(in srgb, currentColor 7%, transparent) 100%);
+	background-size: 200% 100%;
+	animation: volt-branch-suggest-sweep 1.4s linear infinite;
+}
+
+.monaco-workbench.reduce-motion .volt-branch-suggest-row.skeleton .volt-branch-suggest-name {
+	animation: none;
+}
+
+@keyframes volt-branch-suggest-sweep {
+	from { background-position: 100% 0; }
+	to { background-position: -100% 0; }
+}
+
+.volt-branch-suggest-note {
+	padding: 6px 0 0;
+	color: color-mix(in srgb, currentColor 60%, transparent);
+	font-size: 12px;
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+
+/* A full-width hairline over the footer: Cancel (outlined) then Confirm (filled), compact. */
+.volt-branch-suggest-footer {
+	display: flex;
+	justify-content: flex-end;
+	gap: 6px;
+	margin: 4px -12px 0;
+	padding: 8px 10px;
+	border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.monaco-workbench.vs .volt-branch-suggest-footer,
+.monaco-workbench.hc-light .volt-branch-suggest-footer {
+	border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Doubled class: wins over voltButton.css whatever order the bundle puts them in. */
+.monaco-workbench .volt-branch-suggest-footer .volt-button.volt-button {
+	height: 22px;
+	padding: 0 9px;
+	border-radius: 5px;
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.monaco-workbench .volt-branch-suggest-footer .volt-button.volt-branch-suggest-cancel {
+	background: transparent;
+	border-color: color-mix(in srgb, currentColor 22%, transparent);
+	color: inherit;
+}
+
+.monaco-workbench .volt-branch-suggest-footer .volt-button.volt-branch-suggest-cancel:hover {
+	background: color-mix(in srgb, currentColor 8%, transparent);
+	color: inherit;
+}
+
+/* The branch row's Suggest button: a chip at the row's end, shown while the row is hovered. */
+.volt-agent-dock-row.can-suggest-branch > .volt-agent-dock-row-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-dock-row > .volt-agent-dock-branch-suggest {
+	display: none;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	margin-right: -4px;
+	border-radius: 4px;
+	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+	color: inherit;
+	opacity: 0.75;
+	cursor: pointer;
+}
+
+.volt-agent-dock-row.can-suggest-branch:hover > .volt-agent-dock-branch-suggest,
+.volt-agent-dock-row.can-suggest-branch > .volt-agent-dock-branch-suggest.open,
+.monaco-workbench .volt-agent-dock-row.can-suggest-branch:focus-visible > .volt-agent-dock-branch-suggest {
+	display: inline-flex;
+}
+
+.volt-agent-dock-row > .volt-agent-dock-branch-suggest:hover,
+.volt-agent-dock-row > .volt-agent-dock-branch-suggest.open {
+	background: var(--vscode-toolbar-activeBackground, color-mix(in srgb, var(--vscode-foreground) 16%, transparent));
+	opacity: 1;
+}

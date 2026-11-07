@@ -8,8 +8,11 @@ import { Disposable, IDisposable, toDisposable } from '../../../base/common/life
 import { AgentServerEventLog, IEventLogLimits } from './eventLog.js';
 import {
 	AGENT_SERVER_PROTOCOL_VERSION, AgentServerCapability, AgentServerClientFrame, AgentServerCloseCode, AgentServerRemoteError, AgentServerTopic, DEFAULT_TOPICS,
-	IAgentServerCall, IAgentServerHello, IAgentServerReturn, IAgentServerSnapshot, IAgentServerWelcome, isValidHello, parseFrame, toAgentServerError
+	hearsTopic, IAgentServerCall, IAgentServerHello, IAgentServerReturn, IAgentServerSnapshot, IAgentServerWelcome, isValidHello, parseFrame, toAgentServerError
 } from './protocol.js';
+
+/** A topic whose last client left this recently still has its events logged: that client may resume. */
+export const UNHEARD_GRACE_MS = 2 * 60_000;
 
 /** One accepted socket, whatever carries it (WebSocket in production, in-memory in tests). */
 export interface IServerSocket {
@@ -114,6 +117,10 @@ export class AgentServerProtocol extends Disposable {
 	private nextConnectionId = 1;
 	private nextClientCallId = 1;
 	private readonly now: () => number;
+	/** When a client last heard each topic (see {@link publishIfHeard}). */
+	private readonly heardAt = new Map<AgentServerTopic, number>();
+	/** The newest `seq` after which an event of the topic was dropped unheard. */
+	private readonly droppedAfter = new Map<AgentServerTopic, number>();
 
 	private readonly _onDidChangeClients = this._register(new Emitter<void>());
 	readonly onDidChangeClients: Event<void> = this._onDidChangeClients.event;
@@ -154,11 +161,27 @@ export class AgentServerProtocol extends Disposable {
 	publish(topic: AgentServerTopic, data: unknown): number {
 		const stored = this.log.append(topic, data);
 		for (const client of this.clients.values()) {
-			if (client.topics.has(topic)) {
+			if (hearsTopic(client.topics, topic)) {
 				this.sendEvent(client, stored.event.seq, stored.text);
 			}
 		}
 		return stored.event.seq;
+	}
+
+	/**
+	 * Publishes `data()` only when the topic has a client to go to, now or lately (one that left
+	 * less than {@link UNHEARD_GRACE_MS} ago may resume). Otherwise the event is neither built nor
+	 * logged, and a client that later resumes across it is sent a snapshot instead of a replay.
+	 */
+	publishIfHeard(topic: AgentServerTopic, data: () => unknown): number | undefined {
+		const now = this.now();
+		if ([...this.clients.values()].some(client => hearsTopic(client.topics, topic))) {
+			this.heardAt.set(topic, now);
+		} else if (now - (this.heardAt.get(topic) ?? -Infinity) >= UNHEARD_GRACE_MS) {
+			this.droppedAfter.set(topic, this.log.seq);
+			return undefined;
+		}
+		return this.publish(topic, data());
 	}
 
 	/**
@@ -246,6 +269,7 @@ export class AgentServerProtocol extends Disposable {
 			this.releaseSocket(connectionId);
 			if (client && this.clients.get(connectionId) === client) {
 				this.clients.delete(connectionId);
+				this.noteHeard(client);
 				for (const [id, call] of this.pendingClientCalls) {
 					if (call.connectionId === connectionId) {
 						this.pendingClientCalls.delete(id);
@@ -314,12 +338,14 @@ export class AgentServerProtocol extends Disposable {
 		// Welcome and replay synchronously: nothing else runs on this thread in between, so the
 		// client sees every event exactly once whether it resumed or loaded the snapshot.
 		const decision = this.log.resume(frame.resume);
-		if (decision.kind === 'replay') {
+		// Events of its topics were dropped while nobody heard them: replaying the rest would leave a hole.
+		const missed = [...client.topics].some(topic => hearsTopic(client.topics, topic) && (this.droppedAfter.get(topic) ?? -1) >= (frame.resume?.seq ?? Infinity));
+		if (decision.kind === 'replay' && !missed) {
 			const welcome: IAgentServerWelcome = { t: 'welcome', epoch: this.log.epoch, seq: this.log.seq, resumed: true, serverVersion: this.options.serverVersion, pid: this.options.pid };
 			socket.send(JSON.stringify(welcome));
 			client.lastSent = frame.resume!.seq;
 			for (const stored of decision.events) {
-				if (client.topics.has(stored.event.topic)) {
+				if (hearsTopic(client.topics, stored.event.topic)) {
 					this.sendEvent(client, stored.event.seq, stored.text);
 				}
 			}
@@ -389,11 +415,22 @@ export class AgentServerProtocol extends Disposable {
 		if (client.socket.bufferedAmount > max) {
 			// It resumes from its last applied event once it reconnects.
 			this.clients.delete(client.info.connectionId);
+			this.noteHeard(client);
 			client.socket.close(AgentServerCloseCode.Overflow, 'client too slow');
 			this._onDidChangeClients.fire();
 			return;
 		}
 		client.socket.send(text);
+	}
+
+	/** A client that leaves heard its topics until now: their events stay logged a while for its resume. */
+	private noteHeard(client: IClient): void {
+		const now = this.now();
+		for (const topic of client.topics) {
+			if (hearsTopic(client.topics, topic)) {
+				this.heardAt.set(topic, now);
+			}
+		}
 	}
 
 	override dispose(): void {

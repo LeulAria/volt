@@ -24,7 +24,7 @@ export interface IVoltBuiltinSkill {
 }
 
 /** Built-in commands act in the app instead of sending instructions. */
-export type VoltBuiltinCommandId = 'model' | 'customize' | 'new-chat' | 'usage';
+export type VoltBuiltinCommandId = 'model' | 'customize' | 'new-chat' | 'usage' | 'device';
 
 export interface IVoltBuiltinCommand {
 	readonly id: VoltBuiltinCommandId;
@@ -435,6 +435,7 @@ export const VOLT_BUILTIN_COMMANDS: readonly IVoltBuiltinCommand[] = [
 	{ id: 'customize', name: 'customize', title: 'Customize', description: 'Open Skills, Rules, MCPs and Plugins' },
 	{ id: 'new-chat', name: 'new', title: 'New Chat', description: 'Start a new chat' },
 	{ id: 'usage', name: 'usage', title: 'Usage', description: 'Show cost, tokens and limits' },
+	{ id: 'device', name: 'device', title: 'Device', description: 'Open an iOS simulator or Android emulator in this chat' },
 ];
 
 export function findBuiltinSkill(name: string): IVoltBuiltinSkill | undefined {

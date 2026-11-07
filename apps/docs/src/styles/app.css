@@ -4,7 +4,9 @@
 
 @theme {
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Helvetica Neue', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'Geist Mono', ui-monospace, monospace;
+  /* Apple's own faces everywhere: SF Pro for text, SF Mono for code. Nothing is downloaded, except
+     Excalifont for the chalk drawing (see .fl-svg). */
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 html {
@@ -27,6 +29,19 @@ html:has(body[data-scroll-locked]) {
 .home-page ::selection {
   background: rgba(125, 190, 255, 0.26);
   color: #fff;
+}
+
+/* Photo backdrops (the home hero, the tops of Changelog, Download and Support): the photo under 40%
+   black (Support: 60%, through PageBackdrop's dim), seen through a grid of square pixels. */
+.hero-pixels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-color: rgba(0, 0, 0, 0.4);
+  background-image:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.5) 1px, transparent 1px),
+    linear-gradient(rgba(0, 0, 0, 0.5) 1px, transparent 1px);
+  background-size: 6px 6px;
 }
 
 .home-grain {
@@ -168,6 +183,22 @@ html:has(body[data-scroll-locked]) {
   }
 }
 
+/* Photo place pins: a ring spreading slowly from under the pin's tip. */
+.place-pulse {
+  animation: place-pulse 2.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+@keyframes place-pulse {
+  from {
+    transform: scale(0.5);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
 /* Feature index: the active row's rule fills for exactly one turn. */
 .demo-progress {
   transform-origin: left center;
@@ -194,7 +225,8 @@ html:has(body[data-scroll-locked]) {
   .cap-spin,
   .cap-ping,
   .cap-pulse,
-  .demo-progress {
+  .demo-progress,
+  .place-pulse {
     animation: none;
   }
 }
@@ -218,6 +250,554 @@ html:has(body[data-scroll-locked]) {
   [data-hero-geometry] {
     visibility: visible;
     animation: none;
+  }
+}
+
+/* Agent flow drawing (agentFlow.tsx), chalked on the page's blackboard: rough.js outlines (chalk.tsx),
+   Excalifont handwriting, and a grain where the chalk skipped over the board. White chalk, with orange
+   for work moving and green for work shipped. */
+
+/* Excalifont (SIL OFL 1.1, from Excalidraw; public/fonts/excalifont/OFL.txt), the hand of Volt's
+   Scratch board. The one face the site downloads, for this drawing. Latin only. */
+@font-face {
+  font-family: 'Excalifont';
+  src: url('/fonts/excalifont/Excalifont-Regular-a88b72a24fb54c9f94e3b5fdaa7481c9.woff2') format('woff2');
+  font-display: swap;
+  unicode-range: U+20-7E, U+A0-A3, U+A5-A6, U+A8-AB, U+AD-B1, U+B4, U+B6-B8, U+BA-FF, U+131, U+152-153,
+    U+2BC, U+2C6, U+2DA, U+2DC, U+304, U+308, U+2013-2014, U+2018-201A, U+201C-201E, U+2020, U+2022,
+    U+2024-2026, U+2030, U+2039-203A, U+20AC, U+2122, U+2212;
+}
+
+.fl-svg {
+  --fl-chalk: #f4f1e8;
+  --fl-orange: #ffa074;
+  --fl-green: #74e2a8;
+  --fl-red: #ff8f86;
+  --fl-ink: var(--fl-chalk);
+  --fl-soft: rgba(244, 241, 232, 0.74);
+  --fl-faint: rgba(244, 241, 232, 0.54);
+  --fl-stroke: rgba(244, 241, 232, 0.5);
+  --fl-dim: rgba(244, 241, 232, 0.26);
+  /* noise tile: mostly opaque, with specks the board shows through */
+  --fl-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g' x='0' y='0' width='1' height='1'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' seed='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 3 0 0 0 -.7'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23g)'/%3E%3C/svg%3E");
+  -webkit-mask-image: var(--fl-grain);
+  mask-image: var(--fl-grain);
+  -webkit-mask-size: 160px;
+  mask-size: 160px;
+}
+
+.fl-svg text {
+  font-family: 'Excalifont', 'Bradley Hand', 'Segoe Print', cursive;
+}
+
+/* rough.js strokes are outlines and hatching, never filled; every rule below can recolour them */
+:where(.fl-svg .chalk, .fl-svg .chalk-hatch) {
+  fill: none;
+  stroke: var(--fl-stroke);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+:where(.fl-svg .chalk-hatch) {
+  stroke-width: 1;
+}
+
+/* column captions, in the site's "01 — Label" style */
+.fl-index {
+  font-size: 13px;
+  fill: var(--fl-orange);
+}
+
+.fl-index-rule {
+  stroke: var(--fl-dim);
+}
+
+.fl-header {
+  font-size: 14.5px;
+  fill: var(--fl-soft);
+}
+
+/* the exact route packets travel; its chalk line is what shows */
+.fl-route {
+  fill: none;
+  stroke: none;
+}
+
+.fl-line {
+  stroke: rgba(244, 241, 232, 0.32);
+  transition: stroke 0.4s;
+}
+
+.fl-line.is-live {
+  stroke: rgba(255, 160, 116, 0.8);
+}
+
+.fl-line.is-ship {
+  stroke: rgba(116, 226, 168, 0.85);
+}
+
+.fl-joint {
+  fill: #0a0d0c;
+  stroke: rgba(244, 241, 232, 0.6);
+}
+
+/* cards are chalk outlines on the board, nothing filled in */
+.fl-card {
+  stroke: var(--fl-stroke);
+  transition: stroke 0.4s;
+}
+
+.fl-node.is-hit .fl-card {
+  stroke: rgba(244, 241, 232, 0.85);
+}
+
+/* an agent row: running, its next task on the way, or just finished */
+.fl-agent-state {
+  font-size: 11.5px;
+  fill: var(--fl-faint);
+}
+
+.fl-agent.is-done .fl-agent-state {
+  fill: var(--fl-green);
+}
+
+.fl-agent.is-done .fl-bar {
+  stroke: var(--fl-green);
+}
+
+.fl-tile {
+  stroke: var(--fl-dim);
+}
+
+.fl-tile-icon,
+.fl-brand {
+  color: rgba(244, 241, 232, 0.9);
+}
+
+.fl-mark {
+  fill: var(--fl-chalk);
+}
+
+.fl-title {
+  font-size: 14px;
+  fill: var(--fl-ink);
+}
+
+.fl-sub {
+  font-size: 12px;
+  fill: var(--fl-soft);
+}
+
+.fl-label {
+  font-size: 12.5px;
+  fill: rgba(244, 241, 232, 0.82);
+}
+
+.fl-meta {
+  font-size: 11.5px;
+  fill: var(--fl-faint);
+}
+
+.fl-meta.is-hot {
+  fill: var(--fl-orange);
+}
+
+.fl-foot {
+  font-size: 11px;
+  fill: var(--fl-faint);
+  transition: fill 0.4s;
+}
+
+.fl-foot.is-news {
+  fill: var(--fl-orange);
+}
+
+.fl-divider {
+  stroke: var(--fl-dim);
+}
+
+/* progress is a chalk stroke, uncovered as it goes */
+.fl-track {
+  stroke: rgba(244, 241, 232, 0.16);
+  stroke-width: 2;
+}
+
+.fl-bar {
+  stroke: var(--fl-orange);
+  stroke-width: 2.4;
+}
+
+/* devices, sketched in a few strokes */
+.fl-bezel {
+  stroke: rgba(244, 241, 232, 0.55);
+}
+
+.fl-screen {
+  stroke: rgba(244, 241, 232, 0.16);
+}
+
+.fl-base {
+  stroke: rgba(244, 241, 232, 0.5);
+}
+
+.fl-notch {
+  stroke: rgba(244, 241, 232, 0.3);
+}
+
+.fl-ui-dot {
+  fill: rgba(244, 241, 232, 0.35);
+}
+
+.fl-island {
+  stroke: rgba(244, 241, 232, 0.45);
+  stroke-width: 4;
+}
+
+.fl-ui-pane {
+  stroke: rgba(244, 241, 232, 0.2);
+}
+
+.fl-ui-line {
+  stroke: rgba(244, 241, 232, 0.32);
+  stroke-width: 2;
+}
+
+.fl-ui-line.is-strong {
+  stroke: rgba(244, 241, 232, 0.6);
+}
+
+.fl-ui-line.is-accent {
+  stroke: rgba(255, 160, 116, 0.85);
+}
+
+.fl-ui-bubble,
+.fl-ui-url,
+.fl-ui-card,
+.fl-ui-tool,
+.fl-ui-composer {
+  stroke: rgba(244, 241, 232, 0.3);
+}
+
+.fl-ui-live {
+  fill: var(--fl-orange);
+}
+
+.fl-ui-send {
+  fill: rgba(244, 241, 232, 0.8);
+}
+
+.fl-ui-btn {
+  fill: rgba(244, 241, 232, 0.24);
+}
+
+.fl-ui-btn.is-approve {
+  fill: rgba(244, 241, 232, 0.85);
+  transition: fill 0.3s;
+}
+
+.fl-device.is-hit .fl-ui-btn.is-approve {
+  fill: var(--fl-green);
+}
+
+.fl-ui-home {
+  stroke: rgba(244, 241, 232, 0.45);
+  stroke-width: 1.6;
+}
+
+.fl-device .fl-bezel {
+  transition: stroke 0.4s;
+}
+
+.fl-device.is-hit .fl-bezel {
+  stroke: var(--fl-orange);
+}
+
+/* the pairing chip sits on its line: the board shows inside it, not the line */
+.fl-chip-bg {
+  fill: #0a0d0c;
+}
+
+.fl-chip {
+  stroke: rgba(244, 241, 232, 0.42);
+}
+
+.fl-chip-icon {
+  fill: none;
+  stroke: rgba(244, 241, 232, 0.75);
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.fl-chip-text {
+  font-size: 10.5px;
+  fill: rgba(244, 241, 232, 0.85);
+}
+
+/* the agent server */
+.fl-hub-card {
+  stroke: rgba(244, 241, 232, 0.58);
+  transition: stroke 0.4s;
+}
+
+.fl-hub.is-hit .fl-hub-card {
+  stroke: var(--fl-orange);
+}
+
+/* Volt's icon, chalked: the tile and its shaded bolt */
+.fl-hub-icon {
+  stroke: rgba(244, 241, 232, 0.5);
+}
+
+.fl-bolt {
+  stroke: var(--fl-chalk);
+  stroke-width: 1.4;
+}
+
+.fl-bolt-hatch {
+  stroke: rgba(244, 241, 232, 0.75);
+}
+
+.fl-hub-title {
+  font-size: 19px;
+  fill: var(--fl-ink);
+}
+
+/* every agent the server can route to; lit while it runs or a task is on its way */
+.fl-pool .fl-tile {
+  transition: stroke 0.3s;
+}
+
+.fl-pool .fl-brand {
+  opacity: 0.35;
+  transition: opacity 0.3s;
+}
+
+.fl-pool.is-on .fl-brand,
+.fl-pool.is-routing .fl-brand {
+  opacity: 1;
+}
+
+.fl-pool.is-on .fl-tile {
+  stroke: rgba(244, 241, 232, 0.62);
+}
+
+.fl-pool.is-routing .fl-tile {
+  stroke: var(--fl-orange);
+}
+
+.fl-status {
+  stroke: rgba(116, 226, 168, 0.65);
+}
+
+.fl-status-text {
+  font-size: 12px;
+  fill: rgba(244, 241, 232, 0.9);
+}
+
+.fl-live-dot,
+.fl-live-pulse {
+  fill: var(--fl-green);
+}
+
+.fl-live-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: fl-pulse 2s ease-out infinite;
+}
+
+@keyframes fl-pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  to {
+    transform: scale(3);
+    opacity: 0;
+  }
+}
+
+.fl-qrow-bg {
+  stroke: rgba(244, 241, 232, 0.24);
+  transition: stroke 0.3s;
+}
+
+.fl-qrow.is-empty .fl-qrow-bg {
+  stroke: rgba(244, 241, 232, 0.14);
+  stroke-dasharray: 3 5;
+}
+
+.fl-qrow-icon {
+  color: rgba(244, 241, 232, 0.6);
+}
+
+.fl-qrow-text {
+  font-size: 13px;
+  fill: rgba(244, 241, 232, 0.92);
+}
+
+/* usage: one row per Claude login */
+.fl-toggle {
+  stroke: var(--fl-green);
+}
+
+.fl-toggle-hatch {
+  stroke: rgba(116, 226, 168, 0.7);
+}
+
+.fl-toggle-knob {
+  fill: var(--fl-chalk);
+}
+
+.fl-avatar {
+  stroke: rgba(244, 241, 232, 0.35);
+}
+
+.fl-account.is-active .fl-avatar {
+  stroke: rgba(255, 160, 116, 0.85);
+}
+
+.fl-avatar-text {
+  font-size: 12px;
+  fill: rgba(244, 241, 232, 0.9);
+}
+
+.fl-account-name {
+  font-size: 13.5px;
+  fill: var(--fl-soft);
+  transition: fill 0.4s;
+}
+
+.fl-account.is-active .fl-account-name {
+  fill: var(--fl-ink);
+}
+
+.fl-usage {
+  stroke: rgba(244, 241, 232, 0.62);
+  stroke-width: 3.4;
+  transition: stroke 0.4s;
+}
+
+.fl-usage.is-hot {
+  stroke: var(--fl-orange);
+}
+
+/* review */
+.fl-diff {
+  font-size: 12.5px;
+}
+
+.fl-diff.is-small {
+  font-size: 11px;
+}
+
+.fl-diff .is-add {
+  fill: var(--fl-green);
+}
+
+.fl-diff .is-del {
+  fill: var(--fl-red);
+}
+
+.fl-proof {
+  stroke: rgba(116, 226, 168, 0.65);
+}
+
+.fl-proof-icon {
+  color: var(--fl-green);
+}
+
+.fl-proof-text {
+  font-size: 11px;
+  fill: rgba(244, 241, 232, 0.9);
+}
+
+.fl-file {
+  font-size: 11px;
+  fill: rgba(244, 241, 232, 0.7);
+}
+
+.fl-btn {
+  stroke: rgba(244, 241, 232, 0.42);
+}
+
+.fl-btn-text {
+  font-size: 11.5px;
+  fill: rgba(244, 241, 232, 0.85);
+}
+
+/* the main button is chalked in, and goes green while it commits */
+.fl-btn-primary {
+  stroke: rgba(244, 241, 232, 0.9);
+  transition: stroke 0.2s;
+}
+
+.fl-btn-primary-hatch {
+  stroke: rgba(244, 241, 232, 0.24);
+  transition: stroke 0.2s;
+}
+
+.fl-btn-primary.is-pressed {
+  stroke: var(--fl-green);
+}
+
+.fl-btn-primary-hatch.is-pressed {
+  stroke: rgba(116, 226, 168, 0.45);
+}
+
+.fl-btn-primary-text {
+  font-size: 11.5px;
+  fill: var(--fl-ink);
+}
+
+.fl-open-chip {
+  stroke: rgba(116, 226, 168, 0.65);
+}
+
+.fl-open-text {
+  font-size: 11px;
+  fill: var(--fl-green);
+}
+
+.fl-log-icon {
+  color: rgba(244, 241, 232, 0.45);
+}
+
+.fl-log-text {
+  font-size: 12.5px;
+  fill: rgba(244, 241, 232, 0.62);
+}
+
+.fl-log.is-new .fl-log-text {
+  fill: var(--fl-ink);
+}
+
+.fl-log.is-new .fl-log-icon {
+  color: rgba(244, 241, 232, 0.85);
+}
+
+.fl-packet {
+  opacity: 0;
+  fill: var(--fl-orange);
+}
+
+.fl-packet[data-kind='ship'] {
+  fill: var(--fl-green);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fl-line,
+  .fl-card,
+  .fl-hub-card,
+  .fl-qrow-bg,
+  .fl-usage,
+  .fl-foot {
+    transition: none;
+  }
+  .fl-live-pulse {
+    animation: none;
+    opacity: 0;
   }
 }
 

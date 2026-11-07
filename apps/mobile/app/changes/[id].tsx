@@ -6,12 +6,16 @@
 import { errorMessage, firstLine, historyOf, type IAgentChange } from '@volt/client-core';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, RefreshControl, SectionList, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, RefreshControl, SectionList, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChangeRow, changeTotals } from '../../src/chat/ChangeRow';
 import { useClient, useCollections, useOptionalClient, useTranscript } from '../../src/state/client';
 import { useTheme } from '../../src/theme/theme';
-import { EmptyState, Tabs, T } from '../../src/ui/core';
+import { useReadableInset } from '../../src/ui/adaptive';
+import { EmptyState, Icon, Tabs, T } from '../../src/ui/core';
+import { useHeaderScroll } from '../../src/ui/header';
+import { ListItem } from '../../src/ui/list';
 
 export default function ChangesScreen() {
 	const { id, turn } = useLocalSearchParams<{ id: string; turn?: string }>();
@@ -26,8 +30,11 @@ interface ITurnSection {
 	readonly title: string;
 	readonly add: number;
 	readonly del: number;
+	readonly count?: number;
 	readonly data: readonly IAgentChange[];
 }
+
+const AnimatedSectionList = Animated.createAnimatedComponent(SectionList<IAgentChange, ITurnSection>);
 
 /**
  * What the chat's agent changed in the project, from its checkpoints: the whole chat grouped by
@@ -43,6 +50,9 @@ function Changes({ chatId, turn }: { readonly chatId: string; readonly turn?: st
 	const [changes, setChanges] = useState<readonly IAgentChange[] | undefined>();
 	const [error, setError] = useState<string | undefined>();
 	const [refreshing, setRefreshing] = useState(false);
+	const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+	const onScroll = useHeaderScroll();
+	const inset = useReadableInset();
 
 	const load = useCallback(async () => {
 		try {
@@ -83,8 +93,8 @@ function Changes({ chatId, turn }: { readonly chatId: string; readonly turn?: st
 		for (const change of changes) {
 			groups.set(change.turnId, [...(groups.get(change.turnId) ?? []), change]);
 		}
-		return [...groups.entries()].map(([turnId, list]) => ({ key: turnId, title: prompts.get(turnId) ?? 'Earlier turn', ...changeTotals(list), data: list }));
-	}, [changes, scope, prompts]);
+		return [...groups.entries()].map(([turnId, list]) => ({ key: turnId, title: prompts.get(turnId) ?? 'Earlier turn', ...changeTotals(list), count: list.length, data: collapsed.has(turnId) ? [] : list }));
+	}, [changes, scope, prompts, collapsed]);
 
 	const totals = useMemo(() => changeTotals(changes ?? []), [changes]);
 	const files = useMemo(() => new Set((changes ?? []).map(c => c.path)).size, [changes]);
@@ -92,26 +102,28 @@ function Changes({ chatId, turn }: { readonly chatId: string; readonly turn?: st
 	return (
 		<View style={{ flex: 1, backgroundColor: p.canvas }}>
 			<Stack.Screen options={{ title: scope === 'turn' ? 'Turn changes' : 'Changes', headerBackTitle: meta?.title }} />
-			<SectionList
-				sections={sections as ITurnSection[]}
+			<AnimatedSectionList
+				onScroll={onScroll}
+				scrollEventThrottle={16}
+				sections={sections}
 				keyExtractor={change => `${change.turnId}:${change.path}`}
 				contentInsetAdjustmentBehavior="automatic"
 				stickySectionHeadersEnabled={false}
-				contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 24 }}
+				contentContainerStyle={{ paddingBottom: insets.bottom + 24, paddingHorizontal: inset }}
 				refreshControl={<RefreshControl refreshing={refreshing} tintColor={p.fgTertiary} onRefresh={() => {
 					setRefreshing(true);
 					void load().finally(() => setRefreshing(false));
 				}} />}
 				ListHeaderComponent={
-					<View style={{ gap: 12, paddingTop: 12, paddingBottom: 4 }}>
+					<View style={{ gap: 10, paddingTop: 4, paddingBottom: 4 }}>
 						<Tabs<Scope> value={scope} onChange={setScope} options={[
 							{ id: 'session', label: 'By turn' },
 							{ id: 'lastTurn', label: 'Last turn' },
 							...(turn ? [{ id: 'turn' as const, label: 'This turn' }] : []),
 						]} />
 						{changes?.length ? (
-							<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 4 }}>
-								<T variant="small" weight="600" color={p.fgSecondary}>{files} {files === 1 ? 'file' : 'files'} changed</T>
+							<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16 }}>
+								<T variant="small" weight="600" color={p.fgSecondary} style={{ flex: 1 }}>{files} {files === 1 ? 'file' : 'files'} changed</T>
 								<T variant="small" mono color={p.diffAddedFg}>+{totals.add}</T>
 								<T variant="small" mono color={p.diffRemovedFg}>{'−'}{totals.del}</T>
 							</View>
@@ -119,12 +131,21 @@ function Changes({ chatId, turn }: { readonly chatId: string; readonly turn?: st
 					</View>
 				}
 				renderSectionHeader={({ section }) => section.title ? (
-					<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 4, paddingTop: 16, paddingBottom: 6 }}>
-						<T variant="footnote" weight="700" color={p.fgSecondary} numberOfLines={1} style={{ flex: 1 }}>{section.title}</T>
+					// A turn's group, as a tree node in VS Code: a chevron that folds it, its prompt, its counts.
+					<ListItem onPress={() => setCollapsed(prev => {
+						const next = new Set(prev);
+						if (!next.delete(section.key)) {
+							next.add(section.key);
+						}
+						return next;
+					})} accessibilityLabel={`${section.title}, ${collapsed.has(section.key) ? 'collapsed' : 'expanded'}`} style={{ minHeight: 36, gap: 6, paddingLeft: 10, marginTop: 6 }}>
+						<Icon name={collapsed.has(section.key) ? 'chevronRight' : 'chevronDown'} size={14} color={p.fgTertiary} />
+						<T variant="small" weight="600" color={p.fgSecondary} numberOfLines={1} style={{ flex: 1 }}>{section.title}</T>
+						{collapsed.has(section.key) && section.count ? <T variant="footnote" color={p.fgQuaternary}>{section.count}</T> : null}
 						<T variant="footnote" mono color={p.diffAddedFg}>+{section.add}</T>
 						<T variant="footnote" mono color={p.diffRemovedFg}>{'−'}{section.del}</T>
-					</View>
-				) : <View style={{ height: 8 }} />}
+					</ListItem>
+				) : <View style={{ height: 6 }} />}
 				ListEmptyComponent={
 					changes === undefined && !error
 						? <View style={{ paddingTop: 60 }}><ActivityIndicator color={p.fgTertiary} /></View>
@@ -132,8 +153,7 @@ function Changes({ chatId, turn }: { readonly chatId: string; readonly turn?: st
 							? <EmptyState icon="alertCircle" title="Couldn't load the changes" body={error} />
 							: <EmptyState icon="fileDiff" title="No changes" body={scope === 'session' ? 'The agent hasn\'t changed any files in this chat.' : 'That turn didn\'t change any files.'} />
 				}
-				ItemSeparatorComponent={() => <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: p.strokeFaint, marginLeft: 46 }} />}
-				renderItem={({ item, index, section }) => <ChangeRow change={item} first={index === 0} last={index === section.data.length - 1} />}
+				renderItem={({ item }) => <ChangeRow change={item} />}
 			/>
 		</View>
 	);

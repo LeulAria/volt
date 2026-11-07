@@ -1,0 +1,13 @@
+# zizmor (workflow security audit, the Workflows job in volt-ci.yml).
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # GitHub's own actions by major tag, as in every workflow here; Dependabot keeps them current.
+        actions/*: ref-pin
+        github/*: ref-pin
+        # Everything else by commit SHA, with the version in a comment.
+        '*': hash-pin
+  # Suggests `uses: $/...` for local actions; this repository keeps the usual `./` form.
+  self-repository:
+    disable: true

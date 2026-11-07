@@ -296,7 +296,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return threadId === undefined ? this.whenReady : this.ensureThreadLoaded(threadId);
 	}
 
-	async submit(threadId: string, prompt: IOrchPrompt, delivery: OrchDelivery, turnId = generateUuid()): Promise<IOrchSubmitResult> {
+	async submit(threadId: string, prompt: IOrchPrompt, delivery: OrchDelivery, requestedTurnId?: string): Promise<IOrchSubmitResult> {
+		// Not a default parameter: from a window, an id left out arrives as null (JSON has no
+		// undefined). A turn with no id was never written to the chat's history, and its reply was
+		// lost the next time the agent server restarted.
+		const turnId = requestedTurnId || generateUuid();
 		await this.ensureThreadLoaded(threadId);
 		this.describeThread(threadId, prompt.modelRef);
 		const thread = this.state.threads[threadId];
@@ -1118,11 +1122,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		try {
 			if (task.worktreePath && task.worktreeBranch) {
 				const root = this.sessionContext.rootFor(task.parentId);
-				if (root) {
-					await this.worktrees.ensure(root.fsPath, task.worktreePath, task.worktreeBranch);
+				// Another checkout may have the branch now that its own is gone; the subagent works there.
+				const path = root ? (await this.worktrees.ensure(root.fsPath, task.worktreePath, task.worktreeBranch)).path : task.worktreePath;
+				if (path !== task.worktreePath) {
+					this.history.open(task.childId).setMeta({ worktreePath: path });
 				}
-				this.runtime.rememberWorktree(task.childId, task.worktreePath, task.worktreeBranch);
-				this.apply({ type: 'task.worktree', taskId, path: task.worktreePath, branch: task.worktreeBranch });
+				this.runtime.rememberWorktree(task.childId, path, task.worktreeBranch);
+				this.apply({ type: 'task.worktree', taskId, path, branch: task.worktreeBranch });
 				return;
 			}
 			const root = this.sessionContext.rootFor(task.parentId);

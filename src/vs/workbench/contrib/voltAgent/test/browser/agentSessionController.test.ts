@@ -300,11 +300,13 @@ suite('Agent session controller', () => {
 	});
 
 	test('the native plan tool streams into a plan card', () => {
-		const { runtime, host } = setup();
+		const { runtime, host, controller } = setup();
 		runtime.emit({ type: 'run.start', runId: 'run-1', mode: 'plan' });
 		runtime.emit({ type: 'tool.start', callId: 'p', name: 'create_plan', title: 'create_plan', card: 'generic' });
 		runtime.emit({ type: 'tool.input.delta', callId: 'p', delta: '{"name":"Fix DELETE",', append: true });
 		runtime.emit({ type: 'tool.input.delta', callId: 'p', delta: '"plan":"1. Parse the id"}', append: true });
+		// Appended deltas are parsed once per drawn frame; the editor flushes them before it draws.
+		controller.flushStreamedInput();
 		const reply = host.messages.at(-1) as IAgentAssistantMessage;
 		const blocks = reply.segments.flatMap(segment => segment.kind === 'block' ? [segment.block] : []);
 		assert.deepStrictEqual(blocks.map(block => block.type), ['plan']);

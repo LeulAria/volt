@@ -1,0 +1,1791 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Workflows: the builder's executions panel (n8n's Logs panel in the Automations look) and the
+ * workflow library with its template gallery. Colours come from the theme: run states use the
+ * testing and chart colours, values the debug views' token colours. Lists are VS Code lists with
+ * square rows edge to edge (volt-lists). The panel is opaque, so nothing scrolls over a
+ * see-through layer (volt-transparent-window).
+ */
+
+.volt-wf-run-panel,
+.volt-wf-library,
+.volt-auto-dialog-layer {
+	--volt-wf-ok: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+	--volt-wf-bad: var(--vscode-testing-iconFailed, var(--vscode-errorForeground));
+	--volt-wf-live: var(--vscode-charts-blue);
+	--volt-wf-wait: var(--vscode-charts-yellow);
+	--volt-wf-mono: var(--monaco-monospace-font, monospace);
+}
+
+/* Panel. */
+.volt-wf-run-panel {
+	display: flex;
+	flex-direction: column;
+	position: relative;
+	overflow: hidden;
+	box-sizing: border-box;
+	background: var(--vscode-panel-background, var(--vscode-editor-background));
+	color: var(--vscode-foreground);
+	font-size: 12.5px;
+	line-height: 18px;
+}
+
+.volt-wf-run-panel .muted {
+	color: var(--volt-auto-muted);
+}
+
+/* Header: 36px exactly (HEAD_HEIGHT in workflowRunPanel.ts). */
+.volt-wf-run-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 36px;
+	padding: 0 6px 0 8px;
+	box-sizing: border-box;
+	border-bottom: 1px solid var(--volt-auto-line);
+	flex-shrink: 0;
+	min-width: 0;
+}
+
+.volt-wf-seg.volt-wf-run-tabs {
+	flex-shrink: 0;
+	margin-left: -2px;
+}
+
+.volt-wf-run-tabs .volt-wf-seg-item {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 12.5px;
+}
+
+.volt-wf-tab-count {
+	color: var(--volt-auto-muted);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-wf-tab-count:empty {
+	display: none;
+}
+
+.volt-wf-tab-count.alert {
+	color: var(--volt-wf-bad);
+}
+
+.volt-wf-run-status {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	overflow: hidden;
+	color: var(--volt-auto-soft);
+	white-space: nowrap;
+}
+
+.volt-wf-run-status-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-wf-run-status .volt-wf-run-status-icon {
+	display: inline-flex;
+	flex-shrink: 0;
+}
+
+.volt-wf-run-status .volt-wf-run-status-icon .codicon[class*='codicon-'] {
+	font-size: 14px;
+}
+
+.volt-wf-run-status.status-running .volt-wf-run-status-icon .codicon[class*='codicon-'],
+.volt-wf-run-status.status-queued .volt-wf-run-status-icon .codicon[class*='codicon-'] {
+	color: var(--volt-wf-live);
+	font-size: 9px;
+	animation: volt-wf-pulse 1.4s ease-in-out infinite;
+}
+
+.volt-wf-run-status.status-succeeded .volt-wf-run-status-icon .codicon[class*='codicon-'] {
+	color: var(--volt-wf-ok);
+}
+
+.volt-wf-run-status.status-succeeded {
+	color: var(--vscode-foreground);
+}
+
+.volt-wf-run-status.status-failed .volt-wf-run-status-icon .codicon[class*='codicon-'],
+.volt-wf-run-status.status-failed .volt-wf-run-status-text {
+	color: var(--volt-wf-bad);
+}
+
+.volt-wf-run-status.status-paused .volt-wf-run-status-icon .codicon[class*='codicon-'],
+.volt-wf-run-status.status-waiting .volt-wf-run-status-icon .codicon[class*='codicon-'] {
+	color: var(--volt-wf-wait);
+}
+
+@keyframes volt-wf-pulse {
+	50% {
+		opacity: 0.35;
+	}
+}
+
+.volt-wf-run-tools,
+.volt-wf-run-tab-tools,
+.volt-wf-run-controls {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex-shrink: 0;
+}
+
+.volt-wf-run-tab-tools {
+	gap: 6px;
+}
+
+.volt-wf-run-controls .volt-auto-icon-button {
+	width: 26px;
+	height: 26px;
+}
+
+.volt-wf-run-controls .volt-auto-icon-button.volt-wf-stop:hover {
+	color: var(--volt-wf-bad);
+	background: color-mix(in srgb, var(--volt-wf-bad) 14%, transparent);
+}
+
+/* The logs search: the sidebar's search icon, then the field. */
+.volt-wf-run-search {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 180px;
+	height: 24px;
+	padding: 0 8px;
+	box-sizing: border-box;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+	border-radius: 2px;
+	color: var(--volt-auto-muted);
+	cursor: text;
+}
+
+.volt-wf-run-search:focus-within {
+	border-color: var(--vscode-focusBorder);
+}
+
+.volt-wf-run-search > .icon {
+	display: inline-flex;
+	flex-shrink: 0;
+}
+
+.volt-wf-run-search > .icon svg {
+	width: 14px;
+	height: 14px;
+}
+
+.volt-wf-run-search input.volt-wf-run-search-input {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	padding: 0;
+	border: none;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font: inherit;
+	font-size: 12px;
+}
+
+.monaco-workbench .volt-wf-run-search .volt-wf-run-search-input:focus {
+	outline: none;
+}
+
+.volt-wf-run-search-input::placeholder {
+	color: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
+}
+
+.volt-wf-run-tab-tools .volt-auto-outline-button.small {
+	height: 24px;
+	padding: 0 8px;
+	border-radius: 2px;
+	font-size: 12px;
+}
+
+.volt-wf-run-tab-tools .volt-auto-outline-button .label:empty {
+	display: none;
+}
+
+.volt-wf-run-body {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+}
+
+.volt-wf-run-tab {
+	height: 100%;
+}
+
+/* Badges (mode, trust, issues). */
+.volt-wf-badge {
+	display: inline-flex;
+	align-items: center;
+	flex-shrink: 0;
+	height: 16px;
+	padding: 0 6px;
+	border-radius: 999px;
+	background: var(--volt-auto-fill);
+	color: var(--volt-auto-soft);
+	font-size: 10.5px;
+	line-height: 16px;
+	white-space: nowrap;
+}
+
+.volt-wf-badge.mode-simulate {
+	background: color-mix(in srgb, var(--vscode-charts-purple) 15%, transparent);
+	color: var(--vscode-charts-purple);
+}
+
+.volt-wf-badge.mode-execute {
+	background: color-mix(in srgb, var(--volt-wf-live) 14%, transparent);
+	color: var(--volt-wf-live);
+}
+
+.volt-wf-badge.untrusted {
+	background: color-mix(in srgb, var(--volt-wf-wait) 14%, transparent);
+	color: var(--volt-wf-wait);
+}
+
+.volt-wf-badge.issues {
+	background: color-mix(in srgb, var(--volt-wf-bad) 13%, transparent);
+	color: var(--volt-wf-bad);
+}
+
+/* Empty states. */
+.volt-wf-run-empty {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	padding: 16px 24px;
+	box-sizing: border-box;
+	color: var(--volt-auto-muted);
+	text-align: center;
+}
+
+.volt-wf-run-empty.small {
+	min-height: 80px;
+}
+
+.volt-wf-teach {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 8px;
+	max-width: 480px;
+}
+
+.volt-wf-teach .volt-wf-teach-icon .codicon[class*='codicon-'] {
+	font-size: 20px;
+	color: var(--volt-auto-soft);
+}
+
+.volt-wf-teach-title {
+	color: var(--vscode-foreground);
+	font-size: 13px;
+}
+
+.volt-wf-teach-keys {
+	display: flex;
+	gap: 14px;
+}
+
+.volt-wf-teach-key {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--volt-auto-soft);
+	font-size: 12px;
+}
+
+.volt-wf-teach-key kbd {
+	padding: 0 6px;
+	border: 1px solid var(--volt-auto-line);
+	border-radius: 4px;
+	background: var(--volt-auto-fill);
+	color: var(--volt-auto-soft);
+	font-family: inherit;
+	font-size: 11px;
+	line-height: 17px;
+}
+
+.volt-wf-teach-hint {
+	color: var(--volt-auto-muted);
+	font-size: 12px;
+	line-height: 17px;
+}
+
+/* Steps: list on the left, the picked step on the right. */
+.volt-wf-steps-split {
+	display: flex;
+	height: 100%;
+}
+
+.volt-wf-steps-list {
+	flex-shrink: 0;
+	border-right: 1px solid var(--volt-auto-line);
+}
+
+.volt-wf-steps-list .monaco-list-row,
+.volt-wf-exec-list .monaco-list-row,
+.volt-wf-log-list .monaco-list-row,
+.volt-wf-json-tree .monaco-list-row,
+.volt-wf-json-table .monaco-list-row,
+.volt-wf-lib-list .monaco-list-row,
+.volt-wf-issue-list .monaco-list-row,
+.volt-wf-perm-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-wf-step-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 10px;
+	min-width: 0;
+	cursor: pointer;
+}
+
+.volt-wf-step-state,
+.volt-wf-step-icon {
+	display: inline-flex;
+	flex-shrink: 0;
+}
+
+.volt-wf-step-row .volt-wf-step-state .codicon[class*='codicon-'],
+.volt-wf-step-head .volt-wf-step-state .codicon[class*='codicon-'] {
+	font-size: 14px;
+	color: var(--volt-auto-muted);
+}
+
+.volt-wf-steps-list .volt-wf-step-icon .codicon[class*='codicon-'],
+.volt-wf-step-head .volt-wf-step-icon .codicon[class*='codicon-'],
+.volt-wf-timeline .volt-wf-step-icon .codicon[class*='codicon-'] {
+	font-size: 14px;
+	color: var(--volt-auto-soft);
+}
+
+.volt-wf-step-row.state-success .volt-wf-step-state .codicon[class*='codicon-'],
+.volt-wf-step-head .volt-wf-step-state.state-success .codicon[class*='codicon-'] {
+	color: var(--volt-wf-ok);
+}
+
+.volt-wf-step-row.state-failed .volt-wf-step-state .codicon[class*='codicon-'],
+.volt-wf-step-head .volt-wf-step-state.state-failed .codicon[class*='codicon-'] {
+	color: var(--volt-wf-bad);
+}
+
+.volt-wf-step-row.state-running .volt-wf-step-state .codicon[class*='codicon-'],
+.volt-wf-step-head .volt-wf-step-state.state-running .codicon[class*='codicon-'] {
+	color: var(--volt-wf-live);
+}
+
+.volt-wf-step-row.state-waiting .volt-wf-step-state .codicon[class*='codicon-'],
+.volt-wf-step-head .volt-wf-step-state.state-waiting .codicon[class*='codicon-'] {
+	color: var(--volt-wf-wait);
+}
+
+.volt-wf-step-row.state-failed .volt-wf-step-name {
+	color: var(--volt-wf-bad);
+}
+
+.volt-wf-step-row.state-skipped .volt-wf-step-name,
+.volt-wf-step-row.state-cancelled .volt-wf-step-name {
+	color: var(--volt-auto-muted);
+}
+
+.volt-wf-step-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-wf-step-badge {
+	flex-shrink: 0;
+	padding: 0 5px;
+	border-radius: 4px;
+	background: var(--volt-auto-fill);
+	color: var(--volt-auto-soft);
+	font-size: 10.5px;
+	line-height: 15px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-wf-step-tokens,
+.volt-wf-step-duration {
+	flex-shrink: 0;
+	color: var(--volt-auto-muted);
+	font-size: 11.5px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-wf-step-tokens:empty {
+	display: none;
+}
+
+/* Step detail. */
+.volt-wf-step-detail {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.volt-wf-step-head {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	height: 34px;
+	padding: 0 6px 0 12px;
+	box-sizing: border-box;
+	flex-shrink: 0;
+	min-width: 0;
+}
+
+.volt-wf-step-detail.empty .volt-wf-step-head {
+	display: none;
+}
+
+.volt-wf-step-title {
+	flex-shrink: 1;
+	min-width: 40px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13px;
+	font-weight: 500;
+}
+
+.volt-wf-step-meta {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-auto-muted);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-wf-step-meta.state-success {
+	color: var(--volt-wf-ok);
+}
+
+.volt-wf-step-meta.state-failed {
+	color: var(--volt-wf-bad);
+}
+
+.volt-wf-step-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	flex-shrink: 0;
+}
+
+.volt-wf-step-actions .volt-auto-icon-button {
+	width: 26px;
+	height: 26px;
+}
+
+/* An error or a wait, as a banner across the detail. */
+.volt-wf-step-alert {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 8px 12px;
+	flex-shrink: 0;
+	border-top: 1px solid transparent;
+	border-bottom: 1px solid transparent;
+}
+
+.volt-wf-step-alert.error {
+	background: color-mix(in srgb, var(--volt-wf-bad) 9%, transparent);
+	border-color: color-mix(in srgb, var(--volt-wf-bad) 30%, transparent);
+}
+
+.volt-wf-step-alert.waiting {
+	background: color-mix(in srgb, var(--volt-wf-wait) 9%, transparent);
+	border-color: color-mix(in srgb, var(--volt-wf-wait) 28%, transparent);
+}
+
+.volt-wf-alert-text {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-wf-step-alert .volt-wf-alert-icon .codicon[class*='codicon-'] {
+	font-size: 14px;
+	line-height: 18px;
+}
+
+.volt-wf-step-alert.error .volt-wf-alert-icon .codicon[class*='codicon-'] {
+	color: var(--volt-wf-bad);
+}
+
+.volt-wf-step-alert.waiting .volt-wf-alert-icon .codicon[class*='codicon-'] {
+	color: var(--volt-wf-wait);
+}
+
+.volt-wf-alert-message {
+	flex: 1;
+	min-width: 0;
+	max-height: 108px;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	user-select: text;
+	font-family: var(--volt-wf-mono);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.volt-wf-step-alert.waiting .volt-wf-alert-message {
+	font-family: inherit;
+}
+
+.volt-wf-alert-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding-left: 22px;
+}
+
+.volt-wf-step-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 32px;
+	padding: 0 6px 0 10px;
+	box-sizing: border-box;
+	border-bottom: 1px solid var(--volt-auto-hair);
+	flex-shrink: 0;
+}
+
+/* Underlined tabs: full toolbar height, the indicator sits on the toolbar's bottom line. */
+.volt-wf-seg {
+	position: relative;
+	display: flex;
+	align-self: stretch;
+	margin-left: -4px;
+}
+
+.volt-wf-seg-item {
+	height: 100%;
+	padding: 0 10px;
+	border: none;
+	border-radius: 0;
+	background: transparent;
+	color: var(--volt-auto-soft);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	white-space: nowrap;
+	transition: color 120ms ease;
+}
+
+.volt-wf-seg-item:hover,
+.volt-wf-seg-item.active {
+	color: var(--vscode-foreground);
+}
+
+.monaco-workbench .volt-wf-seg .volt-wf-seg-item:focus {
+	outline: none;
+}
+
+.monaco-workbench .volt-wf-seg .volt-wf-seg-item:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -4px;
+}
+
+.volt-wf-seg-indicator {
+	position: absolute;
+	left: 0;
+	bottom: -1px;
+	width: 0;
+	height: 2px;
+	background: var(--vscode-foreground);
+	pointer-events: none;
+}
+
+.volt-wf-seg-indicator.placed {
+	transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1), width 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.volt-wf-modes {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.volt-wf-modes .volt-auto-icon-button.volt-wf-mode {
+	width: 24px;
+	height: 22px;
+	color: var(--volt-auto-muted);
+}
+
+.volt-wf-modes .volt-auto-icon-button.volt-wf-mode.active {
+	background: var(--volt-auto-fill);
+	color: var(--vscode-foreground);
+}
+
+.volt-wf-modes .volt-auto-icon-button.volt-wf-mode .codicon[class*='codicon-'] {
+	font-size: 14px;
+}
+
+.volt-wf-step-content {
+	position: relative;
+	overflow: hidden;
+}
+
+/* Value inspector. */
+.volt-wf-inspector {
+	position: relative;
+}
+
+.volt-wf-json-tree,
+.volt-wf-json-table {
+	height: 100%;
+}
+
+.volt-wf-json-tree .monaco-tl-row {
+	padding-left: 4px;
+}
+
+.volt-wf-json-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 22px;
+	padding-right: 8px;
+	min-width: 0;
+	font-family: var(--volt-wf-mono);
+	font-size: 12px;
+}
+
+.volt-wf-json-icon {
+	display: inline-flex;
+	flex-shrink: 0;
+}
+
+.volt-wf-json-row .volt-wf-json-icon .codicon[class*='codicon-'] {
+	font-size: 13px;
+	color: var(--volt-auto-muted);
+}
+
+.volt-wf-json-row .volt-wf-json-icon.kind-string .codicon[class*='codicon-'] {
+	color: var(--vscode-symbolIcon-stringForeground, var(--vscode-debugTokenExpression-string));
+}
+
+.volt-wf-json-row .volt-wf-json-icon.kind-number .codicon[class*='codicon-'] {
+	color: var(--vscode-symbolIcon-numberForeground, var(--vscode-debugTokenExpression-number));
+}
+
+.volt-wf-json-row .volt-wf-json-icon.kind-boolean .codicon[class*='codicon-'] {
+	color: var(--vscode-symbolIcon-booleanForeground, var(--vscode-debugTokenExpression-boolean));
+}
+
+.volt-wf-json-row .volt-wf-json-icon.kind-array .codicon[class*='codicon-'] {
+	color: var(--vscode-symbolIcon-arrayForeground, var(--volt-auto-soft));
+}
+
+.volt-wf-json-row .volt-wf-json-icon.kind-object .codicon[class*='codicon-'] {
+	color: var(--vscode-symbolIcon-objectForeground, var(--volt-auto-soft));
+}
+
+.volt-wf-json-key {
+	flex-shrink: 0;
+	max-width: 45%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--vscode-debugTokenExpression-name, var(--vscode-foreground));
+}
+
+.volt-wf-json-key.index {
+	color: var(--volt-auto-muted);
+}
+
+.volt-wf-json-key:empty {
+	display: none;
+}
+
+.volt-wf-json-key:not(:empty)::after {
+	content: ':';
+	color: var(--volt-auto-muted);
+}
+
+.volt-wf-json-value {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-auto-soft);
+}
+
+.volt-wf-json-value.kind-string,
+.volt-wf-cell.kind-string {
+	color: var(--vscode-debugTokenExpression-string);
+}
+
+.volt-wf-json-value.kind-number,
+.volt-wf-cell.kind-number {
+	color: var(--vscode-debugTokenExpression-number);
+}
+
+.volt-wf-json-value.kind-boolean,
+.volt-wf-cell.kind-boolean {
+	color: var(--vscode-debugTokenExpression-boolean);
+}
+
+.volt-wf-json-value.kind-null,
+.volt-wf-cell.kind-null,
+.volt-wf-json-value.kind-array,
+.volt-wf-json-value.kind-object {
+	color: var(--volt-auto-muted);
+}
+
+.volt-wf-json-row.more .volt-wf-json-value {
+	font-family: var(--vscode-font-family);
+	font-style: italic;
+}
+
+.volt-wf-json-actions {
+	display: none;
+	align-items: center;
+	gap: 2px;
+	flex-shrink: 0;
+}
+
+.volt-wf-json-tree .monaco-list-row:hover .volt-wf-json-actions,
+.volt-wf-json-tree .monaco-list-row.focused .volt-wf-json-actions {
+	display: inline-flex;
+}
+
+.volt-wf-json-action {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	border-radius: 4px;
+	color: var(--volt-auto-soft);
+	cursor: pointer;
+}
+
+.volt-wf-json-action:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-wf-json-actions .volt-wf-json-action .codicon[class*='codicon-'] {
+	font-size: 13px;
+}
+
+.volt-wf-json-table .monaco-table-th {
+	color: var(--volt-auto-soft);
+	font-size: 11.5px;
+	font-weight: 500;
+}
+
+.volt-wf-cell {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--volt-wf-mono);
+	font-size: 12px;
+}
+
+.volt-wf-json-raw {
+	height: 100%;
+	overflow: hidden;
+}
+
+.volt-wf-json-raw-note {
+	height: 22px;
+	padding: 0 12px;
+	color: var(--volt-auto-muted);
+	font-size: 11px;
+	line-height: 22px;
+}
+
+/* Logs. */
+.volt-wf-log-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 22px;
+	padding: 0 12px;
+	min-width: 0;
+	font-size: 12px;
+}
+
+.volt-wf-log-time {
+	flex-shrink: 0;
+	width: 58px;
+	color: var(--volt-auto-muted);
+	font-family: var(--volt-wf-mono);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-wf-log-level {
+	flex-shrink: 0;
+	width: 40px;
+	font-size: 10px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	color: var(--volt-auto-muted);
+}
+
+.volt-wf-log-level.level-info {
+	color: var(--volt-wf-live);
+}
+
+.volt-wf-log-level.level-warn,
+.volt-wf-log-message.level-warn {
+	color: var(--vscode-editorWarning-foreground, var(--volt-wf-wait));
+}
+
+.volt-wf-log-level.level-error,
+.volt-wf-log-message.level-error {
+	color: var(--volt-wf-bad);
+}
+
+.volt-wf-log-node {
+	flex-shrink: 0;
+	max-width: 160px;
+	padding: 0 6px;
+	border-radius: 4px;
+	background: var(--volt-auto-fill);
+	color: var(--volt-auto-soft);
+	font-size: 11px;
+	line-height: 16px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-wf-log-message {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--volt-wf-mono);
+}
+
+.volt-wf-log-message.level-debug {
+	color: var(--volt-auto-muted);
+}
+
+/* Executions: the status icon, then the date and the outcome on two lines. */
+/* The list row sets its own line-height to the row height; the lines need theirs back. */
+.volt-wf-exec-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 46px;
+	padding: 0 10px 0 14px;
+	min-width: 0;
+	line-height: 18px;
+	cursor: pointer;
+}
+
+/* On the first line: (46 - 2 * 18 - 2) / 2 from the top. */
+.volt-wf-exec-state {
+	display: inline-flex;
+	align-items: center;
+	flex-shrink: 0;
+	align-self: flex-start;
+	height: 18px;
+	margin-top: 4px;
+}
+
+.volt-wf-exec-row .volt-wf-exec-state .codicon[class*='codicon-'] {
+	font-size: 14px;
+	color: var(--volt-auto-muted);
+}
+
+.volt-wf-exec-row.status-succeeded .volt-wf-exec-state .codicon[class*='codicon-'] {
+	color: var(--volt-wf-ok);
+}
+
+.volt-wf-exec-row.status-failed .volt-wf-exec-state .codicon[class*='codicon-'] {
+	color: var(--volt-wf-bad);
+}
+
+.volt-wf-exec-row.status-running .volt-wf-exec-state .codicon[class*='codicon-'],
+.volt-wf-exec-row.status-queued .volt-wf-exec-state .codicon[class*='codicon-'] {
+	color: var(--volt-wf-live);
+	font-size: 9px;
+	animation: volt-wf-pulse 1.4s ease-in-out infinite;
+}
+
+.volt-wf-exec-row.status-paused .volt-wf-exec-state .codicon[class*='codicon-'],
+.volt-wf-exec-row.status-waiting .volt-wf-exec-state .codicon[class*='codicon-'] {
+	color: var(--volt-wf-wait);
+}
+
+.volt-wf-exec-main {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-wf-exec-line {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-wf-exec-date {
+	color: var(--vscode-foreground);
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-wf-exec-outcome {
+	flex-shrink: 0;
+	color: var(--volt-auto-soft);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-wf-exec-row.status-succeeded .volt-wf-exec-outcome {
+	color: var(--volt-wf-ok);
+}
+
+.volt-wf-exec-row.status-failed .volt-wf-exec-outcome {
+	color: var(--volt-wf-bad);
+}
+
+.volt-wf-exec-trigger {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-auto-muted);
+	font-size: 12px;
+}
+
+/* A row's own action (retry, more): shown on hover unless `.always`. */
+.volt-wf-row-action {
+	display: none;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 24px;
+	height: 24px;
+	border-radius: 6px;
+	color: var(--volt-auto-soft);
+	cursor: pointer;
+}
+
+.monaco-list-row:hover .volt-wf-row-action,
+.monaco-list-row.focused .volt-wf-row-action,
+.volt-wf-row-action.always {
+	display: inline-flex;
+}
+
+.volt-wf-row-action:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-wf-row-action .codicon[class*='codicon-'] {
+	font-size: 14px;
+}
+
+/* Timeline (Gantt). The label column and the track margin match the grid's inset. */
+.volt-wf-timeline {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	overflow: auto;
+	font-size: 12px;
+}
+
+.volt-wf-tl-axis {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	display: flex;
+	flex-shrink: 0;
+	height: 24px;
+	background: var(--vscode-panel-background, var(--vscode-editor-background));
+	border-bottom: 1px solid var(--volt-auto-hair);
+}
+
+.volt-wf-tl-label {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 170px;
+	padding: 0 10px;
+	box-sizing: border-box;
+	flex-shrink: 0;
+	min-width: 0;
+	border-right: 1px solid var(--volt-auto-hair);
+}
+
+.volt-wf-tl-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-wf-tl-track {
+	position: relative;
+	flex: 1;
+	min-width: 0;
+	margin-right: 18px;
+}
+
+.volt-wf-tl-tick {
+	position: absolute;
+	top: 3px;
+	transform: translateX(-50%);
+	color: var(--volt-auto-muted);
+	font-family: var(--volt-wf-mono);
+	font-size: 10.5px;
+	white-space: nowrap;
+}
+
+.volt-wf-tl-tick:first-child {
+	transform: translateX(4px);
+}
+
+/* The rows fill the panel, so the grid and the label column's line run to the bottom. */
+.volt-wf-tl-rows {
+	position: relative;
+	flex: 1 0 auto;
+}
+
+.volt-wf-tl-rows::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 169px;
+	width: 1px;
+	background: var(--volt-auto-hair);
+	pointer-events: none;
+}
+
+.volt-wf-tl-row .volt-wf-tl-label {
+	border-right: none;
+}
+
+.volt-wf-tl-state {
+	display: none;
+	flex-shrink: 0;
+	margin-left: auto;
+	color: var(--volt-auto-muted);
+	font-size: 11px;
+}
+
+.volt-wf-tl-row.skipped {
+	cursor: pointer;
+}
+
+.volt-wf-tl-row.skipped .volt-wf-tl-name,
+.volt-wf-tl-row.skipped .volt-wf-step-icon {
+	color: var(--volt-auto-muted);
+}
+
+.volt-wf-tl-row.skipped .volt-wf-tl-state {
+	display: inline;
+}
+
+.volt-wf-tl-grid {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 170px;
+	right: 18px;
+	pointer-events: none;
+}
+
+.volt-wf-tl-gridline {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 1px;
+	background: var(--volt-auto-hair);
+}
+
+.volt-wf-tl-now {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 1px;
+	background: var(--volt-wf-live);
+}
+
+.volt-wf-tl-row {
+	display: flex;
+	height: 24px;
+}
+
+.volt-wf-tl-row:hover {
+	background: var(--volt-auto-hover);
+}
+
+.volt-wf-tl-bar {
+	position: absolute;
+	top: 6px;
+	height: 12px;
+	min-width: 3px;
+	box-sizing: border-box;
+	border-radius: 3px;
+	overflow: hidden;
+	background: var(--volt-auto-muted);
+	cursor: pointer;
+	outline-offset: 1px;
+}
+
+.volt-wf-tl-bar.state-success {
+	background: color-mix(in srgb, var(--volt-wf-ok) 75%, transparent);
+}
+
+.volt-wf-tl-bar.state-failed {
+	background: var(--volt-wf-bad);
+}
+
+.volt-wf-tl-bar.state-running {
+	background: repeating-linear-gradient(-45deg, var(--volt-wf-live) 0 6px, color-mix(in srgb, var(--volt-wf-live) 60%, transparent) 6px 12px);
+	background-size: 17px 17px;
+	animation: volt-wf-stripes 0.8s linear infinite;
+}
+
+.volt-wf-tl-bar.state-waiting {
+	background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--volt-wf-wait) 70%, transparent) 0 4px, transparent 4px 8px);
+	border: 1px solid var(--volt-wf-wait);
+}
+
+.volt-wf-tl-bar.state-skipped,
+.volt-wf-tl-bar.state-cancelled,
+.volt-wf-tl-bar.state-queued {
+	background: transparent;
+	border: 1px dashed var(--volt-auto-muted);
+}
+
+.volt-wf-tl-bar.selected {
+	box-shadow: 0 0 0 1.5px var(--vscode-focusBorder);
+}
+
+@keyframes volt-wf-stripes {
+	to {
+		background-position: 17px 0;
+	}
+}
+
+.volt-wf-tl-mark {
+	display: block;
+	padding: 0 3px;
+	color: var(--vscode-editor-background);
+	font-size: 9.5px;
+	font-weight: 600;
+	line-height: 12px;
+	white-space: nowrap;
+}
+
+.volt-wf-tl-bar.state-waiting .volt-wf-tl-mark,
+.volt-wf-tl-bar.state-skipped .volt-wf-tl-mark,
+.volt-wf-tl-bar.state-cancelled .volt-wf-tl-mark {
+	color: var(--vscode-foreground);
+	line-height: 10px;
+}
+
+.volt-wf-menu-probe {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-wf-tl-bar.state-running,
+	.volt-wf-exec-row .volt-wf-exec-state .codicon[class*='codicon-'],
+	.volt-wf-run-status .volt-wf-run-status-icon .codicon[class*='codicon-'] {
+		animation: none;
+	}
+}
+
+/* Library header: when the buttons leave the text too little room, the text stays on top at */
+/* full width and the buttons wrap below it. */
+.volt-wf-library > .volt-auto-list-head {
+	flex-wrap: wrap;
+	row-gap: 16px;
+}
+
+.volt-wf-library > .volt-auto-list-head > .titles {
+	flex: 1 1 320px;
+	min-width: 0;
+}
+
+/* Library: My Workflows. */
+.volt-wf-lib-section {
+	min-height: 120px;
+}
+
+/* My Workflows: a VS Code table. A small header over a hairline, rows edge to edge (the side */
+/* padding is inside each row), no card around it. */
+.volt-wf-lib-table {
+	border-top: 1px solid var(--volt-auto-hair);
+	border-bottom: 1px solid var(--volt-auto-hair);
+}
+
+.volt-wf-lib-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 160px 64px 104px 104px 28px;
+	align-items: center;
+	padding: 0 12px;
+	box-sizing: border-box;
+}
+
+.volt-wf-lib-row.head {
+	height: 30px;
+	border-bottom: 1px solid var(--volt-auto-hair);
+	color: var(--volt-auto-muted);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+}
+
+/* The list row sets line-height to the row height; the two lines of a row need theirs back. */
+.volt-wf-lib-list .volt-wf-lib-row {
+	height: 52px;
+	line-height: 18px;
+	cursor: pointer;
+}
+
+/* The top search: the sidebar's search icon, then the field. */
+.volt-wf-lib-search {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 220px;
+	height: 28px;
+	padding: 0 8px;
+	box-sizing: border-box;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+	border-radius: 7px;
+	color: var(--volt-auto-muted);
+	cursor: text;
+}
+
+.volt-wf-lib-search:focus-within {
+	border-color: var(--vscode-focusBorder);
+}
+
+.volt-wf-lib-search > .icon {
+	display: inline-flex;
+	flex-shrink: 0;
+}
+
+.volt-wf-lib-search > .icon svg {
+	width: 14px;
+	height: 14px;
+}
+
+.volt-wf-lib-search input.volt-wf-lib-search-input {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	padding: 0;
+	border: none;
+	background: transparent;
+	color: var(--volt-auto-fg);
+	font: inherit;
+	font-size: 13px;
+}
+
+.monaco-workbench .volt-wf-lib-search .volt-wf-lib-search-input:focus {
+	outline: none;
+}
+
+.volt-wf-lib-search-input::placeholder {
+	color: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
+}
+
+.volt-wf-lib-row .cell {
+	min-width: 0;
+	padding-right: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-wf-lib-row .cell.main {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.volt-wf-lib-name-line {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-wf-lib-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-wf-lib-badges {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+}
+
+.volt-wf-lib-badges .volt-auto-live {
+	margin-left: 0;
+}
+
+.volt-wf-lib-description {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-auto-muted);
+	font-size: 12px;
+}
+
+.volt-wf-lib-row .cell.trigger,
+.volt-wf-lib-row .cell.last-run {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+}
+
+.volt-wf-lib-row .cell .icon {
+	display: inline-flex;
+	flex-shrink: 0;
+	color: var(--volt-auto-soft);
+}
+
+.volt-wf-lib-row .cell .icon .volt-automation-svg {
+	width: 14px;
+	height: 14px;
+}
+
+.volt-wf-lib-row .cell .text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-wf-lib-row .cell.nodes,
+.volt-wf-lib-row .cell.automations {
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-wf-lib-row .cell.last-run .icon .codicon[class*='codicon-'] {
+	font-size: 14px;
+	color: var(--volt-auto-muted);
+}
+
+.volt-wf-lib-row .cell.last-run .icon.state-success .codicon[class*='codicon-'] {
+	color: var(--volt-wf-ok);
+}
+
+.volt-wf-lib-row .cell.last-run .icon.state-failed .codicon[class*='codicon-'] {
+	color: var(--volt-wf-bad);
+}
+
+.volt-wf-lib-row .cell.last-run .icon.state-running .codicon[class*='codicon-'] {
+	color: var(--volt-wf-live);
+}
+
+.volt-wf-lib-row .cell.actions {
+	display: flex;
+	justify-content: flex-end;
+	padding-right: 0;
+}
+
+/* Library: Templates. */
+.volt-wf-sources {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 10px;
+}
+
+.volt-wf-source-chip {
+	display: inline-flex;
+	align-items: center;
+	height: 28px;
+	box-sizing: border-box;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+	border-radius: 999px;
+	overflow: hidden;
+	max-width: 320px;
+}
+
+.volt-wf-source-chip.active {
+	background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 20%, transparent);
+}
+
+.volt-wf-source-pick {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 100%;
+	min-width: 0;
+	padding: 0 11px;
+	border: none;
+	background: transparent;
+	color: var(--volt-auto-soft);
+	font: inherit;
+	font-size: 12.5px;
+	cursor: pointer;
+}
+
+.volt-wf-source-chip.active .volt-wf-source-pick,
+.volt-wf-source-pick:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-wf-source-pick .label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-wf-source-pick .count {
+	color: var(--volt-auto-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-wf-source-pick .icon {
+	display: inline-flex;
+}
+
+.volt-wf-source-chip .volt-wf-source-pick .icon .codicon[class*='codicon-'] {
+	font-size: 13px;
+}
+
+.volt-wf-source-chip .volt-wf-source-pick .icon.error .codicon[class*='codicon-'] {
+	color: var(--vscode-editorWarning-foreground, var(--volt-wf-wait));
+}
+
+.volt-wf-source-tools {
+	display: none;
+	align-items: center;
+	padding-right: 3px;
+	margin-left: -6px;
+}
+
+.volt-wf-source-chip:hover .volt-wf-source-tools,
+.volt-wf-source-chip:focus-within .volt-wf-source-tools {
+	display: inline-flex;
+}
+
+.volt-wf-source-tools .volt-auto-icon-button.volt-wf-source-tool {
+	width: 22px;
+	height: 22px;
+	border-radius: 999px;
+}
+
+.volt-wf-source-tools .volt-auto-icon-button.volt-wf-source-tool .codicon[class*='codicon-'] {
+	font-size: 13px;
+}
+
+.volt-wf-add-source.volt-auto-outline-button.small {
+	height: 28px;
+	border-radius: 999px;
+}
+
+.volt-wf-lib-note {
+	margin: 0 0 14px;
+}
+
+.volt-wf-template-grid .volt-wf-grid-empty {
+	grid-column: 1 / -1;
+	margin: 0;
+	border: 1px dashed var(--volt-auto-line);
+	border-radius: 12px;
+}
+
+.volt-wf-chips {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 5px;
+	margin-top: 6px;
+}
+
+.volt-wf-type-chip {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	border-radius: 5px;
+	background: var(--volt-auto-fill);
+	color: var(--volt-auto-soft);
+}
+
+.volt-wf-chips .volt-wf-type-chip .codicon[class*='codicon-'] {
+	font-size: 13px;
+}
+
+.volt-wf-more-chip {
+	color: var(--volt-auto-muted);
+	font-size: 11px;
+}
+
+.volt-wf-perm-chip {
+	height: 20px;
+	padding: 0 7px;
+	box-sizing: border-box;
+	border: 1px solid var(--volt-auto-line);
+	border-radius: 999px;
+	color: var(--volt-auto-soft);
+	font-size: 11px;
+	line-height: 18px;
+	white-space: nowrap;
+}
+
+.volt-wf-card-foot {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 6px;
+	min-width: 0;
+	color: var(--volt-auto-muted);
+	font-size: 12px;
+}
+
+.volt-wf-card-foot > span:not(.volt-wf-badge) {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-wf-invalid {
+	flex-shrink: 0;
+	color: var(--volt-wf-bad);
+}
+
+.volt-wf-template-card.invalid .name {
+	color: var(--volt-auto-soft);
+}
+
+.volt-wf-template-card.invalid .volt-auto-round-icon {
+	opacity: 0.6;
+}
+
+/* Dialogs: template preview, paste, publish. */
+.volt-auto-dialog.volt-wf-template-dialog {
+	width: min(920px, calc(100% - 48px));
+}
+
+.volt-auto-dialog.volt-wf-paste-dialog,
+.volt-auto-dialog.volt-wf-publish-dialog {
+	width: min(680px, calc(100% - 48px));
+}
+
+.volt-wf-preview-meta {
+	margin-top: -6px;
+	color: var(--volt-auto-muted);
+	font-size: 12.5px;
+}
+
+.volt-wf-untrusted-note {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 9px 12px;
+	border: 1px solid color-mix(in srgb, var(--volt-wf-wait) 30%, transparent);
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--volt-wf-wait) 9%, transparent);
+	font-size: 12.5px;
+	line-height: 18px;
+}
+
+.volt-wf-untrusted-note .icon .codicon[class*='codicon-'] {
+	color: var(--volt-wf-wait);
+	font-size: 14px;
+	line-height: 18px;
+}
+
+.volt-wf-preview-tabs {
+	margin-bottom: -6px;
+}
+
+.volt-wf-preview-canvas {
+	position: relative;
+	height: 400px;
+	overflow: hidden;
+	border: 1px solid var(--volt-auto-line);
+	border-radius: 10px;
+	background: var(--vscode-editor-background);
+}
+
+/* Code in a real editor (WorkflowCodeEditor): a hairline box in dialogs and panes. */
+.volt-wf-code-editor {
+	overflow: hidden;
+	border: 1px solid var(--volt-auto-line, var(--vscode-widget-border));
+	border-radius: 6px;
+}
+
+.volt-wf-json-raw .volt-wf-code-editor {
+	border: none;
+	border-radius: 0;
+}
+
+.volt-wf-perm-list,
+.volt-wf-issue-list {
+	overflow: hidden;
+	border: 1px solid var(--volt-auto-line);
+	border-radius: 10px;
+}
+
+/* Two lines in a list row: the row's own line-height (its full height) would stack them 46px apart. */
+.volt-wf-perm-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 46px;
+	padding: 0 12px;
+	min-width: 0;
+	line-height: 18px;
+}
+
+.volt-wf-perm-row .icon {
+	display: inline-flex;
+	flex-shrink: 0;
+}
+
+.volt-wf-perm-list .volt-wf-perm-row .icon .codicon[class*='codicon-'] {
+	font-size: 16px;
+	color: var(--volt-auto-soft);
+}
+
+.volt-wf-perm-row .text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.volt-wf-perm-row .detail {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-auto-muted);
+	font-size: 12px;
+}
+
+.volt-wf-issue-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 24px;
+	padding: 0 10px;
+	min-width: 0;
+	font-size: 12px;
+}
+
+.volt-wf-issue-row .icon {
+	display: inline-flex;
+	flex-shrink: 0;
+}
+
+.volt-wf-issue-list .volt-wf-issue-row .icon .codicon[class*='codicon-'] {
+	font-size: 13px;
+}
+
+.volt-wf-issue-list .volt-wf-issue-row .icon.severity-error .codicon[class*='codicon-'] {
+	color: var(--volt-wf-bad);
+}
+
+.volt-wf-issue-list .volt-wf-issue-row .icon.severity-warning .codicon[class*='codicon-'] {
+	color: var(--vscode-editorWarning-foreground, var(--volt-wf-wait));
+}
+
+.volt-wf-issue-row .message {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-wf-issue-row .where {
+	flex-shrink: 0;
+	color: var(--volt-auto-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-wf-parse-status {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 18px;
+	font-size: 12.5px;
+}
+
+.volt-wf-parse-status.ok {
+	color: var(--volt-wf-ok);
+}
+
+.volt-wf-parse-status.error {
+	color: var(--volt-wf-bad);
+}
+
+.volt-wf-parse-status .icon {
+	display: inline-flex;
+}
+
+.volt-wf-dialog-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+/* Narrow editors: the library table drops the counts. */
+@container (max-width: 760px) {
+	.volt-wf-lib-row {
+		grid-template-columns: minmax(0, 1fr) 120px 96px 28px;
+	}
+
+	.volt-wf-lib-row .cell.nodes,
+	.volt-wf-lib-row .cell.automations {
+		display: none;
+	}
+}

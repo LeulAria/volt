@@ -21,8 +21,9 @@ import { ISecretStorageService } from '../../../../platform/secrets/common/secre
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IAgentWorktreeService } from '../common/git/agentWorktree.js';
+import { describeMoveResult, workspaceMoveNote } from '../common/git/workspaceMove.js';
 import { IAgentHistoryService } from '../common/history/agentHistory.js';
-import { buildTitlePrompt, sanitizeTitle, titleCommandFor } from '../common/history/titleGeneration.js';
+import { buildTitlePrompt, isNeutralTitle, isVagueMessage, sanitizeTitle, titleCommandFor } from '../common/history/titleGeneration.js';
 import { PREDICTOR_SKILL, predictorRequest, PredictorTask } from '../common/prediction/predictorSkill.js';
 import { IPredictorLaunch, PredictorAgent } from './prediction/predictorAgent.js';
 import { normalizeCursorModelId } from '../common/harness/cursorQuota.js';
@@ -127,7 +128,7 @@ import { deepseekKnobs, resolveApproval } from '../common/deepseek/approval.js';
 import { VoltLlmAdapter } from './deepseek/voltLlmAdapter.js';
 import { buildSubagentPrompt, customSubagentPrompt, nativeModelTurn } from '../common/deepseek/prompt.js';
 import { ApprovalOutcome, StreamChunk } from '../common/deepseek/protocol.js';
-import { endToolRun, ITrajectoryRequest, ITrajectoryRequestInput, recordStream, startToolRun } from '../common/harness/trajectory.js';
+import { AgentTrajectoryRecorder, endToolRun, ITrajectoryRequest, ITrajectoryRequestInput, recordStream, startToolRun } from '../common/harness/trajectory.js';
 import { IVoltTrajectoryService } from '../common/trajectory.js';
 import './trajectoryService.js';
 import { turnWriteGate } from '../common/turnWriteGate.js';
@@ -348,6 +349,12 @@ interface ISessionState extends IVoltSession {
 	moved?: { readonly model: string; readonly announce: string; readonly announced?: boolean };
 	/** A title was requested from the first message; set once it landed, so the agent's own titles stop replacing it. */
 	titleState?: 'pending' | 'done';
+	/**
+	 * The first message named little or its title came back neutral ("Quick question"): 'due' titles
+	 * the chat again from the first two messages on the next send, once. 'sent' once that call
+	 * started, 'named' once its title landed, so a late first title cannot replace it.
+	 */
+	titleRetry?: 'due' | 'sent' | 'named';
 	/** Agent sessions of models the chat moved away from; switching back resumes one with only the turns it missed. */
 	parkedAgents?: IParkedAgent[];
 	/** The chat was forked from another: its first agent is briefed as a fork. */
@@ -1103,22 +1110,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		session.messages.push({ role: 'user', content: request.text });
 		const catalogItem = this.catalog.find(item => item.ref === session.providerRef && item.enabled) ?? this.catalog.find(item => item.enabled);
-		if (!session.titleState && session.messages.filter(message => message.role === 'user').length === 1) {
+		const userMessages = session.messages.filter(message => message.role === 'user');
+		if (!session.titleState && userMessages.length === 1) {
 			session.titleState = 'pending';
-			const pinned = this.taskModels.title ? this.catalog.find(item => item.ref === this.taskModels.title && item.enabled) : undefined;
-			const titleItem = pinned ?? catalogItem;
-			const start = () => void this.generateTitle(session, request, titleItem, !!pinned);
-			if (titleItem?.kind === 'agent') {
-				// A CLI title is a process start (`claude -p`, `codex exec`): it waits for the first reply
-				// text, or the end of the run, so it does not compete with the turn's own startup.
-				this.deferredTitles.set(session.sessionId, { start, until: 'reply' });
-			} else if (titleItem && titleItem.profileId === catalogItem?.profileId && servedLocally(this.profiles.find(p => p.id === titleItem.profileId))) {
-				// One local server runs one request at a time: sent first, the title would hold up the
-				// run's first step, and between steps it would evict the run's cached prompt.
-				this.deferredTitles.set(session.sessionId, { start, until: 'end' });
-			} else {
-				start();
-			}
+			session.titleRetry = isVagueMessage(request.text) ? 'due' : undefined;
+			this.startTitle(session, catalogItem, buildTitlePrompt(request.text, attachmentNames(request)), true);
+		} else if (session.titleRetry === 'due' && userMessages.length > 1) {
+			// The first message named little; with the next one the title can say what the chat is for.
+			session.titleRetry = 'sent';
+			this.startTitle(session, catalogItem, buildTitlePrompt([userMessages[0].content, request.text], attachmentNames(request)), false);
 		}
 		const engine = catalogItem?.kind === 'agent' ? 'agent' : 'native';
 		const run = this.beginRun(session, request.mode, engine, sendAt);
@@ -1165,20 +1165,85 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return run.runId;
 	}
 
-	/**
-	 * Names the chat from its first message while the agent works on it: one small call with no
-	 * tools. It runs on the text generation model when one is pinned in Settings, as that model
-	 * with its saved options; otherwise on the chat's own provider (Haiku for Claude, low effort
-	 * for Codex, the native model at its lowest reasoning). Failures keep the first-line title.
-	 */
-	private async generateTitle(session: ISessionState, request: IVoltSendRequest, item: IVoltCatalogItem | undefined, pinned: boolean): Promise<void> {
-		// cursor-agent has no light print mode: a title call carries its whole ~16k-token agent prompt
-		// (5 cents on Grok 4.7, measured 2026-10-09). Without a pinned title model the first line stays the title.
-		if (!pinned && this.profiles.find(p => p.id === item?.profileId)?.providerId === 'cursor-acp') {
-			session.titleState = undefined;
+	/** Starts a title call for the send being made, or holds it where it would slow the run down. */
+	private startTitle(session: ISessionState, catalogItem: IVoltCatalogItem | undefined, prompt: string, first: boolean): void {
+		const titler = this.titleModel(catalogItem);
+		if (!titler) {
+			// Nothing here writes titles cheaply: the first line stays the title.
+			if (first && session.titleState === 'pending') {
+				session.titleState = undefined;
+			}
 			return;
 		}
-		const prompt = buildTitlePrompt(request.text, attachmentNames(request));
+		const titleItem = titler.item;
+		const start = () => void this.generateTitle(session, prompt, titleItem, titler.pinned, first);
+		if (titleItem.kind === 'agent') {
+			// A CLI title is a process start (`claude -p`, `codex exec`): it waits for the first reply
+			// text, or the end of the run, so it does not compete with the turn's own startup.
+			this.deferredTitles.set(session.sessionId, { start, until: 'reply' });
+		} else if (titleItem.profileId === catalogItem?.profileId && servedLocally(this.profiles.find(p => p.id === titleItem.profileId))) {
+			// One local server runs one request at a time: sent first, the title would hold up the
+			// run's first step, and between steps it would evict the run's cached prompt.
+			this.deferredTitles.set(session.sessionId, { start, until: 'end' });
+		} else {
+			start();
+		}
+	}
+
+	/**
+	 * Who names a new chat ({@link generateTitle}): the text generation model pinned in Settings;
+	 * else the chat's own provider when it has a cheap one-shot mode; else another enabled provider
+	 * that has one, so a chat on cursor-agent, Grok, OpenCode and the like still gets a written title
+	 * rather than its first line.
+	 */
+	private titleModel(chat: IVoltCatalogItem | undefined): { readonly item: IVoltCatalogItem; readonly pinned: boolean } | undefined {
+		const pinned = this.taskModels.title ? this.catalog.find(item => item.ref === this.taskModels.title && item.enabled) : undefined;
+		if (pinned) {
+			return { item: pinned, pinned: true };
+		}
+		if (chat && this.titleRank(chat) !== undefined) {
+			return { item: chat, pinned: false };
+		}
+		let best: { readonly item: IVoltCatalogItem; readonly rank: number } | undefined;
+		for (const item of this.catalog) {
+			const rank = item.enabled ? this.titleRank(item) : undefined;
+			if (rank !== undefined && (!best || rank < best.rank)) {
+				best = { item, rank };
+			}
+		}
+		return best && { item: best.item, pinned: false };
+	}
+
+	/**
+	 * How well `item` names chats with nothing pinned, best first: Claude Code's Haiku, Codex at low
+	 * effort, an API model at its lowest reasoning, a model on this machine. Undefined when it cannot:
+	 * not set up, no print mode, or a print mode that carries a whole agent prompt (cursor-agent's is
+	 * ~16k tokens, 5 cents a title on Grok 4.7, measured 2026-10-09).
+	 */
+	private titleRank(item: IVoltCatalogItem): number | undefined {
+		const profile = this.profiles.find(p => p.id === item.profileId);
+		const detect = profile ? this.detections.get(profile.id) : undefined;
+		if (!profile?.enabled || detect?.available === false || detect?.authenticated === false) {
+			return undefined;
+		}
+		if (item.kind === 'model') {
+			return this.modelProviders.has(profile.providerId) ? (servedLocally(profile) ? 3 : 2) : undefined;
+		}
+		switch (profile.providerId) {
+			case 'claude-code': return 0;
+			case 'codex': return 1;
+			default: return undefined;
+		}
+	}
+
+	/**
+	 * Names the chat from its first message while the agent works on it: one small call with no
+	 * tools, on the model {@link titleModel} picks. A pinned text generation model runs with its
+	 * saved options; otherwise Claude runs Haiku, Codex low effort, a native model its lowest
+	 * reasoning. Failures keep the first-line title. `first` is false for the one retry from the
+	 * first two messages (see titleRetry).
+	 */
+	private async generateTitle(session: ISessionState, prompt: string, item: IVoltCatalogItem, pinned: boolean, first: boolean): Promise<void> {
 		let raw: string | undefined;
 		try {
 			raw = await this.generateWith(item, pinned, prompt, TITLE_TIMEOUT_MS, 2000);
@@ -1187,8 +1252,19 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		const title = sanitizeTitle(raw);
 		if (!title) {
-			session.titleState = undefined;
+			// A failed retry keeps the title the first message got.
+			if (session.titleState === 'pending') {
+				session.titleState = undefined;
+			}
 			return;
+		}
+		if (!first) {
+			session.titleRetry = 'named';
+		} else if (session.titleRetry === 'named') {
+			// A slow first title landing after the retry's would put the vague one back.
+			return;
+		} else if (!session.titleRetry && isNeutralTitle(title)) {
+			session.titleRetry = 'due';
 		}
 		session.titleState = 'done';
 		await this.history.setAgentTitle(session.sessionId, title);
@@ -2658,8 +2734,18 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			if (!project) {
 				throw new Error('Open a folder before using a worktree.');
 			}
-			const recreated = await this.worktrees.ensure(project.fsPath, session.worktreePath, session.worktreeBranch);
-			if (recreated) {
+			const ensured = await this.worktrees.ensure(project.fsPath, session.worktreePath, session.worktreeBranch);
+			if (ensured.path !== session.worktreePath) {
+				// Its checkout is gone and another one has its branch: the chat works there now, alongside whoever else does.
+				const from = session.worktreePath;
+				session.worktreePath = ensured.path;
+				session.moved = {
+					model: workspaceMoveNote({ fromPath: from, toPath: ensured.path, branch: session.worktreeBranch, worktree: true, files: 0, left: 0 }),
+					announce: describeMoveResult({ ok: true, worktree: true, branch: session.worktreeBranch }),
+				};
+				this.history.open(session.sessionId).setMeta({ worktreePath: ensured.path });
+				this.logService.info(`[volt] ${session.sessionId}: ${from} is gone, so it works in ${ensured.path}, which has ${session.worktreeBranch}`);
+			} else if (ensured.recreated) {
 				session.announceWorktree = true;
 				// A checkout recreated from its branch has none of what setup installed.
 				await this.worktreeSetup.run(session.sessionId, { repoRoot: project.fsPath, worktreePath: session.worktreePath, branch: session.worktreeBranch, isCancelled });
@@ -4713,7 +4799,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					// An agent with no /compact of its own writes a hand-off summary that replaces the history.
 					voltCompaction = isCompactCommand(request.text) && !(provider.supportsCommand?.(handle, 'compact') ?? false);
 					const text = voltCompaction ? agentCompactionPrompt(compactInstructions(request.text)) : request.text;
-					const first = await this.agentTurn(session, run, provider, handle, profile, { text: request.mode === 'plan' ? withPlanModeInstruction(text) : text, mode: request.mode, lead, ...(images ? { images } : {}), ...(request.resources?.length ? { resources: request.resources } : {}) }, attempt === 0);
+					const first = await this.agentTurn(session, run, provider, handle, profile, item, { text: request.mode === 'plan' ? withPlanModeInstruction(text) : text, mode: request.mode, lead, ...(images ? { images } : {}), ...(request.resources?.length ? { resources: request.resources } : {}) }, attempt === 0);
 					if (first.kind === 'stale') {
 						return;
 					}
@@ -4732,7 +4818,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						if (!message || !this.isCurrent(session, run)) {
 							break;
 						}
-						const next = await this.agentTurn(session, run, provider, handle, profile, { text: message, mode: request.mode }, false);
+						const next = await this.agentTurn(session, run, provider, handle, profile, item, { text: message, mode: request.mode }, false);
 						if (next.kind === 'stale') {
 							return;
 						}
@@ -4791,7 +4877,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * provider's prompt settles on its own once the cancel reaches the agent, and the run is
 	 * settled only then, so the next prompt never overlaps it.
 	 */
-	private async agentTurn(session: ISessionState, run: IRunState, provider: IAgentProvider, handle: IAgentSessionHandle, profile: IProviderProfile, message: IAgentMessage, mayRestart: boolean): Promise<AgentTurnResult> {
+	private async agentTurn(session: ISessionState, run: IRunState, provider: IAgentProvider, handle: IAgentSessionHandle, profile: IProviderProfile, item: IVoltCatalogItem, message: IAgentMessage, mayRestart: boolean): Promise<AgentTurnResult> {
 		const token = run.cancel.token;
 		let assistant = '';
 		let textId: string | undefined;
@@ -4804,44 +4890,59 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			run.prompted = true;
 			this.emit(session, run.runId, { type: 'lifecycle', phase: 'running' });
 		}
-		for await (const event of provider.send(handle, message, profile, token)) {
-			if (!this.isCurrent(session, run)) {
-				continue;
-			}
-			if (event.type === 'run.end') {
-				if (!reason) {
-					reason = event.reason;
-					incomplete = event.incomplete;
+		// The agent keeps its own model requests; the Trajectory panel gets each answer as Volt sees it.
+		const trace = new AgentTrajectoryRecorder({
+			begin: input => this.trajectory.begin(input),
+			changed: () => this.trajectory.changed(session.sessionId),
+		}, { sessionId: session.sessionId, runId: run.runId, provider: provider.id, model: item.id, modelLabel: item.label, harness: provider.label });
+		trace.prompt(message.lead ? `${message.lead}\n\n${message.text}` : message.text, message.images);
+		try {
+			for await (const event of provider.send(handle, message, profile, token)) {
+				if (!this.isCurrent(session, run)) {
+					continue;
 				}
-				continue;
-			}
-			if (event.type === 'error' && mayRestart && !token.isCancellationRequested && isAcpTurnRestartable(event.message)) {
-				restart = true;
-				continue;
-			}
-			if (restart) {
-				continue;
-			}
-			if (event.type === 'text.delta' && event.delta) {
-				// Another message of the same turn is another paragraph, as the transcript shows it.
-				if (textId !== undefined && event.id !== textId && assistant && !assistant.endsWith('\n')) {
-					assistant += '\n\n';
+				if (event.type === 'run.end') {
+					if (!reason) {
+						reason = event.reason;
+						incomplete = event.incomplete;
+					}
+					continue;
 				}
-				textId = event.id;
-				assistant += event.delta;
+				if (event.type === 'error' && mayRestart && !token.isCancellationRequested && isAcpTurnRestartable(event.message)) {
+					restart = true;
+					continue;
+				}
+				if (restart) {
+					continue;
+				}
+				if (event.type === 'text.delta' && event.delta) {
+					// Another message of the same turn is another paragraph, as the transcript shows it.
+					if (textId !== undefined && event.id !== textId && assistant && !assistant.endsWith('\n')) {
+						assistant += '\n\n';
+					}
+					textId = event.id;
+					assistant += event.delta;
+				}
+				if (event.type === 'title' && session.agentJoinedLate === handle) {
+					// Codex titled a handed-off chat "<conversation_so_far> This conversation started...".
+					continue;
+				}
+				trace.event(event);
+				this.emitEngine(session, run, event);
 			}
-			if (event.type === 'title' && session.agentJoinedLate === handle) {
-				// Codex titled a handed-off chat "<conversation_so_far> This conversation started...".
-				continue;
-			}
-			this.emitEngine(session, run, event);
+		} catch (err) {
+			trace.end(token.isCancellationRequested ? 'abort' : 'fail', err instanceof Error ? err.message : String(err));
+			throw err;
 		}
 		if (!this.isCurrent(session, run)) {
+			trace.end('abort');
 			return { kind: 'stale' };
 		}
 		if (restart && reason !== 'done') {
+			trace.end('fail', 'The agent process died; Volt restarted it and sent the prompt again.');
 			return { kind: 'restart' };
 		}
+		trace.end(reason ?? 'done');
 		return { kind: 'end', reason: reason ?? 'done', assistant, ...(incomplete ? { incomplete } : {}) };
 	}
 

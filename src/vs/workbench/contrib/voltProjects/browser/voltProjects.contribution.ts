@@ -113,6 +113,12 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			scope: ConfigurationScope.APPLICATION,
 			description: localize('voltProjects.showHiddenFolders', "Show hidden folders in the Add Project folder picker."),
 		},
+		'volt.projects.folderPickerShowFiles': {
+			type: 'boolean',
+			default: true,
+			scope: ConfigurationScope.APPLICATION,
+			description: localize('voltProjects.folderPickerShowFiles', "Show files, dimmed, next to the folders in Volt's folder picker. Only folders can be picked."),
+		},
 		'volt.projects.deepSearchRoots': {
 			type: 'array',
 			items: { type: 'string' },

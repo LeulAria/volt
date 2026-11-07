@@ -43,6 +43,7 @@ import { IEditorService } from '../../../../services/editor/common/editorService
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
 import { getLayoutMode, LayoutModeContext, revealAgentSidePanel } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import '../chrome/agentViewSidebars.js';
+import '../run/agentRun.contribution.js';
 import '../chrome/agentTitlebarHeader.js';
 import '../chrome/agentNav.contribution.js';
 import './agentChatNavigation.contribution.js';
@@ -109,6 +110,7 @@ import {
 import { InlineCommentController } from '../review/inlineCommentController.js';
 import '../../common/agentWorkflowSettings.js';
 import '../automations/automations.contribution.js';
+import '../workflows/workflows.contribution.js';
 import '../gitGraph/gitGraph.contribution.js';
 import '../scratchBoard/scratchBoard.contribution.js';
 import './agentWorkflowCommands.js';

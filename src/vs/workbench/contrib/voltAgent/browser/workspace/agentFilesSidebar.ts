@@ -6,7 +6,7 @@
 import { $, addDisposableListener, append } from '../../../../../base/browser/dom.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, IDisposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
@@ -14,6 +14,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { ConfigurationTarget, IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
+import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
@@ -28,6 +29,8 @@ import { VIEWLET_ID as SEARCH_VIEWLET_ID } from '../../../../services/search/com
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { agentRunOnStorageKey, normalizeAgentRunOn } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
+import { countUserTurns } from '../../../../services/voltRuntime/common/session.js';
 import { VIEWLET_ID as EXPLORER_VIEWLET_ID } from '../../../files/common/files.js';
 import { IExplorerService } from '../../../files/browser/files.js';
 import { ISearchViewModelWorkbenchService } from '../../../search/browser/searchTreeModel/searchViewModelWorkbenchService.js';
@@ -37,7 +40,7 @@ import { INIT_TIMEOUT_MS, runGit } from '../home/agentHomeWorkspaceActions.js';
 import { trackLentPanesCollapsed } from '../review/agentChangesEditor.js';
 import { AgentScmRepositoryFocus, type AgentScmRepositoryState } from '../review/agentScmRepository.js';
 import { setAgentChangesSession } from '../review/agentTurnsView.js';
-import { EXPLORER_ICON_SHAPES, type SvgIconShapes } from './agentSurfaceMenu.js';
+import { EXPLORER_ICON_SHAPES, RELATED_CHATS_ICON_SHAPES, type SvgIconShapes } from './agentSurfaceMenu.js';
 import { createPrimarySidebarToggleIcon } from '../../../../browser/parts/titlebar/sidebarToggleIcon.js';
 import { AGENT_PULL_REQUESTS_CONTAINER_ID, setPullRequestsViewSession } from '../pullRequests/agentPullRequestsViewState.js';
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
@@ -52,7 +55,22 @@ import { AgentResourceFilter, IAgentResourcesService } from '../resources/agentR
 import { agentResourcesSectionFor, OPEN_AGENT_RESOURCES_COMMAND_ID } from '../resources/agentResourcesPage.js';
 import { showVoltMenu } from '../ui/menu/voltMenu.js';
 
-export type AgentFilesSidebarView = 'explorer' | 'scm' | 'search' | 'pullRequests' | 'debug' | 'extensions';
+export type AgentFilesSidebarView = 'explorer' | 'scm' | 'search' | 'pullRequests' | 'chats' | 'debug' | 'extensions';
+
+/** Related Chats' list: the agent list scoped to one project. */
+export interface IRelatedChatsPane extends IDisposable {
+	setScope(root: URI | undefined, name: string): void;
+	focusSearch(): void;
+	layout(): void;
+}
+
+type RelatedChatsPaneFactory = (instantiationService: IInstantiationService, parent: HTMLElement) => IRelatedChatsPane;
+let relatedChatsPaneFactory: RelatedChatsPaneFactory | undefined;
+
+/** The agent list registers Related Chats (agentHomePane.ts); importing it here would loop back through agentSurfaceHost.ts. */
+export function registerRelatedChatsPane(factory: RelatedChatsPaneFactory): void {
+	relatedChatsPaneFactory = factory;
+}
 
 /** The command behind each tab's Ctrl+Option+digit (agentSurfaceHost.ts registers them); tooltips show its keybinding. */
 export function filesSidebarViewCommandId(view: AgentFilesSidebarView): string {
@@ -69,12 +87,19 @@ const MIN_WIDTH = 200;
 const MIN_TABS_WIDTH = 320;
 
 /**
- * The views the sidebar can lend in. The tabs left to right, which is also their shortcut's digit
- * (Explorer 1 … Search 4); `tab: false` views have no tab and open from the activity bar slot.
+ * The views the sidebar can show. The tabs left to right, which is also their shortcut's digit
+ * (Explorer 1 … Related Chats 5); `tab: false` views have no tab and open from the activity bar slot.
+ * Each but Related Chats lends in the workbench's own view container; Related Chats is the agent list, scoped.
  */
-const VIEWS: readonly { readonly id: AgentFilesSidebarView; readonly container: string; readonly icon: SvgIconShapes; readonly label: string; readonly tab?: false }[] = [
+const VIEWS: readonly { readonly id: AgentFilesSidebarView; readonly container?: string; readonly icon: SvgIconShapes; readonly label: string; readonly tab?: false }[] = [
 	{
 		id: 'explorer', container: EXPLORER_VIEWLET_ID, label: localize('voltAgent.filesSidebar.explorer', "Explorer"), icon: EXPLORER_ICON_SHAPES
+	},
+	{
+		id: 'search', container: SEARCH_VIEWLET_ID, label: localize('voltAgent.filesSidebar.search', "Search"), icon: [
+			['path', { d: 'M17 17L21 21' }],
+			['path', { d: 'M3 11C3 15.4183 6.58172 19 11 19C13.213 19 15.2161 18.1015 16.6644 16.6493C18.1077 15.2022 19 13.2053 19 11C19 6.58172 15.4183 3 11 3C6.58172 3 3 6.58172 3 11Z' }],
+		]
 	},
 	{
 		id: 'scm', container: SCM_VIEWLET_ID, label: localize('voltAgent.filesSidebar.scm', "Source Control"), icon: [
@@ -95,10 +120,7 @@ const VIEWS: readonly { readonly id: AgentFilesSidebarView; readonly container: 
 		]
 	},
 	{
-		id: 'search', container: SEARCH_VIEWLET_ID, label: localize('voltAgent.filesSidebar.search', "Search"), icon: [
-			['path', { d: 'M17 17L21 21' }],
-			['path', { d: 'M3 11C3 15.4183 6.58172 19 11 19C13.213 19 15.2161 18.1015 16.6644 16.6493C18.1077 15.2022 19 13.2053 19 11C19 6.58172 15.4183 3 11 3C6.58172 3 3 6.58172 3 11Z' }],
-		]
+		id: 'chats', label: localize('voltAgent.filesSidebar.relatedChats', "Related Chats"), icon: RELATED_CHATS_ICON_SHAPES
 	},
 	{
 		// VIEWLET_ID in debug/common/debug.ts.
@@ -199,8 +221,13 @@ export class AgentFilesSidebar extends Disposable {
 	/** The chat whose repository Source Control shows. */
 	private scmSession: string | undefined;
 	private scmFolder: URI | undefined;
+	/** The chat waits for its worktree (see {@link awaitsWorktree}), so Source Control shows no repository. */
+	private scmAwaitsWorktree = false;
 	private readonly scmRepository: AgentScmRepositoryFocus;
 	private readonly pullRequests: IAgentPullRequestService | undefined;
+	/** Related Chats: the agent list, scoped to the chat's project. Made the first time the tab shows. */
+	private readonly chatsHost: HTMLElement;
+	private chats: IRelatedChatsPane | undefined;
 	private shown = false;
 	/** No tab beside it: it is the whole tools area. */
 	private fills = false;
@@ -217,7 +244,6 @@ export class AgentFilesSidebar extends Disposable {
 	constructor(
 		parent: HTMLElement,
 		@IStorageService private readonly storageService: IStorageService,
-		@IInstantiationService instantiationService: IInstantiationService,
 		@IViewDescriptorService private readonly viewDescriptorService: IViewDescriptorService,
 		@IPaneCompositePartService private readonly paneCompositeService: IPaneCompositePartService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
@@ -237,6 +263,8 @@ export class AgentFilesSidebar extends Disposable {
 		@IEditorService private readonly editorService: IEditorService,
 		@IKeybindingService private readonly keybindingService: IKeybindingService,
 		@IVoltFeatureService private readonly features: IVoltFeatureService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@ILabelService private readonly labelService: ILabelService,
 	) {
 		super();
 		this.scmRepository = this._register(instantiationService.createInstance(AgentScmRepositoryFocus));
@@ -281,7 +309,7 @@ export class AgentFilesSidebar extends Disposable {
 		this._register(addDisposableListener(showTabs, 'click', () => this.showTabsEmitter.fire()));
 		const hide = append(this.header, $('button.volt-agent-files-sidebar-tab.hide')) as HTMLButtonElement;
 		hide.type = 'button';
-		const hideLabel = localize('voltAgent.filesSidebar.hide', "Hide Files Sidebar");
+		const hideLabel = localize('voltAgent.filesSidebar.hide', "Hide Explorer Sidebar");
 		hide.setAttribute('aria-label', hideLabel);
 		setAgentTooltip(hide, hideLabel);
 		// The title bar's sidebar glyph (thin frame, filled bar), mirrored by CSS to sit on the right.
@@ -316,6 +344,10 @@ export class AgentFilesSidebar extends Disposable {
 		this.filterEmpty = append(this.filterPane, $('.volt-agent-files-resources-empty'));
 		this.filterTreeHost = append(this.filterPane, $('.volt-agent-files-resources-tree'));
 		this.filterTree = this._register(instantiationService.createInstance(AgentResourceTree, this.filterTreeHost, 'VoltAgentFilesSidebarResources'));
+		this.chatsHost = append(this.body, $('.volt-agent-files-chats'));
+		// A chat learns its project after it opens (history loads, a draft gets bound).
+		this._register(this.history.onDidChange(() => this.syncChatsScope()));
+		this._register(this.sessionContext.onDidChangeProjects(() => this.syncChatsScope()));
 		this._register(this.filterTree.onDidOpen(({ item, preserveFocus }) => openAgentResource(this.editorService, item, preserveFocus)));
 		this._register(this.resources.onDidChangeFilter(() => this.sync()));
 		// Disabling Agent Resources takes away the filter and lifts one in use.
@@ -334,6 +366,18 @@ export class AgentFilesSidebar extends Disposable {
 
 		this._register(addDisposableListener(this.sash, 'pointerdown', e => this.beginResize(e)));
 		this._register(AgentFilesSidebar.onDidChange(() => this.sync()));
+		// Run on switched to or from Worktree, or the first message created the worktree.
+		const syncWorktree = () => {
+			if (this.scmSession && this.scmSession === this.sessionId && this.awaitsWorktree(this.scmSession) !== this.scmAwaitsWorktree) {
+				this.sync();
+			}
+		};
+		this._register(this.storageService.onDidChangeValue(StorageScope.APPLICATION, undefined, this._store)(event => {
+			if (this.scmSession && event.key === agentRunOnStorageKey(this.sessionContext.bindingFor(this.scmSession)?.projectId)) {
+				syncWorktree();
+			}
+		}));
+		this._register(this.history.onDidChange(syncWorktree));
 		// The workbench gave a part back (back to agent layout): take it again.
 		this._register(layoutService.onDidChangePartVisibility(() => this.sync()));
 		this.syncChrome();
@@ -430,7 +474,7 @@ export class AgentFilesSidebar extends Disposable {
 
 	/** On screen with `view` in it. */
 	showsView(view: AgentFilesSidebarView): boolean {
-		return this.shown && this.lentView === view && !!this.lent.value;
+		return this.shown && this.lentView === view && (view === 'chats' || !!this.lent.value);
 	}
 
 	hasFocus(): boolean {
@@ -439,8 +483,12 @@ export class AgentFilesSidebar extends Disposable {
 
 	/** Moves the keyboard into the view shown: the Explorer's tree, the commit message, Search's field, the pull requests' search. */
 	focusView(): void {
+		if (this.lentView === 'chats') {
+			this.chats?.focusSearch();
+			return;
+		}
 		const view = this.lentView && this.lent.value ? VIEWS.find(candidate => candidate.id === this.lentView) : undefined;
-		const container = view ? this.viewDescriptorService.getViewContainerById(view.container) : undefined;
+		const container = view?.container ? this.viewDescriptorService.getViewContainerById(view.container) : undefined;
 		const location = container ? this.viewDescriptorService.getViewContainerLocation(container) : null;
 		if (location !== null) {
 			this.paneCompositeService.getActivePaneComposite(location)?.focus();
@@ -476,12 +524,15 @@ export class AgentFilesSidebar extends Disposable {
 		this.syncChrome();
 		const state = readState(this.storageService);
 		const want = this.shown && state.open ? this.viewFor(state) : undefined;
-		if (this.lentView !== want || (want && !this.lent.value)) {
+		if (this.lentView !== want || (want && want !== 'chats' && !this.lent.value)) {
 			this.giveBack();
-			if (want) {
+			if (want === 'chats') {
+				this.showChats();
+			} else if (want) {
 				this.borrow(want);
 			}
 		}
+		this.syncChatsScope();
 		// Source Control opens the repository directly. Explorer borrows a cached folder tree and
 		// Search looks in the chat's folder. None of them moves the whole workspace: that stops and
 		// restarts the extension host, seconds on every switch to another project.
@@ -510,19 +561,27 @@ export class AgentFilesSidebar extends Disposable {
 			setPullRequestsViewSession(this.sessionId);
 		}
 		const scmSession = want === 'scm' && this.lent.value ? this.sessionId : undefined;
-		const scmFolder = scmSession ? this.folderOf(scmSession) : undefined;
-		if (scmSession && (this.scmSession !== scmSession || !this.uriIdentityService.extUri.isEqual(scmFolder, this.scmFolder))) {
+		// An unsent chat set to run in a worktree has none yet: the project's checkout is not its repository.
+		const scmAwaitsWorktree = !!scmSession && this.awaitsWorktree(scmSession);
+		const scmFolder = scmSession && !scmAwaitsWorktree ? this.folderOf(scmSession) : undefined;
+		if (scmSession && (this.scmSession !== scmSession || this.scmAwaitsWorktree !== scmAwaitsWorktree || !this.uriIdentityService.extUri.isEqual(scmFolder, this.scmFolder))) {
 			this.scmSession = scmSession;
 			this.scmFolder = scmFolder;
+			this.scmAwaitsWorktree = scmAwaitsWorktree;
 			setAgentChangesSession(scmSession);
-			void this.scmRepository.show(scmSession, () => this.showsScmFor(scmSession), scmFolder, state => this.showRepositoryState(state, scmFolder));
+			if (scmAwaitsWorktree) {
+				this.scmRepository.clear();
+				this.showRepositoryState({ kind: 'worktreePending' }, undefined);
+			} else {
+				void this.scmRepository.show(scmSession, () => this.showsScmFor(scmSession), scmFolder, state => this.showRepositoryState(state, scmFolder));
+			}
 		}
 		this.layoutLent();
 		this.announceShownView();
 	}
 
 	/** Says why Source Control has no repository, in git's own words, with the one action that fixes it. */
-	private showRepositoryState(state: AgentScmRepositoryState, folder: URI | undefined): void {
+	private showRepositoryState(state: AgentScmRepositoryState | { readonly kind: 'worktreePending' }, folder: URI | undefined): void {
 		this.body.classList.toggle('repository-pending', state.kind !== 'ready');
 		let message = '';
 		let action: { label: string; run: () => Promise<unknown> } | undefined;
@@ -532,6 +591,9 @@ export class AgentFilesSidebar extends Disposable {
 				break;
 			case 'noFolder':
 				message = localize('voltAgent.filesSidebar.noFolder', "This chat has no local folder.");
+				break;
+			case 'worktreePending':
+				message = localize('voltAgent.filesSidebar.worktreePending', "This chat runs in a new worktree, created when you send the first message. Its changes show here then.");
 				break;
 			case 'notRepository':
 				message = localize('voltAgent.filesSidebar.notRepository', "This folder is not a Git repository.");
@@ -640,6 +702,17 @@ export class AgentFilesSidebar extends Disposable {
 		}
 	}
 
+	/** An unsent chat whose project runs new chats in a worktree: the worktree comes with the first message. */
+	private awaitsWorktree(sessionId: string): boolean {
+		const session = this.runtime.getOrCreateSession(sessionId);
+		const meta = this.history.get(sessionId);
+		if (meta?.worktreePath || session.worktreePath || (meta?.turnCount ?? 0) > 0 || countUserTurns(session.messages) > 0) {
+			return false;
+		}
+		const projectId = this.sessionContext.bindingFor(sessionId)?.projectId;
+		return !!projectId && normalizeAgentRunOn(this.storageService.get(agentRunOnStorageKey(projectId), StorageScope.APPLICATION)) === 'worktree';
+	}
+
 	/** Where a chat runs: its worktree, else its project. Matches agentIdeWorkspace.ts. */
 	private folderOf(sessionId: string): URI | undefined {
 		const meta = this.history.get(sessionId);
@@ -650,8 +723,38 @@ export class AgentFilesSidebar extends Disposable {
 		return this.sessionContext.rootFor(sessionId) ?? (meta?.workspaceFolder ? uriFromStoredRoot(meta.workspaceFolder) : undefined);
 	}
 
+	/** The project a chat belongs to: its project's folder, even when it runs in a worktree of it. */
+	private projectOf(sessionId: string): URI | undefined {
+		const meta = this.history.get(sessionId);
+		return this.sessionContext.rootFor(sessionId) ?? (meta?.workspaceFolder ? uriFromStoredRoot(meta.workspaceFolder) : undefined);
+	}
+
+	/** Related Chats: the agent list, scoped, in place of a lent view. */
+	private showChats(): void {
+		this.lentView = 'chats';
+		this.body.classList.add('chats');
+		if (!this.chats && relatedChatsPaneFactory) {
+			const title = append(this.chatsHost, $('.volt-agent-files-chats-title'));
+			title.textContent = localize('voltAgent.filesSidebar.relatedChats', "Related Chats");
+			this.chats = this._register(relatedChatsPaneFactory(this.instantiationService, this.chatsHost));
+		}
+		this.syncChatsScope();
+	}
+
+	/** Related Chats follows the chat on screen to its project. */
+	private syncChatsScope(): void {
+		if (this.lentView !== 'chats' || !this.chats || !this.sessionId) {
+			return;
+		}
+		const project = this.projectOf(this.sessionId);
+		const record = this.sessionContext.bindingFor(this.sessionId);
+		const name = (record ? this.sessionContext.getProject(record.projectId)?.displayName : undefined)
+			?? (project ? this.labelService.getUriBasenameLabel(project) : '');
+		this.chats.setScope(project, name);
+	}
+
 	private borrow(view: AgentFilesSidebarView): void {
-		const id = VIEWS.find(candidate => candidate.id === view)!.container;
+		const id = VIEWS.find(candidate => candidate.id === view)!.container!;
 		const container = this.viewDescriptorService.getViewContainerById(id);
 		const location = container ? this.viewDescriptorService.getViewContainerLocation(container) : null;
 		const lent = location !== null ? this.paneCompositeService.lendPaneComposite(id, location, this.body) : undefined;
@@ -687,12 +790,15 @@ export class AgentFilesSidebar extends Disposable {
 		this.lentView = undefined;
 		this.lentPanesCollapsed.clear();
 		this.lent.clear();
-		this.body.classList.remove('unavailable');
+		this.body.classList.remove('unavailable', 'chats');
 	}
 
 	private layoutLent(): void {
 		if (this.size) {
 			this.lent.value?.layout(this.size.width, this.size.height);
+			if (this.lentView === 'chats') {
+				this.chats?.layout();
+			}
 			if (this.body.classList.contains('resource-filtered')) {
 				this.filterTree.layout(Math.max(0, this.size.height - FILTER_BAR_HEIGHT), this.size.width);
 			}
@@ -790,8 +896,8 @@ export class AgentFilesSidebar extends Disposable {
 		this.filterButton.setAttribute('aria-label', filterLabel);
 		setAgentTooltip(this.filterButton, filterLabel);
 		const label = state.open
-			? localize('voltAgent.filesSidebar.hide', "Hide Files Sidebar")
-			: localize('voltAgent.filesSidebar.show', "Show Files Sidebar");
+			? localize('voltAgent.filesSidebar.hide', "Hide Explorer Sidebar")
+			: localize('voltAgent.filesSidebar.show', "Show Explorer Sidebar");
 		this.toggleButton.setAttribute('aria-label', label);
 		this.toggleButton.setAttribute('aria-pressed', String(state.open));
 		this.toggleButton.classList.toggle('active', state.open);

@@ -1358,6 +1358,10 @@
 
 .volt-pr-view {
 	position: relative;
+	/* The view is often a narrow tab beside the chat: the header drops labels before it wraps. */
+	container: volt-pr-view / inline-size;
+	/* Sticky section headers (z-index 1) stay inside: they cut the side panel's resize line otherwise. */
+	isolation: isolate;
 }
 
 .volt-pr-crumbs {
@@ -1375,7 +1379,19 @@
 	align-items: center;
 	gap: 6px;
 	min-width: 0;
+	overflow: hidden;
 	transition: opacity 120ms ease, transform 120ms ease;
+}
+
+/* Short of room, the repository name gives way; the number stays whole beside it. */
+.volt-pr-crumbs-full > .volt-pr-repo {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-pr-crumbs-full > .volt-pr-number {
+	flex: none;
 }
 
 .volt-pr-crumbs-condensed {
@@ -1418,6 +1434,117 @@
 	flex: none;
 }
 
+/*
+ * The header's controls share one box: 26px tall, 7px corners, no outline. Merge, Resolve
+ * Conflicts, the Merged badge, Watch and Stack line up, and the ⋯ glyph ends on the 16px gutter
+ * the text rows below end on.
+ */
+.volt-pr-header-actions > .volt-pr-pill {
+	height: 26px;
+	padding: 0 9px;
+	border: 0;
+	border-radius: 7px;
+}
+
+.volt-pr-header-actions > .volt-pr-pill.watch.active {
+	background: color-mix(in srgb, var(--vscode-textLink-foreground) 12%, transparent);
+}
+
+.volt-pr-header-actions > .volt-pr-more {
+	width: 26px;
+	height: 26px;
+	margin-right: -5px;
+}
+
+.volt-pr-header-actions .volt-pr-button {
+	height: 26px;
+	padding: 0 10px 0 9px;
+	border: 0;
+	gap: 6px;
+}
+
+.volt-pr-header-actions .volt-pr-button.danger,
+.volt-pr-header-actions .volt-pr-button.armed {
+	background: color-mix(in srgb, currentColor 13%, transparent);
+}
+
+.volt-pr-header-actions .volt-pr-button.danger:hover:not(:disabled),
+.volt-pr-header-actions .volt-pr-button.armed:hover:not(:disabled) {
+	background: color-mix(in srgb, currentColor 20%, transparent);
+}
+
+/* Merge | chevron: one white button split by a hairline; each half lights on its own. */
+.volt-pr-header-actions .volt-pr-split {
+	border-radius: 7px;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
+}
+
+.volt-pr-header-actions .volt-pr-split > .volt-pr-icon-button.primary {
+	width: 26px;
+	height: 26px;
+	border-left-color: rgba(0, 0, 0, 0.14);
+}
+
+.monaco-workbench.vs .volt-pr-header-actions .volt-pr-split,
+.monaco-workbench.hc-light .volt-pr-header-actions .volt-pr-split {
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+/*
+ * Icon sizes in the header and Summary. Four classes each: `.monaco-workbench
+ * .codicon[class*='codicon-']` draws every codicon at 16px and beat the softer rules above.
+ */
+.volt-pr-crumbs .volt-pr-number .codicon[class*='codicon-'] {
+	font-size: 12px;
+}
+
+.volt-pr-header-actions .volt-pr-button .codicon[class*='codicon-'],
+.volt-pr-header-actions .volt-pr-pill .codicon[class*='codicon-'],
+.volt-pr-header-actions .volt-pr-state-badge .codicon[class*='codicon-'],
+.volt-pr-header-actions .volt-pr-split .codicon[class*='codicon-'],
+.volt-pr-branches .volt-pr-filestat .codicon[class*='codicon-'],
+.volt-pr-tabbar-aside .volt-pr-checks-summary .codicon[class*='codicon-'],
+.volt-pr-meta-row .volt-pr-meta-label .codicon[class*='codicon-'] {
+	font-size: 14px;
+}
+
+.volt-pr-header-actions .volt-pr-pill .codicon.chevron[class*='codicon-'],
+.volt-pr-branches .volt-pr-arrow .codicon[class*='codicon-'],
+.volt-pr-fold-header .volt-pr-fold-toggle .codicon[class*='codicon-'] {
+	font-size: 12px;
+}
+
+@container volt-pr-view (max-width: 520px) {
+	/* Watch and Stack keep their icon (the tooltip says the rest); the checkout command goes. */
+	.volt-pr-header-actions > .volt-pr-pill {
+		width: 26px;
+		padding: 0;
+		justify-content: center;
+	}
+
+	.volt-pr-header-actions > .volt-pr-pill > span,
+	.volt-pr-header-actions > .volt-pr-pill > .chevron,
+	.volt-pr-filestat.commits {
+		display: none;
+	}
+}
+
+@container volt-pr-view (max-width: 420px) {
+	.volt-pr-byline > .volt-pr-checkout {
+		display: none;
+	}
+}
+
+@container volt-pr-view (max-width: 400px) {
+	.volt-pr-tabbar-aside .volt-pr-checks-summary > .volt-pr-checks-full {
+		display: none;
+	}
+
+	.volt-pr-tabbar-aside .volt-pr-checks-summary > .volt-pr-checks-short {
+		display: inline;
+	}
+}
+
 .volt-pr-fold {
 	overflow: hidden;
 	transition: max-height 160ms ease, opacity 160ms ease;
@@ -1444,8 +1571,19 @@
 	font-size: 12px;
 }
 
+.volt-pr-byline {
+	white-space: nowrap;
+}
+
 .volt-pr-byline strong {
+	flex: none;
 	font-weight: 500;
+}
+
+.volt-pr-byline > span.muted {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .volt-pr-dot {
@@ -1461,6 +1599,8 @@
 	font-size: 12px;
 	cursor: pointer;
 	padding: 2px 4px;
+	/* The text, not the hover box, ends on the gutter. */
+	margin-right: -4px;
 	border-radius: 4px;
 }
 
@@ -1474,10 +1614,26 @@
 }
 
 .volt-pr-branches .volt-pr-branch {
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: none;
 	background: transparent;
 	color: var(--volt-pr-muted);
 	padding: 0 2px;
 	font-size: 12px;
+}
+
+/* The base starts on the gutter and stays readable; the (longer) head shortens first. */
+.volt-pr-branches > .volt-pr-branch:first-child {
+	flex-shrink: 0;
+	max-width: 40%;
+	margin-left: -2px;
+}
+
+.volt-pr-branch > span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .volt-pr-branches .volt-pr-branch:hover {
@@ -1523,9 +1679,14 @@
 	color: var(--volt-pr-muted);
 	font: inherit;
 	font-size: 12px;
+	white-space: nowrap;
 	padding: 2px 4px;
 	border-radius: 4px;
 	cursor: pointer;
+}
+
+.volt-pr-filestat:last-child {
+	margin-right: -4px;
 }
 
 .volt-pr-filestat:hover {
@@ -1558,6 +1719,8 @@
 
 .volt-pr-tabbar > .volt-pr-tabbar-aside {
 	align-self: center;
+	/* Its buttons' 6px hover padding: their text ends on the gutter. */
+	margin-right: -6px;
 }
 
 /* Plain text tabs; the open one is underlined on the bar's bottom edge. */
@@ -1625,9 +1788,15 @@
 	color: var(--volt-pr-muted);
 	font: inherit;
 	font-size: 12px;
+	white-space: nowrap;
 	padding: 2px 6px;
 	border-radius: 6px;
 	cursor: pointer;
+}
+
+.volt-pr-checks-summary > .volt-pr-checks-short {
+	display: none;
+	font-variant-numeric: tabular-nums;
 }
 
 .volt-pr-checks-summary:hover:not(:disabled) {
@@ -1664,14 +1833,15 @@
 	transform: rotate(90deg);
 }
 
+/* Merged / Closed: the state's colour on a soft fill of it, the same box as Merge. */
 .volt-pr-state-badge {
 	display: inline-flex;
 	align-items: center;
-	gap: 5px;
-	height: 24px;
-	padding: 0 10px;
+	gap: 6px;
+	height: 26px;
+	padding: 0 10px 0 9px;
 	border-radius: 7px;
-	border: 1px solid currentColor;
+	background: color-mix(in srgb, currentColor 13%, transparent);
 	font-size: 12px;
 	font-weight: 500;
 }
@@ -1803,6 +1973,15 @@
 	background: var(--vscode-editor-background);
 }
 
+/* A section's last control (Review Now, Newest first) ends its text, not its hover box, on the gutter. */
+.volt-pr-fold-header > .volt-pr-button.ghost:last-child {
+	margin-right: -7px;
+}
+
+.volt-pr-fold-header > .volt-pr-order:last-child {
+	margin-right: -6px;
+}
+
 .volt-pr-fold-toggle {
 	display: inline-flex;
 	align-items: center;
@@ -1896,25 +2075,44 @@
 	padding: 2px 0 6px;
 }
 
-.volt-pr-checks {
-	display: grid;
-	gap: 1px;
+/*
+ * Summary's Commits and Checks (agentPullRequestViewLists.ts): VS Code lists edge to edge of the
+ * view, square rows, the body's 16px gutter inside each row. The theme's list colours, untouched.
+ */
+.volt-pr-row-list {
+	margin: 0 -16px;
 }
 
+.volt-pr-row-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-pr-commit-row,
 .volt-pr-check-row {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	min-height: 30px;
-	padding: 0 6px;
-	border-radius: 6px;
+	height: 100%;
+	padding: 0 16px;
+	box-sizing: border-box;
+	min-width: 0;
 	font-size: 12.5px;
+	line-height: 18px;
+	cursor: pointer;
 }
 
-.volt-pr-check-row:hover {
-	background: var(--volt-pr-surface);
+.volt-pr-commit-avatar,
+.volt-pr-check-icon,
+.volt-pr-commit-checks {
+	display: flex;
+	flex: none;
 }
 
+.volt-pr-commit-checks:empty {
+	display: none;
+}
+
+.volt-pr-commit-headline,
 .volt-pr-check-name {
 	min-width: 0;
 	overflow: hidden;
@@ -1922,15 +2120,90 @@
 	white-space: nowrap;
 }
 
+.volt-pr-commit-headline {
+	flex: 1;
+}
+
+.volt-pr-commit-sha,
 .volt-pr-check-time {
-	font-size: 11.5px;
+	flex: none;
+	color: var(--volt-pr-muted);
 	font-family: var(--monaco-monospace-font);
+	font-size: 11.5px;
+}
+
+/* One width for "1 day ago" and "22 hrs ago", so the ids above and below line up. */
+.volt-pr-commit-time {
+	flex: none;
+	width: 66px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	text-align: right;
+	color: var(--volt-pr-muted);
+	font-size: 12px;
+	white-space: nowrap;
 }
 
 .volt-pr-check-state {
 	flex: none;
 	font-size: 12px;
 	color: var(--volt-pr-muted);
+}
+
+.volt-pr-check-row > .volt-pr-tag.hidden {
+	display: none;
+}
+
+/* Row actions show on hover or focus; a commit's time gives them its place. A failing check's Fix stays. */
+.volt-pr-row-actions {
+	display: none;
+	flex: none;
+	align-items: center;
+	gap: 2px;
+	margin-right: -4px;
+}
+
+.volt-pr-row-actions:empty {
+	display: none !important;
+}
+
+.volt-pr-row-actions.pinned,
+.volt-pr-row-list .monaco-list-row:hover .volt-pr-row-actions,
+.volt-pr-row-list .monaco-list-row.focused .volt-pr-row-actions {
+	display: flex;
+}
+
+.volt-pr-row-list .monaco-list-row:hover .volt-pr-commit-time,
+.volt-pr-row-list .monaco-list-row.focused .volt-pr-commit-time {
+	display: none;
+}
+
+.volt-pr-row-actions > .volt-pr-icon-button {
+	min-width: 22px;
+	height: 22px;
+}
+
+/* Four classes: `.monaco-workbench .codicon[class*='codicon-']` draws every codicon at 16px. */
+.volt-pr-row-list .volt-pr-icon .codicon[class*='codicon-'],
+.volt-pr-row-list .volt-pr-row-actions .codicon[class*='codicon-'] {
+	font-size: 14px;
+}
+
+.volt-pr-more-rows {
+	display: block;
+	margin: 6px 0 0 -4px;
+	padding: 2px 4px;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--vscode-textLink-foreground);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-pr-more-rows:hover {
+	text-decoration: underline;
 }
 
 .volt-pr-check-state.check-failure { color: var(--volt-pr-closed); }

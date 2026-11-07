@@ -1,0 +1,75 @@
+# Label every new pull request by the size of its diff: size/S, size/M or size/L.
+version: 1
+id: label-pr-size
+name: Label pull requests by size
+description: |
+  Starts when a pull request is opened. A shell step counts the changed lines between the
+  base branch and the pull request's head, a switch picks small, medium or large, and the
+  pull request gets the matching size label. No agent and no model: it costs nothing to run.
+tags: [github, pull-request, labels]
+trigger:
+  type: event
+  provider: github
+  event: pr.opened
+  samplePayload:
+    pull_request:
+      number: 42
+      base: { ref: main }
+      head: { sha: 4f2a9c1 }
+nodes:
+  - id: start
+    type: start
+    position: [0, 0]
+  - id: measure
+    type: shell
+    name: Count changed lines
+    position: [280, 0]
+    config:
+      command: |
+        git fetch --quiet origin "$BASE" "$HEAD_SHA"
+        lines=$(git diff --numstat "origin/$BASE...$HEAD_SHA" | awk '{ s += $1 + $2 } END { print s + 0 }')
+        if [ "$lines" -lt 50 ]; then printf small; elif [ "$lines" -lt 400 ]; then printf medium; else printf large; fi
+      env:
+        BASE: '{{ trigger.payload.pull_request.base.ref }}'
+        HEAD_SHA: '{{ trigger.payload.pull_request.head.sha }}'
+  - id: size
+    type: switch
+    name: Size
+    position: [560, 0]
+    config:
+      value: trim(nodes.measure.stdout)
+      cases: [small, medium, large]
+  - id: small
+    type: github_update_pr
+    name: size/S
+    position: [840, -140]
+    config:
+      labels: [size/S]
+  - id: medium
+    type: github_update_pr
+    name: size/M
+    position: [840, 0]
+    config:
+      labels: [size/M]
+  - id: large
+    type: github_update_pr
+    name: size/L
+    position: [840, 140]
+    config:
+      labels: [size/L]
+  - id: done
+    type: end
+    position: [1120, 0]
+    config:
+      status: success
+      output: '{{ nodes.size.case }}'
+edges:
+  - { from: start.next, to: measure }
+  - { from: measure.passed, to: size }
+  - { from: size.small, to: small }
+  - { from: size.medium, to: medium }
+  - { from: size.large, to: large }
+  - { from: size.default, to: done }
+  - { from: small.done, to: done }
+  - { from: medium.done, to: done }
+  - { from: large.done, to: done }

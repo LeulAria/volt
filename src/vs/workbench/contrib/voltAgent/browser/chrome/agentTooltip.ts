@@ -250,6 +250,13 @@ export class AgentTooltip extends Disposable {
 		this.domNode.style.top = `${top}px`;
 	}
 
+	/** Draws the card on screen for `anchor` again with `rows` (content read after it opened). Another anchor's card stays. */
+	refresh(anchor: HTMLElement, rows: readonly IAgentTooltipRow[]): void {
+		if (this.anchor === anchor && this.shownOptions && !this.domNode.classList.contains('hidden')) {
+			this.show(anchor, rows, this.shownOptions);
+		}
+	}
+
 	hide(): void {
 		this.cancelScheduledShow();
 		this.anchor = undefined;

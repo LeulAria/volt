@@ -1,6 +1,6 @@
 {
   "name": "code-oss-dev",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "distro": "8fe74a88c38ca750162e20a6a180cbc319e63e65",
   "author": {
     "name": "Microsoft Corporation"
@@ -15,6 +15,10 @@
     "test-browser-no-install": "node test/unit/browser/index.js",
     "test-node": "mocha test/unit/node/index.js --delay --ui=tdd --timeout=5000 --exit",
     "test-volt-bun": "bun build/volt/bun/test.mjs",
+    "volt-run": "node apps/volt-run/src/cli.mjs",
+    "volt-run:test": "npm --prefix apps/volt-run test",
+    "volt-run:build": "npm --prefix apps/volt-run run build --",
+    "volt-run:release": "npm --prefix apps/volt-run run release --",
     "test-extension": "vscode-test",
     "preinstall": "node build/npm/preinstall.js",
     "postinstall": "node build/npm/postinstall.js",
@@ -42,7 +46,7 @@
     "watch-extensions": "node --max-old-space-size=8192 ./node_modules/gulp/bin/gulp.js watch-extensions watch-extension-media",
     "watch-extensionsd": "deemon npm run watch-extensions",
     "kill-watch-extensionsd": "deemon --kill npm run watch-extensions",
-    "precommit": "node build/hygiene.js",
+    "precommit": "node build/hygiene.js && node build/volt/workflows/precommit.mjs",
     "gulp": "node --max-old-space-size=8192 ./node_modules/gulp/bin/gulp.js",
     "electron": "node build/lib/electron",
     "7z": "7z",

@@ -1,0 +1,87 @@
+# After a pull request is merged: check whether the docs need an update, and draft it.
+version: 1
+id: docs-follow-up
+name: Docs follow-up on merge
+description: |
+  Starts when a pull request is merged. On a new branch an agent compares the merged
+  change with the documentation (README, docs/, code comments that explain behavior) and
+  updates what is now wrong or missing. When it changed something, the update is pushed
+  as a draft pull request that links the original one; otherwise the run just ends.
+tags: [docs, github, pull-request, maintenance]
+trigger:
+  type: event
+  provider: github
+  event: pr.merged
+  samplePayload:
+    pull_request:
+      number: 128
+      title: Add rate limiting to the login endpoint
+      html_url: https://github.com/acme/app/pull/128
+      merge_commit_sha: 9c1e0b7
+nodes:
+  - id: start
+    type: start
+    position: [0, 0]
+  - id: branch
+    type: git_branch
+    name: New branch
+    position: [280, 0]
+    config:
+      name: 'volt/docs-{{ trigger.payload.pull_request.number }}'
+  - id: update
+    type: agent
+    name: Update the docs
+    position: [560, 0]
+    config:
+      prompt: |
+        Pull request #{{ trigger.payload.pull_request.number }} was just merged:
+        {{ trigger.payload.pull_request.title }}
+        {{ trigger.payload.pull_request.html_url }}
+
+        Read its diff (git show {{ trigger.payload.pull_request.merge_commit_sha }}) and
+        check the documentation it affects: the README, docs/, configuration references and
+        comments that describe behavior. Fix what is now wrong and document what is new.
+        Change documentation only. If nothing needs to change, change nothing.
+      mode: Agent
+  - id: commit
+    type: git_commit
+    name: Commit
+    position: [840, 0]
+    config:
+      message: 'docs: follow up on #{{ trigger.payload.pull_request.number }}'
+  - id: push
+    type: git_push
+    name: Push
+    position: [1120, 0]
+  - id: pr
+    type: github_pr
+    name: Draft pull request
+    position: [1400, 0]
+    config:
+      title: 'docs: follow up on #{{ trigger.payload.pull_request.number }}'
+      body: |
+        Documentation for {{ trigger.payload.pull_request.html_url }}
+
+        {{ nodes.update.summary }}
+      draft: true
+  - id: done
+    type: end
+    position: [1680, 0]
+    config:
+      status: success
+      output: '{{ nodes.pr.url }}'
+  - id: current
+    type: end
+    name: Docs are current
+    position: [1120, 140]
+    config:
+      status: success
+      output: The documentation needed no change
+edges:
+  - { from: start.next, to: branch }
+  - { from: branch.created, to: update }
+  - { from: update.done, to: commit }
+  - { from: commit.committed, to: push }
+  - { from: commit.nothing, to: current }
+  - { from: push.pushed, to: pr }
+  - { from: pr.opened, to: done }

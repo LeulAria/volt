@@ -35,6 +35,8 @@ import { IEditorService } from '../../../../services/editor/common/editorService
 import { ILentPaneCompositePart, IPaneCompositePartService } from '../../../../services/panecomposite/browser/panecomposite.js';
 import { IViewDescriptorService } from '../../../../common/views.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
+import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IMultiDiffEditorHeader, IMultiDiffEditorLook, setMultiDiffEditorLookProvider } from '../../../multiDiffEditor/browser/multiDiffEditor.js';
 import { MultiDiffEditorInput } from '../../../multiDiffEditor/browser/multiDiffEditorInput.js';
 import { VIEWLET_ID as SCM_VIEWLET_ID } from '../../../scm/common/scm.js';
@@ -375,6 +377,8 @@ export class AgentChangesEditor extends EditorPane {
 		@IViewDescriptorService private readonly viewDescriptorService: IViewDescriptorService,
 		@IPaneCompositePartService private readonly paneCompositeService: IPaneCompositePartService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
+		@IAgentHistoryService private readonly history: IAgentHistoryService,
+		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 	) {
 		super(AgentChangesEditor.ID, group, telemetryService, themeService, storage);
 		this.scmRepository = this._register(instantiationService.createInstance(AgentScmRepositoryFocus));
@@ -447,7 +451,9 @@ export class AgentChangesEditor extends EditorPane {
 	}
 
 	private showScmRepository(input: AgentChangesEditorInput): void {
-		void this.scmRepository.show(input.sessionId, () => this.input === input && this.isVisible());
+		// A chat in a worktree shows that checkout's repository, not its project's.
+		const worktree = this.history.get(input.sessionId)?.worktreePath || this.runtime.getOrCreateSession(input.sessionId).worktreePath;
+		void this.scmRepository.show(input.sessionId, () => this.input === input && this.isVisible(), worktree ? URI.file(worktree) : undefined);
 	}
 
 	override clearInput(): void {

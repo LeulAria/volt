@@ -6,12 +6,12 @@
 import { errorMessage, type IGitRepoStatus } from '@volt/client-core';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useClient, useOptionalClient } from '../src/state/client';
 import { useTheme } from '../src/theme/theme';
-import { Button, haptic, Icon, T } from '../src/ui/core';
+import { Button, haptic, Icon, Switch, T } from '../src/ui/core';
 
 export default function NewPullScreen() {
 	const { root, branch } = useLocalSearchParams<{ root: string; branch?: string }>();
@@ -76,7 +76,7 @@ function NewPull({ root, branch }: { readonly root: string; readonly branch?: st
 						<T variant="body">Draft</T>
 						<T variant="footnote" color={p.fgTertiary}>Not ready for review yet</T>
 					</View>
-					<Switch value={draft} onValueChange={setDraft} trackColor={{ true: p.success, false: p.fillStrong }} />
+					<Switch value={draft} onValueChange={setDraft} />
 				</View>
 				<Button label={draft ? 'Open draft pull request' : 'Open pull request'} icon="pullRequest" variant="primary" size="lg" busy={busy} disabled={!title.trim()} onPress={() => void create()} />
 			</ScrollView>

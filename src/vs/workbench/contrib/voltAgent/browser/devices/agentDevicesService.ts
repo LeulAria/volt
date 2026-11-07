@@ -16,6 +16,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { imagePointToInput } from '../../../../../platform/voltDevices/common/deviceCommands.js';
 import { IVoltDevice, IVoltDeviceBootOptions, IVoltDeviceHost, IVoltDeviceList, IVoltDevicePostures, IVoltDevicesService, IVoltDeviceStream, VoltDeviceAppearance, VoltDeviceButton, VoltDeviceInput, VoltDeviceModelId, VoltDevicePosture, VoltDeviceState, VoltDeviceTextSize } from '../../../../../platform/voltDevices/common/voltDevices.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { scaleScreenshot } from '../../../../services/voltRuntime/browser/host/imageCodec.js';
 import { DEVICE_TOOLS, VoltDeviceToolName } from '../../../../services/voltRuntime/common/deviceTools.js';
@@ -54,6 +55,10 @@ export interface IDeviceShot {
 export interface IDeviceActivity {
 	readonly key: string;
 	readonly by: 'agent' | 'user';
+	/** Set when the device was started or an app launched on it: Volt shows it beside the chat. */
+	readonly action?: 'boot' | 'launch';
+	/** The chat whose agent acted: its preview opens beside that chat only, in the window that has it. */
+	readonly sessionId?: string;
 }
 
 /**
@@ -110,9 +115,32 @@ export interface IAgentDevicesService {
 	deviceModel(id: VoltDeviceModelId): Promise<ArrayBuffer | undefined>;
 	/** The bundle id or package in front, when it can be told cheaply. */
 	foregroundApp(target: IDeviceTarget): Promise<string | undefined>;
+	/** Hides Simulator.app when a run or an agent's shell opened it: Volt shows the simulator itself. */
+	hideSimulatorApp(): void;
+
+	/** A chat's devices, changed in any window. */
+	readonly onDidChangeChatDevices: Event<void>;
+	/** The devices a chat uses (picked by the user or used by its agent), the latest last. Shared by every window. */
+	chatDevices(sessionId: string): readonly string[];
+	/** The chats that use `key`. */
+	chatsUsing(key: string): readonly string[];
+	attachToChat(sessionId: string, key: string): void;
+	detachFromChat(sessionId: string, key: string): void;
+	/** The device shut down: no chat holds it any more, so whoever boots it next gets it. */
+	releaseDevice(key: string): void;
+	/**
+	 * The user is picking a device for the chat: until `done` is called, device tools without a
+	 * `device` wait for the pick (up to the MCP call limit) instead of guessing.
+	 */
+	beginPick(sessionId: string): (key: string | undefined) => void;
 }
 
 const LIST_TTL_MS = 3000;
+/** Chat devices, shared by every window: one window's agent claims a device, the others leave it alone. */
+const CHAT_DEVICES_KEY = 'volt.devices.chatDevices';
+const MAX_CHATS_WITH_DEVICES = 200;
+/** How long a device tool waits for the user's pick; under the 60s agents give an MCP call. */
+const PICK_WAIT_MS = 45_000;
 /** Under the 60s agents give an MCP call. */
 const AGENT_BOOT_MS = 50_000;
 const SETTLE_MS = 600;
@@ -143,8 +171,10 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 	private listing: Promise<readonly IHostDevices[]> | undefined;
 	/** Size of the last screenshot per device, which agent and user coordinates refer to. */
 	private readonly shots = new Map<string, { image: { width: number; height: number }; screen: { width: number; height: number; scale: number } }>();
-	/** The device each chat used last. */
-	private readonly chatDevices = new Map<string, string>();
+	private readonly _onDidChangeChatDevices = this._register(new Emitter<void>());
+	readonly onDidChangeChatDevices = this._onDidChangeChatDevices.event;
+	/** Open device picks per chat, and who waits for them. */
+	private readonly picks = new Map<string, Promise<string | undefined>>();
 	/** Element refs per device, stable across reads of its screen. */
 	private readonly refs = new Map<string, DeviceRefs>();
 	/** The screen as the agent last read it per device, so the next result reports only what changed. */
@@ -158,8 +188,10 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 		@IWorkspaceContextService private readonly workspace: IWorkspaceContextService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IFileService private readonly fileService: IFileService,
+		@IStorageService private readonly storageService: IStorageService,
 	) {
 		super();
+		this._register(this.storageService.onDidChangeValue(StorageScope.APPLICATION, CHAT_DEVICES_KEY, this._store)(() => this._onDidChangeChatDevices.fire()));
 		this._register(hostTools.registerToolProvider({
 			tools: DEVICE_TOOLS,
 			invoke: (name, args, call) => this.invokeTool(name as VoltDeviceToolName, args, call),
@@ -249,6 +281,110 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 		return this.devices.foregroundApp(target.host, target.device).catch(() => undefined);
 	}
 
+	hideSimulatorApp(): void {
+		if (isMacintosh) {
+			void this.devices.hideSimulatorApp().catch(() => undefined);
+		}
+	}
+
+	//#region Chat devices
+
+	private readChatDevices(): Record<string, string[]> {
+		try {
+			const parsed: unknown = JSON.parse(this.storageService.get(CHAT_DEVICES_KEY, StorageScope.APPLICATION, '{}'));
+			return parsed && typeof parsed === 'object' ? parsed as Record<string, string[]> : {};
+		} catch {
+			return {};
+		}
+	}
+
+	private writeChatDevices(all: Record<string, string[]>): void {
+		const entries = Object.entries(all).filter(([, keys]) => Array.isArray(keys) && keys.length);
+		// Oldest chats drop off first (object keys keep insertion order; a change moves a chat last).
+		const kept = Object.fromEntries(entries.slice(-MAX_CHATS_WITH_DEVICES));
+		this.storageService.store(CHAT_DEVICES_KEY, JSON.stringify(kept), StorageScope.APPLICATION, StorageTarget.MACHINE);
+		this._onDidChangeChatDevices.fire();
+	}
+
+	chatDevices(sessionId: string): readonly string[] {
+		const keys = this.readChatDevices()[sessionId];
+		return Array.isArray(keys) ? keys.filter(key => typeof key === 'string') : [];
+	}
+
+	chatsUsing(key: string): readonly string[] {
+		return Object.entries(this.readChatDevices()).filter(([, keys]) => Array.isArray(keys) && keys.includes(key)).map(([sessionId]) => sessionId);
+	}
+
+	attachToChat(sessionId: string, key: string): void {
+		const all = this.readChatDevices();
+		const keys = (all[sessionId] ?? []).filter(other => other !== key);
+		if (all[sessionId]?.[all[sessionId].length - 1] === key) {
+			return;
+		}
+		delete all[sessionId];
+		all[sessionId] = [...keys, key];
+		this.writeChatDevices(all);
+	}
+
+	detachFromChat(sessionId: string, key: string): void {
+		const all = this.readChatDevices();
+		if (!all[sessionId]?.includes(key)) {
+			return;
+		}
+		all[sessionId] = all[sessionId].filter(other => other !== key);
+		this.writeChatDevices(all);
+	}
+
+	releaseDevice(key: string): void {
+		const all = this.readChatDevices();
+		let changed = false;
+		for (const sessionId of Object.keys(all)) {
+			if (all[sessionId]?.includes(key)) {
+				all[sessionId] = all[sessionId].filter(other => other !== key);
+				changed = true;
+			}
+		}
+		if (changed) {
+			this.writeChatDevices(all);
+		}
+	}
+
+	beginPick(sessionId: string): (key: string | undefined) => void {
+		let done!: (key: string | undefined) => void;
+		const pick = new Promise<string | undefined>(resolve => done = resolve);
+		this.picks.set(sessionId, pick);
+		return key => {
+			if (this.picks.get(sessionId) === pick) {
+				this.picks.delete(sessionId);
+			}
+			if (key) {
+				this.attachToChat(sessionId, key);
+			}
+			done(key);
+		};
+	}
+
+	/** The user's pick for the chat when one is open: waits for it, up to the MCP call limit. */
+	private async awaitPick(sessionId: string | undefined, token: CancellationToken | undefined): Promise<void> {
+		const pick = sessionId ? this.picks.get(sessionId) : undefined;
+		if (!pick) {
+			return;
+		}
+		await Promise.race([
+			pick,
+			new Promise(resolve => setTimeout(resolve, PICK_WAIT_MS)),
+			...(token ? [new Promise(resolve => token.onCancellationRequested(resolve))] : []),
+		]);
+	}
+
+	/** The agent acted on a device for its chat: the chat uses it from now on. */
+	private agentActed(target: IDeviceTarget, call: IVoltHostToolCall | undefined, action?: 'boot' | 'launch'): void {
+		const key = this.keyOf(target);
+		this._onDidAct.fire({ key, by: 'agent', action, sessionId: call?.sessionId });
+	}
+
+	//#endregion
+
 	deviceModel(id: VoltDeviceModelId): Promise<ArrayBuffer | undefined> {
 		let model = this.models.get(id);
 		if (!model) {
@@ -278,6 +414,7 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 	async shutdown(target: IDeviceTarget): Promise<void> {
 		await this.devices.shutdown(target.host, target.device);
 		this.forgetShots(target);
+		this.releaseDevice(this.keyOf(target));
 		this.changed();
 	}
 
@@ -447,17 +584,21 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 		const all = scoped.flatMap(entry => entry.devices.map(device => ({ host: entry.host, device })));
 		let query = str(args.device);
 		if (!query && call?.sessionId) {
-			const last = this.chatDevices.get(call.sessionId);
-			const known = last ? this.find(last) : undefined;
-			if (known && all.some(entry => this.keyOf(entry) === last)) {
-				return known;
+			// The user may be picking the device right now: use their pick, not a guess.
+			await this.awaitPick(call.sessionId, call.token);
+			const chosen = this.chatDevices(call.sessionId);
+			for (let index = chosen.length - 1; index >= 0; index--) {
+				const known = all.find(entry => this.keyOf(entry) === chosen[index]);
+				if (known) {
+					return known;
+				}
 			}
 		}
 		const match = findDevice(all.map(entry => entry.device), query);
 		if (match.kind === 'found') {
 			const target = all.find(entry => entry.device === match.device)!;
 			if (call?.sessionId) {
-				this.chatDevices.set(call.sessionId, this.keyOf(target));
+				this.attachToChat(call.sessionId, this.keyOf(target));
 			}
 			return target;
 		}
@@ -522,28 +663,40 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 	private async runTool(name: VoltDeviceToolName, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
 		switch (name) {
 			case 'device_list': {
+				await this.awaitPick(call?.sessionId, call?.token);
 				const lists = await this.list(true);
 				const host = str(args.host) ? findHost(this.hosts(), str(args.host)) : undefined;
+				const chosen = call?.sessionId ? this.chatDevices(call.sessionId) : [];
 				const lines = ['### Devices'];
 				for (const entry of lists.filter(item => !host || item.host.id === host.id)) {
 					lines.push(`#### ${entry.host.label}${entry.host.ssh ? ' (SSH)' : ''}`);
-					lines.push(...(entry.devices.length ? entry.devices.map(device => describeDevice(device, entry.host.label)) : ['- (no simulators or emulators)']));
+					lines.push(...(entry.devices.length ? entry.devices.map(device => {
+						const line = describeDevice(device, entry.host.label);
+						return chosen.includes(this.keyOf({ host: entry.host, device })) ? `${line} · **this chat's device** (open in Volt beside the chat; device tools use it by default)` : line;
+					}) : ['- (no simulators or emulators)']));
 					lines.push(...entry.problems.map(problem => `- Note: ${problem}`));
+				}
+				if (chosen.length) {
+					lines.push('', 'Run the app on this chat\'s device. Volt shows it beside the chat: never open Simulator.app or an emulator window.');
 				}
 				return { text: lines.join('\n') };
 			}
 			case 'device_boot': {
 				const target = await this.resolve(args, call);
 				if (target.device.state === 'booted') {
+					this.agentActed(target, call, 'boot');
 					return this.withShot(target, [`### ${this.label(target)} is already booted`], args);
 				}
-				const state = await this.devices.boot(target.host, target.device, AGENT_BOOT_MS);
+				// Shown beside the chat as soon as it starts (headless): the preview streams the boot.
+				const started = await this.devices.boot(target.host, target.device, AGENT_BOOT_MS, { waitUntilReady: false });
+				this.changed();
+				this.agentActed(target, call, 'boot');
+				const state = started === 'booted' ? started : await this.devices.boot(target.host, target.device, AGENT_BOOT_MS);
 				this.changed();
 				const booted = { ...target, device: { ...target.device, state } };
 				if (state !== 'booted') {
 					return { text: `### Booting ${this.label(target)}\n- Still booting after ${AGENT_BOOT_MS / 1000}s. Call device_screenshot in a few seconds.` };
 				}
-				this._onDidAct.fire({ key: this.keyOf(target), by: 'agent' });
 				return this.withShot(booted, [`### Booted ${this.label(target)}`], args);
 			}
 			case 'device_shutdown': {
@@ -653,7 +806,7 @@ export class AgentDevicesService extends Disposable implements IAgentDevicesServ
 					return { error: 'device_launch_app needs `app`.' };
 				}
 				await this.devices.launchApp(target.host, target.device, app);
-				this._onDidAct.fire({ key: this.keyOf(target), by: 'agent' });
+				this.agentActed(target, call, 'launch');
 				return this.withShot(target, [`### Launched ${app} on ${this.label(target)}`], { ...args, screenshot: args.screenshot ?? true });
 			}
 			case 'device_set_posture': {

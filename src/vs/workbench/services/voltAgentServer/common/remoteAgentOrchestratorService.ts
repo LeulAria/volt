@@ -5,6 +5,7 @@
 
 import { Emitter } from '../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
+import { generateUuid } from '../../../../base/common/uuid.js';
 import { emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, OrchCommandBody, OrchDelivery, OrchEvent } from '../../voltRuntime/common/orchestration/orchestrator.js';
 import { IWorkspaceMoveSpec } from '../../voltRuntime/common/git/workspaceMove.js';
 import { orchIsTurnCurrent, orchTaskForToolCall, orchTasksOf } from '../../voltRuntime/common/orchestration/orchestratorQueries.js';
@@ -91,7 +92,7 @@ export class RemoteAgentOrchestratorService extends Disposable implements IAgent
 		return this.client.call('orchestrator.dispatch', command);
 	}
 
-	submit(threadId: string, prompt: IOrchPrompt, delivery: OrchDelivery, turnId?: string): Promise<IOrchSubmitResult> {
+	submit(threadId: string, prompt: IOrchPrompt, delivery: OrchDelivery, turnId = generateUuid()): Promise<IOrchSubmitResult> {
 		return this.client.call('orchestrator.submit', threadId, prompt, delivery, turnId);
 	}
 

@@ -9,7 +9,8 @@ import { memo } from 'react';
 import { View } from 'react-native';
 import { FileIcon } from '../files/FileIcon';
 import { useTheme } from '../theme/theme';
-import { Icon, T, Tap } from '../ui/core';
+import { T } from '../ui/core';
+import { ListItem } from '../ui/list';
 
 const KIND: Record<IAgentChange['kind'], { readonly letter: string; readonly label: string }> = {
 	added: { letter: 'A', label: 'Added' },
@@ -20,40 +21,56 @@ const KIND: Record<IAgentChange['kind'], { readonly letter: string; readonly lab
 
 export function openChangeDiff(change: IAgentChange): void {
 	const file = uriPath(change.uri) ?? change.path;
-	router.push({ pathname: '/diff', params: { title: change.path, file, repoRoot: change.repoRoot, ...(change.oldBlob ? { oldBlob: change.oldBlob } : {}), ...(change.newBlob ? { newBlob: change.newBlob } : {}), kind: change.kind } });
+	router.push({ pathname: '/diff', params: { title: change.path, file, repoRoot: change.repoRoot, ...(change.oldBlob ? { oldBlob: change.oldBlob } : {}), ...(change.newBlob ? { newBlob: change.newBlob } : {}), kind: change.kind, additions: String(change.additions), deletions: String(change.deletions) } });
+}
+
+/** Edit patches handed to the diff screen by id (too big for route params). */
+const editPatches = new Map<string, string>();
+let nextEdit = 0;
+
+/** The patch {@link openEditDiff} left under this id, if this app session still has it. */
+export function editPatch(id: string | undefined): string | undefined {
+	return id ? editPatches.get(id) : undefined;
+}
+
+/**
+ * One edit from the transcript as the whole file with its changes marked: the diff screen undoes
+ * `patch` on the file as it is now to get the other side. A new file needs no patch.
+ */
+export function openEditDiff(path: string, patch: string | undefined, created: boolean, counts: { readonly additions?: number; readonly deletions?: number }): void {
+	const id = patch && !created ? `e${++nextEdit}` : undefined;
+	if (id) {
+		editPatches.set(id, patch!);
+	}
+	router.push({ pathname: '/diff', params: { file: path, full: '1', ...(created ? { kind: 'added' } : {}), ...(id ? { edit: id } : {}), ...(counts.additions !== undefined ? { additions: String(counts.additions) } : {}), ...(counts.deletions !== undefined ? { deletions: String(counts.deletions) } : {}) } });
 }
 
 export function changeTotals(changes: readonly IAgentChange[]): { readonly add: number; readonly del: number } {
 	return changes.reduce((sum, c) => ({ add: sum.add + c.additions, del: sum.del + c.deletions }), { add: 0, del: 0 });
 }
 
-/** One changed file: icon, name and folder, +/- counts, A/M/D/R, and its diff on tap. */
-export const ChangeRow = memo(function ChangeRow({ change, first, last }: { readonly change: IAgentChange; readonly first?: boolean; readonly last?: boolean }) {
+/**
+ * One changed file as a row of VS Code's Source Control list: icon, name with its folder dimmed
+ * beside it, +/- counts and the status letter in its colour; its diff on tap.
+ */
+export const ChangeRow = memo(function ChangeRow({ change }: { readonly change: IAgentChange; readonly first?: boolean; readonly last?: boolean }) {
 	const { p } = useTheme();
 	const dir = dirname(change.path);
 	const color = change.kind === 'added' ? p.success : change.kind === 'deleted' ? p.danger : change.kind === 'renamed' ? p.violet : p.warning;
 	return (
-		<Tap
-			haptics="selection"
-			disabled={change.binary}
-			onPress={() => openChangeDiff(change)}
-			style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 11, backgroundColor: p.surface, borderTopLeftRadius: first ? 14 : 0, borderTopRightRadius: first ? 14 : 0, borderBottomLeftRadius: last ? 14 : 0, borderBottomRightRadius: last ? 14 : 0 }}
-		>
-			<FileIcon path={change.path} size={20} />
-			<View style={{ flex: 1, minWidth: 0 }}>
-				<T variant="body" weight="500" numberOfLines={1}>{basename(change.path)}</T>
-				<T variant="caption" mono color={p.fgQuaternary} numberOfLines={1} ellipsizeMode="head">{change.kind === 'renamed' && change.oldPath ? `${change.oldPath} → ${dir || '.'}` : dir || '.'}</T>
+		<ListItem disabled={change.binary} onPress={() => openChangeDiff(change)} accessibilityLabel={`${basename(change.path)}, ${KIND[change.kind].label}`} style={{ minHeight: 42, gap: 10, paddingVertical: 6 }}>
+			<FileIcon path={change.path} size={18} />
+			<View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'baseline', gap: 7 }}>
+				<T variant="body" numberOfLines={1} style={{ flexShrink: 1, maxWidth: '75%', textDecorationLine: change.kind === 'deleted' ? 'line-through' : 'none' }}>{basename(change.path)}</T>
+				<T variant="footnote" color={p.fgQuaternary} numberOfLines={1} ellipsizeMode="head" style={{ flex: 1 }}>{change.kind === 'renamed' && change.oldPath ? `${change.oldPath} → ${dir || '.'}` : dir}</T>
 			</View>
 			{change.binary ? <T variant="footnote" color={p.fgTertiary}>binary</T> : (
 				<View style={{ flexDirection: 'row', gap: 6 }}>
-					{change.additions ? <T variant="footnote" color={p.diffAddedFg} style={{ fontVariant: ['tabular-nums'] }}>+{change.additions}</T> : null}
-					{change.deletions ? <T variant="footnote" color={p.diffRemovedFg} style={{ fontVariant: ['tabular-nums'] }}>-{change.deletions}</T> : null}
+					{change.additions ? <T variant="footnote" mono color={p.diffAddedFg} style={{ fontVariant: ['tabular-nums'] }}>+{change.additions}</T> : null}
+					{change.deletions ? <T variant="footnote" mono color={p.diffRemovedFg} style={{ fontVariant: ['tabular-nums'] }}>{'−'}{change.deletions}</T> : null}
 				</View>
 			)}
-			<View style={{ width: 20, height: 20, borderRadius: 5, backgroundColor: `${color}22`, alignItems: 'center', justifyContent: 'center' }} accessibilityLabel={KIND[change.kind].label}>
-				<T variant="caption" weight="800" color={color}>{KIND[change.kind].letter}</T>
-			</View>
-			<Icon name="chevronRight" size={14} color={p.fgQuaternary} />
-		</Tap>
+			<T variant="footnote" mono weight="700" color={color} style={{ width: 12, textAlign: 'center' }} accessibilityElementsHidden>{KIND[change.kind].letter}</T>
+		</ListItem>
 	);
 });

@@ -22,6 +22,7 @@ import {
 	AGENT_NOTIFY_THREAD_SETTING,
 } from '../../common/agentThreadAttention.js';
 import { AgentThreadAttentionService, IAgentThreadAttentionService } from '../attention/agentThreadAttention.js';
+import { AgentChatBackgroundContribution } from '../chat/agentChatBackground.js';
 import { AgentChatWidthContribution } from '../chat/agentChatWidth.js';
 import { AGENT_COMPACT_LIST_SETTING } from '../home/agentHomeDensity.js';
 import { showProjectIconPicker } from './agentProjectIconPicker.js';
@@ -112,6 +113,7 @@ registerWorkbenchContribution2(AgentThreadAttentionStarter.ID, AgentThreadAttent
 registerWorkbenchContribution2(AgentSidebarRailContribution.ID, AgentSidebarRailContribution, WorkbenchPhase.BlockRestore);
 registerWorkbenchContribution2(AgentSidebarDecorationsContribution.ID, AgentSidebarDecorationsContribution, WorkbenchPhase.BlockRestore);
 registerWorkbenchContribution2(AgentChatWidthContribution.ID, AgentChatWidthContribution, WorkbenchPhase.BlockRestore);
+registerWorkbenchContribution2(AgentChatBackgroundContribution.ID, AgentChatBackgroundContribution, WorkbenchPhase.BlockRestore);
 
 registerAction2(class ToggleAgentSidebarRailAction extends Action2 {
 	constructor() {

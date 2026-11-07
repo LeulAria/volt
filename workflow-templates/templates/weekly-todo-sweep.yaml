@@ -1,0 +1,72 @@
+# Every Monday: collect the TODO and FIXME comments and send the team the ones worth doing.
+version: 1
+id: weekly-todo-sweep
+name: Weekly TODO sweep
+description: |
+  Runs on Mondays at 10:00. A shell step lists the TODO and FIXME comments in the
+  repository, and when there are any, a model picks the five most worth doing this week
+  (with file and line) and the list goes to a Microsoft Teams channel.
+  Set the teamsWebhook variable to the channel's incoming webhook URL.
+tags: [maintenance, teams, schedule, tech-debt]
+trigger:
+  type: schedule
+  cron: '0 10 * * 1'
+variables:
+  teamsWebhook: https://example.webhook.office.com/webhookb2/XXXX
+nodes:
+  - id: start
+    type: start
+    position: [0, 0]
+  - id: collect
+    type: shell
+    name: Find TODOs
+    position: [280, 0]
+    config:
+      command: git grep -n -I -E 'TODO|FIXME' -- . ':(exclude)*.lock' ':(exclude)*.min.*' | head -n 300
+      successCodes: [0, 1]
+  - id: any
+    type: if
+    name: Any found?
+    position: [560, 0]
+    config:
+      condition: len(trim(nodes.collect.stdout)) > 0
+  - id: pick
+    type: summarize
+    name: Pick five
+    position: [840, 0]
+    config:
+      text: '{{ nodes.collect.stdout }}'
+      instructions: |
+        These are TODO and FIXME comments (file:line:text). Pick the five most worth doing
+        this week: bugs and risks first, then quick wins. For each, give the file and line
+        and one sentence on why. End with the total count.
+  - id: send
+    type: teams_message
+    name: Send to Teams
+    position: [1120, 0]
+    config:
+      webhookUrl: '{{ vars.teamsWebhook }}'
+      text: |
+        **TODO sweep**
+
+        {{ nodes.pick.summary }}
+  - id: done
+    type: end
+    position: [1400, 0]
+    config:
+      status: success
+      output: '{{ nodes.pick.summary }}'
+  - id: clean
+    type: end
+    name: Nothing found
+    position: [840, 140]
+    config:
+      status: success
+      output: No TODO or FIXME comments
+edges:
+  - { from: start.next, to: collect }
+  - { from: collect.passed, to: any }
+  - { from: any.true, to: pick }
+  - { from: any.false, to: clean }
+  - { from: pick.done, to: send }
+  - { from: send.sent, to: done }

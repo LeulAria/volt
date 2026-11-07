@@ -35,7 +35,7 @@ import { AgentGitActionsControl } from '../pullRequests/agentGitActionsControl.j
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { currentLink, IAgentPrLink, isOpenState, visibleLinks } from '../../common/agentPullRequests.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
-import { IVoltBrowserComments } from '../preview/browserCommentStore.js';
+import { IVoltBrowserComments, revealBrowserElementOnHover } from '../preview/browserCommentStore.js';
 
 /** A reader this close to the last line is at the end, so the arrow stays hidden. */
 export const SCROLL_END_SLACK_PX = 96;
@@ -272,6 +272,8 @@ export class AgentComposerChips extends Disposable {
 					this.browserComments.show({ sessionId: this.sessionId });
 				}
 			}));
+			// Hovering it shows the annotated element in the browser beside.
+			this._register(revealBrowserElementOnHover(this.commentsChip, () => this.sessionId ? this.browserComments.pending({ sessionId: this.sessionId }).at(-1)?.refs[0]?.payload : undefined, this.commandService));
 		}
 
 		// In the input, it is blue text before the prompt; the host puts it there (multitaskToken).
@@ -811,7 +813,8 @@ export class AgentComposerChips extends Disposable {
 		const showLimit = !!this.options.limitRun?.visible;
 		const showAgentRun = !!this.options.agentRun?.visible;
 		const showCommitReview = !!this.options.commitReview?.visible;
-		const visible = this.hostOpen && !this.newChat && (showLimit || showAgentRun || showCommitReview || showStatus || showComments || showMultitaskChip || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
+		// An annotation queued from the browser shows even before the chat's first message.
+		const visible = this.hostOpen && (this.newChat ? showComments : showLimit || showAgentRun || showCommitReview || showStatus || showComments || showMultitaskChip || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
 		this.element.classList.toggle('is-visible', visible);
 		// A chat hosted in another chat's tools hides the row but keeps its terminals (agentEditor.css).
 		this.element.classList.toggle('has-terminal-runs', showRuns);

@@ -3,8 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { addDisposableListener } from '../../../../../base/browser/dom.js';
+import { disposableTimeout } from '../../../../../base/common/async.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -13,6 +16,33 @@ import type { VoltCommentStatus } from '../chrome/voltCommentsPane.js';
 
 /** `(payload)`: scrolls the browser tab showing a picked element (a chip's browser_element block) to it. */
 export const REVEAL_BROWSER_ELEMENT_COMMAND_ID = 'volt.browser.revealElement';
+
+/**
+ * Hovering `element` (a chip in the chat) a moment scrolls the browser to what it points at and
+ * flashes it; passing over does nothing.
+ */
+export function revealBrowserElementOnHover(element: HTMLElement, payload: () => string | undefined, commandService: ICommandService): IDisposable {
+	let timer: IDisposable | undefined;
+	const cancel = () => {
+		timer?.dispose();
+		timer = undefined;
+	};
+	const enter = addDisposableListener(element, 'mouseenter', () => {
+		cancel();
+		timer = disposableTimeout(() => {
+			const value = payload();
+			if (value) {
+				void commandService.executeCommand(REVEAL_BROWSER_ELEMENT_COMMAND_ID, value);
+			}
+		}, 250);
+	});
+	const leave = addDisposableListener(element, 'mouseleave', cancel);
+	return toDisposable(() => {
+		cancel();
+		enter.dispose();
+		leave.dispose();
+	});
+}
 
 export interface IBrowserCommentBounds {
 	readonly x: number;
@@ -93,7 +123,7 @@ export interface IVoltBrowserComments {
 	archiveResolved(scope: IBrowserCommentScope): void;
 	/** The tab now belongs to chat `sessionId` (or none): its comments follow. */
 	setSession(viewId: string, sessionId: string | undefined): void;
-	/** `ids` (or every pending comment) as one message; they leave the batch (and the page). Undefined when none are open. */
+	/** `ids` (or every pending comment) as one message; they leave the batch, marked sent (their pins stay). Undefined when none are open. */
 	take(scope: IBrowserCommentScope, ids?: readonly string[]): IBrowserCommentMessage | undefined;
 	show(scope: IBrowserCommentScope): void;
 }
@@ -205,9 +235,9 @@ export class VoltBrowserComments extends Disposable implements IVoltBrowserComme
 			return undefined;
 		}
 		const message = formatBrowserComments(comments);
-		// Sent: the annotations leave the batch and their pins leave the page.
+		// Sent: the annotations leave the batch; their numbered pins stay on the page to show what was annotated.
 		for (const comment of comments) {
-			this.comments.splice(this.comments.indexOf(comment), 1);
+			this.comments[this.comments.indexOf(comment)] = { ...comment, status: 'sent', picked: false };
 		}
 		this._onDidChange.fire();
 		return message;

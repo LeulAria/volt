@@ -72,6 +72,10 @@ export class AgentLandingChrome extends Disposable {
 	/** In Worktree mode: the branch the new checkout uses. None means a fresh branch from the current one. */
 	private worktreeTarget: AgentWorktreeTarget | undefined;
 	private branchRequest = 0;
+	/** The project whose branch `branch` is, by root. */
+	private branchRoot: string | undefined;
+	/** Last branch read per project root, so a chat switch shows its project's branch at once. */
+	private readonly branchByRoot = new Map<string, IAgentBranchState>();
 	private lastProjectState: string | undefined;
 
 	private readonly _onDidChangeBranch = this._register(new Emitter<void>());
@@ -115,6 +119,13 @@ export class AgentLandingChrome extends Disposable {
 		this._register(this.workspaceContextService.onDidChangeWorkbenchState(() => this.onProjectChanged()));
 		this._register(this.workspaceContextService.onDidChangeWorkspaceName(() => this.renderProject()));
 		this._register(this.sessionContext.onDidChangeActiveProject(() => this.onProjectChanged()));
+		// A restoring window knows its active project's id before the project's record: until then the
+		// root is the workspace folder's. The pills follow once the record is in.
+		this._register(this.sessionContext.onDidChangeProjects(() => {
+			if (this.projectRoot()?.toString() !== this.branchRoot) {
+				this.onProjectChanged();
+			}
+		}));
 		this._register(this.projects.onDidChange(() => {
 			this.renderProject();
 			// A clone just finished: its branch exists now.
@@ -186,8 +197,41 @@ export class AgentLandingChrome extends Disposable {
 	private onProjectChanged(): void {
 		this.worktreeTarget = undefined;
 		this.renderProject();
+		this.takeProjectBranch();
 		this.renderEnvironment();
 		this.bindRepository();
+	}
+
+	/**
+	 * The branch moves with the project in the same task: the one last read for it, else none yet.
+	 * Reading it again can take seconds with many agents at work, and until then the pill would
+	 * name the last project's branch.
+	 */
+	private takeProjectBranch(): void {
+		const root = this.projectRoot()?.toString();
+		if (root === this.branchRoot) {
+			return;
+		}
+		this.setBranch(root, root !== undefined ? this.branchByRoot.get(root) ?? {} : {});
+	}
+
+	private setBranch(root: string | undefined, branch: IAgentBranchState): void {
+		this.branchRoot = root;
+		this.branch = branch;
+		if (root !== undefined) {
+			this.branchByRoot.delete(root);
+			this.branchByRoot.set(root, branch);
+			// Most recent last; a window rarely has this many projects.
+			for (const key of this.branchByRoot.keys()) {
+				if (this.branchByRoot.size <= 64) {
+					break;
+				}
+				this.branchByRoot.delete(key);
+			}
+		}
+		this.renderBranch();
+		this.renderEnvironment();
+		this._onDidChangeBranch.fire();
 	}
 
 	// ---- Project ------------------------------------------------------------------------
@@ -218,9 +262,6 @@ export class AgentLandingChrome extends Disposable {
 			? cloning ? localize('voltAgent.projectCloning', "{0} · Cloning {1}%", name, cloning.percent) : name
 			: localize('voltAgent.selectProject', "Select project");
 		this.projectButton.classList.toggle('empty', !name);
-		setAgentTooltip(this.projectButton, name
-			? localize('voltAgent.switchProject', "Project: {0}", root ? this.labelService.getUriLabel(root, { noPrefix: true }) : name)
-			: localize('voltAgent.chooseProject', "Choose a project"));
 	}
 
 	/** The sidebar's project menu, as in Cursor; a single folder loads into this new chat. */
@@ -254,13 +295,11 @@ export class AgentLandingChrome extends Disposable {
 			void this.refreshBranch();
 			return;
 		}
+		const root = this.projectRoot()?.toString();
 		this.repositoryWatch.value = autorun(reader => {
 			const ref = repository.provider.historyProvider.read(reader)?.historyItemRef.read(reader);
 			const name = ref?.name?.replace(/^refs\/heads\//, '');
-			this.branch = name ? { name, unborn: !ref?.revision } : ref?.revision ? { detached: ref.revision.slice(0, 7) } : {};
-			this.renderBranch();
-			this.renderEnvironment();
-			this._onDidChangeBranch.fire();
+			this.setBranch(root, name ? { name, unborn: !ref?.revision } : ref?.revision ? { detached: ref.revision.slice(0, 7) } : {});
 		});
 	}
 
@@ -269,17 +308,19 @@ export class AgentLandingChrome extends Disposable {
 		const root = this.projectRoot();
 		const request = ++this.branchRequest;
 		if (!root || root.scheme !== 'file') {
-			this.branch = {};
-		} else {
-			const branches = await this.gitService.listBranches({ repoRoot: root.fsPath }).catch(() => undefined);
-			if (request !== this.branchRequest) {
-				return;
-			}
-			this.branch = branches ? { name: branches.head, detached: branches.detached, unborn: branches.unborn } : {};
+			this.setBranch(root?.toString(), {});
+			return;
 		}
-		this.renderBranch();
-		this.renderEnvironment();
-		this._onDidChangeBranch.fire();
+		const branches = await this.gitService.listBranches({ repoRoot: root.fsPath }).catch(() => undefined);
+		if (request !== this.branchRequest) {
+			return;
+		}
+		// Another project by now: this answer is not the pill's; read the one on screen instead.
+		if (this.projectRoot()?.toString() !== root.toString()) {
+			void this.refreshBranch();
+			return;
+		}
+		this.setBranch(root.toString(), branches ? { name: branches.head, detached: branches.detached, unborn: branches.unborn } : {});
 	}
 
 	/** The project checkout's branch, ignoring any branch picked for a new worktree. */
@@ -296,9 +337,6 @@ export class AgentLandingChrome extends Disposable {
 		if (target) {
 			this.branchLabel.textContent = target.name;
 			this.branchButton.classList.remove('empty');
-			setAgentTooltip(this.branchButton, target.kind === 'new'
-				? localize('voltAgent.worktreeNewBranch', "The worktree gets a new branch: {0}", target.name)
-				: localize('voltAgent.worktreeBranch', "The worktree checks out {0}", target.name));
 			return;
 		}
 		const { name, detached, unborn } = this.branch;
@@ -306,9 +344,6 @@ export class AgentLandingChrome extends Disposable {
 			? unborn ? localize('voltAgent.unbornBranch', "{0} (no commits)", name) : name
 			: detached ? localize('voltAgent.detached', "{0} (detached)", detached) : localize('voltAgent.noBranch', "No branch");
 		this.branchButton.classList.toggle('empty', !name && !detached);
-		setAgentTooltip(this.branchButton, name
-			? unborn ? localize('voltAgent.unbornBranchTooltip', "Branch: {0}. It has no commits yet.", name) : localize('voltAgent.switchBranch', "Branch: {0}", name)
-			: detached ? localize('voltAgent.detachedTooltip', "Detached at {0}", detached) : localize('voltAgent.noRepository', "No git repository"));
 	}
 
 	/** Run on is Worktree, but a worktree starts from a commit and this repo has none yet. */
@@ -374,13 +409,8 @@ export class AgentLandingChrome extends Disposable {
 		this.envButton.classList.toggle('worktree', worktree);
 		this.envButton.classList.toggle('cloud', cloud);
 		this.envButton.classList.toggle('blocked', blocked);
-		setAgentTooltip(this.envButton, blocked
-			? localize('voltAgent.worktreeNeedsCommit', "This repository has no commits yet. Make a first commit to use a worktree.")
-			: worktree
-				? localize('voltAgent.env.worktreeTooltip', "Runs in a new worktree, so your checkout is untouched")
-				: cloud
-					? localize('voltAgent.env.cloudTooltip', "Runs on a Volt Relay runner; your checkout goes along as a bundle")
-					: localize('voltAgent.env.localTooltip', "Runs in your checkout"));
+		// The pickers show no tooltips; only the warning icon says why.
+		setAgentTooltip(this.envButton, blocked ? localize('voltAgent.worktreeNeedsCommit', "This repository has no commits yet. Make a first commit to use a worktree.") : undefined);
 		// The branch button shows the worktree's branch only in Worktree mode.
 		this.renderBranch();
 		if (cloud && this.cloudMachine !== CLOUD_AUTO) {

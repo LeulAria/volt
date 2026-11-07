@@ -1,0 +1,160 @@
+{
+	"$schema": "./schema/index.schema.json",
+	"version": 1,
+	"templates": [
+		{
+			"id": "implement-test-review",
+			"name": "Implement, test and review loop",
+			"description": "An agent implements the task, failing tests go back for fixes (up to 3), a reviewer approves, and a pull request opens.",
+			"path": "templates/implement-test-review.yaml",
+			"author": "Volt",
+			"tags": ["coding", "tests", "review", "pull-request"],
+			"icon": "checklist",
+			"nodeTypes": ["start", "git_branch", "agent", "shell", "git_commit", "git_push", "github_pr", "end", "loop"],
+			"permissions": ["agent", "shell", "network", "git"]
+		},
+		{
+			"id": "fix-failing-ci",
+			"name": "Fix failing CI",
+			"description": "When a GitHub Actions run fails, an agent fixes it on the same branch, tests it locally and pushes the fix.",
+			"path": "templates/fix-failing-ci.yaml",
+			"author": "Volt",
+			"tags": ["ci", "github", "fix"],
+			"icon": "tools",
+			"nodeTypes": ["start", "shell", "agent", "git_commit", "git_push", "github_pr_comment", "end", "loop", "notify"],
+			"permissions": ["agent", "shell", "network", "git"]
+		},
+		{
+			"id": "review-pull-request",
+			"name": "Review a pull request",
+			"description": "Every new pull request gets a review comment from a read-only agent; approved ones get a label.",
+			"path": "templates/review-pull-request.yaml",
+			"author": "Volt",
+			"tags": ["review", "github", "pull-request"],
+			"icon": "git-pull-request",
+			"nodeTypes": ["start", "agent", "github_pr_comment", "github_update_pr", "end"],
+			"permissions": ["agent", "network", "git"]
+		},
+		{
+			"id": "nightly-dependency-update",
+			"name": "Nightly dependency update",
+			"description": "Every night, dependencies are upgraded on a branch, tested, and opened as a draft pull request.",
+			"path": "templates/nightly-dependency-update.yaml",
+			"author": "Volt",
+			"tags": ["dependencies", "maintenance", "schedule"],
+			"icon": "package",
+			"nodeTypes": ["start", "git_branch", "agent", "package_script", "git_commit", "git_push", "github_pr", "end", "notify"],
+			"permissions": ["agent", "shell", "network", "git"]
+		},
+		{
+			"id": "triage-sentry-issue",
+			"name": "Triage Sentry issue",
+			"description": "New Sentry issues are sorted; regressions get a root-cause analysis posted to Slack.",
+			"path": "templates/triage-sentry-issue.yaml",
+			"author": "Volt",
+			"tags": ["sentry", "triage", "slack", "incidents"],
+			"icon": "bug",
+			"nodeTypes": ["start", "classify", "agent", "slack_message", "end", "log"],
+			"permissions": ["agent", "network", "messaging"]
+		},
+		{
+			"id": "release-notes-on-tag",
+			"name": "Release notes on tag",
+			"description": "A pushed version tag gets release notes written from its commits and published as a GitHub release.",
+			"path": "templates/release-notes-on-tag.yaml",
+			"author": "Volt",
+			"tags": ["release", "changelog", "github"],
+			"icon": "tag",
+			"nodeTypes": ["start", "shell", "summarize", "write_file", "slack_message", "end"],
+			"permissions": ["agent", "shell", "network", "filesystem", "messaging"]
+		},
+		{
+			"id": "uptime-check",
+			"name": "Uptime check every 5 minutes",
+			"description": "Requests a URL every five minutes and tells Slack when it is down or slow.",
+			"path": "templates/uptime-check.yaml",
+			"author": "Volt",
+			"tags": ["monitoring", "uptime", "slack", "schedule"],
+			"icon": "pulse",
+			"nodeTypes": ["start", "http", "if", "slack_message", "end"],
+			"permissions": ["network", "messaging"]
+		},
+		{
+			"id": "issue-to-draft-pr",
+			"name": "Issue to draft PR",
+			"description": "Label an issue \"volt\" and an agent implements it, tests it and opens a draft pull request.",
+			"path": "templates/issue-to-draft-pr.yaml",
+			"author": "Volt",
+			"tags": ["github", "issues", "coding", "pull-request"],
+			"icon": "issues",
+			"nodeTypes": ["start", "git_branch", "agent", "package_script", "git_commit", "git_push", "github_pr", "github_issue_comment", "end", "loop"],
+			"permissions": ["agent", "shell", "network", "git"]
+		},
+		{
+			"id": "daily-slack-digest",
+			"name": "Daily Slack digest",
+			"description": "Every weekday morning, the last day's commits are summarized and posted to Slack.",
+			"path": "templates/daily-slack-digest.yaml",
+			"author": "Volt",
+			"tags": ["slack", "digest", "schedule", "team"],
+			"icon": "comment-discussion",
+			"nodeTypes": ["start", "shell", "if", "summarize", "slack_message", "end"],
+			"permissions": ["agent", "shell", "network", "messaging"]
+		},
+		{
+			"id": "parallel-research",
+			"name": "Parallel research with fork/join",
+			"description": "Three agents research a question from different angles at once; a join merges their findings into a report.",
+			"path": "templates/parallel-research.yaml",
+			"author": "Volt",
+			"tags": ["research", "parallel", "agents"],
+			"icon": "repo-forked",
+			"nodeTypes": ["start", "fork", "agent", "join", "summarize", "write_file", "end"],
+			"permissions": ["agent", "filesystem"]
+		},
+		{
+			"id": "label-pr-size",
+			"name": "Label pull requests by size",
+			"description": "New pull requests get a size/S, size/M or size/L label from their diff size. No agent, no model cost.",
+			"path": "templates/label-pr-size.yaml",
+			"author": "Volt",
+			"tags": ["github", "pull-request", "labels"],
+			"icon": "symbol-ruler",
+			"nodeTypes": ["start", "shell", "switch", "github_update_pr", "end"],
+			"permissions": ["shell", "network", "git"]
+		},
+		{
+			"id": "docs-follow-up",
+			"name": "Docs follow-up on merge",
+			"description": "After a merge, an agent updates the documentation the change made wrong and opens a draft pull request.",
+			"path": "templates/docs-follow-up.yaml",
+			"author": "Volt",
+			"tags": ["docs", "github", "pull-request", "maintenance"],
+			"icon": "book",
+			"nodeTypes": ["start", "git_branch", "agent", "git_commit", "git_push", "github_pr", "end"],
+			"permissions": ["agent", "network", "git"]
+		},
+		{
+			"id": "incident-first-look",
+			"name": "Incident first look",
+			"description": "When PagerDuty pages, an agent sums up the likely cause from recent changes; you approve it before it goes to Slack.",
+			"path": "templates/incident-first-look.yaml",
+			"author": "Volt",
+			"tags": ["incidents", "pagerduty", "slack", "approval"],
+			"icon": "flame",
+			"nodeTypes": ["start", "agent", "approval", "slack_message", "end"],
+			"permissions": ["agent", "network", "messaging"]
+		},
+		{
+			"id": "weekly-todo-sweep",
+			"name": "Weekly TODO sweep",
+			"description": "Every Monday, the TODO and FIXME comments worth doing this week go to a Microsoft Teams channel.",
+			"path": "templates/weekly-todo-sweep.yaml",
+			"author": "Volt",
+			"tags": ["maintenance", "teams", "schedule", "tech-debt"],
+			"icon": "checklist",
+			"nodeTypes": ["start", "shell", "if", "summarize", "teams_message", "end"],
+			"permissions": ["agent", "shell", "network", "messaging"]
+		}
+	]
+}

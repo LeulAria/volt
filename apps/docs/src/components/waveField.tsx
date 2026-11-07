@@ -13,10 +13,13 @@ export function WaveField() {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    const canvas = ref.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const node = ref.current;
+    if (!node) return;
+    const context = node.getContext("2d");
+    if (!context) return;
+    // Typed non-null: the function declarations below are hoisted, so narrowing does not reach them.
+    const canvas: HTMLCanvasElement = node;
+    const ctx: CanvasRenderingContext2D = context;
 
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let raf = 0;

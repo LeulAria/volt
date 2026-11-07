@@ -1,0 +1,90 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://raw.githubusercontent.com/LeulAria/volt/main/workflow-templates/schema/index.schema.json",
+	"title": "Volt workflow template index",
+	"description": "The templates a Volt templates repository offers. Each entry points at a workflow YAML file in the repository.",
+	"type": "object",
+	"required": [
+		"version",
+		"templates"
+	],
+	"additionalProperties": false,
+	"properties": {
+		"$schema": {
+			"type": "string"
+		},
+		"version": {
+			"const": 1
+		},
+		"templates": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"required": [
+					"id",
+					"name",
+					"description",
+					"path"
+				],
+				"additionalProperties": false,
+				"properties": {
+					"id": {
+						"description": "The template's id: also its workflow id and file name.",
+						"type": "string",
+						"pattern": "^[a-z][a-z0-9_-]{0,63}$"
+					},
+					"name": {
+						"type": "string",
+						"minLength": 1
+					},
+					"description": {
+						"description": "One or two sentences for the gallery.",
+						"type": "string",
+						"minLength": 1
+					},
+					"path": {
+						"description": "The YAML file, relative to the index (templates/<id>.yaml).",
+						"type": "string",
+						"pattern": "^(?!\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))[^\\\\:]+\\.yaml$"
+					},
+					"author": {
+						"type": "string"
+					},
+					"tags": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					},
+					"icon": {
+						"description": "A codicon id (git-pull-request, robot, tag).",
+						"type": "string"
+					},
+					"nodeTypes": {
+						"description": "The node types the template uses.",
+						"type": "array",
+						"items": {
+							"type": "string"
+						},
+						"uniqueItems": true
+					},
+					"permissions": {
+						"description": "What the template needs to run for real.",
+						"type": "array",
+						"items": {
+							"enum": [
+								"agent",
+								"shell",
+								"network",
+								"git",
+								"filesystem",
+								"messaging"
+							]
+						},
+						"uniqueItems": true
+					}
+				}
+			}
+		}
+	}
+}

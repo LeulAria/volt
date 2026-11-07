@@ -71,7 +71,7 @@ const AXIS = {
   y2: f(BOTTOM.y - AX.dy * 70),
 };
 
-const LABEL = "fill-white/45 font-mono text-[15px] tracking-[0.06em]";
+const LABEL = "fill-white/65 font-mono text-[15px] tracking-[0.06em]";
 
 export function HeroGeometry() {
   const ref = useRef<SVGSVGElement>(null);
@@ -174,7 +174,7 @@ export function HeroGeometry() {
           x2={VIEW + 420}
           y2={HOLE.y}
           stroke="currentColor"
-          strokeOpacity={0.09}
+          strokeOpacity={0.16}
           vectorEffect="non-scaling-stroke"
         />
         <line
@@ -184,7 +184,7 @@ export function HeroGeometry() {
           x2={HOLE.x}
           y2={VIEW + 60}
           stroke="currentColor"
-          strokeOpacity={0.09}
+          strokeOpacity={0.16}
           vectorEffect="non-scaling-stroke"
         />
 
@@ -195,7 +195,7 @@ export function HeroGeometry() {
           cy={HOLE.y}
           r={R}
           stroke="currentColor"
-          strokeOpacity={0.12}
+          strokeOpacity={0.22}
           vectorEffect="non-scaling-stroke"
           transform={`rotate(-90 ${HOLE.x} ${HOLE.y})`}
         />
@@ -205,7 +205,7 @@ export function HeroGeometry() {
           cy={HOLE.y}
           r={R / PHI}
           stroke="currentColor"
-          strokeOpacity={0.08}
+          strokeOpacity={0.15}
           strokeDasharray="2 7"
           vectorEffect="non-scaling-stroke"
           transform={`rotate(-90 ${HOLE.x} ${HOLE.y})`}
@@ -216,7 +216,7 @@ export function HeroGeometry() {
           cy={HOLE.y}
           r={HOLE.r * PHI}
           stroke="currentColor"
-          strokeOpacity={0.14}
+          strokeOpacity={0.24}
           strokeDasharray="1 5"
           vectorEffect="non-scaling-stroke"
         />
@@ -241,7 +241,7 @@ export function HeroGeometry() {
               x2={t.x2}
               y2={t.y2}
               stroke="currentColor"
-              strokeOpacity={t.long ? 0.3 : 0.13}
+              strokeOpacity={t.long ? 0.45 : 0.22}
               vectorEffect="non-scaling-stroke"
             />
           ))}
@@ -288,7 +288,7 @@ export function HeroGeometry() {
             x2={BOX.right + 70}
             y2={BOX.bottom}
             stroke="currentColor"
-            strokeOpacity={0.22}
+            strokeOpacity={0.36}
             vectorEffect="non-scaling-stroke"
           />
           <line
@@ -298,7 +298,7 @@ export function HeroGeometry() {
             x2={BOX.right + 80}
             y2={BOX.top}
             stroke="currentColor"
-            strokeOpacity={0.35}
+            strokeOpacity={0.52}
             vectorEffect="non-scaling-stroke"
           />
           <line
@@ -308,7 +308,7 @@ export function HeroGeometry() {
             x2={BOX.right + 80}
             y2={BOX.bottom}
             stroke="currentColor"
-            strokeOpacity={0.35}
+            strokeOpacity={0.52}
             vectorEffect="non-scaling-stroke"
           />
           <line
@@ -318,7 +318,7 @@ export function HeroGeometry() {
             x2={BOX.right}
             y2={BOX.bottom + 44}
             stroke="currentColor"
-            strokeOpacity={0.22}
+            strokeOpacity={0.36}
             vectorEffect="non-scaling-stroke"
           />
           <line
@@ -328,7 +328,7 @@ export function HeroGeometry() {
             x2={BOX.left}
             y2={BOX.bottom + 54}
             stroke="currentColor"
-            strokeOpacity={0.35}
+            strokeOpacity={0.52}
             vectorEffect="non-scaling-stroke"
           />
           <line
@@ -338,7 +338,7 @@ export function HeroGeometry() {
             x2={BOX.right}
             y2={BOX.bottom + 54}
             stroke="currentColor"
-            strokeOpacity={0.35}
+            strokeOpacity={0.52}
             vectorEffect="non-scaling-stroke"
           />
           {/* hole callout leader */}
@@ -346,7 +346,7 @@ export function HeroGeometry() {
             data-draw
             d={`M${f(HOLE.x - HOLE.r * 0.72)} ${f(HOLE.y + HOLE.r * 0.72)} L${f(HOLE.x - 190)} ${f(HOLE.y + 150)} L${f(HOLE.x - 300)} ${f(HOLE.y + 150)}`}
             stroke="currentColor"
-            strokeOpacity={0.3}
+            strokeOpacity={0.45}
             vectorEffect="non-scaling-stroke"
           />
         </g>

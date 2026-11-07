@@ -1,0 +1,124 @@
+# When a GitHub Actions run fails: check out its branch, fix it, test it, and push the fix.
+version: 1
+id: fix-failing-ci
+name: Fix failing CI
+description: >-
+  Starts when a GitHub Actions workflow run fails. Volt checks out the failing branch, an
+  agent finds the cause and fixes it, and the tests run locally (two more tries when they
+  still fail). The fix is committed and pushed to the same branch, and the pull request
+  gets a comment saying what changed.
+tags: [ci, github, fix]
+trigger:
+  type: event
+  provider: github
+  event: workflow.failure
+  samplePayload:
+    workflow_run:
+      name: CI
+      head_branch: feature/login
+      html_url: https://github.com/acme/app/actions/runs/123
+      conclusion: failure
+variables:
+  testCommand: npm test
+nodes:
+  - id: start
+    type: start
+    position: [0, 0]
+  - id: checkout
+    type: shell
+    name: Check out the branch
+    position: [352, 0]
+    config:
+      command: git fetch origin "$BRANCH" && git checkout "$BRANCH" && git pull --ff-only origin "$BRANCH"
+      env:
+        BRANCH: '{{ trigger.payload.workflow_run.head_branch }}'
+  - id: fix
+    type: agent
+    name: Find and fix
+    position: [688, 0]
+    config:
+      prompt: |
+        The GitHub Actions workflow "{{ trigger.payload.workflow_run.name }}" failed on
+        branch {{ trigger.payload.workflow_run.head_branch }}:
+        {{ trigger.payload.workflow_run.html_url }}
+
+        Read the failing job's log (gh run view --log-failed), reproduce the failure
+        locally, find the root cause and fix it. Do not disable, skip or loosen tests.
+
+        Output of the last local test run, if any:
+        {{ nodes.test.stderr }}
+      mode: Agent
+  - id: test
+    type: shell
+    name: Run tests
+    position: [1024, 0]
+    config:
+      command: '{{ vars.testCommand }}'
+      timeout: 20m
+  - id: commit
+    type: git_commit
+    name: Commit
+    position: [1360, -97]
+    config:
+      message: 'fix: make {{ trigger.payload.workflow_run.name }} pass again'
+  - id: push
+    type: git_push
+    name: Push
+    position: [1696, -141]
+  - id: comment
+    type: github_pr_comment
+    name: Comment on the PR
+    position: [2032, -141]
+    config:
+      body: |
+        Volt pushed {{ nodes.commit.sha }} to fix the failing "{{ trigger.payload.workflow_run.name }}" run.
+
+        {{ nodes.fix.summary }}
+  - id: done
+    type: end
+    position: [2368, -89]
+    config:
+      status: success
+      output: '{{ nodes.commit.sha }}'
+  - id: nothing
+    type: end
+    name: Nothing to change
+    position: [1696, 11]
+    config:
+      status: success
+      output: The agent found nothing to change
+  - id: retry
+    type: loop
+    name: Two more tries
+    position: [1360, 121]
+    config:
+      max: 2
+  - id: alert
+    type: notify
+    name: Tell me
+    position: [1696, 145]
+    config:
+      title: CI is still failing
+      message: '{{ trigger.payload.workflow_run.name }} on {{ trigger.payload.workflow_run.head_branch }} still fails after Volt''s fixes.'
+      severity: error
+  - id: gave_up
+    type: end
+    name: Gave up
+    position: [2032, 185]
+    config:
+      status: failure
+      output: '{{ nodes.test.stderr }}'
+edges:
+  - { from: start.next, to: checkout }
+  - { from: checkout.passed, to: fix }
+  - { from: fix.done, to: test }
+  - { from: test.passed, to: commit }
+  - { from: test.failed, to: retry, label: tests failed }
+  - { from: retry.repeat, to: fix }
+  - { from: retry.exhausted, to: alert }
+  - { from: alert.next, to: gave_up }
+  - { from: commit.committed, to: push }
+  - { from: commit.nothing, to: nothing }
+  - { from: push.pushed, to: comment }
+  - { from: comment.done, to: done }
+  - { from: comment.failed, to: done }

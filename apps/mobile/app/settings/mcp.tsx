@@ -5,11 +5,13 @@
 
 import { errorMessage, type IMcpServerStatus, selectProjects } from '@volt/client-core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, RefreshControl, ScrollView, View } from 'react-native';
+import { ActivityIndicator, RefreshControl, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useClient, useCollections, useOptionalClient } from '../../src/state/client';
 import { useTheme } from '../../src/theme/theme';
 import { T } from '../../src/ui/core';
+import { useHeaderScroll } from '../../src/ui/header';
 import { Group, ListRow } from '../../src/ui/list';
 import { ActionSheet } from '../../src/ui/sheets';
 
@@ -21,6 +23,7 @@ const STATE_LABEL: Record<IMcpServerStatus['state'], string> = { idle: 'Not star
 
 /** The MCP servers agents get: yours everywhere, and a project's own (pick the project). */
 function Mcp() {
+	const onHeaderScroll = useHeaderScroll();
 	const { p } = useTheme();
 	const insets = useSafeAreaInsets();
 	const client = useClient();
@@ -52,7 +55,7 @@ function Mcp() {
 	};
 
 	return (
-		<ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={{ paddingBottom: insets.bottom + 32 }} refreshControl={<RefreshControl refreshing={false} onRefresh={load} tintColor={p.fgTertiary} />}>
+		<Animated.ScrollView onScroll={onHeaderScroll} scrollEventThrottle={16} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={{ paddingBottom: insets.bottom + 32 }} refreshControl={<RefreshControl refreshing={false} onRefresh={load} tintColor={p.fgTertiary} />}>
 			{projects.length ? (
 				<Group title="Project">
 					<ListRow icon="folder" label={project?.name ?? 'No project'} detail={project?.path} chevron onPress={() => setPicking(true)} />
@@ -66,6 +69,6 @@ function Mcp() {
 				</>
 			)}
 			<ActionSheet visible={picking} onClose={() => setPicking(false)} title="Project" actions={projects.map(pr => ({ label: pr.name, icon: 'folder' as const, checked: pr.id === projectId, onPress: () => setProjectId(pr.id) }))} />
-		</ScrollView>
+		</Animated.ScrollView>
 	);
 }

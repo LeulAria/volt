@@ -10,12 +10,12 @@ import {
 } from '@volt/client-core';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Switch, useWindowDimensions, View } from 'react-native';
+import { RefreshControl, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRunGroup } from '../../src/home/RunGroups';
 import { useClient, useCollections, useNow, useOptionalClient } from '../../src/state/client';
 import { useTheme } from '../../src/theme/theme';
-import { Button, EmptyState, haptic, Icon, IconButton, StatusIcon, T, Tap } from '../../src/ui/core';
+import { Button, EmptyState, haptic, Icon, IconButton, StatusIcon, Switch, T, Tap } from '../../src/ui/core';
 import { ConfirmSheet, Sheet } from '../../src/ui/sheets';
 
 export default function RunGroupScreen() {
@@ -266,7 +266,7 @@ function WinnerSheet({ group, run, onClose }: { readonly group: IRunGroup; reado
 			{others ? (
 				<View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingTop: 12 }}>
 					<T variant="small" color={p.fgSecondary} style={{ flex: 1 }}>{`Also delete their worktrees and branches (${others})`}</T>
-					<Switch value={removeOthers} onValueChange={setRemoveOthers} trackColor={{ true: p.danger, false: p.fillStrong }} />
+					<Switch value={removeOthers} onValueChange={setRemoveOthers} tone="danger" />
 				</View>
 			) : null}
 			<View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 8, paddingTop: 16 }}>

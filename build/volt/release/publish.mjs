@@ -67,7 +67,9 @@ console.log(`Feed entries: ${Object.keys(feed).join(', ')}`);
 writeFeed(feed, assets, release);
 
 function releaseNotesHeader() {
-	const lines = [`${title} (\`${commit.slice(0, 8)}\`)`, ''];
+	// "Volt 0.0.6 | Nov 4, 2026 | `abcdef12`": Volt's release notes page reads the commit from this line (voltReleaseNotes.ts).
+	const date = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+	const lines = [`${title} | ${date} | \`${commit.slice(0, 8)}\``, ''];
 	if (channel === 'nightly') {
 		lines.push('Built every night from `main`. Nightly installs next to Volt and Volt Beta.', '', '### Latest commits', '');
 		try {
@@ -83,6 +85,9 @@ function releaseNotesHeader() {
 		lines.push(fs.readFileSync(notes, 'utf8').trim());
 	} else if (channel !== 'nightly') {
 		lines.push(channel === 'beta' ? 'Beta builds install next to Volt.' : 'Download for your platform at https://volt.leularia.com/download.');
+	}
+	if (files.some(name => ['android', 'ios'].includes(parseAssetName(name).os))) {
+		lines.push('', '**Mobile app:** the `.apk` installs on Android (arm64), `ios-arm64-simulator.zip` runs in the iOS Simulator on Apple silicon, and the `.ipa`, when there is one, is signed for iPhone and iPad.');
 	}
 	lines.push('', '**Downloads:** https://volt.leularia.com/download');
 	if (!hasNotes) {

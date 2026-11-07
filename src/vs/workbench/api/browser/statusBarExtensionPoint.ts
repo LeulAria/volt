@@ -6,7 +6,7 @@
 import { IJSONSchema } from '../../../base/common/jsonSchema.js';
 import { DisposableStore, IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
 import { localize } from '../../../nls.js';
-import { createDecorator } from '../../../platform/instantiation/common/instantiation.js';
+import { IExtensionStatusBarItemChangeEvent, IExtensionStatusBarItemService, StatusBarUpdateKind } from '../../services/statusbar/browser/extensionStatusBarItems.js';
 import { isProposedApiEnabled } from '../../services/extensions/common/extensions.js';
 import { ExtensionsRegistry } from '../../services/extensions/common/extensionsRegistry.js';
 import { IStatusbarService, StatusbarAlignment as MainThreadStatusBarAlignment, IStatusbarEntryAccessor, IStatusbarEntry, StatusbarAlignment, IStatusbarEntryPriority, StatusbarEntryKind } from '../../services/statusbar/browser/statusbar.js';
@@ -25,37 +25,7 @@ import { STATUS_BAR_ERROR_ITEM_BACKGROUND, STATUS_BAR_WARNING_ITEM_BACKGROUND } 
 import { IManagedHoverTooltipMarkdownString } from '../../../base/browser/ui/hover/hover.js';
 
 
-// --- service
-
-export const IExtensionStatusBarItemService = createDecorator<IExtensionStatusBarItemService>('IExtensionStatusBarItemService');
-
-export interface IExtensionStatusBarItemChangeEvent {
-	readonly added?: ExtensionStatusBarEntry;
-	readonly removed?: string;
-}
-
-export type ExtensionStatusBarEntry = [string, {
-	entry: IStatusbarEntry;
-	alignment: MainThreadStatusBarAlignment;
-	priority: number;
-}];
-
-export const enum StatusBarUpdateKind {
-	DidDefine,
-	DidUpdate
-}
-
-export interface IExtensionStatusBarItemService {
-	readonly _serviceBrand: undefined;
-
-	onDidChange: Event<IExtensionStatusBarItemChangeEvent>;
-
-	setOrUpdateEntry(id: string, statusId: string, extensionId: string | undefined, name: string, text: string, tooltip: IMarkdownString | string | undefined | IManagedHoverTooltipMarkdownString, command: Command | undefined, color: string | ThemeColor | undefined, backgroundColor: ThemeColor | undefined, alignLeft: boolean, priority: number | undefined, accessibilityInformation: IAccessibilityInformation | undefined): StatusBarUpdateKind;
-
-	unsetEntry(id: string): void;
-
-	getEntries(): Iterable<ExtensionStatusBarEntry>;
-}
+// --- service (declared in services/statusbar/browser/extensionStatusBarItems.ts)
 
 
 class ExtensionStatusBarItemService implements IExtensionStatusBarItemService {
@@ -152,6 +122,7 @@ class ExtensionStatusBarItemService implements IExtensionStatusBarItemService {
 			// Otherwise update
 			existingEntry.accessor.update(entry);
 			existingEntry.entry = entry;
+			this._onDidChange.fire({ updated: [entryId, { entry, alignment, priority }] });
 			return StatusBarUpdateKind.DidUpdate;
 		}
 	}

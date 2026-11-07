@@ -28,12 +28,9 @@ const ROW = `group flex items-center gap-3 rounded-[12px] px-2.5 py-2 transition
  * header hides (Download, Changelog, Install guide, About) and the community links, each led by an icon.
  */
 export function SiteMenu({
-  hero,
   version,
   stars,
 }: {
-  /** The header's opening-sequence mark (`data-hero`), when it has one. */
-  hero: { "data-hero"?: string };
   version: string | undefined;
   stars: number | null;
 }) {
@@ -76,7 +73,6 @@ export function SiteMenu({
   return (
     <>
       <button
-        {...hero}
         ref={buttonRef}
         type="button"
         aria-label="Menu"
@@ -124,11 +120,11 @@ export function SiteMenu({
                     className={`inline-flex items-center rounded-md ${focusRing}`}
                   >
                     <img
-                      src="/volt-icon-256.png"
+                      src="/volt-bolt.svg"
                       alt=""
-                      width={256}
-                      height={256}
-                      className="size-7"
+                      width={360}
+                      height={552}
+                      className="h-7 w-auto"
                     />
                   </Link>
                   <button

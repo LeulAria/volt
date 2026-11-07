@@ -1,0 +1,1329 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * The Automations calendar. Day is a timeline drawn like a run log: hour columns, trigger
+ * diamonds in violet, run bars in lime (red when failed, blue while running), queued time dashed,
+ * PR chips in a mono outline, a now line with its clock; repeating automations are a strip of
+ * ticks. Week and Month are hour and day grids in the same colours. Grid lines are backgrounds,
+ * not elements; the hover card and chips are opaque (the window is transparent:
+ * volt-transparent-window skill).
+ */
+
+.volt-auto-cal {
+	--volt-auto-cal-plan: #a78bfa;
+	--volt-auto-cal-ok: #b6e57c;
+	--volt-auto-cal-fail: #f2878f;
+	--volt-auto-cal-run: #6aa8ff;
+	--volt-auto-cal-stop: color-mix(in srgb, var(--vscode-foreground) 42%, transparent);
+	--volt-auto-cal-skip: color-mix(in srgb, var(--vscode-foreground) 30%, transparent);
+	--volt-auto-cal-grid: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+	--volt-auto-cal-grid-soft: color-mix(in srgb, var(--vscode-foreground) 3.5%, transparent);
+	--volt-auto-cal-mono: var(--monaco-monospace-font, ui-monospace, 'SF Mono', Menlo, monospace);
+	--volt-auto-cal-surface: var(--vscode-editorWidget-background, var(--vscode-editor-background, #1e1e1e));
+	position: relative;
+	border: 1px solid var(--volt-auto-line);
+	border-radius: 12px;
+	outline: none;
+	overflow: hidden;
+	contain: layout paint;
+}
+
+.monaco-workbench.vs .volt-auto-cal,
+.monaco-workbench.hc-light .volt-auto-cal {
+	--volt-auto-cal-plan: #7c3aed;
+	--volt-auto-cal-ok: #3f8f24;
+	--volt-auto-cal-fail: #d33a4f;
+	--volt-auto-cal-run: #2563eb;
+}
+
+.volt-auto-cal:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-auto-cal .plan { --volt-auto-cal-tone: var(--volt-auto-cal-plan); }
+.volt-auto-cal .ok { --volt-auto-cal-tone: var(--volt-auto-cal-ok); }
+.volt-auto-cal .fail { --volt-auto-cal-tone: var(--volt-auto-cal-fail); }
+.volt-auto-cal .run { --volt-auto-cal-tone: var(--volt-auto-cal-run); }
+.volt-auto-cal .stop { --volt-auto-cal-tone: var(--volt-auto-cal-stop); }
+.volt-auto-cal .skip { --volt-auto-cal-tone: var(--volt-auto-cal-skip); }
+
+.volt-auto-cal .clickable {
+	cursor: pointer;
+}
+
+/* ---- Toolbar: arrows, Today, the range and its time zone; the legend with counts; zoom and inactive ---- */
+
+.volt-auto-cal-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 50px;
+	padding: 0 10px 0 8px;
+	border-bottom: 1px solid var(--volt-auto-line);
+}
+
+.volt-auto-cal-toolbar .nav {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.volt-auto-cal-toolbar .nav .today {
+	margin-left: 6px;
+	height: 26px;
+}
+
+.volt-auto-cal-toolbar .title {
+	margin: 0 0 0 8px;
+	font-size: 14px;
+	font-weight: 600;
+	line-height: 20px;
+	letter-spacing: -0.005em;
+	white-space: nowrap;
+}
+
+.volt-auto-cal-toolbar .tz {
+	padding: 1px 5px;
+	border-radius: 4px;
+	background: var(--volt-auto-fill);
+	color: var(--volt-auto-muted);
+	font-family: var(--volt-auto-cal-mono);
+	font-size: 10.5px;
+	line-height: 15px;
+}
+
+.volt-auto-cal-toolbar .stats {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	margin-right: 8px;
+	color: var(--volt-auto-muted);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.volt-auto-cal-toolbar .stat {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-auto-cal-toolbar .stat .value {
+	color: var(--volt-auto-fg);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-auto-cal-toolbar .stat .mark {
+	width: 10px;
+	height: 4px;
+	border-radius: 2px;
+	background: var(--volt-auto-cal-tone);
+}
+
+.volt-auto-cal-toolbar .stat.plan .mark {
+	width: 7px;
+	height: 7px;
+	margin: 0 1px;
+	border-radius: 1px;
+	transform: rotate(45deg);
+}
+
+.volt-auto-cal-toolbar .zoom {
+	display: flex;
+	padding-left: 8px;
+	border-left: 1px solid var(--volt-auto-line);
+}
+
+.volt-auto-cal-toolbar .volt-auto-icon-button:disabled {
+	opacity: 0.32;
+	cursor: default;
+	background: transparent;
+}
+
+.volt-auto-cal-toolbar .volt-auto-icon-button.off {
+	color: var(--volt-auto-muted);
+}
+
+.volt-auto-cal-icon {
+	display: block;
+	flex: none;
+}
+
+/* The menu's anchor: a point where the click was. */
+.volt-auto-cal-anchor {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 1px;
+	height: 1px;
+	pointer-events: none;
+}
+
+/* ---- Hover card: one element, moved and refilled ---- */
+
+.volt-auto-cal-tip {
+	position: absolute;
+	top: 0;
+	left: 0;
+	z-index: 40;
+	min-width: 180px;
+	max-width: 300px;
+	padding: 10px 12px;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 13%, transparent);
+	border-radius: 10px;
+	background: var(--volt-auto-cal-surface);
+	box-shadow: 0 10px 28px rgba(0, 0, 0, 0.34), 0 1px 3px rgba(0, 0, 0, 0.2);
+	color: var(--volt-auto-soft);
+	font-size: 12px;
+	line-height: 18px;
+	pointer-events: none;
+	opacity: 0;
+	visibility: hidden;
+	transition: opacity 80ms ease;
+}
+
+.volt-auto-cal-tip.visible {
+	opacity: 1;
+	visibility: visible;
+}
+
+.volt-auto-cal-tip .head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 4px;
+	color: var(--volt-auto-fg);
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.volt-auto-cal-tip .head .mark {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--volt-auto-cal-tone);
+	flex-shrink: 0;
+}
+
+.volt-auto-cal-tip.plan .head .mark {
+	border-radius: 1px;
+	transform: rotate(45deg);
+}
+
+.volt-auto-cal-tip .line {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-auto-cal-tip .hint {
+	margin-top: 6px;
+	padding-top: 6px;
+	border-top: 1px solid var(--volt-auto-hair);
+	color: var(--volt-auto-muted);
+	font-size: 11px;
+}
+
+/* ---- Filter: one dropdown in the toolbar for which automations show ---- */
+
+.volt-auto-cal-filter {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	height: 28px;
+	padding: 0 8px 0 9px;
+	border: 1px solid var(--volt-auto-line);
+	border-radius: 7px;
+	background: transparent;
+	color: var(--volt-auto-soft);
+	font-size: 12.5px;
+	white-space: nowrap;
+	cursor: pointer;
+	transition: background-color 100ms ease, color 100ms ease, border-color 100ms ease;
+}
+
+.volt-auto-cal-filter:hover,
+.volt-auto-cal-filter.open {
+	background: var(--volt-auto-hover);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+	color: var(--volt-auto-fg);
+}
+
+.volt-auto-cal-filter.filtered {
+	border-color: color-mix(in srgb, var(--volt-auto-cal-plan) 55%, transparent);
+	color: var(--volt-auto-fg);
+}
+
+.volt-auto-cal-filter .dots {
+	display: inline-flex;
+}
+
+.volt-auto-cal-filter .dots:empty {
+	display: none;
+}
+
+.volt-auto-cal-filter .dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--volt-auto-cal-hue);
+	box-shadow: 0 0 0 1.5px var(--volt-auto-cal-surface);
+}
+
+.volt-auto-cal-filter .dot + .dot {
+	margin-left: -3px;
+}
+
+.volt-auto-cal-filter .codicon {
+	font-size: 12px;
+	color: var(--volt-auto-muted);
+}
+
+/* An automation's colour in the filter menu (the menu is outside the calendar, so this class is not scoped to it). */
+.volt-auto-cal-menu-dot {
+	display: inline-block;
+	width: 9px;
+	height: 9px;
+	margin: 0 3px;
+	border-radius: 50%;
+}
+
+.volt-auto-cal-menu-dot.off {
+	opacity: 0.35;
+}
+
+/* ---- Day: the timeline ---- */
+
+.volt-auto-cal-hscroll,
+.volt-auto-cal-day-viewport {
+	width: 100%;
+}
+
+/* Room under the lanes for the horizontal scrollbar, and the hand while dragging through the day. */
+.volt-auto-cal-day.scrolls {
+	padding-bottom: 10px;
+	cursor: grab;
+}
+
+.volt-auto-cal-day.panning,
+.volt-auto-cal-day.panning .lanes {
+	cursor: grabbing;
+}
+
+.volt-auto-cal-day {
+	position: relative;
+	min-height: 240px;
+	/* Hour lines, with a faint half-hour line between. */
+	background-image:
+		linear-gradient(to right, var(--volt-auto-cal-grid) 1px, transparent 1px),
+		linear-gradient(to right, var(--volt-auto-cal-grid-soft) 1px, transparent 1px);
+	background-size: var(--volt-auto-cal-hour) 100%, calc(var(--volt-auto-cal-hour) / 2) 100%;
+	background-position: var(--volt-auto-cal-pad) 0, var(--volt-auto-cal-pad) 0;
+	background-repeat: repeat-x;
+	user-select: none;
+}
+
+/* What already happened today sits on a slightly darker ground. */
+.volt-auto-cal-day .past {
+	position: absolute;
+	top: 40px;
+	bottom: 0;
+	left: 0;
+	background: color-mix(in srgb, var(--vscode-foreground) 2%, transparent);
+	pointer-events: none;
+}
+
+.volt-auto-cal-day .axis {
+	position: relative;
+	z-index: 1;
+	height: 40px;
+	border-bottom: 1px solid var(--volt-auto-cal-grid);
+	background: var(--volt-auto-cal-surface);
+}
+
+.volt-auto-cal-day .axis .hour {
+	position: absolute;
+	top: 13px;
+	transform: translateX(-50%);
+	color: var(--volt-auto-muted);
+	font-family: var(--volt-auto-cal-mono);
+	font-size: 11px;
+	line-height: 15px;
+	letter-spacing: 0.03em;
+	transition: opacity 120ms ease;
+}
+
+.volt-auto-cal-day .axis .hour.first {
+	transform: translateX(-2px);
+}
+
+.volt-auto-cal-day .axis .hour.last {
+	transform: translateX(calc(-100% + 2px));
+}
+
+/* The now clock sits on the axis: the hours beside it step aside. */
+.volt-auto-cal-day .axis .hour.covered {
+	opacity: 0;
+}
+
+.volt-auto-cal-day .lanes {
+	position: relative;
+	cursor: copy;
+}
+
+.volt-auto-cal-day .lane {
+	position: relative;
+	height: 70px;
+	border-bottom: 1px solid var(--volt-auto-cal-grid);
+}
+
+.volt-auto-cal-day .lane.dense {
+	height: 60px;
+}
+
+.volt-auto-cal-day .lane:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 1.6%, transparent);
+}
+
+.volt-auto-cal-day .lane.inactive .track,
+.volt-auto-cal-day .lane.inactive .under,
+.volt-auto-cal-day .lane.inactive .lane-name {
+	opacity: 0.5;
+}
+
+/* The lane's name rides the left edge while the timeline scrolls under it. */
+.volt-auto-cal-day .lane-name {
+	position: sticky;
+	left: 14px;
+	z-index: 4;
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	max-width: 680px;
+	height: 18px;
+	margin-top: 11px;
+	pointer-events: none;
+	white-space: nowrap;
+}
+
+.volt-auto-cal-day .lane-name .dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--volt-auto-cal-hue);
+	flex-shrink: 0;
+}
+
+.volt-auto-cal-day .lane-name .name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--volt-auto-fg);
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.volt-auto-cal-day .lane-name .sum,
+.volt-auto-cal-day .lane-name .tally {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--volt-auto-muted);
+	font-size: 12px;
+}
+
+.volt-auto-cal-day .lane-name .tally {
+	display: inline-flex;
+	gap: 6px;
+	margin-left: 4px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-auto-cal-day .lane-name .tally .sep {
+	opacity: 0.6;
+}
+
+.volt-auto-cal-day .lane-name .tally .fail {
+	color: var(--volt-auto-cal-fail);
+}
+
+.volt-auto-cal-day .lane.add {
+	height: 46px;
+	border-bottom: none;
+}
+
+.volt-auto-cal-day .lane.add .lane-name {
+	margin-top: 14px;
+	color: var(--volt-auto-muted);
+}
+
+.volt-auto-cal-day .lane.add .codicon {
+	font-size: 13px;
+}
+
+.volt-auto-cal-day .track,
+.volt-auto-cal-day .under {
+	position: absolute;
+	left: 0;
+	right: 0;
+	pointer-events: none;
+}
+
+/* Everything on the track is centred on its middle line, 11px down. */
+.volt-auto-cal-day .track {
+	top: 34px;
+	height: 22px;
+}
+
+.volt-auto-cal-day .lane.dense .track {
+	top: 32px;
+}
+
+.volt-auto-cal-day .under {
+	top: 54px;
+	height: 14px;
+}
+
+.volt-auto-cal-day .lane.dense .under {
+	display: none;
+}
+
+.volt-auto-cal-day .track > *,
+.volt-auto-cal-day .under > * {
+	position: absolute;
+	pointer-events: auto;
+}
+
+.volt-auto-cal-day .under > span {
+	top: 0;
+	max-width: 240px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-auto-muted);
+	font-size: 11px;
+	line-height: 14px;
+	pointer-events: none;
+}
+
+.volt-auto-cal-day .under > span.caps {
+	font-family: var(--volt-auto-cal-mono);
+	font-size: 10px;
+	letter-spacing: 0.16em;
+}
+
+/* Diamonds: the automation's colour where a run was triggered, the outcome's for a run too short to draw, a ring for what is ahead. */
+.volt-auto-cal-day .dia {
+	top: 11px;
+	z-index: 3;
+	width: 10px;
+	height: 10px;
+	margin: -5px 0 0 -5px;
+	box-sizing: border-box;
+	border-radius: 2px;
+	background: var(--volt-auto-cal-hue);
+	box-shadow: 0 0 0 2px var(--volt-auto-cal-surface);
+	transform: rotate(45deg);
+	transition: transform 100ms ease;
+}
+
+.volt-auto-cal-day .dia:hover {
+	transform: rotate(45deg) scale(1.3);
+}
+
+.volt-auto-cal-day .dia.status {
+	background: var(--volt-auto-cal-tone);
+}
+
+.volt-auto-cal-day .dia.plan {
+	border: 1.5px solid var(--volt-auto-cal-hue);
+	background: var(--volt-auto-cal-surface);
+}
+
+.volt-auto-cal-day .lane.inactive .dia.plan {
+	border-style: dashed;
+}
+
+.volt-auto-cal-day .dia.skip {
+	border: 1.5px solid var(--volt-auto-cal-skip);
+	background: var(--volt-auto-cal-surface);
+}
+
+/* Run bars: rounded, in the outcome's colour. */
+.volt-auto-cal-day .bar {
+	top: 7px;
+	z-index: 2;
+	height: 8px;
+	border-radius: 4px;
+	background: var(--volt-auto-cal-tone);
+}
+
+.volt-auto-cal-day .bar:hover {
+	filter: brightness(1.12);
+}
+
+.volt-auto-cal-day .bar.run {
+	background-image: repeating-linear-gradient(-45deg, transparent 0 4px, rgba(255, 255, 255, 0.26) 4px 8px);
+	background-size: 11.3px 11.3px;
+	animation: volt-auto-cal-run 0.9s linear infinite;
+}
+
+@keyframes volt-auto-cal-run {
+	to {
+		background-position: 11.3px 0;
+	}
+}
+
+.volt-auto-cal-day .bar.expected {
+	z-index: 1;
+	box-sizing: border-box;
+	border: 1px dashed color-mix(in srgb, var(--volt-auto-cal-hue) 50%, transparent);
+	background: color-mix(in srgb, var(--volt-auto-cal-hue) 6%, transparent);
+	pointer-events: none;
+}
+
+.volt-auto-cal-day .queue {
+	top: 7px;
+	z-index: 1;
+	height: 8px;
+	box-sizing: border-box;
+	border: 1px dashed color-mix(in srgb, var(--vscode-foreground) 36%, transparent);
+	border-right: none;
+	border-radius: 4px 0 0 4px;
+	pointer-events: none;
+}
+
+/* A repeating automation: a dot per run in its outcome's colour, then small rings for the slots ahead. */
+.volt-auto-cal-day .pip {
+	top: 11px;
+	z-index: 2;
+	width: 7px;
+	height: 7px;
+	margin: -3.5px 0 0 -3.5px;
+	box-sizing: border-box;
+	border-radius: 50%;
+	background: var(--volt-auto-cal-tone);
+	transition: transform 100ms ease;
+}
+
+.volt-auto-cal-day .pip.plan {
+	width: 6px;
+	height: 6px;
+	margin: -3px 0 0 -3px;
+	background: transparent;
+	box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--volt-auto-cal-hue) 75%, transparent);
+}
+
+.volt-auto-cal-day .pip:hover {
+	transform: scale(1.6);
+}
+
+/* Slots too close for rings: a dotted line in the automation's colour. */
+.volt-auto-cal-day .pipline {
+	top: 8px;
+	z-index: 1;
+	height: 6px;
+	background-image: radial-gradient(circle, color-mix(in srgb, var(--volt-auto-cal-hue) 80%, transparent) 1.3px, transparent 1.8px);
+	background-size: 6px 6px;
+	background-repeat: repeat-x;
+}
+
+.volt-auto-cal-day .pr {
+	top: 0;
+	z-index: 2;
+	height: 22px;
+	padding: 0 8px;
+	box-sizing: border-box;
+	border: 1px solid color-mix(in srgb, var(--volt-auto-cal-ok) 40%, transparent);
+	border-radius: 5px;
+	background: color-mix(in srgb, var(--volt-auto-cal-ok) 6%, var(--volt-auto-cal-surface));
+	color: var(--volt-auto-cal-ok);
+	font-family: var(--volt-auto-cal-mono);
+	font-size: 11.5px;
+	line-height: 20px;
+	white-space: nowrap;
+	letter-spacing: 0.03em;
+}
+
+.volt-auto-cal-day .pr:hover {
+	background: color-mix(in srgb, var(--volt-auto-cal-ok) 14%, var(--volt-auto-cal-surface));
+}
+
+/* Now: a line through every lane and its clock on the axis. */
+.volt-auto-cal-day .now {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	z-index: 5;
+	width: 1px;
+	background: color-mix(in srgb, var(--vscode-foreground) 42%, transparent);
+	pointer-events: none;
+}
+
+.volt-auto-cal-day .now .badge {
+	position: absolute;
+	top: 7px;
+	left: 0;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 26px;
+	padding: 0 9px 0 8px;
+	box-sizing: border-box;
+	transform: translateX(-50%);
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 20%, transparent);
+	border-radius: 6px;
+	background: var(--volt-auto-cal-surface);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+	color: var(--volt-auto-fg);
+	font-family: var(--volt-auto-cal-mono);
+	font-size: 12.5px;
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+.volt-auto-cal-day .now .badge svg {
+	color: var(--volt-auto-cal-plan);
+}
+
+/* The time under the pointer, offered for a new schedule. */
+.volt-auto-cal-day .ghost {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	z-index: 6;
+	width: 0;
+	border-left: 1px dashed color-mix(in srgb, var(--volt-auto-cal-plan) 75%, transparent);
+	pointer-events: none;
+	opacity: 0;
+}
+
+.volt-auto-cal-day .ghost.visible {
+	opacity: 1;
+}
+
+.volt-auto-cal-day .ghost .badge {
+	position: absolute;
+	top: 10px;
+	left: 0;
+	transform: translateX(-50%);
+	padding: 1px 6px;
+	border-radius: 4px;
+	background: var(--volt-auto-cal-plan);
+	color: #fff;
+	font-family: var(--volt-auto-cal-mono);
+	font-size: 11px;
+	line-height: 18px;
+	white-space: nowrap;
+}
+
+.volt-auto-cal.picking .volt-auto-cal-day .ghost .badge {
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--volt-auto-cal-plan) 25%, transparent);
+}
+
+/* ---- Week ---- */
+
+.volt-auto-cal-week {
+	--volt-auto-cal-gutter: 58px;
+	user-select: none;
+}
+
+.volt-auto-cal-week .wk-head,
+.volt-auto-cal-week .wk-spans {
+	display: grid;
+	grid-template-columns: var(--volt-auto-cal-gutter) minmax(0, 1fr);
+	border-bottom: 1px solid var(--volt-auto-cal-grid);
+}
+
+.volt-auto-cal-week .wk-head {
+	grid-template-columns: var(--volt-auto-cal-gutter) repeat(7, minmax(0, 1fr));
+}
+
+.volt-auto-cal-week .wk-head > .gutter {
+	align-self: center;
+	padding-right: 10px;
+	color: var(--volt-auto-muted);
+	font-family: var(--volt-auto-cal-mono);
+	font-size: 10px;
+	text-align: right;
+}
+
+.volt-auto-cal-week .wk-day {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	height: 48px;
+	border: none;
+	border-left: 1px solid var(--volt-auto-cal-grid);
+	background: transparent;
+	color: var(--volt-auto-soft);
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-auto-cal-week .wk-day:hover {
+	background: var(--volt-auto-hover);
+	color: var(--volt-auto-fg);
+}
+
+.volt-auto-cal-week .wk-day .dow {
+	font-size: 10.5px;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.volt-auto-cal-week .wk-day .num {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 28px;
+	height: 28px;
+	border-radius: 14px;
+	color: var(--volt-auto-fg);
+	font-size: 15px;
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-auto-cal-week .wk-day.past {
+	color: var(--volt-auto-muted);
+}
+
+.volt-auto-cal-week .wk-day.past .num {
+	color: var(--volt-auto-soft);
+}
+
+.volt-auto-cal-week .wk-day.today {
+	color: var(--volt-auto-cal-plan);
+}
+
+.volt-auto-cal-week .wk-day.today .num {
+	background: var(--volt-auto-cal-plan);
+	color: #fff;
+	font-weight: 600;
+}
+
+/* Repeating automations: one bar each across the days they run, like all-day events. */
+.volt-auto-cal-week .wk-spans > .gutter {
+	display: flex;
+	justify-content: flex-end;
+	padding: 12px 12px 0 0;
+	color: var(--volt-auto-muted);
+}
+
+.volt-auto-cal-week .wk-spans .area {
+	padding: 5px 0 6px;
+	border-left: 1px solid var(--volt-auto-cal-grid);
+}
+
+.volt-auto-cal-week .span-row {
+	position: relative;
+	height: 28px;
+}
+
+.volt-auto-cal-week .span {
+	position: absolute;
+	top: 3px;
+	height: 22px;
+	overflow: hidden;
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--volt-auto-cal-hue) 11%, var(--volt-auto-cal-surface));
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--volt-auto-cal-hue) 26%, transparent);
+}
+
+.volt-auto-cal-week .span.inactive {
+	opacity: 0.5;
+}
+
+.volt-auto-cal-week .span .seg {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	transition: background-color 100ms ease;
+}
+
+.volt-auto-cal-week .span .seg + .seg {
+	box-shadow: inset 1px 0 0 color-mix(in srgb, var(--volt-auto-cal-hue) 18%, transparent);
+}
+
+/* Days that are over: the bar is fuller where it has run. */
+.volt-auto-cal-week .span .seg.done {
+	background: color-mix(in srgb, var(--volt-auto-cal-hue) 9%, transparent);
+}
+
+.volt-auto-cal-week .span .seg:hover {
+	background: color-mix(in srgb, var(--volt-auto-cal-hue) 18%, transparent);
+}
+
+.volt-auto-cal-week .span .seg.fail {
+	background: color-mix(in srgb, var(--volt-auto-cal-fail) 12%, transparent);
+	box-shadow: inset 0 -2px 0 var(--volt-auto-cal-fail);
+}
+
+.volt-auto-cal-week .span .seg.fail + .seg {
+	box-shadow: none;
+}
+
+.volt-auto-cal-week .span .label {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 9px;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	max-width: calc(100% - 56px);
+	overflow: hidden;
+	pointer-events: none;
+	white-space: nowrap;
+	font-size: 11.5px;
+}
+
+.volt-auto-cal-week .span .label .dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--volt-auto-cal-hue);
+	flex-shrink: 0;
+}
+
+.volt-auto-cal-week .span .label .name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--volt-auto-fg);
+	font-weight: 600;
+}
+
+.volt-auto-cal-week .span .label .sum {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--volt-auto-muted);
+}
+
+.volt-auto-cal-vscroll {
+	width: 100%;
+}
+
+.volt-auto-cal-week .wk-grid {
+	position: relative;
+	display: grid;
+	grid-template-columns: var(--volt-auto-cal-gutter) repeat(7, minmax(0, 1fr));
+	background-image: linear-gradient(to bottom, var(--volt-auto-cal-grid) 1px, transparent 1px);
+	background-size: 100% var(--volt-auto-cal-hour);
+}
+
+.volt-auto-cal-week .wk-grid > .gutter {
+	position: relative;
+	background: var(--volt-auto-cal-surface);
+}
+
+.volt-auto-cal-week .wk-grid > .gutter span {
+	position: absolute;
+	right: 10px;
+	transform: translateY(-50%);
+	color: var(--volt-auto-muted);
+	font-family: var(--volt-auto-cal-mono);
+	font-size: 10.5px;
+}
+
+.volt-auto-cal-week .wk-col {
+	position: relative;
+	border-left: 1px solid var(--volt-auto-cal-grid);
+	cursor: copy;
+	background-image: linear-gradient(to bottom, var(--volt-auto-cal-grid-soft) 1px, transparent 1px);
+	background-size: 100% calc(var(--volt-auto-cal-hour) / 2);
+	background-position: 0 calc(var(--volt-auto-cal-hour) / 2);
+}
+
+.volt-auto-cal-week .wk-col.weekend,
+.volt-auto-cal-month .mo-cell.weekend {
+	background-color: color-mix(in srgb, var(--vscode-foreground) 1.6%, transparent);
+}
+
+.volt-auto-cal-week .wk-col.today {
+	background-color: color-mix(in srgb, var(--volt-auto-cal-plan) 4%, transparent);
+}
+
+/* A block in the automation's colour: a tint with an even hairline all round (never a one-sided rule); how it went in the corner. */
+.volt-auto-cal-week .wk-ev {
+	container-type: inline-size;
+	position: absolute;
+	z-index: 2;
+	box-sizing: border-box;
+	padding: 0 18px 0 8px;
+	overflow: hidden;
+	border-radius: 5px;
+	background: color-mix(in srgb, var(--volt-auto-cal-hue) 15%, var(--volt-auto-cal-surface));
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--volt-auto-cal-hue) 38%, transparent);
+	color: var(--volt-auto-fg);
+	font-size: 11.5px;
+	line-height: 15px;
+	white-space: nowrap;
+	transition: background-color 100ms ease;
+}
+
+.volt-auto-cal-week .wk-ev:hover {
+	z-index: 20;
+	background: color-mix(in srgb, var(--volt-auto-cal-hue) 24%, var(--volt-auto-cal-surface));
+}
+
+.volt-auto-cal-week .wk-ev .text {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 100%;
+	min-width: 0;
+}
+
+.volt-auto-cal-week .wk-ev .name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-weight: 500;
+}
+
+.volt-auto-cal-week .wk-ev .time {
+	flex-shrink: 0;
+	color: var(--volt-auto-soft);
+	font-family: var(--volt-auto-cal-mono);
+	font-size: 10px;
+	opacity: 0.85;
+}
+
+.volt-auto-cal-week .wk-ev.tall .text {
+	flex-direction: column;
+	align-items: stretch;
+	justify-content: flex-start;
+	gap: 1px;
+	padding-top: 4px;
+}
+
+.volt-auto-cal-week .wk-ev.tall .time {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-auto-cal-week .wk-ev .state {
+	position: absolute;
+	top: 4px;
+	right: 4px;
+	display: flex;
+	color: var(--volt-auto-cal-tone);
+}
+
+.volt-auto-cal-week .wk-ev .state .codicon {
+	font-size: 11px;
+}
+
+.volt-auto-cal-week .wk-ev.run .state {
+	animation: volt-auto-pulse 1.6s ease-in-out infinite;
+}
+
+.volt-auto-cal-week .wk-ev.fail {
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--volt-auto-cal-fail) 60%, transparent);
+}
+
+.volt-auto-cal-week .wk-ev.plan {
+	padding-left: 8px;
+	background: color-mix(in srgb, var(--volt-auto-cal-hue) 5%, var(--volt-auto-cal-surface));
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--volt-auto-cal-hue) 45%, transparent);
+	border: 1px dashed transparent;
+}
+
+.volt-auto-cal-week .wk-ev.plan:hover {
+	background: color-mix(in srgb, var(--volt-auto-cal-hue) 13%, var(--volt-auto-cal-surface));
+}
+
+.volt-auto-cal-week .wk-ev.inactive {
+	opacity: 0.45;
+}
+
+/* A narrow one-line block keeps its name; the time is in its hover card. */
+@container (max-width: 104px) {
+	.volt-auto-cal-week .wk-ev:not(.tall) .time {
+		display: none;
+	}
+}
+
+.volt-auto-cal-week .wk-now {
+	position: absolute;
+	left: -1px;
+	right: 0;
+	z-index: 30;
+	height: 2px;
+	margin-top: -1px;
+	background: var(--volt-auto-cal-plan);
+	pointer-events: none;
+}
+
+.volt-auto-cal-week .wk-now::before {
+	content: '';
+	position: absolute;
+	top: -4px;
+	left: -5px;
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	background: var(--volt-auto-cal-plan);
+}
+
+/* The half hour under the pointer, below the blocks. */
+.volt-auto-cal-week .wk-ghost {
+	position: absolute;
+	z-index: 1;
+	display: none;
+	box-sizing: border-box;
+	padding: 3px 7px;
+	border-radius: 5px;
+	background: color-mix(in srgb, var(--volt-auto-cal-plan) 14%, transparent);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--volt-auto-cal-plan) 45%, transparent);
+	color: var(--volt-auto-cal-plan);
+	font-family: var(--volt-auto-cal-mono);
+	font-size: 10.5px;
+	line-height: 14px;
+	pointer-events: none;
+}
+
+.volt-auto-cal-week .wk-ghost.visible {
+	display: block;
+}
+
+/* ---- Month ---- */
+
+.volt-auto-cal-month {
+	user-select: none;
+}
+
+.volt-auto-cal-month .mo-head {
+	display: grid;
+	grid-template-columns: repeat(7, minmax(0, 1fr));
+	height: 34px;
+	border-bottom: 1px solid var(--volt-auto-cal-grid);
+}
+
+.volt-auto-cal-month .mo-head span {
+	padding: 11px 12px 0;
+	color: var(--volt-auto-muted);
+	font-size: 10.5px;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.volt-auto-cal-month .mo-grid {
+	display: grid;
+	grid-template-columns: repeat(7, minmax(0, 1fr));
+	grid-auto-rows: minmax(112px, auto);
+}
+
+.volt-auto-cal-month .mo-cell {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+	padding: 6px 6px 7px;
+	border-right: 1px solid var(--volt-auto-cal-grid);
+	border-bottom: 1px solid var(--volt-auto-cal-grid);
+	cursor: copy;
+	transition: background-color 100ms ease;
+}
+
+.volt-auto-cal-month .mo-cell:nth-child(7n) {
+	border-right: none;
+}
+
+.volt-auto-cal-month .mo-cell:nth-last-child(-n + 7) {
+	border-bottom: none;
+}
+
+.volt-auto-cal-month .mo-cell:hover,
+.volt-auto-cal-month .mo-cell.picked {
+	background-color: color-mix(in srgb, var(--volt-auto-cal-plan) 5%, transparent);
+}
+
+.volt-auto-cal-month .mo-cell.out .mo-num,
+.volt-auto-cal-month .mo-cell.out .mo-list,
+.volt-auto-cal-month .mo-cell.out .mo-dots {
+	opacity: 0.4;
+}
+
+.volt-auto-cal-month .mo-num {
+	align-self: flex-start;
+	min-width: 26px;
+	height: 26px;
+	padding: 0 7px;
+	border: none;
+	border-radius: 13px;
+	background: transparent;
+	color: var(--volt-auto-soft);
+	font-size: 12.5px;
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+	cursor: pointer;
+}
+
+.volt-auto-cal-month .mo-num:hover {
+	background: var(--volt-auto-fill);
+	color: var(--volt-auto-fg);
+}
+
+.volt-auto-cal-month .mo-cell.past .mo-num {
+	color: var(--volt-auto-muted);
+}
+
+.volt-auto-cal-month .mo-cell.today .mo-num {
+	background: var(--volt-auto-cal-plan);
+	color: #fff;
+	font-weight: 600;
+}
+
+.volt-auto-cal-month .mo-list {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 0;
+}
+
+/* A day's news: failures, pull requests, events, schedules rarer than daily. */
+.volt-auto-cal-month .mo-line {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	height: 20px;
+	padding: 0 5px;
+	border-radius: 4px;
+	color: var(--volt-auto-fg);
+	font-size: 11.5px;
+	white-space: nowrap;
+	transition: background-color 100ms ease;
+}
+
+.volt-auto-cal-month .mo-line:hover {
+	background: color-mix(in srgb, var(--volt-auto-cal-hue) 14%, var(--volt-auto-cal-surface));
+}
+
+.volt-auto-cal-month .mo-line .mark {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--volt-auto-cal-hue);
+	flex-shrink: 0;
+}
+
+.volt-auto-cal-month .mo-line.plan .mark {
+	border-radius: 1px;
+	transform: rotate(45deg);
+	background: transparent;
+	box-shadow: inset 0 0 0 1.5px var(--volt-auto-cal-hue);
+}
+
+.volt-auto-cal-month .mo-line.fail .mark {
+	background: var(--volt-auto-cal-fail);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--volt-auto-cal-fail) 25%, transparent);
+}
+
+.volt-auto-cal-month .mo-line.fail .time {
+	color: var(--volt-auto-cal-fail);
+}
+
+.volt-auto-cal-month .mo-line.inactive {
+	opacity: 0.5;
+}
+
+.volt-auto-cal-month .mo-line .name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-auto-cal-month .mo-line .time {
+	flex-shrink: 0;
+	color: var(--volt-auto-muted);
+	font-family: var(--volt-auto-cal-mono);
+	font-size: 10px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-auto-cal-month .mo-line .pr {
+	flex-shrink: 0;
+	padding: 0 4px;
+	border-radius: 3px;
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--volt-auto-cal-ok) 40%, transparent);
+	color: var(--volt-auto-cal-ok);
+	font-family: var(--volt-auto-cal-mono);
+	font-size: 10px;
+	line-height: 14px;
+}
+
+.volt-auto-cal-month .mo-more {
+	align-self: flex-start;
+	padding: 0 5px;
+	border: none;
+	background: none;
+	color: var(--volt-auto-muted);
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.volt-auto-cal-month .mo-more:hover {
+	color: var(--volt-auto-fg);
+	text-decoration: underline;
+}
+
+/* The day's automations as dots in their colours: filled when ran, a ring when ahead, red when failed. */
+.volt-auto-cal-month .mo-dots {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	align-self: flex-start;
+	gap: 4px;
+	margin-top: auto;
+	padding: 4px 5px;
+	border-radius: 5px;
+	transition: background-color 100ms ease;
+}
+
+.volt-auto-cal-month .mo-dots:hover {
+	background: var(--volt-auto-fill);
+}
+
+.volt-auto-cal-month .mo-dots .dot {
+	width: 7px;
+	height: 7px;
+	box-sizing: border-box;
+	border-radius: 50%;
+	background: var(--volt-auto-cal-hue);
+}
+
+.volt-auto-cal-month .mo-dots .dot.plan {
+	background: transparent;
+	box-shadow: inset 0 0 0 1.5px var(--volt-auto-cal-hue);
+}
+
+.volt-auto-cal-month .mo-dots .dot.fail {
+	background: var(--volt-auto-cal-fail);
+}
+
+.volt-auto-cal-month .mo-dots .dot.inactive {
+	opacity: 0.4;
+}
+
+.volt-auto-cal-month .mo-dots .extra {
+	color: var(--volt-auto-muted);
+	font-family: var(--volt-auto-cal-mono);
+	font-size: 9.5px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-auto-cal-day .bar.run,
+	.volt-auto-cal-week .wk-ev.run .state {
+		animation: none;
+	}
+}

@@ -6,16 +6,23 @@
 import { buildChatSections, type IChatListItem, type IChatSection, selectProjects } from '@volt/client-core';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { SectionList, StyleSheet, TextInput, View } from 'react-native';
+import { SectionList, StyleSheet, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChatRow } from '../src/home/ChatRow';
 import { inboxItems } from '../src/home/inbox';
 import { openChat, useChatMenu } from '../src/home/useChatMenu';
 import { useChatItems, useCollections, useOptionalClient } from '../src/state/client';
 import { useTheme } from '../src/theme/theme';
+import { useReadableInset } from '../src/ui/adaptive';
 import { EmptyState, Icon, IconButton, T, Tap } from '../src/ui/core';
+import { useHeaderScroll } from '../src/ui/header';
 import { Chips } from '../src/ui/rows';
+import { SearchField } from '../src/ui/SearchField';
 import { ActionSheet, type ISheetAction } from '../src/ui/sheets';
+
+type ChatSectionData = IChatSection & { readonly data: IChatListItem[] };
+const AnimatedSectionList = Animated.createAnimatedComponent(SectionList<IChatListItem, ChatSectionData>);
 
 export type ChatsFilter = 'all' | 'needs' | 'working' | 'unread' | 'pinned' | 'settled' | 'archived';
 
@@ -38,6 +45,8 @@ export default function ChatsScreen() {
  * by day; Snoozed and Settled folded), with filters, search and a project filter.
  */
 function Chats() {
+	const onHeaderScroll = useHeaderScroll();
+	const inset = useReadableInset();
 	const { p } = useTheme();
 	const insets = useSafeAreaInsets();
 	const params = useLocalSearchParams<{ filter?: string; search?: string; project?: string }>();
@@ -83,23 +92,20 @@ function Chats() {
 					</View>
 				),
 			}} />
-			<SectionList
+			<AnimatedSectionList onScroll={onHeaderScroll} scrollEventThrottle={16}
 				sections={data}
 				keyExtractor={item => item.id}
 				stickySectionHeadersEnabled={false}
 				keyboardDismissMode="on-drag"
-				contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
+				contentContainerStyle={{ paddingBottom: insets.bottom + 32, paddingHorizontal: inset }}
 				ListHeaderComponent={
-					<View style={{ paddingTop: 6 }}>
-						<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, height: 40, paddingHorizontal: 12, borderRadius: 12, backgroundColor: p.fill, marginHorizontal: 16, marginBottom: 4 }}>
-							<Icon name="search" size={16} color={p.fgTertiary} />
-							<TextInput value={query} onChangeText={setQuery} autoFocus={params.search === '1'} placeholder="Search chats" placeholderTextColor={p.fgQuaternary} autoCapitalize="none" autoCorrect={false} selectionColor={p.accent} style={{ flex: 1, color: p.fg, fontSize: 16 }} />
-						</View>
+					<View style={{ gap: 6 }}>
+						<SearchField value={query} onChange={setQuery} autoFocus={params.search === '1'} placeholder="Search chats" />
 						<Chips value={filter} options={FILTERS} onChange={setFilter} />
 					</View>
 				}
 				ItemSeparatorComponent={() => <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: p.strokeFaint, marginLeft: 50 }} />}
-				renderSectionHeader={({ section }) => <SectionHeader section={section as IChatSection} open={!!openShelves[section.key] || !!query} onToggle={() => setOpenShelves(s => ({ ...s, [section.key]: !s[section.key] }))} />}
+				renderSectionHeader={({ section }) => <SectionHeader section={section} open={!!openShelves[section.key] || !!query} onToggle={() => setOpenShelves(s => ({ ...s, [section.key]: !s[section.key] }))} />}
 				renderItem={({ item }) => <ChatRow item={item} onPress={openChat} onLongPress={menu.show} />}
 				ListEmptyComponent={<EmptyState icon={query ? 'search' : 'message'} title={query ? 'No chats match' : 'No chats here'} />}
 			/>

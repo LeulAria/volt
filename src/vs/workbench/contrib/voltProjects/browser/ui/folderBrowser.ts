@@ -5,7 +5,7 @@
 
 import { $, addDisposableListener, append, clearNode, EventHelper, getWindow } from '../../../../../base/browser/dom.js';
 import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
-import { HighlightedLabel } from '../../../../../base/browser/ui/highlightedlabel/highlightedLabel.js';
+import { IconLabel } from '../../../../../base/browser/ui/iconLabel/iconLabel.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { InputBox, MessageType } from '../../../../../base/browser/ui/inputbox/inputBox.js';
 import { IListVirtualDelegate } from '../../../../../base/browser/ui/list/list.js';
@@ -16,17 +16,22 @@ import { isCancellationError, onUnexpectedError } from '../../../../../base/comm
 import { Emitter } from '../../../../../base/common/event.js';
 import { IMatch, matchesFuzzy } from '../../../../../base/common/filters.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
-import { Disposable, DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
+import { ILanguageService } from '../../../../../editor/common/languages/language.js';
+import { getIconClasses } from '../../../../../editor/common/services/getIconClasses.js';
+import { IModelService } from '../../../../../editor/common/services/model.js';
 import { localize } from '../../../../../nls.js';
 import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import { FileKind } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { WorkbenchAsyncDataTree } from '../../../../../platform/list/browser/listService.js';
 import { defaultInputBoxStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
 import { activeContrastBorder, listActiveSelectionBackground, listActiveSelectionForeground, listActiveSelectionIconForeground } from '../../../../../platform/theme/common/colorRegistry.js';
+import { IFileIconTheme, IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IVoltFsBrowseService, IVoltFsEntry, IVoltFsListing, IVoltQuickAccessRoot } from '../../../../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { browseDirectory, browseLeaf, BrowseGeneration, ensureTrailingSeparator, hasTrailingSeparator, parentDirectory, tildify, untildify } from '../../common/browsePath.js';
 import { rankFolders } from '../../common/folderSearch.js';
@@ -44,18 +49,23 @@ export interface IFolderBrowserOptions {
 	readonly acceptLabel?: string;
 	/** What Escape does here, for the footer hint. Defaults to "Close". */
 	readonly escapeLabel?: string;
+	/** The line above the folders, e.g. what the pick is for. Defaults to "Directories". */
+	readonly caption?: string;
 }
 
 interface IFolderRow { readonly kind: 'folder'; readonly id: string; readonly entry: IVoltFsEntry; readonly matches?: IMatch[]; readonly added: boolean; readonly location?: string }
+/** Files are listed so a folder is easy to recognise, but only folders can be picked. */
+interface IFileRow { readonly kind: 'file'; readonly id: string; readonly entry: IVoltFsEntry; readonly matches?: IMatch[] }
 type Row =
 	| IFolderRow
+	| IFileRow
 	| { readonly kind: 'message'; readonly id: string; readonly text: string; readonly error?: boolean };
 
 /** The tree's input: its children are the rows of the folder shown (or the search results). */
 const TREE_ROOT = { kind: 'root' } as const;
 type TreeRoot = typeof TREE_ROOT;
 
-const ROW_HEIGHT = 32;
+const ROW_HEIGHT = 28;
 /** Registered by the desktop files contribution; the footer link hides without it. */
 const REVEAL_IN_OS_COMMAND_ID = 'revealFileInOS';
 /** Listings survive closing the dialog, so it paints at once next time; every open still re-reads. */
@@ -69,7 +79,9 @@ let cachedHome: string | undefined;
  * your home. The folders are a workbench tree driven from the path field: ↑↓ move, → expands a
  * folder in place, ← collapses it or goes to its parent, Enter adds the focused folder, and Tab
  * (or a double click) goes into it. Listings come from the main process in one call per folder,
- * are painted from cache, and are always re-read.
+ * are painted from cache, and are always re-read. Rows look like the Explorer's: the file icon
+ * theme's folder and file icons (a folder opens when expanded), with files shown dimmed so a
+ * folder is easy to recognise; only folders can be focused and picked.
  */
 export class FolderBrowser extends Disposable {
 
@@ -90,6 +102,9 @@ export class FolderBrowser extends Disposable {
 	private readonly tree: WorkbenchAsyncDataTree<TreeRoot, Row>;
 	/** Only the latest refresh of the tree's top rows moves the focus. */
 	private renderGeneration = 0;
+	private renderedGeneration = 0;
+	/** Enter came before the typed path's folder was listed: accept once it is. */
+	private acceptWhenListed = false;
 	private readonly generation = new BrowseGeneration();
 	private readonly newFolderStore = this._register(new DisposableStore());
 	private readonly searchScheduler: RunOnceScheduler;
@@ -101,6 +116,9 @@ export class FolderBrowser extends Disposable {
 	private listing: IVoltFsListing | undefined;
 	private rows: Row[] = [];
 	private showHidden: boolean;
+	private readonly showFiles: boolean;
+	/** The folder a click on a file or message goes back to. */
+	private lastFocus: IFolderRow | undefined;
 	private searching = false;
 	private searchId: string | undefined;
 	private searchResults: IVoltFsEntry[] = [];
@@ -114,9 +132,13 @@ export class FolderBrowser extends Disposable {
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@ICommandService private readonly commandService: ICommandService,
 		@IInstantiationService instantiationService: IInstantiationService,
+		@IThemeService themeService: IThemeService,
+		@IModelService modelService: IModelService,
+		@ILanguageService languageService: ILanguageService,
 	) {
 		super();
 		this.showHidden = this.configurationService.getValue<boolean>('volt.projects.showHiddenFolders') === true;
+		this.showFiles = this.configurationService.getValue<boolean>('volt.projects.folderPickerShowFiles') !== false;
 		this.element = append(container, $('.volt-folder-browser'));
 
 		const head = append(this.element, $('.volt-folder-head'));
@@ -154,11 +176,14 @@ export class FolderBrowser extends Disposable {
 
 		this.section = append(this.element, $('.volt-folder-section'));
 		this.listHost = append(this.element, $('.volt-folder-list'));
+		this._register(fileIconThemeScope(this.listHost, themeService));
+		const icons = this._register(new IconClasses(modelService, languageService));
 		const dataSource: IAsyncDataSource<TreeRoot, Row> = {
-			hasChildren: element => element === TREE_ROOT || (element.kind === 'folder' && this.mayHaveSubfolders(element.entry.path)),
-			getChildren: element => element === TREE_ROOT ? this.rows : element.kind === 'folder' ? this.subfolders(element) : [],
+			hasChildren: element => element === TREE_ROOT || (element.kind === 'folder' && this.mayHaveChildren(element.entry.path)),
+			getChildren: element => element === TREE_ROOT ? this.rows : element.kind === 'folder' ? this.children(element) : [],
 		};
-		this.tree = this._register(instantiationService.createInstance(WorkbenchAsyncDataTree<TreeRoot, Row>, 'VoltFolderBrowser', this.listHost, new RowDelegate(), [new FolderRenderer(), new MessageRenderer()], dataSource, {
+		const renderers = [new EntryRenderer('folder', icons), new EntryRenderer('file', icons), new MessageRenderer()];
+		this.tree = this._register(instantiationService.createInstance(WorkbenchAsyncDataTree<TreeRoot, Row>, 'VoltFolderBrowser', this.listHost, new RowDelegate(), renderers, dataSource, {
 			identityProvider: { getId: row => row.id },
 			multipleSelectionSupport: false,
 			horizontalScrolling: false,
@@ -168,7 +193,8 @@ export class FolderBrowser extends Disposable {
 			accessibilityProvider: {
 				getWidgetAriaLabel: () => localize('voltFolders.listAria', "Folders"),
 				getRole: row => row.kind === 'message' ? 'presentation' : 'treeitem',
-				getAriaLabel: row => row.kind === 'folder' ? `${row.entry.name}${row.entry.gitRepo ? ', git' : ''}${row.added ? ', added' : ''}` : row.text,
+				getAriaLabel: row => row.kind === 'folder' ? `${row.entry.name}${row.entry.gitRepo ? ', git' : ''}${row.added ? ', added' : ''}`
+					: row.kind === 'file' ? localize('voltFolders.fileAria', "{0}, file", row.entry.name) : row.text,
 			},
 			// Keys stay in the path field, so the list never holds DOM focus: its focused row takes the
 			// list's active selection colors, like a quick pick. Outlines only in high contrast.
@@ -196,10 +222,14 @@ export class FolderBrowser extends Disposable {
 		// The path field drives the tree, so keys always land there.
 		this._register(this.tree.onDidFocus(() => this.input.focus()));
 		this._register(this.tree.onDidChangeFocus(e => {
-			// A click on a message row focuses nothing. Keys step over messages themselves (settleFocus).
-			if (e.elements[0]?.kind === 'message' && e.browserEvent) {
-				this.tree.setFocus([]);
+			const focused = e.elements[0];
+			// A click on a file or a message keeps the folder that was focused. Keys only stop on folders (moveFocus).
+			if (focused && focused.kind !== 'folder' && e.browserEvent) {
+				this.tree.setFocus(this.lastFocus && this.tree.hasNode(this.lastFocus) ? [this.lastFocus] : []);
 				return;
+			}
+			if (focused?.kind === 'folder') {
+				this.lastFocus = focused;
 			}
 			this.fireTarget();
 		}));
@@ -245,7 +275,8 @@ export class FolderBrowser extends Disposable {
 		if (row?.kind === 'folder') {
 			return row.entry.path;
 		}
-		return this.searching ? undefined : this.dir ? stripTrailing(this.dir) : undefined;
+		// A typed name that matches no folder adds nothing, not the folder it is typed in.
+		return this.searching || browseLeaf(this.input.value) ? undefined : this.dir ? stripTrailing(this.dir) : undefined;
 	}
 
 	get currentFolder(): string {
@@ -308,8 +339,13 @@ export class FolderBrowser extends Disposable {
 			return;
 		}
 		this.home = cachedHome = home;
-		const start = this.options.initialPath || roots.find(root => root.id === 'code')?.path || home;
-		this.setPath(ensureTrailingSeparator(start));
+		if (this.input.value) {
+			// Typed or pasted while the start folder was looked up (a round trip in the browser): keep it.
+			this.onInput();
+		} else {
+			const start = this.options.initialPath || roots.find(root => root.id === 'code')?.path || home;
+			this.setPath(ensureTrailingSeparator(start));
+		}
 		if (this.newFolderRequested) {
 			this.newFolderRequested = false;
 			this.startNewFolder();
@@ -336,8 +372,12 @@ export class FolderBrowser extends Disposable {
 
 	private accept(): void {
 		const target = this.target;
+		this.acceptWhenListed = false;
 		if (target) {
 			this.options.onAccept(target);
+		} else if (!this.searching && browseLeaf(this.input.value)) {
+			// Enter right after pasting or typing a path: its folder is still being listed.
+			this.acceptWhenListed = !this.listing || this.renderedGeneration !== this.renderGeneration;
 		}
 	}
 
@@ -354,6 +394,7 @@ export class FolderBrowser extends Disposable {
 	}
 
 	private onInput(): void {
+		this.acceptWhenListed = false;
 		if (this.searching) {
 			this.searchScheduler.schedule();
 			return;
@@ -372,7 +413,7 @@ export class FolderBrowser extends Disposable {
 			return;
 		}
 		const generation = this.generation.next();
-		const key = `${this.showHidden ? 'h' : ''}:${dir}`;
+		const key = this.cacheKey(dir);
 		const changed = dir !== this.dir;
 		this.dir = dir;
 		const cached = listingCache.get(key);
@@ -383,7 +424,7 @@ export class FolderBrowser extends Disposable {
 			this.listing = undefined;
 			this.renderRows(true);
 		}
-		const fresh = await this.fsBrowse.list(dir, { showHidden: this.showHidden, dirsOnly: true }).catch((): IVoltFsListing => ({ path: dir, entries: [], truncated: false, error: 'notFound' }));
+		const fresh = await this.read(dir);
 		if (!this.generation.isCurrent(generation) || this._store.isDisposed) {
 			return;
 		}
@@ -429,26 +470,30 @@ export class FolderBrowser extends Disposable {
 			} else if (this.listing.error) {
 				rows.push({ kind: 'message', id: 'error', error: true, text: listErrorText(this.listing.error) });
 			} else {
-				const prefix: Row[] = [];
-				const fuzzy: Row[] = [];
+				// Folders before files; inside each, names that start with the filter before fuzzy matches.
+				const folders: Row[] = [];
+				const folderMatches: Row[] = [];
+				const files: Row[] = [];
+				const fileMatches: Row[] = [];
 				const lowerLeaf = leaf.toLowerCase();
 				for (const entry of this.listing.entries) {
 					if (entry.hidden && !this.showHidden && !leaf.startsWith('.')) {
 						continue;
 					}
-					if (!leaf) {
-						prefix.push({ kind: 'folder', id: entry.path, entry, added: added.has(entry.path) });
+					const matches = leaf ? matchesFuzzy(leaf, entry.name, true) : undefined;
+					if (leaf && !matches) {
 						continue;
 					}
-					const matches = matchesFuzzy(leaf, entry.name, true);
-					if (!matches) {
-						continue;
+					const prefix = !leaf || entry.name.toLowerCase().startsWith(lowerLeaf);
+					if (entry.kind === 'dir') {
+						(prefix ? folders : folderMatches).push({ kind: 'folder', id: entry.path, entry, matches: matches ?? undefined, added: added.has(entry.path) });
+					} else {
+						(prefix ? files : fileMatches).push({ kind: 'file', id: entry.path, entry, matches: matches ?? undefined });
 					}
-					(entry.name.toLowerCase().startsWith(lowerLeaf) ? prefix : fuzzy).push({ kind: 'folder', id: entry.path, entry, matches, added: added.has(entry.path) });
 				}
-				rows.push(...prefix, ...fuzzy);
-				if (!prefix.length && !fuzzy.length) {
-					rows.push({ kind: 'message', id: 'empty', text: leaf ? localize('voltFolders.noMatch', "No folder named \"{0}\" here", leaf) : localize('voltFolders.empty', "No folders here") });
+				rows.push(...folders, ...folderMatches, ...files, ...fileMatches);
+				if (!rows.length) {
+					rows.push({ kind: 'message', id: 'empty', text: leaf ? localize('voltFolders.noMatch', "No folder named \"{0}\" here", leaf) : this.showFiles ? localize('voltFolders.emptyFolder', "This folder is empty") : localize('voltFolders.empty', "No folders here") });
 				}
 			}
 		}
@@ -469,7 +514,11 @@ export class FolderBrowser extends Disposable {
 					this.tree.scrollTop = 0;
 				}
 			}
+			this.renderedGeneration = generation;
 			this.fireTarget();
+			if (this.acceptWhenListed && this.listing) {
+				this.accept();
+			}
 		}, err => {
 			if (!isCancellationError(err)) {
 				onUnexpectedError(err);
@@ -498,7 +547,13 @@ export class FolderBrowser extends Disposable {
 	}
 
 	private cacheKey(dir: string): string {
-		return `${this.showHidden ? 'h' : ''}:${dir}`;
+		return `${this.showHidden ? 'h' : ''}${this.showFiles ? 'f' : ''}:${dir}`;
+	}
+
+	/** One folder's listing from the main process; a failed call reads as "not found". */
+	private read(dir: string): Promise<IVoltFsListing> {
+		return this.fsBrowse.list(dir, { showHidden: this.showHidden, dirsOnly: !this.showFiles })
+			.catch((): IVoltFsListing => ({ path: dir, entries: [], truncated: false, error: 'notFound' }));
 	}
 
 	/** Reads the focused folder ahead, so expanding or entering it paints at once. */
@@ -510,26 +565,26 @@ export class FolderBrowser extends Disposable {
 		const dir = ensureTrailingSeparator(row.entry.path);
 		const key = this.cacheKey(dir);
 		if (!listingCache.has(key)) {
-			void this.fsBrowse.list(dir, { showHidden: this.showHidden, dirsOnly: true }).then(listing => {
+			void this.read(dir).then(listing => {
 				if (!listing.error) {
 					listingCache.set(key, listing);
 				}
-			}, () => undefined);
+			});
 		}
 	}
 
-	/** False once a read of the folder found no subfolders, so it shows no twistie. */
-	private mayHaveSubfolders(path: string): boolean {
+	/** False once a read of the folder found it empty, so it shows no twistie. */
+	private mayHaveChildren(path: string): boolean {
 		const listing = listingCache.get(this.cacheKey(ensureTrailingSeparator(path)));
 		return !listing || listing.entries.some(entry => this.showHidden || !entry.hidden);
 	}
 
 	/** An expanded folder's children: painted from cache when there is one, and always re-read. */
-	private subfolders(parent: IFolderRow): Iterable<Row> | Promise<Iterable<Row>> {
+	private children(parent: IFolderRow): Iterable<Row> | Promise<Iterable<Row>> {
 		const dir = ensureTrailingSeparator(parent.entry.path);
 		const key = this.cacheKey(dir);
 		const cached = listingCache.get(key);
-		const fresh = this.fsBrowse.list(dir, { showHidden: this.showHidden, dirsOnly: true }).catch((): IVoltFsListing => ({ path: dir, entries: [], truncated: false, error: 'notFound' }));
+		const fresh = this.read(dir);
 		if (!cached) {
 			return fresh.then(listing => {
 				if (!listing.error) {
@@ -557,51 +612,41 @@ export class FolderBrowser extends Disposable {
 		const added = this.options.addedPaths();
 		const rows: Row[] = listing.entries
 			.filter(entry => this.showHidden || !entry.hidden)
-			.map(entry => ({ kind: 'folder', id: `${parent.id}/${entry.name}`, entry, added: added.has(entry.path) }));
-		return rows.length ? rows : [{ kind: 'message', id: `${parent.id}#empty`, text: localize('voltFolders.noSubfolders', "No folders inside") }];
+			.map((entry): Row => entry.kind === 'dir'
+				? { kind: 'folder', id: `${parent.id}/${entry.name}`, entry, added: added.has(entry.path) }
+				: { kind: 'file', id: `${parent.id}/${entry.name}`, entry });
+		return rows.length ? rows : [{ kind: 'message', id: `${parent.id}#empty`, text: this.showFiles ? localize('voltFolders.emptyFolder', "This folder is empty") : localize('voltFolders.noSubfolders', "No folders inside") }];
 	}
 
-	/** Moves the focus over folder rows, skipping messages; stays put at either end. */
+	/** Moves the focus over folder rows, stepping over files and messages; stays put at either end. */
 	private moveFocus(delta: 1 | -1, page = false): void {
 		const start = this.focusedRow();
-		if (!start) {
-			if (delta > 0) {
-				this.tree.focusFirst();
-			} else {
-				this.tree.focusLast();
-			}
-		} else if (page) {
-			void (delta > 0 ? this.tree.focusNextPage() : this.tree.focusPreviousPage()).then(() => this.settleFocus(delta, start));
+		if (page && start) {
+			// A page down (or up) lands wherever it lands, then settles on the nearest folder.
+			void (delta > 0 ? this.tree.focusNextPage() : this.tree.focusPreviousPage()).then(() => {
+				const landed = this.focusedRow();
+				this.focusFolder(landed && landed.kind !== 'folder' ? (this.nextFolder(landed, delta) ?? this.nextFolder(landed, -delta as 1 | -1)) : landed, start);
+			});
 			return;
-		} else if (delta > 0) {
-			this.tree.focusNext();
-		} else {
-			this.tree.focusPrevious();
 		}
-		this.settleFocus(delta, start);
+		this.focusFolder(this.nextFolder(start, delta), start);
 	}
 
-	/** After a move landed on a message, steps on to the next folder, or goes back to `start`. */
-	private settleFocus(delta: 1 | -1, start: Row | undefined): void {
-		let focused = this.tree.getFocus()[0];
-		for (let steps = 0; focused?.kind === 'message' && steps < 50; steps++) {
-			const before = focused;
-			if (delta > 0) {
-				this.tree.focusNext();
-			} else {
-				this.tree.focusPrevious();
-			}
-			focused = this.tree.getFocus()[0];
-			if (focused === before) {
-				break;
-			}
+	/** The first folder row after `from` in `delta`'s direction, among the rows shown (expanded folders' too). */
+	private nextFolder(from: Row | undefined, delta: 1 | -1): IFolderRow | undefined {
+		const navigator = this.tree.navigate(from);
+		let row = from ? (delta > 0 ? navigator.next() : navigator.previous()) : (delta > 0 ? navigator.first() : navigator.last());
+		while (row && row.kind !== 'folder') {
+			row = delta > 0 ? navigator.next() : navigator.previous();
 		}
-		if (focused?.kind !== 'folder') {
-			this.tree.setFocus(start && this.tree.hasNode(start) ? [start] : []);
-			focused = this.tree.getFocus()[0];
-		}
-		if (focused) {
-			this.tree.reveal(focused);
+		return row ?? undefined;
+	}
+
+	private focusFolder(row: Row | undefined, fallback: Row | undefined): void {
+		const target = row?.kind === 'folder' ? row : fallback && this.tree.hasNode(fallback) ? fallback : undefined;
+		this.tree.setFocus(target ? [target] : []);
+		if (target) {
+			this.tree.reveal(target);
 		}
 	}
 
@@ -610,13 +655,10 @@ export class FolderBrowser extends Disposable {
 		if (this.tree.isCollapsible(row) && this.tree.isCollapsed(row)) {
 			void this.tree.expand(row).catch(onUnexpectedError);
 		} else if (this.tree.isCollapsible(row)) {
-			this.tree.focusNext();
-			const child = this.focusedRow();
-			if (child?.kind === 'folder' && this.tree.getParentElement(child) === row) {
-				this.tree.reveal(child);
-			} else {
-				// No subfolder to step into ("No folders inside"): stay on the folder.
-				this.tree.setFocus([row]);
+			// Subfolders come first, so the next folder is a child or there is none to step into.
+			const child = this.nextFolder(row, 1);
+			if (child && this.tree.getParentElement(child) === row) {
+				this.focusFolder(child, row);
 			}
 		}
 	}
@@ -655,11 +697,12 @@ export class FolderBrowser extends Disposable {
 				return;
 			}
 		} else if (event.equals(KeyCode.Enter) || event.equals(KeyMod.CtrlCmd | KeyCode.Enter)) {
-			// The focused folder, else the folder being shown.
-			if (!this.target) {
+			// The focused folder, else the folder being shown; a path just typed, once its folder is listed.
+			const target = this.target;
+			this.accept();
+			if (!target && !this.acceptWhenListed) {
 				return;
 			}
-			this.accept();
 		} else if (event.equals(KeyCode.Tab) && row?.kind === 'folder') {
 			this.enter(row.entry.path);
 		} else if (event.equals(KeyMod.Alt | KeyCode.UpArrow) || event.equals(KeyMod.CtrlCmd | KeyCode.UpArrow)) {
@@ -768,7 +811,7 @@ export class FolderBrowser extends Disposable {
 	}
 
 	private renderSection(): void {
-		this.section.textContent = this.searching ? localize('voltFolders.allFolders', "All folders") : localize('voltFolders.directories', "Directories");
+		this.section.textContent = this.searching ? localize('voltFolders.allFolders', "All folders") : this.options.caption ?? localize('voltFolders.directories', "Directories");
 	}
 
 	private renderFooter(): void {
@@ -803,7 +846,7 @@ export class FolderBrowser extends Disposable {
 		this.renderSection();
 	}
 
-	private observeSize() {
+	private observeSize(): IDisposable {
 		const win = getWindow(this.element);
 		const observer = new win.ResizeObserver(() => this.tree.layout(this.listHost.clientHeight, this.listHost.clientWidth));
 		observer.observe(this.listHost);
@@ -844,45 +887,90 @@ class RowDelegate implements IListVirtualDelegate<Row> {
 	}
 }
 
-interface IFolderTemplate {
-	readonly icon: HTMLElement;
-	readonly label: HighlightedLabel;
-	readonly location: HTMLElement;
-	readonly badges: HTMLElement;
+/**
+ * Puts the file icon theme's icons on the tree, as the Explorer does: `show-file-icons` turns
+ * them on, and the theme decides whether twisties line up with icons or hide.
+ */
+function fileIconThemeScope(container: HTMLElement, themeService: IThemeService): IDisposable {
+	container.classList.add('file-icon-themable-tree', 'show-file-icons');
+	const apply = (theme: IFileIconTheme) => {
+		container.classList.toggle('align-icons-and-twisties', theme.hasFileIcons && !theme.hasFolderIcons);
+		container.classList.toggle('hide-arrows', theme.hidesExplorerArrows === true);
+	};
+	apply(themeService.getFileIconTheme());
+	return themeService.onDidFileIconThemeChange(apply);
 }
 
-class FolderRenderer implements ITreeRenderer<Row, void, IFolderTemplate> {
-	readonly templateId = 'folder';
+/** The icon theme classes of a path, kept while the picker is open (a re-render costs a map lookup). */
+class IconClasses extends Disposable {
+	private readonly cache = new Map<string, string[]>();
 
-	renderTemplate(container: HTMLElement): IFolderTemplate {
-		const row = append(container, $('.volt-folder-row'));
-		const icon = append(row, $('span.volt-folder-icon'));
-		const label = new HighlightedLabel(append(row, $('span.volt-folder-name')));
-		const location = append(row, $('span.volt-folder-location'));
-		const badges = append(row, $('span.volt-folder-badges'));
-		return { icon, label, location, badges };
+	constructor(
+		private readonly modelService: IModelService,
+		private readonly languageService: ILanguageService,
+	) {
+		super();
+		// A language registered later can change which icon a file gets.
+		this._register(languageService.onDidChange(() => this.cache.clear()));
 	}
 
-	renderElement(node: ITreeNode<Row, void>, _index: number, template: IFolderTemplate): void {
+	get(entry: IVoltFsEntry): string[] {
+		const kind = entry.kind === 'dir' ? FileKind.FOLDER : FileKind.FILE;
+		const key = `${kind}:${entry.path}`;
+		let classes = this.cache.get(key);
+		if (!classes) {
+			classes = getIconClasses(this.modelService, this.languageService, URI.file(entry.path), kind);
+			this.cache.set(key, classes);
+		}
+		return classes;
+	}
+}
+
+interface IEntryTemplate {
+	readonly row: HTMLElement;
+	readonly label: IconLabel;
+	readonly location: HTMLElement;
+	readonly git: HTMLElement;
+	readonly added: HTMLElement;
+}
+
+/** A folder or a file: its theme icon (a folder's opens while expanded), name, and for folders, where it is and its badges. */
+class EntryRenderer implements ITreeRenderer<Row, void, IEntryTemplate> {
+
+	constructor(
+		readonly templateId: 'folder' | 'file',
+		private readonly icons: IconClasses,
+	) { }
+
+	renderTemplate(container: HTMLElement): IEntryTemplate {
+		const row = append(container, $(`.volt-folder-row.${this.templateId}`));
+		const label = new IconLabel(row, { supportHighlights: true });
+		const location = append(row, $('span.volt-folder-location'));
+		const badges = append(row, $('span.volt-folder-badges'));
+		const git = append(badges, $('span.volt-folder-badge'));
+		git.textContent = 'git';
+		const added = append(badges, $('span.volt-folder-badge.added'));
+		added.textContent = localize('voltFolders.added', "Added");
+		return { row, label, location, git, added };
+	}
+
+	renderElement(node: ITreeNode<Row, void>, _index: number, template: IEntryTemplate): void {
 		const row = node.element;
-		if (row.kind !== 'folder') {
+		if (row.kind !== 'folder' && row.kind !== 'file') {
 			return;
 		}
 		const entry = row.entry;
-		clearNode(template.icon);
-		template.icon.appendChild(renderIcon(entry.gitRepo ? Codicon.repo : entry.symlink ? Codicon.fileSymlinkDirectory : Codicon.folder));
-		template.label.set(entry.name, row.matches);
-		template.location.textContent = row.location ?? '';
-		clearNode(template.badges);
-		if (entry.gitRepo) {
-			append(template.badges, $('span.volt-folder-badge')).textContent = 'git';
-		}
-		if (row.added) {
-			append(template.badges, $('span.volt-folder-badge.added')).textContent = localize('voltFolders.added', "Added");
-		}
+		template.label.setLabel(entry.name, undefined, { matches: row.matches, extraClasses: this.icons.get(entry) });
+		const folder = row.kind === 'folder' ? row : undefined;
+		// Marked left-to-right so the path keeps `~/` in front while it ellipsizes on the left.
+		template.location.textContent = folder?.location ? `\u200e${folder.location}\u200e` : '';
+		template.git.classList.toggle('hidden', !folder?.entry.gitRepo);
+		template.added.classList.toggle('hidden', !folder?.added);
 	}
 
-	disposeTemplate(): void { }
+	disposeTemplate(template: IEntryTemplate): void {
+		template.label.dispose();
+	}
 }
 
 class MessageRenderer implements ITreeRenderer<Row, void, HTMLElement> {

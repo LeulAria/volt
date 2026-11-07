@@ -232,8 +232,9 @@ if (process.platform !== 'win32') {
 			bin = join(home, 'bin');
 			await fs.mkdir(join(home, '.volt', 'awake', 'holders'), { recursive: true });
 			await fs.mkdir(bin);
-			// A fake sudo that records its arguments instead of running pmset.
-			await fs.writeFile(join(bin, 'sudo'), `#!/bin/sh\necho "$@" >> "${join(home, 'sudo.log')}"\nexit 0\n`, { mode: 0o755 });
+			// A fake sudo that records its arguments instead of running pmset. printf, not echo: dash's
+			// echo (Linux /bin/sh) takes the leading -n as its own option and drops it.
+			await fs.writeFile(join(bin, 'sudo'), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${join(home, 'sudo.log')}"\nexit 0\n`, { mode: 0o755 });
 			await fs.writeFile(join(home, '.volt', 'awake', 'recovery.sh'), RECOVERY_SCRIPT, { mode: 0o700 });
 			await fs.writeFile(join(home, '.volt', 'awake', 'changes'), 'darwinSleepDisabled=1\nwin32Lid=x,1,1\n');
 		});

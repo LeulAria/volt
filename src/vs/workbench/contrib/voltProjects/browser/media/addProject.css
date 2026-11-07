@@ -146,11 +146,13 @@
 	border-radius: 14px;
 }
 
+/* A full-width hairline under it, like the one over the footer. */
 .volt-folder-head {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	padding: 12px 12px 8px 14px;
+	padding: 12px 12px 12px 14px;
+	border-bottom: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
 	flex-shrink: 0;
 }
 
@@ -251,9 +253,9 @@
 	flex: 1;
 }
 
-/* Lined up with the top rows' folder icons, past the row padding, indent and twistie. */
+/* Lined up with the top rows' icons, past the row padding, indent and twistie. */
 .volt-folder-section {
-	padding: 6px 24px 4px 34px;
+	padding: 10px 24px 4px 40px;
 	color: var(--vscode-descriptionForeground);
 	font-size: 12px;
 	flex-shrink: 0;
@@ -279,6 +281,11 @@
 	flex-shrink: 0;
 	overflow: hidden;
 	white-space: nowrap;
+}
+
+/* Over the chat's picture the dialog is frosted glass (voltModal.ts): the footer lets it through. */
+.volt-modal.volt-chat-frosted .volt-folder-foot {
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
 }
 
 .volt-folder-foot-hint {
@@ -317,10 +324,22 @@
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	height: 32px;
+	height: 28px;
 	padding: 0 20px 0 2px;
 	box-sizing: border-box;
 	cursor: default;
+}
+
+/* The file icon theme's icon (its ::before) and the name, as in the Explorer. */
+.volt-folder-row .monaco-icon-label {
+	flex: 0 1 auto;
+	min-width: 0;
+	line-height: 22px;
+}
+
+/* Files only help recognise a folder; they cannot be picked. */
+.volt-folder-row.file .monaco-icon-label {
+	opacity: 0.5;
 }
 
 .volt-github-list .monaco-list-row.focused .volt-github-row {
@@ -361,23 +380,7 @@
 	background: transparent !important;
 }
 
-.volt-folder-icon {
-	display: inline-flex;
-	width: 16px;
-	justify-content: center;
-	flex-shrink: 0;
-	color: var(--vscode-symbolIcon-folderForeground, var(--vscode-icon-foreground));
-}
-
-.volt-folder-name {
-	flex: 0 1 auto;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.volt-folder-name .highlight,
+.volt-folder-row .monaco-highlighted-label .highlight,
 .volt-github-name .highlight {
 	color: var(--vscode-list-highlightForeground);
 	font-weight: 600;
@@ -415,6 +418,10 @@
 	color: var(--vscode-badge-foreground);
 	background: var(--vscode-badge-background);
 	border-color: transparent;
+}
+
+.volt-folder-badge.hidden {
+	display: none;
 }
 
 .volt-folder-row.message {

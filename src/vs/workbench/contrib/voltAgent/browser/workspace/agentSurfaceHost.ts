@@ -63,12 +63,13 @@ import { AgentChangesEditorInput, isAgentChangesDiffFor, openAgentChangesDiff } 
 import { AgentChangesScope } from '../review/agentSessionChanges.js';
 import { AgentFilesSidebar, AgentFilesSidebarView, filesSidebarTabs, filesSidebarViewCommandId } from './agentFilesSidebar.js';
 import { AgentSurfaceAddMenu, IAgentSurfaceAddMenuHost, renderSurfaceOpenList, visibleSurfaceMenuItems } from './agentSurfaceAddMenu.js';
-import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
+import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
 import { AgentToolsEditorPart, AgentToolsPartContext, hasSavedAgentTools } from './agentToolsEditorPart.js';
 import { attachSessionToProject } from './agentShell.js';
 import { registerAgentFileEditorRouting } from './agentFileEditorRouting.js';
 import { IAgentChatView, IAgentSurface, IAgentWorkspaceService } from './agentWorkspace.js';
 import { SHOW_AGENT_SCM_COMMAND_ID } from '../../common/agentGitActions.js';
+import { AGENT_RUN_SHOW_IN_VOLT_SETTING, isLocalPageUrl } from '../../common/agentRunSettings.js';
 
 export { chooseAgentBrowserSurfaceMount, type AgentBrowserSurfaceMount } from './agentBrowserMount.js';
 export { shouldHideAgentQuickOpenRail, surfaceKindForMenuAction, agentSurfaceMenuItems } from './agentSurfaceMenu.js';
@@ -90,6 +91,8 @@ const TOGGLE_TOOLS_FULLSCREEN_ID = 'workbench.action.voltAgentTools.toggleFullSc
 const TOGGLE_TOOLS_PANEL_ID = 'workbench.action.voltAgentTools.togglePanel';
 /** Opens the Explorer in the files sidebar of the chat on screen. */
 export const SHOW_AGENT_FILES_COMMAND_ID = 'workbench.action.voltAgentTools.showFiles';
+/** Opens Related Chats (the chat's project's chats) in the explorer sidebar, with the keyboard in its search. */
+export const SHOW_AGENT_RELATED_CHATS_COMMAND_ID = 'workbench.action.voltAgentTools.showRelatedChats';
 /** The floating preview's gap to the chat's edges, and its smallest size. */
 const FLOAT_MARGIN = 12;
 const FLOAT_MIN_WIDTH = 200;
@@ -319,6 +322,25 @@ export function openInAgentTools(input: EditorInput, sessionId?: string, options
 	const candidates = [...hosts].filter(host => host.canOpenTools());
 	const host = (sessionId ? candidates.find(candidate => candidate.showsSession(sessionId)) : undefined) ?? candidates.find(isChatToolsHost);
 	return host?.openEditorInTools(input, options);
+}
+
+/**
+ * Opens `input` as a tab in `sessionId`'s own tools and nowhere else: on screen when that chat is,
+ * else as a background tab it finds when the user opens it. Undefined when this window has no
+ * view to host that chat's tools (the IDE layout).
+ */
+export function openInChatTools(input: EditorInput, sessionId: string, options?: IEditorOptions): Promise<IEditorPane | undefined> | undefined {
+	const host = [...hosts].find(candidate => candidate.canOpenTools() && candidate.showsSession(sessionId));
+	if (host) {
+		return host.openEditorInTools(input, options);
+	}
+	const part = ensureAgentToolsPart(sessionId);
+	return part?.activeGroup.openEditor(input, { ...options, pinned: true, preserveFocus: true, inactive: !!part.activeGroup.activeEditor });
+}
+
+/** Whether `sessionId`'s chat is the one on screen in this window. */
+export function isAgentChatOnScreen(sessionId: string): boolean {
+	return [...hosts].some(host => host.canOpenTools() && host.showsSession(sessionId));
 }
 
 /**
@@ -2462,6 +2484,9 @@ export class AgentSurfaceHost extends Disposable {
 			case 'automations':
 				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, this.sessionId));
 				return;
+			case 'workflows':
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, this.sessionId));
+				return;
 			case 'sideChat':
 				void this.openSideChat();
 				return;
@@ -2595,6 +2620,22 @@ registerAction2(class ShowAgentSourceControlAction extends Action2 {
 	}
 });
 
+registerAction2(class ShowAgentRelatedChatsAction extends Action2 {
+	constructor() {
+		super({
+			id: SHOW_AGENT_RELATED_CHATS_COMMAND_ID,
+			title: localize2('voltAgent.tools.showRelatedChats', "Show Related Chats in Tools"),
+			f1: true,
+			precondition: LayoutModeContext.isEqualTo('agent'),
+		});
+	}
+
+	override run(_accessor: ServicesAccessor): void {
+		const host = [...hosts].find(candidate => candidate.canOpenTools());
+		host?.toggleFilesSidebarView('chats');
+	}
+});
+
 /** Opens the right sidebar on `view` beside the chat on screen; false when no chat can open tools (IDE layout). */
 export function showAgentFilesSidebar(view: AgentFilesSidebarView): boolean {
 	const host = [...hosts].find(candidate => candidate.canOpenTools());
@@ -2664,9 +2705,9 @@ for (const item of agentSurfaceMenuItems()) {
 	});
 }
 
-// Ctrl+Option + 1 to 4: the right sidebar's tabs, left to right (Explorer, Source Control, Pull Requests,
-// Search). Same family as the letters above, one hand on the left; Ctrl+Alt+Shift off a Mac.
-const SIDEBAR_TAB_KEYS = [KeyCode.Digit1, KeyCode.Digit2, KeyCode.Digit3, KeyCode.Digit4];
+// Ctrl+Option + 1 to 5: the right sidebar's tabs, left to right (Explorer, Search, Source Control, Pull
+// Requests, Related Chats). Same family as the letters above, one hand on the left; Ctrl+Alt+Shift off a Mac.
+const SIDEBAR_TAB_KEYS = [KeyCode.Digit1, KeyCode.Digit2, KeyCode.Digit3, KeyCode.Digit4, KeyCode.Digit5];
 filesSidebarTabs().forEach((tab, index) => {
 	const key = SIDEBAR_TAB_KEYS[index];
 	if (key === undefined) {
@@ -2725,7 +2766,8 @@ registerAction2(class ToggleAgentToolsPanelAction extends Action2 {
  * In the agent layout a web link opens as a browser tab in the tools of the chat on screen, wherever
  * it is clicked: code, terminals, hovers, Source Control, any view. (Links in the chat itself already
  * do, through their own handler.) "Open in System Browser" and extensions' openExternal ask for the
- * system browser explicitly and still get it.
+ * system browser explicitly and still get it, except a local page an extension or debug session opens
+ * (a dev server on localhost): with `volt.agent.run.showInVolt` that shows in Volt's browser too.
  */
 class AgentBrowserLinkOpener extends Disposable {
 
@@ -2735,12 +2777,22 @@ class AgentBrowserLinkOpener extends Disposable {
 		@IOpenerService openerService: IOpenerService,
 		@IWorkbenchLayoutService layoutService: IWorkbenchLayoutService,
 		@IAgentWorkspaceService workspace: IAgentWorkspaceService,
+		@IConfigurationService configurationService: IConfigurationService,
 	) {
 		super();
 		this._register(openerService.registerOpener({
 			open: async (resource: URI | string, options?: OpenInternalOptions | OpenExternalOptions) => {
-				if ((options as OpenExternalOptions | undefined)?.openExternal || getLayoutMode(layoutService) !== 'agent') {
+				if (getLayoutMode(layoutService) !== 'agent') {
 					return false;
+				}
+				const external = options as OpenExternalOptions | undefined;
+				if (external?.openExternal) {
+					const local = external.fromExtension
+						&& configurationService.getValue<boolean>(AGENT_RUN_SHOW_IN_VOLT_SETTING) !== false
+						&& isLocalPageUrl(typeof resource === 'string' ? resource : resource.toString(true));
+					if (!local) {
+						return false;
+					}
 				}
 				let target: URI;
 				try {

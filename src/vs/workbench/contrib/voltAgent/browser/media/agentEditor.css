@@ -191,7 +191,7 @@
 }
 
 /* A Context or Session Usage card is its own surface: no fade band around it on the transcript. */
-.volt-agent-editor.has-turns:has(.volt-agent-composer > .volt-agent-context-panel) .volt-agent-thread > .monaco-scrollable-element {
+.volt-agent-editor.has-turns.has-context-panel .volt-agent-thread > .monaco-scrollable-element {
 	-webkit-mask-image: none;
 	mask-image: none;
 }
@@ -3940,7 +3940,8 @@ pre.volt-agent-searchable {
 	z-index: 6;
 	flex: 0 0 auto;
 	width: 100%;
-	max-width: 720px;
+	/* Edge to edge with the chips and the composer. */
+	max-width: 728px;
 	margin: 0 auto 6px;
 	box-sizing: border-box;
 	color: var(--vscode-foreground);
@@ -5588,7 +5589,9 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-landing-pick:hover,
-.volt-agent-landing-pick.open {
+.volt-agent-landing-pick.open,
+.volt-agent-landing-chrome .volt-agent-status-access:hover,
+.volt-agent-landing-chrome .volt-agent-status-access.open {
 	color: var(--vscode-foreground);
 	background: var(--vscode-toolbar-hoverBackground);
 }
@@ -5599,6 +5602,119 @@ pre.volt-agent-searchable {
 .monaco-workbench .volt-agent-landing-pick:focus-visible {
 	outline: none !important;
 	box-shadow: none !important;
+}
+
+/*
+ * "Recent projects" under a new chat's composer while it has no project (agentLandingRecents.ts):
+ * a VS Code list with square rows the column's full width. TS sets the block's folded height, so
+ * "Show more" grows the list downward over the empty space and the composer does not move.
+ */
+.volt-agent-landing-recents {
+	width: 100%;
+	max-width: 560px;
+	margin: 32px auto 0;
+	box-sizing: border-box;
+}
+
+.volt-agent-landing-recents.hidden,
+.volt-agent-composer.follow-up .volt-agent-landing-recents,
+.volt-agent-editor.has-turns .volt-agent-landing-recents,
+.volt-agent-editor.zoomed .volt-agent-landing-recents,
+.volt-agent-editor.resized .volt-agent-landing-recents,
+.volt-agent-editor.browser-hosted .volt-agent-landing-recents,
+.monaco-workbench:not(.volt-layout-agent) .volt-agent-landing-recents,
+.monaco-workbench .part.auxiliarybar .volt-agent-landing-recents {
+	display: none !important;
+}
+
+.volt-agent-landing-recents-head {
+	height: 24px;
+	padding: 0 14px;
+	box-sizing: border-box;
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 18px;
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+}
+
+.volt-agent-landing-recents-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-agent-landing-recent {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 0 14px;
+	min-width: 0;
+	box-sizing: border-box;
+	font-size: 13px;
+	color: var(--vscode-foreground);
+	cursor: pointer;
+}
+
+.volt-agent-landing-recent .icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 15px;
+	height: 15px;
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+}
+
+.volt-agent-landing-recent .icon .volt-agent-svg-icon,
+.volt-agent-landing-recent .icon .volt-agent-svg-icon svg {
+	display: block;
+	width: 15px;
+	height: 15px;
+}
+
+.volt-agent-landing-recents-list .volt-agent-landing-recent .icon .codicon[class*='codicon-'] {
+	font-size: 14px;
+	color: inherit;
+}
+
+.volt-agent-landing-recent .name {
+	flex: 0 1 auto;
+	max-width: 40%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* The parent folder, right after the name. */
+.volt-agent-landing-recent .path {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	color: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
+}
+
+/* ⌘1 to ⌘3, shown on the row under the pointer or the keyboard. */
+.volt-agent-landing-recent .key {
+	flex-shrink: 0;
+	padding-left: 12px;
+	font-size: 11.5px;
+	color: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
+	visibility: hidden;
+}
+
+.volt-agent-landing-recent:hover .key,
+.volt-agent-landing-recents-list .monaco-list:focus .volt-agent-landing-recent.focused .key {
+	visibility: visible;
+}
+
+.volt-agent-landing-recent.more {
+	font-size: 12.5px;
+	color: color-mix(in srgb, var(--vscode-foreground) 60%, transparent);
+}
+
+.volt-agent-landing-recent.more:hover {
+	color: var(--vscode-foreground);
 }
 
 .volt-agent-composer-status {
@@ -6418,15 +6534,50 @@ pre.volt-agent-searchable {
 	color: var(--vscode-descriptionForeground);
 }
 
+/* Loading rows look like the rows they stand for: an icon, then a label bar where the label sits */
+/* (the row's own empty slots would push the bar to the right). */
+.volt-agent-picker-list .monaco-list-row.skeleton {
+	justify-content: flex-start;
+	gap: 8px;
+	pointer-events: none;
+}
+
+.volt-agent-picker-list .monaco-list-row.skeleton.focused {
+	background: transparent !important;
+}
+
+.volt-agent-picker-list .monaco-list-row.skeleton > * {
+	display: none;
+}
+
+.volt-agent-picker-list .monaco-list-row.skeleton::before,
 .volt-agent-picker-list .monaco-list-row.skeleton::after {
 	content: '';
 	display: block;
-	height: 8px;
-	width: 58%;
-	border-radius: 999px;
+	flex-shrink: 0;
 	background: linear-gradient(90deg, color-mix(in srgb, var(--vscode-foreground) 6%, transparent) 0%, color-mix(in srgb, var(--vscode-foreground) 14%, transparent) 50%, color-mix(in srgb, var(--vscode-foreground) 6%, transparent) 100%);
 	background-size: 200% 100%;
 	animation: volt-agent-skeleton 1.1s ease-in-out infinite;
+}
+
+.volt-agent-picker-list .monaco-list-row.skeleton::before {
+	width: 16px;
+	height: 16px;
+	border-radius: 4px;
+}
+
+.volt-agent-picker-list .monaco-list-row.skeleton::after {
+	width: 44%;
+	height: 8px;
+	border-radius: 999px;
+}
+
+.volt-agent-picker-list .monaco-list-row.skeleton:nth-child(3n + 2)::after {
+	width: 58%;
+}
+
+.volt-agent-picker-list .monaco-list-row.skeleton:nth-child(3n)::after {
+	width: 34%;
 }
 
 .volt-agent-picker-list .check {
@@ -6727,7 +6878,7 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-skeleton-bar,
-.volt-agent-provider-tab.skeleton {
+.volt-agent-provider-tab.skeleton::after {
 	background: linear-gradient(90deg, color-mix(in srgb, var(--vscode-foreground) 6%, transparent) 0%, color-mix(in srgb, var(--vscode-foreground) 14%, transparent) 50%, color-mix(in srgb, var(--vscode-foreground) 6%, transparent) 100%);
 	background-size: 200% 100%;
 	animation: volt-agent-skeleton 1.1s ease-in-out infinite;
@@ -6748,9 +6899,17 @@ pre.volt-agent-searchable {
 	width: 66%;
 }
 
+/* A loading provider tab: a rounded icon in the tab's slot, so the strip reads as separate tabs. */
 .volt-agent-provider-tab.skeleton {
 	pointer-events: none;
 	opacity: 1;
+}
+
+.volt-agent-provider-tab.skeleton::after {
+	content: '';
+	width: 18px;
+	height: 18px;
+	border-radius: 5px;
 }
 
 @keyframes volt-agent-skeleton {
@@ -10062,6 +10221,8 @@ pre.volt-agent-searchable {
 	display: flex;
 	flex-direction: column;
 	font-size: 13px;
+	/* The last row's highlight sits on the bottom edge; the radius clips its corners. */
+	overflow: hidden;
 }
 
 .monaco-workbench.vs .volt-agent-turn-files,
@@ -10074,7 +10235,7 @@ pre.volt-agent-searchable {
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	padding: 8px 12px 0;
+	padding: 8px 12px 4px;
 	min-height: 20px;
 	line-height: 20px;
 }
@@ -10176,14 +10337,20 @@ pre.volt-agent-searchable {
 	background: rgba(0, 0, 0, 0.05);
 }
 
-/* The rows are a workbench tree sized to its content (agentTurnFilesTree.ts). Margin, not padding: the tree takes the box's width. */
-.volt-agent-turn-files-rows {
-	margin: 4px 6px 6px;
+/* The rows are a workbench tree sized to its content (agentTurnFilesTree.ts), edge to edge and square like a VS Code list. */
+/* The side padding is inside each row, so names and stats line up with the header's 12px. */
+.volt-agent-turn-files-rows .monaco-list-row {
+	border-radius: 0;
+	cursor: pointer;
 }
 
-.volt-agent-turn-files-rows .monaco-list-row {
-	border-radius: 6px;
-	cursor: pointer;
+.volt-agent-turn-files-rows .monaco-tl-row {
+	padding-left: 6px;
+}
+
+/* Indent guides are placed from the row's edge (tree.css left: 16px): move them with the padding. */
+.volt-agent-turn-files-rows .monaco-tl-indent {
+	left: 22px;
 }
 
 /* List view: no twistie gutter. !important beats tree.css's display: flex !important. */
@@ -10200,7 +10367,7 @@ pre.volt-agent-searchable {
 	align-items: center;
 	gap: 6px;
 	height: 100%;
-	padding-right: 6px;
+	padding-right: 12px;
 	min-width: 0;
 	color: var(--vscode-descriptionForeground);
 }

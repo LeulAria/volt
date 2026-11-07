@@ -6,14 +6,18 @@
 import { basename, dirname, errorMessage, type IFileEntry, type IFileRoot, type IGitChange, shortPath, type VoltClient } from '@volt/client-core';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, RefreshControl, StyleSheet, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { openFile } from '../../src/chat/context';
 import { FileIcon } from '../../src/files/FileIcon';
 import { fuzzyFilter } from '../../src/files/fuzzy';
 import { useClient, useOptionalClient } from '../../src/state/client';
 import { useTheme } from '../../src/theme/theme';
-import { EmptyState, Icon, T, Tap } from '../../src/ui/core';
+import { EmptyState, Icon, T } from '../../src/ui/core';
+import { useHeaderScroll } from '../../src/ui/header';
+import { ListItem } from '../../src/ui/list';
+import { SearchField } from '../../src/ui/SearchField';
 
 export default function FilesScreen() {
 	const params = useLocalSearchParams<{ root?: string; dir?: string; name?: string }>();
@@ -38,32 +42,23 @@ function fileIndex(client: VoltClient, root: string): Promise<readonly string[]>
 	return files;
 }
 
-function SearchField({ value, onChange, placeholder }: { readonly value: string; readonly onChange: (value: string) => void; readonly placeholder: string }) {
-	const { p } = useTheme();
-	return (
-		<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, height: 40, paddingHorizontal: 12, borderRadius: 12, backgroundColor: p.fill, marginHorizontal: 16, marginTop: 8, marginBottom: 6 }}>
-			<Icon name="search" size={16} color={p.fgTertiary} />
-			<TextInput value={value} onChangeText={onChange} placeholder={placeholder} placeholderTextColor={p.fgQuaternary} autoCapitalize="none" autoCorrect={false} clearButtonMode="while-editing" selectionColor={p.accent} style={{ flex: 1, color: p.fg, fontSize: 16 }} />
-		</View>
-	);
-}
-
 function Row({ icon, title, detail, right, onPress, onLongPress }: { readonly icon: ReactNode; readonly title: string; readonly detail?: string; readonly right?: ReactNode; readonly onPress: () => void; readonly onLongPress?: () => void }) {
 	const { p } = useTheme();
 	return (
-		<Tap haptics="selection" onPress={onPress} onLongPress={onLongPress} style={styles.row}>
+		<ListItem onPress={onPress} onLongPress={onLongPress} accessibilityLabel={title} style={styles.row}>
 			<View style={styles.icon}>{icon}</View>
-			<View style={{ flex: 1, minWidth: 0 }}>
-				<T variant="body" numberOfLines={1}>{title}</T>
-				{detail ? <T variant="caption" mono color={p.fgQuaternary} numberOfLines={1} ellipsizeMode="head">{detail}</T> : null}
+			<View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'baseline', gap: 7 }}>
+				<T variant="body" numberOfLines={1} style={{ flexShrink: 1, maxWidth: detail ? '75%' : '100%' }}>{title}</T>
+				{detail ? <T variant="footnote" color={p.fgQuaternary} numberOfLines={1} ellipsizeMode="head" style={{ flex: 1 }}>{detail}</T> : null}
 			</View>
 			{right}
-		</Tap>
+		</ListItem>
 	);
 }
 
 /** Projects and chat worktrees Volt has open on the computer. */
 function Roots() {
+	const onHeaderScroll = useHeaderScroll();
 	const { p } = useTheme();
 	const insets = useSafeAreaInsets();
 	const client = useClient();
@@ -85,7 +80,7 @@ function Roots() {
 	return (
 		<View style={{ flex: 1, backgroundColor: p.canvas }}>
 			<Stack.Screen options={{ title: 'Files' }} />
-			<FlatList
+			<Animated.FlatList onScroll={onHeaderScroll} scrollEventThrottle={16}
 				data={sections}
 				keyExtractor={item => item.root.id}
 				contentInsetAdjustmentBehavior="automatic"
@@ -112,6 +107,7 @@ function Roots() {
 
 /** A folder's entries; typing searches every file under the project. */
 function Folder({ root, dir, name }: { readonly root: string; readonly dir: string; readonly name?: string }) {
+	const onHeaderScroll = useHeaderScroll();
 	const { p } = useTheme();
 	const insets = useSafeAreaInsets();
 	const client = useClient();
@@ -164,7 +160,7 @@ function Folder({ root, dir, name }: { readonly root: string; readonly dir: stri
 		<View style={{ flex: 1, backgroundColor: p.canvas }}>
 			<Stack.Screen options={{ title }} />
 			{results ? (
-				<FlatList
+				<Animated.FlatList onScroll={onHeaderScroll} scrollEventThrottle={16}
 					data={results}
 					keyExtractor={rel => rel}
 					keyboardShouldPersistTaps="handled"
@@ -175,7 +171,7 @@ function Folder({ root, dir, name }: { readonly root: string; readonly dir: stri
 					renderItem={({ item: rel }) => <Row icon={<FileIcon path={rel} />} title={basename(rel)} detail={dirname(rel) || '.'} onPress={() => openFile(join(rel))} />}
 				/>
 			) : (
-				<FlatList
+				<Animated.FlatList onScroll={onHeaderScroll} scrollEventThrottle={16}
 					data={entries as IFileEntry[] | undefined}
 					keyExtractor={entry => entry.path}
 					keyboardShouldPersistTaps="handled"
@@ -217,7 +213,7 @@ function Folder({ root, dir, name }: { readonly root: string; readonly dir: stri
 }
 
 const styles = StyleSheet.create({
-	row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, minHeight: 48, paddingVertical: 6 },
+	row: { minHeight: 42, gap: 10, paddingVertical: 5 },
 	icon: { width: 24, alignItems: 'center' },
 	header: { letterSpacing: 0.6, marginHorizontal: 20, marginTop: 18, marginBottom: 4 },
 });

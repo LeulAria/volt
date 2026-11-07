@@ -164,7 +164,8 @@ export class AgentServerLauncher {
 		if (await this.networkAccess()) {
 			program.push('--host', '0.0.0.0');
 		}
-		const env: Record<string, string> = { ELECTRON_RUN_AS_NODE: '1', HOME: process.env.HOME ?? '' };
+		// The compile cache halves a warm start (the server strips it from what it runs, see agentServerMain).
+		const env: Record<string, string> = { ELECTRON_RUN_AS_NODE: '1', HOME: process.env.HOME ?? '', NODE_COMPILE_CACHE: this.paths.compileCacheDir };
 		if (process.env['VSCODE_DEV']) {
 			env['VSCODE_DEV'] = '1';
 			env['NODE_ENV'] = 'development';

@@ -1,0 +1,221 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* The agent window has its own debug toolbar (in the side toolbar, or floating by the chat title):
+ * VS Code's floating one stays for the IDE layout. */
+.monaco-workbench.volt-layout-agent > .debug-toolbar {
+	display: none !important;
+}
+
+.volt-agent-dock-run.hidden,
+.volt-run-toolbar.hidden,
+.volt-run-toolbar-float.hidden {
+	display: none;
+}
+
+/* Run row: play icon, what runs, "Running", then the launcher's arrow. */
+.volt-agent-dock-run-icon {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+}
+
+.volt-agent-dock-run-row.running .volt-agent-dock-run-icon {
+	color: var(--vscode-debugIcon-startForeground, #89d185);
+}
+
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-run-row.running .volt-agent-dock-run-icon .codicon {
+	color: var(--vscode-debugIcon-startForeground, #89d185);
+}
+
+.volt-agent-dock-row > .volt-agent-dock-run-state {
+	flex: none;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-dock-row > .volt-agent-dock-run-state:empty {
+	display: none;
+}
+
+.volt-agent-dock-row > .volt-agent-dock-run-pick {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	margin-right: -3px;
+	border-radius: 4px;
+}
+
+.volt-agent-dock-row > .volt-agent-dock-run-pick:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+
+.monaco-workbench .volt-agent-dock-row > .volt-agent-dock-run-pick:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+/* "No Device", like Flutter's status bar item before a device is picked. */
+.volt-agent-dock-device-row.none > .volt-agent-dock-row-label {
+	color: var(--vscode-descriptionForeground);
+}
+
+/* Extensions' status bar items: VS Code list rows, edge to edge and square. */
+.volt-agent-dock-status-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-agent-dock-status-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 26px;
+	padding: 0 12px;
+	font-size: 13px;
+	cursor: pointer;
+	min-width: 0;
+}
+
+.volt-agent-dock-status-row.no-command {
+	cursor: default;
+}
+
+.volt-agent-dock-status-icon {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+}
+
+.monaco-workbench .volt-agent-dock-status-row .volt-agent-dock-status-icon .codicon[class*='codicon-'] {
+	font-size: 14px;
+	width: 14px;
+	height: 14px;
+	color: inherit;
+}
+
+.volt-agent-dock-status-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.monaco-workbench .volt-agent-dock-status-row .volt-agent-dock-status-label .codicon[class*='codicon-'] {
+	font-size: 14px;
+	vertical-align: text-bottom;
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+}
+
+.volt-agent-dock-status-source {
+	flex: none;
+	max-width: 45%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-dock-status-source:empty {
+	display: none;
+}
+
+/* The toolbar: VS Code's debug toolbar items, 22px each. */
+.volt-run-toolbar {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+}
+
+.volt-run-toolbar .monaco-action-bar .action-item .action-label {
+	width: 16px;
+	height: 16px;
+	padding: 3px;
+	border-radius: 4px;
+}
+
+.volt-run-toolbar .monaco-action-bar .action-item {
+	margin-right: 2px;
+}
+
+/* The chat's running device: its name after a status dot (green running, amber booting). */
+.volt-run-toolbar .monaco-action-bar .action-item .action-label.volt-run-device-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	width: auto;
+	max-width: 160px;
+	padding: 3px 6px;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--vscode-foreground);
+}
+
+.volt-run-toolbar .action-label.volt-run-device-chip::before {
+	content: '';
+	flex: none;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--vscode-testing-iconPassed, #73c991);
+}
+
+.volt-run-toolbar .action-label.volt-run-device-chip.booting::before {
+	background: var(--vscode-charts-yellow, #cca700);
+}
+
+/* Flutter's hot reload is a yellow bolt. */
+.monaco-workbench .volt-run-toolbar .action-label.codicon.codicon-zap {
+	color: var(--vscode-charts-yellow, #cca700);
+}
+
+/* In the side toolbar: a row under Run, its icons lined up with the rows' icons. */
+.volt-run-toolbar.inline {
+	height: 28px;
+	padding: 0 9px;
+}
+
+/* Floating by the chat title: a solid pill (the window is transparent; see the volt-transparent-window rules). */
+.volt-run-toolbar-float {
+	position: absolute;
+	z-index: 2520;
+	display: flex;
+	align-items: center;
+	height: 28px;
+	padding: 0 4px 0 0;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-debugToolBar-border, var(--vscode-widget-border, transparent));
+	border-radius: 6px;
+	background: var(--vscode-debugToolBar-background, var(--vscode-editorWidget-background));
+	box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+	-webkit-app-region: no-drag;
+}
+
+.volt-run-toolbar-grip {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 100%;
+	cursor: grab;
+	opacity: 0.6;
+}
+
+.volt-run-toolbar-float.dragging,
+.volt-run-toolbar-float.dragging .volt-run-toolbar-grip {
+	cursor: grabbing;
+}
+
+.monaco-workbench .volt-run-toolbar-float .volt-run-toolbar-grip .codicon[class*='codicon-'] {
+	font-size: 14px;
+}

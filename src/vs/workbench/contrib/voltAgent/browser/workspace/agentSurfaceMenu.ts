@@ -21,6 +21,16 @@ export const OPEN_CANVAS_IN_TOOLS_COMMAND_ID = 'volt.canvas.openInTools';
 /** Registered in automations.contribution.ts, which imports this host: Automations as a tab. */
 export const OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID = 'voltAgent.automations.openInTools';
 
+/** Registered in automations.contribution.ts: the workflow library beside the chat, as an Automations tab. */
+export const OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID = 'voltAgent.workflows.openInTools';
+
+/** Lucide workflow: two cards joined by an elbow (the Workflows tab and its + menu row). */
+export const WORKFLOWS_ICON_SHAPES: SvgIconShapes = [
+	['rect', { x: 3, y: 3, width: 8, height: 8, rx: 2 }],
+	['path', { d: 'M7 11v4a2 2 0 0 0 2 2h4' }],
+	['rect', { x: 13, y: 13, width: 8, height: 8, rx: 2 }],
+];
+
 /** Registered in gitGraph/gitGraph.contribution.ts, which imports this host: the repository's commit graph as a tab. */
 export const OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID = 'volt.gitGraph.openInTools';
 
@@ -59,6 +69,12 @@ export const EXPLORER_ICON_SHAPES: SvgIconShapes = [
 	['path', { d: 'M2 10h20' }],
 ];
 
+/** Related Chats (lucide messages-square): two speech bubbles, one behind the other, for a project's chats. */
+export const RELATED_CHATS_ICON_SHAPES: SvgIconShapes = [
+	['path', { d: 'M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z' }],
+	['path', { d: 'M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1' }],
+];
+
 /** Lucide square-terminal, globe and smartphone: strokes like the other rows, instead of filled codicons. */
 const TERMINAL_ICON_SHAPES: SvgIconShapes = [
 	['rect', { x: 3, y: 3, width: 18, height: 18, rx: 2 }],
@@ -78,7 +94,7 @@ const DEVICE_ICON_SHAPES: SvgIconShapes = [
 export const SIDE_CHAT_ICON_PATH = 'M7 7H15M7 11H11M5 3H19C20.1046 3 21 3.89543 21 5V15C21 16.1046 20.1046 17 19 17H16L12.3536 20.6464C12.1583 20.8417 11.8417 20.8417 11.6464 20.6464L8 17H5C3.89543 17 3 16.1046 3 15V5C3 3.89543 3.89543 3 5 3Z';
 
 /** Right-rail / tab-bar + menu rows that open an agent surface. */
-export type AgentSurfaceMenuActionId = 'file' | 'terminal' | 'browser' | 'device' | 'changes' | 'gitGraph' | 'scratch' | 'canvas' | 'automations' | 'sideChat';
+export type AgentSurfaceMenuActionId = 'file' | 'terminal' | 'browser' | 'device' | 'changes' | 'gitGraph' | 'scratch' | 'canvas' | 'automations' | 'workflows' | 'sideChat';
 
 /** Each row's own command, registered in agentSurfaceHost.ts: opens it in the right panel of the chat on screen. */
 export function surfaceOpenCommandId(id: AgentSurfaceMenuActionId): string {
@@ -99,6 +115,7 @@ export const SURFACE_OPEN_KEYS: Readonly<Record<AgentSurfaceMenuActionId, KeyCod
 	scratch: KeyCode.KeyS,
 	canvas: KeyCode.KeyV,
 	automations: KeyCode.KeyA,
+	workflows: KeyCode.KeyW,
 	sideChat: KeyCode.KeyN,
 };
 
@@ -180,6 +197,13 @@ export function agentSurfaceMenuItems(): readonly IAgentSurfaceMenuItem[] {
 			svgPath: AGENT_HOME_AUTOMATIONS_ICON_PATH,
 		},
 		{
+			// Visual workflows: the library, then the builder.
+			id: 'workflows',
+			label: localize('voltAgent.surfaceMenu.workflows', "Workflows"),
+			icon: Codicon.typeHierarchy,
+			svgPath: WORKFLOWS_ICON_SHAPES,
+		},
+		{
 			id: 'sideChat',
 			label: localize('voltAgent.surfaceMenu.sideChat', "New Side Chat"),
 			icon: Codicon.commentDiscussion,
@@ -209,6 +233,7 @@ export function surfaceKindForMenuAction(id: AgentSurfaceMenuActionId): 'file' |
 		case 'canvas':
 			return 'canvas';
 		case 'automations':
+		case 'workflows':
 			return 'automations';
 		case 'sideChat':
 			return 'chat';

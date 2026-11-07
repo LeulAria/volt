@@ -44,7 +44,7 @@ export const DEVICE_TOOLS: readonly IVoltHostToolInfo[] = [
 		title: 'Booted device',
 		group: 'devices',
 		approvalInReadOnlyModes: 'starts a simulator',
-		description: 'Boot a simulator or emulator and wait (up to ~50s) until it is ready. Returns a screenshot. If it says still booting, call device_screenshot in a few seconds.',
+		description: 'Boot a simulator or emulator and wait (up to ~50s) until it is ready. It boots headless and shows beside this chat in Volt (never open Simulator.app or an emulator window yourself). Returns a screenshot. If it says still booting, call device_screenshot in a few seconds.',
 		inputSchema: { type: 'object', properties: { device: DEVICE, host: HOST }, required: ['device'] },
 	},
 	{

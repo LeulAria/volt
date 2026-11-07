@@ -121,6 +121,11 @@ export interface IAgentSessionControl extends IDisposable {
 	 */
 	loadTranscript?(): Promise<{ readonly messages: IAgentMessage[]; readonly contextUsed?: number; readonly contextWindow?: number }>;
 	/**
+	 * Set when another process owns the transcript: a view shows the chat until the handle is
+	 * disposed, so its changes come at full rate (others come about once a second).
+	 */
+	watch?(): IDisposable;
+	/**
 	 * Set when another process owns the transcript: a view's own change to the transcript (a stopped
 	 * reply, an edited plan, a cut before an edited prompt) goes to that owner, which records it.
 	 */
@@ -196,6 +201,46 @@ export function completeStreamingBlocks(message: IAgentAssistantMessage, stopped
 			segment.block.status = segment.block.type === 'approval' ? 'error' : 'complete';
 		}
 	}
+}
+
+/** A turn's user message and the streaming reply its run's events land in. */
+export function turnMessagesFor(spec: IAgentTurnSpec): { readonly user: IAgentUserMessage; readonly reply: IAgentAssistantMessage } {
+	const user: IAgentUserMessage = {
+		kind: 'user',
+		id: spec.turnId,
+		text: spec.display?.text.trim() || spec.text,
+		agentText: spec.display ? spec.text : undefined,
+		mentions: spec.display?.mentions,
+		mode: spec.mode,
+		...(spec.origin ? { origin: spec.origin } : {}),
+		...(spec.taskIds?.length ? { taskIds: [...spec.taskIds] } : {}),
+		...(spec.handoff ? { handoff: spec.handoff } : {}),
+		...(spec.scheduled ? { scheduled: spec.scheduled } : {}),
+		...(spec.fromThread ? { fromThread: spec.fromThread } : {}),
+	};
+	const reply: IAgentAssistantMessage = {
+		kind: 'agent',
+		id: spec.turnId,
+		title: '',
+		steps: [],
+		segments: [],
+		blockState: {},
+		startedAt: Date.now(),
+		activity: {
+			status: localize('voltAgent.thinking', "Thinking"),
+			expanded: false,
+			streaming: true,
+			items: [],
+		},
+	};
+	if (isCompactCommand(spec.text) && reply.activity) {
+		// "Compacting context" from the first frame: the agent reports its compaction only once the
+		// prompt reaches it, and the checkpoint before a turn can take a couple of seconds.
+		reply.segments.push({ kind: 'compaction', compaction: { id: `pending-${spec.turnId}`, status: 'running', trigger: 'manual', startedAt: Date.now(), provisional: true } });
+		reply.activity.status = localize('voltAgent.compaction.running', "Compacting context");
+		reply.activity.statusPinned = true;
+	}
+	return { user, reply };
 }
 
 /** An approval card is still waiting on the user's decision. */
@@ -441,44 +486,8 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 		return item?.kind === 'agent' ? item.label : undefined;
 	}
 
-	/** A turn's user message and the streaming reply its run's events land in. */
 	private turnMessages(spec: IAgentTurnSpec): { readonly user: IAgentUserMessage; readonly reply: IAgentAssistantMessage } {
-		const user: IAgentUserMessage = {
-			kind: 'user',
-			id: spec.turnId,
-			text: spec.display?.text.trim() || spec.text,
-			agentText: spec.display ? spec.text : undefined,
-			mentions: spec.display?.mentions,
-			mode: spec.mode,
-			...(spec.origin ? { origin: spec.origin } : {}),
-			...(spec.taskIds?.length ? { taskIds: [...spec.taskIds] } : {}),
-			...(spec.handoff ? { handoff: spec.handoff } : {}),
-			...(spec.scheduled ? { scheduled: spec.scheduled } : {}),
-			...(spec.fromThread ? { fromThread: spec.fromThread } : {}),
-		};
-		const reply: IAgentAssistantMessage = {
-			kind: 'agent',
-			id: spec.turnId,
-			title: '',
-			steps: [],
-			segments: [],
-			blockState: {},
-			startedAt: Date.now(),
-			activity: {
-				status: localize('voltAgent.thinking', "Thinking"),
-				expanded: false,
-				streaming: true,
-				items: [],
-			},
-		};
-		if (isCompactCommand(spec.text) && reply.activity) {
-			// "Compacting context" from the first frame: the agent reports its compaction only once the
-			// prompt reaches it, and the checkpoint before a turn can take a couple of seconds.
-			reply.segments.push({ kind: 'compaction', compaction: { id: `pending-${spec.turnId}`, status: 'running', trigger: 'manual', startedAt: Date.now(), provisional: true } });
-			reply.activity.status = localize('voltAgent.compaction.running', "Compacting context");
-			reply.activity.statusPinned = true;
-		}
-		return { user, reply };
+		return turnMessagesFor(spec);
 	}
 
 	/** The turn never reached the runtime (it failed or was stopped while starting): close its reply. */

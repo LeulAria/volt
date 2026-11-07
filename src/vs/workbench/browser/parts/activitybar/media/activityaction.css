@@ -61,54 +61,34 @@
 
 .monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-label.codicon,
 .monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-label.codicon[class*='codicon-'] {
-	font-size: 18px;
+	font-size: 16px;
 	align-items: center;
 	justify-content: center;
 }
 
 .monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-label.codicon::before {
-	font-size: 18px;
+	font-size: 16px;
 	position: relative;
 	z-index: 1;
 }
 
+/* The glyph is inline: a mask image that fails to load hides the icon completely. */
 .monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-label.codicon-search-view-icon::before {
 	content: '' !important;
 	display: block;
-	width: 20px;
-	height: 20px;
-	flex: 0 0 20px;
+	width: 18px;
+	height: 18px;
+	flex: 0 0 18px;
 	background-color: currentColor;
-	-webkit-mask-image: url('./search-view-icon.svg');
+	-webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='10.75' cy='10.75' r='8.75'/%3E%3Cpath d='M17 17l5 5'/%3E%3C/svg%3E");
 	-webkit-mask-repeat: no-repeat;
 	-webkit-mask-position: center;
-	-webkit-mask-size: 20px 20px;
-	-webkit-mask-mode: alpha;
-	mask-image: url('./search-view-icon.svg');
+	-webkit-mask-size: 18px 18px;
+	mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='10.75' cy='10.75' r='8.75'/%3E%3Cpath d='M17 17l5 5'/%3E%3C/svg%3E");
 	mask-repeat: no-repeat;
 	mask-position: center;
-	mask-size: 20px 20px;
+	mask-size: 18px 18px;
 	mask-mode: alpha;
-}
-
-.monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item.checked .action-label,
-.monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item:hover .action-label {
-	border-radius: 8px;
-}
-
-.monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item.checked .action-label::after,
-.monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item:hover .action-label::after {
-	content: '';
-	position: absolute;
-	inset: 2px 8px;
-	border-radius: 8px;
-	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
-	z-index: 0;
-	pointer-events: none;
-}
-
-.monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item:hover:not(.checked) .action-label::after {
-	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 }
 
 .monaco-workbench .activitybar > .content :not(.monaco-menu) > .monaco-action-bar .action-item.active .action-label.codicon,

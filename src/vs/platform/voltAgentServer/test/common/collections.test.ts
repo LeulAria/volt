@@ -7,7 +7,7 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { CollectionMirror, ReplicatedCollection } from '../../common/collections.js';
 import { ICollectionDelta } from '../../common/protocol.js';
-import { applySessionPatch, reconcile, SessionPatcher } from '../../common/sessionPatch.js';
+import { applySessionEdits, applySessionPatch, reconcile, SessionPatcher, sessionEdits } from '../../common/sessionPatch.js';
 
 suite('Agent server replicated state', () => {
 
@@ -99,5 +99,94 @@ suite('Agent server replicated state', () => {
 		assert.strictEqual(result.segments[1].block, block);
 		assert.strictEqual(block.status, 'complete');
 		assert.deepStrictEqual(result, next);
+	});
+
+	interface ITestMessage {
+		kind: string;
+		text?: string;
+		segments?: { kind: string; text?: string; block?: { id: string; output: string } }[];
+		activity?: { streaming?: boolean; label?: string };
+		uri?: { $mid: number; path: string };
+	}
+
+	const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+
+	test('compact patches carry a streaming reply as what changed in it, and apply to the same result', () => {
+		const patcher = new SessionPatcher('s1');
+		const output = 'x'.repeat(4000);
+		const server: ITestMessage[] = [
+			{ kind: 'user', text: 'hi' },
+			{ kind: 'agent', segments: [{ kind: 'block', block: { id: 'b1', output } }, { kind: 'text', text: 'He' }], activity: { streaming: true, label: 'Writing' } },
+		];
+		patcher.reset(server);
+		const viaFull: unknown[] = copy(server);
+		const viaEdits: unknown[] = copy(server);
+		let rev = 0;
+		const step = (expectEdits: unknown) => {
+			const patches = patcher.diffPatches(server)!;
+			assert.deepStrictEqual(patches.compact.edit, expectEdits);
+			assert.deepStrictEqual(patches.compact.set, []);
+			assert.ok(applySessionPatch(viaFull, rev, patches.full));
+			assert.ok(applySessionPatch(viaEdits, rev, patches.compact));
+			rev = patches.full.rev;
+			assert.deepStrictEqual(viaFull, server);
+			assert.deepStrictEqual(viaEdits, server);
+		};
+
+		server[1].segments![1].text = 'Hello';
+		step([{ i: 1, edits: [{ p: ['segments', 1, 'text'], s: 'llo', at: 2 }] }]);
+
+		server[1].segments!.push({ kind: 'text', text: ' there' });
+		delete server[1].activity!.label;
+		step([{ i: 1, edits: [{ p: ['segments', 2], v: { kind: 'text', text: ' there' } }, { p: ['activity', 'label'], x: 1 }] }]);
+
+		server[1].segments!.length = 1;
+		server[1].activity!.streaming = false;
+		step([{ i: 1, edits: [{ p: ['segments'], n: 1 }, { p: ['activity', 'streaming'], v: false }] }]);
+
+		// A new message, and one that changed everywhere, go whole.
+		server.push({ kind: 'user', text: 'next' });
+		server[0] = { kind: 'notice', text: 'x' };
+		const patches = patcher.diffPatches(server)!;
+		assert.deepStrictEqual(patches.compact.set.map(s => s.i), [0, 2]);
+		assert.strictEqual(patches.compact.edit, undefined);
+		assert.ok(applySessionPatch(viaEdits, rev, patches.compact));
+		assert.deepStrictEqual(viaEdits, server);
+	});
+
+	test('a value encoded for the wire changes whole', () => {
+		const patcher = new SessionPatcher('s1');
+		const server: ITestMessage[] = [{ kind: 'agent', text: 'a long enough reply to make edits worth it', uri: { $mid: 1, path: '/a' } }];
+		patcher.reset(server);
+		server[0].uri = { $mid: 1, path: '/b' };
+		assert.deepStrictEqual(patcher.diffPatches(server)!.compact.edit, [{ i: 0, edits: [{ p: ['uri'], v: { $mid: 1, path: '/b' } }] }]);
+	});
+
+	test('a streaming diff reads only the current turn until the whole transcript is compared', () => {
+		const encoded: number[] = [];
+		const server: ITestMessage[] = [{ kind: 'user', text: 'one' }, { kind: 'agent', text: 'two' }, { kind: 'user', text: 'three' }, { kind: 'agent', text: 'fo' }];
+		const patcher = new SessionPatcher('s1', message => {
+			encoded.push(server.indexOf(message as ITestMessage));
+			return message;
+		});
+		patcher.reset(server);
+		encoded.length = 0;
+		server[1].text = 'two, edited';
+		server[3].text = 'four';
+		const tail = patcher.diffPatches(server, undefined, 2)!;
+		assert.deepStrictEqual(encoded, [2, 3]);
+		assert.deepStrictEqual(tail.full.set.map(s => s.i), [3]);
+		const whole = patcher.diffPatches(server)!;
+		assert.deepStrictEqual(whole.full.set.map(s => s.i), [1]);
+	});
+
+	test('edits that do not fit what the client holds are refused', () => {
+		assert.strictEqual(applySessionEdits({ t: 'ab' }, [{ p: ['t'], s: 'c', at: 3 }]), false, 'text of another length');
+		assert.strictEqual(applySessionEdits({ t: 'ab' }, [{ p: ['missing', 't'], v: 1 }]), false, 'no such parent');
+		assert.strictEqual(applySessionEdits({ a: [1] }, [{ p: ['a', 'x'], v: 1 }]), false, 'a key on an array');
+		assert.strictEqual(applySessionEdits({ a: [1] }, [{ p: ['a', 3], v: 1 }]), false, 'a hole in an array');
+		assert.strictEqual(applySessionEdits({}, [{ p: ['__proto__', 'polluted'], v: true }]), false);
+		assert.strictEqual(({} as { polluted?: boolean }).polluted, undefined);
+		assert.strictEqual(sessionEdits('a', 'b'), undefined, 'a changed root is a whole replacement');
 	});
 });

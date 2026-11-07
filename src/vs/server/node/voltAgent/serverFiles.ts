@@ -5,6 +5,7 @@
 
 import { execFile, spawn } from 'child_process';
 import { promises as fs } from 'fs';
+import { homedir } from 'os';
 import { rgPath } from '@vscode/ripgrep';
 import { Disposable } from '../../../base/common/lifecycle.js';
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from '../../../base/common/path.js';
@@ -29,6 +30,15 @@ export interface IServerFileEntry {
 	readonly size?: number;
 	readonly mtime?: number;
 	readonly link?: boolean;
+}
+
+/** A folder on the computer and the folders in it, for picking one to add as a project. */
+export interface IServerFolderListing {
+	readonly path: string;
+	readonly home: string;
+	/** The folder above, if there is one. */
+	readonly parent?: string;
+	readonly folders: readonly { readonly name: string; readonly path: string; readonly git?: boolean }[];
 }
 
 export type IServerFileContent =
@@ -97,6 +107,7 @@ export class ServerFiles extends Disposable {
 		this._register(protocol.registerMethods('files', {
 			roots: () => this.listRoots(),
 			list: (_ctx, path) => this.list(String(path)),
+			folders: (_ctx, path, options) => this.folders(typeof path === 'string' && path ? path : undefined, (options ?? {}) as { hidden?: boolean }),
 			read: (_ctx, path) => this.read(String(path)),
 			write: (_ctx, path, text, options) => this.write(String(path), String(text ?? ''), (options ?? {}) as { mtime?: number; create?: boolean }),
 			create: (_ctx, path, kind) => this.create(String(path), kind === 'dir' ? 'dir' : 'file'),
@@ -165,6 +176,38 @@ export class ServerFiles extends Disposable {
 			return { name: d.name, path: full, kind: isDir ? 'dir' : 'file', ...(link ? { link: true } : {}) };
 		}));
 		return entries.filter((e): e is IServerFileEntry => !!e).sort((a, b) => a.kind !== b.kind ? (a.kind === 'dir' ? -1 : 1) : a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+	}
+
+	/**
+	 * The folders inside any folder on the computer (the home folder by default), for the phone's
+	 * Add project picker. Names only, never files or contents: a paired device can already add any
+	 * path as a project, this only lets it see the folder names it would type.
+	 */
+	private async folders(path: string | undefined, options: { hidden?: boolean }): Promise<IServerFolderListing> {
+		const home = homedir();
+		const target = normalize(!path || path === '~' ? home : path.startsWith('~/') ? join(home, path.slice(2)) : path);
+		if (!isAbsolute(target)) {
+			fail('BadPath', 'Give an absolute path.');
+		}
+		const dirents = await fs.readdir(target, { withFileTypes: true }).catch(err => fail(err?.code === 'ENOENT' ? 'NotFound' : 'Forbidden', `Can't open ${target}.`));
+		const folders = await Promise.all(dirents
+			.filter(d => (d.isDirectory() || d.isSymbolicLink()) && (options.hidden || !d.name.startsWith('.')) && !SKIPPED_DIRS.has(d.name))
+			.map(async d => {
+				const full = join(target, d.name);
+				const stat = await fs.stat(full).catch(() => undefined);
+				if (!stat?.isDirectory()) {
+					return undefined;
+				}
+				const git = await fs.stat(join(full, '.git')).then(() => true, () => false);
+				return { name: d.name, path: full, ...(git ? { git } : {}) };
+			}));
+		const parent = dirname(target);
+		return {
+			path: target,
+			home,
+			...(parent !== target ? { parent } : {}),
+			folders: folders.filter((f): f is NonNullable<typeof f> => !!f).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })),
+		};
 	}
 
 	private async read(path: string): Promise<IServerFileContent> {

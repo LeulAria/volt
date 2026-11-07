@@ -97,6 +97,7 @@ function typeGlyph(item: IAgentSlashItem, document: Document): HTMLElement {
 		case 'customize': return codiconGlyph(Codicon.extensions, 'customize');
 		case 'new-chat': return codiconGlyph(Codicon.add, 'new-chat');
 		case 'usage': return codiconGlyph(Codicon.graph, 'usage');
+		case 'device': return codiconGlyph(Codicon.deviceMobile, 'device');
 		case 'skill':
 		default:
 			return createCubeGlyph(document);

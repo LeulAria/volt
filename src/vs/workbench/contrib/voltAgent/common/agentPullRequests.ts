@@ -614,6 +614,28 @@ export function isGitPushOutput(output: string): boolean {
 	return /^To \S+$/m.test(output) && /^\s*(?:[+*-]\s+)?(?:[0-9a-f]{7,}\.\.\.?[0-9a-f]{7,}|\[new branch\])\s+\S+\s+->\s+\S+/m.test(output);
 }
 
+/**
+ * The pull requests a command says it merged, closed or reopened, as `gh pr merge`, `gh pr close` and
+ * `gh pr reopen` print it ("Squashed and merged pull request owner/name#12 (title)", "Pull request
+ * owner/name#12 (title) was already merged"). `repo` is `owner/name` when the command named it.
+ */
+export function changedPullRequestsInOutput(output: string): { readonly repo?: string; readonly number: number }[] {
+	const found: { repo?: string; number: number }[] = [];
+	const patterns = [
+		/\b(?:merged|closed|reopened) pull request ([\w.-]+\/[\w.-]+)?#(\d+)\b/gi,
+		/\bpull request ([\w.-]+\/[\w.-]+)?#(\d+)\b[^\n]*\bwas already (?:merged|closed)\b/gi,
+	];
+	for (const pattern of patterns) {
+		for (const match of output.matchAll(pattern)) {
+			const number = Number(match[2]);
+			if (!found.some(pr => pr.number === number && pr.repo === match[1])) {
+				found.push(match[1] ? { repo: match[1], number } : { number });
+			}
+		}
+	}
+	return found;
+}
+
 //#endregion
 
 //#region Ranking
@@ -1009,6 +1031,89 @@ export function buildPullRequestTextPrompt(head: string, base: string, commits: 
 		clip(patch, MAX_DIFF_CHARS),
 		...(template ? ['', 'Template:', clip(template, 4000)] : []),
 	].join('\n');
+}
+
+/** Branch names the suggestion card offers. */
+export const BRANCH_NAME_SUGGESTIONS = 4;
+
+/** What a branch is about, for naming it: the chat that works on it and what it holds so far. */
+export interface IBranchNameContext {
+	readonly current: string;
+	readonly chatTitle?: string;
+	readonly firstPrompt?: string;
+	/** Subjects of the commits on the branch, oldest first. */
+	readonly commits: readonly string[];
+	/** Uncommitted files as `M\tpath` lines, and their patch. */
+	readonly files: string;
+	readonly patch: string;
+	readonly recentSubjects: readonly string[];
+}
+
+export function buildBranchNamePrompt(context: IBranchNameContext): string {
+	return [
+		'You name git branches.',
+		`Return a JSON object with one key, names: an array of ${BRANCH_NAME_SUGGESTIONS} different branch names for the work below, best first.`,
+		'Rules:',
+		'- each name is type/short-kebab-summary, type one of feat, fix, refactor, perf, docs, test, chore (e.g. feat/cart-discounts, fix/login-redirect)',
+		'- the summary is 2 to 4 lower case words joined by dashes, at most 40 characters in all',
+		'- name the branch\'s whole work (the request, its commits and the uncommitted changes together), not only the latest edit',
+		'- vary the wording or the angle between names, not just the type',
+		...(context.recentSubjects.length ? ['- recent commits, for the words this repository uses:', ...context.recentSubjects.slice(0, 8).map(subject => `  ${subject}`)] : []),
+		'',
+		`Current branch: ${context.current}`,
+		...(context.chatTitle ? [`Chat title: ${context.chatTitle}`] : []),
+		...(context.firstPrompt ? ['Request:', clip(context.firstPrompt, 2000)] : []),
+		...(context.commits.length ? ['Commits on the branch:', ...context.commits.slice(0, 30).map(commit => `- ${commit}`)] : []),
+		...(context.files.trim() ? ['Uncommitted files:', clip(context.files, MAX_FILES_CHARS), '', 'Patch:', clip(context.patch, MAX_DIFF_CHARS / 2)] : []),
+	].join('\n');
+}
+
+/** A suggested name made safe for git: lower case, dashes for spaces, no quotes, list markers or `refs/heads/`. */
+export function sanitizeBranchSuggestion(raw: string): string | undefined {
+	const name = raw.trim()
+		.replace(/^(?:[-*•]|\d+[.)])\s+/, '')
+		.replace(/^["'`]+|["'`,]+$/g, '')
+		.replace(/^refs\/heads\//, '')
+		.toLowerCase()
+		.replace(/[\s_]+/g, '-')
+		.replace(/[^a-z0-9/.-]/g, '')
+		.replace(/\.{2,}/g, '-')
+		.replace(/\.lock(?=\/|$)/g, '')
+		.replace(/-{2,}/g, '-')
+		.replace(/\/{2,}/g, '/')
+		.replace(/(^|\/)[-.]+|[-.]+(?=\/|$)/g, '$1')
+		.replace(/^\/+|\/+$/g, '');
+	return name.length >= 3 && name.length <= 60 ? name : undefined;
+}
+
+/** Up to {@link BRANCH_NAME_SUGGESTIONS} distinct names from a model reply (`{ names: [...] }`, or one name per line), never `current`. */
+export function branchNamesFrom(raw: string | undefined, current?: string): string[] {
+	if (!raw) {
+		return [];
+	}
+	const text = raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '');
+	let candidates: unknown[] | undefined;
+	const start = text.indexOf('{');
+	const end = text.lastIndexOf('}');
+	if (start >= 0 && end > start) {
+		try {
+			const parsed = JSON.parse(text.slice(start, end + 1)) as { names?: unknown };
+			candidates = Array.isArray(parsed.names) ? parsed.names : undefined;
+		} catch {
+			// Read it line by line instead.
+		}
+	}
+	// Without JSON, only lines shaped like type/name count: prose around them ("Here are some names:") does not.
+	const lines = !candidates;
+	candidates ??= text.split('\n').filter(line => /^\s*(?:[-*•]|\d+[.)])?\s*[`"']?[A-Za-z]+\/\S+\s*$/.test(line));
+	const names: string[] = [];
+	for (const candidate of candidates) {
+		const name = typeof candidate === 'string' ? sanitizeBranchSuggestion(candidate) : undefined;
+		if (name && (!lines || name.includes('/')) && name !== current && !names.includes(name)) {
+			names.push(name);
+		}
+	}
+	return names.slice(0, BRANCH_NAME_SUGGESTIONS);
 }
 
 /** Reads `{ subject, body }` / `{ title, body }` from a model reply, tolerating code fences and prose around it. */

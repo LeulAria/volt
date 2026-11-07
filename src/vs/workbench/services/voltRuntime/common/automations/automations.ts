@@ -6,6 +6,7 @@
 import { Event } from '../../../../../base/common/event.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { describeCron, nextCronRun, parseCron } from './automationCron.js';
+import { civilDay, formatGmtOffset, isLocalTimeZone, timeZoneLabel, wallClock } from './automationTime.js';
 import { AUTOMATION_PROVIDERS, AutomationProvider, AutomationTriggerGroup, eventLabel, triggerGroupOf } from './automationTriggers.js';
 import { IAgentWebhookTrigger, parseWebhookTrigger } from './automationWebhooks.js';
 
@@ -50,7 +51,9 @@ export type AutomationSchedule =
 	/** `weekdays` 0 (Sunday) to 6. */
 	| { readonly type: 'weekly'; readonly weekdays: readonly number[]; readonly time: string }
 	| { readonly type: 'cron'; readonly expr: string }
-	| { readonly type: 'interval'; readonly everyMs: number };
+	| { readonly type: 'interval'; readonly everyMs: number }
+	/** Runs once at `at` (epoch ms); after that it has no next run. */
+	| { readonly type: 'once'; readonly at: number };
 
 export interface IAutomationTrigger {
 	readonly id: string;
@@ -62,6 +65,8 @@ export interface IAutomationTrigger {
 	readonly hook?: IAgentWebhookTrigger;
 	/** Narrows the event: a branch, a channel, a label, an emoji. */
 	readonly option?: string;
+	/** Schedules: the IANA zone the times are in (`Europe/Berlin`); local time when absent. */
+	readonly timezone?: string;
 }
 
 export type AutomationToolKind = 'memories' | 'mcp' | 'slack_send' | 'slack_read' | 'teams_send' | 'teams_read';
@@ -145,6 +150,8 @@ export interface IAutomationDraft {
 	readonly templateId?: string;
 	/** Runs go into this chat instead of a new chat each time (scheduled from a chat). */
 	readonly threadId?: string;
+	/** Runs execute this saved workflow (`IWorkflowService`) with the instructions as its `task` input. */
+	readonly workflowId?: string;
 }
 
 export interface IAutomation extends IAutomationDraft {
@@ -181,38 +188,72 @@ export function formatTimeOfDay(minutes: number): string {
 	return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 }
 
-export function defaultSchedule(kind: string): AutomationSchedule {
+/** A new trigger's schedule for a kind of the Scheduled menu; a one-time run starts at the next full hour. */
+export function defaultSchedule(kind: string, now = Date.now()): AutomationSchedule {
 	switch (kind) {
+		case 'minutes':
+		case 'interval': return { type: 'interval', everyMs: 15 * 60_000 };
 		case 'hourly': return { type: 'hourly', minute: 0 };
 		case 'weekly': return { type: 'weekly', weekdays: [1], time: '09:00' };
 		case 'cron': return { type: 'cron', expr: '0 9 * * 1-5' };
+		case 'once': {
+			const next = new Date(now);
+			next.setMinutes(0, 0, 0);
+			next.setHours(next.getHours() + 1);
+			return { type: 'once', at: next.getTime() };
+		}
 		default: return { type: 'daily', time: '09:00' };
 	}
 }
 
-export function validateSchedule(spec: AutomationSchedule): string | undefined {
+/**
+ * What is wrong with a schedule, if anything. With `now`, a one-time run at or before it is an
+ * error too: pass it when saving what the user just set, not for one that already ran.
+ */
+export function validateSchedule(spec: AutomationSchedule, now?: number): string | undefined {
 	switch (spec.type) {
 		case 'hourly': return Number.isInteger(spec.minute) && spec.minute >= 0 && spec.minute < 60 ? undefined : 'Minute must be 0-59.';
 		case 'daily': return parseTimeOfDay(spec.time) === undefined ? 'Time must be HH:MM.' : undefined;
 		case 'weekly': return parseTimeOfDay(spec.time) === undefined ? 'Time must be HH:MM.' : spec.weekdays.length ? undefined : 'Pick at least one day.';
 		case 'cron': return parseCron(spec.expr).error;
 		case 'interval': return spec.everyMs >= MIN_INTERVAL_MS ? undefined : 'Runs at most once a minute.';
+		case 'once': return !Number.isFinite(spec.at) ? 'Pick a date and time.' : now !== undefined && spec.at <= now ? 'This time has passed.' : undefined;
 	}
 }
 
-/** The first run strictly after `after`, in local time. */
-export function nextScheduleAt(spec: AutomationSchedule, after: number): number | undefined {
+/**
+ * A schedule trigger's problem on Save: like `validateSchedule`, and a one-time run that is new
+ * or was moved must be in the future (one that already ran may stay as it is).
+ */
+export function scheduleSaveError(trigger: IAutomationTrigger, saved: readonly IAutomationTrigger[] | undefined, now: number): string | undefined {
+	if (!trigger.schedule) {
+		return undefined;
+	}
+	const before = saved?.find(entry => entry.id === trigger.id);
+	const unchanged = !!before && JSON.stringify(before.schedule) === JSON.stringify(trigger.schedule);
+	return validateSchedule(trigger.schedule, unchanged ? undefined : now);
+}
+
+/** The first run strictly after `after`. `zone` is the IANA zone the times are in; local time when absent. */
+export function nextScheduleAt(spec: AutomationSchedule, after: number, zone?: string): number | undefined {
 	switch (spec.type) {
 		case 'interval':
 			return spec.everyMs >= MIN_INTERVAL_MS ? after + spec.everyMs : undefined;
+		case 'once':
+			return Number.isFinite(spec.at) && spec.at > after ? spec.at : undefined;
 		case 'hourly': {
-			const start = new Date(after);
-			const candidate = new Date(start.getFullYear(), start.getMonth(), start.getDate(), start.getHours(), spec.minute, 0, 0).getTime();
-			return candidate > after ? candidate : candidate + 3_600_000;
+			const clock = wallClock(zone);
+			const start = clock.parts(after);
+			let candidate = clock.epoch(start.year, start.month, start.day, start.hour, spec.minute);
+			// An absolute hour on: across a daylight saving change the wall hour repeats or jumps, the run does not.
+			while (candidate <= after) {
+				candidate += 3_600_000;
+			}
+			return candidate;
 		}
 		case 'cron': {
 			const parsed = parseCron(spec.expr).schedule;
-			return parsed ? nextCronRun(parsed, after) : undefined;
+			return parsed ? nextCronRun(parsed, after, zone) : undefined;
 		}
 		case 'daily':
 		case 'weekly': {
@@ -221,11 +262,16 @@ export function nextScheduleAt(spec: AutomationSchedule, after: number): number 
 				return undefined;
 			}
 			const days = spec.type === 'weekly' && spec.weekdays.length && spec.weekdays.length < 7 ? new Set(spec.weekdays) : undefined;
-			const start = new Date(after);
+			const clock = wallClock(zone);
+			const start = clock.parts(after);
 			for (let offset = 0; offset <= 7; offset++) {
-				const candidate = new Date(start.getFullYear(), start.getMonth(), start.getDate() + offset, Math.floor(minutes / 60), minutes % 60, 0, 0);
-				if (candidate.getTime() > after && (!days || days.has(candidate.getDay()))) {
-					return candidate.getTime();
+				const day = civilDay(start.year, start.month, start.day + offset);
+				if (days && !days.has(day.weekday)) {
+					continue;
+				}
+				const candidate = clock.epoch(day.year, day.month, day.day, Math.floor(minutes / 60), minutes % 60);
+				if (candidate > after) {
+					return candidate;
 				}
 			}
 			return undefined;
@@ -233,19 +279,53 @@ export function nextScheduleAt(spec: AutomationSchedule, after: number): number 
 	}
 }
 
+/** The next `count` runs after `after`, for previews ("Next: Tue 09:00, Wed 09:00, …"). */
+export function nextRunsPreview(spec: AutomationSchedule, after: number, count: number, zone?: string): number[] {
+	const runs: number[] = [];
+	if (spec.type === 'interval') {
+		for (let index = 1; index <= count && spec.everyMs >= MIN_INTERVAL_MS; index++) {
+			runs.push(after + index * spec.everyMs);
+		}
+		return runs;
+	}
+	let at = after;
+	while (runs.length < count) {
+		const next = nextScheduleAt(spec, at, zone);
+		if (next === undefined) {
+			break;
+		}
+		runs.push(next);
+		at = next;
+	}
+	return runs;
+}
+
 const WEEKDAY_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export function weekdayName(day: number, short = false): string {
 	return (short ? WEEKDAY_SHORT : WEEKDAY_LONG)[day] ?? '';
 }
 
-/** "Every hour at :00", "Every day at 15:00", "Every Monday at 09:00", "Weekdays at 09:00". */
-export function describeSchedule(spec: AutomationSchedule): string {
+/**
+ * "Every hour at :00", "Every day at 15:00", "Every Monday at 09:00", "Weekdays at 09:00",
+ * "Once on Tue, Nov 4 at 09:00" (read in `zone`; the year shows when it is not `now`'s).
+ */
+export function describeSchedule(spec: AutomationSchedule, zone?: string, now = Date.now()): string {
 	switch (spec.type) {
 		case 'hourly': return `Every hour at :${String(spec.minute).padStart(2, '0')}`;
 		case 'daily': return `Every day at ${spec.time}`;
 		case 'cron': return describeCron(spec.expr);
+		case 'once': {
+			if (!Number.isFinite(spec.at)) {
+				return 'Once';
+			}
+			const clock = wallClock(zone);
+			const at = clock.parts(spec.at);
+			const year = at.year !== clock.parts(now).year ? `, ${at.year}` : '';
+			return `Once on ${WEEKDAY_SHORT[at.weekday]}, ${MONTH_SHORT[at.month - 1]} ${at.day}${year} at ${formatTimeOfDay(at.hour * 60 + at.minute)}`;
+		}
 		case 'interval': {
 			const minutes = Math.round(spec.everyMs / 60_000);
 			if (minutes % 1440 === 0) {
@@ -273,10 +353,15 @@ export function describeSchedule(spec: AutomationSchedule): string {
 	}
 }
 
-/** "Every day at 15:00", "Pull request opened", "New push to main". */
-export function describeTrigger(trigger: IAutomationTrigger): string {
+/** "Every day at 15:00", "Every day at 09:00 (GMT+1 · Berlin)", "Pull request opened", "New push to main". */
+export function describeTrigger(trigger: IAutomationTrigger, now = Date.now()): string {
 	if (trigger.provider === 'schedule') {
-		return trigger.schedule ? describeSchedule(trigger.schedule) : 'Scheduled';
+		if (!trigger.schedule) {
+			return 'Scheduled';
+		}
+		const text = describeSchedule(trigger.schedule, trigger.timezone, now);
+		// An interval is the same in every zone.
+		return isLocalTimeZone(trigger.timezone) || trigger.schedule.type === 'interval' ? text : `${text} (${timeZoneLabel(trigger.timezone!, now)})`;
 	}
 	const label = eventLabel(trigger.provider, trigger.event);
 	return trigger.option?.trim() ? `${label} (${trigger.option.trim()})` : label;
@@ -287,8 +372,9 @@ function scheduleTriggers(automation: Pick<IAutomation, 'triggers'>): IAutomatio
 }
 
 /**
- * The next run of every schedule trigger. A trigger whose schedule did not change and whose next
- * run is still ahead keeps it; a new or edited one counts from `now`.
+ * The next run of every schedule trigger. A trigger whose schedule (and zone) did not change and
+ * whose next run is still ahead keeps it; a new or edited one counts from `now`. A one-time run
+ * that already ran has no next run, so editing the automation never runs it again.
  */
 export function planNextRuns(automation: Pick<IAutomation, 'enabled' | 'triggers'>, now: number, previous?: { readonly triggers: readonly IAutomationTrigger[]; readonly nextRuns: Readonly<Record<string, number>> }): Record<string, number> {
 	const next: Record<string, number> = {};
@@ -298,11 +384,11 @@ export function planNextRuns(automation: Pick<IAutomation, 'enabled' | 'triggers
 	for (const trigger of scheduleTriggers(automation)) {
 		const before = previous?.triggers.find(candidate => candidate.id === trigger.id);
 		const kept = previous?.nextRuns[trigger.id];
-		if (before && kept !== undefined && kept > now - SCHEDULE_MISSED_GRACE_MS && JSON.stringify(before.schedule) === JSON.stringify(trigger.schedule)) {
+		if (before && kept !== undefined && kept > now - SCHEDULE_MISSED_GRACE_MS && JSON.stringify(before.schedule) === JSON.stringify(trigger.schedule) && before.timezone === trigger.timezone) {
 			next[trigger.id] = kept;
 			continue;
 		}
-		const at = nextScheduleAt(trigger.schedule!, now);
+		const at = nextScheduleAt(trigger.schedule!, now, trigger.timezone);
 		if (at !== undefined) {
 			next[trigger.id] = at;
 		}
@@ -320,8 +406,9 @@ export interface IScheduleDecision {
 
 /**
  * Which schedule triggers are due at `now`. An interval missed while Volt was closed runs once; a
- * fixed time missed by more than the grace is skipped (T3 does the same). Two triggers due at the
- * same minute run once: the second is recorded as a skip.
+ * fixed time (a one-time run too) missed by more than the grace is skipped (T3 does the same).
+ * Two triggers due at the same minute run once: the second is recorded as a skip. A one-time run
+ * has no next run after this.
  */
 export function dueSchedules(automation: IAutomation, now: number): IScheduleDecision[] {
 	if (!automation.enabled) {
@@ -336,7 +423,7 @@ export function dueSchedules(automation: IAutomation, now: number): IScheduleDec
 		}
 		const spec = trigger.schedule!;
 		const late = now - due;
-		const next = nextScheduleAt(spec, spec.type === 'interval' ? now : Math.max(now, due));
+		const next = nextScheduleAt(spec, spec.type === 'interval' ? now : Math.max(now, due), trigger.timezone);
 		const kind: IScheduleDecision['kind'] = (spec.type !== 'interval' && late > SCHEDULE_MISSED_GRACE_MS) || ran ? 'skip' : 'run';
 		ran ||= kind === 'run';
 		decisions.push({ triggerId: trigger.id, kind, next, due });
@@ -371,22 +458,53 @@ export function nextDueAt(automations: readonly IAutomation[]): number | undefin
 
 /**
  * A schedule from an agent's words: "hourly", "hourly at :15", "daily at 09:00", "weekdays at
- * 18:30", "mondays at 9:00", "mon, wed at 08:15", "every 2 hours", "cron 0 9 * * 1-5", or a
- * bare five-field cron expression.
+ * 18:30", "mondays at 9:00", "mon, wed at 08:15", "every 2 hours", "every 5 minutes", "once at
+ * 2026-11-04 09:00", "tomorrow at 9:00", "in 30 minutes", "cron 0 9 * * 1-5", or a bare
+ * five-field cron expression. One-time runs are in local time and must be after `now`.
  */
-export function parseScheduleText(input: string): { readonly schedule?: AutomationSchedule; readonly error?: string } {
+export function parseScheduleText(input: string, now = Date.now()): { readonly schedule?: AutomationSchedule; readonly error?: string } {
 	const text = input.trim().toLowerCase().replace(/\s+/g, ' ');
-	const fail = { error: `Could not read the schedule "${input}". Try "daily at 09:00", "weekdays at 18:30", "hourly at :15", "every 2 hours" or a cron expression like "0 9 * * 1-5".` };
+	const fail = { error: `Could not read the schedule "${input}". Try "daily at 09:00", "weekdays at 18:30", "hourly at :15", "every 5 minutes", "once at 2026-11-04 09:00", "in 30 minutes" or a cron expression like "0 9 * * 1-5".` };
+	const once = (at: number) => {
+		const spec: AutomationSchedule = { type: 'once', at };
+		const error = validateSchedule(spec, now);
+		return error ? { error: error === 'This time has passed.' ? `${input.trim()} has already passed.` : error } : { schedule: spec };
+	};
 	const hourly = /^(?:hourly|every hour)(?: at :?(\d{1,2}))?$/.exec(text);
 	if (hourly) {
 		const minute = hourly[1] ? Number(hourly[1]) : 0;
 		return minute < 60 ? { schedule: { type: 'hourly', minute } } : fail;
 	}
-	const every = /^every (\d+) ?(minute|min|hour|hr|day)s?$/.exec(text);
+	if (text === 'every minute') {
+		return { schedule: { type: 'interval', everyMs: 60_000 } };
+	}
+	const every = /^every (\d+) ?(minute|min|m|hour|hr|h|day|d)s?$/.exec(text);
 	if (every) {
 		const unit = every[2].startsWith('m') ? 60_000 : every[2].startsWith('h') ? 3_600_000 : 86_400_000;
 		const spec: AutomationSchedule = { type: 'interval', everyMs: Number(every[1]) * unit };
 		return validateSchedule(spec) ? { error: validateSchedule(spec) } : { schedule: spec };
+	}
+	const after = /^(?:once )?in (\d+) ?(minute|min|m|hour|hr|h|day|d)s?$/.exec(text);
+	if (after) {
+		const unit = after[2].startsWith('m') ? 60_000 : after[2].startsWith('h') ? 3_600_000 : 86_400_000;
+		// On a whole minute, like every other schedule.
+		return once(Math.ceil((now + Number(after[1]) * unit) / 60_000) * 60_000);
+	}
+	const dated = /^(?:once )?(?:on |at )?(\d{4})-(\d{2})-(\d{2})(?:t| at | )(\d{1,2}:\d{2})$/.exec(text);
+	if (dated) {
+		const minutes = parseTimeOfDay(dated[4]);
+		const [year, month, day] = [Number(dated[1]), Number(dated[2]), Number(dated[3])];
+		// "2026-02-30" would roll into March.
+		if (minutes === undefined || month < 1 || month > 12 || new Date(year, month - 1, day).getDate() !== day) {
+			return fail;
+		}
+		return once(new Date(year, month - 1, day, Math.floor(minutes / 60), minutes % 60).getTime());
+	}
+	const relative = /^(?:once )?(today|tomorrow) at (\d{1,2}:\d{2})$/.exec(text);
+	if (relative) {
+		const minutes = parseTimeOfDay(relative[2]);
+		const base = new Date(now);
+		return minutes === undefined ? fail : once(new Date(base.getFullYear(), base.getMonth(), base.getDate() + (relative[1] === 'tomorrow' ? 1 : 0), Math.floor(minutes / 60), minutes % 60).getTime());
 	}
 	const at = /^(daily|every day|weekdays|weekends|(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*[, ]*(?:and )?)+) at (\d{1,2}:\d{2})$/.exec(text);
 	if (at) {
@@ -411,21 +529,14 @@ export function parseScheduleText(input: string): { readonly schedule?: Automati
 	return fail;
 }
 
-/** The trigger menu's kind for a schedule (an interval counts as hourly for the picker). */
+/** The trigger menu's kind for a schedule (an interval is "Every few minutes"). */
 export function scheduleKindOf(spec: AutomationSchedule): string {
-	return spec.type === 'interval' ? 'hourly' : spec.type;
+	return spec.type === 'interval' ? 'minutes' : spec.type;
 }
 
-/** "GMT+4", "GMT-5:30", "GMT". */
-export function gmtOffsetLabel(at: number): string {
-	const offset = -new Date(at).getTimezoneOffset();
-	if (offset === 0) {
-		return 'GMT';
-	}
-	const sign = offset > 0 ? '+' : '-';
-	const hours = Math.floor(Math.abs(offset) / 60);
-	const minutes = Math.abs(offset) % 60;
-	return `GMT${sign}${hours}${minutes ? `:${String(minutes).padStart(2, '0')}` : ''}`;
+/** "GMT+4", "GMT-5:30", "GMT": the offset at `at` in `zone` (local when absent). */
+export function gmtOffsetLabel(at: number, zone?: string): string {
+	return formatGmtOffset(wallClock(zone).offset(at));
 }
 
 //#endregion
@@ -680,6 +791,7 @@ export function parseSchedule(value: unknown): AutomationSchedule | undefined {
 		}
 		case 'cron': return typeof value.expr === 'string' && !parseCron(value.expr).error ? { type: 'cron', expr: value.expr.trim() } : undefined;
 		case 'interval': return typeof value.everyMs === 'number' && value.everyMs > 0 ? { type: 'interval', everyMs: value.everyMs } : undefined;
+		case 'once': return typeof value.at === 'number' && Number.isFinite(value.at) ? { type: 'once', at: Math.floor(value.at) } : undefined;
 		// The old scheduled tasks' shape.
 		case 'fixed_time': {
 			const time = typeof value.timeOfDay === 'string' ? value.timeOfDay : '';
@@ -700,7 +812,7 @@ export function parseTrigger(value: unknown): IAutomationTrigger | undefined {
 	if ((provider === 'schedule' && !schedule) || (provider !== 'schedule' && !hook)) {
 		return undefined;
 	}
-	return { id: value.id, provider, event: value.event, ...(schedule ? { schedule } : {}), ...(hook ? { hook } : {}), ...strings(value, ['option']) };
+	return { id: value.id, provider, event: value.event, ...(schedule ? { schedule } : {}), ...(hook ? { hook } : {}), ...strings(value, ['option', 'timezone']) };
 }
 
 const TOOL_KINDS: readonly AutomationToolKind[] = ['memories', 'mcp', 'slack_send', 'slack_read', 'teams_send', 'teams_read'];
@@ -775,7 +887,7 @@ export function parseAutomation(value: unknown): IAutomation | undefined {
 		triggers: list(value.triggers, parseTrigger),
 		repositories: list(value.repositories, parseRepository),
 		tools: list(value.tools, parseTool),
-		...strings(value, ['modelRef', 'mode', 'templateId', 'threadId', 'sourceThreadId']),
+		...strings(value, ['modelRef', 'mode', 'templateId', 'threadId', 'sourceThreadId', 'workflowId']),
 		...(value.shared === true ? { shared: true } : {}),
 		...(value.createdByAgent === true ? { createdByAgent: true } : {}),
 		createdAt: value.createdAt,
@@ -971,6 +1083,37 @@ export interface IAutomationDeliveryInput {
 	readonly label: string;
 }
 
+/** An automation run that executes the automation's workflow (`IAutomationDraft.workflowId`). */
+export interface IAutomationWorkflowRequest {
+	readonly automation: IAutomation;
+	readonly run: IAutomationRun;
+	/** The instructions with the event's placeholders filled in: the workflow's `task` input. */
+	readonly task: string;
+	readonly eventLines?: readonly string[];
+	readonly payload?: string;
+	readonly repository?: IAutomationRepository;
+	/** The workflow run started, or its first agent step opened a chat. */
+	onProgress(progress: { readonly workflowRunId?: string; readonly threadId?: string }): void;
+}
+
+export interface IAutomationWorkflowResult {
+	readonly status: 'succeeded' | 'failed' | 'cancelled';
+	readonly error?: string;
+	/** The first agent step's chat, for Open chat. */
+	readonly threadId?: string;
+	readonly workflowRunId?: string;
+}
+
+export interface IAutomationWorkflowRun {
+	readonly result: Promise<IAutomationWorkflowResult>;
+	cancel(): void;
+}
+
+/** Runs workflows for automations; the workflows bridge registers it (the services do not depend on each other). */
+export interface IAutomationWorkflowRunner {
+	run(request: IAutomationWorkflowRequest): IAutomationWorkflowRun;
+}
+
 export interface IAutomationService {
 	readonly _serviceBrand: undefined;
 	readonly onDidChange: Event<void>;
@@ -998,6 +1141,8 @@ export interface IAutomationService {
 	readMemory(id: string, file?: string): Promise<string>;
 	writeMemory(id: string, file: string, content: string): Promise<void>;
 	deleteMemory(id: string, file: string): Promise<void>;
+	/** Runs of automations with a `workflowId` go through `runner` (the latest one registered). */
+	registerWorkflowRunner?(runner: IAutomationWorkflowRunner): { dispose(): void };
 }
 
 //#endregion

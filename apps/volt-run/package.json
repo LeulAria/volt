@@ -1,0 +1,44 @@
+{
+	"name": "volt-run",
+	"version": "0.0.5",
+	"description": "Run Volt in your browser with one command: npx volt-run. The agent server and the full Volt workbench, on your computer.",
+	"license": "MIT",
+	"author": "Volt ADK",
+	"homepage": "https://volt.leularia.com",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/LeulAria/VOLT.git",
+		"directory": "apps/volt-run"
+	},
+	"bugs": "https://github.com/LeulAria/VOLT/issues",
+	"keywords": [
+		"volt",
+		"ai",
+		"agents",
+		"coding-agent",
+		"ide",
+		"browser",
+		"claude",
+		"codex"
+	],
+	"type": "module",
+	"bin": {
+		"volt-run": "dist/volt-run.mjs"
+	},
+	"files": [
+		"dist/volt-run.mjs",
+		"README.md"
+	],
+	"engines": {
+		"node": ">=20"
+	},
+	"scripts": {
+		"start": "node src/cli.mjs",
+		"build": "node scripts/build.mjs",
+		"test": "node --test test/*.test.mjs",
+		"release": "node scripts/release.mjs"
+	},
+	"devDependencies": {
+		"esbuild": "0.28.2"
+	}
+}

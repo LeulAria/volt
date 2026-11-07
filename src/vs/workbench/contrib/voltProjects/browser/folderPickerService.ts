@@ -5,6 +5,7 @@
 
 import './media/addProject.css';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { localize } from '../../../../nls.js';
 import { createDecorator, IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
 import { IVoltProjectsService } from '../common/projects.js';
@@ -12,7 +13,9 @@ import { FolderBrowser } from './ui/folderBrowser.js';
 import { showVoltModal } from './ui/voltModal.js';
 
 export interface IVoltPickFolderOptions {
+	/** Shown above the folders, e.g. "Choose where new projects go". */
 	readonly title: string;
+	/** Read to screen readers with the title. */
 	readonly subtitle?: string;
 	/** The primary button, e.g. "Choose". */
 	readonly acceptLabel: string;
@@ -42,12 +45,13 @@ export class VoltFolderPickerService implements IVoltFolderPickerService {
 	pickFolder(options: IVoltPickFolderOptions): Promise<string | undefined> {
 		return new Promise<string | undefined>(resolve => {
 			let result: string | undefined;
+			// The same folder palette as Add Project: the title names the list instead of a header.
 			showVoltModal(this.layoutService, {
-				title: options.title,
-				subtitle: options.subtitle,
-				width: 760,
-				height: 520,
-				className: 'volt-add-project',
+				title: options.subtitle ? localize('voltFolders.pickerAria', "{0}. {1}", options.title, options.subtitle) : options.title,
+				headless: true,
+				width: 640,
+				height: 480,
+				className: 'volt-add-project volt-folder-palette',
 				onDidClose: () => resolve(result),
 				render: (body, close) => {
 					const store = new DisposableStore();
@@ -60,6 +64,8 @@ export class VoltFolderPickerService implements IVoltFolderPickerService {
 						addedPaths: () => new Set(this.projects.list().filter(project => project.uri.scheme === 'file').map(project => project.uri.fsPath)),
 						knownFolders: () => this.projects.list().filter(project => project.uri.scheme === 'file').map(project => ({ name: project.name, path: project.uri.fsPath })),
 						acceptLabel: options.acceptLabel,
+						escapeLabel: localize('voltFolders.cancel', "Cancel"),
+						caption: options.title,
 						onAccept: accept,
 					}));
 					browser.focus();

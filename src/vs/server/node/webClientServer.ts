@@ -448,7 +448,8 @@ export class WebClientServer {
 			'Content-Type': 'text/html',
 			'Content-Security-Policy': cspDirectives
 		};
-		if (this._connectionToken.type !== ServerConnectionTokenType.None) {
+		// An embedder (Volt's agent server) signs pages in itself and puts the token in their configuration.
+		if (this._connectionToken.type !== ServerConnectionTokenType.None && !this._webConfiguration) {
 			// At this point we know the client has a valid cookie
 			// and we want to set it prolong it to ensure that this
 			// client is valid for another 1 week at least

@@ -9,7 +9,7 @@ import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'fs/pr
 import { tmpdir } from 'os';
 import { join } from '../../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { AgentWorktreeError, GitRunner, IGitRunResult, IWorktreeFiles, branchNameFromTitle, createAgentWorktree, releaseWorktreeBranch } from '../../common/git/agentWorktree.js';
+import { AgentWorktreeError, GitRunner, IGitRunResult, IWorktreeFiles, branchNameFromTitle, createAgentWorktree, ensureAgentWorktree, releaseWorktreeBranch } from '../../common/git/agentWorktree.js';
 
 suite('Agent worktrees on git', () => {
 
@@ -130,6 +130,40 @@ suite('Agent worktrees on git', () => {
 			const own = join(root, 'own');
 			await git(repo, ['worktree', 'add', own, 'other']);
 			await assert.rejects(() => releaseWorktreeBranch({ run: git, repoRoot: repo, worktreesRoot, branch: 'other' }), (err: unknown) => err instanceof AgentWorktreeError);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test('a chat whose checkout is gone works in the one that has its branch now, else gets its own back', async () => {
+		const root = await realpath(await mkdtemp(join(tmpdir(), 'volt-ensure-')));
+		const repo = join(root, 'repo');
+		const worktreesRoot = join(root, 'wt');
+		try {
+			await mkdir(repo);
+			await git(repo, ['init', '-b', 'main']);
+			await git(repo, ['config', 'user.email', 'test@volt.local']);
+			await git(repo, ['config', 'user.name', 'Volt Test']);
+			await writeFile(join(repo, 'README'), 'hello\n');
+			await git(repo, ['add', 'README']);
+			await git(repo, ['commit', '-m', 'init']);
+			await git(repo, ['branch', 'feat/bg']);
+			const ensure = (path: string) => ensureAgentWorktree({ run: git, files: files(), repoRoot: repo, worktreesRoot, path, branch: 'feat/bg' });
+
+			// The chat's checkout is removed and its branch checked out in another worktree.
+			const chat = await createAgentWorktree({ run: git, files: files(), repoRoot: repo, worktreesRoot, target: { kind: 'branch', name: 'feat/bg' } });
+			await git(repo, ['worktree', 'remove', '--force', chat.path]);
+			const other = join(root, 'other');
+			await git(repo, ['worktree', 'add', other, 'feat/bg']);
+			assert.deepStrictEqual(await ensure(chat.path), { path: other, recreated: false });
+			assert.strictEqual(await files().exists(chat.path), false, 'no second checkout is made');
+
+			// Nothing has the branch: the checkout comes back, also after a delete git never saw.
+			await git(repo, ['worktree', 'remove', '--force', other]);
+			assert.deepStrictEqual(await ensure(chat.path), { path: chat.path, recreated: true });
+			await rm(chat.path, { recursive: true, force: true });
+			assert.deepStrictEqual(await ensure(chat.path), { path: chat.path, recreated: true });
+			assert.strictEqual((await git(chat.path, ['branch', '--show-current'])).stdout.trim(), 'feat/bg');
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

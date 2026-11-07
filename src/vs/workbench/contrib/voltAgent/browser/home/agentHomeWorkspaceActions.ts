@@ -10,6 +10,7 @@ import { hash } from '../../../../../base/common/hash.js';
 import { untildify } from '../../../../../base/common/labels.js';
 import { isAbsolute } from '../../../../../base/common/path.js';
 import { isEqual, joinPath } from '../../../../../base/common/resources.js';
+import { isDefined } from '../../../../../base/common/types.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
@@ -31,12 +32,31 @@ import { IVoltProjectsService } from '../../../voltProjects/common/projects.js';
 import { IVoltFolderPickerService } from '../../../voltProjects/browser/folderPickerService.js';
 import { IProjectCloneService } from '../../../voltProjects/browser/projectCloneService.js';
 import { AddProjectDialog } from '../../../voltProjects/browser/ui/addProjectView.js';
-import { agentHomeWorkspaceEntries, cloneFolderName, commitFailureSummary, freeFolderName, gitErrorSummary, IAgentHomeWorkspaceEntry, namedProjectReadme, projectFolderSlug } from './agentHomeWorkspace.js';
+import { agentHomeWorkspaceEntries, CLAUDE_HISTORY_LIMIT, claudeHistoryFolderKind, claudeHistoryFolders, cloneFolderName, commitFailureSummary, freeFolderName, gitErrorSummary, IAgentHomeWorkspaceEntry, namedProjectReadme, projectFolderSlug } from './agentHomeWorkspace.js';
 import { IAgentHomeWorkspaceMenuHost, showAgentHomeWorkspaceMenu } from './agentHomeWorkspaceMenu.js';
 
 /** Parent folder for clones and new projects, once the user picks one. */
 const LOCATION_STORAGE_KEY = 'volt.agent.home.projectsLocation';
 export const INIT_TIMEOUT_MS = 30_000;
+/** ~/.claude.json also holds Claude Code's app state; past this it is not read for history. */
+const CLAUDE_JSON_MAX_BYTES = 16 * 1024 * 1024;
+
+/** Claude Code's history by `~/.claude.json`'s mtime, so each new chat does not parse it again. */
+let claudeHistoryCache: { readonly mtime: number; readonly folders: string[] } | undefined;
+
+async function readClaudeHistory(fileService: IFileService, resource: URI): Promise<string[]> {
+	try {
+		const stat = await fileService.stat(resource);
+		if (claudeHistoryCache?.mtime !== stat.mtime) {
+			const content = await fileService.readFile(resource, { limits: { size: CLAUDE_JSON_MAX_BYTES } });
+			claudeHistoryCache = { mtime: stat.mtime, folders: claudeHistoryFolders(content.value.toString()) };
+		}
+		return claudeHistoryCache.folders;
+	} catch {
+		// No Claude Code, or a file too big to read: no history.
+		return [];
+	}
+}
 
 export { runGit } from './agentGitRun.js';
 export type { IGitRun } from './agentGitRun.js';
@@ -87,9 +107,12 @@ export class AgentHomeWorkspaceActions {
 		};
 	}
 
-	/** Local folders only (no remotes, no workspace files): recently opened first, then registered projects. */
-	private async entries(): Promise<IAgentHomeWorkspaceEntry[]> {
-		const recents = await this.workspacesService.getRecentlyOpened();
+	/**
+	 * Local folders only (no remotes, no workspace files): recently opened first, then registered
+	 * projects, then the folders Claude Code has worked in.
+	 */
+	async entries(): Promise<IAgentHomeWorkspaceEntry[]> {
+		const [recents, history] = await Promise.all([this.workspacesService.getRecentlyOpened(), this.claudeHistory()]);
 		const recent = recents.workspaces
 			.filter(isRecentFolder)
 			.filter(folder => folder.folderUri.scheme === 'file')
@@ -97,7 +120,28 @@ export class AgentHomeWorkspaceActions {
 		const projects = this.sessionContext.projects
 			.filter(project => project.root.scheme === 'file')
 			.map(project => ({ uri: project.root, name: project.displayName }));
-		return agentHomeWorkspaceEntries(recent, projects, uri => this.labelService.getUriLabel(uri));
+		return agentHomeWorkspaceEntries(recent, [...projects, ...history], uri => this.labelService.getUriLabel(uri));
+	}
+
+	/**
+	 * Claude Code's past projects (`~/.claude.json`), as Cezar lists them. Folders that are gone are
+	 * left out, except under Desktop, Documents and the like, which are listed unchecked: looking
+	 * there is what makes macOS ask for permission.
+	 */
+	private async claudeHistory(): Promise<{ uri: URI; name: string }[]> {
+		const home = this.pathService.userHome({ preferLocal: true });
+		if (home.scheme !== 'file') {
+			return [];
+		}
+		const candidates = (await readClaudeHistory(this.fileService, joinPath(home, '.claude.json')))
+			.map(path => ({ path, kind: claudeHistoryFolderKind(path, home.fsPath) }))
+			.filter(candidate => candidate.kind !== 'skip')
+			.slice(0, CLAUDE_HISTORY_LIMIT);
+		const kept = await Promise.all(candidates.map(async ({ path, kind }) => {
+			const uri = URI.file(path);
+			return kind === 'listed' || await this.fileService.stat(uri).then(stat => stat.isDirectory, () => false) ? uri : undefined;
+		}));
+		return kept.filter(isDefined).map(uri => ({ uri, name: this.labelService.getUriBasenameLabel(uri) }));
 	}
 
 	private locationUri(): URI {

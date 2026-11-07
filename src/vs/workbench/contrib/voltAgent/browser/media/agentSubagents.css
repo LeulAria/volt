@@ -285,7 +285,7 @@ button.volt-subagent-row:hover .volt-subagent-chevron { color: var(--vscode-fore
 	z-index: 6;
 	flex: 0 0 auto;
 	width: 100%;
-	max-width: 720px;
+	max-width: 728px;
 	margin: 0 auto 6px;
 	box-sizing: border-box;
 	color: var(--vscode-foreground);

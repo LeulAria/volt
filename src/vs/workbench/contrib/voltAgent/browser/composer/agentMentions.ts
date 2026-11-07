@@ -8,6 +8,7 @@ import { IKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { decodeBase64, encodeBase64, VSBuffer } from '../../../../../base/common/buffer.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { compareFileNamesDefault } from '../../../../../base/common/comparers.js';
 import { IMatch, matchesFuzzy } from '../../../../../base/common/filters.js';
 import { compareItemsByFuzzyScore, FuzzyScorerCache, IItemAccessor, prepareQuery, scoreItemFuzzy } from '../../../../../base/common/fuzzyScorer.js';
@@ -78,6 +79,9 @@ import { OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, OPEN_SCRATCH_BOARD_COMMAND_ID } f
 import { OPEN_CANVAS_COMMAND_ID } from '../visuals/canvas/canvasCard.js';
 import { REVEAL_BROWSER_ELEMENT_COMMAND_ID } from '../preview/browserCommentStore.js';
 import { IVoltCanvasService } from '../visuals/canvas/canvasService.js';
+import { IAgentDevicesService, IDeviceTarget, IHostDevices } from '../devices/agentDevicesService.js';
+import { OPEN_DEVICE_PREVIEW_COMMAND_ID } from '../workspace/agentSurfaceMenu.js';
+import { describeDevice } from '../../common/agentDevices.js';
 import type { ICanvasDoc } from '../visuals/canvas/canvasModel.js';
 import { IPathService } from '../../../../services/path/common/pathService.js';
 import { AgentSlashMenu, rankSlashItems } from './agentSlashMenu.js';
@@ -85,7 +89,7 @@ import { AgentSkillHoverCard } from './agentSkillHoverCard.js';
 import { decodeVoltContextDrag, REVEAL_VOLT_PART_COMMAND_ID, VOLT_CONTEXT_MIME, voltPartIdFromContext } from '../../../voltCustomize/common/voltCustomizeContext.js';
 
 /** `action`: a prompt Volt sent for a button (Generate Draft Commits); the chip stands for it and `value` holds the prompt. */
-export type AgentMentionKind = 'file' | 'folder' | 'terminal' | 'chat' | 'branch' | 'browser' | 'image' | 'video' | 'mcp' | 'selection' | 'skill' | 'scratch' | 'canvas' | 'action';
+export type AgentMentionKind = 'file' | 'folder' | 'terminal' | 'chat' | 'branch' | 'browser' | 'image' | 'video' | 'mcp' | 'selection' | 'skill' | 'scratch' | 'canvas' | 'action' | 'device';
 
 export interface IAgentImagePayload {
 	id: string;
@@ -275,7 +279,10 @@ export interface IAgentMentionHost {
 	currentModelLabel?(): string | undefined;
 }
 
-type MentionMenuView = 'root' | 'files' | 'computer' | 'terminals' | 'chats' | 'boards' | 'canvases';
+type MentionMenuView = 'root' | 'files' | 'computer' | 'terminals' | 'chats' | 'boards' | 'canvases' | 'devices' | DeviceMenuKind;
+
+/** The device kinds `/device` and @ Devices open as submenus. */
+type DeviceMenuKind = 'devices:ios' | 'devices:android' | 'devices:physical';
 
 /** An entry of the folder This Mac shows. */
 interface IComputerEntry {
@@ -410,7 +417,8 @@ export function mentionIconClasses(
 								: mention.kind === 'scratch' ? Codicon.notebook
 									: mention.kind === 'canvas' ? Codicon.symbolColor
 										: mention.kind === 'action' ? Codicon.gitCommit
-											: Codicon.globe;
+											: mention.kind === 'device' ? Codicon.deviceMobile
+												: Codicon.globe;
 	return ['codicon', `codicon-${icon.id}`];
 }
 
@@ -509,6 +517,8 @@ export class AgentMentionController extends Disposable {
 	private readonly surfaceContexts = new Map<string, string>();
 	/** The design canvases for the @ menu's Canvases list; read when that list opens. */
 	private canvasDocs: readonly ICanvasDoc[] | undefined;
+	/** Simulators and emulators for the Devices view; undefined until first listed. */
+	private deviceLists: readonly IHostDevices[] | undefined;
 	private lastDropAt = 0;
 	private hoveredMentionId: string | undefined;
 	private insertingMention = false;
@@ -1232,21 +1242,12 @@ export class AgentMentionController extends Disposable {
 
 	/** Types an @ at the cursor and opens the panel on Files & Folders. */
 	openFilePicker(): void {
-		this.editor.focus();
-		if (this.getAtQuery()) {
-			this.dismissedToken = undefined;
-			this.menuToken = undefined;
-			this.pendingMenuView = 'files';
-			this.refreshMentionMenu(true);
-			return;
-		}
-		const range = this.cursorRangeAfterSpacer();
-		if (!range) {
-			return;
-		}
-		this.pendingMenuView = 'files';
-		const cursor = new Selection(range.startLineNumber, range.startColumn + 1, range.startLineNumber, range.startColumn + 1);
-		this.editor.executeEdits('volt-agent-mention-at', [{ range: Range.lift(range), text: '@' }], [cursor]);
+		this.openMenuOn('files');
+	}
+
+	/** Types an @ at the cursor and opens the panel on Devices (`/device`). */
+	openDevicePicker(): void {
+		this.openMenuOn('devices');
 	}
 
 	private registerListeners(): void {
@@ -2069,7 +2070,32 @@ export class AgentMentionController extends Disposable {
 			case 'usage':
 				void this.commandService.executeCommand(USAGE_COMMAND_ID);
 				return;
+			case 'device':
+				this.openMenuOn('devices');
+				return;
 		}
+	}
+
+	/** Types an @ at the cursor and opens the panel on `view` (Files & Folders, Devices). */
+	private openMenuOn(view: MentionMenuView): void {
+		this.editor.focus();
+		if (view === 'devices') {
+			void this.loadDevices();
+		}
+		if (this.getAtQuery()) {
+			this.dismissedToken = undefined;
+			this.menuToken = undefined;
+			this.pendingMenuView = view;
+			this.refreshMentionMenu(true);
+			return;
+		}
+		const range = this.cursorRangeAfterSpacer();
+		if (!range) {
+			return;
+		}
+		this.pendingMenuView = view;
+		const cursor = new Selection(range.startLineNumber, range.startColumn + 1, range.startLineNumber, range.startColumn + 1);
+		this.editor.executeEdits('volt-agent-mention-at', [{ range: Range.lift(range), text: '@' }], [cursor]);
 	}
 
 	private slashMention(item: IAgentSlashItem, mode: boolean): IAgentMention {
@@ -2304,8 +2330,26 @@ export class AgentMentionController extends Disposable {
 			};
 		}
 
+		if (view === 'devices') {
+			return { kind: 'list', rows: [back, ...this.deviceKindRows(query)] };
+		}
+
+		if (view === 'devices:ios' || view === 'devices:android' || view === 'devices:physical') {
+			const up: AgentMentionRow = { ...back, run: () => this.setMenuView('devices') };
+			const devices = this.deviceRows(view, query);
+			return {
+				kind: 'list', rows: [up, ...(devices.length ? devices : [this.message(this.deviceLists === undefined
+					? localize('voltAgent.mention.loadingDevices', "Loading...")
+					: query ? localize('voltAgent.mention.noMatchingDevices', "No matching devices")
+						: view === 'devices:ios' ? localize('voltAgent.mention.noSimulators', "No iOS simulators. Install one in Xcode > Settings > Components.")
+							: view === 'devices:android' ? localize('voltAgent.mention.noEmulators', "No Android emulators. Create one in Android Studio > Device Manager.")
+								: localize('voltAgent.mention.noPhysical', "No phone or tablet is connected"))])],
+			};
+		}
+
 		const categories: AgentMentionRow[] = [
 			{ kind: 'item', id: 'files', label: localize('voltAgent.mention.files', "Files & Folders"), icon: Codicon.folder, submenu: true, run: () => this.setMenuView('files') },
+			...(this.surfaceService(IAgentDevicesService) ? [{ kind: 'item' as const, id: 'devices', label: localize('voltAgent.mention.devices', "Devices"), icon: Codicon.deviceMobile, submenu: true, run: () => this.openDevicesView() }] : []),
 			{ kind: 'item', id: 'computer', label: THIS_MACHINE, icon: Codicon.deviceDesktop, submenu: true, run: () => this.openComputer(undefined) },
 			{ kind: 'item', id: 'terminals', label: localize('voltAgent.mention.terminals', "Terminals"), icon: Codicon.terminal, submenu: true, run: () => this.setMenuView('terminals') },
 			{ kind: 'item', id: 'chats', label: localize('voltAgent.mention.chats', "Chats"), icon: Codicon.commentDiscussion, submenu: true, run: () => this.setMenuView('chats') },
@@ -2474,6 +2518,115 @@ export class AgentMentionController extends Disposable {
 			}
 		}
 		return rows;
+	}
+
+	private openDevicesView(): void {
+		this.setMenuView('devices');
+		void this.loadDevices();
+	}
+
+	/** Simulators and emulators, listed when the Devices view opens, then drawn again. */
+	private async loadDevices(): Promise<void> {
+		const devices = this.surfaceService(IAgentDevicesService);
+		if (!devices) {
+			this.deviceLists = [];
+			return;
+		}
+		this.deviceLists = devices.cached().length ? devices.cached() : this.deviceLists;
+		const lists = await devices.list(true).catch(() => [] as readonly IHostDevices[]);
+		this.deviceLists = lists;
+		if (this.mentionMenu.isVisible && this.menuView.startsWith('devices')) {
+			this.refreshMentionMenu(false);
+		}
+	}
+
+	private devicesOfKind(kind: DeviceMenuKind): { target: IDeviceTarget; key: string }[] {
+		const devices = this.surfaceService(IAgentDevicesService);
+		const found: { target: IDeviceTarget; key: string }[] = [];
+		for (const entry of this.deviceLists ?? []) {
+			for (const device of entry.devices) {
+				const matches = kind === 'devices:physical' ? device.kind === 'physical'
+					: device.kind !== 'physical' && device.platform === (kind === 'devices:ios' ? 'ios' : 'android');
+				if (matches && devices) {
+					const target = { host: entry.host, device };
+					found.push({ target, key: devices.keyOf(target) });
+				}
+			}
+		}
+		// Running ones first, like Xcode's and Android Studio's device menus.
+		return found.sort((a, b) => Number(b.target.device.state === 'booted') - Number(a.target.device.state === 'booted'));
+	}
+
+	/** iOS Simulators, Android Emulators, Connected Devices: each opens its own list. */
+	private deviceKindRows(query: string): AgentMentionRow[] {
+		const kinds: { view: DeviceMenuKind; label: string; icon: ThemeIcon }[] = [
+			{ view: 'devices:ios', label: localize('voltAgent.mention.iosSimulators', "iOS Simulators"), icon: Codicon.deviceMobile },
+			{ view: 'devices:android', label: localize('voltAgent.mention.androidEmulators', "Android Emulators"), icon: Codicon.deviceMobile },
+			{ view: 'devices:physical', label: localize('voltAgent.mention.physicalDevices', "Connected Devices"), icon: Codicon.plug },
+		];
+		const rows: AgentMentionRow[] = kinds.map(kind => {
+			const all = this.devicesOfKind(kind.view);
+			const running = all.filter(entry => entry.target.device.state === 'booted').length;
+			return {
+				kind: 'item' as const,
+				id: kind.view,
+				label: kind.label,
+				icon: kind.icon,
+				description: this.deviceLists === undefined ? undefined
+					: running ? localize('voltAgent.mention.devicesRunning', "{0} running", running)
+						: all.length ? localize('voltAgent.mention.devicesCount', "{0} available", all.length) : localize('voltAgent.mention.devicesNone', "None"),
+				submenu: true,
+				run: () => this.setMenuView(kind.view),
+			};
+		});
+		// Typing after `/device` searches every device at once.
+		if (query) {
+			const matches = (['devices:ios', 'devices:android', 'devices:physical'] as const).flatMap(view => this.deviceRows(view, query));
+			return [...filterRows(rows, query), ...(matches.length ? [{ kind: 'separator' as const, id: 'devices:sep' }, ...matches] : [])];
+		}
+		return rows;
+	}
+
+	private deviceRows(view: DeviceMenuKind, query: string): AgentMentionRow[] {
+		const rows: AgentMentionRow[] = [];
+		const local = this.surfaceService(IAgentDevicesService)?.hosts()[0]?.id;
+		for (const { target, key } of this.devicesOfKind(view)) {
+			const { device, host } = target;
+			const labelMatches = query ? matchesFuzzy(query, device.name, true) : undefined;
+			if (query && !labelMatches) {
+				continue;
+			}
+			const running = device.state === 'booted';
+			const facts = [device.runtime, host.id !== local ? host.label : undefined].filter(Boolean).join(' · ');
+			rows.push({
+				kind: 'item',
+				id: `device:${key}`,
+				label: device.name,
+				labelMatches: labelMatches ?? undefined,
+				icon: device.kind === 'physical' ? Codicon.plug : Codicon.deviceMobile,
+				description: facts || undefined,
+				trailing: running ? localize('voltAgent.mention.deviceRunning', "Running") : device.state === 'booting' ? localize('voltAgent.mention.deviceBooting', "Booting") : undefined,
+				run: () => this.pickDevice(target, key),
+			});
+		}
+		return rows;
+	}
+
+	/** The chip goes in the prompt; the device starts (headless) and opens beside this chat at once. */
+	private pickDevice(target: IDeviceTarget, key: string): void {
+		this.pickMention({ id: generateUuid(), kind: 'device', label: truncateLabel(target.device.name, 40), value: key });
+		const devices = this.surfaceService(IAgentDevicesService);
+		const sessionId = this.host.sessionId?.();
+		if (sessionId) {
+			devices?.attachToChat(sessionId, key);
+		}
+		const open = () => void this.commandService.executeCommand(OPEN_DEVICE_PREVIEW_COMMAND_ID, key, sessionId);
+		if (devices && target.device.state !== 'booted' && target.device.state !== 'booting' && target.device.kind !== 'physical') {
+			// Opened once the boot started, so the tab shows it booting rather than shut down.
+			void devices.boot(target, undefined, { waitUntilReady: false }).then(open, err => this.notificationService.warn(localize('voltAgent.mention.bootFailed', "Could not start {0}: {1}", target.device.name, err instanceof Error ? err.message : String(err))));
+			return;
+		}
+		open();
 	}
 
 	/** The Canvases list: read from disk when it opens, then drawn again. */
@@ -2741,6 +2894,12 @@ export class AgentMentionController extends Disposable {
 				// The board itself, and how to answer on it: the agent draws there, not in the chat.
 				const content = this.surfaceContexts.get(`scratch:${mention.value}`);
 				blocks.push(`<attached_scratch_board title="${mention.label}" boardId="${mention.value}">\n${content ? `${content}\n\n` : ''}Answer on this board: read it with scratch_read and draw with scratch_draw (boardId "${mention.value}"; pass a frame's id as replace to redraw it).\n</attached_scratch_board>`);
+			} else if (mention.kind === 'device' && mention.value) {
+				const target = this.surfaceService(IAgentDevicesService)?.find(mention.value);
+				const id = target?.device.id ?? mention.value.split('/').slice(2).join('/');
+				const facts = target ? describeDevice(target.device, target.host.label).replace(/^- /, '') : mention.label;
+				const runId = target?.device.platform === 'android' ? target.device.serial ?? id : id;
+				blocks.push(`<attached_device name="${mention.label}" id="${id}">\n${facts}\nThe user picked this device for this chat. Volt started it headless and shows it beside this chat; do not open Simulator.app or an emulator window. Use the device_* tools with device "${id}" (they default to it in this chat), and run the app on it by this id (for example \`flutter run -d ${runId}\`).\n</attached_device>`);
 			} else if (mention.kind === 'canvas' && mention.value) {
 				const content = this.surfaceContexts.get(`canvas:${mention.value}`);
 				blocks.push(`<attached_canvas title="${mention.label}" canvasId="${mention.value}">\n${content ? `${content}\n\n` : ''}Work on this canvas: read it with canvas_read and change it with canvas_update (id "${mention.value}") rather than making a new one.\n</attached_canvas>`);
@@ -3391,7 +3550,7 @@ export class AgentMentionController extends Disposable {
 			return mention.value ?? serializeTerminalSelection(mention.terminalQuote);
 		}
 		// Named references; a chat's or terminal's content follows the prompt (see contextBlocks).
-		if (mention.kind === 'chat' || mention.kind === 'terminal' || mention.kind === 'mcp' || mention.kind === 'scratch' || mention.kind === 'canvas') {
+		if (mention.kind === 'chat' || mention.kind === 'terminal' || mention.kind === 'mcp' || mention.kind === 'scratch' || mention.kind === 'canvas' || mention.kind === 'device') {
 			return `@${mention.kind}/${mention.label}`;
 		}
 		if (mention.value) {

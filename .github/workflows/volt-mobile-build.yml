@@ -1,0 +1,164 @@
+name: Volt Mobile Build
+
+# Builds the mobile app (apps/mobile) for Android and iOS with apps/mobile/scripts/releaseBuild.mjs.
+# volt-build.yml calls it, so nightly, beta and stable releases carry the apps next to the desktop
+# builds (targets android-arm64 and ios-arm64). It also runs on pull requests that change the app,
+# and by hand, where the builds are only kept as run artifacts.
+#
+# Without signing secrets the APK is signed with the public debug key and iOS gets the simulator
+# app only; see docs/releasing.md for the secrets that add a Google Play .aab and a device .ipa.
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        description: stable, beta or nightly
+        type: string
+        required: true
+      version:
+        description: Release version
+        type: string
+        required: true
+      android:
+        type: boolean
+        default: true
+      ios:
+        type: boolean
+        default: true
+  workflow_dispatch:
+    inputs:
+      android:
+        description: Build Android
+        type: boolean
+        default: true
+      ios:
+        description: Build iOS
+        type: boolean
+        default: true
+  pull_request:
+    branches:
+      - main
+    paths:
+      - apps/mobile/**
+      - apps/mobile-widgets/**
+      - apps/client-core/**
+      - .github/workflows/volt-mobile-build.yml
+
+permissions:
+  contents: read
+
+# A new push to a pull request replaces its running build; release runs never cancel each other.
+concurrency:
+  group: volt-mobile-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CHANNEL: ${{ inputs.channel }}
+  VOLT_VERSION: ${{ inputs.version }}
+  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  android:
+    name: Android arm64
+    if: github.event_name == 'pull_request' || inputs.android
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: Install dependencies
+        working-directory: apps/mobile
+        run: |
+          set -e
+          for i in 1 2 3; do
+            npm ci --no-audit --no-fund && break
+            if [ $i -eq 3 ]; then echo "npm ci failed too many times" >&2; exit 1; fi
+            echo "npm ci failed $i, retrying..."
+          done
+
+      - name: Build
+        working-directory: apps/mobile
+        run: |
+          set -e
+          if [ -n "$CHANNEL" ]; then NAME="volt-$CHANNEL-$VOLT_VERSION"; else NAME="volt-mobile-${HEAD_SHA::8}"; fi
+          node scripts/releaseBuild.mjs android --out "$GITHUB_WORKSPACE/.build/volt-assets" --name "$NAME"
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: volt-android-arm64
+          path: .build/volt-assets/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  ios:
+    name: iOS arm64
+    if: github.event_name == 'pull_request' || inputs.ios
+    # The Xcode the app is developed with (27.1); macos-26 only has Xcode 26.
+    runs-on: xcode-27
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.1.app
+          xcodebuild -version
+
+      - name: Install dependencies
+        working-directory: apps/mobile
+        run: |
+          set -e
+          for i in 1 2 3; do
+            npm ci --no-audit --no-fund && break
+            if [ $i -eq 3 ]; then echo "npm ci failed too many times" >&2; exit 1; fi
+            echo "npm ci failed $i, retrying..."
+          done
+
+      - name: Build
+        working-directory: apps/mobile
+        run: |
+          set -e
+          if [ -n "$CHANNEL" ]; then NAME="volt-$CHANNEL-$VOLT_VERSION"; else NAME="volt-mobile-${HEAD_SHA::8}"; fi
+          node scripts/releaseBuild.mjs ios --out "$GITHUB_WORKSPACE/.build/volt-assets" --name "$NAME"
+        env:
+          IOS_DISTRIBUTION_CERTIFICATE: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE }}
+          IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+          IOS_WIDGETS_PROVISIONING_PROFILE: ${{ secrets.IOS_WIDGETS_PROVISIONING_PROFILE }}
+          IOS_EXPORT_METHOD: ${{ vars.IOS_EXPORT_METHOD }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: volt-ios-arm64
+          path: .build/volt-assets/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

@@ -72,6 +72,61 @@
 	opacity: 1;
 }
 
+/* Related Chats: the Search row is a field that narrows the list as you type. */
+.volt-agent-home-nav-row.volt-agent-home-search-field {
+	cursor: text;
+}
+
+/* No focus ring: the field is the row itself, and the caret says it has the keyboard. */
+.monaco-workbench .volt-agent-home-search-field input.name,
+.monaco-workbench .volt-agent-home-search-field input.name:focus {
+	height: 22px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	outline: none;
+	box-shadow: none;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	opacity: 1;
+}
+
+/* A full-width hairline between the search and the list. */
+.volt-agent-home.scoped > .volt-agent-home-nav {
+	padding-bottom: 6px;
+	border-bottom: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
+}
+
+/* The chat's last message in its hover card (agentHomePane.ts sets the max height). */
+.volt-agent-home-hover-message-label {
+	margin-bottom: 4px;
+	font-size: 11px;
+	opacity: 0.6;
+}
+
+.volt-agent-home-hover-message {
+	/* Room under the last line, so it does not sit on the card's edge. */
+	padding-bottom: 4px;
+	overflow-y: auto;
+	overflow-wrap: anywhere;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+/* The chat's markdown, tightened for a card: no gap above the first block or below the last. */
+.volt-agent-home-hover-message > .volt-agent-markdown > :first-child {
+	margin-top: 0;
+}
+
+.volt-agent-home-hover-message > .volt-agent-markdown > :last-child {
+	margin-bottom: 0;
+}
+
+.volt-agent-home-search-field input.name::placeholder {
+	color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+}
+
 .volt-agent-home-nav-action {
 	display: flex;
 	align-items: center;
@@ -478,8 +533,8 @@
 	box-shadow: none !important;
 }
 
-/* No solid row fills: the sidebar is see-through. Hover and list selection paint nothing; the open chat
- * gets a faint tint from the active editor (.active-chat), so clicking elsewhere in the sidebar keeps it. */
+/* No solid row fills: the sidebar is see-through. Hover and list selection paint nothing; the chat on
+ * screen gets a faint tint (.active-chat, set once its transcript is drawn), so clicking elsewhere keeps it. */
 .volt-agent-home-tree .monaco-list-row,
 .volt-agent-home-tree .monaco-list-row:hover,
 .volt-agent-home-tree .monaco-list-row.selected,
@@ -1996,6 +2051,12 @@ html.volt-layout-agent-window body {
 	background-color: var(--vscode-titleBar-activeBackground, var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-activityBar-background))) !important;
 }
 
+/* The IDE sidebar's title reads "Explorer", not "EXPLORER". */
+.monaco-workbench:not(.volt-layout-agent) .part.sidebar > .title > .title-label h2 {
+	text-transform: none;
+	font-size: 12px;
+}
+
 /* Hover actions that do not apply to a tab's shelf (snooze on Snoozed, Settle off the inbox). */
 .volt-agent-home-row > .actions > .row-action.hidden {
 	display: none;
@@ -2011,6 +2072,50 @@ html.volt-layout-agent-window body {
 
 .volt-agent-home-row > .actions > .row-action.settle > .label {
 	line-height: 20px;
+}
+
+/* The … menu is open: its row keeps the buttons after the pointer leaves for the menu. */
+.monaco-list-row .volt-agent-home-row.is-session.menu-open > .actions {
+	display: flex;
+}
+
+.monaco-list-row .volt-agent-home-row.is-session.menu-open > .actions > .row-action.more {
+	background: var(--vscode-toolbar-activeBackground, color-mix(in srgb, var(--vscode-foreground) 16%, transparent));
+	opacity: 1;
+}
+
+/* Rename in place: the title is a field; the buttons, age and status step aside until it closes. */
+.monaco-list-row .volt-agent-home-row.is-session.renaming > .actions,
+.volt-agent-home-row.is-session.renaming > .meta,
+.volt-agent-home-row.is-session.renaming > .status-badge,
+.volt-agent-home-row.is-session.renaming > .line-pr,
+.volt-agent-home-row.is-session.renaming > .unread-dot {
+	display: none;
+}
+
+.volt-agent-home-row.is-session.renaming > .name {
+	display: flex;
+	align-items: center;
+	mask-image: none;
+}
+
+.volt-agent-home-row.is-session > .name > .rename-input {
+	flex: 1;
+	min-width: 0;
+	height: 20px;
+	margin: 0;
+	padding: 0 4px;
+	box-sizing: border-box;
+	border: 0;
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground, var(--vscode-foreground));
+	font: inherit;
+}
+
+.volt-agent-home-row.is-session.two-line > .name > .rename-input {
+	height: 18px;
 }
 
 /* Status badge after the age: one empty span on every row; only active agent tabs that are not idle fill it. */
@@ -2093,8 +2198,14 @@ html.volt-layout-agent-window body {
 	color: var(--vscode-charts-blue, #3794ff);
 }
 
-.volt-agent-home-row > .status-badge.kind-working .status-icon svg,
-.volt-agent-tooltip-card-icon.volt-agent-svg-icon.status-working svg {
+/*
+ * The ring's square box spins, not its <svg>: Chromium runs an animation on an SVG element on the
+ * main thread (a restyle and repaint every frame per ring, about a fifth of the main thread with
+ * ten agents at work), and one on an HTML box on the compositor. The box is the svg's size and
+ * centered on it, so the turn looks the same.
+ */
+.volt-agent-home-row > .status-badge.kind-working > .status-icon,
+.volt-agent-tooltip-card-icon.volt-agent-svg-icon.status-working {
 	animation: volt-agent-home-spin 2.4s linear infinite;
 }
 

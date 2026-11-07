@@ -1,0 +1,88 @@
+# Triage new Sentry issues: sort them, find the cause of real regressions, and tell Slack.
+version: 1
+id: triage-sentry-issue
+name: Triage Sentry issue
+description: >-
+  Starts when Sentry reports a new issue. A model sorts it into regression, flaky or
+  noise. Regressions get a read-only agent that looks for the cause in this repository
+  and proposes a fix, and the finding goes to Slack. Flaky and noisy issues are logged.
+  Set the slackWebhook variable to your Slack incoming webhook URL.
+tags: [sentry, triage, slack, incidents]
+trigger:
+  type: event
+  provider: sentry
+  event: issue.created
+  samplePayload:
+    data:
+      issue:
+        title: 'TypeError: Cannot read properties of undefined (reading ''id'')'
+        culprit: src/auth/session.ts in refreshSession
+        permalink: https://acme.sentry.io/issues/4711/
+        count: 12
+variables:
+  slackWebhook: https://hooks.slack.com/services/T000/B000/XXXX
+nodes:
+  - id: start
+    type: start
+    position: [0, 0]
+  - id: classify
+    type: classify
+    name: Sort the issue
+    position: [352, 0]
+    config:
+      text: |
+        {{ trigger.payload.data.issue.title }}
+        Culprit: {{ trigger.payload.data.issue.culprit }}
+        Events so far: {{ trigger.payload.data.issue.count }}
+      categories: [regression, flaky, noise]
+      instructions: |
+        regression: a real bug in our code, likely from a recent change.
+        flaky: timing, network or test-only failures that come and go.
+        noise: browser extensions, bots, third-party scripts, expected errors.
+  - id: investigate
+    type: agent
+    name: Find the cause
+    position: [688, -40]
+    config:
+      prompt: |
+        Sentry reported a new issue: {{ trigger.payload.data.issue.title }}
+        Where: {{ trigger.payload.data.issue.culprit }}
+        {{ trigger.payload.data.issue.permalink }}
+
+        Find the code involved and the most likely cause (check recent commits with
+        git log). Do not change files. Reply with the cause, the commit that most likely
+        introduced it, and a proposed fix in a few lines.
+      mode: Ask
+  - id: alert
+    type: slack_message
+    name: Post to Slack
+    position: [1024, -6]
+    config:
+      webhookUrl: '{{ vars.slackWebhook }}'
+      text: |
+        *New regression:* {{ trigger.payload.data.issue.title }}
+        {{ trigger.payload.data.issue.permalink }}
+
+        {{ nodes.investigate.summary }}
+  - id: done
+    type: end
+    position: [1360, 82]
+    config:
+      status: success
+      output: '{{ nodes.classify.category }}'
+  - id: note
+    type: log
+    name: Log it
+    position: [688, 112]
+    config:
+      message: 'Sorted as {{ nodes.classify.category }}: {{ trigger.payload.data.issue.title }} ({{ nodes.classify.reason }})'
+edges:
+  - { from: start.next, to: classify }
+  - { from: classify.regression, to: investigate }
+  - { from: classify.other, to: investigate }
+  - { from: classify.flaky, to: note }
+  - { from: classify.noise, to: note }
+  - { from: investigate.done, to: alert }
+  - { from: investigate.failed, to: alert }
+  - { from: alert.sent, to: done }
+  - { from: note.next, to: done }

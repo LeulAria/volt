@@ -22,6 +22,7 @@ import { InMemoryStorageService } from '../../../../../platform/storage/common/s
 import { IVoltExecRequest, IVoltExecResult, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { AgentRuntimeService } from '../../browser/voltRuntimeService.js';
 import { DEFAULT_ACP_CAPABILITIES, DEFAULT_MODEL_CAPABILITIES } from '../../common/capabilities.js';
+import { LSP_ENABLED_SETTING } from '../../common/codeIntelligence.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../../common/events.js';
 import { IProviderProfile } from '../../common/profiles.js';
 import { IAgentMessage, IAgentProvider, IAgentSessionHandle, IAgentStartRequest, IModelProvider, IModelRequest, IVoltCatalogItem } from '../../common/providers.js';
@@ -36,10 +37,19 @@ class FakeModel implements IModelProvider {
 	readonly label = 'Fake model';
 	readonly turns: Turn<IModelRequest>[] = [];
 	readonly requests: IModelRequest[] = [];
+	/** Replies to title calls (no tools), in order. Unset, a title call takes the next turn like a run. */
+	titles?: string[];
+	readonly titlePrompts: string[] = [];
 	async detect() { return { available: true, authenticated: true }; }
 	async listModels() { return [{ id: 'fm', label: 'FM', capabilities: DEFAULT_MODEL_CAPABILITIES }]; }
 	async *stream(request: IModelRequest, token: CancellationToken): AsyncIterable<IVoltEvent> {
 		this.requests.push(request);
+		if (this.titles && !request.tools?.length) {
+			this.titlePrompts.push(String(request.messages[0]?.content));
+			yield { type: 'text.delta', id: 'title', delta: this.titles.shift() ?? '' };
+			yield { type: 'finish', reason: 'stop' };
+			return;
+		}
 		const turn = this.turns.shift();
 		if (turn) {
 			yield* turn(request, token);
@@ -95,7 +105,6 @@ class FakeAgent implements IAgentProvider {
 class FakeStdio {
 	readonly execs: IVoltExecRequest[] = [];
 	readonly checkOutputs: { output: string; exitCode: number }[] = [];
-	readonly checkRan = new DeferredPromise<void>();
 	asService(): IVoltStdioService {
 		return {
 			onData: Event.None,
@@ -107,9 +116,6 @@ class FakeStdio {
 			exec: async (request: IVoltExecRequest): Promise<IVoltExecResult> => {
 				this.execs.push(request);
 				const scripted = request.command === 'npm test' ? this.checkOutputs.shift() : undefined;
-				if (request.command === 'npm test') {
-					this.checkRan.complete();
-				}
 				const output = scripted?.output ?? '';
 				return { id: request.id, exitCode: scripted?.exitCode ?? 127, stdout: output, stderr: '', combined: output, truncated: false, durationMs: 5, timedOut: false, cancelled: false, running: false };
 			},
@@ -118,6 +124,25 @@ class FakeStdio {
 			jobWait: async () => undefined,
 			listJobs: async () => [],
 		} as unknown as IVoltStdioService;
+	}
+}
+
+/** Chat titles kept the way AgentHistoryService keeps them: once the user renamed a chat, agent titles are ignored. */
+class FakeHistory {
+	readonly agentTitles: string[] = [];
+	userTitle: string | undefined;
+	get shown(): string | undefined {
+		return this.userTitle ?? this.agentTitles.at(-1);
+	}
+	asService(): object {
+		return {
+			open: () => ({ setMeta: () => { } }),
+			setAgentTitle: async (_id: string, title: string) => {
+				if (!this.userTitle) {
+					this.agentTitles.push(title);
+				}
+			},
+		};
 	}
 }
 
@@ -157,12 +182,27 @@ suite('Agent runtime orchestration', () => {
 		const fileService = disposables.add(new FileService(new NullLogService()));
 		disposables.add(fileService.registerProvider('file', disposables.add(new InMemoryFileSystemProvider())));
 		await fileService.createFolder(ROOT);
+		// The provider reports writes in a batch a little later: the fixture's must land before the
+		// service listens, or they would void the first check result it caches.
+		const last = Object.keys(files).at(-1);
+		const landed = new DeferredPromise<void>();
+		if (last) {
+			disposables.add(fileService.onDidFilesChange(e => {
+				if (e.contains(joinPath(ROOT, last))) {
+					landed.complete();
+				}
+			}));
+		}
 		for (const [path, content] of Object.entries(files)) {
 			await fileService.writeFile(joinPath(ROOT, path), VSBuffer.fromString(content));
+		}
+		if (last) {
+			await landed.p;
 		}
 		const stdio = new FakeStdio();
 		const model = new FakeModel();
 		const agent = new FakeAgent();
+		const history = new FakeHistory();
 		const stub = <T>(value: object) => value as unknown as T;
 		const service = disposables.add(new AgentRuntimeService(
 			disposables.add(new InMemoryStorageService()),
@@ -176,16 +216,18 @@ suite('Agent runtime orchestration', () => {
 			stub({ context: async () => undefined }),
 			stub({}),
 			stub({ rootFor: () => undefined }),
-			stub({ open: () => ({ setMeta: () => { } }), setAgentTitle: async () => { } }),
+			stub(history.asService()),
 			stub({}),
 			stub({ run: async () => undefined, needsRetry: () => false }),
 			stub({ files: { get: () => undefined } }),
 			stub({ userHome: async () => { throw new Error('no home'); } }),
-			stub({}),
+			// No error markers: an agent's file changes count none.
+			stub({ read: () => [], onMarkerChanged: Event.None }),
 			stub({}),
 			stub({}),
 			stub({ userRoamingDataHome: URI.file('/user') }),
-			stub({ getValue: () => undefined }),
+			// No language servers: the error gate does not wait for markers on the files an agent changed.
+			stub({ getValue: (key: string) => key === LSP_ENABLED_SETTING ? false : undefined }),
 			// No hooks: every tool runs as it is.
 			stub({ run: async () => ({ context: [] }), wrapTool: (tool: unknown) => tool, definitions: async () => [] }),
 			// No code index: searches use ripgrep.
@@ -212,7 +254,7 @@ suite('Agent runtime orchestration', () => {
 			await waitFor(() => !!ended(runId), `run ${runId} to end`);
 			return ended(runId)!.event as Extract<IVoltEvent, { type: 'run.end' }>;
 		};
-		return { service, internals, model, agent, stdio, events, ref, waitEnd, ended, fileService };
+		return { service, internals, model, agent, stdio, history, events, ref, waitEnd, ended, fileService };
 	}
 
 	test('a native run streams, ends done, keeps the reply and records its timings', async () => {
@@ -234,6 +276,44 @@ suite('Agent runtime orchestration', () => {
 		const [run, title] = model.requests;
 		assert.ok(run.tools?.length, 'the run went first');
 		assert.ok(!title.tools?.length && title.messages.length === 1, 'then the title call');
+	});
+
+	test('a first message that got a neutral title is titled again, once, from the first two messages', async () => {
+		const { service, model, history, ref, waitEnd } = await setup('model');
+		model.titles = ['Quick question', 'Fix sidebar list jumping to top', 'Never asked'];
+		await waitEnd(await service.send('chat', { text: 'hi, got a minute for something?', mode: 'agent', providerRef: ref }));
+		await waitFor(() => history.agentTitles.length === 1, 'the first title');
+		await waitEnd(await service.send('chat', { text: 'the sidebar list jumps to the top when a chat finishes', mode: 'agent', providerRef: ref }));
+		await waitFor(() => history.agentTitles.length === 2, 'the second title');
+		assert.ok(model.titlePrompts[1].includes('First message:\nhi, got a minute for something?\n\nLatest message:\nthe sidebar list jumps'));
+		await waitEnd(await service.send('chat', { text: 'and keep the selection too', mode: 'agent', providerRef: ref }));
+		await timeout(20);
+		assert.deepStrictEqual(history.agentTitles, ['Quick question', 'Fix sidebar list jumping to top']);
+		assert.strictEqual(model.titlePrompts.length, 2, 'no third title call');
+	});
+
+	test('a specific first message keeps its title through the next messages', async () => {
+		const { service, model, history, ref, waitEnd } = await setup('model');
+		model.titles = ['Fix doubled run command card borders', 'Never asked'];
+		await waitEnd(await service.send('chat', { text: 'the borders on the run command card look doubled, polish it', mode: 'agent', providerRef: ref }));
+		await waitFor(() => history.agentTitles.length === 1, 'the first title');
+		await waitEnd(await service.send('chat', { text: 'ok', mode: 'agent', providerRef: ref }));
+		await timeout(20);
+		assert.deepStrictEqual(history.agentTitles, ['Fix doubled run command card borders']);
+		assert.strictEqual(model.titlePrompts.length, 1);
+	});
+
+	test('a chat the user renamed keeps its name when a short first message is titled again', async () => {
+		const { service, model, history, ref, waitEnd } = await setup('model');
+		model.titles = ['Greeting', 'Fix sidebar list jumping to top'];
+		await waitEnd(await service.send('chat', { text: 'hey', mode: 'agent', providerRef: ref }));
+		await waitFor(() => history.agentTitles.length === 1, 'the first title');
+		history.userTitle = 'Scroll bug';
+		await waitEnd(await service.send('chat', { text: 'the sidebar list jumps to the top when a chat finishes', mode: 'agent', providerRef: ref }));
+		await waitFor(() => model.titlePrompts.length === 2, 'the retry');
+		await timeout(20);
+		assert.strictEqual(history.shown, 'Scroll bug');
+		assert.deepStrictEqual(history.agentTitles, ['Greeting']);
 	});
 
 	test('cancel then immediate resend (native): the cancelled loop cannot write into the new run', async () => {
@@ -317,13 +397,25 @@ suite('Agent runtime orchestration', () => {
 		assert.strictEqual(service.getRunMetrics('chat')[1].agentSource, 'live');
 	});
 
-	test('a regression against the baseline sends the agent back once, with the evidence', async () => {
-		const { service, agent, stdio, events, ref, waitEnd } = await setup('agent', { 'package.json': JSON.stringify({ scripts: { test: 'node --test' } }) });
+	/**
+	 * The project's tests run after a run that changed files, never during it (checkAfterRun); that
+	 * result is the baseline of the next run. Runs one change to make the baseline (`before`), then
+	 * a second whose check prints `after`, and returns the second run's id once its check ran.
+	 */
+	async function checkedChanges(setupResult: Awaited<ReturnType<typeof setup>>, before: string, after: string): Promise<string> {
+		const { service, agent, stdio, ref, waitEnd } = setupResult;
 		await service.setAccessMode('full-access');
-		stdio.checkOutputs.push({ output: BEFORE, exitCode: 1 }, { output: REGRESSED, exitCode: 1 });
+		stdio.checkOutputs.push({ output: before, exitCode: 1 }, { output: after, exitCode: 1 });
+		const checks = () => stdio.execs.filter(exec => exec.command === 'npm test').length;
 		agent.turns.push(async function* () {
-			await stdio.checkRan.p;
-			await timeout(5);
+			yield { type: 'file.change', uri: joinPath(ROOT, 'src/a.js'), kind: 'edit' };
+			yield { type: 'run.end', runId: 'x', reason: 'done' };
+		});
+		assert.strictEqual((await waitEnd(await service.send('chat', { text: 'tweak', mode: 'agent', providerRef: ref }))).reason, 'done');
+		await waitFor(() => checks() === 1, 'the check after the first run');
+		// Its result is cached once the exec answers: the next send takes it as the baseline.
+		await timeout(5);
+		agent.turns.push(async function* () {
 			yield { type: 'tool.start', callId: 'e1', name: 'Edit', kind: 'edit' };
 			yield { type: 'file.change', uri: joinPath(ROOT, 'src/stats.js'), kind: 'edit' };
 			yield { type: 'tool.end', callId: 'e1' };
@@ -332,26 +424,29 @@ suite('Agent runtime orchestration', () => {
 		});
 		const runId = await service.send('chat', { text: 'Refactor mean()', mode: 'agent', providerRef: ref });
 		assert.strictEqual((await waitEnd(runId)).reason, 'done');
-		assert.strictEqual(stdio.execs.filter(exec => exec.command === 'npm test').length, 2, 'baseline and after');
-		assert.strictEqual(agent.prompts.length, 2);
-		assert.ok(agent.prompts[1].text.includes('- mean'));
-		assert.ok(!agent.prompts[1].text.includes('- median sorts numerically'), 'the pre-existing failure is not blamed on the run');
-		assert.ok(events.some(envelope => envelope.event.type === 'notice' && envelope.event.title.startsWith('1 test that passed before now fails')));
-		assert.strictEqual(service.getRunMetrics('chat')[0].continuations, 1);
+		await waitFor(() => checks() === 2, 'the check after the second run');
+		await timeout(5);
+		assert.strictEqual(agent.prompts.length, 2, 'the checks never send the agent back');
+		return runId;
+	}
+
+	test('a regression against the baseline is reported after the run, with the evidence', async () => {
+		const context = await setup('agent', { 'package.json': JSON.stringify({ scripts: { test: 'node --test' } }) });
+		const runId = await checkedChanges(context, BEFORE, REGRESSED);
+		const notices = context.events.filter(envelope => envelope.event.type === 'notice' && envelope.event.severity === 'warning');
+		assert.strictEqual(notices.length, 1);
+		const [{ runId: noticeRun, event: notice }] = notices;
+		assert.ok(notice.type === 'notice');
+		assert.strictEqual(noticeRun, runId, 'reported on the run that regressed');
+		assert.ok(notice.title.startsWith('1 test(s) that passed before this run now fail'), notice.title);
+		assert.ok(notice.description?.includes('- mean'));
+		assert.ok(!notice.description?.includes('- median sorts numerically'), 'the pre-existing failure is not blamed on the run');
 	});
 
-	test('pre-existing failures alone never send the agent back', async () => {
-		const { service, agent, stdio, ref, waitEnd } = await setup('agent', { 'package.json': JSON.stringify({ scripts: { test: 'node --test' } }) });
-		await service.setAccessMode('full-access');
-		stdio.checkOutputs.push({ output: BEFORE, exitCode: 1 }, { output: BEFORE, exitCode: 1 });
-		agent.turns.push(async function* () {
-			await stdio.checkRan.p;
-			await timeout(5);
-			yield { type: 'file.change', uri: joinPath(ROOT, 'src/a.js'), kind: 'edit' };
-			yield { type: 'run.end', runId: 'x', reason: 'done' };
-		});
-		await waitEnd(await service.send('chat', { text: 'tweak', mode: 'agent', providerRef: ref }));
-		assert.strictEqual(agent.prompts.length, 1);
+	test('pre-existing failures alone are never reported as a regression', async () => {
+		const context = await setup('agent', { 'package.json': JSON.stringify({ scripts: { test: 'node --test' } }) });
+		await checkedChanges(context, BEFORE, BEFORE);
+		assert.ok(!context.events.some(envelope => envelope.event.type === 'notice' && envelope.event.severity === 'warning'));
 	});
 
 	test('Ask mode and supervised access never run project checks', async () => {

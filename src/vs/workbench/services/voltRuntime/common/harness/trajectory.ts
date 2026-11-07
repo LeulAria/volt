@@ -5,9 +5,11 @@
 
 import { IVoltEvent } from '../events.js';
 import { StreamChunk, TokenUsage } from '../deepseek/protocol.js';
+import type { IModelImage } from '../providers.js';
 import { IToolCall, IToolResult, IToolSchema } from '../tools/tool.js';
 import { estimateTokens } from './contextEngine.js';
 import { INativeLoopMessage } from './nativeLoop.js';
+import { resultText } from './supervisor.js';
 
 /**
  * The API trajectory of a native run: every model request as it went on the wire (system prompt,
@@ -19,7 +21,8 @@ import { INativeLoopMessage } from './nativeLoop.js';
 export interface ITrajectoryToolCall {
 	readonly id: string;
 	readonly name: string;
-	readonly arguments: string;
+	/** An agent may send a call's input after announcing it. */
+	arguments: string;
 }
 
 export interface ITrajectoryResponse {
@@ -37,7 +40,7 @@ export interface ITrajectoryNote {
 export interface ITrajectoryToolRun {
 	readonly callId: string;
 	readonly name: string;
-	readonly args: unknown;
+	args: unknown;
 	readonly startedAt: number;
 	endedAt?: number;
 	durationMs?: number;
@@ -60,6 +63,13 @@ export interface ITrajectoryRequest {
 	readonly modelLabel?: string;
 	/** A subagent's name; the chat's own agent has none. */
 	readonly agent?: string;
+	/**
+	 * The agent that ran the request when Volt does not run the model itself (Claude Code, Codex
+	 * and other ACP agents). Its system prompt, tools and history stay inside it: `system` and
+	 * `tools` are empty and `messages` holds only the input new to this request (the user's
+	 * message, or the answer and tool results since the previous request).
+	 */
+	readonly harness?: string;
 	readonly startedAt: number;
 	firstChunkAt?: number;
 	endedAt?: number;
@@ -70,6 +80,11 @@ export interface ITrajectoryRequest {
 	readonly maxOutputTokens?: number;
 	readonly response: ITrajectoryResponse;
 	usage?: TokenUsage;
+	/** `usage` counts every request of the turn: agents report their usage once a turn. */
+	usageScope?: 'turn';
+	/** How full the agent said its context was after this request, and the window's size. */
+	contextTokens?: number;
+	contextWindow?: number;
 	costUsd?: number;
 	finish?: string;
 	error?: string;
@@ -87,18 +102,21 @@ export interface ITrajectoryRequestInput {
 	readonly model: string;
 	readonly modelLabel?: string;
 	readonly agent?: string;
+	readonly harness?: string;
 	readonly system: string;
 	readonly messages: readonly INativeLoopMessage[];
 	readonly tools: readonly IToolSchema[];
 	readonly options?: unknown;
 	readonly maxOutputTokens?: number;
+	/** When it went out, if not now: an agent's next request starts when the tool results it waited on came back. */
+	readonly startedAt?: number;
 }
 
 export function newTrajectoryRequest(input: ITrajectoryRequestInput, now = Date.now()): ITrajectoryRequest {
 	return {
 		...input,
 		messages: input.messages.map(message => ({ ...message })),
-		startedAt: now,
+		startedAt: input.startedAt ?? now,
 		response: { text: '', reasoning: '', toolCalls: [] },
 		notes: [],
 		toolRuns: [],
@@ -179,7 +197,11 @@ export function endToolRun(request: ITrajectoryRequest, result: IToolResult, now
 	run.endedAt = now;
 	run.durationMs = result.durationMs ?? now - run.startedAt;
 	run.isError = result.isError;
-	run.result = result.text.length > RESULT_CHARS ? `${result.text.slice(0, RESULT_CHARS)}\n\n[${result.text.length - RESULT_CHARS} more characters]` : result.text;
+	run.result = clipResult(result.text);
+}
+
+function clipResult(text: string): string {
+	return text.length > RESULT_CHARS ? `${text.slice(0, RESULT_CHARS)}\n\n[${text.length - RESULT_CHARS} more characters]` : text;
 }
 
 /** Calls of an earlier request still open when the next one goes out never finished. */
@@ -193,15 +215,301 @@ export function closeOpenToolRuns(request: ITrajectoryRequest, now = Date.now())
 	}
 }
 
+// --- agents Volt does not run itself ---------------------------------------------------------
+
+/** Where an {@link AgentTrajectoryRecorder} puts its requests: the trajectory service, for one chat. */
+export interface IAgentTrajectorySink {
+	begin(input: Omit<ITrajectoryRequestInput, 'id' | 'index'>): ITrajectoryRequest | undefined;
+	changed(): void;
+}
+
+export interface IAgentTrajectoryTarget {
+	readonly sessionId: string;
+	readonly runId: string;
+	readonly provider: string;
+	readonly model: string;
+	readonly modelLabel?: string;
+	/** The agent's name, e.g. Claude Code. */
+	readonly harness: string;
+}
+
+function parseToolInput(input: string | undefined): unknown {
+	if (!input) {
+		return {};
+	}
+	try {
+		return JSON.parse(input);
+	} catch {
+		return input;
+	}
+}
+
+/**
+ * The trajectory of an agent Volt does not run itself (Claude Code, Codex, Cursor and other ACP
+ * agents), read from the events it streams. Its model requests stay inside it, so a request here
+ * is one answer of its model: it ends where the answer asks for tools, and the next starts when
+ * the model speaks again after a tool result came back. Its input is what Volt saw go in (the
+ * prompt, or the answer and tool results since the previous request). Agents report tokens once
+ * a turn, on its last request, and their context size along the way, on the request it followed.
+ */
+export class AgentTrajectoryRecorder {
+
+	private current: ITrajectoryRequest | undefined;
+	private readonly turn: ITrajectoryRequest[] = [];
+	/** The request whose answer started each tool call. */
+	private readonly calls = new Map<string, ITrajectoryRequest>();
+	/** Tool results back since the current request's answer: the next request's input. */
+	private results: INativeLoopMessage[] = [];
+	private textId: string | undefined;
+	private usage: { input: number; output: number; cache: number; cacheWrite: number } | undefined;
+	private lastError: string | undefined;
+	private model: string;
+	private readonly subagents = new Map<string, AgentTrajectoryRecorder>();
+	private done = false;
+
+	constructor(
+		private readonly sink: IAgentTrajectorySink,
+		private readonly target: IAgentTrajectoryTarget,
+		private readonly agent?: string,
+		private readonly now: () => number = Date.now,
+	) {
+		this.model = target.model;
+	}
+
+	/** The prompt went out: the turn's first request. */
+	prompt(text: string, images?: readonly IModelImage[]): void {
+		if (!this.done && !this.current) {
+			this.open([{ role: 'user', content: text, ...(images?.length ? { images: [...images] } : {}) }], this.now());
+		}
+	}
+
+	event(event: IVoltEvent): void {
+		if (this.done) {
+			return;
+		}
+		const now = this.now();
+		switch (event.type) {
+			case 'text.delta':
+			case 'reasoning.delta': {
+				if (!event.delta) {
+					return;
+				}
+				const request = this.answering(now);
+				if (!request) {
+					return;
+				}
+				if (event.type === 'text.delta') {
+					// Another message of the same answer is another paragraph, as the transcript shows it.
+					if (this.textId !== undefined && event.id !== this.textId && request.response.text && !request.response.text.endsWith('\n')) {
+						request.response.text += '\n\n';
+					}
+					this.textId = event.id;
+					request.response.text += event.delta;
+				} else {
+					request.response.reasoning += event.delta;
+				}
+				// Still answering.
+				request.endedAt = undefined;
+				request.finish = undefined;
+				break;
+			}
+			case 'reasoning.block': {
+				const request = this.answering(now);
+				if (!request || request.response.reasoning || !event.text) {
+					return;
+				}
+				request.response.reasoning = event.text;
+				break;
+			}
+			case 'tool.start': {
+				if (this.calls.has(event.callId)) {
+					return;
+				}
+				const request = this.answering(now);
+				if (!request) {
+					return;
+				}
+				request.response.toolCalls.push({ id: event.callId, name: event.name, arguments: event.input ?? '' });
+				request.toolRuns.push({ callId: event.callId, name: event.name, args: parseToolInput(event.input), startedAt: now });
+				this.calls.set(event.callId, request);
+				// The answer is out once it asks for a tool; more calls of the same answer move its end.
+				request.endedAt = now;
+				request.finish = 'tool_calls';
+				break;
+			}
+			case 'tool.input.delta': {
+				const request = this.calls.get(event.callId);
+				const call = request?.response.toolCalls.find(candidate => candidate.id === event.callId);
+				const run = request?.toolRuns.find(candidate => candidate.callId === event.callId);
+				if (!call || !run || !event.delta) {
+					return;
+				}
+				call.arguments = event.append ? call.arguments + event.delta : event.delta;
+				run.args = parseToolInput(call.arguments);
+				break;
+			}
+			case 'tool.end': {
+				const run = this.calls.get(event.callId)?.toolRuns.find(candidate => candidate.callId === event.callId);
+				if (!run || run.endedAt !== undefined) {
+					return;
+				}
+				const output = resultText(event.result) || event.output || '';
+				run.endedAt = now;
+				run.durationMs = event.durationMs ?? now - run.startedAt;
+				run.isError = !!event.error;
+				run.result = clipResult(event.error && !output.includes(event.error) ? [event.error, output].filter(Boolean).join('\n') : output);
+				this.results.push({ role: 'tool', content: run.result, callId: run.callId, name: run.name, ...(run.isError ? { isError: true } : {}) });
+				break;
+			}
+			case 'usage': {
+				const request = this.current;
+				if (request && event.used !== undefined) {
+					request.contextTokens = event.used;
+				}
+				if (request && event.size !== undefined) {
+					request.contextWindow = event.size;
+				}
+				const cache = event.cache ?? 0, cacheWrite = event.cacheWrite ?? 0;
+				if (event.input + event.output + cache + cacheWrite > 0) {
+					const usage = this.usage ??= { input: 0, output: 0, cache: 0, cacheWrite: 0 };
+					usage.input += event.input;
+					usage.output += event.output;
+					usage.cache += cache;
+					usage.cacheWrite += cacheWrite;
+				}
+				break;
+			}
+			case 'model.reported':
+				this.model = event.model;
+				return;
+			case 'retry':
+			case 'error':
+			case 'notice': {
+				const note = noteText(event);
+				if (event.type === 'error') {
+					this.lastError = event.message;
+				}
+				if (!note || !this.current) {
+					return;
+				}
+				this.current.notes.push(note);
+				break;
+			}
+			case 'subagent.spawned': {
+				if (this.subagents.has(event.childId)) {
+					return;
+				}
+				const model = event.model ?? this.target.model;
+				const child = new AgentTrajectoryRecorder(this.sink, { ...this.target, model, modelLabel: model === this.target.model ? this.target.modelLabel : undefined }, event.title || event.kind || 'subagent', this.now);
+				this.subagents.set(event.childId, child);
+				child.prompt(event.prompt ?? event.title);
+				return;
+			}
+			case 'subagent.event':
+				this.subagents.get(event.childId)?.event(event.event);
+				return;
+			case 'subagent.completed':
+				this.subagents.get(event.childId)?.end(event.status === 'completed' ? 'done' : event.status === 'cancelled' ? 'abort' : 'fail', event.error);
+				return;
+			default:
+				return;
+		}
+		this.sink.changed();
+	}
+
+	/** The turn is over: its last request ends and gets the turn's tokens. */
+	end(reason: 'done' | 'abort' | 'fail', error?: string): void {
+		if (this.done) {
+			return;
+		}
+		this.done = true;
+		for (const child of this.subagents.values()) {
+			child.end(reason, error);
+		}
+		const now = this.now();
+		const last = this.current;
+		if (last) {
+			last.endedAt ??= now;
+			if (reason === 'abort') {
+				last.finish ??= 'aborted';
+			} else if (reason === 'fail') {
+				last.finish = 'error';
+				last.error ??= error ?? this.lastError ?? 'The turn failed.';
+			} else {
+				last.finish ??= 'stop';
+			}
+			if (this.usage) {
+				last.usage = { input: this.usage.input, output: this.usage.output, cache: this.usage.cache, cacheWrite: this.usage.cacheWrite };
+				if (this.turn.length > 1) {
+					last.usageScope = 'turn';
+				}
+			}
+		}
+		// The turn moved on without these results (stopped, or the agent never reported them).
+		for (const request of this.turn) {
+			closeOpenToolRuns(request, now);
+		}
+		this.sink.changed();
+	}
+
+	/** The request the model is answering in: the current one, or the next once a tool result came back. */
+	private answering(now: number): ITrajectoryRequest | undefined {
+		const current = this.current;
+		if (current && !current.toolRuns.some(run => run.endedAt !== undefined)) {
+			current.firstChunkAt ??= now;
+			return current;
+		}
+		// It went out when the results it carries were in.
+		const ready = current ? Math.max(current.endedAt ?? current.startedAt, ...current.toolRuns.map(run => run.endedAt ?? 0)) : now;
+		const input: INativeLoopMessage[] = current ? [{
+			role: 'assistant',
+			content: current.response.text,
+			...(current.response.toolCalls.length ? { toolCalls: current.response.toolCalls.map(call => ({ id: call.id, name: call.name, args: parseToolInput(call.arguments) })) } : {}),
+		}, ...this.results] : [];
+		const request = this.open(input, Math.min(ready, now));
+		if (request) {
+			request.firstChunkAt = now;
+		}
+		return request;
+	}
+
+	private open(messages: INativeLoopMessage[], startedAt: number): ITrajectoryRequest | undefined {
+		const request = this.sink.begin({
+			sessionId: this.target.sessionId,
+			runId: this.target.runId,
+			provider: this.target.provider,
+			model: this.model,
+			...(this.model === this.target.model && this.target.modelLabel ? { modelLabel: this.target.modelLabel } : {}),
+			...(this.agent ? { agent: this.agent } : {}),
+			harness: this.target.harness,
+			system: '',
+			messages,
+			tools: [],
+			startedAt,
+		});
+		if (!request) {
+			// Recording is off.
+			this.done = true;
+			return undefined;
+		}
+		this.current = request;
+		this.turn.push(request);
+		this.results = [];
+		this.textId = undefined;
+		return request;
+	}
+}
+
 // --- syncing to a window -------------------------------------------------------------------
 
 /** Changes whenever a recorded request grows (stream chunk, usage, tool result); compared by value. */
 export function trajectoryRevision(request: ITrajectoryRequest): string {
 	const ended = request.toolRuns.filter(run => run.endedAt !== undefined).length;
+	const args = request.response.toolCalls.reduce((sum, call) => sum + call.arguments.length, 0);
 	return [
-		request.firstChunkAt ?? '', request.endedAt ?? '', request.response.text.length, request.response.reasoning.length, request.response.toolCalls.length,
-		request.usage ? JSON.stringify(request.usage) : '', request.costUsd ?? '', request.finish ?? '', request.error ?? '',
-		request.notes.length, request.toolRuns.length, ended,
+		request.firstChunkAt ?? '', request.endedAt ?? '', request.response.text.length, request.response.reasoning.length, request.response.toolCalls.length, args,
+		request.usage ? JSON.stringify(request.usage) : '', request.usageScope ?? '', request.contextTokens ?? '', request.contextWindow ?? '',
+		request.costUsd ?? '', request.finish ?? '', request.error ?? '', request.notes.length, request.toolRuns.length, ended,
 	].join('|');
 }
 

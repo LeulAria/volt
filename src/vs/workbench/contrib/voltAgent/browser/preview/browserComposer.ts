@@ -630,6 +630,20 @@ export class BrowserAgentComposer extends Disposable {
 		close.appendChild(renderIcon(Codicon.close));
 	}
 
+	/**
+	 * Puts `token` in the input, before the prompt, as the chat's composer shows Start Multitasking's
+	 * "N to multitask": after the + on one line, a line of its own above a multiline prompt.
+	 */
+	addInputToken(token: HTMLElement): void {
+		this.element.insertBefore(token, this.monacoHost);
+	}
+
+	/** The input token is up, gone or its count changed: it takes room from the editor, so lay it out again. */
+	setInputTokenShown(shown: boolean): void {
+		this.element.classList.toggle('has-input-token', shown);
+		this.layout();
+	}
+
 	hidePlusMenu(): void {
 		this.plusMenu?.dispose();
 		this.plusMenu = undefined;

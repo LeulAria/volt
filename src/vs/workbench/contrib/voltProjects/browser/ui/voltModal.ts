@@ -11,6 +11,7 @@ import { KeyCode } from '../../../../../base/common/keyCodes.js';
 import { DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
 import { ILayoutService } from '../../../../../platform/layout/browser/layoutService.js';
+import { frostOverChatBackdrop } from '../../../voltAgent/browser/chat/agentChatBackground.js';
 
 export interface IVoltModalOptions {
 	readonly title: string;
@@ -31,6 +32,7 @@ const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), textarea, sele
  * A centred dialog inside the workbench window. The dim backdrop and the panel are separate
  * layers: the backdrop holds nothing that scrolls, and the panel is opaque and paint-contained,
  * which keeps the see-through agent window from smearing (see the volt-transparent-window skill).
+ * Over a chat's picture the panel is frosted glass, still opaque (frostOverChatBackdrop).
  */
 export function showVoltModal(layoutService: ILayoutService, options: IVoltModalOptions): IDisposable {
 	const store = new DisposableStore();
@@ -117,6 +119,7 @@ export function showVoltModal(layoutService: ILayoutService, options: IVoltModal
 	// Keystrokes stay in the dialog instead of reaching workbench keybindings.
 	store.add(addDisposableListener(panel, 'keydown', e => e.stopPropagation()));
 	store.add(options.render(body, close));
+	store.add(frostOverChatBackdrop(panel));
 	if (!panel.contains(getActiveElement())) {
 		panel.focus();
 	}

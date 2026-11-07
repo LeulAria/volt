@@ -1,0 +1,96 @@
+name: PR
+
+# Pull request checks that read the PR through the API and never run its code, so they work for
+# forks too: pull_request_target runs this file as it is on main, with a token that can label.
+# Never check out or run the PR's head in this workflow.
+#
+#   Title and Description  the title is a conventional commit (it becomes the squash commit and
+#                          the changelog line) and the description is filled in
+#   Size Label             one size:* label from the changed lines, tests and lockfiles excluded
+#   Area Labels            area:* labels from the changed paths (.github/labeler.yml)
+
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] reads the PR through the API only, never checks out its code
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions: {}
+
+jobs:
+  validate:
+    name: Title and Description
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    concurrency:
+      group: pr-validate-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            build/volt/ci
+            .nvmrc
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Check the title and description
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node build/volt/ci/pr.mjs validate
+
+  size:
+    name: Size Label
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    concurrency:
+      group: pr-size-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            build/volt/ci
+            .github/labels.json
+            .nvmrc
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Set the size label
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node build/volt/ci/pr.mjs size
+
+  areas:
+    name: Area Labels
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    concurrency:
+      group: pr-areas-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      # Reads .github/labeler.yml from the base branch through the API; it does not check out the PR.
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
+        with:
+          sync-labels: false

@@ -1,6 +1,7 @@
 import changelogSource from "virtual:changelog";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowUpRight } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Inline } from "@/components/inlineMarkdown";
 import { SiteFooter } from "@/components/landing/closing";
 import {
@@ -10,7 +11,8 @@ import {
   SectionRule,
 } from "@/components/landing/geometry";
 import { focusRing } from "@/components/landing/install";
-import { HEADING_INSET } from "@/components/landing/primitives";
+import { PagePlace, PLACES } from "@/components/landing/photoPlace";
+import { HEADING_INSET, PageBackdrop } from "@/components/landing/primitives";
 import { SiteHeader } from "@/components/landing/siteHeader";
 import {
   type ChangelogRelease,
@@ -26,6 +28,8 @@ import { GITHUB_RELEASES_URL } from "@/lib/useReleases";
 
 const REPO_URL = `https://github.com/${gitConfig.user}/${gitConfig.repo}`;
 const RELEASES = parseChangelog(changelogSource);
+/** Each release's anchor, which is also its entry's id. */
+const RELEASE_IDS = RELEASES.map((release) => `v${release.version}`);
 
 export const Route = createFileRoute("/changelog")({
   component: ChangelogPage,
@@ -43,44 +47,60 @@ function ChangelogPage() {
       <SiteHeader />
       <main className="relative">
         <Guides />
-        <section
-          className={cn(COLUMN, "relative pt-20 pb-16 md:pt-28 md:pb-20")}
-        >
-          <div className={HEADING_INSET}>
-            <Eyebrow>Changelog</Eyebrow>
-            <h1 className="mt-6 text-balance text-[40px] font-semibold leading-[1.02] tracking-[-0.035em] text-white sm:text-[56px] md:text-[68px]">
-              What's new in Volt.
-            </h1>
-            <p className="mt-5 max-w-xl text-pretty text-[15px] leading-[1.65] text-white/50 md:text-[17px]">
-              Every release, newest first. Volt is in public beta, so expect
-              changes between versions.
-            </p>
-            <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3 text-[13px]">
-              <Link
-                to="/download"
-                className="inline-flex h-9 items-center rounded-full bg-white px-4 font-medium text-[#0a0d0c] transition-colors hover:bg-white/85"
-              >
-                Download the latest
-              </Link>
-              <a
-                href={GITHUB_RELEASES_URL}
-                target="_blank"
-                rel="noreferrer"
-                className={LINK}
-              >
-                Releases on GitHub
-                <ArrowUpRight className="size-3.5" />
-              </a>
+        <div className="relative">
+          <PageBackdrop src="/changelog-backdrop.webp" position="50% 30%" />
+          <section
+            // pb-32 on phones: room under the buttons for the place pin
+            className={cn(COLUMN, "relative pt-20 pb-32 md:pt-28 md:pb-20")}
+          >
+            <div className={HEADING_INSET}>
+              <Eyebrow>Changelog</Eyebrow>
+              <h1 className="mt-6 text-balance text-[40px] font-semibold leading-[1.02] tracking-[-0.035em] text-white sm:text-[56px] md:text-[68px]">
+                What's new in Volt.
+              </h1>
+              <p className="mt-5 max-w-xl text-pretty text-[15px] leading-[1.65] text-white md:text-[17px]">
+                Every release, newest first. Volt is in public beta, so expect
+                changes between versions.
+              </p>
+              <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3 text-[13px]">
+                <Link
+                  to="/download"
+                  className="inline-flex h-9 items-center rounded-full bg-white px-4 font-medium text-[#0a0d0c] transition-colors hover:bg-white/85"
+                >
+                  Download the latest
+                </Link>
+                <a
+                  href={GITHUB_RELEASES_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={LINK}
+                >
+                  Releases on GitHub
+                  <ArrowUpRight className="size-3.5" />
+                </a>
+              </div>
+            </div>
+          </section>
+          <PagePlace place={PLACES.lalibela} />
+        </div>
+        <div className="relative">
+          {/* From lg, the versions run down the left of the entries. Above them, so the rail takes
+              its clicks; only the rail itself catches the pointer. */}
+          <div className="pointer-events-none absolute inset-0 z-10 hidden lg:block">
+            <div className={cn(COLUMN, "h-full")}>
+              <div className={cn(HEADING_INSET, "h-full")}>
+                <ReleaseRail />
+              </div>
             </div>
           </div>
-        </section>
-        {RELEASES.map((release, index) => (
-          <ReleaseEntry
-            key={release.version}
-            release={release}
-            latest={index === 0}
-          />
-        ))}
+          {RELEASES.map((release, index) => (
+            <ReleaseEntry
+              key={release.version}
+              release={release}
+              latest={index === 0}
+            />
+          ))}
+        </div>
         <div className="pb-16 md:pb-24" />
         <SectionRule />
         <SiteFooter />
@@ -106,7 +126,13 @@ function ReleaseEntry({
         aria-labelledby={`${id}-title`}
         className={cn(COLUMN, "relative pt-12 pb-4 md:pt-16")}
       >
-        <div className={cn(HEADING_INSET, "max-w-[820px] pr-4 md:pr-8")}>
+        <div
+          className={cn(
+            HEADING_INSET,
+            // from lg the rail sits in the first 160px; the text keeps its width
+            "max-w-[820px] pr-4 md:pr-8 lg:max-w-[948px] lg:pl-40",
+          )}
+        >
           <header>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[15px]">
               <a
@@ -161,6 +187,99 @@ function ReleaseEntry({
         </div>
       </article>
     </>
+  );
+}
+
+/**
+ * The release being read: the last one whose entry has reached a line 30% down the window. At the
+ * bottom of the page it is the last release, which is too short to ever reach that line.
+ */
+function useActiveRelease(ids: readonly string[]) {
+  const [active, setActive] = useState(ids[0]);
+  useEffect(() => {
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const line = window.innerHeight * 0.3;
+      let current = ids[0];
+      for (const id of ids) {
+        const top = document.getElementById(id)?.getBoundingClientRect().top;
+        if (top !== undefined && top <= line) current = id;
+      }
+      const atBottom =
+        window.innerHeight + window.scrollY >=
+        document.documentElement.scrollHeight - 2;
+      setActive(atBottom ? ids[ids.length - 1] : current);
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+    };
+  }, [ids]);
+  return active;
+}
+
+/** Every version, sticky beside the entries: the one being read is lit, and each jumps to its entry. */
+function ReleaseRail() {
+  const active = useActiveRelease(RELEASE_IDS);
+  const navigate = useNavigate();
+  return (
+    <nav
+      aria-label="Releases"
+      // level with the first entry's version line: its rule (1px) and top padding (64px)
+      className="pointer-events-auto sticky top-10 mt-[65px] w-fit"
+    >
+      <ol className="flex flex-col gap-0.5">
+        {RELEASES.map((release) => {
+          const id = `v${release.version}`;
+          const current = id === active;
+          return (
+            <li key={id}>
+              <a
+                href={`#${id}`}
+                aria-current={current ? "true" : undefined}
+                // Through the router: with its scroll restoration on, following a bare hash link
+                // changes the URL but leaves the page where it was. Replace, not push: Back from a
+                // jump would change the hash without scrolling back.
+                onClick={(event) => {
+                  if (
+                    event.button !== 0 ||
+                    event.metaKey ||
+                    event.ctrlKey ||
+                    event.shiftKey ||
+                    event.altKey
+                  )
+                    return;
+                  event.preventDefault();
+                  navigate({ to: "/changelog", hash: id, replace: true });
+                }}
+                className={cn(
+                  "flex h-7 items-center gap-2.5 rounded pr-2 font-mono text-[14px] transition-colors duration-200",
+                  current ? "text-white" : "text-white/35 hover:text-white/70",
+                  focusRing,
+                )}
+              >
+                <span
+                  aria-hidden
+                  className={cn(
+                    "size-1.5 shrink-0 rounded-full bg-[#ff8a5a] transition-opacity duration-200",
+                    current ? "opacity-100" : "opacity-0",
+                  )}
+                />
+                {release.version}
+              </a>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
   );
 }
 

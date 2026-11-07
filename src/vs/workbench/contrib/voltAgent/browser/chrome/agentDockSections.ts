@@ -74,7 +74,7 @@ export class DockGroup extends Disposable {
 
 //#region Which sections show
 
-export type DockSectionId = 'agents' | 'tabs' | 'designs' | 'scratch' | 'workspace' | 'pullRequests' | 'automations' | 'usage' | 'previous';
+export type DockSectionId = 'agents' | 'tabs' | 'designs' | 'scratch' | 'workspace' | 'run' | 'pullRequests' | 'automations' | 'usage' | 'previous';
 
 interface IDockSectionInfo {
 	readonly id: DockSectionId;
@@ -89,6 +89,7 @@ export const DOCK_SECTIONS: readonly IDockSectionInfo[] = [
 	{ id: 'designs', label: localize('voltAgent.dockSections.designs', "Designs"), shownByDefault: true },
 	{ id: 'scratch', label: localize('voltAgent.dockSections.scratch', "Scratch"), shownByDefault: true },
 	{ id: 'workspace', label: localize('voltAgent.dockSections.workspace', "Files, terminal and browser"), shownByDefault: true },
+	{ id: 'run', label: localize('voltAgent.dockSections.run', "Run and debug"), shownByDefault: true },
 	{ id: 'pullRequests', label: localize('voltAgent.dockSections.pullRequests', "Changes and pull requests"), shownByDefault: true },
 	{ id: 'automations', label: localize('voltAgent.dockSections.automations', "Automations"), shownByDefault: false },
 	{ id: 'usage', label: localize('voltAgent.dockSections.usage', "Usage"), shownByDefault: false },
@@ -177,9 +178,19 @@ export class DockSectionPrefs extends Disposable {
 	}
 }
 
-/** The tune button's menu: a check per section ("Show in side toolbar"), toggled in place, then Reset to default. */
-export function showDockSectionsMenu(contextViewService: IContextViewService, anchor: HTMLElement, prefs: DockSectionPrefs, onHide: () => void) {
-	type Pick = DockSectionId | 'reset';
+/** A window option the tune menu offers after the sections: VS Code's bottom status bar (`volt.agent.statusBar.visible`). */
+export interface IDockStatusBarToggle {
+	readonly shown: () => boolean;
+	/** Writes the setting; the check follows once it is written. */
+	readonly toggle: () => Promise<void>;
+}
+
+/**
+ * The tune button's menu: a check per section ("Show in side toolbar"), toggled in place, then
+ * "Show bottom status bar", then Reset to default (the sections only; the status bar is a setting).
+ */
+export function showDockSectionsMenu(contextViewService: IContextViewService, anchor: HTMLElement, prefs: DockSectionPrefs, onHide: () => void, statusBar?: IDockStatusBarToggle) {
+	type Pick = DockSectionId | 'reset' | 'statusBar';
 	const handle = showVoltMenu<Pick>(contextViewService, {
 		anchor,
 		position: 'below',
@@ -192,6 +203,17 @@ export function showDockSectionsMenu(contextViewService: IContextViewService, an
 				title: localize('voltAgent.dockSections.title', "Show in side toolbar"),
 				items: DOCK_SECTIONS.filter(section => prefs.isAvailable(section.id)).map(section => ({ id: section.id, label: section.label, checked: prefs.isShown(section.id), keepOpen: true, data: section.id })),
 			},
+			...(statusBar ? [{
+				id: 'window',
+				items: [{
+					id: 'statusBar',
+					label: localize('voltAgent.dockSections.statusBar', "Show bottom status bar"),
+					tooltip: localize('voltAgent.dockSections.statusBarTip', "VS Code's status bar along the bottom of the window (volt.agent.statusBar.visible)"),
+					checked: statusBar.shown(),
+					keepOpen: true,
+					data: 'statusBar' as const,
+				}],
+			}] : []),
 			{
 				id: 'reset',
 				items: [{ id: 'reset', label: localize('voltAgent.dockSections.reset', "Reset to default"), disabled: prefs.isDefault(), keepOpen: true, data: 'reset' }],
@@ -200,6 +222,9 @@ export function showDockSectionsMenu(contextViewService: IContextViewService, an
 		onPick: item => {
 			if (item.data === 'reset') {
 				prefs.reset();
+			} else if (item.data === 'statusBar') {
+				void statusBar?.toggle().then(() => handle.refresh());
+				return;
 			} else {
 				prefs.toggle(item.data);
 			}
