@@ -2102,8 +2102,19 @@ export class AgentHomePane extends Disposable {
 			this.finishRename(this.rename.value, false);
 		}
 		this.rename = { id: session.id, value: this.titleOf(session), selectAll: true };
+		this.rerenderSession(session.id);
+	}
+
+	/**
+	 * Draws a chat's rows again, in every group that lists it. `tree.rerender()` with no row does
+	 * nothing in a list without dynamic heights, so the row is named.
+	 */
+	private rerenderSession(id: string): void {
 		for (const pane of this.panes) {
-			pane.tree?.rerender();
+			const element = pane.findSession(id);
+			if (element && pane.tree?.hasElement(element)) {
+				pane.tree.rerender(element);
+			}
 		}
 	}
 
@@ -2128,6 +2139,7 @@ export class AgentHomePane extends Disposable {
 		if (refocus) {
 			this.panes.find(pane => pane.findSession(rename.id))?.tree?.domFocus();
 		}
+		this.rerenderSession(rename.id);
 		this.rerenderRows();
 		if (this.refreshAfterRename) {
 			this.refreshAfterRename = false;
