@@ -77,16 +77,25 @@
 	cursor: text;
 }
 
-.volt-agent-home-search-field input.name {
+/* No focus ring: the field is the row itself, and the caret says it has the keyboard. */
+.monaco-workbench .volt-agent-home-search-field input.name,
+.monaco-workbench .volt-agent-home-search-field input.name:focus {
 	height: 22px;
 	margin: 0;
 	padding: 0;
 	border: 0;
 	outline: none;
+	box-shadow: none;
 	background: transparent;
 	color: inherit;
 	font: inherit;
 	opacity: 1;
+}
+
+/* A full-width hairline between the search and the list. */
+.volt-agent-home.scoped > .volt-agent-home-nav {
+	padding-bottom: 6px;
+	border-bottom: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
 }
 
 .volt-agent-home-search-field input.name::placeholder {
