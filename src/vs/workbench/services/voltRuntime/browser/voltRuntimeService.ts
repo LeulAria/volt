@@ -43,7 +43,7 @@ import { modePolicy, VoltMode } from '../common/modes.js';
 import { isCatalogModelEnabled, setCatalogModelEnabled } from '../common/models/modelVisibility.js';
 import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_DISABLED_MODELS_STORAGE_KEY, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
 import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IModelRequest, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
-import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, newChatSandboxDefaults, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { isSandboxUnavailableError, sandboxRefusedMessage } from '../common/access/sandboxRefusal.js';
 import { cheapestReasoningLevel, resolveTabModel } from '../common/models/modelAccess.js';
 import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../common/runtime.js';
@@ -141,7 +141,7 @@ import { turnWriteGate } from '../common/turnWriteGate.js';
 import { createBuiltinTools } from './tools/registry.js';
 import { loadProjectInstructions } from './prompt/projectInstructions.js';
 import { IRunPlan } from '../common/runPlan.js';
-import { isWindows, isMacintosh } from '../../../../base/common/platform.js';
+import { isLinux, isWindows, isMacintosh } from '../../../../base/common/platform.js';
 import { AnthropicProvider } from './providers/anthropic.js';
 import { GeminiProvider } from './providers/gemini.js';
 import { OllamaProvider } from './providers/ollama.js';
@@ -554,6 +554,9 @@ interface INativeTurnInputs {
 /** Sessions a chat keeps warm for switching back (per chat); idle ones go after IDLE_AGENT_TTL_MS. */
 const MAX_PARKED_PER_CHAT = 2;
 
+/** v2: the default for new chats is on (macOS, Linux); an `off` saved before it was the old default, not a choice. */
+const SANDBOX_DEFAULTS_VERSION = 2;
+
 export class AgentRuntimeService extends Disposable implements IAgentRuntimeService {
 
 	declare readonly _serviceBrand: undefined;
@@ -586,7 +589,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private accessMode: VoltAccessMode = DEFAULT_ACCESS_MODE;
 	/** Chats that picked their own access mode from the composer. */
 	private accessChats: Record<string, VoltAccessMode> = {};
-	private sandboxDefaults: IVoltSandboxSettings = DEFAULT_SANDBOX_SETTINGS;
+	private sandboxDefaults: IVoltSandboxSettings = newChatSandboxDefaults(isMacintosh ? 'darwin' : isLinux ? 'linux' : isWindows ? 'win32' : 'other');
 	private sandboxChats: Record<string, IVoltSandboxSettings> = {};
 	private projectRules: IPermissionRule[] = [];
 	private savedRules: IPermissionRule[] = [];
@@ -1477,6 +1480,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	/** The chat's sandbox as an agent start asks for it; undefined when the chat runs unconfined. */
 	private sandboxStart(sessionId: string, cwd: string | undefined): IAgentSandboxStart | undefined {
 		const settings = this.getSandboxSettings(sessionId);
+		if (!this.sandboxChats[sessionId]) {
+			// Pinned at the chat's first agent start: a later change of the default never moves a chat that ran.
+			this.sandboxChats = { ...this.sandboxChats, [sessionId]: settings };
+			this.storeSandbox();
+		}
 		if (settings.level === 'off') {
 			return undefined;
 		}
@@ -2248,7 +2256,18 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	getSandboxSettings(sessionId: string): IVoltSandboxSettings {
-		return this.sandboxChats[sessionId] ?? this.sandboxDefaults;
+		return this.sandboxChats[sessionId] ?? this.unpinnedSandbox(sessionId);
+	}
+
+	/**
+	 * A chat with no sandbox of its own: a new one (no turns yet, or forked or continued from one)
+	 * gets the default for new chats; one that already ran before the sandbox was on by default
+	 * keeps running unsandboxed, as it always did, until the user changes it.
+	 */
+	private unpinnedSandbox(sessionId: string): IVoltSandboxSettings {
+		const session = this.sessions.get(sessionId) as ISessionState | undefined;
+		const ranBefore = !!session && !session.forkedFrom && !session.continuedFrom && session.messages.some(message => message.role === 'assistant');
+		return ranBefore ? DEFAULT_SANDBOX_SETTINGS : this.sandboxDefaults;
 	}
 
 	chatExec(sessionId: string, reason: VoltExecReason, providerId?: string): IChatExec {
@@ -2293,7 +2312,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	private storeSandbox(): void {
-		this.storageService.store(VOLT_SANDBOX_STORAGE_KEY, JSON.stringify({ defaults: this.sandboxDefaults, chats: this.sandboxChats }), StorageScope.APPLICATION, StorageTarget.USER);
+		this.storageService.store(VOLT_SANDBOX_STORAGE_KEY, JSON.stringify({ v: SANDBOX_DEFAULTS_VERSION, defaults: this.sandboxDefaults, chats: this.sandboxChats }), StorageScope.APPLICATION, StorageTarget.USER);
 	}
 
 	respondToAccessRequest(requestId: string, effect: Extract<PermissionEffect, 'allow' | 'deny'>, scope: AccessDecisionScope = 'once', pattern?: string): void {
@@ -5908,8 +5927,13 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.accessMode = normalizeVoltAccessMode(this.storageService.get(VOLT_ACCESS_MODE_STORAGE_KEY, StorageScope.APPLICATION));
 		const storedChats = this.readJson<Record<string, unknown>>(VOLT_ACCESS_CHATS_STORAGE_KEY, {});
 		this.accessChats = Object.fromEntries(Object.entries(storedChats).filter((entry): entry is [string, VoltAccessMode] => isVoltAccessMode(entry[1])));
-		const storedSandbox = this.readJson<{ defaults?: unknown; chats?: Record<string, unknown> }>(VOLT_SANDBOX_STORAGE_KEY, {});
-		this.sandboxDefaults = normalizeSandboxSettings(storedSandbox.defaults);
+		const storedSandbox = this.readJson<{ v?: number; defaults?: unknown; chats?: Record<string, unknown> }>(VOLT_SANDBOX_STORAGE_KEY, {});
+		const storedDefaults = storedSandbox.defaults === undefined ? undefined : normalizeSandboxSettings(storedSandbox.defaults);
+		// Before v2 every save wrote the old `off` default, chosen or not: only a default the user
+		// changed (any other level), or one saved since, still stands.
+		if (storedDefaults && ((storedSandbox.v ?? 1) >= SANDBOX_DEFAULTS_VERSION || storedDefaults.level !== 'off')) {
+			this.sandboxDefaults = storedDefaults;
+		}
 		this.sandboxChats = Object.fromEntries(Object.entries(storedSandbox.chats ?? {}).map(([id, value]) => [id, normalizeSandboxSettings(value)]));
 		this.projectRules = this.readWorkspaceJson(VOLT_ACCESS_PROJECT_RULES_STORAGE_KEY, []);
 		this.savedRules = this.readWorkspaceJson(VOLT_ACCESS_SAVED_RULES_STORAGE_KEY, []);

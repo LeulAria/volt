@@ -662,6 +662,14 @@ export function describeSandbox(settings: IVoltSandboxSettings): string {
 
 export const DEFAULT_SANDBOX_SETTINGS: IVoltSandboxSettings = { level: 'off', network: true };
 
+/**
+ * What a new chat starts with (spec N.1): writes inside the workspace, with the chat's network
+ * through the broker, on macOS and Linux. Off on Windows until its sandbox is on by default.
+ */
+export function newChatSandboxDefaults(platform: string): IVoltSandboxSettings {
+	return platform === 'darwin' || platform === 'linux' ? { level: 'workspace-write', network: true } : DEFAULT_SANDBOX_SETTINGS;
+}
+
 /** Settings read back from storage: unknown fields dropped, paths and hosts cleaned. */
 export function normalizeSandboxSettings(value: unknown): IVoltSandboxSettings {
 	const raw = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
