@@ -460,7 +460,14 @@ export class WebviewElement extends Disposable implements IWebviewElement, Webvi
 
 		this._windowId = targetWindow.vscodeWindowId;
 		this._encodedWebviewOriginPromise = parentOriginHash(targetWindow.origin, this.origin).then(id => this._encodedWebviewOrigin = id);
-		this._encodedWebviewOriginPromise.then(encodedWebviewOrigin => {
+		this._encodedWebviewOriginPromise.then(async encodedWebviewOrigin => {
+			// A sandboxed owner's egress rules are in place before its page can load anything.
+			try {
+				await this.updateEgress();
+			} catch (error) {
+				this._logService.error(`Webview(${this.id}): its network rules could not be set, so it stays empty`, error);
+				return;
+			}
 			if (!this._disposed) {
 				this._initElement(encodedWebviewOrigin, this.extension, this._options, targetWindow);
 			}
@@ -668,8 +675,28 @@ export class WebviewElement extends Disposable implements IWebviewElement, Webvi
 			},
 			state: this._content.state,
 			cspSource: webviewGenericCspSource,
+			cspFloor: this._content.options.ownerPolicy?.csp,
 			confirmBeforeClose: this._confirmBeforeClose,
 		});
+		this.updateEgress().catch(error => this._logService.error(`Webview(${this.id}): could not update its network rules`, error));
+	}
+
+	/**
+	 * Volt: tells the process that sees this webview's network requests which hosts they may reach,
+	 * when its owner is sandboxed (spec I.10). Electron implements it; elsewhere the CSP floor is all.
+	 */
+	protected updateEgress(): Promise<void> {
+		return Promise.resolve();
+	}
+
+	/** The origin the webview's frames load from (known once mounted), for {@link updateEgress}. */
+	protected get encodedWebviewOrigin(): string | undefined {
+		return this._encodedWebviewOrigin;
+	}
+
+	/** The hosts a sandboxed owner's pages may reach; undefined when the owner isn't sandboxed. */
+	protected get egressHosts(): readonly string[] | undefined {
+		return this._content.options.ownerPolicy?.egressHosts;
 	}
 
 	protected style(): void {
@@ -762,6 +789,7 @@ export class WebviewElement extends Disposable implements IWebviewElement, Webvi
 			const result = await loadLocalResource(uri, {
 				ifNoneMatch,
 				roots: this._content.options.localResourceRoots || [],
+				resolveSymlinks: !!this._content.options.ownerPolicy?.egressHosts,
 			}, this._fileService, this._logService, this._resourceLoadingCts.token);
 
 			switch (result.type) {
