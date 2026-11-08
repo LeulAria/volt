@@ -29,11 +29,55 @@ export const AGENTS = {
 		binary: () => process.env.VOLT_RUNNER_CODEX_BIN || 'codex',
 		credentials: () => !!(process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || fs.existsSync(path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'auth.json'))),
 		command: task => ({
-			args: ['exec', '--json', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', ...(task.model ? ['-m', task.model] : []), '-'],
+			args: ['exec', '--json', '--skip-git-repo-check', ...codexSandboxArgs(), ...(task.model ? ['-m', task.model] : []), '-'],
 			env: {},
 		}),
 	},
 };
+
+/**
+ * Codex's own OS sandbox for a task (B-06): on Linux and macOS it writes only the task's checkout
+ * and temp (network kept on: tasks install packages), instead of running with the sandbox off.
+ * `VOLT_RUNNER_CODEX_SANDBOX=off` is the operator's explicit choice for a container whose kernel
+ * cannot give Codex its sandbox (no Landlock); then the container is the only boundary. Windows has
+ * no sandbox Codex or Volt can apply here, so it keeps Codex's sandbox off there, and the runner's
+ * machine or container is the boundary. Claude Code has no OS sandbox of its own: it runs with
+ * `bypassPermissions`, bounded by the container and the allow-listed environment (runnerAgentEnv).
+ */
+export function codexSandboxArgs(platform = process.platform, env = process.env) {
+	if (platform === 'win32' || env.VOLT_RUNNER_CODEX_SANDBOX === 'off') {
+		return ['--dangerously-bypass-approvals-and-sandbox'];
+	}
+	return ['--sandbox', 'workspace-write', '-c', 'approval_policy="never"', '-c', 'sandbox_workspace_write.network_access=true'];
+}
+
+/** What every agent may see of the runner's environment: where things are, never the runner's own secrets. */
+const BASE_ENV = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LANGUAGE', 'TZ', 'TERM', 'TMPDIR', 'TMP', 'TEMP', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'SystemRoot', 'ComSpec', 'PATHEXT', 'WINDIR', 'APPDATA', 'LOCALAPPDATA', 'USERPROFILE'];
+/** Each agent's own credentials and config, which it needs to run. */
+const AGENT_ENV = {
+	claude: ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'CLAUDE_CONFIG_DIR'],
+	codex: ['OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_BASE_URL', 'CODEX_HOME'],
+};
+
+/**
+ * The environment a task's agent starts with (B-06): an allow list, not the runner's whole
+ * environment. The relay enrol key and token, the admin token and every other VOLT_RELAY_* and
+ * VOLT_RUNNER_* setting stay with the runner; one agent never gets another's credentials.
+ */
+export function runnerAgentEnv(agent, hostEnv = process.env) {
+	const env = {};
+	for (const name of [...BASE_ENV, ...(AGENT_ENV[agent] ?? [])]) {
+		if (typeof hostEnv[name] === 'string') {
+			env[name] = hostEnv[name];
+		}
+	}
+	for (const [name, value] of Object.entries(hostEnv)) {
+		if (/^LC_[A-Z]+$/.test(name) && typeof value === 'string') {
+			env[name] = value;
+		}
+	}
+	return env;
+}
 
 function readTokenFile(file) {
 	if (!file) {
