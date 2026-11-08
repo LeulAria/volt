@@ -781,8 +781,18 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 				{
 					id: 'antigravity',
 					label: 'Antigravity',
+					order: 70,
 					binary: 'agy',
+					versionArgs: ['--version'],
 					args: ['acp'],
+					apiHosts: ['*.googleapis.com', 'accounts.google.com', 'oauth2.googleapis.com'],
+					state: {
+						writable: ['.gemini/antigravity-cli', '.gemini/tmp', '.gemini/antigravity/conversations', '.gemini/antigravity/brain', '.gemini/antigravity/annotations'],
+						writableFiles: ['.gemini/oauth_creds.json', '.gemini/google_accounts.json', '.gemini/installation_id'],
+						readable: ['.gemini', '.antigravity', '.config/antigravity'],
+						credentials: ['.gemini/oauth_creds.json', '.gemini/antigravity-cli/antigravity-oauth-token', '.gemini/jetski-standalone-oauth-token'],
+						envKeys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_CLOUD_PROJECT'],
+					},
 					models: {
 						source: 'acp',
 					},
@@ -817,8 +827,48 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			voltAgents: [
 				{
 					id: 'claude',
+					provider: 'claude-code',
 					label: 'Claude',
+					order: 20,
 					binary: 'claude',
+					versionArgs: ['--version'],
+					args: [],
+					acpAdapter: {
+						command: 'claude-agent-acp',
+						package: '@agentclientprotocol/claude-agent-acp@0.81.2',
+					},
+					env: {
+						CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
+					},
+					authProbe: 'claude',
+					login: ['claude', 'auth', 'login'],
+					apiHosts: ['api.anthropic.com', '*.anthropic.com', 'claude.ai', '*.claude.ai', 'claude.com', '*.claude.com', 'sentry.io', '*.sentry.io'],
+					state: {
+						configOverlay: 'CLAUDE_CONFIG_DIR',
+						configHome: '.claude',
+						link: ['settings.json', 'settings.local.json', 'CLAUDE.md', 'agents', 'commands', 'skills', 'hooks', 'plugins', 'output-styles', 'rules', 'keybindings.json', 'statusline.sh'],
+						seed: [
+							{
+								name: '.claude.json',
+								from: 'home:.claude.json',
+								mergeBack: ['numStartups', 'tipsHistory', 'promptQueueUseCount', 'projects.*.lastSessionId', 'projects.*.lastCost', 'projects.*.lastAPIDuration', 'projects.*.lastAPIDurationWithoutRetries', 'projects.*.lastToolDuration', 'projects.*.lastDuration', 'projects.*.lastLinesAdded', 'projects.*.lastLinesRemoved', 'projects.*.lastTotalInputTokens', 'projects.*.lastTotalOutputTokens', 'projects.*.lastTotalCacheCreationInputTokens', 'projects.*.lastTotalCacheReadInputTokens', 'projects.*.lastTotalWebSearchRequests', 'projects.*.lastModelUsage', 'projects.*.lastSessionMetrics', 'projects.*.exampleFiles', 'projects.*.exampleFilesGeneratedAt', 'projects.*.hasCompletedProjectOnboarding', 'projects.*.projectOnboardingSeenCount'],
+							},
+						],
+						secureStorage: {
+							env: 'CLAUDE_SECURESTORAGE_CONFIG_DIR',
+							file: '.credentials.json',
+							freshness: ['claudeAiOauth', 'expiresAt'],
+							identity: 'claude',
+						},
+						writable: ['Library/Caches/claude-cli-nodejs', '.cache/claude-cli-nodejs'],
+						readable: ['.local/share/claude'],
+						credentials: ['.claude/.credentials.json'],
+						tmpDirs: ['/private/tmp/claude-${uid}', '/tmp/claude-${uid}', '/private/tmp/cc-socks', '/tmp/cc-socks'],
+						env: {
+							DISABLE_AUTOUPDATER: '1',
+						},
+						envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'],
+					},
 					models: {
 						source: 'acp',
 					},
@@ -854,7 +904,31 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 				{
 					id: 'codex',
 					label: 'Codex',
+					order: 10,
 					binary: 'codex',
+					versionArgs: ['--version'],
+					args: [],
+					acpAdapter: {
+						command: 'codex-acp',
+						package: '@agentclientprotocol/codex-acp@1.13.1',
+					},
+					authProbe: 'codex',
+					login: ['codex', 'login'],
+					apiHosts: ['chatgpt.com', '*.chatgpt.com', 'api.openai.com', '*.openai.com', 'auth.openai.com'],
+					state: {
+						configOverlay: 'CODEX_HOME',
+						configHome: '.codex',
+						link: ['config.toml', 'AGENTS.md', 'AGENTS.override.md', 'rules', 'skills', 'plugins', 'prompts', 'hooks.json'],
+						loginFiles: [
+							{
+								name: 'auth.json',
+								freshness: ['last_refresh'],
+								identity: ['tokens.account_id', 'OPENAI_API_KEY'],
+							},
+						],
+						credentials: ['.codex/auth.json'],
+						envKeys: ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_HOME'],
+					},
 					models: {
 						source: 'acp',
 					},
@@ -889,9 +963,36 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			voltAgents: [
 				{
 					id: 'cursor',
+					provider: 'cursor-acp',
 					label: 'Cursor',
+					order: 30,
 					binary: 'cursor-agent',
+					fallbackBinaries: ['agent'],
+					versionArgs: ['--version'],
 					args: ['acp'],
+					earlyAccess: true,
+					login: ['cursor-agent', 'login'],
+					apiHosts: ['cursor.com', '*.cursor.com', 'cursor.sh', '*.cursor.sh', 'cursorapi.com', '*.cursorapi.com'],
+					state: {
+						configOverlay: 'CURSOR_CONFIG_DIR',
+						configHome: '.cursor',
+						link: ['mcp.json', 'hooks.json', 'hooks', 'rules', 'skills', 'skills-cursor', 'agents', 'plugins', 'extensions', 'permissions.json', 'sandbox-policies'],
+						seed: [
+							{
+								name: 'cli-config.json',
+								from: 'config:cli-config.json',
+								mergeBack: ['model', 'selectedModel', 'hasChangedDefaultModel', 'modelParameters', 'modelSelectionHistory', 'maxMode'],
+							},
+						],
+						setEnv: {
+							CURSOR_DATA_DIR: '${config}',
+						},
+						writable: ['Library/Application Support/Cursor/User/globalStorage'],
+						writableFiles: ['.cursor/auth.json', '.config/cursor/auth.json'],
+						readable: ['.local/share/cursor-agent'],
+						credentials: ['.cursor/auth.json', '.config/cursor/auth.json'],
+						envKeys: ['CURSOR_API_KEY'],
+					},
 					models: {
 						source: 'acp',
 					},
@@ -926,9 +1027,22 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			voltAgents: [
 				{
 					id: 'fx',
-					label: 'FX',
+					label: 'fx',
+					order: 100,
 					binary: 'fx',
+					versionArgs: ['--version'],
 					args: ['acp'],
+					earlyAccess: true,
+					authProbe: 'fx',
+					login: ['fx', 'login'],
+					apiHosts: ['fx.sh', '*.fx.sh', 'ai-gateway.vercel.sh', 'vercel.com', '*.vercel.com', 'chatgpt.com', '*.chatgpt.com', 'api.openai.com', 'auth.openai.com', 'x.ai', '*.x.ai', 'grok.com', '*.grok.com'],
+					state: {
+						writable: ['.fx/sessions', '.fx/backups', '.fx/diagnostics', '.fx/file-index'],
+						writableFiles: ['.fx/history.jsonl', '.fx/history.lock', '.fx/auth.lock', '.fx/settings.lock', '.fx/auth.json'],
+						readable: ['.fx'],
+						credentials: ['.fx/auth.json', '.fx/mcp-credentials'],
+						envKeys: ['AI_GATEWAY_API_KEY', 'OPENAI_API_KEY', 'XAI_API_KEY'],
+					},
 					models: {
 						source: 'acp',
 					},
@@ -964,8 +1078,20 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 				{
 					id: 'grok',
 					label: 'Grok',
+					order: 40,
 					binary: 'grok',
+					versionArgs: ['--version'],
 					args: ['agent', 'stdio'],
+					earlyAccess: true,
+					authProbe: 'grok',
+					apiHosts: ['x.ai', '*.x.ai', 'grok.com', '*.grok.com'],
+					state: {
+						writable: ['.grok/sessions', '.grok/logs', '.grok/memory-v2', '.grok/memtrace', '.grok/grove', '.grok/downloads', '.local/state/grok'],
+						writableFiles: ['.grok/auth.json', '.grok/auth.json.lock', '.grok/active_sessions.json', '.grok/active_sessions.lock', '.grok/worktrees.db', '.grok/models_cache.json', '.grok/settings_cache.json', '.grok/tip_cursor.json', '.grok/agent_id', '.grok/.config-init.lock', '.grok/managed_config.lock', '.grok/.metadata_version'],
+						readable: ['.grok'],
+						credentials: ['.grok/auth.json'],
+						envKeys: ['XAI_API_KEY', 'GROK_API_KEY'],
+					},
 					models: {
 						source: 'acp',
 					},
@@ -1000,9 +1126,18 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			voltAgents: [
 				{
 					id: 'kimi',
-					label: 'Kimi',
+					label: 'Kimi Code',
+					order: 80,
 					binary: 'kimi',
+					versionArgs: ['--version'],
 					args: ['acp'],
+					authProbe: 'kimi',
+					apiHosts: ['*.moonshot.ai', '*.moonshot.cn', 'kimi.com', '*.kimi.com'],
+					state: {
+						writable: ['.kimi/sessions', '.kimi/logs', '.kimi-code/sessions', '.kimi-code/logs'],
+						readable: ['.kimi', '.kimi-code'],
+						envKeys: ['MOONSHOT_API_KEY', 'KIMI_API_KEY'],
+					},
 					models: {
 						source: 'acp',
 					},
@@ -1077,9 +1212,16 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			voltAgents: [
 				{
 					id: 'muse',
-					label: 'Muse',
+					label: 'Muse Code',
+					order: 90,
 					binary: 'muse',
+					versionArgs: ['--version'],
 					args: ['acp'],
+					authProbe: 'muse',
+					state: {
+						writable: ['.muse/sessions', '.muse/logs'],
+						readable: ['.muse', '.config/muse'],
+					},
 					models: {
 						source: 'acp',
 					},
@@ -1115,8 +1257,21 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 				{
 					id: 'opencode',
 					label: 'OpenCode',
+					order: 50,
 					binary: 'opencode',
+					fallbackBinaries: ['opencode2'],
+					versionArgs: ['--version'],
 					args: ['acp'],
+					authProbe: 'opencode',
+					login: ['opencode', 'auth', 'login'],
+					apiHosts: ['opencode.ai', '*.opencode.ai', 'models.dev', 'api.anthropic.com', 'api.openai.com', 'openrouter.ai', '*.openrouter.ai', 'generativelanguage.googleapis.com', 'api.x.ai', 'api.deepseek.com', 'api.moonshot.ai', 'api.z.ai'],
+					state: {
+						writable: ['.local/share/opencode/storage', '.local/share/opencode/snapshot', '.local/share/opencode/log', '.local/state/opencode', '.local/share/oh-my-opencode', '.claude/transcripts'],
+						writableFiles: ['.local/share/opencode/auth.json', '.local/share/opencode/opencode.db', '.local/share/opencode/opencode.db-wal', '.local/share/opencode/opencode.db-shm', '.local/share/opencode/opencode.db-journal'],
+						readable: ['.local/share/opencode', '.config/opencode', '.opencode', '.omo'],
+						credentials: ['.local/share/opencode/auth.json', '.local/share/opencode/opencode.db'],
+						envKeys: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'GEMINI_API_KEY', 'XAI_API_KEY', 'DEEPSEEK_API_KEY', 'MOONSHOT_API_KEY', 'ZAI_API_KEY', 'OPENCODE_API_KEY'],
+					},
 					models: {
 						source: 'acp',
 					},
@@ -1191,7 +1346,24 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 				{
 					id: 'pi',
 					label: 'Pi',
+					order: 60,
 					binary: 'pi',
+					versionArgs: ['--version'],
+					args: [],
+					earlyAccess: true,
+					acpAdapter: {
+						command: 'pi-acp',
+						package: 'pi-acp@0.0.34',
+					},
+					authProbe: 'pi',
+					apiHosts: ['pi.dev', '*.pi.dev', 'api.anthropic.com', 'api.openai.com', 'chatgpt.com', '*.chatgpt.com', 'auth.openai.com', 'openrouter.ai', '*.openrouter.ai', 'generativelanguage.googleapis.com', 'api.x.ai', 'api.deepseek.com', 'api.moonshot.ai', 'api.z.ai', 'api.groq.com', 'api.mistral.ai', 'api.cerebras.ai'],
+					state: {
+						writable: ['.pi/agent/sessions', '.pi/agent/logs'],
+						writableFiles: ['.pi/agent/auth.json'],
+						readable: ['.pi'],
+						credentials: ['.pi/agent/auth.json'],
+						envKeys: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'GEMINI_API_KEY', 'XAI_API_KEY', 'GROQ_API_KEY', 'MISTRAL_API_KEY', 'CEREBRAS_API_KEY'],
+					},
 					models: {
 						source: 'acp',
 					},

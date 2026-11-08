@@ -78,27 +78,91 @@ export interface IVoltDockContribution {
 }
 
 /**
+ * Sign-in probes core implements (`cliAgents.ts` `CLI_AUTH_PROBES`): a provider names one, it never
+ * ships the code. Each reads only its own CLI's account file or status command.
+ */
+export const VOLT_AGENT_AUTH_PROBES = ['claude', 'codex', 'grok', 'opencode', 'pi', 'kimi', 'muse', 'fx'] as const;
+export type VoltAgentAuthProbe = typeof VOLT_AGENT_AUTH_PROBES[number];
+
+/**
+ * Where an agent CLI keeps its state, in the allow-list form of B-05 (H3). The overlay fields
+ * mirror `IAgentOverlaySpec` (`platform/voltSandbox/common/agentState.ts`), the rest the agent's
+ * footprint (`sandboxPolicy.ts`). Paths are relative to the home folder unless they say otherwise.
+ *
+ * For built-ins these are a declaration that must equal core's compiled tables (the parity test
+ * fails otherwise): the sandbox profile is built from core's tables, so a manifest can't widen
+ * its own sandbox. Widening needs a core release, like a first-party ceiling (G.10).
+ */
+export interface IVoltAgentStateContribution {
+	/** The environment variable that points the CLI at a per-chat config overlay (`CLAUDE_CONFIG_DIR`). */
+	readonly configOverlay?: string;
+	/** The real config folder the overlay stands in for (`.claude`). */
+	readonly configHome?: string;
+	/** Entries of the real config folder linked into the overlay read-only. */
+	readonly link?: readonly string[];
+	/** Files copied into the overlay at each launch, and the dotted keys copied back after a turn. */
+	readonly seed?: readonly { readonly name: string; readonly from: string; readonly mergeBack: readonly string[] }[];
+	/** Login files kept in the overlay: copied back only when they are the same account and newer. */
+	readonly loginFiles?: readonly { readonly name: string; readonly freshness: readonly string[]; readonly identity: readonly string[] }[];
+	/** Where the CLI's login lives apart from its config folder (Claude Code's keychain item). */
+	readonly secureStorage?: { readonly env: string; readonly file: string; readonly freshness: readonly string[]; readonly identity: 'claude' };
+	/** More variables the overlay sets; `${config}` is the overlay folder. */
+	readonly setEnv?: Readonly<Record<string, string>>;
+	/** Subpaths the CLI writes in place, outside its overlay. Never a whole dot folder or a config file. */
+	readonly writable?: readonly string[];
+	/** Single files the CLI writes in place (a refreshed login, a lock). */
+	readonly writableFiles?: readonly string[];
+	/** Its own state, readable so it finds its install and settings. */
+	readonly readable?: readonly string[];
+	/** Its credential files, denied to every other agent's sandbox. */
+	readonly credentials?: readonly string[];
+	/** Absolute temp folders it uses; `${uid}` is the user's id (0 when unknown). */
+	readonly tmpDirs?: readonly string[];
+	/** Fixed environment for a sandboxed run (turning self-updates off). */
+	readonly env?: Readonly<Record<string, string>>;
+	/** Environment variables it reads its keys and endpoints from, passed even though they look secret. */
+	readonly envKeys?: readonly string[];
+	/** H.12 shorthand for a provider without seeds: keys merged back to the real config after a turn. */
+	readonly mergeBack?: readonly string[];
+}
+
+/**
  * A model provider (spec H.12): data, never an arbitrary `{command, args}`. Core resolves the bare
  * binary name, pins its path and digest, and launches it through the supervisor.
+ *
+ * Only a built-in `volt.*` extension with a first-party ceiling contributes an agent Volt runs
+ * (`voltAgentDefinitions.ts`). A third party's `voltAgents` entry is accepted only as the
+ * capability requests it implies (its API hosts); Volt never launches it.
  */
 export interface IVoltAgentContribution {
 	/** The model picker's provider family (`providerFamily`). */
 	readonly id: string;
+	/** The runtime provider id when it differs from the family (`claude-code` for `claude`). */
+	readonly provider?: string;
 	readonly label?: string;
+	/** Its place in setup and provider lists (lowest first). */
+	readonly order?: number;
 	/** A bare executable name, no path. */
 	readonly binary?: string;
-	/** Launch arguments; only core-defined substitutions (`${model}`, `${projectSlug}`). */
+	/** More executable names, looked for in order after `binary`. */
+	readonly fallbackBinaries?: readonly string[];
+	/** Arguments that print the version. Default `--version`. */
+	readonly versionArgs?: readonly string[];
+	/** Launch arguments (ACP mode); only core-defined substitutions (`${model}`, `${projectSlug}`). */
 	readonly args?: readonly string[];
+	/** Shown in the picker as early access. */
+	readonly earlyAccess?: boolean;
+	/** A separate ACP server for a CLI with no ACP mode: its executable and the pinned npm package. */
+	readonly acpAdapter?: { readonly command: string; readonly package: string };
+	/** Extra environment for the ACP process. Never a loader or interpreter variable. */
+	readonly env?: Readonly<Record<string, string>>;
+	/** The core sign-in probe it uses. */
+	readonly authProbe?: VoltAgentAuthProbe;
+	/** The command line that starts a sign-in, run in a terminal the user sees. */
+	readonly login?: readonly string[];
 	/** The hosts its API calls reach. */
 	readonly apiHosts?: readonly string[];
-	readonly state?: {
-		/** The environment variable that points the CLI at a per-chat config overlay. */
-		readonly configOverlay?: string;
-		/** Paths in the overlay the agent may write. */
-		readonly writable?: readonly string[];
-		/** Keys merged back to the real config after a turn. */
-		readonly mergeBack?: readonly string[];
-	};
+	readonly state?: IVoltAgentStateContribution;
 	/** How core asks whether the user is signed in. */
 	readonly probe?: { readonly command: readonly string[]; readonly parse: string };
 	readonly models?: { readonly source: 'acp' | 'api' | 'static'; readonly list?: readonly string[] };
@@ -171,6 +235,15 @@ export const VOLT_CONTRIBUTION_POINTS = [
 const ID = { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$' } satisfies IJSONSchema;
 const TOOL_NAME = { type: 'string', pattern: '^[a-z][a-z0-9_]*$', description: 'The tool name agents call (snake_case).' } satisfies IJSONSchema;
 const STRINGS = { type: 'array', items: { type: 'string', minLength: 1 } } satisfies IJSONSchema;
+const BINARY = { type: 'string', pattern: '^[A-Za-z0-9._-]+$', description: 'A bare executable name; core resolves and pins it.' } satisfies IJSONSchema;
+const ENV_NAME = { type: 'string', pattern: '^[A-Z][A-Z0-9_]*$' } satisfies IJSONSchema;
+const ENV_RECORD = { type: 'object', additionalProperties: { type: 'string' } } satisfies IJSONSchema;
+
+/**
+ * Variables that load code into a process or change where it finds programs: an agent's `env` and
+ * `setEnv` may never set them, built-in or not.
+ */
+const LOADER_ENV = /^(NODE_OPTIONS|NODE_PATH|NODE_EXTRA_CA_CERTS|ELECTRON_RUN_AS_NODE|LD_[A-Z_]+|DYLD_[A-Z_]+|PATH|HOME|SHELL|BASH_ENV|ENV|ZDOTDIR|PYTHONPATH|PYTHONSTARTUP|PERL5OPT|RUBYOPT|GIT_[A-Z_]+)$/;
 
 function labelled(description: string, extra: Record<string, IJSONSchema> = {}): IJSONSchema {
 	return {
@@ -229,14 +302,55 @@ export const VOLT_CONTRIBUTION_SCHEMAS: Readonly<Record<keyof IVoltContributes, 
 			additionalProperties: false,
 			properties: {
 				id: ID,
+				provider: ID,
 				label: { type: 'string' },
-				binary: { type: 'string', pattern: '^[A-Za-z0-9._-]+$', description: 'A bare executable name; core resolves and pins it.' },
+				order: { type: 'number' },
+				binary: BINARY,
+				fallbackBinaries: { type: 'array', items: BINARY },
+				versionArgs: STRINGS,
 				args: STRINGS,
+				earlyAccess: { type: 'boolean' },
+				acpAdapter: {
+					type: 'object',
+					required: ['command', 'package'],
+					additionalProperties: false,
+					properties: { command: BINARY, package: { type: 'string', pattern: '^(@[a-z0-9._-]+/)?[a-z0-9._-]+@[0-9][0-9A-Za-z.+-]*$', description: 'An npm package pinned to an exact version.' } },
+				},
+				env: ENV_RECORD,
+				authProbe: { type: 'string', enum: [...VOLT_AGENT_AUTH_PROBES], description: 'The sign-in probe core runs for it.' },
+				login: { ...STRINGS, minItems: 1 },
 				apiHosts: STRINGS,
 				state: {
 					type: 'object',
 					additionalProperties: false,
-					properties: { configOverlay: { type: 'string', pattern: '^[A-Z][A-Z0-9_]*$' }, writable: STRINGS, mergeBack: STRINGS },
+					properties: {
+						configOverlay: ENV_NAME,
+						configHome: { type: 'string', pattern: '^\\.[A-Za-z0-9._-]+$' },
+						link: STRINGS,
+						seed: {
+							type: 'array',
+							items: { type: 'object', required: ['name', 'from', 'mergeBack'], additionalProperties: false, properties: { name: { type: 'string', minLength: 1 }, from: { type: 'string', pattern: '^(config|home):' }, mergeBack: STRINGS } },
+						},
+						loginFiles: {
+							type: 'array',
+							items: { type: 'object', required: ['name', 'freshness', 'identity'], additionalProperties: false, properties: { name: { type: 'string', minLength: 1 }, freshness: STRINGS, identity: STRINGS } },
+						},
+						secureStorage: {
+							type: 'object',
+							required: ['env', 'file', 'freshness', 'identity'],
+							additionalProperties: false,
+							properties: { env: ENV_NAME, file: { type: 'string', minLength: 1 }, freshness: STRINGS, identity: { type: 'string', enum: ['claude'] } },
+						},
+						setEnv: ENV_RECORD,
+						writable: STRINGS,
+						writableFiles: STRINGS,
+						readable: STRINGS,
+						credentials: STRINGS,
+						tmpDirs: STRINGS,
+						env: ENV_RECORD,
+						envKeys: { type: 'array', items: ENV_NAME },
+						mergeBack: STRINGS,
+					},
 				},
 				probe: {
 					type: 'object',
@@ -370,6 +484,9 @@ export function validateVoltContribution(point: keyof IVoltContributes, value: u
 			}
 		}
 	}
+	if (point === VOLT_AGENTS_EXTENSION_POINT) {
+		(value as IVoltAgentContribution[]).forEach((agent, index) => errors.push(...agentRuleErrors(agent, `${path}[${index}]`)));
+	}
 	if (point === VOLT_CAPABILITIES_EXTENSION_POINT) {
 		const declared = value as IVoltCapabilitiesContribution;
 		for (const capability of [...declared.required ?? [], ...declared.optional ?? []]) {
@@ -379,6 +496,42 @@ export function validateVoltContribution(point: keyof IVoltContributes, value: u
 			} else if (voltCapabilityClassRank(capability.class) < voltCapabilityClassRank(catalog)) {
 				errors.push(`${path}: "${capability.id}" is ${catalog} and can't be declared ${capability.class}`);
 			}
+		}
+	}
+	return errors;
+}
+
+/** A relative path below the home folder (or the config folder): no `..`, no leading `/`, no empty segment. */
+function isPlainRelativePath(path: string): boolean {
+	return !path.startsWith('/') && !path.startsWith('~') && path.split('/').every(segment => !!segment && segment !== '.' && segment !== '..');
+}
+
+/** An agent's rules the schema can't say: environment names that load code, and paths that leave home. */
+function agentRuleErrors(agent: IVoltAgentContribution, path: string): string[] {
+	const errors: string[] = [];
+	const envNames = [
+		...Object.keys(agent.env ?? {}).map(name => [`${path}.env`, name]),
+		...Object.keys(agent.state?.setEnv ?? {}).map(name => [`${path}.state.setEnv`, name]),
+		...Object.keys(agent.state?.env ?? {}).map(name => [`${path}.state.env`, name]),
+	];
+	for (const [where, name] of envNames) {
+		if (!/^[A-Z][A-Z0-9_]*$/.test(name)) {
+			errors.push(`${where}: ${JSON.stringify(name)} is not an environment variable name`);
+		} else if (LOADER_ENV.test(name)) {
+			errors.push(`${where}: ${name} loads code or changes where programs are found; an agent may not set it`);
+		}
+	}
+	const state = agent.state;
+	for (const [field, list] of [['writable', state?.writable], ['writableFiles', state?.writableFiles], ['readable', state?.readable], ['credentials', state?.credentials], ['link', state?.link]] as const) {
+		for (const entry of list ?? []) {
+			if (!isPlainRelativePath(entry)) {
+				errors.push(`${path}.state.${field}: ${JSON.stringify(entry)} is not a plain relative path`);
+			}
+		}
+	}
+	for (const dir of state?.tmpDirs ?? []) {
+		if (!/^\/(private\/)?tmp\/[^/]+$/.test(dir) || dir.includes('..')) {
+			errors.push(`${path}.state.tmpDirs: ${JSON.stringify(dir)} is not a folder directly in /tmp`);
 		}
 	}
 	return errors;

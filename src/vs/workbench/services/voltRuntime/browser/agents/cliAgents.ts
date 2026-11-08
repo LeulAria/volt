@@ -14,6 +14,8 @@ import { parseOpenCodeAuthList, parseOpenCodeModelLines } from '../../common/mod
 import { isSignInNotice } from '../../common/acpNotices.js';
 import { providerFamily } from '../providers/providerFamily.js';
 import { IDetectResult, IModelInfo } from '../../common/providers.js';
+import { builtinAgentDefinitions, IVoltAgentDefinitionData } from '../../../voltPlugins/common/voltAgentDefinitions.js';
+import type { VoltAgentAuthProbe } from '../../../voltPlugins/common/voltContributions.js';
 
 /** A separate ACP server for a CLI that has no ACP mode of its own. It drives the CLI with the same login. */
 export interface IAcpAdapter {
@@ -300,15 +302,15 @@ async function probeHomeConfig(stdio: IVoltStdioService, posixPath: string, acco
 	return { account, plan };
 }
 
-async function probeKimiAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
+export async function probeKimiAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
 	return probeHomeConfig(stdio, '.kimi-code/config.toml', 'kimi', 'Kimi Code');
 }
 
-async function probeMuseAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
+export async function probeMuseAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
 	return probeHomeConfig(stdio, '.config/muse/settings.json', 'muse', 'Muse Code');
 }
 
-async function probeGrokAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
+export async function probeGrokAuth(stdio: IVoltStdioService): Promise<{ account?: string; plan?: string } | undefined> {
 	return probeHomeConfig(stdio, '.grok/auth.json', 'grok.com', 'Signed in');
 }
 
@@ -341,7 +343,7 @@ async function readFxStatus(stdio: IVoltStdioService, command: string): Promise<
 }
 
 /** `fx status --json` names the login (`fx login`, `codex`, an API key); `missing` when signed out. */
-async function probeFxAuth(stdio: IVoltStdioService, command = 'fx'): Promise<{ account?: string; plan?: string } | undefined> {
+export async function probeFxAuth(stdio: IVoltStdioService, command = 'fx'): Promise<{ account?: string; plan?: string } | undefined> {
 	const status = await readFxStatus(stdio, command);
 	if (!fxSignedIn(status)) {
 		return undefined;
@@ -401,104 +403,41 @@ export async function probePiAuth(stdio: IVoltStdioService): Promise<{ account?:
 	};
 }
 
-export const CLI_AGENT_DEFINITIONS: readonly ICliAgentDefinition[] = [
-	{
-		id: 'codex',
-		label: 'Codex',
-		commands: ['codex'],
-		versionArgs: ['--version'],
-		// Codex has no `acp` subcommand. `codex acp` starts the TUI, which exits with
-		// "stdin is not a terminal" when Volt pipes stdio. The adapter speaks ACP for it.
-		acpArgs: [],
-		acpAdapter: { command: 'codex-acp', package: '@agentclientprotocol/codex-acp@1.13.1' },
-		probeAuth: probeCodexAuth,
-	},
-	{
-		id: 'claude-code',
-		label: 'Claude',
-		commands: ['claude'],
-		versionArgs: ['--version'],
-		// Claude Code has no `acp` subcommand; the official adapter speaks ACP for it.
-		acpArgs: [],
-		acpAdapter: { command: 'claude-agent-acp', package: '@agentclientprotocol/claude-agent-acp@0.81.2' },
-		// Claude Code turns its to-do tools (TodoWrite / TaskCreate) on only for older models, so Opus 5.5
-		// and newer had no list to show in the Tasks card. This switch turns them on for every model.
-		acpEnv: { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' },
-		probeAuth: probeClaudeAuth,
-	},
-	{
-		id: 'cursor-acp',
-		label: 'Cursor',
-		commands: ['cursor-agent', 'agent'],
-		versionArgs: ['--version'],
-		acpArgs: ['acp'],
-		earlyAccess: true,
-	},
-	{
-		id: 'grok',
-		label: 'Grok',
-		commands: ['grok'],
-		versionArgs: ['--version'],
-		// `grok acp` is not a command. ACP is `grok agent stdio`.
-		acpArgs: ['agent', 'stdio'],
-		earlyAccess: true,
-		probeAuth: probeGrokAuth,
-	},
-	{
-		id: 'opencode',
-		label: 'OpenCode',
-		// OpenCode 2's npm package also installs `opencode2`; its installer replaces `opencode` itself.
-		// `--version` prints "opencode v2.0.26" on 2 and "1.19.0" on 1. ACP is `opencode acp` on both.
-		commands: ['opencode', 'opencode2'],
-		versionArgs: ['--version'],
-		acpArgs: ['acp'],
-		probeAuth: probeOpenCodeAuth,
-	},
-	{
-		id: 'pi',
-		label: 'Pi',
-		commands: ['pi'],
-		versionArgs: ['--version'],
-		// Pi speaks its own JSON-lines RPC (`pi --mode rpc`), not ACP; the pi-acp adapter drives it
-		// with the same login and settings.
-		acpArgs: [],
-		acpAdapter: { command: 'pi-acp', package: 'pi-acp@0.0.34' },
-		earlyAccess: true,
-		probeAuth: probePiAuth,
-	},
-	{
-		id: 'antigravity',
-		label: 'Antigravity',
-		commands: ['agy'],
-		versionArgs: ['--version'],
-		acpArgs: ['acp'],
-	},
-	{
-		id: 'kimi',
-		label: 'Kimi Code',
-		commands: ['kimi'],
-		versionArgs: ['--version'],
-		acpArgs: ['acp'],
-		probeAuth: probeKimiAuth,
-	},
-	{
-		id: 'muse',
-		label: 'Muse Code',
-		commands: ['muse'],
-		versionArgs: ['--version'],
-		acpArgs: ['acp'],
-		probeAuth: probeMuseAuth,
-	},
-	{
-		id: 'fx',
-		label: 'fx',
-		commands: ['fx'],
-		versionArgs: ['--version'],
-		acpArgs: ['acp'],
-		earlyAccess: true,
-		probeAuth: probeFxAuth,
-	},
-];
+/** The core sign-in probes a provider's manifest names (`contributes.voltAgents[].authProbe`). */
+export const CLI_AUTH_PROBES: Readonly<Record<VoltAgentAuthProbe, NonNullable<ICliAgentDefinition['probeAuth']>>> = {
+	claude: probeClaudeAuth,
+	codex: probeCodexAuth,
+	grok: probeGrokAuth,
+	opencode: probeOpenCodeAuth,
+	pi: probePiAuth,
+	kimi: probeKimiAuth,
+	muse: probeMuseAuth,
+	fx: probeFxAuth,
+};
+
+/** A definition from its manifest data, with the core probe it names. */
+export function cliAgentFromData(data: IVoltAgentDefinitionData): ICliAgentDefinition {
+	return {
+		id: data.id,
+		label: data.label,
+		commands: data.commands,
+		versionArgs: data.versionArgs,
+		acpArgs: data.acpArgs,
+		...(data.earlyAccess ? { earlyAccess: true } : {}),
+		...(data.acpAdapter ? { acpAdapter: data.acpAdapter } : {}),
+		...(data.acpEnv ? { acpEnv: data.acpEnv } : {}),
+		...(data.authProbe ? { probeAuth: CLI_AUTH_PROBES[data.authProbe] } : {}),
+	};
+}
+
+const CLI_AGENT_DATA = builtinAgentDefinitions();
+
+/**
+ * The agent CLIs Volt runs, built from the built-in provider extensions' manifests
+ * (`contributes.voltAgents`, spec H.12). `cliAgentsReference.ts` keeps the hand-written list for
+ * one release, as the parity test's reference.
+ */
+export const CLI_AGENTS: readonly ICliAgentDefinition[] = CLI_AGENT_DATA.map(cliAgentFromData);
 
 /**
  * OpenCode's model command. Empty when the CLI is missing or nobody is signed in. OpenCode 2's
@@ -518,20 +457,14 @@ export async function listOpenCodeModels(stdio: IVoltStdioService, command = 'op
 }
 
 export function cliAgentDefinition(providerId: string): ICliAgentDefinition | undefined {
-	return CLI_AGENT_DEFINITIONS.find(def => def.id === providerId);
+	return CLI_AGENTS.find(def => def.id === providerId);
 }
 
 /**
- * Commands that actually start a sign-in. `claude login` is a prompt, not a command;
- * Claude Code's login is `claude auth login`.
+ * Commands that actually start a sign-in, from the manifests' `login`. `claude login` is a prompt,
+ * not a command; Claude Code's login is `claude auth login`.
  */
-const CLI_LOGIN_COMMANDS: Record<string, string> = {
-	'claude-code': 'claude auth login',
-	codex: 'codex login',
-	'cursor-acp': 'cursor-agent login',
-	opencode: 'opencode auth login',
-	fx: 'fx login',
-};
+export const CLI_LOGIN_COMMANDS: Readonly<Record<string, string>> = Object.fromEntries(CLI_AGENT_DATA.flatMap(data => data.login ? [[data.id, data.login.join(' ')]] : []));
 
 export interface ICliLogin {
 	readonly providerId: string;
@@ -545,7 +478,7 @@ export function cliLoginForNotice(title: string, description: string | undefined
 		return undefined;
 	}
 	const text = `${title}\n${description ?? ''}`;
-	const named = CLI_AGENT_DEFINITIONS.find(def => mentionsCli(text, def));
+	const named = CLI_AGENTS.find(def => mentionsCli(text, def));
 	const def = named ?? cliAgentForProvider(providerId);
 	const command = def ? CLI_LOGIN_COMMANDS[def.id] : undefined;
 	if (!def || !command) {
@@ -567,7 +500,7 @@ function cliAgentForProvider(providerId: string | undefined): ICliAgentDefinitio
 	if (!providerId) {
 		return undefined;
 	}
-	return cliAgentDefinition(providerId) ?? CLI_AGENT_DEFINITIONS.find(def => providerFamily(def.id) === providerFamily(providerId));
+	return cliAgentDefinition(providerId) ?? CLI_AGENTS.find(def => providerFamily(def.id) === providerFamily(providerId));
 }
 
 /** Pulls a semver-ish token out of `--version` output, which is rarely just the number. */

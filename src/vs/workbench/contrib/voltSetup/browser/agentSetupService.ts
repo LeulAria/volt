@@ -8,7 +8,7 @@ import { isMacintosh, isWindows } from '../../../../base/common/platform.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { voltExec } from '../../../services/voltRuntime/common/execContext.js';
-import { CLI_AGENT_DEFINITIONS, detectCliAgent, ICliAgentDefinition } from '../../../services/voltRuntime/browser/agents/cliAgents.js';
+import { CLI_AGENTS, detectCliAgent, ICliAgentDefinition } from '../../../services/voltRuntime/browser/agents/cliAgents.js';
 import { IDetectResult } from '../../../services/voltRuntime/common/providers.js';
 import { ITerminalService } from '../../terminal/browser/terminal.js';
 import { AgentSignIn, agentSetupInfo, authCheckCommand, IAgentSetupInfo, installCommand, parseAuthCheck, parseCredentialsFile, SetupPlatform, setupTerminalName } from '../common/agentSetup.js';
@@ -41,7 +41,7 @@ export class AgentSetupService {
 	) { }
 
 	definitions(): readonly ICliAgentDefinition[] {
-		return CLI_AGENT_DEFINITIONS;
+		return CLI_AGENTS;
 	}
 
 	async detect(def: ICliAgentDefinition): Promise<IAgentSetupState> {
@@ -97,7 +97,7 @@ export class AgentSetupService {
 			return undefined;
 		}
 		// `cursor-agent login` when only `agent` is installed, and so on.
-		const def = CLI_AGENT_DEFINITIONS.find(candidate => candidate.id === state.id);
+		const def = CLI_AGENTS.find(candidate => candidate.id === state.id);
 		const [first, ...rest] = login.split(' ');
 		return state.command && def?.commands.includes(first) ? [state.command, ...rest].join(' ') : login;
 	}

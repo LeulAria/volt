@@ -36,10 +36,48 @@
 			{
 				"id": "antigravity",
 				"label": "Antigravity",
+				"order": 70,
 				"binary": "agy",
+				"versionArgs": [
+					"--version"
+				],
 				"args": [
 					"acp"
 				],
+				"apiHosts": [
+					"*.googleapis.com",
+					"accounts.google.com",
+					"oauth2.googleapis.com"
+				],
+				"state": {
+					"writable": [
+						".gemini/antigravity-cli",
+						".gemini/tmp",
+						".gemini/antigravity/conversations",
+						".gemini/antigravity/brain",
+						".gemini/antigravity/annotations"
+					],
+					"writableFiles": [
+						".gemini/oauth_creds.json",
+						".gemini/google_accounts.json",
+						".gemini/installation_id"
+					],
+					"readable": [
+						".gemini",
+						".antigravity",
+						".config/antigravity"
+					],
+					"credentials": [
+						".gemini/oauth_creds.json",
+						".gemini/antigravity-cli/antigravity-oauth-token",
+						".gemini/jetski-standalone-oauth-token"
+					],
+					"envKeys": [
+						"GEMINI_API_KEY",
+						"GOOGLE_API_KEY",
+						"GOOGLE_CLOUD_PROJECT"
+					]
+				},
 				"models": {
 					"source": "acp"
 				}

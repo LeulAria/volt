@@ -110,7 +110,7 @@ const SECRET_HOME_DIRS = CREDENTIAL_HOME_PATHS.filter(path => path !== 'Library/
  * home folder. Nothing else of the home folder is writable, and nothing else is readable beyond
  * the system, the toolchains and the workspace (D-14, narrow reads).
  */
-interface IAgentFootprint {
+export interface IAgentFootprint {
 	/** Folders the CLI writes in place: sessions, logs, caches. Never a CLI's whole folder, never config (see `footprintLintErrors`). */
 	readonly writable: readonly string[];
 	/** Single files written in place (atomic-write siblings too): lock files, histories, its own login. */
@@ -154,8 +154,12 @@ const SANDBOX_CACHE_ENV: Readonly<Record<string, string>> = {
  * Claude Code, Codex and Cursor take their config folder from the environment: a sandboxed chat
  * gets a per-chat copy (AGENT_OVERLAYS in agentState.ts), so their footprints here hold only what
  * lives outside it. The others write in place, in the subpaths listed.
+ *
+ * The built-in provider manifests repeat this table (and AGENT_OVERLAYS) as `contributes.voltAgents[].state`
+ * (spec H.12, M2), and `cliAgentParity.test.ts` fails when they differ. The sandbox profile is built
+ * from this compiled table, never from a manifest, so a changed `package.json` can't widen it.
  */
-const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
+export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 	'claude-code': {
 		writable: ['Library/Caches/claude-cli-nodejs', '.cache/claude-cli-nodejs'],
 		// The install (`.local/share/claude`, `.claude/local`). Its config folder comes in through the overlay.
