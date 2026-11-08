@@ -456,6 +456,10 @@ function stdioChannel(service: WorkbenchStdioService, ownerOf: (ctx: RemoteAgent
 			if (command === 'exec') {
 				return service.execFor(ownerOf(ctx), (arg as [IVoltExecRequest])[0]) as Promise<unknown> as Promise<T>;
 			}
+			if ((command === 'approveSandboxDenial' || command === 'refuseSandboxDenial') && service.ownerOf((arg as [string])[0]) !== ownerOf(ctx)) {
+				// A client answers only its own agents' denials.
+				return Promise.resolve((command === 'approveSandboxDenial' ? { ok: false, epoch: 0, reason: 'not this client\'s agent' } : false) as T);
+			}
 			return proxied.call<T>(ctx, command, arg, token);
 		},
 		listen<T>(ctx: RemoteAgentConnectionContext, event: string, arg?: unknown): Event<T> {

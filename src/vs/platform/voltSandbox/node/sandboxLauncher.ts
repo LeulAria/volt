@@ -20,6 +20,7 @@ import { AGENT_STATE_ROOT, agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRe
 import { AGENT_CONFIG_NAMES } from '../common/sandboxProfiles.js';
 import { AgentStateOverlay, IAgentStateSync } from './agentStateOverlay.js';
 import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
+import type { INetworkGrantSource } from './networkBroker.js';
 import { IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { IVoltSandboxPolicy, SandboxDimension } from '../common/sandboxSchema.js';
 import { readAdminPolicy, systemAdminPolicySource } from './adminPolicy.js';
@@ -106,6 +107,8 @@ export interface IVoltSandboxLauncherOptions {
 	readonly supervisorEnabled?: () => boolean;
 	/** `volt.sandbox.networkBroker`, read at every launch; default the network broker. Not with `manager`. */
 	readonly networkMode?: () => NetworkBrokerMode;
+	/** Where the network broker's grants live (the grant store); not with `manager`. */
+	readonly grants?: () => Promise<INetworkGrantSource | undefined>;
 }
 
 const MAX_KEPT = 500;
@@ -168,7 +171,7 @@ export class VoltSandboxLauncher extends Disposable {
 	) {
 		super();
 		const sandboxLogger = { info: (m: string) => logger.info(m), warn: (m: string) => logger.warn(m) };
-		this.manager = options.manager ?? new SandboxManager(sandboxLogger, { platform: options.platform ?? process.platform, ...(options.networkMode ? { networkMode: options.networkMode } : {}) });
+		this.manager = options.manager ?? new SandboxManager(sandboxLogger, { platform: options.platform ?? process.platform, ...(options.networkMode ? { networkMode: options.networkMode } : {}), ...(options.grants ? { grants: options.grants } : {}) });
 		// Disposed at once (its disposal starts killing the hosts); the shutdown below waits for those kills.
 		this.supervisor = this._register(new SandboxSupervisor(this.manager, sandboxLogger, { ...(options.supervisorEnabled ? { enabled: options.supervisorEnabled } : {}) }));
 		// Hosts first (their whole trees), then every other run the manager still has.
@@ -358,7 +361,7 @@ export class VoltSandboxLauncher extends Disposable {
 			if (denial.kind === 'process' || denial.kind === 'limit') {
 				return;
 			}
-			this.report(prepared.tag, { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}), ...(denial.promptable === false ? { promptable: false } : {}) });
+			this.report(prepared.tag, { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}), ...(denial.promptable === false ? { promptable: false } : {}), ...(denial.denialId ? { denialId: denial.denialId } : {}), ...(denial.epoch !== undefined ? { epoch: denial.epoch } : {}) });
 		});
 		const warnings = prepared.unenforced.map(dimension => `Sandbox is partial here: ${UNENFORCED_TEXT[dimension] ?? dimension}.`);
 		if (policy.network.listen) {
