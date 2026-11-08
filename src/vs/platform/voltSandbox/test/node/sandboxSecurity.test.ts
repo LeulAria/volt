@@ -23,7 +23,7 @@ import * as net from 'net';
 import { tmpdir } from 'os';
 import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { ISandboxRunResult } from '../../common/sandboxBackend.js';
+import { dimensionsUsed, ISandboxRunResult } from '../../common/sandboxBackend.js';
 import { composeSandboxPolicy } from '../../common/sandboxComposition.js';
 import { agentStatePlan, IAgentStatePlan } from '../../common/agentState.js';
 import { AGENT_STATE_ROOT, agentSandboxPolicy, IVoltSandboxRequest } from '../../common/sandboxPolicy.js';
@@ -681,11 +681,19 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 	test('a policy the backend cannot enforce is refused before anything runs', async () => {
 		const parsed = parseSandboxPolicyLayer({ schemaVersion: 1, process: { limits: { memoryMB: 256 } } });
 		assert.ok(parsed.ok);
-		const { policy } = composeSandboxPolicy(workspace(), [{ source: 'user', trusted: true, layer: parsed.value }]);
-		// No backend caps resident memory (macOS: none at all; Linux: RLIMIT_AS is virtual memory only).
+		const composed = composeSandboxPolicy(workspace(), [{ source: 'user', trusted: true, layer: parsed.value }]).policy;
+		// A dimension this policy uses that this backend reports it does not fully enforce, memory first
+		// (macOS polls the footprint; Linux without a cgroup scope has RLIMIT_AS, virtual memory only).
+		// With C4's cgroup layer memory is enforced, so another one is picked (bubblewrap's
+		// filesystem.protectNew); there is always one, so the refusal is proven on every backend.
+		const capabilities = await f.manager.capabilities();
+		const dimension = ['limits.memory' as const, ...dimensionsUsed(composed)].find(used => capabilities.enforcement[used] !== 'enforced' && !(capabilities.optional ?? []).includes(used));
+		assert.ok(dimension, `${capabilities.backend} enforces every dimension this policy uses: nothing to refuse`);
+		// Not marked best effort, so the run must be refused rather than run as partial.
+		const policy: IVoltSandboxPolicy = { ...composed, bestEffort: composed.bestEffort.filter(entry => entry !== dimension) };
 		const result = await sh(policy, `touch ${f.ws}/should-not-run`, { expectRefusal: true });
 		assert.strictEqual(result.status, 'unavailable');
-		assert.ok(result.unenforced.includes('limits.memory'));
+		assert.ok(result.unenforced.includes(dimension), `${dimension} is reported unenforced: ${result.unenforced.join(', ')}`);
 		assert.ok(!await exists(join(f.ws, 'should-not-run')));
 	});
 

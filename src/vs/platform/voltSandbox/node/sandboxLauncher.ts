@@ -19,6 +19,7 @@ import { agentStatePlan } from '../common/agentState.js';
 import { AGENT_STATE_ROOT, agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
 import { AGENT_CONFIG_NAMES } from '../common/sandboxProfiles.js';
 import { AgentStateOverlay, IAgentStateSync } from './agentStateOverlay.js';
+import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
 import { IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { IVoltSandboxPolicy, SandboxDimension } from '../common/sandboxSchema.js';
 import { readAdminPolicy, systemAdminPolicySource } from './adminPolicy.js';
@@ -103,6 +104,8 @@ export interface IVoltSandboxLauncherOptions {
 	readonly executionHost?: string;
 	/** The supervisor's feature flag (`volt.sandbox.supervisor.enabled`). */
 	readonly supervisorEnabled?: () => boolean;
+	/** `volt.sandbox.networkBroker`, read at every launch; default the network broker. Not with `manager`. */
+	readonly networkMode?: () => NetworkBrokerMode;
 }
 
 const MAX_KEPT = 500;
@@ -165,7 +168,7 @@ export class VoltSandboxLauncher extends Disposable {
 	) {
 		super();
 		const sandboxLogger = { info: (m: string) => logger.info(m), warn: (m: string) => logger.warn(m) };
-		this.manager = options.manager ?? new SandboxManager(sandboxLogger, { platform: options.platform ?? process.platform });
+		this.manager = options.manager ?? new SandboxManager(sandboxLogger, { platform: options.platform ?? process.platform, ...(options.networkMode ? { networkMode: options.networkMode } : {}) });
 		// Disposed at once (its disposal starts killing the hosts); the shutdown below waits for those kills.
 		this.supervisor = this._register(new SandboxSupervisor(this.manager, sandboxLogger, { ...(options.supervisorEnabled ? { enabled: options.supervisorEnabled } : {}) }));
 		// Hosts first (their whole trees), then every other run the manager still has.
@@ -243,6 +246,9 @@ export class VoltSandboxLauncher extends Disposable {
 				terminal: !!options.terminal,
 				label: options.label ?? `${request.providerId} agent`,
 				isolate: [{ root: host.cacheDir, keep: cacheDir }],
+				// The network broker's route, token, grants and budgets are this principal's; its chat's
+				// grants attach to the chat, not to this one run (I.4 routes).
+				principal,
 			});
 			sealed = this.registry.sealLaunchPolicy(principal, prepared.launchPolicyHash);
 			launched = true;
@@ -352,7 +358,7 @@ export class VoltSandboxLauncher extends Disposable {
 			if (denial.kind === 'process' || denial.kind === 'limit') {
 				return;
 			}
-			this.report(prepared.tag, { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}) });
+			this.report(prepared.tag, { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}), ...(denial.promptable === false ? { promptable: false } : {}) });
 		});
 		const warnings = prepared.unenforced.map(dimension => `Sandbox is partial here: ${UNENFORCED_TEXT[dimension] ?? dimension}.`);
 		if (policy.network.listen) {

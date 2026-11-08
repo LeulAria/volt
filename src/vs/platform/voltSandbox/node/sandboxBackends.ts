@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type { ChildProcess } from 'child_process';
-import { ISandboxBackendCapabilities, ISandboxRunDenial, SandboxBackendId } from '../common/sandboxBackend.js';
+import { ISandboxBackendCapabilities, ISandboxResourceViolation, ISandboxRunDenial, SandboxBackendId, SandboxLayers } from '../common/sandboxBackend.js';
 import { IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { SandboxDimension } from '../common/sandboxSchema.js';
 
@@ -24,6 +24,8 @@ export interface ISandboxLaunchOptions {
 	readonly onDenial: (denial: ISandboxRunDenial) => void;
 	/** Test builds only: make one launch step fail (FAULT-*). A fault can only refuse, never widen. */
 	readonly fault?: SandboxFault;
+	/** The backend killed the run's tree for crossing a resource limit (F.8). */
+	readonly onResourceViolation?: (violation: ISandboxResourceViolation) => void;
 }
 
 /**
@@ -40,6 +42,8 @@ export interface ISandboxEvidence {
 	readonly canary: Readonly<Record<string, string>>;
 	/** `bubblewrap --version`, the helper and macOS version. */
 	readonly backendVersion: string;
+	/** Second layers active for this run (absent ones say why). */
+	readonly layers?: SandboxLayers;
 }
 
 export type SandboxConfirmation =

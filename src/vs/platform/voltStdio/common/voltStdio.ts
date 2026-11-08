@@ -62,8 +62,12 @@ export interface IVoltExecContext {
 
 /** Why a spawn or command was refused before anything ran. */
 export interface IVoltExecRefusal {
-	/** `no-context`: nobody said who it runs for. `no-sandbox`: a sandboxed chat's process without its sandbox. `sandbox`: the sandbox could not be set up. */
-	readonly kind: 'no-context' | 'no-sandbox' | 'sandbox';
+	/**
+	 * `no-context`: nobody said who it runs for. `no-sandbox`: a sandboxed chat's process without its
+	 * sandbox. `sandbox`: the sandbox could not be set up. `build-entry`: project-defined commands
+	 * outside the sandbox while files that run code changed unreviewed (I.6).
+	 */
+	readonly kind: 'no-context' | 'no-sandbox' | 'sandbox' | 'build-entry';
 	readonly reason: string;
 }
 

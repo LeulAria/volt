@@ -3,10 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { posix } from '../../../../base/common/path.js';
 import { chatCovers } from '../../../../platform/voltSandbox/common/authority.js';
 import { chatSubject } from '../../../../platform/voltSandbox/common/principals.js';
-import { domainAllowed, isPathInside, IVoltSandboxSettings, normalizeSandboxPath, planAllowsWrite, resolveSandboxPlan, SandboxStrategy, strategyAtLeast, VoltSandboxLevel } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { domainAllowed, isPathInside, IVoltSandboxSettings, SandboxStrategy, strategyAtLeast, VoltSandboxLevel } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { threadIdArg } from './orchestration/agentThreadTools.js';
 import { parseActScript } from './tools/actScript.js';
 import { localImagePaths } from './tools/localImages.js';
@@ -540,73 +539,13 @@ export function legacySandboxCovers(target: IVoltSandboxSettings | undefined, ca
 	return true;
 }
 
-/** Machine facts the path rules need. Without `home`, writes are refused (the plan needs it). */
-export interface ISandboxPathContext {
-	/** The chat's folders: its worktree or project, as named and resolved through symlinks. */
-	readonly roots: readonly string[];
-	readonly home?: string;
-	/** `TMPDIR` (on macOS the per-user `/var/folders/.../T`). */
-	readonly tmpdir?: string;
-	readonly platform: string;
-}
-
-/** Under the home folder: credentials and other apps' private data. Never read for a sandboxed chat. */
-const CREDENTIAL_HOME_PATHS = [
-	'.ssh', '.aws', '.gnupg', '.kube', '.azure', '.docker', '.config/gh', '.config/gcloud', '.config/hub', '.netrc', '.npmrc', '.pypirc', '.git-credentials', '.config/git/credentials',
-	'Library/Keychains', 'Library/Cookies', 'Library/Safari', 'Library/Mail', 'Library/Messages',
-	'Library/Application Support/Google/Chrome', 'Library/Application Support/Chromium', 'Library/Application Support/BraveSoftware', 'Library/Application Support/Microsoft Edge',
-	'Library/Application Support/Arc', 'Library/Application Support/Firefox', 'Library/Application Support/com.apple.TCC',
-	'.mozilla', '.config/google-chrome', '.config/chromium', '.config/BraveSoftware', '.config/microsoft-edge',
-	// Volt's own: account logins and the app's user data.
-	'.volt/accounts', 'Library/Application Support/Volt', 'Library/Application Support/Volt Beta', 'Library/Application Support/code-oss-dev', '.config/Volt', '.config/code-oss-dev',
-];
-
-/** A path as the rules compare it: `..` resolved, normalized, `/private/tmp` and `/private/var` as `/tmp` and `/var` on macOS. */
-function comparable(path: string, platform: string): string {
-	const normalized = normalizeSandboxPath(posix.normalize(path.trim()));
-	return platform === 'darwin' && /^\/private\/(tmp|var|etc)(\/|$)/.test(normalized) ? normalized.slice('/private'.length) : normalized;
-}
-
-/** Why a sandboxed chat may not read `path` (resolved through symlinks), or undefined when it may. */
-export function sandboxReadRefusal(settings: IVoltSandboxSettings | undefined, path: string, context: ISandboxPathContext): string | undefined {
-	if (!isSandboxed(settings)) {
-		return undefined;
-	}
-	const target = comparable(path, context.platform);
-	if (!target.startsWith('/')) {
-		return `${path} is not an absolute path`;
-	}
-	const home = context.home ? comparable(context.home, context.platform) : undefined;
-	if (home && CREDENTIAL_HOME_PATHS.some(dir => isPathInside(target, `${home}/${dir}`))) {
-		return `${path} is in a folder with credentials or private app data`;
-	}
-	const roots = [...context.roots, ...(settings.extraWritableRoots ?? []), '/tmp', '/var/tmp', ...(context.tmpdir ? [context.tmpdir] : [])]
-		.map(root => comparable(root, context.platform))
-		.filter(root => root.startsWith('/') && root !== '/' && root !== home);
-	return roots.some(root => isPathInside(target, root)) ? undefined : `${path} is outside this chat's workspace`;
-}
-
-/** Why a sandboxed chat may not write `path` (resolved through symlinks): the rule the OS enforces on the agent itself. */
-export function sandboxWriteRefusal(settings: IVoltSandboxSettings | undefined, path: string, context: ISandboxPathContext): string | undefined {
-	if (!isSandboxed(settings)) {
-		return undefined;
-	}
-	if (!context.home) {
-		return `Volt cannot tell whether the sandbox allows writing ${path}`;
-	}
-	const plan = resolveSandboxPlan({
-		level: settings.level,
-		network: settings.network,
-		// No agent's state folders: these tools write projects, never an agent CLI's own files.
-		providerId: '',
-		workspaceRoots: [...context.roots],
-		...(settings.extraWritableRoots?.length ? { extraWritableRoots: settings.extraWritableRoots } : {}),
-	}, { platform: context.platform, home: context.home, tmpdir: context.tmpdir ?? '/tmp' });
-	if (planAllowsWrite(plan, normalizeSandboxPath(posix.normalize(path.trim())))) {
-		return undefined;
-	}
-	return settings.level === 'read-only' ? 'this chat\'s sandbox is read-only' : `the sandbox does not allow writing ${path}`;
-}
+/**
+ * The path rules for a sandboxed chat's host tool calls: the files broker's (`voltFiles/common/
+ * filesBroker.ts`), so the gate and the broker judge a path alike. Kept under these names for the
+ * gate's callers and tests.
+ */
+export type { ISandboxPathContext } from '../../../../platform/voltFiles/common/filesBroker.js';
+export { brokerReadRefusal as sandboxReadRefusal, brokerWriteRefusal as sandboxWriteRefusal } from '../../../../platform/voltFiles/common/filesBroker.js';
 
 /** Why a sandboxed chat may not open (or read) the page at `url` in the in-app browser, or undefined when it may. */
 export function sandboxBrowserUrlRefusal(settings: IVoltSandboxSettings | undefined, url: string | undefined): string | undefined {

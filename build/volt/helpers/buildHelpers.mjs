@@ -21,8 +21,9 @@
 //           universal build lipo's them and merges the manifests (build/darwin/create-universal-app.ts).
 //   win32:  volt-helpers/volt-desktop.dll (VoltDesktop.windows.cs, compiled by Windows PowerShell),
 //           and the digest of VoltDesktop.windows.ps1 that loads it.
-//   linux:  volt-helpers/volt-fsd (race-free file opens for sandboxed agents, build/volt/volt-fsd.c)
-//           and the digest of volt_desktop_linux.py.
+//   linux:  volt-helpers/volt-fsd (race-free file opens for sandboxed agents, build/volt/volt-fsd.c),
+//           volt-helpers/volt-landlock (the sandbox's Landlock layer, build/volt/volt-landlock.c,
+//           static) and the digest of volt_desktop_linux.py.
 //
 // Signing happens later with the rest of the app (build/darwin/sign.js, win32-sign.ps1). A signed
 // build is checked by signature; an unsigned one by these digests, which signing would change.
@@ -91,7 +92,10 @@ async function buildWin32(work, helpersDir, source) {
 function buildLinux(source, helpersDir) {
 	const fsd = path.join(helpersDir, 'volt-fsd');
 	execFileSync('cc', ['-O2', '-Wall', '-Wextra', '-o', fsd, path.join(root, 'build', 'volt', 'volt-fsd.c')], { stdio: 'inherit', timeout: 600_000 });
-	return { 'volt-fsd': [fsd], 'desktop-script': [path.join(source, ...HELPER_SOURCES.split('/'), 'volt_desktop_linux.py')] };
+	// Static: it runs inside the sandbox before anything else, whatever libraries the policy shows.
+	const landlock = path.join(helpersDir, 'volt-landlock');
+	execFileSync('cc', ['-O2', '-static', '-Wall', '-Wextra', '-Werror', '-o', landlock, path.join(root, 'build', 'volt', 'volt-landlock.c')], { stdio: 'inherit', timeout: 600_000 });
+	return { 'volt-fsd': [fsd], 'volt-landlock': [landlock], 'desktop-script': [path.join(source, ...HELPER_SOURCES.split('/'), 'volt_desktop_linux.py')] };
 }
 
 /** The manifest path of a file: under `volt-helpers/` for built binaries, its place in `out/` for shipped scripts. */

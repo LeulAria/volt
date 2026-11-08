@@ -5354,7 +5354,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const row = append(tray, $('.volt-agent-run-tray-actions'));
 		const settings = this.runtime.getSandboxSettings(this.sessionKey);
 		if (denial.kind === 'network') {
-			this.appendTrayButton(row, localize('voltAgent.sandbox.allowHost', "Allow {0}", denial.target), localize('voltAgent.sandbox.allowHost.hint', "Let this chat reach {0} through the sandbox", denial.target), 'primary', () => this.retrySandboxed(withAllowedDomain(settings, denial.target)));
+			// The network broker says when no "Allow" may be offered: a private or metadata address, or the prompt budget is spent (G.12).
+			if (denial.promptable !== false) {
+				this.appendTrayButton(row, localize('voltAgent.sandbox.allowHost', "Allow {0}", denial.target), localize('voltAgent.sandbox.allowHost.hint', "Let this chat reach {0} through the sandbox", denial.target), 'primary', () => this.retrySandboxed(withAllowedDomain(settings, denial.target)));
+			}
 		} else if (denial.kind === 'write') {
 			const folder = denial.target.slice(0, denial.target.lastIndexOf('/')) || '/';
 			// The agent picks the path, so the folder is checked before it is granted (home, system, credentials, .git).

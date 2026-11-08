@@ -7,8 +7,9 @@ import { createHash } from 'crypto';
 import { Dirent, promises as fs } from 'fs';
 import { homedir } from 'os';
 import { basename, isAbsolute, join, resolve } from '../../../base/common/path.js';
+import { BUILD_ENTRY_DIRS, BUILD_ENTRY_FILES, GIT_ENTRY_FILES } from '../../voltSandbox/common/executionBearing.js';
 import { gitConfigHooksPath } from '../../voltSandbox/node/sandboxResolver.js';
-import { IBuildEntryChange } from '../common/hostGit.js';
+import { BuildEntryPurpose, IBuildEntryChange, relevantBuildEntryChanges } from '../common/hostGit.js';
 
 /**
  * The build-entry guard (I.6, INV-14). When a sandboxed writer starts in a workspace, the guard
@@ -23,17 +24,10 @@ import { IBuildEntryChange } from '../common/hostGit.js';
  * share them.
  */
 
-/** Files at a workspace root that a build, a task, an install or worktree setup runs. */
-const BUILD_FILES = [
-	'.vscode/tasks.json', '.vscode/launch.json', 'package.json', 'Makefile', 'makefile', 'GNUmakefile', 'justfile', 'Justfile', 'Taskfile.yml',
-	'.envrc', '.pre-commit-config.yaml', 'lefthook.yml', '.lefthook.yml', '.npmrc', '.yarnrc', '.yarnrc.yml', 'bunfig.toml', 'build.rs',
-	'.cargo/config.toml', '.cargo/config', 'pyproject.toml', 'setup.py', '.devcontainer/devcontainer.json',
-	't3.json', 'volt.json', '.volt/worktrees.json', '.cursor/worktrees.json', '.volt/hooks.json',
-];
-/** Folders at a workspace root whose every file runs (hook managers). */
-const BUILD_DIRS = ['.husky', '.githooks', '.volt/hooks'];
-/** Names in a git folder that run code or point git elsewhere. */
-const GIT_FILES = ['config', 'config.worktree', 'commondir', 'gitdir', 'info/attributes', 'objects/info/alternates', 'objects/info/http-alternates'];
+/** The execution-bearing lists (A3), shared with the files broker's floor. */
+const BUILD_FILES = BUILD_ENTRY_FILES;
+const BUILD_DIRS = BUILD_ENTRY_DIRS;
+const GIT_FILES = GIT_ENTRY_FILES;
 
 const MAX_TEXT = 64 * 1024;
 const MAX_HASHED = 4 * 1024 * 1024;
@@ -114,6 +108,12 @@ export class BuildEntryGuard {
 			});
 		}
 		return out;
+	}
+
+	/** What `purpose` would run that changed since the baseline, across `roots` (I.6's check, in one place). */
+	async unreviewed(roots: readonly string[], purpose: BuildEntryPurpose): Promise<IBuildEntryChange[]> {
+		const changes = await Promise.all([...new Set(roots)].map(root => this.changes(root)));
+		return relevantBuildEntryChanges(changes.flat(), purpose);
 	}
 
 	/** The user reviewed `paths` (all when omitted): they become the baseline. */

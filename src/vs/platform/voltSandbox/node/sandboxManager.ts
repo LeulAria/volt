@@ -9,15 +9,17 @@ import { generateUuid } from '../../../base/common/uuid.js';
 import { promises as fs } from 'fs';
 import { basename, dirname, join } from '../../../base/common/path.js';
 import { Emitter, Event } from '../../../base/common/event.js';
-import { checkEnforcement, IAttestation, ISandboxBackendCapabilities, ISandboxRunDenial, ISandboxRunResult, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
+import { checkEnforcement, IAttestation, ISandboxBackendCapabilities, ISandboxResourceViolation, ISandboxRunDenial, ISandboxRunResult, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { IResolvedSandboxPolicy, ISandboxIsolatedRoot, sandboxProxyEnv } from '../common/sandboxResolved.js';
 import { IVoltSandboxPolicy, SandboxDimension } from '../common/sandboxSchema.js';
-import { IPrincipal } from '../common/principals.js';
 import { ISandboxWorkloadInfo, summarizeSandboxPolicy } from '../common/sandboxWorkloads.js';
 import { BubblewrapBackend } from './bubblewrapBackend.js';
 import { MxcBackend } from './mxcBackend.js';
 import { ISandboxBackend, ISandboxLaunchSpec, SandboxConfirmation, SandboxFault } from './sandboxBackends.js';
 import { osBuild } from './sandboxProbeCache.js';
+import { IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
+import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
+import { INetworkDenial, NetworkAuditLog, NetworkBroker, NetworkRoute } from './networkBroker.js';
 import { ISandboxProxyOptions, SandboxNetworkProxy } from './sandboxProxy.js';
 import { ISandboxHostFacts, ISandboxRunContext, resolveSandboxPolicy, sandboxHostFacts } from './sandboxResolver.js';
 import { SeatbeltBackend } from './seatbeltBackend.js';
@@ -52,8 +54,16 @@ export interface ISandboxRequest {
 	readonly label?: string;
 	/** Folders hidden from this run except one child each (real paths), e.g. the per-principal package caches. The run folders are added by the manager. */
 	readonly isolate?: readonly ISandboxIsolatedRoot[];
-	/** Who it runs as, when a registry minted a principal for it (shown on the Security page). */
+	/**
+	 * Who it runs as, when a registry minted a principal for it (shown on the Security page): its
+	 * network broker route, token, grants and budgets are this principal's. Wins over `subject` and
+	 * `principalKind`.
+	 */
 	readonly principal?: IPrincipal;
+	/** Without `principal`: whose run this is (`chat:<id>`), its grants attach to it. Default: a subject of this run alone. */
+	readonly subject?: SubjectKey;
+	/** Without `principal`: default `agent`; picks the network budget (H.8). */
+	readonly principalKind?: PrincipalKind;
 }
 
 export interface IPreparedSandbox {
@@ -72,6 +82,8 @@ export interface IPreparedSandbox {
 	/** See {@link ISandboxLaunchSpec.extraStdioDirections}. */
 	readonly extraStdioDirections: readonly ('in' | 'out')[];
 	readonly onDenial: Event<ISandboxRunDenial>;
+	/** The backend killed the tree for crossing a resource limit (F.8). */
+	readonly onResourceViolation: Event<ISandboxResourceViolation>;
 	/** SHA-256 of the resolved policy; network grants made later are not part of it (F.9). */
 	readonly launchPolicyHash: string;
 	/** Attests the spawned process from outside and only then lets the workload run (F.5). */
@@ -80,8 +92,14 @@ export interface IPreparedSandbox {
 	attestation(): IAttestation | undefined;
 	/** Kills the whole tree: the workload and everything it started. */
 	terminate(child: ChildProcess): Promise<void>;
-	/** Hosts the proxy lets through from now on (network `proxy`). */
+	/** Who the run is: its route, grants and audit lines are about this principal. */
+	readonly principal: IPrincipal;
+	/** Hosts the proxy lets through from now on (network `proxy`): live, the next connection (F.9). */
 	allowDomains(entries: readonly string[]): void;
+	/** Takes back hosts {@link allowDomains} granted; tunnels they allowed close at once (INV-23). Not with the legacy proxy. */
+	revokeDomains(entries: readonly string[]): Promise<void>;
+	/** The run's network broker route (network `proxy`, broker mode). */
+	networkRoute(): NetworkRoute | undefined;
 	dispose(): Promise<void>;
 }
 
@@ -102,8 +120,14 @@ export interface ISandboxManagerOptions {
 	readonly host?: ISandboxHostFacts;
 	/** Test builds only: make a launch step fail (FAULT-*). */
 	readonly fault?: SandboxFault;
-	/** Test builds only: the proxy's resolver and connector. */
+	/** Test builds only: the proxy's resolver and connector (the broker's too). */
 	readonly proxy?: ISandboxProxyOptions;
+	/** `legacy`: the pre-broker proxy (`volt.sandbox.networkBroker`, one release). Read at every launch. */
+	readonly networkMode?: () => NetworkBrokerMode;
+	/** A broker shared with other managers; default: one of its own. */
+	readonly broker?: NetworkBroker;
+	/** Volt's own listener ports, never reachable through the broker. */
+	readonly reservedPorts?: () => readonly number[];
 }
 
 const RUN_PREFIX = 'volt-sbx-';
@@ -132,6 +156,10 @@ export class SandboxManager {
 		this.runRoot = options.runRoot;
 		this.fault = options.fault;
 		this.proxyOptions = options.proxy ?? {};
+		this.networkMode = options.networkMode ?? (() => 'broker');
+		this.broker = options.broker;
+		this.ownsBroker = !options.broker;
+		this.reservedPorts = options.reservedPorts;
 		if (options.host) {
 			this.host = Promise.resolve(options.host);
 		}
@@ -139,6 +167,22 @@ export class SandboxManager {
 
 	private readonly fault: SandboxFault | undefined;
 	private readonly proxyOptions: ISandboxProxyOptions;
+	private readonly networkMode: () => NetworkBrokerMode;
+	private broker: NetworkBroker | undefined;
+	private readonly ownsBroker: boolean;
+	private readonly reservedPorts: (() => readonly number[]) | undefined;
+
+	/** The broker, made on first use; its audit log is `~/.volt/trust/audit/network.log` (denied to every sandbox). */
+	private networkBroker(host: ISandboxHostFacts): NetworkBroker {
+		this.broker ??= new NetworkBroker({
+			...(this.proxyOptions.lookup ? { lookup: this.proxyOptions.lookup } : {}),
+			...(this.proxyOptions.connect ? { connect: this.proxyOptions.connect } : {}),
+			...(this.proxyOptions.tunnelIdleMs ? { tunnelIdleMs: this.proxyOptions.tunnelIdleMs } : {}),
+			...(this.reservedPorts ? { reservedPorts: this.reservedPorts } : {}),
+			audit: new NetworkAuditLog(join(host.home, '.volt', 'trust', 'audit', 'network.log')).append,
+		});
+		return this.broker;
+	}
 
 	private readonly runRoot: string | undefined;
 
@@ -250,12 +294,16 @@ export class SandboxManager {
 		await fs.mkdir(runTmp, { mode: 0o700 });
 		const tag = generateUuid().replace(/-/g, '').slice(0, 16);
 		const denials = new Emitter<ISandboxRunDenial>();
+		const violations = new Emitter<ISandboxResourceViolation>();
 		let proxy: SandboxNetworkProxy | undefined;
+		let route: NetworkRoute | undefined;
 		let spec: ISandboxLaunchSpec | undefined;
 		const cleanup = async () => {
 			proxy?.dispose();
+			route?.dispose();
 			await spec?.dispose().catch(() => undefined);
 			denials.dispose();
+			violations.dispose();
 			await removeRunDir(runDir);
 		};
 		try {
@@ -266,7 +314,33 @@ export class SandboxManager {
 			// The canary: a file of this run that its own policy denies (F.5 step 3).
 			const sentinel = join(runDir, SENTINEL_NAME);
 			await fs.writeFile(sentinel, `volt-canary ${tag}\n`, { mode: 0o600 });
-			if (resolved.network.mode === 'proxy') {
+			const proxied = resolved.network.mode === 'proxy';
+			const launchPolicy = (proxyEnv: Record<string, string>): IResolvedSandboxPolicy => ({
+				...resolved,
+				env: {
+					...resolved.env,
+					...proxyEnv,
+					VOLT_SANDBOX: resolved.name,
+					VOLT_SANDBOX_TAG: tag,
+					...(resolved.network.mode !== 'host' ? { VOLT_SANDBOX_NETWORK_DISABLED: '1', CODEX_SANDBOX_NETWORK_DISABLED: '1' } : {}),
+				},
+				deny: [...resolved.deny, sentinel],
+				sentinel,
+				// Every other run's folder (its temp, its control sockets) is out of reach (B-35).
+				isolated: [{ root: dirname(runDir), keep: runDir }, ...(request.isolate ?? []), ...(resolved.isolated ?? [])],
+			});
+			// The hash leaves out environment values (F.3), so it is known before the route exists.
+			const launchPolicyHash = policyHash(launchPolicy(proxied ? sandboxProxyEnv(1, 'route') : {}));
+			// The launcher's or supervisor's principal when it minted one (same id, this launch's policy hash).
+			const principal: IPrincipal = Object.freeze(request.principal ? { ...request.principal, launchPolicyHash } : {
+				id: randomBytes(16).toString('base64url'),
+				subject: request.subject ?? `chat:run-${tag}`,
+				kind: request.principalKind ?? 'agent',
+				executionHost: 'local',
+				launchPolicyHash,
+				createdAt: Date.now(),
+			});
+			if (proxied && this.networkMode() === 'legacy') {
 				proxy = await SandboxNetworkProxy.start(resolved.network.allow, (target, reason) => reason === 'auth'
 					// Not this run's request (no token or another's): never a denial row with an "Allow" button.
 					? this.logger.warn(`[volt-sandbox] ${tag} proxy refused a request without this run's token`)
@@ -275,28 +349,28 @@ export class SandboxManager {
 					// Per run: another process on this machine cannot use this run's grants (B-31).
 					token: randomBytes(24).toString('base64url'),
 				});
+			} else if (proxied) {
+				// The network broker (I.4): this principal's own route, token, rules, grants and budgets.
+				route = await this.networkBroker(host).openRoute({
+					principal,
+					allow: resolved.network.allow,
+					onDenial: denial => denial.reason === 'auth'
+						// Not this run's request (no token or another's): never a denial row with an "Allow" button.
+						? this.logger.warn(`[volt-sandbox] ${tag} network broker refused a request without this run's token`)
+						: denials.fire({ kind: 'network', target: denialTarget(denial), source: 'proxy', denialId: denial.denialId, promptable: denial.promptable }),
+				});
 			}
-			const env: Record<string, string> = {
-				...resolved.env,
-				...(proxy ? sandboxProxyEnv(proxy.port, proxy.token) : {}),
-				VOLT_SANDBOX: resolved.name,
-				VOLT_SANDBOX_TAG: tag,
-				...(resolved.network.mode !== 'host' ? { VOLT_SANDBOX_NETWORK_DISABLED: '1', CODEX_SANDBOX_NETWORK_DISABLED: '1' } : {}),
-			};
-			const policy: IResolvedSandboxPolicy = {
-				...resolved,
-				env,
-				deny: [...resolved.deny, sentinel],
-				sentinel,
-				// Every other run's folder (its temp, its control sockets) is out of reach (B-35).
-				isolated: [{ root: dirname(runDir), keep: runDir }, ...(request.isolate ?? []), ...(resolved.isolated ?? [])],
-			};
-			const launchPolicyHash = policyHash(policy);
+			const routePort = route?.port ?? proxy?.port;
+			const policy = launchPolicy(route ? sandboxProxyEnv(route.port, route.token) : proxy ? sandboxProxyEnv(proxy.port, proxy.token) : {});
 			spec = await this.backend.launch(policy, request.command, request.args ?? [], {
 				tag,
-				proxyPort: proxy?.port,
+				proxyPort: routePort,
 				terminal: !!request.terminal,
 				onDenial: denial => denials.fire(denial),
+				onResourceViolation: violation => {
+					this.logger.warn(`[volt-sandbox] ${tag} killed: ${violation.dimension} ${violation.observed} over ${violation.limit} (${violation.by})`);
+					violations.fire(violation);
+				},
 				...(this.fault ? { fault: this.fault } : {}),
 			});
 			const unenforced = [...new Set([...check.unenforced, ...(spec.unenforced ?? [])])];
@@ -317,6 +391,7 @@ export class SandboxManager {
 				extraStdio: launched.extraStdio,
 				extraStdioDirections: launched.extraStdioDirections,
 				onDenial: denials.event,
+				onResourceViolation: violations.event,
 				launchPolicyHash,
 				attestation: () => attestation,
 				confirm: async child => {
@@ -339,6 +414,7 @@ export class SandboxManager {
 							evidence: confirmation.attestation.evidence,
 							canary: confirmation.attestation.canary,
 							unenforced,
+							layers: confirmation.attestation.layers ?? {},
 							attestedAt: Date.now(),
 						};
 						this._onDidChangeWorkloads.fire();
@@ -346,7 +422,13 @@ export class SandboxManager {
 					return confirmation;
 				},
 				terminate: async child => { await launched.terminate(child); },
-				allowDomains: entries => proxy?.allow(entries),
+				principal,
+				allowDomains: entries => {
+					proxy?.allow(entries);
+					void route?.allowHosts(entries).catch(err => this.logger.warn(`[volt-sandbox] ${tag} could not allow hosts: ${err}`));
+				},
+				revokeDomains: async entries => { await route?.revokeHosts(entries); },
+				networkRoute: () => route,
 				dispose: async () => {
 					if (!disposed) {
 						disposed = true;
@@ -386,10 +468,15 @@ export class SandboxManager {
 		}
 		const prepareMs = Date.now() - started;
 		const denials: ISandboxRunDenial[] = [];
+		let resourceViolation: ISandboxResourceViolation | undefined;
 		const listener = prepared.onDenial(denial => {
 			if (denials.length < 200) {
 				denials.push(denial);
 			}
+		});
+		const violationListener = prepared.onResourceViolation(violation => {
+			resourceViolation ??= violation;
+			denials.push({ kind: 'limit', target: violation.dimension === 'limits.memory' ? `memory ${violation.limit} MB` : `processes ${violation.limit}`, source: 'manager' });
 		});
 		const cap = options.maxOutputBytes ?? 1024 * 1024;
 		const stdout = new CappedText(cap);
@@ -406,6 +493,7 @@ export class SandboxManager {
 			});
 		} catch (err) {
 			listener.dispose();
+			violationListener.dispose();
 			await prepared.dispose();
 			return this.failure('failed', prepared, (err as Error).message, prepareMs, started);
 		}
@@ -461,6 +549,8 @@ export class SandboxManager {
 		}
 		listener.dispose();
 		await prepared.dispose();
+		// Disposing reads the last accounting (a cgroup's OOM kill), so the listener goes after it.
+		violationListener.dispose();
 		if (timedOut) {
 			denials.push({ kind: 'limit', target: `wall clock ${Math.round(wallClock / 1000)} s`, source: 'manager' });
 		}
@@ -479,6 +569,7 @@ export class SandboxManager {
 			timing: { prepareMs, startMs, totalMs: Date.now() - started },
 			...(confirmation.ok ? {} : { error: redactSandboxText(confirmation.error, prepared.policy.home) }),
 			...(confirmation.ok && prepared.attestation() ? { attestation: prepared.attestation() } : {}),
+			...(resourceViolation ? { resourceViolation } : {}),
 		};
 	}
 
@@ -496,6 +587,9 @@ export class SandboxManager {
 		this.live.clear();
 		await Promise.all(entries.map(({ child, prepared }) => child ? prepared.terminate(child).catch(() => undefined) : undefined));
 		await Promise.all(entries.map(({ prepared }) => prepared.dispose().catch(() => undefined)));
+		if (this.ownsBroker) {
+			this.broker?.dispose();
+		}
 		(this.backend as { dispose?(): void }).dispose?.();
 		this._onDidChangeWorkloads.dispose();
 	}
@@ -558,6 +652,17 @@ export function policyHash(policy: IResolvedSandboxPolicy): string {
 	};
 	const launch = { ...policy, network: { ...policy.network, allow: [] }, env: Object.keys(policy.env).sort() };
 	return createHash('sha256').update(JSON.stringify(canonical(launch))).digest('hex');
+}
+
+/**
+ * A broker denial as the transcript's target: for one an "Allow" could answer, the rule text it
+ * would add (`host`, `host:80`, `host:8443`; no port is 443 under I.4); for any other, the
+ * destination and why, which no button offers to allow.
+ */
+export function denialTarget(denial: Pick<INetworkDenial, 'destination' | 'port' | 'reason'>): string {
+	const host = denial.destination.includes(':') && !denial.destination.startsWith('[') ? `[${denial.destination}]` : denial.destination;
+	const withPort = denial.port === 443 || !Number.isInteger(denial.port) ? host : `${host}:${denial.port}`;
+	return denial.reason === 'not-allowed' || denial.reason === 'port' ? withPort : `${withPort} (${denial.reason})`;
 }
 
 /** Removes a run folder the manager made, and nothing else. */

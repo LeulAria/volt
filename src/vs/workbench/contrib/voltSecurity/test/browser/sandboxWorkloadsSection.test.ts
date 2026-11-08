@@ -24,7 +24,7 @@ function workload(id: string, overrides: Partial<ISandboxWorkloadInfo> = {}): IS
 		state: 'running',
 		status: 'sandboxed',
 		unenforced: [],
-		attestation: { principalId: `p-${id}`, backend: 'seatbelt', backendVersion: 'n/a', osBuild: '25A1', launchPolicyHash: 'ab'.repeat(32), evidence: { sandbox_check: 1 }, canary: { credOpen: 'denied' }, unenforced: [], attestedAt: 1 },
+		attestation: { principalId: `p-${id}`, backend: 'seatbelt', backendVersion: 'n/a', osBuild: '25A1', launchPolicyHash: 'ab'.repeat(32), evidence: { sandbox_check: 1 }, canary: { credOpen: 'denied' }, unenforced: [], layers: { processTracking: { active: true, detail: 'kqueue' } }, attestedAt: 1 },
 		policy: { name: 'workspace', network: 'none', allowedHosts: 0, readsEverything: false, read: ['~/ws'], write: ['~/ws'], denied: 3, limits: {} },
 		startedAt: 1,
 		restarts: 0,
@@ -86,6 +86,7 @@ suite('Volt Security page: sandboxed processes (C5)', () => {
 		assert.match(detail, /chat:a \(p-a\)/, 'the principal');
 		assert.match(detail, /sandbox_check=1/, 'the attestation evidence');
 		assert.match(detail, new RegExp('ab'.repeat(32)), 'the launch policy hash');
+		assert.match(detail, /Second layers: processTracking on \(kqueue\)/, 'the second layers (C4)');
 		assert.ok(page.querySelector('.volt-security-empty')?.hasAttribute('hidden'));
 
 		host.querySelector<HTMLElement>('.monaco-button')!.click();

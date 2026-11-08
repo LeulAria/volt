@@ -5,11 +5,8 @@
 
 import { localize } from '../../../../../nls.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
-import { formatBuildEntryDiff, IBuildEntryChange } from '../../../../../platform/voltGit/common/hostGit.js';
+import { BuildEntryPurpose, formatBuildEntryDiff, IBuildEntryChange, relevantBuildEntryChanges } from '../../../../../platform/voltGit/common/hostGit.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
-
-/** What Volt is about to run for the user: their commit or push hooks, worktree setup, or a Run target (script, task, launch). */
-export type BuildEntryPurpose = 'commit' | 'push' | 'setup' | 'run';
 
 /**
  * The build-entry review (I.6): files that run code (git hooks and config, package scripts, tasks,
@@ -28,7 +25,7 @@ export async function reviewBuildEntries(
 	const unique = [...new Set(roots)];
 	const changes = known ?? (await Promise.all(unique.map(root => stdio.buildEntryChanges?.(root).catch(() => []) ?? []))).flat();
 	// Hooks are all a commit or push runs; setup and Run can start anything the project describes.
-	const relevant = purpose === 'commit' || purpose === 'push' ? changes.filter(change => change.group === 'git') : changes;
+	const relevant = relevantBuildEntryChanges(changes, purpose);
 	if (!relevant.length) {
 		return true;
 	}
