@@ -6,6 +6,7 @@
 import { createHash, getRandomValues } from 'crypto';
 import { createRequire } from 'node:module';
 import * as net from 'net';
+import { join } from '../../../base/common/path.js';
 import { HOST_METHODS, CORE_METHODS, HOST_NOTIFICATIONS, PluginFileRoot, VOLT_PLUGIN_API_VERSIONS, VOLT_PLUGIN_PROTOCOL, VoltPluginError } from '../common/pluginProtocol.js';
 import { PluginRpc } from '../common/pluginRpc.js';
 
@@ -74,8 +75,10 @@ function message(error: unknown): string {
 
 export async function runPluginHost(options: IPluginHostRunOptions): Promise<void> {
 	// SES before anything of the plugin's: the realm's intrinsics are frozen from here on.
+	// Core names where `ses` is (a packaged build keeps it in node_modules.asar); else the usual lookup.
 	const require = createRequire(import.meta.url);
-	require('ses');
+	const ses = process.argv.find(arg => arg.startsWith('--ses='))?.slice('--ses='.length);
+	require(ses ? join(ses, 'dist', 'ses.cjs') : 'ses');
 	const started = performance.now();
 	lockdown({ errorTaming: 'unsafe', consoleTaming: 'unsafe', stackFiltering: 'concise', overrideTaming: 'moderate' });
 	const lockdownMs = performance.now() - started;

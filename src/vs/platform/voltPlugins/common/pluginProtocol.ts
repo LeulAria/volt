@@ -46,9 +46,9 @@ export const PLUGIN_PROTOCOL_LIMITS: PluginProtocolLimits = Object.freeze({
 	defaultDeadlineMs: 30_000,
 	/** The longest deadline a tool may declare. */
 	maxDeadlineMs: 10 * 60_000,
-	/** Token bucket on incoming calls: refill per second, and the burst it holds. */
-	callsPerSecond: 500,
-	burst: 1_000,
+	/** Token bucket on incoming calls: refill per second, and the burst it holds (above Part L's 20k messages a second, 10k calls each way). */
+	callsPerSecond: 10_000,
+	burst: 10_000,
 	/** A string without its own `maxLength`. */
 	maxStringLength: 1024 * 1024,
 	/** Nesting of any value. */
