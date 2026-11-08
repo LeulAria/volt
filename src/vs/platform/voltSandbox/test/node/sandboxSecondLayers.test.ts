@@ -101,8 +101,8 @@ suite('Volt sandbox second layers (C4, real processes)', function () {
 	const hostEnv = () => ({ PATH: '/usr/bin:/bin:/usr/sbin:/sbin', HOME: home, LANG: 'C' });
 
 	/** The workspace profile with these limits, accepted best effort (the macOS layers are). */
-	function limited(limits: Partial<ISandboxLimits>, bestEffort: readonly SandboxDimension[] = []): IVoltSandboxPolicy {
-		const base = builtinProfile('workspace');
+	function limited(limits: Partial<ISandboxLimits>, bestEffort: readonly SandboxDimension[] = [], profile: 'workspace' | 'network' = 'workspace'): IVoltSandboxPolicy {
+		const base = builtinProfile(profile);
 		return { ...base, process: { ...base.process, limits: { ...base.process.limits, ...limits } }, bestEffort: [...new Set([...base.bestEffort, ...bestEffort])] };
 	}
 
@@ -247,8 +247,11 @@ suite('Volt sandbox second layers (C4, real processes)', function () {
 		assert.ok(Date.now() - started < 15_000, `killed after ${Date.now() - started} ms`);
 		assert.ok(await waitFor(() => strayProcesses('memory').length === 0, 3_000), strayProcesses('memory').join(' | '));
 		// V8 reserves far more address space than it uses: with memory in the cgroup, RLIMIT_AS is gone.
-		const node = await run(limited({ memoryMB: 256 }, ['limits.memory']), `${process.execPath} -e 'console.log(new Array(1e5).fill(1).length)'`);
+		// Through the proxy, so the scope also wraps the network bridge's nsenter.
+		const node = await run(limited({ memoryMB: 256 }, ['limits.memory'], 'network'), `${process.execPath} -e 'console.log(new Array(1e5).fill(1).length)'`);
 		assert.ok(node.stdout.includes('100000'), `node runs under a 256 MB limit: ${node.stderr}`);
+		assert.strictEqual(node.attestation?.layers.cgroup?.active, true, JSON.stringify(node.attestation?.layers));
+		assert.strictEqual(node.resourceViolation, undefined);
 	});
 
 	linuxTest('RES-LNX-2: a fork bomb is held at the process limit, then the whole tree goes', async () => {

@@ -684,9 +684,10 @@ class SeatbeltAttestor {
 /**
  * Kills a run: its process group, every descendant reachable through parent pids (including
  * ones that moved to their own group or session), and any process still carrying the run's tag.
- * The responsible process does not help here: under a disclaimed root every new process is its
- * own (measured on macOS 26.6), so a double-forked `setsid` daemon with a cleared environment
- * still escapes the sweep, and stays sandboxed (`process.tree` is partial).
+ * A double-forked `setsid` daemon with a cleared environment escapes this sweep; the helper's
+ * tracking (`SeatbeltAttestor.kill`: kqueue fork events, and every process the disclaimed root is
+ * responsible for, which such a daemon still is, measured on macOS 26.6) takes it first. One that
+ * also re-disclaims escapes both and stays sandboxed (`process.tree` is partial).
  */
 export async function killRun(pgid: number, tag: string, options: { readonly table?: (needle: string | undefined) => Promise<IProcessRow[]> } = {}): Promise<void> {
 	const kill = (pid: number, group = false) => {

@@ -5,17 +5,17 @@ What the sandbox does **not** guarantee today. Each limit comes with the reason,
 ## Limits of the OS mechanisms
 
 1. **macOS: a fully detached process can outlive its run** (`process.tree` is `partial`).
-   - **Why:** macOS has no PID namespace. The kill reaches the process group, every descendant reachable through parent pids, every process still carrying the run's `VOLT_SANDBOX_TAG`, and (through the watchdog) the group when Volt itself dies.
-   - **The gap:** a process that double-forks, calls `setsid` and clears its environment is invisible to all of these.
+   - **Why:** macOS has no PID namespace. The kill reaches the process group, every descendant reachable through parent pids, every process still carrying the run's `VOLT_SANDBOX_TAG`, and (through the watchdog) the group when Volt itself dies. The sandbox helper also tracks each run from its root (kqueue fork and exit events) and kills every process the disclaimed root is responsible for, which a double-forked, `setsid`, environment-cleared daemon still is (TREE-MAC-1).
+   - **The gap:** a process that does all of that and also disclaims its responsibility again is invisible to all of these.
    - **What still holds:** it stays inside Seatbelt (sandboxes are inherited and cannot be dropped) and inside its rlimits, so it is persistence, not an escape. The adversarial suite checks that such a survivor still cannot write outside.
-   - **Future:** a per-run `sandbox_check`-based sweep through a small signed helper.
-2. **macOS: no per-sandbox process count or memory cap.** RLIMIT_NPROC counts every process of the user, and RLIMIT_AS/RSS are not enforced, so `limits.processes` and `limits.memory` are `unsupported`.
-   - A fork bomb in a macOS sandbox is bounded only by the system's per-user limit. Profiles mark `limits.processes` best effort, and the run says so.
+2. **macOS: process and memory limits are best effort** (`partial`). RLIMIT_NPROC counts every process of the user, and RLIMIT_AS/RSS are not enforced.
+   - **Processes:** the run gets RLIMIT_NPROC at the user's count plus its limit, and the helper's fork watchdog stops and kills the whole tree the moment it passes the limit (RES-MAC-2).
+   - **Memory:** the tree's physical footprint is polled every second and the tree is killed over the limit (RES-MAC-1), so a fast allocation can pass the limit for up to a second.
 3. **Linux: paths that do not exist at launch cannot be guarded** (`filesystem.protectNew` is `partial`). bubblewrap binds existing paths; it cannot deny creating `.vscode/tasks.json` or a new nested `.git` inside a writable workspace.
    - **What still holds:** existing protected paths are read-only binds, and `**/` patterns are expanded at launch over a bounded walk.
-   - **Future:** Landlock inside bubblewrap cannot carve such holes either; an overlay with review on exit (the "cells" design) would.
-4. **Linux: memory limits are virtual memory** (RLIMIT_AS). V8 and Wasm reserve far more address space than they use, so a tight value breaks Node.
-   - **Future:** cgroups v2 memory limits need a delegated cgroup, usually through `systemd-run --user`.
+   - **Landlock** runs inside bubblewrap where the kernel has it (a second check on reads and writes), but it only grants rights to whole folders, so it cannot carve such holes either (LNX-FS-3 stays open); an overlay with review on exit (the "cells" design) would.
+4. **Linux: without a delegated cgroup, memory limits are virtual memory** (RLIMIT_AS). V8 and Wasm reserve far more address space than they use, so a tight value breaks Node.
+   - Where systemd's user manager delegates the memory controller (systemd 252+), a run with a memory limit gets its own `systemd-run --user --scope` instead: memory.max on the whole tree, enforced (RES-LNX-1), and no RLIMIT_AS.
 5. **Linux specifics.**
    - **Single home files can't be replaced atomically.** Files written in place (`~/.claude.json`) are single-file binds, so an agent that replaces one by rename gets `EBUSY`.
    - **Servers in the sandbox can't be reached from the host.** A server a sandboxed workload starts with `listen` is reachable only inside its network namespace, not from the host's browser.

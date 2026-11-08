@@ -211,8 +211,9 @@ function profile(id: SandboxProfileId, policy: Omit<IVoltSandboxPolicy, 'schemaV
  *   a grant has to name each host.
  *
  * Best effort, so the run is reported `partial` instead of refused: `limits.processes` and
- * `process.tree` (macOS has no per-sandbox process count or PID namespace; a process that
- * double-forks, calls setsid and clears its environment outlives the kill, still sandboxed), and
+ * `process.tree` (macOS has no per-sandbox process count or PID namespace: a fork watchdog and
+ * process tracking stand in, and a process that also re-disclaims its responsibility outlives the
+ * kill, still sandboxed), and
  * `filesystem.protectNew` (bubblewrap can only protect paths that exist at launch).
  */
 export function builtinProfile(id: SandboxProfileId): IVoltSandboxPolicy {
