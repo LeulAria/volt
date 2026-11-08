@@ -46,7 +46,8 @@ export interface IWelcomeEvent {
 export interface IConnectionOptions {
 	/** The `ws://host:port/ws` URL, asked before every attempt (a better route may have appeared). */
 	readonly resolveUrl: () => Promise<string>;
-	readonly token: string;
+	/** Asked at every hello (a refreshed token replaces the old one). */
+	readonly token: string | (() => string);
 	readonly client: { readonly kind: ClientKind; readonly id: string; readonly topics?: readonly Topic[] };
 	readonly createSocket?: (url: string) => IWebSocketLike;
 	readonly backoff?: { readonly initialMs: number; readonly maxMs: number; readonly stableMs: number };
@@ -273,7 +274,7 @@ export class VoltConnection {
 			const hello: IHello = {
 				t: 'hello',
 				protocol: AGENT_SERVER_PROTOCOL_VERSION,
-				token: this.options.token,
+				token: typeof this.options.token === 'function' ? this.options.token() : this.options.token,
 				client: this.options.client,
 				...(this.epoch ? { resume: { epoch: this.epoch, seq: this.lastSeq } } : {}),
 			};
@@ -575,7 +576,7 @@ export class VoltConnection {
 	}
 }
 
-function defaultCreateSocket(url: string): IWebSocketLike {
+export function defaultCreateSocket(url: string): IWebSocketLike {
 	const ctor = (globalThis as unknown as { WebSocket?: new (url: string) => IWebSocketLike }).WebSocket;
 	if (!ctor) {
 		throw new Error('WebSocket is not available.');

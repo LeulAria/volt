@@ -147,6 +147,11 @@ export interface IAgentServerRuntimeInfo {
 	readonly appRoot: string;
 	/** The build's commit (packaged builds); undefined out of sources. */
 	readonly commit?: string;
+	/**
+	 * With network access on: the TLS listener devices on the network use (`host`). `port` is
+	 * then plain HTTP on loopback only, for this computer's own clients.
+	 */
+	readonly tlsPort?: number;
 }
 
 //#region Pairing (phones and browsers)
@@ -155,10 +160,29 @@ export interface IAgentServerRuntimeInfo {
 export const VOLT_ENVIRONMENT_PATH = '/.well-known/volt/environment';
 /** `POST`: trade a one-time pairing code for a device token ({@link IVoltPairRequest}). */
 export const VOLT_PAIR_PATH = '/api/auth/pair';
-/** `POST`, loopback only: a token for the browser on the server's own machine. */
+/**
+ * `POST {nonce}`, loopback only, from the server's own page: a token for the browser on the
+ * server's machine. The nonce is single use, valid 60 s, and only the desktop app (or another
+ * holder of the server's own token) can make one ({@link VOLT_LOCAL_LINK_PATH}); it rides in the
+ * opened URL's fragment (`/#local=<nonce>`).
+ */
 export const VOLT_LOCAL_SESSION_PATH = '/api/auth/local';
+/** `POST` with the server's own token as a bearer, loopback only: a one-time local sign-in nonce ({@link IVoltLocalLink}). */
+export const VOLT_LOCAL_LINK_PATH = '/api/auth/link';
+/** `POST` with a device token as a bearer: the same device's next token ({@link IVoltRefreshResponse}); the old one stops working a minute later. */
+export const VOLT_REFRESH_PATH = '/api/auth/refresh';
 /** `POST` with the server's own token as a bearer: a one-time pairing code ({@link IVoltPairingCode}), for tools on this machine (`npx volt-run pair`). */
 export const VOLT_PAIRING_CODE_PATH = '/api/auth/code';
+
+export interface IVoltLocalLink {
+	readonly nonce: string;
+	readonly expiresAt: number;
+}
+
+export interface IVoltRefreshResponse {
+	readonly token: string;
+	readonly expiresAt: number;
+}
 /** The server exits with this when it stops only to load recompiled code (a checkout): whatever runs it starts it again. */
 export const AGENT_SERVER_RESTART_EXIT_CODE = 75;
 
@@ -186,6 +210,8 @@ export interface IVoltPairRequest {
 		readonly os?: string;
 		readonly model?: string;
 	};
+	/** `usage`: a token that only reads this machine's usage (another computer's Usage page). */
+	readonly scope?: 'usage';
 }
 
 export interface IVoltPairResponse {
@@ -194,6 +220,8 @@ export interface IVoltPairResponse {
 	readonly environmentId: string;
 	readonly label: string;
 	readonly role: 'owner' | 'device';
+	/** When the token stops working unless refreshed ({@link VOLT_REFRESH_PATH}); older servers leave it out. */
+	readonly expiresAt?: number;
 }
 
 export type VoltRouteKind = 'loopback' | 'lan' | 'tailnet' | 'public';
@@ -211,9 +239,16 @@ export interface IVoltPairingUrl {
 export interface IVoltPairingCode {
 	readonly code: string;
 	readonly expiresAt: number;
-	/** Pairing links for each address the server can be reached at, best first. */
+	/**
+	 * Pairing links for each address the server can be reached at, best first. Links to the
+	 * network listener are `https://` and carry the certificate's pin (`#code=...&fp=...`).
+	 */
 	readonly urls: readonly IVoltPairingUrl[];
 	readonly network: boolean;
+	/** The network listener's certificate SHA-256 as `AB:CD:...`, for comparing with a browser's certificate viewer. */
+	readonly fingerprint?: string;
+	/** The same SHA-256 as base64url: the `fp=` of the network links, for links made from parts (an address typed by hand). */
+	readonly pin?: string;
 }
 
 /** `ssh -R` from this computer to a server of the user's, which then forwards its port here. */

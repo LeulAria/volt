@@ -5,11 +5,11 @@
 
 import { ChildProcess, execFile, spawn } from 'child_process';
 import { promises as fs } from 'fs';
-import { createServer as createHttpServer, IncomingMessage, request } from 'http';
-import { connect, createServer, Socket } from 'net';
-import { generateUuid } from '../../../base/common/uuid.js';
+import { IncomingMessage, request, type Server } from 'http';
+import { connect } from 'net';
 import { delimiter, join } from '../../../base/common/path.js';
 import { ILogService } from '../../log/common/log.js';
+import { createAuthenticatedServer, freeLoopbackPort, ListenerAuth, listenOn, loopbackHostNames, newListenerSecret, secretsEqual } from '../../voltListeners/node/listenerAuth.js';
 
 export const DEVICE_HUB_PACKAGE = 'expo-device-hub';
 export const DEVICE_HUB_VERSION = '0.19.1';
@@ -26,7 +26,7 @@ const ATTACH_TIMEOUT = 60_000;
 export class DeviceHub {
 
 	private starting: Promise<{ hub: string; window: string }> | undefined;
-	private proxy: ReturnType<typeof createHttpServer> | undefined;
+	private proxy: Server | undefined;
 	/** The window's base URL. It outlives hub restarts: the proxy forwards to `hubPort`. */
 	private proxyBase: Promise<string> | undefined;
 	private hubPort = 0;
@@ -185,7 +185,7 @@ export class DeviceHub {
 
 	private async start(): Promise<{ hub: string; window: string }> {
 		const entry = await this.install();
-		const port = await freePort();
+		const port = await freeLoopbackPort();
 		const env = await this.env();
 		// The hub's native modules (serve-sim, node-datachannel) are built for Node, not Electron.
 		const node = await this.which('node');
@@ -243,13 +243,25 @@ export class DeviceHub {
 		throw new Error('The device hub did not answer within 30 seconds.');
 	}
 
-	/** Forwards `/<token>/...` (HTTP and WebSocket) to the current hub for Volt's window, adding CORS. */
+	/**
+	 * Forwards `/<secret>/...` (HTTP and WebSocket) to the current hub for Volt's window, adding
+	 * CORS. The path's first segment is a per-launch bearer (the window can't put a header on a
+	 * `<video>` or a WebSocket), checked by the listener library: Host must be loopback, sockets and
+	 * writes need the window's Origin.
+	 */
 	private async startProxy(): Promise<string> {
-		const prefix = `/${generateUuid()}`;
-		const allowed = (req: IncomingMessage) => {
-			const origin = req.headers.origin;
-			return (!origin || origin === 'vscode-file://vscode-app') && !!req.url?.startsWith(`${prefix}/`);
-		};
+		const secret = newListenerSecret();
+		const prefix = `/${secret}`;
+		let port = 0;
+		const auth = new ListenerAuth<true>({
+			hosts: () => ({ names: loopbackHostNames(port) }),
+			extract: req => {
+				const match = /^\/([A-Za-z0-9_-]{43})\//.exec(req.url ?? '');
+				return match ? { secret: match[1], via: 'path' } : undefined;
+			},
+			verify: candidate => secretsEqual(candidate, secret) || undefined,
+			browserOrigins: ['vscode-file://vscode-app'],
+		});
 		const cors = (req: IncomingMessage): Record<string, string> => req.headers.origin ? {
 			'access-control-allow-origin': req.headers.origin,
 			'access-control-allow-headers': 'content-type',
@@ -261,11 +273,7 @@ export class DeviceHub {
 			delete headers.referer;
 			return headers;
 		};
-		const proxy = createHttpServer((req, res) => {
-			if (!allowed(req)) {
-				res.writeHead(403).end();
-				return;
-			}
+		const proxy = createAuthenticatedServer(auth, (req, res) => {
 			if (req.method === 'OPTIONS') {
 				res.writeHead(204, cors(req)).end();
 				return;
@@ -277,12 +285,7 @@ export class DeviceHub {
 			upstream.on('error', () => res.headersSent ? res.destroy() : res.writeHead(502).end());
 			res.on('close', () => upstream.destroy());
 			req.pipe(upstream);
-		});
-		proxy.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer) => {
-			if (!allowed(req)) {
-				socket.destroy();
-				return;
-			}
+		}, (req, socket, head) => {
 			// Touches are tiny writes: send each at once instead of waiting to batch them.
 			socket.setNoDelay(true);
 			const upstream = connect(this.hubPort, '127.0.0.1', () => {
@@ -310,13 +313,7 @@ export class DeviceHub {
 			upstream.on('close', close);
 			socket.on('close', close);
 		});
-		const port = await new Promise<number>((resolve, reject) => {
-			proxy.once('error', reject);
-			proxy.listen(0, '127.0.0.1', () => {
-				const address = proxy.address();
-				resolve(typeof address === 'object' && address ? address.port : 0);
-			});
-		});
+		port = await listenOn(proxy, 0);
 		this.proxy = proxy;
 		return `http://127.0.0.1:${port}${prefix}`;
 	}
@@ -352,16 +349,4 @@ export class DeviceHub {
 		await fs.rename(staging, dir);
 		return entry;
 	}
-}
-
-function freePort(): Promise<number> {
-	return new Promise((resolve, reject) => {
-		const server = createServer();
-		server.once('error', reject);
-		server.listen(0, '127.0.0.1', () => {
-			const address = server.address();
-			const port = typeof address === 'object' && address ? address.port : 0;
-			server.close(() => port ? resolve(port) : reject(new Error('No free port for the device hub')));
-		});
-	});
 }

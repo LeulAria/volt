@@ -114,6 +114,13 @@ export interface ISessionState {
 export const VOLT_ENVIRONMENT_PATH = '/.well-known/volt/environment';
 export const VOLT_PAIR_PATH = '/api/auth/pair';
 export const VOLT_LOCAL_SESSION_PATH = '/api/auth/local';
+/** `POST` with the device token as a bearer: the device's next token (the old one stops a minute later). */
+export const VOLT_REFRESH_PATH = '/api/auth/refresh';
+
+export interface IRefreshResponse {
+	readonly token: string;
+	readonly expiresAt: number;
+}
 
 export interface IEnvironmentDescriptor {
 	readonly environmentId: string;
@@ -141,6 +148,8 @@ export interface IPairResponse {
 	readonly environmentId: string;
 	readonly label: string;
 	readonly role: Role;
+	/** When the token stops working unless refreshed; older servers leave it out. */
+	readonly expiresAt?: number;
 }
 
 export type RouteKind = 'loopback' | 'lan' | 'tailnet' | 'public';
@@ -150,6 +159,10 @@ export interface IPairingCode {
 	readonly expiresAt: number;
 	readonly urls: readonly { readonly kind: RouteKind; readonly url: string }[];
 	readonly network: boolean;
+	/** The network listener's certificate SHA-256 (`AB:CD:...`). */
+	readonly fingerprint?: string;
+	/** The same as base64url: the `fp=` of its network links. */
+	readonly pin?: string;
 }
 
 export interface IPairedDevice {

@@ -10,7 +10,7 @@ import {
 import * as Network from 'expo-network';
 import { createContext, type ReactNode, useContext, useEffect, useState, useSyncExternalStore } from 'react';
 import { AppState } from 'react-native';
-import { asyncStorage, installClientId } from './environments';
+import { asyncStorage, installClientId, updateEnvironment } from './environments';
 import { startLiveActivities } from './liveActivities';
 
 const ClientContext = createContext<VoltClient | undefined>(undefined);
@@ -21,7 +21,8 @@ const ClientContext = createContext<VoltClient | undefined>(undefined);
  */
 export function ClientProvider({ environment, children }: { readonly environment: ISavedEnvironment | undefined; readonly children: ReactNode }) {
 	const [client, setClient] = useState<VoltClient | undefined>();
-	const envKey = environment ? `${environment.environmentId}:${environment.token}` : undefined;
+	// Not the token: the client refreshes it itself (pairing again gives a new device id).
+	const envKey = environment ? `${environment.environmentId}:${environment.deviceId}` : undefined;
 
 	useEffect(() => {
 		if (!environment) {
@@ -36,7 +37,7 @@ export function ClientProvider({ environment, children }: { readonly environment
 			if (disposed) {
 				return;
 			}
-			next = new VoltClient({ environment, clientKind: 'mobile', clientId, storage: asyncStorage });
+			next = new VoltClient({ environment, clientKind: 'mobile', clientId, storage: asyncStorage, onDidChangeEnvironment: updateEnvironment });
 			setClient(next);
 			void next.start();
 			stopActivities = startLiveActivities(next);

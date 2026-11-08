@@ -153,6 +153,8 @@ button:disabled { opacity: .45; cursor: default; }
 	const query = new URLSearchParams(location.search);
 	const code = fragment.get('code') || query.get('code');
 	const token = fragment.get('token');
+	// Volt on this computer opens the page with a one-time sign-in nonce (valid a minute, once).
+	const local = fragment.get('local');
 	if (location.hash) {
 		history.replaceState(null, '', location.pathname + location.search);
 	}
@@ -169,10 +171,9 @@ button:disabled { opacity: .45; cursor: default; }
 		if (code) {
 			return pair(code);
 		}
-		// On the computer itself the server signs a local browser in without a code.
-		const local = await post(BOOT.local, {}).catch(() => undefined);
-		if (local && local.token) {
-			return open(local.token);
+		if (local) {
+			const session = await post(BOOT.local, { nonce: local });
+			return open(session.token);
 		}
 		ask();
 	})().catch(err => ask(err.message));

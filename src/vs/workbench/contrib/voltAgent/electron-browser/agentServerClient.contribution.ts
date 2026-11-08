@@ -479,9 +479,13 @@ registerAction2(class extends Action2 {
 	}
 });
 
-/** Volt in the browser on this machine. It signs itself in over loopback, so no token goes in the URL. */
-function localWebUrl(port: number, path = '/'): string {
-	return `http://127.0.0.1:${port}${path}`;
+/**
+ * Volt in the browser on this machine, signed in once: the server makes a single-use nonce
+ * (valid a minute) that rides in the URL's fragment, so the page signs in without a token in the
+ * URL and nothing else on this computer can sign itself in (B-01).
+ */
+function localWebUrl(mainService: IVoltAgentServerMainService, path = '/'): Promise<string> {
+	return mainService.createLocalWebLink(path);
 }
 
 /** The browser workbench opened on Volt Settings > Devices (for when this window is not the agent server's client). */
@@ -555,8 +559,7 @@ registerAction2(class extends Action2 {
 			return;
 		}
 		try {
-			const endpoint = await mainService.ensureRunning();
-			await nativeHost.openExternal(localWebUrl(endpoint.port));
+			await nativeHost.openExternal(await localWebUrl(mainService));
 		} catch (err) {
 			notifications.error(localize('voltAgentServer.openWebFailed', "Could not open Volt in the browser: {0}", err instanceof Error ? err.message : String(err)));
 		}
@@ -626,7 +629,7 @@ registerAction2(class extends Action2 {
 				}
 				endpoint = await mainService.setNetworkAccess(true);
 			}
-			await nativeHost.openExternal(localWebUrl(endpoint.port, DEVICES_PAGE_PATH));
+			await nativeHost.openExternal(await localWebUrl(mainService, DEVICES_PAGE_PATH));
 			notifications.notify({
 				severity: Severity.Info,
 				message: localize('voltUsage.shareNext', "Choose Add Device on the Devices page and copy its link. On your other computer, open Settings > Usage, choose Add Machine and paste it."),

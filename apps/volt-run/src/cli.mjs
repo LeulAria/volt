@@ -18,7 +18,7 @@ import { openBrowser } from './browser.mjs';
 import { agentServerPaths, channelProduct, runtimeCacheDir, tildify, userDataDir } from './paths.mjs';
 import { MIN_RUNTIME_VERSION, targetId } from './release.mjs';
 import { cachedRuntimes, locate, resolveRuntime } from './runtime.mjs';
-import { browserSupport, createPairingCode, findServer, isAlive, isLoopbackHost, localBase, logTail, readNetworkAccess, readServerFiles, RESTART_EXIT_CODE, startServer, stopServer, waitForServer, writeNetworkAccess } from './server.mjs';
+import { browserSupport, createLocalLink, createPairingCode, findServer, isAlive, isLoopbackHost, localBase, logTail, readNetworkAccess, readServerFiles, RESTART_EXIT_CODE, startServer, stopServer, waitForServer, writeNetworkAccess } from './server.mjs';
 import { ARROW, bold, CHECK, cyan, dim, formatBytes, formatDuration, green, qrLines, red, Status, yellow } from './ui.mjs';
 
 function readJson(file) {
@@ -173,7 +173,8 @@ async function start(o) {
 	status.done();
 
 	const url = `${base}/`;
-	const opened = o.open && await openBrowser(url);
+	// The opened page signs in with a one-time nonce (the plain address asks for a pairing code).
+	const opened = o.open && await openBrowser(await createLocalLink(base, running.token));
 	const version = serverVersion(running.info);
 	out();
 	out(`  ${bold(`Volt${version ? ` ${version}` : ''}`)}  ${owned ? dim(`ready in ${formatDuration(performance.now() - started)}`) : dim('already running')}`);
@@ -192,7 +193,7 @@ async function start(o) {
 		out(`\n  ${yellow(note)}`);
 	}
 	out();
-	out(`  ${opened ? dim('Opened in your browser.') : 'Open the link above in your browser.'}`);
+	out(`  ${opened ? dim('Opened in your browser.') : 'Open the link above in your browser, then pair it with "npx volt-run pair" (or run npx volt-run again where a browser can open).'}`);
 	process.removeListener('SIGINT', interrupt);
 	process.removeListener('SIGTERM', interrupt);
 
