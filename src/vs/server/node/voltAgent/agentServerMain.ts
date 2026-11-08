@@ -500,6 +500,7 @@ export async function main(argv: string[]): Promise<void> {
 	// this port) is refused before a route runs; the routes still authenticate every request.
 	let tunnelPort = 0;
 	const loopbackHosts = (): IHostRule => ({ names: loopbackHostNames(httpContext.port) });
+	const plainHosts = (): IHostRule => httpContext.network ? { names: [...loopbackHostNames(httpContext.port), ...machineHostNames()], anyIpLiteral: true, suffixes: ['.ts.net'] } : loopbackHosts();
 	const networkHosts = (): IHostRule => ({ names: [...loopbackHostNames(httpContext.tls?.port ?? 0), ...machineHostNames()], anyIpLiteral: true, suffixes: ['.ts.net'] });
 	const tunnelHosts = (): IHostRule => ({ names: [...loopbackHostNames(tunnelPort), ...tunnels.urls().map(tunnel => hostOf(tunnel.url)).filter((host): host is string => !!host)] });
 	const onUpgrade = (hosts: () => IHostRule) => (req: http.IncomingMessage, socket: Socket) => {
@@ -527,8 +528,8 @@ export async function main(argv: string[]): Promise<void> {
 		}
 		void serveHttp(req, res, token, epoch, pairing, workbench, render, context(), usage, logService);
 	};
-	const server = createListenerServer(serve(() => httpContext, loopbackHosts));
-	server.on('upgrade', onUpgrade(loopbackHosts));
+	const server = createListenerServer(serve(() => httpContext, plainHosts));
+	server.on('upgrade', onUpgrade(plainHosts));
 	// Cloudflare and SSH tunnels forward to a second listener on loopback, opened with the first
 	// tunnel: the same routes, but its requests never count as this computer's own browser.
 	let tunnelListener: Promise<number> | undefined;
@@ -581,10 +582,11 @@ export async function main(argv: string[]): Promise<void> {
 			return tunnels.installCloudflared();
 		},
 	}));
-	// Plain HTTP only on loopback (this computer's windows, browser and tools). With network access
-	// on, devices use a second listener that speaks TLS with this server's own certificate, whose
-	// pin reaches them in the pairing QR (B-24): tokens and cookies never cross the network in clear.
-	const port = await listenPreferred(server, httpContext.network ? '127.0.0.1' : args.host, args.port ?? preferredAgentServerPort(args.userDataDir), args.port === undefined);
+	// With network access on, devices pair over plain HTTP on the network, as the phone app expects
+	// (it has no way to pin a self-signed certificate). A second listener also speaks TLS with this
+	// server's own certificate for clients that can pin it. Routes for this computer only still
+	// require a loopback peer.
+	const port = await listenPreferred(server, args.host, args.port ?? preferredAgentServerPort(args.userDataDir), args.port === undefined);
 	httpContext = { ...httpContext, port };
 	let tlsPort: number | undefined;
 	if (httpContext.network) {

@@ -229,16 +229,17 @@ suite('Agent server pairing: local nonce, expiring tokens, per-source limits', (
 		}
 	});
 
-	test('pairing links to the network listener are https and carry the certificate pin', () => {
+	test('network pairing links use the plain listener every client can reach; the TLS pin comes beside them', () => {
 		const pin = 'P'.repeat(43);
 		const code = pairing.createCode({ port: 4000, network: true, serverVersion: 'test', tls: { port: 4002, fingerprint: pin, fingerprintHex: 'AB:CD' } });
 		for (const link of code.urls.filter(url => url.kind !== 'loopback')) {
-			assert.match(link.url, new RegExp(`^https://[^/]+:4002/pair#code=${code.code}&fp=${pin}$`));
+			assert.match(link.url, new RegExp(`^http://[^/]+:4000/pair#code=${code.code}$`));
 		}
 		assert.strictEqual(code.urls.at(-1)?.url, `http://127.0.0.1:4000/pair#code=${code.code}`);
 		assert.strictEqual(code.fingerprint, 'AB:CD');
-		const plain = pairing.createCode({ port: 4000, network: true, serverVersion: 'test' });
-		assert.deepStrictEqual(plain.urls.map(url => url.kind), ['loopback'], 'no plain-HTTP network links');
+		assert.strictEqual(code.pin, pin);
+		const local = pairing.createCode({ port: 4000, network: false, serverVersion: 'test' });
+		assert.deepStrictEqual(local.urls.map(url => url.kind), ['loopback'], 'no network links without network access');
 	});
 
 	test('browser sessions on this computer are capped', async () => {

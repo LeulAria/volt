@@ -299,9 +299,10 @@ export class ServerPairing extends Disposable {
 		const expiresAt = this.now() + CODE_TTL_MS;
 		this.codes.set(code, expiresAt);
 		const pairPath = `/pair#code=${code}`;
-		// The network listener speaks TLS with this server's own certificate: its links carry the pin.
-		const urls: IVoltPairingUrl[] = ctx.network && ctx.tls
-			? reachableAddresses().filter(a => a.kind !== 'loopback').map(a => ({ kind: a.kind, url: `https://${a.ip}:${ctx.tls!.port}${pairPath}&fp=${ctx.tls!.fingerprint}` }))
+		// Network links use the plain listener, which every client (the phone app included) can reach.
+		// The TLS listener's pin is returned beside them for clients that pin it.
+		const urls: IVoltPairingUrl[] = ctx.network
+			? reachableAddresses().filter(a => a.kind !== 'loopback').map(a => ({ kind: a.kind, url: `http://${a.ip}:${ctx.port}${pairPath}` }))
 			: [];
 		for (const tunnel of ctx.tunnelUrls?.() ?? []) {
 			urls.push({ kind: 'public', url: `${tunnel.url}${pairPath}`, via: tunnel.via });

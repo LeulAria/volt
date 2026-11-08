@@ -106,7 +106,7 @@ class RawSocket {
 	/** Opens the socket and waits for the server's answer to the upgrade (frames go only after it). */
 	static async open(port: number, path: string, headers: Record<string, string> = {}): Promise<RawSocket> {
 		const raw = await new Promise<RawSocket>((resolve, reject) => {
-			const socket = connect(port, '127.0.0.1', () => resolve(new RawSocket(socket, headers, path, `127.0.0.1:${port}`)));
+			const socket = connect(port, '::1', () => resolve(new RawSocket(socket, headers, path, `[::1]:${port}`)));
 			socket.once('error', reject);
 		});
 		await raw.status;
@@ -208,7 +208,8 @@ suite('LST-1..8 / REM-2: the agent server\'s listeners against a local attacker'
 			}
 		}
 		assert.ok(info, `the agent server did not start:\n${log}`);
-		base = `http://127.0.0.1:${info.port}`;
+		// The server listens on the address it was given (`::1` here), as it does on 0.0.0.0 in network mode.
+		base = `http://[::1]:${info.port}`;
 	});
 
 	suiteTeardown(async () => {
@@ -303,21 +304,21 @@ suite('LST-1..8 / REM-2: the agent server\'s listeners against a local attacker'
 		assert.strictEqual(await again.closed, AgentServerCloseCode.Unauthorized);
 	});
 
-	test('B-24: devices on the network get TLS with the certificate pinned from the pairing link, never plain HTTP', async () => {
+	test('B-24: network devices pair over plain HTTP (the phone app can\'t pin); the TLS listener serves pinned clients', async () => {
 		assert.ok(info.tlsPort, 'network access opens the TLS listener');
 		const code = await call(`${base}${VOLT_PAIRING_CODE_PATH}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
 		const pairing = code.body as unknown as IVoltPairingCode;
 		const pin = pairing.pin;
 		assert.ok(pin && /^[A-Za-z0-9_-]{43}$/.test(pin), `the pairing code carries the pin: ${JSON.stringify(pairing)}`);
 		for (const link of pairing.urls.filter(url => url.kind !== 'loopback' && !url.via)) {
-			assert.ok(link.url.startsWith('https://') && link.url.endsWith(`&fp=${pin}`), `a network link is https with the pin: ${link.url}`);
+			assert.ok(link.url.startsWith(`http://`) && link.url.includes(`:${info.port}/pair#code=`), `a network link uses the plain listener: ${link.url}`);
 		}
+		assert.strictEqual((await call(`http://[::1]:${info.port}${VOLT_ENVIRONMENT_PATH}`)).status, 200, 'the plain listener answers on the network address');
 		const tlsBase = `https://[::1]:${info.tlsPort}`;
 		const descriptor = await pinnedRequest(`${tlsBase}${VOLT_ENVIRONMENT_PATH}`, pin);
 		assert.strictEqual(descriptor.status, 200);
 		await assert.rejects(pinnedRequest(`${tlsBase}${VOLT_ENVIRONMENT_PATH}`, 'Z'.repeat(43)), PinMismatchError);
-		await assert.rejects(call(`http://[::1]:${info.tlsPort}${VOLT_ENVIRONMENT_PATH}`), 'no plain HTTP on the network listener');
-		await assert.rejects(call(`http://[::1]:${info.port}${VOLT_ENVIRONMENT_PATH}`), 'the plain listener is loopback IPv4 only');
+		await assert.rejects(call(`http://[::1]:${info.tlsPort}${VOLT_ENVIRONMENT_PATH}`), 'the TLS listener speaks only TLS');
 		// Over TLS: pairing works, and the local-only routes don't.
 		const body = JSON.stringify({ code: pairing.code, client: { label: 'LST phone', kind: 'mobile' } });
 		const paired = await pinnedRequest(`${tlsBase}${VOLT_PAIR_PATH}`, pin, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
