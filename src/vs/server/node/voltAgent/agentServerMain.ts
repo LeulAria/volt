@@ -88,6 +88,7 @@ import { IVoltTrajectoryService } from '../../../workbench/services/voltRuntime/
 import { VoltHooksService } from '../../../workbench/services/voltRuntime/browser/hooks/voltHooksService.js';
 import { IVoltHooksService } from '../../../workbench/services/voltRuntime/common/hooks/voltHooks.js';
 import { IWorkspaceTrustManagementService } from '../../../platform/workspace/common/workspaceTrust.js';
+import { setMcpTrustAttestedByApproval } from '../../../workbench/services/voltRuntime/common/harness/mcpApprovals.js';
 import { IAgentWorktreeSetupService } from '../../../workbench/services/voltRuntime/common/git/worktreeSetupPlan.js';
 import { AgentHistoryService, setAgentHistoryAppender } from '../../../workbench/services/voltRuntime/browser/history/agentHistoryService.js';
 import { VoltHostToolService } from '../../../workbench/services/voltRuntime/browser/host/hostToolService.js';
@@ -316,6 +317,8 @@ export async function main(argv: string[]): Promise<void> {
 	})));
 
 	services.set(IWorkspaceTrustManagementService, new ServerWorkspaceTrustService() as unknown as IWorkspaceTrustManagementService);
+	// No folder is trusted here: a project's MCP approval, which a window grants only under its Workspace Trust, stands for it.
+	setMcpTrustAttestedByApproval();
 	services.set(IVoltHooksService, new SyncDescriptor(VoltHooksService));
 	services.set(IVoltHostToolService, new SyncDescriptor(VoltHostToolService));
 	// The server has no windows: it keeps and lists every chat and project.

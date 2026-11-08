@@ -154,6 +154,7 @@ import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentCommitPlanTray } from '../pullRequests/agentCommitPlanTray.js';
 import { IAgentCommitPlanService } from '../pullRequests/agentCommitPlanService.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
+import { AgentMcpApprovalCard } from '../composer/agentMcpApprovalCard.js';
 import { AgentLimitChip } from '../composer/agentLimitChip.js';
 import { AgentVoiceDictation } from '../composer/agentVoiceDictation.js';
 import { AgentDictationText } from '../composer/agentDictationText.js';
@@ -846,6 +847,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** The user armed (true) or disarmed (false) "Compact first" for the next send; undefined: the default (armed for old, large chats). */
 	private compactFirst: boolean | undefined;
 	private worktreeSetupCard: AgentWorktreeSetupCard | undefined;
+	private mcpApprovalCard: AgentMcpApprovalCard | undefined;
 	private limitChip: AgentLimitChip | undefined;
 	private waitingForClone: string | undefined;
 	/**
@@ -1451,6 +1453,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			onDidChangeHeight: () => this.layoutInputEditor(),
 		}));
 		append(this.composerEl, this.worktreeSetupCard.element);
+		// A repository's own MCP servers wait here for the user's approval before they can start.
+		this.mcpApprovalCard = this._register(this.instantiationService.createInstance(AgentMcpApprovalCard, {
+			onDidDecide: () => this.prewarmAgent(),
+			onDidChangeHeight: () => this.layoutInputEditor(),
+		}));
+		append(this.composerEl, this.mcpApprovalCard.element);
 		append(this.composerEl, this.composerQueue.element);
 		// The chips (run status, terminals, Changes) always sit last, right on top of the text area.
 		append(this.composerEl, this.composerChips.element);
@@ -8844,6 +8852,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// One pane shows every agent tab: the banner follows the tab's project.
 		this.renderCloneBanner();
 		this.worktreeSetupCard?.setChat(this.sessionKey);
+		this.refreshMcpApprovals();
 		this.limitChip?.render();
 		this.ensureInputEditor();
 		this.restoreInputState(input);
@@ -8957,6 +8966,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// The turn's workspace summary (its git status) is read now too, so the send finds it ready.
 		void this.commandService.executeCommand(WORKSPACE_SNAPSHOT_COMMAND_ID, this.sessionKey).catch(() => undefined);
 		this.runtime.prewarmAgent(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode);
+		this.refreshMcpApprovals();
+	}
+
+	/** The chat's project MCP servers waiting for approval, for the model and mode the composer would send with. */
+	private refreshMcpApprovals(): void {
+		this.mcpApprovalCard?.refresh(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode);
 	}
 
 	override clearInput(): void {

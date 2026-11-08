@@ -60,6 +60,21 @@ export function parseMcpConfig(text: string, variables: Record<string, string>):
 	return out;
 }
 
+/**
+ * One server per name, the first file's first. The user's own files come before the project's
+ * whatever order they were read in: a repository can never replace a server the user set up with
+ * its own command under the same name (B-02). Volt's own host server is already a native tool.
+ */
+export function mergeMcpServerEntries<T extends { readonly config: McpServerConfig; readonly scope: 'project' | 'user' }>(entries: readonly T[]): T[] {
+	const byName = new Map<string, T>();
+	for (const entry of [...entries.filter(entry => entry.scope === 'user'), ...entries.filter(entry => entry.scope === 'project')]) {
+		if (!byName.has(entry.config.name) && entry.config.name !== 'volt') {
+			byName.set(entry.config.name, entry);
+		}
+	}
+	return [...byName.values()];
+}
+
 /** `mcp__server__tool`, limited to what every provider accepts as a function name. */
 export function mcpToolName(server: string, tool: string): string {
 	const clean = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '_');

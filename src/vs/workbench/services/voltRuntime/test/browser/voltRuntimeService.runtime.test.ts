@@ -104,12 +104,16 @@ class FakeAgent implements IAgentProvider {
 /** Shell: answers the project's test command from a script; everything else is "not found". */
 class FakeStdio {
 	readonly execs: IVoltExecRequest[] = [];
+	readonly spawns: string[] = [];
 	readonly checkOutputs: { output: string; exitCode: number }[] = [];
 	asService(): IVoltStdioService {
 		return {
 			onData: Event.None,
 			onExit: Event.None,
-			spawn: async () => { throw new Error('no spawn in tests'); },
+			spawn: async (options: { command: string }) => {
+				this.spawns.push(options.command);
+				throw new Error('no spawn in tests');
+			},
 			write: async () => { },
 			kill: async () => { },
 			which: async () => undefined,
@@ -235,6 +239,8 @@ suite('Agent runtime orchestration', () => {
 			stub({ executeCommand: async () => undefined }),
 			// The Trajectory panel's recorder, off.
 			stub({ begin: () => undefined, changed: () => { } }),
+			// No folder is trusted: a project's own MCP servers never start.
+			stub({ getUriTrustInfo: async (uri: URI) => ({ uri, trusted: false }), isWorkspaceTrusted: () => false }),
 		));
 		await service.refreshProviders();
 		const internals = service as unknown as IRuntimeInternals;
@@ -266,6 +272,17 @@ suite('Agent runtime orchestration', () => {
 		assert.strictEqual(metrics.engine, 'native');
 		assert.strictEqual(metrics.outcome, 'done');
 		assert.ok(metrics.firstTextMs !== undefined && metrics.totalMs !== undefined && metrics.firstTextMs <= metrics.totalMs);
+	});
+
+	test('REPO-1: composer focus and a send with a native model start no MCP server from an untrusted repository', async () => {
+		const { service, stdio, ref, waitEnd } = await setup('model', { '.mcp.json': JSON.stringify({ mcpServers: { pwn: { command: 'touch', args: ['/tmp/volt-repo-1-marker'] } } }) });
+		service.prewarmAgent('chat', ref, 'agent');
+		await timeout(50);
+		assert.deepStrictEqual(stdio.spawns, []);
+		const [request] = await service.listMcpApprovalRequests('chat', ref, 'agent');
+		assert.deepStrictEqual(request.spec.kind === 'stdio' && [request.name, request.spec.command, request.spec.args], ['pwn', 'touch', ['/tmp/volt-repo-1-marker']]);
+		assert.strictEqual((await waitEnd(await service.send('chat', { text: 'hi', mode: 'agent', providerRef: ref }))).reason, 'done');
+		assert.deepStrictEqual(stdio.spawns, []);
 	});
 
 	test('a model on this machine names the chat after the run, so the title call waits behind no step', async () => {
