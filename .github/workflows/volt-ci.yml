@@ -450,6 +450,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: apps/mobile/node_modules/.bin/tsc --noEmit -p apps/client-core/tsconfig.json
 
+      - name: client-core tests
+        if: ${{ !cancelled() }}
+        working-directory: apps/client-core
+        run: npm test
+
   relay:
     name: Relay
     needs: changes
