@@ -9,9 +9,11 @@
 #   scripts/volt-sandbox-linux-test.sh probe                               print the backend's capability report
 #   scripts/volt-sandbox-linux-test.sh shell                               a shell in the rig (out/ mounted at /volt/out)
 #   scripts/volt-sandbox-linux-test.sh verify-syscalls                     check seccomp.ts's syscall numbers on arm64 and amd64
-#   scripts/volt-sandbox-linux-test.sh suite                               the adversarial mocha suites (sandboxSecurity, hostGit, sandboxAttestation, sandboxProxy, sandboxPty), required to run
+#   scripts/volt-sandbox-linux-test.sh suite                               the adversarial mocha suites (sandboxSecurity, hostGit, sandboxAttestation, sandboxProxy, sandboxPty, sandboxSecondLayers), required to run
 #   scripts/volt-sandbox-linux-test.sh files                               race-free host file opens (safeOpen.test.ts, RACE-1..3) with volt-fsd built here
 #   scripts/volt-sandbox-linux-test.sh cve                                 LNX-BWRAP-CVE: bubblewrap 0.9.0 must be refused, 0.13.1 must pass
+#   scripts/volt-sandbox-linux-test.sh vm-setup <lima vm>                  prepare an Ubuntu 24.04 Lima VM (Landlock, systemd user cgroups) like the rig
+#   scripts/volt-sandbox-linux-test.sh vm <lima vm>                        the second-layer, security and attestation suites there, Landlock and cgroups required
 #
 # Set VOLT_SANDBOX_NO_TRANSPILE=1 to skip `npm run transpile-client-oxc` (out/ is already fresh).
 #
@@ -69,6 +71,33 @@ snapshot() {
 	done
 	# base/common imports vs/nls.js and its siblings.
 	cp "$ROOT"/out/vs/*.js "$SNAPSHOT/out/vs/"
+	landlock_helper
+}
+
+# volt-landlock (the Landlock layer, C4), built statically for the rig's architecture and listed in
+# out/volt-helpers-manifest.json as a packaged build lists it: the backend finds and verifies it
+# there. Cached in .build until the source changes. Docker Desktop's kernel has no Landlock, so
+# the layer reports itself off there; a kernel with it runs it (`vm`, below).
+landlock_helper() {
+	local arch cache="$ROOT/.build/volt-sandbox-rig"
+	arch="$(docker run --rm ubuntu:24.04 uname -m)"
+	case "$arch" in aarch64) arch=arm64 ;; x86_64) arch=x64 ;; esac
+	local built="$cache/volt-landlock-$arch"
+	if [[ ! -f "$built" || "$ROOT/build/volt/volt-landlock.c" -nt "$built" ]]; then
+		echo "Building volt-landlock ($arch) ..." >&2
+		mkdir -p "$cache"
+		docker run --rm -v "$ROOT/build/volt/volt-landlock.c:/src/volt-landlock.c:ro" -v "$cache:/out" ubuntu:24.04 bash -c "
+			apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gcc libc6-dev >/dev/null 2>&1 \
+				&& gcc -O2 -static -Wall -Wextra -Werror -o /out/volt-landlock-$arch /src/volt-landlock.c"
+	fi
+	mkdir -p "$SNAPSHOT/out/volt-helpers"
+	cp "$built" "$SNAPSHOT/out/volt-helpers/volt-landlock"
+	node -e '
+		const [file, target, out] = process.argv.slice(1);
+		const sha256 = require("crypto").createHash("sha256").update(require("fs").readFileSync(file)).digest("hex");
+		const manifest = { version: 1, helpers: { "volt-landlock": { files: [{ path: "volt-helpers/volt-landlock", sha256: { [target]: sha256 } }] } } };
+		require("fs").writeFileSync(out, JSON.stringify(manifest, null, "\t") + "\n");
+	' "$built" "linux-$arch" "$SNAPSHOT/out/volt-helpers-manifest.json"
 }
 
 build_image() {
@@ -81,11 +110,14 @@ build_cve_image() {
 	docker build -q -t "$CVE_IMAGE" -f "$CVE_DOCKERFILE" "$ROOT/build/volt-sandbox" >/dev/null
 }
 
+# Where Volt's `out/` is, as Volt's own loader tells its modules (FileAccess): the helper manifest is found there.
+FILE_ROOT=(--import 'data:text/javascript,globalThis._VSCODE_FILE_ROOT="/volt/out";')
+
 # mocha inside a rig image with one environment variable set, the host's node_modules (plain JavaScript) and the arguments given.
 mocha_in() {
 	local image="$1" env="$2"; shift 2
 	docker run --rm "${DOCKER_FLAGS[@]}" -v "$ROOT/node_modules:/volt/node_modules:ro" -e "$env" "$image" \
-		node /volt/node_modules/mocha/bin/mocha.js --ui tdd --timeout 120000 --exit "$@"
+		node "${FILE_ROOT[@]}" /volt/node_modules/mocha/bin/mocha.js --ui tdd --timeout 120000 --exit "$@"
 }
 
 # Prints `name number` for every syscall in seccomp.ts's table for one architecture, from the
@@ -164,12 +196,13 @@ case "$cmd" in
 		build_image
 		# mocha and its dependencies are plain JavaScript, so the host's node_modules work here.
 		docker run --rm "${DOCKER_FLAGS[@]}" -v "$ROOT/node_modules:/volt/node_modules:ro" -e VOLT_SANDBOX_REQUIRED=1 "$IMAGE" \
-			node /volt/node_modules/mocha/bin/mocha.js --ui tdd --timeout 120000 --exit \
+			node "${FILE_ROOT[@]}" /volt/node_modules/mocha/bin/mocha.js --ui tdd --timeout 120000 --exit \
 			/volt/out/vs/platform/voltSandbox/test/node/sandboxSecurity.test.js \
 			/volt/out/vs/platform/voltGit/test/node/hostGit.test.js \
 			/volt/out/vs/platform/voltSandbox/test/node/sandboxAttestation.test.js \
 			/volt/out/vs/platform/voltSandbox/test/node/sandboxProxy.test.js \
-			/volt/out/vs/platform/voltSandbox/test/node/sandboxPty.test.js "$@"
+			/volt/out/vs/platform/voltSandbox/test/node/sandboxPty.test.js \
+			/volt/out/vs/platform/voltSandbox/test/node/sandboxSecondLayers.test.js "$@"
 		;;
 	files)
 		transpile
@@ -195,8 +228,41 @@ case "$cmd" in
 		echo "LNX-BWRAP-CVE on bubblewrap 0.13.1: expect the trial to pass" >&2
 		mocha_in "$IMAGE" VOLT_SANDBOX_REQUIRED=1 --grep 'LNX-BWRAP-CVE: the probe' /volt/out/vs/platform/voltSandbox/test/node/sandboxAttestation.test.js
 		;;
+	vm-setup)
+		# A Lima VM (Ubuntu 24.04: Landlock, systemd's user manager with delegated cgroups) set up
+		# like the rig image: its bubblewrap 0.13.1 and Node copied out of the image, socat, and an
+		# AppArmor profile that lets /usr/bin/bwrap make user namespaces (what the probe tells users).
+		vm="${1:?usage: vm-setup <lima instance>}"
+		build_image
+		bin="$(mktemp -d "${TMPDIR:-/tmp}/volt-sandbox-vm.XXXXXX")"
+		cid="$(docker create "$IMAGE")"
+		docker cp "$cid:/usr/bin/bwrap" "$bin/bwrap" && docker cp "$cid:/usr/local/bin/node" "$bin/node"
+		docker rm "$cid" >/dev/null
+		limactl copy "$bin/bwrap" "$bin/node" "$vm:/tmp/"
+		rm -rf "$bin"
+		limactl shell --workdir / "$vm" -- bash -c 'set -e
+			sudo install -m 755 /tmp/bwrap /usr/bin/bwrap; sudo install -m 755 /tmp/node /usr/local/bin/node
+			sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq socat >/dev/null
+			printf "abi <abi/4.0>,\ninclude <tunables/global>\nprofile bwrap /usr/bin/bwrap flags=(unconfined) {\n  userns,\n  include if exists <local/bwrap>\n}\n" | sudo tee /etc/apparmor.d/bwrap >/dev/null
+			sudo apparmor_parser -r /etc/apparmor.d/bwrap
+			bwrap --version; node --version'
+		;;
+	vm)
+		# The suites on that VM, with the second layers required: Landlock and the cgroup scope must
+		# be on, not reported off. The checkout's node_modules is reached through Lima's home mount.
+		vm="${1:?usage: vm <lima instance> [mocha args]}"; shift
+		transpile
+		cp "$ROOT/package.json" "$SNAPSHOT/package.json"
+		limactl shell --workdir / "$vm" -- rm -rf /tmp/volt-rig
+		limactl copy -r "$SNAPSHOT" "$vm:/tmp/volt-rig"
+		limactl shell --workdir / "$vm" -- env VOLT_SANDBOX_REQUIRED=1 VOLT_SANDBOX_REQUIRE_LAYERS=landlock,cgroup \
+			node --import 'data:text/javascript,globalThis._VSCODE_FILE_ROOT="/tmp/volt-rig/out";' "$(cd "$ROOT/node_modules" && pwd -P)/mocha/bin/mocha.js" --ui tdd --timeout 120000 --exit \
+			/tmp/volt-rig/out/vs/platform/voltSandbox/test/node/sandboxSecondLayers.test.js \
+			/tmp/volt-rig/out/vs/platform/voltSandbox/test/node/sandboxSecurity.test.js \
+			/tmp/volt-rig/out/vs/platform/voltSandbox/test/node/sandboxAttestation.test.js "$@"
+		;;
 	*)
-		sed -n '2,22p' "$0"
+		sed -n '2,24p' "$0"
 		exit 64
 		;;
 esac

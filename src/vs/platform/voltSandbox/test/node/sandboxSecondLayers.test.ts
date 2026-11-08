@@ -17,21 +17,26 @@
 
 import assert from 'assert';
 import { ChildProcess, execFileSync, spawn } from 'child_process';
-import { promises as fs } from 'fs';
+import { existsSync, promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { ISandboxRunResult } from '../../common/sandboxBackend.js';
 import { builtinProfile } from '../../common/sandboxProfiles.js';
 import { ISandboxLimits, IVoltSandboxPolicy, SandboxDimension } from '../../common/sandboxSchema.js';
+import { landlockHelperPath } from '../../node/bubblewrapBackend.js';
 import { IPreparedSandbox, SandboxManager } from '../../node/sandboxManager.js';
 import { sandboxHostFacts } from '../../node/sandboxResolver.js';
 import { realSandboxAvailable } from './sandboxSuiteGate.js';
 
 const isMac = process.platform === 'darwin';
+const isLinux = process.platform === 'linux';
 const PERL = '/usr/bin/perl';
 const macTest = isMac ? test : test.skip;
+const linuxTest = isLinux ? test : test.skip;
 const MARKER = `volt-sbx-layers-${process.pid}`;
+/** Linux layers this machine must have (`landlock,cgroup`): their tests fail instead of checking the absence report. */
+const REQUIRED_LAYERS = (process.env.VOLT_SANDBOX_REQUIRE_LAYERS ?? '').split(',').filter(Boolean);
 
 /** Processes carrying this suite's marker (optionally one test's), the sandbox launchers excluded. */
 function strayProcesses(name?: string): string[] {
@@ -180,6 +185,129 @@ suite('Volt sandbox second layers (C4, real processes)', function () {
 		assert.strictEqual(result.status, 'completed', result.error);
 		assert.strictEqual(result.resourceViolation, undefined, JSON.stringify(result.resourceViolation));
 		assert.ok(result.stdout.includes('done'), result.stderr);
+	});
+
+	// --- Linux -------------------------------------------------------------------------------------
+
+	/**
+	 * Whether a Linux layer is on, from the backend's own report. Absent: the report must say why,
+	 * and the rig that has the layer (`VOLT_SANDBOX_REQUIRE_LAYERS`) fails instead.
+	 */
+	async function linuxLayer(id: 'landlock' | 'cgroup'): Promise<boolean> {
+		const details = (await manager.capabilities()).details;
+		const line = details.find(detail => detail.startsWith(id === 'landlock' ? 'landlock: ' : 'cgroups: '));
+		assert.ok(line, `the backend reports its ${id} layer: ${details.join(' | ')}`);
+		const on = !line.includes(': off (');
+		if (!on && REQUIRED_LAYERS.includes(id)) {
+			assert.fail(`${id} is required here (VOLT_SANDBOX_REQUIRE_LAYERS) but off: ${line}`);
+		}
+		return on;
+	}
+
+	linuxTest('TREE-LNX-1: a double-forked, setsid, environment-cleared orphan dies with its run, with and without a scope', async () => {
+		const orphan = `${PERL} -e 'use POSIX; exit 0 if fork(); POSIX::setsid(); exit 0 if fork(); %ENV = (); exec { "/bin/sleep" } "${MARKER}-" . "orphan", "300"'`;
+		for (const policy of [limited({}), limited({ memoryMB: 512 }, ['limits.memory'])]) {
+			const handle = await start(policy, `${orphan}; ${PERL} -e '$0 = "${MARKER}-" . "main"; sleep 300'`);
+			try {
+				assert.ok(await waitFor(() => strayProcesses('orphan').length === 1 && strayProcesses('main').length === 1, 5_000), strayProcesses().join(' | '));
+				const layers = handle.prepared.attestation()?.layers;
+				if (policy.process.limits.memoryMB !== undefined && await linuxLayer('cgroup')) {
+					assert.strictEqual(layers?.cgroup?.active, true, JSON.stringify(layers));
+					assert.match(String(handle.prepared.attestation()?.evidence.cgroup), /\/volt-sbx-[^/]+\.scope$/);
+				} else {
+					assert.strictEqual(layers?.cgroup?.active, false, JSON.stringify(layers));
+					assert.ok(layers?.cgroup?.detail, 'an absent layer says why');
+				}
+			} finally {
+				await stop(handle);
+			}
+			assert.ok(await waitFor(() => strayProcesses().length === 0, 5_000), `survivors: ${strayProcesses().join(' | ')}`);
+		}
+	});
+
+	linuxTest('RES-LNX-1: memory is a hard limit on the whole tree (cgroup memory.max), and a run over it is killed and says why', async () => {
+		const policy = limited({ memoryMB: 64, wallClockSeconds: 60 }, ['limits.memory']);
+		const script = `${PERL} -e '$0 = "${MARKER}-memory"; my $x = "x" x (256 * 1024 * 1024); sleep 60'`;
+		if (!await linuxLayer('cgroup')) {
+			// Without a delegated cgroup memory is RLIMIT_AS per process: partial, and the run says so.
+			assert.strictEqual((await manager.capabilities()).enforcement['limits.memory'], 'partial');
+			const result = await run(policy, script);
+			assert.ok(result.unenforced.includes('limits.memory'));
+			assert.strictEqual(result.attestation?.layers.cgroup?.active, false);
+			return;
+		}
+		assert.strictEqual((await manager.capabilities()).enforcement['limits.memory'], 'enforced');
+		const started = Date.now();
+		const result = await run(policy, script);
+		assert.strictEqual(result.status, 'completed', result.error);
+		assert.ok(result.stdout.startsWith('volt-sandbox-ran'), result.stderr);
+		assert.ok(!result.unenforced.includes('limits.memory'), 'hard on this host');
+		assert.strictEqual(result.resourceViolation?.dimension, 'limits.memory', JSON.stringify(result.resourceViolation));
+		assert.strictEqual(result.resourceViolation.by, 'cgroup');
+		assert.ok(Date.now() - started < 15_000, `killed after ${Date.now() - started} ms`);
+		assert.ok(await waitFor(() => strayProcesses('memory').length === 0, 3_000), strayProcesses('memory').join(' | '));
+		// V8 reserves far more address space than it uses: with memory in the cgroup, RLIMIT_AS is gone.
+		const node = await run(limited({ memoryMB: 256 }, ['limits.memory']), `${process.execPath} -e 'console.log(new Array(1e5).fill(1).length)'`);
+		assert.ok(node.stdout.includes('100000'), `node runs under a 256 MB limit: ${node.stderr}`);
+	});
+
+	linuxTest('RES-LNX-2: a fork bomb is held at the process limit, then the whole tree goes', async () => {
+		const scoped = await linuxLayer('cgroup');
+		// A memory limit as well, so the run gets its own scope (pids.max and cgroup.kill) where the host has one.
+		const policy = limited({ processes: 32, memoryMB: 512, cpuSeconds: 20, wallClockSeconds: 20 }, ['limits.memory']);
+		const result = await run(policy, `${PERL} -e '$0 = "${MARKER}-bomb"; fork() while 1' & sleep 3; echo held`, 30_000);
+		assert.strictEqual(result.status, 'completed', result.error);
+		assert.ok(result.stdout.includes('held'), `the run itself kept working: ${result.stderr}`);
+		if (scoped) {
+			assert.ok(result.denials.some(denial => denial.kind === 'limit' && denial.target === 'processes 32'), JSON.stringify(result.denials));
+		}
+		assert.ok(await waitFor(() => strayProcesses('bomb').length === 0, 5_000), strayProcesses('bomb').slice(0, 5).join(' | '));
+	});
+
+	linuxTest('RES-LNX-3: CPU time, file size and open files are kernel limits', async () => {
+		const files = await run(limited({ openFiles: 64 }), 'ulimit -n');
+		assert.strictEqual(files.stdout.split('\n')[1]?.trim(), '64', files.stdout);
+		const started = Date.now();
+		const spin = await run(limited({ cpuSeconds: 1 }), 'while :; do :; done');
+		assert.ok(spin.exitCode !== 0 && Date.now() - started < 15_000, `cpu: exit ${spin.exitCode} ${spin.signal}`);
+		await run(limited({ fileSizeMB: 1 }), `dd if=/dev/zero of=${ws}/big bs=1048576 count=8 2>/dev/null`);
+		const size = (await fs.stat(join(ws, 'big')).catch(() => ({ size: 0 }))).size;
+		assert.ok(size > 0 && size <= 1024 * 1024, `file size capped: ${size}`);
+	});
+
+	linuxTest('LNX-FS-2 (second layer): with Landlock, a write the mounts would allow outside the policy still fails', async () => {
+		if (!await linuxLayer('landlock')) {
+			const result = await run(limited({}), 'true');
+			assert.strictEqual(result.attestation?.layers.landlock?.active, false);
+			assert.ok(result.attestation?.layers.landlock?.detail, 'an absent layer says why');
+			return;
+		}
+		// The helper alone, outside bubblewrap: everything readable, only the workspace writable.
+		const helper = await landlockHelperPath();
+		assert.ok(helper);
+		const abi = Number(/landlock: ABI (\d+)/.exec((await manager.capabilities()).details.join('\n'))?.[1]);
+		const outside = join(root, 'outside');
+		await fs.mkdir(outside, { recursive: true });
+		const out = execFileSync(helper, [String(abi), '-r', '/', '-w', ws, '--', '/bin/sh', '-c', `echo ok > ${ws}/landlock-ok && echo in; echo no > ${outside}/landlock-no || echo refused`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+		assert.deepStrictEqual(out.trim().split('\n'), ['in', 'refused']);
+		assert.ok(!existsSync(join(outside, 'landlock-no')));
+		// A real run carries the layer: workloads, git and node work as before.
+		const git = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+		const result = await run(limited({}), `cd ${ws} && ${git} init -q && echo x > f && ${git} -c user.name=t -c user.email=t@t add f && ${git} -c user.name=t -c user.email=t@t commit -qm x && echo committed; ${process.execPath} -e 'console.log("node ok")'; echo tmp > /tmp/t && cat /tmp/t; ls / >/dev/null && echo listed`);
+		assert.strictEqual(result.status, 'completed', result.error);
+		assert.deepStrictEqual(result.stdout.trim().split('\n').slice(1), ['committed', 'node ok', 'tmp', 'listed'], result.stderr);
+		assert.strictEqual(result.attestation?.layers.landlock?.active, true, JSON.stringify(result.attestation?.layers));
+		assert.strictEqual(result.attestation?.evidence.landlockAbi, abi);
+	});
+
+	linuxTest('LNX-FS-3: a name created during the run inside a writable root stays best effort, with Landlock too, and the run says so', async () => {
+		// Landlock only grants (a right on a folder holds below it), so it cannot refuse one new name
+		// in a folder that must stay writable (a new `.git/commondir`): the spec's row is not met.
+		await fs.mkdir(join(ws, '.git'), { recursive: true });
+		const result = await run(builtinProfile('workspace'), `echo x > ${ws}/.git/commondir-probe; echo done`);
+		assert.strictEqual(result.status, 'completed', result.error);
+		assert.ok(result.unenforced.includes('filesystem.protectNew'), 'reported partial, not claimed');
+		await fs.rm(join(ws, '.git'), { recursive: true, force: true });
 	});
 
 	macTest('RES-MAC-3: CPU time, file size and open files are kernel limits', async () => {
