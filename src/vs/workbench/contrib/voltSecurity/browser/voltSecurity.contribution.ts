@@ -23,7 +23,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			type: 'boolean',
 			default: true,
 			scope: ConfigurationScope.APPLICATION,
-			description: localize('voltSecurity.supervisor.enabled', "Run long-lived sandboxed hosts (plugin hosts, helpers) under Volt's supervisor, which restarts them after a crash, stops idle ones and ends them when Volt quits. When off, no sandboxed host starts. Takes effect for hosts started after the change; reaping hosts left by a crash needs a restart."),
+			description: localize('voltSecurity.supervisor.enabled', "Run long-lived sandboxed hosts (plugin hosts, helpers, and the MCP servers Volt starts for sandboxed chats) under Volt's supervisor, which restarts them after a crash, stops idle ones and ends them when Volt quits. When off, no sandboxed host starts, and MCP servers start as they did before, outside the sandbox. Takes effect for hosts started after the change; reaping hosts left by a crash needs a restart."),
 		},
 	},
 });

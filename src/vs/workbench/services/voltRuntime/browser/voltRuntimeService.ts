@@ -99,7 +99,8 @@ import { chooseEffort, EffortLevel, higherEffort } from '../common/deepseek/effo
 import { IToolDocuments, runtimeToolDocuments } from './tools/fileTools.js';
 import { ISubagentRequest, NATIVE_ASK_QUESTION_TOOL_NAME } from './tools/metaTools.js';
 import { createRuntimeCodeIntel, IRuntimeCodeIntel } from './host/codeIntelHost.js';
-import { McpHost } from './host/mcpHost.js';
+import { IMcpChat, McpHost } from './host/mcpHost.js';
+import { SANDBOX_SUPERVISOR_SETTING } from '../../../../platform/voltSandbox/common/sandboxWorkloads.js';
 import { isMcpTrustAttestedByApproval, IVoltMcpApprovalRecord, VoltMcpApprovalStore } from '../common/harness/mcpApprovals.js';
 import { IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { INativeBackgroundAgent, INativeJournalEntry, NativeJournal } from './history/nativeJournal.js';
@@ -723,6 +724,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.mcpHost = this._register(new McpHost(fileService, stdio, requestService, logService, {
 			approvals: new VoltMcpApprovalStore(joinPath(environmentService.userRoamingDataHome, 'voltMcpApprovals.json'), fileService, logService),
 			trusted: root => this.mcpFolderTrusted(root),
+		}, {
+			// The supervisor's rollback flag: off, every chat's MCP servers start as before.
+			sandboxedHosts: () => this.configurationService.getValue<boolean>(SANDBOX_SUPERVISOR_SETTING) !== false,
 		}));
 		this.journal = this._register(new NativeJournal(joinPath(environmentService.userRoamingDataHome, 'voltNative'), fileService, logService));
 		this.traces = this._register(new RunTraceJournal(joinPath(environmentService.userRoamingDataHome, 'voltTraces'), fileService, logService));
@@ -966,6 +970,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		for (const id of mcpSessions) {
 			this.hostTools.revokeMcpSession(id);
 		}
+		// Its own sandboxed MCP servers stop too, whole trees (C6); the next run starts them again.
+		this.mcpHost.releaseChat(key);
 	}
 
 	/** Moves an idle chat's native transcript to disk only; the journal brings it back before its next run. */
@@ -1447,7 +1453,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		// The composer is about to send: read the chat's native transcript now, not on the send.
 		this.restoreReleasedNative(session);
 		const root = this.executionRoot(session);
-		void this.nativeTurnInputs(root, modePolicy(mode).allowMcp);
+		void this.nativeTurnInputs(root, modePolicy(mode).allowMcp, this.mcpChat(session));
 		void this.hooks.definitions(root?.fsPath).catch(() => undefined);
 		void this.apiKey(profile).catch(() => undefined);
 	}
@@ -2260,6 +2266,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		// "Allow host": hosts are not part of the launch key, so the running agent keeps its process
 		// and its proxy lets the new hosts through from its next connection (F.9, B-31).
 		const added = (next.allowedDomains ?? []).filter(domain => !(before.allowedDomains ?? []).includes(domain));
+		const removed = (before.allowedDomains ?? []).some(domain => !(next.allowedDomains ?? []).includes(domain));
+		if (removed || sandboxLaunchKey(before) !== sandboxLaunchKey(next)) {
+			// A grant revoked or the sandbox changed: the chat's MCP servers stop now (F.9), never keep
+			// what the chat no longer has, and start under the new sandbox when next needed (C6).
+			this.mcpHost.releaseChat(sessionId);
+		}
 		const session = this.sessions.get(sessionId) as ISessionState | undefined;
 		if (added.length && session?.agentHandle && session.agentProviderId && session.agentSandboxKey === sandboxLaunchKey(next)) {
 			await this.agentProviders.get(session.agentProviderId)?.allowSandboxDomains?.(session.agentHandle, added).catch(err => this.logService.warn('[volt] could not allow hosts for the running agent', err));
@@ -3042,7 +3054,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		// Reads that do not depend on the previous run (or on the prompt hooks) start now and run
 		// alongside the settle wait and the hooks: skills and rules, memory, MCP connections, the key.
 		const allowMcp = modePolicy(request.mode).allowMcp;
-		const early = this.nativeTurnInputs(this.executionRoot(session), allowMcp);
+		const early = this.nativeTurnInputs(this.executionRoot(session), allowMcp, this.mcpChat(session));
 		// The code the message names, searched while the turn gets ready (snippets, ~1.5k tokens at most).
 		const retrieval = isCompactCommand(request.text) || isVoltNote(request.text) ? undefined : this.retrieveContext(session, run, request.text, false);
 		const apiKeyRead = this.apiKey(profile);
@@ -3119,9 +3131,13 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 
 		// The root can only differ from the early read if the chat moved while the previous run settled.
-		const { projectInstructions, instructions, mcpTools, memoryContext } = await (isEqual(early.root, root) ? early : this.nativeTurnInputs(root, allowMcp)).read();
+		const { projectInstructions, instructions, mcpTools, memoryContext } = await (isEqual(early.root, root) ? early : this.nativeTurnInputs(root, allowMcp, this.mcpChat(session))).read();
 		if (!this.isCurrent(session, run)) {
 			return;
+		}
+		// MCP servers Volt's sandbox would not start for this chat: said once, with the step that refused (C6).
+		for (const refusal of this.mcpHost.takeRefusals(session.sessionId)) {
+			this.emit(session, run.runId, { type: 'notice', severity: 'warning', title: localize('voltMcp.sandboxRefused', "The {0} MCP server was not started in this chat's sandbox.", refusal.server), description: refusal.reason.slice(0, 500) });
 		}
 		state.instructions = instructions;
 		const facts = this.environmentFacts(root);
@@ -4461,13 +4477,13 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * connecting at once too, but the tool list is taken when `read` is called, so servers that come
 	 * up meanwhile (during the settle wait and the prompt hooks) are in it.
 	 */
-	private nativeTurnInputs(root: URI | undefined, allowMcp: boolean): { readonly root: URI | undefined; read(): Promise<INativeTurnInputs> } {
+	private nativeTurnInputs(root: URI | undefined, allowMcp: boolean, chat: IMcpChat): { readonly root: URI | undefined; read(): Promise<INativeTurnInputs> } {
 		const home = this.pathService.userHome().catch(() => undefined);
 		const projectInstructions = this.workspaceProjectInstructions(root);
 		const instructions = this.workspaceInstructions(root);
 		const memoryContext = this.memory.context().catch(() => undefined);
 		if (allowMcp) {
-			void home.then(dir => this.mcpHost.prewarm(root, dir)).catch(() => undefined);
+			void home.then(dir => this.mcpHost.prewarm(root, dir, chat)).catch(() => undefined);
 		}
 		return {
 			root,
@@ -4476,12 +4492,18 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					projectInstructions,
 					instructions,
 					// Never held for a server still starting: it joins the next turn instead.
-					allowMcp ? home.then(dir => this.mcpHost.tools(root, dir, MCP_SEND_WAIT_MS)).catch(() => []) : Promise.resolve([]),
+					allowMcp ? home.then(dir => this.mcpHost.tools(root, dir, MCP_SEND_WAIT_MS, chat)).catch(() => []) : Promise.resolve([]),
 					memoryContext,
 				]);
 				return { projectInstructions: project, instructions: snapshot, mcpTools, memoryContext: memory };
 			},
 		};
+	}
+
+	/** Whose MCP servers a turn uses: a sandboxed chat's run in its sandbox, as its own (C6). */
+	private mcpChat(session: ISessionState): IMcpChat {
+		const sandbox = this.chatExec(session.sessionId, 'mcp').sandbox;
+		return { id: session.sessionId, ...(sandbox ? { sandbox } : {}) };
 	}
 
 	/** The profile's API key, read from secret storage once and kept until the secret changes. */

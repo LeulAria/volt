@@ -96,10 +96,21 @@ function statusText(row: ISandboxWorkloadInfo): string {
 	return parts.join(', ');
 }
 
+/** Its name, and the chat it works for (an MCP server's): "MCP github, chat Fix login" or "..., chat 1a2b3c4d". */
+export function titleText(row: ISandboxWorkloadInfo): string {
+	const chat = row.onBehalfOf;
+	if (!chat) {
+		return row.label;
+	}
+	const id = chat.subject.startsWith('chat:') ? chat.subject.slice('chat:'.length) : chat.subject;
+	return localize('voltSecurity.titleForChat', "{0}, chat {1}", row.label, chat.label ?? id.slice(0, 8));
+}
+
 /** The hover: everything the attestation record and the policy say (F.12). */
 function detailText(row: ISandboxWorkloadInfo): string {
 	const lines = [
 		localize('voltSecurity.detail.principal', "Principal: {0}", row.subject ? `${row.subject} (${row.principalId})` : row.principalId),
+		...(row.onBehalfOf ? [localize('voltSecurity.detail.onBehalfOf', "Works for: {0}", row.onBehalfOf.label ? `${row.onBehalfOf.label} (${row.onBehalfOf.subject})` : row.onBehalfOf.subject)] : []),
 		localize('voltSecurity.detail.started', "Started: {0}", new Date(row.startedAt).toLocaleString()),
 	];
 	const attestation = row.attestation;
@@ -186,7 +197,7 @@ class WorkloadRenderer implements IListRenderer<ISandboxWorkloadInfo, IWorkloadT
 		template.icon.replaceChildren(renderIcon(broken ? Codicon.warning : workload.status === 'partial' ? Codicon.shield : workload.lifetime === 'host' ? Codicon.server : Codicon.terminal));
 		template.row.classList.toggle('broken', broken);
 		template.row.classList.toggle('partial', workload.status === 'partial');
-		template.title.textContent = workload.label;
+		template.title.textContent = titleText(workload);
 		template.state.textContent = STATE_LABELS[workload.state] ?? workload.state;
 		template.status.textContent = statusText(workload);
 		const resources = resourcesText(workload.resources);
@@ -271,7 +282,7 @@ export class SandboxWorkloadsSection {
 			alwaysConsumeMouseWheel: false,
 			accessibilityProvider: {
 				getWidgetAriaLabel: () => localize('voltSecurity.workloadsAria', "Sandboxed processes"),
-				getAriaLabel: (workload: ISandboxWorkloadInfo) => localize('voltSecurity.workloadAria', "{0}, {1}, {2}", workload.label, STATE_LABELS[workload.state] ?? workload.state, statusText(workload)),
+				getAriaLabel: (workload: ISandboxWorkloadInfo) => localize('voltSecurity.workloadAria', "{0}, {1}, {2}", titleText(workload), STATE_LABELS[workload.state] ?? workload.state, statusText(workload)),
 			},
 		}));
 		let listDisposed = false;
