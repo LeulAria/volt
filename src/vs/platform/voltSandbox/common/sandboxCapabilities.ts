@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { composeSandboxPolicy } from './sandboxComposition.js';
+import { composeSandboxPolicy } from './compile.js';
 import { builtinProfile, isSecretEnvName } from './sandboxProfiles.js';
 import { envNameError, IVoltSandboxPolicy, IVoltSandboxPolicyLayer, networkEntryError, pathEntryError, SANDBOX_POLICY_SCHEMA_VERSION } from './sandboxSchema.js';
 

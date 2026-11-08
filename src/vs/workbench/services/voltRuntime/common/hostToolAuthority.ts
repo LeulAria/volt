@@ -8,7 +8,7 @@ import { Disposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
-import { decisionRecord, IAccessRequest, IChatView, IDecision, IDecisionLogRecord, IManifestView, PolicySnapshot, evaluate } from '../../../../platform/voltSandbox/common/authority.js';
+import { decisionRecord, IAccessRequest, IChatView, IDecision, IDecisionLogRecord, IManifestView, PolicyAuthorityMode, POLICY_AUTHORITY_MODE_SETTING, PolicySnapshot, evaluate } from '../../../../platform/voltSandbox/common/authority.js';
 import { FLOW_CAPABILITY, IGrant } from '../../../../platform/voltSandbox/common/grants.js';
 import { chatSubject, corePrincipal, extensionSubject, ICallContext, SubjectKey } from '../../../../platform/voltSandbox/common/principals.js';
 import { IVoltSandboxSettings, SandboxStrategy } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
@@ -27,9 +27,9 @@ import { hostToolClassCapability, HostToolSandboxClass, IHostToolSandboxUse } fr
  * `sandboxBrowserUrlRefusal`): they are the files and network brokers' job (later packages).
  */
 
-export type PolicyAuthorityMode = 'enforce' | 'shadow';
-
-export const POLICY_AUTHORITY_MODE_SETTING = 'volt.sandbox.policyAuthority.mode';
+// The mode is read on the execution host too (the sandbox launcher), so it is defined beside the Authority.
+export { POLICY_AUTHORITY_MODE_SETTING, readPolicyAuthorityMode } from '../../../../platform/voltSandbox/common/authority.js';
+export type { PolicyAuthorityMode } from '../../../../platform/voltSandbox/common/authority.js';
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 	id: 'volt.sandbox.policyAuthority',
@@ -40,7 +40,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			type: 'string',
 			enum: ['enforce', 'shadow'],
 			enumDescriptions: [
-				localize('voltPolicyAuthority.enforce', "The Policy Authority decides what a sandboxed chat's host tool calls and extensions may do."),
+				localize('voltPolicyAuthority.enforce', "The Policy Authority decides what a sandboxed chat's host tool calls and extensions may do, and the policy its agent is launched with."),
 				localize('voltPolicyAuthority.shadow', "The earlier rules decide; the Policy Authority's decision is only compared and differences are logged. For one release, to roll back."),
 			],
 			default: 'enforce',
@@ -48,10 +48,6 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 		},
 	},
 });
-
-export function readPolicyAuthorityMode(value: unknown): PolicyAuthorityMode {
-	return value === 'shadow' ? 'shadow' : 'enforce';
-}
 
 /** One call where the old rules and the Authority disagreed. */
 export interface IPolicyShadowDiff {
