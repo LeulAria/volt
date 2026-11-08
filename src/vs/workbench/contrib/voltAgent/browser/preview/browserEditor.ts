@@ -3885,7 +3885,7 @@ class VoltBrowserViews extends Disposable implements IVoltBrowserViews {
 
 registerSingleton(IVoltBrowserViews, VoltBrowserViews, InstantiationType.Delayed);
 
-CommandsRegistry.registerCommand(REVEAL_BROWSER_ELEMENT_COMMAND_ID, (accessor, payload: string) => accessor.get(IVoltBrowserViews).revealElement(payload));
+CommandsRegistry.registerCommand(REVEAL_BROWSER_ELEMENT_COMMAND_ID, (accessor, payload: string) => accessor.get(IVoltBrowserViews).revealElement(payload), 'internal');
 
 /** The editor pane for a browser tab: a slot the tab's `VoltBrowserView` is laid over. */
 export class VoltBrowserEditor extends EditorPane {

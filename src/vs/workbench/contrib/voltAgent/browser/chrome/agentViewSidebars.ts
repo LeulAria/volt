@@ -609,7 +609,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		this._register(this.sectionPrefs.onDidChange(() => this.applySectionPrefs()));
 		this.applySectionPrefs();
 		this._register(this.lineage.onDidChangeSummary(summary => this.syncAgentsRail(summary)));
-		this._register(CommandsRegistry.registerCommand(SHOW_AGENTS_IN_SIDE_TOOLBAR_COMMAND_ID, () => this.revealInToolbar(this.lineage.element)));
+		this._register(CommandsRegistry.registerCommand(SHOW_AGENTS_IN_SIDE_TOOLBAR_COMMAND_ID, () => this.revealInToolbar(this.lineage.element), 'public'));
 
 		this.chatResize = new ResizeObserver(() => {
 			this.syncDockToWindow();

@@ -332,7 +332,7 @@ async function pickSource(accessor: ServicesAccessor, placeholder: string): Prom
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: CAPTURE_WINDOW_COMMAND_ID, title: localize2('voltCapture.captureWindow', "Capture Window Screenshot…"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: CAPTURE_WINDOW_COMMAND_ID, visibility: 'internal', title: localize2('voltCapture.captureWindow', "Capture Window Screenshot…"), category: localize2('volt', "Volt"), f1: true });
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const capture = accessor.get(IVoltCaptureService);
@@ -354,7 +354,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: RECORD_WINDOW_COMMAND_ID, title: localize2('voltCapture.recordWindow', "Record Window…"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: RECORD_WINDOW_COMMAND_ID, visibility: 'internal', title: localize2('voltCapture.recordWindow', "Record Window…"), category: localize2('volt', "Volt"), f1: true });
 	}
 	async run(accessor: ServicesAccessor, sourceId?: string): Promise<void> {
 		const windows = accessor.get(IVoltWindowCaptureService);
@@ -381,7 +381,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: STOP_RECORDING_COMMAND_ID, title: localize2('voltCapture.stopRecording', "Stop Recording"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: STOP_RECORDING_COMMAND_ID, visibility: 'internal', title: localize2('voltCapture.stopRecording', "Stop Recording"), category: localize2('volt', "Volt"), f1: true });
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		await Promise.all(accessor.get(IVoltRecordingStatusService).recordings.map(recording => recording.stop()));

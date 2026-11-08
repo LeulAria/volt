@@ -37,6 +37,7 @@ registerAction2(class OpenAgentResourcesAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_AGENT_RESOURCES_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('agentResources.open', "Open Agent Resources"),
 			category: Categories.View,
 			icon: Codicon.layers,
@@ -71,6 +72,7 @@ for (const section of AGENT_RESOURCES_SECTIONS) {
 		constructor() {
 			super({
 				id: `${OPEN_AGENT_RESOURCES_COMMAND_ID}.${section.id}`,
+				visibility: 'public',
 				title: { value: localize('agentResources.openSection', "Agent Resources: {0}", section.label), original: `Agent Resources: ${section.label}` },
 				f1: true,
 			});

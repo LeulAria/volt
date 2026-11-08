@@ -158,6 +158,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_LIFECYCLE_UNDO_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.undoLifecycle', "Undo Last Chat Settle, Snooze, Archive or Pin"),
 			precondition: AgentLifecycleUndoContext,
 			keybinding: {

@@ -371,7 +371,7 @@ registerWorkbenchContribution2(WebPageChromeContribution.ID, WebPageChromeContri
 // The desktop's command, for the same entry points: Volt Settings > Devices.
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.agentServer.pairDevice', title: localize2('voltAgentServer.pairDevice', "Pair a Phone or Browser..."), category: localize2('volt', "Volt"), f1: true });
+		super({ id: 'volt.agentServer.pairDevice', visibility: 'internal', title: localize2('voltAgentServer.pairDevice', "Pair a Phone or Browser..."), category: localize2('volt', "Volt"), f1: true });
 	}
 	override run(accessor: ServicesAccessor): Promise<unknown> {
 		return accessor.get(ICommandService).executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID, 'devices');
@@ -402,7 +402,7 @@ registerWorkbenchContribution2(WebSettingsLinkContribution.ID, WebSettingsLinkCo
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.web.signOut', title: localize2('volt.web.signOut', "Sign Out of This Browser"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: 'volt.web.signOut', visibility: 'internal', title: localize2('volt.web.signOut', "Sign Out of This Browser"), category: localize2('volt', "Volt"), f1: true });
 	}
 	override async run(): Promise<void> {
 		await fetch('/api/workbench/session', { method: 'DELETE', credentials: 'same-origin' }).catch(() => undefined);

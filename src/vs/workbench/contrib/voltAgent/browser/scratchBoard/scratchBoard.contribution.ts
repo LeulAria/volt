@@ -128,7 +128,7 @@ export async function openScratchInTools(accessor: ServicesAccessor, sessionId: 
 
 registerAction2(class OpenScratchInToolsAction extends Action2 {
 	constructor() {
-		super({ id: OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, title: localize2('voltScratch.openInTools', "Open Scratch Beside Chat"), precondition: SCRATCH_ENABLED });
+		super({ id: OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, visibility: 'public', title: localize2('voltScratch.openInTools', "Open Scratch Beside Chat"), precondition: SCRATCH_ENABLED });
 	}
 
 	override async run(accessor: ServicesAccessor, sessionId?: unknown): Promise<boolean> {
@@ -138,7 +138,7 @@ registerAction2(class OpenScratchInToolsAction extends Action2 {
 
 registerAction2(class OpenFreshScratchBoardAction extends Action2 {
 	constructor() {
-		super({ id: OPEN_FRESH_SCRATCH_BOARD_COMMAND_ID, title: localize2('voltScratch.openFresh', "Open a Clean Scratch Board"), precondition: SCRATCH_ENABLED });
+		super({ id: OPEN_FRESH_SCRATCH_BOARD_COMMAND_ID, visibility: 'public', title: localize2('voltScratch.openFresh', "Open a Clean Scratch Board"), precondition: SCRATCH_ENABLED });
 	}
 
 	override async run(accessor: ServicesAccessor): Promise<void> {
@@ -168,7 +168,7 @@ export async function openScratchBoardBeside(accessor: ServicesAccessor, session
 
 registerAction2(class OpenScratchBoardBesideAction extends Action2 {
 	constructor() {
-		super({ id: OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, title: localize2('voltScratch.openBeside', "Open Scratch Board Beside Chat") });
+		super({ id: OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, visibility: 'public', title: localize2('voltScratch.openBeside', "Open Scratch Board Beside Chat") });
 	}
 
 	/** `frameId`: a drawing to select and bring into view (a picture of it was clicked in the chat). */
@@ -181,6 +181,7 @@ registerAction2(class OpenScratchBoardAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_SCRATCH_BOARD_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltScratch.open', "Open Scratch"),
 			category: localize2('voltAgent.category', "Agent"),
 			precondition: SCRATCH_ENABLED,
@@ -198,6 +199,7 @@ registerAction2(class NewScratchBoardAction extends Action2 {
 	constructor() {
 		super({
 			id: NEW_SCRATCH_BOARD_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltScratch.newCommand', "New Scratch Board"),
 			category: localize2('voltAgent.category', "Agent"),
 			precondition: SCRATCH_ENABLED,

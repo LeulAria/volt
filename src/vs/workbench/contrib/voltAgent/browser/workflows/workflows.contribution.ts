@@ -35,6 +35,7 @@ registerAction2(class OpenWorkflowsAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_WORKFLOWS_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltWorkflows.open', "Show Workflows"),
 			category: localize2('voltAgent.category', "Agent"),
 			icon: Codicon.typeHierarchy,
@@ -51,6 +52,7 @@ registerAction2(class NewWorkflowAction extends Action2 {
 	constructor() {
 		super({
 			id: NEW_WORKFLOW_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltWorkflows.new', "New Workflow…"),
 			category: localize2('voltAgent.category', "Agent"),
 			icon: Codicon.typeHierarchy,
@@ -74,6 +76,7 @@ registerAction2(class RunWorkflowAction extends Action2 {
 	constructor() {
 		super({
 			id: RUN_WORKFLOW_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltWorkflows.run', "Run Workflow…"),
 			category: localize2('voltAgent.category', "Agent"),
 			icon: Codicon.play,

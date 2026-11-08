@@ -1645,11 +1645,11 @@ CommandsRegistry.registerCommand(AUTOMATE_BROWSER_COMMAND_ID, (accessor: Service
 		}
 		source.dispose();
 	});
-});
+}, 'internal');
 
 CommandsRegistry.registerCommand(BROWSER_PAGE_URL_COMMAND_ID, (accessor: ServicesAccessor, sessionId: string): string | undefined => {
 	return sessionBrowser(accessor.get(IAgentRuntimeService).chatFor(sessionId))?.input.url;
-});
+}, 'internal');
 
 CommandsRegistry.registerCommand(PREFLIGHT_BROWSER_COMMAND_ID, (accessor: ServicesAccessor, callerId: string, request: IVoltBrowserPreflightRequest, token?: CancellationToken): Promise<IVoltBrowserPreflightResult> => {
 	// A warm-pool agent's id names the chat it was given, like the browser tool calls.
@@ -1661,7 +1661,7 @@ CommandsRegistry.registerCommand(PREFLIGHT_BROWSER_COMMAND_ID, (accessor: Servic
 	const services: IAutomationServices = { workspace: accessor.get(IAgentWorkspaceService), views: accessor.get(IVoltBrowserViews), files: accessor.get(IFileService), groups: accessor.get(IEditorGroupsService), browser };
 	// A primer that failed says nothing rather than something the agent would have to work around.
 	return queue.queue(sessionId, () => preflight(services, browser, sessionId, request, token ?? CancellationToken.None).catch((): IVoltBrowserPreflightResult => ({ lines: [] })));
-});
+}, 'internal');
 
 function logTail(log: string, max: number): string {
 	const text = log.replace(/\x1b\[[0-9;]*m/g, '').trim();

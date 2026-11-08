@@ -119,6 +119,7 @@ registerAction2(class ToggleAgentSidebarRailAction extends Action2 {
 	constructor() {
 		super({
 			id: TOGGLE_AGENT_SIDEBAR_RAIL_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.toggleSidebarRail', "Toggle Agent Sidebar Icon Rail"),
 			category: Categories.View,
 			f1: true,
@@ -133,6 +134,7 @@ registerAction2(class ToggleAgentCompactListAction extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.agent.toggleCompactList',
+			visibility: 'public',
 			title: localize2('voltAgent.toggleCompactList', "Toggle Compact Agent List"),
 			category: Categories.View,
 			f1: true,
@@ -148,6 +150,7 @@ registerAction2(class ChangeProjectIconAction extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.agent.changeProjectIcon',
+			visibility: 'internal',
 			title: localize2('voltAgent.changeProjectIcon', "Change Project Icon…"),
 			category: Categories.View,
 			f1: true,

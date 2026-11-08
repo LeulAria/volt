@@ -179,6 +179,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_SCROLL_PAGE_UP_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.scrollPageUp', "Scroll Chat Up a Page"),
 			category: Categories.View,
 			f1: true,
@@ -195,6 +196,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_SCROLL_PAGE_DOWN_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.scrollPageDown', "Scroll Chat Down a Page"),
 			category: Categories.View,
 			f1: true,
@@ -211,6 +213,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_SCROLL_TOP_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.scrollToTop', "Scroll Chat to Top"),
 			category: Categories.View,
 			f1: true,
@@ -227,6 +230,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_SCROLL_BOTTOM_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.scrollToBottom', "Scroll Chat to Bottom"),
 			category: Categories.View,
 			f1: true,
@@ -245,6 +249,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_PREVIOUS_MESSAGE_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.previousMessage', "Go to Previous Message in Chat"),
 			category: Categories.View,
 			f1: true,
@@ -261,6 +266,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_NEXT_MESSAGE_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.nextMessage', "Go to Next Message in Chat"),
 			category: Categories.View,
 			f1: true,
