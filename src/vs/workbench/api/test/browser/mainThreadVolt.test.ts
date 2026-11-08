@@ -38,7 +38,8 @@ import { IExtensionService } from '../../../services/extensions/common/extension
 import { ExtensionsProposedApi } from '../../../services/extensions/common/extensionsProposedApi.js';
 import { VoltCapabilityError } from '../../../services/voltPlugins/common/capabilities.js';
 import { IVoltExtensionApiService } from '../../../services/voltPlugins/common/voltExtensionApi.js';
-import { IAutomation, IAutomationCreateInput, IAutomationService } from '../../../services/voltRuntime/common/automations/automations.js';
+import { IAutomation, IAutomationCreateInput, IAutomationRun, IAutomationService } from '../../../services/voltRuntime/common/automations/automations.js';
+import { OPEN_AUTOMATIONS_COMMAND_ID } from '../../../contrib/voltAutomations/common/voltAutomations.js';
 import { IAgentHistoryService, IAgentSessionMeta } from '../../../services/voltRuntime/common/history/agentHistory.js';
 import { BROWSER_PAGE_URL_COMMAND_ID, IVoltHostToolCall, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
 import { IVoltMemory, IVoltMemoryDraft, IVoltMemoryService } from '../../../services/voltRuntime/common/memory/voltMemory.js';
@@ -176,6 +177,9 @@ suite('Volt extension API (vscode.volt)', () => {
 				automations.push(automation);
 				return automation;
 			}
+			override get(id: string) { return automations.find(automation => automation.id === id); }
+			override async runNow(id: string) { return [{ id: `r-${id}`, at: 1, status: 'running', provider: 'manual', label: 'Run now', threadId: 'chat-9' } as IAutomationRun]; }
+			override async delete(id: string) { automations.splice(automations.findIndex(automation => automation.id === id), 1); }
 		});
 		instantiation.stub(IVoltUsageService, new class extends mock<IVoltUsageService>() {
 			override async getUsage(): Promise<IVoltUsageSnapshot> {
@@ -379,6 +383,29 @@ suite('Volt extension API (vscode.volt)', () => {
 		assert.deepStrictEqual(await volt.pullRequests.list('chat-1'), [{ url: 'https://github.com/acme/app/pull/12', number: 12, repository: 'acme/app', watched: true }]);
 		assert.strictEqual((await volt.pullRequests.link('chat-1', 'https://github.com/acme/app/pull/13')).text, 'ran link_pull_request');
 		assert.strictEqual(h.invoked.find(call => call.name === 'link_pull_request')?.call?.sessionId, 'chat-1');
+	});
+
+	test('EXT-RT-automations-own: show the page; run and remove only the automations it scheduled', async () => {
+		const bare = description('acme.bare', { contributes: {} });
+		const h = host([acme(), bare], ['acme.notes', 'acme.bare']);
+		h.grant('acme.notes', 'automations.schedule');
+		const volt = h.voltFor('acme.notes');
+		await volt.automations.show('a1');
+		await volt.automations.show();
+		assert.deepStrictEqual(h.commands.filter(command => command.id === OPEN_AUTOMATIONS_COMMAND_ID).map(command => command.args), [['a1'], []]);
+		const own = await volt.automations.schedule({ name: 'Morning triage', instructions: 'Triage new issues.', schedule: { type: 'daily', time: '09:00' } });
+		assert.strictEqual(h.automations[0].createdByExtension, 'acme.notes', 'core records who scheduled it, not the payload');
+		h.automations.push({ ...h.automations[0], id: 'mine', createdByExtension: undefined, createdBy: 'You' } as IAutomation);
+		assert.deepStrictEqual(await volt.automations.run(own.id), [{ id: 'r-a1', status: 'running', chatId: 'chat-9' }]);
+		await assert.rejects(Promise.resolve(volt.automations.run('mine')), /is not an automation Notes scheduled/, 'the user\'s own automation');
+		await assert.rejects(Promise.resolve(volt.automations.remove('mine')), /is not an automation Notes scheduled/);
+		await volt.automations.remove(own.id);
+		assert.deepStrictEqual(h.automations.map(automation => automation.id), ['mine']);
+		// Undeclared: refused before anything runs.
+		const other = h.voltFor('acme.bare');
+		assert.strictEqual((await refusal(other.automations.run('mine'))).deniedBy, 'manifest');
+		assert.strictEqual((await refusal(other.automations.remove('mine'))).deniedBy, 'manifest');
+		assert.deepStrictEqual(h.automations.map(automation => automation.id), ['mine']);
 	});
 
 	// --- Identity ---------------------------------------------------------------------------------

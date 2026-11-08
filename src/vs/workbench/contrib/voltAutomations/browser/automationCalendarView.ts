@@ -3,32 +3,32 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import '../media/agentAutomationsCalendar.css';
-import { $, addDisposableListener, append, clearNode, disposableWindowInterval, getActiveDocument, getWindow } from '../../../../../base/browser/dom.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { ThemeIcon } from '../../../../../base/common/themables.js';
-import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
-import { ScrollbarVisibility } from '../../../../../base/common/scrollable.js';
-import { URI } from '../../../../../base/common/uri.js';
-import { generateUuid } from '../../../../../base/common/uuid.js';
-import { localize } from '../../../../../nls.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
-import { INotificationService } from '../../../../../platform/notification/common/notification.js';
-import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
+import './media/agentAutomationsCalendar.css';
+import { $, addDisposableListener, append, clearNode, disposableWindowInterval, getActiveDocument, getWindow } from '../../../../base/browser/dom.js';
+import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { DomScrollableElement } from '../../../../base/browser/ui/scrollbar/scrollableElement.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
+import { Disposable, DisposableStore, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { ScrollbarVisibility } from '../../../../base/common/scrollable.js';
+import { URI } from '../../../../base/common/uri.js';
+import { generateUuid } from '../../../../base/common/uuid.js';
+import { localize } from '../../../../nls.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
+import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import {
 	AutomationSchedule, describeSchedule, describeTrigger, formatDuration, gmtOffsetLabel, IAutomation, IAutomationRun, IAutomationService, isActiveRun, scheduleKindOf, weekdayName,
-} from '../../../../services/voltRuntime/common/automations/automations.js';
-import { daySlots, ICalendarDaySlots, ICalendarRepeat, ICalendarRun, ICalendarSlot, isFrequentSchedule, isRoutineSchedule, packColumns, runPullRequest, runsBetween, triggerSlotsOnDay } from '../../../../services/voltRuntime/common/automations/automationCalendar.js';
-import { AUTOMATION_TEMPLATES } from '../../../../services/voltRuntime/common/automations/automationTemplates.js';
-import { setAgentTooltip } from '../chrome/agentTooltip.js';
-import { OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
-import { addDays, addMonths, calendarWeeks, combineDayAndTime, dateTimeFormat, minutesOfDay, startOfDay, startOfMonth } from '../ui/dateTime/voltDateTime.js';
-import { IVoltMenuHandle, IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
-import { AutomationsView, IAutomationsHost } from './automationRoutes.js';
-import { button, iconButton } from './automationUi.js';
+} from '../../../services/voltRuntime/common/automations/automations.js';
+import { daySlots, ICalendarDaySlots, ICalendarRepeat, ICalendarRun, ICalendarSlot, isFrequentSchedule, isRoutineSchedule, packColumns, runPullRequest, runsBetween, triggerSlotsOnDay } from '../../../services/voltRuntime/common/automations/automationCalendar.js';
+import { AUTOMATION_TEMPLATES } from '../../../services/voltRuntime/common/automations/automationTemplates.js';
+import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
+import { OPEN_AGENT_COMMAND_ID } from '../../voltAgent/browser/editor/agentEditorInput.js';
+import { addDays, addMonths, calendarWeeks, combineDayAndTime, dateTimeFormat, minutesOfDay, startOfDay, startOfMonth } from '../../voltAgent/browser/ui/dateTime/voltDateTime.js';
+import { IVoltMenuHandle, IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../../voltAgent/browser/ui/menu/voltMenu.js';
+import { AutomationsView, IAutomationsHost } from '../../voltAgent/browser/automations/automationRoutes.js';
+import { button, iconButton } from '../../voltAgent/browser/automations/automationUi.js';
 
 export type CalendarView = Exclude<AutomationsView, 'list'>;
 

@@ -14,13 +14,19 @@ import { INotificationService } from '../../../../../platform/notification/commo
 import { IQuickInputService, IQuickPickItem } from '../../../../../platform/quickinput/common/quickInput.js';
 import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { IWorkflowService, WorkflowRecord } from '../../../../services/voltRuntime/common/workflows/workflowTypes.js';
-import { IWorkflowSeed } from '../automations/automationRoutes.js';
-import { openAutomations } from '../automations/automations.contribution.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { OPEN_AUTOMATIONS_ROUTE_COMMAND_ID } from '../../../voltAutomations/common/voltAutomations.js';
+import { AutomationsRoute, IWorkflowSeed } from '../automations/automationRoutes.js';
 import { registerAgentPaletteEntry } from '../editor/agentCommandPalette.js';
 import { WorkflowAutomationBridge } from './workflowAutomationBridge.js';
 import { WorkflowService } from './workflowService.js';
 
 registerSingleton(IWorkflowService, WorkflowService, InstantiationType.Delayed);
+
+/** Workflows live in the Automations tab, a page of the Automations feature's module. */
+function openAutomations(accessor: ServicesAccessor, route: AutomationsRoute): Promise<void> {
+	return accessor.get(ICommandService).executeCommand(OPEN_AUTOMATIONS_ROUTE_COMMAND_ID, route);
+}
 
 registerWorkbenchContribution2(WorkflowAutomationBridge.ID, WorkflowAutomationBridge, WorkbenchPhase.AfterRestored);
 

@@ -403,6 +403,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 			updatedAt: now,
 			createdBy: this.creator(),
 			...(input.createdByAgent ? { createdByAgent: true } : {}),
+			...(input.createdByExtension ? { createdByExtension: input.createdByExtension } : {}),
 			...(input.sourceThreadId ? { sourceThreadId: input.sourceThreadId } : {}),
 			...(input.sandbox && input.sandbox.level !== 'off' ? { sandbox: input.sandbox } : {}),
 			nextRuns: {},

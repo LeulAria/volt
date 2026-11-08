@@ -4,11 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Event } from '../../../../base/common/event.js';
-import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
 import { ILocalizedString } from '../../../../platform/action/common/action.js';
 import { CommandVisibility } from '../../../../platform/commands/common/commands.js';
 import { createDecorator, IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
-import { IEditorSerializer } from '../../../common/editor.js';
+import { EditorsOrder, IEditorSerializer } from '../../../common/editor.js';
+import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { ILifecycleService } from '../../../services/lifecycle/common/lifecycle.js';
 import { IVoltPluginContext } from '../../../services/voltPlugins/common/voltApi.js';
 
 /**
@@ -77,4 +79,22 @@ export interface IVoltFeatureModuleService {
 	 * is off or has no module. The result is the module's own object, typed by its contract file.
 	 */
 	activate<T extends IVoltFeatureModule = IVoltFeatureModule>(feature: string): Promise<T | undefined>;
+}
+
+/**
+ * Closes the module's tabs (editors of `typeIds`) when it unloads because its feature was turned
+ * off: with its editor pane unregistered they couldn't show. Not when the window shuts down, so
+ * they still come back after a reload.
+ */
+export function closeModuleEditorsOnUnload(host: IVoltFeatureModuleHost, typeIds: readonly string[]): void {
+	host.subscriptions.add(toDisposable(() => host.instantiationService.invokeFunction(accessor => {
+		if (accessor.get(ILifecycleService).willShutdown) {
+			return;
+		}
+		const editorService = accessor.get(IEditorService);
+		const open = editorService.getEditors(EditorsOrder.SEQUENTIAL).filter(({ editor }) => typeIds.includes(editor.typeId));
+		if (open.length) {
+			void editorService.closeEditors(open);
+		}
+	})));
 }

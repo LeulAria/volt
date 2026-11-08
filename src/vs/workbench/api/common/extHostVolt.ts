@@ -154,6 +154,9 @@ export class ExtHostVolt implements ExtHostVoltShape {
 		const automations: typeof vscode.volt.automations = {
 			list: () => call('automations.list'),
 			schedule: options => call('automations.schedule', options),
+			show: automationId => call('automations.show', automationId),
+			run: automationId => call('automations.run', automationId),
+			remove: automationId => call('automations.remove', automationId),
 		};
 
 		const usage: typeof vscode.volt.usage = {

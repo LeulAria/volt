@@ -162,11 +162,26 @@ export interface IVoltAutomationSummary {
 	readonly runCount: number;
 }
 
+/** One run an automation started. */
+export interface IVoltAutomationRun {
+	readonly id: string;
+	/** `queued`, `running`, `succeeded`, `failed`, ... */
+	readonly status: string;
+	/** The chat the run went to. */
+	readonly chatId?: string;
+}
+
 export interface IVoltAutomationsApi {
 	/** `agents.read:any`: automations run agents with prompts the user wrote. */
 	list(): Promise<readonly IVoltAutomationSummary[]>;
 	/** `automations.schedule`: a scheduled agent run (a new chat each time, or `chatId`'s chat). */
 	schedule(options: { readonly name: string; readonly instructions: string; readonly schedule: VoltAutomationSchedule; readonly chatId?: string; readonly enabled?: boolean }): Promise<IVoltAutomationSummary>;
+	/** `ui.contribute`: shows the Automations page, or one automation's. Nothing comes back. */
+	show(automationId?: string): Promise<void>;
+	/** `automations.schedule`: runs now an automation this plugin scheduled (anyone else's is refused). */
+	run(automationId: string): Promise<readonly IVoltAutomationRun[]>;
+	/** `automations.schedule`: deletes an automation this plugin scheduled (anyone else's is refused). */
+	remove(automationId: string): Promise<void>;
 }
 
 export interface IVoltUsageModelTotal {
@@ -329,6 +344,11 @@ export interface IVoltApiBackend {
 	browserPageUrl?(chatId: string): Promise<string | undefined>;
 	listAutomations?(): Promise<readonly IVoltAutomationSummary[]>;
 	scheduleAutomation?(options: { readonly name: string; readonly instructions: string; readonly schedule: VoltAutomationSchedule; readonly chatId?: string; readonly enabled: boolean }, caller: IVoltApiCaller): Promise<IVoltAutomationSummary>;
+	showAutomations?(automationId: string | undefined): Promise<void>;
+	/** Refuses an automation `caller` didn't schedule. */
+	runAutomation?(automationId: string, caller: IVoltApiCaller): Promise<readonly IVoltAutomationRun[]>;
+	/** Refuses an automation `caller` didn't schedule. */
+	deleteAutomation?(automationId: string, caller: IVoltApiCaller): Promise<void>;
 	readUsage?(): Promise<IVoltUsageSummary>;
 	listPullRequests?(chatId: string): Promise<readonly IVoltPullRequestLink[]>;
 }
@@ -617,6 +637,18 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 				check({ api: 'automations.schedule', capability: 'agents.send', target: options.chatId });
 			}
 			return bound(backend.scheduleAutomation, 'automations.schedule').call(backend, { ...options, enabled: options.enabled !== false }, caller(options.chatId));
+		},
+		async show(automationId) {
+			check({ api: 'automations.show', capability: 'ui.contribute', ...(automationId ? { target: automationId } : {}) });
+			return bound(backend.showAutomations, 'automations.show').call(backend, automationId);
+		},
+		async run(automationId) {
+			check({ api: 'automations.run', capability: 'automations.schedule', target: automationId });
+			return bound(backend.runAutomation, 'automations.run').call(backend, automationId, caller());
+		},
+		async remove(automationId) {
+			check({ api: 'automations.remove', capability: 'automations.schedule', target: automationId });
+			return bound(backend.deleteAutomation, 'automations.remove').call(backend, automationId, caller());
 		},
 	};
 

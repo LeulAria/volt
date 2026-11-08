@@ -75,7 +75,8 @@ import { createVoltDropdown, IVoltDropdownOption } from '../../voltAgent/browser
 import { createAgentHeaderSeparatorIcon } from '../../voltAgent/browser/chrome/agentTitlebarHeader.js';
 import { AgentFooterAction, appendAgentFooterActions } from '../../voltAgent/browser/home/agentHomeFooterActions.js';
 import { AgentCustomizeEditor, AgentCustomizeEditorInput } from '../../voltAgent/browser/customize/agentCustomizeEditor.js';
-import { AutomationsEditor, AutomationsEditorInput } from '../../voltAgent/browser/automations/automationsEditor.js';
+import { AUTOMATIONS_FEATURE_ID, IAutomationsEmbeddedPage, IVoltAutomationsModule } from '../../voltAutomations/common/voltAutomations.js';
+import { IVoltFeatureModule, IVoltFeatureModuleService } from '../../voltCustomize/browser/voltFeatureModules.js';
 import { createHomeAutomationsIcon } from '../../voltAgent/browser/home/agentHomeIcons.js';
 import { IVoltFeatureService } from '../../voltCustomize/common/voltFeatures.js';
 import { RunOnceScheduler } from '../../../../base/common/async.js';
@@ -228,7 +229,9 @@ export class VoltSettingsEditor extends EditorPane {
 	private customizePane: AgentCustomizeEditor | undefined;
 	/** Automations: the agent's Automations page, hosted here like Skills & Plugins. */
 	private automationsHost!: HTMLElement;
-	private automationsPane: AutomationsEditor | undefined;
+	/** The Automations module's page, once the module is loaded (it goes if the module unloads). */
+	private automationsPane: IAutomationsEmbeddedPage | undefined;
+	private automationsLoading = false;
 	/** Every registered setting by category: VS Code's settings editor model, sorted for the nav. */
 	private catalogModel: Settings2EditorModel | undefined;
 	private catalog: ISettingsCatalogCategory[] = [];
@@ -888,26 +891,47 @@ export class VoltSettingsEditor extends EditorPane {
 		}
 		const automations = this.automationsHost;
 		if (this.automationsPane && this.section === 'automations' && automations.isConnected && automations.clientWidth && automations.clientHeight) {
-			this.automationsPane.layout(new Dimension(automations.clientWidth, automations.clientHeight));
+			this.automationsPane.layout(automations.clientWidth, automations.clientHeight);
 		}
 	}
 
-	/** Shows the hosted Automations page, making it on first visit. */
+	/** Shows the hosted Automations page, loading the Automations module and making the page on first visit. */
 	private showAutomations(): void {
 		if (!this.isVisible()) {
 			return;
 		}
-		let pane = this.automationsPane;
-		if (!pane) {
-			pane = this.automationsPane = this._register(this.instantiationService.createInstance(AutomationsEditor, this.group));
-			pane.create(this.automationsHost);
-			pane.setVisible(true);
-			const input = this._register(new AutomationsEditorInput());
-			void pane.setInput(input, undefined, {}, CancellationToken.None).then(() => this.layoutCustomize());
-		} else {
-			pane.setVisible(true);
+		if (this.automationsPane) {
+			this.automationsPane.setVisible(true);
+			this.layoutCustomize();
+			return;
 		}
-		this.layoutCustomize();
+		if (this.automationsLoading) {
+			return;
+		}
+		this.automationsLoading = true;
+		const modules = this.instantiationService.invokeFunction(accessor => accessor.get(IVoltFeatureModuleService));
+		void modules.activate<IVoltFeatureModule & IVoltAutomationsModule>(AUTOMATIONS_FEATURE_ID).then(module => {
+			this.automationsLoading = false;
+			if (!module || this.automationsPane || this._store.isDisposed) {
+				return;
+			}
+			const page = this.automationsPane = module.createEmbeddedPage(this.automationsHost, this.group);
+			this._register(page);
+			// Disabling the extension unloads the module, and the page with it.
+			const unloaded = this._register(modules.onDidChange(feature => {
+				if (feature === AUTOMATIONS_FEATURE_ID && !modules.isActive(feature)) {
+					unloaded.dispose();
+					if (this.automationsPane === page) {
+						this.automationsPane = undefined;
+					}
+				}
+			}));
+			page.setVisible(this.section === 'automations' && this.isVisible());
+			this.layoutCustomize();
+		}, error => {
+			this.automationsLoading = false;
+			this.logService.error('[volt settings] the Automations page did not load', error);
+		});
 	}
 
 	private get target(): HTMLElement {

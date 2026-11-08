@@ -25,6 +25,7 @@
 	"contributes": {
 		"voltModule": {
 			"feature": "automations",
+			"entry": "voltAutomations",
 			"label": "Automations",
 			"description": "Scheduled and triggered runs, the calendar, and the tools agents manage them with.",
 			"category": "productivity",

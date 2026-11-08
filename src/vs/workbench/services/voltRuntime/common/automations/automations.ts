@@ -162,6 +162,8 @@ export interface IAutomation extends IAutomationDraft {
 	/** The signed-in account that made it ("LeulAria"), else "You". */
 	readonly createdBy: string;
 	readonly createdByAgent?: boolean;
+	/** The extension that scheduled it through `vscode.volt.automations` (only it may run or delete it there). */
+	readonly createdByExtension?: string;
 	/** The chat an agent created it from. */
 	readonly sourceThreadId?: string;
 	/**
@@ -893,7 +895,7 @@ export function parseAutomation(value: unknown): IAutomation | undefined {
 		triggers: list(value.triggers, parseTrigger),
 		repositories: list(value.repositories, parseRepository),
 		tools: list(value.tools, parseTool),
-		...strings(value, ['modelRef', 'mode', 'templateId', 'threadId', 'sourceThreadId', 'workflowId']),
+		...strings(value, ['modelRef', 'mode', 'templateId', 'threadId', 'sourceThreadId', 'workflowId', 'createdByExtension']),
 		...(value.shared === true ? { shared: true } : {}),
 		...(value.createdByAgent === true ? { createdByAgent: true } : {}),
 		...(isRecord(value.sandbox) && normalizeSandboxSettings(value.sandbox).level !== 'off' ? { sandbox: normalizeSandboxSettings(value.sandbox) } : {}),
@@ -1077,6 +1079,7 @@ export const IAutomationService = createDecorator<IAutomationService>('automatio
 
 export interface IAutomationCreateInput extends Partial<IAutomationDraft> {
 	readonly createdByAgent?: boolean;
+	readonly createdByExtension?: string;
 	readonly sourceThreadId?: string;
 	readonly sandbox?: IVoltSandboxSettings;
 }

@@ -16,7 +16,8 @@
 //   `common/`, the `volt` facade (`services/voltPlugins/common/`), the module host types and the UI
 //   kit. Any other core module it still uses is listed per feature in
 //   feature-import-allowlist.json: a ratchet, so the list only shrinks. A new core import fails; an
-//   entry nothing uses any more is reported as stale.
+//   entry nothing uses any more is reported as stale. The feature's own `test/` folder is exempt
+//   from this rule (tests set up core around the module), not from the other.
 //
 // Usage: node build/volt/ci/featureImportLint.mjs [--root <dir>] [--warn]
 //   --warn   report, but exit 0
@@ -133,7 +134,8 @@ export function checkFile(file, text, features, allowlist) {
 			}
 			continue;
 		}
-		if (own && !fenced && !ALWAYS_ALLOWED.some(prefix => target.startsWith(prefix)) && !(allowlist[own.feature] ?? []).includes(target)) {
+		const test = !!own && file.startsWith(`${own.folder}test/`);
+		if (own && !test && !fenced && !ALWAYS_ALLOWED.some(prefix => target.startsWith(prefix)) && !(allowlist[own.feature] ?? []).includes(target)) {
 			findings.push({ file, line, target, rule: 'out', feature: own.feature, text: lineText });
 		}
 	}
@@ -173,7 +175,7 @@ export function scan(root, allowlist) {
 		const text = fs.readFileSync(path.join(root, file), 'utf8');
 		findings.push(...checkFile(file, text, features, allowlist));
 		const own = features.find(feature => file.startsWith(feature.folder));
-		if (own) {
+		if (own && !file.startsWith(`${own.folder}test/`)) {
 			for (const { target } of importsOf(file, text)) {
 				used.get(own.feature).add(target);
 			}

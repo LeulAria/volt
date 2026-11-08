@@ -127,6 +127,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 			voltModule: {
 				feature: 'automations',
+				entry: 'voltAutomations',
 				label: 'Automations',
 				description: 'Scheduled and triggered runs, the calendar, and the tools agents manage them with.',
 				category: 'productivity',

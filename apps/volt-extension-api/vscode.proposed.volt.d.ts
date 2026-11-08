@@ -228,12 +228,27 @@ declare module 'vscode' {
 			readonly runCount: number;
 		}
 
+		/** One run an automation started. */
+		export interface AutomationRun {
+			readonly id: string;
+			/** `queued`, `running`, `succeeded`, `failed`, ... */
+			readonly status: string;
+			/** The chat the run went to. */
+			readonly chatId?: string;
+		}
+
 		/** Scheduled agent runs. */
 		export namespace automations {
 			/** Capability: `agents.read:any`. */
 			export function list(): Thenable<readonly Automation[]>;
 			/** Runs an agent with `instructions` on a schedule (a new chat each run, or `chatId`). Capability: `automations.schedule`. */
 			export function schedule(options: { readonly name: string; readonly instructions: string; readonly schedule: AutomationSchedule; readonly chatId?: string; readonly enabled?: boolean }): Thenable<Automation>;
+			/** Shows the Automations page, or one automation's page. Capability: `ui.contribute`. */
+			export function show(automationId?: string): Thenable<void>;
+			/** Runs now an automation this extension scheduled; anyone else's is refused. Capability: `automations.schedule`. */
+			export function run(automationId: string): Thenable<readonly AutomationRun[]>;
+			/** Deletes an automation this extension scheduled; anyone else's is refused. Capability: `automations.schedule`. */
+			export function remove(automationId: string): Thenable<void>;
 		}
 
 		export interface UsageSummary {

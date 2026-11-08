@@ -3,50 +3,50 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, clearNode, getWindow } from '../../../../../base/browser/dom.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { RunOnceScheduler } from '../../../../../base/common/async.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
-import { isMacintosh } from '../../../../../base/common/platform.js';
-import { basename } from '../../../../../base/common/resources.js';
-import { URI } from '../../../../../base/common/uri.js';
-import { generateUuid } from '../../../../../base/common/uuid.js';
-import { localize } from '../../../../../nls.js';
-import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
-import { IDialogService, IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
-import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { ILayoutService } from '../../../../../platform/layout/browser/layoutService.js';
-import { INotificationService } from '../../../../../platform/notification/common/notification.js';
-import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
-import { IVoltPullRequestService } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
-import { IVoltRelayService, IVoltRelayState } from '../../../../../platform/voltRelay/common/voltRelay.js';
-import { IWorkspacesService, isRecentFolder } from '../../../../../platform/workspaces/common/workspaces.js';
+import { $, addDisposableListener, append, clearNode, getWindow } from '../../../../base/browser/dom.js';
+import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { RunOnceScheduler } from '../../../../base/common/async.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { Disposable, DisposableStore, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { isMacintosh } from '../../../../base/common/platform.js';
+import { basename } from '../../../../base/common/resources.js';
+import { URI } from '../../../../base/common/uri.js';
+import { generateUuid } from '../../../../base/common/uuid.js';
+import { localize } from '../../../../nls.js';
+import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
+import { IDialogService, IFileDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
+import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { IVoltPullRequestService } from '../../../../platform/voltPullRequests/common/voltPullRequests.js';
+import { IVoltRelayService, IVoltRelayState } from '../../../../platform/voltRelay/common/voltRelay.js';
+import { IWorkspacesService, isRecentFolder } from '../../../../platform/workspaces/common/workspaces.js';
 import {
 	AutomationToolKind, defaultSchedule, describeSchedule, IAutomation, IAutomationDraft, IAutomationRepository, IAutomationService,
 	IAutomationTool, IAutomationTrigger, isActiveRun, scheduleKindOf, scheduleSaveError,
-} from '../../../../services/voltRuntime/common/automations/automations.js';
-import { automationTemplate } from '../../../../services/voltRuntime/common/automations/automationTemplates.js';
-import { AutomationProvider, eventLabel, eventOption, providerLabel, providerSignature } from '../../../../services/voltRuntime/common/automations/automationTriggers.js';
-import { formatWebhookFilter, IAgentWebhookFilter, IAgentWebhookTrigger, newWebhookTrigger, parseWebhookFilter } from '../../../../services/voltRuntime/common/automations/automationWebhooks.js';
-import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
-import { IVoltQueryCache } from '../../../../services/voltRuntime/browser/queryCache.js';
-import { IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
-import { setAgentTooltip } from '../chrome/agentTooltip.js';
-import { OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID } from '../editor/agentEditorInput.js';
-import { createVoltDropdown } from '../ui/dropdown/voltDropdown.js';
-import { showVoltMenu } from '../ui/menu/voltMenu.js';
+} from '../../../services/voltRuntime/common/automations/automations.js';
+import { automationTemplate } from '../../../services/voltRuntime/common/automations/automationTemplates.js';
+import { AutomationProvider, eventLabel, eventOption, providerLabel, providerSignature } from '../../../services/voltRuntime/common/automations/automationTriggers.js';
+import { formatWebhookFilter, IAgentWebhookFilter, IAgentWebhookTrigger, newWebhookTrigger, parseWebhookFilter } from '../../../services/voltRuntime/common/automations/automationWebhooks.js';
+import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
+import { IVoltQueryCache } from '../../../services/voltRuntime/browser/queryCache.js';
+import { IVoltSessionContextService, uriFromStoredRoot } from '../../../services/voltRuntime/common/sessionContext.js';
+import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
+import { OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID } from '../../voltAgent/browser/editor/agentEditorInput.js';
+import { createVoltDropdown } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
+import { showVoltMenu } from '../../voltAgent/browser/ui/menu/voltMenu.js';
 import { AutomationComposer } from './automationComposer.js';
-import { formatScheduleWhen } from './automationFormat.js';
-import { connectVoltRelay, hookUrl } from './automationHooks.js';
-import { memoriesIcon, providerIcon, toolKindIcon } from './automationIcons.js';
-import { forgetRemoteNames, IRepositoryCandidate, showRepositoryMenu, showToolMenu, showTriggerMenu, ToolPick } from './automationPickers.js';
+import { formatScheduleWhen } from '../../voltAgent/browser/automations/automationFormat.js';
+import { connectVoltRelay, hookUrl } from '../../voltAgent/browser/automations/automationHooks.js';
+import { memoriesIcon, providerIcon, toolKindIcon } from '../../voltAgent/browser/automations/automationIcons.js';
+import { forgetRemoteNames, IRepositoryCandidate, showRepositoryMenu, showToolMenu, showTriggerMenu, ToolPick } from '../../voltAgent/browser/automations/automationPickers.js';
 import { renderScheduleRow } from './automationScheduleRow.js';
-import { AutomationsRoute, IAutomationSeed, IAutomationsHost, IAutomationsPage } from './automationRoutes.js';
+import { AutomationsRoute, IAutomationSeed, IAutomationsHost, IAutomationsPage } from '../../voltAgent/browser/automations/automationRoutes.js';
 import { RunHistoryPanel } from './automationRunsView.js';
-import { button, field, flashLabel, iconButton, pillTabs, showAutomationDialog, toggleSwitch } from './automationUi.js';
+import { button, field, flashLabel, iconButton, pillTabs, showAutomationDialog, toggleSwitch } from '../../voltAgent/browser/automations/automationUi.js';
 
 type Tab = 'settings' | 'runs';
 

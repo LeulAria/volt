@@ -172,15 +172,18 @@ Chart specs are the ones the `render_chart` tool takes; Scratch drawings take wh
 
 ```ts
 const automations = await volt.automations.list();                  // [agents.read:any]
-await volt.automations.schedule({                                     // [automations.schedule]
+const automation = await volt.automations.schedule({                  // [automations.schedule]
   name: 'Morning triage',
   instructions: 'Triage the issues opened since yesterday.',
   schedule: { type: 'weekly', weekdays: [1, 2, 3, 4, 5], time: '09:00' },
   // chatId: run in this chat instead of a new one each time (also needs agents.send)
 });
+await volt.automations.show(automation.id);                           // [ui.contribute] the Automations page, or one automation's
+const runs = await volt.automations.run(automation.id);               // [automations.schedule] runs it now: [{ id, status, chatId? }]
+await volt.automations.remove(automation.id);                         // [automations.schedule]
 ```
 
-Schedules: `hourly {minute}`, `daily {time}`, `weekly {weekdays, time}`, `cron {expr}`, `interval {everyMs}`, `once {at}`. An automation made by an extension has no tools or secrets of its own; it runs in the active project.
+Schedules: `hourly {minute}`, `daily {time}`, `weekly {weekdays, time}`, `cron {expr}`, `interval {everyMs}`, `once {at}`. An automation made by an extension has no tools or secrets of its own; it runs in the active project. Volt records which extension scheduled it: `run` and `remove` work only on those, and refuse the user's own automations and other extensions'.
 
 ### 3.9 `volt.usage`
 

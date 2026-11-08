@@ -72,6 +72,10 @@ test('LINT-FEATURE-OUT: a feature imports core beyond the always-allowed set onl
 	assert.deepEqual(checkFile(file, deep, FEATURES, {}).map(finding => `${finding.rule}:${finding.target}`), ['out:src/vs/workbench/services/voltRuntime/common/history/agentHistory.ts']);
 	assert.equal(checkFile(file, deep, FEATURES, { automations: ['src/vs/workbench/services/voltRuntime/common/history/agentHistory.ts'] }).length, 0);
 	assert.equal(checkFile(file, deep, FEATURES, { skills: ['src/vs/workbench/services/voltRuntime/common/history/agentHistory.ts'] }).length, 1, 'another feature\'s entry does not count');
+	// A feature's own tests set up core around it; they still can't reach another feature's internals.
+	const test = 'src/vs/workbench/contrib/voltAutomations/test/browser/x.test.ts';
+	assert.equal(checkFile(test, 'import { s } from \'../../../voltCustomize/browser/voltFeatureModuleService.js\';', FEATURES, {}).length, 0);
+	assert.deepEqual(checkFile(test, 'import { x } from \'../../../voltSkills/browser/x.js\';', FEATURES, {}).map(finding => finding.rule), ['in']);
 });
 
 test('LINT-FEATURE-REPO: the repository passes, and its allowlist has no stale entry', () => {

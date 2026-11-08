@@ -1,5 +1,41 @@
 {
 	"//": "Core modules each fenced feature (contrib/<voltModule.entry>/) still imports beyond the always-allowed set in featureImportLint.mjs. A ratchet: remove entries as features move to the volt facade; never add one without review.",
 	"features": {
+		"automations": [
+			"src/vs/workbench/contrib/voltAgent/browser/automations/automationFormat.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/automations/automationHooks.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/automations/automationIcons.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/automations/automationPickers.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/automations/automationRoutes.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/automations/automationUi.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/chrome/agentModeIcons.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/composer/agentSkillHoverCard.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/composer/agentSlashMenu.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/composer/agentVoiceDictation.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/composer/agentVoiceVisuals.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/customize/agentCustomizeService.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/editor/agentEditorInput.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/editor/agentScrollable.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/home/agentHomeIcons.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/media/agentComposerInput.css",
+			"src/vs/workbench/contrib/voltAgent/browser/picker/agentModelPicker.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/workflows/workflowBuilderPage.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/workflows/workflowLibraryPage.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/workspace/agentSurfaceHost.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/workspace/agentSurfaceMenu.ts",
+			"src/vs/workbench/services/editor/common/editorGroupsService.ts",
+			"src/vs/workbench/services/editor/common/editorService.ts",
+			"src/vs/workbench/services/voltRuntime/browser/queryCache.ts",
+			"src/vs/workbench/services/voltRuntime/common/automations/automationCalendar.ts",
+			"src/vs/workbench/services/voltRuntime/common/automations/automationCron.ts",
+			"src/vs/workbench/services/voltRuntime/common/automations/automationTemplates.ts",
+			"src/vs/workbench/services/voltRuntime/common/automations/automationTime.ts",
+			"src/vs/workbench/services/voltRuntime/common/automations/automationTriggers.ts",
+			"src/vs/workbench/services/voltRuntime/common/automations/automationWebhooks.ts",
+			"src/vs/workbench/services/voltRuntime/common/automations/automations.ts",
+			"src/vs/workbench/services/voltRuntime/common/runtime.ts",
+			"src/vs/workbench/services/voltRuntime/common/sessionContext.ts",
+			"src/vs/workbench/services/voltRuntime/common/workflows/workflowTypes.ts"
+		]
 	}
 }

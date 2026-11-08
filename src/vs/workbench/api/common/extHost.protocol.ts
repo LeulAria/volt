@@ -2777,7 +2777,7 @@ export type VoltApiMethod =
 	| 'memory.list' | 'memory.read' | 'memory.write' | 'memory.delete'
 	| 'browser.open' | 'browser.readPage'
 	| 'visuals.renderChart' | 'visuals.drawOnScratch'
-	| 'automations.list' | 'automations.schedule'
+	| 'automations.list' | 'automations.schedule' | 'automations.show' | 'automations.run' | 'automations.remove'
 	| 'usage.get'
 	| 'pullRequests.list' | 'pullRequests.link';
 
