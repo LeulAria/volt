@@ -181,7 +181,7 @@ function parsePromptLike(value: unknown): IOrchTurn['prompt'] | undefined {
 
 const TURN_KINDS = new Set(['prompt', 'notification', 'brief', 'followup', 'resume', 'external']);
 const TURN_PHASES = new Set(['dispatching', 'running', 'cancelling']);
-const PAUSES = new Set(['failed', 'stopped', 'interrupted', 'wakeups', 'limit']);
+const PAUSES = new Set(['failed', 'stopped', 'interrupted', 'wakeups', 'limit', 'user']);
 const OUTCOMES = new Set(['done', 'failed', 'cancelled', 'interrupted']);
 const TASK_STATES = new Set(['queued', 'running', 'waiting', 'completed', 'failed', 'cancelled', 'interrupted']);
 const DELIVERIES = new Set(['pending', 'delivered', 'acknowledged', 'none']);
@@ -289,7 +289,8 @@ function parseQueueItem(value: unknown): IOrchQueueItem | undefined {
 		at: item.at as number,
 		...(TURN_KINDS.has(item.kind as string) ? { kind: item.kind as IOrchQueueItem['kind'] } : {}),
 		// No `held`: it marks a prompt open in a composer, and no composer survives a reload. Kept,
-		// a prompt the user was editing when the window closed would be skipped forever.
+		// a prompt the user was editing when the window closed would be skipped forever. No `sendNow`
+		// either: the turn it waited to stop died with the window, so it waits with the rest.
 	};
 }
 

@@ -43,9 +43,18 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 				? thread
 				: { ...thread, queue: event.head ? [event.item, ...thread.queue] : [...thread.queue, event.item] });
 		case 'queue.removed':
-			return updateThread(state, event.threadId, thread => thread.queue.some(item => item.id === event.itemId)
-				? { ...thread, queue: thread.queue.filter(item => item.id !== event.itemId) }
-				: thread);
+			return updateThread(state, event.threadId, thread => {
+				if (!thread.queue.some(item => item.id === event.itemId)) {
+					return thread;
+				}
+				const queue = thread.queue.filter(item => item.id !== event.itemId);
+				// The user's pause held these messages: with none left it is over (a new queue starts unpaused).
+				if (!queue.length && thread.pause === 'user') {
+					const { pause: _pause, ...rest } = thread;
+					return { ...rest, queue };
+				}
+				return { ...thread, queue };
+			});
 		case 'queue.reordered':
 			return updateThread(state, event.threadId, thread => {
 				const byId = new Map(thread.queue.map(item => [item.id, item]));
@@ -70,7 +79,8 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 				}),
 			}));
 		case 'queue.paused':
-			return updateThread(state, event.threadId, thread => thread.pause === event.reason ? thread : { ...thread, pause: event.reason });
+			// Volt's own pauses (an error, a stop, a restart) do not replace the user's: only Resume ends it.
+			return updateThread(state, event.threadId, thread => thread.pause === event.reason || thread.pause === 'user' ? thread : { ...thread, pause: event.reason });
 		case 'queue.resumed':
 			return updateThread(state, event.threadId, thread => {
 				if (!thread.pause && !thread.wakeups) {
@@ -84,7 +94,12 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 				// A turn that goes out ends a usage-limit park, except the resume of that park: it holds
 				// until the provider answers (`limit.recovered`) or the resume ends.
 				const { pause: _pause, wakeups: _wakeups, limit: _limit, rescue: _rescue, spend: _spend, ...rest } = thread;
-				const keep = event.turn.limitProbe !== undefined && thread.limit ? { limit: thread.limit } : {};
+				// The user's pause outlasts what goes out meanwhile (a prompt they send, a restart of the
+				// work): the messages it holds still wait for Resume.
+				const keep = {
+					...(event.turn.limitProbe !== undefined && thread.limit ? { limit: thread.limit } : {}),
+					...(thread.pause === 'user' ? { pause: thread.pause } : {}),
+				};
 				const automatic = event.turn.kind === 'notification';
 				const wakeups = automatic ? (thread.wakeups ?? 0) + 1 : event.turn.kind === 'external' ? thread.wakeups : 0;
 				// A prompt (the user's, or one they queued) takes over from a restart Volt was waiting to send.

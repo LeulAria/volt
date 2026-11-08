@@ -47,6 +47,8 @@ export interface IIntent {
 	readonly shape: IRequestShape;
 	/** Something long-running is involved: a server, a watcher, Docker. Managed terminals fit. */
 	readonly wantsServices?: boolean;
+	/** A job that runs a while and ends with a result (a benchmark, a build, a deploy, training): watch_job keeps the user posted. */
+	readonly wantsLongJob?: boolean;
 	/** Committing, pushing, naming the branch or opening a pull request: Volt's commit review and branch naming. */
 	readonly wantsGit?: boolean;
 }
@@ -102,6 +104,7 @@ const WORKSPACE_REF = /\b(this|the|our|my) (repo|repository|code ?base|project|a
 /** Long-running things: containers, servers, watchers, daemons. */
 /** "commit this", "push it", "raise a PR", "rename the branch": the commit review and branch naming apply. */
 const GIT_INTENT = /\b(?:commit(?:s|ting)?|push(?:ed|ing)?|pull request|(?:raise|open|create|make|send) (?:a |the )?pr|pr to|(?:re)?name (?:the |this |my )?branch|branch name)\b/i;
+const LONG_JOB_INTENT = /\b(?:bench(?:mark)?(?:s|ing)?|perf(?:ormance)? (?:tests?|runs?)|load tests?|stress tests?|train(?:ing)? (?:the |a )?(?:model|run)|fine-?tun(?:e|ing)|backfill|deploy(?:ment|ing)?|ci (?:runs?|pipeline|jobs?)|(?:release|production|prod|ios|android|docker|xcode|gradle) builds?|build (?:the |a )?(?:ios|android|release|docker|image|ipa|apk)|full (?:test )?suite|long[- ]running|in the background|overnight|crawl(?:er|ing)?|scrap(?:e|er|ing)|(?:render|export|encode|transcode) (?:the |a )?video)\b/i;
 const SERVICE_INTENT = /\b(?:docker|compose|container|kubernetes|k8s|dev ?server|web ?server|(?:start|run|launch|boot|restart|spin up)\b[^.?!]{0,30}\b(?:server|service|api|backend|database|db|redis|postgres|mongo|stack|worker|queue|app)|watch mode|watcher|hot reload|localhost:\d+)\b/i;
 const PREVIEW_INTENT = /\b(?:preview|open|show|see|view|look at)\b[^.?!]{0,40}\b(?:app|site|website|page|server|project|frontend|front-end|ui|it|this|the (?:thing|result|game|demo)|in (?:the |a )?browser|locally|on localhost)\b|\b(?:run|start|launch|serve|spin up|boot)\b[^.?!]{0,30}\b(?:app|site|website|page|(?:dev |web |http )?server|frontend|front-end|ui|game|demo|locally|on localhost|in (?:the |a )?browser)\b|\b(?:check|test)\b[^.?!]{0,30}\b(?:in (?:the |a )?browser|on localhost|the (?:ui|page|site|website|frontend))\b|\b(?:dev server|localhost|live preview|hot reload|in the browser|show me (?:the|what|how it looks))\b|\bmake it (?:run|work)\b|\bcan i see\b|\blet'?s see it\b/i;
 
@@ -172,6 +175,8 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	if (wantsPreview) { signals.push('preview'); }
 	const wantsServices = wantsPreview || SERVICE_INTENT.test(raw);
 	if (wantsServices) { signals.push('services'); }
+	const wantsLongJob = hasWorkspace && LONG_JOB_INTENT.test(raw);
+	if (wantsLongJob) { signals.push('long-job'); }
 	const wantsGit = hasWorkspace && GIT_INTENT.test(raw);
 	if (wantsGit) { signals.push('git'); }
 
@@ -285,6 +290,7 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 		...(wantsScratch ? { wantsScratch } : {}),
 		...(wantsDevice ? { wantsDevice } : {}),
 		...(wantsServices ? { wantsServices } : {}),
+		...(wantsLongJob ? { wantsLongJob } : {}),
 		...(wantsGit ? { wantsGit } : {}),
 		shape,
 	};

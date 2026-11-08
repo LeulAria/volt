@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { isJobWatchToolName, WATCH_JOB_TOOL_NAME } from '../../../../services/voltRuntime/common/jobs/jobWatch.js';
 import { isMemoryToolName } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
 import { AGENT_TASK_TOOLS, bareTaskToolName } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import { describeLocator, parseLocator } from '../../../../services/voltRuntime/common/tools/browserRun.js';
@@ -120,13 +121,16 @@ export function describeTerminalToolActivity(name: string | undefined, title: st
 }
 
 /**
- * How a Volt tool that is no browser action counts in the trail: the commit review is waiting on
- * the user (`wait`), pull request, thread and memory tools are plain steps (`tool`). Undefined for
+ * How a Volt tool that is no browser action counts in the trail: the commit review and watched jobs
+ * are waits (`wait`), pull request, thread and memory tools are plain steps (`tool`). Undefined for
  * the browser, device and design tools, which count as browser actions.
  */
 export function hostToolStepKind(tool: string | undefined): 'wait' | 'tool' | undefined {
 	if (!tool) {
 		return undefined;
+	}
+	if (isJobWatchToolName(tool)) {
+		return 'wait';
 	}
 	if ((COMMIT_PLAN_TOOL_NAMES as readonly string[]).includes(tool)) {
 		return tool === 'rename_branch' ? 'tool' : 'wait';
@@ -173,6 +177,11 @@ export function describeHostToolActivity(name: string | undefined, title: string
 			case 'unwatch_pull_request': return { tool, label: 'Stopped watching', detail: which };
 			default: return { tool, label: 'Listed pull requests' };
 		}
+	}
+	if (isJobWatchToolName(tool)) {
+		return tool === WATCH_JOB_TOOL_NAME
+			? { tool, label: 'Watching job', detail: text(args.title, 60) ?? text(args.check, 80) }
+			: { tool, label: 'Stopped watching job', detail: text(args.id, 20) };
 	}
 	if ((COMMIT_PLAN_TOOL_NAMES as readonly string[]).includes(tool)) {
 		switch (tool) {

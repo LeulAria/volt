@@ -6,6 +6,7 @@
 import { CANVAS_RENDER_TOOL_NAME, CANVAS_UPDATE_TOOL_NAME, MOCKUPS_TOOL_NAME, RENDER_CHART_TOOL_NAME, RENDER_HTML_TOOL_NAME, SCREENS_TOOL_NAME } from '../hostTools.js';
 import { modePolicy, VoltMode } from '../modes.js';
 import { DOCKER_ENSURE_TOOL_NAME, TERMINAL_OUTPUT_TOOL_NAME, TERMINAL_START_TOOL_NAME, TERMINAL_STOP_TOOL_NAME, TERMINAL_WAIT_TOOL_NAME } from '../terminalTools.js';
+import { WATCH_JOB_TOOL_NAME } from '../jobs/jobWatch.js';
 import { IRunPlan } from '../runPlan.js';
 import { IIntent } from './intent.js';
 import { laneDefinition } from './lanes.js';
@@ -229,6 +230,9 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	if (input.intent.wantsServices && modePolicy(input.mode).allowTerminal) {
 		parts.push(`[Volt] ${MANAGED_TERMINALS}`);
 	}
+	if (input.intent.wantsLongJob && modePolicy(input.mode).allowTerminal) {
+		parts.push(`[Volt] ${WATCH_LONG_JOBS}`);
+	}
 	// Agents asked to "commit and push" ran git themselves and renamed the worktree's branch behind Volt's back.
 	if (input.intent.wantsGit && input.commitReview && modePolicy(input.mode).allowTerminal) {
 		parts.push(`[Volt] ${COMMIT_REVIEW}`);
@@ -290,6 +294,13 @@ export const TEST_INTEGRITY = 'Make tests pass by fixing the code. Never special
  * timeout or vanish into a background job the user cannot see. Volt's terminals do neither.
  */
 export const MANAGED_TERMINALS = `Start servers, watchers, \`docker compose up\` and anything else that keeps running with ${TERMINAL_START_TOOL_NAME} from the volt MCP server, not your own shell or background tasks: it returns once the process is up, the user sees it as a chip and can open it, and you keep working. Read it with ${TERMINAL_OUTPUT_TOOL_NAME} or ${TERMINAL_WAIT_TOOL_NAME}, stop it with ${TERMINAL_STOP_TOOL_NAME}. When Docker is needed, call ${DOCKER_ENSURE_TOOL_NAME} once instead of opening Docker and polling it. Run commands that finish on their own (builds, tests, installs) as usual.`;
+
+/**
+ * An agent ran a benchmark in the background, ended its turn with "I'll post the tables as soon as
+ * it finishes", and never came back: nothing woke it. watch_job has Volt check the job, show the
+ * user its progress, and wake the agent when it ends.
+ */
+export const WATCH_LONG_JOBS = `When you end your turn while a job the user waits on still runs (a background or nohup command, a benchmark, a long build, a CI run or deploy), call ${WATCH_JOB_TOOL_NAME} from the volt MCP server first: a short title and a quick check command Volt runs every few seconds (the job is done when the check exits 0, matches done_pattern, or the given pid exits; print progress like "3/8" or "40%"). Volt shows the user its progress and wakes you when it ends, so you can report the result. Do not sleep or poll it yourself.`;
 
 /**
  * CLI agents grep with their own tools, which re-read the whole tree each time; in a large repo

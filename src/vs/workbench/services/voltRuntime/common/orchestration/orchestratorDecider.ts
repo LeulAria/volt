@@ -170,7 +170,8 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 		}
 		case 'queue.pause': {
 			const thread = state.threads[command.threadId];
-			return thread && thread.pause !== command.reason ? { events: [{ type: 'queue.paused', threadId: thread.id, reason: command.reason }] } : { events: [] };
+			// The user's pause stands until they resume: another reason does not replace it.
+			return thread && thread.pause !== command.reason && thread.pause !== 'user' ? { events: [{ type: 'queue.paused', threadId: thread.id, reason: command.reason }] } : { events: [] };
 		}
 		case 'turn.cancel':
 			return decideCancel(state, command.threadId, command.cascade, command.at);
@@ -696,8 +697,9 @@ function decideSubmit(state: IOrchState, threadId: string, item: ISubmitItem, de
 		events.push({ type: 'turn.steered', threadId: thread.id, turnId: active.id, prompt: item.prompt, steerId: item.id });
 		return { events, outcome: 'steered' };
 	}
-	// Otherwise stop the agent; this prompt goes first once the stop lands.
-	events.push({ type: 'queue.added', threadId: thread.id, item: queued, head: true });
+	// Otherwise stop the agent; this prompt goes first once the stop lands (past the user's pause:
+	// they sent this one now, the rest stays held).
+	events.push({ type: 'queue.added', threadId: thread.id, item: thread.pause === 'user' && !thread.taskId ? { ...queued, sendNow: true } : queued, head: true });
 	if (active.phase !== 'cancelling') {
 		events.push({ type: 'turn.cancelling', threadId: thread.id, turnId: active.id });
 	}
@@ -730,6 +732,10 @@ function decideNotify(state: IOrchState, threadId: string, item: ISubmitItem, li
 		return { events: [], rejected: `The chat woke itself ${limits.maxWakeups} times in a row; it waits for the user.` };
 	}
 	const active = thread.active;
+	if (interrupt && active && thread.pause === 'user') {
+		// Stopping the turn would only leave this waiting behind the user's pause.
+		return { events: [], rejected: 'The user paused this chat\'s queue, so its turn is not stopped for a message. Send it with mode "queue" to wait in the queue until they resume it.' };
+	}
 	if (interrupt && active && !task && !thread.blocked && !thread.moving) {
 		// Stop what runs and go first: the queue resumes with this turn once the stop lands.
 		if (thread.pause) {
@@ -1532,13 +1538,15 @@ function rescueThread(state: IOrchState, thread: IOrchThread, at: number): OrchE
 	const rescue = thread.rescue!;
 	const last = thread.last;
 	const cut = !!last && (last.outcome === 'failed' || last.outcome === 'interrupted') && last.kind !== 'external';
-	if (!cut && !thread.queue.length && !hasPendingReports(state, thread.id)) {
+	// The user's pause holds what waits behind the turn: only the cut-off work goes on, the queue stays paused.
+	const held = thread.pause === 'user';
+	if (!cut && (held || (!thread.queue.length && !hasPendingReports(state, thread.id)))) {
 		return [{ type: 'rescue.cleared', threadId: thread.id, reason: 'done' }];
 	}
 	const attempts = rescue.attempts + 1;
 	const { notBefore: _notBefore, ...rest } = rescue;
 	const events: OrchEvent[] = [{ type: 'rescue.armed', threadId: thread.id, rescue: { ...rest, attempts, at } }];
-	if (thread.pause) {
+	if (thread.pause && !held) {
 		events.push({ type: 'queue.resumed', threadId: thread.id });
 	}
 	if (cut) {
@@ -1756,6 +1764,12 @@ function scheduleRound(state: IOrchState, at: number, limits: IOrchLimits, seq: 
 			current = next.threads[thread.id];
 		}
 		if (current.pause) {
+			// Sent now while the user's pause held the queue: it goes once the turn it stopped is over.
+			const now = current.pause === 'user' ? nextQueued(current) : undefined;
+			if (now?.sendNow) {
+				push({ type: 'queue.removed', threadId: current.id, itemId: now.id, reason: 'dispatched' });
+				push(dispatch(current.id, { id: now.id, kind: now.kind ?? 'prompt', prompt: now.prompt, at }));
+			}
 			continue;
 		}
 		const task = current.taskId ? next.tasks[current.taskId] : undefined;
