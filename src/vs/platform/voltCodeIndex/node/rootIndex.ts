@@ -14,6 +14,7 @@ import { literalTrigramQuery, regexTrigramQuery, toByteString, TrigramQuery } fr
 import { extractSymbols, hasSymbolRules, SYMBOL_KINDS } from '../common/symbolExtract.js';
 import { createJsMatcher, IJsMatcher, matchText } from '../common/textMatch.js';
 import { IVoltCodeIndexFileHits, IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexFindFilesRequest, IVoltCodeIndexFindFilesResult, IVoltCodeIndexOptions, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult, IVoltCodeSymbol, VoltCodeIndexState, VoltCodeSymbolKind } from '../common/voltCodeIndex.js';
+import { safeOpenRead } from '../../voltFiles/node/safeOpen.js';
 import { deleteSegment, ISegmentSymbols, mergeSegments, NEXT_BIT, PostingCache, releaseBuildMemory, rotl8, Segment, SegmentBuilder, TrigramTable, trigramBits } from './indexFormat.js';
 import { IGNORE_FILE_NAMES, listFiles, searchFiles } from './ripgrep.js';
 
@@ -266,8 +267,15 @@ function namesOf(table: ISymbolTable): SymbolNameIndex {
 	return table.names ??= new SymbolNameIndex(table.syms.names);
 }
 
+/** A confined index never follows symlinks, whatever the setting says. */
+function effectiveOptions(options: IVoltCodeIndexOptions): IVoltCodeIndexOptions {
+	return options.confined ? { ...options, ignoreSymlinks: true } : options;
+}
+
 export function optionsKey(options: IVoltCodeIndexOptions | undefined): string {
-	return JSON.stringify({ h: !!options?.hierarchicalIgnore, s: !!options?.ignoreSymlinks });
+	return options?.confined
+		? JSON.stringify({ h: !!options.hierarchicalIgnore, s: true, c: true })
+		: JSON.stringify({ h: !!options?.hierarchicalIgnore, s: !!options?.ignoreSymlinks });
 }
 
 /**
@@ -330,16 +338,27 @@ export class RootIndex {
 	private lastHealAt = 0;
 	lastUsedAt = Date.now();
 
+	private options: IVoltCodeIndexOptions;
+	/** `root` through its symlinks, for a confined index's opens. */
+	private openRoot: Promise<string> | undefined;
+
 	constructor(
 		readonly root: string,
 		private readonly dir: string,
-		private options: IVoltCodeIndexOptions,
+		options: IVoltCodeIndexOptions,
 		private readonly onChange: () => void,
 		private readonly log: (message: string) => void,
-	) { }
+	) {
+		this.options = effectiveOptions(options);
+	}
 
 	get key(): string {
 		return optionsKey(this.options);
+	}
+
+	/** A sandboxed chat's index (see `IVoltCodeIndexOptions.confined`). */
+	get confined(): boolean {
+		return !!this.options.confined;
 	}
 
 	//#region Lifecycle
@@ -348,7 +367,7 @@ export class RootIndex {
 	start(options?: IVoltCodeIndexOptions): Promise<void> {
 		this.lastUsedAt = Date.now();
 		if (options && optionsKey(options) !== this.key) {
-			this.options = options;
+			this.options = effectiveOptions(options);
 			return this.rebuild();
 		}
 		if (!this.started) {
@@ -683,36 +702,66 @@ export class RootIndex {
 
 	//#region Indexing
 
+	/**
+	 * A confined index's open of a listed file: no symlink anywhere in its path (a folder swapped for
+	 * a link after the listing is refused, not read through). Throws when refused or gone.
+	 */
+	private async openConfined(path: string): Promise<fs.FileHandle> {
+		const root = await (this.openRoot ??= fs.realpath(this.root));
+		return (await safeOpenRead({ root, path: join(root, ...path.split('/')) })).handle;
+	}
+
+	/** A file's bytes: through {@link openConfined} for a confined index. */
+	private async readBytes(path: string): Promise<Buffer> {
+		if (!this.options.confined) {
+			return fs.readFile(join(this.root, path));
+		}
+		const file = await this.openConfined(path);
+		try {
+			return await file.readFile();
+		} finally {
+			await file.close();
+		}
+	}
+
 	private async readForIndex(path: string): Promise<ReadResult> {
 		const abs = join(this.root, path);
 		let stat;
+		// A confined index stats and reads the file it opened, never the path again.
+		let file: fs.FileHandle | undefined;
 		try {
-			stat = await fs.stat(abs);
+			if (this.options.confined) {
+				file = await this.openConfined(path);
+				stat = await file.stat();
+			} else {
+				stat = await fs.stat(abs);
+			}
 		} catch {
+			await file?.close();
 			return { kind: 'missing' };
 		}
-		if (!stat.isFile()) {
-			return { kind: 'missing' };
-		}
-		if (stat.size > MAX_INDEXED_BYTES) {
-			const head = new Uint8Array(8192);
-			const file = await fs.open(abs, 'r');
-			try {
+		try {
+			if (!stat.isFile()) {
+				return { kind: 'missing' };
+			}
+			if (stat.size > MAX_INDEXED_BYTES) {
+				const head = new Uint8Array(8192);
+				file ??= await fs.open(abs, 'r');
 				const { bytesRead } = await file.read(head, 0, head.length, 0);
 				const bytes = head.subarray(0, bytesRead);
 				return hasNul(bytes) && !utf16Bom(bytes) ? { kind: 'binary' } : { kind: 'large' };
-			} finally {
-				await file.close();
 			}
+			const bytes = file ? await file.readFile() : await fs.readFile(abs);
+			if (utf16Bom(bytes)) {
+				return { kind: 'large' }; // ripgrep transcodes these; search them directly
+			}
+			if (hasNul(bytes)) {
+				return { kind: 'binary' };
+			}
+			return { kind: 'text', bytes, size: stat.size, mtime: Math.round(stat.mtimeMs) };
+		} finally {
+			await file?.close();
 		}
-		const bytes = await fs.readFile(abs);
-		if (utf16Bom(bytes)) {
-			return { kind: 'large' }; // ripgrep transcodes these; search them directly
-		}
-		if (hasNul(bytes)) {
-			return { kind: 'binary' };
-		}
-		return { kind: 'text', bytes, size: stat.size, mtime: Math.round(stat.mtimeMs) };
 	}
 
 	/**
@@ -1254,7 +1303,7 @@ export class RootIndex {
 			if (!entry && this.largeBits.size >= MAX_LARGE_BITSETS) {
 				return true;
 			}
-			const bytes = await fs.readFile(abs).catch(() => undefined);
+			const bytes = await this.readBytes(path).catch(() => undefined);
 			if (!bytes) {
 				return true;
 			}
@@ -1307,7 +1356,7 @@ export class RootIndex {
 
 	private async readText(path: string): Promise<string | undefined> {
 		try {
-			const bytes = await fs.readFile(join(this.root, path));
+			const bytes = await this.readBytes(path);
 			const bom = utf16Bom(bytes);
 			if (bom) {
 				return new TextDecoder(bom).decode(bytes.subarray(2));
@@ -1442,6 +1491,9 @@ export class RootIndex {
 			// In-process: it stops at the match limit, and for selective candidate sets reading them
 			// here beats ripgrep's process start and file list (VOLT, ~1,500 candidates: 50 vs 200 ms).
 			result = { ...await this.verify(unique, matcher, context, request.maxMatches, maxLineChars), engine: 'index' };
+		} else if (this.options.confined) {
+			// ripgrep opens files by path, through any symlink a sandboxed chat swaps in.
+			return { kind: 'fallback', reason: 'this pattern needs ripgrep, which a sandboxed chat\'s search does not run' };
 		} else {
 			try {
 				result = { ...await ripgrep(unique, request.maxMatches), scanned: unique.length, engine: 'ripgrep' };

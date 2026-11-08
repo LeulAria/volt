@@ -1278,6 +1278,8 @@ async function automate(services: IAutomationServices, sessionId: string, tool: 
 	try {
 		cancelled(ctx.token);
 		const { view, opened } = await browserFor(services, sessionId, normalized, ctx.token);
+		// A sandboxed chat drives pages only in its own signed-out profile (B-16).
+		await view.ensureChatProfile();
 		lock(sessionId, view);
 		const ownTabNote = ownTabNotes.get(sessionId);
 		ownTabNotes.delete(sessionId);
@@ -1708,6 +1710,7 @@ async function preflight(services: IAutomationServices, browser: IVoltBrowserSer
 		return { lines: [`[Volt] The app is serving at ${url} (${origin}). Do not start another server.`], url };
 	}
 	const { view, opened } = found;
+	await view.ensureChatProfile();
 	if (opened) {
 		await view.automationReady(15_000, token);
 	} else if (view.pageUrl !== url) {

@@ -16,8 +16,9 @@ import { localImagePaths } from './tools/localImages.js';
  * - `safe`: changes or reads only Volt's own state (questions, plans, charts, pull request links,
  *   the chat list), or looks at a simulator or the in-app UI. Runs.
  * - `browser`: the in-app browser. Runs, but the pages it opens and ends on are judged: no
- *   `file:` pages (a local page can frame any local file), and with the network off only local
- *   pages and the allowed hosts.
+ *   `file:` pages (a local page can frame any local file), and with the network off only the
+ *   allowed hosts and local pages on ports the user granted. A sandboxed chat's browser is its own
+ *   signed-out profile whose traffic follows the same rules (B-16).
  * - `reads`: reads files the agent names. Only inside the chat's workspace, its allowed folders
  *   or temp, and never in the user's credential folders.
  * - `network`: reaches a service on the internet for the agent (Slack, GitHub comments). Only
@@ -46,11 +47,11 @@ export const SPAWNED_CHATS_INHERIT_SANDBOX = true;
 
 /** Every host tool Volt serves, window and agent server. The tests check the list is complete. */
 export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxClass>> = {
-	// Questions, plans and what the user has open: Volt's own UI (workspace_status runs `git status`).
+	// Questions and plans: Volt's own UI. workspace_status reads the chat's folder (`git status`, file names).
 	ask_question: 'safe',
 	await_answers: 'safe',
 	propose_plan: 'safe',
-	workspace_status: 'safe',
+	workspace_status: 'reads',
 
 	// The in-app browser. browser_run `edits` and browser_act `save` add writes.
 	browser_navigate: 'browser',
@@ -98,10 +99,11 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	playground_list: 'safe',
 	playground_delete: 'safe',
 
-	// Code search confined to the chat's project.
-	instant_grep: 'safe',
-	find_symbol: 'safe',
-	find_files: 'safe',
+	// Code search in the chat's folder: its `path` is judged, and for a sandboxed chat the search runs
+	// on the chat's confined index and returns only what the chat may read (B-15).
+	instant_grep: 'reads',
+	find_symbol: 'reads',
+	find_files: 'reads',
 
 	// Pull requests: Volt's links and watches (gh reads). The stack tools run git checkout, rebase and push here.
 	link_pull_request: 'safe',
@@ -245,6 +247,13 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 			return { kind: AUTOMATION_ACTIONS[action] ?? 'escapes' };
 		case 'image_inspect':
 			return { kind, reads: strings([args.path]) };
+		case 'instant_grep':
+		case 'find_symbol':
+		case 'find_files':
+			// The folder searched: `path`, else the chat's own.
+			return { kind, reads: strings([args.path]).length ? strings([args.path]) : ['.'] };
+		case 'workspace_status':
+			return { kind, reads: ['.'] };
 		case 'browser_compare_image':
 			return { kind, reads: strings([args.reference_path]), urls: strings([args.url]) };
 		case 'html_render':
@@ -532,11 +541,21 @@ export function sandboxBrowserUrlRefusal(settings: IVoltSandboxSettings | undefi
 				return undefined;
 			}
 			const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-			const local = host === 'localhost' || host.endsWith('.localhost') || host === '::1' || host === '0.0.0.0' || /^127(\.\d{1,3}){3}$/.test(host);
-			return local || domainAllowed(host, settings.allowedDomains ?? []) ? undefined : `${parsed.host} is not reachable: this chat's network is off`;
+			if (isLoopbackHost(host)) {
+				// A local page is a server something on this machine runs, maybe the agent itself, and its
+				// script could send what it reads anywhere: only on a port the user granted (B-16).
+				const port = parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' || parsed.protocol === 'wss:' ? 443 : 80;
+				return (settings.listenPorts ?? []).includes(port) ? undefined : `${parsed.host} is a local server on a port this chat's sandbox was not granted (its network is off)`;
+			}
+			return domainAllowed(host, settings.allowedDomains ?? []) ? undefined : `${parsed.host} is not reachable: this chat's network is off`;
 		}
 	}
 	return `${parsed.protocol} pages are not opened from a sandboxed chat`;
+}
+
+/** `localhost`, `*.localhost`, `0.0.0.0`, `::1` and 127/8 (a hostname, lower case, without brackets). */
+export function isLoopbackHost(host: string): boolean {
+	return host === 'localhost' || host.endsWith('.localhost') || host === '::1' || host === '0.0.0.0' || /^127(\.\d{1,3}){3}$/.test(host);
 }
 
 /** What the model reads when a tool is refused for a sandboxed chat: what happened and what to do instead. */

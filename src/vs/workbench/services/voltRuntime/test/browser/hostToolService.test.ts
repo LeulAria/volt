@@ -177,15 +177,18 @@ suite('Volt host tool service', () => {
 	test('sandbox gate: browser_run edits write only where the OS sandbox lets the agent write, never through a link', async () => {
 		const { service, written } = setup({ pageUrl: 'http://localhost:3000/', links: new Map([['/ws/rc', '/Users/someone/.zshrc'], ['/ws/out', '/elsewhere']]) });
 		const run = (path: string, sandbox?: IVoltSandboxSettings) => service.invokeTool('browser_run', { edits: [{ path, content: 'x' }] }, { sessionId: 's1', ...(sandbox ? { sandbox } : {}) });
+		// The page is the chat's dev server: a local port the user granted (B-16: no other local page with the network off).
+		const DEV_SERVER: IVoltSandboxSettings = { ...WORKSPACE_WRITE, listenPorts: [3000] };
 
-		const ok = await run('src/app.ts', WORKSPACE_WRITE);
+		const ok = await run('src/app.ts', DEV_SERVER);
 		assert.strictEqual(ok.error, undefined);
 		assert.ok(written.has('/ws/src/app.ts'));
 		for (const path of ['.git/config', '.vscode/tasks.json', '.claude/settings.json', '.git/hooks/pre-commit', 'rc', 'out/x.ts', '/etc/x', '../x.ts']) {
-			const refused = await run(path, WORKSPACE_WRITE);
+			const refused = await run(path, DEV_SERVER);
 			assert.match(refused.error ?? '', /^browser_run did not start: no file was changed\./, path);
 		}
-		assert.match((await run('src/other.ts', READ_ONLY)).error ?? '', /sandbox is read-only/);
+		assert.match((await run('src/other.ts', { ...READ_ONLY, listenPorts: [3000] })).error ?? '', /sandbox is read-only/);
+		assert.match((await run('src/other.ts', WORKSPACE_WRITE)).error ?? '', /local server on a port this chat's sandbox was not granted/, 'the page itself, on a port not granted');
 		assert.deepStrictEqual([...written.keys()], ['/ws/src/app.ts']);
 
 		// Unsandboxed: as before (inside the project).
@@ -216,7 +219,7 @@ suite('Volt host tool service', () => {
 		assert.ok((await inspect('/etc/secret.png', { sessionId: 's1' })).text?.includes('Size: 8×8'));
 	});
 
-	test('sandbox gate: the browser opens no local file pages, stays local with the network off, and returns nothing from a page the chat may not see', async () => {
+	test('sandbox gate: the browser opens no local file pages, only granted local ports with the network off, and returns nothing from a page the chat may not see', async () => {
 		const { service, page, automated } = setup({
 			pageUrl: 'http://localhost:3000/',
 			onAutomate: (name, args, current) => {
@@ -237,18 +240,22 @@ suite('Volt host tool service', () => {
 		assert.match((await service.invokeTool('browser_run', { steps: [{ action: 'navigate', url: 'https://evil.example' }] }, sandboxed)).error ?? '', /evil\.example is not reachable/);
 		assert.strictEqual(automated().length, 0);
 
-		assert.strictEqual((await navigate('http://localhost:5173/')).text, 'ran browser_navigate');
+		// B-16: a local page is a server the agent may run itself; with the network off only on a port the user granted.
+		const devServer = { sessionId: 's1', sandbox: { ...WORKSPACE_WRITE, listenPorts: [5173] } };
+		assert.match((await navigate('http://localhost:5173/')).error ?? '', /localhost:5173 is a local server on a port this chat's sandbox was not granted/);
+		assert.strictEqual(automated().length, 0);
+		assert.strictEqual((await navigate('http://localhost:5173/', devServer)).text, 'ran browser_navigate');
 		assert.strictEqual((await navigate('https://docs.allowed.dev/x', { sessionId: 's1', sandbox: { ...WORKSPACE_WRITE, allowedDomains: ['*.allowed.dev'] } })).text, 'ran browser_navigate');
 		assert.strictEqual((await navigate('https://example.com/', { sessionId: 's1', sandbox: { ...WORKSPACE_WRITE, network: true } })).text, 'ran browser_navigate');
 
 		// A click that lands on a local file: what the page showed stays with Volt, and the next look is refused.
 		page.url = 'http://localhost:5173/';
-		const clicked = await service.invokeTool('browser_click', { ref: 'e1' }, sandboxed);
+		const clicked = await service.invokeTool('browser_click', { ref: 'e1' }, devServer);
 		assert.match(clicked.error ?? '', /^browser_click ran, but the page ended on file:\/\/\/Users\/someone\/\.ssh\/id_rsa.*was not returned/);
 		assert.strictEqual(clicked.text, undefined);
-		assert.match((await service.invokeTool('browser_snapshot', {}, sandboxed)).error ?? '', /^browser_snapshot was not run: the page this chat's browser shows is not one its sandbox allows/);
-		assert.strictEqual((await navigate('http://localhost:5173/')).text, 'ran browser_navigate', 'navigating away is allowed');
-		assert.strictEqual((await service.invokeTool('browser_snapshot', {}, sandboxed)).text, 'ran browser_snapshot');
+		assert.match((await service.invokeTool('browser_snapshot', {}, devServer)).error ?? '', /^browser_snapshot was not run: the page this chat's browser shows is not one its sandbox allows/);
+		assert.strictEqual((await navigate('http://localhost:5173/', devServer)).text, 'ran browser_navigate', 'navigating away is allowed');
+		assert.strictEqual((await service.invokeTool('browser_snapshot', {}, devServer)).text, 'ran browser_snapshot');
 
 		// Unsandboxed: as before.
 		assert.strictEqual((await navigate('file:///etc/passwd', { sessionId: 's1' })).text, 'ran browser_navigate');
