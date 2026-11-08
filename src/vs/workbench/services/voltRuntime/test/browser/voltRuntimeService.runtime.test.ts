@@ -492,6 +492,28 @@ suite('Agent runtime orchestration', () => {
 		assert.deepStrictEqual(shell.sandbox, { level: 'workspace-write', network: false, providerId: '', workspaceRoots: [ROOT.fsPath] });
 	});
 
+	test('LIFE-PATH-7: a sandboxed chat\'s title, written by its agent CLI, runs in the chat\'s sandbox; text for no chat is Volt\'s', async () => {
+		const { service, internals, stdio } = await setup('agent');
+		// A CLI that answers in print mode (titleCommandFor): the title is a command Volt runs.
+		internals.profiles = internals.profiles.map(profile => ({ ...profile, providerId: 'claude-code' }));
+		service.getOrCreateSession('chat');
+		await service.setSandboxSettings('chat', { level: 'workspace-write', network: true });
+		await service.generateText('Name this chat', { sessionId: 'chat' });
+		await service.generateText('Write a commit message');
+		const titles = stdio.execs.filter(exec => exec.id.startsWith('title-'));
+		assert.ok(titles.length >= 2, 'both ran as commands');
+		const forChat = titles.filter(exec => exec.command.includes('Name this chat'));
+		assert.ok(forChat.length >= 1);
+		for (const exec of forChat) {
+			assert.deepStrictEqual(exec.context, { principal: 'chat:chat', reason: 'title', sandboxed: true });
+			assert.deepStrictEqual(exec.sandbox, { level: 'workspace-write', network: true, providerId: 'claude-code', workspaceRoots: [ROOT.fsPath] }, 'the chat\'s rules, with the CLI\'s own footprint');
+		}
+		for (const exec of titles.filter(exec => exec.command.includes('Write a commit message'))) {
+			assert.deepStrictEqual(exec.context, { principal: 'volt', reason: 'title', sandboxed: false });
+			assert.strictEqual(exec.sandbox, undefined);
+		}
+	});
+
 	test('Ask mode and supervised access never run project checks', async () => {
 		const { service, stdio, ref, waitEnd } = await setup('agent', { 'package.json': JSON.stringify({ scripts: { test: 'node --test' } }) });
 		await waitEnd(await service.send('chat', { text: 'explain', mode: 'agent', providerRef: ref }));
