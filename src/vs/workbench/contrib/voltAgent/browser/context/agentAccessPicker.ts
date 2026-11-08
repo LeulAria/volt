@@ -7,6 +7,8 @@ import { $, addDisposableListener, append, EventHelper } from '../../../../../ba
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { isWindows } from '../../../../../base/common/platform.js';
+import { sandboxPlatformUnavailable } from '../../../../services/voltRuntime/common/access/sandboxRefusal.js';
 import { localize } from '../../../../../nls.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { describeSandbox, IVoltSandboxSettings, VoltSandboxLevel } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
@@ -21,6 +23,15 @@ export interface IAgentAccessPickerHost {
 	sessionId(): string;
 	/** CLI agents run in the chat's OS sandbox, so the menu offers its level too. */
 	isAgent(): boolean;
+}
+
+/**
+ * Why no sandbox level can be used where the agents run, or undefined. The workbench's own OS:
+ * the agent runtime runs on this machine in the desktop app.
+ */
+function sandboxUnavailableHere(): string | undefined {
+	const reason = sandboxPlatformUnavailable(isWindows ? 'win32' : '');
+	return reason ? localize('voltAgent.sandbox.unavailableWindows', "OS sandboxing isn't available on Windows yet.") : undefined;
 }
 
 type AccessPick =
@@ -69,7 +80,10 @@ export class AgentAccessPicker extends Disposable {
 		this.label.textContent = option.label;
 		this.element.dataset.mode = option.id;
 		const sandbox = this.runtime.getSandboxSettings(sessionId);
-		const tooltip = this.host.isAgent() && sandbox.level !== 'off' ? `${option.description}\n${describeSandbox(sandbox)}` : option.description;
+		const unavailable = sandboxUnavailableHere();
+		const tooltip = this.host.isAgent() && sandbox.level !== 'off'
+			? `${option.description}\n${unavailable ? localize('voltAgent.sandbox.unavailableTooltip', "{0} This chat's agent will not start until its sandbox is off.", unavailable) : describeSandbox(sandbox)}`
+			: option.description;
 		setAgentTooltip(this.element, this.inLandingRow ? undefined : tooltip);
 		this.element.setAttribute('aria-label', localize('voltAgent.accessAria', "Permissions: {0}", option.label));
 	}
@@ -115,8 +129,11 @@ export class AgentAccessPicker extends Disposable {
 	}
 
 	private sandboxSection(settings: IVoltSandboxSettings): IVoltMenuSection<AccessPick> {
+		// No OS sandbox on this machine: the levels show why instead of silently running unconfined. Off stays pickable.
+		const unavailable = sandboxUnavailableHere();
 		const level = (id: VoltSandboxLevel, label: string, subtitle: string): IVoltMenuItem<AccessPick> => ({
-			id: `sandbox:${id}`, label, subtitle, icon: () => createSandboxIcon(id), checked: settings.level === id, data: { kind: 'sandbox', level: id },
+			id: `sandbox:${id}`, label, subtitle: unavailable && id !== 'off' ? unavailable : subtitle, icon: () => createSandboxIcon(id), checked: settings.level === id, data: { kind: 'sandbox', level: id },
+			...(unavailable && id !== 'off' ? { disabled: true, tooltip: unavailable } : {}),
 		});
 		const items: IVoltMenuItem<AccessPick>[] = [
 			level('off', localize('voltAgent.sandbox.off', "Off"), localize('voltAgent.sandbox.off.desc', "The agent runs with your permissions")),
@@ -141,6 +158,9 @@ export class AgentAccessPicker extends Disposable {
 	private async pick(sessionId: string, pick: AccessPick): Promise<void> {
 		if (pick.kind === 'mode') {
 			await this.runtime.setAccessMode(pick.mode, sessionId);
+			return;
+		}
+		if (pick.kind === 'sandbox' && pick.level !== 'off' && sandboxUnavailableHere()) {
 			return;
 		}
 		const settings = this.runtime.getSandboxSettings(sessionId);

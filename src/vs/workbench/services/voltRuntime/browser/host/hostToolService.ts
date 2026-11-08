@@ -8,13 +8,18 @@ import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { isAbsolute } from '../../../../../base/common/path.js';
-import { isEqualOrParent, joinPath, relativePath } from '../../../../../base/common/resources.js';
+import { isLinux, isMacintosh, isWindows } from '../../../../../base/common/platform.js';
+import { env } from '../../../../../base/common/process.js';
+import { basename, dirname, isEqualOrParent, joinPath, normalizePath, relativePath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
+import { hostMcpSessionToken } from '../../../../../platform/voltHostMcp/common/voltHostMcpAuth.js';
+import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
-import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltHostFileChange, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, PREFLIGHT_BROWSER_COMMAND_ID, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltHostFileChange, IVoltHostSandboxResolver, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, PREFLIGHT_BROWSER_COMMAND_ID, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
+import { hostToolSandboxUse, isSandboxed, ISandboxPathContext, sandboxBrowserUrlRefusal, sandboxCovers, sandboxReadRefusal, sandboxRefusalMessage, sandboxWriteRefusal } from '../../common/hostToolSandbox.js';
 import { browserBlockedMessage, IVoltBrowserAccessService } from '../../common/browserAccess.js';
 import { PROPOSE_PLAN_TOOL_NAME } from '../../common/plans.js';
 import { VoltMode } from '../../common/modes.js';
@@ -28,6 +33,9 @@ import { decodeImage, ImageFormat, MAX_IMAGE_BYTES, scaleScreenshot, zoomImage }
 const QUESTION_POLL_MS = 45_000;
 
 const MODE_LABEL: Record<VoltMode, string> = { agent: 'Agent', plan: 'Plan', ask: 'Ask', debug: 'Debug', multitask: 'Multitask' };
+
+/** The machine the sandbox plan is resolved for: this process runs on it (window or agent server). */
+const SANDBOX_PLATFORM = isMacintosh ? 'darwin' : isLinux ? 'linux' : isWindows ? 'win32' : 'unknown';
 
 function num(value: unknown): number | undefined {
 	return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
@@ -54,6 +62,7 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 	private questionHandler: IVoltQuestionHandler | undefined;
 	private sessions: IVoltHostSessionResolver | undefined;
 	private approver: IVoltHostToolApprover | undefined;
+	private sandboxes: IVoltHostSandboxResolver | undefined;
 	private readonly _onDidChangeMcp = this._register(new Emitter<void>());
 	readonly onDidChangeMcp: Event<void> = this._onDidChangeMcp.event;
 	private readonly _onDidInvokeTool = this._register(new Emitter<IVoltHostToolInvocation>());
@@ -121,6 +130,10 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		if (this.disabledTools.has(name)) {
 			return { error: `${name} belongs to a Volt feature the user turned off (Capabilities or Extensions). Do not call it again in this chat.` };
 		}
+		const confined = await this.checkSandbox(name, args, call);
+		if (confined) {
+			return confined;
+		}
 		for (const provider of this.providers) {
 			const tool = provider.tools.find(candidate => candidate.name === name);
 			if (tool) {
@@ -169,6 +182,15 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 			if (refusal) {
 				return refusal;
 			}
+			// A sandboxed chat reads only pages its sandbox allows: the one shown before the call (unless it opens another first)…
+			const sandbox = isSandboxed(call.sandbox) ? call.sandbox : undefined;
+			if (sandbox && name !== 'browser_navigate' && typeof args.url !== 'string') {
+				const shown = await this.pageUrl(call.sessionId);
+				const why = sandboxBrowserUrlRefusal(sandbox, shown);
+				if (why) {
+					return { error: `${name} was not run: the page this chat's browser shows is not one its sandbox allows (${why}). Open another page with browser_navigate first.` };
+				}
+			}
 			const cwd = call.cwd ?? this.sessions?.cwd(call.sessionId) ?? this.workspace.getWorkspace().folders[0]?.uri.fsPath;
 			const options: IVoltBrowserAutomationOptions = name === BROWSER_COMPARE_IMAGE_TOOL_NAME
 				? { token, cwd, ...await this.loadReference(args, call) }
@@ -176,13 +198,159 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 			if (token.isCancellationRequested) {
 				return { error: 'Cancelled.' };
 			}
-			if (name === BROWSER_RUN_TOOL_NAME && args.edits !== undefined) {
-				return this.editThenRun(call.sessionId, args, options);
-			}
-			const result = await this.commandService.executeCommand<IVoltHostToolResult>(AUTOMATE_BROWSER_COMMAND_ID, call.sessionId, name, args, options);
-			return result ?? { error: 'The in-app browser is not available in this window.' };
+			const result = name === BROWSER_RUN_TOOL_NAME && args.edits !== undefined
+				? await this.editThenRun(call.sessionId, args, options)
+				: await this.commandService.executeCommand<IVoltHostToolResult>(AUTOMATE_BROWSER_COMMAND_ID, call.sessionId, name, args, options) ?? { error: 'The in-app browser is not available in this window.' };
+			// …and the one it ends on: links, scripts and saved flows can go anywhere.
+			return sandbox ? this.withheldUnlessAllowed(name, call.sessionId, sandbox, result) : result;
 		}
 		return { error: `Unknown tool ${name}` };
+	}
+
+	private pageUrl(sessionId: string): Promise<string | undefined> {
+		return this.commandService.executeCommand<string | undefined>(BROWSER_PAGE_URL_COMMAND_ID, sessionId).catch(() => undefined);
+	}
+
+	/** A browser call that left the page on one the chat's sandbox does not allow: what it read stays with Volt (file changes are still reported). */
+	private async withheldUnlessAllowed(name: string, sessionId: string, sandbox: IVoltSandboxSettings, result: IVoltHostToolResult): Promise<IVoltHostToolResult> {
+		const url = await this.pageUrl(sessionId);
+		const why = sandboxBrowserUrlRefusal(sandbox, url);
+		if (!why) {
+			return result;
+		}
+		return { error: `${name} ran, but the page ended on ${url}, which this chat's sandbox does not allow (${why}). What the page showed was not returned. Open another page with browser_navigate.`, ...(result.changes ? { changes: result.changes } : {}) };
+	}
+
+	/**
+	 * The sandbox gate. Every call passes here before any tool runs; for a chat whose agent runs in
+	 * Volt's OS sandbox, what the tool would do outside it (`hostToolSandbox.ts`) is refused, or
+	 * held to the rule the OS enforces on the agent itself. Fails closed: a tool the gate does not
+	 * know, a path it cannot place, or another chat it cannot judge is refused.
+	 */
+	private async checkSandbox(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult | undefined> {
+		const sandbox = call?.sandbox;
+		if (!call || !isSandboxed(sandbox)) {
+			return undefined;
+		}
+		const use = hostToolSandboxUse(name, args);
+		if (!use) {
+			return { error: sandboxRefusalMessage(name, undefined, sandbox) };
+		}
+		switch (use.kind) {
+			case 'escapes':
+			case 'persists':
+			case 'spawns':
+				return { error: sandboxRefusalMessage(name, use.kind, sandbox) };
+			case 'network':
+				if (!sandbox.network) {
+					return { error: sandboxRefusalMessage(name, use.kind, sandbox) };
+				}
+				break;
+			case 'delegates':
+				if (use.target && use.target !== call.sessionId && !this.coversChat(use.target, sandbox, call)) {
+					return { error: sandboxRefusalMessage(name, use.kind, sandbox) };
+				}
+				break;
+		}
+		for (const url of use.urls ?? []) {
+			const why = sandboxBrowserUrlRefusal(sandbox, url);
+			if (why) {
+				return { error: `${name} was not run: ${why}.` };
+			}
+		}
+		if (!use.reads?.length && !use.writes?.length) {
+			return undefined;
+		}
+		const context = await this.sandboxContext(call);
+		// Relative paths resolve where the tools resolve them: the chat's folder, else the window's.
+		const base = call.cwd ?? this.workspace.getWorkspace().folders[0]?.uri.fsPath;
+		for (const raw of use.reads ?? []) {
+			for (const path of await this.realPaths(raw, base)) {
+				const why = path === undefined ? `${raw} is relative and this chat has no folder` : sandboxReadRefusal(sandbox, path, context);
+				if (why) {
+					return { error: `${name} was not run: ${why}. A sandboxed chat reads files only in its workspace, the folders the user allowed, and temp folders.` };
+				}
+			}
+		}
+		for (const raw of use.writes ?? []) {
+			for (const path of await this.realPaths(raw, base)) {
+				const why = path === undefined ? `${raw} is relative and this chat has no folder` : sandboxWriteRefusal(sandbox, path, context);
+				if (why) {
+					return { error: `${name} did not start: no file was changed. ${why[0].toUpperCase()}${why.slice(1)} (this chat runs in Volt's sandbox). Change files only where the sandbox allows, with your own tools.` };
+				}
+			}
+		}
+		return undefined;
+	}
+
+	/** Whether `target` runs in a sandbox at least as strict as the caller's, so prompting it is not a way out. */
+	private coversChat(target: string, sandbox: IVoltSandboxSettings, call: IVoltHostToolCall): boolean {
+		const resolver = this.sandboxes;
+		const settings = resolver?.settings(target);
+		if (!resolver || !settings) {
+			return false;
+		}
+		// Folders matter only when the target may write its workspace; reading them can create a chat's state.
+		const folders = settings.level === 'workspace-write'
+			? { target: resolver.folder(target), caller: (call.sessionId ? resolver.folder(call.sessionId) : undefined) ?? call.cwd }
+			: undefined;
+		return sandboxCovers(settings, sandbox, folders);
+	}
+
+	/** Where the chat may work (its folder as named and resolved through symlinks), and the machine facts the rules need. */
+	private async sandboxContext(call: IVoltHostToolCall): Promise<ISandboxPathContext> {
+		const named = [...new Set([call.sessionId ? this.sandboxes?.folder(call.sessionId) : undefined, call.cwd].filter((folder): folder is string => !!folder && isAbsolute(folder)))];
+		const resolved = await Promise.all(named.map(folder => this.realPath(URI.file(folder))));
+		return {
+			roots: [...new Set([...named, ...resolved])],
+			home: env['HOME'] || env['USERPROFILE'] || undefined,
+			tmpdir: env['TMPDIR'] || undefined,
+			platform: SANDBOX_PLATFORM,
+		};
+	}
+
+	/**
+	 * A path an agent named, as the file it reaches: relative to `base`, `file://` decoded, and through
+	 * symlinks. Tools decode `%xx` in some paths, so both readings are returned. Undefined for a
+	 * relative path without a base.
+	 */
+	private async realPaths(raw: string, base: string | undefined): Promise<(string | undefined)[]> {
+		const value = raw.trim();
+		let decoded = value;
+		try {
+			decoded = decodeURIComponent(value);
+		} catch {
+			// not percent-encoded
+		}
+		const readings = [...new Set([value, decoded])];
+		return Promise.all(readings.map(async reading => {
+			const uri = /^file:\/\//i.test(reading) ? URI.parse(reading) : isAbsolute(reading) ? URI.file(reading) : base ? joinPath(URI.file(base), reading) : undefined;
+			return uri ? this.realPath(normalizePath(uri)) : undefined;
+		}));
+	}
+
+	/** `uri` through symlinks: its own real path, or its deepest existing folder's plus the rest (a file about to be created). */
+	private async realPath(uri: URI): Promise<string> {
+		let current = uri;
+		const rest: string[] = [];
+		for (let depth = 0; depth < 64; depth++) {
+			let real: URI | undefined;
+			try {
+				real = await this.fileService.realpath(current);
+			} catch {
+				real = undefined;
+			}
+			if (real) {
+				return (rest.length ? joinPath(real, ...[...rest].reverse()) : real).fsPath;
+			}
+			const parent = dirname(current);
+			if (parent.path === current.path) {
+				break;
+			}
+			rest.push(basename(current));
+			current = parent;
+		}
+		return uri.fsPath;
 	}
 
 	/**
@@ -383,7 +551,11 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		if (options?.groups) {
 			url += `?groups=${options.groups.join(',')}`;
 		}
-		const headers = this.mcpToken ? [{ name: 'Authorization', value: `Bearer ${this.mcpToken}` }] : [];
+		// Each chat's agent gets a token for its own session and groups, never the server secret: a
+		// server without a session gets no credentials (the server refuses it), so nothing an agent
+		// holds lets it act as another chat.
+		const token = this.mcpToken && sessionId ? hostMcpSessionToken(this.mcpToken, sessionId, options?.groups) : undefined;
+		const headers = token ? [{ name: 'Authorization', value: `Bearer ${token}` }] : [];
 		return [{ type: 'http', name: 'volt', url, headers }];
 	}
 
@@ -406,6 +578,10 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 
 	setApprover(approver: IVoltHostToolApprover | undefined): void {
 		this.approver = approver;
+	}
+
+	setSandboxResolver(resolver: IVoltHostSandboxResolver | undefined): void {
+		this.sandboxes = resolver;
 	}
 
 	private async captureBrowser(args: Record<string, unknown>): Promise<IVoltHostToolResult> {

@@ -144,36 +144,34 @@ export class AgentWorktreeSetupService extends Disposable implements IAgentWorkt
 		let projectFile: IProjectFile | undefined;
 		let worktreesJson: IWorktreesJson | undefined;
 		let error: string | undefined;
-		// The new worktree's copy first: its branch may set up differently than the checkout.
-		for (const folder of [worktreePath, repoRoot]) {
-			for (const source of PROJECT_FILES) {
-				if (projectFile) {
-					break;
-				}
-				const text = await this.read(join(folder, source));
-				if (text !== undefined) {
-					const parsed = parseProjectFile(text, source);
-					if (parsed.kind === 'ok') {
-						projectFile = parsed.value;
-					} else if (parsed.kind === 'error') {
-						error ??= parsed.error;
-					}
+		// The project checkout's files only, never the new worktree's: a sandboxed agent could commit a setup file to a branch and have it run outside the sandbox.
+		for (const source of PROJECT_FILES) {
+			if (projectFile) {
+				break;
+			}
+			const text = await this.read(join(repoRoot, source));
+			if (text !== undefined) {
+				const parsed = parseProjectFile(text, source);
+				if (parsed.kind === 'ok') {
+					projectFile = parsed.value;
+				} else if (parsed.kind === 'error') {
+					error ??= parsed.error;
 				}
 			}
-			for (const source of WORKTREE_SETUP_FILES) {
-				if (worktreesJson) {
-					break;
-				}
-				const file = join(folder, ...source.split(posix.sep));
-				const text = await this.read(file);
-				if (text !== undefined) {
-					const parsed = parseWorktreesJson(text, source, platform);
-					if (parsed.kind === 'ok') {
-						// A script path is relative to the file that names it.
-						worktreesJson = parsed.value.script ? { ...parsed.value, commands: [join(folder, ...source.split(posix.sep).slice(0, -1), parsed.value.script)], script: parsed.value.script } : parsed.value;
-					} else if (parsed.kind === 'error') {
-						error ??= parsed.error;
-					}
+		}
+		for (const source of WORKTREE_SETUP_FILES) {
+			if (worktreesJson) {
+				break;
+			}
+			const file = join(repoRoot, ...source.split(posix.sep));
+			const text = await this.read(file);
+			if (text !== undefined) {
+				const parsed = parseWorktreesJson(text, source, platform);
+				if (parsed.kind === 'ok') {
+					// A script path is relative to the file that names it (so it is the checkout's script too).
+					worktreesJson = parsed.value.script ? { ...parsed.value, commands: [join(repoRoot, ...source.split(posix.sep).slice(0, -1), parsed.value.script)], script: parsed.value.script } : parsed.value;
+				} else if (parsed.kind === 'error') {
+					error ??= parsed.error;
 				}
 			}
 		}

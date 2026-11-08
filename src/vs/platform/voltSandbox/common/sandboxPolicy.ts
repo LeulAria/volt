@@ -3,9 +3,13 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { CREDENTIAL_HOME_PATHS, credentialDenyEntries, PROTECTED_GIT_PATTERNS, PROTECTED_ROOT_NAMES } from './sandboxProfiles.js';
+import { IVoltSandboxPolicy } from './sandboxSchema.js';
+
 /**
- * OS sandbox policy for agent processes. Pure: the main process turns a plan into a Seatbelt
- * profile (macOS) or Landlock rules (Linux); the renderer decides levels per chat.
+ * Per-chat sandbox settings for agent processes, and the agent profile built from them. Pure: the
+ * node side resolves `agentSandboxPolicy` and runs it through the SandboxManager; the renderer
+ * decides levels per chat and uses `resolveSandboxPlan` for its own checks.
  *
  * Unlike Codex and Claude Code, which sandbox only the shell commands an agent runs, Volt wraps
  * the whole agent process tree, so the agent's own file tools are confined too. That makes the
@@ -77,74 +81,113 @@ export interface ISandboxPlan {
 	readonly loopbackPorts: readonly number[];
 }
 
-/** Files that run as code later, outside any sandbox (srt's mandatory denies, plus Volt's own). */
-const DANGEROUS_ROOT_FILES = ['.gitconfig', '.gitmodules', '.bashrc', '.bash_profile', '.zshrc', '.zprofile', '.zshenv', '.profile', '.ripgreprc', '.mcp.json'];
-const DANGEROUS_ROOT_DIRS = ['.git/hooks', '.vscode', '.idea', '.claude/commands', '.claude/agents', '.cursor/hooks', '.volt/hooks'];
-const DANGEROUS_ROOT_EXACT = ['.git/config', '.claude/settings.json', '.claude/settings.local.json', '.cursor/hooks.json', '.cursor/mcp.json', '.volt/hooks.json'];
+/** Files that run as code later, outside any sandbox: the same set the OS profiles protect. */
+const DANGEROUS_ROOT_NAMES = PROTECTED_ROOT_NAMES;
+const DANGEROUS_GIT_NAMES = ['.git/config', '.git/config.worktree', '.git/hooks', '.git/modules'];
 
-/** Credentials no agent needs (git over SSH still works: `~/.ssh` stays readable). */
-const SECRET_HOME_DIRS = ['.aws', '.gnupg', '.kube', '.config/gcloud', '.azure', '.docker/config.json', '.netrc', '.npmrc', '.pypirc'];
+/** Credentials no agent needs, for the renderer-side checks (the OS profile uses `credentialDenyEntries`). */
+const SECRET_HOME_DIRS = CREDENTIAL_HOME_PATHS.filter(path => path !== 'Library/Keychains');
 
 interface IAgentFootprint {
-	/** Folders under the home directory the CLI writes (sessions, auth, caches, installs). */
+	/** Folders under the home directory the CLI writes (sessions, auth, caches). */
 	readonly homeDirs: readonly string[];
 	/** Files under the home directory written in place (atomic writes go through siblings). */
 	readonly homeFiles?: readonly string[];
-	/** Paths under the home directory that hold code or hooks the CLI runs: never writable. */
+	/**
+	 * Paths under the home directory that hold code, hooks or installs the CLI (or Volt) runs
+	 * later: never writable, even inside `homeDirs`.
+	 */
 	readonly protectedHome?: readonly string[];
+	/** The CLI's own credentials: readable by this agent, denied to every other one. */
+	readonly credentials?: readonly string[];
 	/** Absolute temp folders keyed off the uid (`claude-<uid>`). */
 	readonly tmpDirs?: (uid: number | undefined) => readonly string[];
 	/** API hosts the agent must reach to work at all. */
 	readonly domains: readonly string[];
+	/** Environment variables the CLI reads its keys and endpoints from, copied even though they look secret. */
+	readonly envKeys?: readonly string[];
+	/** Fixed environment for a sandboxed run (turn off self-updates that would write executables). */
+	readonly env?: Readonly<Record<string, string>>;
 }
 
-/** Every agent goes through npx or a package manager cache at some point. */
-const SHARED_HOME_DIRS = ['.npm', '.cache', 'Library/Caches', '.bun/install/cache', '.local/state'];
+/** State every CLI writes; shared caches are not here (see `SANDBOX_CACHE_ENV`). */
+const SHARED_HOME_DIRS = ['.local/state'];
 const NPM_DOMAINS = ['registry.npmjs.org'];
+
+/**
+ * Package and tool caches redirected to a sandbox-only folder. The shared ones (`~/.npm`,
+ * `~/.cache`, `~/Library/Caches`, Bun's cache) hold code the host runs later, including the npx
+ * copies of the ACP adapters Volt itself launches, so a sandboxed agent must not write them.
+ */
+const SANDBOX_CACHE_ENV: Readonly<Record<string, string>> = {
+	npm_config_cache: 'npm',
+	XDG_CACHE_HOME: 'xdg',
+	BUN_INSTALL_CACHE_DIR: 'bun',
+	PIP_CACHE_DIR: 'pip',
+	YARN_CACHE_FOLDER: 'yarn',
+	npm_config_store_dir: 'pnpm-store',
+	UV_CACHE_DIR: 'uv',
+	GOCACHE: 'go-build',
+};
 
 const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 	'claude-code': {
-		homeDirs: ['.claude', '.config/claude', '.local/share/claude'],
+		homeDirs: ['.claude', '.config/claude', 'Library/Caches/claude-cli-nodejs'],
 		homeFiles: ['.claude.json'],
-		protectedHome: ['.claude/settings.json', '.claude/settings.local.json', '.claude/commands', '.claude/agents', '.claude/hooks'],
+		// `.local/share/claude` and `.claude/local` hold the CLI's own binaries; plugins carry hooks.
+		protectedHome: ['.claude/settings.json', '.claude/settings.local.json', '.claude/commands', '.claude/agents', '.claude/hooks', '.claude/plugins', '.claude/local', '.local/share/claude'],
+		credentials: ['.claude/.credentials.json'],
 		tmpDirs: uid => [`/private/tmp/claude-${uid ?? 0}`, `/tmp/claude-${uid ?? 0}`, '/private/tmp/cc-socks', '/tmp/cc-socks'],
 		domains: ['api.anthropic.com', '*.anthropic.com', 'claude.ai', '*.claude.ai', 'claude.com', '*.claude.com', 'sentry.io', '*.sentry.io'],
+		envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR'],
+		env: { DISABLE_AUTOUPDATER: '1' },
 	},
 	codex: {
 		homeDirs: ['.codex'],
 		protectedHome: ['.codex/config.toml', '.codex/rules'],
+		credentials: ['.codex/auth.json'],
 		domains: ['chatgpt.com', '*.chatgpt.com', 'api.openai.com', '*.openai.com', 'auth.openai.com'],
+		envKeys: ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_HOME'],
 	},
 	'cursor-acp': {
-		homeDirs: ['.cursor', '.config/cursor', '.local/share/cursor-agent', 'Library/Application Support/Cursor/User/globalStorage'],
+		homeDirs: ['.cursor', '.config/cursor', 'Library/Application Support/Cursor/User/globalStorage'],
 		// cli-config.json is the CLI's own state (it saves the chosen model), so it stays writable under ~/.cursor.
-		protectedHome: ['.cursor/mcp.json', '.cursor/hooks.json', '.cursor/hooks'],
+		protectedHome: ['.cursor/mcp.json', '.cursor/hooks.json', '.cursor/hooks', '.cursor/extensions', '.local/share/cursor-agent'],
 		domains: ['cursor.com', '*.cursor.com', 'cursor.sh', '*.cursor.sh', 'cursorapi.com', '*.cursorapi.com'],
+		envKeys: ['CURSOR_API_KEY'],
 	},
 	grok: {
 		homeDirs: ['.grok'],
 		protectedHome: ['.grok/hooks', '.grok/mcp.json'],
 		domains: ['x.ai', '*.x.ai', 'grok.com', '*.grok.com'],
+		envKeys: ['XAI_API_KEY', 'GROK_API_KEY'],
 	},
 	opencode: {
 		// OpenCode 2 keeps credentials and sessions in `.local/share/opencode/opencode.db` and its CLI settings in `.config/opencode/cli.json`.
 		homeDirs: ['.local/share/opencode', '.config/opencode', '.opencode', '.omo', '.local/share/oh-my-opencode', '.claude/transcripts'],
-		protectedHome: ['.config/opencode/opencode.json', '.config/opencode/opencode.jsonc', '.config/opencode/cli.json', '.config/opencode/plugin', '.config/opencode/plugins'],
+		protectedHome: ['.config/opencode/opencode.json', '.config/opencode/opencode.jsonc', '.config/opencode/cli.json', '.config/opencode/plugin', '.config/opencode/plugins', '.opencode/bin', '.opencode/plugin', '.opencode/plugins'],
+		credentials: ['.local/share/opencode/auth.json', '.local/share/opencode/opencode.db'],
 		domains: ['opencode.ai', '*.opencode.ai', 'models.dev', 'api.anthropic.com', 'api.openai.com', 'openrouter.ai', '*.openrouter.ai', 'generativelanguage.googleapis.com', 'api.x.ai', 'api.deepseek.com', 'api.moonshot.ai', 'api.z.ai'],
+		envKeys: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'GEMINI_API_KEY', 'XAI_API_KEY', 'DEEPSEEK_API_KEY', 'MOONSHOT_API_KEY', 'ZAI_API_KEY', 'OPENCODE_API_KEY'],
 	},
 	antigravity: {
 		homeDirs: ['.gemini', '.antigravity', '.config/antigravity'],
+		credentials: ['.gemini/oauth_creds.json'],
 		domains: ['*.googleapis.com', 'accounts.google.com', 'oauth2.googleapis.com'],
+		envKeys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_CLOUD_PROJECT'],
 	},
 	pi: {
 		// `.pi/agent/auth.json` stays writable: Pi refreshes its OAuth tokens there.
 		homeDirs: ['.pi'],
 		protectedHome: ['.pi/agent/settings.json', '.pi/agent/models.json', '.pi/agent/mcp.json', '.pi/agent/keybindings.json'],
+		credentials: ['.pi/agent/auth.json'],
 		domains: ['pi.dev', '*.pi.dev', 'api.anthropic.com', 'api.openai.com', 'chatgpt.com', '*.chatgpt.com', 'auth.openai.com', 'openrouter.ai', '*.openrouter.ai', 'generativelanguage.googleapis.com', 'api.x.ai', 'api.deepseek.com', 'api.moonshot.ai', 'api.z.ai', 'api.groq.com', 'api.mistral.ai', 'api.cerebras.ai'],
+		envKeys: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'GEMINI_API_KEY', 'XAI_API_KEY', 'GROQ_API_KEY', 'MISTRAL_API_KEY', 'CEREBRAS_API_KEY'],
 	},
 	kimi: {
 		homeDirs: ['.kimi', '.kimi-code'],
 		domains: ['*.moonshot.ai', '*.moonshot.cn', 'kimi.com', '*.kimi.com'],
+		envKeys: ['MOONSHOT_API_KEY', 'KIMI_API_KEY'],
 	},
 	muse: {
 		homeDirs: ['.muse', '.config/muse'],
@@ -155,8 +198,12 @@ const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 		homeDirs: ['.fx'],
 		protectedHome: ['.fx/AGENTS.md', '.fx/skills'],
 		domains: ['fx.sh', '*.fx.sh', 'ai-gateway.vercel.sh', 'vercel.com', '*.vercel.com', 'chatgpt.com', '*.chatgpt.com', 'api.openai.com', 'auth.openai.com', 'x.ai', '*.x.ai', 'grok.com', '*.grok.com'],
+		envKeys: ['AI_GATEWAY_API_KEY', 'OPENAI_API_KEY', 'XAI_API_KEY'],
 	},
 };
+
+/** Every agent's own credential files, so each sandboxed agent can be denied the others'. */
+const ALL_AGENT_CREDENTIALS = [...new Set(Object.values(AGENT_FOOTPRINTS).flatMap(footprint => footprint.credentials ?? []))];
 
 /** The agent's API hosts: what stays reachable when the chat's network is off. */
 export function agentApiDomains(providerId: string): readonly string[] {
@@ -238,19 +285,17 @@ export function resolveSandboxPlan(request: IVoltSandboxRequest, host: ISandboxH
 	for (const root of [...workspace, ...extra]) {
 		if (root.endsWith('/.git')) {
 			// A worktree's git common dir: its hooks and config run later, outside the sandbox.
-			denySubpaths.push(`${root}/hooks`);
-			denyFiles.push(`${root}/config`);
+			denySubpaths.push(`${root}/hooks`, `${root}/modules`);
+			denyFiles.push(`${root}/config`, `${root}/config.worktree`);
 			continue;
 		}
-		for (const dir of DANGEROUS_ROOT_DIRS) {
-			denySubpaths.push(`${root}/${dir}`);
-		}
-		for (const file of [...DANGEROUS_ROOT_FILES, ...DANGEROUS_ROOT_EXACT]) {
-			denyFiles.push(`${root}/${file}`);
+		// Treated as folders: a folder rule also covers a file of that name.
+		for (const name of [...DANGEROUS_ROOT_NAMES, ...DANGEROUS_GIT_NAMES]) {
+			denySubpaths.push(`${root}/${name}`);
 		}
 	}
-	for (const file of DANGEROUS_ROOT_FILES) {
-		denyFiles.push(`${home}/${file}`);
+	for (const name of PROTECTED_ROOT_NAMES.filter(name => name.startsWith('.') && !name.includes('/'))) {
+		denyFiles.push(`${home}/${name}`);
 	}
 	denyFiles.push(`${home}/.config/git/config`, `${home}/.ssh/config`, `${home}/.ssh/authorized_keys`);
 	for (const path of footprint?.protectedHome ?? []) {
@@ -275,6 +320,106 @@ export function resolveSandboxPlan(request: IVoltSandboxRequest, host: ISandboxH
 function genericHomeDirs(providerId: string): string[] {
 	const name = providerId.replace(/-acp$/, '').replace(/[^a-z0-9._-]/gi, '');
 	return name ? [`.${name}`, `.config/${name}`, `.local/share/${name}`] : [];
+}
+
+/** Machine facts the agent profile needs; the node side fills them. */
+export interface IAgentSandboxHost {
+	readonly platform: string;
+	/** Real path. */
+	readonly home: string;
+	/** Real temp folders the CLI and its shells write: `os.tmpdir()`, `/tmp`, `/var/tmp`, the macOS user cache dir. */
+	readonly tempDirs: readonly string[];
+	readonly uid?: number;
+	/** Volt's user data: the agent-server token, the host MCP state. No agent may read it. */
+	readonly userDataDir?: string;
+	/** Private keys in `~/.ssh` (found by content): denied even when `~/.ssh` stays readable for git over SSH. */
+	readonly sshPrivateKeys?: readonly string[];
+	/** The ssh-agent socket, granted when the chat's network is on. */
+	readonly sshAuthSock?: string;
+	/** Where sandboxed package caches live (see `SANDBOX_CACHE_ENV`). */
+	readonly cacheDir: string;
+}
+
+/**
+ * The policy an agent CLI process tree runs under. Weaker than the workload profiles by design,
+ * because the whole CLI runs inside it:
+ * - the whole filesystem is readable except credentials (SSH private keys, cloud and `gh`
+ *   credentials, browser profiles, `.env` files, other agents' tokens, Volt's user data);
+ * - writable: the workspace (`workspace-write`), folders the user allowed, temp, and the CLI's own
+ *   state, minus everything that runs later outside the sandbox;
+ * - OS services stay reachable on macOS (Keychain, launchd), with Apple Events, LaunchServices,
+ *   synthetic input, the pasteboard, preference writes and signals to other processes denied;
+ * - no unix sockets (ssh-agent only with network on); loopback only to the proxy and Volt's MCP
+ *   server unless network is on;
+ * - the environment is the user's minus anything that looks secret, plus the CLI's own keys.
+ */
+export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSandboxHost): IVoltSandboxPolicy {
+	const home = normalizeSandboxPath(host.home);
+	const footprint = AGENT_FOOTPRINTS[request.providerId];
+	const usable = (paths: readonly string[] | undefined) => (paths ?? []).map(normalizeSandboxPath).filter(isAbsolute).filter(root => root !== '/' && !isPathInside(home, root));
+	const workspace = usable(request.workspaceRoots);
+	const extra = usable(request.extraWritableRoots);
+	const at = (relative: string) => `${home}/${relative}`;
+
+	const write = unique([
+		...(request.level === 'workspace-write' ? workspace : []),
+		...extra,
+		...host.tempDirs,
+		...(footprint?.tmpDirs?.(host.uid) ?? []),
+		...[...SHARED_HOME_DIRS, ...(footprint?.homeDirs ?? genericHomeDirs(request.providerId)), ...(footprint?.homeFiles ?? [])].map(at),
+		host.cacheDir,
+	]);
+
+	const protect: string[] = [];
+	for (const root of [...workspace, ...extra]) {
+		if (root.endsWith('/.git')) {
+			protect.push(`${root}/hooks`, `${root}/modules`, `${root}/config`, `${root}/config.worktree`);
+			continue;
+		}
+		protect.push(...PROTECTED_ROOT_NAMES.map(name => `${root}/${name}`));
+	}
+	if (request.level === 'read-only') {
+		// Read-only holds even when the workspace sits below a writable folder (a repo in /tmp).
+		protect.push(...workspace.filter(root => !extra.some(allowed => isPathInside(root, allowed))));
+	}
+	protect.push(...(footprint?.protectedHome ?? []).map(at), ...PROTECTED_GIT_PATTERNS);
+
+	const ownCredentials = new Set(footprint?.credentials ?? []);
+	const deny = [
+		...credentialDenyEntries()
+			// Keychain items are guarded by their own access lists; the CLI reads its login from there.
+			.filter(entry => entry !== '${home}/Library/Keychains')
+			// With network on, ssh needs its config and known_hosts; only the private keys stay denied.
+			.filter(entry => !(entry === '${home}/.ssh' && request.network))
+			.map(entry => entry.replace(/^\$\{home\}/, home)),
+		...(request.network ? (host.sshPrivateKeys ?? []) : []),
+		...ALL_AGENT_CREDENTIALS.filter(path => !ownCredentials.has(path)).map(at),
+		...(host.userDataDir ? [normalizeSandboxPath(host.userDataDir)] : []),
+	];
+
+	const network = request.network
+		? { mode: 'host' as const, allow: [], loopbackPorts: [], listen: true }
+		: {
+			mode: 'proxy' as const,
+			allow: unique([...agentApiDomains(request.providerId), ...(request.allowedDomains ?? [])].map(domain => domain.trim().toLowerCase()).filter(domain => domain && domain !== 'localhost')),
+			loopbackPorts: unique((request.loopbackPorts ?? []).filter(port => Number.isInteger(port) && port > 0 && port < 65536).map(String)).map(Number),
+			listen: true,
+		};
+
+	const cacheEnv = Object.fromEntries(Object.entries(SANDBOX_CACHE_ENV).map(([name, sub]) => [name, `${host.cacheDir}/${sub}`]));
+	return {
+		schemaVersion: 1,
+		name: `agent ${request.providerId} ${request.level}`,
+		filesystem: { read: ['/'], write, deny: unique(deny), protect: unique(protect), unmask: [] },
+		network,
+		process: { limits: {} },
+		env: { inherit: ['*', ...(footprint?.envKeys ?? [])], set: { ...cacheEnv, ...footprint?.env } },
+		// Seatbelt can allow exactly one socket. bubblewrap would have to allow AF_UNIX altogether
+		// while the whole filesystem is readable, so on Linux ssh-agent stays out (git over HTTPS works).
+		host: { unixSockets: request.network && host.sshAuthSock && host.platform === 'darwin' ? [host.sshAuthSock] : [], systemServices: true },
+		// bubblewrap cannot guard paths that do not exist yet; macOS cannot contain a setsid daemon.
+		bestEffort: ['filesystem.protectNew', 'process.tree'],
+	};
 }
 
 /**
@@ -345,31 +490,6 @@ export function sandboxStrategy(providerId: string, level: VoltSandboxLevel, pla
 /** Extra CLI arguments that switch an agent's own sandbox off while Volt wraps it (nesting fails on macOS). */
 export function nativeSandboxOffArgs(providerId: string): readonly string[] {
 	return providerId === 'cursor-acp' ? ['--sandbox', 'disabled'] : [];
-}
-
-/** Environment for a wrapped agent: says it is sandboxed and routes HTTP through Volt's proxy. */
-export function sandboxEnv(plan: ISandboxPlan, proxyUrl: string | undefined, tag: string): Record<string, string> {
-	const env: Record<string, string> = {
-		VOLT_SANDBOX: plan.level,
-		VOLT_SANDBOX_TAG: tag,
-	};
-	if (plan.network === 'proxy') {
-		env.VOLT_SANDBOX_NETWORK_DISABLED = '1';
-		// Codex's convention; tools that know it skip network tests.
-		env.CODEX_SANDBOX_NETWORK_DISABLED = '1';
-	}
-	if (proxyUrl) {
-		const noProxy = 'localhost,127.0.0.1,::1,.localhost';
-		Object.assign(env, {
-			HTTP_PROXY: proxyUrl, HTTPS_PROXY: proxyUrl, http_proxy: proxyUrl, https_proxy: proxyUrl,
-			ALL_PROXY: proxyUrl, all_proxy: proxyUrl,
-			NO_PROXY: noProxy, no_proxy: noProxy,
-			// Node 24+ fetch honours the variables above only with this set.
-			NODE_USE_ENV_PROXY: '1',
-			npm_config_proxy: proxyUrl, npm_config_https_proxy: proxyUrl,
-		});
-	}
-	return env;
 }
 
 /** One-line summary for tooltips and logs. */

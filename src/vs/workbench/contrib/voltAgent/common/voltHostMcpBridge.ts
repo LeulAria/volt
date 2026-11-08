@@ -8,6 +8,7 @@ import { Disposable, DisposableMap, toDisposable } from '../../../../base/common
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IVoltHostMcpResult, IVoltHostMcpService } from '../../../../platform/voltHostMcp/common/voltHostMcp.js';
+import { IVoltSandboxSettings } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IVoltHostToolResult, IVoltHostToolService, LEGACY_TOOL_NAMES } from '../../../services/voltRuntime/common/hostTools.js';
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
 
@@ -38,7 +39,13 @@ export class VoltHostMcpBridge extends Disposable {
 				this.calls.get(id)?.cancel();
 			}
 		}));
+		// The gate judges calls that prompt another chat by that chat's sandbox and folder.
+		this.hostTools.setSandboxResolver({
+			settings: sessionId => this.sandboxOf(this.runtime.chatFor(sessionId)),
+			folder: sessionId => this.runtime.workingFolder(this.runtime.chatFor(sessionId)),
+		});
 		this._register(toDisposable(() => {
+			this.hostTools.setSandboxResolver(undefined);
 			this.hostTools.setMcpEndpoint(undefined);
 			void this.mcp.stop(this.serverId);
 		}));
@@ -64,15 +71,31 @@ export class VoltHostMcpBridge extends Disposable {
 		try {
 			// A warm spare agent was started under a pool alias before any chat adopted it, and its
 			// MCP URL still carries that alias: name the chat, or the browser, questions and mode
-			// gates act for a chat that does not exist.
-			result = await this.hostTools.invokeTool(name, args, { sessionId: sessionId ? this.runtime.chatFor(sessionId) : undefined, token: cancel.token, source: 'mcp' });
+			// gates act for a chat that does not exist. The server checked the session against the
+			// agent's token, so this is the chat the agent serves, and its sandbox comes from Volt.
+			const chat = sessionId ? this.runtime.chatFor(sessionId) : undefined;
+			const sandbox = chat ? this.sandboxOf(chat) : undefined;
+			result = await this.hostTools.invokeTool(name, args, { sessionId: chat, token: cancel.token, source: 'mcp', ...(sandbox && sandbox.level !== 'off' ? { sandbox } : {}) });
 		} catch (err) {
 			result = { error: err instanceof Error ? err.message : String(err) };
 		}
 		this.calls.deleteAndDispose(id);
 		await this.mcp.respond(id, toMcpResult(result));
 	}
+
+	/** A chat's sandbox; when the runtime cannot say, the strictest one (fail closed). */
+	private sandboxOf(chatId: string): IVoltSandboxSettings {
+		try {
+			return this.runtime.getSandboxSettings(chatId) ?? UNKNOWN_SANDBOX;
+		} catch (err) {
+			this.logService.warn('[volt] could not read a chat\'s sandbox for a host tool call', err);
+			return UNKNOWN_SANDBOX;
+		}
+	}
 }
+
+/** What a call gets when the chat's sandbox cannot be read. */
+const UNKNOWN_SANDBOX: IVoltSandboxSettings = { level: 'read-only', network: false };
 
 function toMcpResult(result: IVoltHostToolResult): IVoltHostMcpResult {
 	if (result.error) {

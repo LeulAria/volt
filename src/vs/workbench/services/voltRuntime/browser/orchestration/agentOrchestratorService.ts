@@ -41,6 +41,7 @@ import { DurableClaims } from '../jobs/durableClaims.js';
 import { BEACON_TTL_MS, WorkbenchBeacons } from '../jobs/workbenchBeacons.js';
 import { OrchestratorStore } from './orchestratorStore.js';
 import { orchIsTurnCurrent, orchTaskForToolCall, orchTasksOf } from '../../common/orchestration/orchestratorQueries.js';
+import { confineChatSandbox } from '../../common/access/chatSandbox.js';
 
 /** Models one delegate_task call may run the same brief on. */
 const MAX_FAN_OUT = 4;
@@ -1016,6 +1017,10 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				}
 			}
 			const thread = this.state.threads[threadId];
+			if (thread?.parentId) {
+				// A subagent is never confined less than the chat that delegated to it (every turn: the parent's may have tightened).
+				await confineChatSandbox(this.runtime, threadId, this.runtime.getSandboxSettings(thread.parentId));
+			}
 			if (thread?.taskId && thread.parentId && turn.kind === 'brief') {
 				await host.prepareChild?.(threadId, thread.parentId);
 			}

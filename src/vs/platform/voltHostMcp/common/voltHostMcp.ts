@@ -14,17 +14,21 @@ export interface IVoltHostMcpToolInfo {
 	readonly title?: string;
 	readonly description: string;
 	readonly inputSchema: object;
-	/** Lets a URL ask for a subset: `/mcp/<sessionId>?groups=core,image`. */
+	/** Lets a URL ask for a subset: `/mcp/<sessionId>?groups=core,image` (the session's token covers the groups). */
 	readonly group?: string;
 	/** Earlier names still accepted in `tools/call` (never listed). */
 	readonly aliases?: readonly string[];
 }
 
-/** Where agents reach a window's server, and the bearer token every request must carry. */
+/** Where agents reach a window's server, and the secret their bearer tokens derive from. */
 export interface IVoltHostMcpEndpoint {
 	/** `http://127.0.0.1:<port>/mcp` */
 	readonly url: string;
-	/** Send as `Authorization: Bearer <token>`. Random per server; never logged. */
+	/**
+	 * The server secret. Random per server; never logged and never handed to an agent: an agent
+	 * gets `hostMcpSessionToken(token, sessionId, groups)` for `/mcp/<sessionId>` (see
+	 * `voltHostMcpAuth.ts`). A request without a session needs this secret itself.
+	 */
 	readonly token: string;
 }
 
@@ -32,7 +36,7 @@ export interface IVoltHostMcpEndpoint {
 export interface IVoltHostMcpCall {
 	readonly id: string;
 	readonly serverId: string;
-	/** From the URL path `/mcp/<sessionId>`: the Volt chat the agent serves. */
+	/** From the URL path `/mcp/<sessionId>`, verified against the session's token: the Volt chat the agent serves. */
 	readonly sessionId?: string;
 	readonly name: string;
 	readonly args: unknown;

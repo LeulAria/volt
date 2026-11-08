@@ -14,7 +14,7 @@ import { generateUuid } from '../../../base/common/uuid.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
 import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
-import { isPathInside, planAllowsWrite } from '../../voltSandbox/common/sandboxPolicy.js';
+import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.js';
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
 import { ChildLedger } from './childLedger.js';
 import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxEvent, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
@@ -107,32 +107,42 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		const id = generateUuid();
 		let command = options.command;
 		let args = options.args ?? [];
-		let sandboxEnv: Record<string, string> = {};
-		const launch = options.sandbox ? await this.sandbox.prepare(command, args, options.sandbox) : undefined;
+		let cwd = options.cwd;
+		let env: NodeJS.ProcessEnv;
+		// Throws SandboxUnavailableError when the sandbox cannot be established: the agent does not start.
+		const launch = options.sandbox ? await this.sandbox.prepare(command, args, options.sandbox, { cwd: options.cwd, hostEnv: await this.env(), env: options.env }) : undefined;
 		if (launch) {
 			command = launch.command;
 			args = launch.args;
-			sandboxEnv = launch.env;
+			cwd = launch.cwd;
+			// The profile's environment is complete: the user's minus secrets, plus what Volt set on purpose.
+			env = launch.env;
 			this.sandboxes.set(id, launch);
 			this.sandboxTags.set(launch.tag, id);
-		}
-		const env = { ...await this.env(), ...options.env, ...sandboxEnv };
-		if (launch) {
 			// Diagnostics for sandboxed spawns: exactly what runs, where, from which parent and with which env names.
-			this.logService.info(`[volt-sandbox-spawn] ${id} ppid=${process.pid} cwd=${options.cwd ?? ''} argv=${JSON.stringify([command, ...args.filter(arg => arg.length < 200)])}`);
+			this.logService.info(`[volt-sandbox-spawn] ${id} ppid=${process.pid} cwd=${cwd ?? ''} ${launch.mechanism} unenforced=${launch.unenforced.join(',') || 'none'}`);
 			this.logService.info(`[volt-sandbox-spawn] ${id} env=${Object.keys(env).sort().join(',')}`);
+		} else {
+			env = { ...await this.env(), ...options.env };
 		}
 		const child = spawn(command, args, {
-			cwd: options.cwd,
+			cwd,
 			env,
-			stdio: ['pipe', 'pipe', 'pipe'],
+			stdio: ['pipe', 'pipe', 'pipe', ...(launch?.extraStdio ?? [])],
 			// Its own process group, so stopping it also stops the workers it starts.
 			detached: process.platform !== 'win32',
-		});
-		if (launch?.warnings.length) {
-			// After the spawn call has answered, so the caller already knows the id.
-			const warnings = launch.warnings;
-			setTimeout(() => warnings.forEach(warning => this._onSandboxEvent.fire({ id, warning })), 250);
+		}) as ChildProcessWithoutNullStreams;
+		if (launch) {
+			void launch.confirm(child).then(confirmation => {
+				if (!confirmation.ok) {
+					// Never left running unconfirmed: the agent exits and the transcript says why.
+					this.logService.warn(`[volt-sandbox-spawn] ${id} not confirmed: ${confirmation.error}`);
+					this._onSandboxEvent.fire({ id, warning: `The sandbox could not be established, so the agent was stopped: ${confirmation.error}` });
+					void launch.terminate(child);
+				} else if (launch.warnings.length) {
+					launch.warnings.forEach(warning => this._onSandboxEvent.fire({ id, warning }));
+				}
+			});
 		}
 		this.processes.set(id, child);
 		this.track(child, command);
@@ -216,17 +226,18 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			return true;
 		}
 		const resolved = await realpathOfNearest(path);
-		const plan = launch.plan;
-		if (access === 'read') {
-			return !plan.denyReadSubpaths.some(root => isPathInside(path, root) || isPathInside(resolved, root));
-		}
-		// Both spellings must pass, as Seatbelt checks the resolved path and Volt writes the given one.
-		return planAllowsWrite(plan, path) && planAllowsWrite(plan, resolved);
+		// Both spellings must pass, as the OS checks the resolved path and Volt writes the given one.
+		return resolvedPolicyAllows(launch.policy, path, access) && resolvedPolicyAllows(launch.policy, resolved, access);
 	}
 
 	private disposeSandbox(id: string): void {
 		const launch = this.sandboxes.get(id);
 		if (launch) {
+			const child = this.processes.get(id);
+			if (child) {
+				// The agent is gone; nothing it started may outlive it.
+				void launch.terminate(child);
+			}
 			// A moment for the kernel log to deliver the last denials of a process that just ended.
 			setTimeout(() => {
 				launch.dispose();
@@ -251,7 +262,13 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		if (!child) {
 			return;
 		}
-		killTree(child);
+		const launch = this.sandboxes.get(id);
+		if (launch) {
+			// The backend's kill: the whole sandbox, including processes that left the group.
+			void launch.terminate(child);
+		} else {
+			killTree(child);
+		}
 		this.processes.delete(id);
 		this.owners.delete(id);
 	}
@@ -279,7 +296,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			void this.kill(id);
 		}
 		for (const run of this.runs.values()) {
-			killTree(run.child);
+			run.stop();
 		}
 	}
 
@@ -326,18 +343,39 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		const env = { ...await this.env(), ...request.env };
 		const shell = shellFor(env);
 		const started = Date.now();
-		const child = spawn(shell.file, shell.args(request.command), {
-			cwd: request.cwd,
-			env,
+		let launch: ISandboxLaunch | undefined;
+		if (request.sandbox) {
+			try {
+				launch = await this.sandbox.prepare(shell.file, shell.args(request.command), request.sandbox, { cwd: request.cwd, hostEnv: await this.env(), env: request.env });
+			} catch (err) {
+				// Refused, never run unsandboxed.
+				const message = `Not run: ${(err as Error).message}`;
+				return { id: request.id, exitCode: null, stdout: '', stderr: message, combined: message, truncated: false, durationMs: Date.now() - started, timedOut: false, cancelled: false, running: false };
+			}
+		}
+		const child = spawn(launch?.command ?? shell.file, launch?.args ?? shell.args(request.command), {
+			cwd: launch?.cwd ?? request.cwd,
+			env: launch?.env ?? env,
 			// No stdin: a command that prompts gets EOF instead of hanging the run.
-			stdio: ['ignore', 'pipe', 'pipe'],
+			stdio: ['ignore', 'pipe', 'pipe', ...(launch?.extraStdio ?? [])],
 			detached: process.platform !== 'win32',
 			windowsVerbatimArguments: process.platform === 'win32',
 		});
 		this.track(child, shell.file);
-		const run = new ExecRun(request.id, request.command, child, started, owner);
+		const run = new ExecRun(request.id, request.command, child, started, owner, launch);
 		this.runs.set(request.id, run);
 		this.pruneFinishedJobs();
+		if (launch) {
+			const sandboxed = launch;
+			void sandboxed.confirm(child).then(confirmation => {
+				if (!confirmation.ok) {
+					run.appendError(`Volt sandbox: ${confirmation.error}\n`);
+					void sandboxed.terminate(child);
+				}
+			});
+			// Nothing a sandboxed command started outlives it; then its sandbox is torn down.
+			run.onDone(() => void sandboxed.terminate(child).finally(() => sandboxed.dispose()));
+		}
 		run.onDone(() => {
 			// A command that handed control back stays readable as a job.
 			if (!request.background && !run.yielded) {
@@ -346,7 +384,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		});
 		const timeout = setTimeout(() => {
 			run.timedOut = true;
-			killTree(child);
+			run.stop();
 		}, Math.max(1_000, request.timeoutMs));
 		run.onDone(() => clearTimeout(timeout));
 
@@ -375,7 +413,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			return;
 		}
 		run.cancelled = true;
-		killTree(run.child);
+		run.stop();
 		await Promise.race([run.done, delay(KILL_GRACE_MS * 2)]);
 		this.runs.delete(id);
 	}
@@ -494,7 +532,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		}
 		this.sandboxes.clear();
 		for (const run of this.runs.values()) {
-			killTree(run.child);
+			run.stop();
 		}
 		this.runs.clear();
 		this.stderr.clear();
@@ -524,7 +562,7 @@ class ExecRun {
 	private readonly outputListeners = new Set<() => void>();
 	private readonly doneListeners: (() => void)[] = [];
 
-	constructor(readonly id: string, readonly command: string, readonly child: ChildProcess, readonly startedAt: number, readonly owner?: string) {
+	constructor(readonly id: string, readonly command: string, readonly child: ChildProcess, readonly startedAt: number, readonly owner?: string, private readonly sandbox?: ISandboxLaunch) {
 		child.stdout?.setEncoding('utf8');
 		child.stderr?.setEncoding('utf8');
 		child.stdout?.on('data', (data: string) => this.append(this.stdout, data));
@@ -550,6 +588,19 @@ class ExecRun {
 				finish(127, null);
 			});
 		});
+	}
+
+	/** Kills the whole tree: through the sandbox backend when sandboxed (it reaches processes that left the group). */
+	stop(): void {
+		if (this.sandbox) {
+			void this.sandbox.terminate(this.child);
+		} else {
+			killTree(this.child);
+		}
+	}
+
+	appendError(text: string): void {
+		this.append(this.stderr, text);
 	}
 
 	onDone(listener: () => void): void {

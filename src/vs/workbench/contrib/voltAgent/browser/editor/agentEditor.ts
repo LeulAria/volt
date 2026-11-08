@@ -14,7 +14,11 @@ import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/sandboxDenials.js';
-import { IVoltSandboxSettings, withAllowedDomain, withWritableRoot } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { IVoltSandboxSettings, sandboxWorkspaceRoots, withAllowedDomain, withWritableRoot } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { folderGrantError } from '../../../../../platform/voltSandbox/common/sandboxInheritance.js';
+import { IPathService } from '../../../../services/path/common/pathService.js';
+import { IWorkbenchEnvironmentService } from '../../../../services/environment/common/environmentService.js';
+import { isSandboxRefusedMessage, sandboxRefusedReason } from '../../../../services/voltRuntime/common/access/sandboxRefusal.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
@@ -5347,7 +5351,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.appendTrayButton(row, localize('voltAgent.sandbox.allowHost', "Allow {0}", denial.target), localize('voltAgent.sandbox.allowHost.hint', "Let this chat reach {0} through the sandbox", denial.target), 'primary', () => this.retrySandboxed(withAllowedDomain(settings, denial.target)));
 		} else if (denial.kind === 'write') {
 			const folder = denial.target.slice(0, denial.target.lastIndexOf('/')) || '/';
-			this.appendTrayButton(row, localize('voltAgent.sandbox.allowFolder', "Allow folder"), localize('voltAgent.sandbox.allowFolder.hint', "Let this chat write in {0}", folder), 'primary', () => this.retrySandboxed(withWritableRoot(settings, folder)));
+			// The agent picks the path, so the folder is checked before it is granted (home, system, credentials, .git).
+			this.appendTrayButton(row, localize('voltAgent.sandbox.allowFolder', "Allow folder"), localize('voltAgent.sandbox.allowFolder.hint', "Let this chat write in {0}", folder), 'primary', () => void this.allowSandboxFolder(tray, settings, folder));
 		}
 		this.appendTrayButton(row, localize('voltAgent.sandbox.outside', "Run outside sandbox"), localize('voltAgent.sandbox.outside.hint', "Turn the sandbox off for this chat and retry the step"), 'secondary', () => this.retrySandboxed({ ...settings, level: 'off' }));
 	}
@@ -5359,6 +5364,28 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			case 'launch': return localize('voltAgent.sandbox.launch', "Opening {0} was blocked", denial.target);
 			default: return localize('voltAgent.sandbox.write', "Writing {0} was blocked", denial.target);
 		}
+	}
+
+	/** "Allow folder": granted and retried, or refused with the reason shown in the tray. */
+	private async allowSandboxFolder(tray: HTMLElement, settings: IVoltSandboxSettings, folder: string): Promise<void> {
+		const { home, userDataDir } = await this.instantiationService.invokeFunction(async accessor => ({
+			home: (await accessor.get(IPathService).userHome({ preferLocal: true })).fsPath,
+			userDataDir: dirname(accessor.get(IWorkbenchEnvironmentService).userRoamingDataHome.fsPath),
+		}));
+		const session = this.runtime.getOrCreateSession(this.sessionKey);
+		const workspaceRoots = sandboxWorkspaceRoots(this.runtime.workingFolder(this.sessionKey), this.sessionContext.rootFor(this.sessionKey)?.fsPath, !!session.worktreePath);
+		const refusal = folderGrantError(folder, { home, workspaceRoots, userDataDir });
+		if (!refusal) {
+			this.retrySandboxed(withWritableRoot(settings, folder));
+			return;
+		}
+		if (!tray.isConnected) {
+			return;
+		}
+		tray.querySelector('.volt-agent-run-tray-refusal')?.remove();
+		const note = append(tray, $('.volt-agent-run-tray-detail.volt-agent-run-tray-refusal'));
+		note.setAttribute('role', 'alert');
+		this.setSearchableText(note, localize('voltAgent.sandbox.allowFolder.refused', "Not allowed: {0}", refusal));
 	}
 
 	private retrySandboxed(settings: IVoltSandboxSettings): void {
@@ -5449,6 +5476,26 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (retrySubagent) {
 			this.appendTrayButton(row, retrySubagent.label, retrySubagent.tooltip, 'primary', retrySubagent.run);
 		}
+		this.appendSandboxRefusedActions(row, message);
+	}
+
+	/**
+	 * The agent was refused its sandbox (none on this machine, or one it cannot enforce): Volt never
+	 * runs it unconfined on its own. The user can turn the sandbox off for this chat, then try again.
+	 */
+	private appendSandboxRefusedActions(row: HTMLElement, message: IAgentAssistantMessage): void {
+		const failure = message.failure?.message ?? '';
+		if (!isSandboxRefusedMessage(failure) || message !== this.messages.at(-1) || this.isStreaming()) {
+			return;
+		}
+		const settings = this.runtime.getSandboxSettings(this.sessionKey);
+		if (settings.level !== 'off') {
+			this.appendTrayButton(row, localize('voltAgent.sandbox.turnOff', "Turn off sandbox for this chat"), localize('voltAgent.sandbox.turnOff.hint', "The agent then runs without OS confinement: {0}", sandboxRefusedReason(failure)), 'primary', () => {
+				void this.runtime.setSandboxSettings(this.sessionKey, { ...settings, level: 'off' }).then(() => this.rerenderExchangeOf(message));
+			});
+			return;
+		}
+		this.appendTrayButton(row, localize('voltAgent.tryAgain', "Try again"), localize('voltAgent.sandbox.tryAgain.hint', "Send this prompt again; the sandbox is off for this chat now"), 'primary', () => this.retryLastTurn());
 	}
 
 	/**

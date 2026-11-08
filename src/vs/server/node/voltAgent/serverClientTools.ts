@@ -7,6 +7,7 @@ import { Disposable, IDisposable } from '../../../base/common/lifecycle.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { AgentServerProtocol } from '../../../platform/voltAgentServer/common/protocolServer.js';
 import { fromWire, toWire } from '../../../platform/voltAgentServer/common/wire.js';
+import { IVoltSandboxSettings } from '../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IVoltExternalCaller, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolResult, IVoltHostToolService } from '../../../workbench/services/voltRuntime/common/hostTools.js';
 
 /** What a window gets with a forwarded tool call. The token stays here; `cancelKey` names the call for `hostTools.cancel`. */
@@ -16,6 +17,8 @@ export interface IClientToolCall {
 	readonly cwd?: string;
 	readonly source?: 'mcp' | 'native';
 	readonly external?: IVoltExternalCaller;
+	/** The calling chat's sandbox (the server's gate already ran): the window's tool reads it, and its nested calls carry it back. */
+	readonly sandbox?: IVoltSandboxSettings;
 	readonly cancelKey?: string;
 }
 
@@ -29,6 +32,7 @@ function toClientToolCall(call: IVoltHostToolCall | undefined, cancelKey?: strin
 		...(call.cwd ? { cwd: call.cwd } : {}),
 		...(call.source ? { source: call.source } : {}),
 		...(call.external ? { external: call.external } : {}),
+		...(call.sandbox ? { sandbox: call.sandbox } : {}),
 		...(cancelKey ? { cancelKey } : {}),
 	};
 }

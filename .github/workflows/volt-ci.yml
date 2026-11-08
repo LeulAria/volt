@@ -237,6 +237,67 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # The OS sandbox, attacked for real: escape attempts on Linux (bubblewrap + seccomp) and macOS
+  # (Seatbelt), each checked against the host's state (docs/security/sandbox). A missing backend
+  # FAILS here (VOLT_SANDBOX_REQUIRED); it never skips. Runs on Node like the shipped app does.
+  sandbox:
+    name: Sandbox Security (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      # Pure-JS dependencies only (mocha, glob, esbuild): no native modules, no Electron.
+      - name: Install dependencies without scripts
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor; bubblewrap needs them.
+      # Volt's probe reports this exact setting to users who hit it.
+      - name: Install bubblewrap, socat and prlimit (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap socat util-linux
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --version
+
+      - name: Transpile src/
+        run: npm run gulp transpile-client-esbuild
+
+      - name: Policy, composition, capability and profile tests
+        run: >-
+          npm run test-node --
+          --run src/vs/platform/voltSandbox/test/common/sandboxCore.test.ts
+          --run src/vs/platform/voltSandbox/test/common/sandboxPolicy.test.ts
+          --run src/vs/platform/voltSandbox/test/common/sandboxInheritance.test.ts
+          --run src/vs/platform/voltSandbox/test/common/seccomp.test.ts
+          --run src/vs/platform/voltSandbox/test/common/bwrap.test.ts
+
+      - name: Adversarial sandbox suite
+        env:
+          VOLT_SANDBOX_REQUIRED: '1'
+        run: npm run test-node -- --run src/vs/platform/voltSandbox/test/node/sandboxSecurity.test.ts
+
+      # The seccomp filter's syscall numbers must match the kernel headers of the runner's architecture.
+      - name: Seccomp syscall numbers against kernel headers (Linux)
+        if: runner.os == 'Linux'
+        run: node scripts/volt-sandbox-check-syscalls.mjs
+
   extensions:
     name: Extensions
     needs: changes
@@ -512,7 +573,7 @@ jobs:
   check:
     name: Check
     if: always()
-    needs: [changes, lint, typecheck, test-volt, test-node, test-electron, extensions, cli, docs, mobile, relay, govern, workflows, dependencies]
+    needs: [changes, lint, typecheck, test-volt, test-node, test-electron, sandbox, extensions, cli, docs, mobile, relay, govern, workflows, dependencies]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -523,7 +584,7 @@ jobs:
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           echo "$RESULTS" | jq -e --arg event "$EVENT" '
-            {typecheck: "src", "test-volt": "src", "test-node": "src", "test-electron": "src",
+            {typecheck: "src", "test-volt": "src", "test-node": "src", "test-electron": "src", sandbox: "src",
              extensions: "extensions", cli: "cli", docs: "docs", mobile: "mobile",
              relay: "relay", govern: "govern", workflows: "workflows"} as $gate
             | .changes.outputs as $areas

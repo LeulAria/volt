@@ -9,6 +9,7 @@ import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
 import type { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import type { IVoltSandboxSettings } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from './deviceTools.js';
 import { DESKTOP_TOOL_NAMES } from './desktopTools.js';
 import { isMemoryToolName } from './memory/voltMemory.js';
@@ -200,6 +201,20 @@ export interface IVoltHostToolCall {
 	readonly source?: 'mcp' | 'native';
 	/** An agent outside Volt called it over the OAuth MCP server (no chat; `sessionId` is unset). */
 	readonly external?: IVoltExternalCaller;
+	/**
+	 * The OS sandbox of the chat whose agent made the call, resolved by Volt from the session its
+	 * MCP token was issued for (never from the agent). Undefined or `off`: unconfined. The host tool
+	 * service refuses or narrows what a sandboxed chat's call would do outside it (`hostToolSandbox.ts`).
+	 */
+	readonly sandbox?: IVoltSandboxSettings;
+}
+
+/** Each chat's sandbox, for the sandbox gate: the caller's workspace, and other chats a call would prompt (thread_send). */
+export interface IVoltHostSandboxResolver {
+	/** The chat's sandbox settings (the default for a chat that never set one). */
+	settings(sessionId: string): IVoltSandboxSettings | undefined;
+	/** The folder the chat's agent may write when its sandbox allows the workspace: its worktree, else its project. */
+	folder(sessionId: string): string | undefined;
 }
 
 /** Who an outside agent is, from the grant the user approved. */
@@ -1035,4 +1050,6 @@ export interface IVoltHostToolService {
 	setSessionResolver(resolver: IVoltHostSessionResolver | undefined): void;
 	/** Asks the user when a chat's mode does not allow a call. Without one, such calls are refused. */
 	setApprover(approver: IVoltHostToolApprover | undefined): void;
+	/** Each chat's sandbox, set by whoever serves the MCP server. Without one, a sandboxed chat may not prompt other chats. */
+	setSandboxResolver(resolver: IVoltHostSandboxResolver | undefined): void;
 }

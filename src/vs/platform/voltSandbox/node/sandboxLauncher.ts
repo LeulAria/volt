@@ -3,24 +3,24 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ChildProcess, execFile, spawn } from 'child_process';
-import { createHash } from 'crypto';
-import { promises as fs, existsSync } from 'fs';
-import { homedir, tmpdir } from 'os';
-import { join } from '../../../base/common/path.js';
+import { ChildProcess, execFile } from 'child_process';
+import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import { Emitter, Event } from '../../../base/common/event.js';
-import { Disposable } from '../../../base/common/lifecycle.js';
-import { generateUuid } from '../../../base/common/uuid.js';
-import { bwrapArgs, LANDLOCK_HELPER_SOURCE, landlockArgs } from '../common/landlock.js';
-import { denialKindForOperation, ISandboxDenial, isNoiseDenial } from '../common/sandboxDenials.js';
-import { ISandboxHostInfo, ISandboxPlan, IVoltSandboxRequest, nativeSandboxOffArgs, resolveSandboxPlan, sandboxEnv } from '../common/sandboxPolicy.js';
-import { buildSeatbeltProfile, parseSeatbeltLogLine, SANDBOX_EXEC_PATH, seatbeltCommand, SEATBELT_TAG_PREFIX } from '../common/seatbelt.js';
-import { SandboxNetworkProxy } from './sandboxProxy.js';
+import { Disposable, toDisposable } from '../../../base/common/lifecycle.js';
+import { join } from '../../../base/common/path.js';
+import { ISandboxBackendCapabilities, SandboxBackendId } from '../common/sandboxBackend.js';
+import { ISandboxDenial, isNoiseDenial } from '../common/sandboxDenials.js';
+import { agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
+import { IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
+import { SandboxDimension } from '../common/sandboxSchema.js';
+import { SandboxManager } from './sandboxManager.js';
+import { sandboxHostFacts } from './sandboxResolver.js';
+import { SandboxConfirmation } from './sandboxBackends.js';
 
 const execFileAsync = promisify(execFile);
 
-export type SandboxMechanism = 'seatbelt' | 'landlock' | 'bwrap' | 'none';
+export type SandboxMechanism = 'seatbelt' | 'bwrap' | 'none';
 
 export interface IVoltSandboxSupport {
 	readonly platform: string;
@@ -29,19 +29,27 @@ export interface IVoltSandboxSupport {
 	readonly filesystem: boolean;
 	/** Network can be limited to Volt's proxy. */
 	readonly network: boolean;
-	/** One line for the UI: "macOS Seatbelt", "Landlock ABI 5", "No Landlock in this kernel (5.10)". */
+	/** One line for the UI: "macOS Seatbelt", "bubblewrap 0.9.0", or why there is none. */
 	readonly detail: string;
 }
 
+/** A prepared agent launch. The caller spawns it, then must `confirm` before trusting it and `dispose` after. */
 export interface ISandboxLaunch {
 	readonly command: string;
 	readonly args: string[];
+	/** The agent's complete environment. Nothing else may be merged in. */
 	readonly env: Record<string, string>;
+	readonly cwd: string;
+	/** stdio entries from fd 3 up. */
+	readonly extraStdio: readonly (number | 'pipe')[];
 	readonly tag: string;
-	readonly plan: ISandboxPlan;
+	readonly policy: IResolvedSandboxPolicy;
 	readonly mechanism: SandboxMechanism;
-	/** Shown in the transcript: the sandbox is weaker than asked (no Landlock, no network filter). */
+	/** Dimensions running best effort (status `partial`). Shown in the transcript. */
+	readonly unenforced: readonly SandboxDimension[];
 	readonly warnings: readonly string[];
+	confirm(child: ChildProcess): Promise<SandboxConfirmation>;
+	terminate(child: ChildProcess): Promise<void>;
 	/** Hosts the user allows later (network off). */
 	allowDomains(domains: readonly string[]): void;
 	dispose(): void;
@@ -57,124 +65,88 @@ interface ILogger {
 	warn(message: string, ...args: unknown[]): void;
 }
 
+const UNENFORCED_TEXT: Partial<Record<SandboxDimension, string>> = {
+	'filesystem.protectNew': 'protected files that do not exist yet (new git hooks, editor tasks) are not guarded on this OS',
+	'process.tree': 'a process that detaches itself completely can outlive the agent (it stays sandboxed)',
+};
+
 /**
- * Wraps agent commands in the OS sandbox: Seatbelt on macOS, Landlock (Volt's own helper, else
- * bubblewrap) on Linux. Watches the kernel log for denials on macOS and reports them per launch.
+ * Agent CLI processes in the OS sandbox: builds the agent profile for a chat's request and runs
+ * it through the SandboxManager. Refuses (throws) when the sandbox cannot be established; never
+ * hands back an unsandboxed command.
  */
 export class VoltSandboxLauncher extends Disposable {
 
 	private readonly _onViolation = this._register(new Emitter<ISandboxViolationEvent>());
 	readonly onViolation: Event<ISandboxViolationEvent> = this._onViolation.event;
 
-	private host: Promise<ISandboxHostInfo> | undefined;
-	private helper: Promise<string | undefined> | undefined;
-	private support: Promise<IVoltSandboxSupport> | undefined;
-	private readonly liveTags = new Set<string>();
-	private monitor: ChildProcess | undefined;
+	private readonly manager: SandboxManager;
+	private agentHost: Promise<Omit<IAgentSandboxHost, 'sshAuthSock'>> | undefined;
 	private readonly recent = new Map<string, number>();
 
 	constructor(
-		/** Where the compiled Linux helper is kept (Volt's user data). */
-		private readonly stateDir: string,
-		private readonly logger: ILogger,
-		private readonly platform: string = process.platform,
+		/** Volt's user data: never readable by a sandboxed agent (agent-server token, MCP state). */
+		private readonly userDataDir: string,
+		logger: ILogger,
+		platform: string = process.platform,
 	) {
 		super();
+		this.manager = new SandboxManager({ info: m => logger.info(m), warn: m => logger.warn(m) }, { platform });
+		this._register(toDisposable(() => void this.manager.dispose()));
 	}
 
-	getSupport(): Promise<IVoltSandboxSupport> {
-		this.support ??= this.detectSupport();
-		return this.support;
+	async getSupport(): Promise<IVoltSandboxSupport> {
+		const capabilities = await this.manager.capabilities();
+		return supportFrom(capabilities);
 	}
 
-	private async detectSupport(): Promise<IVoltSandboxSupport> {
-		if (this.platform === 'darwin') {
-			const ok = existsSync(SANDBOX_EXEC_PATH);
-			return { platform: 'darwin', mechanism: ok ? 'seatbelt' : 'none', filesystem: ok, network: ok, detail: ok ? 'macOS Seatbelt' : 'sandbox-exec is missing' };
-		}
-		if (this.platform === 'linux') {
-			const helper = await this.ensureHelper();
-			if (helper) {
-				const abi = await this.landlockAbi(helper);
-				if (abi > 0) {
-					return { platform: 'linux', mechanism: 'landlock', filesystem: true, network: abi >= 4, detail: abi >= 4 ? `Landlock ABI ${abi}` : `Landlock ABI ${abi} (network limits need Linux 6.7)` };
-				}
-			}
-			const bwrap = await which('bwrap');
-			if (bwrap) {
-				return { platform: 'linux', mechanism: 'bwrap', filesystem: true, network: false, detail: 'bubblewrap (no Landlock; network is not limited)' };
-			}
-			return { platform: 'linux', mechanism: 'none', filesystem: false, network: false, detail: helper ? 'This kernel has no Landlock and bubblewrap is not installed' : 'No C compiler for the Landlock helper and bubblewrap is not installed' };
-		}
-		return { platform: this.platform, mechanism: 'none', filesystem: false, network: false, detail: 'OS sandboxing is not available on this platform' };
+	capabilities(): Promise<ISandboxBackendCapabilities> {
+		return this.manager.capabilities();
 	}
 
 	/**
 	 * The command, arguments and environment that run `command args` sandboxed by `request`.
-	 * The caller spawns it and calls `dispose` when the process ends.
+	 * `hostEnv` is the user's environment the profile filters; `env` is what Volt sets on purpose.
 	 */
-	async prepare(command: string, args: readonly string[], request: IVoltSandboxRequest): Promise<ISandboxLaunch> {
-		const host = await this.hostInfo();
-		const tag = generateUuid().replace(/-/g, '').slice(0, 16);
-		const resolved: IVoltSandboxRequest = {
-			...request,
-			workspaceRoots: await withRealpaths(request.workspaceRoots),
-			extraWritableRoots: await withRealpaths(request.extraWritableRoots ?? []),
-		};
-		const plan = resolveSandboxPlan(resolved, host);
-		const support = await this.getSupport();
-		const warnings: string[] = [];
-		let proxy: SandboxNetworkProxy | undefined;
-		if (plan.network === 'proxy') {
-			proxy = await SandboxNetworkProxy.start(plan.allowedDomains, hostName => this.report(tag, { kind: 'network', target: hostName, source: 'proxy' }));
-		}
-		const env = sandboxEnv(plan, proxy?.url, tag);
-		const agentArgs = [...nativeSandboxOffArgs(request.providerId), ...args];
-		let wrapped: { command: string; args: string[] };
-		switch (support.mechanism) {
-			case 'seatbelt':
-				wrapped = seatbeltCommand(buildSeatbeltProfile(plan, tag), command, agentArgs);
-				this.watch(tag);
-				break;
-			case 'landlock': {
-				const helper = (await this.ensureHelper())!;
-				const ports = [...(proxy ? [proxy.port] : []), ...plan.loopbackPorts];
-				wrapped = { command: helper, args: [...landlockArgs(plan, ports), '--', command, ...agentArgs] };
-				if (plan.network === 'proxy' && !support.network) {
-					warnings.push(`Network is not limited: ${support.detail}.`);
-				}
-				break;
+	async prepare(command: string, args: readonly string[], request: IVoltSandboxRequest, options: { cwd?: string; hostEnv: Readonly<Record<string, string | undefined>>; env?: Readonly<Record<string, string>> }): Promise<ISandboxLaunch> {
+		const host = await this.hostFacts();
+		const sshAuthSock = options.hostEnv.SSH_AUTH_SOCK && await fs.stat(options.hostEnv.SSH_AUTH_SOCK).then(s => s.isSocket(), () => false) ? options.hostEnv.SSH_AUTH_SOCK : undefined;
+		const policy = agentSandboxPolicy(request, { ...host, ...(sshAuthSock ? { sshAuthSock } : {}) });
+		const prepared = await this.manager.prepare({
+			command,
+			args: [...nativeSandboxOffArgs(request.providerId), ...args],
+			policy,
+			context: { workspaceRoots: request.workspaceRoots.filter(root => !root.endsWith('/.git')), cwd: options.cwd, hostEnv: options.hostEnv, env: options.env },
+			label: `${request.providerId} agent`,
+		});
+		const listener = prepared.onDenial(denial => {
+			if (denial.kind === 'process' || denial.kind === 'limit') {
+				return;
 			}
-			case 'bwrap': {
-				const existing = { ...plan, denyReadSubpaths: plan.denyReadSubpaths.filter(path => existsSync(path)) };
-				wrapped = { command: 'bwrap', args: [...bwrapArgs(existing), '--', command, ...agentArgs] };
-				if (plan.network === 'proxy') {
-					warnings.push('Network is not limited: no Landlock in this kernel, so only HTTP clients that honour the proxy are filtered.');
-				}
-				break;
-			}
-			default:
-				wrapped = { command, args: [...args] };
-				warnings.push(`The agent runs without a sandbox: ${support.detail}.`);
-		}
-		this.logger.info(`[volt-sandbox] ${support.mechanism} ${plan.level} network=${plan.network} tag=${tag} roots=${plan.writableSubpaths.length}`);
+			this.report(prepared.tag, { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}) });
+		});
+		const warnings = prepared.unenforced.map(dimension => `Sandbox is partial here: ${UNENFORCED_TEXT[dimension] ?? dimension}.`);
 		let disposed = false;
 		return {
-			command: wrapped.command,
-			args: wrapped.args,
-			env,
-			tag,
-			plan,
-			mechanism: support.mechanism,
+			command: prepared.command,
+			args: [...prepared.args],
+			env: { ...prepared.env },
+			cwd: prepared.cwd,
+			extraStdio: prepared.extraStdio,
+			tag: prepared.tag,
+			policy: prepared.policy,
+			mechanism: mechanismOf(prepared.backend),
+			unenforced: prepared.unenforced,
 			warnings,
-			allowDomains: domains => proxy?.allow(domains),
+			confirm: child => prepared.confirm(child),
+			terminate: child => prepared.terminate(child),
+			allowDomains: domains => prepared.allowDomains(domains),
 			dispose: () => {
-				if (disposed) {
-					return;
+				if (!disposed) {
+					disposed = true;
+					listener.dispose();
+					void prepared.dispose();
 				}
-				disposed = true;
-				proxy?.dispose();
-				this.unwatch(tag);
 			},
 		};
 	}
@@ -199,134 +171,78 @@ export class VoltSandboxLauncher extends Disposable {
 		this._onViolation.fire({ tag, denial });
 	}
 
-	// --- macOS: the kernel log ------------------------------------------------------------------
-
-	private watch(tag: string): void {
-		this.liveTags.add(tag);
-		if (this.monitor || this.platform !== 'darwin') {
-			return;
-		}
-		const child = spawn('/usr/bin/log', ['stream', '--style', 'ndjson', '--predicate', `eventMessage CONTAINS "${SEATBELT_TAG_PREFIX}"`], { stdio: ['ignore', 'pipe', 'ignore'] });
-		this.monitor = child;
-		let buffer = '';
-		child.stdout?.setEncoding('utf8');
-		child.stdout?.on('data', (data: string) => {
-			// ndjson: one record per line; newlines inside messages are escaped.
-			buffer += data;
-			const lines = buffer.split('\n');
-			buffer = lines.pop() ?? '';
-			for (const line of lines) {
-				this.onLogLine(line);
+	private hostFacts(): Promise<Omit<IAgentSandboxHost, 'sshAuthSock'>> {
+		this.agentHost ??= (async () => {
+			const facts = await sandboxHostFacts();
+			const temps = new Set<string>([facts.tmpRoot]);
+			for (const dir of ['/tmp', '/var/tmp']) {
+				temps.add(await fs.realpath(dir).catch(() => dir));
 			}
-		});
-		child.on('error', err => this.logger.warn('[volt-sandbox] log stream failed', err));
-		child.on('close', () => {
-			if (this.monitor === child) {
-				this.monitor = undefined;
-			}
-		});
-	}
-
-	private onLogLine(line: string): void {
-		const violation = parseSeatbeltLogLine(line);
-		if (!violation || !this.liveTags.has(violation.tag)) {
-			return;
-		}
-		const kind = denialKindForOperation(violation.operation);
-		if (!kind) {
-			return;
-		}
-		this.report(violation.tag, { kind, target: violation.target, source: 'os', process: violation.process });
-	}
-
-	private unwatch(tag: string): void {
-		this.liveTags.delete(tag);
-		if (!this.liveTags.size && this.monitor) {
-			// Late denials of a process that just exited are not worth a running log stream.
-			const monitor = this.monitor;
-			this.monitor = undefined;
-			monitor.kill();
-		}
-	}
-
-	// --- host facts and the Linux helper --------------------------------------------------------
-
-	private hostInfo(): Promise<ISandboxHostInfo> {
-		this.host ??= (async () => {
-			const home = await fs.realpath(homedir()).catch(() => homedir());
-			const tmp = await fs.realpath(tmpdir()).catch(() => tmpdir());
-			let darwinUserCacheDir: string | undefined;
-			if (this.platform === 'darwin') {
-				darwinUserCacheDir = await execFileAsync('/usr/bin/getconf', ['DARWIN_USER_CACHE_DIR']).then(r => r.stdout.trim(), () => undefined);
-				darwinUserCacheDir = darwinUserCacheDir ? await fs.realpath(darwinUserCacheDir).catch(() => darwinUserCacheDir) : undefined;
-			}
-			return { platform: this.platform, home, tmpdir: tmp, darwinUserCacheDir, uid: process.getuid?.() };
-		})();
-		return this.host;
-	}
-
-	/** Compiles the helper once per source version; undefined when no compiler works. */
-	ensureHelper(): Promise<string | undefined> {
-		this.helper ??= (async () => {
-			const digest = createHash('sha256').update(LANDLOCK_HELPER_SOURCE).digest('hex').slice(0, 12);
-			const dir = join(this.stateDir, 'volt-sandbox');
-			const binary = join(dir, `volt-landlock-${digest}`);
-			if (existsSync(binary)) {
-				return binary;
-			}
-			await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-			const source = join(dir, `volt-landlock-${digest}.c`);
-			await fs.writeFile(source, LANDLOCK_HELPER_SOURCE, { mode: 0o600 });
-			for (const compiler of ['cc', 'gcc', 'clang']) {
-				try {
-					await execFileAsync(compiler, ['-O2', '-o', `${binary}.tmp`, source], { timeout: 60_000 });
-					await fs.rename(`${binary}.tmp`, binary);
-					this.logger.info(`[volt-sandbox] compiled the Landlock helper with ${compiler}`);
-					return binary;
-				} catch {
-					// Try the next compiler.
+			if (facts.platform === 'darwin') {
+				const cache = await execFileAsync('/usr/bin/getconf', ['DARWIN_USER_CACHE_DIR']).then(r => fs.realpath(r.stdout.trim()), () => undefined);
+				if (cache) {
+					temps.add(cache);
 				}
 			}
-			this.logger.warn('[volt-sandbox] no C compiler could build the Landlock helper');
-			return undefined;
+			const cacheDir = join(facts.home, '.volt', 'sandbox-cache');
+			await fs.mkdir(cacheDir, { recursive: true, mode: 0o700 });
+			const userDataDir = await fs.realpath(this.userDataDir).catch(() => this.userDataDir);
+			return {
+				platform: facts.platform,
+				home: facts.home,
+				tempDirs: [...temps].filter(dir => dir !== '/' && dir !== facts.home),
+				uid: process.getuid?.(),
+				userDataDir,
+				sshPrivateKeys: await sshPrivateKeys(join(facts.home, '.ssh')),
+				cacheDir,
+			};
 		})();
-		return this.helper;
+		return this.agentHost;
 	}
 
-	private async landlockAbi(helper: string): Promise<number> {
-		try {
-			const { stdout } = await execFileAsync(helper, ['--probe'], { timeout: 5_000 });
-			return Number.parseInt(stdout.trim(), 10) || 0;
-		} catch {
-			return 0;
-		}
-	}
-
-	override dispose(): void {
-		this.monitor?.kill();
-		this.monitor = undefined;
-		super.dispose();
-	}
 }
 
-/** Each existing path, plus its resolved form when a symlink leads elsewhere (Seatbelt checks resolved paths). */
-async function withRealpaths(paths: readonly string[]): Promise<string[]> {
+function mechanismOf(backend: SandboxBackendId): SandboxMechanism {
+	return backend === 'seatbelt' ? 'seatbelt' : backend === 'bubblewrap' ? 'bwrap' : 'none';
+}
+
+export function supportFrom(capabilities: ISandboxBackendCapabilities): IVoltSandboxSupport {
+	const platform = process.platform;
+	if (!capabilities.available) {
+		return { platform, mechanism: 'none', filesystem: false, network: false, detail: capabilities.diagnostics[0] ?? 'No OS sandbox on this machine' };
+	}
+	return {
+		platform,
+		mechanism: mechanismOf(capabilities.backend),
+		filesystem: capabilities.enforcement['filesystem.write'] === 'enforced',
+		network: capabilities.enforcement['network.proxy'] === 'enforced',
+		detail: capabilities.details[0] ?? capabilities.backend,
+	};
+}
+
+/** Files in `~/.ssh` that hold a private key, judged by content rather than name. */
+export async function sshPrivateKeys(dir: string): Promise<string[]> {
 	const out: string[] = [];
-	for (const path of paths) {
-		out.push(path);
-		const real = await fs.realpath(path).catch(() => undefined);
-		if (real && real !== path) {
-			out.push(real);
+	const names = await fs.readdir(dir).catch(() => [] as string[]);
+	for (const name of names) {
+		const path = join(dir, name);
+		const handle = await fs.open(path, 'r').catch(() => undefined);
+		if (!handle) {
+			continue;
+		}
+		try {
+			const stat = await handle.stat();
+			if (!stat.isFile() || stat.size > 1024 * 1024) {
+				continue;
+			}
+			const { buffer, bytesRead } = await handle.read(Buffer.alloc(256), 0, 256, 0);
+			const head = buffer.subarray(0, bytesRead).toString('latin1');
+			if (/-----BEGIN [A-Z ]*PRIVATE KEY-----|PuTTY-User-Key-File/.test(head)) {
+				out.push(await fs.realpath(path).catch(() => path));
+			}
+		} finally {
+			await handle.close();
 		}
 	}
-	return [...new Set(out)];
-}
-
-async function which(command: string): Promise<string | undefined> {
-	try {
-		const { stdout } = await execFileAsync('which', [command]);
-		return stdout.trim() || undefined;
-	} catch {
-		return undefined;
-	}
+	return out;
 }

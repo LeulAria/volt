@@ -44,6 +44,7 @@ import { isCatalogModelEnabled, setCatalogModelEnabled } from '../common/models/
 import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_DISABLED_MODELS_STORAGE_KEY, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
 import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IModelRequest, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { isSandboxUnavailableError, sandboxRefusedMessage } from '../common/access/sandboxRefusal.js';
 import { cheapestReasoningLevel, resolveTabModel } from '../common/models/modelAccess.js';
 import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../common/runtime.js';
 import { countUserTurns, IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
@@ -287,6 +288,8 @@ interface IParkedAgent {
 	readonly providerId: string;
 	readonly ref: string;
 	readonly cwd: string | undefined;
+	/** The sandbox its process was started under (sandboxLaunchKey): it serves the chat again only under the same one. */
+	readonly sandboxKey: string;
 	/** How many of the chat's `messages` it has seen. */
 	readonly synced: number;
 	readonly parkedAt: number;
@@ -842,9 +845,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		session.agentHandle = undefined;
 		session.agentProviderId = undefined;
-		const parked: IParkedAgent = { handle, providerId, ref: session.agentRef, cwd: session.agentCwd, synced: session.agentSynced ?? 0, parkedAt: Date.now() };
+		const parked: IParkedAgent = { handle, providerId, ref: session.agentRef, cwd: session.agentCwd, sandboxKey: session.agentSandboxKey ?? 'off', synced: session.agentSynced ?? 0, parkedAt: Date.now() };
 		session.agentRef = undefined;
 		session.agentCwd = undefined;
+		session.agentSandboxKey = undefined;
 		session.agentSynced = 0;
 		// One per model: a newer session of the same model replaces the older one.
 		this.releaseParked(session, agent => agent.ref === parked.ref && agent.cwd === parked.cwd);
@@ -853,9 +857,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.agentReaper.schedule();
 	}
 
-	/** A parked session of exactly this model and folder that is still alive, taken out of the parking. */
+	/** A parked session of exactly this model, folder and sandbox that is still alive, taken out of the parking. */
 	private takeParkedAgent(session: ISessionState, provider: IAgentProvider, item: IVoltCatalogItem, cwd: string | undefined): IParkedAgent | undefined {
-		const parked = session.parkedAgents?.find(agent => agent.providerId === provider.id && agent.ref === item.ref && agent.cwd === cwd);
+		const sandboxKey = this.sandboxKey(session.sessionId);
+		const parked = session.parkedAgents?.find(agent => agent.providerId === provider.id && agent.ref === item.ref && agent.cwd === cwd && agent.sandboxKey === sandboxKey);
 		if (!parked) {
 			return undefined;
 		}
@@ -1470,23 +1475,32 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private async startAgentSession(session: ISessionState, run: IRunState, provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, mode: VoltMode, options: IVoltModelOptions | undefined): Promise<void> {
 		const cwd = this.executionRoot(session)?.fsPath;
 		// The provider adopts a spare it parked for this chat (see prewarmAgent), else starts cold.
-		const handle = await provider.start(this.agentStartRequest(session.sessionId, profile, item, cwd, options, mode, this.sandboxStart(session.sessionId, cwd)));
+		let sandbox = this.sandboxStart(session.sessionId, cwd);
+		let handle = await provider.start(this.agentStartRequest(session.sessionId, profile, item, cwd, options, mode, sandbox));
+		if (sandboxLaunchKey(sandbox?.settings) !== this.sandboxKey(session.sessionId) && this.isCurrent(session, run)) {
+			// The chat's sandbox changed while the agent started, and a process keeps the one it was
+			// spawned with: this turn gets one under the new settings.
+			void provider.dispose(handle).catch(() => undefined);
+			sandbox = this.sandboxStart(session.sessionId, cwd);
+			handle = await provider.start(this.agentStartRequest(session.sessionId, profile, item, cwd, options, mode, sandbox));
+		}
 		if (!this.isCurrent(session, run) && session.agentHandle) {
 			// A newer run already has an agent; this cancelled run's start is not needed.
 			void provider.dispose(handle).catch(() => undefined);
 			return;
 		}
 		this.disposeSessionAgent(session);
-		this.bindAgent(session, provider, item, cwd, handle);
+		this.bindAgent(session, provider, item, cwd, handle, sandboxLaunchKey(sandbox?.settings));
 		await provider.applyAccessPolicy?.(handle, this.policyFor(session.sessionId));
 	}
 
-	private bindAgent(session: ISessionState, provider: IAgentProvider, item: IVoltCatalogItem, cwd: string | undefined, handle: IAgentSessionHandle): void {
+	/** `sandboxKey`: what the process was started under, never the chat's settings now (they may have changed since). */
+	private bindAgent(session: ISessionState, provider: IAgentProvider, item: IVoltCatalogItem, cwd: string | undefined, handle: IAgentSessionHandle, sandboxKey: string): void {
 		session.agentHandle = handle;
 		session.agentProviderId = provider.id;
 		session.agentRef = item.ref;
 		session.agentCwd = cwd;
-		session.agentSandboxKey = this.sandboxKey(session.sessionId);
+		session.agentSandboxKey = sandboxKey;
 		session.agentUsedAt = Date.now();
 		// A fresh agent process has seen nothing of this conversation yet.
 		session.agentSynced = 0;
@@ -4522,7 +4536,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 
 	private async browserPreflight(session: ISessionState, run: IRunState, mode: VoltMode, root: URI, plan: IPreflightPlan): Promise<readonly string[] | undefined> {
 		const start = (await this.workspaceRunPlan(root)).start;
-		const allowStart = !!start && modePolicy(mode).allowTerminal && this.policyAllows(session, run, start);
+		// Volt starts the dev server outside any sandbox, and a sandboxed agent can edit the script it
+		// runs (package.json): a sandboxed chat's agent starts it itself, inside its sandbox.
+		const allowStart = !!start && modePolicy(mode).allowTerminal && this.policyAllows(session, run, start) && this.getSandboxSettings(session.sessionId).level === 'off';
 		const result = await this.hostTools.preflightBrowser(session.sessionId, { cwd: root.fsPath, start, allowStart, a11y: plan.a11y, widths: plan.widths, perf: plan.perf }, run.cancel.token);
 		return result.lines.length ? result.lines : undefined;
 	}
@@ -4749,7 +4765,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						}
 						if (parked) {
 							this.disposeSessionAgent(session);
-							this.bindAgent(session, provider, item, cwd, parked.handle);
+							this.bindAgent(session, provider, item, cwd, parked.handle, parked.sandboxKey);
 							session.agentSynced = parked.synced;
 							reused = true;
 							run.metrics.setAgentSource('live');
@@ -4852,7 +4868,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					return;
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
-					if (attempt === 0 && !token.isCancellationRequested && isAcpTurnRestartable(message) && this.isCurrent(session, run)) {
+					// A refused sandbox is never retried: a second spawn would be refused too, and none runs unconfined.
+					if (attempt === 0 && !token.isCancellationRequested && !isSandboxUnavailableError(err) && isAcpTurnRestartable(message) && this.isCurrent(session, run)) {
 						this.emit(session, run.runId, { type: 'retry', attempt: 2, delayMs: 0, message: 'Agent process died. Restarting and retrying.' });
 						this.disposeSessionAgent(session);
 						continue;
@@ -4866,7 +4883,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			}
 		} catch (err) {
 			if (this.isCurrent(session, run)) {
-				this.emit(session, run.runId, { type: 'error', message: err instanceof Error ? err.message : String(err), retryable: true });
+				// The chat shows a refused sandbox with a way to turn it off for this chat (see sandboxRefusal.ts).
+				const refused = isSandboxUnavailableError(err);
+				this.emit(session, run.runId, { type: 'error', message: refused ? sandboxRefusedMessage(err.message) : err instanceof Error ? err.message : String(err), retryable: !refused });
 				this.finish(session, run, token.isCancellationRequested ? 'abort' : 'fail');
 			}
 		}
@@ -4954,7 +4973,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!handle || !provider.resumeIn || session.agentProviderId !== provider.id || session.agentRef !== item.ref || session.agentCwd === cwd) {
 			return false;
 		}
-		const resumed = await provider.resumeIn(handle, this.agentStartRequest(session.sessionId, profile, item, cwd, request.options, request.mode));
+		// The resumed session is a new process: it gets the chat's sandbox for the new folder, like any start.
+		const sandbox = this.sandboxStart(session.sessionId, cwd);
+		const resumed = await provider.resumeIn(handle, this.agentStartRequest(session.sessionId, profile, item, cwd, request.options, request.mode, sandbox));
 		if (!resumed || !this.isCurrent(session, run)) {
 			if (resumed) {
 				void provider.dispose(resumed).catch(() => undefined);
@@ -4963,6 +4984,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		session.agentHandle = resumed;
 		session.agentCwd = cwd;
+		session.agentSandboxKey = sandboxLaunchKey(sandbox?.settings);
 		session.agentUsedAt = Date.now();
 		await provider.applyAccessPolicy?.(resumed, this.policyFor(session.sessionId));
 		return true;
@@ -5104,13 +5126,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		if (usePool) {
 			const spare = await this.agentPool.take(spareRequest.key);
-			if (spare) {
+			// The pool key holds the sandbox the spare was spawned with; settings changed meanwhile start a new one below.
+			const spareKey = sandboxLaunchKey(sandbox?.settings);
+			if (spare && spareKey !== this.sandboxKey(session.sessionId)) {
+				void provider.dispose(spare.handle).catch(() => undefined);
+			} else if (spare) {
 				if (!this.isCurrent(session, run) && session.agentHandle) {
 					void provider.dispose(spare.handle).catch(() => undefined);
 					return;
 				}
 				this.disposeSessionAgent(session);
-				this.bindAgent(session, provider, item, cwd, spare.handle);
+				this.bindAgent(session, provider, item, cwd, spare.handle, spareKey);
 				this.setAlias(spare.alias, session.sessionId);
 				run.metrics.setAgentSource(restart ? 'restart' : 'pool');
 				return;
