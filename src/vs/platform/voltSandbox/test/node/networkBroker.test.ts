@@ -551,6 +551,51 @@ suite('Volt network broker (I.4, NET-1..20)', function () {
 		assert.match((await open(r.port, connect(r, 'localhost:5173'))).line, /403/, 'a name never resolves to loopback here');
 	});
 
+	test('NET-VIEW-1: a plugin principal is judged by its manifest view: declared hosts only, none without a view, none for network none', async () => {
+		const subject: SubjectKey = 'firstparty:volt.provider-openrouter';
+		const viewed = await route([], { principal: principal(subject, 't2'), view: { manifest: { subject, declared: [{ id: 'net.connect', targets: ['openrouter.ai'] }], network: 'broker' } } });
+		assert.match((await open(viewed.port, connect(viewed, 'openrouter.ai:443'))).line, /200/, 'declared and in the first-party ceiling');
+		assert.match((await open(viewed.port, connect(viewed, 'example.com:443'))).line, /403/, 'not declared');
+		const pluginSubject: SubjectKey = 'plugin:acme.weather@local';
+		const plugin = await route([], { principal: principal(pluginSubject, 't2'), view: { manifest: { subject: pluginSubject, declared: [{ id: 'net.connect', targets: ['api.weather.test'] }], network: 'broker' } } });
+		assert.match((await open(plugin.port, connect(plugin, 'api.weather.test:443'))).line, /200/, 'a declared low capability holds for a third-party plugin (install-time grant)');
+		assert.match((await open(plugin.port, connect(plugin, 'api.weather.test:8443'))).line, /403/, 'another port is not declared');
+		const blind = await route([], { principal: principal('plugin:acme.blind@local', 't2') });
+		assert.match((await open(blind.port, connect(blind, 'api.weather.test:443'))).line, /403/, 'no view: no manifest, refused');
+		assert.match(denials.at(-1)?.message ?? '', /no manifest/);
+		// A view whose manifest says the network is off: still refused for an undeclared host, and the route itself never opens without proxy.
+		const off = await route([], { principal: principal('plugin:acme.off@local', 't2'), view: { manifest: { subject: 'plugin:acme.off@local', declared: [], network: 'none' } } });
+		assert.match((await open(off.port, connect(off, 'api.weather.test:443'))).line, /403/);
+		// The view's subject is the route's own: a view naming another subject cannot lend it that subject's declarations.
+		const forged = await route([], { principal: principal('plugin:acme.forged@local', 't2'), view: { manifest: { subject: 'firstparty:volt.provider-openrouter', declared: [], network: 'broker' } } });
+		assert.match((await open(forged.port, connect(forged, 'openrouter.ai:443'))).line, /403/);
+	});
+
+	test('NET-VIEW-2: an MCP principal from a registered provider: its approved hosts, never wider than its parent chat; revoking the provider closes its tunnels', async () => {
+		const subject: SubjectKey = 'mcp:0123abcd';
+		const chat = principal('chat:parent');
+		const approved = (target: string): IGrant => ({ id: `mcp-${target}`, subject, capability: 'net.connect@1', scope: { targets: [target] }, kind: 'persistent', source: 'user', grantedAt: Date.now(), lastUsedAt: Date.now(), epoch: 0 });
+		const provider = broker.registerViewProvider(p => p.subject === subject ? {
+			manifest: { subject, declared: [{ id: 'net.connect', targets: ['a.test', 'b.test'] }], network: 'broker' },
+			grants: [approved('a.test'), approved('b.test')],
+			onBehalfOf: [{ principal: chat, chat: { subject: chat.subject, settings: { level: 'workspace-write', network: false, allowedDomains: ['a.test'] } } }],
+		} : undefined);
+		try {
+			const mcp = await route([], { principal: principal(subject, 'mcp') });
+			const tunnel = await open(mcp.port, connect(mcp, 'a.test:443'));
+			assert.match(tunnel.line, /200/, `approved, and its chat allows it: ${denials.at(-1)?.message}`);
+			assert.match((await open(mcp.port, connect(mcp, 'b.test:443'))).line, /403/, 'approved for the server, but its chat does not allow b.test');
+			assert.match(denials.at(-1)?.message ?? '', /on whose behalf/);
+			assert.match((await open(mcp.port, connect(mcp, 'c.test:443'))).line, /403/, 'not approved');
+			assert.deepStrictEqual(audit.filter(event => event.decision === 'allow' && event.subject === subject).map(event => event.chain), [['chat:parent']], 'the chain is the provider\'s, not the client\'s');
+			provider.dispose();
+			await tunnel.raw.closed;
+			assert.match((await open(mcp.port, connect(mcp, 'a.test:443'))).line, /403/, 'no provider: no manifest');
+		} finally {
+			provider.dispose();
+		}
+	});
+
 	test('the audit log is one JSON object per line, 0600, rotated by size', async () => {
 		const dir = await fs.mkdtemp(join(tmpdir(), 'volt-net-audit-'));
 		try {

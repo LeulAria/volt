@@ -15,6 +15,7 @@ import { composeSandboxPolicy } from '../common/sandboxComposition.js';
 import { IAttestation, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { IVoltSandboxPolicy, parseSandboxPolicyLayer, SandboxDimension } from '../common/sandboxSchema.js';
 import { isLiveWorkloadState, ISandboxResourceSample, ISandboxWorkloadInfo, SandboxExitReason, SandboxWorkloadState, summarizeSandboxPolicy } from '../common/sandboxWorkloads.js';
+import { INetworkPrincipalView } from './networkBroker.js';
 import { PrincipalRegistry } from './principalRegistry.js';
 import { IPreparedSandbox, ISandboxLogger, processAlive, RUN_LEDGER_NAME, SandboxManager } from './sandboxManager.js';
 import { ISandboxRunContext } from './sandboxResolver.js';
@@ -76,6 +77,8 @@ export interface IHostStartRequest {
 	readonly idle?: { readonly afterMs: number; readonly stopAfterMs: number };
 	/** Polled limits (F.8): a tree over them is killed (`resource`) and that counts as a crash. */
 	readonly limits?: { readonly memoryMB?: number };
+	/** What the network broker judges a host that is not a chat by (its manifest, or an MCP server's approved hosts). */
+	readonly networkView?: INetworkPrincipalView;
 }
 
 export type SandboxHostRefusal = 'disabled' | 'budget' | 'probe' | 'attest' | 'ipc' | 'launch' | SandboxDimension;
@@ -554,7 +557,7 @@ class SandboxHost implements ISandboxedHost {
 		}
 		let prepared: IPreparedSandbox;
 		try {
-			prepared = await this.supervisor.manager.prepare({ command: file, args, policy, context: request.context, label: request.label, principal: this._principal });
+			prepared = await this.supervisor.manager.prepare({ command: file, args, policy, context: request.context, label: request.label, principal: this._principal, ...(request.networkView ? { networkView: request.networkView } : {}) });
 		} catch (err) {
 			if (err instanceof SandboxUnavailableError) {
 				return this.fail(err.blocking[0] ?? 'probe', err.message);

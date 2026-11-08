@@ -11,11 +11,11 @@ import * as net from 'net';
 import { homedir } from 'os';
 import { IDisposable } from '../../../base/common/lifecycle.js';
 import { dirname, join } from '../../../base/common/path.js';
-import { evaluate, IAccessRequest, IAdminPolicy, IDecision, PolicySnapshot } from '../common/authority.js';
+import { evaluate, IAccessRequest, IAdminPolicy, IChatView, IDecision, IManifestView, PolicySnapshot } from '../common/authority.js';
 import { GrantKind, IGrant } from '../common/grants.js';
 import { classifyAddress } from '../common/networkAddress.js';
 import { INormalizedHost, normalizeNetworkHost, parseNetworkRule, splitAuthority } from '../common/networkRules.js';
-import { ICallContext, IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
+import { ICallContext, IPrincipal, isChatSubject, PrincipalKind, SubjectKey } from '../common/principals.js';
 import { GrantCommitResult, IGrantStoreChange, IGrantStoreChangeEvent } from './grantStore.js';
 
 /**
@@ -140,6 +140,29 @@ export class MemoryGrantSource implements INetworkGrantSource {
 	}
 }
 
+/**
+ * What the broker judges a principal that is not a chat by (a T2 plugin, a T3 extension, an MCP
+ * server): core's record of it, never anything the principal sent. The Authority reads it as the
+ * snapshot's manifest, its own grants and, when it acts for chats, those chats: G.2 step 6 then
+ * holds its connections to what each chat in its chain may reach, so a view is never wider than
+ * its parent chat's.
+ */
+export interface INetworkPrincipalView {
+	/** Its manifest: `net.connect` targets it declares; `network: 'none'` refuses every connection. */
+	readonly manifest: IManifestView;
+	/** Grants core holds for it beyond the broker's own (an MCP server's approved hosts, recorded when the user approved the server). */
+	readonly grants?: readonly IGrant[];
+	/** The principals it acts for, outermost first, each with its chat view when it is a chat. */
+	readonly onBehalfOf?: readonly { readonly principal: IPrincipal; readonly chat?: IChatView }[];
+}
+
+/**
+ * Supplies the view of a principal that is not a chat. Providers are asked in the order they were
+ * registered; the first that knows the principal answers. None knows it: the broker has no manifest
+ * for it and refuses every connection (fail closed).
+ */
+export type NetworkViewProvider = (principal: IPrincipal) => INetworkPrincipalView | undefined;
+
 export interface INetworkBrokerOptions {
 	/** Name resolution; tests replace it. */
 	readonly lookup?: NetworkLookup;
@@ -183,6 +206,11 @@ export interface INetworkRouteOptions {
 	/** Loopback ports reachable through the broker (`net.loopback.connect:<port>`); none by default. */
 	readonly loopbackPorts?: readonly number[];
 	readonly level?: 'workspace-write' | 'read-only';
+	/**
+	 * A principal that is not a chat: its view, given by the launcher. Absent: the broker's
+	 * registered providers are asked ({@link NetworkBroker.registerViewProvider}).
+	 */
+	readonly view?: INetworkPrincipalView;
 	readonly limits?: Partial<INetworkRouteLimits>;
 	readonly onDenial?: (denial: INetworkDenial) => void;
 }
@@ -214,6 +242,7 @@ export class NetworkBroker {
 	private readonly grants: INetworkGrantSource;
 	private readonly routes = new Set<NetworkRoute>();
 	private readonly listener: IDisposable | undefined;
+	private readonly viewProviders: NetworkViewProvider[] = [];
 	private disposed = false;
 
 	constructor(readonly options: INetworkBrokerOptions = {}) {
@@ -242,6 +271,39 @@ export class NetworkBroker {
 	/** @internal */
 	routeClosed(route: NetworkRoute): void {
 		this.routes.delete(route);
+	}
+
+	/**
+	 * Registers where the views of principals that are not chats come from (plugin hosts, MCP
+	 * servers). Disposing it takes the provider back; routes it answered for re-judge their tunnels.
+	 */
+	registerViewProvider(provider: NetworkViewProvider): IDisposable {
+		this.viewProviders.push(provider);
+		return {
+			dispose: () => {
+				const at = this.viewProviders.indexOf(provider);
+				if (at >= 0) {
+					this.viewProviders.splice(at, 1);
+					this.changed([], true);
+				}
+			}
+		};
+	}
+
+	/** The view of `principal` from the first provider that knows it. */
+	viewOf(principal: IPrincipal): INetworkPrincipalView | undefined {
+		for (const provider of this.viewProviders) {
+			const view = provider(principal);
+			if (view) {
+				return view;
+			}
+		}
+		return undefined;
+	}
+
+	/** A provider's answer changed for `subjects` (an approval was revoked, a manifest narrowed): their routes re-judge. */
+	viewsChanged(subjects: readonly SubjectKey[], narrowed: boolean): void {
+		this.changed(subjects, narrowed);
 	}
 
 	/** The grants of `subject` at the current epoch. */
@@ -534,18 +596,43 @@ export class NetworkRoute {
 		if (this.snapshot && (this.snapshot.epoch !== this.broker.epoch || (this.snapshot.rebuildAt !== undefined && now >= this.snapshot.rebuildAt))) {
 			this.snapshot = undefined;
 		}
-		this.snapshot ??= PolicySnapshot.build({
-			epoch: this.broker.epoch,
-			asOf: now,
-			grants: this.broker.grantsOf(this.subject),
-			chats: [{ subject: this.subject, settings: { level: this.options.level ?? 'workspace-write', network: false, allowedDomains: this.allow, listenPorts: this.options.loopbackPorts ?? [] } }],
-			...(this.broker.options.admin ? { admin: this.broker.options.admin } : {}),
-		});
+		if (!this.snapshot) {
+			const admin = this.broker.options.admin ? { admin: this.broker.options.admin } : {};
+			if (isChatSubject(this.subject)) {
+				this.snapshot = PolicySnapshot.build({
+					epoch: this.broker.epoch,
+					asOf: now,
+					grants: this.broker.grantsOf(this.subject),
+					chats: [{ subject: this.subject, settings: { level: this.options.level ?? 'workspace-write', network: false, allowedDomains: this.allow, listenPorts: this.options.loopbackPorts ?? [] } }],
+					...admin,
+				});
+			} else {
+				// Any other principal is judged by core's view of it; with none, by no manifest: refused.
+				const view = this.view();
+				const callers = view?.onBehalfOf ?? [];
+				const chats = callers.map(caller => caller.chat).filter((chat): chat is IChatView => !!chat);
+				const grants = [this.subject, ...callers.map(caller => caller.principal.subject)].flatMap(subject => this.broker.grantsOf(subject));
+				this.snapshot = PolicySnapshot.build({
+					epoch: this.broker.epoch,
+					asOf: now,
+					grants: [...grants, ...(view?.grants ?? []).filter(grant => grant.subject === this.subject)],
+					...(view ? { manifests: [{ ...view.manifest, subject: this.subject }] } : {}),
+					...(chats.length ? { chats } : {}),
+					...admin,
+				});
+			}
+		}
 		return this.snapshot;
 	}
 
+	/** Core's view of a principal that is not a chat: the launcher's, else a registered provider's. */
+	private view(): INetworkPrincipalView | undefined {
+		return this.options.view ?? this.broker.viewOf(this.principal);
+	}
+
 	private context(): ICallContext {
-		return { principal: this.principal, onBehalfOf: this.options.onBehalfOf ?? [], requestId: randomBytes(8).toString('hex') };
+		const onBehalfOf = this.options.onBehalfOf ?? (isChatSubject(this.subject) ? undefined : this.view()?.onBehalfOf?.map(caller => caller.principal)) ?? [];
+		return { principal: this.principal, onBehalfOf, requestId: randomBytes(8).toString('hex') };
 	}
 
 	private decide(request: IAccessRequest): IDecision {
@@ -714,7 +801,7 @@ export class NetworkRoute {
 	}
 
 	private chain(): readonly SubjectKey[] {
-		return (this.options.onBehalfOf ?? []).map(principal => principal.subject);
+		return this.context().onBehalfOf.map(principal => principal.subject);
 	}
 
 	// --- protocol ----------------------------------------------------------------------------

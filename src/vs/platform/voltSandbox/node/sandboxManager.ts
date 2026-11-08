@@ -9,6 +9,7 @@ import { generateUuid } from '../../../base/common/uuid.js';
 import { promises as fs } from 'fs';
 import { basename, dirname, join } from '../../../base/common/path.js';
 import { Emitter, Event } from '../../../base/common/event.js';
+import { IDisposable } from '../../../base/common/lifecycle.js';
 import { checkEnforcement, IAttestation, ISandboxBackendCapabilities, ISandboxResourceViolation, ISandboxRunDenial, ISandboxRunResult, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { IResolvedSandboxPolicy, ISandboxIsolatedRoot, sandboxProxyEnv } from '../common/sandboxResolved.js';
 import { IVoltSandboxPolicy, SandboxDimension } from '../common/sandboxSchema.js';
@@ -19,7 +20,7 @@ import { ISandboxBackend, ISandboxLaunchSpec, SandboxConfirmation, SandboxFault 
 import { osBuild } from './sandboxProbeCache.js';
 import { IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
 import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
-import { INetworkDenial, NetworkAuditLog, NetworkBroker, NetworkRoute } from './networkBroker.js';
+import { INetworkDenial, INetworkPrincipalView, NetworkAuditLog, NetworkBroker, NetworkRoute, NetworkViewProvider } from './networkBroker.js';
 import { ISandboxProxyOptions, SandboxNetworkProxy } from './sandboxProxy.js';
 import { ISandboxHostFacts, ISandboxRunContext, resolveSandboxPolicy, sandboxHostFacts } from './sandboxResolver.js';
 import { SeatbeltBackend } from './seatbeltBackend.js';
@@ -64,6 +65,11 @@ export interface ISandboxRequest {
 	readonly subject?: SubjectKey;
 	/** Without `principal`: default `agent`; picks the network budget (H.8). */
 	readonly principalKind?: PrincipalKind;
+	/**
+	 * A principal that is not a chat (a plugin host, an MCP server): what the network broker judges
+	 * its connections by. Absent: the broker's registered view providers, else none (refused).
+	 */
+	readonly networkView?: INetworkPrincipalView;
 }
 
 export interface IPreparedSandbox {
@@ -181,7 +187,37 @@ export class SandboxManager {
 			...(this.reservedPorts ? { reservedPorts: this.reservedPorts } : {}),
 			audit: new NetworkAuditLog(join(host.home, '.volt', 'trust', 'audit', 'network.log')).append,
 		});
+		this.registerPendingViews(this.broker);
 		return this.broker;
+	}
+
+	private readonly viewProviders = new Map<NetworkViewProvider, IDisposable | undefined>();
+
+	/**
+	 * Where the network broker gets the view of a principal that is not a chat (plugin hosts, MCP
+	 * servers): see {@link NetworkBroker.registerViewProvider}. Registered on the broker once it exists.
+	 */
+	registerNetworkViewProvider(provider: NetworkViewProvider): IDisposable {
+		this.viewProviders.set(provider, this.broker?.registerViewProvider(provider));
+		return {
+			dispose: () => {
+				this.viewProviders.get(provider)?.dispose();
+				this.viewProviders.delete(provider);
+			}
+		};
+	}
+
+	/** A provider's answer changed for `subjects`: their routes re-judge open tunnels. */
+	networkViewsChanged(subjects: readonly SubjectKey[], narrowed: boolean): void {
+		this.broker?.viewsChanged(subjects, narrowed);
+	}
+
+	private registerPendingViews(broker: NetworkBroker): void {
+		for (const [provider, registration] of this.viewProviders) {
+			if (!registration) {
+				this.viewProviders.set(provider, broker.registerViewProvider(provider));
+			}
+		}
 	}
 
 	private readonly runRoot: string | undefined;
@@ -354,6 +390,7 @@ export class SandboxManager {
 				route = await this.networkBroker(host).openRoute({
 					principal,
 					allow: resolved.network.allow,
+					...(request.networkView ? { view: request.networkView } : {}),
 					onDenial: denial => denial.reason === 'auth'
 						// Not this run's request (no token or another's): never a denial row with an "Allow" button.
 						? this.logger.warn(`[volt-sandbox] ${tag} network broker refused a request without this run's token`)
