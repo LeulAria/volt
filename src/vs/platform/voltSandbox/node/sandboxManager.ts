@@ -12,6 +12,8 @@ import { Emitter, Event } from '../../../base/common/event.js';
 import { checkEnforcement, IAttestation, ISandboxBackendCapabilities, ISandboxRunDenial, ISandboxRunResult, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { IResolvedSandboxPolicy, ISandboxIsolatedRoot, sandboxProxyEnv } from '../common/sandboxResolved.js';
 import { IVoltSandboxPolicy, SandboxDimension } from '../common/sandboxSchema.js';
+import { IPrincipal } from '../common/principals.js';
+import { ISandboxWorkloadInfo, summarizeSandboxPolicy } from '../common/sandboxWorkloads.js';
 import { BubblewrapBackend } from './bubblewrapBackend.js';
 import { MxcBackend } from './mxcBackend.js';
 import { ISandboxBackend, ISandboxLaunchSpec, SandboxConfirmation, SandboxFault } from './sandboxBackends.js';
@@ -50,6 +52,8 @@ export interface ISandboxRequest {
 	readonly label?: string;
 	/** Folders hidden from this run except one child each (real paths), e.g. the per-principal package caches. The run folders are added by the manager. */
 	readonly isolate?: readonly ISandboxIsolatedRoot[];
+	/** Who it runs as, when a registry minted a principal for it (shown on the Security page). */
+	readonly principal?: IPrincipal;
 }
 
 export interface IPreparedSandbox {
@@ -103,6 +107,8 @@ export interface ISandboxManagerOptions {
 }
 
 const RUN_PREFIX = 'volt-sbx-';
+/** A long-lived host's record in its run folder (supervisor.ts): a folder whose owner still runs is never swept. */
+export const RUN_LEDGER_NAME = 'ledger.json';
 /** The canary file in each run folder: denied by the run's own policy, read by the prologue, checked from outside. */
 const SENTINEL_NAME = 'canary';
 /** After the workload exits, how long its output may keep arriving before the run counts as done. */
@@ -112,7 +118,10 @@ export class SandboxManager {
 
 	private readonly backend: ISandboxBackend;
 	private host: Promise<ISandboxHostFacts> | undefined;
-	private readonly live = new Map<string, { child?: ChildProcess; prepared: IPreparedSandbox }>();
+	private readonly live = new Map<string, ILiveRun>();
+	private readonly _onDidChangeWorkloads = new Emitter<void>();
+	/** A run was attested or ended. */
+	readonly onDidChangeWorkloads: Event<void> = this._onDidChangeWorkloads.event;
 
 	constructor(
 		private readonly logger: ISandboxLogger = { info: () => undefined, warn: () => undefined },
@@ -160,7 +169,8 @@ export class SandboxManager {
 			const dayAgo = Date.now() - 24 * 3600 * 1000;
 			for (const name of await fs.readdir(root).catch(() => [] as string[])) {
 				const stat = name.startsWith(RUN_PREFIX) ? await fs.stat(join(root, name)).catch(() => undefined) : undefined;
-				if (stat && stat.mtimeMs < dayAgo) {
+				// A host that has run for a day (its owner, another Volt process, is alive) keeps its folder.
+				if (stat && stat.mtimeMs < dayAgo && !await ownerAlive(join(root, name))) {
 					await removeRunDir(join(root, name));
 				}
 			}
@@ -170,6 +180,53 @@ export class SandboxManager {
 	}
 
 	private runRootReady: Promise<string> | undefined;
+
+	/** `~/.volt/sandbox/runs` (or the test's), created on first use. */
+	async runRootPath(): Promise<string> {
+		return this.runRootDir(await this.hostFacts());
+	}
+
+	/** Every live run that was attested or is being attested: agents, commands, terminals, hosts. */
+	workloads(): ISandboxWorkloadInfo[] {
+		const out: ISandboxWorkloadInfo[] = [];
+		for (const [tag, run] of this.live) {
+			const attestation = run.prepared.attestation();
+			if (!run.child && !attestation) {
+				continue; // Prepared, not spawned yet.
+			}
+			out.push({
+				id: tag,
+				principalId: run.principal?.id ?? tag,
+				...(run.principal ? { subject: run.principal.subject } : {}),
+				label: run.label,
+				lifetime: 'command',
+				backend: run.prepared.backend,
+				state: attestation ? 'running' : 'attesting',
+				status: run.prepared.unenforced.length ? 'partial' : 'sandboxed',
+				unenforced: run.prepared.unenforced,
+				...(attestation ? { attestation } : {}),
+				policy: summarizeSandboxPolicy(run.prepared.policy),
+				startedAt: run.startedAt,
+			});
+		}
+		return out;
+	}
+
+	/** The process a live run was confirmed on, if it got that far. */
+	processOf(tag: string): ChildProcess | undefined {
+		return this.live.get(tag)?.child;
+	}
+
+	/** Kills the whole tree of live run `tag`. False when there is no such run or it never spawned. */
+	async stop(tag: string): Promise<boolean> {
+		const run = this.live.get(tag);
+		if (!run?.child) {
+			return false;
+		}
+		this.logger.info(`[volt-sandbox] ${tag} stopped on request`);
+		await run.prepared.terminate(run.child);
+		return true;
+	}
 
 	/**
 	 * Everything needed to spawn the workload sandboxed. The caller spawns `command args` with
@@ -284,6 +341,7 @@ export class SandboxManager {
 							unenforced,
 							attestedAt: Date.now(),
 						};
+						this._onDidChangeWorkloads.fire();
 					}
 					return confirmation;
 				},
@@ -293,11 +351,14 @@ export class SandboxManager {
 					if (!disposed) {
 						disposed = true;
 						this.live.delete(tag);
+						if (attestation) {
+							this._onDidChangeWorkloads.fire();
+						}
 						await cleanup();
 					}
 				},
 			};
-			this.live.set(tag, { prepared });
+			this.live.set(tag, { prepared, label: request.label ?? basename(request.command), startedAt: Date.now(), ...(request.principal ? { principal: request.principal } : {}) });
 			return prepared;
 		} catch (err) {
 			await cleanup();
@@ -436,6 +497,39 @@ export class SandboxManager {
 		await Promise.all(entries.map(({ child, prepared }) => child ? prepared.terminate(child).catch(() => undefined) : undefined));
 		await Promise.all(entries.map(({ prepared }) => prepared.dispose().catch(() => undefined)));
 		(this.backend as { dispose?(): void }).dispose?.();
+		this._onDidChangeWorkloads.dispose();
+	}
+}
+
+interface ILiveRun {
+	child?: ChildProcess;
+	readonly prepared: IPreparedSandbox;
+	readonly label: string;
+	readonly startedAt: number;
+	readonly principal?: IPrincipal;
+}
+
+/** Whether the run folder holds a host ledger whose owning process is still running. */
+async function ownerAlive(runDir: string): Promise<boolean> {
+	const text = await fs.readFile(join(runDir, RUN_LEDGER_NAME), 'utf8').catch(() => undefined);
+	if (!text) {
+		return false;
+	}
+	try {
+		const owner = (JSON.parse(text) as { ownerPid?: unknown }).ownerPid;
+		return typeof owner === 'number' && owner > 0 && processAlive(owner);
+	} catch {
+		return false;
+	}
+}
+
+/** Whether process `pid` exists (EPERM: it does, as another user's). */
+export function processAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err) {
+		return (err as NodeJS.ErrnoException).code === 'EPERM';
 	}
 }
 

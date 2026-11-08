@@ -6,6 +6,7 @@
 import { IChannel, ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../../../platform/voltGit/common/hostGit.js';
 import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../platform/voltStdio/common/voltStdio.js';
+import type { ISandboxWorkloadInfo } from '../../../../platform/voltSandbox/common/sandboxWorkloads.js';
 import { projectRunEnv } from './projectRunEnv.js';
 
 /**
@@ -64,6 +65,9 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	confirmSandboxedTerminal(id: string, pid: number): Promise<string> { return this.inner.confirmSandboxedTerminal!(id, pid); }
 	endSandboxedTerminal(id: string): Promise<void> { return this.inner.endSandboxedTerminal!(id); }
 	async syncSandboxState(id: string): Promise<IVoltSandboxStateSync | undefined> { return this.inner.syncSandboxState ? this.inner.syncSandboxState(id) : undefined; }
+	get onDidChangeSandboxWorkloads() { return this.inner.onDidChangeSandboxWorkloads; }
+	async sandboxWorkloads(): Promise<readonly ISandboxWorkloadInfo[]> { return this.inner.sandboxWorkloads ? this.inner.sandboxWorkloads() : []; }
+	async stopSandboxWorkload(id: string): Promise<boolean> { return this.inner.stopSandboxWorkload ? this.inner.stopSandboxWorkload(id) : false; }
 }
 
 function isStdioService(source: IChannel | IVoltStdioService): source is IVoltStdioService {

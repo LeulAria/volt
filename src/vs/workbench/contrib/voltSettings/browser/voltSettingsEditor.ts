@@ -66,6 +66,7 @@ import { CanvasScratchPage } from './canvasScratchPage.js';
 import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
 import { DevicesPage } from './devicesPage.js';
+import { SandboxWorkloadsSection } from '../../voltSecurity/browser/sandboxWorkloadsSection.js';
 import type { VoltConnectionKind } from './addDeviceModal.js';
 import { createSettingsIcon } from './settingsIcons.js';
 import { AgentUsagePage } from '../../voltAgent/browser/usage/agentUsagePage.js';
@@ -1677,6 +1678,15 @@ export class VoltSettingsEditor extends EditorPane {
 			localize('voltSettings.secrets', "Secrets"),
 			localize('voltSettings.securityBody', "API keys are stored in OS secret storage, never in settings.json."),
 		);
+
+		// Every sandboxed process with its attestation, policy and resources (contrib/voltSecurity).
+		this.instantiationService.createInstance(SandboxWorkloadsSection, {
+			store: this.renderStore,
+			sectionLabel: label => this.sectionLabel(label),
+			sectionHint: text => void (append(this.target, $('.volt-settings-section-hint')).textContent = text),
+			settingsGroup: () => this.settingsGroup(),
+			isCurrent: () => this.section === 'security',
+		}).render();
 
 		this.sectionLabel(localize('voltSettings.projectRules', "Project rules"));
 		append(this.target, $('.volt-settings-section-hint')).textContent = localize('voltSettings.projectRulesDesc', "Explicit deny rules still win under Full access. Format: action resource effect.");

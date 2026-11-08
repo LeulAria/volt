@@ -197,6 +197,8 @@ import './services/voltRuntime/browser/history/agentHistoryService.js';
 import './services/voltRuntime/browser/git/agentWorktreeService.js';
 import './services/voltRuntime/browser/queryCache.js';
 import './contrib/voltSettings/browser/voltSettings.contribution.js';
+// Security page: sandboxed processes, the sandbox supervisor's flag
+import './contrib/voltSecurity/browser/voltSecurity.contribution.js';
 import './contrib/voltCodeIntelligence/browser/voltCodeIntelligence.contribution.js';
 
 // New Agent editor

@@ -496,6 +496,14 @@
 			"why": "The supervisor's own run of a prepared, confirmed sandbox (SandboxManager.run)."
 		},
 		{
+			"file": "src/vs/platform/voltSandbox/node/supervisor.ts",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "sandbox",
+			"reason": "supervisor",
+			"why": "SandboxSupervisor starts a long-lived host from a prepared, confirmed sandbox (attest then go byte, F.4), and polls /bin/ps for its hosts' resource use and for reaping a crashed Volt's hosts (F.9, F.11)."
+		},
+		{
 			"file": "src/vs/platform/voltSandbox/node/sandboxPty.ts",
 			"kind": "child_process",
 			"count": 1,

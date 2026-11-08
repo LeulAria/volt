@@ -24,6 +24,7 @@ import { IVoltSandboxPolicy, SandboxDimension } from '../common/sandboxSchema.js
 import { readAdminPolicy, systemAdminPolicySource } from './adminPolicy.js';
 import { PrincipalRegistry } from './principalRegistry.js';
 import { IPreparedSandbox, SandboxManager } from './sandboxManager.js';
+import { SandboxSupervisor } from './supervisor.js';
 import { sandboxHostFacts } from './sandboxResolver.js';
 import { SandboxConfirmation } from './sandboxBackends.js';
 
@@ -100,6 +101,8 @@ export interface IVoltSandboxLauncherOptions {
 	readonly now?: () => number;
 	/** This execution host's id, for the principals it mints. */
 	readonly executionHost?: string;
+	/** The supervisor's feature flag (`volt.sandbox.supervisor.enabled`). */
+	readonly supervisorEnabled?: () => boolean;
 }
 
 const MAX_KEPT = 500;
@@ -138,6 +141,8 @@ export class VoltSandboxLauncher extends Disposable {
 	readonly onDidShadowDiff: Event<ILaunchShadowDiff> = this._onDidShadowDiff.event;
 
 	private readonly manager: SandboxManager;
+	/** Long-lived hosts (plugin hosts, MCP servers) and the Security page's view of every sandboxed process. */
+	readonly supervisor: SandboxSupervisor;
 	private agentHost: Promise<Omit<IAgentSandboxHost, 'sshAuthSock'>> | undefined;
 	private readonly recent = new Map<string, number>();
 	private readonly registry: PrincipalRegistry;
@@ -159,8 +164,12 @@ export class VoltSandboxLauncher extends Disposable {
 		options: IVoltSandboxLauncherOptions = {},
 	) {
 		super();
-		this.manager = options.manager ?? new SandboxManager({ info: m => logger.info(m), warn: m => logger.warn(m) }, { platform: options.platform ?? process.platform });
-		this._register(toDisposable(() => void this.manager.dispose()));
+		const sandboxLogger = { info: (m: string) => logger.info(m), warn: (m: string) => logger.warn(m) };
+		this.manager = options.manager ?? new SandboxManager(sandboxLogger, { platform: options.platform ?? process.platform });
+		// Disposed at once (its disposal starts killing the hosts); the shutdown below waits for those kills.
+		this.supervisor = this._register(new SandboxSupervisor(this.manager, sandboxLogger, { ...(options.supervisorEnabled ? { enabled: options.supervisorEnabled } : {}) }));
+		// Hosts first (their whole trees), then every other run the manager still has.
+		this._register(toDisposable(() => void this.shutdown()));
 		this.now = options.now ?? Date.now;
 		this.mode = options.mode ?? (() => 'enforce');
 		this.readAdmin = options.admin ?? (() => readAdminPolicy(systemAdminPolicySource()));
@@ -168,6 +177,17 @@ export class VoltSandboxLauncher extends Disposable {
 		this.registry = this._register(new PrincipalRegistry(options.executionHost ?? `launcher:${process.pid}`, this.now));
 		this.cache.invalidate(this.epoch);
 	}
+
+	/** Volt quits: every sandboxed process tree goes. */
+	async shutdown(): Promise<void> {
+		this.shutdownDone ??= (async () => {
+			await this.supervisor.shutdown();
+			await this.manager.dispose();
+		})();
+		return this.shutdownDone;
+	}
+
+	private shutdownDone: Promise<void> | undefined;
 
 	async getSupport(): Promise<IVoltSandboxSupport> {
 		const capabilities = await this.manager.capabilities();
