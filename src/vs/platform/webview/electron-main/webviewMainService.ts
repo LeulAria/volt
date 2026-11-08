@@ -7,8 +7,10 @@ import { WebContents, webContents, WebFrameMain } from 'electron';
 import { Emitter } from '../../../base/common/event.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
 import { FindInFrameOptions, FoundInFrameResult, IWebviewManagerService, WebviewWebContentsId, WebviewWindowId } from '../common/webviewManagerService.js';
+import { WebviewEgressRegistry } from '../common/voltWebviewEgress.js';
 import { WebviewProtocolProvider } from './webviewProtocolProvider.js';
 import { IWindowsMainService } from '../../windows/electron-main/windows.js';
+import { ICodeWindow } from '../../window/electron-main/window.js';
 import { IFileService } from '../../files/common/files.js';
 
 export class WebviewMainService extends Disposable implements IWebviewManagerService {
@@ -19,11 +21,32 @@ export class WebviewMainService extends Disposable implements IWebviewManagerSer
 	public readonly onFoundInFrame = this._onFoundInFrame.event;
 
 	constructor(
+		/** Shared with the session's request dispatcher (`app.ts`), which enforces it. */
+		private readonly egress: WebviewEgressRegistry,
 		@IFileService fileService: IFileService,
 		@IWindowsMainService private readonly windowsMainService: IWindowsMainService,
 	) {
 		super();
 		this._register(new WebviewProtocolProvider(fileService));
+		// A window that closes or reloads takes its webviews along without unregistering them.
+		const watch = (window: ICodeWindow) => this._register(window.onWillLoad(() => egress.deleteWindow(window.id)));
+		windowsMainService.getWindows().forEach(watch);
+		this._register(windowsMainService.onDidOpenWindow(watch));
+		this._register(windowsMainService.onDidDestroyWindow(window => egress.deleteWindow(window.id)));
+	}
+
+	public async setWebviewEgress(windowId: WebviewWindowId, webviewId: string, encodedOrigin: string | undefined, hosts: readonly string[] | undefined): Promise<void> {
+		if (typeof webviewId !== 'string' || !webviewId) {
+			throw new Error('Invalid webview id');
+		}
+		if (hosts === undefined) {
+			this.egress.delete(webviewId);
+			return;
+		}
+		if (typeof windowId?.windowId !== 'number' || typeof encodedOrigin !== 'string' || !/^[a-z0-9]+$/i.test(encodedOrigin) || !Array.isArray(hosts) || hosts.some(host => typeof host !== 'string')) {
+			throw new Error('Invalid webview egress rules');
+		}
+		this.egress.set(windowId.windowId, webviewId, encodedOrigin, hosts);
 	}
 
 	public async setIgnoreMenuShortcuts(id: WebviewWebContentsId | WebviewWindowId, enabled: boolean): Promise<void> {

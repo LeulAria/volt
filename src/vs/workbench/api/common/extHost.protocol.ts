@@ -1536,6 +1536,8 @@ export interface MainThreadDebugServiceShape extends IDisposable {
 export interface IOpenUriOptions {
 	readonly allowTunneling?: boolean;
 	readonly allowContributedOpeners?: boolean | string;
+	/** Volt: the extension that asked; the main thread checks it runs in the calling host (I.10). */
+	readonly extensionId?: string;
 }
 
 export interface MainThreadWindowShape extends IDisposable {

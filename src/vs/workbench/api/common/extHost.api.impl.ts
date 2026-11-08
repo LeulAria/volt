@@ -398,6 +398,7 @@ export function createApiFactoryAndRegisterActors(accessor: ServicesAccessor): I
 				return extHostWindow.openUri(uri, {
 					allowTunneling: initData.remote.isRemote ?? (initData.remote.authority ? await extHostTunnelService.hasTunnelProvider() : false),
 					allowContributedOpeners: options?.allowContributedOpeners,
+					extensionId: extension.identifier.value,
 				});
 			},
 			async asExternalUri(uri: URI) {
@@ -406,7 +407,7 @@ export function createApiFactoryAndRegisterActors(accessor: ServicesAccessor): I
 				}
 
 				try {
-					return await extHostWindow.asExternalUri(uri, { allowTunneling: !!initData.remote.authority });
+					return await extHostWindow.asExternalUri(uri, { allowTunneling: !!initData.remote.authority, extensionId: extension.identifier.value });
 				} catch (err) {
 					if (matchesScheme(uri, Schemas.http) || matchesScheme(uri, Schemas.https)) {
 						return uri;

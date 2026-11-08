@@ -260,7 +260,13 @@ suite('Volt: extension host boundary (P0-3)', () => {
 		const opened: string[] = [];
 		const panels = disposables.add(new MainThreadWebviewPanels(
 			hostOf('pub.mine'),
-			undefined! as MainThreadWebviews,
+			// Core's description of the extension; the real one is tested in voltWebviewOwnership.test.ts.
+			new class extends mock<MainThreadWebviews>() {
+				override readonly ownership = new class extends mock<MainThreadWebviews['ownership']>() {
+					override extension(data: { readonly id: ExtensionIdentifier | string }) { return { id: new ExtensionIdentifier(typeof data.id === 'string' ? data.id : data.id.value) }; }
+					override contentOptions(_extension: unknown, requested: object) { return requested; }
+				};
+			},
 			undefined! as IConfigurationService,
 			new class extends mock<IEditorGroupsService>() {
 				override onDidAddGroup = Event.None;

@@ -7,7 +7,9 @@ import { CancellationToken } from '../../../base/common/cancellation.js';
 import { onUnexpectedError } from '../../../base/common/errors.js';
 import { Disposable, DisposableMap, DisposableStore } from '../../../base/common/lifecycle.js';
 import { generateUuid } from '../../../base/common/uuid.js';
-import { MainThreadWebviews, reviveWebviewExtension } from './mainThreadWebviews.js';
+import { MainThreadWebviews } from './mainThreadWebviews.js';
+import { ExtensionIdentifier } from '../../../platform/extensions/common/extensions.js';
+import { ILogService } from '../../../platform/log/common/log.js';
 import * as extHostProtocol from '../common/extHost.protocol.js';
 import { IViewBadge } from '../../common/views.js';
 import { IWebviewViewService, WebviewView } from '../../contrib/webviewView/browser/webviewViewService.js';
@@ -27,6 +29,7 @@ export class MainThreadWebviewsViews extends Disposable implements extHostProtoc
 		private readonly mainThreadWebviews: MainThreadWebviews,
 		@ITelemetryService private readonly _telemetryService: ITelemetryService,
 		@IWebviewViewService private readonly _webviewViewService: IWebviewViewService,
+		@ILogService private readonly _logService: ILogService,
 	) {
 		super();
 
@@ -62,14 +65,25 @@ export class MainThreadWebviewsViews extends Disposable implements extHostProtoc
 			throw new Error(`View provider for ${viewType} already registered`);
 		}
 
-		const extension = reviveWebviewExtension(extensionData);
+		// Volt: the extension as core knows it, running in this host (B-08, B-23).
+		const extension = this.mainThreadWebviews.ownership.extension(extensionData);
 
 		const registration = this._webviewViewService.register(viewType, {
 			resolve: async (webviewView: WebviewView, cancellation: CancellationToken) => {
+				// The view's origin is its contributing extension's: another extension providing
+				// for it would run in that origin (its storage, its service worker cache).
+				const contributor = webviewView.webview.extension?.id;
+				if (contributor && !ExtensionIdentifier.equals(contributor, extension.id)) {
+					this._logService.warn(`[volt webview] ${extension.id.value} tried to provide the view ${viewType} of ${contributor.value}`);
+					webviewView.webview.setHtml(this.mainThreadWebviews.getWebviewResolvedFailedContent(viewType));
+					return;
+				}
+
 				const handle = generateUuid();
 
 				this._webviewViews.set(handle, webviewView);
 				this.mainThreadWebviews.addWebview(handle, webviewView.webview, { serializeBuffersForPostMessage: options.serializeBuffersForPostMessage });
+				this.mainThreadWebviews.setOwner(handle, extension, webviewView.webview.contentOptions);
 
 				let state = undefined;
 				if (webviewView.webview.state) {
