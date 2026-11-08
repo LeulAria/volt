@@ -8,6 +8,7 @@ import { Disposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
+import { FilesAccess, filesPlan, ISandboxPathContext } from '../../../../platform/voltFiles/common/filesBroker.js';
 import { decisionRecord, IAccessRequest, IChatView, IDecision, IDecisionLogRecord, IManifestView, PolicyAuthorityMode, POLICY_AUTHORITY_MODE_SETTING, PolicySnapshot, evaluate } from '../../../../platform/voltSandbox/common/authority.js';
 import { FLOW_CAPABILITY, IGrant } from '../../../../platform/voltSandbox/common/grants.js';
 import { chatSubject, corePrincipal, extensionSubject, ICallContext, SubjectKey } from '../../../../platform/voltSandbox/common/principals.js';
@@ -25,8 +26,8 @@ import { hostToolClassCapability, HostToolSandboxClass, IHostToolSandboxUse } fr
  * decide every call; `shadow` acts on the old one, `enforce` on the Authority's; either way every
  * difference is recorded (`diffs`, `onDidDiff`) with the decision that explains it.
  *
- * Path, page and port rules stay where they are (`sandboxReadRefusal`, `sandboxWriteRefusal`,
- * `sandboxBrowserUrlRefusal`): they are the files and network brokers' job (later packages).
+ * Path rules are the files broker's (`filesRefusal`: its plan on the real path, then `evaluate` on
+ * the capability). Page and port rules (`sandboxBrowserUrlRefusal`) are the network broker's job.
  */
 
 // The mode is read on the execution host too (the sandbox launcher), so it is defined beside the Authority.
@@ -167,6 +168,22 @@ export class HostToolAuthority extends Disposable {
 		const request: IAccessRequest = { capability, target: name, edge: 'tool', surface: 'host-tool' };
 		const context = this.context(subject, [chatSubject(caller.id ?? '(none)')]);
 		return this.decide(snapshot, request, context);
+	}
+
+	/**
+	 * A sandboxed chat's host tool reads or writes `path` (a real path): the files broker's plan
+	 * (I.15: host reads go through the files broker), then the Authority's decision on its capability.
+	 * Returns why it is refused, or undefined.
+	 */
+	filesRefusal(caller: IGateChat, path: string, access: FilesAccess, context: ISandboxPathContext): string | undefined {
+		const subject = chatSubject(caller.id ?? '(none)');
+		const plan = filesPlan(subject, path, access, { roots: context.roots, platform: context.platform, ...(context.home ? { home: context.home } : {}), ...(context.tmpdir ? { tmpdir: context.tmpdir } : {}), ...(caller.settings ? { chat: caller.settings } : {}) });
+		if (plan.refusal) {
+			return plan.refusal;
+		}
+		const callerView = chatView(caller);
+		const decision = this.decide(this.snapshot(callerView ? [callerView] : [], []), { capability: plan.capability, target: plan.target, surface: 'broker' }, this.context(subject, []));
+		return decision.allow ? undefined : decision.reason;
 	}
 
 	ownerSubject(owner: IGateToolOwner): SubjectKey {

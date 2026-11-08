@@ -9,8 +9,8 @@
 #   scripts/volt-sandbox-linux-test.sh probe                               print the backend's capability report
 #   scripts/volt-sandbox-linux-test.sh shell                               a shell in the rig (out/ mounted at /volt/out)
 #   scripts/volt-sandbox-linux-test.sh verify-syscalls                     check seccomp.ts's syscall numbers on arm64 and amd64
-#   scripts/volt-sandbox-linux-test.sh suite                               the adversarial mocha suites (sandboxSecurity, hostGit, sandboxAttestation, sandboxProxy, networkBroker, networkAddress, sandboxPty, sandboxSupervisor), required to run
-#   scripts/volt-sandbox-linux-test.sh files                               race-free host file opens (safeOpen.test.ts, RACE-1..3) with volt-fsd built here
+#   scripts/volt-sandbox-linux-test.sh suite                               the adversarial mocha suites (sandboxSecurity, hostGit, gitBroker, sandboxAttestation, sandboxProxy, networkBroker, networkAddress, sandboxPty, sandboxSupervisor), required to run
+#   scripts/volt-sandbox-linux-test.sh files                               race-free host file opens and the files broker (safeOpen.test.ts, filesBroker.test.ts, RACE-1..3) with volt-fsd built here
 #   scripts/volt-sandbox-linux-test.sh cve                                 LNX-BWRAP-CVE: bubblewrap 0.9.0 must be refused, 0.13.1 must pass
 #
 # Set VOLT_SANDBOX_NO_TRANSPILE=1 to skip `npm run transpile-client-oxc` (out/ is already fresh).
@@ -58,7 +58,7 @@ snapshot() {
 	local dir
 	# voltAccounts/node: the agent state overlay checks a refreshed Claude login's account with it.
 	# voltHelpers (and what it imports): the one helper checker the macOS and Windows backends load.
-	# voltPlugins/common: the capability catalog and ceilings the network broker's Authority reads.
+	# voltPlugins/common: the Policy Authority's capability catalog and first-party ceilings (the network, files and git brokers).
 	for dir in vs/base/common vs/base/test/common vs/base/parts/sandbox/common vs/platform/voltSandbox vs/platform/voltGit vs/platform/voltAccounts/node \
 		vs/platform/voltHelpers vs/platform/product/common vs/platform/voltCodeIndex/common vs/platform/voltDevices/common vs/platform/voltPlugins/common; do
 		if [[ ! -d "$ROOT/out/$dir" ]]; then
@@ -168,6 +168,7 @@ case "$cmd" in
 			node /volt/node_modules/mocha/bin/mocha.js --ui tdd --timeout 120000 --exit \
 			/volt/out/vs/platform/voltSandbox/test/node/sandboxSecurity.test.js \
 			/volt/out/vs/platform/voltGit/test/node/hostGit.test.js \
+			/volt/out/vs/platform/voltGit/test/node/gitBroker.test.js \
 			/volt/out/vs/platform/voltSandbox/test/node/sandboxAttestation.test.js \
 			/volt/out/vs/platform/voltSandbox/test/node/sandboxProxy.test.js \
 			/volt/out/vs/platform/voltSandbox/test/node/networkBroker.test.js \
@@ -188,7 +189,8 @@ case "$cmd" in
 			apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gcc libc6-dev >/dev/null 2>&1 \
 				&& gcc -O2 -static -Wall -Wextra -o /out/volt-fsd /src/volt-fsd.c'
 		docker run --rm "${DOCKER_FLAGS[@]}" -v "$SNAPSHOT/bin:/volt/bin:ro" -v "$ROOT/node_modules:/volt/node_modules:ro" -e VOLT_SANDBOX_REQUIRED=1 -e VSCODE_DEV=1 -e VOLT_FSD_PATH=/volt/bin/volt-fsd "$IMAGE" \
-			node /volt/node_modules/mocha/bin/mocha.js --ui tdd --timeout 120000 --exit /volt/out/vs/platform/voltFiles/test/node/safeOpen.test.js "$@"
+			node /volt/node_modules/mocha/bin/mocha.js --ui tdd --timeout 120000 --exit /volt/out/vs/platform/voltFiles/test/node/safeOpen.test.js \
+			/volt/out/vs/platform/voltFiles/test/node/filesBroker.test.js "$@"
 		;;
 	cve)
 		transpile

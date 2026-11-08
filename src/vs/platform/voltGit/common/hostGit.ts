@@ -77,6 +77,27 @@ export interface IBuildEntryChange {
 	readonly after?: string;
 }
 
+/**
+ * What Volt is about to run for the user from a folder a sandboxed writer worked in (I.6): their
+ * commit or push hooks, worktree setup, or a Run target (script, task, launch).
+ */
+export type BuildEntryPurpose = 'commit' | 'push' | 'setup' | 'run';
+
+/** The changes `purpose` would run: hooks and git config for a commit or push; everything for setup and Run. */
+export function relevantBuildEntryChanges(changes: readonly IBuildEntryChange[], purpose: BuildEntryPurpose): IBuildEntryChange[] {
+	return purpose === 'commit' || purpose === 'push' ? changes.filter(change => change.group === 'git') : [...changes];
+}
+
+/**
+ * The review a process needs before it starts, from who it runs for and why (`IVoltExecContext`):
+ * project-defined setup that runs outside any sandbox (`worktree-setup` for an unsandboxed chat)
+ * waits for the build-entry review. Inside a sandbox the guard has nothing to protect: what runs
+ * there is held to the sandbox. Undefined: no review.
+ */
+export function buildEntryPurposeOf(reason: string, sandboxed: boolean): BuildEntryPurpose | undefined {
+	return !sandboxed && reason === 'worktree-setup' ? 'setup' : undefined;
+}
+
 /** Subcommands that talk to a remote (and may need credentials or ssh). */
 const REMOTE_COMMANDS = new Set(['fetch', 'pull', 'push', 'clone', 'ls-remote', 'remote', 'submodule', 'archive']);
 
