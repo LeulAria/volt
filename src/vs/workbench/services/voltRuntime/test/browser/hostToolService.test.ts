@@ -18,7 +18,7 @@ import { VoltHostToolService } from '../../browser/host/hostToolService.js';
 import { dataUrlBytes, decodeDataUrl, encodeImage, scaleScreenshot } from '../../browser/host/imageCodec.js';
 import { createBrowserTools } from '../../browser/tools/browserTool.js';
 import { BrowserBlockReason, IVoltBrowserAccessService } from '../../common/browserAccess.js';
-import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, IVoltBrowserAutomationOptions, IVoltHostToolApproval, IVoltHostToolCall, IVoltHostToolInvocation, IVoltMcpServer, VOLT_HOST_TOOLS } from '../../common/hostTools.js';
+import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, IVoltBrowserAutomationOptions, IVoltHostFlowApproval, IVoltHostToolApproval, IVoltHostToolCall, IVoltHostToolOwner, IVoltHostToolInvocation, IVoltMcpServer, VOLT_HOST_TOOLS } from '../../common/hostTools.js';
 import { VoltMode } from '../../common/modes.js';
 import { createImage, IRgbaImage } from '../../common/tools/imageAnalysis.js';
 
@@ -529,5 +529,70 @@ suite('Volt host tool service', () => {
 		assert.strictEqual((await service.invokeTool('device_tap', { x: 1, y: 2 }, { sessionId: 's1' })).text, 'ran device_tap');
 		assert.strictEqual(asked.length, 1);
 		assert.deepStrictEqual(ran, ['device_list', 'device_tap', 'device_tap']);
+	});
+
+	test('PERM-FLOW-1: a network-off chat calling an extension\'s network tool is refused until the flow card allows it; for this chat holds until revoked, once is spent', async () => {
+		const { service } = setup();
+		const ran: string[] = [];
+		const owner: IVoltHostToolOwner = { extensionId: 'acme.linear', label: 'Linear', firstParty: false, toolClass: 'network', declared: [{ id: 'tools.register' }, { id: 'net.connect', targets: ['api.linear.app'] }] };
+		store.add(service.registerToolProvider({
+			tools: [{ name: 'linear_sync', title: 'Synced', description: '', inputSchema: {} }, { name: 'linear_write', title: 'Wrote', description: '', inputSchema: {} }],
+			invoke: async name => { ran.push(name); return { text: `ran ${name}` }; },
+			owner,
+		}));
+		const offline = { sessionId: 's1', sandbox: WORKSPACE_WRITE };
+		const sync = () => service.invokeTool('linear_sync', { issue: 'L-1' }, offline);
+		// No one to ask: refused, saying why.
+		assert.match((await sync()).error ?? '', /belongs to Linear, which can send what it is given to any host .* needs the user's approval/);
+
+		const asked: IVoltHostFlowApproval[] = [];
+		let answer: 'once' | 'chat' | undefined;
+		service.setApprover({ approve: async () => false, approveFlow: async request => { asked.push(request); return answer; } });
+		assert.match((await sync()).error ?? '', /did not allow sending this chat's content/);
+		assert.deepStrictEqual(asked.map(request => [request.sessionId, request.name, request.extension, request.hosts]), [['s1', 'linear_sync', 'Linear', 'all']], 'unsandboxed extension code can reach anything: the card says so');
+
+		answer = 'once';
+		assert.strictEqual((await sync()).text, 'ran linear_sync');
+		assert.deepStrictEqual(service.flowApprovals('s1'), [], 'once is spent by the call it allowed');
+		answer = undefined;
+		assert.ok((await sync()).error, 'asked again after once');
+
+		answer = 'chat';
+		assert.strictEqual((await sync()).text, 'ran linear_sync');
+		answer = undefined;
+		assert.strictEqual((await sync()).text, 'ran linear_sync', 'for this chat: not asked again');
+		assert.ok((await service.invokeTool('linear_sync', {}, { sessionId: 's2', sandbox: WORKSPACE_WRITE })).error, 'only this chat');
+		assert.deepStrictEqual(service.flowApprovals('s1').map(grant => [grant.kind, grant.scope.targets, grant.scope.hosts]), [['session', ['plugin:acme.linear@local'], ['*']]], 'visible');
+		assert.strictEqual(service.revokeFlowApprovals('s1'), 1);
+		assert.ok((await sync()).error, 'revocable');
+		assert.strictEqual(asked.length, 6);
+
+		// A chat with the network on is compatible: no card. Unsandboxed chats are not gated at all.
+		assert.strictEqual((await service.invokeTool('linear_sync', {}, { sessionId: 's3', sandbox: { ...WORKSPACE_WRITE, network: true } })).text, 'ran linear_sync');
+		assert.strictEqual((await service.invokeTool('linear_sync', {}, { sessionId: 's4', sandbox: { level: 'off', network: false } })).text, 'ran linear_sync');
+		assert.strictEqual(asked.length, 6);
+
+		// Shadow mode: the earlier rule (every unknown tool refused) acts, and the difference is recorded.
+		const diffs: string[] = [];
+		store.add(service.onDidShadowDiff(diff => diffs.push(`${diff.what}:${diff.legacy}:${diff.mode}`)));
+		service.setPolicyAuthorityMode('shadow');
+		assert.ok((await service.invokeTool('linear_sync', {}, { sessionId: 's3', sandbox: { ...WORKSPACE_WRITE, network: true } })).error);
+		service.setPolicyAuthorityMode('enforce');
+		assert.deepStrictEqual(diffs, ['linear_sync:deny:shadow']);
+		assert.deepStrictEqual(ran, ['linear_sync', 'linear_sync', 'linear_sync', 'linear_sync', 'linear_sync']);
+		service.setApprover(undefined);
+	});
+
+	test('PERM-FLOW-1: an extension tool whose class the gate can\'t judge without its arguments stays refused in a sandboxed chat', async () => {
+		const { service } = setup();
+		for (const toolClass of ['writes', 'reads', 'escapes', 'spawns', 'browser'] as const) {
+			const registration = service.registerToolProvider({
+				tools: [{ name: `ext_${toolClass}`, title: toolClass, description: '', inputSchema: {} }],
+				invoke: async () => ({ text: 'ran' }),
+				owner: { extensionId: 'acme.tools', label: 'Tools', firstParty: false, toolClass, declared: [] },
+			});
+			assert.ok((await service.invokeTool(`ext_${toolClass}`, {}, { sessionId: 's1', sandbox: { ...WORKSPACE_WRITE, network: true } })).error, toolClass);
+			registration.dispose();
+		}
 	});
 });
