@@ -303,6 +303,8 @@ interface IMentionFile {
 const MAX_FILE_ITEMS = 30;
 const MAX_RECENT_ITEMS = 5;
 const MAX_CHAT_ITEMS = 50;
+/** An agent chat in the @ menu and on its chip: a paper plane drawn by CSS (agentEditor.css), not a codicon glyph. */
+export const AgentChatMentionIcon = ThemeIcon.fromId('volt-agent-chat');
 const MENU_SEARCH_DEBOUNCE_MS = 80;
 /** A referenced chat is sent along, cut from the start past this size. */
 const MAX_CHAT_CONTEXT_CHARS = 24_000;
@@ -410,7 +412,7 @@ export function mentionIconClasses(
 	const icon = mention.kind === 'image' ? Codicon.fileMedia
 		: mention.kind === 'video' ? Codicon.deviceCameraVideo
 			: mention.kind === 'terminal' ? Codicon.terminal
-				: mention.kind === 'chat' ? Codicon.comment
+				: mention.kind === 'chat' ? AgentChatMentionIcon
 					: mention.kind === 'mcp' ? Codicon.server
 						: mention.kind === 'branch' ? Codicon.gitBranch
 							: mention.kind === 'browser' ? Codicon.inspect
@@ -513,6 +515,8 @@ export class AgentMentionController extends Disposable {
 	private mcpServers: readonly IVoltMcpServerStatus[] | undefined;
 	/** Transcripts of referenced chats, by session id. */
 	private readonly chatContexts = new Map<string, string>();
+	/** Unsent text of draft chats for the Chats list, by session id; read when the list first shows them. */
+	private readonly draftTexts = new Map<string, string | undefined>();
 	/** What a referenced Scratch board or design canvas holds, by `kind:id`, read when it is picked. */
 	private readonly surfaceContexts = new Map<string, string>();
 	/** The design canvases for the @ menu's Canvases list; read when that list opens. */
@@ -2352,7 +2356,7 @@ export class AgentMentionController extends Disposable {
 			...(this.surfaceService(IAgentDevicesService) ? [{ kind: 'item' as const, id: 'devices', label: localize('voltAgent.mention.devices', "Devices"), icon: Codicon.deviceMobile, submenu: true, run: () => this.openDevicesView() }] : []),
 			{ kind: 'item', id: 'computer', label: THIS_MACHINE, icon: Codicon.deviceDesktop, submenu: true, run: () => this.openComputer(undefined) },
 			{ kind: 'item', id: 'terminals', label: localize('voltAgent.mention.terminals', "Terminals"), icon: Codicon.terminal, submenu: true, run: () => this.setMenuView('terminals') },
-			{ kind: 'item', id: 'chats', label: localize('voltAgent.mention.chats', "Chats"), icon: Codicon.commentDiscussion, submenu: true, run: () => this.setMenuView('chats') },
+			{ kind: 'item', id: 'chats', label: localize('voltAgent.mention.chats', "Chats"), icon: AgentChatMentionIcon, submenu: true, run: () => this.setMenuView('chats') },
 			// The surfaces beside a chat: a board or a canvas goes to the agent with what is on it.
 			...(this.surfaceOff(SCRATCH_ENABLED_SETTING) ? [] : [{ kind: 'item' as const, id: 'boards', label: localize('voltAgent.mention.boards', "Scratch Boards"), icon: Codicon.notebook, submenu: true, run: () => this.setMenuView('boards') }]),
 			...(this.surfaceOff(CANVAS_ENABLED_SETTING) ? [] : [{ kind: 'item' as const, id: 'canvases', label: localize('voltAgent.mention.canvases', "Canvases"), icon: Codicon.symbolColor, submenu: true, run: () => this.openCanvasesView() }]),
@@ -2441,18 +2445,23 @@ export class AgentMentionController extends Disposable {
 		return rows;
 	}
 
-	/** Other chats of this project, newest first, with their age like the sidebar. */
+	/** Other chats of this project, drafts included, newest first, with their age like the sidebar. */
 	private chatRows(query: string): AgentMentionRow[] {
 		const root = this.searchRoot()?.fsPath;
 		const current = this.host.sessionId?.();
 		const now = Date.now();
 		const rows: AgentMentionRow[] = [];
 		const sessions = this.agentHistory.list({ inWindow: true })
-			.filter(session => session.id !== current && session.turnCount > 0
+			.filter(session => session.id !== current && (session.turnCount > 0 || session.hasDraft)
 				&& (!root || session.workspaceFolder === root || !!session.workspaceFolders?.includes(root)))
 			.sort((a, b) => b.updatedAt - a.updatedAt);
 		for (const session of sessions) {
-			const title = session.title || session.preview || localize('voltAgent.mention.untitledChat', "Untitled chat");
+			const draft = session.turnCount === 0;
+			if (draft && !this.draftTexts.has(session.id)) {
+				this.loadDraftText(session.id);
+			}
+			const title = session.title || session.preview || (draft ? this.draftTexts.get(session.id) : undefined)
+				|| (draft ? localize('voltAgent.mention.untitledDraft', "New Chat") : localize('voltAgent.mention.untitledChat', "Untitled chat"));
 			const labelMatches = query ? matchesFuzzy(query, title, true) : undefined;
 			if (query && !labelMatches) {
 				continue;
@@ -2462,8 +2471,8 @@ export class AgentMentionController extends Disposable {
 				id: `chat:${session.id}`,
 				label: title,
 				labelMatches: labelMatches ?? undefined,
-				icon: Codicon.comment,
-				description: compactSessionAge(session.updatedAt, now),
+				icon: AgentChatMentionIcon,
+				description: draft ? localize('voltAgent.mention.draft', "Draft") : compactSessionAge(session.updatedAt, now),
 				run: () => {
 					void this.loadChatContext(session.id);
 					this.pickMention({ id: generateUuid(), kind: 'chat', label: truncateLabel(title, 40), value: session.id });
@@ -2474,6 +2483,21 @@ export class AgentMentionController extends Disposable {
 			}
 		}
 		return rows;
+	}
+
+	/** A draft chat's unsent text, one line, as its name in the Chats list; drawn again once read. */
+	private loadDraftText(sessionId: string): void {
+		this.draftTexts.set(sessionId, undefined);
+		void this.agentHistory.open(sessionId).loadDraft().then(draft => {
+			const text = draft?.text.replace(/\s+/g, ' ').trim();
+			if (!text) {
+				return;
+			}
+			this.draftTexts.set(sessionId, text);
+			if (this.menuView === 'chats') {
+				this.refreshMentionMenu(false);
+			}
+		}, () => { /* no draft file: the row keeps its fallback name */ });
 	}
 
 	/** Settings > Canvas & Scratch turned the surface off: no way to mention it either. */
@@ -2834,13 +2858,19 @@ export class AgentMentionController extends Disposable {
 			return;
 		}
 		try {
-			const transcript = await this.agentHistory.open(sessionId).load();
+			const handle = this.agentHistory.open(sessionId);
+			const transcript = await handle.load();
 			const parts: string[] = [];
 			for (const turn of transcript.turns) {
 				parts.push(`User: ${turn.user.text.trim()}`);
 				if (turn.assistant?.text.trim()) {
 					parts.push(`Assistant: ${turn.assistant.text.trim()}`);
 				}
+			}
+			// A draft chat has no turns yet: what the user is writing there is what it holds.
+			const draft = parts.length ? undefined : (await handle.loadDraft())?.text.trim();
+			if (draft) {
+				parts.push(`Unsent draft: ${draft}`);
 			}
 			const text = parts.join('\n\n');
 			// Keep the end: the latest turns say where the chat landed.
