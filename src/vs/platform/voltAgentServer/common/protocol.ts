@@ -169,6 +169,23 @@ export const VOLT_PAIR_PATH = '/api/auth/pair';
 export const VOLT_LOCAL_SESSION_PATH = '/api/auth/local';
 /** `POST` with the server's own token as a bearer, loopback only: a one-time local sign-in nonce ({@link IVoltLocalLink}). */
 export const VOLT_LOCAL_LINK_PATH = '/api/auth/link';
+/**
+ * `POST` with the server's own token as a bearer, loopback only: a one-time ticket ({@link IVoltExtensionHostTicket})
+ * for the desktop's sandboxed extension hosts (P6), which connect to the workbench server here.
+ */
+export const VOLT_EXTHOST_TICKET_PATH = '/api/workbench/exthost-ticket';
+/** The query parameter a desktop extension host connection carries its ticket in (single use, a minute). */
+export const VOLT_EXTHOST_TICKET_QUERY = 'voltExtHostTicket';
+
+export interface IVoltExtensionHostTicket {
+	readonly ticket: string;
+	/** The workbench server's connection token (its handshake checks it too). */
+	readonly connectionToken: string;
+	/** Where the workbench server keeps extension storage (`…/User/globalStorage`), as this machine's path. */
+	readonly globalStorageHome: string;
+	readonly expiresAt: number;
+}
+
 /** `POST` with a device token as a bearer: the same device's next token ({@link IVoltRefreshResponse}); the old one stops working a minute later. */
 export const VOLT_REFRESH_PATH = '/api/auth/refresh';
 /** `POST` with the server's own token as a bearer: a one-time pairing code ({@link IVoltPairingCode}), for tools on this machine (`npx volt-run pair`). */

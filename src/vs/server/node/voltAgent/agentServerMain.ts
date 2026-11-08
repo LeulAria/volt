@@ -50,7 +50,7 @@ import { ISecretStorageService } from '../../../platform/secrets/common/secrets.
 import { getResolvedShellEnv } from '../../../platform/shell/node/shellEnv.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../platform/workspace/common/workspace.js';
-import { AGENT_SERVER_RESTART_EXIT_CODE, AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo, IVoltSshTunnelOptions, VOLT_LOCAL_LINK_PATH, VOLT_PAIRING_CODE_PATH } from '../../../platform/voltAgentServer/common/protocol.js';
+import { AGENT_SERVER_RESTART_EXIT_CODE, AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo, IVoltSshTunnelOptions, VOLT_EXTHOST_TICKET_PATH, VOLT_LOCAL_LINK_PATH, VOLT_PAIRING_CODE_PATH } from '../../../platform/voltAgentServer/common/protocol.js';
 import { AgentServerProtocol, IClientCallOptions } from '../../../platform/voltAgentServer/common/protocolServer.js';
 import { SessionTopicData } from '../../../platform/voltAgentServer/common/sessionPatch.js';
 import { agentServerPaths, clearAgentServerRuntime, ensureAgentServerToken, isProcessAlive, preferredAgentServerPort, writeAgentServerRuntime } from '../../../platform/voltAgentServer/node/agentServerFiles.js';
@@ -804,6 +804,19 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, to
 			sendJson(res, 401, { error: 'unauthorized' });
 		} else {
 			sendJson(res, 200, url.pathname === VOLT_LOCAL_LINK_PATH ? pairing.createLocalNonce() : pairing.createCode(ctx));
+		}
+		return;
+	}
+	if (url.pathname === VOLT_EXTHOST_TICKET_PATH) {
+		// P6: the desktop app runs its sandboxed extensions' hosts here; only it (the server's own token, this computer) gets a ticket.
+		if (req.method !== 'POST') {
+			sendJson(res, 405, { error: 'method_not_allowed' });
+		} else if (ctx.viaTunnel || ctx.viaNetwork || !isLoopbackAddress(req.socket.remoteAddress) || !secretsEqual(bearerToken(req), token)) {
+			sendJson(res, 401, { error: 'unauthorized' });
+		} else if (!workbench.available) {
+			sendJson(res, 404, { error: 'no_workbench' });
+		} else {
+			sendJson(res, 200, await workbench.issueExtensionHostTicket());
 		}
 		return;
 	}

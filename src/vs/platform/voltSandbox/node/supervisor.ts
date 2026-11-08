@@ -8,6 +8,7 @@ import type { Duplex } from 'stream';
 import { randomBytes } from 'crypto';
 import { promises as fs } from 'fs';
 import { promisify } from 'util';
+import type { Socket } from 'net';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
 import { basename, dirname, join } from '../../../base/common/path.js';
@@ -16,7 +17,7 @@ import { composeSandboxPolicy } from '../common/sandboxComposition.js';
 import { IAttestation, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { IVoltSandboxPolicy, parseSandboxPolicyLayer, SandboxDimension } from '../common/sandboxSchema.js';
 import { isLiveWorkloadState, ISandboxResourceSample, ISandboxWorkloadInfo, SandboxExitReason, SandboxWorkloadState, summarizeSandboxPolicy } from '../common/sandboxWorkloads.js';
-import { INetworkPrincipalView } from './networkBroker.js';
+import type { INetworkPrincipalView, NetworkRoute } from './networkBroker.js';
 import { PrincipalRegistry } from './principalRegistry.js';
 import { IPreparedSandbox, ISandboxLogger, processAlive, RUN_LEDGER_NAME, SandboxManager } from './sandboxManager.js';
 import { ISandboxRunContext } from './sandboxResolver.js';
@@ -59,7 +60,18 @@ export interface IHostFork {
 	readonly fork: string;
 	readonly args?: readonly string[];
 	readonly execArgv?: readonly string[];
+	/**
+	 * Launcher-reserved `VSCODE_*` names the Node host needs (F.7: written last, after the policy's
+	 * env): the extension host's entry point and its NLS configuration. Only names in
+	 * {@link HOST_RESERVED_ENV} are taken; anything else is refused.
+	 */
+	readonly reservedEnv?: Readonly<Record<string, string>>;
 }
+
+/** The reserved names a Node host may be given (H.1 T3 host). Never a secret: these are fixed values Volt computes. */
+export const HOST_RESERVED_ENV: ReadonlySet<string> = new Set([
+	'VSCODE_ESM_ENTRYPOINT', 'VSCODE_HANDLES_UNCAUGHT_ERRORS', 'VSCODE_NLS_CONFIG', 'VSCODE_EXTHOST_WILL_SEND_SOCKET', 'VSCODE_DEV',
+]);
 
 export interface IHostStartRequest {
 	/** Minted by the caller (or the supervisor's registry) before the call. */
@@ -134,8 +146,14 @@ export interface ISandboxedHost {
 	readonly channelId: string | undefined;
 	/** Messages from the host on its channel; only after the go byte. */
 	readonly onMessage: Event<unknown>;
-	/** Sends on the channel; false when it is not running or has no channel. */
-	send(message: unknown): boolean;
+	/**
+	 * Sends on the channel; false when it is not running or has no channel. `handle`: a connected
+	 * socket passed along (SCM_RIGHTS on the socketpair), as VS Code hands an extension host its
+	 * connection; it has no path, so nothing else can reach it.
+	 */
+	send(message: unknown, handle?: Socket): boolean;
+	/** The host's network broker route (network `proxy`): its live "Allow host" grants go here. */
+	networkRoute(): NetworkRoute | undefined;
 	/** What a `stdio: 'pipe'` host writes to stdout; only after the go byte. */
 	readonly onStdout: Event<string>;
 	/** Writes to a `stdio: 'pipe'` host's stdin; false when it is not running or has no stdin. */
@@ -501,7 +519,17 @@ class SandboxHost implements ISandboxedHost {
 	readonly onExit = this._onExit.event;
 	private readonly _onResource = new Emitter<ISandboxResourceSample>();
 	readonly onResource = this._onResource.event;
-	private readonly _onMessage = new Emitter<unknown>();
+	/** Messages that came before anyone listened (a host may speak first): delivered to the first listener. */
+	private unheard: unknown[] = [];
+	private readonly _onMessage = new Emitter<unknown>({
+		onDidAddFirstListener: () => queueMicrotask(() => {
+			const pending = this.unheard;
+			this.unheard = [];
+			for (const message of pending) {
+				this._onMessage.fire(message);
+			}
+		}),
+	});
 	readonly onMessage = this._onMessage.event;
 	private readonly _onStdout = new Emitter<string>({ onDidAddFirstListener: () => this.flushStdout() });
 	readonly onStdout = this._onStdout.event;
@@ -585,6 +613,11 @@ class SandboxHost implements ISandboxedHost {
 		const fork = 'fork' in request.command ? request.command : undefined;
 		let file: string;
 		let args: string[];
+		const reserved = Object.entries(fork?.reservedEnv ?? {});
+		const unknownReserved = reserved.find(([name]) => !HOST_RESERVED_ENV.has(name));
+		if (unknownReserved) {
+			return this.fail('launch', `${unknownReserved[0]} is not a name a host may be given.`);
+		}
 		if (fork) {
 			const runtime = this.supervisor.nodeRuntime;
 			// The runtime must be readable inside: its bundle, as a trusted layer over the caller's policy.
@@ -620,7 +653,7 @@ class SandboxHost implements ISandboxedHost {
 			child = spawn(prepared.command, [...prepared.args], {
 				cwd: prepared.cwd,
 				// Reserved names last (F.7): Node as Node; `NODE_CHANNEL_FD` Node itself adds for the `ipc` entry.
-				env: { ...prepared.env, ...(fork ? { ELECTRON_RUN_AS_NODE: '1' } : {}), ...(streamFd !== undefined ? { [HOST_CHANNEL_FD_ENV]: String(streamFd) } : {}) },
+				env: { ...prepared.env, ...Object.fromEntries(reserved), ...(fork ? { ELECTRON_RUN_AS_NODE: '1' } : {}), ...(streamFd !== undefined ? { [HOST_CHANNEL_FD_ENV]: String(streamFd) } : {}) },
 				stdio: [piped ? 'pipe' : 'ignore', piped ? 'pipe' : 'ignore', 'pipe', ...prepared.extraStdio, ...(streamFd !== undefined ? ['pipe' as const] : []), ...(this.ipc ? ['ipc' as const] : [])],
 				detached: true,
 				windowsHide: true,
@@ -702,7 +735,11 @@ class SandboxHost implements ISandboxedHost {
 			child.on('message', message => {
 				if (this._state === 'running' || this._state === 'idle') {
 					this.activity();
-					this._onMessage.fire(message);
+					if (this._onMessage.hasListeners()) {
+						this._onMessage.fire(message);
+					} else if (this.unheard.length < 64) {
+						this.unheard.push(message);
+					}
 				}
 			});
 			child.on('error', () => undefined);
@@ -716,9 +753,10 @@ class SandboxHost implements ISandboxedHost {
 				this._channelId = undefined;
 			}
 		}
-		await this.writeLedger(prepared, child);
 		this.lastActivity = Date.now();
+		// Running before the ledger write, so a host's first message (it may send one at once) is not dropped.
 		this.setState('running');
+		await this.writeLedger(prepared, child);
 		this.scheduleIdle();
 		this.logger.info(`[volt-sandbox] host ${this.label} ${prepared.tag} running (${this._backend}, pid ${child.pid}, policy ${prepared.launchPolicyHash.slice(0, 12)}${this._restarts ? `, restart ${this._restarts}` : ''})`);
 		return undefined;
@@ -877,13 +915,17 @@ class SandboxHost implements ISandboxedHost {
 		}
 	}
 
-	send(message: unknown): boolean {
+	send(message: unknown, handle?: Socket): boolean {
 		const child = this.child;
 		if (!this.ipc || !child?.connected || (this._state !== 'running' && this._state !== 'idle')) {
 			return false;
 		}
 		this.activity();
-		return child.send(message as object);
+		return handle ? child.send(message as object, handle) : child.send(message as object);
+	}
+
+	networkRoute(): NetworkRoute | undefined {
+		return this.prepared?.networkRoute();
 	}
 
 	write(data: string): boolean {

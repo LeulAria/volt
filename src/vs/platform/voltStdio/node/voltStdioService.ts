@@ -24,6 +24,7 @@ import { brokerReadFile, brokerWriteFile, defaultFsdPath } from '../../voltFiles
 import { SafeOpenError } from '../../voltFiles/node/safeOpen.js';
 import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.js';
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
+import type { SandboxedExtensionHosts } from '../../voltSandbox/node/extensionHostSandbox.js';
 import { ISandboxWorkloadInfo, SANDBOX_SUPERVISOR_SETTING } from '../../voltSandbox/common/sandboxWorkloads.js';
 import { NETWORK_BROKER_SETTING, readNetworkBrokerMode } from '../../voltSandbox/common/networkBrokerSetting.js';
 import { ChildLedger } from './childLedger.js';
@@ -234,6 +235,11 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 
 	async restartPlugin(plugin: string): Promise<void> {
 		await this.plugins.restart(plugin);
+	}
+
+	/** T3 extension hosts (P2): the same supervisor, so they are listed and killed with every other sandboxed host. */
+	sandboxedExtensionHosts(): SandboxedExtensionHosts {
+		return this.sandbox.extensionHosts();
 	}
 
 	async sandboxWorkloads(): Promise<readonly ISandboxWorkloadInfo[]> {

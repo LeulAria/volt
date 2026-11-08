@@ -57,6 +57,7 @@ import '../platform/undoRedo/common/undoRedoService.js';
 import './services/workspaces/common/editSessionIdentityService.js';
 import './services/workspaces/common/canonicalUriService.js';
 import './services/extensions/browser/extensionUrlHandler.js';
+import './services/extensions/browser/voltExtensionSandboxService.js';
 import './services/keybinding/common/keybindingEditing.js';
 import './services/decorations/browser/decorationsService.js';
 import './services/dialogs/common/dialogService.js';

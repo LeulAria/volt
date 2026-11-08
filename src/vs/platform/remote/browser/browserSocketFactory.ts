@@ -279,7 +279,11 @@ export class BrowserSocketFactory implements ISocketFactory<RemoteConnectionType
 		return true;
 	}
 
-	connect({ host, port }: WebSocketRemoteConnection, path: string, query: string, debugLabel: string): Promise<ISocket> {
+	connect({ host, port, volt }: WebSocketRemoteConnection, path: string, query: string, debugLabel: string): Promise<ISocket> {
+		if (volt) {
+			path = `${volt.pathPrefix}${path}`;
+			query = `${query}&${volt.query}`;
+		}
 		return new Promise<ISocket>((resolve, reject) => {
 			const webSocketSchema = (/^https:/.test(mainWindow.location.href) ? 'wss' : 'ws');
 			const socket = this._webSocketFactory.create(`${webSocketSchema}://${(/:/.test(host) && !/\[/.test(host)) ? `[${host}]` : host}:${port}${path}?${query}&skipWebSocketFrames=false`, debugLabel);

@@ -12,7 +12,7 @@ import { homedir } from 'os';
 import { IDisposable } from '../../../base/common/lifecycle.js';
 import { dirname, join } from '../../../base/common/path.js';
 import { evaluate, IAccessRequest, IAdminPolicy, IChatView, IDecision, IManifestView, PolicySnapshot } from '../common/authority.js';
-import { GrantKind, IGrant } from '../common/grants.js';
+import { GrantKind, grantValid, IGrant } from '../common/grants.js';
 import { classifyAddress } from '../common/networkAddress.js';
 import { INormalizedHost, normalizeNetworkHost, parseNetworkRule, splitAuthority } from '../common/networkRules.js';
 import { ICallContext, IPrincipal, isChatSubject, PrincipalKind, SubjectKey, subjectChatId } from '../common/principals.js';
@@ -541,6 +541,9 @@ export class NetworkRoute {
 	 */
 	async allowHosts(entries: readonly string[]): Promise<number> {
 		const targets = normalizeEntries(entries).filter(entry => {
+			if (!isChatSubject(this.subject) && entry === '*') {
+				return false; // H.7: never public `*` for a plugin, extension or MCP server.
+			}
 			const rule = parseNetworkRule(entry);
 			return rule && (rule.kind !== 'ip' || classifyAddress(rule.cidr.slice(0, rule.cidr.lastIndexOf('/')))?.class === 'public');
 		}).filter(entry => !this.ownGrants().some(grant => grant.capability === 'net.connect@1' && grant.scope.targets?.[0] === entry));
@@ -675,7 +678,7 @@ export class NetworkRoute {
 					epoch: this.broker.epoch,
 					asOf: now,
 					grants: [...grants, ...(view?.grants ?? []).filter(grant => grant.subject === this.subject)],
-					...(view ? { manifests: [{ ...view.manifest, subject: this.subject }] } : {}),
+					...(view ? { manifests: [this.routeManifest({ ...view.manifest, subject: this.subject }, grants.filter(grant => grant.subject === this.subject), now)] } : {}),
 					...(chats.length ? { chats } : {}),
 					...admin,
 				});
@@ -687,6 +690,25 @@ export class NetworkRoute {
 	/** Core's view of a principal that is not a chat: the launcher's, else a registered provider's. */
 	private view(): INetworkPrincipalView | undefined {
 		return this.options.view ?? this.broker.viewOf(this.principal);
+	}
+
+	/**
+	 * A plugin's manifest as this route judges it: `net.connect` only for hosts named (never an
+	 * untargeted or `*` declaration), plus the hosts its valid grants name. `net.connect` is low, so
+	 * a named host is an install-time grant (G.4); the user's "Allow host" names the rest.
+	 */
+	private routeManifest(manifest: IManifestView, grants: readonly IGrant[], now: number): IManifestView {
+		const context = { asOf: now, epoch: this.broker.epoch, sessionIds: [this.principal.id] };
+		const named = (targets: readonly string[] | undefined) => (targets ?? []).filter(target => target.trim() !== '*');
+		const granted = grants.filter(grant => !grant.revoked && grant.capability.split('@')[0] === 'net.connect' && grantValid(grant, context)).flatMap(grant => named(grant.scope.targets));
+		const declared = manifest.declared.flatMap(entry => {
+			if (entry.id.split('@')[0] !== 'net.connect') {
+				return [entry];
+			}
+			const targets = named(entry.targets);
+			return targets.length ? [{ ...entry, targets }] : [];
+		});
+		return { ...manifest, declared: granted.length ? [...declared, { id: 'net.connect', targets: granted }] : declared };
 	}
 
 	private context(): ICallContext {
@@ -727,7 +749,12 @@ export class NetworkRoute {
 		const named: IAccessRequest = { capability: 'net.connect', target: target.host, port, surface: 'broker' };
 		const decision = this.decide(named);
 		if (!decision.allow) {
-			return refuse(decision.code === 'port' ? 'port' : 'not-allowed', `Blocked by Volt sandbox: ${decision.code === 'chat-sandbox' ? `network access to ${target.host} is off for this chat. Ask the user to allow it.` : `${decision.reason}.`}`, { decision, target });
+			const text = decision.code === 'chat-sandbox'
+				? `network access to ${target.host} is off for this chat. Ask the user to allow it.`
+				: !isChatSubject(this.subject) && (decision.code === 'undeclared' || decision.code === 'undeclared-target')
+					? `network access to ${target.host} is off for this extension or plugin. The user can allow the host.`
+					: `${decision.reason}.`;
+			return refuse(decision.code === 'port' ? 'port' : 'not-allowed', `Blocked by Volt sandbox: ${text}`, { decision, target });
 		}
 		requests.push(named);
 		let answers: readonly IResolvedAddress[];
