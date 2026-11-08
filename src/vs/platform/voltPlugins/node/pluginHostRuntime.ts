@@ -80,7 +80,9 @@ export async function runPluginHost(options: IPluginHostRunOptions): Promise<voi
 	const ses = process.argv.find(arg => arg.startsWith('--ses='))?.slice('--ses='.length);
 	require(ses ? join(ses, 'dist', 'ses.cjs') : 'ses');
 	const started = performance.now();
-	lockdown({ errorTaming: 'unsafe', consoleTaming: 'unsafe', stackFiltering: 'concise', overrideTaming: 'moderate' });
+	// Locale methods stay the host's (`localeTaming: 'unsafe'`): sorting and case must match core's
+	// (notes are sorted with `localeCompare`); the locale is all they reveal.
+	lockdown({ errorTaming: 'unsafe', consoleTaming: 'unsafe', stackFiltering: 'concise', overrideTaming: 'moderate', localeTaming: 'unsafe' });
 	const lockdownMs = performance.now() - started;
 
 	const socket = new net.Socket({ fd: options.fd, readable: true, writable: true });

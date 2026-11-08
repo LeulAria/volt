@@ -871,6 +871,11 @@ class T2Plugin {
 					}
 				}
 				case 'files/write': {
+					// A folder the manifest declares (`~/.volt/skills`) is made on first write: the broker opens only below a folder that exists.
+					const declared = declaredFileRoots(fileTargets(this.descriptor.declared), this.service.options.home).find(root => path.startsWith(root + sep));
+					if (declared) {
+						await fs.mkdir(declared, { recursive: true });
+					}
 					const { handle } = await files.open(context, { path, mode: 'write' });
 					try {
 						const { created } = await files.write(context, { handle, data: p.text ?? '' });

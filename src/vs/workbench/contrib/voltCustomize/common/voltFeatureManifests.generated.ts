@@ -838,7 +838,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 					{
 						id: 'files.write',
 						class: 'medium',
-						targets: ['*/.volt/memory/*', '*/.volt/skills/*'],
+						targets: ['*/.volt/memory/*', '*/.volt/skills/*', '~/.volt/skills/*'],
 						reason: 'Saves project notes, and the skills agents write (.volt/skills in the project or the home folder).',
 					},
 				],

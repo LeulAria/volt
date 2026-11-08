@@ -219,7 +219,8 @@
 					"class": "medium",
 					"targets": [
 						"*/.volt/memory/*",
-						"*/.volt/skills/*"
+						"*/.volt/skills/*",
+						"~/.volt/skills/*"
 					],
 					"reason": "Saves project notes, and the skills agents write (.volt/skills in the project or the home folder)."
 				}

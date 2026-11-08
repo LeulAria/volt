@@ -44,7 +44,8 @@ export const FIRST_PARTY_CEILINGS: Readonly<Record<string, readonly IVoltCeiling
 	'volt.memory': [
 		{ id: 'tools.register' }, { id: 'agents.context' },
 		{ id: 'files.read:workspace', targets: ['*/.volt/memory', '*/.volt/memory/*'] },
-		{ id: 'files.write', targets: ['*/.volt/memory/*', '*/.volt/skills/*'] },
+		// `~/.volt/skills/*` names the home folder's skills as a folder the broker may reach (`*/...` names none).
+		{ id: 'files.write', targets: ['*/.volt/memory/*', '*/.volt/skills/*', '~/.volt/skills/*'] },
 	],
 	'volt.playgrounds': [{ id: 'tools.register' }, { id: 'net.listen:*' }],
 	'volt.provider-antigravity': PROVIDER('antigravity'),

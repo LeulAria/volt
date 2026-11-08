@@ -57,6 +57,8 @@ module.exports.unicodeFilter = [
 	'!extensions/vscode-api-tests/testWorkspace/**',
 	'!extensions/vscode-api-tests/testWorkspace2/**',
 	'!extensions/**/dist/**',
+	// Generated T2 plugin bundles (scripts/volt-bundle-t2-plugins.mjs).
+	'!extensions/volt-*/plugin/**',
 	'!extensions/**/out/**',
 	'!extensions/**/snippets/**',
 	'!extensions/**/colorize-fixtures/**',
@@ -128,6 +130,8 @@ module.exports.indentationFilter = [
 	'!**/fixtures/**',
 	'!**/lib/**',
 	'!extensions/**/dist/**',
+	// Generated T2 plugin bundles (scripts/volt-bundle-t2-plugins.mjs).
+	'!extensions/volt-*/plugin/**',
 	'!extensions/**/out/**',
 	'!extensions/**/snippets/**',
 	'!extensions/**/syntaxes/**',
