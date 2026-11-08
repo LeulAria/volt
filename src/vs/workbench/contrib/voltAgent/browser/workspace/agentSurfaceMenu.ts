@@ -31,8 +31,8 @@ export const WORKFLOWS_ICON_SHAPES: SvgIconShapes = [
 	['rect', { x: 13, y: 13, width: 8, height: 8, rx: 2 }],
 ];
 
-/** Registered in gitGraph/gitGraph.contribution.ts, which imports this host: the repository's commit graph as a tab. */
-export const OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID = 'volt.gitGraph.openInTools';
+/** The Git Graph module's (contrib/voltGitGraph): the repository's commit graph as a tab. */
+export { OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID } from '../../../voltGitGraph/common/voltGitGraph.js';
 
 /** Lucide git-graph (AriaIcons): two branches off a trunk, the Git Graph tab and its + menu row. */
 export const GIT_GRAPH_ICON_SHAPES: SvgIconShapes = [

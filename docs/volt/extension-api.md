@@ -55,7 +55,7 @@ Every `vscode.volt` call needs a capability. Volt decides from the method and it
 |---|---|---|---|
 | none | `storage.own`, `config.own`, `ui.contribute` | always | always |
 | low | `tools.register`, `agents.read:current`, `usage.report`, `files.read:workspace`, `net.connect` | declared → allowed while enabled | declared ∩ ceiling, no prompt |
-| medium | `agents.read:any`, `agents.send`, `browser.read`, `hosting.read`, `files.write` | declared → asked once | declared ∩ ceiling, no prompt |
+| medium | `agents.read:any`, `agents.send`, `browser.read`, `hosting.read`, `git.read`, `files.write` | declared → asked once | declared ∩ ceiling, no prompt |
 | high | `agents.create`, `agents.context`, `browser.drive`, `automations.schedule` | declared → asked once | declared ∩ ceiling, no prompt |
 | critical | `spawn.unsandboxed`, `secrets.read`, `desktop.control`, `full` | never through the API | never through the API |
 
@@ -197,6 +197,18 @@ const links = await volt.pullRequests.list(chatId);                   // [hostin
 // [{ url, number, repository: 'owner/name', title?, state?, watched }]
 await volt.pullRequests.link(chatId, 'https://github.com/acme/app/pull/12'); // [hosting.read + agents.send]
 ```
+
+### 3.11 `volt.gitGraph`
+
+```ts
+await volt.gitGraph.open({ repositoryRoot, query: 'author:ann path:src/login.ts', revealCommit: 'abc1234' }); // [git.read]
+await volt.gitGraph.askAgent({ action: 'review', commit: 'abc1234', repositoryRoot });                   // [agents.send]
+await volt.gitGraph.askAgent({ action: 'explain', path: 'src/login.ts', startLine: 12, endLine: 40 });
+```
+
+- `open` opens the Git Graph tab (beside the chat in front, in the agent layout) or brings it forward, then searches or reveals. Queries use the graph's syntax: `author:`, `path:`, `lines:12-40:src/a.ts`, or text.
+- `askAgent` opens a side chat and sends it a prompt built from git's facts (subject, files, stats): `explain` or `review` a commit or lines, or `ask` your `question` about them. The SHA must be hex.
+- Both reject while the user has turned the Git Graph off (its `volt.git-graph` extension is disabled). The first call loads the feature; nothing of it runs before.
 
 ## 4. Developing and testing
 

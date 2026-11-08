@@ -3,42 +3,42 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import '../media/agentCommitPlan.css';
-import { $, addDisposableListener, append, EventHelper, EventType } from '../../../../../base/browser/dom.js';
-import { Button } from '../../../../../base/browser/ui/button/button.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { IIdentityProvider, IListVirtualDelegate } from '../../../../../base/browser/ui/list/list.js';
-import { TriStateCheckbox } from '../../../../../base/browser/ui/toggle/toggle.js';
-import { ITreeElement, ITreeNode, ITreeRenderer } from '../../../../../base/browser/ui/tree/tree.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { Emitter, Event } from '../../../../../base/common/event.js';
-import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
-import { basename, dirname } from '../../../../../base/common/path.js';
-import { ThemeIcon } from '../../../../../base/common/themables.js';
-import { URI } from '../../../../../base/common/uri.js';
-import { localize } from '../../../../../nls.js';
-import { ITextModel } from '../../../../../editor/common/model.js';
-import { ILanguageService } from '../../../../../editor/common/languages/language.js';
-import { IModelService } from '../../../../../editor/common/services/model.js';
-import { ITextModelContentProvider } from '../../../../../editor/common/services/resolverService.js';
-import { FileKind } from '../../../../../platform/files/common/files.js';
-import { IVoltGitService } from '../../../../../platform/voltGit/common/voltGit.js';
-import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { WorkbenchObjectTree } from '../../../../../platform/list/browser/listService.js';
-import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
-import { defaultCheckboxStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
-import { IVoltGitStatusFile } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
-import { ResourceLabels } from '../../../../browser/labels.js';
-import { EditorsOrder } from '../../../../common/editor.js';
-import { IEditorService } from '../../../../services/editor/common/editorService.js';
-import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
-import { MultiDiffEditorInput } from '../../../multiDiffEditor/browser/multiDiffEditorInput.js';
-import { IMultiDiffSourceResolver, IResolvedMultiDiffSource, MultiDiffEditorItem } from '../../../multiDiffEditor/browser/multiDiffSourceResolverService.js';
-import { splitCommitMessage } from '../../common/agentCommitPlan.js';
-import { AgentTooltip, IAgentTooltipRow, setAgentTooltip } from '../chrome/agentTooltip.js';
-import { createVoltButton } from '../chrome/voltButton.js';
-import { IAgentComposerTerminalRuns } from '../composer/agentComposerChips.js';
-import { IAgentCommitPlan, IAgentCommitPlanService, IAgentPlannedCommit } from './agentCommitPlanService.js';
+import './media/agentCommitPlan.css';
+import { $, addDisposableListener, append, EventHelper, EventType } from '../../../../base/browser/dom.js';
+import { Button } from '../../../../base/browser/ui/button/button.js';
+import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { IIdentityProvider, IListVirtualDelegate } from '../../../../base/browser/ui/list/list.js';
+import { TriStateCheckbox } from '../../../../base/browser/ui/toggle/toggle.js';
+import { ITreeElement, ITreeNode, ITreeRenderer } from '../../../../base/browser/ui/tree/tree.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { Emitter, Event } from '../../../../base/common/event.js';
+import { Disposable, DisposableStore, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { basename, dirname } from '../../../../base/common/path.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
+import { URI } from '../../../../base/common/uri.js';
+import { localize } from '../../../../nls.js';
+import { ITextModel } from '../../../../editor/common/model.js';
+import { ILanguageService } from '../../../../editor/common/languages/language.js';
+import { IModelService } from '../../../../editor/common/services/model.js';
+import { ITextModelContentProvider } from '../../../../editor/common/services/resolverService.js';
+import { FileKind } from '../../../../platform/files/common/files.js';
+import { IVoltGitService } from '../../../../platform/voltGit/common/voltGit.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { WorkbenchObjectTree } from '../../../../platform/list/browser/listService.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+import { defaultCheckboxStyles } from '../../../../platform/theme/browser/defaultStyles.js';
+import { IVoltGitStatusFile } from '../../../../platform/voltPullRequests/common/voltPullRequests.js';
+import { ResourceLabels } from '../../../browser/labels.js';
+import { EditorsOrder } from '../../../common/editor.js';
+import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { IAgentOrchestratorService } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { MultiDiffEditorInput } from '../../multiDiffEditor/browser/multiDiffEditorInput.js';
+import { IMultiDiffSourceResolver, IResolvedMultiDiffSource, MultiDiffEditorItem } from '../../multiDiffEditor/browser/multiDiffSourceResolverService.js';
+import { splitCommitMessage } from '../common/agentCommitPlan.js';
+import { AgentTooltip, IAgentTooltipRow, setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
+import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
+import { IVoltComposerTray, IVoltComposerTrayHost } from '../../../services/voltPlugins/browser/voltAgentWindow.js';
+import { IAgentCommitPlan, IAgentCommitPlanService, IAgentPlannedCommit } from '../common/voltCommitReview.js';
 
 const ROW_HEIGHT = 24;
 /** The tree scrolls past this many rows; the tray never pushes the composer off the window. */
@@ -591,18 +591,14 @@ function setIconButton(button: Button, icon: ThemeIcon, label: string): void {
 	button.element.setAttribute('aria-label', label);
 }
 
-export interface IAgentCommitPlanTrayOptions {
-	/** The tray changed height; the composer relayouts. */
-	onLayout(): void;
-}
-
 /**
  * The commits an agent proposed (propose_commits), docked above the composer until the user
  * commits or closes them: each commit's message (the whole of it on hover), its files as a tree
  * that opens their diffs, checkboxes to leave commits, folders or files out, Regenerate and Edit
- * for the message, then Commit. A solid card over the thread, like the question tray.
+ * for the message, then Commit. A solid card over the thread, like the question tray. Each chat's
+ * composer shows one while the module is loaded (`IVoltAgentWindowService.registerComposerTray`).
  */
-export class AgentCommitPlanTray extends Disposable {
+export class AgentCommitPlanTray extends Disposable implements IVoltComposerTray {
 
 	readonly element: HTMLElement;
 
@@ -624,11 +620,9 @@ export class AgentCommitPlanTray extends Disposable {
 	private readonly cancelButton;
 	private readonly commitButton;
 	private readonly stopButton: HTMLButtonElement;
+	/** The review shrunk to a chip in the row above the composer: the composer's button, filled here. */
 	private readonly chip: HTMLButtonElement;
 	private readonly chipCount: HTMLElement;
-	private readonly onDidChangeChip = this._register(new Emitter<void>());
-	/** The review shrunk to a chip, for the row above the composer (AgentComposerChips). */
-	readonly rowChip: IAgentComposerTerminalRuns;
 	private readonly tooltip = this._register(new AgentTooltip());
 	/** Files as folders (the default) or one list by path; kept for the next review too. */
 	private viewAsTree: boolean;
@@ -637,7 +631,7 @@ export class AgentCommitPlanTray extends Disposable {
 	private height = 0;
 
 	constructor(
-		private readonly options: IAgentCommitPlanTrayOptions,
+		private readonly composer: IVoltComposerTrayHost,
 		@IAgentCommitPlanService private readonly plans: IAgentCommitPlanService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IEditorService private readonly editorService: IEditorService,
@@ -650,17 +644,15 @@ export class AgentCommitPlanTray extends Disposable {
 		this.element.setAttribute('role', 'region');
 		this.element.setAttribute('aria-label', localize('voltCommitPlan.aria', "Review Draft Commits"));
 
-		// Shrunk: a chip in the row above the composer (rowChip); a click opens the review again.
-		this.chip = $('button.volt-agent-composer-chip.volt-commit-plan-chip.hidden') as HTMLButtonElement;
-		this.chip.type = 'button';
+		// Shrunk: a chip in the row above the composer (the host's, hidden until then); a click opens the review again.
+		this.chip = composer.chip;
+		this.chip.classList.add('volt-commit-plan-chip');
 		append(this.chip, $('span.volt-commit-plan-chip-icon')).appendChild(renderIcon(Codicon.gitCommit));
 		append(this.chip, $('span.volt-agent-composer-chip-label')).textContent = localize('voltCommitPlan.chip', "Draft Commits");
 		this.chipCount = append(this.chip, $('span.volt-commit-plan-chip-count'));
 		append(this.chip, $('span.volt-commit-plan-chip-icon')).appendChild(renderIcon(Codicon.chevronUp));
 		setAgentTooltip(this.chip, localize('voltCommitPlan.expand', "Show Draft Commits"));
 		this._register(addDisposableListener(this.chip, EventType.CLICK, () => this.setMinimized(false)));
-		const chip = this.chip;
-		this.rowChip = { element: chip, get visible() { return !chip.classList.contains('hidden'); }, onDidChange: this.onDidChangeChip.event };
 
 		// While the agent drafts: the composer's dictation glow, moving along the bottom of the card.
 		append(append(this.element, $('.volt-commit-plan-glow')), $('.volt-commit-plan-aurora'));
@@ -823,7 +815,7 @@ export class AgentCommitPlanTray extends Disposable {
 		this.element.classList.toggle('drafting', drafting);
 		if (this.chip.classList.contains('hidden') === minimized) {
 			this.chip.classList.toggle('hidden', !minimized);
-			this.onDidChangeChip.fire();
+			this.composer.chipChanged();
 		}
 		for (const button of [this.commitButton, this.cancelButton, this.viewButton, this.collapseButton, this.minimizeButton]) {
 			button.element.classList.toggle('hidden', drafting);
@@ -995,7 +987,7 @@ export class AgentCommitPlanTray extends Disposable {
 		const next = this.element.offsetHeight;
 		if (next !== this.height) {
 			this.height = next;
-			this.options.onLayout();
+			this.composer.layout();
 		}
 	}
 }

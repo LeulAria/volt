@@ -39,7 +39,7 @@ export const FIRST_PARTY_CEILINGS: Readonly<Record<string, readonly IVoltCeiling
 	'volt.computer-use': [{ id: 'tools.register' }, { id: 'desktop.control' }, { id: 'screen.capture' }, { id: 'spawn.unsandboxed' }],
 	'volt.customize': [{ id: 'files.write', targets: ['~/.volt/customize/*'] }],
 	'volt.devices': [{ id: 'tools.register' }, { id: 'devices.drive' }, { id: 'screen.capture' }, { id: 'spawn.unsandboxed' }],
-	'volt.git-graph': [{ id: 'git.read' }, { id: 'git.write' }, { id: 'agents.send' }],
+	'volt.git-graph': [{ id: 'git.read' }, { id: 'git.write' }, { id: 'git.push' }, { id: 'agents.send' }],
 	'volt.memory': [{ id: 'tools.register' }, { id: 'agents.context' }],
 	'volt.playgrounds': [{ id: 'tools.register' }, { id: 'net.listen:*' }],
 	'volt.provider-antigravity': PROVIDER('antigravity'),

@@ -90,7 +90,7 @@ test('XPL-CMD: the real registrations of volt.browser.automate, volt.agentServer
 		'src/vs/workbench/contrib/voltAgent/browser/preview/browserAutomation.ts',
 		'src/vs/workbench/contrib/voltAgent/electron-browser/agentServerClient.contribution.ts',
 		'src/vs/workbench/contrib/voltAgent/browser/review/agentChangesActions.ts',
-		'src/vs/workbench/contrib/voltAgent/browser/gitGraph/gitGraph.contribution.ts',
+		'src/vs/workbench/contrib/voltGitGraph/browser/voltGitGraph.module.ts',
 		'src/vs/workbench/contrib/voltAgent/browser/workspace/agentSurfaceHost.ts',
 	]) {
 		assert.ok(fs.existsSync(path.join(root, file)), file);

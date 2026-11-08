@@ -268,5 +268,35 @@ declare module 'vscode' {
 			/** Links a pull request to a chat. Capabilities: `hosting.read` and `agents.send`. */
 			export function link(chatId: string, url: string): Thenable<ToolResult>;
 		}
+
+		export interface GitGraphOpenOptions {
+			/** The repository's root folder; the active repository when unset. */
+			readonly repositoryRoot?: string;
+			/** A search in the graph's query syntax: `author:`, `path:`, `lines:12-40:src/a.ts`, or text. */
+			readonly query?: string;
+			/** A commit to scroll to and select. */
+			readonly revealCommit?: string;
+		}
+
+		export interface GitAskAgentOptions {
+			/** `explain` or `review` a commit (or lines of a file), or `ask` the `question` about it. Anything else is refused. */
+			readonly action: string;
+			readonly repositoryRoot?: string;
+			/** A commit SHA (hex). */
+			readonly commit?: string;
+			/** A file in the repository, with `startLine` and `endLine`, for lines instead of a commit. */
+			readonly path?: string;
+			readonly startLine?: number;
+			readonly endLine?: number;
+			readonly question?: string;
+		}
+
+		/** The Git Graph. Rejects while the user has turned it off (the `volt.git-graph` extension is disabled). */
+		export namespace gitGraph {
+			/** Opens the Git Graph tab (or brings it forward), then searches or reveals a commit. Capability: `git.read`. */
+			export function open(options?: GitGraphOpenOptions): Thenable<void>;
+			/** A new side chat explains or reviews a commit (or lines), starting from git's facts. Capability: `agents.send`. */
+			export function askAgent(options: GitAskAgentOptions): Thenable<void>;
+		}
 	}
 }

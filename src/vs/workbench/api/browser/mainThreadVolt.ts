@@ -265,6 +265,31 @@ export class MainThreadVolt extends Disposable implements MainThreadVoltShape {
 				case 'usage.get': return volt.usage.get();
 				case 'pullRequests.list': return volt.pullRequests.list(str(arg(0), 'chatId'));
 				case 'pullRequests.link': return this.result(extensionId, await volt.pullRequests.link(str(arg(0), 'chatId'), str(arg(1), 'url')));
+				case 'gitGraph.open': {
+					const options = record(arg(0), 'options');
+					return volt.gitGraph.open({
+						repositoryRoot: optionalStr(options.repositoryRoot, 'repositoryRoot'),
+						query: optionalStr(options.query, 'query'),
+						revealCommit: optionalStr(options.revealCommit, 'revealCommit'),
+					});
+				}
+				case 'gitGraph.askAgent': {
+					const options = record(arg(0), 'options');
+					const action = options.action;
+					if (action !== 'explain' && action !== 'review' && action !== 'ask') {
+						throw new Error('volt: action must be explain, review or ask.');
+					}
+					const line = (value: unknown, name: string) => value === undefined || value === null ? undefined : finite(value, name);
+					return volt.gitGraph.askAgent({
+						action,
+						repositoryRoot: optionalStr(options.repositoryRoot, 'repositoryRoot'),
+						commit: optionalStr(options.commit, 'commit'),
+						path: optionalStr(options.path, 'path'),
+						startLine: line(options.startLine, 'startLine'),
+						endLine: line(options.endLine, 'endLine'),
+						question: optionalStr(options.question, 'question'),
+					});
+				}
 				default: throw new Error(`volt: unknown method ${String(method)}`);
 			}
 		});

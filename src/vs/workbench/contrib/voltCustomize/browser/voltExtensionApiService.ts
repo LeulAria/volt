@@ -36,6 +36,7 @@ import { IVoltSessionContextService } from '../../../services/voltRuntime/common
 import { shownAgentChat } from '../../voltAgent/browser/editor/agentShownChat.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../../voltAgent/browser/preview/browserEditorInput.js';
 import { IAgentPullRequestService } from '../../voltAgent/browser/pullRequests/agentPullRequestService.js';
+import { GIT_GRAPH_ASK_AGENT_COMMAND_ID, GIT_GRAPH_FEATURE_ID, OPEN_GIT_GRAPH_COMMAND_ID } from '../../voltGitGraph/common/voltGitGraph.js';
 import { IVoltFeatureService } from '../common/voltFeatures.js';
 import { showVoltExtensionConsent, voltCapabilityCopy } from './voltExtensionConsent.js';
 
@@ -173,6 +174,11 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 		this._register(extensionService.onDidChangeExtensions(registerDeclared));
 
 		const turns = this._register(new TurnEvents(() => this.get(IAgentOrchestratorService)));
+		const gitGraphOn = () => {
+			if (!featureService.isEnabled(GIT_GRAPH_FEATURE_ID)) {
+				throw new Error('volt.gitGraph: the Git Graph is turned off (the volt.git-graph extension is disabled).');
+			}
+		};
 		this.backend = {
 			registerTool: (info, invoke, owner) => hostTools.registerToolProvider({
 				tools: [info],
@@ -252,6 +258,15 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 				...(link.snapshot ? { title: link.snapshot.title, state: link.snapshot.state } : {}),
 				watched: !!link.watch,
 			})),
+			// The Git Graph's commands load its module on first use (voltFeatureModuleTable.ts).
+			openGitGraph: async options => {
+				gitGraphOn();
+				await commandService.executeCommand(OPEN_GIT_GRAPH_COMMAND_ID, options);
+			},
+			askGitAgent: async options => {
+				gitGraphOn();
+				await commandService.executeCommand(GIT_GRAPH_ASK_AGENT_COMMAND_ID, options);
+			},
 		};
 	}
 

@@ -8,9 +8,9 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { toISCMHistoryItemViewModelArray } from '../../../scm/browser/scmHistory.js';
 import { ISCMHistoryItem, ISCMHistoryItemRef } from '../../../scm/common/history.js';
 import { detectCodingAgents } from '../../common/gitAgentAttribution.js';
-import { dateRange, GitGraphLaneBuilder, isoSeconds } from '../../browser/gitGraph/gitGraphModel.js';
-import { buildGitAgentPrompt, gitAgentPromptTitle, readGitAskAgentArgs } from '../../browser/gitGraph/gitGraphPrompts.js';
-import { diffstatBlocks, formatCount, shortAgo } from '../../browser/gitGraph/gitGraphRenderers.js';
+import { dateRange, GitGraphLaneBuilder, isoSeconds } from '../../browser/gitGraphModel.js';
+import { buildGitAgentPrompt, gitAgentPromptTitle, readGitAskAgentArgs } from '../../browser/gitGraphPrompts.js';
+import { diffstatBlocks, formatCount, shortAgo } from '../../browser/gitGraphRenderers.js';
 
 function commit(id: string, parentIds: string[], references?: ISCMHistoryItemRef[]): ISCMHistoryItem {
 	return { id, parentIds, subject: id, message: id, references };

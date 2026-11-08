@@ -3,15 +3,15 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, EventType, getWindow, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
-import { Emitter, Event } from '../../../../../base/common/event.js';
-import { Disposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
-import { language } from '../../../../../base/common/platform.js';
-import { safeIntl } from '../../../../../base/common/date.js';
-import { localize } from '../../../../../nls.js';
-import { chartsGreen, editorBackground, focusBorder, foreground } from '../../../../../platform/theme/common/colorRegistry.js';
-import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
-import { colorRegistry, historyItemRefColor } from '../../../scm/browser/scmHistory.js';
+import { $, addDisposableListener, append, EventType, getWindow, scheduleAtNextAnimationFrame } from '../../../../base/browser/dom.js';
+import { Emitter, Event } from '../../../../base/common/event.js';
+import { Disposable, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { language } from '../../../../base/common/platform.js';
+import { safeIntl } from '../../../../base/common/date.js';
+import { localize } from '../../../../nls.js';
+import { chartsGreen, editorBackground, focusBorder, foreground } from '../../../../platform/theme/common/colorRegistry.js';
+import { IThemeService } from '../../../../platform/theme/common/themeService.js';
+import { colorRegistry, historyItemRefColor } from '../../scm/browser/scmHistory.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const HEIGHT = 64;

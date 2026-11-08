@@ -151,8 +151,9 @@ import { AGENT_TOOL_DENSITY_SETTING, readToolDensity } from '../../common/agentA
 import { AgentComposerQueue, IAgentComposerQueueState, IAgentQueueEditContent, IAgentQueueEditSurface, IAgentQueueHost, queueRowActions, QueuePause } from '../composer/agentComposerQueue.js';
 import { AgentTasksCard } from '../composer/agentTasksCard.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
-import { AgentCommitPlanTray } from '../pullRequests/agentCommitPlanTray.js';
-import { IAgentCommitPlanService } from '../pullRequests/agentCommitPlanService.js';
+import { AgentComposerTraySlot } from '../composer/agentComposerTraySlot.js';
+import { COMMIT_REVIEW_FEATURE_ID, ICommitReviewModule } from '../../../voltCommitReview/common/voltCommitReview.js';
+import { IVoltFeatureModule, IVoltFeatureModuleService } from '../../../voltCustomize/browser/voltFeatureModules.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
 import { AgentMcpApprovalCard } from '../composer/agentMcpApprovalCard.js';
 import { AgentLimitChip } from '../composer/agentLimitChip.js';
@@ -812,7 +813,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private tasksCard: AgentTasksCard | undefined;
 	private questionTray!: AgentQuestionTray;
 	/** The commits the agent proposed (propose_commits), docked above the composer while the user reviews them. */
-	private commitPlanTray: AgentCommitPlanTray | undefined;
+	/** The commit review's card and chip, while its module (volt.commit-review) is loaded. */
+	private commitReviewSlot: AgentComposerTraySlot | undefined;
 	private composerChips!: AgentComposerChips;
 	private pendingChanges!: AgentPendingChanges;
 	private readonly freshText = new FreshTextTracker();
@@ -1369,13 +1371,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// A subagent's chat says whose it is and how it is doing: a chip at the start of the row above the composer.
 		const subagentChip = this.subagentBar = $('button.volt-agent-composer-chip.volt-agent-subagent-bar.hidden');
 		(subagentChip as HTMLButtonElement).type = 'button';
-		// The commit review is opened and closed by the commit plan service (desktop only, like pull requests);
-		// shrunk, it is a chip in the row above the composer.
-		if (this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentCommitPlanService))) {
-			this.commitPlanTray = this._register(this.instantiationService.createInstance(AgentCommitPlanTray, { onLayout: () => this.layoutInputEditor() }));
-		}
+		// The commit review is opened and closed by its module (desktop only, like pull requests), which
+		// fills this slot while it is loaded; shrunk, it is a chip in the row above the composer.
+		this.commitReviewSlot = this._register(this.instantiationService.createInstance(AgentComposerTraySlot, COMMIT_REVIEW_FEATURE_ID, () => this.layoutInputEditor()));
 		this.composerChips = this._register(this.instantiationService.createInstance(AgentComposerChips, {
-			...(this.commitPlanTray ? { commitReview: this.commitPlanTray.rowChip } : {}),
+			commitReview: this.commitReviewSlot.chip,
 			agentRun: { element: subagentChip, get visible() { return !subagentChip.classList.contains('hidden'); }, onDidChange: this.onDidChangeSubagentChip.event },
 			onChangesClick: () => void this.openSessionChanges(),
 			onTerminalClick: () => this.surfaceHost.openTerminal(),
@@ -1420,10 +1420,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				prepare: source => answerFiles.prepare(source),
 			},
 		}));
-		if (this.commitPlanTray) {
-			append(this.composerEl, this.commitPlanTray.element);
-		}
 		append(this.composerEl, this.questionTray.element);
+		this.commitReviewSlot?.mount(this.composerEl, this.questionTray.element);
 		this._register(this.runtime.onDidChangeQuestions(sessionId => {
 			if (sessionId === this.sessionKey) {
 				this.syncQuestionTray();
@@ -5587,8 +5585,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** Cursor's "Try again": the newest prompt runs again in place of the turn that failed or stopped. */
 	/** A Draft Commits turn the user stopped leaves no trace: its prompt and its stopped reply go too. */
 	private removeStoppedDraft(): void {
-		const commitPlans = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentCommitPlanService));
-		if (!commitPlans?.takeStoppedDraft(this.sessionKey)) {
+		// Only a loaded commit review has drafts (Draft Commits loads it).
+		const commitReview = this.instantiationService.invokeFunction(accessor => accessor.get(IVoltFeatureModuleService).getActive<IVoltFeatureModule & ICommitReviewModule>(COMMIT_REVIEW_FEATURE_ID));
+		if (!commitReview?.plans.takeStoppedDraft(this.sessionKey)) {
 			return;
 		}
 		const index = findLastIdx(this.messages, message => message.kind === 'user');
@@ -8404,7 +8403,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 
 	private syncQueueStack(): void {
 		this.syncQuestionTray();
-		this.commitPlanTray?.setSession(this.sessionKey);
+		this.commitReviewSlot?.setSession(this.sessionKey);
 		this.watchedTaskCard?.setChat(this.sessionKey ? this.runtime.chatFor(this.sessionKey) : undefined);
 		if (!this.composerQueue) {
 			return;

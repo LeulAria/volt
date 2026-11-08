@@ -125,6 +125,11 @@ jobs:
       - name: Built-in manifests within their ceilings
         run: node build/volt/ci/manifestCeiling.mjs
 
+      # A feature in its own folder (voltModule.entry) is reached only through its contract, and
+      # reaches core only through the volt facade or its reviewed list (sandbox spec H.11, M3).
+      - name: Feature import lint
+        run: node build/volt/ci/featureImportLint.mjs
+
   typecheck:
     name: Typecheck
     needs: changes

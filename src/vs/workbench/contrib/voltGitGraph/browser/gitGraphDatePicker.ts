@@ -3,13 +3,13 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, EventType } from '../../../../../base/browser/dom.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { safeIntl } from '../../../../../base/common/date.js';
-import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
-import { language } from '../../../../../base/common/platform.js';
-import { localize } from '../../../../../nls.js';
+import { $, addDisposableListener, append, EventType } from '../../../../base/browser/dom.js';
+import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { safeIntl } from '../../../../base/common/date.js';
+import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
+import { language } from '../../../../base/common/platform.js';
+import { localize } from '../../../../nls.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 

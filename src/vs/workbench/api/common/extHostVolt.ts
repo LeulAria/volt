@@ -165,7 +165,12 @@ export class ExtHostVolt implements ExtHostVoltShape {
 			link: (chatId, url) => call('pullRequests.link', chatId, url),
 		};
 
-		return Object.freeze({ version: VOLT_EXTENSION_API_VERSION, tools, chats, storage, settings, memory, browser, visuals, automations, usage, pullRequests });
+		const gitGraph: typeof vscode.volt.gitGraph = {
+			open: options => call('gitGraph.open', options),
+			askAgent: options => call('gitGraph.askAgent', options),
+		};
+
+		return Object.freeze({ version: VOLT_EXTENSION_API_VERSION, tools, chats, storage, settings, memory, browser, visuals, automations, usage, pullRequests, gitGraph });
 	}
 
 	/** One pair of emitters per extension; the renderer is asked to stream while either has listeners. */
