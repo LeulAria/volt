@@ -27,6 +27,8 @@ export const AUTHORITY_FILES = new Set([
 	'src/vs/platform/voltSandbox/common/grants.ts',
 	'src/vs/platform/voltPlugins/common/capabilityCatalog.ts',
 	'src/vs/platform/voltPlugins/common/firstPartyCeilings.ts',
+	// The network broker's host rules (C3): only the Authority matches them.
+	'src/vs/platform/voltSandbox/common/networkRules.ts',
 ]);
 const ALLOWLIST = 'build/volt/ci/authority-allowlist.json';
 const SCANNED = ['src', 'apps'];
@@ -39,6 +41,7 @@ export const PRIMITIVES = [
 	'ceilingCovers', 'declarationsOutsideCeiling', 'chatCovers', 'grantCovers', 'grantValid', 'hasRefusal',
 	'capabilityIdCovers', 'capabilityTargetMatches', 'manifestDenial', 'egressWithin',
 	'legacySandboxCovers', 'legacyHostToolRefusal', 'legacyExtensionDenial',
+	'networkRulesCover', 'networkRuleCovers',
 ];
 const CALL = new RegExp(`(?<![\\w$])(${PRIMITIVES.join('|')})\\s*\\(`);
 const DEFINITION = new RegExp(`\\bfunction\\s+(${PRIMITIVES.join('|')})\\b`);

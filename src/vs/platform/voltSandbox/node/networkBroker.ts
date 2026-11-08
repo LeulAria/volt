@@ -867,9 +867,9 @@ export class NetworkRoute {
 			for (const socket of [client, upstream]) {
 				socket.setTimeout(idle, () => this.close(connection, 'idle'));
 			}
-			client.once('close', () => this.close(connection, 'done'));
+			client.once('close', () => this.close(connection, 'done', true));
 		}
-		upstream.once('close', () => this.close(connection, 'done'));
+		upstream.once('close', () => this.close(connection, 'done', true));
 		return connection;
 	}
 
@@ -882,14 +882,23 @@ export class NetworkRoute {
 		}
 	}
 
-	private close(connection: IOpenConnection, reason: 'revoked' | 'idle' | 'budget' | 'done'): void {
+	/**
+	 * `graceful`: one side finished on its own, and the client still gets what is in flight (the
+	 * tail of a download) before its end; a client that stops reading is cut at the idle timeout.
+	 * Otherwise (revoked, idle, budget, the route closing) both sides are cut at once.
+	 */
+	private close(connection: IOpenConnection, reason: 'revoked' | 'idle' | 'budget' | 'done', graceful = false): void {
 		if (connection.closed) {
 			return;
 		}
 		connection.closed = true;
 		this.connections.delete(connection);
 		connection.upstream.destroy();
-		if (connection.method === 'CONNECT' || reason !== 'done') {
+		if (graceful && connection.method === 'CONNECT') {
+			const client = connection.client;
+			client.end();
+			client.setTimeout(this.broker.options.tunnelIdleMs ?? BROKER_TUNNEL_IDLE_MS, () => client.destroy());
+		} else if (connection.method === 'CONNECT' || reason !== 'done') {
 			connection.client.destroy();
 		}
 		this.broker.audit({ ts: this.broker.now(), principal: this.principal.id, subject: this.subject, chain: this.chain(), method: connection.method, destination: connection.destination, port: connection.port, address: connection.address, decision: 'close', reason, epoch: this.broker.epoch, bytes: connection.bytes });

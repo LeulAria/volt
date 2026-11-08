@@ -16,7 +16,7 @@ import { agentStatePlan } from '../common/agentState.js';
 import { AGENT_STATE_ROOT, agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
 import { AGENT_CONFIG_NAMES } from '../common/sandboxProfiles.js';
 import { AgentStateOverlay, IAgentStateSync } from './agentStateOverlay.js';
-import { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
+import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
 import { chatSubject } from '../common/principals.js';
 import { IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { SandboxDimension } from '../common/sandboxSchema.js';

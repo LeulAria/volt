@@ -5,7 +5,7 @@
 
 import { randomBytes } from 'crypto';
 import { app, session, webContents, type AuthenticationResponseDetails, type AuthInfo, type Event as ElectronEvent, type OnBeforeRequestListenerDetails, type Session, type WebContents } from 'electron';
-import { NetworkBrokerMode } from '../../voltSandbox/common/networkBrokerSetting.js';
+import type { NetworkBrokerMode } from '../../voltSandbox/common/networkBrokerSetting.js';
 import { chatSubject } from '../../voltSandbox/common/principals.js';
 import { NetworkAuditLog, NetworkBroker, NetworkRoute } from '../../voltSandbox/node/networkBroker.js';
 import { SandboxNetworkProxy } from '../../voltSandbox/node/sandboxProxy.js';

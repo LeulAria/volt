@@ -17,7 +17,7 @@ import { MxcBackend } from './mxcBackend.js';
 import { ISandboxBackend, ISandboxLaunchSpec, SandboxConfirmation, SandboxFault } from './sandboxBackends.js';
 import { osBuild } from './sandboxProbeCache.js';
 import { IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
-import { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
+import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
 import { INetworkDenial, NetworkAuditLog, NetworkBroker, NetworkRoute } from './networkBroker.js';
 import { ISandboxProxyOptions, SandboxNetworkProxy } from './sandboxProxy.js';
 import { ISandboxHostFacts, ISandboxRunContext, resolveSandboxPolicy, sandboxHostFacts } from './sandboxResolver.js';

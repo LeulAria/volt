@@ -489,6 +489,44 @@ suite('Volt network broker (I.4, NET-1..20)', function () {
 		assert.ok(audit.some(event => event.decision === 'deny' && event.reason === 'not-allowed'));
 	});
 
+	test('an upstream that ends first: the client still gets every byte in flight, then its end', async () => {
+		const size = 16 * 1024 * 1024;
+		const sink = net.createServer(socket => { socket.on('error', () => undefined); socket.end(Buffer.alloc(size, 7)); });
+		await new Promise<void>(resolve => sink.listen(0, '127.0.0.1', resolve));
+		broker.dispose();
+		broker = makeBroker({ connect: () => net.connect({ host: '127.0.0.1', port: (sink.address() as net.AddressInfo).port }) });
+		try {
+			const r = await route(['download.test']);
+			const socket = net.connect({ host: '127.0.0.1', port: r.port });
+			socket.on('error', () => undefined);
+			let received = 0;
+			let head = true;
+			let paused = false;
+			const done = new Promise<void>(resolve => socket.once('close', () => resolve()));
+			socket.on('data', data => {
+				if (head) {
+					const end = data.indexOf('\r\n\r\n');
+					assert.ok(data.toString('latin1', 0, 12).startsWith('HTTP/1.1 200'));
+					received += data.length - end - 4;
+					head = false;
+				} else {
+					received += data.length;
+				}
+				if (!paused && received >= size - 512 * 1024) {
+					// A slow reader near the end: the upstream has sent everything and closed while the tail still waits in buffers.
+					paused = true;
+					socket.pause();
+					setTimeout(() => socket.resume(), 300);
+				}
+			});
+			socket.write(connect(r, 'download.test:443'));
+			await done;
+			assert.strictEqual(received, size);
+		} finally {
+			await new Promise<void>(resolve => sink.close(() => resolve()));
+		}
+	});
+
 	test('t2 and t3 principals get H.8 byte budgets; agents none', async () => {
 		const t2 = await broker.openRoute({ principal: principal('plugin:a.b@local', 't2'), allow: [] });
 		const agent = await broker.openRoute({ principal: principal(), allow: [] });
