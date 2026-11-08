@@ -534,8 +534,8 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	async kill(id: string): Promise<void> {
 		const host = this.hosts.get(id)?.host;
 		if (host) {
-			// Its whole tree; the exit reaches the caller when it is gone.
-			void host.terminate('stopped');
+			// Its whole tree; resolves (and the exit reaches the caller) when it is gone.
+			await host.terminate('stopped');
 			return;
 		}
 		const child = this.processes.get(id);
