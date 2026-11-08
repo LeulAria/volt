@@ -1022,6 +1022,14 @@ export interface IVoltHostToolProvider {
 	approved?(name: string, args: Record<string, unknown>, call: IVoltHostToolCall): void;
 }
 
+/** The features (`VOLT_FEATURES` ids) the user turned off, by where the choice was made. */
+export interface IVoltFeatureEnablementMirror {
+	/** Disabled for every window (the extension is disabled globally). */
+	readonly global: readonly string[];
+	/** Disabled only in this window's workspace. */
+	readonly workspace: readonly string[];
+}
+
 export interface IVoltHostToolService {
 	readonly _serviceBrand: undefined;
 	readonly onDidChangeMcp: Event<void>;
@@ -1035,6 +1043,12 @@ export interface IVoltHostToolService {
 	 * out of the list agents get and refused if called anyway.
 	 */
 	setDisabledTools(names: Iterable<string>): void;
+	/**
+	 * Which Volt features are off in this window, for where the agents run. The agent server turns
+	 * their tools off for its own agents too (its own tools included) and keeps the global choice
+	 * while no window is connected. A window that runs its agents itself has nothing to mirror.
+	 */
+	mirrorFeatureEnablement(state: IVoltFeatureEnablementMirror): void;
 	/** The browser half of an ACP agent's turn primer (the app serving and open in the chat's browser, audits). */
 	preflightBrowser(sessionId: string, request: IVoltBrowserPreflightRequest, token: CancellationToken): Promise<IVoltBrowserPreflightResult>;
 	invokeTool(name: string, input?: unknown, call?: IVoltHostToolCall): Promise<IVoltHostToolResult>;

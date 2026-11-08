@@ -95,6 +95,9 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		this._onDidChangeTools.fire();
 	}
 
+	/** The agents run in this process: `setDisabledTools` already took their tools away. */
+	mirrorFeatureEnablement(): void { }
+
 	registerToolProvider(provider: IVoltHostToolProvider): IDisposable {
 		this.providers.add(provider);
 		this._onDidChangeTools.fire();
