@@ -20,7 +20,7 @@ import { editorGroupToColumn } from '../../services/editor/common/editorGroupCol
 import { GroupLocation, GroupsOrder, IEditorGroup, IEditorGroupsService, preferredSideBySideGroupDirection } from '../../services/editor/common/editorGroupsService.js';
 import { ACTIVE_GROUP, IEditorService, PreferredGroup, SIDE_GROUP } from '../../services/editor/common/editorService.js';
 import { IExtensionService } from '../../services/extensions/common/extensions.js';
-import { IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
+import { assertHostsExtension, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
 import * as extHostProtocol from '../common/extHost.protocol.js';
 import { MainThreadWebviews, reviveWebviewContentOptions, reviveWebviewExtension } from './mainThreadWebviews.js';
 
@@ -90,7 +90,7 @@ export class MainThreadWebviewPanels extends Disposable implements extHostProtoc
 	private readonly webviewOriginStore: ExtensionKeyedWebviewOriginStore;
 
 	constructor(
-		context: IExtHostContext,
+		private readonly _context: IExtHostContext,
 		private readonly _mainThreadWebviews: MainThreadWebviews,
 		@IConfigurationService private readonly _configurationService: IConfigurationService,
 		@IEditorGroupsService private readonly _editorGroupService: IEditorGroupsService,
@@ -103,7 +103,7 @@ export class MainThreadWebviewPanels extends Disposable implements extHostProtoc
 
 		this.webviewOriginStore = new ExtensionKeyedWebviewOriginStore('mainThreadWebviewPanel.origins', storageService);
 
-		this._proxy = context.getProxy(extHostProtocol.ExtHostContext.ExtHostWebviewPanels);
+		this._proxy = _context.getProxy(extHostProtocol.ExtHostContext.ExtHostWebviewPanels);
 
 		this._register(Event.any(
 			_editorService.onDidActiveEditorChange,
@@ -155,6 +155,9 @@ export class MainThreadWebviewPanels extends Disposable implements extHostProtoc
 		initData: extHostProtocol.IWebviewInitData,
 		showOptions: extHostProtocol.WebviewPanelShowOptions,
 	): void {
+		// The origin (and with it the webview's storage) is keyed on the extension: only one running
+		// in this host gets its origin (B-08).
+		assertHostsExtension(this._context, extensionData.id);
 		const targetGroup = this.getTargetGroupFromShowOptions(showOptions);
 		const mainThreadShowOptions: IWebViewShowOptions = showOptions ? {
 			preserveFocus: !!showOptions.preserveFocus,

@@ -143,7 +143,8 @@ export class MainThreadWebviews extends Disposable implements extHostProtocol.Ma
 
 export function reviveWebviewExtension(extensionData: extHostProtocol.WebviewExtensionDescription): WebviewExtensionDescription {
 	return {
-		id: extensionData.id,
+		// Rebuilt from `value`: a payload's identifier is a plain object whose `_lower` could name another extension.
+		id: new ExtensionIdentifier(extensionData.id.value),
 		location: URI.revive(extensionData.location),
 	};
 }
