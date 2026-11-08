@@ -3,12 +3,18 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { timingSafeEqual } from 'crypto';
 import { lookup as dnsLookup } from 'dns';
 import * as http from 'http';
 import * as net from 'net';
 import { splitAllowEntry } from '../common/sandboxSchema.js';
 
 export const PROXY_BLOCK_MESSAGE = (host: string) => `Blocked by Volt sandbox: network access to ${host} is off for this chat. Ask the user to allow it.`;
+
+/** A tunnel with no traffic either way for this long is closed (I.4 limits). */
+export const PROXY_TUNNEL_IDLE_MS = 120_000;
+/** A client must finish its request headers within this (I.4 limits; slowloris). */
+export const PROXY_HEADER_TIMEOUT_MS = 15_000;
 
 export interface IResolvedAddress {
 	readonly address: string;
@@ -20,10 +26,19 @@ export type SandboxProxyLookup = (host: string) => Promise<readonly IResolvedAdd
 export interface ISandboxProxyOptions {
 	/** Name resolution; tests replace it. */
 	readonly lookup?: SandboxProxyLookup;
+	/** Opens the upstream connection to a checked address; tests replace it. */
+	readonly connect?: (address: IResolvedAddress, port: number) => net.Socket;
+	/**
+	 * The run's route token: every request must carry `Proxy-Authorization: Basic volt:<token>`,
+	 * else 407. Absent: no client authentication (tests of the address rules only).
+	 */
+	readonly token?: string;
+	/** Tunnel idle timeout; tests shorten it. */
+	readonly tunnelIdleMs?: number;
 }
 
 /** Why the proxy refused a destination, for the 403 and the transcript. */
-export type ProxyRefusal = 'not-allowed' | 'private-address' | 'unresolvable' | 'bad-request';
+export type ProxyRefusal = 'not-allowed' | 'private-address' | 'unresolvable' | 'bad-request' | 'auth';
 
 /**
  * Volt's filtering HTTP/HTTPS proxy for one sandboxed run. The OS sandbox lets the workload reach
@@ -33,33 +48,38 @@ export type ProxyRefusal = 'not-allowed' | 'private-address' | 'unresolvable' | 
  *   rebinding cannot swap in `127.0.0.1` between check and connect);
  * - loopback, private, link-local (cloud metadata), CGNAT, multicast, reserved and unique-local
  *   addresses are refused, including IPv4-mapped and NAT64 forms, whatever the allow list says;
- * - an entry without a port allows ports 80 and 443 only.
+ * - an entry without a port allows ports 80 and 443 only;
+ * - with a token, only the run it was made for may use it (`Proxy-Authorization`, else 407);
+ * - "Allow host" applies to the running process's next connection (`allow`), no restart.
  * It does not inspect TLS: a client can still front a request through an allowed CDN.
  */
 export class SandboxNetworkProxy {
 
 	private readonly sockets = new Set<net.Socket>();
 	private allowed: string[];
+	private readonly expectedAuth: Buffer | undefined;
 
 	private constructor(
 		private readonly server: http.Server,
 		allowed: readonly string[],
 		private readonly onBlocked: (host: string, reason: ProxyRefusal) => void,
-		private readonly lookup: SandboxProxyLookup,
+		private readonly options: ISandboxProxyOptions,
 	) {
 		this.allowed = [...allowed];
+		this.expectedAuth = options.token ? Buffer.from(`Basic ${Buffer.from(`volt:${options.token}`).toString('base64')}`) : undefined;
 	}
 
 	static async start(allowed: readonly string[], onBlocked: (host: string, reason: ProxyRefusal) => void, options: ISandboxProxyOptions = {}): Promise<SandboxNetworkProxy> {
 		const server = http.createServer({ maxHeaderSize: 16 * 1024 });
-		const proxy = new SandboxNetworkProxy(server, allowed, onBlocked, options.lookup ?? defaultLookup);
+		const proxy = new SandboxNetworkProxy(server, allowed, onBlocked, options);
 		server.on('connect', (req, socket, head) => void proxy.tunnel(req, socket as net.Socket, head));
 		server.on('request', (req, res) => void proxy.forward(req, res));
 		server.on('connection', socket => {
 			proxy.sockets.add(socket);
 			socket.on('close', () => proxy.sockets.delete(socket));
 		});
-		server.headersTimeout = 15_000;
+		server.headersTimeout = PROXY_HEADER_TIMEOUT_MS;
+		server.requestTimeout = PROXY_HEADER_TIMEOUT_MS * 4;
 		await new Promise<void>((resolve, reject) => {
 			server.once('error', reject);
 			server.listen(0, '127.0.0.1', () => resolve());
@@ -76,8 +96,23 @@ export class SandboxNetworkProxy {
 		return `http://127.0.0.1:${this.port}`;
 	}
 
+	/** The run's route token (see `ISandboxProxyOptions.token`). */
+	get token(): string | undefined {
+		return this.options.token;
+	}
+
+	/** Live: the running process's next connection to these hosts goes through (F.9). */
 	allow(entries: readonly string[]): void {
 		this.allowed = [...new Set([...this.allowed, ...entries.map(entry => entry.trim().toLowerCase()).filter(Boolean)])];
+	}
+
+	/** Whether the request carries this run's token. Constant time; a missing token is a mismatch. */
+	private authorized(req: http.IncomingMessage): boolean {
+		if (!this.expectedAuth) {
+			return true;
+		}
+		const given = Buffer.from(String(req.headers['proxy-authorization'] ?? ''));
+		return given.length === this.expectedAuth.length && timingSafeEqual(given, this.expectedAuth);
 	}
 
 	/** Whether `host:port` is on the allow list (before resolution). */
@@ -99,7 +134,7 @@ export class SandboxNetworkProxy {
 			addresses = [{ address: name, family: net.isIP(name) as 4 | 6 }];
 		} else {
 			try {
-				addresses = await this.lookup(name);
+				addresses = await (this.options.lookup ?? defaultLookup)(name);
 			} catch {
 				return 'unresolvable';
 			}
@@ -116,6 +151,11 @@ export class SandboxNetworkProxy {
 
 	private async tunnel(req: http.IncomingMessage, client: net.Socket, head: Buffer): Promise<void> {
 		client.on('error', () => undefined);
+		if (!this.authorized(req)) {
+			this.block(req.url ?? '', 'auth');
+			client.end(`HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="volt-sandbox"\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n${refusalText(req.url ?? '', 'auth')}\r\n`);
+			return;
+		}
 		const { host, port } = splitHostPort(req.url ?? '', 443);
 		const target = await this.destination(host, port);
 		if (typeof target === 'string') {
@@ -123,7 +163,8 @@ export class SandboxNetworkProxy {
 			client.end(`HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n${refusalText(host, target)}\r\n`);
 			return;
 		}
-		const upstream = net.connect({ host: target.address, port, family: target.family }, () => {
+		const upstream = this.open(target, port);
+		upstream.once('connect', () => {
 			client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
 			if (head.length) {
 				upstream.write(head);
@@ -131,12 +172,30 @@ export class SandboxNetworkProxy {
 			upstream.pipe(client);
 			client.pipe(upstream);
 		});
+		// A tunnel nobody uses is closed: slow or abandoned tunnels must not pile up.
+		const idle = this.options.tunnelIdleMs ?? PROXY_TUNNEL_IDLE_MS;
+		for (const socket of [client, upstream]) {
+			socket.setTimeout(idle, () => {
+				client.destroy();
+				upstream.destroy();
+			});
+		}
+		client.on('close', () => upstream.destroy());
 		this.sockets.add(upstream);
 		upstream.on('close', () => this.sockets.delete(upstream));
 		upstream.on('error', () => client.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n'));
 	}
 
+	private open(target: IResolvedAddress, port: number): net.Socket {
+		return this.options.connect ? this.options.connect(target, port) : net.connect({ host: target.address, port, family: target.family });
+	}
+
 	private async forward(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+		if (!this.authorized(req)) {
+			this.block(req.url ?? '', 'auth');
+			res.writeHead(407, { 'Content-Type': 'text/plain', 'Proxy-Authenticate': 'Basic realm="volt-sandbox"' }).end(`${refusalText(req.url ?? '', 'auth')}\n`);
+			return;
+		}
 		let url: URL;
 		try {
 			url = new URL(req.url ?? '');
@@ -166,13 +225,17 @@ export class SandboxNetworkProxy {
 			method: req.method,
 			path: `${url.pathname}${url.search}`,
 			headers: { ...headers, host: url.host },
+			...(this.options.connect ? { createConnection: () => this.open(target, port) } : {}),
 		}, reply => {
 			res.writeHead(reply.statusCode ?? 502, reply.headers);
 			reply.pipe(res);
 		});
+		upstream.setTimeout(this.options.tunnelIdleMs ?? PROXY_TUNNEL_IDLE_MS, () => upstream.destroy(new Error('idle')));
 		upstream.on('error', () => {
 			if (!res.headersSent) {
 				res.writeHead(502).end();
+			} else {
+				res.destroy();
 			}
 		});
 		req.pipe(upstream);
@@ -200,6 +263,7 @@ function refusalText(host: string, reason: ProxyRefusal): string {
 		case 'private-address': return `Blocked by Volt sandbox: ${host} resolves to a local or private address.`;
 		case 'unresolvable': return `Volt sandbox proxy could not resolve ${host}.`;
 		case 'bad-request': return `Blocked by Volt sandbox: unsupported request for ${host}.`;
+		case 'auth': return 'Volt sandbox proxy: this proxy serves only the sandboxed run it was started for.';
 		default: return PROXY_BLOCK_MESSAGE(host);
 	}
 }
@@ -272,7 +336,10 @@ export function isPublicAddress(address: string): boolean {
 	return !BLOCKED.check(lower, 'ipv6');
 }
 
-/** The IPv4 address inside `::ffff:a.b.c.d`, `::a.b.c.d`, `64:ff9b::/96` or `2002::/16`; null if malformed; undefined if none. */
+/**
+ * The IPv4 address inside `::ffff:a.b.c.d`, `::a.b.c.d`, `64:ff9b::/96`, `64:ff9b:1::/48` or
+ * `2002::/16`; null if malformed or if the forms disagree; undefined if none.
+ */
 function embeddedIPv4(v6: string): string | null | undefined {
 	const dotted = /^(?:::ffff:|::|64:ff9b::)(\d+\.\d+\.\d+\.\d+)$/.exec(v6);
 	if (dotted) {
@@ -291,6 +358,13 @@ function embeddedIPv4(v6: string): string | null | undefined {
 	}
 	if (groups[0] === 0x64 && groups[1] === 0xff9b && groups.slice(2, 6).every(g => g === 0)) {
 		return fromHex(groups[6], groups[7]);
+	}
+	if (groups[0] === 0x64 && groups[1] === 0xff9b && groups[2] === 0x0001) {
+		// RFC 8215's local-use NAT64 prefix. A network may put the IPv4 address at any RFC 6052
+		// position inside it (/48, /56, /64, /96): it is public only if every reading is.
+		const bytes = groups.flatMap(g => [g >> 8, g & 0xff]);
+		const readings = [[6, 7, 9, 10], [7, 9, 10, 11], [9, 10, 11, 12], [12, 13, 14, 15]].map(at => at.map(i => bytes[i]).join('.'));
+		return readings.every(isPublicAddress) ? readings[readings.length - 1] : null;
 	}
 	if (groups[0] === 0x2002) {
 		return fromHex(groups[1], groups[2]);
