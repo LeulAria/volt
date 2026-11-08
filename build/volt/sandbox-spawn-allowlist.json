@@ -1,0 +1,635 @@
+{
+	"$comment": [
+		"Spawn audit (spec K.4, INV-03): every call site in src/ and apps/ that starts a process or runs code outside the realm, per file and kind, with an owner and a reason.",
+		"supervisor: Volt core starts it as the monitor (sandbox supervisor, stdio service, the app's own hosts and helpers); nothing an agent wrote decides what runs.",
+		"user-action: it runs for the user's own action (their terminals, tasks, installs, extensions, debug sessions).",
+		"build-only: build, release and developer tooling that never ships in the app.",
+		"A process Volt starts for a chat goes through the stdio service with the chat's ExecContext. Check with: node build/volt/ci/spawnAudit.mjs"
+	],
+	"sites": [
+		{
+			"file": "apps/mobile/scripts/buildCache.js",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "mobile",
+			"reason": "build-only",
+			"why": "Mobile build cache tooling; never shipped."
+		},
+		{
+			"file": "apps/mobile/scripts/diffs/build-diffs.mjs",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "mobile",
+			"reason": "build-only",
+			"why": "Builds the mobile diff bundle at build time."
+		},
+		{
+			"file": "apps/mobile/scripts/fastBuild.mjs",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "mobile",
+			"reason": "build-only",
+			"why": "Fast mobile rebuilds for developers."
+		},
+		{
+			"file": "apps/mobile/scripts/monaco/build-monaco.mjs",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "mobile",
+			"reason": "build-only",
+			"why": "Builds the mobile Monaco bundle at build time."
+		},
+		{
+			"file": "apps/mobile/scripts/releaseBuild.mjs",
+			"kind": "child_process",
+			"count": 5,
+			"owner": "mobile",
+			"reason": "build-only",
+			"why": "Mobile release builds in CI."
+		},
+		{
+			"file": "apps/mobile/scripts/run.mjs",
+			"kind": "child_process",
+			"count": 10,
+			"owner": "mobile",
+			"reason": "build-only",
+			"why": "Developer runner for simulators and Metro."
+		},
+		{
+			"file": "apps/relay/src/runner/agents.mjs",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "relay",
+			"reason": "supervisor",
+			"why": "The relay runner asks each agent CLI for its version (a fixed argument list) to report what it can run."
+		},
+		{
+			"file": "apps/relay/src/runner/runner.mjs",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "relay",
+			"reason": "supervisor",
+			"why": "The relay runner starts a cloud task's agent CLI with an allow-listed environment (runnerAgentEnv) and git for its checkout; the runner's container is the boundary (see agents.mjs)."
+		},
+		{
+			"file": "apps/volt-run/scripts/release.mjs",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "volt-run",
+			"reason": "build-only",
+			"why": "Publishes the volt-run npm package."
+		},
+		{
+			"file": "apps/volt-run/src/browser.mjs",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "volt-run",
+			"reason": "user-action",
+			"why": "npx volt-run opens the user's browser on the URL it printed, at the user's command."
+		},
+		{
+			"file": "apps/volt-run/src/download.mjs",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "volt-run",
+			"reason": "user-action",
+			"why": "npx volt-run unpacks and starts the Volt the user asked it to download."
+		},
+		{
+			"file": "apps/volt-run/src/server.mjs",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "volt-run",
+			"reason": "user-action",
+			"why": "npx volt-run starts the user's Volt server."
+		},
+		{
+			"file": "src/vs/base/browser/webWorkerFactory.ts",
+			"kind": "new Worker",
+			"count": 3,
+			"owner": "core",
+			"reason": "supervisor",
+			"why": "Workbench web workers for Volt's own bundled worker scripts (language features, search); no eval of agent text."
+		},
+		{
+			"file": "src/vs/base/node/processes.ts",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "core",
+			"reason": "supervisor",
+			"why": "Process helpers for core (tree kill, executable lookup) with fixed commands."
+		},
+		{
+			"file": "src/vs/base/node/ps.ts",
+			"kind": "child_process",
+			"count": 4,
+			"owner": "core",
+			"reason": "supervisor",
+			"why": "Lists Volt's own process tree (Process Explorer) with fixed ps/wmic commands."
+		},
+		{
+			"file": "src/vs/base/node/terminalEncoding.ts",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "core",
+			"reason": "supervisor",
+			"why": "Reads the console code page with a fixed command."
+		},
+		{
+			"file": "src/vs/base/parts/ipc/node/ipc.cp.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "core",
+			"reason": "supervisor",
+			"why": "Forks Volt's own node helper processes over IPC."
+		},
+		{
+			"file": "src/vs/code/node/cli.ts",
+			"kind": "child_process",
+			"count": 4,
+			"owner": "core",
+			"reason": "user-action",
+			"why": "The volt/code command line the user runs: starts the app and its own helpers."
+		},
+		{
+			"file": "src/vs/platform/cssDev/node/cssDevService.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "core",
+			"reason": "supervisor",
+			"why": "Developer mode only (running from sources): ripgrep lists the app's own CSS files."
+		},
+		{
+			"file": "src/vs/platform/extensionManagement/node/extensionLifecycle.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "extensions",
+			"reason": "user-action",
+			"why": "Runs the uninstall hook of an extension the user uninstalls."
+		},
+		{
+			"file": "src/vs/platform/externalTerminal/node/externalTerminalService.ts",
+			"kind": "child_process",
+			"count": 3,
+			"owner": "terminal",
+			"reason": "user-action",
+			"why": "Opens the user's external terminal at their request (Open in External Terminal)."
+		},
+		{
+			"file": "src/vs/platform/native/electron-main/nativeHostMainService.ts",
+			"kind": "child_process",
+			"count": 3,
+			"owner": "core",
+			"reason": "user-action",
+			"why": "Installs or removes the shell command and reads the computer name, at the user's request."
+		},
+		{
+			"file": "src/vs/platform/remote/node/wsl.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "remote",
+			"reason": "supervisor",
+			"why": "Checks whether WSL is available (wsl.exe --status)."
+		},
+		{
+			"file": "src/vs/platform/remoteTunnel/node/remoteTunnelService.ts",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "remote",
+			"reason": "user-action",
+			"why": "Starts the tunnel CLI when the user turns on Remote Tunnel Access."
+		},
+		{
+			"file": "src/vs/platform/shell/node/shellEnv.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "core",
+			"reason": "supervisor",
+			"why": "Resolves the user's login shell environment once at startup."
+		},
+		{
+			"file": "src/vs/platform/terminal/node/ptyService.ts",
+			"kind": "child_process",
+			"count": 3,
+			"owner": "terminal",
+			"reason": "user-action",
+			"why": "The user's terminals: port owner lookup and WSL path translation for them."
+		},
+		{
+			"file": "src/vs/platform/terminal/node/terminalProcess.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "terminal",
+			"reason": "user-action",
+			"why": "The user's terminal shells (node-pty) and their process lookups. A sandboxed chat's terminals reach a PTY only through the stdio service's sandboxed terminal launcher (sandboxPty.ts)."
+		},
+		{
+			"file": "src/vs/platform/terminal/node/terminalProcess.ts",
+			"kind": "pty.spawn",
+			"count": 1,
+			"owner": "terminal",
+			"reason": "user-action",
+			"why": "The user's terminal shells (node-pty) and their process lookups. A sandboxed chat's terminals reach a PTY only through the stdio service's sandboxed terminal launcher (sandboxPty.ts)."
+		},
+		{
+			"file": "src/vs/platform/terminal/node/terminalProfiles.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "terminal",
+			"reason": "user-action",
+			"why": "Lists WSL distributions for the user's terminal profiles."
+		},
+		{
+			"file": "src/vs/platform/update/electron-main/updateService.darwin.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "update",
+			"reason": "user-action",
+			"why": "Applies an update the user accepted."
+		},
+		{
+			"file": "src/vs/platform/update/electron-main/updateService.snap.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "update",
+			"reason": "user-action",
+			"why": "Restarts into a snap update the user accepted."
+		},
+		{
+			"file": "src/vs/platform/update/electron-main/updateService.win32.ts",
+			"kind": "child_process",
+			"count": 4,
+			"owner": "update",
+			"reason": "user-action",
+			"why": "Runs the Windows installer of an update the user accepted."
+		},
+		{
+			"file": "src/vs/platform/utilityProcess/electron-main/utilityProcess.ts",
+			"kind": "utilityProcess.fork",
+			"count": 1,
+			"owner": "core",
+			"reason": "supervisor",
+			"why": "Electron utility processes for Volt's own services (extension host, shared processes)."
+		},
+		{
+			"file": "src/vs/platform/voltAccounts/node/claudeLogin.ts",
+			"kind": "child_process",
+			"count": 4,
+			"owner": "accounts",
+			"reason": "user-action",
+			"why": "Reads and writes the Claude login in the Keychain (/usr/bin/security) when the user switches accounts."
+		},
+		{
+			"file": "src/vs/platform/voltAgentServer/node/agentServerLauncher.ts",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "agent-server",
+			"reason": "supervisor",
+			"why": "Starts Volt's own agent server and checks its state; chats' processes then go through its stdio service."
+		},
+		{
+			"file": "src/vs/platform/voltAgentServer/node/launchd.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "agent-server",
+			"reason": "supervisor",
+			"why": "Registers the agent server with launchd (/bin/launchctl)."
+		},
+		{
+			"file": "src/vs/platform/voltAwake/node/awakeDarwin.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "awake",
+			"reason": "user-action",
+			"why": "Lid-Closed Mode the user turned on: pmset."
+		},
+		{
+			"file": "src/vs/platform/voltAwake/node/awakeExec.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "awake",
+			"reason": "user-action",
+			"why": "Lid-Closed Mode the user turned on: the shared runner for its fixed commands."
+		},
+		{
+			"file": "src/vs/platform/voltAwake/node/awakeLinux.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "awake",
+			"reason": "user-action",
+			"why": "Lid-Closed Mode the user turned on: systemd-inhibit."
+		},
+		{
+			"file": "src/vs/platform/voltAwake/node/awakeWin32.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "awake",
+			"reason": "user-action",
+			"why": "Lid-Closed Mode the user turned on: powercfg."
+		},
+		{
+			"file": "src/vs/platform/voltBrowser/node/browserCookieReader.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "browser",
+			"reason": "user-action",
+			"why": "Imports cookies from the user's browser when they ask for it (fixed helper commands)."
+		},
+		{
+			"file": "src/vs/platform/voltBrowser/node/browserPlaygrounds.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "browser",
+			"reason": "supervisor",
+			"why": "Lists local listening servers (lsof/ps) for the in-app browser."
+		},
+		{
+			"file": "src/vs/platform/voltBrowser/node/devServers.ts",
+			"kind": "child_process",
+			"count": 3,
+			"owner": "browser",
+			"reason": "supervisor",
+			"why": "Looks up dev servers (ps/lsof) and starts the project's start command for an unsandboxed chat's browser primer only; a sandboxed chat never gets it (voltRuntimeService allowStart requires sandbox level off)."
+		},
+		{
+			"file": "src/vs/platform/voltCapture/electron-main/voltCaptureMainService.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "capture",
+			"reason": "supervisor",
+			"why": "Screen capture helper with fixed arguments; refused for sandboxed chats at the host tool gate."
+		},
+		{
+			"file": "src/vs/platform/voltCodeIndex/node/fffEngine.ts",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "code-index",
+			"reason": "supervisor",
+			"why": "Volt's bundled FFF file finder over the project."
+		},
+		{
+			"file": "src/vs/platform/voltCodeIndex/node/ripgrep.ts",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "code-index",
+			"reason": "supervisor",
+			"why": "Volt's bundled ripgrep for search tools."
+		},
+		{
+			"file": "src/vs/platform/voltDesktop/electron-main/voltDesktopMainService.ts",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "desktop",
+			"reason": "supervisor",
+			"why": "Volt's computer-use helper (built from its bundled source with swiftc, then run); desktop tools are refused for sandboxed chats."
+		},
+		{
+			"file": "src/vs/platform/voltDevices/node/deviceHub.ts",
+			"kind": "child_process",
+			"count": 3,
+			"owner": "devices",
+			"reason": "supervisor",
+			"why": "The device hub for simulator streaming: install, start and find it."
+		},
+		{
+			"file": "src/vs/platform/voltDevices/node/voltDevicesService.ts",
+			"kind": "child_process",
+			"count": 3,
+			"owner": "devices",
+			"reason": "supervisor",
+			"why": "simctl/adb/emulator for the device tools; installing or launching an app is refused for sandboxed chats."
+		},
+		{
+			"file": "src/vs/platform/voltGit/node/gitExecutable.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "git",
+			"reason": "supervisor",
+			"why": "Finds the git executable."
+		},
+		{
+			"file": "src/vs/platform/voltGit/node/voltGitService.ts",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "git",
+			"reason": "supervisor",
+			"why": "Volt's own git operations; repository-controlled behaviour is HostGit's (B-03, H1)."
+		},
+		{
+			"file": "src/vs/platform/voltPullRequests/node/voltPullRequestService.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "pull-requests",
+			"reason": "supervisor",
+			"why": "gh and git reads for pull request links and watches."
+		},
+		{
+			"file": "src/vs/platform/voltRelay/node/relaySource.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "relay",
+			"reason": "supervisor",
+			"why": "Bundles the project with git for a cloud task the user started."
+		},
+		{
+			"file": "src/vs/platform/voltRelay/node/voltRelayService.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "relay",
+			"reason": "supervisor",
+			"why": "Reads the battery state (pmset) for host load reports."
+		},
+		{
+			"file": "src/vs/platform/voltSandbox/node/bubblewrapBackend.ts",
+			"kind": "child_process",
+			"count": 3,
+			"owner": "sandbox",
+			"reason": "supervisor",
+			"why": "The Linux sandbox backend: bubblewrap, its probe and network bridge."
+		},
+		{
+			"file": "src/vs/platform/voltSandbox/node/sandboxLauncher.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "sandbox",
+			"reason": "supervisor",
+			"why": "Reads the macOS user cache folder (getconf) for the agent profile."
+		},
+		{
+			"file": "src/vs/platform/voltSandbox/node/sandboxManager.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "sandbox",
+			"reason": "supervisor",
+			"why": "The supervisor's own run of a prepared, confirmed sandbox (SandboxManager.run)."
+		},
+		{
+			"file": "src/vs/platform/voltSandbox/node/sandboxPty.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "sandbox",
+			"reason": "supervisor",
+			"why": "mkfifo for a sandboxed terminal's control channels (F.6)."
+		},
+		{
+			"file": "src/vs/platform/voltSandbox/node/sandboxResolver.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "sandbox",
+			"reason": "supervisor",
+			"why": "Finds the developer tools folder (xcode-select -p) for the sandbox profile."
+		},
+		{
+			"file": "src/vs/platform/voltSandbox/node/seatbeltBackend.ts",
+			"kind": "child_process",
+			"count": 3,
+			"owner": "sandbox",
+			"reason": "supervisor",
+			"why": "The macOS sandbox backend: sandbox-exec probe, the kernel log stream, the watchdog and the tree kill."
+		},
+		{
+			"file": "src/vs/platform/voltSpeech/electron-main/voltSpeechMainService.ts",
+			"kind": "child_process",
+			"count": 5,
+			"owner": "speech",
+			"reason": "user-action",
+			"why": "Dictation the user turned on: Volt's speech helper, built from its bundled source and run."
+		},
+		{
+			"file": "src/vs/platform/voltStdio/node/childLedger.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "stdio",
+			"reason": "supervisor",
+			"why": "Lists processes (ps) to stop what a crashed agent server left behind."
+		},
+		{
+			"file": "src/vs/platform/voltStdio/node/voltStdioService.ts",
+			"kind": "child_process",
+			"count": 7,
+			"owner": "stdio",
+			"reason": "supervisor",
+			"why": "Runs every chat process and command with its ExecContext: a sandboxed chat's only through the sandbox launcher, refused without it (execRefusal)."
+		},
+		{
+			"file": "src/vs/platform/voltStorage/node/voltStorageService.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "storage",
+			"reason": "supervisor",
+			"why": "Volt's own git reads for its storage view."
+		},
+		{
+			"file": "src/vs/platform/voltUsage/node/usageAccounts.ts",
+			"kind": "child_process",
+			"count": 3,
+			"owner": "usage",
+			"reason": "supervisor",
+			"why": "Reads the agent CLIs' sign-in and usage (Keychain, --version, Codex app server) for the Usage page."
+		},
+		{
+			"file": "src/vs/server/node/extensionHostConnection.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "extensions",
+			"reason": "user-action",
+			"why": "Forks the remote extension host that runs the user's installed extensions."
+		},
+		{
+			"file": "src/vs/server/node/server.cli.ts",
+			"kind": "child_process",
+			"count": 5,
+			"owner": "core",
+			"reason": "user-action",
+			"why": "The server command line the user runs."
+		},
+		{
+			"file": "src/vs/server/node/voltAgent/serverFiles.ts",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "agent-server",
+			"reason": "supervisor",
+			"why": "git and ripgrep reads for the web workbench's file views."
+		},
+		{
+			"file": "src/vs/server/node/voltAgent/serverPlatformServices.ts",
+			"kind": "child_process",
+			"count": 3,
+			"owner": "agent-server",
+			"reason": "supervisor",
+			"why": "Keychain access for the agent server's secret storage."
+		},
+		{
+			"file": "src/vs/server/node/voltAgent/serverTerminals.ts",
+			"kind": "pty.spawn",
+			"count": 2,
+			"owner": "terminal",
+			"reason": "supervisor",
+			"why": "The agent server's PTY terminals: a sandboxed chat's start the launcher prepared by the stdio service (prepareSandboxedTerminal) and run only after confirmSandboxedTerminal; others run for unsandboxed chats or the user."
+		},
+		{
+			"file": "src/vs/server/node/voltAgent/serverTunnels.ts",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "agent-server",
+			"reason": "user-action",
+			"why": "Tunnels (cloudflared, ssh, tailscale) the user set up in Add Device."
+		},
+		{
+			"file": "src/vs/workbench/api/node/extHostTunnelService.ts",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "extensions",
+			"reason": "supervisor",
+			"why": "Port discovery for forwarded ports (fixed ls/ps commands)."
+		},
+		{
+			"file": "src/vs/workbench/contrib/debug/node/debugAdapter.ts",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "debug",
+			"reason": "user-action",
+			"why": "Debug adapters of the user's debug sessions."
+		},
+		{
+			"file": "src/vs/workbench/contrib/debug/node/terminals.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "debug",
+			"reason": "user-action",
+			"why": "Terminal lookups for the user's debug sessions."
+		},
+		{
+			"file": "src/vs/workbench/contrib/voltAgent/browser/blocks/vendor/beautifulMermaid.js",
+			"kind": "new Worker",
+			"count": 1,
+			"owner": "visuals",
+			"reason": "supervisor",
+			"why": "The bundled Mermaid renderer's own worker script."
+		},
+		{
+			"file": "src/vs/workbench/services/search/node/fileSearch.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "search",
+			"reason": "supervisor",
+			"why": "The search service's file listing (find/ripgrep)."
+		},
+		{
+			"file": "src/vs/workbench/services/search/node/ripgrepFileSearch.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "search",
+			"reason": "supervisor",
+			"why": "The search service's ripgrep file search."
+		},
+		{
+			"file": "src/vs/workbench/services/search/node/ripgrepTextSearchEngine.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "search",
+			"reason": "supervisor",
+			"why": "The search service's ripgrep text search."
+		}
+	]
+}
