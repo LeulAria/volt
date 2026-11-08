@@ -113,7 +113,21 @@ export interface IBubblewrapArgsOptions {
 	 * `--bind-fd`): what is mounted is what was checked, even if the path is swapped meanwhile (B-33).
 	 */
 	readonly bindFds?: ReadonlyMap<string, number>;
+	/** The Landlock layer (C4): bubblewrap's payload restricts itself before the prologue runs. */
+	readonly landlock?: ILandlockInvocation;
+	/** Variables bubblewrap itself was given that the workload must not inherit (`systemd-run`'s bus folder). */
+	readonly unsetEnv?: readonly string[];
 }
+
+/** `build/volt/volt-landlock.c`, bound read-only at its own path and exec'd as bubblewrap's payload. */
+export interface ILandlockInvocation {
+	readonly path: string;
+	/** The ABI the probe measured (1 or more): the helper refuses a kernel with less. */
+	readonly abi: number;
+}
+
+/** Landlock ABI 6: abstract unix sockets and signals scoped to the sandbox (a second layer for LNX-UNIX-1). */
+export const LANDLOCK_SCOPE_ABI = 6;
 
 export interface IPrlimitInvocation {
 	/** prlimit's path inside the sandbox. */
@@ -214,17 +228,25 @@ export function encodeBubblewrapArgs(args: readonly string[]): string {
 }
 
 /**
- * The workload command after `--`: the readiness script, then prlimit when limits apply, then the
- * command. Throws for a command bubblewrap or the shell could take as an option.
+ * The workload command after `--`: the Landlock helper and its rules when the layer is on, the
+ * readiness script, then prlimit when limits apply, then the command. Throws for a command
+ * bubblewrap or the shell could take as an option.
  */
-export function bubblewrapCommand(command: string, args: readonly string[], options: Pick<IBubblewrapArgsOptions, 'shell' | 'prlimit' | 'sentinel'>, limits: ISandboxLimits): string[] {
+export function bubblewrapCommand(command: string, args: readonly string[], options: Pick<IBubblewrapArgsOptions, 'shell' | 'prlimit' | 'sentinel' | 'landlock'>, limits: ISandboxLimits, landlockRules: readonly string[] = []): string[] {
 	if (!command || command.startsWith('-') || command.includes('\0') || args.some(arg => arg.includes('\0'))) {
 		throw new Error('The sandboxed command must be a program name or path (not empty, not starting with "-", no NUL)');
 	}
 	if (!options.sentinel.startsWith('/') || options.sentinel.includes('\0')) {
 		throw new Error('The canary sentinel must be an absolute path');
 	}
-	const out = ['--', options.shell, '-c', BUBBLEWRAP_READY_SCRIPT, BUBBLEWRAP_READY_ARGV0, options.sentinel];
+	const out = ['--'];
+	if (options.landlock) {
+		if (!options.landlock.path.startsWith('/') || !Number.isInteger(options.landlock.abi) || options.landlock.abi < 1) {
+			throw new Error('The Landlock helper needs an absolute path and an ABI of 1 or more');
+		}
+		out.push(options.landlock.path, String(options.landlock.abi), ...landlockRules, '--');
+	}
+	out.push(options.shell, '-c', BUBBLEWRAP_READY_SCRIPT, BUBBLEWRAP_READY_ARGV0, options.sentinel);
 	if (options.prlimit) {
 		const limitArgs = prlimitOptions(limits, options.prlimit.hard);
 		if (limitArgs.length) {
@@ -242,7 +264,11 @@ export function bubblewrapArgs(policy: IResolvedSandboxPolicy, command: string, 
 	const args: string[] = [];
 	const push = (...values: string[]) => args.push(...values);
 
-	// Environment first: `--args` inserts its arguments where it appears.
+	// Environment first: `--args` inserts its arguments where it appears. Unset before, so a
+	// policy that sets one of these names still gets its own value.
+	for (const name of options.unsetEnv ?? []) {
+		push('--unsetenv', name);
+	}
 	push('--args', String(BUBBLEWRAP_FDS.args));
 
 	// Namespaces. A user namespace always (unprivileged bubblewrap needs it), so the workload has
@@ -419,6 +445,11 @@ export function bubblewrapArgs(policy: IResolvedSandboxPolicy, command: string, 
 		push('--remount-ro', root);
 	}
 
+	// The Landlock helper, at its own path (before the root is frozen: its mount point may be new).
+	if (options.landlock) {
+		push('--ro-bind', options.landlock.path, options.landlock.path);
+	}
+
 	// bubblewrap builds a minimal root on a tmpfs, writable by the sandbox's user: freeze it, so a
 	// write outside the writable roots fails (EROFS) instead of landing in memory. Non-recursive:
 	// the binds and tmpfs mounts on top keep their own modes.
@@ -427,8 +458,46 @@ export function bubblewrapArgs(policy: IResolvedSandboxPolicy, command: string, 
 	}
 
 	push('--chdir', policy.cwd);
-	push(...bubblewrapCommand(command, commandArgs, options, policy.limits));
+	const rules = options.landlock ? landlockRules(policy, { masks, writeFiles: policy.writeFiles.filter(path => kindOf(path) === 'file'), reexpose: options.host.reexpose, abi: options.landlock.abi }) : [];
+	push(...bubblewrapCommand(command, commandArgs, options, policy.limits, rules));
 	return args;
+}
+
+/**
+ * The Landlock rules mirroring a run's mounts (see build/volt/volt-landlock.c): read roots
+ * readable (or `/` with readAll), a narrow sandbox's `/` listable, write roots and the private
+ * tmpfs masks writable, existing single files writable, `/dev` and `/proc` usable, and, from ABI 6,
+ * abstract unix sockets and signals scoped to the sandbox. Grants only: a denied or protected path
+ * below a granted root stays covered by its mount, as without Landlock.
+ */
+export function landlockRules(policy: IResolvedSandboxPolicy, facts: { readonly masks: readonly string[]; readonly writeFiles: readonly string[]; readonly reexpose: readonly string[]; readonly abi: number }): string[] {
+	const out: string[] = [];
+	const rule = (flag: string, path: string) => {
+		if (!path.startsWith('/') || path.includes('\0')) {
+			throw new Error(`A Landlock rule needs an absolute path: ${path}`);
+		}
+		out.push(flag, path);
+	};
+	if (policy.readAll) {
+		rule('-r', '/');
+	} else {
+		rule('-l', '/');
+		for (const path of outermost([...policy.read, ...facts.reexpose])) {
+			rule('-r', path);
+		}
+	}
+	for (const path of outermost([...policy.write, ...facts.masks])) {
+		rule('-w', path);
+	}
+	for (const path of facts.writeFiles) {
+		rule('-f', path);
+	}
+	rule('-d', '/dev');
+	rule('-d', '/proc');
+	if (facts.abi >= LANDLOCK_SCOPE_ABI) {
+		out.push('-s');
+	}
+	return out;
 }
 
 /**

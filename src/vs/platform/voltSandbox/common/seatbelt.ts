@@ -530,13 +530,17 @@ export const SEATBELT_FDS = { status: 3, go: 4 } as const;
  * byte, EOF (Volt gone or refusing) or nothing at all means the workload never runs: exit 125.
  * The ready line is informational: an unsandboxed process can write the same text. Constant
  * text: values arrive as positional arguments only.
- * Arguments: <cpu seconds|-> <file size in 512-byte blocks|-> <open files|-> <sentinel> <command> <args...>
+ * Arguments: <cpu seconds|-> <file size in 512-byte blocks|-> <open files|-> <user processes|-> <sentinel> <command> <args...>
+ * `user processes` is RLIMIT_NPROC, which macOS counts across all of the user's processes: the
+ * backend passes the user's count at launch plus the run's limit, which bounds a fork bomb until
+ * the fork watchdog kills it (RES-MAC-2).
  */
 export const SEATBELT_PROLOGUE = [
-	'c=$1 f=$2 n=$3 s=$4; shift 4',
+	'c=$1 f=$2 n=$3 u=$4 s=$5; shift 5',
 	'[ "$c" = - ] || ulimit -t "$c" || exit 125',
 	'[ "$f" = - ] || ulimit -f "$f" || exit 125',
 	'[ "$n" = - ] || ulimit -n "$n" || exit 125',
+	'[ "$u" = - ] || ulimit -u "$u" || exit 125',
 	'l=; { read -r l < "$s"; } 2>/dev/null; if [ -n "$l" ]; then k=open; else k=denied; fi',
 	'printf "volt-sandbox-ready %s cred=%s\\n" "$$" "$k" >&3 || exit 125',
 	'exec 3>&-',

@@ -12,7 +12,7 @@ import { IResolvedSandboxPolicy } from '../../common/sandboxResolved.js';
 const ARITY: Readonly<Record<string, number>> = {
 	'--unshare-user': 0, '--unshare-pid': 0, '--unshare-ipc': 0, '--unshare-uts': 0, '--unshare-cgroup-try': 0, '--unshare-net': 0,
 	'--die-with-parent': 0, '--disable-userns': 0, '--new-session': 0,
-	'--args': 1, '--json-status-fd': 1, '--seccomp': 1, '--hostname': 1, '--cap-drop': 1, '--tmpfs': 1, '--remount-ro': 1, '--chdir': 1, '--dev': 1, '--proc': 1,
+	'--args': 1, '--unsetenv': 1, '--json-status-fd': 1, '--seccomp': 1, '--hostname': 1, '--cap-drop': 1, '--tmpfs': 1, '--remount-ro': 1, '--chdir': 1, '--dev': 1, '--proc': 1,
 	'--ro-bind': 2, '--ro-bind-try': 2, '--bind': 2, '--bind-try': 2, '--symlink': 2, '--dev-bind': 2, '--bind-fd': 2, '--ro-bind-fd': 2,
 };
 
@@ -218,6 +218,36 @@ suite('Volt sandbox bubblewrap arguments', () => {
 			'node', '--inspect', 'x.js',
 		]);
 		assert.deepStrictEqual(build(policy()).command, ['/usr/bin/dash', '-c', BUBBLEWRAP_READY_SCRIPT, BUBBLEWRAP_READY_ARGV0, SENTINEL, '/usr/bin/node', 'app.js'], 'no limits, no prlimit');
+	});
+
+	test('C4 Landlock: the helper is the payload, bound read-only before the root is frozen, its rules mirroring the mounts', () => {
+		const helper = '/opt/volt/out/volt-helpers/volt-landlock';
+		const p = policy({ writeFiles: ['/home/me/.claude.json'] });
+		const { ops, command } = build(p, options({ host: host({ '/home/me/.claude.json': 'file' }), landlock: { path: helper, abi: 6 } }));
+		const bind = indexOf(ops, '--ro-bind', helper);
+		assert.ok(bind >= 0 && bind < indexOf(ops, '--remount-ro', '/'), 'bound while the root can still take a mount point');
+		const end = command.indexOf('--');
+		assert.deepStrictEqual(command.slice(0, 2), [helper, '6']);
+		assert.deepStrictEqual(command.slice(2, end), [
+			'-l', '/', '-r', '/etc', '-r', '/usr', '-r', '/run/systemd/resolve/stub-resolv.conf',
+			// The run's temp folder is inside the /tmp mask, which is the sandbox's own tmpfs.
+			'-w', '/tmp', '-w', '/dev/shm', '-w', REPO,
+			'-f', '/home/me/.claude.json', '-d', '/dev', '-d', '/proc', '-s',
+		]);
+		assert.deepStrictEqual(command.slice(end + 1), ['/usr/bin/dash', '-c', BUBBLEWRAP_READY_SCRIPT, BUBBLEWRAP_READY_ARGV0, SENTINEL, '/usr/bin/node', 'app.js'], 'then the prologue, unchanged');
+		// readAll reads everything; before ABI 6 nothing is scoped.
+		const all = build(policy({ readAll: true }), options({ landlock: { path: helper, abi: 4 } })).command;
+		assert.deepStrictEqual(all.slice(2, all.indexOf('--')).slice(0, 2), ['-r', '/']);
+		assert.deepStrictEqual(all.slice(all.indexOf('--') - 4, all.indexOf('--')), ['-d', '/dev', '-d', '/proc'], 'no -s');
+		assert.throws(() => build(p, options({ landlock: { path: 'volt-landlock', abi: 6 } })));
+		assert.throws(() => build(p, options({ landlock: { path: helper, abi: 0 } })));
+	});
+
+	test('C4 cgroups: what systemd-run adds to bubblewrap\'s environment is unset before the policy\'s own', () => {
+		const { ops } = build(policy(), options({ unsetEnv: ['XDG_RUNTIME_DIR', 'INVOCATION_ID'] }));
+		assert.ok(has(ops, '--unsetenv', 'XDG_RUNTIME_DIR') && has(ops, '--unsetenv', 'INVOCATION_ID'));
+		assert.ok(indexOf(ops, '--unsetenv', 'INVOCATION_ID') < indexOf(ops, '--args'), 'a policy that sets one keeps its value');
+		assert.strictEqual(indexOf(build(policy()).ops, '--unsetenv'), -1);
 	});
 
 	test('the readiness script waits for the go byte on its own fd before the workload (B-29)', () => {

@@ -145,6 +145,36 @@ export interface ISandboxRunResult {
 	readonly error?: string;
 	/** The external evidence the run started on; absent when it never started. */
 	readonly attestation?: IAttestation;
+	/** The run was killed for crossing a resource limit (F.8): `ExitReason.resource`. */
+	readonly resourceViolation?: ISandboxResourceViolation;
+}
+
+/**
+ * Enforcement layers a backend adds beside its main sandbox (J.1, J.2), each behind a probe: a
+ * kernel or system without the support reports the layer absent, never claims it.
+ * - `landlock`: Linux, a Landlock domain mirroring the run's read and write sets (LNX-FS-2, LNX-FS-3).
+ * - `cgroup`: Linux, the run's own systemd user scope: memory and pids limits, `cgroup.kill` (RES-LNX, TREE-LNX).
+ * - `processTracking`: macOS, kqueue fork/exit tracking plus the responsible-process sweep (TREE-MAC).
+ * - `footprint`: macOS, the tree's physical footprint polled against the memory limit (RES-MAC-1).
+ */
+export type SandboxSecondLayerId = 'landlock' | 'cgroup' | 'processTracking' | 'footprint';
+
+export interface ISandboxLayerState {
+	readonly active: boolean;
+	/** `ABI 6`, the scope's cgroup path, or why the layer is absent. */
+	readonly detail: string;
+}
+
+export type SandboxLayers = Readonly<Partial<Record<SandboxSecondLayerId, ISandboxLayerState>>>;
+
+/** Why a run was killed for its resources: the limit, what was seen, and which layer saw it. */
+export interface ISandboxResourceViolation {
+	readonly dimension: 'limits.memory' | 'limits.processes';
+	/** MB for memory, a process count for processes. */
+	readonly limit: number;
+	readonly observed: number;
+	/** `footprint`: macOS polling; `watchdog`: macOS fork tracking; `cgroup`: the Linux kernel (OOM kill of the scope). */
+	readonly by: 'footprint' | 'watchdog' | 'cgroup';
 }
 
 /**
@@ -164,6 +194,8 @@ export interface IAttestation {
 	/** What the prologue's canary saw: `{ credOpen: 'denied' }`. */
 	readonly canary: Readonly<Record<string, string>>;
 	readonly unenforced: readonly SandboxDimension[];
+	/** Which second layers this run has (J.1, J.2); the Security page shows them. */
+	readonly layers: SandboxLayers;
 	readonly attestedAt: number;
 }
 

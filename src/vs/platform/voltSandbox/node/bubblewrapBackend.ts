@@ -4,16 +4,18 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ChildProcess, execFile, spawn } from 'child_process';
-import { close as closeFd, constants as fsConstants, Dirent, fstatSync, open as openFd, promises as fs } from 'fs';
+import { close as closeFd, constants as fsConstants, Dirent, existsSync, fstatSync, FSWatcher, open as openFd, promises as fs, watch } from 'fs';
 import * as net from 'net';
 import { release, tmpdir } from 'os';
 import { promisify } from 'util';
+import { FileAccess } from '../../../base/common/network.js';
 import { dirname, join } from '../../../base/common/path.js';
-import { bridgeHolderArgs, BUBBLEWRAP_FDS, bubblewrapArgs, bubblewrapEnvArgs, bubblewrapRefusals, encodeBubblewrapArgs, hasRlimits, IBubblewrapPathMatch, IBubblewrapPatternMatches, isInsidePath, nsenterArgs, PrlimitResource } from '../common/bwrap.js';
-import { allEnforcement, ISandboxBackendCapabilities, parseReadyLine, redactSandboxText, SANDBOX_GO, SANDBOX_WRONG_GO, SandboxEnforcement, SandboxUnavailableError } from '../common/sandboxBackend.js';
+import { helperIntegrity, verifyHelperBinary } from '../../voltHelpers/node/helperIntegrity.js';
+import { bridgeHolderArgs, BUBBLEWRAP_FDS, bubblewrapArgs, bubblewrapEnvArgs, bubblewrapRefusals, encodeBubblewrapArgs, hasRlimits, IBubblewrapPathMatch, IBubblewrapPatternMatches, ILandlockInvocation, isInsidePath, LANDLOCK_SCOPE_ABI, nsenterArgs, PrlimitResource } from '../common/bwrap.js';
+import { allEnforcement, ISandboxBackendCapabilities, ISandboxLayerState, parseReadyLine, redactSandboxText, SANDBOX_GO, SANDBOX_WRONG_GO, SandboxEnforcement, SandboxSecondLayerId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { gitDirWritable } from '../common/sandboxProfiles.js';
 import { IResolvedPattern, IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
-import { SandboxDimension } from '../common/sandboxSchema.js';
+import { ISandboxLimits, SandboxDimension } from '../common/sandboxSchema.js';
 import { buildSeccompFilter, SeccompArch, seccompArch, seccompInstructions } from '../common/seccomp.js';
 import { ISandboxBackend, ISandboxLaunchOptions, ISandboxLaunchSpec, SandboxConfirmation, SandboxFault } from './sandboxBackends.js';
 import { binaryDigest, osBuild, ProbeCache } from './sandboxProbeCache.js';
@@ -103,6 +105,102 @@ interface IBubblewrapState {
 	/** Top-level folders that are real folders (non-merged /usr), bound in trials. */
 	readonly rootDirs: readonly string[];
 	readonly hostNamespaces: Readonly<Partial<Record<NamespaceName, number>>>;
+	/** The Landlock layer (C4), when the kernel has it and its trials passed. */
+	readonly landlock?: ILandlockInvocation;
+	/** The cgroup layer (C4), when systemd's user manager gives the user a delegated scope. */
+	readonly cgroup?: ICgroupFacts;
+	/** Why a second layer is absent, for every run's attestation. */
+	readonly absent: Readonly<{ landlock?: string; cgroup?: string }>;
+}
+
+interface ICgroupFacts {
+	readonly systemdRun: string;
+	/** Asks the user manager how a scope ended (an OOM kill) and clears a failed one. */
+	readonly systemctl: string;
+	/** `XDG_RUNTIME_DIR` for systemd-run, which finds the user manager's bus there. */
+	readonly runtimeDir: string;
+	/** `cgroup.kill` (Linux 5.14+): one write ends the whole scope. */
+	readonly kill: boolean;
+	/** A process limit alone gets a scope too (before 5.14, RLIMIT_NPROC counts the user's processes). */
+	readonly forProcesses: boolean;
+}
+
+type ILayerProbe<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly why: string };
+
+export const LANDLOCK_HELPER_ID = 'volt-landlock';
+
+/** Where `volt-landlock` is: this build's verified helper, or (from sources) the one built into `.build`. */
+export async function landlockHelperPath(): Promise<string | undefined> {
+	const integrity = helperIntegrity();
+	const bundled = await integrity.bundledPath(LANDLOCK_HELPER_ID);
+	if (bundled || !integrity.developerMode) {
+		return bundled;
+	}
+	const dev = join(dirname(FileAccess.asFileUri('').fsPath), '.build', 'volt-helpers', LANDLOCK_HELPER_ID);
+	if (!existsSync(dev)) {
+		return undefined;
+	}
+	return (await integrity.trustDeveloperHelper(LANDLOCK_HELPER_ID, dev)).ok ? dev : undefined;
+}
+
+/**
+ * Reports a scope's cgroup path (relative to the cgroup root), its memory.max and pids.max, and
+ * whether it has cgroup.kill. The trial runs it as the scope's own process.
+ */
+const CGROUP_TRIAL_SCRIPT = 'p=$(sed -n "s/^0:://p" /proc/self/cgroup); d=/sys/fs/cgroup$p; printf "%s|%s|%s|%s\\n" "$p" "$(cat "$d/memory.max")" "$(cat "$d/pids.max")" "$([ -e "$d/cgroup.kill" ] && echo kill)"';
+
+/**
+ * The cgroup layer behind its probe (C4, J.2): `systemd-run --user --scope` must reach the user
+ * manager and give a trial scope the memory and pids limits it asked for, which needs cgroup v2
+ * with `memory` and `pids` delegated to the user (systemd 252+ does by default). Otherwise the
+ * layer is off and memory stays a per-process RLIMIT_AS (`partial`).
+ */
+async function probeCgroup(shell: string): Promise<ILayerProbe<Omit<ICgroupFacts, 'forProcesses'>>> {
+	const [systemdRun, systemctl] = await Promise.all([findExecutable('systemd-run'), findExecutable('systemctl')]);
+	if (!systemdRun || !systemctl) {
+		return { ok: false, why: `${systemdRun ? 'systemctl' : 'systemd-run'} is not installed` };
+	}
+	const runtimeDir = `/run/user/${process.getuid?.() ?? -1}`;
+	if (!existsSync(join(runtimeDir, 'systemd'))) {
+		return { ok: false, why: `no systemd user manager runs for this user (${runtimeDir}/systemd is missing)` };
+	}
+	if ((await fs.readFile('/sys/fs/cgroup/cgroup.controllers', 'utf8').catch(() => undefined)) === undefined) {
+		return { ok: false, why: 'cgroup v2 is not mounted at /sys/fs/cgroup' };
+	}
+	const unit = `volt-sbx-probe-${process.pid}-${Date.now()}`;
+	const output = await execFileAsync(systemdRun, [...systemdRunArgs(unit, { memoryMB: 64, processes: 32 }), shell, '-c', CGROUP_TRIAL_SCRIPT], { timeout: 10_000, env: { XDG_RUNTIME_DIR: runtimeDir } })
+		.then(r => r.stdout.trim(), (err: Error & { stderr?: string }) => `error: ${(err.stderr || err.message).trim().split('\n')[0].slice(0, 200)}`);
+	const [path, memory, pids, kill] = output.split('|');
+	if (!path?.endsWith(`/${unit}.scope`)) {
+		return { ok: false, why: output.startsWith('error: ') ? `systemd-run --user --scope failed: ${output.slice(7)}` : 'the trial did not run in its own scope' };
+	}
+	if (memory !== String(64 * 1024 * 1024) || pids !== '32') {
+		return { ok: false, why: `the user manager does not delegate the memory and pids controllers (the trial scope had memory.max ${memory || 'missing'}, pids.max ${pids || 'missing'})` };
+	}
+	return { ok: true, value: { systemdRun, systemctl, runtimeDir, kill: kill === 'kill' } };
+}
+
+/** What `systemd-run --scope` adds to the environment it execs with (measured on systemd 255). */
+const SYSTEMD_RUN_ADDS = ['INVOCATION_ID'];
+
+/**
+ * `systemd-run` arguments for a run's scope, up to the command (F.8: memory and pids from the
+ * policy). Not `--collect`: a scope the kernel OOM-killed stays loaded as failed with
+ * `Result=oom-kill` until the backend has read it (CgroupScope.stop), because an OOM kill can end a
+ * run, and systemd remove its cgroup, before memory.events can be read. A scope that ends well is
+ * unloaded at once either way.
+ */
+function systemdRunArgs(unit: string, limits: { readonly memoryMB?: number; readonly processes?: number }): string[] {
+	const out = ['--user', '--scope', '--quiet', `--unit=${unit}`];
+	if (limits.memoryMB !== undefined) {
+		// No swap: the limit is on the memory the run holds, not a hint to page it out.
+		out.push('-p', `MemoryMax=${Math.max(1, Math.floor(limits.memoryMB))}M`, '-p', 'MemorySwapMax=0');
+	}
+	if (limits.processes !== undefined) {
+		out.push('-p', `TasksMax=${Math.max(1, Math.floor(limits.processes))}`);
+	}
+	out.push('--');
+	return out;
 }
 
 interface IStatusInfo {
@@ -122,7 +220,8 @@ export class BubblewrapBackend implements ISandboxBackend {
 	}
 
 	private async getState(): Promise<IBubblewrapState | ISandboxBackendCapabilities> {
-		const key = `bubblewrap|${osBuild()}|${await binaryDigest(SYSTEM_BWRAP)}`;
+		const landlock = process.platform === 'linux' ? await landlockHelperPath().catch(() => undefined) : undefined;
+		const key = `bubblewrap|${osBuild()}|${await binaryDigest(SYSTEM_BWRAP)}|${landlock ? await binaryDigest(landlock) : 'no landlock helper'}`;
 		return this.cache.get(key, () => this.doProbe().catch(err => unavailable([], [`The bubblewrap probe failed: ${(err as Error).message}`])));
 	}
 
@@ -188,7 +287,7 @@ export class BubblewrapBackend implements ISandboxBackend {
 		const base: IBubblewrapState = {
 			capabilities: unavailable(details, diagnostics),
 			bwrap, version, arch, shell, prlimit, socat, nsenter, bridge: false, disableUserns, rootLinks, rootDirs, hostNamespaces,
-			bindFd, versionText: versionText || `bubblewrap ${version.join('.')}`,
+			bindFd, versionText: versionText || `bubblewrap ${version.join('.')}`, absent: {},
 		};
 
 		// CVE-2026-87766: setup-time file creation follows symlinks in bound content onto the host.
@@ -213,10 +312,18 @@ export class BubblewrapBackend implements ISandboxBackend {
 		details.push(`seccomp: ${arch} filter, ${seccompInstructions(arch, { blockUnixSockets: true }).length} instructions, socket families inet/inet6, netlink route, unix when granted; --disable-userns: ${disableUserns ? 'yes' : 'no (bubblewrap < 0.8; seccomp still refuses new namespaces)'}`);
 		details.push(bindFd ? 'roots: bound from verified O_PATH fds (--bind-fd)' : `roots: bound by path (bubblewrap < ${BIND_FD_VERSION.join('.')} has no --bind-fd), so roots under shared temp folders are refused`);
 
-		const [bridgeTrial, limitsTrial] = await Promise.all([
+		const [bridgeTrial, limitsTrial, landlock, cgroup] = await Promise.all([
 			socat && nsenter ? this.trial(base, { bridgePort: 41_000 + Math.floor(Math.random() * 1000) }) : Promise.resolve(undefined),
 			prlimit ? this.trial(base, { limits: true }) : Promise.resolve(undefined),
+			this.probeLandlock(base),
+			probeCgroup(shell),
 		]);
+		details.push(landlock.ok
+			? `landlock: ABI ${landlock.value.abi}, a second layer on reads, writes and devices${landlock.value.abi >= LANDLOCK_SCOPE_ABI ? ', abstract unix sockets and signals scoped' : ''} (${landlock.value.path}, trials ok)`
+			: `landlock: off (${landlock.why})`);
+		details.push(cgroup.ok
+			? `cgroups: a systemd user scope per run with a memory or process limit (memory.max, pids.max${cgroup.value.kill ? ', cgroup.kill' : ''}), trial ok`
+			: `cgroups: off (${cgroup.why}); memory is limited per process (RLIMIT_AS)`);
 		const bridge = !!bridgeTrial?.ok;
 		if (bridge) {
 			details.push(`network bridge: ok (${socat} in a holder namespace, joined with ${nsenter})`);
@@ -269,16 +376,61 @@ export class BubblewrapBackend implements ISandboxBackend {
 				set(dimension, 'unsupported', note);
 			}
 		}
+		if (cgroup.ok) {
+			// Hard, for the whole tree (J.2): the run's own scope, memory.max and pids.max.
+			set('limits.memory', 'enforced', 'cgroup v2 memory.max on the run\'s own systemd user scope: resident memory of the whole tree; the kernel kills the whole scope when it passes the limit (memory.oom.group).');
+			if (!nprocPerUserns) {
+				set('limits.processes', 'enforced', 'cgroup v2 pids.max on the run\'s own systemd user scope.');
+			}
+		}
 		return {
 			...base,
 			prlimit: limits ? prlimit : undefined,
 			bridge,
+			...(landlock.ok ? { landlock: landlock.value } : {}),
+			// From 5.14 RLIMIT_NPROC already counts per sandbox: a process limit alone needs no scope.
+			...(cgroup.ok ? { cgroup: { ...cgroup.value, forProcesses: !nprocPerUserns } } : {}),
+			absent: { ...(landlock.ok ? {} : { landlock: landlock.why }), ...(cgroup.ok ? {} : { cgroup: cgroup.why }) },
 			capabilities: { backend: 'bubblewrap', available: true, enforcement, notes, details, diagnostics },
 		};
 	}
 
+	/**
+	 * Landlock behind its probe (C4): the helper of this build, the kernel's ABI, a check on the
+	 * host that a domain without a write rule really refuses a write, then a trial sandbox through
+	 * the launch path. Anything missing leaves the layer off and says why; it never refuses a run.
+	 */
+	private async probeLandlock(base: IBubblewrapState): Promise<ILayerProbe<ILandlockInvocation>> {
+		const path = await landlockHelperPath().catch(() => undefined);
+		if (!path) {
+			return { ok: false, why: 'this build has no volt-landlock helper' };
+		}
+		const verified = await verifyHelperBinary(LANDLOCK_HELPER_ID, path);
+		if (!verified.ok) {
+			return { ok: false, why: `the volt-landlock helper failed its integrity check: ${verified.reason}` };
+		}
+		const abi = Number(/^abi (\d+)$/m.exec(await execFileAsync(path, ['probe'], { timeout: 5_000, env: {} }).then(r => r.stdout, () => ''))?.[1] ?? 0);
+		if (!(abi >= 1)) {
+			return { ok: false, why: 'the kernel has no Landlock, or it is not enabled (lsm=)' };
+		}
+		const dir = await fs.mkdtemp(join(await fs.realpath(tmpdir()), 'volt-sbx-landlock-'));
+		try {
+			const target = join(dir, 'refused');
+			// Everything readable, nothing writable: the write must fail and leave nothing behind.
+			const wrote = await execFileAsync(path, [String(abi), '-r', '/', '--', base.shell, '-c', ': > "$1"', 'volt-landlock-probe', target], { timeout: 5_000, env: {} }).then(() => true, () => false);
+			if (wrote || existsSync(target)) {
+				return { ok: false, why: `Landlock ABI ${abi} did not refuse a write outside its rules` };
+			}
+		} finally {
+			await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+		}
+		const invocation: ILandlockInvocation = { path, abi };
+		const trial = await this.trial(base, { landlock: invocation });
+		return trial.ok ? { ok: true, value: invocation } : { ok: false, why: `a trial sandbox with Landlock failed: ${trial.error}` };
+	}
+
 	/** Starts a trial sandbox through the launch path and waits for it to exit cleanly. */
-	private async trial(state: IBubblewrapState, options: { bridgePort?: number; limits?: boolean }): Promise<SandboxConfirmation> {
+	private async trial(state: IBubblewrapState, options: { bridgePort?: number; limits?: boolean; landlock?: ILandlockInvocation }): Promise<SandboxConfirmation> {
 		const runDir = await fs.mkdtemp(join(await fs.realpath(tmpdir()), 'volt-sbx-probe-'));
 		const tmp = join(runDir, 'tmp');
 		let spec: ISandboxLaunchSpec | undefined;
@@ -296,7 +448,7 @@ export class BubblewrapBackend implements ISandboxBackend {
 				limits: options.limits ? { processes: 64, openFiles: 256, cpuSeconds: 10, fileSizeMB: 1, memoryMB: 1024 } : {},
 				env: { PATH: '/usr/bin:/bin' }, cwd: tmp, tmp, home: tmp, sentinel,
 			};
-			const withTools: IBubblewrapState = { ...state, bridge: !!options.bridgePort, prlimit: options.limits ? state.prlimit : undefined };
+			const withTools: IBubblewrapState = { ...state, bridge: !!options.bridgePort, prlimit: options.limits ? state.prlimit : undefined, landlock: options.landlock };
 			spec = await this.createSpec(withTools, policy, state.shell, ['-c', 'exit 0'], { tag: 'probe', terminal: false, onDenial: () => undefined });
 			const child = spawn(spec.command, [...spec.args], { env: spec.env, cwd: spec.cwd, stdio: ['ignore', 'ignore', 'pipe', ...spec.extraStdio], detached: true });
 			const exited = new Promise<number | null>(resolve => {
@@ -371,10 +523,24 @@ export class BubblewrapBackend implements ISandboxBackend {
 			// A `.env` the walk did not reach would stay readable: refuse rather than run with less (B-27).
 			throw new SandboxUnavailableError(`The Linux sandbox could not check every folder for ${policy.denyPatterns.map(p => p.names.join('/')).filter((n, i, all) => all.indexOf(n) === i).slice(0, 4).join(', ')} files before starting (it stopped after ${matches.visited} folders${matches.unfinished ? `, at ${redactSandboxText(matches.unfinished, policy.home)}` : ''}: over ${PATTERN_WALK_LIMITS.maxEntries} entries, deeper than ${PATTERN_WALK_LIMITS.maxDepth} levels or slower than ${PATTERN_WALK_LIMITS.budgetMs} ms). Open a smaller folder, or narrow what the sandbox reads.`, 'unavailable', ['filesystem.denyPatterns']);
 		}
+		// Second layers (C4). Landlock: the helper checked like every helper, right before the launch;
+		// one that fails refuses the run (the probe found it good, so a change is tampering).
+		if (state.landlock) {
+			const verified = await verifyHelperBinary(LANDLOCK_HELPER_ID, state.landlock.path);
+			if (!verified.ok) {
+				throw new SandboxUnavailableError(`The Landlock helper failed its integrity check: ${verified.reason}`, 'unavailable');
+			}
+		}
+		// The run's own systemd scope, when it has a limit only a cgroup holds for the whole tree.
+		const scope = state.cgroup && (policy.limits.memoryMB !== undefined || (state.cgroup.forProcesses && policy.limits.processes !== undefined))
+			? new CgroupScope(state.cgroup, `volt-sbx-${options.tag.replace(/[^A-Za-z0-9]/g, '').slice(0, 32)}-${process.pid}-${++scopeCount}`, policy.limits)
+			: undefined;
+		// With memory in the cgroup, RLIMIT_AS (which breaks V8, Go and the JVM well below its value) is dropped.
+		const rlimits = scope?.memoryMB !== undefined ? { ...policy, limits: { ...policy.limits, memoryMB: undefined } } : policy;
 		const opened = bindFd ? await openRoots(roots) : { fds: new Map<string, number>(), close: () => undefined };
 		let bwrapArgs: string[];
 		try {
-			bwrapArgs = bubblewrapArgs(policy, command, commandArgs, {
+			bwrapArgs = bubblewrapArgs(rlimits, command, commandArgs, {
 				terminal: options.terminal,
 				disableUserns: state.disableUserns,
 				bridged: ports.length > 0,
@@ -384,6 +550,9 @@ export class BubblewrapBackend implements ISandboxBackend {
 				prlimit: state.prlimit ? { path: state.prlimit, hard } : undefined,
 				sentinel,
 				bindFds: new Map([...opened.fds.keys()].map((path, index) => [path, BUBBLEWRAP_FDS.firstRoot + index])),
+				...(state.landlock ? { landlock: state.landlock } : {}),
+				// systemd-run passes its own environment on to bubblewrap; the workload starts from the policy's.
+				...(scope ? { unsetEnv: [...Object.keys(scope.env), ...SYSTEMD_RUN_ADDS] } : {}),
 			});
 		} catch (err) {
 			opened.close();
@@ -405,17 +574,25 @@ export class BubblewrapBackend implements ISandboxBackend {
 				throw err;
 			}
 		}
-		const limitsText = state.prlimit && hasRlimits(policy.limits) ? 'limits via prlimit' : 'no rlimits';
+		const limitsText = state.prlimit && hasRlimits(rlimits.limits) ? 'limits via prlimit' : 'no rlimits';
 		const patternText = policy.denyPatterns.length || policy.protectPatterns.length
 			? `patterns: ${matches.deny.length + matches.protect.length} existing paths`
 			: '';
+		const layers: Partial<Record<SandboxSecondLayerId, ISandboxLayerState>> = {
+			landlock: state.landlock
+				? { active: true, detail: `ABI ${state.landlock.abi}: reads, writes and devices mirrored before the prologue${state.landlock.abi >= LANDLOCK_SCOPE_ABI ? '; abstract unix sockets and signals scoped' : ''}` }
+				: { active: false, detail: state.absent.landlock ?? 'off' },
+			cgroup: { active: false, detail: state.cgroup ? 'the run has no memory limit' : state.absent.cgroup ?? 'off' },
+		};
 		let status: IStatusInfo | undefined;
 		let disposed = false;
+		const inner = bridge ? [state.nsenter!, ...nsenterArgs(bridge.holderPid, state.bwrap, bwrapArgs)] : [state.bwrap, ...bwrapArgs];
 		return {
-			command: bridge ? state.nsenter! : state.bwrap,
-			args: bridge ? nsenterArgs(bridge.holderPid, state.bwrap, bwrapArgs) : bwrapArgs,
-			// Deliberately empty: see the class comment (the workload's environment goes through `--args`).
-			env: {},
+			command: scope ? scope.facts.systemdRun : inner[0],
+			args: scope ? [...systemdRunArgs(scope.unit, scope.limits), ...inner] : inner.slice(1),
+			// Deliberately empty (see the class comment: the workload's environment goes through `--args`),
+			// except for where systemd-run finds the user manager, which bubblewrap unsets again.
+			env: scope ? { ...scope.env } : {},
 			cwd: '/',
 			// BUBBLEWRAP_FDS: marker, status, args, seccomp, go; then the root fds for --bind-fd (never on a PTY).
 			extraStdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe', ...opened.fds.values()],
@@ -428,29 +605,40 @@ export class BubblewrapBackend implements ISandboxBackend {
 				const result = await confirmLaunch(child, {
 					envArgs, seccomp, home: policy.home, hostNamespaces: state.hostNamespaces, fault: options.fault,
 					expectNet: policy.network.mode === 'host' ? 'host' : bridge ? bridge.netNamespace : 'new',
+					// The workload is attested; before it may run, its scope must be the one asked for.
+					...(scope ? { beforeGo: async (pid: number) => scope.attach(pid) } : {}),
 				});
 				if (!result.ok) {
 					return result;
 				}
 				status = result.status;
+				if (scope) {
+					layers.cgroup = { active: true, detail: scope.describe() };
+					scope.watch(options);
+				}
 				const parts = [
 					`bubblewrap ${state.version.join('.')}`,
 					`namespaces ${Object.keys(result.status.namespaces).join(', ')}, user`,
 					`network ${policy.network.mode}${bridge ? ` (bridged ports ${ports.join(', ')})` : ''}`,
 					`seccomp${blockUnixSockets ? ' (unix sockets refused)' : ''}, NoNewPrivs`,
 					limitsText,
+					...(state.landlock ? [`landlock ABI ${state.landlock.abi}`] : []),
+					...(scope ? [`cgroup ${scope.path}`] : []),
 					...(patternText ? [patternText] : []),
 					`pid ${result.status.childPid}`,
 					`attested from /proc (pid ${result.workloadPid})`,
 				];
+				const evidence = { ...result.evidence, ...(state.landlock ? { landlockAbi: state.landlock.abi } : {}), ...(scope ? { cgroup: scope.path! } : {}) };
 				return {
 					ok: true,
 					detail: parts.join('; '),
-					attestation: { evidence: result.evidence, canary: { credOpen: result.cred }, backendVersion: state.versionText },
+					attestation: { evidence, canary: { credOpen: result.cred }, backendVersion: state.versionText, layers },
 				};
 			},
 			terminate: async child => {
 				opened.close();
+				// One write ends the whole scope (F.10); the pid namespace's init goes with it anyway.
+				await scope?.kill();
 				await killSandbox(child, status);
 				await bridge?.stop();
 			},
@@ -460,6 +648,7 @@ export class BubblewrapBackend implements ISandboxBackend {
 				}
 				disposed = true;
 				opened.close();
+				await scope?.stop(options);
 				await bridge?.stop();
 				await fs.rm(controlDir, { recursive: true, force: true }).catch(() => undefined);
 			},
@@ -880,6 +1069,8 @@ interface IConfirmContext {
 	/** `new`: a namespace of its own; a number: the bridge holder's; `host`: unchanged. */
 	readonly expectNet: 'new' | 'host' | number;
 	readonly fault: SandboxFault | undefined;
+	/** After the attestation, before the go byte: a second layer's own check (the run's scope); an error refuses. */
+	readonly beforeGo?: (workloadPid: number) => Promise<string | undefined>;
 }
 
 type LinuxConfirmation =
@@ -948,6 +1139,14 @@ function confirmLaunch(child: ChildProcess, context: IConfirmContext): Promise<L
 				// The canary counts only now that we know who ran it.
 				if (readyLine.cred !== 'denied') {
 					finish({ ok: false, error: 'the canary could read the run\'s sentinel credential' });
+					return;
+				}
+				const layerProblem = await context.beforeGo?.(attested.pid);
+				if (done || exited) {
+					return;
+				}
+				if (layerProblem) {
+					finish({ ok: false, error: layerProblem });
 					return;
 				}
 				if (context.fault === 'withhold-go') {
@@ -1189,6 +1388,176 @@ async function isLiveMember(pid: number, namespace: NamespaceName, ino: number):
 	const stat = await fs.readFile(`/proc/${pid}/stat`, 'utf8').catch(() => '');
 	const state = stat.slice(stat.lastIndexOf(')') + 2).charAt(0);
 	return state !== '' && state !== 'Z' && state !== 'X';
+}
+
+let scopeCount = 0;
+/** How often a run's scope is read for the kernel's OOM and pids events (a change to memory.events also wakes a watcher). */
+const CGROUP_POLL_MS = 500;
+const MB = 1024 * 1024;
+
+/**
+ * One run's systemd user scope (F.8, F.10). `systemd-run --scope` moves itself into the new scope
+ * and then becomes the run's first process, so bubblewrap and everything below it are in it from
+ * the start, under memory.max and pids.max. Before the go byte the backend checks from outside that
+ * the attested workload is in that scope with those limits; then it makes an OOM kill take the
+ * whole scope (memory.oom.group), reports the kernel's OOM kills as a resource violation and the
+ * pids limit as a denial, and ends the scope with one write to cgroup.kill. systemd removes the
+ * scope once it is empty.
+ */
+class CgroupScope {
+
+	readonly env: Readonly<Record<string, string>>;
+	readonly limits: { readonly memoryMB?: number; readonly processes?: number };
+	/** The scope's path below the cgroup root, once attached. */
+	path: string | undefined;
+	private dir: string | undefined;
+	private poll: ReturnType<typeof setInterval> | undefined;
+	private watcher: FSWatcher | undefined;
+	private memoryReported = false;
+	private pidsReported = false;
+
+	constructor(readonly facts: ICgroupFacts, readonly unit: string, limits: ISandboxLimits) {
+		this.env = { XDG_RUNTIME_DIR: facts.runtimeDir };
+		this.limits = {
+			...(limits.memoryMB !== undefined ? { memoryMB: Math.max(1, Math.floor(limits.memoryMB)) } : {}),
+			...(limits.processes !== undefined && (facts.forProcesses || limits.memoryMB !== undefined) ? { processes: Math.max(1, Math.floor(limits.processes)) } : {}),
+		};
+	}
+
+	get memoryMB(): number | undefined {
+		return this.limits.memoryMB;
+	}
+
+	/** Checks the attested workload is in this scope with its limits; an answer is why not. */
+	async attach(pid: number): Promise<string | undefined> {
+		const text = await fs.readFile(`/proc/${pid}/cgroup`, 'utf8').catch(() => '');
+		const path = /^0::(.*)$/m.exec(text)?.[1]?.trim();
+		if (!path || !path.endsWith(`/${this.unit}.scope`)) {
+			return `the sandbox is not in its own cgroup scope (${path || 'no cgroup v2 entry'})`;
+		}
+		const dir = `/sys/fs/cgroup${path}`;
+		const read = (name: string) => fs.readFile(join(dir, name), 'utf8').then(value => value.trim(), () => 'missing');
+		if (this.limits.memoryMB !== undefined) {
+			const memory = await read('memory.max');
+			if (memory !== String(this.limits.memoryMB * MB)) {
+				return `the sandbox's cgroup scope has memory.max ${memory}, not ${this.limits.memoryMB} MB`;
+			}
+			// An OOM kill takes the whole tree, not its largest process (the backend also kills on the event).
+			await fs.writeFile(join(dir, 'memory.oom.group'), '1').catch(() => undefined);
+		}
+		if (this.limits.processes !== undefined) {
+			const pids = await read('pids.max');
+			if (pids !== String(this.limits.processes)) {
+				return `the sandbox's cgroup scope has pids.max ${pids}, not ${this.limits.processes}`;
+			}
+		}
+		this.path = path;
+		this.dir = dir;
+		return undefined;
+	}
+
+	describe(): string {
+		const limits = [
+			...(this.limits.memoryMB !== undefined ? [`memory.max ${this.limits.memoryMB} MB (whole tree, OOM kills the scope)`] : []),
+			...(this.limits.processes !== undefined ? [`pids.max ${this.limits.processes}`] : []),
+		];
+		return `systemd user scope ${this.path}: ${limits.join(', ')}${this.facts.kill ? '; cgroup.kill ends it' : ''}`;
+	}
+
+	watch(options: Pick<ISandboxLaunchOptions, 'onDenial' | 'onResourceViolation'>): void {
+		if (!this.dir || this.poll) {
+			return;
+		}
+		this.poll = setInterval(() => void this.check(options), CGROUP_POLL_MS);
+		try {
+			this.watcher = watch(join(this.dir, 'memory.events'), () => void this.check(options));
+			this.watcher.on('error', () => undefined);
+		} catch {
+			// The poll still sees it.
+		}
+	}
+
+	/** Reads the scope's events; answers whether memory.events could be read (the scope still exists). */
+	private async check(options: Pick<ISandboxLaunchOptions, 'onDenial' | 'onResourceViolation'>): Promise<boolean> {
+		const dir = this.dir;
+		if (!dir) {
+			return false;
+		}
+		const count = (text: string, name: string) => Number(new RegExp(`^${name} (\\d+)$`, 'm').exec(text)?.[1] ?? 0);
+		let memoryRead = false;
+		if (this.limits.memoryMB !== undefined && !this.memoryReported) {
+			const events = await fs.readFile(join(dir, 'memory.events'), 'utf8').catch(() => undefined);
+			memoryRead = events !== undefined;
+			if (events !== undefined && !this.memoryReported && (count(events, 'oom_kill') > 0 || count(events, 'oom_group_kill') > 0)) {
+				this.memoryReported = true;
+				const peak = await fs.readFile(join(dir, 'memory.peak'), 'utf8').then(value => Math.round(Number(value.trim()) / MB), () => 0);
+				options.onResourceViolation?.({ dimension: 'limits.memory', limit: this.limits.memoryMB, observed: peak > 0 ? peak : this.limits.memoryMB, by: 'cgroup' });
+				await this.kill();
+			}
+		}
+		if (this.limits.processes !== undefined && !this.pidsReported) {
+			const events = await fs.readFile(join(dir, 'pids.events'), 'utf8').catch(() => '');
+			if (!this.pidsReported && count(events, 'max') > 0) {
+				this.pidsReported = true;
+				options.onDenial({ kind: 'limit', target: `processes ${this.limits.processes}`, source: 'os' });
+			}
+		}
+		return memoryRead;
+	}
+
+	/** Every process of the scope, at once (Linux 5.14+); older kernels rely on the pid namespace. */
+	async kill(): Promise<void> {
+		if (this.dir && this.facts.kill) {
+			await fs.writeFile(join(this.dir, 'cgroup.kill'), '1').catch(() => undefined);
+		}
+	}
+
+	/**
+	 * The last accounting, then no more watching. An OOM kill usually ends the run, and systemd
+	 * removes the scope, before memory.events can be read: the user manager keeps the scope loaded
+	 * as failed (`Result=oom-kill`, see systemdRunArgs) until it is read and cleared here.
+	 */
+	async stop(options: Pick<ISandboxLaunchOptions, 'onDenial' | 'onResourceViolation'>): Promise<void> {
+		if (this.poll) {
+			clearInterval(this.poll);
+			this.poll = undefined;
+		}
+		this.watcher?.close();
+		this.watcher = undefined;
+		const memoryRead = await this.check(options);
+		this.dir = undefined;
+		// The run is over: counters read now are final. No OOM in them, nothing to ask (a scope that
+		// ends well unloads itself); otherwise the user manager has the answer and a failed unit to clear.
+		if (this.limits.memoryMB === undefined || (memoryRead && !this.memoryReported)) {
+			return;
+		}
+		const ended = await this.ended();
+		if (ended?.result === 'oom-kill' && this.limits.memoryMB !== undefined && !this.memoryReported) {
+			this.memoryReported = true;
+			options.onResourceViolation?.({ dimension: 'limits.memory', limit: this.limits.memoryMB, observed: this.limits.memoryMB, by: 'cgroup' });
+		}
+		if (ended?.state === 'failed') {
+			await execFileAsync(this.facts.systemctl, ['--user', 'reset-failed', `${this.unit}.scope`], { timeout: 5_000, env: { ...this.env } }).catch(() => undefined);
+		}
+	}
+
+	/** How the user manager says the scope ended, once it has (a scope still stopping is waited for, up to a second). */
+	private async ended(): Promise<{ readonly state: string; readonly result: string } | undefined> {
+		for (let attempt = 0; attempt < 20; attempt++) {
+			const text = await execFileAsync(this.facts.systemctl, ['--user', 'show', '-p', 'LoadState', '-p', 'ActiveState', '-p', 'Result', `${this.unit}.scope`], { timeout: 5_000, env: { ...this.env } })
+				.then(r => r.stdout, () => undefined);
+			if (text === undefined) {
+				return undefined;
+			}
+			const field = (name: string) => new RegExp(`^${name}=(.*)$`, 'm').exec(text)?.[1]?.trim() ?? '';
+			const state = field('ActiveState');
+			if (field('LoadState') === 'not-found' || state === 'inactive' || state === 'failed') {
+				return { state, result: field('Result') };
+			}
+			await new Promise(resolve => setTimeout(resolve, 50));
+		}
+		return undefined;
+	}
 }
 
 /**

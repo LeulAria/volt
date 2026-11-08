@@ -109,6 +109,8 @@ function detailText(row: ISandboxWorkloadInfo): string {
 			localize('voltSecurity.detail.policy', "Launch policy: {0}", attestation.launchPolicyHash),
 			localize('voltSecurity.detail.evidence', "Evidence: {0}", Object.entries(attestation.evidence).map(([key, value]) => `${key}=${value}`).join(', ') || '-'),
 			localize('voltSecurity.detail.canary', "Canary: {0}", Object.entries(attestation.canary).map(([key, value]) => `${key}=${value}`).join(', ') || '-'),
+			// A record from before the second layers (a recovered ledger) has none.
+			localize('voltSecurity.detail.layers', "Second layers: {0}", Object.entries(attestation.layers ?? {}).map(([id, layer]) => `${id} ${layer?.active ? 'on' : 'off'} (${layer?.detail})`).join(', ') || '-'),
 			localize('voltSecurity.detail.attestedAt', "Attested: {0}", new Date(attestation.attestedAt).toLocaleString()),
 		);
 	}
