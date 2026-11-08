@@ -8,6 +8,7 @@ import { Disposable } from '../../../base/common/lifecycle.js';
 import { IProductService } from '../../product/common/productService.js';
 import { ExtensionGalleryResourceType, Flag, IExtensionGalleryManifest, IExtensionGalleryManifestService, ExtensionGalleryManifestStatus } from './extensionGalleryManifest.js';
 import { FilterType, SortBy } from './extensionManagement.js';
+import { hasVoltRegistryPublicKeys } from './voltExtensionSigning.js';
 
 type ExtensionGalleryConfig = {
 	readonly serviceUrl: string;
@@ -224,7 +225,8 @@ export class ExtensionGalleryManifestService extends Disposable implements IExte
 					flags,
 				},
 				signing: {
-					allPublicRepositorySigned: !/^https:\/\/open-vsx\.org\b/i.test(extensionsGallery.serviceUrl),
+					// Volt (INV-29): with the registry's keys pinned, every extension needs a signature or the user's consent.
+					allPublicRepositorySigned: hasVoltRegistryPublicKeys(this.productService) || !/^https:\/\/open-vsx\.org\b/i.test(extensionsGallery.serviceUrl),
 				}
 			}
 		};

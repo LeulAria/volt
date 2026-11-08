@@ -41,6 +41,8 @@ import { areSameExtensions, computeTargetPlatform, ExtensionKey, getGalleryExten
 import { IExtensionsProfileScannerService, IScannedProfileExtension } from '../common/extensionsProfileScannerService.js';
 import { IExtensionsScannerService, IScannedExtension, ManifestMetadata, UserExtensionsScanOptions } from '../common/extensionsScannerService.js';
 import { ExtensionsDownloader } from './extensionDownloader.js';
+import { hasVoltRegistryPublicKeys } from '../common/voltExtensionSigning.js';
+import { isConsentedUnsignedExtension, VoltUnsignedExtensionConsent } from './voltUnsignedExtensionConsent.js';
 import { ExtensionsLifecycle } from './extensionLifecycle.js';
 import { fromExtractError, getManifest } from './extensionManagementUtil.js';
 import { ExtensionsManifestCache } from './extensionsManifestCache.js';
@@ -77,6 +79,9 @@ export class ExtensionManagementService extends AbstractExtensionManagementServi
 
 	private readonly extractingGalleryExtensions = new Map<string, Promise<ExtractExtensionResult>>();
 
+	/** Volt: unsigned extensions the user chose to install (INV-29). */
+	private readonly unsignedConsent: VoltUnsignedExtensionConsent;
+
 	constructor(
 		@IExtensionGalleryService galleryService: IExtensionGalleryService,
 		@ITelemetryService telemetryService: ITelemetryService,
@@ -99,6 +104,7 @@ export class ExtensionManagementService extends AbstractExtensionManagementServi
 		this.extensionsScanner = this._register(instantiationService.createInstance(ExtensionsScanner, extension => extensionLifecycle.postUninstall(extension)));
 		this.manifestCache = this._register(new ExtensionsManifestCache(userDataProfilesService, fileService, uriIdentityService, this, this.logService));
 		this.extensionsDownloader = this._register(instantiationService.createInstance(ExtensionsDownloader));
+		this.unsignedConsent = new VoltUnsignedExtensionConsent(path.join(environmentService.userDataPath, 'volt-unsigned-extensions.json'));
 
 		const extensionsWatcher = this._register(new ExtensionsWatcher(this, this.extensionsScannerService, userDataProfilesService, extensionsProfileScannerService, uriIdentityService, fileService, logService));
 		this._register(extensionsWatcher.onDidChangeExtensionsByAnotherSource(e => this.onDidChangeExtensionsFromAnotherSource(e)));
@@ -316,6 +322,8 @@ export class ExtensionManagementService extends AbstractExtensionManagementServi
 				false,
 				token);
 
+			await this.recordUnsignedConsent(gallery, options.donotVerifySignature);
+
 			if (verificationStatus !== ExtensionSignatureVerificationCode.Success && this.environmentService.isBuilt) {
 				try {
 					await this.extensionsDownloader.delete(location);
@@ -344,13 +352,15 @@ export class ExtensionManagementService extends AbstractExtensionManagementServi
 		}
 		const { location, verificationStatus } = await this.extensionsDownloader.download(extension, operation, verifySignature, clientTargetPlatform);
 		const shouldRequireSignature = shouldRequireRepositorySignatureFor(extension.private, await this.extensionGalleryManifestService.getExtensionGalleryManifest());
+		// Volt (INV-29): with registry keys pinned, the check runs in dev builds and on every platform too.
+		const registryKeysPinned = hasVoltRegistryPublicKeys(this.productService);
 
 		if (
 			verificationStatus !== ExtensionSignatureVerificationCode.Success
 			&& !(verificationStatus === ExtensionSignatureVerificationCode.NotSigned && !shouldRequireSignature)
 			&& verifySignature
-			&& this.environmentService.isBuilt
-			&& (await this.getTargetPlatform()) !== TargetPlatform.LINUX_ARMHF
+			&& (registryKeysPinned || (this.environmentService.isBuilt && (await this.getTargetPlatform()) !== TargetPlatform.LINUX_ARMHF))
+			&& !(await isConsentedUnsignedExtension(verificationStatus, extension.identifier.id, registryKeysPinned, this.unsignedConsent))
 		) {
 			try {
 				await this.extensionsDownloader.delete(location);
@@ -381,7 +391,24 @@ export class ExtensionManagementService extends AbstractExtensionManagementServi
 			throw new ExtensionManagementError(nls.localize('signature verification failed', "Signature verification failed with '{0}' error.", verificationStatus), ExtensionManagementErrorCode.SignatureVerificationInternal);
 		}
 
+		if (registryKeysPinned && verificationStatus === ExtensionSignatureVerificationCode.NotSigned && verifySignature) {
+			this.logService.info(`Installing ${extension.identifier.id}@${extension.version} as an unsigned third-party extension (consented earlier)`);
+		}
+
 		return { location, verificationStatus };
+	}
+
+	/** Volt (INV-29): records "Install Anyway" for an unsigned or unverifiable gallery extension, once per extension. */
+	private async recordUnsignedConsent(extension: IGalleryExtension, donotVerifySignature: boolean | undefined): Promise<void> {
+		if (!donotVerifySignature || !hasVoltRegistryPublicKeys(this.productService)) {
+			return;
+		}
+		this.logService.warn(`Installed ${extension.identifier.id}@${extension.version} as an explicitly unsigned third-party extension`);
+		try {
+			await this.unsignedConsent.grant(extension.identifier.id, extension.version);
+		} catch (error) {
+			this.logService.error('Could not record the consent to an unsigned extension', getErrorMessage(error));
+		}
 	}
 
 	private async extractVSIX(extensionKey: ExtensionKey, location: URI, options: InstallExtensionTaskOptions, token: CancellationToken): Promise<ExtractExtensionResult> {
