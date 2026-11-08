@@ -694,8 +694,9 @@ export interface IPatternWalkResult extends IBubblewrapPatternMatches {
  *
  * `complete` covers the required roots: the workspace, the writes, the patterns' own roots and a
  * home the sandbox can read. With narrow reads the home is not readable, only the toolchains in
- * it (`~/.cargo`, `~/.dotnet`, `~/go`); they are walked after the required roots, with what is
- * left of the budget, best effort: an install of that size would otherwise refuse every run.
+ * it (`~/.cargo`, `~/.dotnet`, `~/go`); they, and the shared temp folders an agent may write
+ * (`/tmp`), are walked after the required roots, with what is left of the budget, best effort: an
+ * install or a busy `/tmp` would otherwise refuse every run.
  */
 export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { collectSockets: boolean }, limits: { readonly [K in keyof typeof PATTERN_WALK_LIMITS]: number } = PATTERN_WALK_LIMITS): Promise<IPatternWalkResult> {
 	type Kind = 'deny' | 'protect';
@@ -709,8 +710,12 @@ export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { co
 	const expandRoot = (pattern: IResolvedPattern): IResolvedPattern[] => pattern.root === '/'
 		? [...new Set([policy.cwd, ...policy.write, ...homeRoots])].map(root => ({ root, names: pattern.names }))
 		: [pattern];
-	// Read-only toolchains in an unreadable home: best effort (see above).
-	const required = (root: string) => homeVisible || !homeRoots.includes(root) || root === policy.cwd || policy.write.includes(root);
+	// Best effort (see above): read-only toolchains in an unreadable home, and the shared temp
+	// folders an agent may write (a busy /tmp is no place for a project's secrets either).
+	const temps = await agentWritableTemps();
+	const bestEffortRoots = new Set([...(homeVisible ? [] : homeRoots.filter(root => !policy.write.includes(root))), ...policy.write.filter(root => temps.includes(root))]);
+	const ownRoots = new Set([...policy.denyPatterns, ...policy.protectPatterns].map(pattern => pattern.root));
+	const required = (root: string) => !bestEffortRoots.has(root) || root === policy.cwd || ownRoots.has(root);
 	for (const pattern of policy.denyPatterns) {
 		patterns.push(...expandRoot(pattern).map(p => ({ kind: 'deny' as const, pattern: p })));
 	}

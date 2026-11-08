@@ -450,7 +450,7 @@ suite('Volt sandbox pattern walk scope (B-27)', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	test('B-27: with narrow reads the unreadable home is not walked, and its toolchains are best effort: neither refuses the run', async () => {
+	test('B-27: with narrow reads the unreadable home is not walked, and its toolchains and the shared temp are best effort: none refuses the run', async () => {
 		const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'volt-walk-')));
 		try {
 			const home = join(root, 'home');
@@ -477,6 +477,10 @@ suite('Volt sandbox pattern walk scope (B-27)', () => {
 			const narrow = await walkPatterns(base, { collectSockets: false }, limits);
 			assert.strictEqual(narrow.complete, true, 'the workspace was walked whole; the rest of the home is not walked, the toolchain only best effort');
 			assert.deepStrictEqual(narrow.deny.map(match => match.path).sort(), [join(tools, '.env'), join(ws, 'src', '.env')].sort());
+
+			// The shared temp folder an agent may write is best effort too (this fixture alone is more than the limits).
+			const temp = await fs.realpath(tmpdir());
+			assert.strictEqual((await walkPatterns({ ...base, write: [ws, temp] }, { collectSockets: false }, limits)).complete, true);
 
 			// A workspace the walk cannot finish still refuses.
 			for (let d = 0; d < 40; d++) {
