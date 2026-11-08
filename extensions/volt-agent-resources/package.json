@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,46 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "agentResources",
+			"label": "Agent Resources",
+			"description": "What each harness loads (instructions, skills, agents, MCP) and in what order, in the files sidebar and its own page.",
+			"category": "resources",
+			"icon": "library",
+			"order": 20,
+			"commands": [
+				"volt.agent.openAgentResources"
+			],
+			"settings": [
+				"volt.agentResources."
+			]
+		},
+		"voltDock": [
+			{
+				"id": "resources",
+				"label": "Agent Resources"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "files.read:workspace",
+					"class": "low"
+				},
+				{
+					"id": "files.read:home",
+					"class": "critical",
+					"targets": [
+						"~/.claude/*",
+						"~/.codex/*",
+						"~/.cursor/*",
+						"~/.config/opencode/*",
+						"~/.agents/*"
+					],
+					"reason": "What each harness loads from its own folder; never credentials."
+				}
+			]
+		}
+	}
 }

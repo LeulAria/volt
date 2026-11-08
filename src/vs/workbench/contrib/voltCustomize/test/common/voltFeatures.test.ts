@@ -6,7 +6,9 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { voltPartIdFromContext } from '../../common/voltCustomizeContext.js';
-import { VOLT_FEATURE_CATEGORIES, VOLT_FEATURES, voltFeatureOwning, voltFeatureSettingMatches } from '../../common/voltFeatures.js';
+import { HOST_TOOL_SANDBOX_CLASSES } from '../../../../services/voltRuntime/common/hostToolSandbox.js';
+import { VOLT_FEATURE_MANIFESTS } from '../../common/voltFeatureManifests.generated.js';
+import { loadVoltFeatures, VOLT_FEATURE_CATEGORIES, VOLT_FEATURES, VOLT_FEATURES_HAND_WRITTEN, VOLT_FEATURES_SOURCE, VoltFeatureCategoryId, voltFeatureOwning, voltFeatureSettingMatches } from '../../common/voltFeatures.js';
 import { resolveVoltSlotPlacement, unplacedVoltSlotItems, VOLT_SLOT_ITEMS } from '../../common/voltSlots.js';
 
 suite('Volt features', () => {
@@ -63,6 +65,33 @@ suite('Volt features', () => {
 		assert.strictEqual(voltPartIdFromContext('<volt_capability id="volt/usage" label="Usage" kind="feature">\nmore'), 'volt/usage');
 		assert.strictEqual(voltPartIdFromContext('<volt_part id="composer" label="Message box">'), 'composer');
 		assert.strictEqual(voltPartIdFromContext('<volt_other id="x">'), undefined);
+	});
+
+	test('M1 catalog parity: the catalog generated from the manifests deep-equals the hand-written one', () => {
+		assert.deepStrictEqual(VOLT_FEATURES_SOURCE, { source: 'manifests' });
+		assert.strictEqual(VOLT_FEATURE_MANIFESTS.length, 30);
+		assert.deepStrictEqual(VOLT_FEATURES, VOLT_FEATURES_HAND_WRITTEN);
+	});
+
+	test('M1 rollback: manifests that do not validate fall back to the hand-written catalog', () => {
+		const broken = VOLT_FEATURE_MANIFESTS.map(manifest => manifest.name === 'usage'
+			? { ...manifest, contributes: { ...manifest.contributes, voltModule: { ...manifest.contributes!.voltModule!, category: 'nowhere' as VoltFeatureCategoryId } } }
+			: manifest);
+		const loaded = loadVoltFeatures(broken);
+		assert.strictEqual(loaded.source, 'hand-written');
+		assert.match(loaded.error ?? '', /volt\.usage: contributes\.voltModule\.category/);
+		assert.strictEqual(loaded.features, VOLT_FEATURES_HAND_WRITTEN);
+		// Two manifests claiming one feature id also fall back.
+		const twice = [...VOLT_FEATURE_MANIFESTS, { ...VOLT_FEATURE_MANIFESTS[0], name: 'copy' }];
+		assert.strictEqual(loadVoltFeatures(twice).source, 'hand-written');
+	});
+
+	test('M1: a manifest tool declares the class Volt gives it', () => {
+		for (const manifest of VOLT_FEATURE_MANIFESTS) {
+			for (const tool of manifest.contributes?.voltTools ?? []) {
+				assert.strictEqual(tool.class, HOST_TOOL_SANDBOX_CLASSES[tool.name], `${manifest.name}: ${tool.name}`);
+			}
+		}
 	});
 
 	test('setting prefixes match keys under them only', () => {

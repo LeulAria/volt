@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,37 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.grok",
+			"label": "Grok",
+			"description": "Grok (xAI) models.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 40
+		},
+		"voltAgents": [
+			{
+				"id": "grok",
+				"label": "Grok",
+				"binary": "grok",
+				"args": [
+					"agent",
+					"stdio"
+				],
+				"models": {
+					"source": "acp"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.use:grok",
+					"class": "high",
+					"reason": "The provider's sign-in or API key."
+				}
+			]
+		}
+	}
 }

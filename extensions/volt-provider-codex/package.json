@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,33 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.codex",
+			"label": "Codex",
+			"description": "Codex (OpenAI's CLI) and OpenAI API models.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 20
+		},
+		"voltAgents": [
+			{
+				"id": "codex",
+				"label": "Codex",
+				"binary": "codex",
+				"models": {
+					"source": "acp"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.use:codex",
+					"class": "high",
+					"reason": "The provider's sign-in or API key."
+				}
+			]
+		}
+	}
 }

@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,36 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.opencode",
+			"label": "OpenCode",
+			"description": "OpenCode and OpenCode Go models.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 50
+		},
+		"voltAgents": [
+			{
+				"id": "opencode",
+				"label": "OpenCode",
+				"binary": "opencode",
+				"args": [
+					"acp"
+				],
+				"models": {
+					"source": "acp"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.use:opencode",
+					"class": "high",
+					"reason": "The provider's sign-in or API key."
+				}
+			]
+		}
+	}
 }

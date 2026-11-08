@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,53 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "usage",
+			"label": "Usage",
+			"description": "Usage limits and runway for every account, the Usage page and button, and its side toolbar section.",
+			"category": "productivity",
+			"icon": "pulse",
+			"order": 20,
+			"commands": [
+				"workbench.action.voltAgent.usage"
+			]
+		},
+		"voltSlotItems": [
+			{
+				"id": "volt.usage",
+				"label": "Usage"
+			}
+		],
+		"voltSettingsPages": [
+			{
+				"id": "usage",
+				"label": "Usage"
+			}
+		],
+		"voltDock": [
+			{
+				"id": "usage",
+				"label": "Usage"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "usage.report",
+					"class": "low"
+				},
+				{
+					"id": "net.connect",
+					"class": "low",
+					"reason": "Each provider's usage endpoint."
+				},
+				{
+					"id": "secrets.use:*",
+					"class": "high",
+					"reason": "Each account's sign-in, to read its limits."
+				}
+			]
+		}
+	}
 }

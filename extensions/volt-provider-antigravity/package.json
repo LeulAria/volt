@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,36 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.antigravity",
+			"label": "Antigravity",
+			"description": "Antigravity and Gemini models.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 70
+		},
+		"voltAgents": [
+			{
+				"id": "antigravity",
+				"label": "Antigravity",
+				"binary": "agy",
+				"args": [
+					"acp"
+				],
+				"models": {
+					"source": "acp"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.use:antigravity",
+					"class": "high",
+					"reason": "The provider's sign-in or API key."
+				}
+			]
+		}
+	}
 }
