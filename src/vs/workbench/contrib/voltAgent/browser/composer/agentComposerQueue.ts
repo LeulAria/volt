@@ -44,8 +44,10 @@ export interface IAgentComposerQueueOptions {
 	onSendNow?(id: string): void;
 	/** Send this prompt in a new chat, whose agent starts with this chat's conversation as a condensed handoff. */
 	onSendToNewChat?(id: string): void;
-	/** The queue was paused by an error or left idle: send the next prompt and keep draining. */
+	/** The queue was paused (by the user, an error, or left idle): send the next prompt and keep draining. */
 	onResume?(): void;
+	/** Hold the queue: nothing queued goes, not even when the running turn ends, until Resume. */
+	onPause?(): void;
 	onCancelEdit?(): void;
 	/** A subagent row was clicked: open its chat beside this one. */
 	onOpenAgent?(view: ISubagentView): void;
@@ -80,13 +82,14 @@ export interface IAgentQueueHost {
 	sendQueuedNow(id: string): void;
 	sendQueuedToNewChat(id: string): void;
 	resumeQueue(): void;
+	pauseQueue(): void;
 }
 
 /**
  * What a queued row does, the same in the chat's card and in the browser dock's: remove, clear,
- * reorder, edit (in `surface`, else the chat's composer), send now, send in a new chat, resume.
+ * reorder, edit (in `surface`, else the chat's composer), send now, send in a new chat, pause, resume.
  */
-export function queueRowActions(host: () => IAgentQueueHost | undefined, surface?: IAgentQueueEditSurface): Pick<IAgentComposerQueueOptions, 'onRemove' | 'onClear' | 'onReorder' | 'onEdit' | 'onCancelEdit' | 'onSendNow' | 'onSendToNewChat' | 'onResume'> {
+export function queueRowActions(host: () => IAgentQueueHost | undefined, surface?: IAgentQueueEditSurface): Pick<IAgentComposerQueueOptions, 'onRemove' | 'onClear' | 'onReorder' | 'onEdit' | 'onCancelEdit' | 'onSendNow' | 'onSendToNewChat' | 'onResume' | 'onPause'> {
 	return {
 		onRemove: id => host()?.removeQueuedPrompt(id),
 		onClear: () => host()?.clearPromptQueue(),
@@ -96,6 +99,7 @@ export function queueRowActions(host: () => IAgentQueueHost | undefined, surface
 		onSendNow: id => host()?.sendQueuedNow(id),
 		onSendToNewChat: id => host()?.sendQueuedToNewChat(id),
 		onResume: () => host()?.resumeQueue(),
+		onPause: () => host()?.pauseQueue(),
 	};
 }
 
@@ -105,10 +109,11 @@ export interface IAgentComposerAgents {
 	readonly conflicts: readonly { readonly path: string; readonly titles: readonly string[]; readonly taskIds?: readonly string[] }[];
 }
 
-/** Why the queue is not draining on its own: stopped, an error, a restart, or too many automatic wake-ups. */
-export type QueuePause = 'stopped' | 'failed' | 'interrupted' | 'wakeups';
+/** Why the queue is not draining on its own: the user paused it, stopped, an error, a restart, or too many automatic wake-ups. */
+export type QueuePause = 'user' | 'stopped' | 'failed' | 'interrupted' | 'wakeups';
 
 export interface IAgentComposerQueueState {
+	/** Set while a turn runs only for the user's pause (`user`): the others are about an idle chat. */
 	readonly paused?: QueuePause;
 	/** The queued prompt loaded into the composer for editing. */
 	readonly editingId?: string;
@@ -130,6 +135,7 @@ export function queueSendNowLabels(state: Pick<IAgentComposerQueueState, 'runnin
 
 export function queuePauseLabel(pause: QueuePause): string {
 	switch (pause) {
+		case 'user': return localize('voltAgent.queue.pausedUser', "Paused");
 		case 'failed': return localize('voltAgent.queue.pausedError', "Paused after an error");
 		case 'interrupted': return localize('voltAgent.queue.pausedRestart', "Paused after a restart");
 		case 'wakeups': return localize('voltAgent.queue.pausedWakeups', "Paused");
@@ -139,6 +145,7 @@ export function queuePauseLabel(pause: QueuePause): string {
 
 function queuePauseHint(pause: QueuePause): string {
 	switch (pause) {
+		case 'user': return localize('voltAgent.queue.pausedUserHint', "Queued messages wait until you resume, even when the agent finishes.");
 		case 'failed': return localize('voltAgent.queue.pausedErrorHint', "The last run failed, so queued prompts wait instead of going to the same provider right away. Resume sends them now.");
 		case 'interrupted': return localize('voltAgent.queue.pausedRestartHint', "Volt restarted while this chat worked. Resume continues now.");
 		case 'wakeups': return localize('voltAgent.queue.pausedWakeupsHint', "Subagent reports woke this chat many times in a row without you. Resume to keep going.");
@@ -360,7 +367,7 @@ export class AgentComposerQueue extends Disposable {
 		const count = this.items.length;
 		// The agents live in the composer's chip (its menu lists them and their file conflicts); the card
 		// keeps them only while their reports wait for Resume.
-		const agents = this.state.paused ? this.shownAgents().length : 0;
+		const agents = this.waitsForResume ? this.shownAgents().length : 0;
 		this.queueEl.classList.toggle('hidden', count === 0);
 		this.agentsElement.classList.toggle('hidden', agents === 0);
 		this.agentsElement.classList.toggle('expanded', !this.agentsCollapsed);
@@ -398,6 +405,11 @@ export class AgentComposerQueue extends Disposable {
 		this.element.classList.toggle('has-tasks', this.tasksCard.visible);
 	}
 
+	/** Nothing runs and the queue is paused: queued prompts and subagent reports wait for Resume. */
+	private get waitsForResume(): boolean {
+		return !!this.state.paused && !this.state.running;
+	}
+
 	/**
 	 * With the side toolbar open beside the chat, its agents list (and the composer's agents chip)
 	 * show this chat's agents: the card keeps them only while their reports wait for Resume.
@@ -406,7 +418,7 @@ export class AgentComposerQueue extends Disposable {
 		if (!this.agentsInDock) {
 			return this.agents.views;
 		}
-		return this.state.paused ? this.agents.views.filter(view => isLiveSubagentState(view.state)) : [];
+		return this.waitsForResume ? this.agents.views.filter(view => isLiveSubagentState(view.state)) : [];
 	}
 
 	private renderAgents(section: HTMLElement): void {
@@ -575,11 +587,14 @@ export class AgentComposerQueue extends Disposable {
 				e.stopPropagation();
 				this.options.onCancelEdit?.();
 			}));
-		} else if (this.state.paused && !this.state.running && this.options.onResume) {
+		} else if (this.state.paused && this.options.onResume) {
+			// The user's pause shows while the agent works too (when that turn ends is when it holds the queue).
 			const resume = append(actions, $('button.volt-agent-queue-text-btn.primary')) as HTMLButtonElement;
 			resume.type = 'button';
 			resume.textContent = localize('voltAgent.queue.resume', "Resume");
-			setAgentTooltip(resume, localize('voltAgent.queue.resumeHint', "Send the next queued prompt"));
+			setAgentTooltip(resume, this.state.running
+				? localize('voltAgent.queue.resumeAfterHint', "Let queued messages go again, after the running turn")
+				: localize('voltAgent.queue.resumeHint', "Send the next queued prompt"));
 			this.listeners.add(addDisposableListener(resume, 'click', e => {
 				e.preventDefault();
 				e.stopPropagation();
@@ -628,6 +643,20 @@ export class AgentComposerQueue extends Disposable {
 					e.preventDefault();
 					e.stopPropagation();
 					this.options.onMultitask();
+				}));
+			}
+			const onPause = this.options.onPause;
+			if (!this.state.paused && onPause) {
+				// Holds the queue: the running turn finishes, and what is queued waits for Resume.
+				const pause = append(actions, $('button.volt-agent-queue-remove')) as HTMLButtonElement;
+				pause.type = 'button';
+				pause.setAttribute('aria-label', localize('voltAgent.queue.pause', "Pause queue"));
+				setAgentTooltip(pause, localize('voltAgent.queue.pauseHint', "Pause the queue: queued messages wait until you resume, even when the agent finishes"));
+				pause.appendChild(renderIcon(Codicon.debugPause));
+				this.listeners.add(addDisposableListener(pause, 'click', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					onPause();
 				}));
 			}
 		}

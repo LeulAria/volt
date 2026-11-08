@@ -28,6 +28,7 @@ import { IVoltSessionContextService } from '../../../services/voltRuntime/common
 import { DEVICE_REMOTE_HOSTS_SETTING } from '../common/agentDevices.js';
 import { AgentDevicesService, IAgentDevicesService } from '../browser/devices/agentDevicesService.js';
 import { DEVICE_EDITOR_ID, DeviceFloat, DevicePreviewEditor, DevicePreviewEditorInput, DevicePreviewEditorInputSerializer } from '../browser/devices/deviceEditor.js';
+import { agentIdeScope, onDidChangeAgentIdeScope } from '../browser/workspace/agentIdeWorkspace.js';
 import { startAgentChat } from '../browser/workspace/agentPanels.js';
 import { agentSessionToolTabs, agentToolsSessionOnScreen, isAgentChatOnScreen, liveAgentToolsPart, openInAgentTools, openInChatTools, revealAgentToolEditor } from '../browser/workspace/agentSurfaceHost.js';
 import { IAgentWorkspaceService } from '../browser/workspace/agentWorkspace.js';
@@ -130,11 +131,14 @@ class VoltDevicesContribution extends Disposable implements IWorkbenchContributi
 		this._register(this.instantiationService.createInstance(DeviceFloat));
 		this._register(this.editorService.onDidEditorsChange(() => void this.moveOutOfMiddle()));
 		this._register(onDidChangeLayoutMode(() => void this.moveOutOfMiddle()));
+		this._register(onDidChangeAgentIdeScope(() => void this.moveOutOfMiddle()));
 		void this.moveOutOfMiddle();
 	}
 
 	private async moveOutOfMiddle(): Promise<void> {
-		if (this.moving || getLayoutMode(this.layoutService) !== 'agent') {
+		// Leaving the IDE layout puts each tab of the middle back in the chat it came from, which is
+		// not always the chat on screen: only a tab still left over once that is done moves here.
+		if (this.moving || getLayoutMode(this.layoutService) !== 'agent' || agentIdeScope()) {
 			return;
 		}
 		for (const group of this.editorGroupsService.mainPart.groups) {

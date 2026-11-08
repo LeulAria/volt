@@ -90,13 +90,21 @@ export interface IOrchQueueItem {
 	readonly kind?: OrchTurnKind;
 	/** Loaded into the composer for editing: the queue waits at it until it is put back. */
 	readonly held?: boolean;
+	/**
+	 * The user sent it now while the queue was paused (`user`) and the running turn could not take it:
+	 * it goes once that turn has stopped, past the pause; the rest stays held.
+	 */
+	readonly sendNow?: boolean;
 }
 
 /**
  * Why a thread's queue does not drain on its own: the last turn failed, the user stopped it, Volt
  * restarted, or the chat woke itself up too many times in a row (subagent reports, no user turn).
+ * `user`: the user paused the queue (its Pause button). Unlike the others it outlasts the turns that
+ * go out meanwhile (the running one, a prompt the user sends, Volt's restarts of that work) and
+ * automatic pauses do not replace it: only Resume, or the queue running empty, ends it.
  */
-export type OrchPause = 'failed' | 'stopped' | 'interrupted' | 'wakeups' | 'limit';
+export type OrchPause = 'failed' | 'stopped' | 'interrupted' | 'wakeups' | 'limit' | 'user';
 
 /**
  * Settled and archived chats do not run: the orchestrator holds them (`blocked` with one of these
@@ -453,7 +461,7 @@ export type OrchCommandBody =
 	| { readonly type: 'queue.clear'; readonly threadId: string }
 	| { readonly type: 'queue.sendNow'; readonly threadId: string; readonly itemId: string; readonly canSteer?: boolean }
 	| { readonly type: 'queue.resume'; readonly threadId: string }
-	/** Hold the queue until the user resumes it (the chat's project failed to clone, ...). */
+	/** Hold the queue until the user resumes it (the user's Pause, the chat's project failed to clone, ...). */
 	| { readonly type: 'queue.pause'; readonly threadId: string; readonly reason: OrchPause }
 	/** Stop. `cascade`: also stop the subagents this turn started (`turn`) or every live one of the chat (`all`). */
 	| { readonly type: 'turn.cancel'; readonly threadId: string; readonly cascade?: 'turn' | 'all'; readonly reason?: string }

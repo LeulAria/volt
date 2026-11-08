@@ -11,6 +11,7 @@ import type { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from './deviceTools.js';
 import { DESKTOP_TOOL_NAMES } from './desktopTools.js';
+import { isJobWatchToolName } from './jobs/jobWatch.js';
 import { isMemoryToolName } from './memory/voltMemory.js';
 import { PLAYGROUND_TOOL_NAMES } from './playgroundTools.js';
 import type { VoltMode } from './modes.js';
@@ -860,7 +861,7 @@ export function voltHostToolName(name?: string, title?: string): string | undefi
 		const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
 		for (const candidate of [value.replace(TOOL_PREFIX_RE, '').trim(), tail.replace(TOOL_PREFIX_RE, '').trim()]) {
 			const id = candidate.toLowerCase();
-			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (COMMIT_PLAN_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (AUTOMATION_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (DESKTOP_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || (PLAYGROUND_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id) || TERMINAL_READ_TOOL_NAMES.has(id) || id === WORKSPACE_STATUS_TOOL_NAME) {
+			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (COMMIT_PLAN_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (AUTOMATION_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (DESKTOP_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || (PLAYGROUND_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id) || TERMINAL_READ_TOOL_NAMES.has(id) || id === WORKSPACE_STATUS_TOOL_NAME || isJobWatchToolName(id)) {
 				return canonicalHostToolName(id);
 			}
 		}

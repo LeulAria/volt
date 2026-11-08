@@ -1,0 +1,269 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Jobs the agent waits on (agentJobWaitRows.ts): the thread's last child while the agent is idle,
+ * lined up with the agent's reply text (.volt-agent-turn.agent sits 13px in from the column).
+ */
+.volt-agent-job-waits {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	flex-shrink: 0;
+	width: 100%;
+	max-width: 728px;
+	/* The thread puts 20px between exchanges; this belongs to the reply above it. */
+	margin: -6px auto 0;
+	padding: 0 13px;
+	box-sizing: border-box;
+}
+
+.volt-agent-job-wait {
+	position: relative;
+	overflow: hidden;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+}
+
+.volt-agent-job-wait-main {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+	padding: 9px 8px 9px 12px;
+}
+
+.volt-agent-job-wait-mark {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	color: color-mix(in srgb, var(--vscode-foreground) 75%, transparent);
+}
+
+.volt-agent-job-wait-mark .codicon {
+	font-size: 15px;
+}
+
+.volt-agent-job-wait.done .volt-agent-job-wait-mark {
+	color: var(--vscode-testing-iconPassed, #73c991);
+}
+
+.volt-agent-job-wait.failed .volt-agent-job-wait-mark {
+	color: var(--vscode-testing-iconFailed, #f14c4c);
+}
+
+.volt-agent-job-wait.timedOut .volt-agent-job-wait-mark,
+.volt-agent-job-wait.broken .volt-agent-job-wait-mark {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+/* Three dots that rise and brighten in turn: opacity and transform only, so the compositor runs them. */
+.volt-agent-job-dots {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+}
+
+.volt-agent-job-dots > i {
+	display: block;
+	width: 4px;
+	height: 4px;
+	border-radius: 50%;
+	background: currentColor;
+	opacity: 0.25;
+	animation: volt-agent-job-dot 1.2s ease-in-out infinite;
+}
+
+.volt-agent-job-dots > i:nth-child(2) {
+	animation-delay: 0.16s;
+}
+
+.volt-agent-job-dots > i:nth-child(3) {
+	animation-delay: 0.32s;
+}
+
+@keyframes volt-agent-job-dot {
+	0%, 60%, 100% {
+		opacity: 0.25;
+		transform: translateY(0);
+	}
+	30% {
+		opacity: 1;
+		transform: translateY(-2px);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-agent-job-dots > i {
+		animation: none;
+		opacity: 0.6;
+	}
+}
+
+.monaco-workbench.reduce-motion .volt-agent-job-dots > i {
+	animation: none;
+	opacity: 0.6;
+}
+
+.volt-agent-job-wait-body {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.volt-agent-job-wait-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-agent-job-wait-title {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 13px;
+	font-weight: 500;
+	line-height: 18px;
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-job-wait:not(.running) .volt-agent-job-wait-title {
+	color: color-mix(in srgb, var(--vscode-foreground) 80%, transparent);
+}
+
+.volt-agent-job-wait-percent,
+.volt-agent-job-wait-clock {
+	flex: none;
+	font-size: 12px;
+	line-height: 18px;
+	font-variant-numeric: tabular-nums;
+	color: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+}
+
+.volt-agent-job-wait-percent:empty {
+	display: none;
+}
+
+.volt-agent-job-wait-clock {
+	margin-left: auto;
+}
+
+.volt-agent-job-wait-line {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-family: var(--volt-code-font, var(--monaco-monospace-font, monospace));
+	font-size: 11.5px;
+	line-height: 16px;
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+}
+
+.volt-agent-job-wait-line.placeholder {
+	font-family: inherit;
+	font-size: 12px;
+}
+
+.volt-agent-job-wait-line:empty {
+	display: none;
+}
+
+.volt-agent-job-wait-actions {
+	display: flex;
+	flex: none;
+	gap: 2px;
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+
+.volt-agent-job-wait:hover .volt-agent-job-wait-actions,
+.volt-agent-job-wait:focus-within .volt-agent-job-wait-actions,
+.volt-agent-job-wait:not(.running) .volt-agent-job-wait-actions {
+	opacity: 1;
+}
+
+.volt-agent-job-wait-action {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+	cursor: pointer;
+}
+
+.volt-agent-job-wait-action:hover {
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.volt-agent-job-wait-action:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-agent-job-wait-action .codicon {
+	font-size: 13px;
+}
+
+/* How far along it is: a 2px bar along the card's bottom edge, once the job says. */
+.volt-agent-job-wait-bar {
+	display: none;
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 2px;
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.volt-agent-job-wait.has-progress .volt-agent-job-wait-bar {
+	display: block;
+}
+
+.volt-agent-job-wait-fill {
+	width: 100%;
+	height: 100%;
+	transform: scaleX(0);
+	transform-origin: left center;
+	background: var(--vscode-progressBar-background);
+	transition: transform 400ms ease-out;
+}
+
+/* Volt's notice in the transcript when a job ended (agentEditor renderNotificationTurn). */
+.volt-agent-notification-head.job.done .codicon {
+	color: var(--vscode-testing-iconPassed, #73c991);
+}
+
+.volt-agent-notification-head.job.failed .codicon {
+	color: var(--vscode-testing-iconFailed, #f14c4c);
+}
+
+.volt-agent-notification-head.job.timedOut .codicon,
+.volt-agent-notification-head.job.broken .codicon {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-agent-job-wait.done .volt-agent-job-wait-fill {
+	background: var(--vscode-testing-iconPassed, #73c991);
+}
+
+.volt-agent-job-wait.failed .volt-agent-job-wait-fill {
+	background: var(--vscode-testing-iconFailed, #f14c4c);
+}
