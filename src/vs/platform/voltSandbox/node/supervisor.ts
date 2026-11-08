@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ChildProcess, execFile, spawn } from 'child_process';
+import type { Duplex } from 'stream';
 import { randomBytes } from 'crypto';
 import { promises as fs } from 'fs';
 import { promisify } from 'util';
@@ -15,6 +16,7 @@ import { composeSandboxPolicy } from '../common/sandboxComposition.js';
 import { IAttestation, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { IVoltSandboxPolicy, parseSandboxPolicyLayer, SandboxDimension } from '../common/sandboxSchema.js';
 import { isLiveWorkloadState, ISandboxResourceSample, ISandboxWorkloadInfo, SandboxExitReason, SandboxWorkloadState, summarizeSandboxPolicy } from '../common/sandboxWorkloads.js';
+import { INetworkPrincipalView } from './networkBroker.js';
 import { PrincipalRegistry } from './principalRegistry.js';
 import { IPreparedSandbox, ISandboxLogger, processAlive, RUN_LEDGER_NAME, SandboxManager } from './sandboxManager.js';
 import { ISandboxRunContext } from './sandboxResolver.js';
@@ -78,12 +80,20 @@ export interface IHostStartRequest {
 	readonly stdio?: 'pipe';
 	/** Who the host works for (`chat:<id>`): shown with it, and {@link SandboxSupervisor.stopFor} stops it with them. */
 	readonly onBehalfOf?: { readonly subject: SubjectKey; readonly label?: string };
+	/**
+	 * A raw socketpair for a protocol of the host's own (`volt-plugin/1`, H.3): one more inherited fd
+	 * after the backend's, its number in `VOLT_HOST_CHANNEL_FD`. Like the `ipc` channel it has no
+	 * path and is handed to the caller only after the go byte.
+	 */
+	readonly stream?: boolean;
 	/** Crash restarts; `maxPerMinute: 0` never restarts. Default 3 (F.11). */
 	readonly restart?: { readonly maxPerMinute: number };
 	/** No activity (RPC either way, `touch`) for `afterMs`: idle; for `stopAfterMs`: stopped. Default: never. */
 	readonly idle?: { readonly afterMs: number; readonly stopAfterMs: number };
 	/** Polled limits (F.8): a tree over them is killed (`resource`) and that counts as a crash. */
 	readonly limits?: { readonly memoryMB?: number };
+	/** What the network broker judges a host that is not a chat by (its manifest, or an MCP server's approved hosts). */
+	readonly networkView?: INetworkPrincipalView;
 }
 
 /** Which step refused (F.5 rule 5); `policy`: the Policy Authority refused the launch. */
@@ -118,6 +128,10 @@ export interface ISandboxedHost {
 	readonly onDidChangeState: Event<SandboxWorkloadState>;
 	readonly onExit: Event<IHostExit>;
 	readonly onResource: Event<ISandboxResourceSample>;
+	/** The `stream` channel while it runs (after the go byte); every byte on it is this host's principal's. */
+	readonly channel: Duplex | undefined;
+	/** The id its principal is bound to in the registry (the supervisor's `registry`), while it runs. */
+	readonly channelId: string | undefined;
 	/** Messages from the host on its channel; only after the go byte. */
 	readonly onMessage: Event<unknown>;
 	/** Sends on the channel; false when it is not running or has no channel. */
@@ -165,6 +179,8 @@ export interface ISandboxSupervisorOptions {
 const DEFAULT_MAX_HOSTS = 24;
 const DEFAULT_RESTARTS_PER_MINUTE = 3;
 const STDERR_TAIL_BYTES = 64 * 1024;
+/** Where a `stream` host finds its channel. */
+export const HOST_CHANNEL_FD_ENV = 'VOLT_HOST_CHANNEL_FD';
 /** How long a stopping host may take before its exit counts as done anyway. */
 const STOP_TIMEOUT_MS = 5_000;
 const LEDGER_VERSION = 1;
@@ -216,8 +232,8 @@ export class SandboxSupervisor extends Disposable {
 		if (!this.enabled) {
 			return { ok: false, refused: 'disabled', reason: 'Sandboxed hosts are turned off (volt.sandbox.supervisor.enabled).' };
 		}
-		const ipc = request.ipc ?? 'fork' in request.command;
-		if (ipc && this.manager.backendId === 'mxc') {
+		const ipc = request.ipc ?? ('fork' in request.command && !request.stream);
+		if ((ipc || request.stream) && this.manager.backendId === 'mxc') {
 			// Windows channels are named pipes with a DACL for the container (F.5 step 4); not built yet.
 			return { ok: false, refused: 'ipc', reason: 'A host channel is not available on Windows yet.' };
 		}
@@ -467,7 +483,8 @@ class SandboxHost implements ISandboxedHost {
 	private idleTimer: ReturnType<typeof setTimeout> | undefined;
 	private crashes: number[] = [];
 	private stderr = '';
-	private channelId: string | undefined;
+	private _channelId: string | undefined;
+	private _channel: Duplex | undefined;
 	private _backend: SandboxBackendId;
 	private _attestation: IAttestation | undefined;
 	private _restarts = 0;
@@ -512,6 +529,8 @@ class SandboxHost implements ISandboxedHost {
 	get attestation(): IAttestation | undefined { return this._attestation; }
 	get pid(): number | undefined { return this._state === 'running' || this._state === 'idle' || this._state === 'stopping' ? this.child?.pid : undefined; }
 	get restarts(): number { return this._restarts; }
+	get channel(): Duplex | undefined { return this._state === 'running' || this._state === 'idle' ? this._channel : undefined; }
+	get channelId(): string | undefined { return this._channelId; }
 	get lastResources(): ISandboxResourceSample | undefined { return this._lastResources; }
 
 	stderrTail(): string {
@@ -584,7 +603,7 @@ class SandboxHost implements ISandboxedHost {
 		}
 		let prepared: IPreparedSandbox;
 		try {
-			prepared = await this.supervisor.manager.prepare({ command: file, args, policy, context: request.context, label: request.label, principal: this._principal });
+			prepared = await this.supervisor.manager.prepare({ command: file, args, policy, context: request.context, label: request.label, principal: this._principal, ...(request.networkView ? { networkView: request.networkView } : {}) });
 		} catch (err) {
 			if (err instanceof SandboxUnavailableError) {
 				return this.fail(err.blocking[0] ?? 'probe', err.message);
@@ -596,12 +615,13 @@ class SandboxHost implements ISandboxedHost {
 		this._backend = prepared.backend;
 		const piped = request.stdio === 'pipe';
 		let child: ChildProcess;
+		const streamFd = request.stream ? 3 + prepared.extraStdio.length : undefined;
 		try {
 			child = spawn(prepared.command, [...prepared.args], {
 				cwd: prepared.cwd,
 				// Reserved names last (F.7): Node as Node; `NODE_CHANNEL_FD` Node itself adds for the `ipc` entry.
-				env: { ...prepared.env, ...(fork ? { ELECTRON_RUN_AS_NODE: '1' } : {}) },
-				stdio: [piped ? 'pipe' : 'ignore', piped ? 'pipe' : 'ignore', 'pipe', ...prepared.extraStdio, ...(this.ipc ? ['ipc' as const] : [])],
+				env: { ...prepared.env, ...(fork ? { ELECTRON_RUN_AS_NODE: '1' } : {}), ...(streamFd !== undefined ? { [HOST_CHANNEL_FD_ENV]: String(streamFd) } : {}) },
+				stdio: [piped ? 'pipe' : 'ignore', piped ? 'pipe' : 'ignore', 'pipe', ...prepared.extraStdio, ...(streamFd !== undefined ? ['pipe' as const] : []), ...(this.ipc ? ['ipc' as const] : [])],
 				detached: true,
 				windowsHide: true,
 			});
@@ -662,6 +682,22 @@ class SandboxHost implements ISandboxedHost {
 		this._attestation = prepared.attestation();
 		this.released = true;
 		// Only now is the channel open to anyone (F.5 step 4).
+		if (streamFd !== undefined) {
+			const stream = child.stdio[streamFd] as Duplex | null;
+			if (!stream) {
+				this.stopReason = 'refused';
+				await prepared.terminate(child);
+				await this.exited;
+				return this.fail('ipc', 'The host\'s channel could not be opened.');
+			}
+			stream.on('error', () => undefined);
+			stream.on('data', () => {
+				if (this._state === 'running' || this._state === 'idle') {
+					this.activity();
+				}
+			});
+			this._channel = stream;
+		}
 		if (this.ipc) {
 			child.on('message', message => {
 				if (this._state === 'running' || this._state === 'idle') {
@@ -670,14 +706,14 @@ class SandboxHost implements ISandboxedHost {
 				}
 			});
 			child.on('error', () => undefined);
-			if (this.supervisor.registry) {
-				this.channelId = `host:${this.id}:${prepared.tag}`;
-				try {
-					this.supervisor.registry.bind(this.channelId, this._principal);
-				} catch (err) {
-					this.logger.warn(`[volt-sandbox] host ${this.label}: its principal could not be bound to the channel: ${(err as Error).message}`);
-					this.channelId = undefined;
-				}
+		}
+		if ((this.ipc || this._channel) && this.supervisor.registry) {
+			this._channelId = `host:${this.id}:${prepared.tag}`;
+			try {
+				this.supervisor.registry.bind(this._channelId, this._principal);
+			} catch (err) {
+				this.logger.warn(`[volt-sandbox] host ${this.label}: its principal could not be bound to the channel: ${(err as Error).message}`);
+				this._channelId = undefined;
 			}
 		}
 		await this.writeLedger(prepared, child);
@@ -725,10 +761,11 @@ class SandboxHost implements ISandboxedHost {
 		if (child.connected) {
 			child.disconnect();
 		}
-		if (this.channelId) {
-			this.supervisor.registry?.closeChannel(this.channelId);
-			this.channelId = undefined;
+		if (this._channelId) {
+			this.supervisor.registry?.closeChannel(this._channelId);
+			this._channelId = undefined;
 		}
+		this._channel = undefined;
 		await prepared.dispose();
 		if (this.prepared === prepared) {
 			this.child = undefined;

@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { IVoltPluginAvailability, IVoltPluginFolders, IVoltPluginStatus, IVoltPluginToolRequest, IVoltPluginToolResult } from '../../../../platform/voltPlugins/common/pluginHosts.js';
 import { IChannel, ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../../../platform/voltGit/common/hostGit.js';
 import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltPromptBudget, IVoltSandboxApproval, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../../../../platform/voltStdio/common/voltStdio.js';
@@ -92,6 +93,12 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	async trustPromptBudgets(): Promise<readonly IVoltPromptBudget[]> { return this.inner.trustPromptBudgets ? this.inner.trustPromptBudgets() : []; }
 	async resetPromptBudgets(subject?: SubjectKey): Promise<void> { await this.inner.resetPromptBudgets?.(subject); }
 	get onDidChangeTrust() { return this.inner.onDidChangeTrust; }
+	get onDidChangePlugins() { return this.inner.onDidChangePlugins; }
+	pluginAvailability(): Promise<IVoltPluginAvailability> { return this.inner.pluginAvailability ? this.inner.pluginAvailability() : Promise.resolve({ sandboxed: false, refused: 'This Volt has no plugin hosts.' }); }
+	invokePluginTool(request: IVoltPluginToolRequest): Promise<IVoltPluginToolResult> { return this.inner.invokePluginTool ? this.inner.invokePluginTool(request) : Promise.resolve({ error: 'This Volt has no plugin hosts.' }); }
+	async pluginContext(plugin: string, folders: IVoltPluginFolders): Promise<string | undefined> { return this.inner.pluginContext?.(plugin, folders); }
+	async pluginStatus(): Promise<readonly IVoltPluginStatus[]> { return this.inner.pluginStatus ? this.inner.pluginStatus() : []; }
+	async restartPlugin(plugin: string): Promise<void> { await this.inner.restartPlugin?.(plugin); }
 }
 
 function isStdioService(source: IChannel | IVoltStdioService): source is IVoltStdioService {

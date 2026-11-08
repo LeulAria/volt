@@ -74,7 +74,15 @@ export interface IServerWorkbenchOptions {
 	readonly usage?: VoltUsageService;
 	/** The agent server's pull request service, shared with paired phones' git screens. */
 	readonly pullRequests?: IVoltPullRequestService;
+	/**
+	 * The agent server's stdio service, whose T2 plugin hosts (Memory) browser windows share: one
+	 * host per plugin on this machine-side process, not one more for the workbench (H.6).
+	 */
+	readonly plugins?: VoltStdioService;
 }
+
+/** The stdio channel's T2 plugin calls and event (`IVoltStdioService`). */
+const PLUGIN_COMMANDS: ReadonlySet<string> = new Set(['pluginAvailability', 'invokePluginTool', 'pluginContext', 'pluginStatus', 'restartPlugin']);
 
 /**
  * Volt's workbench in the browser, as code-server does it: VS Code's own server (remote extension
@@ -379,7 +387,7 @@ export class ServerWorkbench extends Disposable {
 				stdio.release(owner);
 			}
 		}));
-		socketServer.registerChannel(VOLT_STDIO_CHANNEL_NAME, stdioChannel(stdio, ownerOf, store));
+		socketServer.registerChannel(VOLT_STDIO_CHANNEL_NAME, stdioChannel(stdio, ownerOf, store, this.options.plugins));
 
 		socketServer.registerChannel(VOLT_GIT_CHANNEL_NAME, ProxyChannel.fromService(git, store));
 		if (codeIndex) {
@@ -445,11 +453,18 @@ class WorkbenchStdioService extends VoltStdioService {
 	}
 }
 
-/** As the desktop's channel: `spawn` and `exec` record the window, and output goes only to it. */
-function stdioChannel(service: WorkbenchStdioService, ownerOf: (ctx: RemoteAgentConnectionContext) => string, store: DisposableStore): IServerChannel<RemoteAgentConnectionContext> {
+/**
+ * As the desktop's channel: `spawn` and `exec` record the window, and output goes only to it. T2
+ * plugin calls go to `plugins` (the agent server's stdio service) when given.
+ */
+export function stdioChannel(service: VoltStdioService, ownerOf: (ctx: RemoteAgentConnectionContext) => string, store: DisposableStore, plugins?: VoltStdioService): IServerChannel<RemoteAgentConnectionContext> {
 	const proxied = ProxyChannel.fromService(service, store);
+	const pluginsProxied = plugins ? ProxyChannel.fromService(plugins, store) : undefined;
 	return {
 		call<T>(ctx: RemoteAgentConnectionContext, command: string, arg?: unknown, token?: CancellationToken): Promise<T> {
+			if (pluginsProxied && PLUGIN_COMMANDS.has(command)) {
+				return pluginsProxied.call<T>(ctx, command, arg, token);
+			}
 			if (command === 'spawn') {
 				return service.spawnFor(ownerOf(ctx), (arg as [IVoltStdioSpawnOptions])[0]) as Promise<unknown> as Promise<T>;
 			}
@@ -471,6 +486,9 @@ function stdioChannel(service: WorkbenchStdioService, ownerOf: (ctx: RemoteAgent
 			}
 			if (event === 'onExit') {
 				return Event.filter(service.onExit, e => service.ownerOf(e.id) === ownerOf(ctx)) as Event<unknown> as Event<T>;
+			}
+			if (pluginsProxied && event === 'onDidChangePlugins') {
+				return pluginsProxied.listen<T>(ctx, event, arg);
 			}
 			return proxied.listen<T>(ctx, event, arg);
 		},

@@ -10,6 +10,7 @@ import { SANDBOX_SUPERVISOR_SETTING } from '../../../../platform/voltSandbox/com
 import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { FlowGrantSync } from './flowGrantSync.js';
 import { InstallSheetContribution } from './installSheet.js';
+import './voltPluginHosts.js';
 
 /**
  * Volt's Security page (spec M.3 C5): the sandboxed processes section is

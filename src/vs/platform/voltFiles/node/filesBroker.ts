@@ -28,7 +28,9 @@ import { ISafeOpenOptions, ISafeOpenRequest, realPathOfNearest, SafeOpenError, s
  * ever leaves the broker (revocable grants are mediated I/O; F.9).
  *
  * Methods: `open {path, mode}` -> `{handle, size?}`; `read {handle, offset?, length?}` -> `{data,
- * eof}`; `write {handle, data}` (the file's whole content); `stat {handle}`; `close {handle}`.
+ * eof}`; `write {handle, data}` (the file's whole content); `stat {handle}`; `close {handle}`;
+ * `list {path}` -> `{entries}` (a folder's files and folders, judged as a read of the folder);
+ * `delete {path}` (one file, judged as a write; never through a symlink).
  */
 
 interface IOpenHandle {
@@ -150,6 +152,8 @@ export class FilesBroker extends Disposable implements IBroker {
 			case 'write': return this.write(context, args);
 			case 'stat': return this.stat(context, args);
 			case 'close': return this.close(context, args);
+			case 'list': return this.list(context, args);
+			case 'delete': return this.delete(context, args);
 		}
 		throw new BrokerError('invalid', `the files broker has no method ${String(method)}`);
 	}
@@ -236,6 +240,69 @@ export class FilesBroker extends Disposable implements IBroker {
 			this.handles.delete(handle.id);
 			await handle.file?.close().catch(() => undefined);
 		});
+	}
+
+	/** A folder's files and folders (at most 1000), judged as a read of the folder; nothing is followed through a symlink. */
+	async list(context: ICallContext, args: unknown): Promise<{ readonly entries: readonly { readonly name: string; readonly kind: 'file' | 'directory' }[] }> {
+		return this.audited(context, 'list', args, async () => {
+			const { given, path } = await this.named(context, args, 'read');
+			const stat = await fs.lstat(path).catch(() => undefined);
+			if (!stat) {
+				throw new BrokerError('io', `${given} does not exist`);
+			}
+			if (!stat.isDirectory()) {
+				throw new BrokerError('invalid', `${given} is not a folder`);
+			}
+			const entries = await fs.readdir(path, { withFileTypes: true });
+			// The folder must still be the one judged (a swap for a symlink in between is refused).
+			if (await fs.realpath(path).catch(() => undefined) !== path) {
+				throw new BrokerError('denied', `${given} changed while it was listed`);
+			}
+			return {
+				entries: entries.filter(entry => entry.isFile() || entry.isDirectory()).slice(0, 1000)
+					.map(entry => ({ name: entry.name, kind: entry.isDirectory() ? 'directory' as const : 'file' as const })),
+			};
+		});
+	}
+
+	/** Deletes one file, judged as a write. A symlink anywhere in the path, or at the file, is refused. */
+	async delete(context: ICallContext, args: unknown): Promise<{ readonly deleted: boolean }> {
+		return this.audited(context, 'delete', args, async () => {
+			const { given, path, scope } = await this.named(context, args, 'write');
+			const stat = await fs.lstat(given).catch(() => undefined);
+			if (!stat) {
+				return { deleted: false };
+			}
+			if (stat.isSymbolicLink() || given !== path) {
+				throw new BrokerError('denied', `${given} is reached through a symlink, which is never deleted through`);
+			}
+			if (!stat.isFile()) {
+				throw new BrokerError('invalid', `${given} is not a file`);
+			}
+			const parent = given.slice(0, given.lastIndexOf(sep)) || sep;
+			if (await fs.realpath(parent).catch(() => undefined) !== parent) {
+				throw new BrokerError('denied', `${given} changed while it was deleted`);
+			}
+			await this.recordBuildEntries(context, scope, path);
+			await fs.unlink(given);
+			return { deleted: true };
+		});
+	}
+
+	/** A path argument, validated, resolved and authorized for `mode` (list and delete name paths, not handles). */
+	private async named(context: ICallContext, args: unknown, mode: FilesAccess): Promise<{ readonly given: string; readonly path: string; readonly scope: IFilesScope }> {
+		this.authenticate(context);
+		const input = record(args);
+		const scope = this.scopeOf(context.principal);
+		let given: string;
+		try {
+			given = validateBrokerPath(input.path, scope.platform);
+		} catch (err) {
+			throw new BrokerError('invalid', err instanceof FilesBrokerPathError ? err.message : String(err));
+		}
+		const path = await realPathOfNearest(given);
+		await this.authorize(context, scope, given, path, mode);
+		return { given, path, scope };
 	}
 
 	/** Every handle of `principalId` stops working now (its principal was revoked or its grant narrowed to nothing). */

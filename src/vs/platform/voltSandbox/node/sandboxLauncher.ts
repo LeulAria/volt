@@ -8,7 +8,7 @@ import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import { Emitter, Event } from '../../../base/common/event.js';
-import { Disposable, toDisposable } from '../../../base/common/lifecycle.js';
+import { Disposable, IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
 import { join } from '../../../base/common/path.js';
 import { chatLaunchView, evaluateLaunch, IAdminPolicy, ILaunchDecision, IWorkspaceRestriction, PolicyAuthorityMode, PolicySnapshot } from '../common/authority.js';
 import { ILaunchCompileInput, ILaunchCompileRecord, ISandboxCompositionNote, ISandboxLayer, LaunchPolicyCache, launchCompileRecord, launchPolicyBytes } from '../common/compile.js';
@@ -22,7 +22,7 @@ import { AGENT_STATE_ROOT, agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRe
 import { AGENT_CONFIG_NAMES } from '../common/sandboxProfiles.js';
 import { AgentStateOverlay, IAgentStateSync } from './agentStateOverlay.js';
 import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
-import type { INetworkGrantSource } from './networkBroker.js';
+import type { INetworkGrantSource, NetworkViewProvider } from './networkBroker.js';
 import { IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { IVoltSandboxPolicy, SandboxDimension } from '../common/sandboxSchema.js';
 import { readAdminPolicy, systemAdminPolicySource } from './adminPolicy.js';
@@ -180,7 +180,8 @@ export class VoltSandboxLauncher extends Disposable {
 	readonly supervisor: SandboxSupervisor;
 	private agentHost: Promise<Omit<IAgentSandboxHost, 'sshAuthSock'>> | undefined;
 	private readonly recent = new Map<string, number>();
-	private readonly registry: PrincipalRegistry;
+	/** Mints every principal this execution host runs, and binds hosts' channels to them. */
+	readonly registry: PrincipalRegistry;
 	private readonly cache = new LaunchPolicyCache();
 	private readonly mode: () => PolicyAuthorityMode;
 	private readonly now: () => number;
@@ -226,6 +227,20 @@ export class VoltSandboxLauncher extends Disposable {
 	}
 
 	private shutdownDone: Promise<void> | undefined;
+
+	/**
+	 * Where the network broker gets the view of principals that are not chats: plugin hosts (their
+	 * manifest), MCP servers (their approved `allowedHosts`, acting for their parent chat). See
+	 * `NetworkBroker.registerViewProvider`.
+	 */
+	registerNetworkViewProvider(provider: NetworkViewProvider): IDisposable {
+		return this.manager.registerNetworkViewProvider(provider);
+	}
+
+	/** A view provider's answer changed for `subjects`: their open tunnels are judged again. */
+	networkViewsChanged(subjects: readonly SubjectKey[], narrowed: boolean): void {
+		this.manager.networkViewsChanged(subjects, narrowed);
+	}
 
 	async getSupport(): Promise<IVoltSandboxSupport> {
 		const capabilities = await this.manager.capabilities();

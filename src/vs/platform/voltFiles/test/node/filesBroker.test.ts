@@ -192,6 +192,26 @@ suite('Volt files broker (I.2)', function () {
 		assert.ok(event.target && !event.target.includes('a.txt'));
 	});
 
+	safeTest('list and delete: judged as a read of the folder and a write of the file; never through a symlink; outside the scope refused', async () => {
+		const { context } = host.connect(PLUGIN);
+		await fs.mkdir(join(ws, 'notes', 'deeper'), { recursive: true });
+		await fs.writeFile(join(ws, 'notes', 'a.md'), 'a');
+		await fs.symlink(join(outside, 'canary.txt'), join(ws, 'notes', 'link.md'));
+		const { entries } = await broker.list(context, { path: join(ws, 'notes') });
+		assert.deepStrictEqual([...entries].sort((x, y) => x.name.localeCompare(y.name)), [{ name: 'a.md', kind: 'file' }, { name: 'deeper', kind: 'directory' }], 'a symlink is not listed');
+		assert.strictEqual(await outcome(broker.list(context, { path: outside })), 'denied', 'outside the scope');
+		assert.strictEqual(await outcome(broker.delete(context, { path: join(ws, 'notes', 'link.md') })), 'denied', 'a symlink is never deleted through');
+		assert.strictEqual(await fs.readFile(join(outside, 'canary.txt'), 'utf8'), 'OUTSIDE');
+		assert.deepStrictEqual(await broker.delete(context, { path: join(ws, 'notes', 'a.md') }), { deleted: true });
+		assert.deepStrictEqual(await broker.delete(context, { path: join(ws, 'notes', 'a.md') }), { deleted: false }, 'already gone');
+		assert.strictEqual(await outcome(broker.delete(context, { path: join(ws, 'notes', 'deeper') })), 'invalid', 'a folder is not a file');
+		const reader = host.connect(READER).context;
+		await fs.writeFile(join(ws, 'notes', 'b.md'), 'b');
+		assert.strictEqual(await outcome(broker.delete(reader, { path: join(ws, 'notes', 'b.md') })), 'denied', 'a reader may not delete');
+		assert.ok(await fs.stat(join(ws, 'notes', 'b.md')));
+		assert.deepStrictEqual(host.audit.events.filter(event => event.method === 'delete').map(event => event.decision), ['deny', 'allow', 'allow', 'deny', 'deny']);
+	});
+
 	safeTest('RACE-1: a folder flipped to a symlink during 1,000 handle writes never sends a byte outside', async () => {
 		const { context } = host.connect(PLUGIN);
 		const dir = join(ws, 'dir');

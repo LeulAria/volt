@@ -492,6 +492,7 @@ export async function main(argv: string[]): Promise<void> {
 		sendFile,
 		usage,
 		pullRequests,
+		plugins: stdioService,
 	}));
 	httpContext = { ...httpContext, workbench: workbench.available };
 	// Pages, diagrams and formulas for the phone and browser apps, and KaTeX's files for them.
