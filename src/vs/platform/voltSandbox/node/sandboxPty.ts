@@ -179,6 +179,7 @@ export class SandboxedPtySession {
 			env: { ...options.env, VOLT_PTY_GO: go },
 			terminal: true,
 			label: options.label ?? 'terminal',
+			kind: 'task',
 		});
 		try {
 			const directions = sandbox.extraStdioDirections;

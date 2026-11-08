@@ -19,6 +19,7 @@ import { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../voltGi
 import { buildEntryGuard } from '../../voltGit/node/buildEntryGuard.js';
 import { runHostGit } from '../../voltGit/node/hostGit.js';
 import type { IVoltSandboxRequest } from '../../voltSandbox/common/sandboxPolicy.js';
+import { POLICY_AUTHORITY_MODE_SETTING, readPolicyAuthorityMode } from '../../voltSandbox/common/authority.js';
 import { brokerReadFile, brokerWriteFile, defaultFsdPath } from '../../voltFiles/node/sandboxFileBroker.js';
 import { SafeOpenError } from '../../voltFiles/node/safeOpen.js';
 import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.js';
@@ -94,7 +95,9 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		private readonly ledger?: ChildLedger,
 	) {
 		super();
-		this.sandbox = this._register(new VoltSandboxLauncher(userDataPath, logService));
+		this.sandbox = this._register(new VoltSandboxLauncher(userDataPath, logService, {
+			mode: () => readPolicyAuthorityMode(this.configurationService.getValue(POLICY_AUTHORITY_MODE_SETTING)),
+		}));
 		this._register(this.sandbox.onViolation(e => {
 			const id = this.sandboxTags.get(e.tag);
 			if (id) {
@@ -509,7 +512,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		if (request.sandbox) {
 			await this.snapshotBuildEntries(request.sandbox);
 			try {
-				launch = await this.sandbox.prepare(shell.file, shell.args(request.command), request.sandbox, { cwd: request.cwd, hostEnv: await this.env(), env: request.env, label: request.context.reason });
+				launch = await this.sandbox.prepare(shell.file, shell.args(request.command), request.sandbox, { cwd: request.cwd, hostEnv: await this.env(), env: request.env, label: request.context.reason, kind: 'task' });
 			} catch (err) {
 				// Refused, never run unsandboxed.
 				return refused({ kind: 'sandbox', reason: (err as Error).message });
