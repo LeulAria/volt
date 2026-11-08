@@ -120,6 +120,11 @@ jobs:
       - name: Policy Authority gate
         run: node build/volt/ci/authorityGate.mjs
 
+      # Every extensions/volt-* built-in declares only what its first-party ceiling (compiled into
+      # src/vs/platform/voltPlugins/common/firstPartyCeilings.ts) holds (plugin platform spec M5, G.10).
+      - name: Built-in manifests within their ceilings
+        run: node build/volt/ci/manifestCeiling.mjs
+
   typecheck:
     name: Typecheck
     needs: changes

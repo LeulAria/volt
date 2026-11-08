@@ -7,8 +7,8 @@
  * First-party ceilings (spec G.10): the most each built-in `volt.*` extension may ever be granted.
  * A built-in gets what its manifest declares, intersected with this table, with no prompt. The
  * table is compiled into core, so widening a built-in needs a core release: a changed
- * `package.json` alone can't (the CI check `firstPartyCeilings.test.ts` fails any manifest that
- * declares more, and the policy refuses at call time what the table doesn't hold).
+ * `package.json` alone can't (the CI check `build/volt/ci/manifestCeiling.mjs` fails any manifest
+ * that declares more, and the policy refuses at call time what the table doesn't hold).
  *
  * Owned through CODEOWNERS. Keep each entry exactly as narrow as the feature's manifest.
  */
