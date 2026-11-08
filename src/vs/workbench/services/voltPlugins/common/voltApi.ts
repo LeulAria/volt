@@ -665,4 +665,10 @@ export interface IVoltPluginService {
 	 * extension: its `subscriptions` are disposed when the extension goes away (disabled or removed).
 	 */
 	getContext(extensionId: string): IVoltPluginContext | undefined;
+	/**
+	 * The context of a built-in feature from the manifest compiled into core, for a build that
+	 * doesn't ship its extension (the feature then stays on, like `IVoltFeatureService` says).
+	 * Undefined when the extension is loaded but disabled.
+	 */
+	getBuiltinContext?(manifest: IVoltPluginManifest): IVoltPluginContext | undefined;
 }
