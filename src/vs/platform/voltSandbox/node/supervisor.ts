@@ -409,12 +409,18 @@ export class SandboxSupervisor extends Disposable {
 	}
 
 	/** Volt quits: every host's whole tree goes, before the manager disposes its runs. */
-	async shutdown(): Promise<void> {
-		this.disposing = true;
-		clearInterval(this.sampler);
-		this.sampler = undefined;
-		await Promise.all([...this.hosts.values()].map(host => host.terminate('quit').catch(() => undefined)));
+	shutdown(): Promise<void> {
+		// Once: `dispose` (synchronous, for the owner's disposables) and an owner awaiting it share the same kills.
+		this.shutdownDone ??= (async () => {
+			this.disposing = true;
+			clearInterval(this.sampler);
+			this.sampler = undefined;
+			await Promise.all([...this.hosts.values()].map(host => host.terminate('quit').catch(() => undefined)));
+		})();
+		return this.shutdownDone;
 	}
+
+	private shutdownDone: Promise<void> | undefined;
 
 	override dispose(): void {
 		void this.shutdown();

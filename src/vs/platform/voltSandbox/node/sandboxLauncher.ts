@@ -109,7 +109,8 @@ export class VoltSandboxLauncher extends Disposable {
 		super();
 		const sandboxLogger = { info: (m: string) => logger.info(m), warn: (m: string) => logger.warn(m) };
 		this.manager = new SandboxManager(sandboxLogger, { platform });
-		this.supervisor = new SandboxSupervisor(this.manager, sandboxLogger, { ...(supervisorEnabled ? { enabled: supervisorEnabled } : {}) });
+		// Disposed at once (its disposal starts killing the hosts); the shutdown below waits for those kills.
+		this.supervisor = this._register(new SandboxSupervisor(this.manager, sandboxLogger, { ...(supervisorEnabled ? { enabled: supervisorEnabled } : {}) }));
 		// Hosts first (their whole trees), then every other run the manager still has.
 		this._register(toDisposable(() => void this.shutdown()));
 	}
@@ -118,7 +119,6 @@ export class VoltSandboxLauncher extends Disposable {
 	async shutdown(): Promise<void> {
 		this.shutdownDone ??= (async () => {
 			await this.supervisor.shutdown();
-			this.supervisor.dispose();
 			await this.manager.dispose();
 		})();
 		return this.shutdownDone;
