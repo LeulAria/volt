@@ -26,6 +26,7 @@ import { ISandboxLogger } from '../../voltSandbox/node/sandboxManager.js';
 import { ISandboxedHost, SandboxSupervisor } from '../../voltSandbox/node/supervisor.js';
 import { apiVersionSatisfies, CORE_METHODS, CORE_NOTIFICATIONS, HOST_METHODS, PluginFileRoot, VOLT_PLUGIN_API_VERSION, VOLT_PLUGIN_PROTOCOL, VoltPluginError } from '../common/pluginProtocol.js';
 import { PluginRpc } from '../common/pluginRpc.js';
+import { IVoltPluginAvailability, IVoltPluginFolders, IVoltPluginStatus, IVoltPluginToolResult, VoltPluginState } from '../common/pluginHosts.js';
 
 /**
  * Core's side of T2 plugin hosts (spec H.1-H.3, H.6, H.8, H.9): the `MainThreadVolt*`
@@ -74,37 +75,10 @@ export interface IT2PluginDescriptor {
 	readonly label?: string;
 }
 
-/** Core's record of the folders a call is about (never the plugin's say). */
-export interface IT2CallFolders {
-	/** The open workspace's first folder. */
-	readonly workspace?: string;
-	/** The chat's own folder for this call (its worktree, else its project). */
-	readonly project?: string;
-}
-
-export type T2PluginState = 'stopped' | 'starting' | 'running' | 'idle' | 'restarting' | 'broken' | 'refused';
-
-export interface IT2PluginStatus {
-	readonly id: string;
-	readonly label: string;
-	readonly state: T2PluginState;
-	readonly restarts: number;
-	/** Why it is broken or refused. */
-	readonly detail?: string;
-	/** The last lines of its stderr (H.9). */
-	readonly stderr?: string;
-	readonly principalId?: string;
-	readonly pid?: number;
-	/** The last cold start: `start` to the plugin activated. */
-	readonly coldStartMs?: number;
-	/** Of which: spawn to the handshake. */
-	readonly handshakeMs?: number;
-}
-
-export interface IT2ToolResult {
-	readonly text?: string;
-	readonly error?: string;
-}
+export type IT2CallFolders = IVoltPluginFolders;
+export type T2PluginState = VoltPluginState;
+export type IT2PluginStatus = IVoltPluginStatus;
+export type IT2ToolResult = IVoltPluginToolResult;
 
 export interface IVoltPluginHostServiceOptions {
 	readonly supervisor: SandboxSupervisor;
@@ -180,6 +154,38 @@ export function t2HostPolicy(reads: readonly string[], networkHosts: readonly st
 		process: { limits: { memoryMB, processes: platform === 'linux' ? 32 : 1, fileSizeMB: 64, openFiles: 256 } },
 		bestEffort,
 		name: 't2-plugin',
+	};
+}
+
+/**
+ * A built-in T2 plugin from its manifest on disk (`extensions/<folder>/package.json`, shipped
+ * with the app): its tools, capabilities, `engines.volt` and bundle (`voltPlugin.main`).
+ */
+export async function builtinT2Descriptor(id: string, folder: string, storageDir: string, extensionsRoot: string = join(dirname(FileAccess.asFileUri('').fsPath.replace(/[\\/]+$/, '')), 'extensions')): Promise<IT2PluginDescriptor> {
+	const dir = join(extensionsRoot, folder);
+	const manifest = JSON.parse(await fs.readFile(join(dir, 'package.json'), 'utf8')) as {
+		publisher?: string; name?: string; displayName?: string;
+		engines?: { volt?: string };
+		voltPlugin?: { host?: string; main?: string };
+		contributes?: { voltTools?: { name: string }[]; voltCapabilities?: { required?: IDeclaredCapability[]; optional?: IDeclaredCapability[] } };
+	};
+	if (`${manifest.publisher}.${manifest.name}`.toLowerCase() !== id || manifest.voltPlugin?.host !== 't2' || typeof manifest.voltPlugin.main !== 'string') {
+		throw new Error(`${dir} is not the T2 plugin ${id}`);
+	}
+	const bundle = join(dir, manifest.voltPlugin.main);
+	if (!bundle.startsWith(dir + sep)) {
+		throw new Error(`${id}'s bundle is outside its folder`);
+	}
+	const capabilities = manifest.contributes?.voltCapabilities;
+	return {
+		id,
+		firstParty: true,
+		...(manifest.engines?.volt ? { enginesVolt: manifest.engines.volt } : {}),
+		bundle,
+		tools: (manifest.contributes?.voltTools ?? []).map(tool => ({ name: tool.name })),
+		declared: [...capabilities?.required ?? [], ...(capabilities?.optional ?? []).map(entry => ({ ...entry, optional: true }))].map(entry => ({ id: entry.id, ...(entry.targets ? { targets: entry.targets } : {}), ...(entry.optional ? { optional: true } : {}) })),
+		storageDir,
+		label: (manifest.displayName ?? id).replace(/^Volt: /, ''),
 	};
 }
 
@@ -261,6 +267,26 @@ export class VoltPluginHostService extends Disposable {
 				this.refreshAuthority([plugin.subject]);
 			}
 		});
+	}
+
+	/**
+	 * Whether T2 hosts can run here, from static facts only (F.13): an OS without a sandbox, or a
+	 * platform without a host channel, is `unsupported` (degraded mode may apply); the supervisor
+	 * turned off is `refused`. A launch that fails later is never degraded mode.
+	 */
+	async availability(): Promise<IVoltPluginAvailability> {
+		const supervisor = this.options.supervisor;
+		if (!supervisor.enabled) {
+			return { sandboxed: false, refused: 'Sandboxed hosts are turned off (volt.sandbox.supervisor.enabled).' };
+		}
+		if (supervisor.manager.backendId === 'mxc') {
+			return { sandboxed: false, unsupported: 'Windows sandboxes have no plugin host channel yet.' };
+		}
+		const capabilities = await supervisor.manager.capabilities();
+		if (!capabilities.available) {
+			return { sandboxed: false, unsupported: capabilities.diagnostics.join(' ') || 'This system has no OS sandbox.' };
+		}
+		return { sandboxed: true };
 	}
 
 	/** Every registered plugin's state (H.9: the Security page, the status bar's count of broken plugins). */

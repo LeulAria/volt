@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { IVoltPluginAvailability, IVoltPluginFolders, IVoltPluginStatus, IVoltPluginToolRequest, IVoltPluginToolResult } from '../../../../platform/voltPlugins/common/pluginHosts.js';
 import { IChannel, ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../../../platform/voltGit/common/hostGit.js';
 import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../platform/voltStdio/common/voltStdio.js';
@@ -68,6 +69,12 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	get onDidChangeSandboxWorkloads() { return this.inner.onDidChangeSandboxWorkloads; }
 	async sandboxWorkloads(): Promise<readonly ISandboxWorkloadInfo[]> { return this.inner.sandboxWorkloads ? this.inner.sandboxWorkloads() : []; }
 	async stopSandboxWorkload(id: string): Promise<boolean> { return this.inner.stopSandboxWorkload ? this.inner.stopSandboxWorkload(id) : false; }
+	get onDidChangePlugins() { return this.inner.onDidChangePlugins; }
+	pluginAvailability(): Promise<IVoltPluginAvailability> { return this.inner.pluginAvailability ? this.inner.pluginAvailability() : Promise.resolve({ sandboxed: false, refused: 'This Volt has no plugin hosts.' }); }
+	invokePluginTool(request: IVoltPluginToolRequest): Promise<IVoltPluginToolResult> { return this.inner.invokePluginTool ? this.inner.invokePluginTool(request) : Promise.resolve({ error: 'This Volt has no plugin hosts.' }); }
+	async pluginContext(plugin: string, folders: IVoltPluginFolders): Promise<string | undefined> { return this.inner.pluginContext?.(plugin, folders); }
+	async pluginStatus(): Promise<readonly IVoltPluginStatus[]> { return this.inner.pluginStatus ? this.inner.pluginStatus() : []; }
+	async restartPlugin(plugin: string): Promise<void> { await this.inner.restartPlugin?.(plugin); }
 }
 
 function isStdioService(source: IChannel | IVoltStdioService): source is IVoltStdioService {

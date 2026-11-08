@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Event } from '../../../base/common/event.js';
+import { IVoltPluginAvailability, IVoltPluginFolders, IVoltPluginStatus, IVoltPluginToolRequest, IVoltPluginToolResult } from '../../voltPlugins/common/pluginHosts.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
 import type { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../voltGit/common/hostGit.js';
 import type { ISandboxDenial } from '../../voltSandbox/common/sandboxDenials.js';
@@ -315,6 +316,18 @@ export interface IVoltStdioService {
 	stopSandboxWorkload?(id: string): Promise<boolean>;
 	/** A sandboxed workload started, changed state or ended. */
 	readonly onDidChangeSandboxWorkloads?: Event<void>;
+	/** Whether Volt's T2 plugins (Memory) can run in sandboxed hosts here (spec H.1, F.13). */
+	pluginAvailability?(): Promise<IVoltPluginAvailability>;
+	/** Calls a tool of a built-in T2 plugin; its host starts on the first call (H.2). Never throws: a refusal is `error`. */
+	invokePluginTool?(request: IVoltPluginToolRequest): Promise<IVoltPluginToolResult>;
+	/** The context block a built-in T2 plugin adds to a new agent's prompt (capped), if any. */
+	pluginContext?(plugin: string, folders: IVoltPluginFolders): Promise<string | undefined>;
+	/** Every built-in T2 plugin's state (H.9: broken plugins, their stderr). */
+	pluginStatus?(): Promise<readonly IVoltPluginStatus[]>;
+	/** "Restart" on a broken plugin. */
+	restartPlugin?(plugin: string): Promise<void>;
+	/** A T2 plugin's state changed. */
+	readonly onDidChangePlugins?: Event<void>;
 }
 
 /** What one merge of an agent's config overlay did. */

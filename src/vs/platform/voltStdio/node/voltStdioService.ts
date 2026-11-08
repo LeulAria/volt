@@ -27,6 +27,8 @@ import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sand
 import { ISandboxWorkloadInfo, SANDBOX_SUPERVISOR_SETTING } from '../../voltSandbox/common/sandboxWorkloads.js';
 import { NETWORK_BROKER_SETTING, readNetworkBrokerMode } from '../../voltSandbox/common/networkBrokerSetting.js';
 import { ChildLedger } from './childLedger.js';
+import { BUILTIN_T2_PLUGINS, IVoltPluginAvailability, IVoltPluginFolders, IVoltPluginStatus, IVoltPluginToolRequest, IVoltPluginToolResult, MEMORY_PLUGIN_ID } from '../../voltPlugins/common/pluginHosts.js';
+import { builtinT2Descriptor, VoltPluginHostService } from '../../voltPlugins/node/pluginHost.js';
 import { SandboxedPtySession } from '../../voltSandbox/node/sandboxPty.js';
 import { describeExecContext, execRefusal, IVoltExecContext, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../common/voltStdio.js';
 
@@ -111,6 +113,16 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			}
 		}));
 		this.onDidChangeSandboxWorkloads = Event.any(this.sandbox.supervisor.onDidChange, this.sandbox.supervisor.manager.onDidChangeWorkloads);
+		// Volt's T2 plugins (spec H.1, roadmap P1): registered on first use, each host started on its first call.
+		this.plugins = this._register(new VoltPluginHostService({
+			supervisor: this.sandbox.supervisor,
+			registry: this.sandbox.registry,
+			home: homedir(),
+			logger: { info: message => logService.info(message), warn: message => logService.warn(message) },
+		}));
+		this.pluginStorageRoot = join(userDataPath, 'User');
+		this._register(this.sandbox.registerNetworkViewProvider(principal => this.plugins.networkView(principal)));
+		this.onDidChangePlugins = Event.signal(this.plugins.onDidChange);
 		// F.11: hosts a crashed Volt left behind are reaped once, at start.
 		if (supervisorEnabled()) {
 			void this.sandbox.supervisor.recover().catch(err => this.logService.warn(`[volt-sandbox] recovery of earlier hosts failed: ${err}`));
@@ -118,6 +130,49 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	}
 
 	readonly onDidChangeSandboxWorkloads: Event<void>;
+
+	private readonly plugins: VoltPluginHostService;
+	private readonly pluginStorageRoot: string;
+	private pluginsRegistered: Promise<void> | undefined;
+	readonly onDidChangePlugins: Event<void>;
+
+	/** The built-in T2 plugins, from their manifests (once). Memory's storage is where its user notes always were. */
+	private registerPlugins(): Promise<void> {
+		this.pluginsRegistered ??= (async () => {
+			for (const builtin of BUILTIN_T2_PLUGINS) {
+				try {
+					const storage = builtin.id === MEMORY_PLUGIN_ID ? join(this.pluginStorageRoot, 'voltMemory') : join(this.pluginStorageRoot, 'pluginStorage', builtin.id);
+					this._register(this.plugins.register(await builtinT2Descriptor(builtin.id, builtin.folder, storage)));
+				} catch (err) {
+					this.logService.warn(`[volt-plugin] ${builtin.id} is not available: ${err instanceof Error ? err.message : String(err)}`);
+				}
+			}
+		})();
+		return this.pluginsRegistered;
+	}
+
+	async pluginAvailability(): Promise<IVoltPluginAvailability> {
+		return this.plugins.availability();
+	}
+
+	async invokePluginTool(request: IVoltPluginToolRequest): Promise<IVoltPluginToolResult> {
+		await this.registerPlugins();
+		return this.plugins.invokeTool(request.plugin, request.tool, request.args ?? {}, request.folders ?? {});
+	}
+
+	async pluginContext(plugin: string, folders: IVoltPluginFolders): Promise<string | undefined> {
+		await this.registerPlugins();
+		return this.plugins.providesContext(plugin) ? this.plugins.provideContext(plugin, folders) : undefined;
+	}
+
+	async pluginStatus(): Promise<readonly IVoltPluginStatus[]> {
+		await this.registerPlugins();
+		return this.plugins.status();
+	}
+
+	async restartPlugin(plugin: string): Promise<void> {
+		await this.plugins.restart(plugin);
+	}
 
 	async sandboxWorkloads(): Promise<readonly ISandboxWorkloadInfo[]> {
 		return this.sandbox.supervisor.workloads();

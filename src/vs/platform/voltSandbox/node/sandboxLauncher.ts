@@ -149,7 +149,8 @@ export class VoltSandboxLauncher extends Disposable {
 	readonly supervisor: SandboxSupervisor;
 	private agentHost: Promise<Omit<IAgentSandboxHost, 'sshAuthSock'>> | undefined;
 	private readonly recent = new Map<string, number>();
-	private readonly registry: PrincipalRegistry;
+	/** Mints every principal this execution host runs, and binds hosts' channels to them. */
+	readonly registry: PrincipalRegistry;
 	private readonly cache = new LaunchPolicyCache();
 	private readonly mode: () => PolicyAuthorityMode;
 	private readonly now: () => number;
@@ -170,15 +171,16 @@ export class VoltSandboxLauncher extends Disposable {
 		super();
 		const sandboxLogger = { info: (m: string) => logger.info(m), warn: (m: string) => logger.warn(m) };
 		this.manager = options.manager ?? new SandboxManager(sandboxLogger, { platform: options.platform ?? process.platform, ...(options.networkMode ? { networkMode: options.networkMode } : {}) });
+		this.now = options.now ?? Date.now;
+		this.registry = this._register(new PrincipalRegistry(options.executionHost ?? `launcher:${process.pid}`, this.now));
 		// Disposed at once (its disposal starts killing the hosts); the shutdown below waits for those kills.
-		this.supervisor = this._register(new SandboxSupervisor(this.manager, sandboxLogger, { ...(options.supervisorEnabled ? { enabled: options.supervisorEnabled } : {}) }));
+		// With the registry: a host's channel is bound to its principal (identity is the channel, H.3).
+		this.supervisor = this._register(new SandboxSupervisor(this.manager, sandboxLogger, { registry: this.registry, ...(options.supervisorEnabled ? { enabled: options.supervisorEnabled } : {}) }));
 		// Hosts first (their whole trees), then every other run the manager still has.
 		this._register(toDisposable(() => void this.shutdown()));
-		this.now = options.now ?? Date.now;
 		this.mode = options.mode ?? (() => 'enforce');
 		this.readAdmin = options.admin ?? (() => readAdminPolicy(systemAdminPolicySource()));
 		this.workspace = options.workspace;
-		this.registry = this._register(new PrincipalRegistry(options.executionHost ?? `launcher:${process.pid}`, this.now));
 		this.cache.invalidate(this.epoch);
 	}
 
