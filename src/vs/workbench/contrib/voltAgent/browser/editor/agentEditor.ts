@@ -94,7 +94,7 @@ import { parseWorktreeList } from '../../../../services/voltRuntime/common/orche
 import { showAgentMoveMenu } from '../orchestration/agentMoveMenu.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { IVoltProject, IVoltProjectsService, VoltProjectCommands } from '../../../voltProjects/common/projects.js';
-import { createAccessIcon } from '../chrome/accessIcons.js';
+import { createAccessIcon, createVoltGuardIcon } from '../chrome/accessIcons.js';
 import { AgentAccessPicker } from '../context/agentAccessPicker.js';
 import { AgentTerminalChips } from '../terminals/agentTerminalChips.js';
 import { AgentWatchedTaskCard } from '../terminals/agentWatchedTaskCard.js';
@@ -5336,8 +5336,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		tray.setAttribute('role', 'status');
 		const head = append(tray, $('.volt-agent-run-tray-head'));
 		const icon = append(head, $('span.volt-agent-run-tray-icon'));
-		icon.appendChild(renderIcon(Codicon.shield));
-		this.setSearchableText(append(head, $('span.volt-agent-run-tray-title')), localize('voltAgent.sandbox.title', "Blocked by the sandbox"));
+		icon.appendChild(createVoltGuardIcon());
+		this.setSearchableText(append(head, $('span.volt-agent-run-tray-title')), localize('voltAgent.sandbox.title', "Volt Guard"));
 		const dismiss = append(head, $('button.volt-agent-run-tray-dismiss')) as HTMLButtonElement;
 		dismiss.type = 'button';
 		dismiss.setAttribute('aria-label', localize('voltAgent.tray.dismiss', "Dismiss"));
