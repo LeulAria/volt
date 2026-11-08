@@ -33,7 +33,6 @@ import { SandboxSupervisor } from '../../../voltSandbox/node/supervisor.js';
 import { realSandboxAvailable } from '../../../voltSandbox/test/node/sandboxSuiteGate.js';
 import { IT2PluginDescriptor, IVoltPluginHostServiceOptions, VoltPluginHostService } from '../../node/pluginHost.js';
 
-
 /** A plugin: tools that exercise the API, and context. */
 const NOTES_PLUGIN = `
 module.exports.activate = function (volt) {

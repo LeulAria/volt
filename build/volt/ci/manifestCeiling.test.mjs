@@ -57,5 +57,9 @@ test('M5-CI-3: a built-in without a ceiling, a renamed manifest and a stale ceil
 	const narrower = builtin('memory', { voltCapabilities: { required: [{ id: 'tools.register' }] } });
 	const { problems, warnings } = checkBuiltins(withReplaced(narrower), ceilings);
 	assert.deepEqual(problems, []);
-	assert.deepEqual(warnings, ['volt.memory: the ceiling holds agents.context, which the manifest doesn\'t declare (narrow the ceiling)']);
+	assert.deepEqual(warnings, [
+		'volt.memory: the ceiling holds agents.context, which the manifest doesn\'t declare (narrow the ceiling)',
+		'volt.memory: the ceiling holds files.read:workspace, which the manifest doesn\'t declare (narrow the ceiling)',
+		'volt.memory: the ceiling holds files.write, which the manifest doesn\'t declare (narrow the ceiling)',
+	]);
 });
