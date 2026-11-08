@@ -1260,6 +1260,10 @@ function renderApprovalBlock(parent: HTMLElement, block: IApprovalBlock, ctx: IB
 	}));
 	ctx.store.add(addDisposableListener(always, 'click', e => {
 		e.preventDefault();
+		// "Allow for This Chat" on a flow card is kept in the grant store (P4): only the user's own click counts (G.7).
+		if (block.alwaysForChat && !e.isTrusted) {
+			return;
+		}
 		decide('allow', 'always');
 	}));
 	ctx.store.add(addDisposableListener(skip, 'click', e => {

@@ -1126,4 +1126,16 @@ export interface IVoltHostToolService {
 	/** The flow approvals (G.6) a chat holds, and revoking them. */
 	flowApprovals?(sessionId: string): readonly IGrant[];
 	revokeFlowApprovals?(sessionId: string): number;
+	/**
+	 * Where "Allow for This Chat" flow approvals are kept (the grant store, P4): they hold across
+	 * restarts until revoked. Without one they last as long as the window.
+	 */
+	setFlowGrantStore?(store: IVoltFlowGrantStore | undefined): void;
+	/** The grant store's flow approvals (its session grants of chats), after any change to it. */
+	setStoredFlowGrants?(grants: readonly IGrant[]): void;
+}
+
+export interface IVoltFlowGrantStore {
+	persist(grant: IGrant): Promise<void>;
+	revoke(ids: readonly string[]): Promise<void>;
 }

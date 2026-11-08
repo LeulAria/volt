@@ -16,7 +16,11 @@ export type TrustRecordOrigin =
 	/** Answers the user gave before the grant store (the extension pages' consents), moved once. */
 	| 'migration'
 	/** The user's own toggle on an extension's Features page (core UI with its own consent). */
-	| 'extension-page';
+	| 'extension-page'
+	/** "Allow for This Chat" on a transcript approval card (a trusted click only). */
+	| 'approval-card'
+	/** The install sheet's Allow (its own gesture-armed button). */
+	| 'install-sheet';
 
 /**
  * The window's side of the grant store (spec P4): a cached copy of `~/.volt/trust/grants.json`
