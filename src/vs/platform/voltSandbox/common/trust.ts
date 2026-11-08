@@ -40,6 +40,8 @@ export interface ITrustChange {
 	readonly unrefuse?: readonly { readonly subject: SubjectKey; readonly capability: string }[];
 	/** Every grant and refusal of these subjects goes (a signer change, an uninstall). */
 	readonly dropSubjects?: readonly SubjectKey[];
+	/** Grants used: their last use moves (G.4's unused expiry counts from it). */
+	readonly touch?: readonly { readonly id: string; readonly at: number }[];
 }
 
 export interface ITrustCommitResult {

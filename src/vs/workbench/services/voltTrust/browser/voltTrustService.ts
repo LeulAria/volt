@@ -71,8 +71,8 @@ export class VoltTrustService extends Disposable implements IVoltTrustService {
 		return this.commit({ add: drafts, unrefuse: drafts.map(draft => ({ subject: draft.subject, capability: draft.capability })) });
 	}
 
-	narrow(change: Pick<ITrustChange, 'revoke' | 'refuse' | 'dropSubjects'>): Promise<ITrustCommitResult> {
-		return this.commit({ ...change.revoke ? { revoke: change.revoke } : {}, ...change.refuse ? { refuse: change.refuse } : {}, ...change.dropSubjects ? { dropSubjects: change.dropSubjects } : {} });
+	narrow(change: Pick<ITrustChange, 'revoke' | 'refuse' | 'dropSubjects' | 'touch'>): Promise<ITrustCommitResult> {
+		return this.commit({ ...change.revoke ? { revoke: change.revoke } : {}, ...change.refuse ? { refuse: change.refuse } : {}, ...change.dropSubjects ? { dropSubjects: change.dropSubjects } : {}, ...change.touch ? { touch: change.touch } : {} });
 	}
 
 	record(change: ITrustChange, origin: TrustRecordOrigin): Promise<ITrustCommitResult> {

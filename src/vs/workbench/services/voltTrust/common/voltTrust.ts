@@ -42,7 +42,7 @@ export interface IVoltTrustService {
 	/** A prompt's answer: refused unless `gesture` is a live token minted for `subject`. */
 	grant(subject: SubjectKey, drafts: readonly TrustGrantDraft[], gesture: IUserGestureToken | undefined): Promise<ITrustCommitResult>;
 	/** Revocations, refusals and dropped subjects: narrowing only. */
-	narrow(change: Pick<ITrustChange, 'revoke' | 'refuse' | 'dropSubjects'>): Promise<ITrustCommitResult>;
+	narrow(change: Pick<ITrustChange, 'revoke' | 'refuse' | 'dropSubjects' | 'touch'>): Promise<ITrustCommitResult>;
 	/** A widening that is not a prompt's (see {@link TrustRecordOrigin}). */
 	record(change: ITrustChange, origin: TrustRecordOrigin): Promise<ITrustCommitResult>;
 
