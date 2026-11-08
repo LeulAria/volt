@@ -364,11 +364,18 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 			assert.strictEqual(await sha(config), before, `${policy.name}: config`);
 			assert.ok(!await exists(join(repo, '.git', 'hooks', 'post-checkout')), policy.name);
 			assert.ok(!await exists(join(repo, '.git', 'info', 'attributes')), policy.name);
-			assert.ok(!await exists(join(worktreeDir, 'config.worktree')), policy.name);
-			if (!isLinux) {
+			if (isLinux) {
+				// bubblewrap binds only names that exist at launch: a new config.worktree or alternates is the
+				// protectNew residual, and the run says so. On the host, HostGit refuses alternates planted
+				// while a sandboxed writer worked (GIT-4); config.worktree is read only with
+				// extensions.worktreeConfig, which lives in the protected config.
+				assert.ok(result.unenforced.includes('filesystem.protectNew'), `${policy.name}: the run reports the gap`);
+			} else {
+				assert.ok(!await exists(join(worktreeDir, 'config.worktree')), policy.name);
 				assert.ok(!await exists(join(repo, '.git', 'objects', 'info', 'alternates')), `${policy.name}: alternates`);
 			}
 			// Lock files are writable by design (git takes them for every update); a stale one only blocks.
+			await fs.rm(join(worktreeDir, 'config.worktree'), { force: true });
 			await fs.rm(join(repo, '.git', 'objects', 'info', 'alternates'), { force: true });
 			await fs.rm(join(repo, '.git', 'config.lock'), { force: true });
 			for (const done of ['COMMITTED', 'BRANCHED', 'STASHED']) {
