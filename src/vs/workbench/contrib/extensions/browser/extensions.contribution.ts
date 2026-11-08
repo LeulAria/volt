@@ -28,6 +28,7 @@ import { ExtensionGalleryManifestStatus, ExtensionGalleryResourceType, Extension
 import { EXTENSION_INSTALL_SOURCE_CONTEXT, ExtensionInstallSource, ExtensionsLocalizedLabel, FilterType, IExtensionGalleryService, IExtensionManagementService, PreferencesLocalizedLabel, SortBy, VerifyExtensionSignatureConfigKey } from '../../../../platform/extensionManagement/common/extensionManagement.js';
 import { areSameExtensions, getIdAndVersion } from '../../../../platform/extensionManagement/common/extensionManagementUtil.js';
 import { ExtensionStorageService } from '../../../../platform/extensionManagement/common/extensionStorage.js';
+import { hasVoltRegistryPublicKeys } from '../../../../platform/extensionManagement/common/voltExtensionSigning.js';
 import { IExtensionRecommendationNotificationService } from '../../../../platform/extensionRecommendations/common/extensionRecommendations.js';
 import { EXTENSION_CATEGORIES, ExtensionType } from '../../../../platform/extensions/common/extensions.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
@@ -265,7 +266,8 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration)
 			[VerifyExtensionSignatureConfigKey]: {
 				type: 'boolean',
 				description: localize('extensions.verifySignature', "When enabled, extensions are verified to be signed before getting installed."),
-				default: !/^https:\/\/open-vsx\.org\b/i.test(product.extensionsGallery?.serviceUrl ?? ''),
+				// Volt: on when product.json pins the registry's signing keys (INV-29).
+				default: hasVoltRegistryPublicKeys(product) || !/^https:\/\/open-vsx\.org\b/i.test(product.extensionsGallery?.serviceUrl ?? ''),
 				scope: ConfigurationScope.APPLICATION,
 				included: isNative
 			},

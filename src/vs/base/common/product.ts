@@ -57,6 +57,16 @@ export interface IVoltReleaseConfiguration {
 	readonly feedUrl: string;
 	/** Download page that offers every platform, arch and channel. */
 	readonly downloadPage: string;
+	/**
+	 * Ed25519 public keys (base64 SPKI DER, see build/volt/release/generateFeedKey.mjs) that sign each
+	 * channel's feed. When set, the updater refuses unsigned, expired, rolled-back and other-channel
+	 * feeds; without it the feed is read unverified, as before.
+	 */
+	readonly feedPublicKeys?: { readonly [channel: string]: string | readonly string[] | undefined };
+	/** Apple team id that another channel's app must be signed by before it is moved into place. */
+	readonly darwinTeamIdentifier?: string;
+	/** Authenticode signer subject (e.g. `CN=Example Ltd`) a Windows installer must carry before it runs. */
+	readonly win32Publisher?: string;
 }
 
 export type ExtensionVirtualWorkspaceSupport = {
@@ -73,6 +83,8 @@ export interface IProductConfiguration {
 	readonly vscodeVersion?: string;
 	/** Where Volt releases and the update feed live. */
 	readonly voltRelease?: IVoltReleaseConfiguration;
+	/** SHA-256 (hex) of the app's builtin-manifest.json, written at build time (build/volt/release/builtinManifest.mjs). */
+	readonly voltBuiltinManifestSha256?: string;
 	readonly date?: string;
 	readonly quality?: string;
 	readonly commit?: string;
@@ -118,6 +130,12 @@ export interface IProductConfiguration {
 		readonly extensionUrlTemplate: string;
 		readonly resourceUrlTemplate: string;
 		readonly nlsBaseUrl: string;
+		/**
+		 * Volt: the registry's Ed25519 signing keys (base64 SPKI DER; Open VSX publishes its key at
+		 * `/api/-/public-key/<id>`). When set, `.sigzip` signatures are verified against them and an
+		 * unsigned or unverifiable extension installs only after the user's consent.
+		 */
+		readonly voltRegistryPublicKeys?: readonly string[];
 	};
 
 	readonly extensionPublisherOrgs?: readonly string[];
