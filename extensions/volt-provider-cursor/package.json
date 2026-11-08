@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,36 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.cursor",
+			"label": "Cursor",
+			"description": "Cursor's agent over ACP.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 30
+		},
+		"voltAgents": [
+			{
+				"id": "cursor",
+				"label": "Cursor",
+				"binary": "cursor-agent",
+				"args": [
+					"acp"
+				],
+				"models": {
+					"source": "acp"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.use:cursor",
+					"class": "high",
+					"reason": "The provider's sign-in or API key."
+				}
+			]
+		}
+	}
 }

@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,92 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "automations",
+			"label": "Automations",
+			"description": "Scheduled and triggered runs, the calendar, and the tools agents manage them with.",
+			"category": "productivity",
+			"icon": "calendar",
+			"order": 10,
+			"commands": [
+				"voltAgent.automations.open",
+				"voltAgent.automations.new",
+				"voltAgent.automations.runs"
+			],
+			"settings": [
+				"volt.automations."
+			]
+		},
+		"voltTools": [
+			{
+				"name": "manage_automations",
+				"class": "escapes"
+			},
+			{
+				"name": "automation",
+				"class": "escapes"
+			}
+		],
+		"voltSlotItems": [
+			{
+				"id": "volt.automations",
+				"label": "Automations"
+			}
+		],
+		"voltSettingsPages": [
+			{
+				"id": "automations",
+				"label": "Automations"
+			}
+		],
+		"voltSurfaces": [
+			{
+				"id": "automations",
+				"label": "Automations"
+			}
+		],
+		"voltDock": [
+			{
+				"id": "automations",
+				"label": "Automations"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				},
+				{
+					"id": "automations.schedule",
+					"class": "high"
+				},
+				{
+					"id": "agents.create",
+					"class": "high",
+					"reason": "An automation run is a chat."
+				},
+				{
+					"id": "net.connect",
+					"class": "low",
+					"reason": "Slack and Teams actions."
+				},
+				{
+					"id": "hosting.write",
+					"class": "high",
+					"reason": "Pull request comments and reviewers."
+				},
+				{
+					"id": "secrets.use:*",
+					"class": "high"
+				},
+				{
+					"id": "spawn.unsandboxed",
+					"class": "critical",
+					"reason": "Shell nodes and open_pr run on the host."
+				}
+			]
+		}
+	}
 }

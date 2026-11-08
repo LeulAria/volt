@@ -47,11 +47,14 @@ import { closeAgentToolEditor, openInAgentTools, revealAgentToolEditor, shownAge
 import { REVEAL_VOLT_PART_COMMAND_ID } from '../common/voltCustomizeContext.js';
 import { IVoltFeatureService } from '../common/voltFeatures.js';
 import { VoltFeatureService } from './voltFeatureService.js';
+import { IVoltPluginService } from '../../../services/voltPlugins/common/voltApi.js';
+import { VoltPluginService } from './voltPluginService.js';
 
 registerSingleton(IVoltSlotService, VoltSlotService, InstantiationType.Delayed);
 // Eager: it sets the `voltFeature.*` context keys and takes turned-off features' tools away at startup.
 registerSingleton(IVoltFeatureService, VoltFeatureService, InstantiationType.Eager);
 registerSingleton(IVoltCustomizeService, VoltCustomizeService, InstantiationType.Eager);
+registerSingleton(IVoltPluginService, VoltPluginService, InstantiationType.Delayed);
 
 export const CUSTOMIZE_VOLT_SECTION = 'customizeVolt';
 const OPEN_VOLT_SETTINGS = 'workbench.action.openVoltSettings';
@@ -294,6 +297,13 @@ Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane
 
 registerWorkbenchContribution2(VoltLookCssContribution.ID, VoltLookCssContribution, WorkbenchPhase.BlockRestore);
 registerWorkbenchContribution2(VoltPlaygroundTitleContribution.ID, VoltPlaygroundTitleContribution, WorkbenchPhase.AfterRestored);
+
+/** Reads Volt's contribution points once the window is idle, so a manifest's problems show on its extension. */
+class VoltPluginsContribution implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.voltPlugins';
+	constructor(@IVoltPluginService _plugins: IVoltPluginService) { }
+}
+registerWorkbenchContribution2(VoltPluginsContribution.ID, VoltPluginsContribution, WorkbenchPhase.Eventually);
 registerWorkbenchContribution2(VoltPlaygroundDevtoolsContribution.ID, VoltPlaygroundDevtoolsContribution, WorkbenchPhase.AfterRestored);
 
 // --- Commands ----------------------------------------------------------------------------------

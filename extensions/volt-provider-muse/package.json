@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,36 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.muse",
+			"label": "Muse",
+			"description": "Muse models.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 90
+		},
+		"voltAgents": [
+			{
+				"id": "muse",
+				"label": "Muse",
+				"binary": "muse",
+				"args": [
+					"acp"
+				],
+				"models": {
+					"source": "acp"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.use:muse",
+					"class": "high",
+					"reason": "The provider's sign-in or API key."
+				}
+			]
+		}
+	}
 }

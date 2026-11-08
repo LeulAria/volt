@@ -105,6 +105,7 @@ import { IAgentRuntimeService } from '../../../workbench/services/voltRuntime/co
 import { IVoltSessionContextService } from '../../../workbench/services/voltRuntime/common/sessionContext.js';
 import { RunModeTracker } from '../../../workbench/services/voltRuntime/common/hostSessionResolver.js';
 import { AgentServerApi, createCollections } from './serverApi.js';
+import { ServerFeatureEnablement } from './serverFeatureEnablement.js';
 import { ServerAgentWorkspaceService } from './serverAgentWorkspace.js';
 import { IAgentServerClients } from './serverClients.js';
 import { ChildLedger } from '../../../platform/voltStdio/node/childLedger.js';
@@ -400,6 +401,9 @@ export async function main(argv: string[]): Promise<void> {
 			return true;
 		}));
 	});
+	// Features a window turned off lose their tools here too, before the host MCP server first lists
+	// them; the global choice holds while no window is open (customize.md 6.1d).
+	disposables.add(new ServerFeatureEnablement(protocol, instantiationService.invokeFunction(accessor => accessor.get(IVoltHostToolService)), storageService));
 	disposables.add(instantiationService.createInstance(VoltHostMcpBridge));
 	// Mode and folder per chat for the host tools (a window's browser automation did this).
 	instantiationService.invokeFunction(accessor => accessor.get(IVoltHostToolService).setSessionResolver(disposables.add(new RunModeTracker(accessor.get(IAgentRuntimeService)))));

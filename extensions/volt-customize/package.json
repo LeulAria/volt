@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,42 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "customize",
+			"label": "Customize Volt",
+			"description": "Looks, layouts and slots, the Customize Volt page, and the Playground where agents change Volt.",
+			"category": "customize",
+			"icon": "paintcan",
+			"order": 10,
+			"commands": [
+				"volt.customize.open",
+				"volt.customize.openPlayground",
+				"volt.customize.selectLayout",
+				"volt.customize.selectLook"
+			],
+			"settings": [
+				"volt.customize.",
+				"volt.look."
+			]
+		},
+		"voltSettingsPages": [
+			{
+				"id": "customizeVolt",
+				"label": "Customize Volt"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "files.write",
+					"class": "medium",
+					"targets": [
+						"~/.volt/customize/*"
+					],
+					"reason": "Looks, layouts and Playground drafts."
+				}
+			]
+		}
+	}
 }

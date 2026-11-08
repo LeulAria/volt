@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,36 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.fx",
+			"label": "FX",
+			"description": "FX models.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 100
+		},
+		"voltAgents": [
+			{
+				"id": "fx",
+				"label": "FX",
+				"binary": "fx",
+				"args": [
+					"acp"
+				],
+				"models": {
+					"source": "acp"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.use:fx",
+					"class": "high",
+					"reason": "The provider's sign-in or API key."
+				}
+			]
+		}
+	}
 }

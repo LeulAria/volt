@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,49 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "memory",
+			"label": "Memory",
+			"description": "Notes agents keep between chats, and skills they write for themselves.",
+			"category": "productivity",
+			"icon": "database",
+			"order": 30
+		},
+		"voltTools": [
+			{
+				"name": "memory_list",
+				"class": "safe"
+			},
+			{
+				"name": "memory_read",
+				"class": "safe"
+			},
+			{
+				"name": "memory_write",
+				"class": "persists"
+			},
+			{
+				"name": "skill_write",
+				"class": "persists"
+			},
+			{
+				"name": "memory_delete",
+				"class": "persists"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				},
+				{
+					"id": "agents.context",
+					"class": "high",
+					"reason": "Notes and skills later chats read."
+				}
+			]
+		}
+	}
 }

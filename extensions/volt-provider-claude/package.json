@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,33 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.claude",
+			"label": "Claude",
+			"description": "Claude Code and Anthropic API models in the model picker and Providers & Models.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 10
+		},
+		"voltAgents": [
+			{
+				"id": "claude",
+				"label": "Claude",
+				"binary": "claude",
+				"models": {
+					"source": "acp"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.use:claude",
+					"class": "high",
+					"reason": "The provider's sign-in or API key."
+				}
+			]
+		}
+	}
 }

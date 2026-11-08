@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,118 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "devices",
+			"label": "Simulators and window capture",
+			"description": "iOS simulators and Android emulators agents can drive, and window capture and recording.",
+			"category": "tools",
+			"icon": "device-mobile",
+			"order": 50,
+			"commands": [
+				"volt.devices.openPreview"
+			],
+			"settings": [
+				"volt.devices."
+			]
+		},
+		"voltTools": [
+			{
+				"name": "device_list",
+				"class": "safe"
+			},
+			{
+				"name": "device_boot",
+				"class": "safe"
+			},
+			{
+				"name": "device_shutdown",
+				"class": "safe"
+			},
+			{
+				"name": "device_snapshot",
+				"class": "safe"
+			},
+			{
+				"name": "device_act",
+				"class": "safe"
+			},
+			{
+				"name": "device_screenshot",
+				"class": "safe"
+			},
+			{
+				"name": "device_tap",
+				"class": "safe"
+			},
+			{
+				"name": "device_swipe",
+				"class": "safe"
+			},
+			{
+				"name": "device_type",
+				"class": "safe"
+			},
+			{
+				"name": "device_press_button",
+				"class": "safe"
+			},
+			{
+				"name": "device_install_app",
+				"class": "escapes"
+			},
+			{
+				"name": "device_launch_app",
+				"class": "escapes"
+			},
+			{
+				"name": "device_set_posture",
+				"class": "safe"
+			},
+			{
+				"name": "window_list",
+				"class": "safe"
+			},
+			{
+				"name": "window_capture",
+				"class": "escapes"
+			},
+			{
+				"name": "window_record_start",
+				"class": "escapes"
+			},
+			{
+				"name": "window_record_stop",
+				"class": "safe"
+			}
+		],
+		"voltSurfaces": [
+			{
+				"id": "device",
+				"label": "Device"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				},
+				{
+					"id": "devices.drive",
+					"class": "high"
+				},
+				{
+					"id": "screen.capture",
+					"class": "critical",
+					"reason": "Window capture and recording."
+				},
+				{
+					"id": "spawn.unsandboxed",
+					"class": "critical",
+					"reason": "Installing and launching apps runs the agent's build on the host."
+				}
+			]
+		}
+	}
 }

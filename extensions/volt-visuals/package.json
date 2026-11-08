@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,80 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "visuals",
+			"label": "Charts, HTML and canvas",
+			"description": "Charts, HTML pages, mockups and the canvas, drawn in the chat.",
+			"category": "tools",
+			"icon": "graph",
+			"order": 30,
+			"settings": [
+				"volt.canvas."
+			]
+		},
+		"voltTools": [
+			{
+				"name": "render_chart",
+				"class": "safe"
+			},
+			{
+				"name": "html_render",
+				"class": "reads"
+			},
+			{
+				"name": "html_preview",
+				"class": "reads"
+			},
+			{
+				"name": "mockups_render",
+				"class": "safe"
+			},
+			{
+				"name": "screens_capture",
+				"class": "reads"
+			},
+			{
+				"name": "canvas_render",
+				"class": "reads"
+			},
+			{
+				"name": "canvas_update",
+				"class": "reads"
+			},
+			{
+				"name": "canvas_read",
+				"class": "safe"
+			}
+		],
+		"voltSurfaces": [
+			{
+				"id": "canvas",
+				"label": "Canvas"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				},
+				{
+					"id": "files.read:workspace",
+					"class": "low",
+					"reason": "Local images in pages and canvas frames."
+				},
+				{
+					"id": "browser.drive",
+					"class": "high",
+					"reason": "screens_capture opens web pages."
+				},
+				{
+					"id": "devices.drive",
+					"class": "high",
+					"reason": "screens_capture drives a simulator."
+				}
+			]
+		}
+	}
 }

@@ -31,6 +31,8 @@ export class VoltFeatureService extends Disposable implements IVoltFeatureServic
 	readonly onDidChange = this._onDidChange.event;
 
 	private disabled: ReadonlySet<string>;
+	/** Of `disabled`, the features turned off only for this workspace. */
+	private disabledInWorkspace: ReadonlySet<string> = new Set();
 	private readonly contextKeys = new Map<string, IContextKey<boolean>>();
 	private readonly recompute = this._register(new RunOnceScheduler(() => void this.read(), 50));
 
@@ -96,6 +98,7 @@ export class VoltFeatureService extends Disposable implements IVoltFeatureServic
 		try {
 			const extensions = await this.featureExtensions();
 			const disabled = new Set<string>();
+			const workspace = new Set<string>();
 			for (const [featureId, local] of extensions) {
 				// Only the user's choice turns a feature off, not a state the environment puts the
 				// extension in (an untrusted workspace, a remote window's extension kind).
@@ -103,10 +106,15 @@ export class VoltFeatureService extends Disposable implements IVoltFeatureServic
 				if (state === EnablementState.DisabledGlobally || state === EnablementState.DisabledWorkspace) {
 					disabled.add(featureId);
 				}
+				if (state === EnablementState.DisabledWorkspace) {
+					workspace.add(featureId);
+				}
 			}
-			if (disabled.size !== this.disabled.size || [...disabled].some(id => !this.disabled.has(id))) {
-				this.disabled = disabled;
-				this.apply();
+			const changed = disabled.size !== this.disabled.size || [...disabled].some(id => !this.disabled.has(id));
+			this.disabled = disabled;
+			this.disabledInWorkspace = workspace;
+			this.apply();
+			if (changed) {
 				this._onDidChange.fire();
 			}
 		} catch (error) {
@@ -119,5 +127,10 @@ export class VoltFeatureService extends Disposable implements IVoltFeatureServic
 			key.set(!this.disabled.has(featureId));
 		}
 		this.hostTools.setDisabledTools(VOLT_FEATURES.filter(feature => this.disabled.has(feature.id)).flatMap(feature => feature.tools ?? []));
+		// The agent server's own tools too (customize.md 6.1d): it keeps the global choice while no window is open.
+		this.hostTools.mirrorFeatureEnablement({
+			global: [...this.disabled].filter(id => !this.disabledInWorkspace.has(id)),
+			workspace: [...this.disabledInWorkspace],
+		});
 	}
 }

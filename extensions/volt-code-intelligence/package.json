@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,50 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "codeIntelligence",
+			"label": "Code intelligence",
+			"description": "Volt's code index: instant grep, symbol and file search for agents.",
+			"category": "workspace",
+			"icon": "symbol-class",
+			"order": 40,
+			"settings": [
+				"volt.codeIntelligence."
+			]
+		},
+		"voltTools": [
+			{
+				"name": "instant_grep",
+				"class": "safe"
+			},
+			{
+				"name": "find_symbol",
+				"class": "safe"
+			},
+			{
+				"name": "find_files",
+				"class": "safe"
+			}
+		],
+		"voltSettingsPages": [
+			{
+				"id": "codeIntelligence",
+				"label": "Code Intelligence"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				},
+				{
+					"id": "files.read:workspace",
+					"class": "low",
+					"reason": "Indexes and searches the chat's project."
+				}
+			]
+		}
+	}
 }
