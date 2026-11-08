@@ -709,21 +709,23 @@ export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { co
 	// incomplete, which refuses the run (B-27), for files the sandbox cannot reach anyway.
 	const homeVisible = policy.readAll || policy.read.some(root => isInside(policy.home, root));
 	const homeRoots = homeVisible ? [policy.home] : policy.read.filter(root => isInside(root, policy.home));
-	const expandRoot = (pattern: IResolvedPattern): IResolvedPattern[] => pattern.root === '/'
-		? [...new Set([policy.cwd, ...policy.write, ...homeRoots])].map(root => ({ root, names: pattern.names }))
-		: [pattern];
-	// Best effort (see above): read-only toolchains in an unreadable home, and the shared temp
-	// folders an agent may write (a busy /tmp is no place for a project's secrets either).
+	// Best effort (see above), as the resolver marks its own expansions of `**/`: read-only
+	// toolchains in an unreadable home, and the shared temp folders an agent may write.
 	const temps = await agentWritableTemps();
-	const bestEffortRoots = new Set([...(homeVisible ? [] : homeRoots.filter(root => !policy.write.includes(root))), ...policy.write.filter(root => temps.includes(root))]);
-	// The resolver already expands `**/` patterns onto these roots, so a pattern's own root says nothing here.
-	const required = (root: string) => !bestEffortRoots.has(root) || root === policy.cwd;
+	const expandRoot = (pattern: IResolvedPattern): IResolvedPattern[] => pattern.root === '/'
+		? [...new Set([policy.cwd, ...policy.write, ...homeRoots])].map(root => ({
+			root, names: pattern.names,
+			...(root !== policy.cwd && (temps.includes(root) || (!homeVisible && !policy.write.includes(root))) ? { bestEffort: true } : {}),
+		}))
+		: [pattern];
 	for (const pattern of policy.denyPatterns) {
 		patterns.push(...expandRoot(pattern).map(p => ({ kind: 'deny' as const, pattern: p })));
 	}
 	for (const pattern of policy.protectPatterns) {
 		patterns.push(...expandRoot(pattern).map(p => ({ kind: 'protect' as const, pattern: p })));
 	}
+	// A root is walked best effort only when every pattern on it is, and never the working directory.
+	const required = (root: string) => root === policy.cwd || patterns.some(({ pattern }) => pattern.root === root && !pattern.bestEffort) || (options.collectSockets && policy.write.includes(root) && !temps.includes(root));
 	const roots = [...new Set([...patterns.map(p => p.pattern.root), ...(options.collectSockets ? policy.write : [])])].sort((a, b) => a.length - b.length);
 	const deny = new Map<string, IBubblewrapPathMatch>();
 	const protect = new Map<string, IBubblewrapPathMatch>();

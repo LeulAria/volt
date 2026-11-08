@@ -19,7 +19,7 @@ import assert from 'assert';
 import { ChildProcess, execFileSync, spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import * as net from 'net';
-import { tmpdir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { basename, join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { BUBBLEWRAP_FDS } from '../../common/bwrap.js';
@@ -33,7 +33,7 @@ import { walkPatterns } from '../../node/bubblewrapBackend.js';
 import { SandboxFault } from '../../node/sandboxBackends.js';
 import { sandboxCacheKey } from '../../node/sandboxLauncher.js';
 import { IPreparedSandbox, ISandboxManagerOptions, SandboxManager } from '../../node/sandboxManager.js';
-import { ISandboxHostFacts, sandboxHostFacts } from '../../node/sandboxResolver.js';
+import { ISandboxHostFacts, resolveSandboxPolicy, sandboxHostFacts } from '../../node/sandboxResolver.js';
 import { realSandboxAvailable } from './sandboxSuiteGate.js';
 
 const isMac = process.platform === 'darwin';
@@ -482,8 +482,9 @@ suite('Volt sandbox pattern walk scope (B-27)', () => {
 			const temp = await fs.realpath(tmpdir());
 			assert.strictEqual((await walkPatterns({ ...base, write: [ws, temp] }, { collectSockets: false }, limits)).complete, true);
 
-			// As the resolver writes them: `**/.env` expanded onto every readable and writable root.
-			const expanded = [ws, temp, tools].map(at => ({ root: at, names: ['.env'] }));
+			// As the resolver writes them: `**/.env` expanded onto every readable and writable root,
+			// the toolchain and the temp folder marked best effort.
+			const expanded = [{ root: ws, names: ['.env'] }, { root: temp, names: ['.env'], bestEffort: true }, { root: tools, names: ['.env'], bestEffort: true }];
 			const resolved = await walkPatterns({ ...base, write: [ws, temp], denyPatterns: expanded }, { collectSockets: false }, limits);
 			assert.strictEqual(resolved.complete, true);
 			assert.ok(resolved.deny.some(match => match.path === join(ws, 'src', '.env')));
@@ -497,6 +498,38 @@ suite('Volt sandbox pattern walk scope (B-27)', () => {
 			// So does a home the sandbox can read: it is walked whole.
 			await fs.rm(join(ws, 'bulk'), { recursive: true });
 			assert.strictEqual((await walkPatterns({ ...base, read: [...base.read, home] }, { collectSockets: false }, limits)).complete, false);
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test('B-27: the resolver marks toolchains (also one linked out of the home) and shared temp best effort, never the workspace', async () => {
+		// Not under the temp folder: the agent writes it, and it may not be a parent of the home.
+		const root = await fs.realpath(await fs.mkdtemp(join(homedir(), '.volt-walk-resolve-')));
+		try {
+			const home = join(root, 'home');
+			const ws = join(home, 'project');
+			const linkedOut = join(root, 'opt', 'ghcup');
+			await fs.mkdir(join(home, '.cargo'), { recursive: true });
+			await fs.mkdir(ws, { recursive: true });
+			await fs.mkdir(linkedOut, { recursive: true });
+			// As on a GitHub runner: ~/.ghcup is a link to /usr/local/.ghcup.
+			await fs.symlink(linkedOut, join(home, '.ghcup'));
+			const facts: ISandboxHostFacts = { ...await sandboxHostFacts(), home };
+			const policy = agentSandboxPolicy(
+				{ level: 'workspace-write', network: false, providerId: '', workspaceRoots: [ws] },
+				{ platform: process.platform, home, tempDirs: [facts.tmpRoot], cacheDir: join(root, 'cache') },
+			);
+			const runTmp = join(root, 'run');
+			await fs.mkdir(runTmp);
+			const { policy: resolved } = await resolveSandboxPolicy(policy, { workspaceRoots: [ws], hostEnv: { PATH: '/usr/bin:/bin', HOME: home } }, facts, runTmp);
+			const env = resolved.denyPatterns.filter(pattern => pattern.names.join('/') === '.env');
+			const flag = (at: string) => env.find(pattern => pattern.root === at)?.bestEffort ?? false;
+			assert.strictEqual(flag(ws), false, 'the workspace is walked whole');
+			assert.ok(env.some(pattern => pattern.root === ws));
+			assert.strictEqual(flag(join(home, '.cargo')), true);
+			assert.strictEqual(flag(linkedOut), true, 'a toolchain linked out of the home');
+			assert.strictEqual(flag(facts.tmpRoot), true);
 		} finally {
 			await fs.rm(root, { recursive: true, force: true });
 		}

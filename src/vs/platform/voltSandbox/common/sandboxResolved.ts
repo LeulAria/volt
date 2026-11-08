@@ -65,6 +65,12 @@ export interface IResolvedPattern {
 	readonly root: string;
 	/** Literal path components, at least one. */
 	readonly names: readonly string[];
+	/**
+	 * Backends that expand patterns by a bounded walk (bubblewrap, MXC) may leave this root's walk
+	 * unfinished without refusing the run: a read-only install (a toolchain) or a shared temp
+	 * folder, never the workspace or a folder it writes (B-27, 05-limitations.md).
+	 */
+	readonly bestEffort?: boolean;
 }
 
 /**

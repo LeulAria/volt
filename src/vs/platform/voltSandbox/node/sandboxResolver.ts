@@ -214,6 +214,9 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	// workspace that merely lives under a temp folder is protected like any other.
 	const tempRoots = new Set([runTmp, host.tmpRoot, ...TEMP_ROOTS]);
 	const isTemp = (root: string) => tempRoots.has(root);
+	// A deny pattern's walk may stop early (B-27) only in a read-only root that holds no workspace
+	// (a toolchain, an install) or in a shared temp folder: never in the workspace or what it writes.
+	const walkBestEffort = (root: string) => root !== '/' && (isTemp(root) || (!write.includes(root) && !workspaceRoots.some(ws => isInside(ws, root) || isInside(root, ws))));
 	const patternRootsFor = (kind: 'deny' | 'protect'): string[] => kind === 'protect'
 		? write.filter(root => !isTemp(root))
 		: unique(readAll ? ['/'] : [...write, ...read.filter(root => !systemDirs.includes(root) && !pathDirs.includes(root))]);
@@ -227,7 +230,7 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 			if (entry.startsWith('**/')) {
 				const names = entry.slice(3).split('/');
 				for (const root of patternRootsFor(kind)) {
-					patterns.push({ root, names });
+					patterns.push({ root, names, ...(kind === 'deny' && walkBestEffort(root) ? { bestEffort: true } : {}) });
 				}
 				continue;
 			}
