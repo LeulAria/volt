@@ -9,6 +9,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
 import { ConfigurationScope, Extensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
+import { VOLT_SANDBOXED_EXTENSIONS_SETTING, VOLT_UNSANDBOXED_EXTENSIONS_SETTING } from '../../../../platform/voltSandbox/common/extensionHostSandbox.js';
 import { webviewResourceBaseHost } from './webview.js';
 
 /**
@@ -19,12 +20,14 @@ import { webviewResourceBaseHost } from './webview.js';
  */
 
 /**
- * Extensions the user opted into Volt's sandbox, by id (N.1 #22: opt-in per extension). Today their
- * webviews get the strict floor (no network beyond declared `net.connect` hosts, no workspace reads
- * through the webview unless the workspace is trusted, links outside Volt ask first); running the
- * extension host itself in a sandbox comes with the per-extension hosts (P2).
+ * Extensions the user opted into Volt's sandbox, by id (N.1 #22: opt-in per extension). Each runs
+ * alone in its own sandboxed extension host (P2, `extensionHostSandbox.ts`), and their webviews get
+ * the strict floor (no network beyond declared `net.connect` hosts, no workspace reads through the
+ * webview unless the workspace is trusted, links outside Volt ask first).
  */
-export const VOLT_SANDBOXED_EXTENSIONS_SETTING = 'volt.extensions.sandboxed';
+export { VOLT_SANDBOXED_EXTENSIONS_SETTING, VOLT_UNSANDBOXED_EXTENSIONS_SETTING };
+
+const EXTENSION_ID_ITEMS = { type: 'string', pattern: '^[a-zA-Z0-9-]+\\.[a-zA-Z0-9-]+$', patternErrorMessage: localize('voltExtensions.sandboxed.pattern', "Use the extension's id, publisher.name.") } as const;
 
 Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfiguration({
 	id: 'volt.extensions',
@@ -33,12 +36,20 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 	properties: {
 		[VOLT_SANDBOXED_EXTENSIONS_SETTING]: {
 			type: 'array',
-			items: { type: 'string', pattern: '^[a-zA-Z0-9-]+\\.[a-zA-Z0-9-]+$', patternErrorMessage: localize('voltExtensions.sandboxed.pattern', "Use the extension's id, publisher.name.") },
+			items: EXTENSION_ID_ITEMS,
 			default: [],
 			uniqueItems: true,
-			// A repository can't change it: only the user decides which extensions are confined.
-			scope: ConfigurationScope.APPLICATION,
-			description: localize('voltExtensions.sandboxed', "Extensions Volt runs under its sandbox rules, by id (publisher.name). Their webviews reach no network except the hosts the extension declares with net.connect, read the workspace only when it is trusted, and links they open outside Volt ask first."),
+			// Per profile, in user (or remote user) settings only: a repository can't change which extensions are confined.
+			scope: ConfigurationScope.MACHINE,
+			description: localize('voltExtensions.sandboxed', "Extensions Volt runs in a sandbox, by id (publisher.name). Each runs alone in its own extension host, which reads only its own folder and storage, your toolchains and a trusted workspace, writes only its storage, and reaches no network except hosts you allow. Their webviews reach no network except the hosts the extension declares with net.connect, read the workspace only when it is trusted, and links they open outside Volt ask first. Extensions not listed run as before."),
+		},
+		[VOLT_UNSANDBOXED_EXTENSIONS_SETTING]: {
+			type: 'array',
+			items: EXTENSION_ID_ITEMS,
+			default: [],
+			uniqueItems: true,
+			scope: ConfigurationScope.MACHINE,
+			description: localize('voltExtensions.runWithoutSandbox', "Extensions in volt.extensions.sandboxed that Volt could not sandbox here and that you chose to run without the sandbox anyway. Until you choose that, such an extension stays off."),
 		},
 	},
 });
