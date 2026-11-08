@@ -67,6 +67,54 @@ export const FIRST_PARTY_CEILINGS: Readonly<Record<string, readonly IVoltCeiling
 	'volt.visuals': [{ id: 'tools.register' }, { id: 'files.read:workspace' }, { id: 'browser.drive' }, { id: 'devices.drive' }],
 });
 
+/**
+ * M5: the built-ins whose `volt` API calls from in-process feature code are enforced (what the
+ * manifest declares within the ceiling, refused beyond it, no prompt). Every other built-in runs in
+ * report mode: calls go through and each would-be denial is logged once
+ * (`ReportModeCapabilityReporter`).
+ *
+ * The rule: a feature moves here only after its report log shows 0 would-be denials over one
+ * release, and `featureCapabilityMode.test.ts` (M5-MODE-1) shows 0 for its manifest and its own API
+ * namespace under enforcement. A feature whose manifest declares a critical capability can't move
+ * until that capability leaves the API (critical is never granted through it, G.8). M5-MODE-1 also
+ * fails when a built-in shows 0 and is left out, so the list can't silently fall behind.
+ *
+ * Extension hosts (`vscode.volt`) are always enforced; this list is only for trusted-core code.
+ *
+ * Still in report mode (each has a would-be denial in M5-MODE-1 today): agent-resources,
+ * automations, claude-accounts, commit-review, computer-use, devices, memory, pull-requests,
+ * visuals.
+ */
+export const FIRST_PARTY_ENFORCED: ReadonlySet<string> = new Set([
+	'volt.browser',
+	'volt.code-intelligence',
+	'volt.customize',
+	'volt.git-graph',
+	'volt.playgrounds',
+	'volt.remote-devices',
+	'volt.scratch-board',
+	'volt.skills-and-plugins',
+	'volt.usage',
+	// The 12 providers: each declares only its own secret (or loopback ports, or openrouter.ai).
+	'volt.provider-antigravity',
+	'volt.provider-claude',
+	'volt.provider-codex',
+	'volt.provider-cursor',
+	'volt.provider-fx',
+	'volt.provider-grok',
+	'volt.provider-kimi',
+	'volt.provider-local',
+	'volt.provider-muse',
+	'volt.provider-opencode',
+	'volt.provider-openrouter',
+	'volt.provider-pi',
+]);
+
+/** `enforce` or `report` for a built-in's in-process `volt` API calls (M5). */
+export function firstPartyCapabilityMode(extensionId: string): 'enforce' | 'report' {
+	return FIRST_PARTY_ENFORCED.has(extensionId.toLowerCase()) && !!firstPartyCeiling(extensionId) ? 'enforce' : 'report';
+}
+
 /** The ceiling of a built-in extension; undefined for any extension the table doesn't name. */
 export function firstPartyCeiling(extensionId: string): readonly IVoltCeilingEntry[] | undefined {
 	const key = extensionId.toLowerCase();
