@@ -101,7 +101,7 @@ export interface IVoltExtensionHostSandbox {
 }
 
 /** The sandboxed start for `startParams.voltSandbox`, before the connection is accepted, so a refusal goes back on it. */
-export async function startSandboxedExtensionHost(sandbox: IVoltExtensionHostSandbox | undefined, startParams: IRemoteExtensionHostStartParams, accessor: { environmentService: IServerEnvironmentService; logService: ILogService; configurationService: IConfigurationService }): Promise<{ readonly ok: true; readonly started: ISandboxedExtensionHostStart } | { readonly ok: false; readonly code: string; readonly reason: string }> {
+export async function startSandboxedExtensionHost(sandbox: IVoltExtensionHostSandbox | undefined, startParams: IRemoteExtensionHostStartParams, accessor: { environmentService: IServerEnvironmentService; logService: ILogService; configurationService: IConfigurationService; userEnvironment?: () => Promise<IProcessEnvironment> }): Promise<{ readonly ok: true; readonly started: ISandboxedExtensionHostStart } | { readonly ok: false; readonly code: string; readonly reason: string }> {
 	const params = startParams.voltSandbox;
 	if (!params || typeof params.extensionId !== 'string' || !/^[a-z0-9-]+\.[a-z0-9-]+$/i.test(params.extensionId)) {
 		return { ok: false, code: 'request', reason: 'The request names no extension.' };
@@ -110,7 +110,7 @@ export async function startSandboxedExtensionHost(sandbox: IVoltExtensionHostSan
 		return { ok: false, code: 'platform', reason: 'This server does not run sandboxed extension hosts.' };
 	}
 	// The user's environment as a forked host would get it; the sandbox copies only the fixed list from it.
-	const hostEnv = await buildUserEnvironment(startParams.env, true, startParams.language, accessor.environmentService, accessor.logService, accessor.configurationService);
+	const hostEnv = await (accessor.userEnvironment?.() ?? buildUserEnvironment(startParams.env, true, startParams.language, accessor.environmentService, accessor.logService, accessor.configurationService));
 	const args = ['--type=extensionHost', ...(params.transformURIs ? ['--transformURIs'] : []), '--useHostProxy=false'];
 	const environment = accessor.environmentService;
 	return sandbox.start(params, {
