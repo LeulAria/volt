@@ -7,9 +7,8 @@ import { allEnforcement, ISandboxBackendCapabilities, SandboxUnavailableError } 
 import { ISandboxBackend, ISandboxLaunchSpec } from './sandboxBackends.js';
 
 /**
- * Platforms without an OS sandbox backend (Windows today). Every launch is refused: Volt never
- * runs a workload that asked for a sandbox without one. MXC is the recommended Windows backend
- * (docs/security/sandbox/01-decisions.md, ADR-5).
+ * Platforms without an OS sandbox backend (Windows has MXC, mxcBackend.ts). Every launch is
+ * refused: Volt never runs a workload that asked for a sandbox without one.
  */
 export class UnsupportedBackend implements ISandboxBackend {
 

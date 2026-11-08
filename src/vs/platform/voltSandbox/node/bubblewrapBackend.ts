@@ -15,6 +15,7 @@ import { IResolvedPattern, IResolvedSandboxPolicy } from '../common/sandboxResol
 import { SandboxDimension } from '../common/sandboxSchema.js';
 import { buildSeccompFilter, SeccompArch, seccompArch, seccompInstructions } from '../common/seccomp.js';
 import { ISandboxBackend, ISandboxLaunchOptions, ISandboxLaunchSpec, SandboxConfirmation } from './sandboxBackends.js';
+import { isInside } from './sandboxResolver.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -541,7 +542,8 @@ export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { co
 		entries += list.length;
 		const names = new Map(list.map(entry => [entry.name, entry]));
 		for (const { kind, pattern } of patterns) {
-			if (!isInsidePath(dir, pattern.root)) {
+			// The resolver's comparison: Windows paths (MXC uses this walk too) are case-insensitive with `\`.
+			if (!isInside(dir, pattern.root)) {
 				continue;
 			}
 			const first = names.get(pattern.names[0]);
@@ -571,7 +573,7 @@ export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { co
 			// A repository's `.git` is matched from its parent (`.git/config`, `.git/hooks`), so the
 			// walk never enters one. A `.git` that is a root itself (a linked worktree's common
 			// folder) is walked for `config.worktree`, minus its objects.
-			if (entry.name === '.git' || (entry.name === 'objects' && root && dir.endsWith('/.git'))) {
+			if (entry.name === '.git' || (entry.name === 'objects' && root && /[\\/]\.git$/.test(dir))) {
 				continue;
 			}
 			queue.push({ dir: path, depth: depth + 1, root: false });

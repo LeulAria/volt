@@ -8,6 +8,7 @@ import { promises as fs } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { promisify } from 'util';
 import { basename, dirname, isAbsolute, join, resolve } from '../../../base/common/path.js';
+import { isWindowsPathInside } from '../common/mxc.js';
 import { SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { isReservedEnvName, isSecretEnvName, systemReadPaths } from '../common/sandboxProfiles.js';
 import { IResolvedPattern, IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
@@ -75,7 +76,7 @@ export async function canonicalPath(path: string): Promise<ICanonical> {
 	}
 	const rest: string[] = [];
 	let current = path;
-	for (let i = 0; i < 128 && current && current !== '/'; i++) {
+	for (let i = 0; i < 128 && current && current !== '/' && dirname(current) !== current; i++) {
 		rest.unshift(basename(current));
 		current = dirname(current);
 		try {
@@ -89,7 +90,20 @@ export async function canonicalPath(path: string): Promise<ICanonical> {
 }
 
 export function isInside(path: string, root: string): boolean {
+	if (isWindowsStylePath(root) || isWindowsStylePath(path)) {
+		return isWindowsPathInside(path, root);
+	}
 	return root === '/' || path === root || path.startsWith(`${root}/`);
+}
+
+/** `C:\...` or `\\server\...`: compared case-insensitively with either separator. */
+function isWindowsStylePath(path: string): boolean {
+	return /^[A-Za-z]:([\\/]|$)/.test(path) || path.startsWith('\\\\');
+}
+
+/** The PATH separator of the platform the policy is resolved for. */
+function pathDelimiter(platform: string): string {
+	return platform === 'win32' ? ';' : ':';
 }
 
 const TEMP_ROOTS = ['/tmp', '/private/tmp', '/var/tmp', '/private/var/tmp'];
@@ -130,8 +144,9 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	}
 	await fs.mkdir(join(runTmp, 'home'), { recursive: true, mode: 0o700 });
 
-	const pathDirs = await toolchainDirs(context.hostEnv.PATH, home, notes);
-	const systemDirs = (await Promise.all(systemReadPaths(host.platform).map(canonicalPath))).filter(c => c.exists).map(c => c.path);
+	const hostPath = host.platform === 'win32' ? Object.entries(context.hostEnv).find(([key]) => key.toLowerCase() === 'path')?.[1] : context.hostEnv.PATH;
+	const pathDirs = await toolchainDirs(hostPath, home, notes, pathDelimiter(host.platform));
+	const systemDirs = (await Promise.all(systemReadPaths(host.platform, context.hostEnv).map(canonicalPath))).filter(c => c.exists).map(c => c.path);
 	if (host.platform === 'darwin' && host.developerDir && host.developerDir.startsWith('/Applications/')) {
 		// `/usr/bin/git` and friends are shims that load frameworks from the selected Xcode.
 		systemDirs.push(dirname(host.developerDir));
@@ -281,8 +296,10 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	}
 	const readable = (dir: string) => readAll || [...read, ...write].some(root => isInside(dir, root));
 	if (!env.PATH) {
-		const fromHost = (context.hostEnv.PATH ?? '').split(':').filter(dir => isAbsolute(dir) && readable(dir));
-		env.PATH = fromHost.length ? unique(fromHost).join(':') : '/usr/bin:/bin:/usr/sbin:/sbin';
+		const delimiter = pathDelimiter(host.platform);
+		const fromHost = (hostPath ?? '').split(delimiter).filter(dir => isAbsolute(dir) && readable(dir));
+		const fallback = host.platform === 'win32' ? systemDirs.slice(0, 1).flatMap(root => [join(root, 'System32'), root]).join(';') : '/usr/bin:/bin:/usr/sbin:/sbin';
+		env.PATH = fromHost.length ? unique(fromHost).join(delimiter) : fallback;
 	}
 	env.TMPDIR ??= runTmp;
 	env.HOME ??= readAll ? (context.hostEnv.HOME ?? home) : join(runTmp, 'home');
@@ -354,22 +371,23 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
  * user's node, python or cargo. `<prefix>/bin` gives `<prefix>` (libraries live beside it), except
  * where the prefix is a catch-all such as `~/.local` or the home folder.
  */
-async function toolchainDirs(pathVar: string | undefined, home: string, notes: string[]): Promise<string[]> {
+async function toolchainDirs(pathVar: string | undefined, home: string, notes: string[], delimiter = ':'): Promise<string[]> {
 	const out: string[] = [];
-	for (const dir of (pathVar ?? '').split(':')) {
+	const isRoot = (path: string) => path === '/' || dirname(path) === path;
+	for (const dir of (pathVar ?? '').split(delimiter)) {
 		if (!isAbsolute(dir)) {
 			continue;
 		}
 		const c = await canonicalPath(dir);
-		if (!c.exists || !c.isDirectory || c.path === '/' || c.path === home) {
+		if (!c.exists || !c.isDirectory || isRoot(c.path) || c.path === home) {
 			continue;
 		}
 		let prefix = c.path;
 		const parent = dirname(c.path);
-		if ((basename(c.path) === 'bin' || basename(c.path) === 'sbin') && parent !== '/' && parent !== home && parent !== join(home, '.local') && !isInside(home, parent)) {
+		if ((basename(c.path) === 'bin' || basename(c.path) === 'sbin') && !isRoot(parent) && parent !== home && parent !== join(home, '.local') && !isInside(home, parent)) {
 			prefix = parent;
 		}
-		if (prefix === '/' || isInside(home, prefix)) {
+		if (isRoot(prefix) || isInside(home, prefix)) {
 			notes.push(`PATH entry too broad to expose: ${dir}`);
 			continue;
 		}

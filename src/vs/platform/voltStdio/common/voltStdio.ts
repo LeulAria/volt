@@ -33,7 +33,7 @@ export interface IVoltSandboxEvent {
 
 export interface IVoltSandboxSupportInfo {
 	readonly platform: string;
-	readonly mechanism: 'seatbelt' | 'bwrap' | 'none';
+	readonly mechanism: 'seatbelt' | 'bwrap' | 'mxc' | 'none';
 	readonly filesystem: boolean;
 	readonly network: boolean;
 	readonly detail: string;
