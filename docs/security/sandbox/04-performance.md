@@ -36,6 +36,8 @@ On macOS, the end-to-end time breaks down roughly as:
 
 Agent CLIs pay this once per process, which lives for a whole chat. Workload commands pay it per command.
 
+**Long-lived hosts (C5 supervisor), 2026-11-08,** Apple M4 Max, `workspace` profile: a Node host (Volt's runtime as Node) from `SandboxSupervisor.start` through attestation, the go byte and its `NODE_CHANNEL_FD` channel to the first RPC answered: **p50 114 ms, max 139 ms** over 8 runs (`PERF-HOST-1` in `sandboxSupervisor.test.ts`), inside the spec's T2 budget of 150 / 300 ms. With the machine at load average 29 the same test gave p50 332 ms, max 435 ms.
+
 ## Inside a sandbox
 
 | | direct | sandboxed |

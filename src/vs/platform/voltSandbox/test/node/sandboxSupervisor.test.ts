@@ -17,7 +17,7 @@
  */
 
 import assert from 'assert';
-import { spawn } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from '../../../../base/common/path.js';
@@ -43,6 +43,39 @@ async function waitFor(check: () => boolean | Promise<boolean>, ms: number): Pro
 		await new Promise(resolve => setTimeout(resolve, 25));
 	}
 	return check();
+}
+
+/**
+ * `root` and every process below it, as pids seen from outside the sandbox. A pid the host reports
+ * about itself is its own pid namespace's on Linux, so the tests never use those from outside.
+ */
+async function treeOf(root: number): Promise<number[]> {
+	const parents = new Map<number, number>();
+	if (isLinux) {
+		for (const name of await fs.readdir('/proc')) {
+			const stat = /^\d+$/.test(name) ? await fs.readFile(`/proc/${name}/stat`, 'utf8').catch(() => undefined) : undefined;
+			if (stat) {
+				parents.set(Number(name), Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]));
+			}
+		}
+	} else {
+		const stdout = await new Promise<string>(resolve => execFile('/bin/ps', ['-axo', 'pid=,ppid='], (_err, out) => resolve(out ?? '')));
+		for (const line of stdout.split('\n')) {
+			const match = /^\s*(\d+)\s+(\d+)/.exec(line);
+			if (match) {
+				parents.set(Number(match[1]), Number(match[2]));
+			}
+		}
+	}
+	const tree = [root];
+	for (let i = 0; i < tree.length; i++) {
+		for (const [pid, ppid] of parents) {
+			if (ppid === tree[i] && !tree.includes(pid)) {
+				tree.push(pid);
+			}
+		}
+	}
+	return tree;
 }
 
 function principal(id = 'host'): IPrincipal {
@@ -201,7 +234,9 @@ suite('Volt sandbox supervisor (C5, real processes)', function () {
 		try {
 			const pong = await request(h, { op: 'ping', n: 1 }, 'pong');
 			const fd = pong.fd as number;
-			const pid = pong.pid as number;
+			// The host's processes as Volt sees them (on Linux the host's own pid is its namespace's).
+			const pids = await treeOf(h.pid!);
+			assert.ok(isLinux || pids.includes(pong.pid as number), `the host ${pong.pid} is in its tree ${pids.join(', ')}`);
 			// The channel is a socketpair: nothing in the run folders (or anywhere) names it.
 			const sockets: string[] = [];
 			const walk = async (dir: string) => {
@@ -221,9 +256,9 @@ suite('Volt sandbox supervisor (C5, real processes)', function () {
 			try {
 				// From another sandbox: the same fd number is not open there, and the host's /proc fds are out of reach (Linux: another pid namespace).
 				// macOS: process-info is not mediated (the residual the Security page states), so lsof may see that the fd exists, but it names no path anything could connect to.
-				const probe = isLinux
-					? `echo ran; (echo forged >&${fd}) 2>/dev/null && echo WROTE-FD; ls -l /proc/${pid}/fd 2>/dev/null | grep -c socket || true; cat /proc/${pid}/fd/${fd} 2>/dev/null && echo READ-PROC`
-					: `echo ran; (echo forged >&${fd}) 2>/dev/null && echo WROTE-FD; /usr/sbin/lsof -a -p ${pid} -d ${fd} -Fn 2>/dev/null | grep '^n' | grep -c / || true`;
+				const probe = `echo ran; (echo forged >&${fd}) 2>/dev/null && echo WROTE-FD; ` + pids.map(pid => isLinux
+					? `ls -l /proc/${pid}/fd 2>/dev/null | grep -c socket || true; cat /proc/${pid}/fd/${fd} 2>/dev/null && echo READ-PROC; `
+					: `/usr/sbin/lsof -a -p ${pid} -d ${fd} -Fn 2>/dev/null | grep '^n' | grep -c / || true; `).join('');
 				const result = await supervisor.manager.run({ command: '/bin/sh', args: ['-c', probe], policy: builtinProfile('workspace'), context: { workspaceRoots: [ws], hostEnv: { PATH: '/usr/bin:/bin:/usr/sbin', HOME: home } } }, { timeoutMs: 30_000 });
 				assert.strictEqual(result.status, 'completed', result.error);
 				const lines = result.stdout.trim().split('\n');
@@ -348,7 +383,11 @@ suite('Volt sandbox supervisor (C5, real processes)', function () {
 		const hosts = [await started(await supervisor.start(nodeHost())), await started(await supervisor.start(nodeHost()))];
 		const pids: number[] = [];
 		for (const h of hosts) {
-			pids.push(h.pid!, (await request(h, { op: 'child' }, 'child')).pid as number);
+			const child = (await request(h, { op: 'child' }, 'child')).pid as number;
+			// Every process of the host's tree, as Volt sees them (on Linux the child's pid above is the sandbox's namespace's).
+			const tree = await treeOf(h.pid!);
+			assert.ok(isLinux ? tree.length >= 3 : tree.includes(child), `the host's child is in its tree: ${tree.join(', ')}`);
+			pids.push(...tree);
 		}
 		assert.ok(pids.every(pid => processAlive(pid)), 'hosts and their children run');
 		const started_ = Date.now();
