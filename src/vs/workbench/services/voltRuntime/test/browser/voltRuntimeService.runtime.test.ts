@@ -237,7 +237,7 @@ suite('Agent runtime orchestration', () => {
 			stub({}),
 			stub({ userRoamingDataHome: URI.file('/user') }),
 			// No language servers: the error gate does not wait for markers on the files an agent changed.
-			stub({ getValue: (key: string) => key === LSP_ENABLED_SETTING ? false : undefined }),
+			stub({ getValue: (key: string) => key === LSP_ENABLED_SETTING ? false : undefined, onDidChangeConfiguration: Event.None }),
 			// No hooks: every tool runs as it is.
 			stub({ run: async () => ({ context: [] }), wrapTool: (tool: unknown) => tool, definitions: async () => [] }),
 			// No code index: searches use ripgrep.
