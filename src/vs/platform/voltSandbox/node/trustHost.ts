@@ -6,11 +6,12 @@
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { Emitter } from '../../../base/common/event.js';
-import { Disposable, MutableDisposable } from '../../../base/common/lifecycle.js';
+import { Disposable, dispose, IDisposable, markAsSingleton } from '../../../base/common/lifecycle.js';
 import { join } from '../../../base/common/path.js';
 import { SubjectKey } from '../common/principals.js';
 import { ITrustChange, ITrustCommitResult, ITrustHistoryEntry, ITrustState, mergeTrustHistory, TRUST_HISTORY_PARSERS, TrustHistorySource, trustChangeRefusal } from '../common/trust.js';
-import { GrantStore } from './grantStore.js';
+import { GrantStore, IGrantStoreChangeEvent } from './grantStore.js';
+import type { INetworkGrantSource } from './networkBroker.js';
 
 /**
  * The grant store on an execution host (spec P4): opened on first use, watched so another Volt
@@ -31,8 +32,8 @@ const HISTORY_TAIL_BYTES = 256 * 1024;
 export class TrustHost extends Disposable {
 
 	private opened: Promise<GrantStore> | undefined;
-	private readonly listener = this._register(new MutableDisposable());
-	private readonly watcher = this._register(new MutableDisposable());
+	/** The open store and what hangs on it: opened on first use (often in the middle of something else), kept for the host's life. */
+	private readonly held: IDisposable[] = [];
 	private readonly _onDidChange = this._register(new Emitter<{ readonly epoch: number; readonly narrowed: boolean }>());
 	readonly onDidChange = this._onDidChange.event;
 
@@ -51,14 +52,42 @@ export class TrustHost extends Disposable {
 				store.dispose();
 				throw new Error('the trust host is disposed');
 			}
-			this._register(store);
-			this.listener.value = store.onDidChange(event => this._onDidChange.fire({ epoch: event.epoch, narrowed: event.narrowed }));
+			this.held.push(markAsSingleton(store), markAsSingleton(store.onDidChange(event => {
+				this._onDidChange.fire({ epoch: event.epoch, narrowed: event.narrowed });
+				for (const listener of [...this.sourceListeners]) {
+					listener(event);
+				}
+			})));
 			if (this.options.watch !== false) {
-				this.watcher.value = store.watch();
+				this.held.push(markAsSingleton(store.watch()));
 			}
 			return store;
 		});
 		return this.opened;
+	}
+
+	private readonly sourceListeners = new Set<(event: IGrantStoreChangeEvent) => void>();
+
+	/**
+	 * The store as the network broker's grant source: its commits and change events (another
+	 * process's included, through the watch). The broker's subscription lives as long as it does.
+	 */
+	async grantSource(): Promise<INetworkGrantSource> {
+		const store = await this.store();
+		return {
+			get data() { return store.data; },
+			commit: (expectedEpoch, change) => store.commit(expectedEpoch, change),
+			onDidChange: listener => {
+				this.sourceListeners.add(listener);
+				return { dispose: () => { this.sourceListeners.delete(listener); } };
+			},
+		};
+	}
+
+	override dispose(): void {
+		dispose(this.held.splice(0).reverse());
+		this.sourceListeners.clear();
+		super.dispose();
 	}
 
 	async state(): Promise<ITrustState> {

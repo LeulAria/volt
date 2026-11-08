@@ -112,7 +112,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			mode: () => readPolicyAuthorityMode(this.configurationService.getValue(POLICY_AUTHORITY_MODE_SETTING)),
 			supervisorEnabled,
 			networkMode: () => readNetworkBrokerMode(this.configurationService.getValue(NETWORK_BROKER_SETTING)),
-			grants: () => this.trust.store(),
+			grants: () => this.trust.grantSource(),
 		}));
 		this._register(this.sandbox.onViolation(e => {
 			const id = this.sandboxTags.get(e.tag);
