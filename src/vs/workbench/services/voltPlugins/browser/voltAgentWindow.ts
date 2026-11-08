@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Dimension } from '../../../../base/browser/dom.js';
+import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
@@ -37,8 +38,40 @@ export interface IVoltToolsPanel extends IDisposable {
 	openNewChat(): Promise<IVoltChatPane | undefined>;
 }
 
+/** What a chat's composer gives a feature's card. */
+export interface IVoltComposerTrayHost {
+	/**
+	 * The card shrunk to a chip, in the row above the composer: the composer's own button
+	 * (`.volt-agent-composer-chip.hidden`), which the card fills and shows by removing `hidden`.
+	 * The composer empties it again when the card goes.
+	 */
+	readonly chip: HTMLButtonElement;
+	/** The chip showed or hid. */
+	chipChanged(): void;
+	/** The card changed height: the composer lays out again. */
+	layout(): void;
+}
+
+/** A feature's card above a chat's composer (like the commit review), shown while the feature is loaded. */
+export interface IVoltComposerTray extends IDisposable {
+	/** Placed in the composer, above the question tray. */
+	readonly element: HTMLElement;
+	/** The chat the composer shows now (undefined: a new chat). */
+	setSession(sessionKey: string | undefined): void;
+}
+
+export type VoltComposerTrayFactory = (host: IVoltComposerTrayHost) => IVoltComposerTray;
+
 export interface IVoltAgentWindowService {
 	readonly _serviceBrand: undefined;
+
+	/**
+	 * Adds a card to every chat's composer, open ones included, under `id` (the composer knows
+	 * where each id's card and chip go) until disposed; disposing removes it from them all.
+	 */
+	registerComposerTray(id: string, factory: VoltComposerTrayFactory): IDisposable;
+	composerTray(id: string): VoltComposerTrayFactory | undefined;
+	readonly onDidChangeComposerTrays: Event<string>;
 
 	/** The agent layout is on (rather than the IDE layout). */
 	isAgentLayout(): boolean;

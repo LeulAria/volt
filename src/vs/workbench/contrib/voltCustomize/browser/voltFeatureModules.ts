@@ -13,6 +13,7 @@ import { ContextKeyExpression } from '../../../../platform/contextkey/common/con
 import { createDecorator, IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IEditorSerializer } from '../../../common/editor.js';
 import { IVoltPluginContext } from '../../../services/voltPlugins/common/voltApi.js';
+import { IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolResult } from '../../../services/voltRuntime/common/hostTools.js';
 
 /**
  * A Volt feature's code, in its own folder (`contrib/volt<Feature>/`, named by its built-in
@@ -43,6 +44,11 @@ export interface IVoltFeatureModuleHost {
 
 export interface IVoltFeatureModule {
 	activate(host: IVoltFeatureModuleHost): void | Promise<void>;
+	/**
+	 * Runs one of the agent tools its table entry lists (`tools`), for the call that loaded it; later
+	 * calls reach the tool provider the module registered.
+	 */
+	invokeTool?(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult>;
 }
 
 /** A command a module registers, as core shows it before the module is loaded. */
@@ -85,6 +91,13 @@ export interface IVoltFeatureModuleEntry {
 	readonly commands?: readonly IVoltFeatureModuleCommand[];
 	/** Editor input type ids the module serializes. */
 	readonly editors?: readonly string[];
+	/**
+	 * Agent tools the module serves: listed (stubs) while the feature is on, so agents see them
+	 * before the module loads; the first call loads it and runs through `invokeTool`.
+	 */
+	readonly tools?: readonly IVoltHostToolInfo[];
+	/** False where the module can't run (a build without the services it needs): no stubs, no loading. */
+	readonly available?: () => boolean;
 }
 
 export const IVoltFeatureModuleService = createDecorator<IVoltFeatureModuleService>('voltFeatureModuleService');
@@ -94,6 +107,8 @@ export interface IVoltFeatureModuleService {
 	/** A module was loaded or unloaded. */
 	readonly onDidChange: Event<string>;
 	isActive(feature: string): boolean;
+	/** The feature's module if it is loaded now (no loading). */
+	getActive<T extends IVoltFeatureModule = IVoltFeatureModule>(feature: string): T | undefined;
 	/**
 	 * Loads and activates the feature's module (once) and returns it; undefined while the feature
 	 * is off or has no module. The result is the module's own object, typed by its contract file.

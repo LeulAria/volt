@@ -10,7 +10,7 @@ import { describeHostToolActivity, friendlyToolTitle, sameHostToolArgs } from '.
 import { buildThreadParts, mergeFileBlocks, turnFileChanges } from '../../browser/chrome/agentTimeline.js';
 import { isAgentTransportError } from '../../../../services/voltRuntime/browser/agents/acpProvider.js';
 import { COMMIT_PLAN_TOOL_NAMES, isVoltHostTool, PULL_REQUEST_TOOL_NAMES, splitMcpToolName, voltHostToolName } from '../../../../services/voltRuntime/common/hostTools.js';
-import { COMMIT_PLAN_TOOLS } from '../../browser/pullRequests/agentCommitPlanService.js';
+import { COMMIT_PLAN_TOOLS } from '../../../voltCommitReview/common/voltCommitReview.js';
 import { bareTaskToolName } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import { PULL_REQUEST_TOOLS } from '../../browser/pullRequests/agentPullRequestService.js';
 

@@ -5,11 +5,13 @@
 
 import { Codicon } from '../../../../base/common/codicons.js';
 import { Schemas } from '../../../../base/common/network.js';
+import { isWeb } from '../../../../base/common/platform.js';
 import { localize2 } from '../../../../nls.js';
 import { MenuId } from '../../../../platform/actions/common/actions.js';
 import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { GIT_GRAPH_ASK_AGENT_COMMAND_ID, GIT_GRAPH_EXPLAIN_COMMIT_COMMAND_ID, GIT_GRAPH_EXPLAIN_LINES_COMMAND_ID, GIT_GRAPH_FEATURE_ID, GIT_GRAPH_FILE_HISTORY_COMMAND_ID, GIT_GRAPH_INPUT_TYPE_ID, GIT_GRAPH_LINE_HISTORY_COMMAND_ID, GIT_GRAPH_REVEAL_COMMIT_COMMAND_ID, GIT_GRAPH_REVIEW_COMMIT_COMMAND_ID, InGitGraphContext, OPEN_GIT_GRAPH_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID } from '../../voltGitGraph/common/voltGitGraph.js';
+import { COMMIT_PLAN_TOOLS, COMMIT_REVIEW_FEATURE_ID } from '../../voltCommitReview/common/voltCommitReview.js';
 import { IVoltFeatureModuleEntry } from './voltFeatureModules.js';
 
 /**
@@ -98,6 +100,18 @@ const GIT_GRAPH_MODULE: IVoltFeatureModuleEntry = {
 	],
 };
 
+/**
+ * The commit review (`volt.commit-review`): agents see its tools from the start, and the first call
+ * loads it. Desktop only, like the pull requests it commits for.
+ */
+const COMMIT_REVIEW_MODULE: IVoltFeatureModuleEntry = {
+	feature: COMMIT_REVIEW_FEATURE_ID,
+	load: async () => (await import('../../voltCommitReview/browser/voltCommitReview.module.js')).commitReviewModule,
+	tools: COMMIT_PLAN_TOOLS,
+	available: () => !isWeb,
+};
+
 export const VOLT_FEATURE_MODULES: readonly IVoltFeatureModuleEntry[] = [
 	GIT_GRAPH_MODULE,
+	COMMIT_REVIEW_MODULE,
 ];

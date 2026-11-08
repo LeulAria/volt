@@ -29,7 +29,8 @@
 			"description": "Agents propose commits for the user to review, and name a worktree's branch.",
 			"category": "workspace",
 			"icon": "git-compare",
-			"order": 70
+			"order": 70,
+			"entry": "voltCommitReview"
 		},
 		"voltTools": [
 			{

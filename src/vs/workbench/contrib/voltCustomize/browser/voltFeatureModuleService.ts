@@ -25,6 +25,7 @@ import { EditorInput } from '../../../common/editor/editorInput.js';
 import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { IVoltPluginContext, IVoltPluginService } from '../../../services/voltPlugins/common/voltApi.js';
+import { IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
 import { IVoltFeatureService, voltFeature } from '../common/voltFeatures.js';
 import { VOLT_FEATURE_MANIFESTS } from '../common/voltFeatureManifests.generated.js';
 import { IVoltFeatureModule, IVoltFeatureModuleEntry, IVoltFeatureModuleHost, IVoltFeatureModuleService } from './voltFeatureModules.js';
@@ -65,7 +66,9 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 	) {
 		super();
 		for (const entry of entries) {
-			this.entries.set(entry.feature, entry);
+			if (entry.available?.() !== false) {
+				this.entries.set(entry.feature, entry);
+			}
 		}
 		this.update();
 		this._register(features.onDidChange(() => this.update()));
@@ -78,6 +81,10 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 
 	isActive(feature: string): boolean {
 		return this.active.has(feature);
+	}
+
+	getActive<T extends IVoltFeatureModule = IVoltFeatureModule>(feature: string): T | undefined {
+		return this.active.get(feature)?.module as T | undefined;
 	}
 
 	async activate<T extends IVoltFeatureModule = IVoltFeatureModule>(feature: string): Promise<T | undefined> {
@@ -175,7 +182,7 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 			if (!on) {
 				this.stubs.deleteAndDispose(entry.feature);
 				this.deactivate(entry.feature);
-			} else if (!this.active.has(entry.feature) && !this.stubs.has(entry.feature) && entry.commands?.length) {
+			} else if (!this.active.has(entry.feature) && !this.stubs.has(entry.feature) && (entry.commands?.length || entry.tools?.length)) {
 				this.stubs.set(entry.feature, this.registerStubs(entry));
 			}
 		}
@@ -183,6 +190,23 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 
 	private registerStubs(entry: IVoltFeatureModuleEntry): IDisposable {
 		const store = new DisposableStore();
+		if (entry.tools?.length) {
+			// Agents list the tools before the module loads; the first call loads it (H.2 `onTool:`).
+			const hostTools = this.instantiationService.invokeFunction(accessor => accessor.get(IVoltHostToolService));
+			store.add(hostTools.registerToolProvider({
+				tools: entry.tools,
+				invoke: async (name, args, call) => {
+					const module = await this.activate(entry.feature).catch(error => {
+						this.logService.error(`[volt modules] ${entry.feature} failed to load for ${name}`, error);
+						return undefined;
+					});
+					if (!module?.invokeTool) {
+						return { error: `${name} is not available: ${voltFeature(entry.feature)?.label ?? entry.feature} could not be loaded.` };
+					}
+					return module.invokeTool(name, args, call);
+				},
+			}));
+		}
 		for (const command of entry.commands ?? []) {
 			const handler = async (_accessor: unknown, ...args: unknown[]) => {
 				const module = await this.activate(entry.feature);

@@ -419,6 +419,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 				category: 'workspace',
 				icon: 'git-compare',
 				order: 70,
+				entry: 'voltCommitReview',
 			},
 		},
 	},

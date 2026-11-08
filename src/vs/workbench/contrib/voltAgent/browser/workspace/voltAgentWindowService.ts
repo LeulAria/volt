@@ -3,6 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { Emitter } from '../../../../../base/common/event.js';
+import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -12,7 +14,7 @@ import { IEditorPane } from '../../../../common/editor.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
-import { IVoltAgentWindowService, IVoltChatPane, IVoltToolsPanel } from '../../../../services/voltPlugins/browser/voltAgentWindow.js';
+import { IVoltAgentWindowService, IVoltChatPane, IVoltToolsPanel, VoltComposerTrayFactory } from '../../../../services/voltPlugins/browser/voltAgentWindow.js';
 import { AgentEditor } from '../editor/agentEditor.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { AgentSurfaceHost, openInAgentTools, openSideChatBeside, openSideChatOnScreen, revealAgentToolEditor } from './agentSurfaceHost.js';
@@ -35,16 +37,40 @@ function chatPaneOf(opened: Promise<IEditorPane | undefined> | undefined): Promi
 }
 
 /** The agent window for feature modules (`IVoltAgentWindowService`), over the right panel's own helpers. */
-export class VoltAgentWindowService implements IVoltAgentWindowService {
+export class VoltAgentWindowService extends Disposable implements IVoltAgentWindowService {
 
 	declare readonly _serviceBrand: undefined;
+
+	private readonly trays = new Map<string, VoltComposerTrayFactory>();
+	private readonly _onDidChangeComposerTrays = this._register(new Emitter<string>());
+	readonly onDidChangeComposerTrays = this._onDidChangeComposerTrays.event;
 
 	constructor(
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IStorageService private readonly storageService: IStorageService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
-	) { }
+	) {
+		super();
+	}
+
+	registerComposerTray(id: string, factory: VoltComposerTrayFactory): IDisposable {
+		if (this.trays.has(id)) {
+			throw new Error(`A composer tray ${id} is already registered.`);
+		}
+		this.trays.set(id, factory);
+		this._onDidChangeComposerTrays.fire(id);
+		return toDisposable(() => {
+			if (this.trays.get(id) === factory) {
+				this.trays.delete(id);
+				this._onDidChangeComposerTrays.fire(id);
+			}
+		});
+	}
+
+	composerTray(id: string): VoltComposerTrayFactory | undefined {
+		return this.trays.get(id);
+	}
 
 	isAgentLayout(): boolean {
 		return getLayoutMode(this.layoutService) === 'agent';
