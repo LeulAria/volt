@@ -10,7 +10,7 @@ import { promisify } from 'util';
 import { FileAccess } from '../../../base/common/network.js';
 import { dirname, join } from '../../../base/common/path.js';
 import { helperIntegrity, verifyHelperBinary } from '../../voltHelpers/node/helperIntegrity.js';
-import { allEnforcement, ISandboxBackendCapabilities, parseReadyLine, redactSandboxText, SANDBOX_GO, SANDBOX_WRONG_GO, SandboxUnavailableError } from '../common/sandboxBackend.js';
+import { allEnforcement, ISandboxBackendCapabilities, ISandboxLayerState, ISandboxResourceViolation, parseReadyLine, redactSandboxText, SANDBOX_GO, SANDBOX_WRONG_GO, SandboxLayers, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { denialKindForOperation } from '../common/sandboxDenials.js';
 import { IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { SandboxDimension } from '../common/sandboxSchema.js';
@@ -26,6 +26,8 @@ const CONFIRM_TIMEOUT_MS = 15_000;
 const ATTEST_TIMEOUT_MS = 5_000;
 /** `fault: withhold-go`: how long the backend holds the go pipe open, without the byte, before refusing. */
 const WITHHELD_GO_MS = 750;
+/** How often a run with a memory or process limit is measured (F.8: kill within 2 s of crossing). */
+export const FOOTPRINT_POLL_MS = 1_000;
 
 export const SANDBOX_HELPER_ID = 'volt-sandbox-helper';
 
@@ -79,15 +81,16 @@ export class SeatbeltBackend implements ISandboxBackend {
 	private async doProbe(helper: string | undefined): Promise<ISandboxBackendCapabilities> {
 		const enforcement = allEnforcement('enforced');
 		const notes: ISandboxBackendCapabilities['notes'] = {
-			'process.tree': 'No PID namespace: the run is a process group plus its descendants and tagged processes. A process that double-forks, calls setsid and clears its environment outlives the kill, still sandboxed.',
-			'limits.processes': 'RLIMIT_NPROC counts every process of the user on macOS, so it cannot cap one sandbox.',
-			'limits.memory': 'macOS does not enforce RLIMIT_AS or RLIMIT_RSS.',
+			'process.tree': 'No PID namespace: the run is tracked from its root (kqueue fork and exit events), and its process group, descendants, tagged processes and every process its root is responsible for are killed with it. A process that double-forks, calls setsid, clears its environment and also disclaims its responsibility again outlives the kill, still sandboxed.',
+			'limits.processes': 'macOS counts RLIMIT_NPROC across all of the user\'s processes: the run gets the user\'s count at launch plus its limit, and a fork watchdog kills the whole tree the moment it passes the limit.',
+			'limits.memory': 'macOS does not enforce RLIMIT_AS or RLIMIT_RSS: the tree\'s physical footprint is polled every second and the tree is killed when it passes the limit.',
 			'syscalls': 'Seatbelt mediates operations (files, mach services, IOKit, sysctl), not raw system calls.',
 			'platform.tcc': `A run whose workspace is in ${TCC_FOLDERS.map(folder => `~/${folder}`).join(', ')} or /Volumes keeps Volt's privacy permissions: a process of its own would have no access to those folders.`,
 		};
 		enforcement['process.tree'] = 'partial';
-		enforcement['limits.processes'] = 'unsupported';
-		enforcement['limits.memory'] = 'unsupported';
+		// Best effort (F.8): a policy must accept them as such, as before; they are no longer ignored.
+		enforcement['limits.processes'] = 'partial';
+		enforcement['limits.memory'] = 'partial';
 		enforcement['syscalls'] = 'partial';
 		const unavailable = (diagnostic: string): ISandboxBackendCapabilities => ({ backend: 'seatbelt', available: false, enforcement: allEnforcement('unsupported'), notes, details: [], diagnostics: [diagnostic] });
 		if (!existsSync(SANDBOX_EXEC_PATH)) {
@@ -122,7 +125,13 @@ export class SeatbeltBackend implements ISandboxBackend {
 			return unavailable(`The trial sandbox could not be attested: ${trial.error}`);
 		}
 		const version = await this.version();
-		return { backend: 'seatbelt', available: true, enforcement, notes, details: [`macOS ${version}`, `${SANDBOX_EXEC_PATH}`, `attestation: sandbox_check from outside, TCC responsibility disclaimed (${helper})`], diagnostics: [] };
+		return {
+			backend: 'seatbelt', available: true, enforcement, notes, diagnostics: [],
+			details: [
+				`macOS ${version}`, `${SANDBOX_EXEC_PATH}`, `attestation: sandbox_check from outside, TCC responsibility disclaimed (${helper})`,
+				`process tree: kqueue fork/exit tracking and the responsible-process sweep (${trial.ok && trial.attestation?.layers?.processTracking?.active ? 'ok in the trial' : 'not confirmed in the trial'}); memory: footprint polled every ${FOOTPRINT_POLL_MS / 1000} s`,
+			],
+		};
 	}
 
 	private version(): Promise<string> {
@@ -195,16 +204,76 @@ export class SeatbeltBackend implements ISandboxBackend {
 			throw new SandboxUnavailableError((err as Error).message, 'unavailable');
 		}
 		const limit = (value: number | undefined, scale = 1) => value === undefined ? '-' : String(Math.max(1, Math.floor(value * scale)));
+		const attestor = this.attestor ??= new SeatbeltAttestor(helper);
+		const processLimit = policy.limits.processes;
+		// RLIMIT_NPROC is per user on macOS: the user's processes now, plus the run's own allowance,
+		// never above the hard limit the run inherits (raising it would fail the prologue).
+		let userProcessLimit = '-';
+		if (processLimit !== undefined) {
+			const users = await attestor.userProcesses().catch(() => undefined);
+			if (!users) {
+				throw new SandboxUnavailableError('The sandbox helper could not count this user\'s processes for the process limit', 'unavailable', ['limits.processes']);
+			}
+			const wanted = users.count + Math.max(1, Math.floor(processLimit));
+			userProcessLimit = String(users.hardLimit === undefined ? wanted : Math.min(wanted, users.hardLimit));
+		}
 		// `ulimit -f` counts 1024-byte blocks in macOS /bin/sh (measured: 2048 blocks allowed a 2 MB file).
-		const prologueArgs = [limit(policy.limits.cpuSeconds), limit(policy.limits.fileSizeMB, 1024), limit(policy.limits.openFiles), sentinel];
+		const prologueArgs = [limit(policy.limits.cpuSeconds), limit(policy.limits.fileSizeMB, 1024), limit(policy.limits.openFiles), userProcessLimit, sentinel];
 		const sandboxArgs = ['-p', profile, '--', '/bin/sh', '-c', SEATBELT_PROLOGUE, 'volt-sandbox', ...prologueArgs, command, ...args];
 		const disclaim = !touchesTccFolder(policy);
 		if (listen) {
 			this.listen(options.tag, options.onDenial);
 		}
-		const attestor = this.attestor ??= new SeatbeltAttestor(helper);
 		let watchdog: ChildProcess | undefined;
 		let pgid: number | undefined;
+		let tracked: number | undefined;
+		let poll: ReturnType<typeof setInterval> | undefined;
+		const memoryLimit = policy.limits.memoryMB;
+		const stopPolling = () => {
+			if (poll) {
+				clearInterval(poll);
+				poll = undefined;
+			}
+		};
+		let reported = false;
+		// F.8 on macOS: the tree's footprint and size, measured from outside every second; the fork
+		// watchdog in the helper kills a run that passes its process limit at once and says so here.
+		const measure = async (root: number, final = false) => {
+			const stats = await attestor.stats(root).catch(() => undefined);
+			if (!stats || reported || (!poll && !final)) {
+				return;
+			}
+			let violation: ISandboxResourceViolation | undefined;
+			if (processLimit !== undefined && (stats.exceeded || stats.members > processLimit)) {
+				violation = { dimension: 'limits.processes', limit: processLimit, observed: Math.max(stats.peak, stats.members), by: 'watchdog' };
+			} else if (memoryLimit !== undefined && stats.footprint > memoryLimit * 1024 * 1024) {
+				violation = { dimension: 'limits.memory', limit: memoryLimit, observed: Math.round(stats.footprint / (1024 * 1024)), by: 'footprint' };
+			}
+			if (violation) {
+				reported = true;
+				stopPolling();
+				options.onResourceViolation?.(violation);
+				await attestor.kill(root).catch(() => undefined);
+			}
+		};
+		const beforeGo = async (pid: number): Promise<SandboxLayers> => {
+			const result = await attestor.track(pid, processLimit).then(() => undefined, (err: Error) => err.message);
+			if (result === undefined) {
+				tracked = pid;
+				if (processLimit !== undefined || memoryLimit !== undefined) {
+					poll = setInterval(() => void measure(pid), FOOTPRINT_POLL_MS);
+				}
+			}
+			const footprint: ISandboxLayerState = memoryLimit === undefined
+				? { active: false, detail: 'the run has no memory limit' }
+				: result === undefined ? { active: true, detail: `physical footprint polled every ${FOOTPRINT_POLL_MS / 1000} s against ${memoryLimit} MB` } : { active: false, detail: `the run could not be tracked: ${result}` };
+			return {
+				processTracking: result === undefined
+					? { active: true, detail: `kqueue fork/exit tracking from pid ${pid}, responsible-process sweep${processLimit !== undefined ? `, fork watchdog at ${processLimit} processes` : ''}` }
+					: { active: false, detail: `the sandbox helper could not track the run: ${result}` },
+				footprint,
+			};
+		};
 		return {
 			// The helper becomes sandbox-exec (same pid, same fds), its own responsible process.
 			command: disclaim ? helper : SANDBOX_EXEC_PATH,
@@ -223,19 +292,33 @@ export class SeatbeltBackend implements ISandboxBackend {
 					watchdog.unref();
 				}
 				const result = await confirmLaunch(child, {
-					attestor, sentinel, network: policy.network.mode, fault: options.fault, disclaim,
+					attestor, sentinel, network: policy.network.mode, fault: options.fault, disclaim, beforeGo,
 					version: `macOS ${await this.version()} sandbox-exec, ${helper}`,
 				});
 				return result.ok ? result : { ok: false, error: redactSandboxText(result.error, policy.home) };
 			},
 			terminate: async child => {
+				stopPolling();
 				const target = child.pid ?? pgid;
+				if (tracked !== undefined) {
+					// Everything tracked from the root and everything it is responsible for (F.10).
+					await attestor.kill(tracked).catch(() => undefined);
+				}
 				if (target) {
 					// The helper's sweep (no `ps` spawn); `ps -E` only if the helper is gone.
 					await killRun(target, options.tag, { table: needle => attestor.sweep(needle).catch(() => processTable(needle)) });
 				}
 			},
 			dispose: async () => {
+				stopPolling();
+				if (tracked !== undefined) {
+					// The watchdog may have killed the whole run between two polls: it still says so.
+					if (processLimit !== undefined) {
+						await measure(tracked, true);
+					}
+					await attestor.untrack(tracked).catch(() => undefined);
+					tracked = undefined;
+				}
 				// The run is over: the watchdog must not fire later at a recycled process group.
 				watchdog?.kill('SIGKILL');
 				watchdog = undefined;
@@ -331,6 +414,8 @@ interface IConfirmContext {
 	readonly fault: SandboxFault | undefined;
 	readonly disclaim: boolean;
 	readonly version: string;
+	/** After the attestation, before the go byte: starts tracking the run (F.10) and says which second layers it got. */
+	readonly beforeGo: (pid: number) => Promise<SandboxLayers>;
 }
 
 /**
@@ -382,6 +467,11 @@ function confirmLaunch(child: ChildProcess, context: IConfirmContext): Promise<S
 					finish(result);
 					return;
 				}
+				// Tracking starts while the prologue still waits, so the workload's first fork is seen.
+				const layers = await context.beforeGo(child.pid!);
+				if (done || exited) {
+					return;
+				}
 				if (context.fault === 'withhold-go') {
 					await new Promise(r => setTimeout(r, WITHHELD_GO_MS));
 					finish({ ok: false, error: 'the go byte was withheld (fault injection)' });
@@ -394,7 +484,7 @@ function confirmLaunch(child: ChildProcess, context: IConfirmContext): Promise<S
 				}
 				// Attested: only now may the workload run.
 				go.end(SANDBOX_GO);
-				finish(result);
+				finish(result.attestation ? { ...result, attestation: { ...result.attestation, layers } } : result);
 			});
 		});
 		child.once('exit', (code, signal) => {
@@ -467,8 +557,9 @@ class SeatbeltAttestor {
 		}
 		const rows: IProcessRow[] = [];
 		for (const entry of value.split(' ')) {
+			// `pid:ppid:pgid:tagged:responsible`; the responsible pid is the helper's own business (its `kill`).
 			const fields = entry.split(':').map(Number);
-			if (fields.length === 4 && fields.every(Number.isInteger)) {
+			if (fields.length >= 4 && fields.every(Number.isInteger)) {
 				rows.push({ pid: fields[0], ppid: fields[1], pgid: fields[2], tagged: fields[3] === 1 });
 			}
 		}
@@ -476,6 +567,47 @@ class SeatbeltAttestor {
 			throw new Error('the sandbox helper listed no processes');
 		}
 		return rows;
+	}
+
+	/** Starts kqueue tracking of the run rooted at `pid` (F.10); `cap` arms the fork watchdog. */
+	async track(pid: number, cap: number | undefined): Promise<void> {
+		await this.answer(`track\t${pid}\t${cap === undefined ? '-' : Math.max(1, Math.floor(cap))}`);
+	}
+
+	/** Live members, their summed physical footprint in bytes, and whether the fork watchdog fired. */
+	async stats(pid: number): Promise<{ readonly members: number; readonly footprint: number; readonly exceeded: boolean; readonly peak: number }> {
+		const fields = (await this.answer(`stats\t${pid}\t-`)).split(' ').map(Number);
+		if (fields.length !== 4 || !fields.every(Number.isFinite)) {
+			throw new Error('bad stats answer');
+		}
+		return { members: fields[0], footprint: fields[1], exceeded: fields[2] === 1, peak: fields[3] };
+	}
+
+	/** SIGKILLs every member of the run until none is left; resolves with how many there were. */
+	async kill(pid: number): Promise<number> {
+		return Number(await this.answer(`kill\t${pid}\t-`));
+	}
+
+	async untrack(pid: number): Promise<void> {
+		await this.answer(`untrack\t${pid}\t-`);
+	}
+
+	/** How many processes this user has now (RLIMIT_NPROC counts them all on macOS), and the hard limit a run inherits. */
+	async userProcesses(): Promise<{ readonly count: number; readonly hardLimit: number | undefined }> {
+		const [count, hard] = (await this.answer('userprocs\t-\t-')).split(' ').map(Number);
+		if (!Number.isInteger(count) || count <= 0 || !Number.isInteger(hard)) {
+			throw new Error('bad userprocs answer');
+		}
+		return { count, hardLimit: hard < 0 ? undefined : hard };
+	}
+
+	/** A request whose answer is not `-<errno>`. */
+	private async answer(body: string): Promise<string> {
+		const value = await this.request(body);
+		if (/^-\d+$/.test(value)) {
+			throw new Error(`the sandbox helper refused ${body.split('\t')[0]} (errno ${value.slice(1)})`);
+		}
+		return value;
 	}
 
 	private request(body: string): Promise<string> {

@@ -9,7 +9,7 @@ import { generateUuid } from '../../../base/common/uuid.js';
 import { promises as fs } from 'fs';
 import { basename, dirname, join } from '../../../base/common/path.js';
 import { Emitter, Event } from '../../../base/common/event.js';
-import { checkEnforcement, IAttestation, ISandboxBackendCapabilities, ISandboxRunDenial, ISandboxRunResult, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
+import { checkEnforcement, IAttestation, ISandboxBackendCapabilities, ISandboxResourceViolation, ISandboxRunDenial, ISandboxRunResult, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { IResolvedSandboxPolicy, ISandboxIsolatedRoot, sandboxProxyEnv } from '../common/sandboxResolved.js';
 import { IVoltSandboxPolicy, SandboxDimension } from '../common/sandboxSchema.js';
 import { BubblewrapBackend } from './bubblewrapBackend.js';
@@ -68,6 +68,8 @@ export interface IPreparedSandbox {
 	/** See {@link ISandboxLaunchSpec.extraStdioDirections}. */
 	readonly extraStdioDirections: readonly ('in' | 'out')[];
 	readonly onDenial: Event<ISandboxRunDenial>;
+	/** The backend killed the tree for crossing a resource limit (F.8). */
+	readonly onResourceViolation: Event<ISandboxResourceViolation>;
 	/** SHA-256 of the resolved policy; network grants made later are not part of it (F.9). */
 	readonly launchPolicyHash: string;
 	/** Attests the spawned process from outside and only then lets the workload run (F.5). */
@@ -193,12 +195,14 @@ export class SandboxManager {
 		await fs.mkdir(runTmp, { mode: 0o700 });
 		const tag = generateUuid().replace(/-/g, '').slice(0, 16);
 		const denials = new Emitter<ISandboxRunDenial>();
+		const violations = new Emitter<ISandboxResourceViolation>();
 		let proxy: SandboxNetworkProxy | undefined;
 		let spec: ISandboxLaunchSpec | undefined;
 		const cleanup = async () => {
 			proxy?.dispose();
 			await spec?.dispose().catch(() => undefined);
 			denials.dispose();
+			violations.dispose();
 			await removeRunDir(runDir);
 		};
 		try {
@@ -240,6 +244,10 @@ export class SandboxManager {
 				proxyPort: proxy?.port,
 				terminal: !!request.terminal,
 				onDenial: denial => denials.fire(denial),
+				onResourceViolation: violation => {
+					this.logger.warn(`[volt-sandbox] ${tag} killed: ${violation.dimension} ${violation.observed} over ${violation.limit} (${violation.by})`);
+					violations.fire(violation);
+				},
 				...(this.fault ? { fault: this.fault } : {}),
 			});
 			const unenforced = [...new Set([...check.unenforced, ...(spec.unenforced ?? [])])];
@@ -260,6 +268,7 @@ export class SandboxManager {
 				extraStdio: launched.extraStdio,
 				extraStdioDirections: launched.extraStdioDirections,
 				onDenial: denials.event,
+				onResourceViolation: violations.event,
 				launchPolicyHash,
 				attestation: () => attestation,
 				confirm: async child => {
@@ -282,6 +291,7 @@ export class SandboxManager {
 							evidence: confirmation.attestation.evidence,
 							canary: confirmation.attestation.canary,
 							unenforced,
+							layers: confirmation.attestation.layers ?? {},
 							attestedAt: Date.now(),
 						};
 					}
@@ -325,10 +335,15 @@ export class SandboxManager {
 		}
 		const prepareMs = Date.now() - started;
 		const denials: ISandboxRunDenial[] = [];
+		let resourceViolation: ISandboxResourceViolation | undefined;
 		const listener = prepared.onDenial(denial => {
 			if (denials.length < 200) {
 				denials.push(denial);
 			}
+		});
+		const violationListener = prepared.onResourceViolation(violation => {
+			resourceViolation ??= violation;
+			denials.push({ kind: 'limit', target: violation.dimension === 'limits.memory' ? `memory ${violation.limit} MB` : `processes ${violation.limit}`, source: 'manager' });
 		});
 		const cap = options.maxOutputBytes ?? 1024 * 1024;
 		const stdout = new CappedText(cap);
@@ -345,6 +360,7 @@ export class SandboxManager {
 			});
 		} catch (err) {
 			listener.dispose();
+			violationListener.dispose();
 			await prepared.dispose();
 			return this.failure('failed', prepared, (err as Error).message, prepareMs, started);
 		}
@@ -400,6 +416,8 @@ export class SandboxManager {
 		}
 		listener.dispose();
 		await prepared.dispose();
+		// Disposing reads the last accounting (a cgroup's OOM kill), so the listener goes after it.
+		violationListener.dispose();
 		if (timedOut) {
 			denials.push({ kind: 'limit', target: `wall clock ${Math.round(wallClock / 1000)} s`, source: 'manager' });
 		}
@@ -418,6 +436,7 @@ export class SandboxManager {
 			timing: { prepareMs, startMs, totalMs: Date.now() - started },
 			...(confirmation.ok ? {} : { error: redactSandboxText(confirmation.error, prepared.policy.home) }),
 			...(confirmation.ok && prepared.attestation() ? { attestation: prepared.attestation() } : {}),
+			...(resourceViolation ? { resourceViolation } : {}),
 		};
 	}
 
