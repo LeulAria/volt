@@ -9,7 +9,10 @@ import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
 import type { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import type { IGrant } from '../../../../platform/voltSandbox/common/grants.js';
 import type { IVoltSandboxSettings, SandboxStrategy } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import type { IPolicyShadowDiff, PolicyAuthorityMode } from './hostToolAuthority.js';
+import type { HostToolSandboxClass } from './hostToolSandbox.js';
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from './deviceTools.js';
 import { DESKTOP_TOOL_NAMES } from './desktopTools.js';
 import { isMemoryToolName } from './memory/voltMemory.js';
@@ -252,9 +255,25 @@ export interface IVoltHostToolApproval {
 	readonly reason: string;
 }
 
+/**
+ * G.6 (PERM-FLOW-1): a chat calls an extension's tool, and the extension can send what it is given
+ * where the chat can't reach. The card asks "Send this chat's content to … via …?".
+ */
+export interface IVoltHostFlowApproval {
+	readonly sessionId: string;
+	readonly name: string;
+	readonly args: Record<string, unknown>;
+	/** The extension's display name. */
+	readonly extension: string;
+	/** Where it can send the data that this chat can't reach; `all`: anywhere (it runs outside Volt's sandbox). */
+	readonly hosts: readonly string[] | 'all';
+}
+
 /** Asks the user to allow one host tool call that the chat's mode would not run on its own. */
 export interface IVoltHostToolApprover {
 	approve(request: IVoltHostToolApproval, token: CancellationToken): Promise<boolean>;
+	/** The flow card: `once`, `chat` (for this chat), or undefined when refused. */
+	approveFlow?(request: IVoltHostFlowApproval, token: CancellationToken): Promise<'once' | 'chat' | undefined>;
 }
 
 /** Extra inputs for `AUTOMATE_BROWSER_COMMAND_ID`. */
@@ -1029,6 +1048,24 @@ export interface IVoltHostToolProvider {
 	needsApproval?(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<string | undefined>;
 	/** The user allowed a call `needsApproval` asked about. */
 	approved?(name: string, args: Record<string, unknown>, call: IVoltHostToolCall): void;
+	/**
+	 * Set for tools an extension registered through the `volt` API (core's record, never the
+	 * extension's word): the gate judges a sandboxed chat's call by it (G.6, PERM-FLOW-1).
+	 */
+	readonly owner?: IVoltHostToolOwner;
+}
+
+/** Who serves an extension's tool, as core recorded it at registration. */
+export interface IVoltHostToolOwner {
+	readonly extensionId: string;
+	readonly label: string;
+	readonly firstParty: boolean;
+	/** The class Volt holds the tool to: Volt's own class for its names, the declared one, else `escapes`. */
+	readonly toolClass: HostToolSandboxClass;
+	/** `contributes.voltCapabilities`, required and optional. */
+	readonly declared: readonly { readonly id: string; readonly targets?: readonly string[] }[];
+	/** Its host runs in an OS sandbox whose network goes through the broker. Default: unsandboxed (N.1: opt-in). */
+	readonly sandboxed?: boolean;
 }
 
 /** The features (`VOLT_FEATURES` ids) the user turned off, by where the choice was made. */
@@ -1082,4 +1119,11 @@ export interface IVoltHostToolService {
 	setApprover(approver: IVoltHostToolApprover | undefined): void;
 	/** Each chat's sandbox, set by whoever serves the MCP server. Without one, a sandboxed chat may not prompt other chats. */
 	setSandboxResolver(resolver: IVoltHostSandboxResolver | undefined): void;
+	/** Whether the Policy Authority decides the gate's class decisions, or only shadows the earlier rules (M.3). */
+	setPolicyAuthorityMode?(mode: PolicyAuthorityMode): void;
+	/** A call where the earlier rules and the Policy Authority disagreed. */
+	readonly onDidShadowDiff?: Event<IPolicyShadowDiff>;
+	/** The flow approvals (G.6) a chat holds, and revoking them. */
+	flowApprovals?(sessionId: string): readonly IGrant[];
+	revokeFlowApprovals?(sessionId: string): number;
 }

@@ -62,7 +62,8 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import './git/agentWorktreeSetupService.js';
 import { withPlanModeInstruction } from '../common/plans.js';
-import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService, VISUAL_TOOL_NAMES } from '../common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostFlowApproval, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService, VISUAL_TOOL_NAMES } from '../common/hostTools.js';
+import { POLICY_AUTHORITY_MODE_SETTING, readPolicyAuthorityMode } from '../common/hostToolAuthority.js';
 import { IVoltMemoryService } from '../common/memory/voltMemory.js';
 import { AgentQuestionDraft, answeredQuestions, IAgentQuestionRequest, IAgentQuestionResponse } from '../common/questions.js';
 import { AcpAgentProvider, IAcpBackgroundTask, IAcpFileWrite, IAcpSupervisionOptions } from './agents/acpProvider.js';
@@ -735,7 +736,21 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}));
 		this.editBaselines = new EditBaselineTracker(fileService, (sessionId, path) => this.editableUri(sessionId, path));
 		this.registerProviders();
-		this.hostTools.setApprover({ approve: (request, token) => this.approveHostTool(request, token) });
+		this.hostTools.setApprover({
+			approve: (request, token) => this.approveHostTool(request, token),
+			approveFlow: (request, token) => this.approveHostFlow(request, token),
+		});
+		// The sandbox gate's Policy Authority (C2): enforce, or shadow the earlier rules for one release.
+		const applyAuthorityMode = () => this.hostTools.setPolicyAuthorityMode?.(readPolicyAuthorityMode(this.configurationService.getValue(POLICY_AUTHORITY_MODE_SETTING)));
+		applyAuthorityMode();
+		this._register(this.configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(POLICY_AUTHORITY_MODE_SETTING)) {
+				applyAuthorityMode();
+			}
+		}));
+		if (this.hostTools.onDidShadowDiff) {
+			this._register(this.hostTools.onDidShadowDiff(diff => this.logService.warn(`[volt policy authority] shadow diff: ${diff.what} for ${diff.subject}: before ${diff.legacy}, the Authority ${diff.authority.allow ? 'allows' : `denies (${diff.authority.deniedBy}): ${diff.authority.reason}`}; ${diff.mode === 'enforce' ? 'the Authority' : 'the earlier rule'} acted`)));
+		}
 		this._register(fileService.onDidFilesChange(e => {
 			const changed = [...e.rawAdded, ...e.rawUpdated, ...e.rawDeleted];
 			this.invalidateChecks(changed);
@@ -2269,7 +2284,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			policySource: scope === 'always' ? 'session' : 'user',
 			risk: pending.request.risk,
 		};
-		if (effect === 'allow' && scope === 'always') {
+		// A flow card's "for this chat" is recorded by the gate as a grant on the chat, never as a saved rule.
+		if (effect === 'allow' && scope === 'always' && pending.request.alwaysScope !== 'chat') {
 			this.savedRules = [...this.savedRules, {
 				action: pending.request.action,
 				resource: decision.pattern ?? pending.request.resource.value,
@@ -2440,6 +2456,46 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		});
 		try {
 			return (await pending).effect === 'allow';
+		} finally {
+			cancelled.dispose();
+		}
+	}
+
+	/**
+	 * The flow card (G.6, PERM-FLOW-1): "Send this chat's content to … via …?" with Skip, Allow for
+	 * This Chat and Allow (once). "For this chat" is the gate's own grant on the chat, never a saved
+	 * access rule.
+	 */
+	private async approveHostFlow(request: IVoltHostFlowApproval, token: CancellationToken): Promise<'once' | 'chat' | undefined> {
+		const sessionId = this.chatFor(request.sessionId);
+		const session = this.sessions.get(sessionId);
+		if (!session) {
+			return undefined;
+		}
+		const where = request.hosts === 'all' ? localize('voltFlow.anyHost', "any host (it runs outside Volt's sandbox)") : request.hosts.join(', ');
+		const question = localize('voltFlow.question', "Send this chat's content to {0} via {1}?", where, request.extension);
+		const access: IAccessRequest = {
+			id: generateUuid(),
+			sessionId,
+			runId: session.activeRun?.runId ?? '',
+			providerId: 'volt',
+			action: 'network',
+			resource: { type: 'tool', value: `${request.name} (${request.extension})` },
+			risk: 'high',
+			preview: { title: request.name, detail: question },
+			reason: question,
+			createdAt: Date.now(),
+			alwaysScope: 'chat',
+		};
+		const pending = this.askAccess(access, { requestId: access.id, effect: 'ask', scope: 'once', policySource: question });
+		const cancelled = token.onCancellationRequested(() => {
+			if (this.pendingApprovals.has(access.id)) {
+				this.respondToAccessRequest(access.id, 'deny', 'once');
+			}
+		});
+		try {
+			const decision = await pending;
+			return decision.effect !== 'allow' ? undefined : decision.scope === 'always' ? 'chat' : 'once';
 		} finally {
 			cancelled.dispose();
 		}

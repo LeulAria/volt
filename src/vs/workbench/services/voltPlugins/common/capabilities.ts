@@ -4,111 +4,28 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Emitter, Event } from '../../../../base/common/event.js';
-import { HostToolSandboxClass } from '../../voltRuntime/common/hostToolSandbox.js';
+import { capabilityClass, VoltCapabilityClass } from '../../../../platform/voltPlugins/common/capabilityCatalog.js';
+import { hostToolClassCapability, HostToolSandboxClass } from '../../voltRuntime/common/hostToolSandbox.js';
 import type { IVoltCapabilitiesContribution, IVoltCapabilityDeclaration } from './voltContributions.js';
 
 /**
  * Volt's capability catalog (spec G.8) and the seam the plugin API checks every call through.
  *
- * Until the Policy Authority exists, the API runs in report mode: `ReportModeCapabilityReporter`
- * compares each call with the capabilities the plugin's manifest declares and logs what would be
- * denied, but every call goes ahead as it does today. The Authority replaces the reporter behind
- * the same `ICapabilityReporter` interface; the API code doesn't change.
+ * The catalog itself lives in `platform/voltPlugins/common/capabilityCatalog.ts`, shared with the
+ * Policy Authority. Report mode (`ReportModeCapabilityReporter`) compares each call with the
+ * manifest and logs what would be denied; the enforcing check is `VoltExtensionCapabilityPolicy`,
+ * which asks the Policy Authority behind the same `ICapabilityReporter` interface.
  */
 
-export const VOLT_CAPABILITY_CLASSES = ['none', 'low', 'medium', 'high', 'critical'] as const;
-export type VoltCapabilityClass = typeof VOLT_CAPABILITY_CLASSES[number];
-
-export function voltCapabilityClassRank(value: VoltCapabilityClass): number {
-	return VOLT_CAPABILITY_CLASSES.indexOf(value);
-}
-
-/** G.8, exact ids. */
-const CATALOG: Readonly<Record<string, VoltCapabilityClass>> = {
-	// none: automatic for everyone.
-	'ui.contribute': 'none',
-	'storage.own': 'none',
-	'config.own': 'none',
-	'commands.own': 'none',
-	'files.read:picked': 'none',
-	// low: the install sheet.
-	'files.read:workspace': 'low',
-	// Named non-exfil hosts. Exfil-capable hosts are high; the Authority classes hosts (C2).
-	'net.connect': 'low',
-	'agents.read:current': 'low',
-	'tools.register': 'low',
-	'usage.report': 'low',
-	// medium: the install sheet and first use.
-	'agents.read:any': 'medium',
-	'agents.send': 'medium',
-	'git.read': 'medium',
-	'hosting.read': 'medium',
-	'files.write': 'medium',
-	'terminals.read': 'medium',
-	'terminals.run': 'medium',
-	'browser.read': 'medium',
-	'clipboard.read': 'medium',
-	// high: asked at runtime, in context.
-	'agents.create': 'high',
-	'agents.context': 'high',
-	'agents.hooks': 'high',
-	'agents.read:other': 'high',
-	'git.write': 'high',
-	'git.push': 'high',
-	'hosting.write': 'high',
-	'net.local.connect': 'high',
-	'browser.drive': 'high',
-	'devices.drive': 'high',
-	'automations.schedule': 'high',
-	// critical: never by prompt.
-	'desktop.control': 'critical',
-	'screen.capture': 'critical',
-	'secrets.read': 'critical',
-	'secrets.manage': 'critical',
-	'files.read:home': 'critical',
-	'spawn.unsandboxed': 'critical',
-	'network.host': 'critical',
-	'commands.execute:*': 'critical',
-	'full': 'critical',
-};
-
-/** G.8, ids with a target after the colon. */
-const PARAMETERIZED: Readonly<Record<string, VoltCapabilityClass>> = {
-	'secrets.use': 'high',
-	'net.loopback.connect': 'high',
-	'net.listen': 'high',
-	'commands.execute': 'high',
-};
-
-/** The catalog class of a capability id (`net.connect@1` and `secrets.use:github` too); undefined: not a Volt capability. */
-export function capabilityClass(id: string): VoltCapabilityClass | undefined {
-	const bare = id.replace(/@\d+$/, '');
-	if (Object.prototype.hasOwnProperty.call(CATALOG, bare)) {
-		return CATALOG[bare];
-	}
-	const colon = bare.indexOf(':');
-	const base = colon > 0 ? bare.slice(0, colon) : undefined;
-	return base && Object.prototype.hasOwnProperty.call(PARAMETERIZED, base) ? PARAMETERIZED[base] : undefined;
-}
+export { capabilityClass, VOLT_CAPABILITY_CLASSES, voltCapabilityClassRank } from '../../../../platform/voltPlugins/common/capabilityCatalog.js';
+export type { VoltCapabilityClass } from '../../../../platform/voltPlugins/common/capabilityCatalog.js';
 
 /**
  * The capability a tool of this class needs on top of `tools.register` (G.8: a plugin can't declare a
  * tool class lower than its capabilities imply). `tools.register` alone covers tools that only read.
  */
 export function toolClassCapability(toolClass: HostToolSandboxClass): string {
-	switch (toolClass) {
-		case 'safe': return 'tools.register';
-		case 'browser': return 'browser.drive';
-		case 'reads': return 'files.read:workspace';
-		case 'network': return 'net.connect';
-		case 'writes': return 'files.write';
-		case 'sandboxed': return 'terminals.run';
-		case 'reads-other': return 'agents.read:other';
-		case 'persists': return 'agents.context';
-		case 'delegates': return 'agents.send';
-		case 'spawns': return 'agents.create';
-		case 'escapes': return 'spawn.unsandboxed';
-	}
+	return hostToolClassCapability(toolClass);
 }
 
 /** Who is calling: set by core when it creates the plugin's context, never taken from a payload. */
@@ -134,9 +51,10 @@ export interface ICapabilityRequest {
 /**
  * Which layer would refuse it (H.3 `deniedBy`). `ceiling`: a built-in asked beyond its first-party
  * ceiling (G.10). `consent`: a third party's medium or high capability the user hasn't allowed
- * (or refused). `critical`: never granted through the API (G.8).
+ * (or refused). `critical`: never granted through the API (G.8). `floor`, `workspace`, `admin`,
+ * `platform`: the Policy Authority's other layers (G.2), e.g. a target in a credential folder.
  */
-export type CapabilityDeniedBy = 'manifest' | 'catalog' | 'ceiling' | 'consent' | 'critical';
+export type CapabilityDeniedBy = 'manifest' | 'catalog' | 'ceiling' | 'consent' | 'critical' | 'floor' | 'workspace' | 'admin' | 'platform';
 
 export interface IWouldBeDenial {
 	readonly extensionId: string;

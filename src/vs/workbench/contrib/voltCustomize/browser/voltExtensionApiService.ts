@@ -28,6 +28,7 @@ import { IVoltContributes, IVoltPluginManifest, pickVoltContributes, validateVol
 import { IVoltExtensionApiService, IVoltExtensionConsent } from '../../../services/voltPlugins/common/voltExtensionApi.js';
 import { IAutomation, IAutomationService } from '../../../services/voltRuntime/common/automations/automations.js';
 import { IAgentHistoryService, IAgentSessionMeta } from '../../../services/voltRuntime/common/history/agentHistory.js';
+import { POLICY_AUTHORITY_MODE_SETTING, readPolicyAuthorityMode } from '../../../services/voltRuntime/common/hostToolAuthority.js';
 import { BROWSER_PAGE_URL_COMMAND_ID, IVoltHostToolCall, IVoltHostToolService, THREAD_TOOL_NAMES } from '../../../services/voltRuntime/common/hostTools.js';
 import { IVoltMemoryService } from '../../../services/voltRuntime/common/memory/voltMemory.js';
 import { IAgentOrchestratorService } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
@@ -82,7 +83,11 @@ function ownSettingsOf(extension: Pick<IExtensionDescription, 'contributes'>): s
  */
 class VoltConsentStore implements IVoltConsentStore {
 
-	constructor(private readonly features: IExtensionFeaturesManagementService) { }
+	readonly onDidChange: Event<unknown>;
+
+	constructor(private readonly features: IExtensionFeaturesManagementService) {
+		this.onDidChange = Event.filter(features.onDidChangeEnablement, e => e.featureId.startsWith('volt.capability.'));
+	}
 
 	state(extensionId: string, capability: string): VoltConsentState {
 		const featureId = voltCapabilityFeatureId(capability);
@@ -147,7 +152,10 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 		@ILogService private readonly logService: ILogService,
 	) {
 		super();
-		this.policy = this._register(new VoltExtensionCapabilityPolicy(new VoltConsentStore(features)));
+		this.policy = this._register(new VoltExtensionCapabilityPolicy(new VoltConsentStore(features), {
+			mode: () => readPolicyAuthorityMode(configurationService.getValue(POLICY_AUTHORITY_MODE_SETTING)),
+			onDiff: diff => logService.warn(`[volt policy authority] shadow diff in the extension API: ${diff.extensionId} ${diff.api} ${diff.capability}${diff.target !== undefined ? ` on ${diff.target}` : ''}: before ${diff.legacy ? `denied (${diff.legacy.deniedBy})` : 'allowed'}, the Authority ${diff.authority ? `denies (${diff.authority.deniedBy}): ${diff.decision.reason}` : 'allows'}`),
+		}));
 		this._register(features.onDidChangeEnablement(e => {
 			if (e.featureId.startsWith('volt.capability.')) {
 				this._onDidChangeConsent.fire({ extensionId: e.extension.value, capability: e.featureId.slice('volt.capability.'.length) });
@@ -166,9 +174,10 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 
 		const turns = this._register(new TurnEvents(() => this.get(IAgentOrchestratorService)));
 		this.backend = {
-			registerTool: (info, invoke) => hostTools.registerToolProvider({
+			registerTool: (info, invoke, owner) => hostTools.registerToolProvider({
 				tools: [info],
 				invoke: (_name, args, call) => invoke(args, call?.sessionId),
+				...(owner ? { owner } : {}),
 			}),
 			invokeTool: (name, args, caller) => hostTools.invokeTool(name, args, this.toolCall(name, caller)),
 			storageGet: key => storageService.get(key, StorageScope.PROFILE),

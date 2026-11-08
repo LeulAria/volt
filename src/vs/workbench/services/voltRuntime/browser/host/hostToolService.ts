@@ -18,8 +18,11 @@ import { InstantiationType, registerSingleton } from '../../../../../platform/in
 import { HOST_MCP_TOKEN_RENEW_MS, hostMcpSessionToken, IHostMcpLease, newHostMcpLease } from '../../../../../platform/voltHostMcp/common/voltHostMcpAuth.js';
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
-import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltHostFileChange, IVoltHostSandboxResolver, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, PREFLIGHT_BROWSER_COMMAND_ID, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
-import { hostToolSandboxUse, isSandboxed, ISandboxPathContext, sandboxBrowserUrlRefusal, sandboxCovers, sandboxReadRefusal, sandboxRefusalMessage, sandboxWriteRefusal } from '../../common/hostToolSandbox.js';
+import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltHostFileChange, IVoltHostSandboxResolver, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolOwner, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, PREFLIGHT_BROWSER_COMMAND_ID, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
+import { hostToolSandboxUse, isSandboxed, ISandboxPathContext, legacyHostToolRefusal, legacySandboxCovers, sandboxBrowserUrlRefusal, sandboxReadRefusal, sandboxRefusalMessage, sandboxWriteRefusal } from '../../common/hostToolSandbox.js';
+import { HostToolAuthority, IGateChat, IPolicyShadowDiff, PolicyAuthorityMode } from '../../common/hostToolAuthority.js';
+import { IGrant } from '../../../../../platform/voltSandbox/common/grants.js';
+import { chatSubject } from '../../../../../platform/voltSandbox/common/principals.js';
 import { browserBlockedMessage, IVoltBrowserAccessService } from '../../common/browserAccess.js';
 import { PROPOSE_PLAN_TOOL_NAME } from '../../common/plans.js';
 import { VoltMode } from '../../common/modes.js';
@@ -76,6 +79,9 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 	readonly onDidChangeTools: Event<void> = this._onDidChangeTools.event;
 	private readonly providers = new Set<IVoltHostToolProvider>();
 	private disabledTools = new Set<string>();
+	/** The gate's class decisions go through the Policy Authority (C2); exposed for tests and the shadow log. */
+	readonly authority = this._register(new HostToolAuthority());
+	readonly onDidShadowDiff: Event<IPolicyShadowDiff> = this.authority.onDidDiff;
 
 	constructor(
 		@ICommandService private readonly commandService: ICommandService,
@@ -245,30 +251,22 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 			return undefined;
 		}
 		const use = hostToolSandboxUse(name, args);
-		if (!use) {
-			return { error: sandboxRefusalMessage(name, undefined, sandbox) };
+		const owner = use ? undefined : this.toolOwner(name);
+		if (owner) {
+			return this.checkExtensionTool(name, args, owner, call, sandbox);
 		}
-		switch (use.kind) {
-			case 'escapes':
-			case 'persists':
-			case 'spawns':
-				return { error: sandboxRefusalMessage(name, use.kind, sandbox) };
-			case 'network':
-				if (!sandbox.network) {
-					return { error: sandboxRefusalMessage(name, use.kind, sandbox) };
-				}
-				break;
-			case 'delegates':
-				if (use.target && use.target !== call.sessionId && !await this.coversChat(use.target, sandbox, call)) {
-					return { error: sandboxRefusalMessage(name, use.kind, sandbox) };
-				}
-				break;
-			case 'reads-other':
-				// agents.read:other (INV-26): never granted to a sandboxed chat; its own chat it may read.
-				if (use.readsAnyChat || (use.target !== undefined && use.target !== call.sessionId)) {
-					return { error: sandboxRefusalMessage(name, use.kind, sandbox) };
-				}
-				break;
+		// The class decision: the Policy Authority's, compared with the earlier rules (shadow mode, M.3).
+		// escapes, persists and spawns are refused; network needs the chat's network; a delegate must be
+		// confined at least as much (INV-11); another chat's transcript needs agents.read:other (INV-26).
+		const other = use?.kind === 'delegates' && use.target && use.target !== call.sessionId ? use.target : undefined;
+		const chats = other ? await this.gateChats(other, sandbox, call) : { caller: this.gateChat(call, sandbox) };
+		const covers = chats.target ? legacySandboxCovers(chats.target.settings, sandbox, { targetStrategy: chats.target.strategy, callerStrategy: chats.caller.strategy, target: chats.target.folder, caller: chats.caller.folder }) : !other;
+		const decision = this.authority.classDecision(use, chats.caller, chats.target);
+		if (this.authority.compare(name, chatSubject(call.sessionId ?? '(none)'), legacyHostToolRefusal(use, call.sessionId, sandbox, covers), decision)) {
+			return { error: sandboxRefusalMessage(name, use?.kind, sandbox) };
+		}
+		if (!use) {
+			return undefined;
 		}
 		for (const url of use.urls ?? []) {
 			const why = sandboxBrowserUrlRefusal(sandbox, url);
@@ -313,25 +311,100 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		};
 	}
 
-	/** Whether `target` runs in a sandbox at least as strict as the caller's, so prompting it is not a way out. */
-	private async coversChat(target: string, sandbox: IVoltSandboxSettings, call: IVoltHostToolCall): Promise<boolean> {
+	/** The calling chat as the gate knows it: the sandbox its call carries and its agent's strategy. */
+	private gateChat(call: IVoltHostToolCall, sandbox: IVoltSandboxSettings): IGateChat {
+		const strategy = call.sessionId ? this.sandboxes?.strategy?.(call.sessionId) : undefined;
+		return { id: call.sessionId, settings: sandbox, ...(strategy ? { strategy } : {}) };
+	}
+
+	/**
+	 * The caller and the chat a `delegates` call prompts, for INV-11. Folders matter only when the
+	 * target may write its workspace, compared as real paths (a symlinked checkout named inside the
+	 * caller's could point anywhere). Without a resolver or the target's settings, the target is
+	 * unknown and the call is refused.
+	 */
+	private async gateChats(target: string, sandbox: IVoltSandboxSettings, call: IVoltHostToolCall): Promise<{ readonly caller: IGateChat; readonly target?: IGateChat }> {
+		const caller = this.gateChat(call, sandbox);
 		const resolver = this.sandboxes;
 		const settings = resolver?.settings(target);
 		if (!resolver || !settings) {
-			return false;
+			return { caller };
 		}
-		const strategies = {
-			targetStrategy: resolver.strategy?.(target),
-			callerStrategy: call.sessionId ? resolver.strategy?.(call.sessionId) : undefined,
-		};
+		const strategy = resolver.strategy?.(target);
+		const other: IGateChat = { id: target, settings, ...(strategy ? { strategy } : {}) };
 		if (settings.level !== 'workspace-write') {
-			return sandboxCovers(settings, sandbox, strategies);
+			return { caller, target: other };
 		}
-		// Folders matter only when the target may write its workspace, compared as real paths (a
-		// symlinked checkout named inside the caller's could point anywhere).
 		const named = { target: resolver.folder(target), caller: (call.sessionId ? resolver.folder(call.sessionId) : undefined) ?? call.cwd };
 		const real = async (folder: string | undefined) => folder && isAbsolute(folder) ? this.realPath(URI.file(folder)) : folder;
-		return sandboxCovers(settings, sandbox, { ...strategies, target: await real(named.target), caller: await real(named.caller) });
+		const [targetFolder, callerFolder] = await Promise.all([real(named.target), real(named.caller)]);
+		return {
+			caller: { ...caller, ...(callerFolder ? { folder: callerFolder } : {}) },
+			target: { ...other, ...(targetFolder ? { folder: targetFolder } : {}) },
+		};
+	}
+
+	/** The extension that registered `name` through the `volt` API, if one did. */
+	private toolOwner(name: string): IVoltHostToolOwner | undefined {
+		for (const provider of this.providers) {
+			if (provider.owner && provider.tools.some(tool => tool.name === name)) {
+				return provider.owner;
+			}
+		}
+		return undefined;
+	}
+
+	/**
+	 * A sandboxed chat calls an extension's tool (G.6, PERM-FLOW-1). The earlier rule refused every
+	 * tool the gate did not know. Now: a tool whose class the gate can't judge without its arguments
+	 * (reads, writes, pages, processes, other chats) is still refused; a `safe` or `network` tool goes
+	 * to the Authority, which also checks that the extension can't send the chat's content anywhere
+	 * the chat couldn't. If it can, the user is asked with the flow card (Allow once / for this chat).
+	 */
+	private async checkExtensionTool(name: string, args: Record<string, unknown>, owner: IVoltHostToolOwner, call: IVoltHostToolCall, sandbox: IVoltSandboxSettings): Promise<IVoltHostToolResult | undefined> {
+		const chat = this.gateChat(call, sandbox);
+		const subject = chatSubject(call.sessionId ?? '(none)');
+		if (owner.toolClass !== 'safe' && owner.toolClass !== 'network') {
+			// Refused under both rules: no shadow difference.
+			return { error: sandboxRefusalMessage(name, undefined, sandbox) };
+		}
+		let decision = this.authority.extensionToolDecision(name, owner, chat);
+		// The earlier rule refused every such tool: an allow here is the spec's change (G.6), recorded as a shadow difference.
+		this.authority.compare(name, subject, true, decision);
+		if (this.authority.mode === 'shadow') {
+			return { error: sandboxRefusalMessage(name, undefined, sandbox) };
+		}
+		if (decision.allow) {
+			return undefined;
+		}
+		const offer = decision.promptable?.flow;
+		if (!offer) {
+			return { error: decision.deniedBy === 'caller' ? sandboxRefusalMessage(name, owner.toolClass, sandbox) : `${name} was not run: ${decision.reason}.` };
+		}
+		const where = offer.hosts === 'all' ? 'any host (it runs outside Volt\'s sandbox)' : offer.hosts.join(', ');
+		if (!call.sessionId || !this.approver?.approveFlow) {
+			return { error: `${name} was not run: it belongs to ${owner.label}, which can send what it is given to ${where}, and this chat's network does not reach there. Sending this chat's content there needs the user's approval in a Volt chat.` };
+		}
+		const choice = await this.approver.approveFlow({ sessionId: call.sessionId, name, args, extension: owner.label, hosts: offer.hosts }, call.token ?? CancellationToken.None).catch(() => undefined);
+		if (!choice) {
+			return { error: `The user did not allow sending this chat's content to ${where} through ${owner.label}, so ${name} was not run. Continue without it.` };
+		}
+		const grant = this.authority.approveFlow(call.sessionId, offer.to, offer.hosts, choice === 'chat' ? 'session' : 'once');
+		decision = this.authority.extensionToolDecision(name, owner, chat);
+		this.authority.consume(grant);
+		return decision.allow ? undefined : { error: `${name} was not run: ${decision.reason}.` };
+	}
+
+	setPolicyAuthorityMode(mode: PolicyAuthorityMode): void {
+		this.authority.mode = mode;
+	}
+
+	flowApprovals(sessionId: string): readonly IGrant[] {
+		return this.authority.flowApprovals(sessionId);
+	}
+
+	revokeFlowApprovals(sessionId: string): number {
+		return this.authority.revokeFlowApprovals(sessionId);
 	}
 
 	/** Where the chat may work (its folder as named and resolved through symlinks), and the machine facts the rules need. */
