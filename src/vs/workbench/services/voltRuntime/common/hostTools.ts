@@ -9,7 +9,7 @@ import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
 import type { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
-import type { IVoltSandboxSettings } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import type { IVoltSandboxSettings, SandboxStrategy } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from './deviceTools.js';
 import { DESKTOP_TOOL_NAMES } from './desktopTools.js';
 import { isMemoryToolName } from './memory/voltMemory.js';
@@ -215,6 +215,8 @@ export interface IVoltHostSandboxResolver {
 	settings(sessionId: string): IVoltSandboxSettings | undefined;
 	/** The folder the chat's agent may write when its sandbox allows the workspace: its worktree, else its project. */
 	folder(sessionId: string): string | undefined;
+	/** How the chat's agent is sandboxed (its provider's strategy at its level); unknown: `wrap`. */
+	strategy?(sessionId: string): SandboxStrategy | undefined;
 }
 
 /** Who an outside agent is, from the grant the user approved. */

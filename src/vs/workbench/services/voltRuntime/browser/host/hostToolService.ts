@@ -247,7 +247,7 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 				}
 				break;
 			case 'delegates':
-				if (use.target && use.target !== call.sessionId && !this.coversChat(use.target, sandbox, call)) {
+				if (use.target && use.target !== call.sessionId && !await this.coversChat(use.target, sandbox, call)) {
 					return { error: sandboxRefusalMessage(name, use.kind, sandbox) };
 				}
 				break;
@@ -284,17 +284,24 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 	}
 
 	/** Whether `target` runs in a sandbox at least as strict as the caller's, so prompting it is not a way out. */
-	private coversChat(target: string, sandbox: IVoltSandboxSettings, call: IVoltHostToolCall): boolean {
+	private async coversChat(target: string, sandbox: IVoltSandboxSettings, call: IVoltHostToolCall): Promise<boolean> {
 		const resolver = this.sandboxes;
 		const settings = resolver?.settings(target);
 		if (!resolver || !settings) {
 			return false;
 		}
-		// Folders matter only when the target may write its workspace; reading them can create a chat's state.
-		const folders = settings.level === 'workspace-write'
-			? { target: resolver.folder(target), caller: (call.sessionId ? resolver.folder(call.sessionId) : undefined) ?? call.cwd }
-			: undefined;
-		return sandboxCovers(settings, sandbox, folders);
+		const strategies = {
+			targetStrategy: resolver.strategy?.(target),
+			callerStrategy: call.sessionId ? resolver.strategy?.(call.sessionId) : undefined,
+		};
+		if (settings.level !== 'workspace-write') {
+			return sandboxCovers(settings, sandbox, strategies);
+		}
+		// Folders matter only when the target may write its workspace, compared as real paths (a
+		// symlinked checkout named inside the caller's could point anywhere).
+		const named = { target: resolver.folder(target), caller: (call.sessionId ? resolver.folder(call.sessionId) : undefined) ?? call.cwd };
+		const real = async (folder: string | undefined) => folder && isAbsolute(folder) ? this.realPath(URI.file(folder)) : folder;
+		return sandboxCovers(settings, sandbox, { ...strategies, target: await real(named.target), caller: await real(named.caller) });
 	}
 
 	/** Where the chat may work (its folder as named and resolved through symlinks), and the machine facts the rules need. */

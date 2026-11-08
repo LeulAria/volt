@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { posix } from '../../../../base/common/path.js';
-import { domainAllowed, isPathInside, IVoltSandboxSettings, normalizeSandboxPath, planAllowsWrite, resolveSandboxPlan, VoltSandboxLevel } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { domainAllowed, isPathInside, IVoltSandboxSettings, normalizeSandboxPath, planAllowsWrite, resolveSandboxPlan, SandboxStrategy, strategyAtLeast, VoltSandboxLevel } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { threadIdArg } from './orchestration/agentThreadTools.js';
 import { parseActScript } from './tools/actScript.js';
 import { localImagePaths } from './tools/localImages.js';
@@ -408,19 +408,38 @@ export function isSandboxed(settings: IVoltSandboxSettings | undefined): setting
 
 const LEVEL_RANK: Readonly<Record<VoltSandboxLevel, number>> = { 'off': 0, 'workspace-write': 1, 'read-only': 2 };
 
+/** Where two chats work and how their agents are sandboxed, for `sandboxCovers`. */
+export interface ISandboxCoverScopes {
+	/** The target's folder (as a real path when the caller could resolve it). */
+	readonly target?: string;
+	/** The caller's folder (as a real path when the caller could resolve it). */
+	readonly caller?: string;
+	/** The target agent's strategy; unknown: `wrap`. */
+	readonly targetStrategy?: SandboxStrategy;
+	readonly callerStrategy?: SandboxStrategy;
+}
+
 /**
- * Whether a chat with `target` settings is confined at least as much as `caller`: its level is as
- * strict, its network no wider, its extra folders and hosts within the caller's, and (when it may
- * write its workspace) its workspace is one the caller may write too.
+ * Whether a chat with `target` settings is confined at least as much as `caller` (INV-11): its level
+ * is as strict, its agent's sandbox no weaker (`native` < `wrap`, B-10), its network no wider, its
+ * extra folders, hosts and listen ports within the caller's, and (when it may write its workspace)
+ * its workspace is one the caller may write too (B-11). Pass real paths: a symlinked folder
+ * compared by its name could point anywhere.
  */
-export function sandboxCovers(target: IVoltSandboxSettings | undefined, caller: IVoltSandboxSettings | undefined, cwds?: { readonly target?: string; readonly caller?: string }): boolean {
+export function sandboxCovers(target: IVoltSandboxSettings | undefined, caller: IVoltSandboxSettings | undefined, cwds?: ISandboxCoverScopes): boolean {
 	if (!isSandboxed(caller)) {
 		return true;
 	}
 	if (!target || LEVEL_RANK[target.level] < LEVEL_RANK[caller.level]) {
 		return false;
 	}
+	if (!strategyAtLeast(cwds?.targetStrategy ?? (isSandboxed(target) ? 'wrap' : 'none'), cwds?.callerStrategy ?? 'wrap')) {
+		return false;
+	}
 	if (!caller.network && target.network) {
+		return false;
+	}
+	if ((target.listenPorts ?? []).some(port => !(caller.listenPorts ?? []).includes(port))) {
 		return false;
 	}
 	const callerRoots = [...(caller.extraWritableRoots ?? []), ...(caller.level === 'workspace-write' && cwds?.caller ? [cwds.caller] : [])];

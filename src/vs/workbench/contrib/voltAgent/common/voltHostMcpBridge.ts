@@ -8,7 +8,8 @@ import { Disposable, DisposableMap, toDisposable } from '../../../../base/common
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IVoltHostMcpResult, IVoltHostMcpService } from '../../../../platform/voltHostMcp/common/voltHostMcp.js';
-import { IVoltSandboxSettings } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { IVoltSandboxSettings, SandboxStrategy, sandboxStrategy } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { CHAT_SANDBOX_PLATFORM } from '../../../services/voltRuntime/common/access/chatSandbox.js';
 import { IVoltHostToolResult, IVoltHostToolService, LEGACY_TOOL_NAMES } from '../../../services/voltRuntime/common/hostTools.js';
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
 
@@ -43,6 +44,7 @@ export class VoltHostMcpBridge extends Disposable {
 		this.hostTools.setSandboxResolver({
 			settings: sessionId => this.sandboxOf(this.runtime.chatFor(sessionId)),
 			folder: sessionId => this.runtime.workingFolder(this.runtime.chatFor(sessionId)),
+			strategy: sessionId => this.strategyOf(this.runtime.chatFor(sessionId)),
 		});
 		this._register(toDisposable(() => {
 			this.hostTools.setSandboxResolver(undefined);
@@ -81,6 +83,17 @@ export class VoltHostMcpBridge extends Disposable {
 		}
 		this.calls.deleteAndDispose(id);
 		await this.mcp.respond(id, toMcpResult(result));
+	}
+
+	/** How the chat's agent is sandboxed: its provider's strategy at its level. */
+	private strategyOf(chatId: string): SandboxStrategy | undefined {
+		try {
+			const ref = this.runtime.getOrCreateSession(chatId).providerRef;
+			const providerId = ref ? this.runtime.listCatalog().find(item => item.ref === ref)?.providerId : undefined;
+			return providerId ? sandboxStrategy(providerId, this.sandboxOf(chatId).level, CHAT_SANDBOX_PLATFORM) : undefined;
+		} catch {
+			return undefined;
+		}
 	}
 
 	/** A chat's sandbox; when the runtime cannot say, the strictest one (fail closed). */

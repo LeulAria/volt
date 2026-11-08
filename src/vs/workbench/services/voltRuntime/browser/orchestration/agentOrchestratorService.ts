@@ -41,7 +41,7 @@ import { DurableClaims } from '../jobs/durableClaims.js';
 import { BEACON_TTL_MS, WorkbenchBeacons } from '../jobs/workbenchBeacons.js';
 import { OrchestratorStore } from './orchestratorStore.js';
 import { orchIsTurnCurrent, orchTaskForToolCall, orchTasksOf } from '../../common/orchestration/orchestratorQueries.js';
-import { confineChatSandbox } from '../../common/access/chatSandbox.js';
+import { confineChatSandbox, handoffSandboxRefusal } from '../../common/access/chatSandbox.js';
 
 /** Models one delegate_task call may run the same brief on. */
 const MAX_FAN_OUT = 4;
@@ -1685,7 +1685,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return lines.length ? ['Models Volt can run a task on (pass the `model` value):', ...lines].join('\n') : 'No models are connected.';
 	}
 
-	private resolveModel(value: unknown): { readonly ref: string; readonly label: string } | undefined {
+	private resolveModel(value: unknown): { readonly ref: string; readonly label: string; readonly providerId: string } | undefined {
 		if (typeof value !== 'string' || !value.trim()) {
 			return undefined;
 		}
@@ -1699,7 +1699,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		if (!match) {
 			throw new Error(`No connected model matches "${value}". Call list_models for the exact values.`);
 		}
-		return { ref: match.ref, label: match.label };
+		return { ref: match.ref, label: match.label, providerId: match.providerId };
 	}
 
 	/**
@@ -2221,10 +2221,19 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return { text: `Sent the follow-up to ${taskId}.\n${describeTask(current, Date.now(), { includeResult: true })}` };
 	}
 
+	private providerOfRef(ref: string | undefined): string | undefined {
+		return ref ? this.runtime.listCatalog().find(item => item.ref === ref)?.providerId : undefined;
+	}
+
 	private handoff(threadId: string, args: Record<string, unknown>): IVoltHostToolResult {
 		const model = this.resolveModel(args.model);
 		if (!model) {
 			return { error: 'handoff needs a `model` from list_models.' };
+		}
+		// The chat keeps its sandbox; the agent it moves to may not be sandboxed more weakly (B-10, INV-11).
+		const refusal = handoffSandboxRefusal(this.runtime.getSandboxSettings(threadId), this.providerOfRef(this.state.threads[threadId]?.modelRef ?? this.runtime.getOrCreateSession(threadId).providerRef), model.providerId, model.label);
+		if (refusal) {
+			return { error: refusal };
 		}
 		const brief = typeof args.brief === 'string' ? args.brief.trim() : '';
 		const step = this.apply({ type: 'thread.handoff', threadId, to: model.ref, toLabel: model.label, by: 'agent', ...(brief ? { brief } : {}), ...(typeof args.reason === 'string' && args.reason.trim() ? { reason: args.reason.trim() } : {}) });
