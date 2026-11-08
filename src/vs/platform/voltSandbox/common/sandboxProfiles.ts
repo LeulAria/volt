@@ -27,6 +27,11 @@ export const CREDENTIAL_HOME_PATHS: readonly string[] = [
 	'Library/Application Support/Google/Chrome', 'Library/Application Support/Chromium', 'Library/Application Support/BraveSoftware',
 	'Library/Application Support/Microsoft Edge', 'Library/Application Support/Arc', 'Library/Application Support/Firefox', 'Library/Safari',
 	'.mozilla', '.config/google-chrome', '.config/chromium', '.config/BraveSoftware', '.config/microsoft-edge',
+	// Windows: DPAPI keys, Credential Manager and the vault, git's `_netrc`, CLI logins and browser profiles.
+	'_netrc', 'AppData/Roaming/Microsoft/Credentials', 'AppData/Local/Microsoft/Credentials', 'AppData/Roaming/Microsoft/Protect',
+	'AppData/Local/Microsoft/Vault', 'AppData/Roaming/Microsoft/Vault', 'AppData/Roaming/GitHub CLI', 'AppData/Roaming/gcloud',
+	'AppData/Local/Google/Chrome/User Data', 'AppData/Local/Microsoft/Edge/User Data', 'AppData/Local/BraveSoftware',
+	'AppData/Roaming/Mozilla/Firefox', 'AppData/Roaming/Opera Software',
 ];
 
 /** Secret-bearing env files, at any depth, including inside the workspace. */
@@ -246,7 +251,20 @@ export const BUILTIN_PROFILE_IDS: readonly SandboxProfileId[] = ['restricted', '
  * Folders `${system}` stands for, per platform: binaries, libraries, certificates, locale and
  * time zone data. Missing ones are skipped.
  */
-export function systemReadPaths(platform: string): readonly string[] {
+export function systemReadPaths(platform: string, env: Readonly<Record<string, string | undefined>> = {}): readonly string[] {
+	if (platform === 'win32') {
+		// Windows and Program Files only: never the drive root, ProgramData (service keys, host
+		// keys) or the profile. Folders come from the environment, with the usual defaults.
+		const get = (name: string) => Object.entries(env).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
+		const drive = (get('SystemDrive') ?? 'C:').replace(/[\\/]+$/, '');
+		return [...new Set([
+			get('SystemRoot') ?? `${drive}\\Windows`,
+			get('ProgramFiles') ?? `${drive}\\Program Files`,
+			get('ProgramFiles(x86)') ?? `${drive}\\Program Files (x86)`,
+			get('ProgramW6432') ?? `${drive}\\Program Files`,
+			`${drive}\\Program Files (Arm)`,
+		])];
+	}
 	if (platform === 'darwin') {
 		return [
 			'/usr', '/bin', '/sbin', '/System', '/Library/Apple', '/Library/Frameworks', '/Library/Developer/CommandLineTools',

@@ -23,7 +23,7 @@ import { SandboxConfirmation } from './sandboxBackends.js';
 
 const execFileAsync = promisify(execFile);
 
-export type SandboxMechanism = 'seatbelt' | 'bwrap' | 'none';
+export type SandboxMechanism = 'seatbelt' | 'bwrap' | 'mxc' | 'none';
 
 export interface IVoltSandboxSupport {
 	readonly platform: string;
@@ -244,7 +244,7 @@ export class VoltSandboxLauncher extends Disposable {
 }
 
 function mechanismOf(backend: SandboxBackendId): SandboxMechanism {
-	return backend === 'seatbelt' ? 'seatbelt' : backend === 'bubblewrap' ? 'bwrap' : 'none';
+	return backend === 'seatbelt' ? 'seatbelt' : backend === 'bubblewrap' ? 'bwrap' : backend === 'mxc' ? 'mxc' : 'none';
 }
 
 export function supportFrom(capabilities: ISandboxBackendCapabilities): IVoltSandboxSupport {

@@ -12,6 +12,7 @@ import { checkEnforcement, ISandboxBackendCapabilities, ISandboxRunDenial, ISand
 import { IResolvedSandboxPolicy, sandboxProxyEnv } from '../common/sandboxResolved.js';
 import { IVoltSandboxPolicy, SandboxDimension } from '../common/sandboxSchema.js';
 import { BubblewrapBackend } from './bubblewrapBackend.js';
+import { MxcBackend } from './mxcBackend.js';
 import { ISandboxBackend, ISandboxLaunchSpec, SandboxConfirmation } from './sandboxBackends.js';
 import { SandboxNetworkProxy } from './sandboxProxy.js';
 import { ISandboxHostFacts, ISandboxRunContext, resolveSandboxPolicy, sandboxHostFacts } from './sandboxResolver.js';
@@ -271,6 +272,8 @@ export class SandboxManager {
 				env: prepared.env,
 				stdio: ['pipe', 'pipe', 'pipe', ...prepared.extraStdio],
 				detached: true,
+				// Windows: `detached` would otherwise give the launcher a console window of its own.
+				windowsHide: true,
 			});
 		} catch (err) {
 			listener.dispose();
@@ -371,6 +374,7 @@ export function createBackend(platform: string): ISandboxBackend {
 	switch (platform) {
 		case 'darwin': return new SeatbeltBackend();
 		case 'linux': return new BubblewrapBackend();
+		case 'win32': return new MxcBackend();
 		default: return new UnsupportedBackend(platform);
 	}
 }

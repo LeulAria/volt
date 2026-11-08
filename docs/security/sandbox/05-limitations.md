@@ -24,7 +24,7 @@ What the sandbox does **not** guarantee today. Each limit comes with the reason,
    - **No ssh-agent.** It is not exposed to Linux agents (F-L7).
    - **Containers need an init.** When Volt runs as PID 1 in a container, run it with an init so finished sandboxes are reaped.
 6. **Seatbelt's future.** `sandbox-exec` has been documented as deprecated for years and still ships. If it goes, the backend moves to `sandbox_init` in a small signed helper; the policy model does not change.
-7. **Windows has no backend.** Sandboxed runs are refused. MXC ProcessContainer is the recommended path for Windows 11 24H2+ (ADR-5).
+7. **Windows (MXC) is weaker than macOS and Linux.** DNS resolves in proxy mode (MXC#1666); single loopback ports, "no new processes" and hard memory or process limits are not available; Git Bash, MSYS2, Cygwin and WSL are refused (MXC#1061); start-up costs about 450 ms per command on the `windows-11-arm` runner (PERF-WIN-1), above the 300 ms budget, so Windows stays off by default.
 
 ## Limits of the policy
 
@@ -60,7 +60,7 @@ What the sandbox does **not** guarantee today. Each limit comes with the reason,
 
 1. Load user and repository policy layers (item 23), and use the sandbox for native models (item 16).
 2. A sandboxed extension host plus capability manifests in packages: the start of the marketplace.
-3. An MXC backend for Windows 11 (ADR-5).
+3. Windows: an x64 runner for the WIN-* suite, packaging `wxc-exec.exe` and `volt-mxc-helper.exe` with the app, and Git Bash on the AppContainer-compatible MSYS2 runtime once its distribution is decided (WIN-MSYS-2 passes in CI).
 4. Supply-chain pipeline extension points, which the sandbox does not block:
    - package integrity (a hash lockfile);
    - publisher identity and signed artifacts (Sigstore or Volt-signed);

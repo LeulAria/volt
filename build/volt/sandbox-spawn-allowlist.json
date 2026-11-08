@@ -472,6 +472,14 @@
 			"why": "The Linux sandbox backend: bubblewrap, its probe and network bridge."
 		},
 		{
+			"file": "src/vs/platform/voltSandbox/node/mxcBackend.ts",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "sandbox",
+			"reason": "supervisor",
+			"why": "The Windows sandbox backend: starts Microsoft's verified wxc-exec.exe with Volt's request (the workload runs inside its container), and the verified volt-mxc-helper that attests it from outside (C7)."
+		},
+		{
 			"file": "src/vs/platform/voltSandbox/node/sandboxLauncher.ts",
 			"kind": "child_process",
 			"count": 1,

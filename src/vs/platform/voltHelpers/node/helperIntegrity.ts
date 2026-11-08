@@ -12,6 +12,7 @@ import { IVoltHelperSigningConfiguration } from '../../../base/common/product.js
 import product from '../../product/common/product.js';
 import { fffPinnedDigests } from '../../voltCodeIndex/common/fff.js';
 import { deviceHubTreeDigests, isDeviceHubRuntimeFile } from '../../voltDevices/common/deviceHubPin.js';
+import { MXC_HELPER_DIGESTS, MXC_HELPER_ID, WXC_EXEC_DIGESTS, WXC_EXEC_HELPER_ID } from '../../voltSandbox/common/mxc.js';
 
 /**
  * Native helpers Volt launches with its own rights (and, on macOS, its privacy grants): speech,
@@ -161,15 +162,16 @@ export class HelperIntegrity {
 			return refuse(`${path} is not a regular file`);
 		}
 		const real = await fs.realpath(path);
-		if (helperId === 'fff') {
-			const key = `${await statKey(real)}|fff`;
+		const codePinned = this.codePinnedDigests(helperId);
+		if (codePinned) {
+			const key = `${await statKey(real)}|${helperId}`;
 			if (this.passed.get(real) === key) {
 				return { ok: true };
 			}
 			const digest = sha256(await fs.readFile(real));
-			if (!fffPinnedDigests(this.options.platform, this.options.arch).includes(digest)) {
+			if (!codePinned.digests.includes(digest)) {
 				this.passed.delete(real);
-				return refuse(`${path} is not the FFF release Volt pins (SHA-256 ${digest.slice(0, 12)}...)`);
+				return refuse(`${path} is not the ${codePinned.label} Volt pins (SHA-256 ${digest.slice(0, 12)}...)`);
 			}
 			this.passed.set(real, key);
 			return { ok: true };
@@ -202,6 +204,20 @@ export class HelperIntegrity {
 			this.passed.delete(real);
 		}
 		return verdict;
+	}
+
+	/**
+	 * Helpers Volt doesn't build, pinned by digest in its code: FFF's release, and the Windows
+	 * sandbox's Microsoft-signed `wxc-exec.exe` (from the pinned `@microsoft/mxc-sdk`) with Volt's
+	 * reproducibly built `volt-mxc-helper` (C7).
+	 */
+	private codePinnedDigests(helperId: string): { readonly digests: readonly string[]; readonly label: string } | undefined {
+		switch (helperId) {
+			case 'fff': return { digests: fffPinnedDigests(this.options.platform, this.options.arch), label: 'FFF release' };
+			case WXC_EXEC_HELPER_ID: return { digests: Object.values(WXC_EXEC_DIGESTS), label: 'wxc-exec release' };
+			case MXC_HELPER_ID: return { digests: Object.values(MXC_HELPER_DIGESTS), label: 'volt-mxc-helper build' };
+			default: return undefined;
+		}
 	}
 
 	/** Signature checks for binaries on signed macOS and Windows builds; the manifest digest otherwise. */
