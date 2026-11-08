@@ -59,6 +59,13 @@ export interface IVoltReleaseConfiguration {
 	readonly downloadPage: string;
 }
 
+export interface IVoltHelperSigningConfiguration {
+	/** Apple Developer team id (10 characters) every macOS helper must be signed by. */
+	readonly darwinTeamId?: string;
+	/** Subject of the Authenticode certificate every Windows helper must be signed with (`CN=...`). */
+	readonly win32Publisher?: string;
+}
+
 export type ExtensionVirtualWorkspaceSupport = {
 	readonly default?: boolean;
 	readonly override?: boolean;
@@ -73,6 +80,11 @@ export interface IProductConfiguration {
 	readonly vscodeVersion?: string;
 	/** Where Volt releases and the update feed live. */
 	readonly voltRelease?: IVoltReleaseConfiguration;
+	/**
+	 * Who must have signed Volt's native helpers (speech, desktop control, ...). Absent, a signed
+	 * build requires the signer of the running app, and an unsigned one the build's helper manifest.
+	 */
+	readonly voltHelperSigning?: IVoltHelperSigningConfiguration;
 	readonly date?: string;
 	readonly quality?: string;
 	readonly commit?: string;
