@@ -24,7 +24,8 @@ flowchart TB
     proxy["SandboxNetworkProxy: hostname allow list, public addresses only"]
     seat["SeatbeltBackend (macOS)"]
     bwrap["BubblewrapBackend (Linux)"]
-    none["UnsupportedBackend (Windows): always refuses"]
+    mxc["MxcBackend (Windows 11): wxc-exec + volt-mxc-helper"]
+    none["UnsupportedBackend (other platforms): always refuses"]
   end
   stdio --> launcher --> manager
   future --> manager
@@ -194,24 +195,24 @@ The words for a future install sheet. A manifest *requests* them, the user *gran
 
 | Dimension | Linux (bubblewrap) | macOS (Seatbelt) | Windows |
 |---|---|---|---|
-| filesystem.read (confine reads) | enforced: only bound paths exist | enforced: deny-default | — |
-| filesystem.write | enforced | enforced | — |
-| filesystem.deny | enforced for existing paths (tmpfs / `/dev/null` masks) | enforced, case-insensitive | — |
-| filesystem.protect | enforced for existing paths (read-only re-binds) | enforced | — |
-| filesystem.protectNew (paths created later, `**/` patterns, new repositories) | partial: patterns cover paths that exist at launch | enforced (regex and `file-write-create` rules) | — |
-| network.none | enforced: empty network namespace | enforced: `deny network*` (also stops DNS) | — |
-| network.proxy | enforced: a holder namespace runs socat bridges to the host proxy; the sandbox joins it with `nsenter` (needs socat, nsenter) | enforced: only the proxy port | — |
-| network.loopbackPorts | enforced through the bridge (needs socat) | enforced per port | — |
-| network.listen (restricting) | enforced: the namespace's own loopback | enforced: `network-bind` denied | — |
-| host.unixSockets | enforced: socket folders masked, seccomp blocks `socket(AF_UNIX)` | enforced: `remote unix-socket` denied | — |
-| process.tree | enforced: PID namespace, `--die-with-parent` | partial: process group, descendants, tagged processes and watchdog; an env-cleared setsid daemon survives, still sandboxed | — |
-| process.isolation | enforced: PID namespace | enforced: signals and process info limited to the sandbox | — |
-| syscalls (backend hardening) | enforced: seccomp filter | partial: Seatbelt mediates operations | — |
-| env.clear | enforced (manager) | enforced (manager) | — |
-| limits.cpu / fileSize / openFiles | enforced: prlimit inside the user namespace | enforced: `ulimit` before `exec` | — |
-| limits.processes | enforced: RLIMIT_NPROC per user namespace (Linux 5.14+) | — | — |
-| limits.memory | partial: RLIMIT_AS (virtual memory) | — | — |
-| limits.wallClock | enforced (manager) | enforced (manager) | — |
+| filesystem.read (confine reads) | enforced: only bound paths exist | enforced: deny-default | enforced: listed folders only; never a drive root or the profile |
+| filesystem.write | enforced | enforced | enforced |
+| filesystem.deny | enforced for existing paths (tmpfs / `/dev/null` masks) | enforced, case-insensitive | enforced for existing paths (`deniedPaths`) |
+| filesystem.protect | enforced for existing paths (read-only re-binds) | enforced | enforced for existing paths (read-only grant under the writable one) |
+| filesystem.protectNew (paths created later, `**/` patterns, new repositories) | partial: patterns cover paths that exist at launch | enforced (regex and `file-write-create` rules) | partial: fixed at launch |
+| network.none | enforced: empty network namespace | enforced: `deny network*` (also stops DNS) | enforced: egress denied, host loopback closed (DNS too) |
+| network.proxy | enforced: a holder namespace runs socat bridges to the host proxy; the sandbox joins it with `nsenter` (needs socat, nsenter) | enforced: only the proxy port | enforced: MXC Model 2, only the proxy port; DNS still resolves (MXC#1666) |
+| network.loopbackPorts | enforced through the bridge (needs socat) | enforced per port | — (MXC opens all loopback ports or none, MXC#1665) |
+| network.listen (restricting) | enforced: the namespace's own loopback | enforced: `network-bind` denied | enforced: unreachable from the host |
+| host.unixSockets | enforced: socket folders masked, seccomp blocks `socket(AF_UNIX)` | enforced: `remote unix-socket` denied | enforced: AF_UNIX sockets are files under the filesystem policy; socket grants are refused |
+| process.tree | enforced: PID namespace, `--die-with-parent` | partial: process group, descendants, tagged processes and watchdog; an env-cleared setsid daemon survives, still sandboxed | enforced: MXC job, `KILL_ON_JOB_CLOSE` |
+| process.isolation | enforced: PID namespace | enforced: signals and process info limited to the sandbox | enforced: AppContainer at Low integrity |
+| syscalls (backend hardening) | enforced: seccomp filter | partial: Seatbelt mediates operations | partial: Win32k stays reachable (`ui.disable: false`) |
+| env.clear | enforced (manager) | enforced (manager) | enforced (manager) |
+| limits.cpu / fileSize / openFiles | enforced: prlimit inside the user namespace | enforced: `ulimit` before `exec` | partial (cpu, polled); — (fileSize, openFiles) |
+| limits.processes | enforced: RLIMIT_NPROC per user namespace (Linux 5.14+) | — | partial: polled; "no new processes" refused |
+| limits.memory | partial: RLIMIT_AS (virtual memory) | — | partial: job peak commit, polled |
+| limits.wallClock | enforced (manager) | enforced (manager) | enforced (manager) |
 
 The Linux column is what the bubblewrap backend's probe reports. The machine's own answer is in `SandboxManager.capabilities()`.
 
@@ -254,7 +255,7 @@ Its diagnostics name the exact fix.
 
 ### Windows
 
-`UnsupportedBackend` refuses every launch with a reason, and the UI shows the levels as unavailable. See ADR-5 for the MXC plan.
+`MxcBackend` (Windows 11 24H2 or later, client editions) launches Microsoft's signed `wxc-exec.exe` from the pinned `@microsoft/mxc-sdk` 1.0.1 with a `version: "1.0.0"` request (telemetry off). The request's process is Volt's own `volt-mxc-helper prologue`: it runs a canary, reports ready and waits; Volt attests it from outside (AppContainer token, Low integrity, job membership, image, parent) before it starts the workload. Git Bash, MSYS2, Cygwin and WSL programs are refused (MXC#1061), PowerShell or cmd suggested. Spec J.3 lists every dimension and residual; the WIN-* suite runs on the hosted `windows-11-arm` runner (`.github/workflows/volt-sandbox-windows.yml`).
 
 ## Integration with Volt
 
@@ -282,7 +283,7 @@ Its diagnostics name the exact fix.
   - **util-linux** `prlimit`, for resource limits.
   - **Unprivileged user namespaces.** On Ubuntu 24.04+, AppArmor restricts them: either install an AppArmor profile for `bwrap` or set `kernel.apparmor_restrict_unprivileged_userns=0`. The probe's diagnostics say which.
   - **Containers** need `--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined` (Docker masks `/proc` otherwise and bubblewrap cannot mount a fresh one).
-- **Windows:** not supported yet; sandboxed runs are refused.
+- **Windows:** Windows 11 24H2 (26100.9278), 25H2 (26200.9278), 26H2 (26300.9550) or 26H1 (28000.2804) or later, client editions. Windows 10 and Windows Server are refused.
 
 ## Configuration
 
