@@ -16,6 +16,9 @@
  * - MEM-T2-PARITY: the same tool calls through `VoltMemoryService` give the same answers, the same
  *   context block and the same files, with the plugin in a real sandboxed host and in-process.
  * - MEM-T2-OFF: the host-off fallbacks never start a host.
+ * - MEM-T2-CLIENTS: the phone (the agent server's own Memory service), a desktop window (the main
+ *   process's stdio channel) and a browser window (the agent server's workbench channel) reach one
+ *   sandboxed host and see the same notes.
  */
 
 import assert from 'assert';
@@ -41,13 +44,18 @@ import { ISandboxHostFacts, sandboxHostFacts } from '../../../../platform/voltSa
 import { SandboxSupervisor } from '../../../../platform/voltSandbox/node/supervisor.js';
 import { realSandboxAvailable } from '../../../../platform/voltSandbox/test/node/sandboxSuiteGate.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
+import type { VoltStdioService } from '../../../../platform/voltStdio/node/voltStdioService.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+import { IChannel, IServerChannel, ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
+import { RemoteAgentConnectionContext } from '../../../../platform/remote/common/remoteAgentEnvironment.js';
 import { IPathService } from '../../../../workbench/services/path/common/pathService.js';
+import { stdioChannel } from '../../../node/voltAgent/serverWorkbench.js';
 // The agent server runs this same service (agentServerMain.ts) for web and phone; it has no DOM dependency.
 // eslint-disable-next-line local/code-layering, local/code-import-patterns
 import { memoryBinding, VoltMemoryService } from '../../../../workbench/services/voltRuntime/browser/memory/voltMemoryService.js';
 import { IVoltHostToolCall, IVoltHostToolProvider, IVoltHostToolService } from '../../../../workbench/services/voltRuntime/common/hostTools.js';
 import { VOLT_MEMORY_TOOLS } from '../../../../workbench/services/voltRuntime/common/memory/voltMemory.js';
+import { ProjectEnvVoltStdioService } from '../../../../workbench/services/voltRuntime/common/projectEnvStdio.js';
 import { IVoltSessionContextService } from '../../../../workbench/services/voltRuntime/common/sessionContext.js';
 
 const repo = dirname(FileAccess.asFileUri('').fsPath.replace(/[\\/]+$/, ''));
@@ -239,6 +247,68 @@ suite('Volt memory as a T2 plugin (P1)', function () {
 		const status = plugins.status()[0];
 		assert.strictEqual(status.state, 'running');
 		process.stderr.write(`\n[MEM-T2] cold start ${status.coldStartMs} ms (handshake ${status.handshakeMs} ms)\n`);
+		store.dispose();
+	});
+
+	test('MEM-T2-CLIENTS: the phone (agent server), a desktop window and a browser window all reach one sandboxed Memory host', async function () {
+		if (!available) {
+			this.skip();
+		}
+		const store = disposables.add(new DisposableStore());
+		const r = await rig(base, 'clients');
+		const manager = new SandboxManager(undefined, { runRoot: join(host.home, '.volt', 'sandbox', 'runs'), host });
+		managers.push(manager);
+		const registry = store.add(new PrincipalRegistry('memory-clients-test'));
+		const supervisor = store.add(new SandboxSupervisor(manager, undefined, { registry }));
+		const plugins = store.add(new VoltPluginHostService({ supervisor, registry, home: r.home }));
+		store.add(plugins.register(await builtinT2Descriptor(MEMORY_PLUGIN_ID, 'volt-memory', join(r.userData, 'User', 'voltMemory'), join(repo, 'extensions'))));
+		// The machine side's stdio service (the main process's, or the agent server's): its plugin half.
+		const machine: Partial<IVoltStdioService> = {
+			pluginAvailability: () => plugins.availability(),
+			invokePluginTool: request => plugins.invokeTool(request.plugin, request.tool, request.args, request.folders),
+			pluginContext: (plugin, folders) => plugins.provideContext(plugin, folders),
+			pluginStatus: async () => plugins.status(),
+			restartPlugin: plugin => plugins.restart(plugin),
+			onDidChangePlugins: Event.signal(plugins.onDidChange),
+			exec: () => Promise.reject(new Error('not in this test')),
+		};
+		/** A channel as IPC carries it: arguments and results serialized, each call in the window's context. */
+		const wire = <T>(server: IServerChannel<T>, ctx: T): IChannel => ({
+			call: async <R>(command: string, arg?: unknown) => {
+				const result = await server.call<R>(ctx, command, arg === undefined ? undefined : JSON.parse(JSON.stringify(arg)));
+				return (result === undefined ? result : JSON.parse(JSON.stringify(result))) as R;
+			},
+			listen: <R>(event: string, arg?: unknown) => server.listen<R>(ctx, event, arg),
+		});
+		// The phone: the agent server's own Memory service, in-process around its stdio service (agentServerMain.ts).
+		const phone = memoryService(store, r, new ProjectEnvVoltStdioService(machine as IVoltStdioService), {});
+		// A desktop window: over the main process's stdio channel (createVoltStdioChannel proxies these calls as they are).
+		const desktop = memoryService(store, r, new ProjectEnvVoltStdioService(wire(ProxyChannel.fromService<string>(machine, store), 'window:1')), {});
+		// A browser window (/code/): over the agent server's workbench channel, whose plugin calls go to the agent server's hosts.
+		const workbenchStdio = {} as VoltStdioService;
+		const webChannel = stdioChannel(workbenchStdio, () => 'workbench:1', store, machine as VoltStdioService);
+		const web = memoryService(store, r, new ProjectEnvVoltStdioService(wire(webChannel, { remoteAuthority: 'test', clientId: 'web' } as RemoteAgentConnectionContext)), {});
+
+		const clients = { phone, desktop, web };
+		for (const [name, client] of Object.entries(clients)) {
+			assert.deepStrictEqual(await client.service.binding(), { kind: 'sandboxed' }, name);
+		}
+		assert.match((await phone.provider().invoke('memory_write', { name: 'From the phone', description: 'Written on the phone', body: 'Phone body.' }, undefined)).text ?? '', /Saved "From the phone" to the user notes/);
+		assert.match((await desktop.provider().invoke('memory_write', { name: 'From the desktop', description: 'Written in a desktop window', body: 'Desktop body.', scope: 'project' }, undefined)).text ?? '', /Saved "From the desktop" to the project notes/);
+		assert.match((await web.provider().invoke('memory_write', { name: 'From the browser', description: 'Written in a browser window', body: 'Browser body.' }, undefined)).text ?? '', /Saved "From the browser" to the user notes/);
+		const lists = await Promise.all(Object.values(clients).map(client => client.provider().invoke('memory_list', {}, undefined)));
+		for (const list of lists) {
+			assert.match(list.text ?? '', /^3 saved notes:/, list.error);
+			assert.strictEqual(list.text, lists[0].text, 'every client sees the same notes');
+		}
+		assert.match((await web.provider().invoke('memory_read', { name: 'from the phone' }, undefined)).text ?? '', /Phone body\./);
+		const contexts = await Promise.all(Object.values(clients).map(client => client.service.context()));
+		assert.match(contexts[0] ?? '', /<volt_memory>[\s\S]*From the browser/);
+		assert.deepStrictEqual(new Set(contexts).size, 1, 'the same <volt_memory> block everywhere');
+		// One host for the plugin (H.6), whichever client asked first.
+		assert.strictEqual(supervisor.list().length, 1);
+		const status = await new ProjectEnvVoltStdioService(wire(webChannel, { remoteAuthority: 'test', clientId: 'web' } as RemoteAgentConnectionContext)).pluginStatus();
+		assert.deepStrictEqual(status.map(s => [s.id, s.state, s.restarts]), [[MEMORY_PLUGIN_ID, 'running', 0]]);
 		store.dispose();
 	});
 });
