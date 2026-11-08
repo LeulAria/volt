@@ -47,7 +47,6 @@ import {
 	TOGGLE_AGENT_DRAWER_COMMAND_ID,
 } from '../editor/agentEditorInput.js';
 import { AGENT_CUSTOMIZE_EDITOR_ID, AgentCustomizeEditor, AgentCustomizeEditorInput, AgentCustomizeEditorInputSerializer } from '../customize/agentCustomizeEditor.js';
-import { AGENT_USAGE_EDITOR_ID, AgentUsageEditor, AgentUsageEditorInput, AgentUsageEditorInputSerializer, OPEN_AGENT_USAGE_COMMAND_ID } from '../usage/agentUsageEditor.js';
 import { findEditorCommandsContext } from '../editor/agentEditorCommandsContext.js';
 import { CONTEXT_IN_AGENT_INPUT } from '../editor/agentFindWidget.js';
 import { AgentSidePanel } from '../chrome/agentSidePanel.js';
@@ -396,41 +395,6 @@ registerAction2(class OpenAgentMarketplaceAction extends Action2 {
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		AgentCustomizeEditor.requestView('marketplace');
 		await accessor.get(ICommandService).executeCommand(OPEN_AGENT_CUSTOMIZE_COMMAND_ID);
-	}
-});
-
-//#endregion
-
-//#region Usage tab
-
-Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
-	EditorPaneDescriptor.create(AgentUsageEditor, AGENT_USAGE_EDITOR_ID, localize('voltUsage.editorLabel', "Usage")),
-	[new SyncDescriptor(AgentUsageEditorInput)]
-);
-
-Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEditorSerializer(
-	AgentUsageEditorInput.TypeID,
-	AgentUsageEditorInputSerializer
-);
-
-registerAction2(class OpenAgentUsageAction extends Action2 {
-	constructor() {
-		super({
-			id: OPEN_AGENT_USAGE_COMMAND_ID,
-			visibility: 'public',
-			title: localize2('voltAgent.usage', "Show Agent Usage and Limits"),
-			category: Categories.View,
-			icon: Codicon.graph,
-			f1: true,
-		});
-	}
-
-	override async run(accessor: ServicesAccessor): Promise<void> {
-		// Usage is a page of Volt Settings; it opens on its last page, so jump to Usage.
-		const editorService = accessor.get(IEditorService);
-		await accessor.get(ICommandService).executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID);
-		const pane = editorService.activeEditorPane as unknown as { showSection?: (id: string) => void } | undefined;
-		pane?.showSection?.('usage');
 	}
 });
 

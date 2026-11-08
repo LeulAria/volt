@@ -263,6 +263,7 @@ export class MainThreadVolt extends Disposable implements MainThreadVoltShape {
 					});
 				}
 				case 'usage.get': return volt.usage.get();
+				case 'usage.limits': return volt.usage.limits();
 				case 'pullRequests.list': return volt.pullRequests.list(str(arg(0), 'chatId'));
 				case 'pullRequests.link': return this.result(extensionId, await volt.pullRequests.link(str(arg(0), 'chatId'), str(arg(1), 'url')));
 				default: throw new Error(`volt: unknown method ${String(method)}`);

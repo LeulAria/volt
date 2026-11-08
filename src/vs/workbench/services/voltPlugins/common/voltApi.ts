@@ -185,9 +185,32 @@ export interface IVoltUsageSummary {
 	readonly models: readonly IVoltUsageModelTotal[];
 }
 
-/** `usage.report`: token use and cost across providers (Settings > Usage). */
+/** One window of a subscription's limits (a session, a week). */
+export interface IVoltUsageLimitWindow {
+	/** The provider's own name for it, e.g. "Current session". */
+	readonly label: string;
+	/** 0-100. */
+	readonly usedPercent: number;
+	/** Epoch ms; absent when the window has not started. */
+	readonly resetsAt?: number;
+}
+
+/** A subscription's limits as last read. No account identity: which login it is stays in Volt. */
+export interface IVoltUsageLimit {
+	readonly provider: string;
+	/** Subscription name, e.g. "Max 5x". */
+	readonly plan?: string;
+	readonly windows: readonly IVoltUsageLimitWindow[];
+	/** Why the windows could not be read. */
+	readonly error?: string;
+	/** Epoch ms the numbers were read. */
+	readonly checkedAt: number;
+}
+
+/** `usage.report`: token use and cost across providers, and each subscription's limits (Settings > Usage). */
 export interface IVoltUsageApi {
 	get(): Promise<IVoltUsageSummary>;
+	limits(): Promise<readonly IVoltUsageLimit[]>;
 }
 
 export interface IVoltPullRequestLink {
@@ -330,6 +353,7 @@ export interface IVoltApiBackend {
 	listAutomations?(): Promise<readonly IVoltAutomationSummary[]>;
 	scheduleAutomation?(options: { readonly name: string; readonly instructions: string; readonly schedule: VoltAutomationSchedule; readonly chatId?: string; readonly enabled: boolean }, caller: IVoltApiCaller): Promise<IVoltAutomationSummary>;
 	readUsage?(): Promise<IVoltUsageSummary>;
+	readUsageLimits?(): Promise<readonly IVoltUsageLimit[]>;
 	listPullRequests?(chatId: string): Promise<readonly IVoltPullRequestLink[]>;
 }
 
@@ -624,6 +648,10 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 		get() {
 			check({ api: 'usage.get', capability: 'usage.report' });
 			return bound(backend.readUsage, 'usage.get').call(backend);
+		},
+		limits() {
+			check({ api: 'usage.limits', capability: 'usage.report' });
+			return bound(backend.readUsageLimits, 'usage.limits').call(backend);
 		},
 	};
 

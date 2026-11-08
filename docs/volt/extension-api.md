@@ -187,7 +187,11 @@ Schedules: `hourly {minute}`, `daily {time}`, `weekly {weekdays, time}`, `cron {
 ```ts
 const usage = await volt.usage.get();                                 // [usage.report]
 // { generatedAt, since, sessionCount, costUsd, models: [{ provider, model, inputTokens, outputTokens, costUsd }] }
+const limits = await volt.usage.limits();                             // [usage.report]
+// [{ provider: 'claude', plan?: 'Max 5x', windows: [{ label: 'Current session', usedPercent: 42, resetsAt?: 1767... }], error?, checkedAt }]
 ```
+
+`limits()` returns each signed-in subscription's limits as Volt last read them (the Usage page in Settings shows the same). It never names the account. To open the Usage page, run the public command `workbench.action.voltAgent.usage`.
 
 ### 3.10 `volt.pullRequests`
 

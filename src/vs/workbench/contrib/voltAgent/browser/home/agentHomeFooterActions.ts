@@ -11,10 +11,10 @@ import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/vol
 import { OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { OPEN_AGENT_CUSTOMIZE_COMMAND_ID } from '../editor/agentEditorInput.js';
-import { OPEN_AGENT_USAGE_COMMAND_ID } from '../usage/agentUsageEditor.js';
+import { OPEN_AGENT_USAGE_COMMAND_ID } from '../../../voltUsage/common/voltUsage.js';
 import { createUsageIcon } from '../usage/agentUsageIcons.js';
-import { AgentUsageHoverCard } from '../usage/agentUsageHoverCard.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { attachFeatureItemHover } from '../chrome/agentFeatureHover.js';
 import { OPEN_PULL_REQUESTS_PAGE_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { IVoltFeatureService } from '../../../voltCustomize/common/voltFeatures.js';
 import { createHomeAutomationsIcon, createHomeCustomizeIcon, createHomePullRequestsIcon, createHomeSettingsIcon } from './agentHomeIcons.js';
@@ -37,12 +37,15 @@ export const AGENT_FOOTER_ACTIONS: Readonly<Record<AgentFooterAction, IAgentFoot
 	customize: { label: localize('voltAgent.home.customize', "Customize"), icon: () => createHomeCustomizeIcon(), command: OPEN_AGENT_CUSTOMIZE_COMMAND_ID },
 };
 
-/** Runs the action's command on click; Usage shows every account's limits on hover instead of a tooltip. */
+/**
+ * Runs the action's command on click. A feature's module can show more on hover than the tooltip
+ * (Usage: every account's limits); it comes and goes with the module.
+ */
 export function wireAgentFooterAction(button: HTMLButtonElement, id: AgentFooterAction, commandService: ICommandService, store: DisposableStore, instantiationService?: IInstantiationService): void {
 	const spec = AGENT_FOOTER_ACTIONS[id];
 	button.setAttribute('aria-label', spec.label);
-	if (id === 'usage' && instantiationService) {
-		store.add(instantiationService.createInstance(AgentUsageHoverCard, button, 'above'));
+	if (instantiationService) {
+		store.add(attachFeatureItemHover(instantiationService, button, AGENT_FOOTER_SLOT_ITEMS[id], 'above', spec.label));
 	} else {
 		setAgentTooltip(button, spec.label);
 	}

@@ -158,6 +158,7 @@ export class ExtHostVolt implements ExtHostVoltShape {
 
 		const usage: typeof vscode.volt.usage = {
 			get: () => call('usage.get'),
+			limits: () => call('usage.limits'),
 		};
 
 		const pullRequests: typeof vscode.volt.pullRequests = {

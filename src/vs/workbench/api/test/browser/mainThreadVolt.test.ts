@@ -24,7 +24,7 @@ import { ILayoutService } from '../../../../platform/layout/browser/layoutServic
 import { NullLogService } from '../../../../platform/log/common/log.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { InMemoryStorageService } from '../../../../platform/storage/common/storage.js';
-import { IVoltUsageService, IVoltUsageSnapshot } from '../../../../platform/voltUsage/common/voltUsage.js';
+import { IVoltUsageLimitGroup, IVoltUsageService, IVoltUsageSnapshot } from '../../../../platform/voltUsage/common/voltUsage.js';
 import { setShownAgentChat } from '../../../contrib/voltAgent/browser/editor/agentShownChat.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../../../contrib/voltAgent/browser/preview/browserEditorInput.js';
 import { IAgentPullRequestService } from '../../../contrib/voltAgent/browser/pullRequests/agentPullRequestService.js';
@@ -149,6 +149,7 @@ suite('Volt extension API (vscode.volt)', () => {
 
 		const memories = new Map<string, IVoltMemory>();
 		const automations: IAutomation[] = [];
+		const usageLimitReads: boolean[] = [];
 		const threads: Record<string, IOrchThread> = {};
 		const orchestratorChanges = store.add(new Emitter<IOrchChange>());
 		const instantiation = store.add(new TestInstantiationService());
@@ -181,6 +182,13 @@ suite('Volt extension API (vscode.volt)', () => {
 			override async getUsage(): Promise<IVoltUsageSnapshot> {
 				const bucket = { provider: 'claude' as const, model: 'claude-opus-5', hour: 0, uncached: 100, cached: 50, cacheWrite: 10, output: 40, costUsd: 1.5, savingsUsd: 0, unpriced: false };
 				return { generatedAt: 9, sinceMs: 1, buckets: [bucket, { ...bucket, costUsd: 0.5 }], activity: [], sessionCount: 4, notes: [], pricingSource: 'test' } as unknown as IVoltUsageSnapshot;
+			}
+			override async getLimits(force?: boolean): Promise<readonly IVoltUsageLimitGroup[]> {
+				usageLimitReads.push(!!force);
+				return [{
+					provider: 'claude', account: { id: 'acct-1', label: 'me@example.com' }, plan: 'Max 5x', checkedAt: 7, machines: ['studio'],
+					windows: [{ id: 'session', label: 'Current session', scope: 'All models', usedPercent: 42, resetsAt: 100, windowMs: 5 }, { id: 'week', label: 'Weekly', usedPercent: 10 }],
+				}, { provider: 'codex', windows: [], error: 'Signed out', checkedAt: 8 }];
 			}
 		});
 		instantiation.stub(IAgentPullRequestService, new class extends mock<IAgentPullRequestService>() {
@@ -223,7 +231,7 @@ suite('Volt extension API (vscode.volt)', () => {
 			threads[id] = { id, rootId: id, depth: 0, createdAt: 0, queue: [], inputs: [], turns: 1, handoffs: [], ...thread } as IOrchThread;
 			orchestratorChanges.fire({ threads: [id], tasks: [] });
 		};
-		return { rpc, api, features, voltFor, grant, providers, invoked, commands, memories, automations, agentCalls, turn };
+		return { rpc, api, features, voltFor, grant, providers, invoked, commands, memories, automations, usageLimitReads, agentCalls, turn };
 	}
 
 	const acme = () => description('acme.notes', { contributes: ACME_CONTRIBUTES });
@@ -379,6 +387,22 @@ suite('Volt extension API (vscode.volt)', () => {
 		assert.deepStrictEqual(await volt.pullRequests.list('chat-1'), [{ url: 'https://github.com/acme/app/pull/12', number: 12, repository: 'acme/app', watched: true }]);
 		assert.strictEqual((await volt.pullRequests.link('chat-1', 'https://github.com/acme/app/pull/13')).text, 'ran link_pull_request');
 		assert.strictEqual(h.invoked.find(call => call.name === 'link_pull_request')?.call?.sessionId, 'chat-1');
+	});
+
+	test('EXT-RT-usage-limits: limits come without the account, from the cached reading, under usage.report', async () => {
+		const h = host([acme(), description('acme.bare'), description('volt.usage', { builtin: true, contributes: { voltCapabilities: { required: [{ id: 'usage.report', class: 'low' }] } } })], ['acme.notes', 'acme.bare', 'volt.usage']);
+		const expected = [
+			{ provider: 'claude', plan: 'Max 5x', windows: [{ label: 'Current session', usedPercent: 42, resetsAt: 100 }, { label: 'Weekly', usedPercent: 10 }], checkedAt: 7 },
+			{ provider: 'codex', windows: [], error: 'Signed out', checkedAt: 8 },
+		];
+		assert.deepStrictEqual(await h.voltFor('acme.notes').usage.limits(), expected, 'no account id, email or machine names');
+		assert.deepStrictEqual(h.usageLimitReads, [false], 'never forces a fresh read from the providers');
+		// The Usage feature's own extension reads them within its ceiling, without a prompt.
+		assert.deepStrictEqual(await h.voltFor('volt.usage').usage.limits(), expected);
+		assert.strictEqual(container.querySelector('.volt-extension-consent'), null);
+		const err = await refusal(h.voltFor('acme.bare').usage.limits());
+		assert.deepStrictEqual([err.capability, err.deniedBy], ['usage.report', 'manifest']);
+		assert.strictEqual(h.usageLimitReads.length, 2, 'a refused call reads nothing');
 	});
 
 	// --- Identity ---------------------------------------------------------------------------------

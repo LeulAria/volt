@@ -245,6 +245,14 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 				const list = [...models.values()].sort((a, b) => b.costUsd - a.costUsd);
 				return { generatedAt: snapshot.generatedAt, since: snapshot.sinceMs, sessionCount: snapshot.sessionCount, costUsd: list.reduce((sum, model) => sum + model.costUsd, 0), models: list };
 			},
+			// Never forced, so an extension asking often is served the service's cached reading.
+			readUsageLimits: async () => (await this.get(IVoltUsageService).getLimits(false)).map(group => ({
+				provider: group.provider,
+				...(group.plan ? { plan: group.plan } : {}),
+				windows: group.windows.map(window => ({ label: window.label, usedPercent: window.usedPercent, ...(window.resetsAt !== undefined ? { resetsAt: window.resetsAt } : {}) })),
+				...(group.error ? { error: group.error } : {}),
+				checkedAt: group.checkedAt,
+			})),
 			listPullRequests: async chatId => this.get(IAgentPullRequestService).links(chatId).map(link => ({
 				url: link.url,
 				number: link.number,

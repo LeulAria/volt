@@ -3,22 +3,22 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import '../media/agentUsageHoverCard.css';
-import { $, addDisposableListener, append, getWindow } from '../../../../../base/browser/dom.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { fromNow } from '../../../../../base/common/date.js';
-import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
-import { localize } from '../../../../../nls.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
-import { IVoltAccountsService, IVoltClaudeAccountsState } from '../../../../../platform/voltAccounts/common/voltAccounts.js';
-import { IVoltUsageLimitGroup, IVoltUsageLimitWindow, IVoltUsageService, VoltUsageProvider } from '../../../../../platform/voltUsage/common/voltUsage.js';
-import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
-import { createVoltButton, voltButtonClasses } from '../chrome/voltButton.js';
-import { OPEN_AGENT_USAGE_COMMAND_ID } from './agentUsageEditor.js';
-import { formatResetTime } from './agentUsageFormat.js';
+import './media/agentUsageHoverCard.css';
+import { $, addDisposableListener, append, getWindow } from '../../../../base/browser/dom.js';
+import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { fromNow } from '../../../../base/common/date.js';
+import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
+import { localize } from '../../../../nls.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+import { IVoltAccountsService, IVoltClaudeAccountsState } from '../../../../platform/voltAccounts/common/voltAccounts.js';
+import { IVoltUsageLimitGroup, IVoltUsageLimitWindow, IVoltUsageService, VoltUsageProvider } from '../../../../platform/voltUsage/common/voltUsage.js';
+import { createBrandIcon } from '../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { createVoltButton, voltButtonClasses } from '../../voltAgent/browser/chrome/voltButton.js';
+import { OPEN_AGENT_USAGE_COMMAND_ID } from '../common/voltUsage.js';
+import { formatResetTime } from '../../voltAgent/browser/usage/agentUsageFormat.js';
 
 /** The pointer rests on the button this long before the card opens. */
 const SHOW_DELAY_MS = 250;

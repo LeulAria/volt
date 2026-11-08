@@ -58,10 +58,12 @@ import { OPEN_AGENT_RESOURCES_COMMAND_ID } from '../resources/agentResourcesPage
 import { IAgentResourcesService } from '../resources/agentResourcesService.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { ConfigurationTarget, IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
-import { AgentDockAutomations, AgentDockUsage, DockGroup, DockSectionId, DockSectionPrefs, showDockSectionsMenu } from './agentDockSections.js';
+import { AgentDockAutomations, DockGroup, DockSectionId, DockSectionPrefs, showDockSectionsMenu } from './agentDockSections.js';
 import { createHomeAutomationsIcon } from '../home/agentHomeIcons.js';
-import { AgentUsageHoverCard } from '../usage/agentUsageHoverCard.js';
 import { createUsageIcon } from '../usage/agentUsageIcons.js';
+import { USAGE_DOCK_SECTION_ID, USAGE_FEATURE_ID, USAGE_SLOT_ITEM_ID } from '../../../voltUsage/common/voltUsage.js';
+import { IVoltFeatureDockSection, IVoltFeatureModuleService } from '../../../voltCustomize/browser/voltFeatureModules.js';
+import { attachFeatureItemHover } from './agentFeatureHover.js';
 import { AgentDockRun } from '../run/agentDockRun.js';
 import { AGENT_RUN_START_COMMAND_ID } from '../run/agentRunService.js';
 import { setAgentRunToolbarInline } from '../run/agentRunToolbar.js';
@@ -217,7 +219,10 @@ class AgentViewSidebarsContribution extends Disposable {
 	/** Each quick action's row and rail button, by action id; a disabled feature hides its own. */
 	private readonly actionButtons: [string, HTMLElement][] = [];
 	private readonly automations: AgentDockAutomations;
-	private readonly usage: AgentDockUsage;
+	/** Usage's section, while the Usage feature's module is loaded (contrib/voltUsage); it goes where the anchor is. */
+	private readonly usage = this._register(new MutableDisposable<IVoltFeatureDockSection>());
+	private readonly usageAnchor: Comment;
+	private usageLoading = false;
 	private readonly tabsSection: HTMLElement;
 	/** The rows under the rail; they move into the popup while it is open. */
 	private readonly body: HTMLElement;
@@ -311,12 +316,13 @@ class AgentViewSidebarsContribution extends Disposable {
 		@IEditorService private readonly editorService: IEditorService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
 		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
-		@IInstantiationService instantiationService: IInstantiationService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IAgentSessionChangesService private readonly changesService: IAgentSessionChangesService,
 		@ISCMService private readonly scmService: ISCMService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IAgentResourcesService private readonly agentResources: IAgentResourcesService,
 		@IVoltFeatureService private readonly features: IVoltFeatureService,
+		@IVoltFeatureModuleService private readonly modules: IVoltFeatureModuleService,
 	) {
 		super();
 		const root = layoutService.mainContainer;
@@ -564,7 +570,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		syncPullRequestsCount();
 		// Off until picked in the tune menu: the chat's and its project's automations, then every account's usage.
 		this.automations = this._register(instantiationService.createInstance(AgentDockAutomations, body));
-		this.usage = this._register(instantiationService.createInstance(AgentDockUsage, body));
+		this.usageAnchor = body.appendChild(body.ownerDocument.createComment('dock usage'));
 		this._register(scmService.onDidAddRepository(() => this.watchBranch()));
 		this._register(scmService.onDidRemoveRepository(() => this.watchBranch()));
 		// A worktree's branch is stored on its chat and follows renames and checkouts (agentWorktreeBranch.ts).
@@ -583,9 +589,13 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.sectionRails.set('run', runRail);
 		this.createSectionRail(rail, 'automations', localize('voltAgent.dock.automations', "Automations"), createHomeAutomationsIcon(), () => this.revealInToolbar(this.automations.section));
 		// Hovering the usage icon opens the limits card beside the rail, as hovering the bars does in the toolbar.
-		const usageRail = this.createSectionRail(rail, 'usage', localize('voltAgent.dock.usage', "Usage"), createUsageIcon(14), () => this.revealInToolbar(this.usage.section));
+		const usageRail = this.createSectionRail(rail, 'usage', localize('voltAgent.dock.usage', "Usage"), createUsageIcon(14), () => {
+			if (this.usage.value) {
+				this.revealInToolbar(this.usage.value.section);
+			}
+		});
 		usageRail.classList.add('volt-agent-dock-usage-rail');
-		this._register(instantiationService.createInstance(AgentUsageHoverCard, usageRail, 'start'));
+		this._register(attachFeatureItemHover(instantiationService, usageRail, USAGE_SLOT_ITEM_ID, 'start'));
 		this._register(changesService.onDidChange(sessionId => {
 			if (!sessionId || sessionId === this.changesSessionId) {
 				this.renderChangesStats();
@@ -604,8 +614,13 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.sections.set('run', this.run.element);
 		this.sections.set('pullRequests', pullRequestsSection);
 		this.sections.set('automations', this.automations.section);
-		this.sections.set('usage', this.usage.section);
 		this.sections.set('previous', this.lineage.previousElement);
+		// The Usage module unloaded (its extension disabled): its section goes with it.
+		this._register(this.modules.onDidChange(feature => {
+			if (feature === USAGE_FEATURE_ID && !this.modules.isActive(feature)) {
+				this.dropUsage();
+			}
+		}));
 		this._register(this.sectionPrefs.onDidChange(() => this.applySectionPrefs()));
 		this.applySectionPrefs();
 		this._register(this.lineage.onDidChangeSummary(summary => this.syncAgentsRail(summary)));
@@ -1370,8 +1385,35 @@ class AgentViewSidebarsContribution extends Disposable {
 			element.classList.toggle('volt-agent-dock-user-hidden', !this.features.isOn('dock', id));
 		}
 		this.automations.setShown(this.sectionPrefs.isShown('automations'));
-		this.usage.setShown(this.sectionPrefs.isShown('usage'));
+		this.usage.value?.setShown(this.sectionPrefs.isShown('usage'));
+		this.syncUsage();
 		this.syncRunInline();
+	}
+
+	/**
+	 * Usage's section is the Usage feature's (contrib/voltUsage): its module loads the first time the
+	 * section is ticked in the tune menu, and the section goes when the module unloads.
+	 */
+	private syncUsage(): void {
+		if (this.usage.value || this.usageLoading || !this.sectionPrefs.isShown('usage') || !this.modules.partOwner('dockSection', USAGE_DOCK_SECTION_ID)) {
+			return;
+		}
+		this.usageLoading = true;
+		void this.modules.part('dockSection', USAGE_DOCK_SECTION_ID).then(part => {
+			if (!part || this._store.isDisposed || this.usage.value) {
+				return;
+			}
+			const created = part.create(this.instantiationService, this.body);
+			this.body.insertBefore(created.section, this.usageAnchor);
+			this.usage.value = created;
+			this.sections.set('usage', created.section);
+			this.applySectionPrefs();
+		}).finally(() => this.usageLoading = false);
+	}
+
+	private dropUsage(): void {
+		this.usage.clear();
+		this.sections.delete('usage');
 	}
 
 	/** The lineage follows the chat in the main panel. */

@@ -245,10 +245,25 @@ declare module 'vscode' {
 			readonly models: readonly { readonly provider: string; readonly model: string; readonly inputTokens: number; readonly outputTokens: number; readonly costUsd: number }[];
 		}
 
-		/** Token use and cost across providers. */
+		/** A subscription's limits as last read. Which account it is stays in Volt. */
+		export interface UsageLimit {
+			readonly provider: string;
+			/** Subscription name, e.g. "Max 5x". */
+			readonly plan?: string;
+			/** Its windows (a session, a week): how much is used, 0-100, and when it resets (epoch ms). */
+			readonly windows: readonly { readonly label: string; readonly usedPercent: number; readonly resetsAt?: number }[];
+			/** Why the windows could not be read. */
+			readonly error?: string;
+			/** Epoch ms the numbers were read. */
+			readonly checkedAt: number;
+		}
+
+		/** Token use and cost across providers, and each subscription's limits. */
 		export namespace usage {
 			/** Capability: `usage.report`. */
 			export function get(): Thenable<UsageSummary>;
+			/** Every signed-in subscription's limits (Settings > Usage). Capability: `usage.report`. */
+			export function limits(): Thenable<readonly UsageLimit[]>;
 		}
 
 		export interface PullRequestLink {

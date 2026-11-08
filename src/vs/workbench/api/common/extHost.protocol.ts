@@ -2778,7 +2778,7 @@ export type VoltApiMethod =
 	| 'browser.open' | 'browser.readPage'
 	| 'visuals.renderChart' | 'visuals.drawOnScratch'
 	| 'automations.list' | 'automations.schedule'
-	| 'usage.get'
+	| 'usage.get' | 'usage.limits'
 	| 'pullRequests.list' | 'pullRequests.link';
 
 export interface IVoltToolResultDto {

@@ -6,9 +6,9 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IVoltUsageBucket, IVoltUsageSnapshot } from '../../../../../platform/voltUsage/common/voltUsage.js';
-import { usageChartSpec, usageInsights } from '../../browser/usage/agentUsageInsights.js';
-import { summarizeUsage } from '../../browser/usage/agentUsageModel.js';
-import { usageCalendar } from '../../browser/usage/agentUsageCalendar.js';
+import { usageChartSpec, usageInsights } from '../../browser/agentUsageInsights.js';
+import { summarizeUsage } from '../../../voltAgent/browser/usage/agentUsageModel.js';
+import { usageCalendar } from '../../browser/agentUsageCalendar.js';
 
 function bucket(hour: number, model: string, cached: number, uncached: number, costUsd: number): IVoltUsageBucket {
 	return {

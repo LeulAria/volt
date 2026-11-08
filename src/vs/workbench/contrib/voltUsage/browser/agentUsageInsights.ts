@@ -3,9 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { localize } from '../../../../../nls.js';
-import { IVoltUsageSnapshot, VoltUsageProvider } from '../../../../../platform/voltUsage/common/voltUsage.js';
-import { IUsageSummary, metricValue, UsageMetric } from './agentUsageModel.js';
+import { localize } from '../../../../nls.js';
+import { IVoltUsageSnapshot, VoltUsageProvider } from '../../../../platform/voltUsage/common/voltUsage.js';
+import { IUsageSummary, metricValue, UsageMetric } from '../../voltAgent/browser/usage/agentUsageModel.js';
 
 /**
  * Chart specs for the Usage page, drawn by the same engine as agent visuals: the main chart

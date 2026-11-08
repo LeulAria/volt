@@ -1489,6 +1489,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 			voltModule: {
 				feature: 'usage',
+				entry: 'voltUsage',
 				label: 'Usage',
 				description: 'Usage limits and runway for every account, the Usage page and button, and its side toolbar section.',
 				category: 'productivity',

@@ -3,11 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, append } from '../../../../../base/browser/dom.js';
-import { localize } from '../../../../../nls.js';
-import { setAgentTooltip } from '../chrome/agentTooltip.js';
-import { formatShare } from './agentUsageFormat.js';
-import { IUsageTotals } from './agentUsageModel.js';
+import { $, append } from '../../../../base/browser/dom.js';
+import { localize } from '../../../../nls.js';
+import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
+import { formatShare } from '../../voltAgent/browser/usage/agentUsageFormat.js';
+import { IUsageTotals } from '../../voltAgent/browser/usage/agentUsageModel.js';
 
 export interface IShareSegment {
 	readonly label: string;

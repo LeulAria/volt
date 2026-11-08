@@ -3,17 +3,17 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
-import { localize } from '../../../../../nls.js';
-import { IVoltUsageLimitGroup, IVoltUsageLimitWindow, VoltUsageProvider } from '../../../../../platform/voltUsage/common/voltUsage.js';
-import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
-import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { $, addDisposableListener, append, getWindow, isHTMLElement } from '../../../../base/browser/dom.js';
+import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
+import { localize } from '../../../../nls.js';
+import { IVoltUsageLimitGroup, IVoltUsageLimitWindow, VoltUsageProvider } from '../../../../platform/voltUsage/common/voltUsage.js';
+import { createBrandIcon } from '../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { DotMatrixMeter } from './agentUsageDots.js';
-import { formatAxis, formatCost, formatDuration, formatPercent, formatSlot, formatTime, formatTokens, formatWeekday } from './agentUsageFormat.js';
-import { IUsageSummary, limitPace } from './agentUsageModel.js';
+import { formatAxis, formatCost, formatDuration, formatPercent, formatSlot, formatTime, formatTokens, formatWeekday } from '../../voltAgent/browser/usage/agentUsageFormat.js';
+import { IUsageSummary, limitPace } from '../../voltAgent/browser/usage/agentUsageModel.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;

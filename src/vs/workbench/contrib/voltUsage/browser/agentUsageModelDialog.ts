@@ -3,20 +3,20 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, EventType, getWindow } from '../../../../../base/browser/dom.js';
-import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { KeyCode } from '../../../../../base/common/keyCodes.js';
-import { DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
-import { localize } from '../../../../../nls.js';
-import { IVoltUsageModelPrice, IVoltUsageSnapshot, VoltUsageProvider } from '../../../../../platform/voltUsage/common/voltUsage.js';
-import { Button } from '../../../../../base/browser/ui/button/button.js';
-import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
-import { createVoltButton } from '../chrome/voltButton.js';
+import { $, addDisposableListener, append, EventType, getWindow } from '../../../../base/browser/dom.js';
+import { StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
+import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { KeyCode } from '../../../../base/common/keyCodes.js';
+import { DisposableStore, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
+import { localize } from '../../../../nls.js';
+import { IVoltUsageModelPrice, IVoltUsageSnapshot, VoltUsageProvider } from '../../../../platform/voltUsage/common/voltUsage.js';
+import { Button } from '../../../../base/browser/ui/button/button.js';
+import { createBrandIcon } from '../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { IUsageChartSeriesStyle, UsageChart } from './agentUsageChart.js';
-import { formatCost, formatShare, formatTokens } from './agentUsageFormat.js';
-import { cacheHitRate, costPerMillionTokens, IUsageModelRow, summarizeUsage, UsageMetric, UsageRange } from './agentUsageModel.js';
+import { formatCost, formatShare, formatTokens } from '../../voltAgent/browser/usage/agentUsageFormat.js';
+import { cacheHitRate, costPerMillionTokens, IUsageModelRow, summarizeUsage, UsageMetric, UsageRange } from '../../voltAgent/browser/usage/agentUsageModel.js';
 import { copyUsagePage } from './agentUsagePageMirror.js';
 import { costTypeSegments, hasFasterSpeeds, renderShareBar, speedCostSegments, tokenTypeSegments } from './agentUsageShareBar.js';
 

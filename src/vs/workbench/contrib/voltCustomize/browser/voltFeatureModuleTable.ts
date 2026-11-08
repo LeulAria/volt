@@ -3,6 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { localize2 } from '../../../../nls.js';
+import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
+import { AGENT_USAGE_INPUT_ID, OPEN_AGENT_USAGE_COMMAND_ID, USAGE_FEATURE_ID } from '../../voltUsage/common/voltUsage.js';
 import { IVoltFeatureModuleEntry } from './voltFeatureModules.js';
 
 /**
@@ -14,4 +17,10 @@ import { IVoltFeatureModuleEntry } from './voltFeatureModules.js';
  * Keep one entry per feature, in the manifests' order; each M3 feature adds its own.
  */
 export const VOLT_FEATURE_MODULES: readonly IVoltFeatureModuleEntry[] = [
+	{
+		feature: USAGE_FEATURE_ID,
+		load: async () => (await import('../../voltUsage/browser/voltUsage.module.js')).usageModule,
+		commands: [{ id: OPEN_AGENT_USAGE_COMMAND_ID, title: localize2('voltAgent.usage', "Show Agent Usage and Limits"), category: Categories.View, f1: true, visibility: 'public' }],
+		editors: [AGENT_USAGE_INPUT_ID],
+	},
 ];

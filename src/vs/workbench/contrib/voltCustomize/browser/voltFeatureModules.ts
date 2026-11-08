@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Event } from '../../../../base/common/event.js';
-import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { DisposableStore, IDisposable } from '../../../../base/common/lifecycle.js';
 import { ILocalizedString } from '../../../../platform/action/common/action.js';
 import { CommandVisibility } from '../../../../platform/commands/common/commands.js';
 import { createDecorator, IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
@@ -36,7 +36,47 @@ export interface IVoltFeatureModuleHost {
 	 * for it instead of being dropped.
 	 */
 	registerEditorSerializer(typeId: string, serializer: IEditorSerializer): void;
+	/**
+	 * Draws a part core hosts (a Settings page, a button's hover card, a side toolbar section). Its
+	 * id must be one the feature's manifest contributes (`voltSettingsPages`, `voltSlotItems`,
+	 * `voltDock`); it goes away when the module unloads.
+	 */
+	registerPart<K extends VoltFeatureModulePartKind>(kind: K, id: string, part: IVoltFeatureModulePartTypes[K]): void;
 }
+
+/** A Volt Settings page a module draws, made on first visit and kept while the module is loaded. */
+export interface IVoltFeatureSettingsPage extends IDisposable {
+	readonly element: HTMLElement;
+	setVisible(visible: boolean): void;
+}
+
+/** A side toolbar section a module draws. */
+export interface IVoltFeatureDockSection extends IDisposable {
+	readonly section: HTMLElement;
+	/** Reads and draws only while shown. */
+	setShown(shown: boolean): void;
+}
+
+export type VoltFeatureHoverPlacement = 'above' | 'start';
+
+/** The parts core hosts for a module, by kind; core asks for one by the id its manifest gives it. */
+export interface IVoltFeatureModulePartTypes {
+	/** A Volt Settings page (`voltSettingsPages`). `container` is the element its dialogs center over. */
+	readonly settingsPage: { create(instantiationService: IInstantiationService, container: () => HTMLElement): IVoltFeatureSettingsPage };
+	/** What hovering a sidebar or footer button shows instead of its tooltip (`voltSlotItems`). */
+	readonly itemHover: { attach(instantiationService: IInstantiationService, anchor: HTMLElement, placement: VoltFeatureHoverPlacement): IDisposable };
+	/** A side toolbar section (`voltDock`). */
+	readonly dockSection: { create(instantiationService: IInstantiationService, parent: HTMLElement): IVoltFeatureDockSection };
+}
+
+export type VoltFeatureModulePartKind = keyof IVoltFeatureModulePartTypes;
+
+/** The manifest contribution point that lists each kind of part's ids. */
+export const VOLT_FEATURE_MODULE_PART_POINTS = {
+	settingsPage: 'voltSettingsPages',
+	itemHover: 'voltSlotItems',
+	dockSection: 'voltDock',
+} as const satisfies Record<VoltFeatureModulePartKind, string>;
 
 export interface IVoltFeatureModule {
 	activate(host: IVoltFeatureModuleHost): void | Promise<void>;
@@ -77,4 +117,11 @@ export interface IVoltFeatureModuleService {
 	 * is off or has no module. The result is the module's own object, typed by its contract file.
 	 */
 	activate<T extends IVoltFeatureModule = IVoltFeatureModule>(feature: string): Promise<T | undefined>;
+	/**
+	 * The feature whose manifest contributes this part, if it has a module and is on. Lets core
+	 * keep a place for the part (a rail button, a nav entry) without loading the module.
+	 */
+	partOwner(kind: VoltFeatureModulePartKind, id: string): string | undefined;
+	/** The part, loading its feature's module first; undefined while the feature is off. */
+	part<K extends VoltFeatureModulePartKind>(kind: K, id: string): Promise<IVoltFeatureModulePartTypes[K] | undefined>;
 }
