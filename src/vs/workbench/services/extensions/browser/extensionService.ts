@@ -32,7 +32,7 @@ import { ExtensionHostKind, ExtensionRunningPreference, IExtensionHostKindPicker
 import { IExtensionManifestPropertiesService } from '../common/extensionManifestPropertiesService.js';
 import { ExtensionRunningLocation, isVoltSandboxedRunningLocation } from '../common/extensionRunningLocation.js';
 import { IVoltExtensionSandboxService } from '../common/voltExtensionSandbox.js';
-import { VoltRefusedExtensionHost, voltSandboxedExtension, voltSandboxedRemoteDataProvider } from '../common/voltSandboxedExtensionHosts.js';
+import { voltHeldByKillSwitch, VoltRefusedExtensionHost, voltSandboxedExtension, voltSandboxedRemoteDataProvider } from '../common/voltSandboxedExtensionHosts.js';
 import { localize } from '../../../../nls.js';
 import { ExtensionRunningLocationTracker, filterExtensionDescriptions } from '../common/extensionRunningLocationTracker.js';
 import { ExtensionHostExtensions, ExtensionHostStartup, IExtensionHost, IExtensionService, toExtensionDescription } from '../common/extensions.js';
@@ -242,6 +242,11 @@ class BrowserExtensionHostFactory implements IExtensionHostFactory {
 	private get _voltWorkspaceTrustService(): IWorkspaceTrustManagementService { return this._instantiationService.invokeFunction(accessor => accessor.get(IWorkspaceTrustManagementService)); }
 
 	createExtensionHost(runningLocations: ExtensionRunningLocationTracker, runningLocation: ExtensionRunningLocation, isInitialStart: boolean): IExtensionHost | null {
+		// Volt (P8): the kill switch holds a sandboxed extension (tier `ask`); it never starts unsandboxed in its place.
+		const held = voltHeldByKillSwitch(this._instantiationService.invokeFunction(accessor => accessor.get(IConfigurationService)), runningLocations, runningLocation, this._getExtensionRegistrySnapshotWhenReady, () => this._voltExtensionSandboxService);
+		if (held) {
+			return held;
+		}
 		switch (runningLocation.kind) {
 			case ExtensionHostKind.LocalProcess: {
 				return null;

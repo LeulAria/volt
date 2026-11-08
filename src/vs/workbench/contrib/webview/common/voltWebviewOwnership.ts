@@ -9,7 +9,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
 import { ConfigurationScope, Extensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
-import { VOLT_SANDBOXED_EXTENSIONS_SETTING, VOLT_UNSANDBOXED_EXTENSIONS_SETTING } from '../../../../platform/voltSandbox/common/extensionHostSandbox.js';
+import { VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING, VOLT_EXTENSION_SANDBOX_MODE_SETTING, VOLT_SANDBOXED_EXTENSIONS_SETTING, VOLT_UNSANDBOXED_EXTENSIONS_SETTING } from '../../../../platform/voltSandbox/common/extensionHostSandbox.js';
 import { webviewResourceBaseHost } from './webview.js';
 
 /**
@@ -50,6 +50,23 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			uniqueItems: true,
 			scope: ConfigurationScope.MACHINE,
 			description: localize('voltExtensions.runWithoutSandbox', "Extensions in volt.extensions.sandboxed that Volt could not sandbox here and that you chose to run without the sandbox anyway. Until you choose that, such an extension stays off."),
+		},
+		[VOLT_EXTENSION_SANDBOX_MODE_SETTING]: {
+			type: 'string',
+			enum: ['optIn', 'required'],
+			enumDescriptions: [
+				localize('voltExtensions.sandboxMode.optIn', "Only the extensions in volt.extensions.sandboxed run in a sandbox. Others run as before."),
+				localize('voltExtensions.sandboxMode.required', "Every third-party extension with code runs in a sandbox, on macOS and Linux. Built-in extensions run as before. On Windows this reads as optIn."),
+			],
+			default: 'optIn',
+			scope: ConfigurationScope.MACHINE,
+			description: localize('voltExtensions.sandboxMode', "Which third-party extensions Volt runs in a sandbox. Applies after a window reload."),
+		},
+		[VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING]: {
+			type: 'boolean',
+			default: false,
+			scope: ConfigurationScope.MACHINE,
+			description: localize('voltExtensions.sandboxKillSwitch', "Switch the extension sandbox off. Extensions that would run in a sandbox stay off instead and each asks whether to run without the sandbox; none runs unsandboxed until you say so. Applies after a window reload."),
 		},
 	},
 });

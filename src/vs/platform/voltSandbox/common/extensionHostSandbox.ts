@@ -27,6 +27,64 @@ export const VOLT_SANDBOXED_EXTENSIONS_SETTING = 'volt.extensions.sandboxed';
 export const VOLT_UNSANDBOXED_EXTENSIONS_SETTING = 'volt.extensions.runWithoutSandbox';
 
 /**
+ * Which third-party extensions run sandboxed (P8). `optIn` (the default, N.1 #22): only the ones in
+ * {@link VOLT_SANDBOXED_EXTENSIONS_SETTING}. `required`: every third-party extension with code, on
+ * the platforms in {@link T3_REQUIRED_PLATFORMS} (elsewhere it reads as `optIn`).
+ */
+export const VOLT_EXTENSION_SANDBOX_MODE_SETTING = 'volt.extensions.sandboxMode';
+
+export type ExtensionSandboxMode = 'optIn' | 'required';
+
+/**
+ * P8's kill switch: the tier moves to `ask`, never silently to off. Every extension that would run
+ * sandboxed stays off instead and asks the user, once per extension, whether to run it without the
+ * sandbox. Nothing starts unsandboxed without that answer.
+ */
+export const VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING = 'volt.extensions.sandboxKillSwitch';
+
+/**
+ * P8's per-OS flip: where `required` applies. Windows is not listed: it joins only when C7's job is
+ * required and green and PERF-WIN-1 is met (spec M.5).
+ */
+export const T3_REQUIRED_PLATFORMS: ReadonlySet<string> = new Set(['darwin', 'linux']);
+
+/** The mode as it applies on `platform`: `required` only where the flip is on. */
+export function effectiveExtensionSandboxMode(mode: unknown, platform: string): ExtensionSandboxMode {
+	return mode === 'required' && T3_REQUIRED_PLATFORMS.has(platform) ? 'required' : 'optIn';
+}
+
+/** The settings an extension's tier is decided from (raw values, as configuration returns them). */
+export interface IExtensionSandboxSettings {
+	readonly mode: unknown;
+	readonly killSwitch: unknown;
+	readonly sandboxed: unknown;
+	readonly unsandboxed: unknown;
+}
+
+/**
+ * Where an extension runs (P2, P8):
+ * - `shared`: as before, in the shared host (not in scope, built-in, no code, or the user chose
+ *   "Run Without Sandbox");
+ * - `sandbox`: alone in its own sandboxed host;
+ * - `ask`: in scope, but the kill switch is on: it stays off until the user answers.
+ */
+export type ExtensionSandboxTier = 'shared' | 'sandbox' | 'ask';
+
+export function extensionSandboxTier(settings: IExtensionSandboxSettings, extension: Pick<IT3ExtensionFacts, 'id' | 'builtin' | 'main' | 'browser'>, platform: string): ExtensionSandboxTier {
+	if (extension.builtin || (!extension.main && !extension.browser)) {
+		return 'shared';
+	}
+	if (extensionListed(settings.unsandboxed, extension.id)) {
+		return 'shared';
+	}
+	const inScope = extensionListed(settings.sandboxed, extension.id) || effectiveExtensionSandboxMode(settings.mode, platform) === 'required';
+	if (!inScope) {
+		return 'shared';
+	}
+	return settings.killSwitch === true ? 'ask' : 'sandbox';
+}
+
+/**
  * What a window asks of the server for a sandboxed host (`IRemoteExtensionHostStartParams.voltSandbox`).
  * The server finds the extension and its folder itself; the window is the profile's owner, so its
  * word on the workspace and its trust counts, never a path for the extension.
@@ -101,7 +159,9 @@ export type ExtensionSandboxRefusalCode =
 	/** The desktop routes sandboxed extensions to the local agent server (P6), which is off. */
 	| 'server-off'
 	/** The sandboxed host was refused at launch (probe, attestation, budget). */
-	| 'launch';
+	| 'launch'
+	/** P8's kill switch is on: the tier is `ask`, and the user has not answered yet. */
+	| 'kill-switch';
 
 export type ExtensionSandboxPlan =
 	| { readonly kind: 'sandbox' }
@@ -194,6 +254,49 @@ export function t3ExtensionHostPolicy(input: IT3PolicyInput): IVoltSandboxPolicy
 
 function unique(entries: readonly string[]): string[] {
 	return [...new Set(entries)];
+}
+
+/** An extension as the `exports` check (H.5) sees it. */
+export interface IT3ExportsFacts {
+	readonly id: string;
+	readonly builtin: boolean;
+	/** Has code (`main` or `browser`): only then does it have `exports`. */
+	readonly code: boolean;
+	readonly extensionDependencies?: readonly string[];
+}
+
+/** One `extensionDependencies` edge that crosses a sandboxed host's wall: `from` can't reach `to`'s `exports`. */
+export interface IT3ExportsLink {
+	readonly from: string;
+	readonly to: string;
+	/** `to` ships with Volt (its API is first party, e.g. `vscode.git`). */
+	readonly firstParty: boolean;
+}
+
+/**
+ * H.5, D-10: one host per extension means `vscode.extensions.getExtension(x).exports` (live objects)
+ * does not cross hosts. The edges that break when `sandboxedIds` each run alone: what they consume
+ * from any other extension with code, and what other extensions consume from them. Third-party to
+ * third-party `exports` are unsupported in v1; the user is told before opting in, and the smoke run
+ * counts them. Activation order across hosts still holds (the main thread activates dependencies).
+ */
+export function t3BrokenExports(sandboxedIds: readonly string[], extensions: readonly IT3ExportsFacts[]): IT3ExportsLink[] {
+	const sandboxed = new Set(sandboxedIds.map(id => id.toLowerCase()));
+	const byId = new Map(extensions.map(extension => [extension.id.toLowerCase(), extension]));
+	const links: IT3ExportsLink[] = [];
+	for (const extension of extensions) {
+		for (const dependency of extension.extensionDependencies ?? []) {
+			const target = byId.get(dependency.toLowerCase());
+			if (!target?.code || target.id.toLowerCase() === extension.id.toLowerCase()) {
+				continue;
+			}
+			// An edge breaks when exactly one end, or both ends separately, run alone.
+			if (sandboxed.has(extension.id.toLowerCase()) || sandboxed.has(target.id.toLowerCase())) {
+				links.push({ from: extension.id, to: target.id, firstParty: target.builtin });
+			}
+		}
+	}
+	return links;
 }
 
 /** Whether `id` is in an opt-in list, case-insensitively (extension ids are). */

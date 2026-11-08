@@ -15,9 +15,10 @@ import { TestConfigurationService } from '../../../../../platform/configuration/
 import { IConfirmation, IConfirmationResult, IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { INotificationService, IPromptChoice, Severity } from '../../../../../platform/notification/common/notification.js';
-import { VOLT_SANDBOXED_EXTENSIONS_SETTING, VOLT_UNSANDBOXED_EXTENSIONS_SETTING } from '../../../../../platform/voltSandbox/common/extensionHostSandbox.js';
+import { T3_REQUIRED_PLATFORMS, VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING, VOLT_EXTENSION_SANDBOX_MODE_SETTING, VOLT_SANDBOXED_EXTENSIONS_SETTING, VOLT_UNSANDBOXED_EXTENSIONS_SETTING } from '../../../../../platform/voltSandbox/common/extensionHostSandbox.js';
 import { IHostService } from '../../../host/browser/host.js';
 import { VoltExtensionSandboxService } from '../../browser/voltExtensionSandboxService.js';
+import { voltPlatform } from '../../common/voltExtensionSandbox.js';
 
 suite('Volt: per-extension sandbox opt-in and kill switch (P2, P8)', () => {
 
@@ -88,5 +89,42 @@ suite('Volt: per-extension sandbox opt-in and kill switch (P2, P8)', () => {
 		// Opting out clears that choice, so a later opt-in starts sandboxed again.
 		await confirmed.s.setOptedIn('pub.ui', false);
 		assert.deepStrictEqual(confirmed.config.getValue(VOLT_UNSANDBOXED_EXTENSIONS_SETTING), []);
+	});
+
+	test('P8-KILL-3: switching the sandbox off asks first; a held extension says so and offers Run Without Sandbox', async () => {
+		const declined = service(false);
+		assert.strictEqual(await declined.s.setKillSwitch(true), false);
+		assert.strictEqual(declined.config.getValue(VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING), undefined, 'nothing changes without the user');
+
+		const { s, config, prompts, confirmations } = service(true);
+		assert.strictEqual(await s.setKillSwitch(true), true);
+		assert.strictEqual(confirmations.length, 1);
+		assert.deepStrictEqual(config.writes.at(-1), [VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING, true, ConfigurationTarget.USER]);
+		await s.setOptedIn('pub.lint', true);
+		s.report('pub.lint', { kind: 'refused', code: 'kill-switch', reason: 'switched off' });
+		assert.match(prompts.at(-1)!.message, /pub\.lint stays off: the extension sandbox is switched off/);
+		assert.deepStrictEqual(prompts.at(-1)!.choices.map(c => c.label), ['Run Without Sandbox', 'Stop Sandboxing It']);
+		assert.deepStrictEqual(config.getValue(VOLT_UNSANDBOXED_EXTENSIONS_SETTING) ?? [], [], 'held, not unsandboxed');
+		// Back on: no confirmation needed to sandbox again.
+		assert.strictEqual(await s.setKillSwitch(false), true);
+		assert.strictEqual(confirmations.length, 1);
+		assert.strictEqual(config.getValue(VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING), false);
+	});
+
+	test('P8-MODE-1: under required every third-party extension is in scope where the flip applies; out means Run Without Sandbox, asked first', async () => {
+		const flipped = T3_REQUIRED_PLATFORMS.has(voltPlatform());
+		const { s, config, confirmations } = service(true);
+		await config.setUserConfiguration(VOLT_EXTENSION_SANDBOX_MODE_SETTING, 'required');
+		assert.strictEqual(s.isOptedIn('pub.any'), flipped);
+		if (!flipped) {
+			return;
+		}
+		await s.setOptedIn('pub.any', false);
+		assert.strictEqual(confirmations.length, 1, 'asked');
+		assert.deepStrictEqual(config.getValue(VOLT_UNSANDBOXED_EXTENSIONS_SETTING), ['pub.any']);
+		assert.deepStrictEqual(config.getValue(VOLT_SANDBOXED_EXTENSIONS_SETTING) ?? [], [], 'the opt-in list is not touched');
+		assert.deepStrictEqual(s.state('pub.any'), { kind: 'unsandboxed' });
+		await s.setOptedIn('pub.any', true);
+		assert.deepStrictEqual(config.getValue(VOLT_UNSANDBOXED_EXTENSIONS_SETTING), [], 'back in the sandbox');
 	});
 });

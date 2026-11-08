@@ -11,9 +11,9 @@ import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { INotificationService, NotificationPriority, Severity } from '../../../../platform/notification/common/notification.js';
-import { extensionListed, VOLT_SANDBOXED_EXTENSIONS_SETTING, VOLT_UNSANDBOXED_EXTENSIONS_SETTING } from '../../../../platform/voltSandbox/common/extensionHostSandbox.js';
+import { effectiveExtensionSandboxMode, extensionListed, VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING, VOLT_EXTENSION_SANDBOX_MODE_SETTING, VOLT_SANDBOXED_EXTENSIONS_SETTING, VOLT_UNSANDBOXED_EXTENSIONS_SETTING } from '../../../../platform/voltSandbox/common/extensionHostSandbox.js';
 import { IHostService } from '../../host/browser/host.js';
-import { IVoltExtensionSandboxService, VoltExtensionSandboxState } from '../common/voltExtensionSandbox.js';
+import { affectsVoltExtensionSandbox, IVoltExtensionSandboxService, voltPlatform, VoltExtensionSandboxState } from '../common/voltExtensionSandbox.js';
 
 /**
  * Per-extension sandboxing in the window: the opt-in (per profile, in user or remote user
@@ -37,7 +37,7 @@ export class VoltExtensionSandboxService extends Disposable implements IVoltExte
 	) {
 		super();
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration(VOLT_SANDBOXED_EXTENSIONS_SETTING) || e.affectsConfiguration(VOLT_UNSANDBOXED_EXTENSIONS_SETTING)) {
+			if (affectsVoltExtensionSandbox(e)) {
 				// Where an extension runs is decided when its host starts: the change applies after a reload.
 				this.notificationService.prompt(Severity.Info, localize('voltSandbox.reload', "Reload the window to apply the change to which extensions run in a sandbox."), [{
 					label: localize('voltSandbox.reloadNow', "Reload Window"),
@@ -60,11 +60,29 @@ export class VoltExtensionSandboxService extends Disposable implements IVoltExte
 	}
 
 	isOptedIn(extensionId: string): boolean {
-		return extensionListed(this.configurationService.getValue(VOLT_SANDBOXED_EXTENSIONS_SETTING), extensionId);
+		return this.required() || extensionListed(this.configurationService.getValue(VOLT_SANDBOXED_EXTENSIONS_SETTING), extensionId);
+	}
+
+	private required(): boolean {
+		return effectiveExtensionSandboxMode(this.configurationService.getValue(VOLT_EXTENSION_SANDBOX_MODE_SETTING), voltPlatform()) === 'required';
 	}
 
 	async setOptedIn(extensionId: string, sandboxed: boolean): Promise<void> {
 		const lower = extensionId.toLowerCase();
+		if (this.required()) {
+			// Every third-party extension is in scope: in clears an earlier "run without sandbox", out is that choice (asked first).
+			if (!sandboxed) {
+				await this.runWithoutSandbox(extensionId);
+				return;
+			}
+			const unsandboxed = this.list(VOLT_UNSANDBOXED_EXTENSIONS_SETTING);
+			if (unsandboxed.some(id => id.toLowerCase() === lower)) {
+				await this.configurationService.updateValue(VOLT_UNSANDBOXED_EXTENSIONS_SETTING, unsandboxed.filter(id => id.toLowerCase() !== lower), ConfigurationTarget.USER);
+			}
+			this.states.delete(lower);
+			this._onDidChange.fire(extensionId);
+			return;
+		}
 		const current = this.list(VOLT_SANDBOXED_EXTENSIONS_SETTING).filter(id => id.toLowerCase() !== lower);
 		await this.configurationService.updateValue(VOLT_SANDBOXED_EXTENSIONS_SETTING, sandboxed ? [...current, extensionId] : current, ConfigurationTarget.USER);
 		if (!sandboxed) {
@@ -96,6 +114,24 @@ export class VoltExtensionSandboxService extends Disposable implements IVoltExte
 		return true;
 	}
 
+	async setKillSwitch(on: boolean): Promise<boolean> {
+		if (on) {
+			const { confirmed } = await this.dialogService.confirm({
+				type: Severity.Warning,
+				message: localize('voltSandbox.killSwitch', "Switch off the extension sandbox?"),
+				detail: localize('voltSandbox.killSwitchDetail', "Extensions that run in a sandbox stop after a reload and stay off. Each asks you whether to run it without the sandbox; none runs unsandboxed until you say so."),
+				primaryButton: localize({ key: 'voltSandbox.killSwitchButton', comment: ['&& denotes a mnemonic'] }, "&&Switch Off"),
+			});
+			if (!confirmed) {
+				return false;
+			}
+		}
+		await this.configurationService.updateValue(VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING, on, ConfigurationTarget.USER);
+		this.logService.info(`[volt-sandbox] the extension sandbox kill switch is ${on ? 'on: sandboxed extensions ask first' : 'off'}`);
+		this._onDidChange.fire('');
+		return true;
+	}
+
 	report(extensionId: string, state: VoltExtensionSandboxState): void {
 		const key = extensionId.toLowerCase();
 		this.states.set(key, state);
@@ -104,7 +140,10 @@ export class VoltExtensionSandboxService extends Disposable implements IVoltExte
 			this.logService.warn(`[volt-sandbox] ${extensionId} stays off: no sandboxed host (${state.code}): ${state.reason}`);
 			if (!this.notified.has(key)) {
 				this.notified.add(key);
-				this.notificationService.prompt(Severity.Warning, localize('voltSandbox.refused', "{0} stays off: Volt can't run it in a sandbox here. {1}", extensionId, state.reason), [{
+				const message = state.code === 'kill-switch'
+					? localize('voltSandbox.held', "{0} stays off: the extension sandbox is switched off. Run it without the sandbox?", extensionId)
+					: localize('voltSandbox.refused', "{0} stays off: Volt can't run it in a sandbox here. {1}", extensionId, state.reason);
+				this.notificationService.prompt(Severity.Warning, message, [{
 					label: localize('voltSandbox.runWithoutAction', "Run Without Sandbox"),
 					run: () => this.runWithoutSandbox(extensionId),
 				}, {

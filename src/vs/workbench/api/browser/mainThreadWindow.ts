@@ -19,6 +19,7 @@ import { IUserActivityService } from '../../services/userActivity/common/userAct
 import { encodeBase64 } from '../../../base/common/buffer.js';
 import { isSandboxedExtension, VOLT_SANDBOXED_EXTENSIONS_SETTING } from '../../contrib/webview/common/voltWebviewOwnership.js';
 import { IExtensionService } from '../../services/extensions/common/extensions.js';
+import { voltIsSandboxed } from '../../services/extensions/common/voltExtensionSandbox.js';
 import { ExternalOpenDecision, externalOpenDecision, externalUriDecision, IExternalOpenCaller } from '../../services/voltPlugins/common/externalOpenGate.js';
 import { confirmExternalOpen, grantedNetHosts } from './voltWebviewOwnership.js';
 
@@ -119,11 +120,13 @@ export class MainThreadWindow implements MainThreadWindowShape {
 			? this.extensionService.extensions.find(extension => ExtensionIdentifier.equals(extension.identifier, extensionId))
 			: undefined;
 		if (!description) {
-			const hostRunsSandboxed = Array.isArray(sandboxedList) && sandboxedList.some(id => typeof id === 'string' && this.extHostContext.hostsExtension(id));
+			// P8: in scope by the opt-in list, or by `required`.
+			const hostRunsSandboxed = (Array.isArray(sandboxedList) && sandboxedList.some(id => typeof id === 'string' && this.extHostContext.hostsExtension(id)))
+				|| this.extensionService.extensions.some(extension => this.extHostContext.hostsExtension(extension.identifier.value) && voltIsSandboxed(this.configurationService, extension));
 			return { extensionId: undefined, builtin: false, sandboxed: hostRunsSandboxed, grantedHosts: [] };
 		}
 		const id = description.identifier.value;
-		const sandboxed = isSandboxedExtension(sandboxedList, id);
+		const sandboxed = isSandboxedExtension(sandboxedList, id) || voltIsSandboxed(this.configurationService, description);
 		return {
 			extensionId: id,
 			builtin: description.isBuiltin && !description.isUserBuiltin,

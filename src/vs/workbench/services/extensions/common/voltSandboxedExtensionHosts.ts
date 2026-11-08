@@ -7,15 +7,17 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { dirname } from '../../../../base/common/path.js';
 import { IMessagePassingProtocol } from '../../../../base/parts/ipc/common/ipc.js';
+import { localize } from '../../../../nls.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IExtensionDescription } from '../../../../platform/extensions/common/extensions.js';
 import { ExtensionSandboxRefusalCode, IVoltSandboxedHostStartParams, t3LogsHome, t3WorkspaceStorageHome } from '../../../../platform/voltSandbox/common/extensionHostSandbox.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
-import { ExtensionRunningLocation } from './extensionRunningLocation.js';
+import { ExtensionRunningLocation, isVoltSandboxedRunningLocation } from './extensionRunningLocation.js';
 import { ExtensionRunningLocationTracker } from './extensionRunningLocationTracker.js';
 import { ExtensionHostExtensions, ExtensionHostStartup, IExtensionHost } from './extensions.js';
 import { IRemoteExtensionHostDataProvider, IRemoteExtensionHostInitData } from './remoteExtensionHost.js';
-import { IVoltExtensionSandboxService } from './voltExtensionSandbox.js';
+import { IVoltExtensionSandboxService, voltExtensionSandboxKillSwitch } from './voltExtensionSandbox.js';
 
 /**
  * The window's part of one opted-in extension's sandboxed host (P2, P6): which extension it is,
@@ -89,6 +91,26 @@ export function voltSandboxedRemoteDataProvider(
 			report: state => extensionId && services.sandbox.report(extensionId, state),
 		},
 	};
+}
+
+/**
+ * P8's kill switch: a sandboxed location's extension is held (tier `ask`), never started without
+ * the sandbox. Undefined when the location is not sandboxed or the switch is off.
+ */
+export function voltHeldByKillSwitch(
+	configurationService: IConfigurationService,
+	runningLocations: ExtensionRunningLocationTracker,
+	location: ExtensionRunningLocation,
+	snapshot: () => Promise<{ readonly extensions: readonly IExtensionDescription[] }>,
+	sandbox: () => IVoltExtensionSandboxService,
+): IExtensionHost | undefined {
+	if (!isVoltSandboxedRunningLocation(location) || !voltExtensionSandboxKillSwitch(configurationService)) {
+		return undefined;
+	}
+	return new VoltRefusedExtensionHost(location, async () => {
+		const extension = voltSandboxedExtension(runningLocations, location, (await snapshot()).extensions);
+		return extension && { extensionId: extension.identifier.value, code: 'kill-switch', reason: localize('voltSandbox.killSwitchOn', "The extension sandbox is switched off (volt.extensions.sandboxKillSwitch), so it waits for you to choose.") };
+	}, sandbox());
 }
 
 /**

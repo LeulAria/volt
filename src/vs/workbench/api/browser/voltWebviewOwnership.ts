@@ -25,6 +25,7 @@ import { IWorkbenchEnvironmentService } from '../../services/environment/common/
 import { IEditorService } from '../../services/editor/common/editorService.js';
 import { assertHostsExtension, ExtensionNotInHostError, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
 import { IExtensionService } from '../../services/extensions/common/extensions.js';
+import { affectsVoltExtensionSandbox, voltIsSandboxed } from '../../services/extensions/common/voltExtensionSandbox.js';
 import { IPathService } from '../../services/path/common/pathService.js';
 import { IUserDataProfileService } from '../../services/userDataProfile/common/userDataProfile.js';
 import { pickVoltContributes, validateVoltContribution } from '../../services/voltPlugins/common/voltContributions.js';
@@ -73,7 +74,7 @@ export class WebviewOwnership extends Disposable {
 		this._register(trustService.onDidChangeTrust(() => this._onDidChange.fire()));
 		this._register(workspaceService.onDidChangeWorkspaceFolders(() => this._onDidChange.fire()));
 		this._register(configurationService.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration(VOLT_SANDBOXED_EXTENSIONS_SETTING)) {
+			if (affectsVoltExtensionSandbox(e)) {
 				this._onDidChange.fire();
 			}
 		}));
@@ -99,7 +100,12 @@ export class WebviewOwnership extends Disposable {
 	}
 
 	isSandboxed(extensionId: string): boolean {
-		return isSandboxedExtension(this.configurationService.getValue(VOLT_SANDBOXED_EXTENSIONS_SETTING), extensionId);
+		if (isSandboxedExtension(this.configurationService.getValue(VOLT_SANDBOXED_EXTENSIONS_SETTING), extensionId)) {
+			return true;
+		}
+		// P8: every third-party extension is in scope under `required`.
+		const description = this.description(extensionId);
+		return !!description && voltIsSandboxed(this.configurationService, description);
 	}
 
 	/** The webview's owner as a caller of the external-open gate, with its name for the prompt. */
