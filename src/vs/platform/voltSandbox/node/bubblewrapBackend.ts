@@ -369,7 +369,7 @@ export class BubblewrapBackend implements ISandboxBackend {
 		const matches: IPatternWalkResult = { ...walked, protect: [...walked.protect, ...await gitAllowListProtections(policy, walked.protect)] };
 		if (policy.denyPatterns.length && !matches.complete) {
 			// A `.env` the walk did not reach would stay readable: refuse rather than run with less (B-27).
-			throw new SandboxUnavailableError(`The Linux sandbox could not check every folder for ${policy.denyPatterns.map(p => p.names.join('/')).filter((n, i, all) => all.indexOf(n) === i).slice(0, 4).join(', ')} files before starting (it stopped after ${matches.visited} folders: over ${PATTERN_WALK_LIMITS.maxEntries} entries, deeper than ${PATTERN_WALK_LIMITS.maxDepth} levels or slower than ${PATTERN_WALK_LIMITS.budgetMs} ms). Open a smaller folder, or narrow what the sandbox reads.`, 'unavailable', ['filesystem.denyPatterns']);
+			throw new SandboxUnavailableError(`The Linux sandbox could not check every folder for ${policy.denyPatterns.map(p => p.names.join('/')).filter((n, i, all) => all.indexOf(n) === i).slice(0, 4).join(', ')} files before starting (it stopped after ${matches.visited} folders${matches.unfinished ? `, at ${redactSandboxText(matches.unfinished, policy.home)}` : ''}: over ${PATTERN_WALK_LIMITS.maxEntries} entries, deeper than ${PATTERN_WALK_LIMITS.maxDepth} levels or slower than ${PATTERN_WALK_LIMITS.budgetMs} ms). Open a smaller folder, or narrow what the sandbox reads.`, 'unavailable', ['filesystem.denyPatterns']);
 		}
 		const opened = bindFd ? await openRoots(roots) : { fds: new Map<string, number>(), close: () => undefined };
 		let bwrapArgs: string[];
@@ -683,6 +683,8 @@ export interface IPatternWalkResult extends IBubblewrapPatternMatches {
 	/** False when the walk stopped at a limit before visiting everything. */
 	readonly complete: boolean;
 	readonly visited: number;
+	/** When not complete: a required folder the walk did not finish (for the refusal). */
+	readonly unfinished?: string;
 }
 
 /**
@@ -730,6 +732,13 @@ export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { co
 	const started = Date.now();
 	let entries = 0;
 	let complete = true;
+	let unfinished: string | undefined;
+	const stop = (bestEffort: boolean, dir: string | undefined) => {
+		if (!bestEffort && complete) {
+			complete = false;
+			unfinished = dir;
+		}
+	};
 	// The required roots' folders first, then the best-effort ones.
 	const queues: { dir: string; depth: number; root: boolean }[][] = [
 		roots.filter(required).map(dir => ({ dir, depth: 0, root: true })),
@@ -739,7 +748,7 @@ export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { co
 		const bestEffort = !queues[0].length;
 		const queue = bestEffort ? queues[1] : queues[0];
 		if (entries >= limits.maxEntries || Date.now() - started > limits.budgetMs) {
-			complete &&= bestEffort;
+			stop(bestEffort, queue[0]?.dir);
 			break;
 		}
 		const { dir, depth, root } = queue.shift()!;
@@ -786,7 +795,7 @@ export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { co
 			}
 			if (depth + 1 > limits.maxDepth) {
 				// A folder the walk will not look into: a match there would stay readable.
-				complete &&= bestEffort;
+				stop(bestEffort, path);
 				continue;
 			}
 			// A repository's `.git` is matched from its parent (`.git/config`, `.git/hooks`), so the
@@ -798,7 +807,7 @@ export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { co
 			queue.push({ dir: path, depth: depth + 1, root: false });
 		}
 	}
-	return { deny: [...deny.values()], protect: [...protect.values()], sockets: [...sockets], complete, visited: visitedDirs.size };
+	return { deny: [...deny.values()], protect: [...protect.values()], sockets: [...sockets], complete, visited: visitedDirs.size, ...(unfinished ? { unfinished } : {}) };
 }
 
 /**
