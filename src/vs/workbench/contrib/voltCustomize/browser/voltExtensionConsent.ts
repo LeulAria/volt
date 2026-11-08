@@ -14,6 +14,9 @@ import { ILayoutService } from '../../../../platform/layout/browser/layoutServic
 import { VoltCapabilityClass } from '../../../services/voltPlugins/common/capabilities.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { showVoltModal } from '../../voltProjects/browser/ui/voltModal.js';
+import { IUserGestureToken } from '../../../../platform/voltSandbox/common/principals.js';
+import { GestureTokenRegistry } from '../../../../platform/voltSandbox/common/trust.js';
+import { bindGestureButton } from '../../../services/voltTrust/browser/gestureTokens.js';
 
 /** What Volt says a capability lets an extension do: Volt's words, never the extension's. */
 export interface IVoltCapabilityCopy {
@@ -65,18 +68,23 @@ export interface IVoltExtensionConsentRequest {
 	readonly class: VoltCapabilityClass;
 	/** The extension's own reason from its manifest: shown as its claim, never as Volt's text. */
 	readonly reason?: string;
+	/**
+	 * G.7: Allow mints a gesture token for `principal` (the extension's subject) only for a real
+	 * click or key press, after 500 ms and pointer movement over the dialog; the grant needs it.
+	 */
+	readonly gesture?: { readonly registry: GestureTokenRegistry; readonly principal: string };
 }
 
 /**
  * "Allow Acme Notes to read your chats?": one capability, in Volt's words, with the extension's
  * stated reason marked as its claim. Closing the dialog refuses; Don't Allow has focus.
  */
-export function showVoltExtensionConsent(layoutService: ILayoutService, request: IVoltExtensionConsentRequest, answer: (granted: boolean) => void): IDisposable {
+export function showVoltExtensionConsent(layoutService: ILayoutService, request: IVoltExtensionConsentRequest, answer: (granted: boolean, gesture?: IUserGestureToken) => void): IDisposable {
 	let answered = false;
-	const decide = (granted: boolean) => {
+	const decide = (granted: boolean, gesture?: IUserGestureToken) => {
 		if (!answered) {
 			answered = true;
-			answer(granted);
+			answer(granted, gesture);
 		}
 	};
 	const copy = voltCapabilityCopy(request.capability);
@@ -115,10 +123,17 @@ export function showVoltExtensionConsent(layoutService: ILayoutService, request:
 			const allow = store.add(createVoltButton(footer, 'primary'));
 			allow.label = localize('voltExtensionConsent.allow', "Allow");
 			allow.element.classList.add('allow');
-			store.add(allow.onDidClick(() => {
-				decide(true);
-				close();
-			}));
+			if (request.gesture) {
+				store.add(bindGestureButton(allow, request.gesture.registry, request.gesture.principal, token => {
+					decide(true, token);
+					close();
+				}, { area: body }));
+			} else {
+				store.add(allow.onDidClick(() => {
+					decide(true);
+					close();
+				}));
+			}
 			// Don't Allow has focus: Enter on a dialog that popped up unasked must not grant access.
 			deny.focus();
 			return store;

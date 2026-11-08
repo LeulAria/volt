@@ -253,6 +253,8 @@ suite('Volt extension API (vscode.volt)', () => {
 				override isOn() { return true; }
 				override isEnabled(featureId: string) { return !featuresOff.has(featureId); }
 			}, features, extensionService, instantiation, layoutService, new NullLogService(),
+			// No grant store here: consents live on the extension pages (the grant store's path is permissionUxWindow.test.ts).
+			undefined!, undefined!,
 		));
 		instantiation.stub(IVoltExtensionApiService, api);
 

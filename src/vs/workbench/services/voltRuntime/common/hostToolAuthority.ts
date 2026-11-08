@@ -5,6 +5,7 @@
 
 import { Emitter } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
+import { generateUuid } from '../../../../base/common/uuid.js';
 import { localize } from '../../../../nls.js';
 import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
@@ -194,7 +195,8 @@ export class HostToolAuthority extends Disposable {
 	approveFlow(chatId: string, to: SubjectKey, hosts: readonly string[] | 'all', kind: 'once' | 'session'): IGrant {
 		const at = this.now();
 		const grant: IGrant = {
-			id: `flow:${chatId}:${to}:${++this.epoch}`,
+			// Unique across windows and restarts: a stored approval keeps its id in the grant store.
+			id: `flow:${chatId}:${to}:${++this.epoch}:${generateUuid().slice(0, 8)}`,
 			subject: chatSubject(chatId),
 			capability: FLOW_CAPABILITY,
 			scope: { targets: [to], hosts: hosts === 'all' ? ['*'] : [...hosts] },
@@ -207,6 +209,22 @@ export class HostToolAuthority extends Disposable {
 		};
 		this.flowGrants = [...this.flowGrants, grant];
 		return grant;
+	}
+
+	/**
+	 * The grant store's flow approvals ("Allow for This Chat", kept across restarts, P4): they
+	 * replace the session ones held here, so a revocation on the Access page takes them away; a
+	 * once grant in flight stays.
+	 */
+	setStoredFlowGrants(grants: readonly IGrant[]): void {
+		const stored = grants.filter(grant => grant.capability === FLOW_CAPABILITY && grant.kind === 'session' && grant.subject.startsWith('chat:'));
+		const kept = this.flowGrants.filter(grant => grant.kind !== 'session');
+		const before = this.flowGrants.map(grant => grant.id).sort().join('\n');
+		const next = [...kept, ...stored.map(grant => ({ ...grant, epoch: 0 }))];
+		if (next.map(grant => grant.id).sort().join('\n') !== before) {
+			this.epoch++;
+			this.flowGrants = next;
+		}
 	}
 
 	/** A once grant is spent by the call it allowed. */

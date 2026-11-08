@@ -2278,6 +2278,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 	}
 
+	sandboxProcessId(sessionId: string): string | undefined {
+		const session = this.sessions.get(sessionId) as ISessionState | undefined;
+		return session?.agentHandle && session.agentProviderId ? this.agentProviders.get(session.agentProviderId)?.sandboxProcessId?.(session.agentHandle) : undefined;
+	}
+
 	getDefaultSandboxSettings(): IVoltSandboxSettings {
 		return this.sandboxDefaults;
 	}

@@ -446,6 +446,10 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 	}
 
+	sandboxProcessId(session: IAgentSessionHandle): string | undefined {
+		return this.sessions.get(session.id)?.processId;
+	}
+
 	async applyAccessPolicy(session: IAgentSessionHandle, policy: ICompiledPolicy): Promise<void> {
 		const live = this.sessions.get(session.id);
 		if (!live) {

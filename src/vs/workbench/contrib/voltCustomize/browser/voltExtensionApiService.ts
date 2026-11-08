@@ -23,7 +23,14 @@ import { IWorkspaceContextService } from '../../../../platform/workspace/common/
 import { Extensions, IExtensionFeatureMarkdownRenderer, IExtensionFeaturesManagementService, IExtensionFeaturesRegistry, IRenderedData } from '../../../services/extensionManagement/common/extensionFeatures.js';
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { capabilityClass, IVoltPluginPrincipal, IWouldBeDenial } from '../../../services/voltPlugins/common/capabilities.js';
-import { consentKey, IVoltConsentStore, VoltConsentState, VoltExtensionCapabilityPolicy } from '../../../services/voltPlugins/common/extensionCapabilityPolicy.js';
+import { consentKey, IStoredConsents, IVoltConsentStore, VoltConsentState, VoltExtensionCapabilityPolicy } from '../../../services/voltPlugins/common/extensionCapabilityPolicy.js';
+import { ILocalExtension } from '../../../../platform/extensionManagement/common/extensionManagement.js';
+import { versionedCapability } from '../../../../platform/voltPlugins/common/capabilityCatalog.js';
+import { consentsToGrants, IConsentRecord, IRefusal } from '../../../../platform/voltSandbox/common/grants.js';
+import { extensionSubject, isPluginSubject, IUserGestureToken, SubjectKey, subjectExtensionId } from '../../../../platform/voltSandbox/common/principals.js';
+import { signerChangeDrops, TrustGrantDraft } from '../../../../platform/voltSandbox/common/trust.js';
+import { IWorkbenchExtensionManagementService } from '../../../services/extensionManagement/common/extensionManagement.js';
+import { IVoltTrustService } from '../../../services/voltTrust/common/voltTrust.js';
 import { createVoltApi, IVoltApiBackend, IVoltApiCaller, IVoltAutomationSummary, IVoltChatSummary, IVoltMemoryNote, IVoltPluginContext, IVoltTurnEvent, IVoltUsageModelTotal, VoltAutomationSchedule } from '../../../services/voltPlugins/common/voltApi.js';
 import { IVoltContributes, IVoltPluginManifest, pickVoltContributes, validateVoltContribution, VOLT_CONTRIBUTION_POINTS } from '../../../services/voltPlugins/common/voltContributions.js';
 import { IVoltExtensionApiService, IVoltExtensionConsent } from '../../../services/voltPlugins/common/voltExtensionApi.js';
@@ -86,18 +93,57 @@ function ownSettingsOf(extension: Pick<IExtensionDescription, 'contributes'>): s
 }
 
 /**
- * Consents in VS Code's extension features store: one feature per capability, which the
- * extension's page (Features) shows with Allow Access / Revoke Access. Never asked: no entry.
+ * Consents (P4): the grant store (`~/.volt/trust/grants.json`) holds them, as persistent user
+ * grants and refusals of the extension's subject (`plugin:<id>@<signer>`). VS Code's extension
+ * features store keeps a copy so the extension's page (Features) shows Allow Access / Revoke
+ * Access; a toggle there is mirrored into the grant store. Before the grant store is read (or
+ * without one: the web), the features store answers.
  */
 class VoltConsentStore implements IVoltConsentStore {
 
 	readonly onDidChange: Event<unknown>;
+	private readonly touched = new Map<string, number>();
 
-	constructor(private readonly features: IExtensionFeaturesManagementService) {
-		this.onDidChange = Event.filter(features.onDidChangeEnablement, e => e.featureId.startsWith('volt.capability.'));
+	constructor(
+		private readonly features: IExtensionFeaturesManagementService,
+		private readonly trust: IVoltTrustService | undefined,
+		private readonly signerOf: (extensionId: string) => string,
+		private readonly ready: () => boolean,
+	) {
+		const pages = Event.filter(features.onDidChangeEnablement, e => e.featureId.startsWith('volt.capability.'));
+		this.onDidChange = trust ? Event.any<unknown>(pages, trust.onDidChange) : pages;
+	}
+
+	subject(extensionId: string): SubjectKey {
+		return extensionSubject(extensionId, false, this.signerOf(extensionId));
+	}
+
+	stored(extensionId: string): IStoredConsents | undefined {
+		if (!this.trust || !this.ready()) {
+			return undefined;
+		}
+		const subject = this.subject(extensionId);
+		const state = this.trust.state;
+		return { subject, epoch: state.epoch, grants: state.grants.filter(grant => grant.subject === subject), refusals: state.refusals.filter(refusal => refusal.subject === subject) };
+	}
+
+	/** At most once a day per grant: G.4's 30-day unused expiry counts from the last use. */
+	used(extensionId: string, capability: string): void {
+		const stored = this.stored(extensionId);
+		const now = Date.now();
+		const touch = (stored?.grants ?? []).filter(grant => consentKey(grant.capability) === consentKey(capability) && now - Math.max(grant.lastUsedAt, this.touched.get(grant.id) ?? 0) > DAY_MS);
+		if (touch.length) {
+			touch.forEach(grant => this.touched.set(grant.id, now));
+			void this.trust?.narrow({ touch: touch.map(grant => ({ id: grant.id, at: now })) }).catch(() => undefined);
+		}
 	}
 
 	state(extensionId: string, capability: string): VoltConsentState {
+		const stored = this.stored(extensionId);
+		if (stored) {
+			const key = consentKey(capability);
+			return stored.grants.some(grant => consentKey(grant.capability) === key) ? 'granted' : stored.refusals.some(refusal => consentKey(refusal.capability) === key) ? 'refused' : undefined;
+		}
 		const featureId = voltCapabilityFeatureId(capability);
 		if (!Registry.as<IExtensionFeaturesRegistry>(Extensions.ExtensionFeaturesRegistry).getExtensionFeature(featureId)) {
 			return undefined;
@@ -105,6 +151,19 @@ class VoltConsentStore implements IVoltConsentStore {
 		const entry = this.features.getEnablementData(featureId).find(data => ExtensionIdentifier.equals(data.extension, extensionId));
 		return entry === undefined ? undefined : entry.enabled ? 'granted' : 'refused';
 	}
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Set once the extension pages' consents were moved into the grant store. */
+const CONSENTS_MIGRATED_KEY = 'volt.trust.consentsMigrated';
+
+/**
+ * The signer a third-party extension's grants are pinned to (G.9 TOFU): the gallery publisher it
+ * was installed from, else `local` (a `.vsix` or a folder). A change of it drops the grants.
+ */
+export function extensionSigner(local: Pick<ILocalExtension, 'source' | 'publisherId'> | undefined): string {
+	return local?.source === 'gallery' && local.publisherId ? `gallery:${local.publisherId.toLowerCase()}` : 'local';
 }
 
 /** The Features tab entry for one capability: shown on a third party's page when it declares it. */
@@ -146,6 +205,13 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 	private readonly asking = new Map<string, Promise<boolean>>();
 	private readonly registered = new Set<string>();
 	private readonly backend: IVoltApiBackend;
+	private readonly consentStore: VoltConsentStore;
+	/** Third-party extensions' signers (G.9), by lower-case id. */
+	private readonly signers = new Map<string, string>();
+	/** The grant store was read, consents moved into it, and signers checked. */
+	private storeReady = false;
+	/** The features store is being set from the grant store: not mirrored back. */
+	private mirroring = false;
 
 	constructor(
 		@IVoltHostToolService hostTools: IVoltHostToolService,
@@ -158,17 +224,34 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@ILayoutService private readonly layoutService: ILayoutService,
 		@ILogService private readonly logService: ILogService,
+		// P4: the grant store, and the installs signers come from. Not given (a host built without them): the features store alone.
+		@IVoltTrustService private readonly trust: IVoltTrustService,
+		@IWorkbenchExtensionManagementService private readonly extensionManagement: IWorkbenchExtensionManagementService,
 	) {
 		super();
-		this.policy = this._register(new VoltExtensionCapabilityPolicy(new VoltConsentStore(features), {
+		this.consentStore = new VoltConsentStore(features, trust, id => this.signers.get(id.toLowerCase()) ?? 'local', () => this.storeReady);
+		this.policy = this._register(new VoltExtensionCapabilityPolicy(this.consentStore, {
 			mode: () => readPolicyAuthorityMode(configurationService.getValue(POLICY_AUTHORITY_MODE_SETTING)),
 			onDiff: diff => logService.warn(`[volt policy authority] shadow diff in the extension API: ${diff.extensionId} ${diff.api} ${diff.capability}${diff.target !== undefined ? ` on ${diff.target}` : ''}: before ${diff.legacy ? `denied (${diff.legacy.deniedBy})` : 'allowed'}, the Authority ${diff.authority ? `denies (${diff.authority.deniedBy}): ${diff.decision.reason}` : 'allows'}`),
 		}));
 		this._register(features.onDidChangeEnablement(e => {
 			if (e.featureId.startsWith('volt.capability.')) {
 				this._onDidChangeConsent.fire({ extensionId: e.extension.value, capability: e.featureId.slice('volt.capability.'.length) });
+				if (!this.mirroring) {
+					void this.mirrorPageToggle(e.extension.value, e.featureId.slice('volt.capability.'.length), e.enabled);
+				}
 			}
 		}));
+		if (trust) {
+			this._register(trust.onDidChange(state => {
+				const subjects = new Set([...state.grants, ...state.refusals].map(entry => entry.subject).filter(isPluginSubject));
+				for (const subject of subjects) {
+					this._onDidChangeConsent.fire({ extensionId: subjectExtensionId(subject)!, capability: '*' });
+				}
+				this.mirrorStoreToPages();
+			}));
+			void this.adoptGrantStore(trust, storageService);
+		}
 		// The extension pages list each declared medium and high capability, with its consent.
 		const registerDeclared = () => {
 			for (const extension of extensionService.extensions) {
@@ -365,15 +448,39 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 		let pending = this.asking.get(key);
 		if (!pending) {
 			const reason = declaredCapabilities(voltManifestOf(extension).contributes ?? {}).find(entry => consentKey(entry.id) === capability)?.reason;
+			const trust = this.storeReady ? this.trust : undefined;
+			const subject = this.consentStore.subject(extension.identifier.value);
+			// G.12: one prompt a minute and three a day per extension, none after two refusals until the Access page is opened.
+			if (trust && !trust.budget.take(subject)) {
+				this.logService.info(`[volt extension api] not asking about ${capability} for ${extension.identifier.value}: its prompt budget is spent`);
+				return Promise.resolve(false);
+			}
 			const dialog = this._register(new DisposableStore());
-			pending = new Promise<boolean>(resolve => {
-				dialog.add(showVoltExtensionConsent(this.layoutService, { extensionName: extension.displayName ?? extension.name, publisher: extension.publisher, capability, class: capabilityClass(capability) ?? 'high', reason }, resolve));
-			}).then(granted => {
+			pending = new Promise<{ readonly granted: boolean; readonly gesture?: IUserGestureToken }>(resolve => {
+				dialog.add(showVoltExtensionConsent(this.layoutService, {
+					extensionName: extension.displayName ?? extension.name, publisher: extension.publisher, capability, class: capabilityClass(capability) ?? 'high', reason,
+					...(trust ? { gesture: { registry: trust.gestures, principal: subject } } : {}),
+				}, (granted, gesture) => resolve({ granted, ...(gesture ? { gesture } : {}) })));
+			}).then(async ({ granted, gesture }) => {
 				if (this._store.isDisposed) {
 					return false; // the window closed the dialog, not the user: nothing is recorded
 				}
 				this.ensureFeature(capability);
-				this.features.setEnablement(extension.identifier, voltCapabilityFeatureId(capability), granted);
+				if (trust) {
+					try {
+						if (granted) {
+							const at = Date.now();
+							await trust.grant(subject, [{ id: `consent:${subject}:${versionedCapability(capability)}:${at}`, subject, capability: versionedCapability(capability), scope: {}, kind: 'persistent', source: 'user', grantedAt: at, lastUsedAt: at }], gesture);
+						} else {
+							trust.budget.refused(subject);
+							await trust.narrow({ refuse: [{ subject, capability: versionedCapability(capability), at: Date.now() }] });
+						}
+					} catch (err) {
+						this.logService.warn(`[volt extension api] ${extension.identifier.value} ${capability}: ${err instanceof Error ? err.message : err}`);
+						return false;
+					}
+				}
+				this.setPage(extension.identifier.value, capability, granted);
 				return granted;
 			}).finally(() => {
 				this.asking.delete(key);
@@ -385,6 +492,13 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 	}
 
 	consents(extensionId: string): readonly IVoltExtensionConsent[] {
+		const stored = this.consentStore.stored(extensionId);
+		if (stored) {
+			const answers = new Map<string, boolean>();
+			stored.refusals.forEach(refusal => answers.set(consentKey(refusal.capability), false));
+			stored.grants.forEach(grant => answers.set(consentKey(grant.capability), true));
+			return [...answers].map(([capability, granted]) => ({ capability, granted }));
+		}
 		const result: IVoltExtensionConsent[] = [];
 		for (const capability of this.registered) {
 			const entry = this.features.getEnablementData(voltCapabilityFeatureId(capability)).find(data => ExtensionIdentifier.equals(data.extension, extensionId));
@@ -398,6 +512,119 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 	revokeConsent(extensionId: string, capability: string): void {
 		this.ensureFeature(capability);
 		this.features.setEnablement(new ExtensionIdentifier(extensionId), voltCapabilityFeatureId(capability), false);
+	}
+
+	subjectOf(extensionId: string): SubjectKey {
+		return this.consentStore.subject(extensionId);
+	}
+
+	/** The extension page's copy of a consent, set without mirroring it back into the grant store. */
+	private setPage(extensionId: string, capability: string, granted: boolean): void {
+		this.ensureFeature(capability);
+		this.mirroring = true;
+		try {
+			this.features.setEnablement(new ExtensionIdentifier(extensionId), voltCapabilityFeatureId(capability), granted);
+		} finally {
+			this.mirroring = false;
+		}
+	}
+
+	/**
+	 * The grant store becomes where consents live (P4): read it, move the extension pages' earlier
+	 * answers into it once, learn each installed extension's signer and drop the grants of a
+	 * signer that changed (G.9), then answer from it.
+	 */
+	private async adoptGrantStore(trust: IVoltTrustService, storage: IStorageService): Promise<void> {
+		await trust.whenReady;
+		try {
+			for (const local of await this.extensionManagement?.getInstalled() ?? []) {
+				if (!local.isBuiltin) {
+					this.signers.set(local.identifier.id.toLowerCase(), extensionSigner(local));
+				}
+			}
+			if (this.extensionManagement) {
+				this._register(this.extensionManagement.onDidInstallExtensions(results => {
+					for (const result of results) {
+						if (result.local && !result.local.isBuiltin) {
+							this.signers.set(result.local.identifier.id.toLowerCase(), extensionSigner(result.local));
+						}
+					}
+					void this.dropChangedSigners(trust);
+				}));
+			}
+			if (!storage.getBoolean(CONSENTS_MIGRATED_KEY, StorageScope.APPLICATION, false) && trust.state.status !== 'newer') {
+				const grants: TrustGrantDraft[] = [];
+				const refusals: IRefusal[] = [];
+				const at = Date.now();
+				const byExtension = new Map<string, IConsentRecord[]>();
+				for (const capability of this.registered) {
+					for (const entry of this.features.getEnablementData(voltCapabilityFeatureId(capability))) {
+						const list = byExtension.get(entry.extension.value) ?? [];
+						list.push({ capability, granted: entry.enabled });
+						byExtension.set(entry.extension.value, list);
+					}
+				}
+				for (const [extensionId, records] of byExtension) {
+					const moved = consentsToGrants(this.consentStore.subject(extensionId), records, at, 0);
+					grants.push(...moved.grants);
+					refusals.push(...moved.refusals);
+				}
+				if (grants.length || refusals.length) {
+					await trust.record({ add: grants, refuse: refusals }, 'migration');
+				}
+				storage.store(CONSENTS_MIGRATED_KEY, true, StorageScope.APPLICATION, StorageTarget.MACHINE);
+			}
+			await this.dropChangedSigners(trust);
+			this.storeReady = true;
+			this.mirrorStoreToPages();
+		} catch (err) {
+			// Without the store the extension pages' consents keep answering, as before.
+			this.logService.warn(`[volt extension api] consents stay on the extension pages: ${err instanceof Error ? err.message : err}`);
+		}
+	}
+
+	/** G.9: an extension now signed by someone else starts with nothing. */
+	private async dropChangedSigners(trust: IVoltTrustService): Promise<void> {
+		const drops = [...this.signers].flatMap(([extensionId, signer]) => signerChangeDrops(trust.state, extensionId, signer));
+		if (drops.length) {
+			this.logService.warn(`[volt extension api] signer changed, permissions dropped: ${drops.join(', ')}`);
+			await trust.narrow({ dropSubjects: drops });
+		}
+	}
+
+	/** Allow Access or Revoke Access on an extension's Features page: the grant store follows. */
+	private async mirrorPageToggle(extensionId: string, capability: string, enabled: boolean): Promise<void> {
+		const trust = this.storeReady ? this.trust : undefined;
+		const stored = this.consentStore.stored(extensionId);
+		if (!trust || !stored) {
+			return;
+		}
+		const key = consentKey(capability);
+		const held = stored.grants.filter(grant => consentKey(grant.capability) === key);
+		try {
+			if (enabled && !held.length) {
+				const at = Date.now();
+				await trust.record({ add: [{ id: `consent:${stored.subject}:${versionedCapability(key)}:${at}`, subject: stored.subject, capability: versionedCapability(key), scope: {}, kind: 'persistent', source: 'user', grantedAt: at, lastUsedAt: at }], unrefuse: [{ subject: stored.subject, capability: key }] }, 'extension-page');
+			} else if (!enabled && (held.length || !stored.refusals.some(refusal => consentKey(refusal.capability) === key))) {
+				await trust.narrow({ revoke: held.map(grant => grant.id), refuse: [{ subject: stored.subject, capability: versionedCapability(key), at: Date.now() }] });
+			}
+		} catch (err) {
+			this.logService.warn(`[volt extension api] could not record ${key} for ${extensionId}: ${err instanceof Error ? err.message : err}`);
+		}
+	}
+
+	/** A grant revoked on the Access page (or dropped): the extension page shows it revoked too. */
+	private mirrorStoreToPages(): void {
+		if (!this.storeReady) {
+			return;
+		}
+		for (const capability of this.registered) {
+			for (const entry of this.features.getEnablementData(voltCapabilityFeatureId(capability))) {
+				if (entry.enabled && this.consentStore.state(entry.extension.value, capability) !== 'granted') {
+					this.setPage(entry.extension.value, capability, false);
+				}
+			}
+		}
 	}
 
 	/** Registers the capability's extension feature (its consent and its row on extension pages) once. */

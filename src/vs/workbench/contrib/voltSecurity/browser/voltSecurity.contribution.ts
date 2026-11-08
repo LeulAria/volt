@@ -7,12 +7,19 @@ import { localize } from '../../../../nls.js';
 import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { SANDBOX_SUPERVISOR_SETTING } from '../../../../platform/voltSandbox/common/sandboxWorkloads.js';
+import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
+import { FlowGrantSync } from './flowGrantSync.js';
+import { InstallSheetContribution } from './installSheet.js';
 
 /**
  * Volt's Security page (spec M.3 C5): the sandboxed processes section is
  * `sandboxWorkloadsSection.ts`, drawn on Volt Settings' Security page. This registers the
- * supervisor's rollback flag.
+ * supervisor's rollback flag, and keeps the host-tool gate's flow approvals in the grant store (P4).
  */
+
+registerWorkbenchContribution2(FlowGrantSync.ID, FlowGrantSync, WorkbenchPhase.AfterRestored);
+// The install sheet: a third-party extension's declared Volt capabilities, by class, at first activation.
+registerWorkbenchContribution2(InstallSheetContribution.ID, InstallSheetContribution, WorkbenchPhase.Eventually);
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 	id: 'volt.sandbox.supervisor',

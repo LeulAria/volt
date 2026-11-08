@@ -12,6 +12,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { HOST_MCP_TOKEN_TTL_MS, hostMcpSessionToken, parseHostMcpSessionToken } from '../../../../../platform/voltHostMcp/common/voltHostMcpAuth.js';
+import { IGrant } from '../../../../../platform/voltSandbox/common/grants.js';
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { VoltHostToolService } from '../../browser/host/hostToolService.js';
@@ -581,6 +582,34 @@ suite('Volt host tool service', () => {
 		assert.deepStrictEqual(diffs, ['linear_sync:deny:shadow']);
 		assert.deepStrictEqual(ran, ['linear_sync', 'linear_sync', 'linear_sync', 'linear_sync', 'linear_sync']);
 		service.setApprover(undefined);
+	});
+
+	test('UX-GRANT-2: "Allow for This Chat" on a flow card is kept in the grant store, holds after a restart, and goes when revoked there', async () => {
+		const owner: IVoltHostToolOwner = { extensionId: 'acme.linear', label: 'Linear', firstParty: false, toolClass: 'network', declared: [{ id: 'tools.register' }, { id: 'net.connect', targets: ['api.linear.app'] }] };
+		const offline = { sessionId: 's1', sandbox: WORKSPACE_WRITE };
+		const kept: IGrant[] = [];
+		const grantStore = { persist: async (grant: IGrant) => { kept.push(grant); }, revoke: async (ids: readonly string[]) => { ids.forEach(id => kept.splice(kept.findIndex(grant => grant.id === id), 1)); } };
+		const serveLinear = (service: ReturnType<typeof setup>['service']) => store.add(service.registerToolProvider({ tools: [{ name: 'linear_sync', title: 'Synced', description: '', inputSchema: {} }], invoke: async () => ({ text: 'ran' }), owner }));
+
+		const first = setup().service;
+		serveLinear(first);
+		first.setFlowGrantStore(grantStore);
+		first.setApprover({ approve: async () => false, approveFlow: async () => 'chat' });
+		assert.strictEqual((await first.invokeTool('linear_sync', {}, offline)).text, 'ran');
+		assert.deepStrictEqual(kept.map(grant => [grant.subject, grant.kind, grant.sessionId]), [['chat:s1', 'session', 's1']], 'persisted as a session grant of the chat');
+
+		// A restart: a new gate, the store's grants loaded, nobody to ask.
+		const second = setup().service;
+		serveLinear(second);
+		second.setApprover({ approve: async () => false, approveFlow: async () => undefined });
+		assert.ok((await second.invokeTool('linear_sync', {}, offline)).error, 'refused before the store is read');
+		second.setStoredFlowGrants(kept);
+		assert.strictEqual((await second.invokeTool('linear_sync', {}, offline)).text, 'ran', 'holds after the restart');
+		// Revoked on the Access page: the store no longer has it.
+		second.setStoredFlowGrants([]);
+		assert.ok((await second.invokeTool('linear_sync', {}, offline)).error, 'gone when revoked');
+		first.setApprover(undefined);
+		second.setApprover(undefined);
 	});
 
 	test('PERM-FLOW-1: an extension tool whose class the gate can\'t judge without its arguments stays refused in a sandboxed chat', async () => {

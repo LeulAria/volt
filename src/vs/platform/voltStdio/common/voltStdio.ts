@@ -9,6 +9,8 @@ import type { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../v
 import type { ISandboxDenial } from '../../voltSandbox/common/sandboxDenials.js';
 import type { IVoltSandboxRequest } from '../../voltSandbox/common/sandboxPolicy.js';
 import type { ISandboxWorkloadInfo } from '../../voltSandbox/common/sandboxWorkloads.js';
+import type { SubjectKey } from '../../voltSandbox/common/principals.js';
+import type { ITrustChange, ITrustCommitResult, ITrustHistoryEntry, ITrustState } from '../../voltSandbox/common/trust.js';
 
 export const IVoltStdioService = createDecorator<IVoltStdioService>('voltStdioService');
 export const VOLT_STDIO_CHANNEL_NAME = 'voltStdio';
@@ -359,6 +361,36 @@ export interface IVoltStdioService {
 	spawnSandboxedMcp?(request: IVoltSandboxedMcpRequest): Promise<string>;
 	/** The chat closed or its grants were revoked: every host started for it stops, whole trees. */
 	stopSandboxedHosts?(chatId: string): Promise<number>;
+	/**
+	 * The Allow buttons of a network denial card (spec I.4 "Approval", P4): names the broker's
+	 * denial of spawn `id` and the epoch it was refused at; the broker rebuilds the rule from its own
+	 * record. `run`: this run of the agent; `chat`: every later run of the chat, kept in the grant
+	 * store until revoked. Refused when the denial is not that spawn's, or the epoch moved.
+	 */
+	approveSandboxDenial?(id: string, denialId: string, expectedEpoch: number, scope: 'run' | 'chat'): Promise<IVoltSandboxApproval>;
+	/** Skip on a denial card: counts toward the route's refusals (two auto-deny, G.12). */
+	refuseSandboxDenial?(id: string, denialId: string): Promise<boolean>;
+	/** The grant store (`~/.volt/trust/grants.json`) as the Access page shows it. */
+	trustState?(): Promise<ITrustState>;
+	/** Records the user's grants and refusals, revokes, and drops subjects; revocations close tunnels they allowed. */
+	trustCommit?(change: ITrustChange): Promise<ITrustCommitResult>;
+	/** The Access page's history: the Authority's decision log and the brokers' audit logs, newest first. */
+	trustHistory?(limit: number, subject?: SubjectKey): Promise<readonly ITrustHistoryEntry[]>;
+	/** Open routes' prompt budgets (G.12). */
+	trustPromptBudgets?(): Promise<readonly IVoltPromptBudget[]>;
+	/** The Access page was opened: prompts may be offered again (G.12). */
+	resetPromptBudgets?(subject?: SubjectKey): Promise<void>;
+	/** The grant store changed (in this process or another Volt process). */
+	readonly onDidChangeTrust?: Event<{ readonly epoch: number; readonly narrowed: boolean }>;
+}
+
+export type IVoltSandboxApproval = { readonly ok: true; readonly epoch: number } | { readonly ok: false; readonly epoch: number; readonly reason: string };
+
+export interface IVoltPromptBudget {
+	readonly subject: SubjectKey;
+	readonly refusals: number;
+	readonly autoDenied: boolean;
+	readonly promptsToday: number;
 }
 
 /** What one merge of an agent's config overlay did. */

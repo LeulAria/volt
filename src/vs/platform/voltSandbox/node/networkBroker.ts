@@ -15,7 +15,7 @@ import { evaluate, IAccessRequest, IAdminPolicy, IDecision, PolicySnapshot } fro
 import { GrantKind, IGrant } from '../common/grants.js';
 import { classifyAddress } from '../common/networkAddress.js';
 import { INormalizedHost, normalizeNetworkHost, parseNetworkRule, splitAuthority } from '../common/networkRules.js';
-import { ICallContext, IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
+import { ICallContext, IPrincipal, PrincipalKind, SubjectKey, subjectChatId } from '../common/principals.js';
 import { GrantCommitResult, IGrantStoreChange, IGrantStoreChangeEvent } from './grantStore.js';
 
 /**
@@ -83,6 +83,11 @@ export interface INetworkDenial {
 	/** Whether an "Allow" may be offered for it: a host rule could open it, and the prompt budget (G.12) is not spent. */
 	readonly promptable: boolean;
 }
+
+/** What an approval holds for: this run of the principal, or every run of its chat (P4 denial card). */
+export type NetworkApprovalScope = 'run' | 'chat';
+
+export type NetworkApprovalResult = { readonly ok: true; readonly epoch: number } | { readonly ok: false; readonly epoch: number; readonly reason: string };
 
 export interface INetworkAuditEvent {
 	readonly ts: number;
@@ -242,6 +247,40 @@ export class NetworkBroker {
 	/** @internal */
 	routeClosed(route: NetworkRoute): void {
 		this.routes.delete(route);
+	}
+
+	/** The route that recorded `denialId`, if it is still open. */
+	routeOfDenial(denialId: string): NetworkRoute | undefined {
+		for (const route of this.routes) {
+			if (route.hasDenial(denialId)) {
+				return route;
+			}
+		}
+		return undefined;
+	}
+
+	/** I.4 "Approval" by denial id: the route that recorded it re-derives the rule from its own record. */
+	approve(denialId: string, expectedEpoch: number, scope: NetworkApprovalScope = 'run'): Promise<NetworkApprovalResult> {
+		const route = this.routeOfDenial(denialId);
+		return route ? route.approve(denialId, expectedEpoch, scope) : Promise.resolve({ ok: false, epoch: this.epoch, reason: 'no such denial: its run has ended' });
+	}
+
+	refuse(denialId: string): boolean {
+		return this.routeOfDenial(denialId)?.refuse(denialId) ?? false;
+	}
+
+	/** The Access page was opened (G.12): prompts may be offered again, for one subject's routes or all. */
+	resetPromptBudget(subject?: SubjectKey): void {
+		for (const route of this.routes) {
+			if (!subject || route.subject === subject) {
+				route.resetPromptBudget();
+			}
+		}
+	}
+
+	/** Each open route's subject and prompt budget, for the Access page. */
+	promptBudgets(): { readonly subject: SubjectKey; readonly refusals: number; readonly autoDenied: boolean; readonly promptsToday: number }[] {
+		return [...this.routes].map(route => ({ subject: route.subject, ...route.promptBudget() }));
 	}
 
 	/** The grants of `subject` at the current epoch. */
@@ -461,7 +500,7 @@ export class NetworkRoute {
 	 * the broker re-derives the rule from its own record, so a client can't swap the host. Private
 	 * and metadata refusals are never approvable. CAS: refused as stale when the epoch moved.
 	 */
-	async approve(denialId: string, expectedEpoch: number): Promise<{ readonly ok: true; readonly epoch: number } | { readonly ok: false; readonly epoch: number; readonly reason: string }> {
+	async approve(denialId: string, expectedEpoch: number, scope: NetworkApprovalScope = 'run'): Promise<NetworkApprovalResult> {
 		const record = this.denials.get(denialId);
 		if (!record) {
 			return { ok: false, epoch: this.broker.epoch, reason: 'no such denial on this route' };
@@ -469,10 +508,17 @@ export class NetworkRoute {
 		if (record.denial.reason !== 'not-allowed' && record.denial.reason !== 'port') {
 			return { ok: false, epoch: this.broker.epoch, reason: `a ${record.denial.reason} refusal can't be approved` };
 		}
+		const chatId = subjectChatId(this.subject);
+		if (scope === 'chat' && !chatId) {
+			return { ok: false, epoch: this.broker.epoch, reason: 'this principal is not a chat' };
+		}
 		const entry = record.target.ip
 			? `${record.target.ip === 6 ? `[${record.target.host}]` : record.target.host}:${record.denial.port}`
 			: record.denial.port === 443 ? record.target.host : `${record.target.host}:${record.denial.port}`;
-		const result = await this.broker.commit(expectedEpoch, { add: [this.grantDraft('net.connect@1', entry, 'session')] });
+		// "Allow": this run (the route's own session, revoked when it closes). "Allow for This Chat": a
+		// session grant of the chat, kept in the grant store for every later run of it until revoked.
+		const draft = scope === 'chat' ? { ...this.grantDraft('net.connect@1', entry, 'session'), sessionId: chatId! } : this.grantDraft('net.connect@1', entry, 'session');
+		const result = await this.broker.commit(expectedEpoch, { add: [draft] });
 		if (!result.committed) {
 			return { ok: false, epoch: result.epoch, reason: 'the permissions changed since this denial; ask again' };
 		}
@@ -481,10 +527,23 @@ export class NetworkRoute {
 	}
 
 	/** The user refused a prompt: after `refusalsToAutoDeny` of them nothing more is offered (G.12). */
-	refuse(denialId: string): void {
+	refuse(denialId: string): boolean {
 		if (this.denials.delete(denialId)) {
 			this.refusals++;
+			return true;
 		}
+		return false;
+	}
+
+	/** Whether `denialId` is one of this route's approvable denials. */
+	hasDenial(denialId: string): boolean {
+		return this.denials.has(denialId);
+	}
+
+	/** G.12 as the Access page shows it. */
+	promptBudget(): { readonly refusals: number; readonly autoDenied: boolean; readonly promptsToday: number } {
+		const now = this.broker.now();
+		return { refusals: this.refusals, autoDenied: this.refusals >= this.limits.refusalsToAutoDeny, promptsToday: this.prompts.filter(at => now - at < DAY_MS).length };
 	}
 
 	/** The Access page was opened: prompts may be offered again (G.12). */

@@ -5,8 +5,10 @@
 
 import { IChannel, ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../../../platform/voltGit/common/hostGit.js';
-import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltPromptBudget, IVoltSandboxApproval, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../../../../platform/voltStdio/common/voltStdio.js';
 import type { ISandboxWorkloadInfo } from '../../../../platform/voltSandbox/common/sandboxWorkloads.js';
+import type { SubjectKey } from '../../../../platform/voltSandbox/common/principals.js';
+import { EMPTY_TRUST_STATE, ITrustChange, ITrustCommitResult, ITrustHistoryEntry, ITrustState } from '../../../../platform/voltSandbox/common/trust.js';
 import { projectRunEnv } from './projectRunEnv.js';
 
 /**
@@ -78,6 +80,18 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 		return this.inner.spawnSandboxedMcp(env ? { ...request, env: { ...env, ...request.env } } : request);
 	}
 	async stopSandboxedHosts(chatId: string): Promise<number> { return this.inner.stopSandboxedHosts ? this.inner.stopSandboxedHosts(chatId) : 0; }
+	async approveSandboxDenial(id: string, denialId: string, expectedEpoch: number, scope: 'run' | 'chat'): Promise<IVoltSandboxApproval> {
+		return this.inner.approveSandboxDenial ? this.inner.approveSandboxDenial(id, denialId, expectedEpoch, scope) : { ok: false, epoch: expectedEpoch, reason: 'this host has no network broker' };
+	}
+	async refuseSandboxDenial(id: string, denialId: string): Promise<boolean> { return this.inner.refuseSandboxDenial ? this.inner.refuseSandboxDenial(id, denialId) : false; }
+	async trustState(): Promise<ITrustState> { return this.inner.trustState ? this.inner.trustState() : EMPTY_TRUST_STATE; }
+	trustCommit(change: ITrustChange): Promise<ITrustCommitResult> {
+		return this.inner.trustCommit ? this.inner.trustCommit(change) : Promise.reject(new Error('this host has no grant store'));
+	}
+	async trustHistory(limit: number, subject?: SubjectKey): Promise<readonly ITrustHistoryEntry[]> { return this.inner.trustHistory ? this.inner.trustHistory(limit, subject) : []; }
+	async trustPromptBudgets(): Promise<readonly IVoltPromptBudget[]> { return this.inner.trustPromptBudgets ? this.inner.trustPromptBudgets() : []; }
+	async resetPromptBudgets(subject?: SubjectKey): Promise<void> { await this.inner.resetPromptBudgets?.(subject); }
+	get onDidChangeTrust() { return this.inner.onDidChangeTrust; }
 }
 
 function isStdioService(source: IChannel | IVoltStdioService): source is IVoltStdioService {

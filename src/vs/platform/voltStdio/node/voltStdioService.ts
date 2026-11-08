@@ -27,9 +27,13 @@ import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sand
 import { ISandboxWorkloadInfo, SANDBOX_SUPERVISOR_SETTING } from '../../voltSandbox/common/sandboxWorkloads.js';
 import { NETWORK_BROKER_SETTING, readNetworkBrokerMode } from '../../voltSandbox/common/networkBrokerSetting.js';
 import { ChildLedger } from './childLedger.js';
+import type { NetworkRoute } from '../../voltSandbox/node/networkBroker.js';
+import { TrustHost } from '../../voltSandbox/node/trustHost.js';
+import type { SubjectKey } from '../../voltSandbox/common/principals.js';
+import type { ITrustChange, ITrustCommitResult, ITrustHistoryEntry, ITrustState } from '../../voltSandbox/common/trust.js';
 import { SandboxedPtySession } from '../../voltSandbox/node/sandboxPty.js';
 import { ISandboxedHost } from '../../voltSandbox/node/supervisor.js';
-import { describeExecContext, execRefusal, IVoltExecContext, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../common/voltStdio.js';
+import { describeExecContext, execRefusal, IVoltExecContext, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltPromptBudget, IVoltSandboxApproval, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../common/voltStdio.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -99,14 +103,20 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		userDataPath: string,
 		/** The agent server's: what it started, so its next start can stop what a crash orphaned. */
 		private readonly ledger?: ChildLedger,
+		/** Tests: where the grant store and the logs live instead of `~/.volt/trust`. */
+		trustDir?: string,
 	) {
 		super();
+		// The grant store (P4): the network broker's approvals land in it, the Access page reads it.
+		this.trust = this._register(new TrustHost(trustDir));
+		this.onDidChangeTrust = this.trust.onDidChange;
 		// The supervisor path's rollback flag (application scope): off, no long-lived host starts.
 		const supervisorEnabled = () => this.configurationService.getValue<boolean>(SANDBOX_SUPERVISOR_SETTING) !== false;
 		this.sandbox = this._register(new VoltSandboxLauncher(userDataPath, logService, {
 			mode: () => readPolicyAuthorityMode(this.configurationService.getValue(POLICY_AUTHORITY_MODE_SETTING)),
 			supervisorEnabled,
 			networkMode: () => readNetworkBrokerMode(this.configurationService.getValue(NETWORK_BROKER_SETTING)),
+			grants: () => this.trust.grantSource(),
 		}));
 		this._register(this.sandbox.onViolation(e => {
 			const id = this.sandboxTags.get(e.tag);
@@ -122,6 +132,54 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	}
 
 	readonly onDidChangeSandboxWorkloads: Event<void>;
+
+	private readonly trust: TrustHost;
+	readonly onDidChangeTrust: Event<{ readonly epoch: number; readonly narrowed: boolean }>;
+
+	async approveSandboxDenial(id: string, denialId: string, expectedEpoch: number, scope: 'run' | 'chat'): Promise<IVoltSandboxApproval> {
+		const route = this.routeOfDenial(id, denialId);
+		if (!route) {
+			return { ok: false, epoch: this.sandbox.supervisor.manager.currentBroker?.epoch ?? expectedEpoch, reason: 'this denial is not one of that agent\'s, or its run has ended' };
+		}
+		const result = await route.approve(denialId, expectedEpoch, scope === 'chat' ? 'chat' : 'run');
+		this.logService.info(`[volt-sandbox] ${id} denial ${denialId} ${result.ok ? `approved for this ${scope} at epoch ${result.epoch}` : `not approved: ${result.reason}`}`);
+		return result;
+	}
+
+	async refuseSandboxDenial(id: string, denialId: string): Promise<boolean> {
+		return this.routeOfDenial(id, denialId)?.refuse(denialId) ?? false;
+	}
+
+	/** The broker route that recorded `denialId`, only when it is spawn `id`'s own (a window answers only its agents' denials). */
+	private routeOfDenial(id: string, denialId: string): NetworkRoute | undefined {
+		const launch = this.sandboxes.get(id);
+		const route = launch ? this.sandbox.supervisor.manager.currentBroker?.routeOfDenial(denialId) : undefined;
+		return route && route.principal.id === launch!.principal.id ? route : undefined;
+	}
+
+	trustState(): Promise<ITrustState> {
+		return this.trust.state();
+	}
+
+	async trustCommit(change: ITrustChange): Promise<ITrustCommitResult> {
+		const result = await this.trust.commit(change);
+		if (result.changed) {
+			this.logService.info(`[volt-trust] epoch ${result.epoch}: ${change.add?.length ?? 0} granted, ${change.revoke?.length ?? 0} revoked, ${change.refuse?.length ?? 0} refused, ${change.dropSubjects?.length ?? 0} subjects dropped`);
+		}
+		return result;
+	}
+
+	trustHistory(limit: number, subject?: SubjectKey): Promise<readonly ITrustHistoryEntry[]> {
+		return this.trust.history(Math.min(Math.max(1, limit), 1000), subject);
+	}
+
+	async trustPromptBudgets(): Promise<readonly IVoltPromptBudget[]> {
+		return this.sandbox.supervisor.manager.currentBroker?.promptBudgets() ?? [];
+	}
+
+	async resetPromptBudgets(subject?: SubjectKey): Promise<void> {
+		this.sandbox.supervisor.manager.currentBroker?.resetPromptBudget(subject);
+	}
 
 	async sandboxWorkloads(): Promise<readonly ISandboxWorkloadInfo[]> {
 		return this.sandbox.supervisor.workloads();

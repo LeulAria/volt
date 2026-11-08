@@ -64,6 +64,10 @@ export function createVoltStdioChannel(service: VoltStdioMainService, disposable
 				// A window widens only its own agents' network, never another window's or one no window started.
 				return Promise.resolve(undefined as T);
 			}
+			if ((command === 'approveSandboxDenial' || command === 'refuseSandboxDenial') && service.ownerOf((arg as [string])[0]) !== ctx) {
+				// A window answers only its own agents' denials.
+				return Promise.resolve((command === 'approveSandboxDenial' ? { ok: false, epoch: 0, reason: 'not this window\'s agent' } : false) as T);
+			}
 			return proxied.call<T>(ctx, command, arg, cancellationToken);
 		},
 		listen<T>(ctx: string, event: string, arg?: unknown): Event<T> {

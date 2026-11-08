@@ -19,7 +19,7 @@ import { ISandboxBackend, ISandboxLaunchSpec, SandboxConfirmation, SandboxFault 
 import { osBuild } from './sandboxProbeCache.js';
 import { IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
 import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
-import { INetworkDenial, NetworkAuditLog, NetworkBroker, NetworkRoute } from './networkBroker.js';
+import { INetworkDenial, INetworkGrantSource, NetworkAuditLog, NetworkBroker, NetworkRoute } from './networkBroker.js';
 import { ISandboxProxyOptions, SandboxNetworkProxy } from './sandboxProxy.js';
 import { ISandboxHostFacts, ISandboxRunContext, resolveSandboxPolicy, sandboxHostFacts } from './sandboxResolver.js';
 import { SeatbeltBackend } from './seatbeltBackend.js';
@@ -128,6 +128,11 @@ export interface ISandboxManagerOptions {
 	readonly broker?: NetworkBroker;
 	/** Volt's own listener ports, never reachable through the broker. */
 	readonly reservedPorts?: () => readonly number[];
+	/**
+	 * Where the broker's grants live: the grant store (`~/.volt/trust/grants.json`) on an execution
+	 * host, opened on first use. Default (and when it can't be opened): grants for as long as Volt runs.
+	 */
+	readonly grants?: () => Promise<INetworkGrantSource | undefined>;
 }
 
 const RUN_PREFIX = 'volt-sbx-';
@@ -160,6 +165,7 @@ export class SandboxManager {
 		this.broker = options.broker;
 		this.ownsBroker = !options.broker;
 		this.reservedPorts = options.reservedPorts;
+		this.grantSource = options.grants;
 		if (options.host) {
 			this.host = Promise.resolve(options.host);
 		}
@@ -171,16 +177,33 @@ export class SandboxManager {
 	private broker: NetworkBroker | undefined;
 	private readonly ownsBroker: boolean;
 	private readonly reservedPorts: (() => readonly number[]) | undefined;
+	private readonly grantSource: (() => Promise<INetworkGrantSource | undefined>) | undefined;
+	private brokerGrants: Promise<INetworkGrantSource | undefined> | undefined;
 
 	/** The broker, made on first use; its audit log is `~/.volt/trust/audit/network.log` (denied to every sandbox). */
-	private networkBroker(host: ISandboxHostFacts): NetworkBroker {
+	private async networkBroker(host: ISandboxHostFacts): Promise<NetworkBroker> {
+		if (this.broker) {
+			return this.broker;
+		}
+		this.brokerGrants ??= this.grantSource ? this.grantSource().catch(err => {
+			// Fewer grants, never more: the broker keeps this run's grants in memory.
+			this.logger.warn(`[volt-sandbox] the grant store could not be opened, so network approvals last until Volt quits: ${err}`);
+			return undefined;
+		}) : Promise.resolve(undefined);
+		const grants = await this.brokerGrants;
 		this.broker ??= new NetworkBroker({
+			...(grants ? { grants } : {}),
 			...(this.proxyOptions.lookup ? { lookup: this.proxyOptions.lookup } : {}),
 			...(this.proxyOptions.connect ? { connect: this.proxyOptions.connect } : {}),
 			...(this.proxyOptions.tunnelIdleMs ? { tunnelIdleMs: this.proxyOptions.tunnelIdleMs } : {}),
 			...(this.reservedPorts ? { reservedPorts: this.reservedPorts } : {}),
 			audit: new NetworkAuditLog(join(host.home, '.volt', 'trust', 'audit', 'network.log')).append,
 		});
+		return this.broker;
+	}
+
+	/** The network broker, once a run made it (approvals, refusals and budgets by denial id). */
+	get currentBroker(): NetworkBroker | undefined {
 		return this.broker;
 	}
 
@@ -351,13 +374,13 @@ export class SandboxManager {
 				});
 			} else if (proxied) {
 				// The network broker (I.4): this principal's own route, token, rules, grants and budgets.
-				route = await this.networkBroker(host).openRoute({
+				route = await (await this.networkBroker(host)).openRoute({
 					principal,
 					allow: resolved.network.allow,
 					onDenial: denial => denial.reason === 'auth'
 						// Not this run's request (no token or another's): never a denial row with an "Allow" button.
 						? this.logger.warn(`[volt-sandbox] ${tag} network broker refused a request without this run's token`)
-						: denials.fire({ kind: 'network', target: denialTarget(denial), source: 'proxy', denialId: denial.denialId, promptable: denial.promptable }),
+						: denials.fire({ kind: 'network', target: denialTarget(denial), source: 'proxy', denialId: denial.denialId, epoch: denial.epoch, promptable: denial.promptable }),
 				});
 			}
 			const routePort = route?.port ?? proxy?.port;
