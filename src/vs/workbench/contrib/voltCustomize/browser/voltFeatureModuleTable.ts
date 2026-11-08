@@ -6,6 +6,7 @@
 import { localize2 } from '../../../../nls.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
 import { OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID } from '../../voltAgent/browser/workspace/agentSurfaceMenu.js';
+import { CLAUDE_ACCOUNTS_FEATURE_ID } from '../../voltClaudeAccounts/common/voltClaudeAccounts.js';
 import {
 	AUTOMATIONS_EDITOR_INPUT_TYPE_ID, AUTOMATIONS_FEATURE_ID, NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATION_RUNS_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID,
 	OPEN_AUTOMATIONS_ROUTE_COMMAND_ID,
@@ -37,6 +38,11 @@ export const VOLT_FEATURE_MODULES: readonly IVoltFeatureModuleEntry[] = [
 			{ id: OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, visibility: 'public' },
 		],
 		editors: [AUTOMATIONS_EDITOR_INPUT_TYPE_ID],
+	},
+	{
+		// No commands or editors: Providers & Models asks for its section. The broker is core.
+		feature: CLAUDE_ACCOUNTS_FEATURE_ID,
+		load: async () => (await import('../../voltClaudeAccounts/browser/voltClaudeAccounts.module.js')).voltClaudeAccountsModule,
 	},
 	{
 		// No commands or editors: Volt Settings asks for its page. Pair a Phone or Browser is core.

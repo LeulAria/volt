@@ -311,6 +311,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 			voltModule: {
 				feature: 'claudeAccounts',
+				entry: 'voltClaudeAccounts',
 				label: 'Claude accounts',
 				description: 'Several Claude logins with one switch, and switching when one runs out.',
 				category: 'providers',
