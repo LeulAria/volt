@@ -109,3 +109,44 @@
 .volt-security-permissions .volt-security-workload-meta {
 	white-space: normal;
 }
+
+/* Install sheet (installSheet.ts): a list of class headers and capabilities, edge to edge. */
+.volt-install-sheet .volt-extension-consent-content .head {
+	padding-bottom: 14px;
+}
+
+.volt-install-sheet-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-install-sheet-group,
+.volt-install-sheet-capability {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: 2px;
+	height: 100%;
+	min-width: 0;
+	line-height: normal;
+}
+
+.volt-install-sheet-group .title {
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.volt-install-sheet-group .outcome,
+.volt-install-sheet-capability .detail {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-install-sheet-capability .title {
+	font-size: 13px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
