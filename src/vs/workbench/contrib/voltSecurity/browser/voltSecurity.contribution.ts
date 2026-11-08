@@ -7,6 +7,7 @@ import { localize } from '../../../../nls.js';
 import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { SANDBOX_SUPERVISOR_SETTING } from '../../../../platform/voltSandbox/common/sandboxWorkloads.js';
+import './voltPluginHosts.js';
 
 /**
  * Volt's Security page (spec M.3 C5): the sandboxed processes section is
