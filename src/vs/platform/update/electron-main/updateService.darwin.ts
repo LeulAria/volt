@@ -25,6 +25,7 @@ import { AvailableForDownload, IUpdate, State, StateType, UpdateType } from '../
 import { IVoltUpdate, VOLT_CHANNEL_APP_NAMES, voltFeedUrl, VoltReleaseChannel } from '../common/voltUpdateFeed.js';
 import { AbstractUpdateService, createUpdateURL, UpdateErrorClassification } from './abstractUpdateService.js';
 import { downloadVoltUpdate } from './voltUpdateDownload.js';
+import { verifyVoltInstaller } from '../node/voltInstallerSignature.js';
 
 export class DarwinUpdateService extends AbstractUpdateService implements IRelaunchHandler {
 
@@ -160,6 +161,8 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 				this.setState(State.AvailableForDownload(update));
 				return;
 			}
+			// The feed entry passed its signature check (parseUpdateResponse). Squirrel.Mac then installs
+			// only a build that satisfies this app's own designated requirement (same team, same bundle id).
 			this.pendingVoltUpdate = update;
 			electron.autoUpdater.setFeedURL({ url: this.squirrelFeedUrl(this.channel!, this.assetID) });
 			electron.autoUpdater.checkForUpdates();
@@ -200,6 +203,7 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 			const zip = path.join(staging, 'update.zip');
 			await downloadVoltUpdate(this.requestService, update.url!, zip, {
 				sha256hash: update.sha256hash,
+				requireSha256: this.voltFeedKeysPinned,
 				size: update.size,
 				onProgress: progress => {
 					if (this.state.type === StateType.Downloading) {
@@ -218,6 +222,8 @@ export class DarwinUpdateService extends AbstractUpdateService implements IRelau
 				if (!app) {
 					throw new Error(`The ${VOLT_CHANNEL_APP_NAMES[channel]} download has no app in it`);
 				}
+				// INV-28: the unpacked app must carry the pinned team's Developer ID signature before it moves in.
+				await verifyVoltInstaller('darwin', path.join(unpacked, app), this.productService.voltRelease, message => this.logService.info(message));
 				if (!fs.existsSync(target)) {
 					await fs.promises.rename(path.join(unpacked, app), target);
 				}

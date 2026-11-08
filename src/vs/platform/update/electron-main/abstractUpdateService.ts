@@ -14,7 +14,8 @@ import { IProductService } from '../../product/common/productService.js';
 import { IRequestContext } from '../../../base/parts/request/common/request.js';
 import { asJson, IRequestService } from '../../request/common/request.js';
 import { AvailableForDownload, DisablementReason, IUpdate, IUpdateService, State, StateType, UpdateType } from '../common/update.js';
-import { decideVoltUpdate, isVoltReleaseChannel, IVoltUpdate, resolveVoltReleaseChannel, VOLT_RELEASE_CHANNEL_SETTING, VoltReleaseChannel, voltFeedUrl } from '../common/voltUpdateFeed.js';
+import { checkVoltFeedTrust, decideVoltUpdate, hasVoltFeedPublicKeys, isVoltReleaseChannel, IVoltUpdate, resolveVoltReleaseChannel, VOLT_RELEASE_CHANNEL_SETTING, VoltReleaseChannel, voltFeedUrl } from '../common/voltUpdateFeed.js';
+import { verifyEd25519 } from '../../../base/node/voltEd25519.js';
 
 export function createUpdateURL(platform: string, quality: string, productService: IProductService): string {
 	if (productService.voltRelease) {
@@ -216,7 +217,39 @@ export abstract class AbstractUpdateService implements IUpdateService {
 			return null; // nothing published for this platform yet
 		}
 		const entry = await asJson<unknown>(context);
+		this.checkVoltFeedTrust(entry, this.channel);
 		return this.decideVoltUpdate(entry) ?? null;
+	}
+
+	/** Volt: the highest signed feed version accepted per feed URL, so an older signed feed is refused. */
+	private readonly voltFeedVersions = new Map<string, number>();
+	private loggedUnverifiedFeed = false;
+
+	/** Volt: whether product.json pins feed keys, which turns on feed and installer verification (INV-28). */
+	protected get voltFeedKeysPinned(): boolean {
+		return hasVoltFeedPublicKeys(this.productService.voltRelease?.feedPublicKeys);
+	}
+
+	/** Volt: throws when the feed entry fails its signature, channel, expiry or rollback check. */
+	private checkVoltFeedTrust(entry: unknown, channel: VoltReleaseChannel): void {
+		const key = this.url ?? channel;
+		const result = checkVoltFeedTrust(entry, channel, {
+			publicKeys: this.productService.voltRelease?.feedPublicKeys,
+			verify: (message, signature, publicKey) => verifyEd25519(message, Buffer.from(signature, 'base64'), publicKey),
+			now: Date.now(),
+			installed: { version: this.productService.voltVersion, channel: this.productService.quality },
+			lastFeedVersion: this.voltFeedVersions.get(key),
+		});
+		if (!result.trusted) {
+			this.logService.error(`update#feed - refused: ${result.reason}`);
+			throw new Error(result.reason);
+		}
+		if (result.verified) {
+			this.voltFeedVersions.set(key, result.feedVersion);
+		} else if (!this.loggedUnverifiedFeed) {
+			this.loggedUnverifiedFeed = true;
+			this.logService.info('update#feed - product.json pins no feed keys (voltRelease.feedPublicKeys); the update feed is not signature-checked');
+		}
 	}
 
 	protected decideVoltUpdate(entry: unknown): IVoltUpdate | undefined {
