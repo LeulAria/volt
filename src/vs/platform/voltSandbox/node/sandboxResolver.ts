@@ -336,6 +336,7 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 				allow: policy.network.mode === 'proxy' ? policy.network.allow : [],
 				loopbackPorts: policy.network.mode === 'host' ? [] : policy.network.loopbackPorts,
 				listen: policy.network.listen,
+				...(policy.network.listenPorts?.length ? { listenPorts: [...new Set(policy.network.listenPorts)] } : {}),
 			},
 			unixSockets: unique(unixSockets),
 			systemServices: policy.host.systemServices,

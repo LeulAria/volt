@@ -26,9 +26,10 @@ suite('Volt sandbox policy', () => {
 		assert.strictEqual(normalizeSandboxLevel(undefined), 'off');
 	});
 
-	test('cursor: the CLI may save its own settings (cli-config.json) but not its hooks or MCP config', () => {
+	test('cursor: its settings (cli-config.json, with command allow lists) are saved in the chat\'s overlay, never in place (B-05)', () => {
 		const plan = resolveSandboxPlan({ ...request(), providerId: 'cursor-acp' }, MAC);
-		assert.ok(planAllowsWrite(plan, `${MAC.home}/.cursor/cli-config.json`), 'choosing a model rewrites it');
+		assert.ok(!planAllowsWrite(plan, `${MAC.home}/.cursor/cli-config.json`), 'it holds permissions.allow');
+		assert.ok(planAllowsWrite(plan, `${MAC.home}/.volt/sandbox/agent-state/chat/cursor-acp/config/cli-config.json`), 'choosing a model rewrites the overlay copy');
 		assert.ok(!planAllowsWrite(plan, `${MAC.home}/.cursor/hooks.json`));
 		assert.ok(!planAllowsWrite(plan, `${MAC.home}/.cursor/mcp.json`));
 	});
@@ -40,9 +41,12 @@ suite('Volt sandbox policy', () => {
 		assert.ok(planAllowsWrite(plan, '/private/tmp/x'));
 		assert.ok(planAllowsWrite(plan, '/tmp/x'), 'the /tmp alias of /private/tmp');
 		assert.ok(planAllowsWrite(plan, '/private/var/folders/ab/xyz/T/node-123'));
-		assert.ok(planAllowsWrite(plan, '/Users/me/.claude/projects/p/s.jsonl'));
-		assert.ok(planAllowsWrite(plan, '/Users/me/.claude.json'));
-		assert.ok(planAllowsWrite(plan, '/Users/me/.claude.json.tmp.123.abc'), 'atomic write sibling');
+		// B-05: Claude Code's state is a per-chat overlay; its MCP servers in ~/.claude.json are never writable in place.
+		assert.ok(planAllowsWrite(plan, '/Users/me/.volt/sandbox/agent-state/chat/claude-code/config/projects/p/s.jsonl'));
+		assert.ok(!planAllowsWrite(plan, '/Users/me/.claude/projects/p/s.jsonl'));
+		assert.ok(!planAllowsWrite(plan, '/Users/me/.claude.json'));
+		assert.ok(!planAllowsWrite(plan, '/Users/me/.claude.json.tmp.123.abc'), 'nor its atomic write sibling');
+		assert.ok(planAllowsWrite(plan, '/Users/me/Library/Caches/claude-cli-nodejs/log.txt'));
 		assert.ok(!planAllowsWrite(plan, '/Users/me/.npm/_npx/x/node_modules/.bin/adapter'), 'shared caches hold code Volt runs later');
 		assert.ok(!planAllowsWrite(plan, '/Users/me/notes.txt'));
 		assert.ok(!planAllowsWrite(plan, '/Users/me/repo-other/a'), 'a sibling folder with the same prefix');
@@ -77,7 +81,7 @@ suite('Volt sandbox policy', () => {
 		assert.ok(!planAllowsWrite(plan, '/Users/me/repo/a.ts'));
 		assert.ok(planAllowsWrite(plan, '/Users/me/scratch/out.txt'));
 		assert.ok(planAllowsWrite(plan, '/private/tmp/x'));
-		assert.ok(planAllowsWrite(plan, '/Users/me/.claude/sessions/x'));
+		assert.ok(planAllowsWrite(plan, '/Users/me/.volt/sandbox/agent-state/chat/claude-code/config/sessions/x'), 'the agent\'s own state (its overlay)');
 	});
 
 	test('read-only holds for a workspace inside temp', () => {
@@ -95,17 +99,26 @@ suite('Volt sandbox policy', () => {
 
 	test('agent footprints keep each CLI working', () => {
 		const cursor = resolveSandboxPlan(request({ providerId: 'cursor-acp' }), MAC);
-		assert.ok(planAllowsWrite(cursor, '/Users/me/.cursor/projects/x/state.json'));
+		assert.ok(planAllowsWrite(cursor, '/Users/me/.volt/sandbox/agent-state/chat/cursor-acp/config/projects/x/state.json'), 'its project data lives in the overlay');
+		assert.ok(!planAllowsWrite(cursor, '/Users/me/.cursor/projects/x/mcp-approvals.json'), 'never in place: MCP approvals live there');
+		assert.ok(planAllowsWrite(cursor, '/Users/me/.cursor/auth.json'), 'its own login refresh');
 		assert.ok(!planAllowsWrite(cursor, '/Users/me/.local/share/cursor-agent/versions/x'), 'the CLI\'s own binaries');
 		assert.ok(!planAllowsWrite(cursor, '/Users/me/.cursor/mcp.json'));
 		const grok = resolveSandboxPlan(request({ providerId: 'grok' }), MAC);
 		assert.ok(planAllowsWrite(grok, '/Users/me/.grok/sessions/x'));
+		assert.ok(!planAllowsWrite(grok, '/Users/me/.grok/config.toml'));
+		assert.ok(!planAllowsWrite(grok, '/Users/me/.grok/installed-plugins/x'));
 		const opencode = resolveSandboxPlan(request({ providerId: 'opencode' }), MAC);
 		assert.ok(planAllowsWrite(opencode, '/Users/me/.local/share/opencode/storage/x'));
+		assert.ok(!planAllowsWrite(opencode, '/Users/me/.local/share/opencode/bin/x'), 'its own binaries');
 		assert.ok(!planAllowsWrite(opencode, '/Users/me/.cache/opencode/models.json'), 'caches are redirected to a sandbox-only folder');
 		assert.ok(!planAllowsWrite(opencode, '/Users/me/.config/opencode/opencode.json'));
+		const gemini = resolveSandboxPlan(request({ providerId: 'antigravity' }), MAC);
+		assert.ok(!planAllowsWrite(gemini, '/Users/me/.gemini/settings.json'), 'MCP servers and hooks');
+		assert.ok(!planAllowsWrite(gemini, '/Users/me/.gemini/tmp/bin/rg'), 'a binary the CLI runs later');
+		assert.ok(planAllowsWrite(gemini, '/Users/me/.gemini/tmp/abc/chats/x.json'));
 		const unknown = resolveSandboxPlan(request({ providerId: 'mystery-acp' }), MAC);
-		assert.ok(planAllowsWrite(unknown, '/Users/me/.mystery/state'));
+		assert.ok(!planAllowsWrite(unknown, '/Users/me/.mystery/state'), 'B-05: an unknown CLI gets no writable home state');
 		assert.ok(!planAllowsWrite(unknown, '/Users/me/.claude/x'), 'another agent\'s state is not shared');
 	});
 
@@ -134,9 +147,11 @@ suite('Volt sandbox policy', () => {
 		assert.ok(agentApiDomains('codex').includes('chatgpt.com'));
 	});
 
-	test('strategy: Codex keeps its own sandbox for workspace-write, everything else is wrapped', () => {
-		assert.strictEqual(sandboxStrategy('codex', 'workspace-write', 'darwin'), 'native');
+	test('strategy: every agent is wrapped at every sandboxed level, Codex included (B-10, D-16)', () => {
+		assert.strictEqual(sandboxStrategy('codex', 'workspace-write', 'darwin'), 'wrap');
+		assert.strictEqual(sandboxStrategy('codex', 'workspace-write', 'linux'), 'wrap');
 		assert.strictEqual(sandboxStrategy('codex', 'read-only', 'darwin'), 'wrap');
+		assert.strictEqual(codexSandboxValue('sandbox', 'workspace-write', sandboxStrategy('codex', 'workspace-write', 'darwin')), 'danger-full-access', 'its own sandbox off inside Volt\'s');
 		assert.strictEqual(sandboxStrategy('claude-code', 'workspace-write', 'darwin'), 'wrap');
 		assert.strictEqual(sandboxStrategy('claude-code', 'workspace-write', 'linux'), 'wrap');
 		assert.strictEqual(sandboxStrategy('claude-code', 'off', 'darwin'), 'none');

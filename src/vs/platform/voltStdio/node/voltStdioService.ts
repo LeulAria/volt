@@ -17,7 +17,7 @@ import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
 import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.js';
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
 import { ChildLedger } from './childLedger.js';
-import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxEvent, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
+import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxEvent, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -228,6 +228,10 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		const resolved = await realpathOfNearest(path);
 		// Both spellings must pass, as the OS checks the resolved path and Volt writes the given one.
 		return resolvedPolicyAllows(launch.policy, path, access) && resolvedPolicyAllows(launch.policy, resolved, access);
+	}
+
+	async syncSandboxState(id: string): Promise<IVoltSandboxStateSync | undefined> {
+		return this.sandboxes.get(id)?.syncState();
 	}
 
 	private disposeSandbox(id: string): void {

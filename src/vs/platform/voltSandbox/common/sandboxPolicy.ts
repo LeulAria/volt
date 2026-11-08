@@ -3,8 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { CREDENTIAL_HOME_PATHS, credentialDenyEntries, PROTECTED_GIT_PATTERNS, PROTECTED_ROOT_NAMES } from './sandboxProfiles.js';
-import { IVoltSandboxPolicy } from './sandboxSchema.js';
+import { AGENT_OVERLAYS, IAgentStatePlan } from './agentState.js';
+import { AGENT_CONFIG_NAMES, AGENT_ENV_INHERIT, agentSystemReadPaths, CREDENTIAL_HOME_PATHS, credentialDenyEntries, HOME_TOOLCHAIN_PATHS, isSecretEnvName, PROTECTED_GIT_PATTERNS, PROTECTED_ROOT_NAMES } from './sandboxProfiles.js';
+import { IVoltSandboxPolicy, SandboxDimension } from './sandboxSchema.js';
 
 /**
  * Per-chat sandbox settings for agent processes, and the agent profile built from them. Pure: the
@@ -14,6 +15,8 @@ import { IVoltSandboxPolicy } from './sandboxSchema.js';
  * Unlike Codex and Claude Code, which sandbox only the shell commands an agent runs, Volt wraps
  * the whole agent process tree, so the agent's own file tools are confined too. That makes the
  * agent CLI's state folders (sessions, auth, caches) part of the policy: without them it breaks.
+ * They are listed as allow lists (B-05): what the CLI writes, never its config, which a later
+ * unsandboxed run of the same CLI would load.
  */
 
 export type VoltSandboxLevel = 'off' | 'workspace-write' | 'read-only';
@@ -33,6 +36,8 @@ export interface IVoltSandboxSettings {
 	readonly extraWritableRoots?: readonly string[];
 	/** Hosts the user allowed from a blocked request while network is off. */
 	readonly allowedDomains?: readonly string[];
+	/** Loopback ports the user allowed the agent to listen on (a dev server). None by default (B-30). */
+	readonly listenPorts?: readonly number[];
 }
 
 /** Sent with a spawn: the main process wraps the command in the OS sandbox. */
@@ -49,6 +54,13 @@ export interface IVoltSandboxRequest {
 	readonly allowedDomains?: readonly string[];
 	/** Loopback ports the agent must reach directly (Volt's MCP server). */
 	readonly loopbackPorts?: readonly number[];
+	/** Loopback ports the agent may listen on (granted one by one). */
+	readonly listenPorts?: readonly number[];
+	/**
+	 * Whose agent state this is (the chat id): picks the per-chat config overlay (agentState.ts).
+	 * Without it the CLI's config folder stays read-only and nothing is overlaid.
+	 */
+	readonly stateKey?: string;
 }
 
 /** Machine facts the plan needs; the main process fills them. */
@@ -88,16 +100,18 @@ const DANGEROUS_GIT_NAMES = ['.git/config', '.git/config.worktree', '.git/hooks'
 /** Credentials no agent needs, for the renderer-side checks (the OS profile uses `credentialDenyEntries`). */
 const SECRET_HOME_DIRS = CREDENTIAL_HOME_PATHS.filter(path => path !== 'Library/Keychains');
 
+/**
+ * Where an agent CLI keeps its state, in allow-list form (B-05, INV-17). Paths are relative to the
+ * home folder. Nothing else of the home folder is writable, and nothing else is readable beyond
+ * the system, the toolchains and the workspace (D-14, narrow reads).
+ */
 interface IAgentFootprint {
-	/** Folders under the home directory the CLI writes (sessions, auth, caches). */
-	readonly homeDirs: readonly string[];
-	/** Files under the home directory written in place (atomic writes go through siblings). */
-	readonly homeFiles?: readonly string[];
-	/**
-	 * Paths under the home directory that hold code, hooks or installs the CLI (or Volt) runs
-	 * later: never writable, even inside `homeDirs`.
-	 */
-	readonly protectedHome?: readonly string[];
+	/** Folders the CLI writes in place: sessions, logs, caches. Never a CLI's whole folder, never config (see `footprintLintErrors`). */
+	readonly writable: readonly string[];
+	/** Single files written in place (atomic-write siblings too): lock files, histories, its own login. */
+	readonly writableFiles?: readonly string[];
+	/** What the CLI reads and never writes: its config, instructions and install. */
+	readonly readable: readonly string[];
 	/** The CLI's own credentials: readable by this agent, denied to every other one. */
 	readonly credentials?: readonly string[];
 	/** Absolute temp folders keyed off the uid (`claude-<uid>`). */
@@ -110,9 +124,10 @@ interface IAgentFootprint {
 	readonly env?: Readonly<Record<string, string>>;
 }
 
-/** State every CLI writes; shared caches are not here (see `SANDBOX_CACHE_ENV`). */
-const SHARED_HOME_DIRS = ['.local/state'];
 const NPM_DOMAINS = ['registry.npmjs.org'];
+
+/** Volt's own per-chat agent state (config overlays, see agentState.ts), below the home folder. */
+export const AGENT_STATE_ROOT = '.volt/sandbox/agent-state';
 
 /**
  * Package and tool caches redirected to a sandbox-only folder. The shared ones (`~/.npm`,
@@ -130,73 +145,93 @@ const SANDBOX_CACHE_ENV: Readonly<Record<string, string>> = {
 	GOCACHE: 'go-build',
 };
 
+/**
+ * Claude Code, Codex and Cursor take their config folder from the environment: a sandboxed chat
+ * gets a per-chat copy (AGENT_OVERLAYS in agentState.ts), so their footprints here hold only what
+ * lives outside it. The others write in place, in the subpaths listed.
+ */
 const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 	'claude-code': {
-		homeDirs: ['.claude', '.config/claude', 'Library/Caches/claude-cli-nodejs'],
-		homeFiles: ['.claude.json'],
-		// `.local/share/claude` and `.claude/local` hold the CLI's own binaries; plugins carry hooks.
-		protectedHome: ['.claude/settings.json', '.claude/settings.local.json', '.claude/commands', '.claude/agents', '.claude/hooks', '.claude/plugins', '.claude/local', '.local/share/claude'],
+		writable: ['Library/Caches/claude-cli-nodejs', '.cache/claude-cli-nodejs'],
+		// The install (`.local/share/claude`, `.claude/local`). Its config folder comes in through the overlay.
+		readable: ['.local/share/claude'],
 		credentials: ['.claude/.credentials.json'],
 		tmpDirs: uid => [`/private/tmp/claude-${uid ?? 0}`, `/tmp/claude-${uid ?? 0}`, '/private/tmp/cc-socks', '/tmp/cc-socks'],
 		domains: ['api.anthropic.com', '*.anthropic.com', 'claude.ai', '*.claude.ai', 'claude.com', '*.claude.com', 'sentry.io', '*.sentry.io'],
-		envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR'],
+		envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'],
 		env: { DISABLE_AUTOUPDATER: '1' },
 	},
 	codex: {
-		homeDirs: ['.codex'],
-		protectedHome: ['.codex/config.toml', '.codex/rules'],
+		writable: [],
+		readable: [],
 		credentials: ['.codex/auth.json'],
 		domains: ['chatgpt.com', '*.chatgpt.com', 'api.openai.com', '*.openai.com', 'auth.openai.com'],
 		envKeys: ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_HOME'],
 	},
 	'cursor-acp': {
-		homeDirs: ['.cursor', '.config/cursor', 'Library/Application Support/Cursor/User/globalStorage'],
-		// cli-config.json is the CLI's own state (it saves the chosen model), so it stays writable under ~/.cursor.
-		protectedHome: ['.cursor/mcp.json', '.cursor/hooks.json', '.cursor/hooks', '.cursor/extensions', '.local/share/cursor-agent'],
+		writable: ['Library/Application Support/Cursor/User/globalStorage'],
+		// It refreshes its login in place (`auth.json`, or the keychain).
+		writableFiles: ['.cursor/auth.json', '.config/cursor/auth.json'],
+		readable: ['.local/share/cursor-agent'],
+		credentials: ['.cursor/auth.json', '.config/cursor/auth.json'],
 		domains: ['cursor.com', '*.cursor.com', 'cursor.sh', '*.cursor.sh', 'cursorapi.com', '*.cursorapi.com'],
 		envKeys: ['CURSOR_API_KEY'],
 	},
 	grok: {
-		homeDirs: ['.grok'],
-		protectedHome: ['.grok/hooks', '.grok/mcp.json'],
+		writable: ['.grok/sessions', '.grok/logs', '.grok/memory-v2', '.grok/memtrace', '.grok/grove', '.grok/downloads', '.local/state/grok'],
+		writableFiles: [
+			'.grok/auth.json', '.grok/auth.json.lock', '.grok/active_sessions.json', '.grok/active_sessions.lock', '.grok/worktrees.db', '.grok/models_cache.json',
+			'.grok/settings_cache.json', '.grok/tip_cursor.json', '.grok/agent_id', '.grok/.config-init.lock', '.grok/managed_config.lock', '.grok/.metadata_version',
+		],
+		readable: ['.grok'],
+		credentials: ['.grok/auth.json'],
 		domains: ['x.ai', '*.x.ai', 'grok.com', '*.grok.com'],
 		envKeys: ['XAI_API_KEY', 'GROK_API_KEY'],
 	},
 	opencode: {
-		// OpenCode 2 keeps credentials and sessions in `.local/share/opencode/opencode.db` and its CLI settings in `.config/opencode/cli.json`.
-		homeDirs: ['.local/share/opencode', '.config/opencode', '.opencode', '.omo', '.local/share/oh-my-opencode', '.claude/transcripts'],
-		protectedHome: ['.config/opencode/opencode.json', '.config/opencode/opencode.jsonc', '.config/opencode/cli.json', '.config/opencode/plugin', '.config/opencode/plugins', '.opencode/bin', '.opencode/plugin', '.opencode/plugins'],
+		// OpenCode 2 keeps credentials and sessions in `.local/share/opencode/opencode.db` and its settings in `.config/opencode`.
+		writable: ['.local/share/opencode/storage', '.local/share/opencode/snapshot', '.local/share/opencode/log', '.local/state/opencode', '.local/share/oh-my-opencode', '.claude/transcripts'],
+		writableFiles: ['.local/share/opencode/auth.json', '.local/share/opencode/opencode.db', '.local/share/opencode/opencode.db-wal', '.local/share/opencode/opencode.db-shm', '.local/share/opencode/opencode.db-journal'],
+		readable: ['.local/share/opencode', '.config/opencode', '.opencode', '.omo'],
 		credentials: ['.local/share/opencode/auth.json', '.local/share/opencode/opencode.db'],
 		domains: ['opencode.ai', '*.opencode.ai', 'models.dev', 'api.anthropic.com', 'api.openai.com', 'openrouter.ai', '*.openrouter.ai', 'generativelanguage.googleapis.com', 'api.x.ai', 'api.deepseek.com', 'api.moonshot.ai', 'api.z.ai'],
 		envKeys: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'GEMINI_API_KEY', 'XAI_API_KEY', 'DEEPSEEK_API_KEY', 'MOONSHOT_API_KEY', 'ZAI_API_KEY', 'OPENCODE_API_KEY'],
 	},
 	antigravity: {
-		homeDirs: ['.gemini', '.antigravity', '.config/antigravity'],
-		credentials: ['.gemini/oauth_creds.json'],
+		// `~/.gemini/settings.json`, `GEMINI.md`, `config/mcp_config.json` and skills stay read-only.
+		writable: ['.gemini/antigravity-cli', '.gemini/tmp', '.gemini/antigravity/conversations', '.gemini/antigravity/brain', '.gemini/antigravity/annotations'],
+		writableFiles: ['.gemini/oauth_creds.json', '.gemini/google_accounts.json', '.gemini/installation_id'],
+		readable: ['.gemini', '.antigravity', '.config/antigravity'],
+		credentials: ['.gemini/oauth_creds.json', '.gemini/antigravity-cli/antigravity-oauth-token', '.gemini/jetski-standalone-oauth-token'],
 		domains: ['*.googleapis.com', 'accounts.google.com', 'oauth2.googleapis.com'],
 		envKeys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_CLOUD_PROJECT'],
 	},
 	pi: {
-		// `.pi/agent/auth.json` stays writable: Pi refreshes its OAuth tokens there.
-		homeDirs: ['.pi'],
-		protectedHome: ['.pi/agent/settings.json', '.pi/agent/models.json', '.pi/agent/mcp.json', '.pi/agent/keybindings.json'],
+		// Pi refreshes its OAuth tokens in `.pi/agent/auth.json`.
+		writable: ['.pi/agent/sessions', '.pi/agent/logs'],
+		writableFiles: ['.pi/agent/auth.json'],
+		readable: ['.pi'],
 		credentials: ['.pi/agent/auth.json'],
 		domains: ['pi.dev', '*.pi.dev', 'api.anthropic.com', 'api.openai.com', 'chatgpt.com', '*.chatgpt.com', 'auth.openai.com', 'openrouter.ai', '*.openrouter.ai', 'generativelanguage.googleapis.com', 'api.x.ai', 'api.deepseek.com', 'api.moonshot.ai', 'api.z.ai', 'api.groq.com', 'api.mistral.ai', 'api.cerebras.ai'],
 		envKeys: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'GEMINI_API_KEY', 'XAI_API_KEY', 'GROQ_API_KEY', 'MISTRAL_API_KEY', 'CEREBRAS_API_KEY'],
 	},
 	kimi: {
-		homeDirs: ['.kimi', '.kimi-code'],
+		writable: ['.kimi/sessions', '.kimi/logs', '.kimi-code/sessions', '.kimi-code/logs'],
+		readable: ['.kimi', '.kimi-code'],
 		domains: ['*.moonshot.ai', '*.moonshot.cn', 'kimi.com', '*.kimi.com'],
 		envKeys: ['MOONSHOT_API_KEY', 'KIMI_API_KEY'],
 	},
 	muse: {
-		homeDirs: ['.muse', '.config/muse'],
+		writable: ['.muse/sessions', '.muse/logs'],
+		readable: ['.muse', '.config/muse'],
 		domains: [],
 	},
 	fx: {
-		// Sessions, settings and the shell-startup cache live in `.fx`; `fx login codex` and `fx login grok` reach those services too.
-		homeDirs: ['.fx'],
-		protectedHome: ['.fx/AGENTS.md', '.fx/skills'],
+		// Sessions and the shell-startup cache live in `.fx`; `fx login codex` and `fx login grok` reach those services too.
+		writable: ['.fx/sessions', '.fx/backups', '.fx/diagnostics', '.fx/file-index'],
+		writableFiles: ['.fx/history.jsonl', '.fx/history.lock', '.fx/auth.lock', '.fx/settings.lock', '.fx/auth.json'],
+		readable: ['.fx'],
+		credentials: ['.fx/auth.json', '.fx/mcp-credentials'],
 		domains: ['fx.sh', '*.fx.sh', 'ai-gateway.vercel.sh', 'vercel.com', '*.vercel.com', 'chatgpt.com', '*.chatgpt.com', 'api.openai.com', 'auth.openai.com', 'x.ai', '*.x.ai', 'grok.com', '*.grok.com'],
 		envKeys: ['AI_GATEWAY_API_KEY', 'OPENAI_API_KEY', 'XAI_API_KEY'],
 	},
@@ -204,6 +239,60 @@ const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 
 /** Every agent's own credential files, so each sandboxed agent can be denied the others'. */
 const ALL_AGENT_CREDENTIALS = [...new Set(Object.values(AGENT_FOOTPRINTS).flatMap(footprint => footprint.credentials ?? []))];
+
+/**
+ * An agent Volt has no footprint for: its dot folders by provider id (the usual convention),
+ * readable so it finds its config, and nothing of the home folder writable (B-05). It works in
+ * the workspace, temp and its private `${tmp}`.
+ */
+function genericFootprint(providerId: string): IAgentFootprint {
+	const name = providerId.replace(/-acp$/, '').replace(/[^a-z0-9._-]/gi, '').replace(/^\.+/, '');
+	return { writable: [], readable: name ? [`.${name}`, `.config/${name}`, `.local/share/${name}`] : [], domains: [] };
+}
+
+function footprintOf(providerId: string): IAgentFootprint {
+	return Object.prototype.hasOwnProperty.call(AGENT_FOOTPRINTS, providerId) ? AGENT_FOOTPRINTS[providerId] : genericFootprint(providerId);
+}
+
+/**
+ * The footprint lint (K.4): a footprint may not make a CLI's config writable. Every writable entry
+ * is a subpath (never a whole `.<cli>` or `.config/<cli>` folder), and no segment of it is a
+ * config-bearing name (`settings.json`, `hooks`, `skills`, `CLAUDE.md`, ...). Overlays copy back
+ * only listed keys. Empty when every footprint passes; the tests assert it.
+ */
+export function footprintLintErrors(footprints: Readonly<Record<string, IAgentFootprint>> = AGENT_FOOTPRINTS): string[] {
+	const errors: string[] = [];
+	const configNames = new Set(AGENT_CONFIG_NAMES.map(name => name.toLowerCase()));
+	for (const [id, footprint] of Object.entries(footprints)) {
+		for (const entry of [...footprint.writable, ...(footprint.writableFiles ?? [])]) {
+			const segments = entry.split('/');
+			if (!entry || entry.startsWith('/') || segments.some(segment => !segment || segment === '.' || segment === '..')) {
+				errors.push(`${id}: ${entry} is not a plain path under the home folder`);
+			}
+			const configSegment = segments.find(segment => configNames.has(segment.toLowerCase()));
+			if (configSegment) {
+				errors.push(`${id}: ${entry} makes ${configSegment} writable, which holds config, hooks or instructions`);
+			}
+			if (segments.length < 2 || (segments.length === 2 && ['.config', '.local', 'Library'].includes(segments[0]))) {
+				errors.push(`${id}: ${entry} is a whole folder; list the subpaths the CLI writes`);
+			}
+			if (footprint.readable.includes(entry)) {
+				errors.push(`${id}: ${entry} is both readable state and writable; list the writable subpaths`);
+			}
+		}
+	}
+	for (const [id, overlay] of Object.entries(AGENT_OVERLAYS)) {
+		for (const seed of overlay.seed) {
+			if (seed.mergeBack.some(key => !key || key === '*' || key.split('.')[0] === '*')) {
+				errors.push(`${id}: ${seed.name} merges back every key`);
+			}
+		}
+		if (!overlay.link.length) {
+			errors.push(`${id}: the overlay links none of the user's config read-only`);
+		}
+	}
+	return errors;
+}
 
 /** The agent's API hosts: what stays reachable when the chat's network is off. */
 export function agentApiDomains(providerId: string): readonly string[] {
@@ -254,7 +343,6 @@ export function isPathInside(path: string, root: string): boolean {
  */
 export function resolveSandboxPlan(request: IVoltSandboxRequest, host: ISandboxHostInfo): ISandboxPlan {
 	const home = normalizeSandboxPath(host.home);
-	const footprint = AGENT_FOOTPRINTS[request.providerId];
 	const writable: string[] = [];
 	const files: string[] = [];
 	const usable = (paths: readonly string[] | undefined) => (paths ?? []).map(normalizeSandboxPath).filter(isAbsolute).filter(root => root !== '/' && root !== home);
@@ -268,13 +356,18 @@ export function resolveSandboxPlan(request: IVoltSandboxRequest, host: ISandboxH
 	if (host.darwinUserCacheDir) {
 		writable.push(normalizeSandboxPath(host.darwinUserCacheDir));
 	}
-	for (const dir of [...SHARED_HOME_DIRS, ...(footprint?.homeDirs ?? genericHomeDirs(request.providerId))]) {
+	const footprint = footprintOf(request.providerId);
+	for (const dir of footprint.writable) {
 		writable.push(`${home}/${dir}`);
 	}
-	for (const file of footprint?.homeFiles ?? []) {
+	if (Object.prototype.hasOwnProperty.call(AGENT_OVERLAYS, request.providerId)) {
+		// Its config folder is a per-chat overlay (agentState.ts); which chat is not known here.
+		writable.push(`${home}/${AGENT_STATE_ROOT}`);
+	}
+	for (const file of footprint.writableFiles ?? []) {
 		files.push(`${home}/${file}`);
 	}
-	writable.push(...(footprint?.tmpDirs?.(host.uid) ?? []));
+	writable.push(...(footprint.tmpDirs?.(host.uid) ?? []));
 
 	const denySubpaths: string[] = [];
 	const denyFiles: string[] = [];
@@ -298,9 +391,8 @@ export function resolveSandboxPlan(request: IVoltSandboxRequest, host: ISandboxH
 		denyFiles.push(`${home}/${name}`);
 	}
 	denyFiles.push(`${home}/.config/git/config`, `${home}/.ssh/config`, `${home}/.ssh/authorized_keys`);
-	for (const path of footprint?.protectedHome ?? []) {
-		(/\.[a-z]+$/i.test(path) ? denyFiles : denySubpaths).push(`${home}/${path}`);
-	}
+	// Config, hooks and instructions inside the CLI's writable state folders (B-05).
+	denySubpaths.push(...agentStateProtections(home, footprintOf(request.providerId)));
 
 	const network = request.network ? 'all' : 'proxy';
 	return {
@@ -316,10 +408,9 @@ export function resolveSandboxPlan(request: IVoltSandboxRequest, host: ISandboxH
 	};
 }
 
-/** An agent Volt has no footprint for: its dot folder by provider id, the usual convention. */
-function genericHomeDirs(providerId: string): string[] {
-	const name = providerId.replace(/-acp$/, '').replace(/[^a-z0-9._-]/gi, '');
-	return name ? [`.${name}`, `.config/${name}`, `.local/share/${name}`] : [];
+/** Config names directly inside each writable state folder, never writable (a CLI that keeps `bin` or `settings.json` there). */
+function agentStateProtections(home: string, footprint: IAgentFootprint): string[] {
+	return footprint.writable.flatMap(dir => AGENT_CONFIG_NAMES.map(name => `${home}/${dir}/${name}`));
 }
 
 /** Machine facts the agent profile needs; the node side fills them. */
@@ -338,24 +429,36 @@ export interface IAgentSandboxHost {
 	readonly sshAuthSock?: string;
 	/** Where sandboxed package caches live (see `SANDBOX_CACHE_ENV`). */
 	readonly cacheDir: string;
+	/** The chat's config overlay for this CLI (agentState.ts), already created by the node side. */
+	readonly statePlan?: IAgentStatePlan;
+}
+
+/** Ports from 1 to 65535, once each. */
+function ports(values: readonly number[] | undefined): number[] {
+	return unique((values ?? []).filter(port => Number.isInteger(port) && port > 0 && port < 65536).map(String)).map(Number);
 }
 
 /**
  * The policy an agent CLI process tree runs under. Weaker than the workload profiles by design,
- * because the whole CLI runs inside it:
- * - the whole filesystem is readable except credentials (SSH private keys, cloud and `gh`
- *   credentials, browser profiles, `.env` files, other agents' tokens, Volt's user data);
+ * because the whole CLI runs inside it, but narrow in what it reads (D-14, on every platform):
+ * - readable: the system folders, the programs on PATH and the user's toolchains (`~/.cargo`,
+ *   `~/.nvm`, Homebrew), the workspace and allowed folders, temp, and the CLI's own state (its
+ *   install, its config read-only, its sessions). Nothing else of the home folder: not other
+ *   projects, not shell startup files, not other agents' state. Credentials stay denied on top;
  * - writable: the workspace (`workspace-write`), folders the user allowed, temp, and the CLI's own
- *   state, minus everything that runs later outside the sandbox;
+ *   state in allow-list form, never its config, hooks or instructions (B-05). Claude Code, Codex
+ *   and Cursor write their config into a per-chat overlay instead (agentState.ts);
  * - OS services stay reachable on macOS (Keychain, launchd), with Apple Events, LaunchServices,
  *   synthetic input, the pasteboard, preference writes and signals to other processes denied;
  * - no unix sockets (ssh-agent only with network on); loopback only to the proxy and Volt's MCP
- *   server unless network is on;
- * - the environment is the user's minus anything that looks secret, plus the CLI's own keys.
+ *   server unless network is on; listening only on ports the user granted (B-30);
+ * - the environment is an allow list (`AGENT_ENV_INHERIT`) plus the CLI's own keys, never `*` (B-41).
  */
 export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSandboxHost): IVoltSandboxPolicy {
 	const home = normalizeSandboxPath(host.home);
-	const footprint = AGENT_FOOTPRINTS[request.providerId];
+	const footprint = footprintOf(request.providerId);
+	const plan = host.statePlan;
+	const overlay = Object.prototype.hasOwnProperty.call(AGENT_OVERLAYS, request.providerId) ? AGENT_OVERLAYS[request.providerId] : undefined;
 	const usable = (paths: readonly string[] | undefined) => (paths ?? []).map(normalizeSandboxPath).filter(isAbsolute).filter(root => root !== '/' && !isPathInside(home, root));
 	const workspace = usable(request.workspaceRoots);
 	const extra = usable(request.extraWritableRoots);
@@ -365,9 +468,26 @@ export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSan
 		...(request.level === 'workspace-write' ? workspace : []),
 		...extra,
 		...host.tempDirs,
-		...(footprint?.tmpDirs?.(host.uid) ?? []),
-		...[...SHARED_HOME_DIRS, ...(footprint?.homeDirs ?? genericHomeDirs(request.providerId)), ...(footprint?.homeFiles ?? [])].map(at),
+		...(footprint.tmpDirs?.(host.uid) ?? []),
+		...footprint.writable.map(at),
+		...(footprint.writableFiles ?? []).map(at),
+		...(plan ? [...plan.write, ...plan.writeFiles] : []),
 		host.cacheDir,
+	]);
+
+	const read = unique([
+		'${system}',
+		'${path}',
+		...agentSystemReadPaths(host.platform),
+		...HOME_TOOLCHAIN_PATHS.map(at),
+		...workspace,
+		...footprint.readable.map(at),
+		// Its config: the overlay's read-only links, or (no overlay for this launch) the real folder.
+		...(plan ? plan.read : overlay ? [at(overlay.home)] : []),
+		// The login: macOS keychain files are guarded by their own access lists.
+		...(host.platform === 'darwin' ? [at('Library/Keychains')] : []),
+		// ssh needs its config and known_hosts for git over SSH; the private keys stay denied.
+		...(request.network ? [at('.ssh')] : []),
 	]);
 
 	const protect: string[] = [];
@@ -382,9 +502,9 @@ export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSan
 		// Read-only holds even when the workspace sits below a writable folder (a repo in /tmp).
 		protect.push(...workspace.filter(root => !extra.some(allowed => isPathInside(root, allowed))));
 	}
-	protect.push(...(footprint?.protectedHome ?? []).map(at), ...PROTECTED_GIT_PATTERNS);
+	protect.push(...agentStateProtections(home, footprint), ...(plan?.protect ?? []), ...PROTECTED_GIT_PATTERNS);
 
-	const ownCredentials = new Set(footprint?.credentials ?? []);
+	const ownCredentials = new Set(footprint.credentials ?? []);
 	const deny = [
 		...credentialDenyEntries()
 			// Keychain items are guarded by their own access lists; the CLI reads its login from there.
@@ -395,31 +515,48 @@ export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSan
 		...(request.network ? (host.sshPrivateKeys ?? []) : []),
 		...ALL_AGENT_CREDENTIALS.filter(path => !ownCredentials.has(path)).map(at),
 		...(host.userDataDir ? [normalizeSandboxPath(host.userDataDir)] : []),
+		// The overlay's seed snapshots are Volt's: the merge compares against them.
+		...(plan ? [plan.seedDir] : []),
 	];
 
+	const listenPorts = ports(request.listenPorts);
+	// Linux with an open network shares the host's network namespace, where seccomp can refuse
+	// listening but cannot tell ports apart: a granted port there opens them all, and says so.
+	const listenAnywhere = request.network && host.platform === 'linux' && listenPorts.length > 0;
 	const network = request.network
-		? { mode: 'host' as const, allow: [], loopbackPorts: [], listen: true }
+		? { mode: 'host' as const, allow: [], loopbackPorts: [], listen: listenAnywhere, ...(listenPorts.length && !listenAnywhere ? { listenPorts } : {}) }
 		: {
 			mode: 'proxy' as const,
 			allow: unique([...agentApiDomains(request.providerId), ...(request.allowedDomains ?? [])].map(domain => domain.trim().toLowerCase()).filter(domain => domain && domain !== 'localhost')),
-			loopbackPorts: unique((request.loopbackPorts ?? []).filter(port => Number.isInteger(port) && port > 0 && port < 65536).map(String)).map(Number),
-			listen: true,
+			loopbackPorts: ports(request.loopbackPorts),
+			listen: false,
+			...(listenPorts.length ? { listenPorts } : {}),
 		};
 
 	const cacheEnv = Object.fromEntries(Object.entries(SANDBOX_CACHE_ENV).map(([name, sub]) => [name, `${host.cacheDir}/${sub}`]));
+	// bubblewrap cannot guard paths that do not exist yet; macOS cannot contain a setsid daemon.
+	const bestEffort: SandboxDimension[] = ['filesystem.protectNew', 'process.tree'];
 	return {
 		schemaVersion: 1,
 		name: `agent ${request.providerId} ${request.level}`,
-		filesystem: { read: ['/'], write, deny: unique(deny), protect: unique(protect), unmask: [] },
+		filesystem: { read, write, deny: unique(deny), protect: unique(protect), unmask: [] },
 		network,
 		process: { limits: {} },
-		env: { inherit: ['*', ...(footprint?.envKeys ?? [])], set: { ...cacheEnv, ...footprint?.env } },
-		// Seatbelt can allow exactly one socket. bubblewrap would have to allow AF_UNIX altogether
-		// while the whole filesystem is readable, so on Linux ssh-agent stays out (git over HTTPS works).
+		env: {
+			inherit: unique([...AGENT_ENV_INHERIT.filter(name => !isSecretEnvName(name)), ...(footprint.envKeys ?? []), ...(request.network && host.sshAuthSock ? ['SSH_AUTH_SOCK'] : [])]),
+			set: { ...cacheEnv, ...footprint.env, ...plan?.env },
+		},
+		// Seatbelt can allow exactly one socket. bubblewrap would have to allow AF_UNIX altogether,
+		// so on Linux ssh-agent stays out (git over HTTPS works).
 		host: { unixSockets: request.network && host.sshAuthSock && host.platform === 'darwin' ? [host.sshAuthSock] : [], systemServices: true },
-		// bubblewrap cannot guard paths that do not exist yet; macOS cannot contain a setsid daemon.
-		bestEffort: ['filesystem.protectNew', 'process.tree'],
+		bestEffort,
 	};
+}
+
+/** The writes a sandboxed agent of `providerId` may make in the home folder, relative to it: for tests and the Security page. */
+export function agentHomeWrites(providerId: string): { readonly folders: readonly string[]; readonly files: readonly string[] } {
+	const footprint = footprintOf(providerId);
+	return { folders: footprint.writable, files: footprint.writableFiles ?? [] };
 }
 
 /**
@@ -469,21 +606,30 @@ export function domainAllowed(host: string, allowed: readonly string[]): boolean
 
 /**
  * How a provider is sandboxed at a level.
- * - `wrap`: Volt wraps the whole agent process tree (Seatbelt / Landlock).
- * - `native`: the agent's own sandbox, configured by Volt (Codex: its per-command Seatbelt, with
- *   escalation prompts that reach Volt's approval UI). macOS refuses nested sandboxes
- *   (`sandbox_apply: Operation not permitted`), so the two are never stacked.
- * - `none`: no sandbox.
+ * - `wrap`: Volt wraps the whole agent process tree (Seatbelt / bubblewrap).
+ * - `native`: the agent's own sandbox, configured by Volt. No provider gets it any more (B-10,
+ *   D-16): Codex's own sandbox read the whole disk and lacked Volt's credential denies and
+ *   protected names, so a handoff to Codex weakened the chat. It stays in the type, and in every
+ *   comparison (`native` is weaker than `wrap`), for agents that may only sandbox themselves.
+ * - `none`: no sandbox (level `off`, or no OS sandbox on this platform: such a chat is refused).
+ *
+ * macOS refuses nested sandboxes (`sandbox_apply: Operation not permitted`), so an agent's own
+ * sandbox is switched off while Volt wraps it (`codexSandboxValue`, `nativeSandboxOffArgs`).
  */
 export type SandboxStrategy = 'wrap' | 'native' | 'none';
 
-export function sandboxStrategy(providerId: string, level: VoltSandboxLevel, platform: string): SandboxStrategy {
+const STRATEGY_RANK: Readonly<Record<SandboxStrategy, number>> = { none: 0, native: 1, wrap: 2 };
+
+/** Whether strategy `a` confines at least as much as `b` (`none < native < wrap`). */
+export function strategyAtLeast(a: SandboxStrategy, b: SandboxStrategy): boolean {
+	return STRATEGY_RANK[a] >= STRATEGY_RANK[b];
+}
+
+export function sandboxStrategy(_providerId: string, level: VoltSandboxLevel, platform: string): SandboxStrategy {
 	if (level === 'off' || platform === 'win32') {
 		return 'none';
 	}
-	if (providerId === 'codex' && level === 'workspace-write') {
-		return 'native';
-	}
+	// Always wrap (D-16): Codex runs under Volt's sandbox with its own sandbox off, like every other agent.
 	return 'wrap';
 }
 
@@ -511,11 +657,13 @@ export function normalizeSandboxSettings(value: unknown): IVoltSandboxSettings {
 	const strings = (list: unknown) => Array.isArray(list) ? [...new Set(list.filter((item): item is string => typeof item === 'string' && !!item.trim()).map(item => item.trim()))] : [];
 	const extra = strings(raw.extraWritableRoots).map(normalizeSandboxPath).filter(isAbsolute);
 	const domains = strings(raw.allowedDomains).map(domain => domain.toLowerCase());
+	const listen = Array.isArray(raw.listenPorts) ? ports(raw.listenPorts.filter((port): port is number => typeof port === 'number')) : [];
 	return {
 		level: normalizeSandboxLevel(raw.level),
 		network: raw.network !== false,
 		...(extra.length ? { extraWritableRoots: extra } : {}),
 		...(domains.length ? { allowedDomains: domains } : {}),
+		...(listen.length ? { listenPorts: listen } : {}),
 	};
 }
 
@@ -527,7 +675,19 @@ export function sandboxLaunchKey(settings: IVoltSandboxSettings | undefined): st
 	if (!settings || settings.level === 'off') {
 		return 'off';
 	}
-	return JSON.stringify([settings.level, settings.network, [...(settings.extraWritableRoots ?? [])].sort()]);
+	const key: unknown[] = [settings.level, settings.network, [...(settings.extraWritableRoots ?? [])].sort()];
+	if (settings.listenPorts?.length) {
+		key.push([...settings.listenPorts].sort((a, b) => a - b));
+	}
+	return JSON.stringify(key);
+}
+
+/** The settings with one more loopback port the agent may listen on (a dev server, B-30). */
+export function withListenPort(settings: IVoltSandboxSettings, port: number): IVoltSandboxSettings {
+	if (!Number.isInteger(port) || port < 1 || port > 65535 || settings.listenPorts?.includes(port)) {
+		return settings;
+	}
+	return { ...settings, listenPorts: [...(settings.listenPorts ?? []), port] };
 }
 
 /** The settings with one more folder the agent may write. */
@@ -574,10 +734,10 @@ export function loopbackPort(url: string | undefined): number | undefined {
 
 /**
  * Codex config and session-mode values Volt sends, adjusted for the chat's sandbox.
- * - `native` (workspace-write): Codex's own Seatbelt / Landlock does the job per command, and its
- *   escalation requests reach Volt's approval UI. Full access is never chosen.
- * - `wrap` (read-only): Volt confines the whole tree, so Codex's per-command sandbox must stay
- *   off; macOS refuses a second sandbox inside one that denies anything.
+ * - `wrap` (every sandboxed level): Volt confines the whole tree, so Codex's per-command sandbox
+ *   must stay off; macOS refuses a second sandbox inside one that denies anything. Codex's own
+ *   approval prompts go with it (B-AP-13); Volt's sandbox is the boundary.
+ * - `native` (no longer chosen, see `sandboxStrategy`): Codex's own sandbox; full access is never chosen.
  */
 export function codexSandboxValue(id: string, value: string | boolean, strategy: SandboxStrategy): string | boolean {
 	if (strategy === 'none' || typeof value !== 'string') {

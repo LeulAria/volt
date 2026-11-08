@@ -5,7 +5,7 @@
 
 import { claudeWorkRulesMeta } from '../../common/harness/claudeWorkRules.js';
 import { bareTaskToolName } from '../../common/orchestration/agentTasks.js';
-import { timeout } from '../../../../../base/common/async.js';
+import { raceTimeout, timeout } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
@@ -930,8 +930,34 @@ export class AcpAgentProvider implements IAgentProvider {
 			workspaceRoots: sandbox.workspaceRoots,
 			...(settings.extraWritableRoots?.length ? { extraWritableRoots: settings.extraWritableRoots } : {}),
 			...(settings.allowedDomains?.length ? { allowedDomains: settings.allowedDomains } : {}),
+			...(settings.listenPorts?.length ? { listenPorts: settings.listenPorts } : {}),
 			loopbackPorts: (this.hostTools?.getMcpServers(req.sessionId) ?? []).map(server => loopbackPort(server.url)).filter((port): port is number => port !== undefined),
+			// The chat's own copy of the CLI's config (B-05): what the agent changes there stays in this chat.
+			stateKey: req.sessionId ?? 'default',
 		};
+	}
+
+	/**
+	 * After a turn: what the agent changed in its config overlay goes back to the user's config only
+	 * for the allowed keys (session ids, counters); everything else is listed in the transcript.
+	 */
+	private async syncSandboxState(live: IAcpSession, turn: AcpPromptTurn): Promise<void> {
+		if (!live.sandbox || live.sandbox.settings.level === 'off' || !this.stdio.syncSandboxState) {
+			return;
+		}
+		try {
+			const result = await raceTimeout(this.stdio.syncSandboxState(live.processId), 3_000);
+			if (result?.dropped.length) {
+				const shown = result.dropped.slice(0, 8).join(', ');
+				this.pushNotice(live, turn, {
+					severity: 'info',
+					title: 'Sandbox kept config changes in this chat',
+					description: `The agent changed ${this.label}'s own settings (${shown}${result.dropped.length > 8 ? `, and ${result.dropped.length - 8} more` : ''}). They stay in this chat's sandbox and were not applied to your ${this.label} config. Make such changes from a chat with the sandbox off, or in ${this.label} itself.`,
+				});
+			}
+		} catch (err) {
+			this.logService.warn('[ACP] sandbox state sync failed', err);
+		}
 	}
 
 	private sandboxStrategyOf(session: IAcpSession): SandboxStrategy {
@@ -1651,6 +1677,7 @@ export class AcpAgentProvider implements IAgentProvider {
 				if (usage) {
 					turn.push(usage);
 				}
+				await this.syncSandboxState(live, turn);
 				this.endTurn(live, turn, result?.stopReason === 'cancelled' || turn.userCancelled ? 'abort' : 'done');
 				return;
 			}

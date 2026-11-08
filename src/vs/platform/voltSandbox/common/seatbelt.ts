@@ -207,6 +207,21 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 		}
 	}
 
+	// Listening (B-30): only the granted ports, so a sandbox cannot squat an OAuth callback or a dev
+	// server's port, or serve pages for the in-app browser. With an open network everything else is
+	// allowed, so TCP binds are denied explicitly; in the other modes the default already denies them.
+	// Verified on macOS 26.6: only a `tcp` bind deny with an `ip` inbound deny can be re-allowed per
+	// port; UDP sockets (Node's dgram binds before sending) stay usable through the udp inbound allow.
+	if (!policy.network.listen) {
+		if (policy.network.mode === 'host') {
+			out.push(`(deny network-bind ${message} (local tcp "*:*"))`, `(deny network-inbound ${message} (local ip "*:*"))`, '(allow network-inbound (local udp "*:*"))');
+		}
+		const listenPorts = [...new Set(policy.network.listenPorts ?? [])].filter(port => Number.isInteger(port) && port > 0 && port < 65536);
+		if (listenPorts.length) {
+			out.push('(allow system-socket)', `(allow network-bind network-inbound\n\t${listenPorts.map(port => `(local ip ${sbplString(`localhost:${port}`)})`).join('\n\t')})`);
+		}
+	}
+
 	// Unix sockets: none but the granted ones (and DNS with an open network), whatever the mode.
 	out.push(`(deny network-outbound ${message} (remote unix-socket))`);
 	const sockets = [...policy.unixSockets, ...(policy.network.mode === 'host' ? [MDNS_SOCKET] : [])];

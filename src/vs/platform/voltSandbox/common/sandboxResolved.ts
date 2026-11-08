@@ -57,7 +57,10 @@ export interface IResolvedNetwork {
 	readonly allow: readonly string[];
 	/** Host loopback ports reachable directly. */
 	readonly loopbackPorts: readonly number[];
+	/** Listening on any loopback port (trusted policies only). */
 	readonly listen: boolean;
+	/** Loopback ports granted for listening one by one. */
+	readonly listenPorts?: readonly number[];
 }
 
 /**

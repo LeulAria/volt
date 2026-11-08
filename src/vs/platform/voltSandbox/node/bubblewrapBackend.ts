@@ -318,7 +318,10 @@ export class BubblewrapBackend implements ISandboxBackend {
 			prlimit: state.prlimit ? { path: state.prlimit, hard } : undefined,
 		});
 		const blockUnixSockets = policy.unixSockets.length === 0;
-		const seccomp = buildSeccompFilter(state.arch, { blockUnixSockets });
+		// The host's network namespace: no listening unless granted (B-30). Granted ports cannot be
+		// told apart by seccomp, so a grant there allows every port (the agent profile marks it best effort).
+		const blockListen = policy.network.mode === 'host' && !policy.network.listen && !policy.network.listenPorts?.length;
+		const seccomp = buildSeccompFilter(state.arch, { blockUnixSockets, blockListen });
 		const envArgs = Buffer.from(encodeBubblewrapArgs(bubblewrapEnvArgs(policy.env)), 'utf8');
 
 		let bridge: BubblewrapBridge | undefined;
@@ -439,11 +442,16 @@ async function userNamespaceDiagnostics(error: string): Promise<string[]> {
 	return out;
 }
 
+/**
+ * Kind of each path that exists. A symlink counts as missing: a mount over it lands on its target
+ * (and fails while that is not mounted yet), and the resolver lists the target itself, which is
+ * what a mount can cover. The link's own name stays best effort (`filesystem.protectNew`).
+ */
 async function pathKinds(paths: readonly string[]): Promise<Map<string, 'dir' | 'file'>> {
 	const out = new Map<string, 'dir' | 'file'>();
 	await Promise.all([...new Set(paths)].map(async path => {
-		const st = await fs.stat(path).catch(() => undefined);
-		if (st) {
+		const st = await fs.lstat(path).catch(() => undefined);
+		if (st && !st.isSymbolicLink()) {
 			out.set(path, st.isDirectory() ? 'dir' : 'file');
 		}
 	}));

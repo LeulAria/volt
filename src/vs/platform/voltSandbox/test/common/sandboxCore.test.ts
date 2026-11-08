@@ -325,14 +325,17 @@ suite('Volt sandbox agent profile', () => {
 		userDataDir: '/Users/me/Library/Application Support/Volt', sshPrivateKeys: ['/Users/me/.ssh/id_ed25519'], sshAuthSock: '/private/tmp/ssh-x/agent.1', cacheDir: '/Users/me/.volt/sandbox-cache',
 	};
 
-	test('reads everything but credentials; writes the workspace, temp and its own state', () => {
+	test('reads the system, toolchains, the workspace and its own state (D-14); writes the workspace, temp and its listed state (B-05)', () => {
 		const policy = agentSandboxPolicy({ level: 'workspace-write', network: false, providerId: 'claude-code', workspaceRoots: ['/Users/me/repo'], loopbackPorts: [4000] }, host);
-		assert.deepStrictEqual(policy.filesystem.read, ['/']);
-		assert.ok(policy.filesystem.write.includes('/Users/me/repo') && policy.filesystem.write.includes('/Users/me/.claude'));
-		assert.ok(policy.filesystem.write.includes('/Users/me/.claude.json'));
+		// Narrow reads on every platform (the owner's D-14): never the whole disk.
+		assert.ok(!policy.filesystem.read.includes('/'));
+		assert.ok(policy.filesystem.read.includes('${system}') && policy.filesystem.read.includes('${path}') && policy.filesystem.read.includes('/Users/me/repo'));
+		assert.ok(policy.filesystem.read.includes('/Users/me/.local/share/claude'), 'the CLI binaries, read-only');
+		assert.ok(policy.filesystem.write.includes('/Users/me/repo'));
+		// B-05: the CLI's config is not writable in place (a chat with an overlay writes its own copy).
+		assert.ok(!policy.filesystem.write.includes('/Users/me/.claude') && !policy.filesystem.write.includes('/Users/me/.claude.json'));
 		assert.ok(!policy.filesystem.write.some(path => path.endsWith('/.npm') || path.endsWith('/Library/Caches') || path.endsWith('/.cache')), 'shared caches are not writable');
-		assert.ok(policy.filesystem.protect.includes('/Users/me/.local/share/claude'), 'the CLI binaries');
-		assert.ok(policy.filesystem.protect.includes('/Users/me/.claude/plugins'));
+		assert.ok(!policy.filesystem.write.some(path => path.startsWith('/Users/me/.local/share/claude')), 'the CLI binaries');
 		assert.ok(policy.filesystem.deny.includes('/Users/me/.ssh'), 'network off: no ssh at all');
 		assert.ok(policy.filesystem.deny.includes('/Users/me/Library/Application Support/Volt'), 'agent-server token');
 		assert.ok(policy.filesystem.deny.includes('/Users/me/.codex/auth.json'), 'other agents\' credentials');
@@ -342,7 +345,9 @@ suite('Volt sandbox agent profile', () => {
 		assert.deepStrictEqual(policy.network.loopbackPorts, [4000]);
 		assert.ok(policy.network.allow.includes('api.anthropic.com'));
 		assert.deepStrictEqual(policy.host.unixSockets, []);
-		assert.ok(policy.env.inherit.includes('*') && policy.env.inherit.includes('ANTHROPIC_API_KEY'));
+		// B-41: an allow list, never `*`; the CLI's own keys are on it.
+		assert.ok(!policy.env.inherit.includes('*') && policy.env.inherit.includes('ANTHROPIC_API_KEY') && policy.env.inherit.includes('PATH'));
+		assert.strictEqual(policy.network.listen, false, 'B-30: no listening by default');
 		assert.strictEqual(policy.env.set.npm_config_cache, '/Users/me/.volt/sandbox-cache/npm');
 		assert.strictEqual(policy.env.set.DISABLE_AUTOUPDATER, '1');
 	});

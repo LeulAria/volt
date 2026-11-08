@@ -72,11 +72,13 @@ export function credentialDenyEntries(): string[] {
  * credentials, the host's IPC endpoints, proxy settings (Volt sets those) and code injection hooks.
  */
 const SECRET_ENV_NAME = /(?:TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL|CLIENT_?ID|SESSION|COOKIE|AUTH|_DSN$|_URL$|_URI$|CONNECTION_?STRING)/i;
+/** `*_KEY`, `*_PAT`, `*_JWT` and their `_KEY_`-style middles (`STRIPE_KEY_LIVE`); not `KEYCHAIN` or `PATH`. */
+const SECRET_ENV_WORD = /(?:^|_)(?:KEY|KEYS|PAT|JWT)(?:_|$)/i;
 const SECRET_ENV_PREFIX = /^(?:AWS_|AZURE_|ARM_|GOOGLE_|GCP_|GCLOUD_|CLOUDSDK_|GH_|GITHUB_|GITLAB_|BITBUCKET_|NPM_|YARN_|DOCKER_|KUBE|HELM_|VAULT_|OP_|HEROKU_|VERCEL_|NETLIFY_|SENTRY_|STRIPE_|TWILIO_|SLACK_|DATABASE|PG|MYSQL_|REDIS_|MONGO|SSH_|GPG_|GNUPG|VSCODE_|ELECTRON_|CHROME_|DBUS_|XDG_RUNTIME_DIR$|DISPLAY$|WAYLAND_|XAUTHORITY$|LD_|DYLD_|BASH_ENV$|ENV$|NODE_OPTIONS$|PYTHONSTARTUP$|PERL5OPT$|RUBYOPT$|PROMPT_COMMAND$|TMUX|STY$|VOLT_)/i;
 const PROXY_ENV = /^(?:HTTPS?_PROXY|ALL_PROXY|NO_PROXY|FTP_PROXY|NPM_CONFIG_(?:HTTPS_)?PROXY)$/i;
 
 export function isSecretEnvName(name: string): boolean {
-	return SECRET_ENV_NAME.test(name) || SECRET_ENV_PREFIX.test(name) || PROXY_ENV.test(name);
+	return SECRET_ENV_NAME.test(name) || SECRET_ENV_WORD.test(name) || SECRET_ENV_PREFIX.test(name) || PROXY_ENV.test(name);
 }
 
 /** Names only the manager sets. No layer may set or inherit them. */
@@ -94,6 +96,49 @@ export function isInjectionEnvName(name: string): boolean {
 
 /** Host variables every profile copies when present: harmless and needed by almost every tool. */
 export const BASE_ENV_INHERIT: readonly string[] = ['LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'LC_MESSAGES', 'TERM', 'COLORTERM', 'TZ', 'USER', 'LOGNAME'];
+
+/**
+ * What an agent CLI's process tree gets of the user's environment (B-41): never `*`, only these
+ * names plus the agent's own (`envKeys` of its footprint). Locale, terminal and shell, and where
+ * the user's toolchains live, so builds and tests behave as in the user's terminal. Anything that
+ * looks secret is dropped even when listed (`isSecretEnvName`), except an agent's own keys.
+ */
+export const AGENT_ENV_INHERIT: readonly string[] = [
+	...BASE_ENV_INHERIT, 'PATH', 'HOME', 'SHELL', 'LC_COLLATE', 'LC_NUMERIC', 'LC_TIME', 'LC_MONETARY', 'EDITOR', 'VISUAL', 'PAGER', 'NO_COLOR', 'FORCE_COLOR', 'CLICOLOR',
+	'__CF_USER_TEXT_ENCODING', 'COMMAND_MODE', 'DEVELOPER_DIR', 'SDKROOT', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_DATA_DIRS', 'XDG_CONFIG_DIRS',
+	'HOMEBREW_PREFIX', 'HOMEBREW_CELLAR', 'HOMEBREW_REPOSITORY', 'NVM_DIR', 'NVM_BIN', 'NVM_INC', 'VOLTA_HOME', 'FNM_DIR', 'PNPM_HOME', 'BUN_INSTALL', 'DENO_INSTALL',
+	'CARGO_HOME', 'RUSTUP_HOME', 'RUSTUP_TOOLCHAIN', 'GOPATH', 'GOROOT', 'GOBIN', 'GOFLAGS', 'JAVA_HOME', 'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'PYENV_ROOT', 'PYENV_VERSION',
+	'VIRTUAL_ENV', 'CONDA_PREFIX', 'RBENV_ROOT', 'ASDF_DIR', 'ASDF_DATA_DIR', 'MISE_DATA_DIR', 'SDKMAN_DIR', 'DOTNET_ROOT', 'FLUTTER_ROOT', 'GEM_HOME', 'GEM_PATH',
+];
+
+/**
+ * Toolchains under the home folder an agent may read (D-14, narrow reads): where the user's
+ * compilers, runtimes and version managers install programs. Their credential files stay denied
+ * by the floor (`~/.cargo/credentials`). Settings that hold registry tokens (`~/.m2`, `~/.gradle`)
+ * are not here.
+ */
+export const HOME_TOOLCHAIN_PATHS: readonly string[] = [
+	'.cargo', '.rustup', 'go', '.nvm', '.bun', '.deno', '.volta', '.fnm', '.local/share/fnm', '.pnpm', 'Library/pnpm', '.local/share/pnpm', '.yarn/bin',
+	'.pyenv', '.rbenv', '.asdf', '.local/share/mise', '.sdkman', '.dotnet', '.swiftpm', '.foundry', '.local/bin', '.local/lib', 'Library/Python', '.npm-global',
+	'.gem', '.local/share/gem', 'flutter', 'Library/Android/sdk', 'Android/Sdk', '.jenv', '.ghcup', '.opam', '.elan', '.pub-cache', '.juliaup',
+	// Tools installed by uv and pipx (`~/.local/bin` links into these).
+	'.local/share/uv', '.local/pipx', '.local/share/pipx',
+	// npx's own installs: the ACP adapters Volt starts run from here (read, never written).
+	'.npm/_npx',
+	// git's own settings (`~/.config/git/credentials` stays denied by the floor).
+	'.gitconfig', '.config/git', '.gitignore_global',
+];
+
+/**
+ * Names in an agent CLI's state that hold configuration, hooks, MCP servers, instructions or
+ * installs: code or prompts every later session of that CLI runs, sandboxed or not (B-05). Never
+ * writable from a sandbox; a footprint may not list them (or a folder holding them) as writable.
+ */
+export const AGENT_CONFIG_NAMES: readonly string[] = [
+	'.claude.json', 'settings.json', 'settings.local.json', 'config.toml', 'config.json', 'config.yaml', 'cli-config.json', 'cli.json', 'mcp.json', 'mcp_config.json',
+	'hooks', 'hooks.json', 'plugins', 'plugin', 'skills', 'agents', 'commands', 'rules', 'output-styles', 'extensions', 'prompts',
+	'CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'opencode.json', 'opencode.jsonc', 'models.json', 'keybindings.json', 'permissions.json', 'mcp-approvals.json', 'bin',
+];
 
 /** Limits every built-in profile sets. The wall clock is the manager's own timer, so it holds everywhere. */
 const DEFAULT_LIMITS = { wallClockSeconds: 600, cpuSeconds: 300, fileSizeMB: 1024, openFiles: 4096, processes: 512 };
@@ -160,5 +205,24 @@ export function systemReadPaths(platform: string): readonly string[] {
 			'/Applications/Xcode.app/Contents/Developer', '/opt/homebrew', '/usr/local', '/dev',
 		];
 	}
+	if (platform === 'win32') {
+		// For the MXC backend (J.3): Windows and Program Files, never `C:\` or the profile root.
+		return ['C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)'];
+	}
 	return ['/usr', '/bin', '/sbin', '/lib', '/lib32', '/lib64', '/libx32', '/etc', '/opt', '/nix/store', '/snap'];
+}
+
+/**
+ * System files an agent CLI needs on top of `${system}` (it reaches OS services the workload
+ * profiles do not): the resolver configuration DNS clients read, and on macOS the keychain and
+ * security databases `security` and TLS stacks open themselves.
+ */
+export function agentSystemReadPaths(platform: string): readonly string[] {
+	if (platform === 'darwin') {
+		return ['/Library/Keychains', '/private/var/db/mds', '/private/var/run/resolv.conf', '/private/var/db/xcode_select_link', '/Library/Preferences/com.apple.security.plist', '/System/Volumes/Preboot/Cryptexes'];
+	}
+	if (platform === 'win32') {
+		return [];
+	}
+	return ['/run/systemd/resolve', '/run/resolvconf', '/var/lib/ca-certificates'];
 }

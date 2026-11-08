@@ -155,6 +155,22 @@ suite('Volt sandbox seccomp filter', () => {
 		}
 	});
 
+	test('NET-LISTEN-1 (Linux, host network): listen is refused only when asked', () => {
+		for (const arch of ARCHES) {
+			const nr = SECCOMP_SYSCALL_NUMBERS[arch].listen;
+			assert.strictEqual(evaluate(buildSeccompFilter(arch, { blockUnixSockets: true, blockListen: true }), { nr, arch: SECCOMP_AUDIT_ARCH[arch] }), ERR_EPERM, arch);
+			assert.strictEqual(evaluate(buildSeccompFilter(arch, { blockUnixSockets: true }), { nr, arch: SECCOMP_AUDIT_ARCH[arch] }), SECCOMP_RET_ALLOW, `${arch}: its own namespace`);
+			const program = seccompInstructions(arch, { blockUnixSockets: true, blockListen: true });
+			program.forEach((instruction, index) => {
+				if ((instruction.code & 0x07) === 0x05) {
+					assert.ok(index + 1 + Math.max(instruction.jt, instruction.jf) < program.length, `${arch} target of ${index}`);
+				}
+			});
+		}
+		assert.strictEqual(SECCOMP_SYSCALL_NUMBERS.x64.listen, 50);
+		assert.strictEqual(SECCOMP_SYSCALL_NUMBERS.arm64.listen, 201);
+	});
+
 	test('jumps are forward, small, and land inside the program', () => {
 		for (const arch of ARCHES) {
 			for (const blockUnixSockets of [true, false]) {
