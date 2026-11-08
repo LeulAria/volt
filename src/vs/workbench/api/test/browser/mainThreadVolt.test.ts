@@ -30,6 +30,7 @@ import { OPEN_BROWSER_COMMAND_ID } from '../../../contrib/voltAgent/browser/prev
 import { IAgentPullRequestService } from '../../../contrib/voltAgent/browser/pullRequests/agentPullRequestService.js';
 import { IAgentPrLink } from '../../../contrib/voltAgent/common/agentPullRequests.js';
 import { IVoltFeatureService } from '../../../contrib/voltCustomize/common/voltFeatures.js';
+import { GIT_GRAPH_ASK_AGENT_COMMAND_ID, OPEN_GIT_GRAPH_COMMAND_ID } from '../../../contrib/voltGitGraph/common/voltGitGraph.js';
 import { isFirstPartyExtension, VoltExtensionApiService, voltCapabilityFeatureId } from '../../../contrib/voltCustomize/browser/voltExtensionApiService.js';
 import { IWorkbenchEnvironmentService } from '../../../services/environment/common/environmentService.js';
 import { IExtensionFeaturesManagementService } from '../../../services/extensionManagement/common/extensionFeatures.js';
@@ -199,9 +200,14 @@ suite('Volt extension API (vscode.volt)', () => {
 		const layoutService = new class extends mock<ILayoutService>() {
 			override get activeContainer() { return container; }
 		};
+		/** Volt features the user turned off (their built-in extensions disabled). */
+		const featuresOff = new Set<string>();
 		const api = store.add(new VoltExtensionApiService(
 			hostTools, store.add(new InMemoryStorageService()), new TestConfigurationService({ acme: { notes: { width: 320 } } }), commandService,
-			new class extends mock<IVoltFeatureService>() { override isOn() { return true; } }, features, extensionService, instantiation, layoutService, new NullLogService(),
+			new class extends mock<IVoltFeatureService>() {
+				override isOn() { return true; }
+				override isEnabled(featureId: string) { return !featuresOff.has(featureId); }
+			}, features, extensionService, instantiation, layoutService, new NullLogService(),
 		));
 		instantiation.stub(IVoltExtensionApiService, api);
 
@@ -223,7 +229,7 @@ suite('Volt extension API (vscode.volt)', () => {
 			threads[id] = { id, rootId: id, depth: 0, createdAt: 0, queue: [], inputs: [], turns: 1, handoffs: [], ...thread } as IOrchThread;
 			orchestratorChanges.fire({ threads: [id], tasks: [] });
 		};
-		return { rpc, api, features, voltFor, grant, providers, invoked, commands, memories, automations, agentCalls, turn };
+		return { rpc, api, features, featuresOff, voltFor, grant, providers, invoked, commands, memories, automations, agentCalls, turn };
 	}
 
 	const acme = () => description('acme.notes', { contributes: ACME_CONTRIBUTES });
@@ -379,6 +385,28 @@ suite('Volt extension API (vscode.volt)', () => {
 		assert.deepStrictEqual(await volt.pullRequests.list('chat-1'), [{ url: 'https://github.com/acme/app/pull/12', number: 12, repository: 'acme/app', watched: true }]);
 		assert.strictEqual((await volt.pullRequests.link('chat-1', 'https://github.com/acme/app/pull/13')).text, 'ran link_pull_request');
 		assert.strictEqual(h.invoked.find(call => call.name === 'link_pull_request')?.call?.sessionId, 'chat-1');
+	});
+
+	test('EXT-RT-gitGraph: open the graph and ask an agent, through the Git Graph\'s commands', async () => {
+		const git = description('acme.git', { contributes: { voltCapabilities: { optional: [{ id: 'git.read', class: 'medium' }, { id: 'agents.send', class: 'medium' }] } } });
+		const h = host([acme(), git], ['acme.notes', 'acme.git']);
+		h.grant('acme.git', 'git.read', 'agents.send');
+		const volt = h.voltFor('acme.git');
+		await volt.gitGraph.open({ repositoryRoot: '/repo/app', query: 'author:ann', revealCommit: 'abc1234' });
+		assert.deepStrictEqual(h.commands.find(command => command.id === OPEN_GIT_GRAPH_COMMAND_ID)?.args, [{ repositoryRoot: '/repo/app', query: 'author:ann', revealCommit: 'abc1234' }]);
+		await volt.gitGraph.askAgent({ action: 'review', commit: 'abc1234', repositoryRoot: '/repo/app' });
+		const asked = h.commands.find(command => command.id === GIT_GRAPH_ASK_AGENT_COMMAND_ID)?.args[0] as Record<string, unknown>;
+		assert.deepStrictEqual([asked.action, asked.commit, asked.repositoryRoot], ['review', 'abc1234', '/repo/app']);
+		await assert.rejects(Promise.resolve(volt.gitGraph.askAgent({ action: 'rewrite' })), /action must be explain, review or ask/);
+		await assert.rejects(Promise.resolve(volt.gitGraph.askAgent({ action: 'explain', startLine: 'one' as unknown as number })), /startLine must be a number/);
+		// Each method needs its capability: acme.notes declares neither.
+		const undeclared = await refusal(h.voltFor('acme.notes').gitGraph.open());
+		assert.deepStrictEqual([undeclared.capability, undeclared.deniedBy], ['git.read', 'manifest']);
+		// The user turned the Git Graph off: the call is refused, and nothing runs.
+		h.featuresOff.add('gitGraph');
+		const before = h.commands.length;
+		await assert.rejects(Promise.resolve(volt.gitGraph.open()), /Git Graph is turned off/);
+		assert.strictEqual(h.commands.length, before);
 	});
 
 	// --- Identity ---------------------------------------------------------------------------------

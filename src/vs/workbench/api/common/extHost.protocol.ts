@@ -2779,7 +2779,8 @@ export type VoltApiMethod =
 	| 'visuals.renderChart' | 'visuals.drawOnScratch'
 	| 'automations.list' | 'automations.schedule'
 	| 'usage.get'
-	| 'pullRequests.list' | 'pullRequests.link';
+	| 'pullRequests.list' | 'pullRequests.link'
+	| 'gitGraph.open' | 'gitGraph.askAgent';
 
 export interface IVoltToolResultDto {
 	readonly text?: string;

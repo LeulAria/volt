@@ -206,6 +206,36 @@ export interface IVoltPullRequestsApi {
 	link(chatId: string, url: string): Promise<IVoltHostToolResult>;
 }
 
+export interface IVoltGitGraphOpenOptions {
+	/** The repository's root folder; the active repository when unset. */
+	readonly repositoryRoot?: string;
+	/** A search in the graph's query syntax (`author:`, `path:`, `lines:12-40:src/a.ts`, text). */
+	readonly query?: string;
+	/** A commit to scroll to and select. */
+	readonly revealCommit?: string;
+}
+
+export interface IVoltGitAskAgentOptions {
+	/** `explain` or `review` a commit (or lines), or `ask` the `question` about it. */
+	readonly action: 'explain' | 'review' | 'ask';
+	readonly repositoryRoot?: string;
+	/** A commit SHA (hex). */
+	readonly commit?: string;
+	/** A file in the repository, with `startLine`/`endLine`, for lines instead of a commit. */
+	readonly path?: string;
+	readonly startLine?: number;
+	readonly endLine?: number;
+	readonly question?: string;
+}
+
+/** The Git Graph (the `volt.git-graph` feature). */
+export interface IVoltGitGraphApi {
+	/** `git.read`: opens the Git Graph tab (or brings it forward), then searches or reveals a commit. */
+	open(options?: IVoltGitGraphOpenOptions): Promise<void>;
+	/** `agents.send`: a new side chat explains or reviews a commit (or lines), starting from git's facts. */
+	askAgent(options: IVoltGitAskAgentOptions): Promise<void>;
+}
+
 /** What the plugin shows (`ui.contribute`): its manifest entries, and whether each is on. */
 export interface IVoltUiApi {
 	readonly contributions: Pick<IVoltContributes, 'voltSlotItems' | 'voltSettingsPages' | 'voltSurfaces' | 'voltDock'>;
@@ -275,6 +305,7 @@ export interface IVoltApi {
 	readonly automations: IVoltAutomationsApi;
 	readonly usage: IVoltUsageApi;
 	readonly pullRequests: IVoltPullRequestsApi;
+	readonly gitGraph: IVoltGitGraphApi;
 }
 
 /** Who a backend call is for, set by core from the principal (never from a payload). */
@@ -331,6 +362,8 @@ export interface IVoltApiBackend {
 	scheduleAutomation?(options: { readonly name: string; readonly instructions: string; readonly schedule: VoltAutomationSchedule; readonly chatId?: string; readonly enabled: boolean }, caller: IVoltApiCaller): Promise<IVoltAutomationSummary>;
 	readUsage?(): Promise<IVoltUsageSummary>;
 	listPullRequests?(chatId: string): Promise<readonly IVoltPullRequestLink[]>;
+	openGitGraph?(options: IVoltGitGraphOpenOptions): Promise<void>;
+	askGitAgent?(options: IVoltGitAskAgentOptions): Promise<void>;
 }
 
 /** The facade could not do this yet: the broker behind it isn't built. */
@@ -639,7 +672,18 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 		},
 	};
 
-	return Object.freeze({ version: VOLT_API_VERSION, tools, storage, agents, ui, settings, commands, net, secrets, memory, browser, visuals, automations, usage, pullRequests });
+	const gitGraph: IVoltGitGraphApi = {
+		open(options) {
+			check({ api: 'gitGraph.open', capability: 'git.read', ...(options?.repositoryRoot ? { target: options.repositoryRoot } : {}) });
+			return bound(backend.openGitGraph, 'gitGraph.open').call(backend, options ?? {});
+		},
+		askAgent(options) {
+			check({ api: 'gitGraph.askAgent', capability: 'agents.send', ...(options.commit ? { target: options.commit } : {}) });
+			return bound(backend.askGitAgent, 'gitGraph.askAgent').call(backend, options);
+		},
+	};
+
+	return Object.freeze({ version: VOLT_API_VERSION, tools, storage, agents, ui, settings, commands, net, secrets, memory, browser, visuals, automations, usage, pullRequests, gitGraph });
 }
 
 /** One extension's validated Volt contributions, as the window loaded them. */
