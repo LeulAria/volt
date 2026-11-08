@@ -1,0 +1,17 @@
+[
+	{
+		"file": "src/vs/workbench/services/voltRuntime/common/git/worktreeSetupPlan.ts",
+		"match": "command: `git submodule update --init",
+		"reason": "Display text of the submodule setup step only; agentWorktreeSetupService.runSubmodules runs it through HostGit, never as this string."
+	},
+	{
+		"file": "src/vs/platform/voltPullRequests/node/voltPrStackGit.ts",
+		"match": "command: `git ${args.join(' ')}`",
+		"reason": "Tells the agent which command stopped a restack; nothing runs it. The restack itself runs through HostGit (StackGit is the PR service's HostGit runner)."
+	},
+	{
+		"file": "apps/relay/src/runner/runner.mjs",
+		"match": "execFile('git', args,",
+		"reason": "The relay runner is a standalone program on a dedicated runner machine, outside Volt's desktop and server hosts. The agent it starts runs unsandboxed there with the same rights as this git, so HostGit's guards would not add a boundary; it cannot import src/vs either."
+	}
+]

@@ -132,6 +132,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: npm run define-class-fields-check
 
+      - name: Git spawns go through HostGit (K.4)
+        if: ${{ !cancelled() }}
+        run: node build/volt/ci/gitSpawnLint.mjs
+
   # Volt's test/common suites straight from src/*.ts with Bun: no compile, about ten seconds.
   test-volt:
     name: Unit Tests (Volt)
