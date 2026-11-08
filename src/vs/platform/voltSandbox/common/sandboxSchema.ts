@@ -28,6 +28,8 @@ export type SandboxDimension =
 	| 'filesystem.deny'
 	| 'filesystem.protect'
 	| 'filesystem.protectNew'
+	/** `**\/name` denies (`.env`) cover every match in the readable roots at launch (B-27). Mandatory unless best effort. */
+	| 'filesystem.denyPatterns'
 	| 'network.none'
 	| 'network.proxy'
 	| 'network.loopbackPorts'
@@ -42,13 +44,16 @@ export type SandboxDimension =
 	| 'limits.processes'
 	| 'limits.fileSize'
 	| 'limits.openFiles'
-	| 'limits.wallClock';
+	| 'limits.wallClock'
+	/** macOS: the sandbox is its own TCC-responsible process and does not inherit Volt's privacy grants (B-13). */
+	| 'platform.tcc';
 
 export const SANDBOX_DIMENSIONS: readonly SandboxDimension[] = [
-	'filesystem.read', 'filesystem.write', 'filesystem.deny', 'filesystem.protect', 'filesystem.protectNew',
+	'filesystem.read', 'filesystem.write', 'filesystem.deny', 'filesystem.protect', 'filesystem.protectNew', 'filesystem.denyPatterns',
 	'network.none', 'network.proxy', 'network.loopbackPorts', 'network.listen',
 	'host.unixSockets', 'process.tree', 'process.isolation', 'syscalls', 'env.clear',
 	'limits.cpu', 'limits.memory', 'limits.processes', 'limits.fileSize', 'limits.openFiles', 'limits.wallClock',
+	'platform.tcc',
 ];
 
 export interface ISandboxFilesystemPolicy {

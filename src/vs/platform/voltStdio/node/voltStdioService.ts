@@ -139,7 +139,11 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 					this.logService.warn(`[volt-sandbox-spawn] ${id} not confirmed: ${confirmation.error}`);
 					this._onSandboxEvent.fire({ id, warning: `The sandbox could not be established, so the agent was stopped: ${confirmation.error}` });
 					void launch.terminate(child);
-				} else if (launch.warnings.length) {
+				} else {
+					const attestation = launch.attestation();
+					if (attestation) {
+						this.logService.info(`[volt-sandbox-spawn] ${id} attested ${attestation.backend} ${JSON.stringify(attestation.evidence)} policy=${attestation.launchPolicyHash.slice(0, 12)}`);
+					}
 					launch.warnings.forEach(warning => this._onSandboxEvent.fire({ id, warning }));
 				}
 			});

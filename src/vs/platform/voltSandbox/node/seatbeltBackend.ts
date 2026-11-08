@@ -4,34 +4,71 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ChildProcess, execFile, spawn } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, promises as fs } from 'fs';
+import { homedir, tmpdir } from 'os';
 import { promisify } from 'util';
-import { allEnforcement, ISandboxBackendCapabilities, SandboxUnavailableError } from '../common/sandboxBackend.js';
+import { FileAccess } from '../../../base/common/network.js';
+import { dirname, join } from '../../../base/common/path.js';
+import { verifyHelperBinary } from '../../voltHelpers/node/helperIntegrity.js';
+import { allEnforcement, ISandboxBackendCapabilities, parseReadyLine, redactSandboxText, SANDBOX_GO, SANDBOX_WRONG_GO, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { denialKindForOperation } from '../common/sandboxDenials.js';
 import { IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
-import { buildSeatbeltProfile, parseSeatbeltLogLine, SANDBOX_EXEC_PATH, SEATBELT_PROLOGUE, SEATBELT_TAG_PREFIX } from '../common/seatbelt.js';
-import { ISandboxBackend, ISandboxLaunchOptions, ISandboxLaunchSpec, SandboxConfirmation } from './sandboxBackends.js';
+import { SandboxDimension } from '../common/sandboxSchema.js';
+import { buildSeatbeltProfile, MDNS_SOCKET, parseSeatbeltLogLine, SANDBOX_EXEC_PATH, SEATBELT_FDS, SEATBELT_PROLOGUE, SEATBELT_TAG_PREFIX } from '../common/seatbelt.js';
+import { ISandboxBackend, ISandboxEvidence, ISandboxLaunchOptions, ISandboxLaunchSpec, SandboxConfirmation, SandboxFault } from './sandboxBackends.js';
+import { binaryDigest, osBuild, ProbeCache } from './sandboxProbeCache.js';
 
 const execFileAsync = promisify(execFile);
 
 /** The watchdog: when Volt's end of its stdin closes (Volt exited or crashed), it kills the run's process group. */
 const WATCHDOG = 'read _ ; kill -KILL -- "-$1" 2>/dev/null';
 const CONFIRM_TIMEOUT_MS = 15_000;
+const ATTEST_TIMEOUT_MS = 5_000;
+/** `fault: withhold-go`: how long the backend holds the go pipe open, without the byte, before refusing. */
+const WITHHELD_GO_MS = 750;
+
+export const SANDBOX_HELPER_ID = 'volt-sandbox-helper';
+
+/**
+ * TCC-protected folders. A disclaimed process is its own responsible process and has no access
+ * there (verified on macOS 26.6: `ls ~/Desktop` fails with EPERM), so a run whose workspace is
+ * inside one keeps Volt's responsibility and reports `platform.tcc` as not enforced.
+ */
+const TCC_FOLDERS = ['Desktop', 'Documents', 'Downloads', 'Library/Mobile Documents', 'Library/CloudStorage'];
+
+export interface ISeatbeltBackendOptions {
+	/** Where `volt-sandbox-helper` is; default: the app's `volt-helpers` (packaged) or `.build/volt-helpers` (dev). */
+	readonly helperPath?: string;
+}
 
 /**
  * macOS: Seatbelt through `/usr/bin/sandbox-exec`. Deny-default for workloads; allow-default
  * with explicit denies for policies that need the OS's services (agent CLIs).
+ *
+ * Every sandbox root is spawned through `volt-sandbox-helper spawn`, which execs `sandbox-exec`
+ * with TCC responsibility disclaimed (B-13): the sandbox does not inherit Volt's privacy grants.
+ * The prologue then waits for the go byte, which this backend sends only after it attested the
+ * process from outside with `sandbox_check` (B-29, F.5). The helper is checked against its
+ * pinned digest before every launch (INV-27).
  */
 export class SeatbeltBackend implements ISandboxBackend {
 
 	readonly id = 'seatbelt' as const;
-	private capabilities: Promise<ISandboxBackendCapabilities> | undefined;
+	private readonly cache = new ProbeCache<ISandboxBackendCapabilities>();
 	private monitor: ChildProcess | undefined;
 	private readonly listeners = new Map<string, ISandboxLaunchOptions['onDenial']>();
+	private attestor: SeatbeltAttestor | undefined;
+	private macosVersion: Promise<string> | undefined;
+	private readonly helper: string | undefined;
 
-	probe(): Promise<ISandboxBackendCapabilities> {
-		this.capabilities ??= this.doProbe();
-		return this.capabilities;
+	constructor(options: ISeatbeltBackendOptions = {}) {
+		this.helper = options.helperPath ?? defaultHelperPath();
+	}
+
+	/** Cached per (OS build, sandbox-exec digest, helper digest): an OS update or a new helper re-probes. */
+	async probe(): Promise<ISandboxBackendCapabilities> {
+		const key = `seatbelt|${osBuild()}|${await binaryDigest(SANDBOX_EXEC_PATH)}|${this.helper ? await binaryDigest(this.helper) : 'no helper'}`;
+		return this.cache.get(key, () => this.doProbe());
 	}
 
 	private async doProbe(): Promise<ISandboxBackendCapabilities> {
@@ -41,33 +78,111 @@ export class SeatbeltBackend implements ISandboxBackend {
 			'limits.processes': 'RLIMIT_NPROC counts every process of the user on macOS, so it cannot cap one sandbox.',
 			'limits.memory': 'macOS does not enforce RLIMIT_AS or RLIMIT_RSS.',
 			'syscalls': 'Seatbelt mediates operations (files, mach services, IOKit, sysctl), not raw system calls.',
+			'platform.tcc': `A run whose workspace is in ${TCC_FOLDERS.map(folder => `~/${folder}`).join(', ')} or /Volumes keeps Volt's privacy permissions: a process of its own would have no access to those folders.`,
 		};
 		enforcement['process.tree'] = 'partial';
 		enforcement['limits.processes'] = 'unsupported';
 		enforcement['limits.memory'] = 'unsupported';
 		enforcement['syscalls'] = 'partial';
+		const unavailable = (diagnostic: string): ISandboxBackendCapabilities => ({ backend: 'seatbelt', available: false, enforcement: allEnforcement('unsupported'), notes, details: [], diagnostics: [diagnostic] });
 		if (!existsSync(SANDBOX_EXEC_PATH)) {
-			return { backend: 'seatbelt', available: false, enforcement: allEnforcement('unsupported'), notes, details: [], diagnostics: [`${SANDBOX_EXEC_PATH} is missing.`] };
+			return unavailable(`${SANDBOX_EXEC_PATH} is missing.`);
+		}
+		// The helper and both private SPIs it uses: without them nothing could be attested.
+		if (!this.helper) {
+			return unavailable('The sandbox helper (volt-sandbox-helper) is missing from this build. Developers: node build/volt/sandbox-helper/build.mjs');
+		}
+		const verified = await verifyHelperBinary(SANDBOX_HELPER_ID, this.helper);
+		if (!verified.ok) {
+			return unavailable(`The sandbox helper failed its integrity check: ${verified.reason}`);
+		}
+		const spi = await execFileAsync(this.helper, ['probe'], { timeout: 10_000 }).then(r => r.stdout.trim(), err => String((err as { stdout?: string }).stdout ?? (err as Error).message).trim());
+		if (spi !== 'ok') {
+			return unavailable(`This macOS lacks the private interfaces Volt's sandbox needs to verify itself (${spi}).`);
 		}
 		// A real trial: a deny-default profile must start a process and keep it from writing.
 		const profile = '(version 1)(deny default)(allow process-exec process-fork)(allow file-read* (literal "/") (subpath "/usr") (subpath "/System") (subpath "/bin"))(allow file-read-metadata)';
 		try {
 			await execFileAsync(SANDBOX_EXEC_PATH, ['-p', profile, '/usr/bin/true'], { timeout: 10_000 });
 		} catch (err) {
-			return { backend: 'seatbelt', available: false, enforcement: allEnforcement('unsupported'), notes, details: [], diagnostics: [`sandbox-exec could not start a sandboxed process: ${(err as Error).message}`] };
+			return unavailable(`sandbox-exec could not start a sandboxed process: ${(err as Error).message}`);
 		}
 		const escaped = await execFileAsync(SANDBOX_EXEC_PATH, ['-p', profile, '/usr/bin/touch', '/private/tmp/.volt-sandbox-probe'], { timeout: 10_000 }).then(() => true, () => false);
 		if (escaped) {
-			return { backend: 'seatbelt', available: false, enforcement: allEnforcement('unsupported'), notes, details: [], diagnostics: ['A trial sandbox could write outside its policy; Seatbelt is not enforcing.'] };
+			return unavailable('A trial sandbox could write outside its policy; Seatbelt is not enforcing.');
 		}
-		const version = await execFileAsync('/usr/bin/sw_vers', ['-productVersion']).then(r => r.stdout.trim(), () => 'unknown');
-		return { backend: 'seatbelt', available: true, enforcement, notes, details: [`macOS ${version}`, `${SANDBOX_EXEC_PATH}`], diagnostics: [] };
+		// And the whole launch protocol once: disclaimed spawn, ready, external attestation, go byte.
+		const trial = await this.trial();
+		if (!trial.ok) {
+			return unavailable(`The trial sandbox could not be attested: ${trial.error}`);
+		}
+		const version = await this.version();
+		return { backend: 'seatbelt', available: true, enforcement, notes, details: [`macOS ${version}`, `${SANDBOX_EXEC_PATH}`, `attestation: sandbox_check from outside, TCC responsibility disclaimed (${this.helper})`], diagnostics: [] };
+	}
+
+	private version(): Promise<string> {
+		this.macosVersion ??= execFileAsync('/usr/bin/sw_vers', ['-productVersion']).then(r => r.stdout.trim(), () => 'unknown');
+		return this.macosVersion;
+	}
+
+	/** A sandboxed `true` through the launch path: must be attested and then exit 0. */
+	private async trial(): Promise<SandboxConfirmation> {
+		const dir = await fs.mkdtemp(join(await fs.realpath(tmpdir()), 'volt-sbx-probe-'));
+		let spec: ISandboxLaunchSpec | undefined;
+		try {
+			const sentinel = join(dir, 'canary');
+			await fs.writeFile(sentinel, 'volt-canary\n', { mode: 0o600 });
+			const policy: IResolvedSandboxPolicy = {
+				// The sentinel's folder is readable, so the deny rule itself is what keeps the canary out.
+				name: 'probe', platform: 'darwin', readAll: false, read: ['/usr', '/System', '/bin', '/private/var/select', dir], write: [], writeFiles: [], deny: [sentinel], protect: [],
+				denyPatterns: [], protectPatterns: [], newRepositoryGuard: [],
+				network: { mode: 'none', allow: [], loopbackPorts: [], listen: false },
+				unixSockets: [], systemServices: false, limits: {},
+				env: { PATH: '/usr/bin:/bin' }, cwd: dir, tmp: dir, home: dir, sentinel,
+			};
+			spec = await this.createSpec(policy, '/usr/bin/true', [], { tag: 'probe', terminal: false, onDenial: () => undefined }, false);
+			const child = spawn(spec.command, [...spec.args], { env: spec.env, cwd: spec.cwd, stdio: ['ignore', 'ignore', 'pipe', ...spec.extraStdio], detached: true });
+			const exited = new Promise<number | null>(resolve => {
+				child.once('close', code => resolve(code));
+				child.once('error', () => resolve(null));
+			});
+			const confirmation = await spec.confirm(child);
+			if (!confirmation.ok) {
+				await spec.terminate(child);
+				return confirmation;
+			}
+			const code = await Promise.race([exited, new Promise<null>(resolve => setTimeout(() => resolve(null), 10_000))]);
+			await spec.terminate(child);
+			return code === 0 ? confirmation : { ok: false, error: `the trial sandbox exited with ${code}` };
+		} catch (err) {
+			return { ok: false, error: (err as Error).message };
+		} finally {
+			await spec?.dispose().catch(() => undefined);
+			await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+		}
 	}
 
 	async launch(policy: IResolvedSandboxPolicy, command: string, args: readonly string[], options: ISandboxLaunchOptions): Promise<ISandboxLaunchSpec> {
 		const capabilities = await this.probe();
 		if (!capabilities.available) {
 			throw new SandboxUnavailableError(`macOS sandbox unavailable: ${capabilities.diagnostics.join(' ')}`, 'unavailable', [], capabilities.diagnostics);
+		}
+		return this.createSpec(policy, command, args, options, true);
+	}
+
+	private async createSpec(policy: IResolvedSandboxPolicy, command: string, args: readonly string[], options: ISandboxLaunchOptions, listen: boolean): Promise<ISandboxLaunchSpec> {
+		const helper = this.helper;
+		if (!helper) {
+			throw new SandboxUnavailableError('The sandbox helper is missing', 'unavailable');
+		}
+		// Immediately before every launch: the binary that disclaims and attests is the one we built.
+		const verified = await verifyHelperBinary(SANDBOX_HELPER_ID, helper);
+		if (!verified.ok) {
+			throw new SandboxUnavailableError(`The sandbox helper failed its integrity check: ${verified.reason}`, 'unavailable');
+		}
+		const sentinel = policy.sentinel;
+		if (!sentinel || /[\t\n]/.test(sentinel) || !policy.deny.includes(sentinel)) {
+			throw new SandboxUnavailableError('The run has no canary sentinel the policy denies', 'unavailable');
 		}
 		let profile: string;
 		try {
@@ -77,29 +192,41 @@ export class SeatbeltBackend implements ISandboxBackend {
 		}
 		const limit = (value: number | undefined, scale = 1) => value === undefined ? '-' : String(Math.max(1, Math.floor(value * scale)));
 		// `ulimit -f` counts 1024-byte blocks in macOS /bin/sh (measured: 2048 blocks allowed a 2 MB file).
-		const prologueArgs = [limit(policy.limits.cpuSeconds), limit(policy.limits.fileSizeMB, 1024), limit(policy.limits.openFiles)];
-		this.listen(options.tag, options.onDenial);
+		const prologueArgs = [limit(policy.limits.cpuSeconds), limit(policy.limits.fileSizeMB, 1024), limit(policy.limits.openFiles), sentinel];
+		const sandboxArgs = ['-p', profile, '--', '/bin/sh', '-c', SEATBELT_PROLOGUE, 'volt-sandbox', ...prologueArgs, command, ...args];
+		const disclaim = !touchesTccFolder(policy);
+		if (listen) {
+			this.listen(options.tag, options.onDenial);
+		}
+		const attestor = this.attestor ??= new SeatbeltAttestor(helper);
 		let watchdog: ChildProcess | undefined;
 		let pgid: number | undefined;
 		return {
-			command: SANDBOX_EXEC_PATH,
-			args: ['-p', profile, '--', '/bin/sh', '-c', SEATBELT_PROLOGUE, 'volt-sandbox', ...prologueArgs, command, ...args],
+			// The helper becomes sandbox-exec (same pid, same fds), its own responsible process.
+			command: disclaim ? helper : SANDBOX_EXEC_PATH,
+			args: disclaim ? ['spawn', SANDBOX_EXEC_PATH, ...sandboxArgs] : sandboxArgs,
 			env: { ...policy.env, VOLT_SANDBOX_TAG: options.tag },
 			cwd: policy.cwd,
-			extraStdio: ['pipe'],
-			confirm: child => {
+			extraStdio: ['pipe', 'pipe'],
+			...(disclaim ? {} : { unenforced: ['platform.tcc'] satisfies SandboxDimension[] }),
+			confirm: async child => {
 				pgid = child.pid;
 				if (pgid) {
 					watchdog = spawn('/bin/sh', ['-c', WATCHDOG, 'volt-sandbox-watchdog', String(pgid)], { stdio: ['pipe', 'ignore', 'ignore'], detached: true });
 					watchdog.on('error', () => undefined);
 					watchdog.unref();
 				}
-				return confirmFromStatusPipe(child);
+				const result = await confirmLaunch(child, {
+					attestor, sentinel, network: policy.network.mode, fault: options.fault, disclaim,
+					version: `macOS ${await this.version()} sandbox-exec, ${helper}`,
+				});
+				return result.ok ? result : { ok: false, error: redactSandboxText(result.error, policy.home) };
 			},
 			terminate: async child => {
 				const target = child.pid ?? pgid;
 				if (target) {
-					await killRun(target, options.tag);
+					// The helper's sweep (no `ps` spawn); `ps -E` only if the helper is gone.
+					await killRun(target, options.tag, { table: needle => attestor.sweep(needle).catch(() => processTable(needle)) });
 				}
 			},
 			dispose: async () => {
@@ -107,7 +234,9 @@ export class SeatbeltBackend implements ISandboxBackend {
 				watchdog?.kill('SIGKILL');
 				watchdog = undefined;
 				// Late denials of a process that just exited still arrive for a moment.
-				setTimeout(() => this.unlisten(options.tag), 2_000);
+				if (listen) {
+					setTimeout(() => this.unlisten(options.tag), 2_000);
+				}
 			},
 		};
 	}
@@ -157,16 +286,55 @@ export class SeatbeltBackend implements ISandboxBackend {
 		this.monitor?.kill();
 		this.monitor = undefined;
 		this.listeners.clear();
+		this.attestor?.dispose();
+		this.attestor = undefined;
 	}
 }
 
-/** Waits for the prologue's marker on fd 3, or the launcher's failure. */
-export function confirmFromStatusPipe(child: ChildProcess): Promise<SandboxConfirmation> {
+/** The packaged app's `volt-helpers`, else the dev build's `.build/volt-helpers`. */
+function defaultHelperPath(): string | undefined {
+	let appRoot: string;
+	try {
+		appRoot = dirname(FileAccess.asFileUri('').fsPath);
+	} catch {
+		return undefined;
+	}
+	return [join(appRoot, 'volt-helpers', SANDBOX_HELPER_ID), join(appRoot, '.build', 'volt-helpers', SANDBOX_HELPER_ID)].find(path => existsSync(path));
+}
+
+/** Whether the run works in a folder only Volt's own TCC grants reach. */
+export function touchesTccFolder(policy: IResolvedSandboxPolicy, home: string = homedir()): boolean {
+	const homes = [...new Set([home, policy.home])];
+	const folders = [...homes.flatMap(h => TCC_FOLDERS.map(folder => `${h}/${folder}`)), '/Volumes'].map(path => path.toLowerCase());
+	const roots = [policy.cwd, ...policy.write, ...(policy.readAll ? [] : policy.read)].map(path => path.toLowerCase());
+	return roots.some(root => folders.some(folder => root === folder || root.startsWith(`${folder}/`) || folder.startsWith(`${root}/`)));
+}
+
+interface IConfirmContext {
+	readonly attestor: SeatbeltAttestor;
+	readonly sentinel: string;
+	readonly network: IResolvedSandboxPolicy['network']['mode'];
+	readonly fault: SandboxFault | undefined;
+	readonly disclaim: boolean;
+	readonly version: string;
+}
+
+/**
+ * The parent's half of the launch protocol: the ready line (informational), then evidence from
+ * outside the process, then the canary, then the go byte. Nothing the workload or the prologue
+ * says makes it `ok`: the pid in the ready line must be the process we spawned, and
+ * `sandbox_check` on that pid must say it is sandboxed and that the run's sentinel, the network
+ * and the DNS socket are denied to it.
+ */
+function confirmLaunch(child: ChildProcess, context: IConfirmContext): Promise<SandboxConfirmation> {
 	return new Promise(resolve => {
-		const status = child.stdio[3] as NodeJS.ReadableStream | null | undefined;
+		const stdio = child.stdio as readonly unknown[];
+		const status = stdio[SEATBELT_FDS.status] as NodeJS.ReadableStream | null | undefined;
+		const go = stdio[SEATBELT_FDS.go] as NodeJS.WritableStream | null | undefined;
 		let done = false;
 		let text = '';
 		let stderr = '';
+		let exited = false;
 		const finish = (result: SandboxConfirmation) => {
 			if (!done) {
 				done = true;
@@ -176,27 +344,205 @@ export function confirmFromStatusPipe(child: ChildProcess): Promise<SandboxConfi
 		};
 		const timer = setTimeout(() => finish({ ok: false, error: 'the sandbox did not confirm in time' }), CONFIRM_TIMEOUT_MS);
 		child.stderr?.on('data', (data: Buffer | string) => { stderr = (stderr + data.toString()).slice(-2_000); });
-		if (!status) {
-			finish({ ok: false, error: 'no status pipe' });
+		if (!status || !go) {
+			finish({ ok: false, error: 'no status or go pipe' });
 			return;
 		}
+		go.on('error', () => undefined);
+		// The go pipe is a socket: keep its read side flowing, or the child's 'close' never comes.
+		(go as unknown as NodeJS.ReadableStream).resume?.();
+		status.on('error', () => undefined);
+		let attesting = false;
 		status.on('data', (data: Buffer | string) => {
 			text += data.toString();
-			const match = /volt-sandbox-ready (\d+)/.exec(text);
-			if (match) {
-				finish({ ok: true, detail: `Seatbelt applied (pid ${match[1]})` });
+			const ready = parseReadyLine(text);
+			if (!ready || attesting) {
+				return;
+			}
+			attesting = true;
+			void attest(child, ready, context).then(async result => {
+				if (done || exited) {
+					return;
+				}
+				if (!result.ok) {
+					finish(result);
+					return;
+				}
+				if (context.fault === 'withhold-go') {
+					await new Promise(r => setTimeout(r, WITHHELD_GO_MS));
+					finish({ ok: false, error: 'the go byte was withheld (fault injection)' });
+					return;
+				}
+				if (context.fault === 'wrong-go') {
+					go.end(SANDBOX_WRONG_GO);
+					finish({ ok: false, error: 'a wrong go byte was sent (fault injection)' });
+					return;
+				}
+				// Attested: only now may the workload run.
+				go.end(SANDBOX_GO);
+				finish(result);
+			});
+		});
+		child.once('exit', (code, signal) => {
+			exited = true;
+			setTimeout(() => finish({ ok: false, error: `sandbox-exec exited before the workload started (${signal ?? code})${stderr ? `: ${stderr.trim()}` : ''}` }), 50);
+		});
+	});
+}
+
+async function attest(child: ChildProcess, ready: { readonly pid: number; readonly cred: string }, context: IConfirmContext): Promise<SandboxConfirmation> {
+	if (!child.pid || ready.pid !== child.pid) {
+		return { ok: false, error: `the ready line names process ${ready.pid}, not the sandbox's ${child.pid}` };
+	}
+	const queries: [string, string, string][] = [['sandbox_check', '-', '-'], ['credentialDenied', 'file-read-data', context.sentinel]];
+	if (context.network !== 'host') {
+		queries.push(['networkDenied', 'network-outbound', '-'], ['dnsDenied', 'network-outbound', MDNS_SOCKET]);
+	}
+	let answers: number[];
+	try {
+		answers = await context.attestor.check(ready.pid, queries.map(([, operation, path]) => [operation, path]));
+	} catch (err) {
+		return { ok: false, error: `the sandbox could not be attested: ${(err as Error).message}` };
+	}
+	const evidence: Record<string, string | number | boolean> = { pid: ready.pid, responsibility: context.disclaim ? 'disclaimed' : 'inherited' };
+	queries.forEach(([name], index) => evidence[name] = answers[index]);
+	const failed = queries.filter((_, index) => answers[index] !== 1).map(([name]) => `${name}=${answers[queries.findIndex(q => q[0] === name)]}`);
+	if (context.fault === 'attest') {
+		failed.push('fault injection');
+	}
+	if (failed.length) {
+		return { ok: false, error: `the process is not sandboxed as required (sandbox_check: ${failed.join(', ')})` };
+	}
+	// The canary only means something now that we know who ran it.
+	if (ready.cred !== 'denied') {
+		return { ok: false, error: 'the canary could read the run\'s sentinel credential' };
+	}
+	const attestation: ISandboxEvidence = { evidence, canary: { credOpen: ready.cred }, backendVersion: context.version };
+	return { ok: true, detail: `Seatbelt applied and attested (pid ${ready.pid}${context.disclaim ? ', own TCC responsibility' : ''})`, attestation };
+}
+
+/**
+ * `volt-sandbox-helper serve`, kept running: answers `sandbox_check` queries about other
+ * processes in well under a millisecond, where a helper process per launch would cost several,
+ * and the process-tree sweep a run's teardown needs (see `killRun`).
+ */
+class SeatbeltAttestor {
+
+	private child: ChildProcess | undefined;
+	private buffer = '';
+	private sequence = 0;
+	private readonly pending = new Map<string, (value: string | Error) => void>();
+
+	constructor(private readonly helper: string) { }
+
+	check(pid: number, queries: readonly (readonly [string, string])[]): Promise<number[]> {
+		return Promise.all(queries.map(async ([operation, path]) => {
+			const value = await this.request(`${pid}\t${operation}\t${path}`);
+			if (!/^-?\d+$/.test(value)) {
+				throw new Error(`bad answer: ${value}`);
+			}
+			return Number(value);
+		}));
+	}
+
+	/** Every process, as `processTable` gives it, from one call into the running helper. */
+	async sweep(needle: string | undefined): Promise<IProcessRow[]> {
+		const value = await this.request(`sweep\t${needle ?? '-'}\t-`);
+		if (value.startsWith('-')) {
+			throw new Error(`the sandbox helper could not list processes (${value})`);
+		}
+		const rows: IProcessRow[] = [];
+		for (const entry of value.split(' ')) {
+			const fields = entry.split(':').map(Number);
+			if (fields.length === 4 && fields.every(Number.isInteger)) {
+				rows.push({ pid: fields[0], ppid: fields[1], pgid: fields[2], tagged: fields[3] === 1 });
+			}
+		}
+		if (!rows.length) {
+			throw new Error('the sandbox helper listed no processes');
+		}
+		return rows;
+	}
+
+	private request(body: string): Promise<string> {
+		const child = this.ensure();
+		return new Promise<string>((resolve, reject) => {
+			if (body.includes('\n') || body.split('\t').length !== 3) {
+				reject(new Error('a query with a tab or newline'));
+				return;
+			}
+			const id = String(++this.sequence);
+			const timer = setTimeout(() => {
+				this.pending.delete(id);
+				reject(new Error('the sandbox helper did not answer'));
+			}, ATTEST_TIMEOUT_MS);
+			this.pending.set(id, value => {
+				clearTimeout(timer);
+				if (value instanceof Error) {
+					reject(value);
+				} else {
+					resolve(value);
+				}
+			});
+			child.stdin?.write(`${id}\t${body}\n`);
+		});
+	}
+
+	private ensure(): ChildProcess {
+		if (this.child) {
+			return this.child;
+		}
+		const child = spawn(this.helper, ['serve'], { stdio: ['pipe', 'pipe', 'ignore'] });
+		this.child = child;
+		this.buffer = '';
+		child.stdout?.setEncoding('utf8');
+		child.stdout?.on('data', (data: string) => {
+			this.buffer += data;
+			const lines = this.buffer.split('\n');
+			this.buffer = lines.pop() ?? '';
+			for (const line of lines) {
+				const tab = line.indexOf('\t');
+				const answer = tab > 0 ? this.pending.get(line.slice(0, tab)) : undefined;
+				if (answer) {
+					this.pending.delete(line.slice(0, tab));
+					answer(line.slice(tab + 1).trim());
+				}
 			}
 		});
-		status.on('error', () => undefined);
-		child.once('exit', (code, signal) => setTimeout(() => finish({ ok: false, error: `sandbox-exec exited before the workload started (${signal ?? code})${stderr ? `: ${stderr.trim()}` : ''}` }), 50));
-	});
+		const gone = (why: string) => {
+			if (this.child === child) {
+				this.child = undefined;
+			}
+			for (const answer of this.pending.values()) {
+				answer(new Error(why));
+			}
+			this.pending.clear();
+		};
+		child.on('error', err => gone(`the sandbox helper failed: ${err.message}`));
+		child.on('exit', code => gone(`the sandbox helper exited (${code})`));
+		child.stdin?.on('error', () => undefined);
+		// An idle helper must not keep Volt (or a test run) alive.
+		child.unref();
+		for (const stream of [child.stdin, child.stdout] as unknown as ({ unref?(): void } | null)[]) {
+			stream?.unref?.();
+		}
+		return child;
+	}
+
+	dispose(): void {
+		this.child?.kill();
+		this.child = undefined;
+	}
 }
 
 /**
  * Kills a run: its process group, every descendant reachable through parent pids (including
  * ones that moved to their own group or session), and any process still carrying the run's tag.
+ * The responsible process does not help here: under a disclaimed root every new process is its
+ * own (measured on macOS 26.6), so a double-forked `setsid` daemon with a cleared environment
+ * still escapes the sweep, and stays sandboxed (`process.tree` is partial).
  */
-export async function killRun(pgid: number, tag: string): Promise<void> {
+export async function killRun(pgid: number, tag: string, options: { readonly table?: (needle: string | undefined) => Promise<IProcessRow[]> } = {}): Promise<void> {
 	const kill = (pid: number, group = false) => {
 		try {
 			process.kill(group ? -pid : pid, 'SIGKILL');
@@ -206,7 +552,8 @@ export async function killRun(pgid: number, tag: string): Promise<void> {
 	};
 	// Snapshot the tree first: once the root dies, its children are reparented and lose the link.
 	// One scan gives parents, groups and environments (the tag).
-	const table = await processTable(tag);
+	const needle = /^[a-f0-9]{8,64}$/.test(tag) ? `VOLT_SANDBOX_TAG=${tag}` : undefined;
+	const table = await (options.table ?? processTable)(needle);
 	kill(pgid, true);
 	const children = new Map<number, number[]>();
 	for (const row of table) {
@@ -240,9 +587,8 @@ export async function killRun(pgid: number, tag: string): Promise<void> {
 
 interface IProcessRow { readonly pid: number; readonly ppid: number; readonly pgid: number; readonly tagged: boolean }
 
-/** Every process: pid, parent, group, and whether its environment holds `VOLT_SANDBOX_TAG=<tag>` (visible for this user's processes). */
-async function processTable(tag: string): Promise<IProcessRow[]> {
-	const needle = /^[a-f0-9]{8,64}$/.test(tag) ? `VOLT_SANDBOX_TAG=${tag}` : undefined;
+/** Every process: pid, parent, group, and whether its argv or environment holds `needle` (visible for this user's processes). */
+async function processTable(needle: string | undefined): Promise<IProcessRow[]> {
 	try {
 		const { stdout } = await execFileAsync('/bin/ps', ['-E', '-ww', '-axo', 'pid=,ppid=,pgid=,command='], { timeout: 5_000, maxBuffer: 64 * 1024 * 1024 });
 		const rows: IProcessRow[] = [];

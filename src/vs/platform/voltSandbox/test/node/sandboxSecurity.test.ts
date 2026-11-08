@@ -394,7 +394,8 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		try {
 			const result = await sh(policy, [
 				// Through the proxy: CONNECT to loopback and metadata must be refused despite the allow list.
-				`for t in 127.0.0.1:${canary.port} 169.254.169.254:80 localhost:${canary.port} [::ffff:127.0.0.1]:${canary.port}; do ${PERL} -MIO::Socket::INET -e '$s=IO::Socket::INET->new(PeerAddr=>(split m{//}, $ENV{HTTPS_PROXY})[1], Timeout=>3) or exit 1; print $s "CONNECT $ARGV[0] HTTP/1.1\\r\\nHost: $ARGV[0]\\r\\n\\r\\n"; $l=<$s>; print "$ARGV[0] $l"' "$t"; done`,
+				// The proxy URL carries the run's token (B-31), sent as Proxy-Authorization, so the refusals below are the address rules'.
+				`for t in 127.0.0.1:${canary.port} 169.254.169.254:80 localhost:${canary.port} [::ffff:127.0.0.1]:${canary.port}; do ${PERL} -MIO::Socket::INET -MMIME::Base64 -e '($a,$h)=$ENV{HTTPS_PROXY}=~m{//([^@]+)@([^/]+)}; $s=IO::Socket::INET->new(PeerAddr=>$h, Timeout=>3) or exit 1; print $s "CONNECT $ARGV[0] HTTP/1.1\\r\\nHost: $ARGV[0]\\r\\nProxy-Authorization: Basic ".encode_base64($a,"")."\\r\\n\\r\\n"; $l=<$s>; print "$ARGV[0] $l"' "$t"; done`,
 				// Around the proxy: direct connects must fail.
 				`${PERL} -MIO::Socket::INET -e 'IO::Socket::INET->new(PeerAddr=>"127.0.0.1:${canary.port}", Timeout=>2) and print "DIRECT\\n"'`,
 				'echo "proxy=$HTTPS_PROXY"',

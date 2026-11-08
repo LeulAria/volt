@@ -21,9 +21,16 @@
  * 4. `clone3` fails with ENOSYS (its flags live in a struct a filter cannot read), so libc falls
  *    back to `clone`, whose flags are checked: any namespace flag is refused.
  * 5. `ioctl(TIOCSTI)` and `ioctl(TIOCLINUX)` are refused (typing into the host terminal).
- * 6. Optionally `socket(AF_UNIX, ...)` is refused, so no host unix socket can be reached even if
- *    one is visible. `socketpair` stays allowed: it cannot reach anything and runtimes use it for
- *    child process pipes.
+ * 6. `socket(domain, ...)` takes an allow list of families: `AF_INET` and `AF_INET6`, and
+ *    `AF_UNIX` only when the policy grants a unix socket (else EPERM, so no host unix socket can
+ *    be reached even if one is visible). `AF_NETLINK` only with protocol `NETLINK_ROUTE`: libc's
+ *    `getifaddrs` reads the interface list through it (Node's `os.networkInterfaces()`, which dev
+ *    servers call at startup, throws without it); it shows the sandbox's own network namespace and
+ *    changes nothing without CAP_NET_ADMIN, which the sandbox lacks. Every other family or netlink
+ *    protocol (`AF_VSOCK` reaches the hypervisor from an empty network namespace; `AF_PACKET`,
+ *    `AF_ALG`, `AF_KEY`, `AF_TIPC`, netlink audit, uevent and netfilter load rarely used kernel
+ *    code) fails with EAFNOSUPPORT, as if the kernel lacked it.
+ *    `socketpair` stays allowed: it cannot reach anything and runtimes use it for child pipes.
  * 7. Everything else is allowed.
  */
 
@@ -40,12 +47,18 @@ export const SECCOMP_RET_ERRNO = 0x00050000;
 export const SECCOMP_RET_ALLOW = 0x7fff0000;
 export const EPERM = 1;
 export const ENOSYS = 38;
+export const EAFNOSUPPORT = 97;
 
 /** `CLONE_NEWNS|CLONE_NEWCGROUP|CLONE_NEWUTS|CLONE_NEWIPC|CLONE_NEWUSER|CLONE_NEWPID|CLONE_NEWNET|CLONE_NEWTIME`. */
 export const CLONE_NAMESPACE_FLAGS = 0x7E020080;
 export const TIOCSTI = 0x5412;
 export const TIOCLINUX = 0x541C;
 export const AF_UNIX = 1;
+export const AF_INET = 2;
+export const AF_INET6 = 10;
+export const AF_NETLINK = 16;
+export const NETLINK_ROUTE = 0;
+export const AF_VSOCK = 40;
 
 /** Refused with EPERM on every architecture. */
 export const SECCOMP_DENIED_SYSCALLS: readonly string[] = [
@@ -64,10 +77,16 @@ export const SECCOMP_DENIED_SYSCALLS: readonly string[] = [
 	'settimeofday', 'clock_settime', 'clock_adjtime', 'adjtimex',
 	// File handles bypass path-based access (the classic container escape) and fanotify watches the host.
 	'open_by_handle_at', 'name_to_handle_at', 'fanotify_init',
+	// Other processes' file descriptors and memory, and kernel-object comparisons across processes.
+	'kcmp', 'pidfd_getfd', 'process_madvise',
+	// Pipe page gifting, a recurring source of kernel memory bugs (Dirty Pipe's neighbourhood).
+	'vmsplice',
+	// NUMA placement: no use in a sandbox, and page migration acts on other processes.
+	'mbind', 'set_mempolicy', 'get_mempolicy', 'migrate_pages', 'move_pages', 'set_mempolicy_home_node',
 ];
 
-/** Refused with EPERM on x86_64 only (they do not exist on arm64). */
-export const SECCOMP_DENIED_SYSCALLS_X64: readonly string[] = ['iopl', 'ioperm', 'uselib'];
+/** Refused with EPERM on x86_64 only (they do not exist on arm64). `modify_ldt`: 16-bit segments, a classic kernel attack surface. */
+export const SECCOMP_DENIED_SYSCALLS_X64: readonly string[] = ['iopl', 'ioperm', 'uselib', 'modify_ldt'];
 
 /**
  * Syscall numbers. x86_64 from arch/x86/entry/syscalls/syscall_64.tbl, arm64 from
@@ -88,7 +107,9 @@ export const SECCOMP_SYSCALL_NUMBERS: Readonly<Record<SeccompArch, Readonly<Reco
 		syslog: 103, acct: 163, quotactl: 179, lookup_dcookie: 212, vhangup: 153,
 		settimeofday: 164, clock_settime: 227, clock_adjtime: 305, adjtimex: 159,
 		open_by_handle_at: 304, name_to_handle_at: 303, fanotify_init: 300,
-		iopl: 172, ioperm: 173, uselib: 134,
+		kcmp: 312, pidfd_getfd: 438, process_madvise: 440, vmsplice: 278,
+		mbind: 237, set_mempolicy: 238, get_mempolicy: 239, migrate_pages: 256, move_pages: 279, set_mempolicy_home_node: 450,
+		iopl: 172, ioperm: 173, uselib: 134, modify_ldt: 154,
 	},
 	arm64: {
 		ioctl: 29, socket: 198, clone: 220, clone3: 435,
@@ -101,6 +122,8 @@ export const SECCOMP_SYSCALL_NUMBERS: Readonly<Record<SeccompArch, Readonly<Reco
 		syslog: 116, acct: 89, quotactl: 60, lookup_dcookie: 18, vhangup: 58,
 		settimeofday: 170, clock_settime: 112, clock_adjtime: 266, adjtimex: 171,
 		open_by_handle_at: 265, name_to_handle_at: 264, fanotify_init: 262,
+		kcmp: 272, pidfd_getfd: 438, process_madvise: 440, vmsplice: 75,
+		mbind: 235, set_mempolicy: 237, get_mempolicy: 236, migrate_pages: 238, move_pages: 239, set_mempolicy_home_node: 450,
 	},
 };
 
@@ -126,6 +149,11 @@ export interface ISeccompInstruction {
 export interface ISeccompFilterOptions {
 	/** Refuse `socket(AF_UNIX, ...)`: set when the policy grants no unix socket. */
 	readonly blockUnixSockets: boolean;
+}
+
+/** Socket families a sandboxed process may create (`AF_UNIX` only when a socket is granted), besides `AF_NETLINK` with `NETLINK_ROUTE`. */
+export function allowedSocketFamilies(options: ISeccompFilterOptions): number[] {
+	return options.blockUnixSockets ? [AF_INET, AF_INET6] : [AF_UNIX, AF_INET, AF_INET6];
 }
 
 const load = (offset: number): ISeccompInstruction => ({ code: BPF_LD_W_ABS, jt: 0, jf: 0, k: offset });
@@ -181,17 +209,25 @@ export function seccompInstructions(arch: SeccompArch, options: ISeccompFilterOp
 		errno(EPERM),
 	);
 
-	if (options.blockUnixSockets) {
-		program.push(
-			jeq(nr('socket'), 0, 4),
-			load(dataArgLow(0)),
-			jeq(AF_UNIX, 0, 1),
-			errno(EPERM),
-			ret(SECCOMP_RET_ALLOW),
-		);
-	}
-
+	// socket(domain, type, protocol), last: anything else is allowed right away. An allow list of
+	// families; `domain` and `protocol` are ints, so the low 32 bits are all of them. One
+	// `jeq family -> allow` per allowed family (the last one inverted, so the allow sits right
+	// after the list and every jump stays short), then AF_UNIX (EPERM when not granted), then
+	// AF_NETLINK with NETLINK_ROUTE only, then EAFNOSUPPORT for everything else.
+	const families = allowedSocketFamilies(options);
+	program.push(jeq(nr('socket'), 1, 0), ret(SECCOMP_RET_ALLOW), load(dataArgLow(0)));
+	families.forEach((family, index) => program.push(index < families.length - 1 ? jeq(family, families.length - 1 - index, 0) : jeq(family, 0, 1)));
 	program.push(ret(SECCOMP_RET_ALLOW));
+	if (options.blockUnixSockets) {
+		program.push(jeq(AF_UNIX, 0, 1), errno(EPERM));
+	}
+	program.push(
+		jeq(AF_NETLINK, 0, 2),
+		load(dataArgLow(2)),
+		jeq(NETLINK_ROUTE, 1, 0),
+		errno(EAFNOSUPPORT),
+		ret(SECCOMP_RET_ALLOW),
+	);
 	return program;
 }
 

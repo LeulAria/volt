@@ -4,12 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ChildProcess, execFile } from 'child_process';
+import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable, toDisposable } from '../../../base/common/lifecycle.js';
 import { join } from '../../../base/common/path.js';
-import { ISandboxBackendCapabilities, SandboxBackendId } from '../common/sandboxBackend.js';
+import { IAttestation, ISandboxBackendCapabilities, SandboxBackendId } from '../common/sandboxBackend.js';
 import { ISandboxDenial, isNoiseDenial } from '../common/sandboxDenials.js';
 import { agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
 import { IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
@@ -48,9 +49,12 @@ export interface ISandboxLaunch {
 	/** Dimensions running best effort (status `partial`). Shown in the transcript. */
 	readonly unenforced: readonly SandboxDimension[];
 	readonly warnings: readonly string[];
+	/** Attests the spawned process from outside, then lets the agent run (F.5). Never `ok` without evidence. */
 	confirm(child: ChildProcess): Promise<SandboxConfirmation>;
+	/** The external evidence the agent started on, once `confirm` succeeded (F.12). */
+	attestation(): IAttestation | undefined;
 	terminate(child: ChildProcess): Promise<void>;
-	/** Hosts the user allows later (network off). */
+	/** Hosts the user allows later (network off): the running agent's next connection goes through. */
 	allowDomains(domains: readonly string[]): void;
 	dispose(): void;
 }
@@ -111,13 +115,17 @@ export class VoltSandboxLauncher extends Disposable {
 	async prepare(command: string, args: readonly string[], request: IVoltSandboxRequest, options: { cwd?: string; hostEnv: Readonly<Record<string, string | undefined>>; env?: Readonly<Record<string, string>> }): Promise<ISandboxLaunch> {
 		const host = await this.hostFacts();
 		const sshAuthSock = options.hostEnv.SSH_AUTH_SOCK && await fs.stat(options.hostEnv.SSH_AUTH_SOCK).then(s => s.isSocket(), () => false) ? options.hostEnv.SSH_AUTH_SOCK : undefined;
-		const policy = agentSandboxPolicy(request, { ...host, ...(sshAuthSock ? { sshAuthSock } : {}) });
+		// Package caches per principal: one chat's sandbox cannot plant a package another one runs (B-35).
+		const cacheDir = join(host.cacheDir, sandboxCacheKey(request));
+		await fs.mkdir(cacheDir, { recursive: true, mode: 0o700 });
+		const policy = agentSandboxPolicy(request, { ...host, cacheDir, ...(sshAuthSock ? { sshAuthSock } : {}) });
 		const prepared = await this.manager.prepare({
 			command,
 			args: [...nativeSandboxOffArgs(request.providerId), ...args],
 			policy,
 			context: { workspaceRoots: request.workspaceRoots.filter(root => !root.endsWith('/.git')), cwd: options.cwd, hostEnv: options.hostEnv, env: options.env },
 			label: `${request.providerId} agent`,
+			isolate: [{ root: host.cacheDir, keep: cacheDir }],
 		});
 		const listener = prepared.onDenial(denial => {
 			if (denial.kind === 'process' || denial.kind === 'limit') {
@@ -139,6 +147,7 @@ export class VoltSandboxLauncher extends Disposable {
 			unenforced: prepared.unenforced,
 			warnings,
 			confirm: child => prepared.confirm(child),
+			attestation: () => prepared.attestation(),
 			terminate: child => prepared.terminate(child),
 			allowDomains: domains => prepared.allowDomains(domains),
 			dispose: () => {
@@ -184,8 +193,10 @@ export class VoltSandboxLauncher extends Disposable {
 					temps.add(cache);
 				}
 			}
-			const cacheDir = join(facts.home, '.volt', 'sandbox-cache');
-			await fs.mkdir(cacheDir, { recursive: true, mode: 0o700 });
+			// The root of the per-principal caches (see `sandboxCacheKey`); each run gets its own child.
+			const cacheRoot = join(facts.home, '.volt', 'sandbox-cache');
+			await fs.mkdir(cacheRoot, { recursive: true, mode: 0o700 });
+			const cacheDir = await fs.realpath(cacheRoot).catch(() => cacheRoot);
 			const userDataDir = await fs.realpath(this.userDataDir).catch(() => this.userDataDir);
 			return {
 				platform: facts.platform,
@@ -200,6 +211,15 @@ export class VoltSandboxLauncher extends Disposable {
 		return this.agentHost;
 	}
 
+}
+
+/**
+ * Whose package cache a run uses: the agent provider and the chat's workspace. Chats of one
+ * project share one; another project's chat (or another provider) cannot read or poison it.
+ * Becomes the principal's subject once principals are minted by the registry (F.1).
+ */
+export function sandboxCacheKey(request: Pick<IVoltSandboxRequest, 'providerId' | 'workspaceRoots'>): string {
+	return createHash('sha256').update([request.providerId, ...request.workspaceRoots].join('\0')).digest('hex').slice(0, 16);
 }
 
 function mechanismOf(backend: SandboxBackendId): SandboxMechanism {

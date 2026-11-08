@@ -4,17 +4,18 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ChildProcess, execFile, spawn } from 'child_process';
-import { constants as fsConstants, Dirent, promises as fs } from 'fs';
+import { close as closeFd, constants as fsConstants, Dirent, fstatSync, open as openFd, promises as fs } from 'fs';
 import * as net from 'net';
 import { release, tmpdir } from 'os';
 import { promisify } from 'util';
 import { dirname, join } from '../../../base/common/path.js';
 import { bridgeHolderArgs, BUBBLEWRAP_FDS, bubblewrapArgs, bubblewrapEnvArgs, bubblewrapRefusals, encodeBubblewrapArgs, hasRlimits, IBubblewrapPathMatch, IBubblewrapPatternMatches, isInsidePath, nsenterArgs, PrlimitResource } from '../common/bwrap.js';
-import { allEnforcement, ISandboxBackendCapabilities, redactSandboxText, SandboxEnforcement, SandboxUnavailableError } from '../common/sandboxBackend.js';
+import { allEnforcement, ISandboxBackendCapabilities, parseReadyLine, redactSandboxText, SANDBOX_GO, SANDBOX_WRONG_GO, SandboxEnforcement, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { IResolvedPattern, IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { SandboxDimension } from '../common/sandboxSchema.js';
 import { buildSeccompFilter, SeccompArch, seccompArch, seccompInstructions } from '../common/seccomp.js';
-import { ISandboxBackend, ISandboxLaunchOptions, ISandboxLaunchSpec, SandboxConfirmation } from './sandboxBackends.js';
+import { ISandboxBackend, ISandboxLaunchOptions, ISandboxLaunchSpec, SandboxConfirmation, SandboxFault } from './sandboxBackends.js';
+import { binaryDigest, osBuild, ProbeCache } from './sandboxProbeCache.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -57,9 +58,21 @@ const CONFIRM_TIMEOUT_MS = 20_000;
 const BRIDGE_TIMEOUT_MS = 5_000;
 const TERMINATE_WAIT_MS = 2_000;
 const MIN_VERSION: readonly [number, number, number] = [0, 4, 0];
+/** CVE-2026-87766 (GHSA-pxhw-h44j-8pfx) is fixed here; older builds must pass the CVE trial (B-20, D-04). */
+export const BUBBLEWRAP_FIXED_VERSION: readonly [number, number, number] = [0, 12, 0];
+/** `--bind-fd` / `--ro-bind-fd` (B-33). */
+const BIND_FD_VERSION: readonly [number, number, number] = [0, 10, 0];
+/**
+ * Only the system's bubblewrap: Ubuntu's AppArmor `bwrap-userns-restrict` profile is bound to
+ * this path, and a copy elsewhere (PATH, a bundle) is a binary nobody vetted (J.2 distro gating).
+ */
+export const SYSTEM_BWRAP = '/usr/bin/bwrap';
+/** `O_PATH` from linux/fcntl.h (the same on x86_64 and arm64); Node does not export it. */
+const O_PATH = 0o10000000;
+const WITHHELD_GO_MS = 750;
 
-/** The bounded walk that expands `**\/` patterns into existing paths. */
-export const PATTERN_WALK_LIMITS = { maxEntries: 20_000, maxDepth: 8, budgetMs: 500 } as const;
+/** The bounded walk that expands `**\/` patterns into existing paths. Stopping at any limit refuses the run (B-27). */
+export const PATTERN_WALK_LIMITS = { maxEntries: 50_000, maxDepth: 12, budgetMs: 1_500 } as const;
 /** Folders the walk never descends into: large, regenerated, and never where secrets or hooks live. */
 const WALK_SKIP: ReadonlySet<string> = new Set(['node_modules', '.cache', '.npm', '.pnpm-store', '.yarn', '.cargo', '.rustup', '.gradle', '.m2', '.nvm', '.venv', '__pycache__', 'snap', '.Trash']);
 
@@ -80,6 +93,10 @@ interface IBubblewrapState {
 	/** The bridge trial passed: proxy and loopback ports can be carried in. */
 	readonly bridge: boolean;
 	readonly disableUserns: boolean;
+	/** bubblewrap 0.10+: roots are bound from verified `O_PATH` fds. */
+	readonly bindFd: boolean;
+	/** `bubblewrap 0.13.1`, for the attestation record. */
+	readonly versionText: string;
 	readonly rootLinks: readonly { readonly path: string; readonly target: string }[];
 	/** Top-level folders that are real folders (non-merged /usr), bound in trials. */
 	readonly rootDirs: readonly string[];
@@ -94,17 +111,17 @@ interface IStatusInfo {
 export class BubblewrapBackend implements ISandboxBackend {
 
 	readonly id = 'bubblewrap' as const;
-	private state: Promise<IBubblewrapState | ISandboxBackendCapabilities> | undefined;
+	private readonly cache = new ProbeCache<IBubblewrapState | ISandboxBackendCapabilities>();
 
-	/** Cached: the trials cost a few sandboxes' startup. */
+	/** Cached per (OS build, bubblewrap digest): the trials cost a few sandboxes' startup; an upgrade re-probes. */
 	async probe(): Promise<ISandboxBackendCapabilities> {
 		const state = await this.getState();
 		return 'capabilities' in state ? state.capabilities : state;
 	}
 
-	private getState(): Promise<IBubblewrapState | ISandboxBackendCapabilities> {
-		this.state ??= this.doProbe().catch(err => unavailable([], [`The bubblewrap probe failed: ${(err as Error).message}`]));
-		return this.state;
+	private async getState(): Promise<IBubblewrapState | ISandboxBackendCapabilities> {
+		const key = `bubblewrap|${osBuild()}|${await binaryDigest(SYSTEM_BWRAP)}`;
+		return this.cache.get(key, () => this.doProbe().catch(err => unavailable([], [`The bubblewrap probe failed: ${(err as Error).message}`])));
 	}
 
 	private async doProbe(): Promise<IBubblewrapState | ISandboxBackendCapabilities> {
@@ -119,9 +136,12 @@ export class BubblewrapBackend implements ISandboxBackend {
 		if (!arch) {
 			diagnostics.push(`Volt has no seccomp filter for ${process.arch}; its Linux sandbox supports x64 and arm64.`);
 		}
-		const bwrap = await findExecutable('bwrap');
+		const bwrap = await fs.access(SYSTEM_BWRAP, fsConstants.X_OK).then(() => SYSTEM_BWRAP, () => undefined);
 		if (!bwrap) {
-			diagnostics.push('bubblewrap is not installed. Install it: `sudo apt install bubblewrap` (Debian, Ubuntu), `sudo dnf install bubblewrap` (Fedora), `sudo pacman -S bubblewrap` (Arch).');
+			const elsewhere = await findExecutable('bwrap');
+			diagnostics.push(elsewhere
+				? `Volt uses only the system bubblewrap at ${SYSTEM_BWRAP} (AppArmor's bwrap profile is bound to it), not ${elsewhere}. Install your distribution's package (bubblewrap ${BUBBLEWRAP_FIXED_VERSION.join('.')} or later).`
+				: 'bubblewrap is not installed. Install it: `sudo apt install bubblewrap` (Debian, Ubuntu), `sudo dnf install bubblewrap` (Fedora), `sudo pacman -S bubblewrap` (Arch).');
 		}
 		const shell = await fs.realpath('/bin/sh').catch(() => undefined);
 		if (!shell) {
@@ -162,10 +182,23 @@ export class BubblewrapBackend implements ISandboxBackend {
 			}
 		}
 		const disableUserns = compareVersions(version, [0, 8, 0]) >= 0;
+		const bindFd = compareVersions(version, BIND_FD_VERSION) >= 0;
 		const base: IBubblewrapState = {
 			capabilities: unavailable(details, diagnostics),
 			bwrap, version, arch, shell, prlimit, socat, nsenter, bridge: false, disableUserns, rootLinks, rootDirs, hostNamespaces,
+			bindFd, versionText: versionText || `bubblewrap ${version.join('.')}`,
 		};
+
+		// CVE-2026-87766: setup-time file creation follows symlinks in bound content onto the host.
+		// Fixed in 0.12.0; an older build passes only on evidence (a backport), never on its version.
+		const cve = await cveTrial(base);
+		if (!cve.ok) {
+			diagnostics.push(compareVersions(version, BUBBLEWRAP_FIXED_VERSION) < 0
+				? `bubblewrap ${version.join('.')} has CVE-2026-87766 (a sandbox setup escape, fixed in ${BUBBLEWRAP_FIXED_VERSION.join('.')}), and Volt's trial confirmed it: ${cve.detail}. Install bubblewrap ${BUBBLEWRAP_FIXED_VERSION.join('.')} or later as ${SYSTEM_BWRAP} (Ubuntu 24.04 and Debian 12 ship older versions: use your distribution's backports or build it from https://github.com/containers/bubblewrap/releases).`
+				: `bubblewrap ${version.join('.')} failed Volt's CVE-2026-87766 trial: ${cve.detail}.`);
+			return unavailable(details, diagnostics);
+		}
+		details.push(`CVE-2026-87766: ${cve.detail}`);
 
 		// A real trial: the same arguments, filter and confirmation as a run.
 		const started = Date.now();
@@ -174,8 +207,9 @@ export class BubblewrapBackend implements ISandboxBackend {
 			diagnostics.push(...await userNamespaceDiagnostics(core.error));
 			return unavailable(details, diagnostics);
 		}
-		details.push(`user namespaces: ok (trial sandbox in ${Date.now() - started} ms)`);
-		details.push(`seccomp: ${arch} filter, ${seccompInstructions(arch, { blockUnixSockets: true }).length} instructions; --disable-userns: ${disableUserns ? 'yes' : 'no (bubblewrap < 0.8; seccomp still refuses new namespaces)'}`);
+		details.push(`user namespaces: ok (trial sandbox in ${Date.now() - started} ms, attested from /proc)`);
+		details.push(`seccomp: ${arch} filter, ${seccompInstructions(arch, { blockUnixSockets: true }).length} instructions, socket families inet/inet6, netlink route, unix when granted; --disable-userns: ${disableUserns ? 'yes' : 'no (bubblewrap < 0.8; seccomp still refuses new namespaces)'}`);
+		details.push(bindFd ? 'roots: bound from verified O_PATH fds (--bind-fd)' : `roots: bound by path (bubblewrap < ${BIND_FD_VERSION.join('.')} has no --bind-fd), so roots under shared temp folders are refused`);
 
 		const [bridgeTrial, limitsTrial] = await Promise.all([
 			socat && nsenter ? this.trial(base, { bridgePort: 41_000 + Math.floor(Math.random() * 1000) }) : Promise.resolve(undefined),
@@ -215,7 +249,8 @@ export class BubblewrapBackend implements ISandboxBackend {
 				notes[dimension] = note;
 			}
 		};
-		set('filesystem.protectNew', 'partial', `bubblewrap can only mount over paths that exist at launch: deny/protect entries that do not exist yet, pattern matches created during the run or beyond a bounded walk (${PATTERN_WALK_LIMITS.maxEntries} entries, depth ${PATTERN_WALK_LIMITS.maxDepth}, ${PATTERN_WALK_LIMITS.budgetMs} ms), and new .git folders are not covered.`);
+		set('filesystem.protectNew', 'partial', 'bubblewrap can only mount over paths that exist at launch: deny/protect entries that do not exist yet, pattern matches created during the run, and new .git folders are not covered.');
+		notes['filesystem.denyPatterns'] = `Every existing match in the readable roots is masked at launch; a bounded walk finds them (${PATTERN_WALK_LIMITS.maxEntries} entries, depth ${PATTERN_WALK_LIMITS.maxDepth}, ${PATTERN_WALK_LIMITS.budgetMs} ms, skipping package and build caches), and a walk that stops early refuses the run.`;
 		if (!bridge) {
 			const why = !socat || !nsenter ? `needs ${!socat ? 'socat' : 'nsenter'} to bridge ports into the sandbox's network namespace` : 'the network bridge trial failed';
 			set('network.proxy', 'unsupported', `${why[0].toUpperCase()}${why.slice(1)}; the sandbox has no network at all instead.`);
@@ -247,14 +282,17 @@ export class BubblewrapBackend implements ISandboxBackend {
 		let spec: ISandboxLaunchSpec | undefined;
 		try {
 			await fs.mkdir(tmp, { mode: 0o700 });
+			// The canary sits in the writable folder, so only its deny mask keeps it unreadable.
+			const sentinel = join(tmp, 'canary');
+			await fs.writeFile(sentinel, 'volt-canary\n', { mode: 0o600 });
 			const read = ['/usr', ...state.rootDirs];
 			const policy: IResolvedSandboxPolicy = {
-				name: 'probe', platform: 'linux', readAll: false, read, write: [tmp], writeFiles: [], deny: [], protect: [],
+				name: 'probe', platform: 'linux', readAll: false, read, write: [tmp], writeFiles: [], deny: [sentinel], protect: [],
 				denyPatterns: [], protectPatterns: [], newRepositoryGuard: [],
 				network: { mode: 'none', allow: [], loopbackPorts: options.bridgePort ? [options.bridgePort] : [], listen: false },
 				unixSockets: [], systemServices: false,
 				limits: options.limits ? { processes: 64, openFiles: 256, cpuSeconds: 10, fileSizeMB: 1, memoryMB: 1024 } : {},
-				env: { PATH: '/usr/bin:/bin' }, cwd: tmp, tmp, home: tmp,
+				env: { PATH: '/usr/bin:/bin' }, cwd: tmp, tmp, home: tmp, sentinel,
 			};
 			const withTools: IBubblewrapState = { ...state, bridge: !!options.bridgePort, prlimit: options.limits ? state.prlimit : undefined };
 			spec = await this.createSpec(withTools, policy, state.shell, ['-c', 'exit 0'], { tag: 'probe', terminal: false, onDenial: () => undefined });
@@ -299,6 +337,20 @@ export class BubblewrapBackend implements ISandboxBackend {
 		if (refusals.length) {
 			throw new SandboxUnavailableError(`The Linux sandbox cannot enforce this policy: ${refusals.map(r => r.reason).join('; ')}`, 'unavailable', [...new Set(refusals.map(r => r.dimension))]);
 		}
+		const sentinel = policy.sentinel;
+		if (!sentinel || !policy.deny.includes(sentinel)) {
+			throw new SandboxUnavailableError('The run has no canary sentinel the policy denies', 'unavailable');
+		}
+		// Without --bind-fd a root is bound by path, after it was checked: under a folder every
+		// sandbox can write, another one could swap it for a symlink in between (B-33).
+		const roots = bindableRoots(policy);
+		if (!state.bindFd) {
+			const temps = await agentWritableTemps();
+			const shared = roots.filter(root => temps.some(temp => root !== temp && isInsidePath(root, temp)));
+			if (shared.length) {
+				throw new SandboxUnavailableError(`bubblewrap ${state.version.join('.')} cannot bind ${shared.join(', ')} race-free (needs ${BIND_FD_VERSION.join('.')}+ for --bind-fd): a folder under a shared temp folder could be swapped while the sandbox is set up`, 'unavailable', ['filesystem.read']);
+			}
+		}
 		await fs.mkdir(controlDir, { recursive: true, mode: 0o700 });
 
 		const [kinds, masks, reexpose, matches, hard] = await Promise.all([
@@ -308,26 +360,44 @@ export class BubblewrapBackend implements ISandboxBackend {
 			walkPatterns(policy, { collectSockets: policy.unixSockets.length > 0 }),
 			state.prlimit && hasRlimits(policy.limits) ? hardLimits() : Promise.resolve({}),
 		]);
-		const bwrapArgs = bubblewrapArgs(policy, command, commandArgs, {
-			terminal: options.terminal,
-			disableUserns: state.disableUserns,
-			bridged: ports.length > 0,
-			host: { kinds, rootLinks: state.rootLinks, masks, reexpose },
-			matches,
-			shell: state.shell,
-			prlimit: state.prlimit ? { path: state.prlimit, hard } : undefined,
-		});
+		if (policy.denyPatterns.length && !matches.complete) {
+			// A `.env` the walk did not reach would stay readable: refuse rather than run with less (B-27).
+			throw new SandboxUnavailableError(`The Linux sandbox could not check every folder for ${policy.denyPatterns.map(p => p.names.join('/')).filter((n, i, all) => all.indexOf(n) === i).slice(0, 4).join(', ')} files before starting (it stopped after ${matches.visited} folders: over ${PATTERN_WALK_LIMITS.maxEntries} entries, deeper than ${PATTERN_WALK_LIMITS.maxDepth} levels or slower than ${PATTERN_WALK_LIMITS.budgetMs} ms). Open a smaller folder, or narrow what the sandbox reads.`, 'unavailable', ['filesystem.denyPatterns']);
+		}
+		const opened = state.bindFd ? await openRoots(roots) : { fds: new Map<string, number>(), close: () => undefined };
+		let bwrapArgs: string[];
+		try {
+			bwrapArgs = bubblewrapArgs(policy, command, commandArgs, {
+				terminal: options.terminal,
+				disableUserns: state.disableUserns,
+				bridged: ports.length > 0,
+				host: { kinds, rootLinks: state.rootLinks, masks, reexpose },
+				matches,
+				shell: state.shell,
+				prlimit: state.prlimit ? { path: state.prlimit, hard } : undefined,
+				sentinel,
+				bindFds: new Map([...opened.fds.keys()].map((path, index) => [path, BUBBLEWRAP_FDS.firstRoot + index])),
+			});
+		} catch (err) {
+			opened.close();
+			throw err;
+		}
 		const blockUnixSockets = policy.unixSockets.length === 0;
 		const seccomp = buildSeccompFilter(state.arch, { blockUnixSockets });
 		const envArgs = Buffer.from(encodeBubblewrapArgs(bubblewrapEnvArgs(policy.env)), 'utf8');
 
 		let bridge: BubblewrapBridge | undefined;
 		if (ports.length) {
-			bridge = await BubblewrapBridge.start(state, controlDir, ports, policy.home);
+			try {
+				bridge = await BubblewrapBridge.start(state, controlDir, ports, policy.home);
+			} catch (err) {
+				opened.close();
+				throw err;
+			}
 		}
 		const limitsText = state.prlimit && hasRlimits(policy.limits) ? 'limits via prlimit' : 'no rlimits';
 		const patternText = policy.denyPatterns.length || policy.protectPatterns.length
-			? `patterns: ${matches.deny.length + matches.protect.length} existing paths${matches.complete ? '' : ' (walk stopped at its budget)'}`
+			? `patterns: ${matches.deny.length + matches.protect.length} existing paths`
 			: '';
 		let status: IStatusInfo | undefined;
 		let disposed = false;
@@ -337,10 +407,13 @@ export class BubblewrapBackend implements ISandboxBackend {
 			// Deliberately empty: see the class comment (the workload's environment goes through `--args`).
 			env: {},
 			cwd: '/',
-			extraStdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+			// marker, status, args, seccomp, go; then the root fds for --bind-fd.
+			extraStdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe', ...opened.fds.values()],
 			confirm: async child => {
+				// The spawn holds its own copies of the root fds now.
+				opened.close();
 				const result = await confirmLaunch(child, {
-					envArgs, seccomp, home: policy.home, hostNamespaces: state.hostNamespaces,
+					envArgs, seccomp, home: policy.home, hostNamespaces: state.hostNamespaces, fault: options.fault,
 					expectNet: policy.network.mode === 'host' ? 'host' : bridge ? bridge.netNamespace : 'new',
 				});
 				if (!result.ok) {
@@ -355,10 +428,16 @@ export class BubblewrapBackend implements ISandboxBackend {
 					limitsText,
 					...(patternText ? [patternText] : []),
 					`pid ${result.status.childPid}`,
+					`attested from /proc (pid ${result.workloadPid})`,
 				];
-				return { ok: true, detail: parts.join('; ') };
+				return {
+					ok: true,
+					detail: parts.join('; '),
+					attestation: { evidence: result.evidence, canary: { credOpen: result.cred }, backendVersion: state.versionText },
+				};
 			},
 			terminate: async child => {
+				opened.close();
 				await killSandbox(child, status);
 				await bridge?.stop();
 			},
@@ -367,10 +446,104 @@ export class BubblewrapBackend implements ISandboxBackend {
 					return;
 				}
 				disposed = true;
+				opened.close();
 				await bridge?.stop();
 				await fs.rm(controlDir, { recursive: true, force: true }).catch(() => undefined);
 			},
 		};
+	}
+}
+
+/** Folders the sandbox binds from the host: the outermost read roots and every write root. */
+function bindableRoots(policy: IResolvedSandboxPolicy): string[] {
+	const reads = policy.readAll ? [] : policy.read.filter(path => !policy.read.some(other => other !== path && isInsidePath(path, other)));
+	return [...new Set([...reads, ...policy.write])];
+}
+
+/** Temp folders every agent profile may write: `/tmp`, `/var/tmp`, `/dev/shm` and `os.tmpdir()`. */
+async function agentWritableTemps(): Promise<string[]> {
+	const out = new Set<string>();
+	for (const dir of ['/tmp', '/var/tmp', '/dev/shm', tmpdir()]) {
+		out.add(await fs.realpath(dir).catch(() => dir));
+	}
+	return [...out];
+}
+
+/**
+ * Opens each user-owned root `O_PATH|O_NOFOLLOW` and checks the fd is the folder the policy named
+ * (its `/proc/self/fd` link reads back the same path, and it is not a symlink), so the mount
+ * bubblewrap makes from it cannot be redirected by a later swap. Roots owned by another user
+ * (root's `/usr`) cannot be swapped by a same-user process and stay bound by path. A root that
+ * fails the check refuses the run.
+ */
+async function openRoots(roots: readonly string[]): Promise<{ readonly fds: ReadonlyMap<string, number>; close(): void }> {
+	const fds = new Map<string, number>();
+	let closed = false;
+	const close = () => {
+		if (!closed) {
+			closed = true;
+			for (const fd of fds.values()) {
+				closeFd(fd, () => undefined);
+			}
+		}
+	};
+	const uid = process.getuid?.();
+	try {
+		for (const root of roots) {
+			const fd = await new Promise<number | undefined>(resolve => openFd(root, O_PATH | fsConstants.O_NOFOLLOW, (err, value) => resolve(err ? undefined : value)));
+			if (fd === undefined) {
+				continue; // Missing: bubblewrap's `-try` binds leave it out, which is stricter.
+			}
+			const st = fstatSync(fd);
+			if (st.uid !== uid) {
+				closeFd(fd, () => undefined);
+				continue;
+			}
+			fds.set(root, fd);
+			const target = await fs.readlink(`/proc/self/fd/${fd}`).catch(() => undefined);
+			if (st.isSymbolicLink() || target !== root) {
+				throw new SandboxUnavailableError(`The sandbox root ${root} changed while the sandbox was being set up (now ${target ?? 'unreadable'})`, 'failed', ['filesystem.read']);
+			}
+		}
+	} catch (err) {
+		close();
+		throw err;
+	}
+	return { fds, close };
+}
+
+/**
+ * CVE-2026-87766 on evidence: a fixture whose bound content holds a symlink to `/oldroot/<host
+ * folder>` (the host's root during setup), and a `--dir` below that link. A vulnerable bubblewrap
+ * creates the folder on the host, outside the fixture; a fixed one (`openat2(RESOLVE_IN_ROOT)`)
+ * keeps it inside the sandbox or refuses.
+ */
+async function cveTrial(state: IBubblewrapState): Promise<{ readonly ok: boolean; readonly detail: string }> {
+	const fixture = await fs.mkdtemp(join(await fs.realpath(tmpdir()), 'volt-sbx-cve-'));
+	try {
+		const bound = join(fixture, 'bound');
+		const outside = join(fixture, 'outside');
+		await fs.mkdir(bound);
+		await fs.mkdir(outside);
+		await fs.symlink(`/oldroot${outside}`, join(bound, 'link'));
+		const args = [
+			'--unshare-user', '--unshare-pid', '--die-with-parent', '--new-session',
+			'--ro-bind', '/usr', '/usr',
+			...state.rootLinks.flatMap(link => ['--symlink', link.target, link.path]),
+			...state.rootDirs.flatMap(dir => ['--ro-bind', dir, dir]),
+			'--bind', bound, bound,
+			'--dir', `${bound}/link/volt-cve-probe`,
+			'--', state.shell, '-c', 'exit 0',
+		];
+		const result = await execFileAsync(state.bwrap, args, { timeout: 10_000, env: {} }).then(() => 'ran', (err: Error) => `refused (${err.message.split('\n')[0].slice(0, 160)})`);
+		const escaped = await fs.lstat(join(outside, 'volt-cve-probe')).then(() => true, () => false);
+		return escaped
+			? { ok: false, detail: 'a folder bubblewrap created during setup landed outside the bound fixture' }
+			: { ok: true, detail: `setup-time creation stayed inside the sandbox (trial ${result})` };
+	} catch (err) {
+		return { ok: false, detail: `the trial could not run: ${(err as Error).message}` };
+	} finally {
+		await fs.rm(fixture, { recursive: true, force: true }).catch(() => undefined);
 	}
 }
 
@@ -565,7 +738,12 @@ export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { co
 			if (options.collectSockets && entry.isSocket()) {
 				sockets.add(path);
 			}
-			if (!entry.isDirectory() || depth + 1 > limits.maxDepth || WALK_SKIP.has(entry.name) || deny.has(path)) {
+			if (!entry.isDirectory() || WALK_SKIP.has(entry.name) || deny.has(path)) {
+				continue;
+			}
+			if (depth + 1 > limits.maxDepth) {
+				// A folder the walk will not look into: a match there would stay readable.
+				complete = false;
 				continue;
 			}
 			// A repository's `.git` is matched from its parent (`.git/config`, `.git/hooks`), so the
@@ -587,14 +765,20 @@ interface IConfirmContext {
 	readonly hostNamespaces: Readonly<Partial<Record<NamespaceName, number>>>;
 	/** `new`: a namespace of its own; a number: the bridge holder's; `host`: unchanged. */
 	readonly expectNet: 'new' | 'host' | number;
+	readonly fault: SandboxFault | undefined;
 }
 
+type LinuxConfirmation =
+	| { readonly ok: true; readonly status: IStatusInfo; readonly workloadPid: number; readonly evidence: Record<string, string | number | boolean>; readonly cred: string }
+	| { readonly ok: false; readonly error: string };
+
 /**
- * Feeds bubblewrap its environment and filter, then waits for both pieces of evidence: the status
- * line with the sandbox's namespaces (written by bubblewrap's monitor), and the readiness line
- * the prologue writes from inside the finished sandbox (`NoNewPrivs:1 Seccomp:2`).
+ * The parent's half of the launch protocol (F.5): feeds bubblewrap its environment and filter,
+ * waits for bubblewrap's status line (only to find the sandbox's pid 1) and the prologue's ready
+ * line, then attests the prologue's process from the host's `/proc` (see `attestFromProc`): the
+ * workload cannot influence any of that. Only then is the go byte sent on fd 7.
  */
-function confirmLaunch(child: ChildProcess, context: IConfirmContext): Promise<{ ok: true; status: IStatusInfo } | { ok: false; error: string }> {
+function confirmLaunch(child: ChildProcess, context: IConfirmContext): Promise<LinuxConfirmation> {
 	return new Promise(resolve => {
 		// Node types `stdio` as a five-tuple; the extra pipes are there at runtime.
 		const stdio = child.stdio as readonly unknown[];
@@ -602,13 +786,16 @@ function confirmLaunch(child: ChildProcess, context: IConfirmContext): Promise<{
 		const status = stdio[BUBBLEWRAP_FDS.status] as NodeJS.ReadableStream | null | undefined;
 		const argsPipe = stdio[BUBBLEWRAP_FDS.args] as NodeJS.WritableStream | null | undefined;
 		const seccompPipe = stdio[BUBBLEWRAP_FDS.seccomp] as NodeJS.WritableStream | null | undefined;
+		const go = stdio[BUBBLEWRAP_FDS.go] as NodeJS.WritableStream | null | undefined;
 		let done = false;
+		let exited = false;
 		let stderr = '';
 		let markerText = '';
 		let statusText = '';
 		let info: IStatusInfo | undefined;
-		let ready: string | undefined;
-		const finish = (result: { ok: true; status: IStatusInfo } | { ok: false; error: string }) => {
+		let ready: { readonly pid: number; readonly cred: string } | undefined;
+		let attesting = false;
+		const finish = (result: LinuxConfirmation) => {
 			if (!done) {
 				done = true;
 				clearTimeout(timer);
@@ -616,20 +803,53 @@ function confirmLaunch(child: ChildProcess, context: IConfirmContext): Promise<{
 			}
 		};
 		const timer = setTimeout(() => finish({ ok: false, error: 'bubblewrap did not confirm the sandbox in time' }), CONFIRM_TIMEOUT_MS);
-		if (!marker || !status || !argsPipe || !seccompPipe) {
+		if (!marker || !status || !argsPipe || !seccompPipe || !go) {
 			finish({ ok: false, error: 'bubblewrap was spawned without its control pipes' });
 			return;
 		}
 		const check = () => {
-			if (!info || ready === undefined) {
+			if (!info || !ready || attesting) {
 				return;
 			}
-			if (!/(?:^|\s)NoNewPrivs:1(?:\s|$)/.test(ready) || !/(?:^|\s)Seccomp:2(?:\s|$)/.test(ready)) {
-				finish({ ok: false, error: `the sandbox started without its seccomp filter (${ready.trim() || 'no report'})` });
-				return;
-			}
+			attesting = true;
 			const problem = namespaceProblem(info, context);
-			finish(problem ? { ok: false, error: problem } : { ok: true, status: info });
+			if (problem) {
+				finish({ ok: false, error: problem });
+				return;
+			}
+			const statusInfo = info;
+			const readyLine = ready;
+			void attestFromProc(statusInfo, readyLine.pid, context).then(async attested => {
+				if (done || exited) {
+					return;
+				}
+				if (!attested.ok) {
+					finish(attested);
+					return;
+				}
+				if (context.fault === 'attest') {
+					finish({ ok: false, error: 'the sandbox could not be attested (fault injection)' });
+					return;
+				}
+				// The canary counts only now that we know who ran it.
+				if (readyLine.cred !== 'denied') {
+					finish({ ok: false, error: 'the canary could read the run\'s sentinel credential' });
+					return;
+				}
+				if (context.fault === 'withhold-go') {
+					await new Promise(r => setTimeout(r, WITHHELD_GO_MS));
+					finish({ ok: false, error: 'the go byte was withheld (fault injection)' });
+					return;
+				}
+				if (context.fault === 'wrong-go') {
+					go.end(SANDBOX_WRONG_GO);
+					finish({ ok: false, error: 'a wrong go byte was sent (fault injection)' });
+					return;
+				}
+				// Attested: only now may the workload run.
+				go.end(SANDBOX_GO);
+				finish({ ok: true, status: statusInfo, workloadPid: attested.pid, evidence: attested.evidence, cred: readyLine.cred });
+			});
 		};
 		child.stderr?.on('data', (data: Buffer | string) => { stderr = (stderr + data.toString()).slice(-4_000); });
 		status.on('data', (data: Buffer | string) => {
@@ -658,24 +878,112 @@ function confirmLaunch(child: ChildProcess, context: IConfirmContext): Promise<{
 				return;
 			}
 			markerText += data.toString();
-			const newline = markerText.indexOf('\n');
-			if (newline >= 0) {
-				ready = markerText.slice(0, newline);
-				check();
+			ready = parseReadyLine(markerText);
+			if (!ready && markerText.includes('\n')) {
+				finish({ ok: false, error: `the sandbox's prologue sent no ready line (${markerText.trim().slice(0, 80)})` });
+				return;
 			}
+			check();
 		});
-		for (const stream of [marker, status, argsPipe, seccompPipe]) {
+		for (const stream of [marker, status, argsPipe, seccompPipe, go]) {
 			stream.on('error', () => undefined);
 		}
 		// The write-only pipes are sockets too: keep their read side flowing, or their end is never
 		// seen and the child's 'close' (which waits for every stdio stream) never comes.
-		(argsPipe as unknown as NodeJS.ReadableStream).resume?.();
-		(seccompPipe as unknown as NodeJS.ReadableStream).resume?.();
+		for (const stream of [argsPipe, seccompPipe, go]) {
+			(stream as unknown as NodeJS.ReadableStream).resume?.();
+		}
 		argsPipe.end(context.envArgs);
 		seccompPipe.end(Buffer.from(context.seccomp));
 		child.once('error', err => finish({ ok: false, error: `could not start bubblewrap: ${err.message}` }));
-		child.once('exit', (code, signal) => setTimeout(() => finish({ ok: false, error: `bubblewrap exited before the workload started (${signal ?? code})${stderr.trim() ? `: ${stderr.trim()}` : ''}` }), 100));
+		child.once('exit', (code, signal) => {
+			exited = true;
+			setTimeout(() => finish({ ok: false, error: `bubblewrap exited before the workload started (${signal ?? code})${stderr.trim() ? `: ${stderr.trim()}` : ''}` }), 100);
+		});
 	});
+}
+
+const ATTEST_NAMESPACES = ['mnt', 'pid', 'ipc', 'uts', 'user', 'net', 'cgroup'] as const;
+
+/**
+ * External evidence from the host side (F.5, J.2): the process that wrote the ready line is a
+ * child of the sandbox's pid 1 (bubblewrap's `child-pid`), its pid inside its namespace is the
+ * one it reported, and the kernel says it runs with NoNewPrivs, in seccomp filter mode with at
+ * least one filter, and in namespaces other than ours (the network one too unless `host`).
+ */
+async function attestFromProc(info: IStatusInfo, innerPid: number, context: IConfirmContext): Promise<{ ok: true; pid: number; evidence: Record<string, string | number | boolean> } | { ok: false; error: string }> {
+	const pid = await sandboxChild(info.childPid, innerPid);
+	if (pid === undefined) {
+		return { ok: false, error: `no process ${innerPid} of the sandbox's pid namespace was found under its pid 1 (${info.childPid})` };
+	}
+	const status = await fs.readFile(`/proc/${pid}/status`, 'utf8').catch(() => '');
+	const field = (name: string) => new RegExp(`^${name}:\\s*(.*)$`, 'm').exec(status)?.[1]?.trim();
+	const evidence: Record<string, string | number | boolean> = { pid, innerPid };
+	const noNewPrivs = Number(field('NoNewPrivs'));
+	const seccompMode = Number(field('Seccomp'));
+	const filtersText = field('Seccomp_filters');
+	evidence.noNewPrivs = noNewPrivs;
+	evidence.seccomp = seccompMode;
+	if (filtersText !== undefined) {
+		evidence.seccompFilters = Number(filtersText);
+	}
+	if (noNewPrivs !== 1 || seccompMode !== 2 || (filtersText !== undefined && !(Number(filtersText) >= 1))) {
+		return { ok: false, error: `the sandbox process runs without its seccomp filter (NoNewPrivs ${field('NoNewPrivs') ?? '?'}, Seccomp ${field('Seccomp') ?? '?'}, filters ${filtersText ?? '?'})` };
+	}
+	for (const name of ATTEST_NAMESPACES) {
+		const [theirs, ours] = await Promise.all([
+			fs.stat(`/proc/${pid}/ns/${name}`).then(st => st.ino, () => undefined),
+			fs.stat(`/proc/self/ns/${name}`).then(st => st.ino, () => undefined),
+		]);
+		if (theirs === undefined) {
+			if (name === 'cgroup') {
+				continue; // `--unshare-cgroup-try`: kernels without cgroup namespaces.
+			}
+			return { ok: false, error: `the sandbox process's ${name} namespace could not be read` };
+		}
+		evidence[`ns${name[0].toUpperCase()}${name.slice(1)}`] = theirs;
+		const shared = theirs === ours;
+		if (shared && !(name === 'net' && context.expectNet === 'host') && name !== 'cgroup') {
+			return { ok: false, error: `the sandbox process shares Volt's ${name} namespace` };
+		}
+		if (name === 'net' && typeof context.expectNet === 'number' && theirs !== context.expectNet) {
+			return { ok: false, error: 'the sandbox process is not in its network bridge\'s namespace' };
+		}
+	}
+	return { ok: true, pid, evidence };
+}
+
+/**
+ * The host pid of the sandbox process whose pid inside its namespace is `innerPid`, among the
+ * children of the sandbox's pid 1. bubblewrap's own init stays pid 1 and runs the command as its
+ * child; `NSpid` gives a process's pid in each nested namespace, the innermost last.
+ */
+async function sandboxChild(init: number, innerPid: number): Promise<number | undefined> {
+	const listed = await fs.readFile(`/proc/${init}/task/${init}/children`, 'utf8').then(text => text.trim().split(/\s+/).filter(Boolean).map(Number), () => undefined);
+	const candidates = listed ?? await childrenByScan(init);
+	for (const pid of [init, ...candidates]) {
+		const status = await fs.readFile(`/proc/${pid}/status`, 'utf8').catch(() => '');
+		const ppid = Number(/^PPid:\s*(\d+)$/m.exec(status)?.[1]);
+		const nspid = /^NSpid:\s*(.*)$/m.exec(status)?.[1]?.trim().split(/\s+/).map(Number) ?? [];
+		if ((pid === init || ppid === init) && nspid.length > 1 && nspid[nspid.length - 1] === innerPid && nspid[0] === pid) {
+			return pid;
+		}
+	}
+	return undefined;
+}
+
+/** Without `CONFIG_PROC_CHILDREN`: every process whose parent is `pid`. */
+async function childrenByScan(pid: number): Promise<number[]> {
+	const out: number[] = [];
+	for (const name of await fs.readdir('/proc').catch(() => [] as string[])) {
+		if (/^\d+$/.test(name)) {
+			const stat = await fs.readFile(`/proc/${name}/stat`, 'utf8').catch(() => '');
+			if (Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]) === pid) {
+				out.push(Number(name));
+			}
+		}
+	}
+	return out;
 }
 
 function parseStatusLine(line: string): IStatusInfo | undefined {

@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { AF_UNIX, buildSeccompFilter, CLONE_NAMESPACE_FLAGS, encodeSeccompProgram, ENOSYS, EPERM, SECCOMP_AUDIT_ARCH, SECCOMP_DENIED_SYSCALLS, SECCOMP_DENIED_SYSCALLS_X64, SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS, SECCOMP_SYSCALL_NUMBERS, SeccompArch, seccompArch, seccompInstructions, TIOCLINUX, TIOCSTI } from '../../common/seccomp.js';
+import { AF_INET, AF_INET6, AF_NETLINK, AF_UNIX, AF_VSOCK, allowedSocketFamilies, NETLINK_ROUTE, buildSeccompFilter, CLONE_NAMESPACE_FLAGS, EAFNOSUPPORT, encodeSeccompProgram, ENOSYS, EPERM, SECCOMP_AUDIT_ARCH, SECCOMP_DENIED_SYSCALLS, SECCOMP_DENIED_SYSCALLS_X64, SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS, SECCOMP_SYSCALL_NUMBERS, SeccompArch, seccompArch, seccompInstructions, TIOCLINUX, TIOCSTI } from '../../common/seccomp.js';
 
 /**
  * A classic-BPF interpreter for the instructions the builder emits, run against a synthetic
@@ -42,6 +42,7 @@ function evaluate(program: Uint8Array, data: { nr: number; arch: number; args?: 
 const ARCHES: readonly SeccompArch[] = ['x64', 'arm64'];
 const ERR_EPERM = (SECCOMP_RET_ERRNO | EPERM) >>> 0;
 const ERR_ENOSYS = (SECCOMP_RET_ERRNO | ENOSYS) >>> 0;
+const ERR_EAFNOSUPPORT = (SECCOMP_RET_ERRNO | EAFNOSUPPORT) >>> 0;
 const SIGCHLD = 17n;
 
 function decide(arch: SeccompArch, name: string, args: readonly bigint[] = [], blockUnixSockets = true): number {
@@ -153,6 +154,40 @@ suite('Volt sandbox seccomp filter', () => {
 			assert.strictEqual(decide(arch, 'socket', [2n, 1n, 0n], true), SECCOMP_RET_ALLOW, 'AF_INET');
 			assert.strictEqual(decide(arch, 'socket', [10n, 2n, 0n], true), SECCOMP_RET_ALLOW, 'AF_INET6');
 		}
+	});
+
+	test('LNX-SECCOMP-1: socket families outside inet, inet6, granted unix and netlink route fail with EAFNOSUPPORT', () => {
+		const families = { AF_KEY: 15, AF_PACKET: 17, AF_TIPC: 30, AF_BLUETOOTH: 31, AF_ALG: 38, AF_VSOCK: AF_VSOCK, AF_XDP: 44, AF_MAX_PLUS: 1000 };
+		for (const arch of ARCHES) {
+			for (const blockUnixSockets of [true, false]) {
+				for (const [name, family] of Object.entries(families)) {
+					assert.strictEqual(decide(arch, 'socket', [BigInt(family), 1n, 0n], blockUnixSockets), ERR_EAFNOSUPPORT, `${arch} ${name}`);
+				}
+				assert.strictEqual(decide(arch, 'socket', [BigInt(AF_INET), 1n, 0n], blockUnixSockets), SECCOMP_RET_ALLOW, `${arch} AF_INET`);
+				assert.strictEqual(decide(arch, 'socket', [BigInt(AF_INET6), 2n, 0n], blockUnixSockets), SECCOMP_RET_ALLOW, `${arch} AF_INET6`);
+				// The kernel takes `int domain`: high bits cannot smuggle AF_VSOCK past the check.
+				assert.strictEqual(decide(arch, 'socket', [(1n << 32n) | BigInt(AF_VSOCK), 1n, 0n], blockUnixSockets), ERR_EAFNOSUPPORT, `${arch} high bits`);
+				// Netlink: the routing protocol only (getifaddrs); audit, uevent, netfilter, generic are refused.
+				assert.strictEqual(decide(arch, 'socket', [BigInt(AF_NETLINK), 3n, BigInt(NETLINK_ROUTE)], blockUnixSockets), SECCOMP_RET_ALLOW, `${arch} netlink route`);
+				for (const protocol of [9n, 12n, 15n, 16n]) {
+					assert.strictEqual(decide(arch, 'socket', [BigInt(AF_NETLINK), 3n, protocol], blockUnixSockets), ERR_EAFNOSUPPORT, `${arch} netlink ${protocol}`);
+				}
+				assert.strictEqual(decide(arch, 'socket', [BigInt(AF_NETLINK), 3n, (1n << 32n) | 9n], blockUnixSockets), ERR_EAFNOSUPPORT, `${arch} netlink protocol high bits`);
+			}
+			assert.deepStrictEqual(allowedSocketFamilies({ blockUnixSockets: true }), [AF_INET, AF_INET6]);
+		}
+	});
+
+	test('LNX-SECCOMP-2: modify_ldt, kcmp, pidfd_getfd, process_madvise, vmsplice and the NUMA calls are refused', () => {
+		const added = ['kcmp', 'pidfd_getfd', 'process_madvise', 'vmsplice', 'mbind', 'set_mempolicy', 'get_mempolicy', 'migrate_pages', 'move_pages', 'set_mempolicy_home_node'];
+		for (const arch of ARCHES) {
+			for (const name of added) {
+				assert.ok(SECCOMP_DENIED_SYSCALLS.includes(name), name);
+				assert.strictEqual(decide(arch, name), ERR_EPERM, `${arch} ${name}`);
+			}
+		}
+		assert.strictEqual(decide('x64', 'modify_ldt'), ERR_EPERM);
+		assert.strictEqual(SECCOMP_SYSCALL_NUMBERS.arm64.modify_ldt, undefined, 'modify_ldt does not exist on arm64');
 	});
 
 	test('jumps are forward, small, and land inside the program', () => {

@@ -66,6 +66,10 @@ export function dimensionsUsed(policy: IVoltSandboxPolicy): SandboxDimension[] {
 	if (policy.filesystem.deny.length || policy.filesystem.protect.length) {
 		used.add('filesystem.protectNew');
 	}
+	// `**/.env`: every match must be covered at launch, or the run is refused (B-27).
+	if (policy.filesystem.deny.some(entry => entry.startsWith('**/'))) {
+		used.add('filesystem.denyPatterns');
+	}
 	if (policy.network.mode === 'none') {
 		used.add('network.none');
 	}
@@ -123,7 +127,49 @@ export interface ISandboxRunResult {
 	readonly timing: { readonly prepareMs: number; readonly startMs: number; readonly totalMs: number };
 	/** Why it was refused or failed, for `unavailable` and `failed`. Redacted. */
 	readonly error?: string;
+	/** The external evidence the run started on; absent when it never started. */
+	readonly attestation?: IAttestation;
 }
+
+/**
+ * Why a run is reported as sandboxed (F.12): evidence the parent collected about the process from
+ * outside it, before the go byte let the workload run. The workload cannot produce any of it.
+ */
+export interface IAttestation {
+	/** The run's tag until principals are minted by a registry. */
+	readonly principalId: string;
+	readonly backend: SandboxBackendId;
+	readonly backendVersion: string;
+	readonly osBuild: string;
+	/** SHA-256 of the resolved policy's canonical JSON. */
+	readonly launchPolicyHash: string;
+	/** `{ sandbox_check: 1, credentialDenied: 1 }`, `{ seccomp: 2, nsMnt: 4026532901 }`. */
+	readonly evidence: Readonly<Record<string, string | number | boolean>>;
+	/** What the prologue's canary saw: `{ credOpen: 'denied' }`. */
+	readonly canary: Readonly<Record<string, string>>;
+	readonly unenforced: readonly SandboxDimension[];
+	readonly attestedAt: number;
+}
+
+/**
+ * The ready line both prologues write before they wait for the go byte (F.5):
+ * `volt-sandbox-ready <pid> cred=<open|denied>`. Informational: it locates the process to attest
+ * and carries the canary's result, which counts only after the attestation.
+ */
+export function parseReadyLine(text: string): { readonly pid: number; readonly cred: 'open' | 'denied' } | undefined {
+	const match = /volt-sandbox-ready (\d+) cred=(open|denied)\n/.exec(text);
+	return match ? { pid: Number(match[1]), cred: match[2] === 'open' ? 'open' : 'denied' } : undefined;
+}
+
+/**
+ * What the parent writes on the go pipe once the process is attested (F.5): the go byte and a
+ * newline, so the prologue's `read` returns on the line and never waits for the pipe's EOF. (On
+ * macOS a `read` that was already blocked when EOF followed the byte stayed blocked about once in
+ * a few hundred concurrent launches.)
+ */
+export const SANDBOX_GO = 'g\n';
+/** Fault injection: any other byte must stop the prologue (exit 125). */
+export const SANDBOX_WRONG_GO = 'x\n';
 
 /** Thrown when a run is refused: no backend, a dimension it cannot enforce, or a bad policy. */
 export class SandboxUnavailableError extends Error {

@@ -35,17 +35,24 @@ import { ISandboxLimits, limitDimension, SandboxDimension } from './sandboxSchem
  * pattern match created during the run, and a new `.git` (`newRepositoryGuard`) are not covered.
  */
 
-/** File descriptors the backend passes, in `extraStdio` order (fd 3 up). The readiness script relies on fd 3. */
-export const BUBBLEWRAP_FDS = { marker: 3, status: 4, args: 5, seccomp: 6 } as const;
+/**
+ * File descriptors the backend passes, in `extraStdio` order (fd 3 up). The readiness script
+ * relies on fd 3 (ready) and fd 7 (go). Root fds for `--bind-fd` follow from `firstRoot`.
+ */
+export const BUBBLEWRAP_FDS = { marker: 3, status: 4, args: 5, seccomp: 6, go: 7, firstRoot: 8 } as const;
 
 /**
  * Runs inside the finished sandbox (after the mounts and the seccomp filter, as the first process
- * of the workload): reports its own `NoNewPrivs` and `Seccomp` state on fd 3, closes fd 3, then
- * execs the workload. The backend only reports the sandbox as established once this line arrives
- * with `Seccomp:2`, so a launcher that failed half way is never mistaken for a running sandbox.
- * Constant: the workload arrives as positional arguments, never as script text.
+ * of the workload), the launch protocol's prologue (F.5): runs the canary (the run's sentinel
+ * credential must be unreadable: masked, so ENOENT or empty), writes
+ * `volt-sandbox-ready <pid> cred=<open|denied>` to fd 3, then blocks on fd 7 for the go byte.
+ * The backend sends `g` and a newline only after it attested this process from outside (its `/proc` status:
+ * NoNewPrivs, seccomp mode and filters, and namespaces); any other byte, EOF or nothing means
+ * the workload never runs (exit 125). The ready line itself proves nothing: an unsandboxed
+ * process can write the same. Constant: the sentinel and the workload arrive as positional
+ * arguments, never as script text.
  */
-export const BUBBLEWRAP_READY_SCRIPT = 'while read -r k v; do case $k in NoNewPrivs:|Seccomp:) printf \'%s%s \' "$k" "$v" >&3;; esac; done < /proc/self/status; printf \'\\n\' >&3; exec 3>&-; exec "$@"';
+export const BUBBLEWRAP_READY_SCRIPT = 's=$1; shift; l=; { read -r l < "$s"; } 2>/dev/null; if [ -n "$l" ]; then k=open; else k=denied; fi; printf \'volt-sandbox-ready %s cred=%s\\n\' "$$" "$k" >&3 || exit 125; exec 3>&-; g=; read -r g <&7; exec 7<&-; [ "$g" = g ] || exit 125; exec "$@"';
 
 /** `$0` of the readiness script, shown by `ps` inside the sandbox until the workload execs. */
 export const BUBBLEWRAP_READY_ARGV0 = 'volt-sandbox';
@@ -98,6 +105,13 @@ export interface IBubblewrapArgsOptions {
 	readonly shell: string;
 	/** Limits, applied by prlimit inside the sandbox. Undefined: none applied. */
 	readonly prlimit?: IPrlimitInvocation;
+	/** The run's canary file (denied by the policy), read by the readiness script. */
+	readonly sentinel: string;
+	/**
+	 * Roots bound from an fd the backend opened `O_PATH|O_NOFOLLOW` and verified (bubblewrap 0.10+
+	 * `--bind-fd`): what is mounted is what was checked, even if the path is swapped meanwhile (B-33).
+	 */
+	readonly bindFds?: ReadonlyMap<string, number>;
 }
 
 export interface IPrlimitInvocation {
@@ -202,11 +216,14 @@ export function encodeBubblewrapArgs(args: readonly string[]): string {
  * The workload command after `--`: the readiness script, then prlimit when limits apply, then the
  * command. Throws for a command bubblewrap or the shell could take as an option.
  */
-export function bubblewrapCommand(command: string, args: readonly string[], options: Pick<IBubblewrapArgsOptions, 'shell' | 'prlimit'>, limits: ISandboxLimits): string[] {
+export function bubblewrapCommand(command: string, args: readonly string[], options: Pick<IBubblewrapArgsOptions, 'shell' | 'prlimit' | 'sentinel'>, limits: ISandboxLimits): string[] {
 	if (!command || command.startsWith('-') || command.includes('\0') || args.some(arg => arg.includes('\0'))) {
 		throw new Error('The sandboxed command must be a program name or path (not empty, not starting with "-", no NUL)');
 	}
-	const out = ['--', options.shell, '-c', BUBBLEWRAP_READY_SCRIPT, BUBBLEWRAP_READY_ARGV0];
+	if (!options.sentinel.startsWith('/') || options.sentinel.includes('\0')) {
+		throw new Error('The canary sentinel must be an absolute path');
+	}
+	const out = ['--', options.shell, '-c', BUBBLEWRAP_READY_SCRIPT, BUBBLEWRAP_READY_ARGV0, options.sentinel];
 	if (options.prlimit) {
 		const limitArgs = prlimitOptions(limits, options.prlimit.hard);
 		if (limitArgs.length) {
@@ -243,13 +260,24 @@ export function bubblewrapArgs(policy: IResolvedSandboxPolicy, command: string, 
 	push('--cap-drop', 'ALL', '--hostname', 'volt-sandbox');
 	push('--json-status-fd', String(BUBBLEWRAP_FDS.status), '--seccomp', String(BUBBLEWRAP_FDS.seccomp));
 
+	// Roots the backend opened as fds bind from the fd, so a path swapped after the check cannot
+	// redirect the mount (B-33); the others by path.
+	const bindRoot = (path: string, writable: boolean) => {
+		const fd = options.bindFds?.get(path);
+		if (fd !== undefined) {
+			push(writable ? '--bind-fd' : '--ro-bind-fd', String(fd), path);
+		} else {
+			push(writable ? '--bind-try' : '--ro-bind-try', path, path);
+		}
+	};
+
 	// 1. Base.
 	const reads = outermost(policy.read);
 	if (policy.readAll) {
 		push('--ro-bind', '/', '/');
 	} else {
 		for (const path of reads) {
-			push('--ro-bind-try', path, path);
+			bindRoot(path, false);
 		}
 		for (const link of options.host.rootLinks) {
 			const absolute = link.target.startsWith('/') ? link.target : `/${link.target}`;
@@ -268,13 +296,20 @@ export function bubblewrapArgs(policy: IResolvedSandboxPolicy, command: string, 
 		push('--tmpfs', mask);
 	}
 	for (const path of [...new Set(policy.read)].sort(byDepth).filter(path => masks.some(mask => isInsidePath(path, mask)))) {
-		push('--ro-bind-try', path, path);
+		bindRoot(path, false);
+	}
+
+	// 3b. Isolated folders (every run folder, every principal's cache): an empty tmpfs, made
+	// read-only at the end; this run's own child is bound back by the writes below (B-35).
+	const isolated = (policy.isolated ?? []).filter(({ root }) => isVisibleInSandbox(policy, root) && !masks.some(mask => isInsidePath(root, mask)));
+	for (const { root } of isolated) {
+		push('--tmpfs', root);
 	}
 
 	// 4. Writes, then files and sockets that must stay usable.
 	const allWrites = [...new Set(policy.write)].sort(byDepth);
 	for (const path of allWrites) {
-		push('--bind-try', path, path);
+		bindRoot(path, true);
 	}
 	for (const path of policy.writeFiles) {
 		// A missing file cannot be bound; leaving it out is stricter, never wider.
@@ -366,6 +401,10 @@ export function bubblewrapArgs(policy: IResolvedSandboxPolicy, command: string, 
 		} else {
 			push('--ro-bind', '/dev/null', path);
 		}
+	}
+
+	for (const { root } of isolated) {
+		push('--remount-ro', root);
 	}
 
 	// bubblewrap builds a minimal root on a tmpfs, writable by the sandbox's user: freeze it, so a
