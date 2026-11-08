@@ -162,6 +162,8 @@ export class ClaudeAccounts extends Disposable {
 	private readonly logins = new Map<string, IPendingLogin>();
 	private switching: VoltAccountSwitching = 'manual';
 	private threshold = CLAUDE_AUTO_SWITCH_DEFAULT_THRESHOLD;
+	/** The feature's extension is on (`setEnabled`). */
+	private enabled = true;
 	private lastError: string | undefined;
 	/** The saved account Claude Code was last seen on, to notice logins changed outside Volt. */
 	private lastLiveId: string | undefined;
@@ -180,7 +182,21 @@ export class ClaudeAccounts extends Disposable {
 	}
 
 	get autoSwitching(): boolean {
-		return this.switching === 'auto';
+		return this.enabled && this.switching === 'auto';
+	}
+
+	/**
+	 * Off (the Claude accounts extension was disabled): nothing writes Claude Code's login any more.
+	 * Automatic switching stops, and adding, switching and forgetting accounts are refused.
+	 */
+	setEnabled(enabled: boolean): void {
+		this.enabled = enabled;
+	}
+
+	private checkEnabled(): void {
+		if (!this.enabled) {
+			throw new Error('Claude accounts is turned off. Enable the Claude accounts extension in Extensions to add, switch or forget accounts.');
+		}
 	}
 
 	private async location(): Promise<IClaudeLiveLocation> {
@@ -385,6 +401,7 @@ export class ClaudeAccounts extends Disposable {
 
 	switchTo(id: string, reason: 'manual' | 'auto' = 'manual', detail?: string): Promise<IVoltClaudeAccountsState> {
 		return this.sequencer.queue(async () => {
+			this.checkEnabled();
 			const event = await this.doSwitch(id, reason, detail);
 			const state = await this.snapshot(id);
 			if (event && reason === 'auto') {
@@ -457,7 +474,8 @@ export class ClaudeAccounts extends Disposable {
 		}
 		return this.sequencer.queue(async () => {
 			const store = await this.load();
-			if (store.accounts.length < 2) {
+			// Turned off while it waited in the queue.
+			if (!this.autoSwitching || store.accounts.length < 2) {
 				return;
 			}
 			const active = await this.syncLive();
@@ -488,6 +506,7 @@ export class ClaudeAccounts extends Disposable {
 
 	remove(id: string): Promise<IVoltClaudeAccountsState> {
 		return this.sequencer.queue(async () => {
+			this.checkEnabled();
 			const store = await this.load();
 			const active = await this.syncLive();
 			if (active?.id === id) {
@@ -507,6 +526,7 @@ export class ClaudeAccounts extends Disposable {
 	//#region Adding an account
 
 	async beginLogin(email?: string): Promise<IVoltClaudeLogin> {
+		this.checkEnabled();
 		await this.sweepLogins();
 		const id = generateUuid().slice(0, 8);
 		const dir = join(this.options.storeDir, 'logins', id);
@@ -527,6 +547,9 @@ export class ClaudeAccounts extends Disposable {
 			const pending = this.logins.get(id);
 			if (!pending) {
 				return { status: 'failed', error: 'That sign-in is no longer running. Start it again.' };
+			}
+			if (!this.enabled) {
+				return { status: 'failed', error: 'Claude accounts is turned off, so the account was not added.' };
 			}
 			const env = await this.options.env();
 			const location = this.options.location?.({ ...env, CLAUDE_CONFIG_DIR: pending.dir }) ?? claudeLiveLocation(this.options.home, env, this.options.platform, pending.dir);
