@@ -8463,7 +8463,26 @@ pre.volt-agent-searchable {
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.folder:not(.folder-icon)::before { content: '\ea83'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.image:not(.file-icon)::before { content: '\eaea'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.terminal:not(.file-icon):not(.folder-icon)::before { content: '\ea85'; }
-:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.chat:not(.file-icon):not(.folder-icon)::before { content: '\ea6b'; }
+/* An agent chat: a paper plane, in the @ menu rows and on chips alike (AgentChatMentionIcon). */
+.codicon.codicon-volt-agent-chat::before,
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.chat:not(.file-icon):not(.folder-icon)::before {
+	content: '';
+	display: inline-block;
+	width: 1em;
+	height: 1em;
+	background-color: currentColor;
+	-webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M20%204L3.5%2010.5L10.5%2013.5L13.5%2020.5Z M13.2%2010.8L15.6%208.4'/></svg>") center / contain no-repeat;
+	mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M20%204L3.5%2010.5L10.5%2013.5L13.5%2020.5Z M13.2%2010.8L15.6%208.4'/></svg>") center / contain no-repeat;
+}
+
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.chat:not(.file-icon):not(.folder-icon)::before {
+	background-color: var(--vscode-icon-foreground, #c5c5c5);
+}
+
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.chat.hovered::before {
+	-webkit-mask: none !important;
+	mask: none !important;
+}
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.mcp:not(.file-icon):not(.folder-icon)::before { content: '\eb50'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.branch:not(.file-icon):not(.folder-icon)::before { content: '\ea68'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.scratch:not(.file-icon):not(.folder-icon)::before { content: '\ebaf'; }
