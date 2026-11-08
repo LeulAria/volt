@@ -45,7 +45,7 @@ const hostEnv = { PATH: process.env.PATH, HOME: process.env.HOME, LANG: 'C' };
 const stats = values => {
 	const sorted = [...values].sort((a, b) => a - b);
 	const pick = q => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
-	return { median: +pick(0.5).toFixed(2), p90: +pick(0.9).toFixed(2), min: +sorted[0].toFixed(2), n: sorted.length };
+	return { median: +pick(0.5).toFixed(2), p90: +pick(0.9).toFixed(2), p95: +pick(0.95).toFixed(2), min: +sorted[0].toFixed(2), n: sorted.length };
 };
 const time = async fn => { const t = performance.now(); await fn(); return performance.now() - t; };
 const direct = (command, args) => new Promise((resolve, reject) => {
@@ -76,15 +76,41 @@ for (let i = 0; i < runs; i++) {
 }
 results.compileMs = stats(compile);
 
-// 2. Startup: /usr/bin/true direct vs sandboxed (workspace and agent profiles).
+// The agent profile: narrow reads with its deny patterns. Size and filter counts of the profile
+// text, and the time `sandbox-exec` alone takes to compile it and run `/usr/bin/true`.
 const agent = agentSandboxPolicy({ level: 'workspace-write', network: false, providerId: 'claude-code', workspaceRoots: [ws] }, { platform: process.platform, home: host.home, tempDirs: [host.tmpRoot], cacheDir: join(work, 'cache') });
-const startup = { direct: [], workspace: [], agent: [], phases: [] };
+if (process.platform === 'darwin') {
+	const agentCompile = [];
+	let profile = '';
+	for (let i = 0; i < runs; i++) {
+		const runTmp = await fs.mkdtemp(join(work, 'compile-'));
+		agentCompile.push(await time(async () => {
+			const { policy } = await resolveSandboxPolicy(agent, { workspaceRoots: [ws], hostEnv }, host, runTmp);
+			profile = buildSeatbeltProfile(policy, { tag: 'bench' });
+		}));
+	}
+	results.agentCompileMs = stats(agentCompile);
+	const count = construct => (profile.match(new RegExp(`\\(${construct} `, 'g')) ?? []).length;
+	results.agentProfile = { bytes: profile.length, regex: count('regex'), subpath: count('subpath'), literal: count('literal') };
+	const file = join(work, 'agent.sb');
+	await fs.writeFile(file, profile);
+	const exec = [];
+	for (let i = 0; i < runs; i++) {
+		exec.push(await time(() => direct('/usr/bin/sandbox-exec', ['-f', file, '/usr/bin/true'])));
+	}
+	results.agentSandboxExecMs = stats(exec);
+}
+
+// 2. Startup: /usr/bin/true direct vs sandboxed (workspace and agent profiles).
+const startup = { direct: [], workspace: [], agent: [], phases: [], agentPhases: [] };
 for (let i = 0; i < runs; i++) {
 	startup.direct.push(await time(() => direct('/usr/bin/true', [])));
 	const r = await sandboxed(builtinProfile('workspace'), '/usr/bin/true', []);
 	startup.workspace.push(r.timing.totalMs);
 	startup.phases.push(r.timing);
-	startup.agent.push((await sandboxed(agent, '/usr/bin/true', [])).timing.totalMs);
+	const a = await sandboxed(agent, '/usr/bin/true', []);
+	startup.agent.push(a.timing.totalMs);
+	startup.agentPhases.push(a.timing);
 }
 results.startupMs = {
 	direct: stats(startup.direct),
@@ -92,6 +118,8 @@ results.startupMs = {
 	agent: stats(startup.agent),
 	workspacePrepare: stats(startup.phases.map(p => p.prepareMs)),
 	workspaceStart: stats(startup.phases.map(p => p.startMs)),
+	agentPrepare: stats(startup.agentPhases.map(p => p.prepareMs)),
+	agentStart: stats(startup.agentPhases.map(p => p.startMs)),
 };
 
 // 3. Per-command overhead inside one sandbox: 200 `true` in a sandboxed shell vs a direct one.
