@@ -16,6 +16,8 @@ import { agentStatePlan } from '../common/agentState.js';
 import { AGENT_STATE_ROOT, agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
 import { AGENT_CONFIG_NAMES } from '../common/sandboxProfiles.js';
 import { AgentStateOverlay, IAgentStateSync } from './agentStateOverlay.js';
+import { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
+import { chatSubject } from '../common/principals.js';
 import { IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { SandboxDimension } from '../common/sandboxSchema.js';
 import { SandboxManager } from './sandboxManager.js';
@@ -100,9 +102,11 @@ export class VoltSandboxLauncher extends Disposable {
 		private readonly userDataDir: string,
 		private readonly logger: ILogger,
 		platform: string = process.platform,
+		/** `volt.sandbox.networkBroker`, read at every launch; default the network broker. */
+		networkMode?: () => NetworkBrokerMode,
 	) {
 		super();
-		this.manager = new SandboxManager({ info: m => logger.info(m), warn: m => logger.warn(m) }, { platform });
+		this.manager = new SandboxManager({ info: m => logger.info(m), warn: m => logger.warn(m) }, { platform, ...(networkMode ? { networkMode } : {}) });
 		this._register(toDisposable(() => void this.manager.dispose()));
 	}
 
@@ -139,12 +143,14 @@ export class VoltSandboxLauncher extends Disposable {
 			terminal: !!options.terminal,
 			label: options.label ?? `${request.providerId} agent`,
 			isolate: [{ root: host.cacheDir, keep: cacheDir }],
+			// The chat's network grants attach to the chat, not to this one run (I.4 routes).
+			...(request.stateKey !== undefined ? { subject: chatSubject(request.stateKey) } : {}),
 		});
 		const listener = prepared.onDenial(denial => {
 			if (denial.kind === 'process' || denial.kind === 'limit') {
 				return;
 			}
-			this.report(prepared.tag, { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}) });
+			this.report(prepared.tag, { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}), ...(denial.promptable === false ? { promptable: false } : {}) });
 		});
 		const warnings = prepared.unenforced.map(dimension => `Sandbox is partial here: ${UNENFORCED_TEXT[dimension] ?? dimension}.`);
 		if (policy.network.listen) {

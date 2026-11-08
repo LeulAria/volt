@@ -18,6 +18,7 @@ import { IVoltBrowserService, IVoltSiteData, VOLT_BROWSER_PARTITION, VoltBrowser
 import { listCookieSources, readCookies } from '../node/browserCookieReader.js';
 import { ISandboxBrowserRules } from '../common/sandboxBrowser.js';
 import { SandboxBrowserSessions } from './sandboxBrowserSessions.js';
+import { NETWORK_BROKER_SETTING, readNetworkBrokerMode } from '../../voltSandbox/common/networkBrokerSetting.js';
 
 interface IPageAgentState {
 	routes: readonly IVoltMockRoute[];
@@ -49,7 +50,7 @@ export class VoltBrowserMainService implements IVoltBrowserService {
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IEnvironmentMainService private readonly environmentMainService: IEnvironmentMainService,
 	) {
-		this.sandboxSessions = new SandboxBrowserSessions(message => this.logService.info(message));
+		this.sandboxSessions = new SandboxBrowserSessions(message => this.logService.info(message), () => readNetworkBrokerMode(this.configurationService.getValue(NETWORK_BROKER_SETTING)));
 		this.playgrounds = new BrowserPlaygrounds(message => this.logService.info(message));
 		// Started from the Dock, the main process lacks the user's PATH (nvm, Homebrew); a dev server needs it.
 		this.devServers = new DevServers(() => this.shellEnv ??= getResolvedShellEnv(this.configurationService, this.logService, this.environmentMainService.args, process.env).then(env => ({ ...process.env, ...env }), () => process.env), message => this.logService.info(message));

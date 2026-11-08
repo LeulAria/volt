@@ -5,13 +5,19 @@
 
 import { randomBytes } from 'crypto';
 import { app, session, webContents, type AuthenticationResponseDetails, type AuthInfo, type Event as ElectronEvent, type OnBeforeRequestListenerDetails, type Session, type WebContents } from 'electron';
+import { NetworkBrokerMode } from '../../voltSandbox/common/networkBrokerSetting.js';
+import { chatSubject } from '../../voltSandbox/common/principals.js';
+import { NetworkAuditLog, NetworkBroker, NetworkRoute } from '../../voltSandbox/node/networkBroker.js';
 import { SandboxNetworkProxy } from '../../voltSandbox/node/sandboxProxy.js';
 import { isSandboxBrowserPartition, ISandboxBrowserRules, sandboxBrowserProxyConfig, sandboxBrowserProxyLogin, sandboxBrowserRequestVerdict } from '../common/sandboxBrowser.js';
 
 interface IPartitionState {
 	readonly session: Session;
 	rules: ISandboxBrowserRules | undefined;
+	/** The legacy proxy (`volt.sandbox.networkBroker: legacy`). */
 	proxy: SandboxNetworkProxy | undefined;
+	/** The partition's own network broker route (I.4 "Browser partition"). */
+	route: NetworkRoute | undefined;
 	/** Serialises rule changes (the proxy starts asynchronously). */
 	applying: Promise<void>;
 }
@@ -33,6 +39,10 @@ export function isSandboxBrowserSession(target: Session | undefined): boolean {
  * cannot carry credentials in a proxy rule, so it asks through the `login` event, which is
  * answered with that profile's token, only for that profile's own proxy, and only once per
  * challenge (a second ask means the token was refused: cancelled, never a dialog).
+ *
+ * The proxy is the network broker (I.4 "Browser partition"): each partition is its own principal
+ * with its own route, so its token is good on its route only, and a narrower rule set closes the
+ * tunnels it no longer allows. `volt.sandbox.networkBroker: legacy` keeps the earlier proxy.
  */
 export class SandboxBrowserSessions {
 
@@ -40,10 +50,22 @@ export class SandboxBrowserSessions {
 	/** Web contents (pages and their docked DevTools) by id, to the partition whose session they use. */
 	private readonly owners = new Map<number, string>();
 	private disposed = false;
+	private broker: NetworkBroker | undefined;
 
-	constructor(private readonly log: (message: string) => void) {
+	constructor(
+		private readonly log: (message: string) => void,
+		/** `volt.sandbox.networkBroker`, read whenever a partition's proxy starts. */
+		private readonly mode: () => NetworkBrokerMode = () => 'broker',
+		/** The broker's audit log; default `~/.volt/trust/audit/network.log`. */
+		private readonly auditFile?: string,
+	) {
 		app.on('web-contents-created', (_event, contents) => this.onWebContents(contents));
 		app.on('login', (event, contents, details, authInfo, callback) => this.onLogin(event, contents, details, authInfo, callback));
+	}
+
+	private networkBroker(): NetworkBroker {
+		this.broker ??= new NetworkBroker({ audit: new NetworkAuditLog(this.auditFile).append });
+		return this.broker;
 	}
 
 	private onLogin(event: ElectronEvent, contents: WebContents | null | undefined, details: AuthenticationResponseDetails & { firstAuthAttempt?: boolean }, authInfo: AuthInfo, callback: (username?: string, password?: string) => void): void {
@@ -52,7 +74,8 @@ export class SandboxBrowserSessions {
 			return;
 		}
 		event.preventDefault();
-		const credentials = sandboxBrowserProxyLogin(this.partitions.get(partition)?.proxy, authInfo, details.firstAuthAttempt !== false);
+		const state = this.partitions.get(partition);
+		const credentials = sandboxBrowserProxyLogin(state?.route ?? state?.proxy, authInfo, details.firstAuthAttempt !== false);
 		if (credentials) {
 			callback(credentials.username, credentials.password);
 		} else {
@@ -107,7 +130,7 @@ export class SandboxBrowserSessions {
 		}
 		const ses = session.fromPartition(partition);
 		sandboxSessions.add(ses);
-		state = { session: ses, rules: undefined, proxy: undefined, applying: Promise.resolve() };
+		state = { session: ses, rules: undefined, proxy: undefined, route: undefined, applying: Promise.resolve() };
 		this.partitions.set(partition, state);
 		ses.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !this.dispatch(partition, details) }));
 		ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
@@ -152,21 +175,38 @@ export class SandboxBrowserSessions {
 		const next = { network: !!rules.network, allowedDomains: [...rules.allowedDomains], listenPorts: rules.listenPorts.filter(port => Number.isInteger(port) && port > 0 && port < 65536) };
 		state.applying = state.applying.catch(() => undefined).then(async () => {
 			const narrower = !!state.rules && state.rules.allowedDomains.some(host => !next.allowedDomains.includes(host));
-			if (next.network || narrower) {
+			const legacy = this.mode() === 'legacy';
+			if (next.network || narrower || !legacy) {
 				state.proxy?.dispose();
 				state.proxy = undefined;
 			}
-			if (!next.network) {
+			if (next.network || legacy) {
+				state.route?.dispose();
+				state.route = undefined;
+			}
+			if (!next.network && legacy) {
 				if (state.proxy) {
 					state.proxy.allow(next.allowedDomains);
 				} else {
 					// Its own route token: no other process on this machine can use this chat's grants (B-31).
 					state.proxy = await SandboxNetworkProxy.start(next.allowedDomains, (host, reason) => this.log(`[volt-sandbox-browser] ${partition} proxy refused ${host}: ${reason}`), { token: randomBytes(24).toString('base64url') });
 				}
+			} else if (!next.network) {
+				if (state.route) {
+					// Wider: the next connection; narrower: the tunnels it no longer allows close now.
+					state.route.setRules(next.allowedDomains);
+				} else {
+					// The partition is its own principal: its own route and token (B-31), its own grants.
+					state.route = await this.networkBroker().openRoute({
+						principal: Object.freeze({ id: randomBytes(16).toString('base64url'), subject: chatSubject(partition), kind: 'agent', executionHost: 'local', launchPolicyHash: '', createdAt: Date.now() }),
+						allow: next.allowedDomains,
+						onDenial: denial => this.log(`[volt-sandbox-browser] ${partition} network broker refused ${denial.destination}:${denial.port}: ${denial.reason}`),
+					});
+				}
 			}
 			// The dispatcher's rules first: the proxy only ever narrows further.
 			state.rules = next;
-			await state.session.setProxy(sandboxBrowserProxyConfig(next, state.proxy?.port));
+			await state.session.setProxy(sandboxBrowserProxyConfig(next, state.route?.port ?? state.proxy?.port));
 			await state.session.closeAllConnections();
 		});
 		return state.applying;
@@ -181,7 +221,9 @@ export class SandboxBrowserSessions {
 		this.disposed = true;
 		for (const state of this.partitions.values()) {
 			state.proxy?.dispose();
+			state.route?.dispose();
 		}
+		this.broker?.dispose();
 	}
 }
 
