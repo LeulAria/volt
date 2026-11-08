@@ -10,6 +10,8 @@
  * sandbox denies: children are confined at least as tightly as the chat that made them.
  */
 
+import { chatCovers, IChatView } from './authority.js';
+import { chatSubject } from './principals.js';
 import { isPathInside, IVoltSandboxSettings, normalizeSandboxPath, SandboxStrategy, strategyAtLeast, VoltSandboxLevel } from './sandboxPolicy.js';
 
 /**
@@ -118,29 +120,17 @@ function writableRoots(settings: IVoltSandboxSettings, scope: ISandboxScope | un
  * as one confined by `b`. With scopes, also its agent's strategy (`native` is weaker than `wrap`)
  * and the folders it works in (B-10, B-11): a chat that writes its workspace is only as strict as
  * one whose writable folders hold that workspace.
+ *
+ * Decided by the Policy Authority's `chatCovers` (INV-11, spec M.3 C2 step 4), the rule the host-tool
+ * gate and the launcher use, so the three can't disagree. Unknown strategy: `wrap`; unknown roots:
+ * only the allowed folders are compared, as before.
  */
 export function isAtLeastAsStrict(a: IVoltSandboxSettings, b: IVoltSandboxSettings, scopes?: { readonly a?: ISandboxScope; readonly b?: ISandboxScope }): boolean {
-	if (b.level === 'off') {
-		return true;
-	}
-	if (a.level === 'off' || LEVEL_RANK[a.level] < LEVEL_RANK[b.level]) {
-		return false;
-	}
-	if (!strategyAtLeast(scopes?.a?.strategy ?? 'wrap', scopes?.b?.strategy ?? 'wrap')) {
-		return false;
-	}
-	if (a.network && !b.network) {
-		return false;
-	}
-	if ((a.listenPorts ?? []).some(port => !(b.listenPorts ?? []).includes(port))) {
-		return false;
-	}
-	const bWrites = writableRoots(b, scopes?.b);
-	if (!writableRoots(a, scopes?.a).every(root => bWrites.some(allowed => isPathInside(root, allowed)))) {
-		return false;
-	}
-	const bReach = reachable(b);
-	return bReach === ALL || (a.allowedDomains ?? []).every(domain => bReach.some(allowed => domainPatternCovered(domain, allowed)));
+	return chatCovers(scopeView('target', a, scopes?.a), scopeView('caller', b, scopes?.b));
+}
+
+function scopeView(name: string, settings: IVoltSandboxSettings, scope: ISandboxScope | undefined): IChatView {
+	return { subject: chatSubject(name), settings, strategy: scope?.strategy ?? 'wrap', folders: scope?.roots ?? [] };
 }
 
 /**

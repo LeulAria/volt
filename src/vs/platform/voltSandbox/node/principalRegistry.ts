@@ -70,6 +70,34 @@ export class PrincipalRegistry extends Disposable {
 		return principal;
 	}
 
+	/**
+	 * Records the hash of the launch policy a principal was minted for once the supervisor computed
+	 * it (F.5: minted before the launch, compiled after). Once only, before it is bound to a channel.
+	 */
+	sealLaunchPolicy(principal: IPrincipal, launchPolicyHash: string): IPrincipal {
+		if (this.principals.get(principal.id) !== principal || !this.isLive(principal.id)) {
+			throw new Error(`principal ${principal.id} was not minted here or is revoked`);
+		}
+		if (principal.launchPolicyHash || this.channelOf.has(principal.id)) {
+			throw new Error(`principal ${principal.id} already has its launch policy`);
+		}
+		const sealed: IPrincipal = Object.freeze({ ...principal, launchPolicyHash });
+		this.principals.set(principal.id, sealed);
+		return sealed;
+	}
+
+	/** Revokes `principalId` (and what was started for it) and forgets it: its process is gone. */
+	retire(principalId: string): void {
+		this.revoke(principalId);
+		this.principals.delete(principalId);
+		this.revoked.delete(principalId);
+	}
+
+	/** Principals minted and not yet retired (live or revoked). */
+	get size(): number {
+		return this.principals.size;
+	}
+
 	/** Binds `principal` to the channel the supervisor created for it. A channel belongs to one principal for its life. */
 	bind(channelId: string, principal: IPrincipal): void {
 		if (this.principals.get(principal.id) !== principal || !this.isLive(principal.id)) {

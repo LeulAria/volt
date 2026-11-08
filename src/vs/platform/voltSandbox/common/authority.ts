@@ -10,9 +10,9 @@ import { bareCapability, capabilityClass, capabilityIdCovers, capabilityTargetMa
 import { FIRST_PARTY_CEILINGS, IVoltCeilingEntry } from '../../voltPlugins/common/firstPartyCeilings.js';
 import { canonicalJson, FLOW_CAPABILITY, GrantKind, grantCovers, grantValid, hasRefusal, IGrant, IGrantContext, IRefusal, nextGrantExpiry } from './grants.js';
 import { gestureValid, ICallContext, IPrincipal, isChatSubject, isFirstPartySubject, isPluginSubject, MAX_CALL_CHAIN, SubjectKey, subjectChatId, subjectExtensionId } from './principals.js';
-import { domainAllowed, isPathInside, IVoltSandboxSettings, normalizeSandboxPath, SandboxStrategy, strategyAtLeast, VoltSandboxLevel } from './sandboxPolicy.js';
+import { agentApiDomains, domainAllowed, isPathInside, IVoltSandboxRequest, IVoltSandboxSettings, normalizeSandboxPath, SandboxStrategy, strategyAtLeast, VoltSandboxLevel } from './sandboxPolicy.js';
 import { CREDENTIAL_HOME_PATHS } from './sandboxProfiles.js';
-import { SandboxDimension } from './sandboxSchema.js';
+import { SandboxDimension, splitAllowEntry } from './sandboxSchema.js';
 
 /**
  * The Policy Authority (spec C.5, F.2, Part G): the one function that decides every permission,
@@ -110,6 +110,14 @@ export interface IChatView {
 	readonly strategy?: SandboxStrategy;
 	/** The folder its agent writes at `workspace-write`, as a real path. */
 	readonly folder?: string;
+	/**
+	 * Every folder its agent writes at `workspace-write` (its checkout and a linked worktree's git
+	 * dir), as real paths; when given, used instead of `folder`. Empty: it writes none beyond its
+	 * allowed folders.
+	 */
+	readonly folders?: readonly string[];
+	/** Its agent's own API hosts: reachable with the network off, whatever else the chat allows. */
+	readonly apiHosts?: readonly string[];
 }
 
 /** Repo `.volt/sandbox.json` (trusted workspaces only) and Workspace Trust: restrict, never widen. */
@@ -395,12 +403,13 @@ function chatGrants(snapshot: PolicySnapshot, request: IAccessRequest, subject: 
 		return deny(epoch, 'manifest', 'chat-sandbox', `${capability} (${cls}) is beyond what a ${settings.level === 'read-only' ? 'read-only ' : ''}sandboxed chat may do`);
 	}
 	const bare = bareCapability(capability);
-	if (bare === 'files.write' && settings.level === 'read-only') {
+	// Folders the user allowed from a denial stay writable at every level (`extraWritableRoots`).
+	if (bare === 'files.write' && settings.level === 'read-only' && !(request.target && (settings.extraWritableRoots ?? []).some(root => isPathInside(request.target!, root)))) {
 		return deny(epoch, 'authority', 'chat-sandbox', 'this chat\'s sandbox is read-only');
 	}
 	if (bare === 'net.connect') {
 		const host = request.target ? hostOf(request.target) : undefined;
-		if (!settings.network && !(host && domainAllowed(host, settings.allowedDomains ?? []))) {
+		if (!settings.network && !(host && domainAllowed(host, [...view.apiHosts ?? [], ...settings.allowedDomains ?? []]))) {
 			return deny(epoch, 'authority', 'chat-sandbox', `this chat's network is off${host ? ` and ${host} is not one of its allowed hosts` : ''}`);
 		}
 	}
@@ -521,11 +530,12 @@ function approvalContext(snapshot: PolicySnapshot, from: SubjectKey, context: IC
 
 function networkEgress(snapshot: PolicySnapshot, subject: SubjectKey): Egress {
 	if (isChatSubject(subject)) {
-		const settings = snapshot.chat(subject)?.settings;
+		const view = snapshot.chat(subject);
+		const settings = view?.settings;
 		if (!settings) {
 			return [];
 		}
-		return settings.level === 'off' || settings.network ? ALL : [...settings.allowedDomains ?? []];
+		return settings.level === 'off' || settings.network ? ALL : [...new Set([...view.apiHosts ?? [], ...settings.allowedDomains ?? []])];
 	}
 	const manifest = snapshot.manifest(subject);
 	if (!manifest) {
@@ -668,17 +678,172 @@ export function chatCovers(target: IChatView | undefined, caller: IChatView): bo
 	if ((t.listenPorts ?? []).some(port => !(c.listenPorts ?? []).includes(port))) {
 		return false;
 	}
-	const callerRoots = [...(c.extraWritableRoots ?? []), ...(c.level === 'workspace-write' && caller.folder ? [caller.folder] : [])];
+	const callerRoots = [...(c.extraWritableRoots ?? []), ...(c.level === 'workspace-write' ? chatFolders(caller) ?? [] : [])];
 	if ((t.extraWritableRoots ?? []).some(root => !callerRoots.some(allowed => isPathInside(root, allowed)))) {
 		return false;
 	}
 	if (!c.network && (t.allowedDomains ?? []).some(host => !domainAllowed(host, c.allowedDomains ?? []))) {
 		return false;
 	}
-	if (t.level === 'workspace-write' && (!target.folder || !callerRoots.some(allowed => isPathInside(target.folder!, allowed)))) {
-		return false;
+	if (t.level === 'workspace-write') {
+		// A target whose folder is unknown may write anywhere: not covered (B-11).
+		const folders = chatFolders(target);
+		if (!folders || folders.some(folder => !callerRoots.some(allowed => isPathInside(folder, allowed)))) {
+			return false;
+		}
 	}
 	return true;
+}
+
+function chatFolders(view: IChatView): readonly string[] | undefined {
+	return view.folders ?? (view.folder ? [view.folder] : undefined);
+}
+
+// --- path and host coverage (moved from sandboxComposition.ts) --------------------------------
+
+/** True when path entry `child` is provably `parent` or below it. Different tokens are never provable. */
+export function entryInside(child: string, parent: string): boolean {
+	if (parent === '/') {
+		return !child.startsWith('**/');
+	}
+	return child === parent || child.startsWith(`${parent}/`);
+}
+
+/** Ports an allow entry without one stands for. */
+const DEFAULT_PORTS: readonly number[] = [80, 443];
+
+/** Whether port `child` (undefined: 80 and 443) is within port `parent` (undefined: 80 and 443). */
+function portCovered(parent: number | undefined, child: number | undefined): boolean {
+	if (parent === undefined) {
+		return child === undefined || DEFAULT_PORTS.includes(child);
+	}
+	return child === parent;
+}
+
+/**
+ * Whether allow entry `parent` covers `child`. An entry without a port means ports 80 and 443, and
+ * so does `*` (every public host on the web ports): `*` never covers `evil.com:6379` (B-32).
+ */
+export function allowCovers(parent: string, child: string): boolean {
+	if (child === '*') {
+		return parent === '*';
+	}
+	const c = splitAllowEntry(child);
+	if (parent === '*') {
+		return portCovered(undefined, c.port);
+	}
+	const p = splitAllowEntry(parent);
+	if (!portCovered(p.port, c.port)) {
+		return false;
+	}
+	if (p.host === c.host) {
+		return true;
+	}
+	if (p.host.startsWith('*.')) {
+		const base = p.host.slice(2);
+		const host = c.host.startsWith('*.') ? c.host.slice(2) : c.host;
+		return host === base || host.endsWith(`.${base}`);
+	}
+	return false;
+}
+
+// --- launches (C2 step 4) ---------------------------------------------------------------------
+
+/** Who decides at launch and in the host-tool gate: the Authority (`enforce`), or the earlier rules with the Authority compared (`shadow`, for one release). */
+export type PolicyAuthorityMode = 'enforce' | 'shadow';
+
+export const POLICY_AUTHORITY_MODE_SETTING = 'volt.sandbox.policyAuthority.mode';
+
+export function readPolicyAuthorityMode(value: unknown): PolicyAuthorityMode {
+	return value === 'shadow' ? 'shadow' : 'enforce';
+}
+
+/**
+ * A chat agent launch's view (F.2 `launchView`): the chat's settings as its spawn request carries
+ * them, the folders it writes, its agent's API hosts, and the `wrap` strategy the launcher always
+ * uses (D-16).
+ */
+export function chatLaunchView(subject: SubjectKey, request: IVoltSandboxRequest): IChatView {
+	return {
+		subject,
+		settings: {
+			level: request.level,
+			network: request.network,
+			...(request.extraWritableRoots?.length ? { extraWritableRoots: request.extraWritableRoots } : {}),
+			...(request.allowedDomains?.length ? { allowedDomains: request.allowedDomains } : {}),
+			...(request.listenPorts?.length ? { listenPorts: request.listenPorts } : {}),
+		},
+		strategy: 'wrap',
+		folders: request.workspaceRoots,
+		apiHosts: agentApiDomains(request.providerId),
+	};
+}
+
+/** A launch decision: the first dimension the Authority refused, or allow with every request it judged. */
+export interface ILaunchDecision extends IDecision {
+	/** Every request the launch was judged by, in order. */
+	readonly requests: readonly IAccessRequest[];
+	/** The one that denied. */
+	readonly denied?: IAccessRequest;
+}
+
+/**
+ * The requests a chat agent's launch makes of the Authority (F.2, F.5): reading its workspace,
+ * writing it at `workspace-write`, writing each allowed folder, the network (`*` when on, else its
+ * agent's API and each allowed host) and listening on each granted port. Volt's own loopback
+ * endpoints (the host MCP server) are core's, authenticated per request (INV-07), not the chat's.
+ */
+export function launchAccessRequests(view: IChatView, workspaceRoots: readonly string[]): IAccessRequest[] {
+	const settings = view.settings;
+	const out: IAccessRequest[] = [];
+	const add = (capability: string, target: string) => out.push({ capability, target, surface: 'launch' });
+	for (const root of workspaceRoots) {
+		add('files.read:workspace', root);
+		if (settings.level === 'workspace-write') {
+			add('files.write', root);
+		}
+	}
+	for (const root of settings.extraWritableRoots ?? []) {
+		add('files.write', root);
+	}
+	if (settings.network) {
+		add('net.connect', '*');
+	} else {
+		for (const host of new Set([...view.apiHosts ?? [], ...settings.allowedDomains ?? []])) {
+			add('net.connect', host);
+		}
+	}
+	for (const port of settings.listenPorts ?? []) {
+		out.push({ capability: `net.listen:${port}`, surface: 'launch' });
+	}
+	return out;
+}
+
+/**
+ * Whether the chat on `context.principal` may be launched with the OS policy its own view asks
+ * for (G.2 over every launch dimension). Floor, workspace and admin layers can refuse a launch the
+ * chat's settings allow; a refused launch never reaches the compiler or a backend (LAUNCH-AUTH-1).
+ * Step 8 (a dimension this backend can't enforce) is the supervisor's at launch, which knows the
+ * policy's best-effort list (INV-04).
+ */
+export function evaluateLaunch(snapshot: PolicySnapshot, context: ICallContext, workspaceRoots: readonly string[]): ILaunchDecision {
+	const epoch = snapshot.epoch;
+	const subject = context.principal.subject;
+	const view = isChatSubject(subject) ? snapshot.chat(subject) : undefined;
+	if (!view) {
+		return { ...deny(epoch, 'manifest', 'unknown-subject', `Volt has no record of ${describeSubject(subject)} to launch`), requests: [] };
+	}
+	if (view.settings.level === 'off') {
+		return { ...deny(epoch, 'manifest', 'chat-sandbox', 'a chat with the sandbox off is not launched through the sandbox'), requests: [] };
+	}
+	const requests = launchAccessRequests(view, workspaceRoots);
+	for (const request of requests) {
+		const decision = evaluate(snapshot, request, context);
+		if (!decision.allow) {
+			return { ...decision, requests, denied: request };
+		}
+	}
+	return { ...allow(epoch), requests };
 }
 
 // --- floor and platform helpers ---------------------------------------------------------------
