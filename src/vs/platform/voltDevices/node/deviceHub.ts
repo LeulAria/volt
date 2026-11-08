@@ -10,9 +10,13 @@ import { connect } from 'net';
 import { delimiter, join } from '../../../base/common/path.js';
 import { ILogService } from '../../log/common/log.js';
 import { createAuthenticatedServer, freeLoopbackPort, ListenerAuth, listenOn, loopbackHostNames, newListenerSecret, secretsEqual } from '../../voltListeners/node/listenerAuth.js';
+import { childEnvFromHost } from '../../voltHelpers/common/childEnv.js';
+import { HelperIntegrity, helperIntegrity } from '../../voltHelpers/node/helperIntegrity.js';
+import { DEVICE_HUB_LOCKFILE, DEVICE_HUB_MANIFEST, DEVICE_HUB_PACKAGE, DEVICE_HUB_VERSION } from '../common/deviceHubPin.js';
 
-export const DEVICE_HUB_PACKAGE = 'expo-device-hub';
-export const DEVICE_HUB_VERSION = '0.19.1';
+export { DEVICE_HUB_PACKAGE, DEVICE_HUB_VERSION };
+/** What a finished install says in `.install-complete`: installs from before the pin are redone. */
+const INSTALL_SENTINEL = `pinned ${DEVICE_HUB_VERSION}`;
 const READY_TIMEOUT = 30_000;
 const INSTALL_TIMEOUT = 240_000;
 const ATTACH_TIMEOUT = 60_000;
@@ -21,7 +25,9 @@ const ATTACH_TIMEOUT = 60_000;
  * Expo's device hub (MIT, https://github.com/expo/expo-device-hub), run as a child on a loopback
  * port. Its serve-sim streams an iOS simulator's screens as H.264 (both displays of an iPhone Duo)
  * and takes touches, keys and hinge commands over a WebSocket, through the simulator's own HID, so
- * no AXe or idb is needed. Installed with npm into `toolsDir` on first use, like T3 Code does.
+ * no AXe or idb is needed. Installed with `npm ci` into `toolsDir` on first use from a lockfile
+ * pinned in Volt's code (every package's registry integrity, no install scripts); the whole tree
+ * is checked against a pinned digest before every launch (spec I.11, B-14).
  */
 export class DeviceHub {
 
@@ -45,6 +51,7 @@ export class DeviceHub {
 		private readonly logService: ILogService,
 		/** Folders to put first on the hub's PATH: serve-emu runs `adb` by name, which the SDK does not put on PATH. */
 		private readonly extraPath: () => Promise<readonly string[]> = async () => [],
+		private readonly integrity: HelperIntegrity = helperIntegrity(),
 	) {
 		process.once('exit', () => this.dispose());
 	}
@@ -186,7 +193,7 @@ export class DeviceHub {
 	private async start(): Promise<{ hub: string; window: string }> {
 		const entry = await this.install();
 		const port = await freeLoopbackPort();
-		const env = await this.env();
+		const env = childEnvFromHost(await this.env());
 		// The hub's native modules (serve-sim, node-datachannel) are built for Node, not Electron.
 		const node = await this.which('node');
 		const command = node ?? process.execPath;
@@ -318,35 +325,52 @@ export class DeviceHub {
 		return `http://127.0.0.1:${port}${prefix}`;
 	}
 
-	/** The hub's CLI entry, installing `expo-device-hub` with npm the first time. */
+	/**
+	 * The hub's CLI entry: installs the pinned tree the first time (or over an install from before
+	 * the pin), then checks the installed tree. A tree that does not match is refused, never run.
+	 */
 	private async install(): Promise<string> {
 		const dir = join(this.toolsDir, DEVICE_HUB_PACKAGE, DEVICE_HUB_VERSION);
 		const entry = join(dir, 'node_modules', DEVICE_HUB_PACKAGE, 'dist', 'server', 'cli.mjs');
 		const sentinel = join(dir, '.install-complete');
-		if (await fs.readFile(sentinel, 'utf8').then(text => text.trim() === DEVICE_HUB_VERSION, () => false)) {
-			return entry;
+		if (!await fs.readFile(sentinel, 'utf8').then(text => text.trim() === INSTALL_SENTINEL, () => false)) {
+			await this.installPinned(dir);
 		}
+		// Before every launch: a file changed since the install is refused.
+		await this.integrity.assert('device-hub', dir);
+		return entry;
+	}
+
+	private async installPinned(dir: string): Promise<void> {
 		const npm = await this.which('npm');
 		if (!npm) {
 			throw new Error('Live simulator streaming needs npm to install Expo\'s device hub once. Install Node.js (https://nodejs.org) and try again.');
 		}
-		this.logService.info(`[volt-devices] installing ${DEVICE_HUB_PACKAGE}@${DEVICE_HUB_VERSION} into ${dir}`);
+		this.logService.info(`[volt-devices] installing ${DEVICE_HUB_PACKAGE}@${DEVICE_HUB_VERSION} (pinned) into ${dir}`);
 		const staging = `${dir}.staging-${process.pid}`;
 		await fs.rm(staging, { recursive: true, force: true });
 		await fs.mkdir(staging, { recursive: true });
-		const env = await this.env();
-		await new Promise<void>((resolve, reject) => {
-			execFile(npm, ['install', '--prefix', staging, '--no-audit', '--no-fund', '--omit=dev', '--loglevel=error', `${DEVICE_HUB_PACKAGE}@${DEVICE_HUB_VERSION}`], { env: { ...env, ELECTRON_RUN_AS_NODE: undefined }, timeout: INSTALL_TIMEOUT, maxBuffer: 16 * 1024 * 1024 }, (error, _stdout, stderr) => {
-				if (error) {
-					reject(new Error(`Could not install Expo's device hub: ${String(stderr).trim().split('\n').pop() || error.message}`));
-				} else {
-					resolve();
-				}
+		try {
+			await fs.writeFile(join(staging, 'package.json'), JSON.stringify(DEVICE_HUB_MANIFEST, null, '\t'));
+			await fs.writeFile(join(staging, 'package-lock.json'), JSON.stringify(DEVICE_HUB_LOCKFILE, null, '\t'));
+			const env = childEnvFromHost(await this.env());
+			// `npm ci` installs exactly the lockfile and checks every tarball against its integrity
+			// hash; no package runs an install script.
+			await new Promise<void>((resolve, reject) => {
+				execFile(npm, ['ci', '--prefix', staging, '--ignore-scripts', '--no-audit', '--no-fund', '--omit=dev', '--loglevel=error'], { cwd: staging, env, timeout: INSTALL_TIMEOUT, maxBuffer: 16 * 1024 * 1024 }, (error, _stdout, stderr) => {
+					if (error) {
+						reject(new Error(`Could not install Expo's device hub: ${String(stderr).trim().split('\n').pop() || error.message}`));
+					} else {
+						resolve();
+					}
+				});
 			});
-		});
-		await fs.writeFile(join(staging, '.install-complete'), `${DEVICE_HUB_VERSION}\n`);
-		await fs.rm(dir, { recursive: true, force: true });
-		await fs.rename(staging, dir);
-		return entry;
+			await this.integrity.assert('device-hub', staging);
+			await fs.writeFile(join(staging, '.install-complete'), `${INSTALL_SENTINEL}\n`);
+			await fs.rm(dir, { recursive: true, force: true });
+			await fs.rename(staging, dir);
+		} finally {
+			await fs.rm(staging, { recursive: true, force: true });
+		}
 	}
 }

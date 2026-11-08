@@ -267,7 +267,13 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 		// The browser workbench's icon and manifest.
 		const serverResources = gulp.src('resources/server/*.{png,ico,json}', { base: '.' });
 
-		const sources = es.merge(src, extensions, serverResources)
+		// Volt's native helpers and their manifest (buildVoltHelpersTask), into the app's `out/`.
+		const voltHelpersDir = `.build/volt-helpers/${platform}-${arch}`;
+		const voltHelpers = gulp.src(`${voltHelpersDir}/**`, { base: voltHelpersDir })
+			.pipe(rename(function (file) { file.dirname = path.join('out', file.dirname); }))
+			.pipe(util.setExecutableBit(['**/volt-helpers/volt-speech', '**/volt-helpers/volt-desktop']));
+
+		const sources = es.merge(src, extensions, serverResources, voltHelpers)
 			.pipe(filter(['**', '!**/*.{js,mjs,cjs,css}.map'], { dot: true }));
 
 		let version = packageJson.version;
@@ -528,6 +534,19 @@ function bundleNonNativeExtensionsInChildProcesses() {
 
 const buildRoot = path.dirname(root);
 
+/**
+ * Builds Volt's native helpers for the target and the manifest Volt verifies them against before
+ * every launch (build/volt/helpers/buildHelpers.mjs). Packaged builds never compile them at runtime.
+ */
+function buildVoltHelpersTask(platform, arch, sourceFolderName) {
+	const fn = () => {
+		cp.execFileSync(process.execPath, [path.join(root, 'build', 'volt', 'helpers', 'buildHelpers.mjs'), '--platform', platform, '--arch', arch, '--source', sourceFolderName, '--out', path.join('.build', 'volt-helpers', `${platform}-${arch}`)], { cwd: root, stdio: 'inherit' });
+		return Promise.resolve();
+	};
+	fn.taskName = `build-volt-helpers-${platform}-${arch}`;
+	return fn;
+}
+
 const BUILD_TARGETS = [
 	{ platform: 'win32', arch: 'x64' },
 	{ platform: 'win32', arch: 'arm64' },
@@ -549,6 +568,7 @@ BUILD_TARGETS.forEach(buildTarget => {
 
 		const packageTasks = [
 			util.rimraf(path.join(buildRoot, destinationFolderName)),
+			buildVoltHelpersTask(platform, arch, sourceFolderName),
 			packageTask(platform, arch, sourceFolderName, destinationFolderName, opts)
 		];
 

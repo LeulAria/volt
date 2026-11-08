@@ -142,7 +142,8 @@ import { IVoltSkillsDirectoryService, VOLT_SKILLS_DIRECTORY_CHANNEL_NAME } from 
 import { VoltSkillsDirectoryMainService } from '../../platform/voltMarketplace/electron-main/voltSkillsDirectoryMainService.js';
 import { IVoltFsBrowseService, VOLT_FS_BROWSE_CHANNEL_NAME } from '../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { VoltFsBrowseService } from '../../platform/voltFsBrowse/node/voltFsBrowseService.js';
-import { IVoltBrowserService, VOLT_BROWSER_CHANNEL_NAME } from '../../platform/voltBrowser/common/voltBrowser.js';
+import { IVoltBrowserService, VOLT_BROWSER_CHANNEL_NAME, VOLT_BROWSER_PARTITION } from '../../platform/voltBrowser/common/voltBrowser.js';
+import { guardBrowserPartition, onGuestWindowOpen, onWillAttachWebview } from '../../platform/voltBrowser/electron-main/browserGuestGuard.js';
 import { VoltBrowserMainService } from '../../platform/voltBrowser/electron-main/voltBrowserMainService.js';
 import { IVoltBadgeService, VOLT_BADGE_CHANNEL_NAME } from '../../platform/voltBadge/common/voltBadge.js';
 import { VoltBadgeMainService } from '../../platform/voltBadge/electron-main/voltBadgeMainService.js';
@@ -256,6 +257,9 @@ export class CodeApplication extends Disposable {
 			}
 			return false;
 		});
+
+		// Volt: the in-app browser's shared partition; per-chat ones get the same on first attach (B-37)
+		guardBrowserPartition(VOLT_BROWSER_PARTITION);
 
 		//#endregion
 
@@ -476,6 +480,16 @@ export class CodeApplication extends Disposable {
 
 				event.preventDefault();
 			});
+
+			// Volt: a <webview> attaches only in an in-app browser partition, without preload or Node (B-37)
+			contents.on('will-attach-webview', (event, webPreferences, params) => onWillAttachWebview(event, webPreferences, params, this.logService));
+
+			// Volt: in-app browser pages open web links in the user's browser and nothing else:
+			// no OS protocol handlers, and no about:blank window with the workbench's preload (B-37)
+			if (contents.getType() === 'webview') {
+				contents.setWindowOpenHandler(details => onGuestWindowOpen(contents, details.url, url => this.nativeHostMainService?.openExternal(undefined, url), this.logService));
+				return;
+			}
 
 			// All Windows: only allow about:blank auxiliary windows to open
 			// For all other URLs, delegate to the OS.

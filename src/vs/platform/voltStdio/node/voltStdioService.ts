@@ -14,6 +14,7 @@ import { generateUuid } from '../../../base/common/uuid.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
 import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
+import { childEnvFromHost } from '../../voltHelpers/common/childEnv.js';
 import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.js';
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
 import { ChildLedger } from './childLedger.js';
@@ -503,7 +504,11 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		return file;
 	}
 
-	/** The user's shell environment, resolved once by the main process and cached. */
+	/**
+	 * The user's shell environment, resolved once by the main process and cached, minus Volt's own
+	 * plumbing (`VSCODE_IPC_HOOK*`, `ELECTRON_*`) and secret-looking names (B-38, INV-24; see
+	 * `childEnv.ts`). Every child starts from it; what a caller sets on purpose is added on top.
+	 */
 	private env(): Promise<NodeJS.ProcessEnv> {
 		this.shellEnv ??= getResolvedShellEnv(this.configurationService, this.logService, { _: [] }, process.env)
 			.catch(err => {
@@ -513,7 +518,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 				return {};
 			})
 			.then(resolved => ({
-				...commandEnv({ ...process.env, ...resolved }),
+				...childEnvFromHost(commandEnv({ ...process.env, ...resolved })),
 				GIT_TERMINAL_PROMPT: '0',
 				GIT_PAGER: 'cat',
 				PAGER: 'cat',

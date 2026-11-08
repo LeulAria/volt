@@ -10,6 +10,7 @@ import { homedir, networkInterfaces } from 'os';
 import { dirname, join, sep } from '../../../base/common/path.js';
 import { IAgentServerRuntimeInfo, IVoltLocalLink, VOLT_LOCAL_LINK_PATH } from '../common/protocol.js';
 import { IVoltAgentServerEndpoint } from '../common/agentServerService.js';
+import { childEnvFromHost } from '../../voltHelpers/common/childEnv.js';
 import { agentServerPaths, IAgentServerPaths, isProcessAlive, readAgentServerRuntime, readAgentServerToken } from './agentServerFiles.js';
 import { installLaunchdJob, restartLaunchdJob, uninstallLaunchdJob } from './launchd.js';
 
@@ -29,6 +30,21 @@ export function localNetworkAddress(): string | undefined {
 		}
 	}
 	return candidates.find(ip => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip)) ?? candidates[0];
+}
+
+/**
+ * The server's command line. `--disable-sigusr1` keeps SIGUSR1 from opening an inspector, which any
+ * same-user process could otherwise send to take over the server (B-19, HOST-SIG-1; verified on
+ * Electron 37's Node 22.19 under `ELECTRON_RUN_AS_NODE`). A build from sources keeps the signal
+ * for debugging when `VOLT_AGENT_SERVER_INSPECT=1` is set.
+ */
+export function agentServerProgram(electronPath: string, entry: string, userDataDir: string, network: boolean, env: NodeJS.ProcessEnv = process.env): string[] {
+	const debuggable = !!env['VSCODE_DEV'] && env['VOLT_AGENT_SERVER_INSPECT'] === '1';
+	const program = [electronPath, ...(debuggable ? [] : ['--disable-sigusr1']), entry, '--user-data-dir', userDataDir];
+	if (network) {
+		program.push('--host', '0.0.0.0');
+	}
+	return program;
 }
 
 export interface IAgentServerLauncherOptions {
@@ -160,10 +176,7 @@ export class AgentServerLauncher {
 	}
 
 	private async start(): Promise<void> {
-		const program = [this.options.electronPath, this.entry, '--user-data-dir', this.paths.userDataDir];
-		if (await this.networkAccess()) {
-			program.push('--host', '0.0.0.0');
-		}
+		const program = agentServerProgram(this.options.electronPath, this.entry, this.paths.userDataDir, await this.networkAccess());
 		// The compile cache halves a warm start (the server strips it from what it runs, see agentServerMain).
 		const env: Record<string, string> = { ELECTRON_RUN_AS_NODE: '1', HOME: process.env.HOME ?? '', NODE_COMPILE_CACHE: this.paths.compileCacheDir };
 		if (process.env['VSCODE_DEV']) {
@@ -182,7 +195,9 @@ export class AgentServerLauncher {
 		this.options.log(`[volt agent server] starting ${this.paths.label} as a detached process`);
 		await fs.mkdir(dirname(this.paths.logFile), { recursive: true });
 		const log = await fs.open(this.paths.logFile, 'a');
-		const child = spawn(program[0], program.slice(1), { env: { ...process.env, ...env }, cwd: this.appRoot, detached: true, stdio: ['ignore', log.fd, log.fd] });
+		// The app's own environment minus its plumbing and secrets: the main process's IPC socket
+		// (`VSCODE_IPC_HOOK`) must not reach the server or anything it starts (B-38).
+		const child = spawn(program[0], program.slice(1), { env: { ...childEnvFromHost(process.env), ...env }, cwd: this.appRoot, detached: true, stdio: ['ignore', log.fd, log.fd] });
 		child.unref();
 		await log.close();
 	}

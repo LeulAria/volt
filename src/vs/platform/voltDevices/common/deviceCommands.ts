@@ -38,10 +38,18 @@ function sshDestination(target: IVoltSshTarget): string {
 	return target.user ? `${target.user}@${target.host}` : target.host;
 }
 
+/**
+ * A login name ssh cannot read as anything else: letters, digits, `.`, `_`, `-`, never starting
+ * with `-` (`-oProxyCommand=...@host` would be an option that runs a command) (B-36).
+ */
+export function isSafeSshUser(user: string): boolean {
+	return /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/.test(user);
+}
+
 /** `user@host`, `host`, `host:2222` or `user@host:2222` into a target. Undefined when it is not one. */
 export function parseSshTarget(value: string): IVoltSshTarget | undefined {
 	const match = /^(?:([^@\s:]+)@)?([A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\])(?::(\d{1,5}))?$/.exec(value.trim());
-	if (!match) {
+	if (!match || match[2].startsWith('-') || (match[1] !== undefined && !isSafeSshUser(match[1]))) {
 		return undefined;
 	}
 	const port = match[3] ? Number(match[3]) : undefined;

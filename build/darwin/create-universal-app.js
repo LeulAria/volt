@@ -30,7 +30,11 @@ async function main(buildDir) {
         '**/policies/{*.mobileconfig,**/*.plist}',
         // TODO: Should we consider expanding this to other files in this area?
         '**/node_modules/@parcel/node-addon-api/nothing.target.mk',
+        // Volt: each architecture lists its own helper slices; merged below.
+        '**/out/volt-helpers-manifest.json',
     ];
+    const helpersManifestPath = path_1.default.join('Contents', 'Resources', 'app', 'out', 'volt-helpers-manifest.json');
+    const helperManifests = [x64AppPath, arm64AppPath].map(app => JSON.parse(fs_1.default.readFileSync(path_1.default.join(app, helpersManifestPath), 'utf8')));
     await (0, vscode_universal_bundler_1.makeUniversalApp)({
         x64AppPath,
         arm64AppPath,
@@ -53,6 +57,23 @@ async function main(buildDir) {
         darwinUniversalAssetId: 'darwin-universal'
     });
     fs_1.default.writeFileSync(productJsonPath, JSON.stringify(productJson, null, '\t'));
+    const merged = { version: 1, helpers: {} };
+    for (const manifest of helperManifests) {
+        for (const [id, entry] of Object.entries(manifest.helpers)) {
+            const files = merged.helpers[id]?.files ?? [];
+            for (const file of entry.files) {
+                const existing = files.find(candidate => candidate.path === file.path);
+                if (existing) {
+                    Object.assign(existing.sha256, file.sha256);
+                }
+                else {
+                    files.push({ path: file.path, sha256: { ...file.sha256 } });
+                }
+            }
+            merged.helpers[id] = { files };
+        }
+    }
+    fs_1.default.writeFileSync(path_1.default.join(outAppPath, helpersManifestPath), JSON.stringify(merged, null, '\t') + '\n');
 }
 if (require.main === module) {
     main(process.argv[2]).catch(err => {

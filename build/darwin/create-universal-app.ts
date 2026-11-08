@@ -31,7 +31,11 @@ async function main(buildDir?: string) {
 		'**/policies/{*.mobileconfig,**/*.plist}',
 		// TODO: Should we consider expanding this to other files in this area?
 		'**/node_modules/@parcel/node-addon-api/nothing.target.mk',
+		// Volt: each architecture lists its own helper slices; merged below.
+		'**/out/volt-helpers-manifest.json',
 	];
+	const helpersManifestPath = path.join('Contents', 'Resources', 'app', 'out', 'volt-helpers-manifest.json');
+	const helperManifests = [x64AppPath, arm64AppPath].map(app => JSON.parse(fs.readFileSync(path.join(app, helpersManifestPath), 'utf8')));
 
 	await makeUniversalApp({
 		x64AppPath,
@@ -56,6 +60,26 @@ async function main(buildDir?: string) {
 		darwinUniversalAssetId: 'darwin-universal'
 	});
 	fs.writeFileSync(productJsonPath, JSON.stringify(productJson, null, '\t'));
+
+	// The helpers are lipo'd into universal binaries; Volt checks this machine's slice, so the
+	// manifest keeps each file's digest for both architectures (see helperIntegrity.ts).
+	type HelperManifest = { version: 1; helpers: Record<string, { files: { path: string; sha256: Record<string, string> }[] }> };
+	const merged: HelperManifest = { version: 1, helpers: {} };
+	for (const manifest of helperManifests as HelperManifest[]) {
+		for (const [id, entry] of Object.entries(manifest.helpers)) {
+			const files = merged.helpers[id]?.files ?? [];
+			for (const file of entry.files) {
+				const existing = files.find(candidate => candidate.path === file.path);
+				if (existing) {
+					Object.assign(existing.sha256, file.sha256);
+				} else {
+					files.push({ path: file.path, sha256: { ...file.sha256 } });
+				}
+			}
+			merged.helpers[id] = { files };
+		}
+	}
+	fs.writeFileSync(path.join(outAppPath, helpersManifestPath), JSON.stringify(merged, null, '\t') + '\n');
 }
 
 if (require.main === module) {
