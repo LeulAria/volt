@@ -11,7 +11,14 @@ import { ISandboxLimits, IVoltSandboxPolicy, limitDimension, SANDBOX_DIMENSIONS,
  * Seatbelt.
  */
 
-export type SandboxBackendId = 'bubblewrap' | 'seatbelt' | 'unsupported';
+export type SandboxBackendId = 'bubblewrap' | 'seatbelt' | 'mxc' | 'unsupported';
+
+/**
+ * Dimensions the spec lets a platform enforce only partly (F.3 "optional", F.8): resource limits
+ * that are polled rather than hard, and protections for paths created after launch. A backend
+ * may list these in `optional`; anything else it does not enforce stays blocking.
+ */
+export const OPTIONAL_DIMENSIONS: readonly SandboxDimension[] = ['filesystem.protectNew', 'limits.cpu', 'limits.memory', 'limits.processes', 'limits.fileSize', 'limits.openFiles'];
 
 /** How well a backend enforces one dimension. `partial` carries the reason in `notes`. */
 export type SandboxEnforcement = 'enforced' | 'partial' | 'unsupported';
@@ -27,6 +34,11 @@ export interface ISandboxBackendCapabilities {
 	readonly details: readonly string[];
 	/** Actionable problems: "Install bubblewrap: sudo apt install bubblewrap". */
 	readonly diagnostics: readonly string[];
+	/**
+	 * Dimensions this platform enforces only partly by design, which run as `partial` instead of
+	 * refusing even when a policy did not mark them best effort. Only `OPTIONAL_DIMENSIONS` count.
+	 */
+	readonly optional?: readonly SandboxDimension[];
 }
 
 /**
@@ -90,7 +102,8 @@ export function dimensionsUsed(policy: IVoltSandboxPolicy): SandboxDimension[] {
 
 export function checkEnforcement(policy: IVoltSandboxPolicy, capabilities: ISandboxBackendCapabilities): ISandboxEnforcementCheck {
 	const unenforced = dimensionsUsed(policy).filter(dimension => capabilities.enforcement[dimension] !== 'enforced');
-	return { unenforced, blocking: unenforced.filter(dimension => !policy.bestEffort.includes(dimension)) };
+	const optional = (capabilities.optional ?? []).filter(dimension => OPTIONAL_DIMENSIONS.includes(dimension));
+	return { unenforced, blocking: unenforced.filter(dimension => !policy.bestEffort.includes(dimension) && !optional.includes(dimension)) };
 }
 
 export function allEnforcement(value: SandboxEnforcement): Record<SandboxDimension, SandboxEnforcement> {
