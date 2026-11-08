@@ -17,6 +17,7 @@ import { BubblewrapBackend } from './bubblewrapBackend.js';
 import { MxcBackend } from './mxcBackend.js';
 import { ISandboxBackend, ISandboxLaunchSpec, SandboxConfirmation, SandboxFault } from './sandboxBackends.js';
 import { osBuild } from './sandboxProbeCache.js';
+import type { IManifestView } from '../common/authority.js';
 import { IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
 import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
 import { INetworkDenial, NetworkAuditLog, NetworkBroker, NetworkRoute } from './networkBroker.js';
@@ -64,6 +65,11 @@ export interface ISandboxRequest {
 	readonly subject?: SubjectKey;
 	/** Without `principal`: default `agent`; picks the network budget (H.8). */
 	readonly principalKind?: PrincipalKind;
+	/**
+	 * A plugin or extension host (T2, T3): its manifest as core recorded it. The network broker judges
+	 * its connections by it (declared hosts and the user's "Allow host"), not as a chat's.
+	 */
+	readonly manifest?: IManifestView;
 }
 
 export interface IPreparedSandbox {
@@ -354,6 +360,7 @@ export class SandboxManager {
 				route = await this.networkBroker(host).openRoute({
 					principal,
 					allow: resolved.network.allow,
+					...(request.manifest ? { manifest: request.manifest } : {}),
 					onDenial: denial => denial.reason === 'auth'
 						// Not this run's request (no token or another's): never a denial row with an "Allow" button.
 						? this.logger.warn(`[volt-sandbox] ${tag} network broker refused a request without this run's token`)

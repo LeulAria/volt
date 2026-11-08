@@ -7,10 +7,13 @@ import { ChildProcess, execFile, spawn } from 'child_process';
 import { randomBytes } from 'crypto';
 import { promises as fs } from 'fs';
 import { promisify } from 'util';
+import type { Socket } from 'net';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
 import { basename, dirname, join } from '../../../base/common/path.js';
+import type { IManifestView } from '../common/authority.js';
 import { IPrincipal } from '../common/principals.js';
+import type { NetworkRoute } from './networkBroker.js';
 import { composeSandboxPolicy } from '../common/sandboxComposition.js';
 import { IAttestation, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { IVoltSandboxPolicy, parseSandboxPolicyLayer, SandboxDimension } from '../common/sandboxSchema.js';
@@ -57,7 +60,18 @@ export interface IHostFork {
 	readonly fork: string;
 	readonly args?: readonly string[];
 	readonly execArgv?: readonly string[];
+	/**
+	 * Launcher-reserved `VSCODE_*` names the Node host needs (F.7: written last, after the policy's
+	 * env): the extension host's entry point and its NLS configuration. Only names in
+	 * {@link HOST_RESERVED_ENV} are taken; anything else is refused.
+	 */
+	readonly reservedEnv?: Readonly<Record<string, string>>;
 }
+
+/** The reserved names a Node host may be given (H.1 T3 host). Never a secret: these are fixed values Volt computes. */
+export const HOST_RESERVED_ENV: ReadonlySet<string> = new Set([
+	'VSCODE_ESM_ENTRYPOINT', 'VSCODE_HANDLES_UNCAUGHT_ERRORS', 'VSCODE_NLS_CONFIG', 'VSCODE_EXTHOST_WILL_SEND_SOCKET', 'VSCODE_DEV',
+]);
 
 export interface IHostStartRequest {
 	/** Minted by the caller (or the supervisor's registry) before the call. */
@@ -76,6 +90,8 @@ export interface IHostStartRequest {
 	readonly idle?: { readonly afterMs: number; readonly stopAfterMs: number };
 	/** Polled limits (F.8): a tree over them is killed (`resource`) and that counts as a crash. */
 	readonly limits?: { readonly memoryMB?: number };
+	/** A plugin or extension host: what the network broker judges its connections by (I.4). */
+	readonly manifest?: IManifestView;
 }
 
 export type SandboxHostRefusal = 'disabled' | 'budget' | 'probe' | 'attest' | 'ipc' | 'launch' | SandboxDimension;
@@ -111,8 +127,14 @@ export interface ISandboxedHost {
 	readonly onResource: Event<ISandboxResourceSample>;
 	/** Messages from the host on its channel; only after the go byte. */
 	readonly onMessage: Event<unknown>;
-	/** Sends on the channel; false when it is not running or has no channel. */
-	send(message: unknown): boolean;
+	/**
+	 * Sends on the channel; false when it is not running or has no channel. `handle`: a connected
+	 * socket passed along (SCM_RIGHTS on the socketpair), as VS Code hands an extension host its
+	 * connection; it has no path, so nothing else can reach it.
+	 */
+	send(message: unknown, handle?: Socket): boolean;
+	/** The host's network broker route (network `proxy`): its live "Allow host" grants go here. */
+	networkRoute(): NetworkRoute | undefined;
 	/** Activity that is not RPC (its view is visible, a tool call is waiting): resets the idle budget. */
 	touch(): void;
 	/** Stops it and starts it again with the policy recompiled (an OS-level grant changed, F.9). */
@@ -536,6 +558,11 @@ class SandboxHost implements ISandboxedHost {
 		const fork = 'fork' in request.command ? request.command : undefined;
 		let file: string;
 		let args: string[];
+		const reserved = Object.entries(fork?.reservedEnv ?? {});
+		const unknownReserved = reserved.find(([name]) => !HOST_RESERVED_ENV.has(name));
+		if (unknownReserved) {
+			return this.fail('launch', `${unknownReserved[0]} is not a name a host may be given.`);
+		}
 		if (fork) {
 			const runtime = this.supervisor.nodeRuntime;
 			// The runtime must be readable inside: its bundle, as a trusted layer over the caller's policy.
@@ -554,7 +581,7 @@ class SandboxHost implements ISandboxedHost {
 		}
 		let prepared: IPreparedSandbox;
 		try {
-			prepared = await this.supervisor.manager.prepare({ command: file, args, policy, context: request.context, label: request.label, principal: this._principal });
+			prepared = await this.supervisor.manager.prepare({ command: file, args, policy, context: request.context, label: request.label, principal: this._principal, ...(request.manifest ? { manifest: request.manifest } : {}) });
 		} catch (err) {
 			if (err instanceof SandboxUnavailableError) {
 				return this.fail(err.blocking[0] ?? 'probe', err.message);
@@ -569,7 +596,7 @@ class SandboxHost implements ISandboxedHost {
 			child = spawn(prepared.command, [...prepared.args], {
 				cwd: prepared.cwd,
 				// Reserved names last (F.7): Node as Node; `NODE_CHANNEL_FD` Node itself adds for the `ipc` entry.
-				env: { ...prepared.env, ...(fork ? { ELECTRON_RUN_AS_NODE: '1' } : {}) },
+				env: { ...prepared.env, ...Object.fromEntries(reserved), ...(fork ? { ELECTRON_RUN_AS_NODE: '1' } : {}) },
 				stdio: ['ignore', 'ignore', 'pipe', ...prepared.extraStdio, ...(this.ipc ? ['ipc' as const] : [])],
 				detached: true,
 				windowsHide: true,
@@ -788,13 +815,17 @@ class SandboxHost implements ISandboxedHost {
 		}
 	}
 
-	send(message: unknown): boolean {
+	send(message: unknown, handle?: Socket): boolean {
 		const child = this.child;
 		if (!this.ipc || !child?.connected || (this._state !== 'running' && this._state !== 'idle')) {
 			return false;
 		}
 		this.activity();
-		return child.send(message as object);
+		return handle ? child.send(message as object, handle) : child.send(message as object);
+	}
+
+	networkRoute(): NetworkRoute | undefined {
+		return this.prepared?.networkRoute();
 	}
 
 	touch(): void {

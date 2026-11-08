@@ -575,6 +575,32 @@ suite('Volt network broker (I.4, NET-1..20)', function () {
 		assert.deepStrictEqual(await source.commit(0, { add: [{ ...draft, id: 'g2' }] }), { committed: false, epoch: 1 }, 'stale');
 		assert.deepStrictEqual(await source.commit(1, { revoke: ['g1'] }), { committed: true, epoch: 2, changed: true });
 	});
+
+	test('NET-T3-1: an extension host\'s route is judged by its manifest: network none, named declarations, live "Allow host", never public *', async () => {
+		const subject: SubjectKey = 'plugin:pub.lint@local';
+		const manifest = { subject, network: 'broker' as const, declared: [{ id: 'net.connect', targets: ['registry.lint.test'] }, { id: 'net.connect', targets: ['*'] }, { id: 'net.connect' }] };
+		const r = await broker.openRoute({ principal: principal(subject, 't3'), allow: ['*'], manifest, onDenial: denial => denials.push(denial) });
+		assert.strictEqual(r.limits.bytesPerDay, 200 * 1024 * 1024, 'H.8 T3 budget');
+		assert.match((await open(r.port, connect(r, 'registry.lint.test:443'))).line, /200/, 'a host it names');
+		const blocked = await open(r.port, connect(r, 'example.test:443'));
+		assert.match(blocked.line, /403/, 'the route\'s allow list and a wildcard declaration open nothing');
+		await until(() => blocked.raw.text().includes('off for this extension'));
+		assert.match(blocked.raw.text(), /off for this extension/);
+		const denial = denials.find(d => d.destination === 'example.test');
+		assert.ok(denial?.promptable, 'an "Allow host" may be offered, naming the destination');
+		await r.allowHosts(['*']);
+		assert.match((await open(r.port, connect(r, 'other.test:443'))).line, /403/, '"Allow host" never grants public *');
+		const approved = await r.approve(denial!.denialId, broker.epoch);
+		assert.ok(approved.ok);
+		assert.match((await open(r.port, connect(r, 'example.test:443'))).line, /200/, 'the approved host, live');
+		// Another instance of another extension does not get it, nor does a later instance of this one (session grant).
+		const other = await broker.openRoute({ principal: principal('plugin:pub.other@local', 't3'), allow: [], manifest: { ...manifest, subject: 'plugin:pub.other@local' } });
+		assert.match((await open(other.port, connect(other, 'example.test:443'))).line, /403/);
+		const later = await broker.openRoute({ principal: principal(subject, 't3'), allow: [], manifest });
+		assert.match((await open(later.port, connect(later, 'example.test:443'))).line, /403/, 'a session grant is the instance\'s');
+		await r.revokeHosts(['example.test']);
+		assert.match((await open(r.port, connect(r, 'example.test:443'))).line, /403/, 'revoked');
+	});
 });
 
 /** A grant source another writer can change (like the GrantStore under ~/.volt/trust), with change events. */

@@ -11,8 +11,8 @@ import * as net from 'net';
 import { homedir } from 'os';
 import { IDisposable } from '../../../base/common/lifecycle.js';
 import { dirname, join } from '../../../base/common/path.js';
-import { evaluate, IAccessRequest, IAdminPolicy, IDecision, PolicySnapshot } from '../common/authority.js';
-import { GrantKind, IGrant } from '../common/grants.js';
+import { evaluate, IAccessRequest, IAdminPolicy, IDecision, IManifestView, PolicySnapshot } from '../common/authority.js';
+import { GrantKind, grantValid, IGrant } from '../common/grants.js';
 import { classifyAddress } from '../common/networkAddress.js';
 import { INormalizedHost, normalizeNetworkHost, parseNetworkRule, splitAuthority } from '../common/networkRules.js';
 import { ICallContext, IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
@@ -185,6 +185,13 @@ export interface INetworkRouteOptions {
 	readonly level?: 'workspace-write' | 'read-only';
 	readonly limits?: Partial<INetworkRouteLimits>;
 	readonly onDenial?: (denial: INetworkDenial) => void;
+	/**
+	 * A plugin or extension principal (T2, T3), not a chat: its manifest as core recorded it. Its
+	 * `net.connect` is the hosts it declares by name plus those the user allowed for it ("Allow
+	 * host", H.7); an undeclared or wildcard-only `net.connect` opens nothing, and no grant opens
+	 * public `*`. `allow` is ignored for it.
+	 */
+	readonly manifest?: IManifestView;
 }
 
 interface IOpenConnection {
@@ -440,6 +447,9 @@ export class NetworkRoute {
 	 */
 	async allowHosts(entries: readonly string[]): Promise<number> {
 		const targets = normalizeEntries(entries).filter(entry => {
+			if (this.options.manifest && entry === '*') {
+				return false; // H.7: never public `*` for a plugin or extension.
+			}
 			const rule = parseNetworkRule(entry);
 			return rule && (rule.kind !== 'ip' || classifyAddress(rule.cidr.slice(0, rule.cidr.lastIndexOf('/')))?.class === 'public');
 		}).filter(entry => !this.ownGrants().some(grant => grant.capability === 'net.connect@1' && grant.scope.targets?.[0] === entry));
@@ -534,14 +544,37 @@ export class NetworkRoute {
 		if (this.snapshot && (this.snapshot.epoch !== this.broker.epoch || (this.snapshot.rebuildAt !== undefined && now >= this.snapshot.rebuildAt))) {
 			this.snapshot = undefined;
 		}
+		const grants = this.broker.grantsOf(this.subject);
+		const manifest = this.options.manifest;
 		this.snapshot ??= PolicySnapshot.build({
 			epoch: this.broker.epoch,
 			asOf: now,
-			grants: this.broker.grantsOf(this.subject),
-			chats: [{ subject: this.subject, settings: { level: this.options.level ?? 'workspace-write', network: false, allowedDomains: this.allow, listenPorts: this.options.loopbackPorts ?? [] } }],
+			grants,
+			...(manifest
+				? { manifests: [this.routeManifest(manifest, grants, now)] }
+				: { chats: [{ subject: this.subject, settings: { level: this.options.level ?? 'workspace-write', network: false, allowedDomains: this.allow, listenPorts: this.options.loopbackPorts ?? [] } }] }),
 			...(this.broker.options.admin ? { admin: this.broker.options.admin } : {}),
 		});
 		return this.snapshot;
+	}
+
+	/**
+	 * A plugin's manifest as this route judges it: `net.connect` only for hosts named (never an
+	 * untargeted or `*` declaration), plus the hosts its valid grants name. `net.connect` is low, so
+	 * a named host is an install-time grant (G.4); the user's "Allow host" names the rest.
+	 */
+	private routeManifest(manifest: IManifestView, grants: readonly IGrant[], now: number): IManifestView {
+		const context = { asOf: now, epoch: this.broker.epoch, sessionIds: [this.principal.id] };
+		const named = (targets: readonly string[] | undefined) => (targets ?? []).filter(target => target.trim() !== '*');
+		const granted = grants.filter(grant => !grant.revoked && grant.capability.split('@')[0] === 'net.connect' && grantValid(grant, context)).flatMap(grant => named(grant.scope.targets));
+		const declared = manifest.declared.flatMap(entry => {
+			if (entry.id.split('@')[0] !== 'net.connect') {
+				return [entry];
+			}
+			const targets = named(entry.targets);
+			return targets.length ? [{ ...entry, targets }] : [];
+		});
+		return { ...manifest, declared: granted.length ? [...declared, { id: 'net.connect', targets: granted }] : declared };
 	}
 
 	private context(): ICallContext {
@@ -581,7 +614,12 @@ export class NetworkRoute {
 		const named: IAccessRequest = { capability: 'net.connect', target: target.host, port, surface: 'broker' };
 		const decision = this.decide(named);
 		if (!decision.allow) {
-			return refuse(decision.code === 'port' ? 'port' : 'not-allowed', `Blocked by Volt sandbox: ${decision.code === 'chat-sandbox' ? `network access to ${target.host} is off for this chat. Ask the user to allow it.` : `${decision.reason}.`}`, { decision, target });
+			const text = decision.code === 'chat-sandbox'
+				? `network access to ${target.host} is off for this chat. Ask the user to allow it.`
+				: this.options.manifest && (decision.code === 'undeclared' || decision.code === 'undeclared-target')
+					? `network access to ${target.host} is off for this extension. The user can allow the host.`
+					: `${decision.reason}.`;
+			return refuse(decision.code === 'port' ? 'port' : 'not-allowed', `Blocked by Volt sandbox: ${text}`, { decision, target });
 		}
 		requests.push(named);
 		let answers: readonly IResolvedAddress[];
