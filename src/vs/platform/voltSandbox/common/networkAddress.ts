@@ -293,8 +293,9 @@ export interface IAddressClassification {
 
 /**
  * The class of an address, or undefined when the text is not a canonical address. An embedding
- * form is judged as its IPv4 address; with several readings (`64:ff9b:1::/48`) the worst counts,
- * and a non-public reading there is `special` (the grant it would need can't be told apart).
+ * form is judged as its IPv4 address (a LAN or loopback one making it `special`); with several
+ * readings (`64:ff9b:1::/48`) the worst counts, and a non-public reading there is `special` (the
+ * grant it would need can't be told apart).
  */
 export function classifyAddress(text: string): IAddressClassification | undefined {
 	const v4 = parseIPv4(text);
@@ -313,10 +314,14 @@ export function classifyAddress(text: string): IAddressClassification | undefine
 	}
 	const classes = readings.map(classifyBytes);
 	const worst = classes.reduce((a, b) => RANK[b] > RANK[a] ? b : a, 'public' as AddressClass);
+	// A LAN or loopback address in an IPv6 disguise is refused outright (`special`): the grants that
+	// open those name the address itself (`net.local.connect`, `net.loopback.connect:<port>`), and a
+	// NAT64 or 6to4 form of `127.0.0.1` is someone else's machine, not this one.
+	const judged = (cls: AddressClass): AddressClass => cls === 'local' || cls === 'loopback' ? 'special' : cls;
 	if (readings.length > 1) {
 		return { class: worst === 'public' ? 'public' : worst === 'metadata' ? 'metadata' : 'special', judged: bytesToIPv4(readings[readings.length - 1]) };
 	}
-	return { class: RANK[own] > RANK[worst] ? own : worst, judged: bytesToIPv4(readings[0]) };
+	return { class: judged(RANK[own] > RANK[worst] ? own : worst), judged: bytesToIPv4(readings[0]) };
 }
 
 /** True only for a canonical, globally routable unicast address. */
