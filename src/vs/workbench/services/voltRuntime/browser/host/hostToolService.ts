@@ -19,7 +19,7 @@ import { HOST_MCP_TOKEN_RENEW_MS, hostMcpSessionToken, IHostMcpLease, newHostMcp
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltHostFileChange, IVoltHostSandboxResolver, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolOwner, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, PREFLIGHT_BROWSER_COMMAND_ID, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
-import { hostToolSandboxUse, isSandboxed, ISandboxPathContext, legacyHostToolRefusal, legacySandboxCovers, sandboxBrowserUrlRefusal, sandboxReadRefusal, sandboxRefusalMessage, sandboxWriteRefusal } from '../../common/hostToolSandbox.js';
+import { hostToolSandboxUse, isSandboxed, ISandboxPathContext, legacyHostToolRefusal, legacySandboxCovers, sandboxBrowserUrlRefusal, sandboxRefusalMessage } from '../../common/hostToolSandbox.js';
 import { HostToolAuthority, IGateChat, IPolicyShadowDiff, PolicyAuthorityMode } from '../../common/hostToolAuthority.js';
 import { IGrant } from '../../../../../platform/voltSandbox/common/grants.js';
 import { chatSubject } from '../../../../../platform/voltSandbox/common/principals.js';
@@ -280,9 +280,11 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		const context = await this.sandboxContext(call);
 		// Relative paths resolve where the tools resolve them: the chat's folder, else the window's.
 		const base = call.cwd ?? this.workspace.getWorkspace().folders[0]?.uri.fsPath;
+		// The files broker's rules (I.15): its plan on the real path, then the Authority on the capability.
+		const chat = this.gateChat(call, sandbox);
 		for (const raw of use.reads ?? []) {
 			for (const path of await this.realPaths(raw, base)) {
-				const why = path === undefined ? `${raw} is relative and this chat has no folder` : sandboxReadRefusal(sandbox, path, context);
+				const why = path === undefined ? `${raw} is relative and this chat has no folder` : this.authority.filesRefusal(chat, path, 'read', context);
 				if (why) {
 					return { error: `${name} was not run: ${why}. A sandboxed chat reads files only in its workspace, the folders the user allowed, and temp folders.` };
 				}
@@ -290,7 +292,7 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		}
 		for (const raw of use.writes ?? []) {
 			for (const path of await this.realPaths(raw, base)) {
-				const why = path === undefined ? `${raw} is relative and this chat has no folder` : sandboxWriteRefusal(sandbox, path, context);
+				const why = path === undefined ? `${raw} is relative and this chat has no folder` : this.authority.filesRefusal(chat, path, 'write', context);
 				if (why) {
 					return { error: `${name} did not start: no file was changed. ${why[0].toUpperCase()}${why.slice(1)} (this chat runs in Volt's sandbox). Change files only where the sandbox allows, with your own tools.` };
 				}
@@ -307,7 +309,7 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 				return `${path} is not an absolute path`;
 			}
 			context ??= this.sandboxContext(call);
-			return sandboxReadRefusal(sandbox, await this.realPath(URI.file(path)), await context);
+			return this.authority.filesRefusal(this.gateChat(call, sandbox), await this.realPath(URI.file(path)), 'read', await context);
 		};
 	}
 
