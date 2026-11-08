@@ -72,13 +72,12 @@ export function dimensionsUsed(policy: IVoltSandboxPolicy): SandboxDimension[] {
 	if (policy.network.mode === 'proxy') {
 		used.add('network.proxy');
 	}
-	if (policy.network.mode !== 'host') {
-		if (policy.network.loopbackPorts.length) {
-			used.add('network.loopbackPorts');
-		}
-		if (!policy.network.listen) {
-			used.add('network.listen');
-		}
+	if (policy.network.mode !== 'host' && policy.network.loopbackPorts.length) {
+		used.add('network.loopbackPorts');
+	}
+	// Listening is limited in every mode, the host's network included (B-30).
+	if (!policy.network.listen) {
+		used.add('network.listen');
 	}
 	for (const [key, value] of Object.entries(policy.process.limits) as [keyof ISandboxLimits, number | undefined][]) {
 		if (value !== undefined) {

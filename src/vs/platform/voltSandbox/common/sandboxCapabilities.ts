@@ -18,7 +18,7 @@ import { envNameError, IVoltSandboxPolicy, IVoltSandboxPolicyLayer, networkEntry
  * Grammar: `<kind>` or `<kind>:<argument>`.
  * - `fs.read:workspace`, `fs.write:workspace`, `fs.read:<path>`, `fs.write:<path>`
  * - `net.connect:<host>`, `net.connect:*` (any public host, via the proxy), `net.host` (unfiltered)
- * - `net.listen`, `net.loopback:<port>`
+ * - `net.listen:<port>` (one port), `net.listen` (any port), `net.loopback:<port>`
  * - `process.exec` (implied: everything runs as processes inside the sandbox)
  * - `git.local` (workspace git, hooks and config still protected), `git.remote:<host>`
  * - `env:<NAME>`, `socket:<path>`
@@ -91,9 +91,14 @@ const KINDS: Readonly<Record<string, ICapabilityKind>> = {
 		layer: () => ({ network: { mode: 'host' } }),
 	},
 	'net.listen': {
-		argument: 'none',
-		describe: () => ({ risk: 'low', description: 'Listen for connections on this machine (local servers)' }),
-		layer: () => ({ network: { listen: true } }),
+		// `net.listen:<port>`: one port (a dev server). Bare `net.listen` is any port, which can
+		// squat another program's port (an OAuth callback), so it rates higher (B-30).
+		argument: 'optional',
+		validate: arg => /^\d{1,5}$/.test(arg) && Number(arg) >= 1 && Number(arg) <= 65535 ? undefined : 'must be a port',
+		describe: arg => arg === undefined
+			? { risk: 'medium', description: 'Listen for connections on any port of this machine (local servers)' }
+			: { risk: 'low', description: `Listen for connections on port ${arg} of this machine (a local server)` },
+		layer: arg => ({ network: arg === undefined ? { listen: true } : { listenPorts: [Number(arg)] } }),
 	},
 	'net.loopback': {
 		argument: 'required',
@@ -237,6 +242,7 @@ function composeLayer(a: IVoltSandboxPolicyLayer, b: Omit<IVoltSandboxPolicyLaye
 			allow: list(a.network?.allow, b.network?.allow),
 			loopbackPorts: list(a.network?.loopbackPorts, b.network?.loopbackPorts),
 			...(a.network?.listen || b.network?.listen ? { listen: true } : {}),
+			listenPorts: list(a.network?.listenPorts, b.network?.listenPorts),
 		},
 		env: { inherit: list(a.env?.inherit, b.env?.inherit) },
 		host: { unixSockets: list(a.host?.unixSockets, b.host?.unixSockets) },

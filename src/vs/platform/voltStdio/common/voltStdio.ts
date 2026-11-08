@@ -296,6 +296,19 @@ export interface IVoltStdioService {
 	confirmSandboxedTerminal?(id: string, pid: number): Promise<string>;
 	/** The terminal exited or is being stopped: its sandbox's whole tree is killed and its run folder removed. */
 	endSandboxedTerminal?(id: string): Promise<void>;
+	/**
+	 * After a turn of sandboxed spawn `id`: copies the allowed keys of its config overlay back to the
+	 * user's config (B-05) and says what it kept out. Undefined when the spawn has no overlay.
+	 */
+	syncSandboxState?(id: string): Promise<IVoltSandboxStateSync | undefined>;
+}
+
+/** What one merge of an agent's config overlay did. */
+export interface IVoltSandboxStateSync {
+	/** Keys copied back to the user's config. */
+	readonly applied: readonly string[];
+	/** Changes kept out of it (MCP servers, trusted folders, permissions), as key paths. */
+	readonly dropped: readonly string[];
 }
 
 /** HostGit through the stdio service; a service without it (a test double, a null host) refuses. */

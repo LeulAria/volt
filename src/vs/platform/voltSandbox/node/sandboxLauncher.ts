@@ -11,7 +11,10 @@ import { Disposable, toDisposable } from '../../../base/common/lifecycle.js';
 import { join } from '../../../base/common/path.js';
 import { ISandboxBackendCapabilities, SandboxBackendId } from '../common/sandboxBackend.js';
 import { ISandboxDenial, isNoiseDenial } from '../common/sandboxDenials.js';
-import { agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
+import { agentStatePlan } from '../common/agentState.js';
+import { AGENT_STATE_ROOT, agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
+import { AGENT_CONFIG_NAMES } from '../common/sandboxProfiles.js';
+import { AgentStateOverlay, IAgentStateSync } from './agentStateOverlay.js';
 import { IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { SandboxDimension } from '../common/sandboxSchema.js';
 import { SandboxManager } from './sandboxManager.js';
@@ -54,6 +57,8 @@ export interface ISandboxLaunch {
 	terminate(child: ChildProcess): Promise<void>;
 	/** Hosts the user allows later (network off). */
 	allowDomains(domains: readonly string[]): void;
+	/** After a turn: the allowed keys of the agent's config overlay go back to the user's config (B-05). */
+	syncState(): Promise<IAgentStateSync | undefined>;
 	dispose(): void;
 }
 
@@ -89,7 +94,7 @@ export class VoltSandboxLauncher extends Disposable {
 	constructor(
 		/** Volt's user data: never readable by a sandboxed agent (agent-server token, MCP state). */
 		private readonly userDataDir: string,
-		logger: ILogger,
+		private readonly logger: ILogger,
 		platform: string = process.platform,
 	) {
 		super();
@@ -113,12 +118,17 @@ export class VoltSandboxLauncher extends Disposable {
 	async prepare(command: string, args: readonly string[], request: IVoltSandboxRequest, options: { cwd?: string; hostEnv: Readonly<Record<string, string | undefined>>; env?: Readonly<Record<string, string>>; terminal?: boolean; label?: string }): Promise<ISandboxLaunch> {
 		const host = await this.hostFacts();
 		const sshAuthSock = options.hostEnv.SSH_AUTH_SOCK && await fs.stat(options.hostEnv.SSH_AUTH_SOCK).then(s => s.isSocket(), () => false) ? options.hostEnv.SSH_AUTH_SOCK : undefined;
-		const policy = agentSandboxPolicy(request, { ...host, ...(sshAuthSock ? { sshAuthSock } : {}) });
+		// The chat's own copy of the CLI's config (B-05); without a chat to key it, the config stays read-only.
+		const statePlan = request.stateKey !== undefined ? agentStatePlan(request.providerId, request.stateKey, { platform: host.platform, home: host.home, root: this.stateRoot(host.home), hostEnv: options.hostEnv }, AGENT_CONFIG_NAMES) : undefined;
+		const overlay = statePlan ? await AgentStateOverlay.prepare(statePlan, { warn: message => this.logger.warn(message) }) : undefined;
+		const policy = agentSandboxPolicy(request, { ...host, ...(sshAuthSock ? { sshAuthSock } : {}), ...(statePlan ? { statePlan } : {}) });
+		// The overlay's variables win over the user's own (`CLAUDE_CONFIG_DIR` set in their shell).
+		const env = statePlan ? { ...options.env, ...statePlan.env } : options.env;
 		const prepared = await this.manager.prepare({
 			command,
 			args: [...nativeSandboxOffArgs(request.providerId), ...args],
 			policy,
-			context: { workspaceRoots: request.workspaceRoots.filter(root => !root.endsWith('/.git')), cwd: options.cwd, hostEnv: options.hostEnv, env: options.env },
+			context: { workspaceRoots: request.workspaceRoots.filter(root => !root.endsWith('/.git')), cwd: options.cwd, hostEnv: options.hostEnv, env },
 			terminal: !!options.terminal,
 			label: options.label ?? `${request.providerId} agent`,
 		});
@@ -129,6 +139,9 @@ export class VoltSandboxLauncher extends Disposable {
 			this.report(prepared.tag, { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}) });
 		});
 		const warnings = prepared.unenforced.map(dimension => `Sandbox is partial here: ${UNENFORCED_TEXT[dimension] ?? dimension}.`);
+		if (policy.network.listen) {
+			warnings.push('Sandbox is partial here: with the network on, Linux cannot limit listening to the ports you allowed, so the agent may listen on any port.');
+		}
 		let disposed = false;
 		return {
 			command: prepared.command,
@@ -145,15 +158,39 @@ export class VoltSandboxLauncher extends Disposable {
 			confirm: child => prepared.confirm(child),
 			terminate: child => prepared.terminate(child),
 			allowDomains: domains => prepared.allowDomains(domains),
+			syncState: async () => {
+				if (!overlay) {
+					return undefined;
+				}
+				const result = await overlay.sync();
+				// A refreshed login needs the provider's word that it is the same account: not on the turn's path.
+				void overlay.syncCredentials().catch(err => this.logger.warn(`[volt-sandbox] agent login merge failed: ${err}`));
+				return result;
+			},
 			dispose: () => {
 				if (!disposed) {
 					disposed = true;
 					listener.dispose();
 					void prepared.dispose();
+					if (overlay) {
+						void overlay.sync().then(() => overlay.syncCredentials()).catch(err => this.logger.warn(`[volt-sandbox] agent state merge failed: ${err}`));
+					}
 				}
 			},
 		};
 	}
+
+	/** `~/.volt/sandbox/agent-state`: per-chat config overlays (agentState.ts). Old ones are pruned once. */
+	private stateRoot(home: string): string {
+		const root = join(home, AGENT_STATE_ROOT);
+		if (!this.stateRootPruned) {
+			this.stateRootPruned = true;
+			void AgentStateOverlay.prune(root).catch(() => undefined);
+		}
+		return root;
+	}
+
+	private stateRootPruned = false;
 
 	private report(tag: string, denial: ISandboxDenial): void {
 		if (isNoiseDenial(denial)) {

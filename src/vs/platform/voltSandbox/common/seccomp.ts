@@ -78,7 +78,7 @@ export const SECCOMP_DENIED_SYSCALLS_X64: readonly string[] = ['iopl', 'ioperm',
  */
 export const SECCOMP_SYSCALL_NUMBERS: Readonly<Record<SeccompArch, Readonly<Record<string, number>>>> = {
 	x64: {
-		ioctl: 16, socket: 41, clone: 56, clone3: 435,
+		ioctl: 16, socket: 41, listen: 50, clone: 56, clone3: 435,
 		mount: 165, umount2: 166, pivot_root: 155, move_mount: 429, open_tree: 428, fsopen: 430, fsconfig: 431, fsmount: 432, fspick: 433, mount_setattr: 442,
 		unshare: 272, setns: 308,
 		ptrace: 101, process_vm_readv: 310, process_vm_writev: 311,
@@ -91,7 +91,7 @@ export const SECCOMP_SYSCALL_NUMBERS: Readonly<Record<SeccompArch, Readonly<Reco
 		iopl: 172, ioperm: 173, uselib: 134,
 	},
 	arm64: {
-		ioctl: 29, socket: 198, clone: 220, clone3: 435,
+		ioctl: 29, socket: 198, listen: 201, clone: 220, clone3: 435,
 		mount: 40, umount2: 39, pivot_root: 41, move_mount: 429, open_tree: 428, fsopen: 430, fsconfig: 431, fsmount: 432, fspick: 433, mount_setattr: 442,
 		unshare: 97, setns: 268,
 		ptrace: 117, process_vm_readv: 270, process_vm_writev: 271,
@@ -126,6 +126,12 @@ export interface ISeccompInstruction {
 export interface ISeccompFilterOptions {
 	/** Refuse `socket(AF_UNIX, ...)`: set when the policy grants no unix socket. */
 	readonly blockUnixSockets: boolean;
+	/**
+	 * Refuse `listen` (B-30): set when the sandbox shares the host's network namespace and may
+	 * listen on no port, so it cannot squat a port on the machine. In its own namespace a listener
+	 * reaches nothing outside and stays allowed.
+	 */
+	readonly blockListen?: boolean;
 }
 
 const load = (offset: number): ISeccompInstruction => ({ code: BPF_LD_W_ABS, jt: 0, jf: 0, k: offset });
@@ -157,6 +163,9 @@ export function seccompInstructions(arch: SeccompArch, options: ISeccompFilterOp
 	const denied = arch === 'x64' ? [...SECCOMP_DENIED_SYSCALLS, ...SECCOMP_DENIED_SYSCALLS_X64] : SECCOMP_DENIED_SYSCALLS;
 	for (const name of denied) {
 		program.push(jeq(nr(name), 0, 1), errno(EPERM));
+	}
+	if (options.blockListen) {
+		program.push(jeq(nr('listen'), 0, 1), errno(EPERM));
 	}
 	program.push(jeq(nr('clone3'), 0, 1), errno(ENOSYS));
 

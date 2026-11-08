@@ -73,8 +73,10 @@ export interface ISandboxNetworkPolicy {
 	readonly allow: readonly string[];
 	/** Host loopback TCP ports the workload may connect to directly (Volt's MCP server). */
 	readonly loopbackPorts: readonly number[];
-	/** May listen on loopback (dev servers). */
+	/** May listen on any loopback port (trusted layers only; agent profiles never set it, B-30). */
 	readonly listen: boolean;
+	/** Loopback ports the workload may listen on, granted one by one (a dev server's port). */
+	readonly listenPorts?: readonly number[];
 }
 
 export interface ISandboxLimits {
@@ -319,7 +321,7 @@ export type SandboxParseResult<T> =
 
 const TOP_KEYS = ['schemaVersion', 'name', 'filesystem', 'network', 'process', 'env', 'host', 'bestEffort'];
 const FILESYSTEM_KEYS = ['read', 'write', 'deny', 'protect', 'unmask'];
-const NETWORK_KEYS = ['mode', 'allow', 'loopbackPorts', 'listen'];
+const NETWORK_KEYS = ['mode', 'allow', 'loopbackPorts', 'listen', 'listenPorts'];
 const PROCESS_KEYS = ['limits'];
 const LIMIT_KEYS = Object.keys(SANDBOX_LIMIT_BOUNDS);
 const ENV_KEYS = ['inherit', 'set'];
@@ -452,6 +454,10 @@ function readLayer(input: unknown, reader: PolicyReader): IVoltSandboxPolicyLaye
 				out.loopbackPorts = reader.list(net.loopbackPorts, 'network.loopbackPorts', (entry, at) =>
 					typeof entry === 'number' && Number.isInteger(entry) && entry >= 1 && entry <= 65535 ? entry : reader.fail(at, 'must be a port from 1 to 65535'));
 			}
+			if (net.listenPorts !== undefined) {
+				out.listenPorts = reader.list(net.listenPorts, 'network.listenPorts', (entry, at) =>
+					typeof entry === 'number' && Number.isInteger(entry) && entry >= 1 && entry <= 65535 ? entry : reader.fail(at, 'must be a port from 1 to 65535'));
+			}
 			if (net.listen !== undefined) {
 				if (typeof net.listen !== 'boolean') {
 					reader.fail('network.listen', 'must be true or false');
@@ -573,6 +579,7 @@ export function completeSandboxPolicy(layer: IVoltSandboxPolicyLayer): IVoltSand
 			allow: layer.network?.allow ?? [],
 			loopbackPorts: layer.network?.loopbackPorts ?? [],
 			listen: layer.network?.listen ?? false,
+			...(layer.network?.listenPorts?.length ? { listenPorts: layer.network.listenPorts } : {}),
 		},
 		process: { limits: { ...layer.process?.limits } },
 		env: { inherit: layer.env?.inherit ?? [], set: { ...layer.env?.set } },

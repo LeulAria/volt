@@ -25,7 +25,7 @@ import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.j
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
 import { ChildLedger } from './childLedger.js';
 import { SandboxedPtySession } from '../../voltSandbox/node/sandboxPty.js';
-import { describeExecContext, execRefusal, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../common/voltStdio.js';
+import { describeExecContext, execRefusal, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../common/voltStdio.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -363,6 +363,10 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			entry.session.exited(null, 'SIGKILL');
 			await entry.session.end();
 		}
+	}
+
+	async syncSandboxState(id: string): Promise<IVoltSandboxStateSync | undefined> {
+		return this.sandboxes.get(id)?.syncState();
 	}
 
 	private disposeSandbox(id: string): void {

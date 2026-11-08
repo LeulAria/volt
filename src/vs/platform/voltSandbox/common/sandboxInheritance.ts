@@ -10,7 +10,21 @@
  * sandbox denies: children are confined at least as tightly as the chat that made them.
  */
 
-import { isPathInside, IVoltSandboxSettings, normalizeSandboxPath, VoltSandboxLevel } from './sandboxPolicy.js';
+import { isPathInside, IVoltSandboxSettings, normalizeSandboxPath, SandboxStrategy, strategyAtLeast, VoltSandboxLevel } from './sandboxPolicy.js';
+
+/**
+ * What a chat's sandbox covers beyond its settings (INV-11): how its agent is sandboxed, and the
+ * folders it works in. Optional so callers that know only the settings still compare those.
+ */
+export interface ISandboxScope {
+	/** Its agent's strategy (`sandboxStrategy` of its provider at its level). Unknown: `wrap` for a sandboxed level. */
+	readonly strategy?: SandboxStrategy;
+	/**
+	 * Real paths of its workspace roots (its checkout, and a linked worktree's git dir): what it
+	 * writes at `workspace-write`. Unknown: only its allowed folders are compared.
+	 */
+	readonly roots?: readonly string[];
+}
 
 const LEVEL_RANK: Readonly<Record<VoltSandboxLevel, number>> = { 'off': 0, 'workspace-write': 1, 'read-only': 2 };
 
@@ -84,26 +98,45 @@ export function stricterSandboxSettings(a: IVoltSandboxSettings, b: IVoltSandbox
 	// With network on the host lists are dormant (they apply once network goes off): both lists are intersected as written.
 	const domains = network ? intersectDomains(a.allowedDomains ?? [], b.allowedDomains ?? []) : intersectDomains(reachable(a), reachable(b));
 	const domainList = domains === ALL ? [] : domains;
+	const listenPorts = (a.listenPorts ?? []).filter(port => (b.listenPorts ?? []).includes(port));
 	return {
 		level,
 		network,
 		...(roots.length ? { extraWritableRoots: roots } : {}),
 		...(domainList.length ? { allowedDomains: domainList } : {}),
+		...(listenPorts.length ? { listenPorts } : {}),
 	};
 }
 
-/** True when `a` allows nothing `b` denies: a chat confined by `a` is confined at least as tightly as one confined by `b`. */
-export function isAtLeastAsStrict(a: IVoltSandboxSettings, b: IVoltSandboxSettings): boolean {
+/** Folders a side may write: its allowed folders, and its workspace roots at `workspace-write`. */
+function writableRoots(settings: IVoltSandboxSettings, scope: ISandboxScope | undefined): string[] {
+	return [...(settings.extraWritableRoots ?? []), ...(settings.level === 'workspace-write' ? scope?.roots ?? [] : [])].map(normalizeSandboxPath);
+}
+
+/**
+ * True when `a` allows nothing `b` denies: a chat confined by `a` is confined at least as tightly
+ * as one confined by `b`. With scopes, also its agent's strategy (`native` is weaker than `wrap`)
+ * and the folders it works in (B-10, B-11): a chat that writes its workspace is only as strict as
+ * one whose writable folders hold that workspace.
+ */
+export function isAtLeastAsStrict(a: IVoltSandboxSettings, b: IVoltSandboxSettings, scopes?: { readonly a?: ISandboxScope; readonly b?: ISandboxScope }): boolean {
 	if (b.level === 'off') {
 		return true;
 	}
 	if (a.level === 'off' || LEVEL_RANK[a.level] < LEVEL_RANK[b.level]) {
 		return false;
 	}
+	if (!strategyAtLeast(scopes?.a?.strategy ?? 'wrap', scopes?.b?.strategy ?? 'wrap')) {
+		return false;
+	}
 	if (a.network && !b.network) {
 		return false;
 	}
-	if (!(a.extraWritableRoots ?? []).every(root => (b.extraWritableRoots ?? []).some(allowed => isPathInside(root, allowed)))) {
+	if ((a.listenPorts ?? []).some(port => !(b.listenPorts ?? []).includes(port))) {
+		return false;
+	}
+	const bWrites = writableRoots(b, scopes?.b);
+	if (!writableRoots(a, scopes?.a).every(root => bWrites.some(allowed => isPathInside(root, allowed)))) {
 		return false;
 	}
 	const bReach = reachable(b);
@@ -119,6 +152,50 @@ export function inheritedSandboxSettings(parent: IVoltSandboxSettings, child: IV
 		return undefined;
 	}
 	return stricterSandboxSettings(parent, child);
+}
+
+export interface ISpawnSandboxDecision {
+	/** What the child is stored with; undefined when its own settings already cover the caller. */
+	readonly settings?: IVoltSandboxSettings;
+	/** Its workspace is outside what the caller may write: it runs read-only there (B-AP-14). */
+	readonly forcedReadOnly?: boolean;
+	/** Why the child may not be started at all. */
+	readonly refused?: string;
+}
+
+/**
+ * The sandbox of a chat a sandboxed caller starts, hands off or moves (thread_launch, handoff,
+ * thread_configure, forks; INV-11): at least the caller's settings, an agent strategy no weaker
+ * than the caller's (else refused), and write access to its workspace only when that workspace,
+ * as a real path, lies inside what the caller may write (else it runs read-only).
+ */
+export function spawnSandboxSettings(caller: IVoltSandboxSettings, child: IVoltSandboxSettings, scopes: { readonly caller?: ISandboxScope; readonly child?: ISandboxScope } = {}): ISpawnSandboxDecision {
+	if (caller.level === 'off') {
+		return {};
+	}
+	const callerStrategy = scopes.caller?.strategy ?? 'wrap';
+	const childStrategy = scopes.child?.strategy ?? 'wrap';
+	if (!strategyAtLeast(childStrategy, callerStrategy)) {
+		return {
+			refused: childStrategy === 'none'
+				? 'That agent cannot run in Volt\'s sandbox on this machine, and this chat is sandboxed.'
+				: 'That agent would run with a weaker sandbox than this chat\'s.',
+		};
+	}
+	let settings = inheritedSandboxSettings(caller, child) ?? child;
+	let forcedReadOnly = false;
+	const childRoots = (scopes.child?.roots ?? []).map(normalizeSandboxPath);
+	if (settings.level === 'workspace-write' && childRoots.length) {
+		const callerWrites = writableRoots(caller, scopes.caller);
+		if (!childRoots.every(root => callerWrites.some(allowed => isPathInside(root, allowed)))) {
+			settings = { ...settings, level: 'read-only' };
+			forcedReadOnly = true;
+		}
+	}
+	if (!forcedReadOnly && isAtLeastAsStrict(child, caller, { a: scopes.child, b: scopes.caller }) && settings === child) {
+		return {};
+	}
+	return { settings, ...(forcedReadOnly ? { forcedReadOnly } : {}) };
 }
 
 // --- "Allow folder" from a denial -------------------------------------------------------------

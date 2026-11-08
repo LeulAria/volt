@@ -51,7 +51,8 @@ transpile() {
 
 snapshot() {
 	local dir
-	for dir in vs/base/common vs/base/test/common vs/platform/voltSandbox vs/platform/voltGit; do
+	# voltAccounts/node: the agent state overlay checks a refreshed Claude login's account with it.
+	for dir in vs/base/common vs/base/test/common vs/platform/voltSandbox vs/platform/voltGit vs/platform/voltAccounts/node; do
 		if [[ ! -d "$ROOT/out/$dir" ]]; then
 			echo "out/$dir is missing (another build cleaning out/?); run again" >&2
 			exit 1

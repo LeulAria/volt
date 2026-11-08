@@ -5,7 +5,7 @@
 
 import { IChannel, ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../../../platform/voltGit/common/hostGit.js';
-import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxFileResult, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { projectRunEnv } from './projectRunEnv.js';
 
 /**
@@ -63,6 +63,7 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	}
 	confirmSandboxedTerminal(id: string, pid: number): Promise<string> { return this.inner.confirmSandboxedTerminal!(id, pid); }
 	endSandboxedTerminal(id: string): Promise<void> { return this.inner.endSandboxedTerminal!(id); }
+	async syncSandboxState(id: string): Promise<IVoltSandboxStateSync | undefined> { return this.inner.syncSandboxState ? this.inner.syncSandboxState(id) : undefined; }
 }
 
 function isStdioService(source: IChannel | IVoltStdioService): source is IVoltStdioService {
