@@ -3,12 +3,16 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { Dimension } from '../../../../base/browser/dom.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Event } from '../../../../base/common/event.js';
-import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
+import { DisposableStore, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { ILocalizedString } from '../../../../platform/action/common/action.js';
 import { CommandVisibility } from '../../../../platform/commands/common/commands.js';
 import { createDecorator, IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
 import { EditorsOrder, IEditorSerializer } from '../../../common/editor.js';
+import { EditorInput } from '../../../common/editor/editorInput.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { ILifecycleService } from '../../../services/lifecycle/common/lifecycle.js';
 import { IVoltPluginContext } from '../../../services/voltPlugins/common/voltApi.js';
@@ -97,4 +101,37 @@ export function closeModuleEditorsOnUnload(host: IVoltFeatureModuleHost, typeIds
 			void editorService.closeEditors(open);
 		}
 	})));
+}
+
+/** A module's editor drawn inside another editor (a page Volt Settings hosts). */
+export interface IVoltEmbeddedEditorPage extends IDisposable {
+	setVisible(visible: boolean): void;
+	layout(width: number, height: number): void;
+}
+
+/**
+ * Shows `input` in `pane` inside `parent`. The page belongs to the module: unloading it disposes
+ * the page (the host's own `dispose` is then a no-op).
+ */
+export function embedModuleEditor(host: IVoltFeatureModuleHost, pane: EditorPane, input: EditorInput, parent: HTMLElement): IVoltEmbeddedEditorPage {
+	const store = new DisposableStore();
+	store.add(pane);
+	store.add(input);
+	let size: Dimension | undefined;
+	pane.create(parent);
+	pane.setVisible(true);
+	void pane.setInput(input, undefined, {}, CancellationToken.None).then(() => {
+		if (size && !store.isDisposed) {
+			pane.layout(size);
+		}
+	});
+	const registration = host.subscriptions.add(store);
+	return {
+		setVisible: visible => pane.setVisible(visible),
+		layout: (width, height) => {
+			size = new Dimension(width, height);
+			pane.layout(size);
+		},
+		dispose: () => host.subscriptions.delete(registration),
+	};
 }

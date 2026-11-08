@@ -36,7 +36,9 @@ import { IVoltSessionContextService } from '../../../services/voltRuntime/common
 import { shownAgentChat } from '../../voltAgent/browser/editor/agentShownChat.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../../voltAgent/browser/preview/browserEditorInput.js';
 import { IAgentPullRequestService } from '../../voltAgent/browser/pullRequests/agentPullRequestService.js';
+import { IAgentCustomizeService } from '../../voltAgent/browser/customize/agentCustomizeService.js';
 import { OPEN_AUTOMATIONS_COMMAND_ID } from '../../voltAutomations/common/voltAutomations.js';
+import { OPEN_SKILLS_COMMAND_ID, OPEN_SKILLS_MARKETPLACE_COMMAND_ID } from '../../voltSkills/common/voltSkills.js';
 import { IVoltFeatureService } from '../common/voltFeatures.js';
 import { showVoltExtensionConsent, voltCapabilityCopy } from './voltExtensionConsent.js';
 
@@ -246,6 +248,15 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 				ownAutomation(automations.get(automationId), automationId, caller);
 				await automations.delete(automationId);
 			},
+			listSkills: async () => (await this.get(IAgentCustomizeService).getItems()).filter(item => item.kind !== 'memory').map(item => ({
+				kind: item.kind,
+				name: item.name,
+				description: item.description,
+				scope: item.scope,
+				...(item.origin ? { origin: item.origin } : {}),
+				...(item.plugin && item.kind !== 'plugin' ? { plugin: item.plugin.name } : {}),
+			})),
+			showSkills: async marketplace => { await commandService.executeCommand(marketplace ? OPEN_SKILLS_MARKETPLACE_COMMAND_ID : OPEN_SKILLS_COMMAND_ID); },
 			readUsage: async () => {
 				const snapshot = await this.get(IVoltUsageService).getUsage();
 				const models = new Map<string, { -readonly [K in keyof IVoltUsageModelTotal]: IVoltUsageModelTotal[K] }>();

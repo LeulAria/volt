@@ -3,8 +3,6 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Dimension } from '../../../../base/browser/dom.js';
-import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
 import { localize, localize2 } from '../../../../nls.js';
@@ -20,7 +18,7 @@ import { IAutomationService } from '../../../services/voltRuntime/common/automat
 import { AutomationsRoute, IAutomationSeed } from '../../voltAgent/browser/automations/automationRoutes.js';
 import { openInAgentTools } from '../../voltAgent/browser/workspace/agentSurfaceHost.js';
 import { OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID } from '../../voltAgent/browser/workspace/agentSurfaceMenu.js';
-import { closeModuleEditorsOnUnload, IVoltFeatureModule, IVoltFeatureModuleHost } from '../../voltCustomize/browser/voltFeatureModules.js';
+import { closeModuleEditorsOnUnload, embedModuleEditor, IVoltFeatureModule, IVoltFeatureModuleHost } from '../../voltCustomize/browser/voltFeatureModules.js';
 import {
 	AUTOMATIONS_EDITOR_ID, IAutomationsEmbeddedPage, IVoltAutomationsModule, NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATION_RUNS_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID,
 	OPEN_AUTOMATIONS_ROUTE_COMMAND_ID,
@@ -184,29 +182,7 @@ class VoltAutomationsModule implements IVoltFeatureModule, IVoltAutomationsModul
 		if (!host) {
 			throw new Error('The Automations module is not loaded.');
 		}
-		const store = new DisposableStore();
-		const pane = store.add(host.instantiationService.createInstance(AutomationsEditor, group));
-		const input = store.add(new AutomationsEditorInput());
-		let size: Dimension | undefined;
-		pane.create(parent);
-		pane.setVisible(true);
-		void pane.setInput(input, undefined, {}, CancellationToken.None).then(() => {
-			if (size && !store.isDisposed) {
-				pane.layout(size);
-			}
-		});
-		// Unloading the module takes the page with it; the host's own disposal is then a no-op.
-		const registration = host.subscriptions.add(store);
-		return {
-			setVisible: visible => pane.setVisible(visible),
-			layout: (width, height) => {
-				size = new Dimension(width, height);
-				pane.layout(size);
-			},
-			dispose: () => {
-				host.subscriptions.delete(registration);
-			},
-		};
+		return embedModuleEditor(host, host.instantiationService.createInstance(AutomationsEditor, group), new AutomationsEditorInput(), parent);
 	}
 }
 

@@ -12,7 +12,7 @@ import { DomScrollableElement } from '../../../../base/browser/ui/scrollbar/scro
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { isMacintosh } from '../../../../base/common/platform.js';
-import { DisposableStore, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../base/browser/ui/contextview/contextview.js';
 import { ScrollbarVisibility } from '../../../../base/common/scrollable.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
@@ -74,9 +74,9 @@ import { createAccessIcon } from '../../voltAgent/browser/chrome/accessIcons.js'
 import { createVoltDropdown, IVoltDropdownOption } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
 import { createAgentHeaderSeparatorIcon } from '../../voltAgent/browser/chrome/agentTitlebarHeader.js';
 import { AgentFooterAction, appendAgentFooterActions } from '../../voltAgent/browser/home/agentHomeFooterActions.js';
-import { AgentCustomizeEditor, AgentCustomizeEditorInput } from '../../voltAgent/browser/customize/agentCustomizeEditor.js';
-import { AUTOMATIONS_FEATURE_ID, IAutomationsEmbeddedPage, IVoltAutomationsModule } from '../../voltAutomations/common/voltAutomations.js';
-import { IVoltFeatureModule, IVoltFeatureModuleService } from '../../voltCustomize/browser/voltFeatureModules.js';
+import { AUTOMATIONS_FEATURE_ID, IVoltAutomationsModule } from '../../voltAutomations/common/voltAutomations.js';
+import { IVoltEmbeddedEditorPage, IVoltFeatureModule, IVoltFeatureModuleService } from '../../voltCustomize/browser/voltFeatureModules.js';
+import { IVoltSkillsModule, SKILLS_FEATURE_ID } from '../../voltSkills/common/voltSkills.js';
 import { createHomeAutomationsIcon } from '../../voltAgent/browser/home/agentHomeIcons.js';
 import { IVoltFeatureService } from '../../voltCustomize/common/voltFeatures.js';
 import { RunOnceScheduler } from '../../../../base/common/async.js';
@@ -226,12 +226,10 @@ export class VoltSettingsEditor extends EditorPane {
 	 * nav stays. Made on first visit and kept, like Usage.
 	 */
 	private customizeHost!: HTMLElement;
-	private customizePane: AgentCustomizeEditor | undefined;
+	private customizePage!: VoltSettingsModulePage<IVoltSkillsModule>;
 	/** Automations: the agent's Automations page, hosted here like Skills & Plugins. */
 	private automationsHost!: HTMLElement;
-	/** The Automations module's page, once the module is loaded (it goes if the module unloads). */
-	private automationsPane: IAutomationsEmbeddedPage | undefined;
-	private automationsLoading = false;
+	private automationsPage!: VoltSettingsModulePage<IVoltAutomationsModule>;
 	/** Every registered setting by category: VS Code's settings editor model, sorted for the nav. */
 	private catalogModel: Settings2EditorModel | undefined;
 	private catalog: ISettingsCatalogCategory[] = [];
@@ -410,6 +408,12 @@ export class VoltSettingsEditor extends EditorPane {
 		customizeResize.observe(this.customizeHost);
 		this.automationsHost = append(this.body, $('.volt-settings-automations'));
 		customizeResize.observe(this.automationsHost);
+		// Both pages are feature modules' (Skills & Plugins, Automations): they load with the module on first visit.
+		const modules = this.instantiationService.invokeFunction(accessor => accessor.get(IVoltFeatureModuleService));
+		this.customizePage = this._register(new VoltSettingsModulePage<IVoltSkillsModule>(modules, this.logService, SKILLS_FEATURE_ID, this.customizeHost,
+			module => module.createEmbeddedPage(this.customizeHost, this.group), () => this.isVisible() && this.section === 'customize'));
+		this.automationsPage = this._register(new VoltSettingsModulePage<IVoltAutomationsModule>(modules, this.logService, AUTOMATIONS_FEATURE_ID, this.automationsHost,
+			module => module.createEmbeddedPage(this.automationsHost, this.group), () => this.isVisible() && this.section === 'automations'));
 		this._register(toDisposable(() => customizeResize.disconnect()));
 		this.createSidebarSash();
 		this._register(this.layoutService.onDidLayoutMainContainer(() => this.syncSidebarWidth()));
@@ -496,8 +500,8 @@ export class VoltSettingsEditor extends EditorPane {
 			return;
 		}
 		this.usage?.setVisible(false);
-		this.customizePane?.setVisible(false);
-		this.automationsPane?.setVisible(false);
+		this.customizePage?.hide();
+		this.automationsPage?.hide();
 		this.container.classList.remove('volt-settings-overlay');
 		this.layoutService.mainContainer.classList.remove('volt-settings-open');
 		this.container.remove();
@@ -720,12 +724,12 @@ export class VoltSettingsEditor extends EditorPane {
 		// Skills & Plugins has its own search, header and scrolling: it takes the page area itself.
 		this.container.classList.toggle('volt-settings-customize-open', this.section === 'customize');
 		if (this.section !== 'customize') {
-			this.customizePane?.setVisible(false);
+			this.customizePage?.hide();
 		}
 		// So does Automations.
 		this.container.classList.toggle('volt-settings-automations-open', this.section === 'automations');
 		if (this.section !== 'automations') {
-			this.automationsPane?.setVisible(false);
+			this.automationsPage?.hide();
 		}
 		// A settings category is a list beside an inspector, in place of the page. Volt's pages draw
 		// where the inspector would, with Volt's list (which links them) kept beside them.
@@ -866,72 +870,23 @@ export class VoltSettingsEditor extends EditorPane {
 		this.usage.setVisible(this.isVisible());
 	}
 
-	/** Shows the hosted Customize page, making it on first visit. */
+	/** Shows the hosted Skills & Plugins page, making it on first visit. */
 	private showCustomize(): void {
-		if (!this.isVisible()) {
-			return;
+		if (this.isVisible()) {
+			this.customizePage.show();
 		}
-		let pane = this.customizePane;
-		if (!pane) {
-			pane = this.customizePane = this._register(this.instantiationService.createInstance(AgentCustomizeEditor, this.group));
-			pane.create(this.customizeHost);
-			pane.setVisible(true);
-			const input = this._register(new AgentCustomizeEditorInput());
-			void pane.setInput(input, undefined, {}, CancellationToken.None).then(() => this.layoutCustomize());
-		} else {
-			pane.setVisible(true);
-		}
-		this.layoutCustomize();
 	}
 
 	private layoutCustomize(): void {
-		const host = this.customizeHost;
-		if (this.customizePane && this.section === 'customize' && host.isConnected && host.clientWidth && host.clientHeight) {
-			this.customizePane.layout(new Dimension(host.clientWidth, host.clientHeight));
-		}
-		const automations = this.automationsHost;
-		if (this.automationsPane && this.section === 'automations' && automations.isConnected && automations.clientWidth && automations.clientHeight) {
-			this.automationsPane.layout(automations.clientWidth, automations.clientHeight);
-		}
+		this.customizePage?.layout();
+		this.automationsPage?.layout();
 	}
 
-	/** Shows the hosted Automations page, loading the Automations module and making the page on first visit. */
+	/** Shows the hosted Automations page, making it on first visit. */
 	private showAutomations(): void {
-		if (!this.isVisible()) {
-			return;
+		if (this.isVisible()) {
+			this.automationsPage.show();
 		}
-		if (this.automationsPane) {
-			this.automationsPane.setVisible(true);
-			this.layoutCustomize();
-			return;
-		}
-		if (this.automationsLoading) {
-			return;
-		}
-		this.automationsLoading = true;
-		const modules = this.instantiationService.invokeFunction(accessor => accessor.get(IVoltFeatureModuleService));
-		void modules.activate<IVoltFeatureModule & IVoltAutomationsModule>(AUTOMATIONS_FEATURE_ID).then(module => {
-			this.automationsLoading = false;
-			if (!module || this.automationsPane || this._store.isDisposed) {
-				return;
-			}
-			const page = this.automationsPane = module.createEmbeddedPage(this.automationsHost, this.group);
-			this._register(page);
-			// Disabling the extension unloads the module, and the page with it.
-			const unloaded = this._register(modules.onDidChange(feature => {
-				if (feature === AUTOMATIONS_FEATURE_ID && !modules.isActive(feature)) {
-					unloaded.dispose();
-					if (this.automationsPane === page) {
-						this.automationsPane = undefined;
-					}
-				}
-			}));
-			page.setVisible(this.section === 'automations' && this.isVisible());
-			this.layoutCustomize();
-		}, error => {
-			this.automationsLoading = false;
-			this.logService.error('[volt settings] the Automations page did not load', error);
-		});
 	}
 
 	private get target(): HTMLElement {
@@ -1883,4 +1838,68 @@ function describeLidClosedMode(state: IAwakeState | undefined): string {
 		parts.push(localize('voltSettings.lidLastError', "Last problem: {0}", state.lastError));
 	}
 	return parts.join(' ');
+}
+
+/**
+ * A page a feature module draws in Volt Settings (Skills & Plugins, Automations): made with the
+ * module on first visit and kept; it goes when the module unloads (the extension was disabled), and
+ * the next visit loads it again.
+ */
+class VoltSettingsModulePage<M> extends Disposable {
+
+	private page: IVoltEmbeddedEditorPage | undefined;
+	private loading = false;
+
+	constructor(
+		private readonly modules: IVoltFeatureModuleService,
+		private readonly logService: ILogService,
+		private readonly feature: string,
+		private readonly host: HTMLElement,
+		private readonly create: (module: M) => IVoltEmbeddedEditorPage,
+		/** Whether the page is the one showing. */
+		private readonly showing: () => boolean,
+	) {
+		super();
+		this._register(modules.onDidChange(feature => {
+			if (feature === this.feature && !modules.isActive(feature)) {
+				this.page = undefined;
+			}
+		}));
+		this._register(toDisposable(() => this.page?.dispose()));
+	}
+
+	show(): void {
+		if (this.page) {
+			this.page.setVisible(true);
+			this.layout();
+			return;
+		}
+		if (this.loading) {
+			return;
+		}
+		this.loading = true;
+		this.modules.activate<IVoltFeatureModule & M>(this.feature).then(module => {
+			this.loading = false;
+			if (!module || this.page || this._store.isDisposed) {
+				return;
+			}
+			this.page = this.create(module);
+			this.page.setVisible(this.showing());
+			this.layout();
+		}, error => {
+			this.loading = false;
+			this.logService.error(`[volt settings] the ${this.feature} page did not load`, error);
+		});
+	}
+
+	hide(): void {
+		this.page?.setVisible(false);
+	}
+
+	layout(): void {
+		const host = this.host;
+		if (this.page && this.showing() && host.isConnected && host.clientWidth && host.clientHeight) {
+			this.page.layout(host.clientWidth, host.clientHeight);
+		}
+	}
 }

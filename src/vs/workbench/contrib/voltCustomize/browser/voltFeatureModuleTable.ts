@@ -4,11 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { localize2 } from '../../../../nls.js';
+import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
 import { OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID } from '../../voltAgent/browser/workspace/agentSurfaceMenu.js';
 import {
 	AUTOMATIONS_EDITOR_INPUT_TYPE_ID, AUTOMATIONS_FEATURE_ID, NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATION_RUNS_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID,
 	OPEN_AUTOMATIONS_ROUTE_COMMAND_ID,
 } from '../../voltAutomations/common/voltAutomations.js';
+import { OPEN_SKILLS_COMMAND_ID, OPEN_SKILLS_MARKETPLACE_COMMAND_ID, SKILLS_EDITOR_INPUT_TYPE_ID, SKILLS_FEATURE_ID } from '../../voltSkills/common/voltSkills.js';
 import { IVoltFeatureModuleEntry } from './voltFeatureModules.js';
 
 const AGENT_CATEGORY = localize2('voltAgent.category', "Agent");
@@ -34,5 +36,14 @@ export const VOLT_FEATURE_MODULES: readonly IVoltFeatureModuleEntry[] = [
 			{ id: OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, visibility: 'public' },
 		],
 		editors: [AUTOMATIONS_EDITOR_INPUT_TYPE_ID],
+	},
+	{
+		feature: SKILLS_FEATURE_ID,
+		load: async () => (await import('../../voltSkills/browser/voltSkills.module.js')).voltSkillsModule,
+		commands: [
+			{ id: OPEN_SKILLS_COMMAND_ID, visibility: 'public', f1: true, title: localize2('voltAgent.customize', "Customize Agent"), category: Categories.View },
+			{ id: OPEN_SKILLS_MARKETPLACE_COMMAND_ID, visibility: 'public', f1: true, title: localize2('voltAgent.marketplace', "Browse Skills and Plugins Marketplace"), category: Categories.View },
+		],
+		editors: [SKILLS_EDITOR_INPUT_TYPE_ID],
 	},
 ];

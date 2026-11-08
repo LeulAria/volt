@@ -36,6 +36,35 @@
 			"src/vs/workbench/services/voltRuntime/common/runtime.ts",
 			"src/vs/workbench/services/voltRuntime/common/sessionContext.ts",
 			"src/vs/workbench/services/voltRuntime/common/workflows/workflowTypes.ts"
+		],
+		"skills": [
+			"src/vs/workbench/contrib/voltAgent/browser/chrome/agentModeIcons.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/chrome/agentSidePanel.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/customize/agentCustomize.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/customize/agentCustomizeDialogs.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/customize/agentCustomizeService.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/customize/agentMarketplace.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/customize/agentMarketplaceView.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/editor/agentEditorInput.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/editor/agentScrollable.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/editor/agentTitleActions.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/media/agentCustomize.css",
+			"src/vs/workbench/contrib/voltAgent/browser/resources/agentResourcesEmbed.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/resources/agentResourcesPage.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/resources/agentResourcesSections.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/workspace/agentSurfaceHost.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/workspace/agentSurfaceMenu.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/workspace/agentToolsEditorPart.ts",
+			"src/vs/workbench/contrib/voltAgent/common/agentResources.ts",
+			"src/vs/workbench/services/editor/common/editorGroupsService.ts",
+			"src/vs/workbench/services/editor/common/editorService.ts",
+			"src/vs/workbench/services/layout/browser/layoutService.ts",
+			"src/vs/workbench/services/textfile/common/textEditorService.ts",
+			"src/vs/workbench/services/views/common/viewsService.ts",
+			"src/vs/workbench/services/voltRuntime/browser/hooks/voltHooksService.ts",
+			"src/vs/workbench/services/voltRuntime/common/hooks/voltHooks.ts",
+			"src/vs/workbench/services/voltRuntime/common/memory/voltMemory.ts",
+			"src/vs/workbench/services/voltRuntime/common/runtime.ts"
 		]
 	}
 }

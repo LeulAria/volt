@@ -2778,6 +2778,7 @@ export type VoltApiMethod =
 	| 'browser.open' | 'browser.readPage'
 	| 'visuals.renderChart' | 'visuals.drawOnScratch'
 	| 'automations.list' | 'automations.schedule' | 'automations.show' | 'automations.run' | 'automations.remove'
+	| 'skills.list' | 'skills.show'
 	| 'usage.get'
 	| 'pullRequests.list' | 'pullRequests.link';
 

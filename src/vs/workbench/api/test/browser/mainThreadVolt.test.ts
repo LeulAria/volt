@@ -40,6 +40,9 @@ import { VoltCapabilityError } from '../../../services/voltPlugins/common/capabi
 import { IVoltExtensionApiService } from '../../../services/voltPlugins/common/voltExtensionApi.js';
 import { IAutomation, IAutomationCreateInput, IAutomationRun, IAutomationService } from '../../../services/voltRuntime/common/automations/automations.js';
 import { OPEN_AUTOMATIONS_COMMAND_ID } from '../../../contrib/voltAutomations/common/voltAutomations.js';
+import { IAgentCustomization } from '../../../contrib/voltAgent/browser/customize/agentCustomize.js';
+import { IAgentCustomizeService } from '../../../contrib/voltAgent/browser/customize/agentCustomizeService.js';
+import { OPEN_SKILLS_COMMAND_ID, OPEN_SKILLS_MARKETPLACE_COMMAND_ID } from '../../../contrib/voltSkills/common/voltSkills.js';
 import { IAgentHistoryService, IAgentSessionMeta } from '../../../services/voltRuntime/common/history/agentHistory.js';
 import { BROWSER_PAGE_URL_COMMAND_ID, IVoltHostToolCall, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
 import { IVoltMemory, IVoltMemoryDraft, IVoltMemoryService } from '../../../services/voltRuntime/common/memory/voltMemory.js';
@@ -180,6 +183,15 @@ suite('Volt extension API (vscode.volt)', () => {
 			override get(id: string) { return automations.find(automation => automation.id === id); }
 			override async runNow(id: string) { return [{ id: `r-${id}`, at: 1, status: 'running', provider: 'manual', label: 'Run now', threadId: 'chat-9' } as IAutomationRun]; }
 			override async delete(id: string) { automations.splice(automations.findIndex(automation => automation.id === id), 1); }
+		});
+		instantiation.stub(IAgentCustomizeService, new class extends mock<IAgentCustomizeService>() {
+			override async getItems(): Promise<readonly IAgentCustomization[]> {
+				return [
+					{ kind: 'skill', scope: 'user', name: 'release-notes', description: 'Writes release notes.', resource: URI.file('/home/me/.claude/skills/release-notes/SKILL.md'), source: '~/.claude', origin: 'claude' },
+					{ kind: 'mcp', scope: 'workspace', name: 'linear', description: 'Linear issues.', resource: URI.file('/repo/app/.mcp.json'), source: 'app', mcp: { command: 'npx', env: { LINEAR_TOKEN: 'secret' } }, plugin: { id: 'claude:linear@acme', name: 'linear', displayName: 'Linear', publisher: 'Acme' } } as unknown as IAgentCustomization,
+					{ kind: 'memory', scope: 'user', name: 'prefers small diffs', description: 'How to change code', resource: URI.file('/m/x.md'), source: 'Volt' },
+				];
+			}
 		});
 		instantiation.stub(IVoltUsageService, new class extends mock<IVoltUsageService>() {
 			override async getUsage(): Promise<IVoltUsageSnapshot> {
@@ -406,6 +418,23 @@ suite('Volt extension API (vscode.volt)', () => {
 		assert.strictEqual((await refusal(other.automations.run('mine'))).deniedBy, 'manifest');
 		assert.strictEqual((await refusal(other.automations.remove('mine'))).deniedBy, 'manifest');
 		assert.deepStrictEqual(h.automations.map(automation => automation.id), ['mine']);
+	});
+
+	test('EXT-RT-skills: list what agents load (names and descriptions only) and show the page', async () => {
+		const h = host([acme()], ['acme.notes']);
+		h.grant('acme.notes', 'agents.read:any');
+		const volt = h.voltFor('acme.notes');
+		assert.deepStrictEqual(await volt.skills.list(), [
+			{ kind: 'skill', name: 'release-notes', description: 'Writes release notes.', scope: 'user', origin: 'claude' },
+			{ kind: 'mcp', name: 'linear', description: 'Linear issues.', scope: 'workspace', plugin: 'linear' },
+		], 'no file paths, no MCP config (env), no memories');
+		assert.deepStrictEqual((await volt.skills.list('mcp')).map(skill => skill.name), ['linear']);
+		await volt.skills.show();
+		await volt.skills.show({ marketplace: true });
+		assert.deepStrictEqual(h.commands.filter(command => command.id === OPEN_SKILLS_COMMAND_ID || command.id === OPEN_SKILLS_MARKETPLACE_COMMAND_ID).map(command => command.id), [OPEN_SKILLS_COMMAND_ID, OPEN_SKILLS_MARKETPLACE_COMMAND_ID]);
+		// Undeclared: refused without a prompt.
+		const bare = host([description('acme.bare', { contributes: {} })], ['acme.bare']);
+		assert.strictEqual((await refusal(bare.voltFor('acme.bare').skills.list())).deniedBy, 'manifest');
 	});
 
 	// --- Identity ---------------------------------------------------------------------------------

@@ -40,13 +40,12 @@ import {
 	AgentEditorInput,
 	EXPORT_AGENT_TRANSCRIPT_COMMAND_ID,
 	OPEN_AGENT_COMMAND_ID,
-	OPEN_AGENT_CUSTOMIZE_COMMAND_ID,
 	NEW_AGENT_TAB_COMMAND_ID,
 	OPEN_AGENT_HISTORY_COMMAND_ID,
 	REPLACE_AGENT_COMMAND_ID,
 	TOGGLE_AGENT_DRAWER_COMMAND_ID,
 } from '../editor/agentEditorInput.js';
-import { AGENT_CUSTOMIZE_EDITOR_ID, AgentCustomizeEditor, AgentCustomizeEditorInput, AgentCustomizeEditorInputSerializer } from '../customize/agentCustomizeEditor.js';
+import { SKILLS_EDITOR_ID } from '../../../voltSkills/common/voltSkills.js';
 import { AGENT_USAGE_EDITOR_ID, AgentUsageEditor, AgentUsageEditorInput, AgentUsageEditorInputSerializer, OPEN_AGENT_USAGE_COMMAND_ID } from '../usage/agentUsageEditor.js';
 import { findEditorCommandsContext } from '../editor/agentEditorCommandsContext.js';
 import { CONTEXT_IN_AGENT_INPUT } from '../editor/agentFindWidget.js';
@@ -59,7 +58,7 @@ import { SEARCH_AGENT_CHATS_COMMAND_ID } from '../search/agentChatSearchService.
 
 const agentTitleActions = ContextKeyExpr.or(
 	ActiveEditorContext.isEqualTo(AGENT_EDITOR_ID),
-	ActiveEditorContext.isEqualTo(AGENT_CUSTOMIZE_EDITOR_ID),
+	ActiveEditorContext.isEqualTo(SKILLS_EDITOR_ID),
 );
 
 async function showAgentSidePanel(accessor: ServicesAccessor, focus: boolean): Promise<AgentSidePanel | undefined> {
@@ -348,56 +347,8 @@ registerAction2(class PreviousAgentTabAction extends Action2 {
 
 //#region Customize tab
 
-Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
-	EditorPaneDescriptor.create(AgentCustomizeEditor, AGENT_CUSTOMIZE_EDITOR_ID, localize('voltCustomize.editorLabel', "Customize")),
-	[new SyncDescriptor(AgentCustomizeEditorInput)]
-);
-
-Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEditorSerializer(
-	AgentCustomizeEditorInput.TypeID,
-	AgentCustomizeEditorInputSerializer
-);
-
-registerAction2(class OpenAgentCustomizeAction extends Action2 {
-	constructor() {
-		super({
-			id: OPEN_AGENT_CUSTOMIZE_COMMAND_ID,
-			visibility: 'public',
-			title: localize2('voltAgent.customize', "Customize Agent"),
-			category: Categories.View,
-			icon: Codicon.extensions,
-			f1: true,
-		});
-	}
-
-	override async run(accessor: ServicesAccessor): Promise<void> {
-		const view = await showAgentSidePanel(accessor, false);
-		if (view) {
-			await view.openCustomize();
-			return;
-		}
-		const input = accessor.get(IInstantiationService).createInstance(AgentCustomizeEditorInput);
-		await accessor.get(IEditorService).openEditor(input, { pinned: true });
-	}
-});
-
-registerAction2(class OpenAgentMarketplaceAction extends Action2 {
-	constructor() {
-		super({
-			id: 'workbench.action.voltAgent.customize.marketplace',
-			visibility: 'public',
-			title: localize2('voltAgent.marketplace', "Browse Skills and Plugins Marketplace"),
-			category: Categories.View,
-			icon: Codicon.extensions,
-			f1: true,
-		});
-	}
-
-	override async run(accessor: ServicesAccessor): Promise<void> {
-		AgentCustomizeEditor.requestView('marketplace');
-		await accessor.get(ICommandService).executeCommand(OPEN_AGENT_CUSTOMIZE_COMMAND_ID);
-	}
-});
+// The Skills & Plugins tab and its commands are a module of the `volt.skills-and-plugins` built-in
+// extension: `contrib/voltSkills/`.
 
 //#endregion
 

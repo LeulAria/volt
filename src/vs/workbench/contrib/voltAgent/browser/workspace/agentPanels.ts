@@ -28,7 +28,7 @@ import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
 import { AgentPullRequestsPageInput } from '../pullRequests/agentPullRequestsPageInput.js';
 import { AUTOMATIONS_EDITOR_INPUT_TYPE_ID } from '../../../voltAutomations/common/voltAutomations.js';
 import { ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
-import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js';
+import { SKILLS_EDITOR_INPUT_TYPE_ID } from '../../../voltSkills/common/voltSkills.js';
 import { AGENT_NEW_CHAT_DRAFT_SETTING } from '../../common/agentComposerSettings.js';
 import { agentPanelTabsMode, isBlankNewChat, latestSessionForFolder, unsentDraftForFolder } from '../home/agentHomeModel.js';
 import { AgentChatStart, attachSessionToProject, resolveSessionProject } from './agentShell.js';
@@ -473,7 +473,7 @@ class AgentPanelTabsContribution extends Disposable {
 		let nonAgentEditors = 0;
 		for (const group of this.editorGroupsService.mainPart.groups) {
 			const active = group.activeEditor;
-			if (active && !(active instanceof AgentEditorInput) && !(active instanceof AgentUsageEditorInput) && active.typeId !== AUTOMATIONS_EDITOR_INPUT_TYPE_ID && !(active instanceof AgentCustomizeEditorInput) && !(active instanceof ScratchBoardEditorInput) && !(active instanceof AgentPullRequestsPageInput)) {
+			if (active && !(active instanceof AgentEditorInput) && !(active instanceof AgentUsageEditorInput) && active.typeId !== AUTOMATIONS_EDITOR_INPUT_TYPE_ID && active.typeId !== SKILLS_EDITOR_INPUT_TYPE_ID && !(active instanceof ScratchBoardEditorInput) && !(active instanceof AgentPullRequestsPageInput)) {
 				nonAgentEditors++;
 			}
 		}

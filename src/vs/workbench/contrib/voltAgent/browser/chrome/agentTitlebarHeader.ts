@@ -31,7 +31,7 @@ import { AGENT_HOME_NEW_CHAT_ICON_PATH } from '../home/agentHomeIcons.js';
 import { scratchProjectLabel } from '../home/agentHomeWorkspace.js';
 import { ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
 import { automationsTrail } from '../../../voltAutomations/common/voltAutomations.js';
-import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js';
+import { skillsTrail } from '../../../voltSkills/common/voltSkills.js';
 import { IAgentPageCrumb } from '../customize/agentMarketplaceView.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { onDidChangeShownAgentChat, shownAgentChat } from '../editor/agentShownChat.js';
@@ -687,7 +687,7 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		this.laptop.hidden = usageOpen;
 		this.titleLabel.hidden = usageOpen;
 		const automations = automationsTrail(editor);
-		const crumbs = usageOpen ? [] : editor instanceof AgentCustomizeEditorInput ? editor.crumbs : automations?.crumbs ?? [];
+		const crumbs = usageOpen ? [] : skillsTrail(editor)?.crumbs ?? automations?.crumbs ?? [];
 		this.renderCrumbs(crumbs);
 		// Automations links back to its list from a page past it.
 		this.titleHome = automations && crumbs.length ? automations.home : undefined;

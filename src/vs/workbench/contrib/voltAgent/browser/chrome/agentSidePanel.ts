@@ -32,7 +32,7 @@ import { GroupsOrder, IEditorGroup, IEditorGroupsService } from '../../../../ser
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
 import { getLayoutMode, onDidChangeLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
-import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js';
+import { SKILLS_EDITOR_INPUT_TYPE_ID } from '../../../voltSkills/common/voltSkills.js';
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
 import { AgentEditor } from '../editor/agentEditor.js';
 import { AgentEditorInput, TOGGLE_AGENT_DRAWER_COMMAND_ID } from '../editor/agentEditorInput.js';
@@ -402,11 +402,6 @@ export class AgentSidePanel extends ViewPane {
 
 	//#endregion
 
-	/** Opens the Customize tab beside the agent sessions. */
-	async openCustomize(): Promise<void> {
-		await this.openPage(AgentCustomizeEditorInput);
-	}
-
 	/** Shows a full-page editor of the window (Agent Resources) the way Customize opens: the main panel in agent layout. */
 	async openEditorPage(input: EditorInput): Promise<void> {
 		if (this.isAgentLayout()) {
@@ -424,11 +419,14 @@ export class AgentSidePanel extends ViewPane {
 		group.focus();
 	}
 
-	private async openPage(ctor: typeof AgentCustomizeEditorInput): Promise<void> {
+	/**
+	 * Opens a full-page tab beside the agent sessions (Skills & Plugins, a feature module's), reusing
+	 * an open one of `typeId`.
+	 */
+	async openPage(typeId: string, create: () => EditorInput): Promise<void> {
 		if (this.isAgentLayout()) {
 			this.revealCenterEditors();
-			const input = this.instantiationService.createInstance(ctor);
-			await this.editorService.openEditor(input, { pinned: true });
+			await this.editorService.openEditor(create(), { pinned: true });
 			return;
 		}
 		if (!this.editorPart) {
@@ -436,8 +434,8 @@ export class AgentSidePanel extends ViewPane {
 		}
 		await this.editorPart.whenRestored;
 		const group = this.editorPart.activeGroup;
-		const existing = group.editors.find(editor => editor instanceof ctor);
-		const input = existing ?? this.instantiationService.createInstance(ctor);
+		const existing = group.editors.find(editor => editor.typeId === typeId);
+		const input = existing ?? create();
 		await group.openEditor(input, { pinned: true });
 		this.syncAgentLayout();
 		group.focus();
@@ -742,5 +740,5 @@ export class AgentSidePanel extends ViewPane {
 }
 
 function isSidebarEditor(editor: EditorInput): boolean {
-	return editor instanceof AgentEditorInput || editor instanceof AgentCustomizeEditorInput || editor instanceof AgentUsageEditorInput;
+	return editor instanceof AgentEditorInput || editor.typeId === SKILLS_EDITOR_INPUT_TYPE_ID || editor instanceof AgentUsageEditorInput;
 }

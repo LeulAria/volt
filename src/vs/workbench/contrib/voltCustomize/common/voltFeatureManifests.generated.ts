@@ -1436,6 +1436,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 			voltModule: {
 				feature: 'skills',
+				entry: 'voltSkills',
 				label: 'Skills & Plugins',
 				description: 'Skills, subagents, rules, hooks and MCP servers, and installing more from skills.sh and plugin marketplaces.',
 				category: 'resources',

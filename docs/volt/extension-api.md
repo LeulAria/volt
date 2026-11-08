@@ -1,6 +1,6 @@
 # Building a Volt extension (`vscode.volt`)
 
-A Volt extension is a normal VS Code extension. It installs from Open VSX, a `.vsix` or a folder, and it can use every VS Code API. Running in Volt, it also gets `vscode.volt`: Volt's chats and agents, agent tools, memory, the in-app browser, charts and the Scratch board, automations, usage and pull requests.
+A Volt extension is a normal VS Code extension. It installs from Open VSX, a `.vsix` or a folder, and it can use every VS Code API. Running in Volt, it also gets `vscode.volt`: Volt's chats and agents, agent tools, memory, the in-app browser, charts and the Scratch board, automations, skills, usage and pull requests.
 
 Volt's own features are built the same way. The 30 `extensions/volt-*` folders are built-in extensions: they ship with the app (no download, no `.vsix`), can't be uninstalled, are enabled by default and can be disabled in Extensions. They get their access from a ceiling compiled into Volt (below). Third-party extensions get theirs from what they declare and what the user allows.
 
@@ -185,14 +185,25 @@ await volt.automations.remove(automation.id);                         // [automa
 
 Schedules: `hourly {minute}`, `daily {time}`, `weekly {weekdays, time}`, `cron {expr}`, `interval {everyMs}`, `once {at}`. An automation made by an extension has no tools or secrets of its own; it runs in the active project. Volt records which extension scheduled it: `run` and `remove` work only on those, and refuse the user's own automations and other extensions'.
 
-### 3.9 `volt.usage`
+### 3.9 `volt.skills`
+
+```ts
+const skills = await volt.skills.list();                              // [agents.read:any] what agents load here
+// [{ kind: 'skill' | 'subagent' | 'rule' | 'command' | 'hook' | 'mcp' | 'plugin', name, description, scope: 'user' | 'workspace', origin?, plugin? }]
+const servers = await volt.skills.list('mcp');
+await volt.skills.show({ marketplace: true });                        // [ui.contribute] Skills & Plugins, or its marketplace
+```
+
+Names and descriptions only: no file paths, file contents or MCP server configs (their env can hold tokens). Memories are `volt.memory`'s.
+
+### 3.10 `volt.usage`
 
 ```ts
 const usage = await volt.usage.get();                                 // [usage.report]
 // { generatedAt, since, sessionCount, costUsd, models: [{ provider, model, inputTokens, outputTokens, costUsd }] }
 ```
 
-### 3.10 `volt.pullRequests`
+### 3.11 `volt.pullRequests`
 
 ```ts
 const links = await volt.pullRequests.list(chatId);                   // [hosting.read]
