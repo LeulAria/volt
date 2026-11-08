@@ -19,10 +19,12 @@ import { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../voltGi
 import { buildEntryGuard } from '../../voltGit/node/buildEntryGuard.js';
 import { runHostGit } from '../../voltGit/node/hostGit.js';
 import type { IVoltSandboxRequest } from '../../voltSandbox/common/sandboxPolicy.js';
+import { brokerReadFile, brokerWriteFile, defaultFsdPath } from '../../voltFiles/node/sandboxFileBroker.js';
+import { SafeOpenError } from '../../voltFiles/node/safeOpen.js';
 import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.js';
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
 import { ChildLedger } from './childLedger.js';
-import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxEvent, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
+import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -262,11 +264,45 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	async sandboxAllows(id: string, path: string, access: 'read' | 'write'): Promise<boolean> {
 		const launch = this.sandboxes.get(id);
 		if (!launch) {
-			return true;
+			// A running spawn without a sandbox is unconfined. An id this service does not know (never
+			// spawned here, or already gone) is refused: it may have been sandboxed (INV-13).
+			return this.processes.has(id);
 		}
 		const resolved = await realpathOfNearest(path);
 		// Both spellings must pass, as the OS checks the resolved path and Volt writes the given one.
 		return resolvedPolicyAllows(launch.policy, path, access) && resolvedPolicyAllows(launch.policy, resolved, access);
+	}
+
+	async sandboxReadFile(id: string, path: string): Promise<IVoltSandboxFileResult> {
+		const launch = this.sandboxes.get(id);
+		if (!launch) {
+			return { ok: false, reason: 'Volt does not know this sandboxed process' };
+		}
+		try {
+			const read = await brokerReadFile(launch.policy, path, { fsdPath: defaultFsdPath() });
+			return { ok: true, path: read.finalPath, content: read.content.toString('utf8') };
+		} catch (err) {
+			return { ok: false, reason: this.fileRefusal(id, path, 'read', err) };
+		}
+	}
+
+	async sandboxWriteFile(id: string, path: string, content: string): Promise<IVoltSandboxFileResult> {
+		const launch = this.sandboxes.get(id);
+		if (!launch) {
+			return { ok: false, reason: 'Volt does not know this sandboxed process' };
+		}
+		try {
+			const written = await brokerWriteFile(launch.policy, path, Buffer.from(content, 'utf8'), { fsdPath: defaultFsdPath() });
+			return { ok: true, path: written.finalPath, ...(written.before ? { content: written.before.toString('utf8') } : {}) };
+		} catch (err) {
+			return { ok: false, reason: this.fileRefusal(id, path, 'write', err) };
+		}
+	}
+
+	private fileRefusal(id: string, path: string, access: 'read' | 'write', err: unknown): string {
+		const reason = err instanceof Error ? err.message : String(err);
+		this.logService.info(`[volt-sandbox-files] ${id} ${access} ${path} refused: ${err instanceof SafeOpenError ? `${err.refusal}: ` : ''}${reason}`);
+		return reason;
 	}
 
 	private disposeSandbox(id: string): void {

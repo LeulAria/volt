@@ -207,6 +207,13 @@ export interface IVoltHostToolCall {
 	 * service refuses or narrows what a sandboxed chat's call would do outside it (`hostToolSandbox.ts`).
 	 */
 	readonly sandbox?: IVoltSandboxSettings;
+	/**
+	 * Set by the host tool service on a sandboxed chat's call before a provider runs it: why the chat
+	 * may not read an absolute path (resolved through symlinks, judged by the same rules as the gate),
+	 * or undefined when it may. Providers that read files the agent did not name (search results)
+	 * filter them with it (B-15).
+	 */
+	readonly readRefusal?: (path: string) => Promise<string | undefined>;
 }
 
 /** Each chat's sandbox, for the sandbox gate: the caller's workspace, and other chats a call would prompt (thread_send). */

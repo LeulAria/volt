@@ -329,15 +329,15 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			voltTools: [
 				{
 					name: 'instant_grep',
-					class: 'safe',
+					class: 'reads',
 				},
 				{
 					name: 'find_symbol',
-					class: 'safe',
+					class: 'reads',
 				},
 				{
 					name: 'find_files',
-					class: 'safe',
+					class: 'reads',
 				},
 			],
 			voltSettingsPages: [

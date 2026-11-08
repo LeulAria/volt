@@ -133,7 +133,6 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 		@ICommandService private readonly commandService: ICommandService,
 		@IInstantiationService protected readonly instantiationService: IInstantiationService,
 		@ILogService private readonly logService: ILogService,
-		@IDialogService private readonly dialogService: IDialogService,
 	) {
 		super();
 		const home = joinPath(environmentService.userRoamingDataHome, 'voltRunGroups');
@@ -393,7 +392,9 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 	private async reviewSetupFiles(repoRoot: string, worktreePath: string): Promise<void> {
 		let review = this.setupReviews.get(repoRoot);
 		if (!review) {
-			review = reviewBuildEntries(this.dialogService, this.stdio, [repoRoot, worktreePath], 'setup').finally(() => this.setupReviews.delete(repoRoot));
+			// The agent server has no dialogs: there the review can't happen, so changed files refuse setup.
+			const dialogs = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IDialogService));
+			review = reviewBuildEntries(dialogs, this.stdio, [repoRoot, worktreePath], 'setup').finally(() => this.setupReviews.delete(repoRoot));
 			this.setupReviews.set(repoRoot, review);
 		}
 		if (!await review) {

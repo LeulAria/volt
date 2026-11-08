@@ -9,6 +9,7 @@ import { timeout } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
+import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -378,6 +379,12 @@ export class AcpAgentProvider implements IAgentProvider {
 	 * isolation as it spawns, before `spawn` has even answered; these wait for the session.
 	 */
 	private readonly earlySandboxEvents = new Map<string, IVoltSandboxEvent[]>();
+	/**
+	 * Live agent processes started in the OS sandbox, and ones started without it. A file request
+	 * from a process in neither (gone, or never ours) is answered as a sandboxed one: refused.
+	 */
+	private readonly sandboxedProcesses = new Set<string>();
+	private readonly unconfinedProcesses = new Set<string>();
 	/** Spawns in flight: only while one is, an unknown spawn id may be one of ours. */
 	private spawning = 0;
 	private readonly _onDidChangeBackgroundTasks = new Emitter<IAcpBackgroundTask>();
@@ -697,6 +704,9 @@ export class AcpAgentProvider implements IAgentProvider {
 	private forgetProcess(processId: string): void {
 		this.byProcess.delete(processId);
 		this.earlySandboxEvents.delete(processId);
+		// A request that still arrives from it is then judged as from an unknown, possibly sandboxed, process.
+		this.sandboxedProcesses.delete(processId);
+		this.unconfinedProcesses.delete(processId);
 	}
 
 	/** Everything that makes two sessions interchangeable before their first prompt. */
@@ -794,6 +804,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (!this.earlySandboxEvents.has(processId)) {
 			this.earlySandboxEvents.set(processId, []);
 		}
+		(sandbox ? this.sandboxedProcesses : this.unconfinedProcesses).add(processId);
 		const client = new AcpJsonRpcClient(this.stdio, processId);
 		this.bindClientRequests(client);
 		client.whenDead(() => {
@@ -945,6 +956,62 @@ export class AcpAgentProvider implements IAgentProvider {
 
 	private async sandboxBlocks(session: IAcpSession, path: string, access: 'read' | 'write'): Promise<boolean> {
 		return this.stdio.sandboxAllows !== undefined && !await this.stdio.sandboxAllows(session.processId, path, access);
+	}
+
+	/**
+	 * `fs/read_text_file` and `fs/write_text_file` from a sandboxed agent (or one Volt cannot place):
+	 * the access policy, then the stdio service's file broker, which checks the sandbox on the real
+	 * path and opens the file without following a symlink (B-17). Nothing is read or written through
+	 * the file service, which follows links.
+	 */
+	private async answerSandboxedFs(client: AcpJsonRpcClient, live: IAcpSession | undefined, turn: AcpPromptTurn | undefined, requestId: string | number, uri: URI, access: 'read' | 'write', params: { content?: string; line?: number; limit?: number }): Promise<void> {
+		const deny = async (reason: string) => {
+			if (live && turn) {
+				this.pushActivity(live, turn, { type: 'sandbox.denial', denial: { kind: access, target: uri.fsPath, source: 'volt' } });
+			}
+			await client.respondError(requestId, `Blocked by Volt sandbox: ${uri.fsPath} (${reason})`);
+		};
+		if (!live) {
+			// No chat is bound to this process (not yet, or no longer): nothing to judge the request by.
+			await deny('this agent process is not bound to a chat');
+			return;
+		}
+		if (uri.scheme !== Schemas.file || !this.stdio.sandboxReadFile || !this.stdio.sandboxWriteFile) {
+			await deny('Volt can only open local files for a sandboxed agent');
+			return;
+		}
+		const [allowed] = await Promise.all([
+			this.authorizeFs(live, turn, access === 'write' ? 'edit' : 'read', uri.fsPath),
+			// The turn's checkpoint, taken while the prompt already runs, must not see this write.
+			access === 'write' ? turnWriteGate(live.voltSessionId) : undefined,
+		]);
+		if (!allowed) {
+			await client.respondError(requestId, 'Blocked by Volt access policy');
+			return;
+		}
+		if (access === 'read') {
+			const read = await this.stdio.sandboxReadFile(live.processId, uri.fsPath);
+			if (!read.ok) {
+				await deny(read.reason);
+				return;
+			}
+			await client.respond(requestId, { content: sliceLines(read.content ?? '', params.line, params.limit) });
+			return;
+		}
+		const content = params.content ?? '';
+		const written = await this.stdio.sandboxWriteFile(live.processId, uri.fsPath, content);
+		if (!written.ok) {
+			await deny(written.reason);
+			return;
+		}
+		await client.respond(requestId, {});
+		const before = written.content;
+		if (live.voltSessionId) {
+			this.writeObserver?.({ sessionId: live.voltSessionId, runId: live.runId ?? '', uri, before });
+		}
+		if (turn) {
+			this.applyDirectives(live, turn, turn.supervisor.observeWrite(uri.fsPath, before, content));
+		}
 	}
 
 	private onSandboxEvent(event: IVoltSandboxEvent): void {
@@ -2043,6 +2110,20 @@ export class AcpAgentProvider implements IAgentProvider {
 				return;
 			}
 			const write = req.method === 'fs/write_text_file';
+			const access = write ? 'write' : 'read';
+			// A sandboxed agent's files go through the sandbox's file broker: checked on the real path and
+			// opened without following a symlink anywhere in it, so a folder swapped for a link between
+			// the check and the open cannot redirect the write (B-17). A process Volt cannot place (no
+			// session bound to it yet, or gone) is refused unless it was started unconfined (INV-13), and so
+			// is a chat Volt should be wrapping whose process it did not wrap. An agent in its own sandbox
+			// (Codex `native`) keeps the checked path below.
+			const sandboxed = this.sandboxedProcesses.has(client.processId)
+				|| !this.unconfinedProcesses.has(client.processId)
+				|| (!!live && this.sandboxStrategyOf(live) === 'wrap');
+			if (sandboxed) {
+				await this.answerSandboxedFs(client, live, turn, req.id, uri, access, params);
+				return;
+			}
 			// The access check and the read are independent: run them together instead of back to back.
 			// Reading has no side effects, so a denied request just drops what was read.
 			const [allowed, current] = await Promise.all([
@@ -2057,7 +2138,6 @@ export class AcpAgentProvider implements IAgentProvider {
 				await client.respondError(req.id, 'Blocked by Volt access policy');
 				return;
 			}
-			const access = write ? 'write' : 'read';
 			if (live && await this.sandboxBlocks(live, uri.fsPath, access)) {
 				if (turn) {
 					this.pushActivity(live, turn, { type: 'sandbox.denial', denial: { kind: access, target: uri.fsPath, source: 'volt' } });
@@ -2202,15 +2282,7 @@ export class AcpAgentProvider implements IAgentProvider {
 
 	private async readTextFile(uri: URI, line?: number, limit?: number): Promise<string> {
 		const file = await this.fileService.readFile(uri);
-		let text = file.value.toString();
-		if (line || limit) {
-			const lines = text.split('\n');
-			const start = Math.max(0, (typeof line === 'number' && line > 0 ? line : 1) - 1);
-			const end = typeof limit === 'number' && limit > 0 ? start + limit : lines.length;
-			text = lines.slice(start, end).join('\n');
-		}
-		const max = 256_000;
-		return text.length > max ? `${text.slice(0, max)}\n\n[truncated after 256KB]` : text;
+		return sliceLines(file.value.toString(), line, limit);
 	}
 
 	private toUri(pathOrUri: string | undefined): URI | undefined {
@@ -2219,6 +2291,18 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		return pathOrUri.includes('://') ? URI.parse(pathOrUri) : URI.file(pathOrUri);
 	}
+}
+
+/** `fs/read_text_file`'s `line` (1-based) and `limit`, and the 256KB cap. */
+function sliceLines(text: string, line?: number, limit?: number): string {
+	if (line || limit) {
+		const lines = text.split('\n');
+		const start = Math.max(0, (typeof line === 'number' && line > 0 ? line : 1) - 1);
+		const end = typeof limit === 'number' && limit > 0 ? start + limit : lines.length;
+		text = lines.slice(start, end).join('\n');
+	}
+	const max = 256_000;
+	return text.length > max ? `${text.slice(0, max)}\n\n[truncated after 256KB]` : text;
 }
 
 function availableCommandsUpdate(params: unknown): ReadonlySet<string> | undefined {

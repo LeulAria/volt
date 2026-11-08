@@ -25,6 +25,12 @@ export interface IVoltCodeIndexOptions {
 	readonly hierarchicalIgnore?: boolean;
 	/** Do not follow symbolic links while listing the project's files. */
 	readonly ignoreSymlinks?: boolean;
+	/**
+	 * A sandboxed chat's index (B-15): kept apart from the project's shared one, symlinks never
+	 * followed, every file opened without following a symlink anywhere in its path, no FFF and no
+	 * ripgrep (which opens files by path). What it cannot answer that way it declines.
+	 */
+	readonly confined?: boolean;
 }
 
 export type VoltCodeIndexState = 'none' | 'indexing' | 'ready' | 'error';

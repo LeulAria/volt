@@ -63,6 +63,10 @@ suite('Volt host tool sandbox classes', () => {
 		for (const name of ['image_inspect', 'browser_compare_image', 'html_render', 'html_preview', 'canvas_render', 'canvas_update', 'screens_capture']) {
 			assert.strictEqual(kind(name), 'reads', name);
 		}
+		// B-15: Volt's search and the workspace summary read the chat's folder outside the sandbox.
+		for (const name of [INSTANT_GREP_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, FIND_FILES_TOOL_NAME, WORKSPACE_STATUS_TOOL_NAME]) {
+			assert.strictEqual(kind(name), 'reads', name);
+		}
 		assert.strictEqual(kind('manage_automations', { action: 'create' }), 'escapes');
 		assert.strictEqual(kind('manage_automations', { action: 'update' }), 'escapes');
 		assert.strictEqual(kind('manage_automations', { action: 'run_now' }), 'escapes');
@@ -103,6 +107,10 @@ suite('Volt host tool sandbox classes', () => {
 		assert.deepStrictEqual(hostToolSandboxUse('thread_send', { thread_id: 'volt://session/abc' }), { kind: 'delegates', target: 'abc' });
 		assert.deepStrictEqual(hostToolSandboxUse('queue_edit', {}), { kind: 'delegates', target: undefined });
 		assert.deepStrictEqual(hostToolSandboxUse('image_inspect', { path: 7 }), { kind: 'reads', reads: [] });
+		assert.deepStrictEqual(hostToolSandboxUse(INSTANT_GREP_TOOL_NAME, { pattern: 'x' }), { kind: 'reads', reads: ['.'] }, 'the chat\'s folder');
+		assert.deepStrictEqual(hostToolSandboxUse(INSTANT_GREP_TOOL_NAME, { pattern: 'x', path: '/Users/me/.ssh' }), { kind: 'reads', reads: ['/Users/me/.ssh'] });
+		assert.deepStrictEqual(hostToolSandboxUse(FIND_FILES_TOOL_NAME, { query: 'x', path: 'src' }), { kind: 'reads', reads: ['src'] });
+		assert.deepStrictEqual(hostToolSandboxUse(WORKSPACE_STATUS_TOOL_NAME, {}), { kind: 'reads', reads: ['.'] });
 	});
 
 	test('a target chat covers the caller only when it is confined at least as much', () => {
@@ -170,12 +178,23 @@ suite('Volt host tool sandbox classes', () => {
 		assert.strictEqual(write('/etc/x', OFF), undefined, 'unsandboxed');
 	});
 
-	test('browser pages: no local files, and only local pages and allowed hosts with the network off', () => {
+	test('browser pages: no local files, and only allowed hosts and granted local ports with the network off', () => {
 		const online = { ...WRITE, network: true };
 		const page = (url: string, settings: IVoltSandboxSettings = WRITE) => sandboxBrowserUrlRefusal(settings, url);
-		for (const url of ['http://localhost:3000/x', 'localhost:5173', '4400', 'http://127.0.0.1:8080', 'http://[::1]:3000', 'http://app.localhost', 'about:blank', 'data:text/html,hi', '/settings', './next', '?tab=2', '#top', '']) {
+		for (const url of ['about:blank', 'data:text/html,hi', '/settings', './next', '?tab=2', '#top', '']) {
 			assert.strictEqual(page(url), undefined, url);
 		}
+		// B-16: a local page is a server the agent may run itself, so only on a port the user granted.
+		const local = ['http://localhost:3000/x', 'localhost:5173', '4400', 'http://127.0.0.1:8080', 'http://[::1]:3000', 'http://app.localhost', 'http://0.0.0.0:3000'];
+		for (const url of local) {
+			assert.match(page(url) ?? '', /local server on a port this chat's sandbox was not granted/, url);
+			assert.strictEqual(page(url, online), undefined, `${url} with the network on`);
+		}
+		const granted = { ...WRITE, listenPorts: [3000, 5173, 4400, 8080, 80] };
+		for (const url of local) {
+			assert.strictEqual(page(url, granted), undefined, `${url} on a granted port`);
+		}
+		assert.match(page('http://localhost:3001', granted) ?? '', /not granted/);
 		assert.match(page('https://example.com') ?? '', /network is off/);
 		assert.match(page('//example.com/x') ?? '', /network is off/, 'a scheme-relative URL is another site');
 		assert.match(page('example.com') ?? '', /network is off/);

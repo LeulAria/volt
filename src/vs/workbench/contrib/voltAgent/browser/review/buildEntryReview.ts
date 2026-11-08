@@ -15,10 +15,11 @@ export type BuildEntryPurpose = 'commit' | 'push' | 'setup' | 'run';
  * The build-entry review (I.6): files that run code (git hooks and config, package scripts, tasks,
  * setup files) changed while a sandboxed agent worked in a folder. Before Volt runs any of them for
  * the user (a commit with hooks, worktree setup, the Run button), the user sees what changed and
- * decides. Accepting makes the current files the new baseline; declining runs nothing.
+ * decides. Accepting makes the current files the new baseline; declining runs nothing. Without
+ * dialogs (the agent server), changed files can't be reviewed, so the answer is no.
  */
 export async function reviewBuildEntries(
-	dialogs: IDialogService,
+	dialogs: IDialogService | undefined,
 	stdio: IVoltStdioService,
 	roots: readonly string[],
 	purpose: BuildEntryPurpose,
@@ -30,6 +31,9 @@ export async function reviewBuildEntries(
 	const relevant = purpose === 'commit' || purpose === 'push' ? changes.filter(change => change.group === 'git') : changes;
 	if (!relevant.length) {
 		return true;
+	}
+	if (!dialogs) {
+		return false;
 	}
 	const { confirmed } = await dialogs.confirm({
 		type: 'warning',

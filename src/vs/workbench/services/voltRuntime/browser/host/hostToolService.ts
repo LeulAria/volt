@@ -134,7 +134,9 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 
 	private async run(name: string, args: Record<string, unknown>, requested: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
 		// Calls over MCP carry no folder: a chat's tools work in its worktree or project.
-		const call = requested?.sessionId && !requested.cwd ? { ...requested, cwd: this.sessions?.cwd(requested.sessionId) } : requested;
+		const placed = requested?.sessionId && !requested.cwd ? { ...requested, cwd: this.sessions?.cwd(requested.sessionId) } : requested;
+		// A sandboxed chat's providers get the gate's read rule, for files they find rather than files named (search results).
+		const call = placed && isSandboxed(placed.sandbox) ? { ...placed, readRefusal: this.readRule(placed, placed.sandbox) } : placed;
 		if (this.disabledTools.has(name)) {
 			return { error: `${name} belongs to a Volt feature the user turned off (Capabilities or Extensions). Do not call it again in this chat.` };
 		}
@@ -289,6 +291,18 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 			}
 		}
 		return undefined;
+	}
+
+	/** The gate's read rule for one call: an absolute path, through its symlinks, against the chat's sandbox. */
+	private readRule(call: IVoltHostToolCall, sandbox: IVoltSandboxSettings): (path: string) => Promise<string | undefined> {
+		let context: Promise<ISandboxPathContext> | undefined;
+		return async path => {
+			if (!isAbsolute(path)) {
+				return `${path} is not an absolute path`;
+			}
+			context ??= this.sandboxContext(call);
+			return sandboxReadRefusal(sandbox, await this.realPath(URI.file(path)), await context);
+		};
 	}
 
 	/** Whether `target` runs in a sandbox at least as strict as the caller's, so prompting it is not a way out. */

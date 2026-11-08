@@ -25,6 +25,20 @@ export interface ISearchIndex {
 	readonly fff?: () => { readonly mode: VoltFffMode; readonly path?: string };
 }
 
+/**
+ * A sandboxed chat's search (B-15). Volt searches outside the chat's sandbox, so it answers only
+ * from the chat's confined index (symlinks never followed, every file opened without following a
+ * link; no FFF, no ripgrep), and every result is checked against the chat's read rules on its real
+ * path. What that cannot answer is declined (thrown), never searched another way.
+ */
+export interface ISearchConfinement {
+	/** Why the chat may not read this absolute path (resolved through symlinks), or undefined when it may. */
+	readonly readRefusal: (path: string) => Promise<string | undefined>;
+}
+
+/** How long a confined search waits for the chat's index to be built or brought up to date. */
+const CONFINED_WAIT_MS = 4_000;
+
 export type VoltSearchEngine = 'index' | 'ripgrep' | 'fff' | 'cache';
 
 /** How an answer was produced: which engine, how long, and why a faster engine passed. */
@@ -54,6 +68,8 @@ export interface IVoltGrepQuery {
 	readonly maxLineChars?: number;
 	/** Only what the index answers: nothing (with the reason as `fallback`) rather than a ripgrep scan. */
 	readonly indexOnly?: boolean;
+	/** A sandboxed chat's search. */
+	readonly confine?: ISearchConfinement;
 }
 
 export interface IVoltGrepFile {
@@ -182,9 +198,115 @@ export class VoltSearch extends Disposable {
 	}
 
 	grep(query: IVoltGrepQuery, token: CancellationToken): Promise<IVoltGrepResult> {
+		if (query.confine) {
+			return this.confinedGrep(query, query.confine);
+		}
 		const key = JSON.stringify(['grep', query.root?.toString(), query.folder.toString(), query.pattern, !!query.literal, !!query.caseSensitive, !!query.multiline, !!query.wholeWord, query.context ?? 0, query.includes ?? [], query.maxMatches]);
 		return this.cached(key, () => this.doGrep(query, token), query.folder, query.indexOnly);
 	}
+
+	//#region Sandboxed chats (B-15)
+
+	/** The confined index for a sandboxed chat's search in `root`, or a refusal. */
+	private confinedIndex(root: URI | undefined, folder: URI): { readonly index: ISearchIndex; readonly root: URI; readonly options: IVoltCodeIndexOptions } {
+		const indexed = this.indexFor(root, folder);
+		if (!indexed || !root) {
+			throw new Error(confinedDecline('the code index is off or this folder is not on disk'));
+		}
+		return { index: indexed, root, options: { ...indexed.options(), ignoreSymlinks: true, confined: true } };
+	}
+
+	/** The paths (root-relative) the chat may read, by its rules on each one's real path. */
+	private async readable(confine: ISearchConfinement, root: URI, paths: readonly string[]): Promise<Set<string>> {
+		const verdicts = await Promise.all(paths.map(path => confine.readRefusal(joinPath(root, path).fsPath).catch(() => 'unreadable')));
+		return new Set(paths.filter((_path, i) => !verdicts[i]));
+	}
+
+	private async confinedGrep(query: IVoltGrepQuery, confine: ISearchConfinement): Promise<IVoltGrepResult> {
+		const started = Date.now();
+		const { index, root, options } = this.confinedIndex(query.root, query.folder);
+		const result = await this.bounded(index.service.search({
+			root: root.fsPath,
+			folder: query.folder.fsPath,
+			pattern: query.pattern,
+			isRegExp: !query.literal,
+			caseSensitive: !!query.caseSensitive,
+			multiline: !!query.multiline,
+			wholeWord: !!query.wholeWord,
+			includes: query.includes,
+			context: query.context,
+			maxMatches: query.maxMatches,
+			maxLineChars: query.maxLineChars ?? LINE_CHARS,
+			options,
+			waitMs: CONFINED_WAIT_MS,
+		}));
+		if (result.kind !== 'results') {
+			throw new Error(confinedDecline(result.reason));
+		}
+		const allowed = await this.readable(confine, root, result.files.map(file => file.path));
+		return {
+			files: result.files.filter(file => allowed.has(file.path)).map(file => ({
+				path: displayPath(root, joinPath(root, file.path)),
+				lines: new Map(file.lines.map(line => [line.line, { text: line.text.replace(/\s+$/, ''), match: line.match }])),
+				matches: file.matches,
+			})),
+			limitHit: result.limitHit,
+			engine: 'index',
+			ms: Date.now() - started,
+		};
+	}
+
+	private async confinedGlob(query: { readonly root: URI | undefined; readonly folder: URI; readonly pattern: string; readonly limit: number }, confine: ISearchConfinement): Promise<IVoltPathsResult> {
+		const started = Date.now();
+		const { index, root, options } = this.confinedIndex(query.root, query.folder);
+		const result = await this.bounded(index.service.files({ root: root.fsPath, folder: query.folder.fsPath, pattern: query.pattern, limit: query.limit, options, waitMs: CONFINED_WAIT_MS }));
+		if (result.kind !== 'results') {
+			throw new Error(confinedDecline(result.reason));
+		}
+		const allowed = await this.readable(confine, root, result.paths);
+		return { paths: result.paths.filter(path => allowed.has(path)).map(path => displayPath(root, joinPath(root, path))), limitHit: result.limitHit, engine: 'index', ms: Date.now() - started };
+	}
+
+	private async confinedFindFiles(query: { readonly root: URI | undefined; readonly folder?: URI; readonly query: string; readonly limit: number }, confine: ISearchConfinement): Promise<IVoltPathsResult> {
+		const started = Date.now();
+		const { index, root, options } = this.confinedIndex(query.root, query.folder ?? query.root ?? URI.file('/'));
+		const result = await this.bounded(index.service.findFiles({
+			root: root.fsPath,
+			...(query.folder ? { folder: query.folder.fsPath } : {}),
+			query: query.query,
+			limit: query.limit,
+			options,
+			fff: 'off',
+			waitMs: CONFINED_WAIT_MS,
+		}));
+		if (result.kind !== 'results') {
+			throw new Error(confinedDecline(result.reason));
+		}
+		const allowed = await this.readable(confine, root, result.paths);
+		return { paths: result.paths.filter(path => allowed.has(path)).map(path => displayPath(root, joinPath(root, path))), limitHit: result.limitHit, engine: 'index', ms: Date.now() - started };
+	}
+
+	private async confinedSymbols(query: { readonly root: URI; readonly folder?: URI; readonly name: string; readonly match: 'exact' | 'prefix' | 'fuzzy'; readonly kind?: VoltCodeSymbolKind; readonly limit: number }, confine: ISearchConfinement): Promise<IVoltSymbolsResult> {
+		const started = Date.now();
+		const { index, root, options } = this.confinedIndex(query.root, query.folder ?? query.root);
+		const result = await this.bounded(index.service.symbols({
+			root: root.fsPath,
+			query: query.name,
+			match: query.match,
+			...(query.kind ? { kinds: [query.kind] } : {}),
+			...(query.folder ? { path: displayPath(root, query.folder) } : {}),
+			limit: query.limit,
+			options,
+			waitMs: CONFINED_WAIT_MS,
+		}));
+		if (result.kind !== 'results') {
+			throw new Error(confinedDecline(result.reason));
+		}
+		const allowed = await this.readable(confine, root, [...new Set(result.symbols.map(symbol => symbol.path))]);
+		return { symbols: result.symbols.filter(symbol => allowed.has(symbol.path)), limitHit: result.limitHit, engine: 'index', ms: Date.now() - started };
+	}
+
+	//#endregion
 
 	private async doGrep(query: IVoltGrepQuery, token: CancellationToken): Promise<IVoltGrepResult> {
 		const started = Date.now();
@@ -268,7 +390,10 @@ export class VoltSearch extends Disposable {
 	}
 
 	/** Files by glob over workspace-relative paths, sorted. */
-	glob(query: { readonly root: URI | undefined; readonly folder: URI; readonly pattern: string; readonly limit: number; readonly indexOnly?: boolean }, token: CancellationToken): Promise<IVoltPathsResult> {
+	glob(query: { readonly root: URI | undefined; readonly folder: URI; readonly pattern: string; readonly limit: number; readonly indexOnly?: boolean; readonly confine?: ISearchConfinement }, token: CancellationToken): Promise<IVoltPathsResult> {
+		if (query.confine) {
+			return this.confinedGlob(query, query.confine);
+		}
 		const key = JSON.stringify(['glob', query.root?.toString(), query.folder.toString(), query.pattern, query.limit]);
 		return this.cached(key, async () => {
 			const started = Date.now();
@@ -299,10 +424,13 @@ export class VoltSearch extends Disposable {
 	}
 
 	/** Files by fuzzy name or path (typos allowed), best first. */
-	findFiles(query: { readonly root: URI | undefined; readonly folder?: URI; readonly query: string; readonly limit: number; readonly indexOnly?: boolean }, token: CancellationToken): Promise<IVoltPathsResult> {
+	findFiles(query: { readonly root: URI | undefined; readonly folder?: URI; readonly query: string; readonly limit: number; readonly indexOnly?: boolean; readonly confine?: ISearchConfinement }, token: CancellationToken): Promise<IVoltPathsResult> {
 		const folder = query.folder ?? query.root;
 		if (!folder) {
 			return Promise.resolve({ paths: [], limitHit: false, engine: 'index', ms: 0, fallback: 'no workspace' });
+		}
+		if (query.confine) {
+			return this.confinedFindFiles(query, query.confine);
 		}
 		const key = JSON.stringify(['find', query.root?.toString(), folder.toString(), query.query, query.limit]);
 		return this.cached(key, async () => {
@@ -350,7 +478,10 @@ export class VoltSearch extends Disposable {
 	}
 
 	/** Where symbols are declared, by name. */
-	symbols(query: { readonly root: URI; readonly folder?: URI; readonly name: string; readonly match: 'exact' | 'prefix' | 'fuzzy'; readonly kind?: VoltCodeSymbolKind; readonly limit: number; readonly indexOnly?: boolean }, token: CancellationToken): Promise<IVoltSymbolsResult> {
+	symbols(query: { readonly root: URI; readonly folder?: URI; readonly name: string; readonly match: 'exact' | 'prefix' | 'fuzzy'; readonly kind?: VoltCodeSymbolKind; readonly limit: number; readonly indexOnly?: boolean; readonly confine?: ISearchConfinement }, token: CancellationToken): Promise<IVoltSymbolsResult> {
+		if (query.confine) {
+			return this.confinedSymbols(query, query.confine);
+		}
 		const key = JSON.stringify(['symbols', query.root.toString(), query.folder?.toString(), query.name, query.match, query.kind, query.limit]);
 		return this.cached(key, async () => {
 			const started = Date.now();
@@ -398,6 +529,10 @@ export class VoltSearch extends Disposable {
 			return { symbols, limitHit: found.limitHit, engine: 'ripgrep', ms: Date.now() - started, ...(fallback ? { fallback } : {}) };
 		}, undefined, query.indexOnly);
 	}
+}
+
+function confinedDecline(reason: string): string {
+	return `Volt's code index could not answer this for a sandboxed chat (${reason}). Search with your own tools instead: they run inside the sandbox.`;
 }
 
 function keywordKind(keyword: string): VoltCodeSymbolKind {

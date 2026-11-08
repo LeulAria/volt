@@ -18,7 +18,8 @@ import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase 
 import { ISearchService } from '../../../services/search/common/search.js';
 import { CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, CODE_INTELLIGENCE_TOOLS, codeIndexEnabled, FFF_MODE_SETTING, FFF_PATH_SETTING, FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, LSP_ENABLED_SETTING, LSP_MAX_LOCAL_SETTING, LSP_MAX_REMOTE_SETTING, LSP_WORKSPACES_MAX, LSP_WORKSPACES_MIN, LSP_WORKTREES_SETTING, readCodeIndexOptions, readFffSettings, RETRIEVAL_ENABLED_SETTING, RTK_ENABLED_SETTING, RTK_EXCLUDE_SETTING } from '../../../services/voltRuntime/common/codeIntelligence.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
-import { VoltSearch } from '../../../services/voltRuntime/browser/search/voltSearch.js';
+import { isSandboxed } from '../../../services/voltRuntime/common/hostToolSandbox.js';
+import { ISearchConfinement, VoltSearch } from '../../../services/voltRuntime/browser/search/voltSearch.js';
 import { createSearchTools } from '../../../services/voltRuntime/browser/tools/searchTools.js';
 
 // Desktop: the main process's index; browsers: the agent server's (both registered later, so they win).
@@ -45,7 +46,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			type: 'boolean',
 			default: false,
 			scope: ConfigurationScope.APPLICATION,
-			description: localize('voltCodeIntelligence.ignoreSymlinks', "Do not follow symbolic links when listing a project's files for the index."),
+			description: localize('voltCodeIntelligence.ignoreSymlinks', "Do not follow symbolic links when listing a project's files for the index. Searches from sandboxed chats never follow them, whatever this says."),
 		},
 		[RTK_ENABLED_SETTING]: {
 			type: 'boolean',
@@ -182,7 +183,15 @@ export class CodeIntelligenceHostTools extends Disposable implements IWorkbenchC
 
 	private async invoke(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
 		const root = call?.cwd ? URI.file(call.cwd) : this.workspace.getWorkspace().folders[0]?.uri;
-		const tools = createSearchTools(this.search, () => root);
+		// A sandboxed chat searches its own confined index, and sees only results its sandbox may read (B-15).
+		let confine: ISearchConfinement | undefined;
+		if (call && isSandboxed(call.sandbox)) {
+			if (!call.readRefusal || !call.cwd) {
+				return { error: `${name} was not run: Volt cannot tell which files this sandboxed chat may read. Search with your own tools instead: they run inside the sandbox.` };
+			}
+			confine = { readRefusal: call.readRefusal };
+		}
+		const tools = createSearchTools(this.search, () => root, confine);
 		const tool = tools.find(candidate => candidate.name === (name === INSTANT_GREP_TOOL_NAME ? 'grep' : name === FIND_SYMBOL_TOOL_NAME ? 'find_symbol' : name === FIND_FILES_TOOL_NAME ? 'find_files' : ''));
 		if (!tool) {
 			return { error: `Unknown tool ${name}.` };

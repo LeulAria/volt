@@ -33,6 +33,11 @@ export interface IVoltSandboxSettings {
 	readonly extraWritableRoots?: readonly string[];
 	/** Hosts the user allowed from a blocked request while network is off. */
 	readonly allowedDomains?: readonly string[];
+	/**
+	 * Loopback ports the user granted the chat (`net.listen:<port>`): its dev servers. With the
+	 * network off, the chat's in-app browser opens local pages only on these ports (B-16).
+	 */
+	readonly listenPorts?: readonly number[];
 }
 
 /** Sent with a spawn: the main process wraps the command in the OS sandbox. */

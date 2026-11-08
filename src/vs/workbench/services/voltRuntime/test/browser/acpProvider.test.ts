@@ -12,7 +12,7 @@ import { isWindows } from '../../../../../base/common/platform.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
-import { IVoltSandboxEvent, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltSandboxEvent, IVoltSandboxFileResult, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { isSandboxUnavailableError, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IAccessDecision } from '../../common/access/accessTypes.js';
@@ -57,6 +57,11 @@ class FakeAgentStdio {
 	/** What each new session starts with; every process gets its own copy. */
 	configOptions: Json[] = JSON.parse(JSON.stringify(CONFIG_OPTIONS)) as Json[];
 	private readonly sessionConfig = new Map<string, Json[]>();
+	/** Runs before the agent answers one of Volt's requests (to send a request of its own first). */
+	beforeAnswer: ((process: string, msg: IWire) => void) | undefined;
+	/** The stdio service's file broker for sandboxed spawns: what it was asked, and what it answers. */
+	readonly brokered: { op: 'read' | 'write'; id: string; path: string; content?: string }[] = [];
+	brokerAnswer: IVoltSandboxFileResult = { ok: true, path: '', content: 'from the broker' };
 
 	constructor(private readonly store: Pick<DisposableStore, 'add'>) {
 		this.onDataEmitter = store.add(new Emitter());
@@ -92,6 +97,14 @@ class FakeAgentStdio {
 			},
 			kill: async () => undefined,
 			which: async (command: string) => `/usr/bin/${command}`,
+			sandboxReadFile: async (id: string, path: string) => {
+				this.brokered.push({ op: 'read', id, path });
+				return this.brokerAnswer;
+			},
+			sandboxWriteFile: async (id: string, path: string, content: string) => {
+				this.brokered.push({ op: 'write', id, path, content });
+				return this.brokerAnswer;
+			},
 		} as unknown as IVoltStdioService;
 	}
 
@@ -99,6 +112,7 @@ class FakeAgentStdio {
 		if (msg.id === undefined || !msg.method) {
 			return;
 		}
+		this.beforeAnswer?.(process, msg);
 		const reply = (result: unknown) => queueMicrotask(() => this.send(process, { jsonrpc: '2.0', id: msg.id, result }));
 		switch (msg.method) {
 			case 'initialize':
@@ -696,6 +710,66 @@ suite('ACP provider sandbox', () => {
 		assert.strictEqual(env.agent.spawned.length, 0, 'no unsandboxed retry');
 		await assert.rejects(env.provider.prewarmSpare(request(SANDBOXED)).then(() => env.provider.start(request(SANDBOXED))), (err: unknown) => isSandboxUnavailableError(err));
 		assert.strictEqual(env.agent.spawned.length, 0);
+	});
+
+	const answerTo = (env: ReturnType<typeof setup>, id: number) => env.agent.written.find(entry => entry.msg.id === id && !entry.msg.method)?.msg;
+	const ALLOW_ALL = { evaluate: () => ({ requestId: 'r', effect: 'allow' as const, scope: 'once' as const }) };
+
+	test('B-17: a sandboxed agent\'s fs/* go through the stdio file broker, never the file service', async function () {
+		if (isWindows) {
+			this.skip();
+		}
+		const env = setup();
+		env.provider.setAccessGate(ALLOW_ALL);
+		const handle = await env.provider.start(request(SANDBOXED));
+		env.agent.send('p1', { jsonrpc: '2.0', id: 801, method: 'fs/write_text_file', params: { sessionId: 'acp-p1', path: '/w/src/a.ts', content: 'hello' } });
+		env.agent.send('p1', { jsonrpc: '2.0', id: 802, method: 'fs/read_text_file', params: { sessionId: 'acp-p1', path: '/w/src/a.ts' } });
+		await settle();
+		assert.deepStrictEqual(env.agent.brokered, [
+			{ op: 'write', id: 'p1', path: '/w/src/a.ts', content: 'hello' },
+			{ op: 'read', id: 'p1', path: '/w/src/a.ts' },
+		]);
+		assert.deepStrictEqual(answerTo(env, 801)?.result, {});
+		assert.deepStrictEqual(answerTo(env, 802)?.result, { content: 'from the broker' });
+
+		// The broker's refusal (a folder swapped for a link) is the agent's error; nothing else is tried.
+		env.agent.brokerAnswer = { ok: false, reason: '/w/dir goes through a symbolic link' };
+		env.agent.send('p1', { jsonrpc: '2.0', id: 803, method: 'fs/write_text_file', params: { sessionId: 'acp-p1', path: '/w/dir/.zshrc', content: 'x' } });
+		await settle();
+		assert.match(JSON.stringify(answerTo(env, 803)?.error), /Blocked by Volt sandbox: \/w\/dir\/\.zshrc \(\/w\/dir goes through a symbolic link\)/);
+		await env.provider.dispose(handle);
+	});
+
+	test('INV-13: a sandboxed process no chat is bound to yet is refused, unasked', async function () {
+		if (isWindows) {
+			this.skip();
+		}
+		const env = setup();
+		let asked = false;
+		env.provider.setAccessGate({ evaluate: () => { asked = true; return ALLOW_ALL.evaluate(); } });
+		// The agent writes before its session exists (between spawn and session/new).
+		env.agent.beforeAnswer = (process, msg) => {
+			if (msg.method === 'initialize') {
+				env.agent.send(process, { jsonrpc: '2.0', id: 811, method: 'fs/write_text_file', params: { path: '/w/early.txt', content: 'x' } });
+			}
+		};
+		const handle = await env.provider.start(request(SANDBOXED));
+		await settle();
+		assert.match(JSON.stringify(answerTo(env, 811)?.error), /not bound to a chat/);
+		assert.deepStrictEqual(env.agent.brokered, []);
+		assert.strictEqual(asked, false);
+		await env.provider.dispose(handle);
+	});
+
+	test('an unsandboxed agent keeps the file service path', async () => {
+		const env = setup();
+		const handle = await env.provider.start(request());
+		env.agent.send('p1', { jsonrpc: '2.0', id: 821, method: 'fs/read_text_file', params: { sessionId: 'acp-p1', path: '/w/a.ts' } });
+		await settle();
+		assert.deepStrictEqual(env.agent.brokered, []);
+		// The test's file service is absent: the read reached it.
+		assert.ok(answerTo(env, 821)?.error, 'answered through the file service');
+		await env.provider.dispose(handle);
 	});
 
 	test('without an OS sandbox (Windows) a sandboxed start is refused before anything spawns', async function () {

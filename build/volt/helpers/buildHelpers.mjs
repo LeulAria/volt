@@ -20,7 +20,8 @@
 //           merges the manifests (build/darwin/create-universal-app.ts).
 //   win32:  volt-helpers/volt-desktop.dll (VoltDesktop.windows.cs, compiled by Windows PowerShell),
 //           and the digest of VoltDesktop.windows.ps1 that loads it.
-//   linux:  the digest of volt_desktop_linux.py.
+//   linux:  volt-helpers/volt-fsd (race-free file opens for sandboxed agents, build/volt/volt-fsd.c)
+//           and the digest of volt_desktop_linux.py.
 //
 // Signing happens later with the rest of the app (build/darwin/sign.js, win32-sign.ps1). A signed
 // build is checked by signature; an unsigned one by these digests, which signing would change.
@@ -84,8 +85,10 @@ async function buildWin32(work, helpersDir, source) {
 	return { desktop: [dll], 'desktop-script': [path.join(source, ...HELPER_SOURCES.split('/'), 'VoltDesktop.windows.ps1')] };
 }
 
-function buildLinux(source) {
-	return { 'desktop-script': [path.join(source, ...HELPER_SOURCES.split('/'), 'volt_desktop_linux.py')] };
+function buildLinux(source, helpersDir) {
+	const fsd = path.join(helpersDir, 'volt-fsd');
+	execFileSync('cc', ['-O2', '-Wall', '-Wextra', '-o', fsd, path.join(root, 'build', 'volt', 'volt-fsd.c')], { stdio: 'inherit', timeout: 600_000 });
+	return { 'volt-fsd': [fsd], 'desktop-script': [path.join(source, ...HELPER_SOURCES.split('/'), 'volt_desktop_linux.py')] };
 }
 
 /** The manifest path of a file: under `volt-helpers/` for built binaries, its place in `out/` for shipped scripts. */
@@ -115,7 +118,7 @@ export async function buildHelpers({ platform, arch, source, out }) {
 	try {
 		const built = platform === 'darwin' ? await buildDarwin(arch, work, helpersDir)
 			: platform === 'win32' ? await buildWin32(work, helpersDir, source)
-				: buildLinux(source);
+				: buildLinux(source, helpersDir);
 		const target = `${platform}-${arch}`;
 		const helpers = {};
 		for (const [id, files] of Object.entries(built)) {

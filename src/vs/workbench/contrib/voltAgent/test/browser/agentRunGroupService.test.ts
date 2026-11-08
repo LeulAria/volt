@@ -15,6 +15,7 @@ import { InMemoryFileSystemProvider } from '../../../../../platform/files/common
 import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { IBuildEntryChange } from '../../../../../platform/voltGit/common/hostGit.js';
 import { IVoltExecRequest, IVoltExecResult, IVoltJobOutput } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { AgentOrchestratorService } from '../../../../services/voltRuntime/browser/orchestration/agentOrchestratorService.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../../../../services/voltRuntime/common/events.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
@@ -223,6 +224,7 @@ suite('Run group service', () => {
 				: [{ path: 'a.ts', kind: 'modified', binary: false, additions: 3, deletions: 1 }],
 			deleteRefs: async () => undefined,
 		};
+		const dialogs = stub<IDialogService>({ confirm: async () => { reviews.push('asked'); return { confirmed: !!options.trust }; } });
 		const create = () => disposables.add(new AgentRunGroupService(
 			orchestrator,
 			stub(worktrees),
@@ -235,10 +237,9 @@ suite('Run group service', () => {
 			fileService,
 			stub({ userRoamingDataHome: URI.file('/user') }),
 			stub({ executeCommand: async (id: string, ...args: unknown[]) => { commands.push({ id, args }); } }),
-			stub({ invokeFunction: (fn: (accessor: unknown) => unknown) => fn({ getIfExists: () => undefined }) }),
+			// The build-entry review (I.6) asks the window's dialogs for the user's answer, when a test asks for one.
+			stub({ invokeFunction: (fn: (accessor: unknown) => unknown) => fn({ getIfExists: (id: unknown) => id === IDialogService ? dialogs : undefined }) }),
 			new NullLogService(),
-			// The build-entry review (I.6): the user's answer, when a test asks for one.
-			stub({ confirm: async () => { reviews.push('asked'); return { confirmed: !!options.trust }; } }),
 		));
 		const service = create();
 		await service.whenReady;
