@@ -714,8 +714,8 @@ export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { co
 	// folders an agent may write (a busy /tmp is no place for a project's secrets either).
 	const temps = await agentWritableTemps();
 	const bestEffortRoots = new Set([...(homeVisible ? [] : homeRoots.filter(root => !policy.write.includes(root))), ...policy.write.filter(root => temps.includes(root))]);
-	const ownRoots = new Set([...policy.denyPatterns, ...policy.protectPatterns].map(pattern => pattern.root));
-	const required = (root: string) => !bestEffortRoots.has(root) || root === policy.cwd || ownRoots.has(root);
+	// The resolver already expands `**/` patterns onto these roots, so a pattern's own root says nothing here.
+	const required = (root: string) => !bestEffortRoots.has(root) || root === policy.cwd;
 	for (const pattern of policy.denyPatterns) {
 		patterns.push(...expandRoot(pattern).map(p => ({ kind: 'deny' as const, pattern: p })));
 	}

@@ -482,6 +482,12 @@ suite('Volt sandbox pattern walk scope (B-27)', () => {
 			const temp = await fs.realpath(tmpdir());
 			assert.strictEqual((await walkPatterns({ ...base, write: [ws, temp] }, { collectSockets: false }, limits)).complete, true);
 
+			// As the resolver writes them: `**/.env` expanded onto every readable and writable root.
+			const expanded = [ws, temp, tools].map(at => ({ root: at, names: ['.env'] }));
+			const resolved = await walkPatterns({ ...base, write: [ws, temp], denyPatterns: expanded }, { collectSockets: false }, limits);
+			assert.strictEqual(resolved.complete, true);
+			assert.ok(resolved.deny.some(match => match.path === join(ws, 'src', '.env')));
+
 			// A workspace the walk cannot finish still refuses.
 			for (let d = 0; d < 40; d++) {
 				await fs.mkdir(join(ws, 'bulk', `d${d}`), { recursive: true });
