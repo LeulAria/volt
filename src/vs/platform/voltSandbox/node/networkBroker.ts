@@ -918,6 +918,11 @@ export class NetworkRoute {
 		this.clients.clear();
 		this.server.close();
 		this.broker.routeClosed(this);
+		// Its session grants end with it: no other principal can use them, and they must not pile up.
+		const own = this.ownGrants().map(grant => grant.id);
+		if (own.length) {
+			void this.broker.update({ revoke: own }).catch(() => undefined);
+		}
 	}
 }
 

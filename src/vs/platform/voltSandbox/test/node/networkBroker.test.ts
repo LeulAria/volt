@@ -332,6 +332,9 @@ suite('Volt network broker (I.4, NET-1..20)', function () {
 		for (const name of ['a.test', 'b.test', 'c.test']) {
 			assert.ok((await r.destination(name, 443)).ok, name);
 		}
+		// The route's session grants end with it.
+		r.dispose();
+		assert.ok(await until(() => broker.grantsOf(r.subject).length === 0), 'revoked when the route closes');
 	});
 
 	test('NET-14 / REV-1: revoking a host closes its open tunnel within 1 s; a narrower rule set does too', async () => {
