@@ -1,0 +1,75 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* An extension asks to use one of Volt's capabilities. The dialog lives in the opaque .volt-modal
+ * panel; nothing here is see-through and no backdrop-filter. */
+
+.volt-modal.volt-extension-consent {
+	height: auto !important;
+	max-height: calc(100% - 48px);
+}
+
+.volt-extension-consent .volt-modal-body {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.volt-extension-consent-content {
+	padding: 22px 22px 14px;
+	overflow-y: auto;
+	min-height: 0;
+}
+
+.volt-extension-consent-content .head {
+	display: flex;
+	gap: 12px;
+	align-items: flex-start;
+}
+
+.volt-extension-consent-content .mark {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 36px;
+	height: 36px;
+	flex-shrink: 0;
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-extension-consent-content .mark .codicon {
+	font-size: 18px;
+}
+
+.volt-extension-consent-content h2 {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+	line-height: 20px;
+	overflow-wrap: anywhere;
+}
+
+.volt-extension-consent-content .meta {
+	margin-top: 4px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-extension-consent-content .what {
+	margin: 14px 0 0;
+	font-size: 13px;
+	line-height: 19px;
+}
+
+.volt-extension-consent-content .claim,
+.volt-extension-consent-content .fine {
+	margin: 10px 0 0;
+	font-size: 12.5px;
+	line-height: 18px;
+	color: var(--vscode-descriptionForeground);
+	overflow-wrap: anywhere;
+}

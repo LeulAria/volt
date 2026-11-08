@@ -2764,6 +2764,61 @@ export interface ExtHostDataChannelsShape {
 	$onDidReceiveData(channelId: string, data: unknown): void;
 }
 
+// --- Volt (`vscode.volt`)
+
+/** A `vscode.volt` method the main thread serves through `$call` (one per facade method). */
+export type VoltApiMethod =
+	| 'chats.list' | 'chats.current' | 'chats.read' | 'chats.send' | 'chats.start'
+	| 'tools.invoke'
+	| 'storage.get' | 'storage.set' | 'storage.delete' | 'storage.keys'
+	| 'settings.get' | 'settings.update'
+	| 'memory.list' | 'memory.read' | 'memory.write' | 'memory.delete'
+	| 'browser.open' | 'browser.readPage'
+	| 'visuals.renderChart' | 'visuals.drawOnScratch'
+	| 'automations.list' | 'automations.schedule'
+	| 'usage.get'
+	| 'pullRequests.list' | 'pullRequests.link';
+
+export interface IVoltToolResultDto {
+	readonly text?: string;
+	readonly image?: string;
+	readonly error?: string;
+	readonly visual?: { readonly kind: string; readonly ref: string; readonly title: string;[key: string]: unknown };
+}
+
+export interface IVoltToolOptionsDto {
+	readonly title?: string;
+	readonly description?: string;
+	readonly inputSchema?: object;
+}
+
+export interface IVoltTurnEventDto {
+	readonly chatId: string;
+	readonly turnId: string;
+	readonly kind: string;
+	readonly outcome?: string;
+}
+
+/**
+ * The renderer half of `vscode.volt`. `extensionId` in a payload is honoured only for an extension
+ * this extension host runs (B-08); everything else about the caller (built-in or not, its declared
+ * capabilities) comes from the renderer's own extension registry, never from the payload.
+ */
+export interface MainThreadVoltShape extends IDisposable {
+	$call(extensionId: string, method: VoltApiMethod, args: unknown[]): Promise<unknown>;
+	$registerTool(extensionId: string, handle: number, name: string, options: IVoltToolOptionsDto | undefined): Promise<void>;
+	$unregisterTool(handle: number): void;
+	/** Starts turn events for the extension (`agents.read:any`); the first subscriber of the host starts the stream. */
+	$subscribeTurns(extensionId: string): Promise<void>;
+	$unsubscribeTurns(extensionId: string): void;
+}
+
+export interface ExtHostVoltShape {
+	$invokeTool(handle: number, input: Record<string, unknown>, call: { readonly chatId?: string }, token: CancellationToken): Promise<IVoltToolResultDto>;
+	$onDidStartTurn(extensionIds: string[], event: IVoltTurnEventDto): void;
+	$onDidFinishTurn(extensionIds: string[], event: IVoltTurnEventDto): void;
+}
+
 export interface ExtHostLocalizationShape {
 	getMessage(extensionId: string, details: IStringDetails): string;
 	getBundle(extensionId: string): { [key: string]: string } | undefined;
@@ -2906,6 +2961,7 @@ export const MainContext = {
 	MainThreadTesting: createProxyIdentifier<MainThreadTestingShape>('MainThreadTesting'),
 	MainThreadLocalization: createProxyIdentifier<MainThreadLocalizationShape>('MainThreadLocalizationShape'),
 	MainThreadDataChannels: createProxyIdentifier<MainThreadDataChannelsShape>('MainThreadDataChannels'),
+	MainThreadVolt: createProxyIdentifier<MainThreadVoltShape>('MainThreadVolt'),
 };
 
 export const ExtHostContext = {
@@ -2970,4 +3026,5 @@ export const ExtHostContext = {
 	ExtHostTelemetry: createProxyIdentifier<ExtHostTelemetryShape>('ExtHostTelemetry'),
 	ExtHostLocalization: createProxyIdentifier<ExtHostLocalizationShape>('ExtHostLocalization'),
 	ExtHostDataChannels: createProxyIdentifier<ExtHostDataChannelsShape>('ExtHostDataChannels'),
+	ExtHostVolt: createProxyIdentifier<ExtHostVoltShape>('ExtHostVolt'),
 };

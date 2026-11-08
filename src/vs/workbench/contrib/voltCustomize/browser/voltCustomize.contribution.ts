@@ -49,8 +49,12 @@ import { IVoltFeatureService } from '../common/voltFeatures.js';
 import { VoltFeatureService } from './voltFeatureService.js';
 import { IVoltPluginService } from '../../../services/voltPlugins/common/voltApi.js';
 import { VoltPluginService } from './voltPluginService.js';
+import { IVoltExtensionApiService } from '../../../services/voltPlugins/common/voltExtensionApi.js';
+import { VoltExtensionApiService } from './voltExtensionApiService.js';
 
 registerSingleton(IVoltSlotService, VoltSlotService, InstantiationType.Delayed);
+// The `vscode.volt` API's main-thread half (`MainThreadVolt`); created on an extension's first call.
+registerSingleton(IVoltExtensionApiService, VoltExtensionApiService, InstantiationType.Delayed);
 // Eager: it sets the `voltFeature.*` context keys and takes turned-off features' tools away at startup.
 registerSingleton(IVoltFeatureService, VoltFeatureService, InstantiationType.Eager);
 registerSingleton(IVoltCustomizeService, VoltCustomizeService, InstantiationType.Eager);
@@ -304,6 +308,15 @@ class VoltPluginsContribution implements IWorkbenchContribution {
 	constructor(@IVoltPluginService _plugins: IVoltPluginService) { }
 }
 registerWorkbenchContribution2(VoltPluginsContribution.ID, VoltPluginsContribution, WorkbenchPhase.Eventually);
+
+/** Lists each extension's Volt capabilities (and the user's consent) on its page once the window is idle. */
+class VoltExtensionApiContribution implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.voltExtensionApi';
+	constructor(@IVoltExtensionApiService extensionApi: IVoltExtensionApiService) {
+		void extensionApi.policy;
+	}
+}
+registerWorkbenchContribution2(VoltExtensionApiContribution.ID, VoltExtensionApiContribution, WorkbenchPhase.Eventually);
 registerWorkbenchContribution2(VoltPlaygroundDevtoolsContribution.ID, VoltPlaygroundDevtoolsContribution, WorkbenchPhase.AfterRestored);
 
 // --- Commands ----------------------------------------------------------------------------------
