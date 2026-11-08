@@ -3,17 +3,17 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { RunOnceScheduler } from '../../../../../base/common/async.js';
-import { CancellationTokenSource } from '../../../../../base/common/cancellation.js';
-import { Emitter, Event } from '../../../../../base/common/event.js';
-import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
-import { rot } from '../../../../../base/common/numbers.js';
-import { autorun } from '../../../../../base/common/observable.js';
-import { ColorIdentifier } from '../../../../../platform/theme/common/colorUtils.js';
-import { colorRegistry, compareHistoryItemRefs, historyItemRefColor } from '../../../scm/browser/scmHistory.js';
-import { ISCMHistoryItem, ISCMHistoryItemGraphNode, ISCMHistoryItemRef, ISCMHistoryItemViewModel, ISCMHistoryProvider } from '../../../scm/common/history.js';
-import { ISCMRepository } from '../../../scm/common/scm.js';
-import { detectCodingAgents, IGitCodingAgent } from '../../common/gitAgentAttribution.js';
+import { RunOnceScheduler } from '../../../../base/common/async.js';
+import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
+import { Emitter, Event } from '../../../../base/common/event.js';
+import { Disposable, DisposableStore, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { rot } from '../../../../base/common/numbers.js';
+import { autorun } from '../../../../base/common/observable.js';
+import { ColorIdentifier } from '../../../../platform/theme/common/colorUtils.js';
+import { colorRegistry, compareHistoryItemRefs, historyItemRefColor } from '../../scm/browser/scmHistory.js';
+import { ISCMHistoryItem, ISCMHistoryItemGraphNode, ISCMHistoryItemRef, ISCMHistoryItemViewModel, ISCMHistoryProvider } from '../../scm/common/history.js';
+import { ISCMRepository } from '../../scm/common/scm.js';
+import { detectCodingAgents, IGitCodingAgent } from '../common/gitAgentAttribution.js';
 
 export interface IGitGraphCommitRow {
 	readonly kind: 'commit';

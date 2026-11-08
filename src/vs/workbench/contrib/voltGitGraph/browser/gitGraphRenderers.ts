@@ -3,26 +3,26 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, EventType, isHTMLElement } from '../../../../../base/browser/dom.js';
-import { IManagedHoverTooltipMarkdownString } from '../../../../../base/browser/ui/hover/hover.js';
-import { getDefaultHoverDelegate } from '../../../../../base/browser/ui/hover/hoverDelegateFactory.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { ITableColumn, ITableRenderer } from '../../../../../base/browser/ui/table/table.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { fromNow, safeIntl } from '../../../../../base/common/date.js';
-import { language } from '../../../../../base/common/platform.js';
-import { MarkdownString } from '../../../../../base/common/htmlContent.js';
-import { DisposableStore } from '../../../../../base/common/lifecycle.js';
-import { ThemeIcon } from '../../../../../base/common/themables.js';
-import { URI } from '../../../../../base/common/uri.js';
-import { localize } from '../../../../../nls.js';
-import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
-import { asCssVariable } from '../../../../../platform/theme/common/colorUtils.js';
-import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
-import { getHistoryItemIndex, historyItemRefColor, ISCMHistoryGraphGeometry, renderSCMHistoryItemGraph } from '../../../scm/browser/scmHistory.js';
-import { getHistoryItemHoverContent } from '../../../scm/browser/util.js';
-import { ISCMHistoryItem, ISCMHistoryItemRef } from '../../../scm/common/history.js';
-import { IGitCodingAgent } from '../../common/gitAgentAttribution.js';
+import { $, addDisposableListener, append, EventType, isHTMLElement } from '../../../../base/browser/dom.js';
+import { IManagedHoverTooltipMarkdownString } from '../../../../base/browser/ui/hover/hover.js';
+import { getDefaultHoverDelegate } from '../../../../base/browser/ui/hover/hoverDelegateFactory.js';
+import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { ITableColumn, ITableRenderer } from '../../../../base/browser/ui/table/table.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { fromNow, safeIntl } from '../../../../base/common/date.js';
+import { language } from '../../../../base/common/platform.js';
+import { MarkdownString } from '../../../../base/common/htmlContent.js';
+import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
+import { URI } from '../../../../base/common/uri.js';
+import { localize } from '../../../../nls.js';
+import { IHoverService } from '../../../../platform/hover/browser/hover.js';
+import { asCssVariable } from '../../../../platform/theme/common/colorUtils.js';
+import { IThemeService } from '../../../../platform/theme/common/themeService.js';
+import { getHistoryItemIndex, historyItemRefColor, ISCMHistoryGraphGeometry, renderSCMHistoryItemGraph } from '../../scm/browser/scmHistory.js';
+import { getHistoryItemHoverContent } from '../../scm/browser/util.js';
+import { ISCMHistoryItem, ISCMHistoryItemRef } from '../../scm/common/history.js';
+import { IGitCodingAgent } from '../common/gitAgentAttribution.js';
 import { createAgentMark } from './gitGraphIcons.js';
 import { GitGraphRow, IGitGraphCommitRow } from './gitGraphModel.js';
 

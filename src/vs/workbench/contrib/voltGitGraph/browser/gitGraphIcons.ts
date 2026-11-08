@@ -3,11 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $ } from '../../../../../base/browser/dom.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { createBrandIcon, PROVIDER_BRANDS } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
-import { GitCodingAgentId } from '../../common/gitAgentAttribution.js';
+import { $ } from '../../../../base/browser/dom.js';
+import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { createBrandIcon, PROVIDER_BRANDS } from '../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { GitCodingAgentId } from '../common/gitAgentAttribution.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 

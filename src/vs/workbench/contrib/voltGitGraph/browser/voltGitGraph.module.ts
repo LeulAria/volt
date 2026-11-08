@@ -3,41 +3,41 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { Iterable } from '../../../../../base/common/iterator.js';
-import { Schemas } from '../../../../../base/common/network.js';
-import { relativePath } from '../../../../../base/common/resources.js';
-import { URI } from '../../../../../base/common/uri.js';
-import { ICodeEditorService } from '../../../../../editor/browser/services/codeEditorService.js';
-import { localize, localize2 } from '../../../../../nls.js';
-import { Action2, MenuId, registerAction2 } from '../../../../../platform/actions/common/actions.js';
-import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
-import { ContextKeyExpr } from '../../../../../platform/contextkey/common/contextkey.js';
-import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
-import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
-import { INotificationService } from '../../../../../platform/notification/common/notification.js';
-import { Registry } from '../../../../../platform/registry/common/platform.js';
-import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../../browser/editor.js';
-import { EditorExtensions, IEditorFactoryRegistry } from '../../../../common/editor.js';
-import { IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
-import { IEditorService } from '../../../../services/editor/common/editorService.js';
-import { ISCMHistoryItem } from '../../../scm/common/history.js';
-import { ISCMProvider, ISCMRepository, ISCMService } from '../../../scm/common/scm.js';
-import { AgentEditor } from '../editor/agentEditor.js';
-import { AgentEditorInput } from '../editor/agentEditorInput.js';
-import { visibleChatSession } from '../pullRequests/agentPullRequestUi.js';
-import { openInAgentTools, openSideChatOnScreen, revealAgentToolEditor } from '../workspace/agentSurfaceHost.js';
-import { OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID } from '../workspace/agentSurfaceMenu.js';
-import { ASK_AGENT_COMMAND_ID, GIT_GRAPH_EDITOR_ID, GitGraphEditor, GitGraphEditorInput, GitGraphEditorInputSerializer, IGitGraphRequest, InGitGraphContext } from './gitGraphEditor.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { Iterable } from '../../../../base/common/iterator.js';
+import { Schemas } from '../../../../base/common/network.js';
+import { relativePath } from '../../../../base/common/resources.js';
+import { URI } from '../../../../base/common/uri.js';
+import { ICodeEditorService } from '../../../../editor/browser/services/codeEditorService.js';
+import { localize, localize2 } from '../../../../nls.js';
+import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
+import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
+import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
+import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
+import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
+import { EditorExtensions } from '../../../common/editor.js';
+import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
+import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { IVoltAgentWindowService, IVoltChatPane } from '../../../services/voltPlugins/browser/voltAgentWindow.js';
+import { IVoltPluginService } from '../../../services/voltPlugins/common/voltApi.js';
+import { ISCMHistoryItem } from '../../scm/common/history.js';
+import { ISCMProvider, ISCMRepository, ISCMService } from '../../scm/common/scm.js';
+import { IVoltFeatureModule, IVoltFeatureModuleHost } from '../../voltCustomize/browser/voltFeatureModules.js';
+import { GIT_GRAPH_ASK_AGENT_COMMAND_ID, GIT_GRAPH_EXPLAIN_COMMIT_COMMAND_ID, GIT_GRAPH_EXPLAIN_LINES_COMMAND_ID, GIT_GRAPH_FILE_HISTORY_COMMAND_ID, GIT_GRAPH_LINE_HISTORY_COMMAND_ID, GIT_GRAPH_REVEAL_COMMIT_COMMAND_ID, GIT_GRAPH_REVIEW_COMMIT_COMMAND_ID, InGitGraphContext, OPEN_GIT_GRAPH_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID } from '../common/voltGitGraph.js';
+import { checkGitGraph, setGitGraphCheck } from './gitGraphAccess.js';
+import { GitGraphEditor } from './gitGraphEditor.js';
+import { GIT_GRAPH_EDITOR_ID, GitGraphEditorInput, GitGraphEditorInputSerializer, IGitGraphRequest } from './gitGraphInput.js';
 import { buildGitAgentPrompt, gitAgentPromptTitle, IGitAgentContext, IGitAskAgentArgs, readGitAskAgentArgs } from './gitGraphPrompts.js';
 
-export const OPEN_GIT_GRAPH_COMMAND_ID = 'volt.gitGraph.open';
-
-Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
-	EditorPaneDescriptor.create(GitGraphEditor, GIT_GRAPH_EDITOR_ID, localize('voltGitGraph.editorLabel', "Git Graph")),
-	[new SyncDescriptor(GitGraphEditorInput)]
-);
-Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEditorSerializer(GitGraphEditorInput.TypeID, GitGraphEditorInputSerializer);
+/**
+ * The Git Graph, a module of the `volt.git-graph` built-in extension (spec M3). Core's module table
+ * (`voltFeatureModuleTable.ts`) loads it the first time one of its commands runs or a saved Git
+ * Graph tab is shown; until then stubs stand in for the commands and their menu entries. Disabling
+ * the extension disposes everything `activate` registered.
+ */
 
 interface IGitGraphOpenArgs {
 	readonly repositoryRoot?: string;
@@ -55,8 +55,9 @@ function readOpenArgs(value: unknown): IGitGraphOpenArgs {
  * Opens the Git Graph tab, or brings the open one forward, then searches or reveals. Over a chat it
  * lands in that chat's right panel like any other tab (agentFileEditorRouting).
  */
-export async function openGitGraph(accessor: ServicesAccessor, args: IGitGraphOpenArgs, sessionId?: string): Promise<void> {
+async function openGitGraph(accessor: ServicesAccessor, args: IGitGraphOpenArgs, sessionId?: string): Promise<void> {
 	const editorService = accessor.get(IEditorService);
+	const agentWindow = accessor.get(IVoltAgentWindowService);
 	const request: IGitGraphRequest | undefined = args.query !== undefined || args.revealCommit
 		? { query: args.query, reveal: args.revealCommit }
 		: undefined;
@@ -70,8 +71,8 @@ export async function openGitGraph(accessor: ServicesAccessor, args: IGitGraphOp
 			existing.repositoryRoot = args.repositoryRoot;
 		}
 		existing.request(request ?? { reveal: undefined });
-		// Only a tab that is in the right panel reveals there; revealAgentToolEditor would otherwise just open the panel.
-		if (inTools && revealAgentToolEditor(existing)) {
+		// Only a tab that is in the right panel reveals there; revealInTools would otherwise just open the panel.
+		if (inTools && agentWindow.revealInTools(existing)) {
 			return;
 		}
 		await editorService.openEditor(existing, { pinned: true }, where[0]?.groupId);
@@ -82,7 +83,7 @@ export async function openGitGraph(accessor: ServicesAccessor, args: IGitGraphOp
 	if (request) {
 		input.request(request);
 	}
-	const opened = openInAgentTools(input, sessionId, { pinned: true });
+	const opened = agentWindow.openInTools(input, sessionId, { pinned: true });
 	if (opened) {
 		await opened;
 	} else {
@@ -90,7 +91,7 @@ export async function openGitGraph(accessor: ServicesAccessor, args: IGitGraphOp
 	}
 }
 
-registerAction2(class OpenGitGraphAction extends Action2 {
+class OpenGitGraphAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_GIT_GRAPH_COMMAND_ID,
@@ -110,9 +111,9 @@ registerAction2(class OpenGitGraphAction extends Action2 {
 	override async run(accessor: ServicesAccessor, args?: unknown): Promise<void> {
 		await openGitGraph(accessor, readOpenArgs(args));
 	}
-});
+}
 
-registerAction2(class OpenGitGraphInToolsAction extends Action2 {
+class OpenGitGraphInToolsAction extends Action2 {
 	constructor() {
 		super({ id: OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, visibility: 'public', title: localize2('voltGitGraph.openInTools', "Open Git Graph Beside Chat") });
 	}
@@ -120,7 +121,7 @@ registerAction2(class OpenGitGraphInToolsAction extends Action2 {
 	override async run(accessor: ServicesAccessor, sessionId?: unknown): Promise<void> {
 		await openGitGraph(accessor, {}, typeof sessionId === 'string' ? sessionId : undefined);
 	}
-});
+}
 
 //#region File and line history
 
@@ -148,10 +149,10 @@ function activeResource(accessor: ServicesAccessor, uri: unknown): URI | undefin
 	return accessor.get(IEditorService).activeEditor?.resource;
 }
 
-registerAction2(class OpenFileHistoryAction extends Action2 {
+class OpenFileHistoryAction extends Action2 {
 	constructor() {
 		super({
-			id: 'volt.gitGraph.fileHistory',
+			id: GIT_GRAPH_FILE_HISTORY_COMMAND_ID,
 			visibility: 'public',
 			title: localize2('voltGitGraph.fileHistory', "Open File History"),
 			category: localize2('voltGitGraph.category', "Git"),
@@ -174,12 +175,12 @@ registerAction2(class OpenFileHistoryAction extends Action2 {
 		}
 		await openGitGraph(accessor, { repositoryRoot: located.repository.provider.rootUri!.fsPath, query: located.path ? `path:${quoteQueryValue(located.path)}` : '' });
 	}
-});
+}
 
-registerAction2(class OpenLineHistoryAction extends Action2 {
+class OpenLineHistoryAction extends Action2 {
 	constructor() {
 		super({
-			id: 'volt.gitGraph.lineHistory',
+			id: GIT_GRAPH_LINE_HISTORY_COMMAND_ID,
 			visibility: 'public',
 			title: localize2('voltGitGraph.lineHistory', "Open Line History"),
 			category: localize2('voltGitGraph.category', "Git"),
@@ -204,7 +205,7 @@ registerAction2(class OpenLineHistoryAction extends Action2 {
 			query: `lines:${selection.startLineNumber}-${end}:${quoteQueryValue(located.path)}`,
 		});
 	}
-});
+}
 
 //#endregion
 
@@ -219,6 +220,7 @@ async function gitContext(scmService: ISCMService, args: IGitAskAgentArgs): Prom
 	const repository = [...scmService.repositories].find(candidate => candidate.provider.rootUri?.toString() === root) ?? Iterable.first(scmService.repositories);
 	const history = repository?.provider.historyProvider.get();
 	const rootUri = repository?.provider.rootUri;
+	checkGitGraph('readCommit', 'git.read', rootUri?.fsPath);
 	try {
 		const item = await history?.resolveHistoryItem(args.commit);
 		if (!item) {
@@ -246,7 +248,7 @@ async function askAgent(accessor: ServicesAccessor, args: IGitAskAgentArgs): Pro
 	const editorService = accessor.get(IEditorService);
 	const clipboardService = accessor.get(IClipboardService);
 	const notificationService = accessor.get(INotificationService);
-	const instantiationService = accessor.get(IInstantiationService);
+	const agentWindow = accessor.get(IVoltAgentWindowService);
 	const graphs: GitGraphEditor[] = [];
 	for (const visible of editorService.visibleEditorPanes) {
 		if (visible instanceof GitGraphEditor) {
@@ -257,24 +259,18 @@ async function askAgent(accessor: ServicesAccessor, args: IGitAskAgentArgs): Pro
 	const prompt = buildGitAgentPrompt(args, context);
 	const display = { text: gitAgentPromptTitle(args, context.subject) };
 
+	checkGitGraph('askAgent', 'agents.send');
 	// Beside the graph on screen first (its chat's right panel, full screen too), then the chat on screen.
-	let pane: unknown;
+	let pane: IVoltChatPane | undefined;
 	for (const graph of graphs) {
-		if (!(pane instanceof AgentEditor)) {
-			pane = await graph.openSideChat();
-		}
+		pane ??= await graph.openSideChat();
 	}
-	if (!(pane instanceof AgentEditor)) {
-		pane = await openSideChatOnScreen(instantiationService.invokeFunction(visibleChatSession));
-	}
-	if (!(pane instanceof AgentEditor)) {
-		// No chat on screen: a new chat tab of its own.
-		const input = instantiationService.createInstance(AgentEditorInput, AgentEditorInput.getNewEditorUri());
-		pane = await editorService.openEditor(input, { pinned: true });
-	}
-	if (pane instanceof AgentEditor) {
+	pane ??= await agentWindow.openSideChatOnScreen(agentWindow.visibleChat());
+	// No chat on screen: a new chat tab of its own.
+	pane ??= await agentWindow.openNewChat();
+	if (pane) {
 		// A side chat in the right panel is composer-only by default; this one is opened to be read.
-		pane.showTranscriptInTools();
+		pane.showTranscript();
 		pane.submitPrompt(prompt, display);
 		return;
 	}
@@ -282,9 +278,9 @@ async function askAgent(accessor: ServicesAccessor, args: IGitAskAgentArgs): Pro
 	notificationService.info(localize('voltGitGraph.promptCopied', "A chat couldn't be opened, so the prompt was copied. Paste it into a chat."));
 }
 
-registerAction2(class AskAgentAboutGitAction extends Action2 {
+class AskAgentAboutGitAction extends Action2 {
 	constructor() {
-		super({ id: ASK_AGENT_COMMAND_ID, visibility: 'exported:agents.send', title: localize2('voltGitGraph.askAgent', "Ask Agent About Commit") });
+		super({ id: GIT_GRAPH_ASK_AGENT_COMMAND_ID, visibility: 'exported:agents.send', title: localize2('voltGitGraph.askAgent', "Ask Agent About Commit") });
 	}
 
 	override async run(accessor: ServicesAccessor, args?: unknown): Promise<void> {
@@ -293,36 +289,51 @@ registerAction2(class AskAgentAboutGitAction extends Action2 {
 			await askAgent(accessor, parsed);
 		}
 	}
-});
-
-/** The SCM graph's commit menu (sidebar and the Git Graph tab): Explain / Review with the agent. */
-for (const [action, id, title, order] of [
-	['explain', 'volt.gitGraph.explainCommit', localize2('voltGitGraph.explainCommit', "Explain with Agent"), 1],
-	['review', 'volt.gitGraph.reviewCommit', localize2('voltGitGraph.reviewCommit', "Review with Agent"), 2],
-] as const) {
-	registerAction2(class extends Action2 {
-		constructor() {
-			super({
-				id,
-				visibility: 'internal',
-				title,
-				icon: Codicon.sparkle,
-				menu: { id: MenuId.SCMHistoryItemContext, group: '0_volt_agent', order, when: ContextKeyExpr.and(ContextKeyExpr.equals('scmProvider', 'git'), ContextKeyExpr.not('listMultiSelection')) },
-			});
-		}
-
-		override async run(accessor: ServicesAccessor, provider?: ISCMProvider, historyItem?: ISCMHistoryItem): Promise<void> {
-			if (historyItem?.id) {
-				await askAgent(accessor, { action, commit: historyItem.id, repositoryRoot: provider?.rootUri?.fsPath });
-			}
-		}
-	});
 }
 
-registerAction2(class RevealInGitGraphAction extends Action2 {
+/** The SCM graph's commit menu (sidebar and the Git Graph tab): Explain / Review with the agent. */
+const COMMIT_AGENT_MENU_WHEN = ContextKeyExpr.and(ContextKeyExpr.equals('scmProvider', 'git'), ContextKeyExpr.not('listMultiSelection'));
+
+class ExplainCommitAction extends Action2 {
 	constructor() {
 		super({
-			id: 'volt.gitGraph.revealCommit',
+			id: GIT_GRAPH_EXPLAIN_COMMIT_COMMAND_ID,
+			visibility: 'internal',
+			title: localize2('voltGitGraph.explainCommit', "Explain with Agent"),
+			icon: Codicon.sparkle,
+			menu: { id: MenuId.SCMHistoryItemContext, group: '0_volt_agent', order: 1, when: COMMIT_AGENT_MENU_WHEN },
+		});
+	}
+
+	override async run(accessor: ServicesAccessor, provider?: ISCMProvider, historyItem?: ISCMHistoryItem): Promise<void> {
+		if (historyItem?.id) {
+			await askAgent(accessor, { action: 'explain', commit: historyItem.id, repositoryRoot: provider?.rootUri?.fsPath });
+		}
+	}
+}
+
+class ReviewCommitAction extends Action2 {
+	constructor() {
+		super({
+			id: GIT_GRAPH_REVIEW_COMMIT_COMMAND_ID,
+			visibility: 'internal',
+			title: localize2('voltGitGraph.reviewCommit', "Review with Agent"),
+			icon: Codicon.sparkle,
+			menu: { id: MenuId.SCMHistoryItemContext, group: '0_volt_agent', order: 2, when: COMMIT_AGENT_MENU_WHEN },
+		});
+	}
+
+	override async run(accessor: ServicesAccessor, provider?: ISCMProvider, historyItem?: ISCMHistoryItem): Promise<void> {
+		if (historyItem?.id) {
+			await askAgent(accessor, { action: 'review', commit: historyItem.id, repositoryRoot: provider?.rootUri?.fsPath });
+		}
+	}
+}
+
+class RevealInGitGraphAction extends Action2 {
+	constructor() {
+		super({
+			id: GIT_GRAPH_REVEAL_COMMIT_COMMAND_ID,
 			visibility: 'public',
 			title: localize2('voltGitGraph.reveal', "Open in Git Graph"),
 			icon: Codicon.sourceControl,
@@ -333,12 +344,12 @@ registerAction2(class RevealInGitGraphAction extends Action2 {
 	override async run(accessor: ServicesAccessor, provider?: ISCMProvider, historyItem?: ISCMHistoryItem): Promise<void> {
 		await openGitGraph(accessor, { repositoryRoot: provider?.rootUri?.fsPath, revealCommit: historyItem?.id });
 	}
-});
+}
 
-registerAction2(class ExplainLinesAction extends Action2 {
+class ExplainLinesAction extends Action2 {
 	constructor() {
 		super({
-			id: 'volt.gitGraph.explainLines',
+			id: GIT_GRAPH_EXPLAIN_LINES_COMMAND_ID,
 			visibility: 'internal',
 			title: localize2('voltGitGraph.explainLines', "Explain Lines with Agent"),
 			category: localize2('voltGitGraph.category', "Git"),
@@ -365,6 +376,33 @@ registerAction2(class ExplainLinesAction extends Action2 {
 			endLine: end,
 		});
 	}
-});
+}
 
 //#endregion
+
+export const gitGraphModule: IVoltFeatureModule = {
+	activate(host: IVoltFeatureModuleHost): void {
+		const { plugin, subscriptions } = host;
+		// Its uses of git and chats, checked against its manifest (report mode: logged, never refused).
+		const reporter = host.instantiationService.invokeFunction(accessor => accessor.get(IVoltPluginService).reporter);
+		const principal = { extensionId: plugin.extensionId, label: plugin.manifest.contributes?.voltModule?.label, firstParty: true, capabilities: plugin.manifest.contributes?.voltCapabilities ?? {} };
+		subscriptions.add(setGitGraphCheck(request => reporter.check(principal, request)));
+
+		subscriptions.add(Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
+			EditorPaneDescriptor.create(GitGraphEditor, GIT_GRAPH_EDITOR_ID, localize('voltGitGraph.editorLabel', "Git Graph")),
+			[new SyncDescriptor(GitGraphEditorInput)]
+		));
+		host.registerEditorSerializer(GitGraphEditorInput.TypeID, new GitGraphEditorInputSerializer());
+
+		// Core took the stubs (and their menu entries) down before activating; these are the real ones.
+		subscriptions.add(registerAction2(OpenGitGraphAction));
+		subscriptions.add(registerAction2(OpenGitGraphInToolsAction));
+		subscriptions.add(registerAction2(OpenFileHistoryAction));
+		subscriptions.add(registerAction2(OpenLineHistoryAction));
+		subscriptions.add(registerAction2(AskAgentAboutGitAction));
+		subscriptions.add(registerAction2(ExplainCommitAction));
+		subscriptions.add(registerAction2(ReviewCommitAction));
+		subscriptions.add(registerAction2(RevealInGitGraphAction));
+		subscriptions.add(registerAction2(ExplainLinesAction));
+	},
+};

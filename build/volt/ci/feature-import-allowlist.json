@@ -1,5 +1,16 @@
 {
 	"//": "Core modules each fenced feature (contrib/<voltModule.entry>/) still imports beyond the always-allowed set in featureImportLint.mjs. A ratchet: remove entries as features move to the volt facade; never add one without review.",
 	"features": {
+		"gitGraph": [
+			"src/vs/workbench/contrib/scm/browser/scmHistory.ts",
+			"src/vs/workbench/contrib/scm/browser/scmViewPane.ts",
+			"src/vs/workbench/contrib/scm/browser/util.ts",
+			"src/vs/workbench/contrib/scm/common/history.ts",
+			"src/vs/workbench/contrib/scm/common/scm.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/editor/agentScrollable.ts",
+			"src/vs/workbench/services/editor/common/editorGroupsService.ts",
+			"src/vs/workbench/services/editor/common/editorService.ts",
+			"src/vs/workbench/services/voltRuntime/browser/providers/providerBrands.ts"
+		]
 	}
 }

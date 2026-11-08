@@ -3,141 +3,67 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import '../media/gitGraph.css';
-import { $, addDisposableListener, append, Dimension, EventType, getWindow, isMouseEvent } from '../../../../../base/browser/dom.js';
-import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
-import { StandardMouseEvent } from '../../../../../base/browser/mouseEvent.js';
-import { getDefaultHoverDelegate } from '../../../../../base/browser/ui/hover/hoverDelegateFactory.js';
-import { renderIcon, renderLabelWithIcons } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { InputBox } from '../../../../../base/browser/ui/inputbox/inputBox.js';
-import { ITableContextMenuEvent } from '../../../../../base/browser/ui/table/table.js';
-import { RunOnceScheduler } from '../../../../../base/common/async.js';
-import { CancellationToken } from '../../../../../base/common/cancellation.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { Emitter } from '../../../../../base/common/event.js';
-import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
-import { DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
-import { autorun } from '../../../../../base/common/observable.js';
-import { Schemas } from '../../../../../base/common/network.js';
-import { basename } from '../../../../../base/common/resources.js';
-import { ThemeIcon } from '../../../../../base/common/themables.js';
-import { URI } from '../../../../../base/common/uri.js';
-import { localize } from '../../../../../nls.js';
-import { getFlatContextMenuActions } from '../../../../../platform/actions/browser/menuEntryActionViewItem.js';
-import { Action2, IMenuService, isIMenuItem, MenuId, MenuRegistry, registerAction2 } from '../../../../../platform/actions/common/actions.js';
-import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { IContextKeyService, IScopedContextKeyService, RawContextKey } from '../../../../../platform/contextkey/common/contextkey.js';
-import { IContextMenuService, IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
-import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
-import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
-import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
-import { WorkbenchTable } from '../../../../../platform/list/browser/listService.js';
-import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
-import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
-import { defaultInputBoxStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
-import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
-import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
-import { IEditorOpenContext, IEditorPane, IEditorSerializer, IUntypedEditorInput } from '../../../../common/editor.js';
-import { EditorInput } from '../../../../common/editor/editorInput.js';
-import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
-import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
-import { getLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
-import { AgentEditorInput } from '../editor/agentEditorInput.js';
-import { AgentSurfaceHost, openSideChatBeside } from '../workspace/agentSurfaceHost.js';
-import { hasSavedAgentTools } from '../workspace/agentToolsEditorPart.js';
-import { ContextKeys } from '../../../scm/browser/scmViewPane.js';
-import { ISCMHistoryItemRef } from '../../../scm/common/history.js';
-import { ISCMRepository, ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
-import { createVoltButton } from '../chrome/voltButton.js';
-import { createVoltDropdown, IVoltDropdown, IVoltDropdownOption } from '../ui/dropdown/voltDropdown.js';
+import './media/gitGraph.css';
+import { $, addDisposableListener, append, Dimension, EventType, getWindow, isMouseEvent } from '../../../../base/browser/dom.js';
+import { StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
+import { StandardMouseEvent } from '../../../../base/browser/mouseEvent.js';
+import { getDefaultHoverDelegate } from '../../../../base/browser/ui/hover/hoverDelegateFactory.js';
+import { renderIcon, renderLabelWithIcons } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { InputBox } from '../../../../base/browser/ui/inputbox/inputBox.js';
+import { ITableContextMenuEvent } from '../../../../base/browser/ui/table/table.js';
+import { ActionRunner, IAction } from '../../../../base/common/actions.js';
+import { RunOnceScheduler } from '../../../../base/common/async.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
+import { DisposableStore, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { autorun } from '../../../../base/common/observable.js';
+import { basename } from '../../../../base/common/resources.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
+import { URI } from '../../../../base/common/uri.js';
+import { localize } from '../../../../nls.js';
+import { getFlatContextMenuActions } from '../../../../platform/actions/browser/menuEntryActionViewItem.js';
+import { Action2, IMenuService, isIMenuItem, MenuId, MenuRegistry, registerAction2 } from '../../../../platform/actions/common/actions.js';
+import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IContextKeyService, IScopedContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
+import { IContextMenuService, IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
+import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
+import { IHoverService } from '../../../../platform/hover/browser/hover.js';
+import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+import { WorkbenchTable } from '../../../../platform/list/browser/listService.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
+import { defaultInputBoxStyles } from '../../../../platform/theme/browser/defaultStyles.js';
+import { IThemeService } from '../../../../platform/theme/common/themeService.js';
+import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
+import { IEditorOpenContext } from '../../../common/editor.js';
+import { IEditorGroup, IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
+import { IVoltAgentWindowService, IVoltChatPane, IVoltToolsPanel } from '../../../services/voltPlugins/browser/voltAgentWindow.js';
+import { ContextKeys } from '../../scm/browser/scmViewPane.js';
+import { ISCMHistoryItemRef } from '../../scm/common/history.js';
+import { ISCMRepository, ISCMService, ISCMViewService } from '../../scm/common/scm.js';
+import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
+import { createVoltDropdown, IVoltDropdown, IVoltDropdownOption } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
 import { DateRangePicker, IDateRange } from './gitGraphDatePicker.js';
-import { AnchorAlignment } from '../../../../../base/browser/ui/contextview/contextview.js';
+import { AnchorAlignment } from '../../../../base/browser/ui/contextview/contextview.js';
 import { ActivityDay, GitGraphActivity, IActivityRange, startOfDay } from './gitGraphActivity.js';
 import { GitGraphInspector, IGitGraphInspectorHost } from './gitGraphInspector.js';
 import { dateRange, GitGraphChange, GitGraphDatePreset, GitGraphModel, GitGraphRow, GitGraphScope, IGitGraphCommitRow, isoSeconds } from './gitGraphModel.js';
 import { GitGraphAgentAction } from './gitGraphPrompts.js';
 import { AgentRenderer, AuthorRenderer, ChangesRenderer, DateRenderer, GIT_GRAPH_COLUMNS_MIN, GIT_GRAPH_ROW_HEIGHT, gitGraphColumns, GraphRenderer, IGitGraphCellHost, isCommitRow, MessageRenderer, RefsRenderer, ShaRenderer } from './gitGraphRenderers.js';
+import { checkGitGraph, gitCommandCapability } from './gitGraphAccess.js';
+import { GIT_GRAPH_EDITOR_ID, GitGraphEditorInput } from './gitGraphInput.js';
+import { GIT_GRAPH_ASK_AGENT_COMMAND_ID, InGitGraphContext } from '../common/voltGitGraph.js';
 
-export const GIT_GRAPH_EDITOR_ID = 'workbench.editor.voltGitGraph';
-const GIT_GRAPH_INPUT_ID = 'workbench.input.voltGitGraph';
-
-/** Set inside the Git Graph tab, so menu items that open it hide there. */
-export const InGitGraphContext = new RawContextKey<boolean>('voltInGitGraph', false);
-
-export interface IGitGraphRequest {
-	/** A search to run, in the history provider's query syntax (`author:`, `path:`, `lines:`…). */
-	readonly query?: string;
-	/** A commit to scroll to and select. */
-	readonly reveal?: string;
-}
-
-export class GitGraphEditorInput extends EditorInput {
-
-	static readonly TypeID = GIT_GRAPH_INPUT_ID;
-	static readonly EditorID = GIT_GRAPH_EDITOR_ID;
-
-	readonly resource = URI.from({ scheme: Schemas.voltGitGraph, path: '/graph' });
-
-	/** The repository's root (fsPath); the active repository when unset. */
-	repositoryRoot: string | undefined;
-	private pending: IGitGraphRequest | undefined;
-
-	private readonly _onDidRequest = this._register(new Emitter<void>());
-	readonly onDidRequest = this._onDidRequest.event;
-
-	override get typeId(): string { return GitGraphEditorInput.TypeID; }
-	override get editorId(): string | undefined { return GitGraphEditorInput.EditorID; }
-
-	override getName(): string {
-		return localize('voltGitGraph.tab', "Git Graph");
-	}
-
-	override getTitle(): string {
-		return this.repositoryRoot
-			? localize('voltGitGraph.tabTitle', "Git Graph · {0}", basename(URI.file(this.repositoryRoot)))
-			: this.getName();
-	}
-
-	override getIcon(): ThemeIcon {
-		return Codicon.sourceControl;
-	}
-
-	override matches(other: EditorInput | IUntypedEditorInput): boolean {
-		return super.matches(other) || other instanceof GitGraphEditorInput;
-	}
-
-	/** Asks the open pane (or the next one) to search or reveal. */
-	request(request: IGitGraphRequest | undefined): void {
-		this.pending = request;
-		this._onDidRequest.fire();
-	}
-
-	takeRequest(): IGitGraphRequest | undefined {
-		const request = this.pending;
-		this.pending = undefined;
-		return request;
-	}
-}
-
-export class GitGraphEditorInputSerializer implements IEditorSerializer {
-	canSerialize(): boolean {
-		return true;
-	}
-	serialize(input: EditorInput): string {
-		return input instanceof GitGraphEditorInput && input.repositoryRoot ? JSON.stringify({ root: input.repositoryRoot }) : '';
-	}
-	deserialize(instantiationService: IInstantiationService, raw: string): EditorInput {
-		const input = instantiationService.createInstance(GitGraphEditorInput);
-		try {
-			const value = raw ? JSON.parse(raw) as { root?: unknown } : {};
-			if (typeof value.root === 'string') {
-				input.repositoryRoot = value.root;
-			}
-		} catch {
-			// The active repository.
+/** Runs a picked menu action after checking what it does to git (gitGraphAccess.ts). */
+class GitGraphActionRunner extends ActionRunner {
+	protected override async runAction(action: IAction, context?: unknown): Promise<void> {
+		const capability = gitCommandCapability(action.id);
+		if (capability) {
+			checkGitGraph('menu', capability, action.id);
 		}
-		return input;
+		return super.runAction(action, context);
 	}
 }
 
@@ -171,7 +97,7 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 
 	private frame!: HTMLElement;
 	private root!: HTMLElement;
-	private surfaceHost: AgentSurfaceHost | undefined;
+	private surfaceHost: IVoltToolsPanel | undefined;
 	private toolsPresented = false;
 	private readonly tableStore = this._register(new DisposableStore());
 	/** A narrow table (the right panel beside a chat) drops Agent, Changes and SHA so the rest stay readable and resizable. */
@@ -195,6 +121,7 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 	private readonly filtersStore = this._register(new DisposableStore());
 	private readonly inputStore = this._register(new DisposableStore());
 	private readonly menuStore = this._register(new MutableDisposable<DisposableStore>());
+	private readonly menuRunner = this._register(new GitGraphActionRunner());
 	private readonly searchSoon = this._register(new RunOnceScheduler(() => this.applyQuery(), 300));
 	private readonly renderToolbarSoon = this._register(new RunOnceScheduler(() => this.renderToolbar(), 50));
 	private scopeHost!: HTMLElement;
@@ -232,7 +159,7 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 		@IHoverService private readonly hoverService: IHoverService,
 		@IClipboardService private readonly clipboardService: IClipboardService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
-		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
+		@IVoltAgentWindowService private readonly agentWindow: IVoltAgentWindowService,
 	) {
 		super(GitGraphEditor.ID, group, telemetryService, themeService, storageService);
 		this.storage = storageService;
@@ -266,7 +193,7 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 
 		// As a main tab the graph has a right panel of its own (like Customize's), where Explain and
 		// Review open their side chat. The panel sizes the graph, so the table follows the graph's width.
-		this.surfaceHost = this._register(this.instantiationService.createInstance(AgentSurfaceHost, this.frame, this.root));
+		this.surfaceHost = this._register(this.agentWindow.createToolsPanel(this.frame, this.root));
 		let observedWidth = -1;
 		const resizeObserver = new (getWindow(this.root).ResizeObserver)(() => {
 			const width = this.root.clientWidth;
@@ -374,7 +301,7 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 			this.setRepository(repository);
 		}
 		this.takeRequest(input);
-		if (hasSavedAgentTools(this.storage, GIT_GRAPH_TOOLS_ID) && this.hasOwnTools()) {
+		if (this.agentWindow.hasSavedTools(GIT_GRAPH_TOOLS_ID) && this.hasOwnTools()) {
 			this.presentTools();
 		}
 	}
@@ -383,7 +310,7 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 
 	/** The agent layout's main area: beside a chat the graph is a tab in that chat's panel instead. */
 	private hasOwnTools(): boolean {
-		return getLayoutMode(this.layoutService) === 'agent' && this.editorGroupsService.mainPart.groups.includes(this.group);
+		return this.agentWindow.isAgentLayout() && this.editorGroupsService.mainPart.groups.includes(this.group);
 	}
 
 	private presentTools(): void {
@@ -397,8 +324,8 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 	 * A new side chat beside the graph: in the chat's right panel the graph is a tab of (also full
 	 * screen, with that chat out of sight), else in the graph's own right panel. Undefined in the IDE layout.
 	 */
-	async openSideChat(): Promise<IEditorPane | undefined> {
-		const beside = openSideChatBeside(this.root);
+	async openSideChat(): Promise<IVoltChatPane | undefined> {
+		const beside = this.agentWindow.openSideChatBeside(this.root);
 		if (beside) {
 			return beside;
 		}
@@ -407,10 +334,10 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 			return undefined;
 		}
 		this.presentTools();
-		if (!host.canOpenTools()) {
+		if (!host.canOpen()) {
 			return undefined;
 		}
-		return host.openEditorInTools(this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.getNewEditorUri()));
+		return host.openNewChat();
 	}
 
 	//#endregion
@@ -498,6 +425,8 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 		}
 		ContextKeys.SCMProvider.bindTo(this.graphContextKeyService).set(repository?.provider.providerId);
 		if (repository) {
+			// The graph reads the repository's history and refs (and its commit activity).
+			checkGitGraph('readHistory', 'git.read', repository.provider.rootUri?.fsPath);
 			const model = new GitGraphModel(repository, this.loadScope(repository));
 			this.model.value = model;
 			model.setVisible(this.isVisible());
@@ -819,7 +748,7 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 			if (command.tooltip) {
 				button.title = command.tooltip;
 			}
-			store.add(addDisposableListener(button, EventType.CLICK, () => void this.commandService.executeCommand(command.id, ...(command.arguments ?? []))));
+			store.add(addDisposableListener(button, EventType.CLICK, () => void this.runCommand(command.id, ...(command.arguments ?? []))));
 		}
 
 		const files = this.model.value?.workingTreeFiles ?? 0;
@@ -840,10 +769,10 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 			button.enabled = !!provider;
 			store.add(button.onDidClick(() => void run()));
 		};
-		action(Codicon.repoFetch, localize('voltGitGraph.fetch', "Fetch"), () => this.commandService.executeCommand('git.fetch', provider));
-		action(Codicon.repoPull, localize('voltGitGraph.pull', "Pull"), () => this.commandService.executeCommand('git.pull', provider));
-		action(Codicon.repoPush, localize('voltGitGraph.push', "Push"), () => this.commandService.executeCommand('git.push', provider));
-		action(Codicon.gitBranchCreate, localize('voltGitGraph.newBranch', "Create Branch"), () => this.commandService.executeCommand('git.branch', provider), false);
+		action(Codicon.repoFetch, localize('voltGitGraph.fetch', "Fetch"), () => this.runCommand('git.fetch', provider));
+		action(Codicon.repoPull, localize('voltGitGraph.pull', "Pull"), () => this.runCommand('git.pull', provider));
+		action(Codicon.repoPush, localize('voltGitGraph.push', "Push"), () => this.runCommand('git.push', provider));
+		action(Codicon.gitBranchCreate, localize('voltGitGraph.newBranch', "Create Branch"), () => this.runCommand('git.branch', provider), false);
 		action(Codicon.refresh, localize('voltGitGraph.refresh', "Refresh"), () => this.model.value?.reload(), false);
 	}
 
@@ -1121,8 +1050,17 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 		}
 	}
 
+	/** Runs a git command from the toolbar after checking what it does to git (gitGraphAccess.ts). */
+	private runCommand(id: string, ...args: unknown[]): Promise<unknown> {
+		const capability = gitCommandCapability(id);
+		if (capability) {
+			checkGitGraph('toolbar', capability, id);
+		}
+		return this.commandService.executeCommand(id, ...args);
+	}
+
 	askAgent(action: GitGraphAgentAction, row: IGitGraphCommitRow): void {
-		void this.commandService.executeCommand(ASK_AGENT_COMMAND_ID, {
+		void this.commandService.executeCommand(GIT_GRAPH_ASK_AGENT_COMMAND_ID, {
 			repositoryRoot: this.repository?.provider.rootUri?.fsPath,
 			action,
 			commit: row.vm.historyItem.id,
@@ -1176,6 +1114,7 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 			getAnchor: () => anchor,
 			getActions: () => getFlatContextMenuActions(groups),
 			getActionsContext: () => item,
+			actionRunner: this.menuRunner,
 			onHide: () => {
 				if (this.menuStore.value === store) {
 					// Let the picked action run before its registration goes away.
@@ -1298,6 +1237,3 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 
 	//#endregion
 }
-
-/** Registered in gitGraph.contribution.ts: hands a commit (or lines of it) to the chat as a prompt. */
-export const ASK_AGENT_COMMAND_ID = 'volt.gitGraph.askAgent';

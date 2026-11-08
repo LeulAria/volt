@@ -38,7 +38,8 @@
 			],
 			"settings": [
 				"volt.gitGraph."
-			]
+			],
+			"entry": "voltGitGraph"
 		},
 		"voltSurfaces": [
 			{
@@ -56,6 +57,11 @@
 					"id": "git.write",
 					"class": "high",
 					"reason": "Checkout, branch and cherry-pick from the graph."
+				},
+				{
+					"id": "git.push",
+					"class": "high",
+					"reason": "Push, sync and publish from the graph's toolbar."
 				},
 				{
 					"id": "agents.send",

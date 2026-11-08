@@ -36,8 +36,9 @@ export const ALWAYS_ALLOWED = [
 	'src/vs/editor/',
 	'src/vs/workbench/browser/',
 	'src/vs/workbench/common/',
-	// The facade (spec H.11 item 3).
+	// The facade (spec H.11 item 3), and its browser half (the agent window as a feature sees it).
 	'src/vs/workbench/services/voltPlugins/common/',
+	'src/vs/workbench/services/voltPlugins/browser/',
 	// The module host it activates with.
 	'src/vs/workbench/contrib/voltCustomize/browser/voltFeatureModules.ts',
 	// The UI kit: Volt's buttons, dropdowns, menus and tooltips.
@@ -120,6 +121,10 @@ export function importsOf(file, text) {
  * @returns {Finding[]}
  */
 export function checkFile(file, text, features, allowlist) {
+	// Tests (a `test/` folder) aren't shipped: they import what they test and core's test helpers.
+	if (/\/test\//.test(file)) {
+		return [];
+	}
 	const own = features.find(feature => file.startsWith(feature.folder));
 	const findings = [];
 	for (const { line, target, dynamic, text: lineText } of importsOf(file, text)) {

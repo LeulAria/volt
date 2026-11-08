@@ -652,6 +652,11 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 						reason: 'Checkout, branch and cherry-pick from the graph.',
 					},
 					{
+						id: 'git.push',
+						class: 'high',
+						reason: 'Push, sync and publish from the graph\'s toolbar.',
+					},
+					{
 						id: 'agents.send',
 						class: 'medium',
 						reason: 'Ask an agent about a commit.',
@@ -667,6 +672,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 				order: 50,
 				commands: ['volt.gitGraph.open', 'volt.gitGraph.openInTools', 'volt.gitGraph.fileHistory', 'volt.gitGraph.lineHistory'],
 				settings: ['volt.gitGraph.'],
+				entry: 'voltGitGraph',
 			},
 		},
 	},

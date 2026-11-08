@@ -74,6 +74,12 @@ test('LINT-FEATURE-OUT: a feature imports core beyond the always-allowed set onl
 	assert.equal(checkFile(file, deep, FEATURES, { skills: ['src/vs/workbench/services/voltRuntime/common/history/agentHistory.ts'] }).length, 1, 'another feature\'s entry does not count');
 });
 
+test('LINT-FEATURE-TEST: tests are not fenced (they import what they test)', () => {
+	const internals = 'import { AutomationsEditor } from \'../../../voltAutomations/browser/automationsEditor.js\';';
+	assert.equal(checkFile('src/vs/workbench/contrib/voltCustomize/test/browser/x.test.ts', internals, FEATURES, {}).length, 0);
+	assert.equal(checkFile('src/vs/workbench/contrib/voltAutomations/test/browser/x.test.ts', 'import { x } from \'../../../voltAgent/browser/editor/agentEditor.js\';', FEATURES, {}).length, 0);
+});
+
 test('LINT-FEATURE-REPO: the repository passes, and its allowlist has no stale entry', () => {
 	const root = path.resolve(import.meta.dirname, '../../..');
 	const allowlist = JSON.parse(fs.readFileSync(path.join(root, 'build/volt/ci/feature-import-allowlist.json'), 'utf8')).features;

@@ -4,9 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Event } from '../../../../base/common/event.js';
-import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { DisposableStore, IDisposable } from '../../../../base/common/lifecycle.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
 import { ILocalizedString } from '../../../../platform/action/common/action.js';
-import { CommandVisibility } from '../../../../platform/commands/common/commands.js';
+import { MenuId } from '../../../../platform/actions/common/actions.js';
+import { CommandVisibility, ICommandHandler } from '../../../../platform/commands/common/commands.js';
+import { ContextKeyExpression } from '../../../../platform/contextkey/common/contextkey.js';
 import { createDecorator, IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IEditorSerializer } from '../../../common/editor.js';
 import { IVoltPluginContext } from '../../../services/voltPlugins/common/voltApi.js';
@@ -51,6 +54,25 @@ export interface IVoltFeatureModuleCommand {
 	readonly f1?: boolean;
 	/** The real command's visibility (default `internal`). */
 	readonly visibility?: Extract<CommandVisibility, 'internal' | 'public'>;
+	/**
+	 * For an `exported:<capability>` command (one extensions call before the module may be loaded):
+	 * registers the stub's `handler` with that visibility written out, so the command visibility
+	 * lint reads it. Stands in for `visibility`.
+	 */
+	readonly registerStub?: (handler: ICommandHandler) => IDisposable;
+	/** The icon and precondition its menu entries show with. */
+	readonly icon?: ThemeIcon;
+	readonly precondition?: ContextKeyExpression;
+	/** Menus that list it before the module loads (the module's own action replaces them). */
+	readonly menus?: readonly IVoltFeatureModuleMenu[];
+}
+
+/** Where a not-yet-loaded module's command shows, like an action's `menu`. */
+export interface IVoltFeatureModuleMenu {
+	readonly id: MenuId;
+	readonly group?: string;
+	readonly order?: number;
+	readonly when?: ContextKeyExpression;
 }
 
 /** One module in core's table (`voltFeatureModuleTable.ts`). */

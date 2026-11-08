@@ -193,11 +193,26 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 				return this.commandService.executeCommand(command.id, ...args);
 			};
 			// Who may run the stub is who may run the command.
-			store.add(command.visibility === 'public'
-				? CommandsRegistry.registerCommand({ id: command.id, visibility: 'public', handler })
-				: CommandsRegistry.registerCommand({ id: command.id, visibility: 'internal', handler }));
-			if (command.f1 && command.title) {
-				store.add(MenuRegistry.appendMenuItem(MenuId.CommandPalette, { command: { id: command.id, title: command.title, ...(command.category ? { category: command.category } : {}) } }));
+			store.add(command.registerStub
+				? command.registerStub(handler)
+				: command.visibility === 'public'
+					? CommandsRegistry.registerCommand({ id: command.id, visibility: 'public', handler })
+					: CommandsRegistry.registerCommand({ id: command.id, visibility: 'internal', handler }));
+			if (!command.title) {
+				continue;
+			}
+			const shown = {
+				id: command.id,
+				title: command.title,
+				...(command.category ? { category: command.category } : {}),
+				...(command.icon ? { icon: command.icon } : {}),
+				...(command.precondition ? { precondition: command.precondition } : {}),
+			};
+			if (command.f1) {
+				store.add(MenuRegistry.appendMenuItem(MenuId.CommandPalette, { command: shown }));
+			}
+			for (const menu of command.menus ?? []) {
+				store.add(MenuRegistry.appendMenuItem(menu.id, { command: shown, group: menu.group, order: menu.order, when: menu.when }));
 			}
 		}
 		return store;
