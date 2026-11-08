@@ -293,10 +293,19 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 				this.emit('data', file);
 			}));
 
+		// Volt (H.10): builtin-manifest.json hashes the volt-* built-ins as packaged; the app checks it when it
+		// scans built-in extensions, and product.json carries the manifest's own hash.
+		const builtinManifestDir = path.join(path.dirname(__dirname), '.build', 'volt-builtin-manifest');
+		const builtinManifestText = cp.execFileSync(process.execPath, [path.join(__dirname, 'volt', 'release', 'builtinManifest.mjs'), path.join(path.dirname(__dirname), '.build', 'extensions')], { encoding: 'utf8' });
+		fs.mkdirSync(builtinManifestDir, { recursive: true });
+		fs.writeFileSync(path.join(builtinManifestDir, 'builtin-manifest.json'), builtinManifestText);
+		const voltBuiltinManifestSha256 = crypto.createHash('sha256').update(builtinManifestText, 'utf8').digest('hex');
+		const builtinManifest = gulp.src(path.join(builtinManifestDir, 'builtin-manifest.json'), { base: builtinManifestDir });
+
 		let productJsonContents;
 		const productJsonStream = gulp.src(['product.json'], { base: '.' })
 			// `version` stays the VS Code engine version (extension compatibility); `voltVersion` is Volt's release.
-			.pipe(json({ commit, date: readISODate('out-build'), checksums, version: product.vscodeVersion || version, voltVersion: version }))
+			.pipe(json({ commit, date: readISODate('out-build'), checksums, version: product.vscodeVersion || version, voltVersion: version, voltBuiltinManifestSha256 }))
 			.pipe(es.through(function (file) {
 				productJsonContents = file.contents.toString();
 				this.emit('data', file);
@@ -341,6 +350,7 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 		let all = es.merge(
 			packageJsonStream,
 			productJsonStream,
+			builtinManifest,
 			license,
 			api,
 			telemetry,
