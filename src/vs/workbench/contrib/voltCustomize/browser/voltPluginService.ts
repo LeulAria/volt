@@ -37,6 +37,7 @@ export class VoltPluginService extends Disposable implements IVoltPluginService 
 	private readonly users = new Map<keyof IVoltContributes, readonly IExtensionPointUser<unknown>[]>();
 	private entries = new Map<string, IVoltPluginEntry>();
 	private readonly contexts = this._register(new DisposableMap<string, VoltPluginContextHandle>());
+	private readonly builtinContexts = this._register(new DisposableMap<string, VoltPluginContextHandle>());
 	private readonly rebuild = this._register(new RunOnceScheduler(() => this.build(), 0));
 	private readonly backend: IVoltApiBackend;
 
@@ -85,6 +86,10 @@ export class VoltPluginService extends Disposable implements IVoltPluginService 
 	}
 
 	getContext(extensionId: string): IVoltPluginContext | undefined {
+		// Extension points that just arrived count already (a feature module asks right after registration).
+		if (this.rebuild.isScheduled()) {
+			this.rebuild.flush();
+		}
 		const key = ExtensionIdentifier.toKey(extensionId);
 		const existing = this.contexts.get(key);
 		if (existing) {
@@ -96,6 +101,23 @@ export class VoltPluginService extends Disposable implements IVoltPluginService 
 		}
 		const handle = new VoltPluginContextHandle(entry, this.backend, this.reporter);
 		this.contexts.set(key, handle);
+		return handle.context;
+	}
+
+	getBuiltinContext(manifest: IVoltPluginManifest): IVoltPluginContext | undefined {
+		const extensionId = `${manifest.publisher}.${manifest.name}`;
+		const loaded = this.getContext(extensionId);
+		if (loaded) {
+			return loaded;
+		}
+		// The caller asks only for a feature that is on (`IVoltFeatureService`), so this is a build
+		// without the extension. Kept apart from `contexts`, which follow the extension registry.
+		const key = ExtensionIdentifier.toKey(extensionId);
+		let handle = this.builtinContexts.get(key);
+		if (!handle) {
+			handle = new VoltPluginContextHandle({ extensionId, firstParty: true, manifest, problems: [] }, this.backend, this.reporter);
+			this.builtinContexts.set(key, handle);
+		}
 		return handle.context;
 	}
 

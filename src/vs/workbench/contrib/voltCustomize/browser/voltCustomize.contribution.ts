@@ -51,6 +51,9 @@ import { IVoltPluginService } from '../../../services/voltPlugins/common/voltApi
 import { VoltPluginService } from './voltPluginService.js';
 import { IVoltExtensionApiService } from '../../../services/voltPlugins/common/voltExtensionApi.js';
 import { VoltExtensionApiService } from './voltExtensionApiService.js';
+import { IVoltFeatureModuleService } from './voltFeatureModules.js';
+import { registerVoltFeatureModuleEditors, VoltFeatureModuleService } from './voltFeatureModuleService.js';
+import { VOLT_FEATURE_MODULES } from './voltFeatureModuleTable.js';
 
 registerSingleton(IVoltSlotService, VoltSlotService, InstantiationType.Delayed);
 // The `vscode.volt` API's main-thread half (`MainThreadVolt`); created on an extension's first call.
@@ -59,6 +62,9 @@ registerSingleton(IVoltExtensionApiService, VoltExtensionApiService, Instantiati
 registerSingleton(IVoltFeatureService, VoltFeatureService, InstantiationType.Eager);
 registerSingleton(IVoltCustomizeService, VoltCustomizeService, InstantiationType.Eager);
 registerSingleton(IVoltPluginService, VoltPluginService, InstantiationType.Delayed);
+// Eager: it stands in for the commands of feature modules that aren't loaded yet. Loads none itself.
+registerSingleton(IVoltFeatureModuleService, new SyncDescriptor(VoltFeatureModuleService, [VOLT_FEATURE_MODULES], false));
+registerVoltFeatureModuleEditors(VOLT_FEATURE_MODULES);
 
 export const CUSTOMIZE_VOLT_SECTION = 'customizeVolt';
 const OPEN_VOLT_SETTINGS = 'workbench.action.openVoltSettings';
@@ -308,6 +314,13 @@ class VoltPluginsContribution implements IWorkbenchContribution {
 	constructor(@IVoltPluginService _plugins: IVoltPluginService) { }
 }
 registerWorkbenchContribution2(VoltPluginsContribution.ID, VoltPluginsContribution, WorkbenchPhase.Eventually);
+
+/** Puts the stubs for not-yet-loaded feature modules' commands in before anything can run them. */
+class VoltFeatureModulesContribution implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.voltFeatureModules';
+	constructor(@IVoltFeatureModuleService _modules: IVoltFeatureModuleService) { }
+}
+registerWorkbenchContribution2(VoltFeatureModulesContribution.ID, VoltFeatureModulesContribution, WorkbenchPhase.BlockRestore);
 
 /** Lists each extension's Volt capabilities (and the user's consent) on its page once the window is idle. */
 class VoltExtensionApiContribution implements IWorkbenchContribution {

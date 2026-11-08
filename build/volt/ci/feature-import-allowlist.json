@@ -1,0 +1,5 @@
+{
+	"//": "Core modules each fenced feature (contrib/<voltModule.entry>/) still imports beyond the always-allowed set in featureImportLint.mjs. A ratchet: remove entries as features move to the volt facade; never add one without review.",
+	"features": {
+	}
+}
