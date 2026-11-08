@@ -28,7 +28,7 @@ import { IVoltCodeIndexService, VOLT_CODE_INDEX_CHANNEL_NAME } from '../../../pl
 import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
 import { IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { VoltPullRequestService } from '../../../platform/voltPullRequests/node/voltPullRequestService.js';
-import { IVoltExecRequest, IVoltStdioSpawnOptions, VOLT_STDIO_CHANNEL_NAME } from '../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltExecRequest, IVoltSandboxedMcpRequest, IVoltStdioSpawnOptions, VOLT_STDIO_CHANNEL_NAME } from '../../../platform/voltStdio/common/voltStdio.js';
 import { VoltStdioService } from '../../../platform/voltStdio/node/voltStdioService.js';
 import { VOLT_USAGE_CHANNEL_NAME } from '../../../platform/voltUsage/common/voltUsage.js';
 import { VoltUsageService } from '../../../platform/voltUsage/node/voltUsageService.js';
@@ -455,6 +455,9 @@ function stdioChannel(service: WorkbenchStdioService, ownerOf: (ctx: RemoteAgent
 			}
 			if (command === 'exec') {
 				return service.execFor(ownerOf(ctx), (arg as [IVoltExecRequest])[0]) as Promise<unknown> as Promise<T>;
+			}
+			if (command === 'spawnSandboxedMcp') {
+				return service.spawnSandboxedMcpFor(ownerOf(ctx), (arg as [IVoltSandboxedMcpRequest])[0]) as Promise<unknown> as Promise<T>;
 			}
 			return proxied.call<T>(ctx, command, arg, token);
 		},

@@ -12,7 +12,9 @@ import { Disposable, toDisposable } from '../../../base/common/lifecycle.js';
 import { join } from '../../../base/common/path.js';
 import { chatLaunchView, evaluateLaunch, IAdminPolicy, ILaunchDecision, IWorkspaceRestriction, PolicyAuthorityMode, PolicySnapshot } from '../common/authority.js';
 import { ILaunchCompileInput, ILaunchCompileRecord, ISandboxCompositionNote, ISandboxLayer, LaunchPolicyCache, launchCompileRecord, launchPolicyBytes } from '../common/compile.js';
-import { chatSubject, ICallContext, IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
+import { chatSubject, corePrincipal, ICallContext, IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
+import { MCP_HOST_QUOTAS, mcpHostPolicy } from '../common/sandboxMcp.js';
+import { isLiveWorkloadState } from '../common/sandboxWorkloads.js';
 import { IAttestation, ISandboxBackendCapabilities, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { ISandboxDenial, isNoiseDenial } from '../common/sandboxDenials.js';
 import { agentStatePlan } from '../common/agentState.js';
@@ -24,7 +26,7 @@ import { IVoltSandboxPolicy, SandboxDimension } from '../common/sandboxSchema.js
 import { readAdminPolicy, systemAdminPolicySource } from './adminPolicy.js';
 import { PrincipalRegistry } from './principalRegistry.js';
 import { IPreparedSandbox, SandboxManager } from './sandboxManager.js';
-import { SandboxSupervisor } from './supervisor.js';
+import { HostStartResult, SandboxSupervisor } from './supervisor.js';
 import { sandboxHostFacts } from './sandboxResolver.js';
 import { SandboxConfirmation } from './sandboxBackends.js';
 
@@ -105,6 +107,33 @@ export interface IVoltSandboxLauncherOptions {
 	readonly supervisorEnabled?: () => boolean;
 }
 
+/** A stdio MCP server Volt starts for a sandboxed chat (see {@link VoltSandboxLauncher.startMcpHost}). */
+export interface IMcpHostLaunch {
+	readonly chatId: string;
+	/** The chat's title, for the Security page. */
+	readonly chatLabel?: string;
+	/** Its name in the config. */
+	readonly server: string;
+	/** sha256 (hex) of its canonical config: its subject, `mcp:<digest>`. */
+	readonly digest: string;
+	readonly command: string;
+	readonly args: readonly string[];
+	readonly cwd?: string;
+	/** The user's environment the policy's allow list copies from. */
+	readonly hostEnv: Readonly<Record<string, string | undefined>>;
+	/** The server's own `env` from its config. */
+	readonly env?: Readonly<Record<string, string>>;
+	/** The chat's sandbox: the server's is that, narrowed. */
+	readonly sandbox: IVoltSandboxRequest;
+	/** Hosts approved for the server; none: no network. */
+	readonly allowedHosts?: readonly string[];
+	/** Defaults: H.8 (`MCP_HOST_QUOTAS`). */
+	readonly idle?: { readonly afterMs: number; readonly stopAfterMs: number };
+	readonly memoryMB?: number;
+}
+
+class McpHostPolicyRefusal extends Error { }
+
 const MAX_KEPT = 500;
 
 /** Who a launch is for: the chat (its state key), or the workspace's anonymous principal for a run with no chat. */
@@ -166,15 +195,18 @@ export class VoltSandboxLauncher extends Disposable {
 		super();
 		const sandboxLogger = { info: (m: string) => logger.info(m), warn: (m: string) => logger.warn(m) };
 		this.manager = options.manager ?? new SandboxManager(sandboxLogger, { platform: options.platform ?? process.platform });
+		this.now = options.now ?? Date.now;
+		this.registry = new PrincipalRegistry(options.executionHost ?? `launcher:${process.pid}`, this.now);
 		// Disposed at once (its disposal starts killing the hosts); the shutdown below waits for those kills.
-		this.supervisor = this._register(new SandboxSupervisor(this.manager, sandboxLogger, { ...(options.supervisorEnabled ? { enabled: options.supervisorEnabled } : {}) }));
+		// Its hosts' principals (and their restarts') are this registry's, so revoking a chat's anchor stops them.
+		this.supervisor = this._register(new SandboxSupervisor(this.manager, sandboxLogger, { ...(options.supervisorEnabled ? { enabled: options.supervisorEnabled } : {}), registry: this.registry }));
+		this._register(this.registry);
+		this._register(this.registry.onDidRevoke(principal => this.onPrincipalRevoked(principal)));
 		// Hosts first (their whole trees), then every other run the manager still has.
 		this._register(toDisposable(() => void this.shutdown()));
-		this.now = options.now ?? Date.now;
 		this.mode = options.mode ?? (() => 'enforce');
 		this.readAdmin = options.admin ?? (() => readAdminPolicy(systemAdminPolicySource()));
 		this.workspace = options.workspace;
-		this.registry = this._register(new PrincipalRegistry(options.executionHost ?? `launcher:${process.pid}`, this.now));
 		this.cache.invalidate(this.epoch);
 	}
 
@@ -250,6 +282,142 @@ export class VoltSandboxLauncher extends Disposable {
 		} finally {
 			if (!launched) {
 				this.registry.retire(principal.id);
+			}
+		}
+	}
+
+	/**
+	 * A stdio MCP server for a sandboxed chat, as a long-lived host under the supervisor (spec C.2,
+	 * H.1 T4, H.8, M.3 C6). Its principal is `mcp:<config digest>`, started for the chat's anchor
+	 * principal: revoking the anchor ({@link stopChatHosts}) stops every server of the chat. The chat's
+	 * launch is judged by the Policy Authority and compiled as an agent launch would be; the server's
+	 * policy is that narrowed (`mcpHostPolicy`), so never wider than the chat, and recompiled the same
+	 * way for every restart. Attested before the go byte, H.8 quotas, idle stop, F.11 restarts.
+	 * Refusals are a typed result; nothing runs unsandboxed.
+	 */
+	async startMcpHost(launch: IMcpHostLaunch): Promise<HostStartResult> {
+		if (!this.supervisor.enabled) {
+			return { ok: false, refused: 'disabled', reason: 'Sandboxed hosts are turned off (volt.sandbox.supervisor.enabled).' };
+		}
+		if (!/^[a-f0-9]{16,128}$/.test(launch.digest)) {
+			return { ok: false, refused: 'launch', reason: 'The MCP server has no valid config digest.' };
+		}
+		const host = await this.hostFacts();
+		// The server's own request: the chat's rules, without the chat's agent state.
+		const { stateKey: _stateKey, ...request } = launch.sandbox;
+		const subject = chatSubject(launch.chatId);
+		const judgeAs = corePrincipal(`mcp-launch:${launch.chatId}`, subject, 'mcp');
+		const compute = async (): Promise<IVoltSandboxPolicy> => {
+			const epoch = this.epoch;
+			const mode = this.mode();
+			const decision = await this.judge(judgeAs, request, host, epoch);
+			if (!decision.allow) {
+				this.recordDiff({ subject, mode, kind: 'refused', decision });
+				if (mode === 'enforce') {
+					throw new McpHostPolicyRefusal(`Volt's sandbox policy refused this chat's launch: ${decision.reason}.`);
+				}
+			}
+			const chat = this.policyFor(subject, mode, decision, { subject, epoch, request, host: { ...host, cacheDir: join(host.cacheDir, sandboxCacheKey(request)) }, ...this.layers.length ? { layers: this.layers } : {} });
+			return mcpHostPolicy({ server: launch.server, chat, request, platform: host.platform, home: host.home, allowedHosts: launch.allowedHosts ?? [] }).policy;
+		};
+		let first: IVoltSandboxPolicy | undefined;
+		try {
+			first = await compute();
+		} catch (err) {
+			return { ok: false, refused: err instanceof McpHostPolicyRefusal ? 'policy' : 'launch', reason: (err as Error).message };
+		}
+		// The server's own storage (its HOME and package caches): one per chat and server, never another's.
+		const storageDir = join(host.cacheDir, `mcp-${createHash('sha256').update(`${launch.chatId}\0${launch.digest}`).digest('hex').slice(0, 16)}`);
+		await fs.mkdir(join(storageDir, 'home'), { recursive: true, mode: 0o700 });
+		let anchor = this.chatAnchors.get(launch.chatId);
+		if (!anchor || !this.registry.isLive(anchor.id)) {
+			anchor = this.registry.mint({ subject, kind: 'agent', launchPolicyHash: '' });
+			this.chatAnchors.set(launch.chatId, anchor);
+		}
+		const principal = this.registry.mint({ subject: `mcp:${launch.digest}`, kind: 'mcp', launchPolicyHash: '', parent: anchor.id });
+		const result = await this.supervisor.start({
+			principal,
+			label: `MCP ${launch.server}`,
+			command: { file: launch.command, args: [...launch.args] },
+			policy: async () => {
+				if (first) {
+					const policy = first;
+					first = undefined;
+					return policy;
+				}
+				return compute();
+			},
+			context: {
+				workspaceRoots: request.workspaceRoots.filter(root => !root.endsWith('/.git')),
+				...(launch.cwd ? { cwd: launch.cwd } : {}),
+				storageDir,
+				hostEnv: launch.hostEnv,
+				...(launch.env ? { env: launch.env } : {}),
+			},
+			ipc: false,
+			stdio: 'pipe',
+			onBehalfOf: { subject, ...(launch.chatLabel ? { label: launch.chatLabel } : {}) },
+			restart: { maxPerMinute: MCP_HOST_QUOTAS.restartsPerMinute },
+			idle: { afterMs: launch.idle?.afterMs ?? MCP_HOST_QUOTAS.idleAfterMs, stopAfterMs: launch.idle?.stopAfterMs ?? MCP_HOST_QUOTAS.idleStopMs },
+			limits: { memoryMB: launch.memoryMB ?? MCP_HOST_QUOTAS.memoryMB },
+		});
+		if (!result.ok) {
+			this.retire(principal.id);
+			return result;
+		}
+		const started = result.host;
+		// Each instance's principal ends with its process; a restart runs as a new one (F.4).
+		const exits = started.onExit(() => this.retire(started.principal.id));
+		const states = started.onDidChangeState(state => {
+			if (state === 'stopped' || state === 'failed' || state === 'broken') {
+				this.retire(started.principal.id);
+				if (state !== 'broken') {
+					exits.dispose();
+					states.dispose();
+				}
+			}
+		});
+		return result;
+	}
+
+	/**
+	 * The chat closed, or its grants were revoked: its anchor principal is revoked, which revokes and
+	 * stops every MCP server started for it, whole trees. Returns how many hosts were stopped.
+	 */
+	async stopChatHosts(chatId: string): Promise<number> {
+		const anchor = this.chatAnchors.get(chatId);
+		this.chatAnchors.delete(chatId);
+		const before = this.supervisor.list().filter(host => host.onBehalfOf?.subject === chatSubject(chatId) && isLiveWorkloadState(host.state)).length;
+		if (anchor) {
+			this.registry.retire(anchor.id);
+		}
+		// Hosts whose principal is between instances (backoff) have no live child principal to revoke.
+		await this.supervisor.stopFor(chatSubject(chatId));
+		return before;
+	}
+
+	private readonly chatAnchors = new Map<string, IPrincipal>();
+	/** Principals being retired by their own exit: their revocation must not stop the host again (a restart). */
+	private readonly retiring = new Set<string>();
+
+	private retire(principalId: string): void {
+		this.retiring.add(principalId);
+		try {
+			this.registry.retire(principalId);
+		} finally {
+			this.retiring.delete(principalId);
+		}
+	}
+
+	/** A revoked principal's host stops, whole tree (F.9: plugin or grant revoked, kill). */
+	private onPrincipalRevoked(principal: IPrincipal): void {
+		if (this.retiring.has(principal.id)) {
+			return;
+		}
+		for (const host of this.supervisor.list()) {
+			if (host.principal.id === principal.id && isLiveWorkloadState(host.state)) {
+				this.logger.info(`[volt-sandbox] ${host.label}: its principal was revoked; stopping it`);
+				void host.terminate('stopped');
 			}
 		}
 	}
