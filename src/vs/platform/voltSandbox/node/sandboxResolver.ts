@@ -10,7 +10,7 @@ import { promisify } from 'util';
 import { basename, dirname, isAbsolute, join, resolve } from '../../../base/common/path.js';
 import { SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { isReservedEnvName, isSecretEnvName, systemReadPaths } from '../common/sandboxProfiles.js';
-import { IResolvedPattern, IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
+import { IResolvedGitDir, IResolvedPattern, IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { IVoltSandboxPolicy } from '../common/sandboxSchema.js';
 
 const execFileAsync = promisify(execFile);
@@ -231,12 +231,17 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	for (const root of workspaceWrites) {
 		protect.push(...await gitProtections(root, home, write));
 	}
+	const guardsGit = policy.filesystem.protect.includes('**/.git/config');
+	// `.git` as an allow list (B-03), wherever the git protections apply: every `.git` below a
+	// writable root that is not a bare temp folder, and each linked worktree's common git dir.
+	const gitDirs: IResolvedGitDir[] = guardsGit ? patternRootsFor('protect').filter(root => basename(root) !== '.git').map(root => ({ root, anyDepth: true })) : [];
 	for (const root of write.filter(w => basename(w) === '.git')) {
-		// A linked worktree's common git dir, writable so commits work: its config and hooks are not.
-		protect.push(join(root, 'config'), join(root, 'config.worktree'), join(root, 'hooks'), join(root, 'modules'));
-		protectPatterns.push({ root, names: ['config.worktree'] });
+		// A linked worktree's common git dir, writable so commits work: only by the allow list.
+		protect.push(...GIT_DIR_READONLY.map(name => join(root, name)));
+		protectPatterns.push({ root, names: ['config.worktree'] }, { root, names: ['commondir'] }, { root, names: ['gitdir'] });
+		gitDirs.push({ root, anyDepth: false });
 	}
-	const newRepositoryGuard = policy.filesystem.protect.includes('**/.git/config') ? workspaceWrites : [];
+	const newRepositoryGuard = guardsGit ? workspaceWrites : [];
 
 	// Sockets.
 	const unixSockets: string[] = [];
@@ -331,6 +336,7 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 			denyPatterns,
 			protectPatterns,
 			newRepositoryGuard,
+			gitDirs,
 			network: {
 				mode: policy.network.mode,
 				allow: policy.network.mode === 'proxy' ? policy.network.allow : [],
@@ -378,6 +384,9 @@ async function toolchainDirs(pathVar: string | undefined, home: string, notes: s
 	return unique(out);
 }
 
+/** Names in a git folder that are never writable from a sandbox, named for backends that bind existing paths. */
+const GIT_DIR_READONLY = ['config', 'config.worktree', 'hooks', 'modules', 'commondir', 'gitdir', 'info', 'objects/info/alternates', 'objects/info/http-alternates'];
+
 /**
  * Paths inside `root` that git runs or trusts later and that the generic protections cannot name:
  * a linked worktree's `.git` pointer file, the worktree's own config, and `core.hooksPath` from
@@ -394,9 +403,11 @@ async function gitProtections(root: string, home: string, writeRoots: readonly s
 		const gitdir = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
 		if (gitdir) {
 			const dir = resolve(root, gitdir);
+			// `commondir` decides where git reads config and hooks from: read here to protect the
+			// common folder, and itself protected below so a sandbox cannot point it elsewhere.
 			const common = await fs.readFile(join(dir, 'commondir'), 'utf8').then(text => resolve(dir, text.trim())).catch(() => dir);
 			configs.push(join(dir, 'config.worktree'), join(common, 'config'));
-			for (const path of [join(dir, 'config.worktree'), join(common, 'config'), join(common, 'hooks')]) {
+			for (const path of [join(dir, 'config.worktree'), join(dir, 'commondir'), join(dir, 'gitdir'), ...GIT_DIR_READONLY.map(name => join(common, name))]) {
 				if (writeRoots.some(w => isInside(path, w))) {
 					out.push(path);
 				}
@@ -405,7 +416,7 @@ async function gitProtections(root: string, home: string, writeRoots: readonly s
 	} else if (stat?.isDirectory()) {
 		configs.push(join(dotGit, 'config'));
 		// Named outright as well as by pattern: bubblewrap binds existing paths, not patterns.
-		out.push(join(dotGit, 'config'), join(dotGit, 'config.worktree'), join(dotGit, 'hooks'), join(dotGit, 'modules'));
+		out.push(...GIT_DIR_READONLY.map(name => join(dotGit, name)));
 	}
 	for (const config of configs) {
 		const text = await fs.readFile(config, 'utf8').catch(() => undefined);
