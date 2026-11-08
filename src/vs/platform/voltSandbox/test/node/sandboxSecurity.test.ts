@@ -27,7 +27,7 @@ import { ISandboxRunResult } from '../../common/sandboxBackend.js';
 import { composeSandboxPolicy } from '../../common/sandboxComposition.js';
 import { agentSandboxPolicy } from '../../common/sandboxPolicy.js';
 import { builtinProfile } from '../../common/sandboxProfiles.js';
-import { IVoltSandboxPolicy, parseSandboxPolicyLayer } from '../../common/sandboxSchema.js';
+import { IVoltSandboxPolicy, parseSandboxPolicyLayer, SandboxDimension } from '../../common/sandboxSchema.js';
 import { SandboxManager } from '../../node/sandboxManager.js';
 import { ISandboxHostFacts, sandboxHostFacts } from '../../node/sandboxResolver.js';
 
@@ -38,6 +38,8 @@ const PERL = '/usr/bin/perl';
 /** Platform-only tests are chosen up front (Bun's mocha shim has no `this.skip()` inside a test). */
 const linuxTest = isLinux ? test : test.skip;
 const macTest = isMac ? test : test.skip;
+/** Dimensions the platform-independent tests rely on; the platform-only ones check their own. */
+const SUITE_DIMENSIONS: readonly SandboxDimension[] = ['filesystem.read', 'filesystem.write', 'filesystem.deny', 'filesystem.protect', 'network.none', 'network.proxy', 'network.loopbackPorts', 'host.unixSockets', 'env.clear'];
 
 interface IFixture {
 	readonly root: string;
@@ -142,9 +144,12 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		const manager = new SandboxManager(undefined, { runRoot, host });
 		f = { root, home, ws, outside, userData, runRoot, agentTmp, host, canaries, manager };
 		const capabilities = await manager.capabilities();
-		available = capabilities.available;
+		// A backend missing a dimension every platform's tests exercise (bubblewrap without socat has
+		// no network.proxy) is not a working backend for this suite.
+		const missing = SUITE_DIMENSIONS.filter(dimension => capabilities.enforcement[dimension] !== 'enforced');
+		available = capabilities.available && missing.length === 0;
 		if (!available) {
-			const message = `[volt-sandbox] NO SANDBOX BACKEND on ${process.platform}: ${capabilities.diagnostics.join(' ')}`;
+			const message = `[volt-sandbox] NO SANDBOX BACKEND on ${process.platform}: ${capabilities.available ? `not enforced: ${missing.join(', ')}.` : ''} ${capabilities.diagnostics.join(' ')}`;
 			if (required) {
 				throw new Error(`${message} (CI requires the sandbox; failing instead of skipping)`);
 			}

@@ -259,11 +259,15 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      # Pure-JS dependencies only (mocha, glob, esbuild): no native modules, no Electron.
+      # Pure-JS dependencies only (mocha, glob, esbuild): no native modules, no Electron. The gulp
+      # transpile task also loads build/'s own dependencies, which the root postinstall would add.
       - name: Install dependencies without scripts
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: |
+          set -e
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm ci --ignore-scripts --no-audit --no-fund --prefix build
 
       # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor; bubblewrap needs them.
       # Volt's probe reports this exact setting to users who hit it.
