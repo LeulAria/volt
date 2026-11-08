@@ -35,11 +35,63 @@
 		"voltAgents": [
 			{
 				"id": "fx",
-				"label": "FX",
+				"label": "fx",
+				"order": 100,
 				"binary": "fx",
+				"versionArgs": [
+					"--version"
+				],
 				"args": [
 					"acp"
 				],
+				"earlyAccess": true,
+				"authProbe": "fx",
+				"login": [
+					"fx",
+					"login"
+				],
+				"apiHosts": [
+					"fx.sh",
+					"*.fx.sh",
+					"ai-gateway.vercel.sh",
+					"vercel.com",
+					"*.vercel.com",
+					"chatgpt.com",
+					"*.chatgpt.com",
+					"api.openai.com",
+					"auth.openai.com",
+					"x.ai",
+					"*.x.ai",
+					"grok.com",
+					"*.grok.com"
+				],
+				"state": {
+					"writable": [
+						".fx/sessions",
+						".fx/backups",
+						".fx/diagnostics",
+						".fx/file-index"
+					],
+					"writableFiles": [
+						".fx/history.jsonl",
+						".fx/history.lock",
+						".fx/auth.lock",
+						".fx/settings.lock",
+						".fx/auth.json"
+					],
+					"readable": [
+						".fx"
+					],
+					"credentials": [
+						".fx/auth.json",
+						".fx/mcp-credentials"
+					],
+					"envKeys": [
+						"AI_GATEWAY_API_KEY",
+						"OPENAI_API_KEY",
+						"XAI_API_KEY"
+					]
+				},
 				"models": {
 					"source": "acp"
 				}

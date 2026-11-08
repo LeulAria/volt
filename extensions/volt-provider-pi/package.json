@@ -36,7 +36,62 @@
 			{
 				"id": "pi",
 				"label": "Pi",
+				"order": 60,
 				"binary": "pi",
+				"versionArgs": [
+					"--version"
+				],
+				"args": [],
+				"earlyAccess": true,
+				"acpAdapter": {
+					"command": "pi-acp",
+					"package": "pi-acp@0.0.34"
+				},
+				"authProbe": "pi",
+				"apiHosts": [
+					"pi.dev",
+					"*.pi.dev",
+					"api.anthropic.com",
+					"api.openai.com",
+					"chatgpt.com",
+					"*.chatgpt.com",
+					"auth.openai.com",
+					"openrouter.ai",
+					"*.openrouter.ai",
+					"generativelanguage.googleapis.com",
+					"api.x.ai",
+					"api.deepseek.com",
+					"api.moonshot.ai",
+					"api.z.ai",
+					"api.groq.com",
+					"api.mistral.ai",
+					"api.cerebras.ai"
+				],
+				"state": {
+					"writable": [
+						".pi/agent/sessions",
+						".pi/agent/logs"
+					],
+					"writableFiles": [
+						".pi/agent/auth.json"
+					],
+					"readable": [
+						".pi"
+					],
+					"credentials": [
+						".pi/agent/auth.json"
+					],
+					"envKeys": [
+						"ANTHROPIC_API_KEY",
+						"OPENAI_API_KEY",
+						"OPENROUTER_API_KEY",
+						"GEMINI_API_KEY",
+						"XAI_API_KEY",
+						"GROQ_API_KEY",
+						"MISTRAL_API_KEY",
+						"CEREBRAS_API_KEY"
+					]
+				},
 				"models": {
 					"source": "acp"
 				}

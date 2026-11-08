@@ -74,7 +74,7 @@ import { EditBaselineTracker } from './editBaselines.js';
 import './host/hostToolService.js';
 import './memory/voltMemoryService.js';
 import { clearClaudeModelCache } from './agents/claudeCatalog.js';
-import { CLI_AGENT_DEFINITIONS, cliAgentDefinition, detectCliAgent } from './agents/cliAgents.js';
+import { CLI_AGENTS, cliAgentDefinition, detectCliAgent } from './agents/cliAgents.js';
 import { NullVoltStdioService } from './host/nullStdioService.js';
 import { loadProjectCheckFiles, loadWorkspaceRunPlan } from './host/workspaceRunPlan.js';
 import { classifyIntent, IIntent, mergeGrantedGroups } from '../common/harness/intent.js';
@@ -5825,7 +5825,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		]) {
 			this.modelProviders.set(provider.id, provider);
 		}
-		for (const def of CLI_AGENT_DEFINITIONS) {
+		for (const def of CLI_AGENTS) {
 			const provider = new AcpAgentProvider(def.id, def.label, def.commands[0], [...def.acpArgs], this.stdio, this.workspace, this.fileService, this.logService, this.hostTools);
 			provider.setAccessGate(this.accessGate);
 			provider.setFileWriteObserver(write => this.onAcpFileWrite(write));
@@ -5983,7 +5983,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			});
 		}
 		const missing = (providerId: string) => !this.profiles.some(profile => profile.providerId === providerId);
-		const added: IProviderProfile[] = CLI_AGENT_DEFINITIONS
+		const added: IProviderProfile[] = CLI_AGENTS
 			.filter(def => missing(def.id))
 			.map(def => ({
 				id: `seed-${def.id}`,

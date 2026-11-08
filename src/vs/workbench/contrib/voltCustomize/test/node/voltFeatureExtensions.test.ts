@@ -9,6 +9,7 @@ import { join } from '../../../../../base/common/path.js';
 import { FileAccess } from '../../../../../base/common/network.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { pickVoltContributes, validateVoltContributes, VOLT_CONTRIBUTION_POINTS } from '../../../../services/voltPlugins/common/voltContributions.js';
+import { VOLT_BUILTIN_AGENTS } from '../../../../services/voltPlugins/common/voltBuiltinAgents.generated.js';
 import { VOLT_FEATURE_MANIFESTS } from '../../common/voltFeatureManifests.generated.js';
 import { VOLT_FEATURES } from '../../common/voltFeatures.js';
 
@@ -63,5 +64,13 @@ suite('Volt feature extensions', () => {
 		const script = readFileSync(join(extensionsFolder, '..', 'scripts', 'volt-generate-features.mjs'), 'utf8');
 		const points = /const POINTS = \[([^\]]*)\]/.exec(script)?.[1].split(',').map(point => point.trim().replace(/'/g, '')).filter(Boolean);
 		assert.deepStrictEqual(points, [...VOLT_CONTRIBUTION_POINTS]);
+	});
+
+	test('M2: the generated agent data is current and holds every built-in\'s voltAgents', () => {
+		const onDisk = readdirSync(extensionsFolder).filter(name => name.startsWith('volt-')).sort().flatMap(folder => {
+			const manifest = JSON.parse(readFileSync(join(extensionsFolder, folder, 'package.json'), 'utf8'));
+			return manifest.contributes.voltAgents ? [{ extensionId: `${manifest.publisher}.${manifest.name}`, agents: manifest.contributes.voltAgents }] : [];
+		});
+		assert.deepStrictEqual(VOLT_BUILTIN_AGENTS, onDisk);
 	});
 });

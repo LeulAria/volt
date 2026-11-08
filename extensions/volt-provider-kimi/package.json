@@ -35,11 +35,38 @@
 		"voltAgents": [
 			{
 				"id": "kimi",
-				"label": "Kimi",
+				"label": "Kimi Code",
+				"order": 80,
 				"binary": "kimi",
+				"versionArgs": [
+					"--version"
+				],
 				"args": [
 					"acp"
 				],
+				"authProbe": "kimi",
+				"apiHosts": [
+					"*.moonshot.ai",
+					"*.moonshot.cn",
+					"kimi.com",
+					"*.kimi.com"
+				],
+				"state": {
+					"writable": [
+						".kimi/sessions",
+						".kimi/logs",
+						".kimi-code/sessions",
+						".kimi-code/logs"
+					],
+					"readable": [
+						".kimi",
+						".kimi-code"
+					],
+					"envKeys": [
+						"MOONSHOT_API_KEY",
+						"KIMI_API_KEY"
+					]
+				},
 				"models": {
 					"source": "acp"
 				}

@@ -79,7 +79,8 @@ export interface ICapabilityVerdict {
  * deny; the Policy Authority (C2) implements `enforce`.
  */
 export interface ICapabilityReporter {
-	readonly mode: 'report' | 'enforce';
+	/** `per-feature`: enforced for the built-ins on `FIRST_PARTY_ENFORCED`, report mode for the rest (M5). */
+	readonly mode: 'report' | 'enforce' | 'per-feature';
 	readonly onDidReport: Event<IWouldBeDenial>;
 	check(principal: IVoltPluginPrincipal, request: ICapabilityRequest): ICapabilityVerdict;
 }

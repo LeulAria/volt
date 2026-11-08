@@ -12,7 +12,7 @@ import { ExtensionIdentifier, IExtensionDescription } from '../../../../platform
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IExtensionPointUser } from '../../../services/extensions/common/extensionsRegistry.js';
-import { ReportModeCapabilityReporter } from '../../../services/voltPlugins/common/capabilities.js';
+import { VoltFeatureCapabilityReporter } from '../../../services/voltPlugins/common/featureCapabilityMode.js';
 import { createVoltApi, IVoltApiBackend, IVoltPluginContext, IVoltPluginEntry, IVoltPluginService } from '../../../services/voltPlugins/common/voltApi.js';
 import { IVoltContributes, IVoltPluginManifest, validateVoltContribution, VOLT_CONTRIBUTION_POINTS } from '../../../services/voltPlugins/common/voltContributions.js';
 import { VOLT_EXTENSION_POINTS } from '../../../services/voltPlugins/common/voltExtensionPoints.js';
@@ -22,8 +22,10 @@ import { IVoltFeatureService } from '../common/voltFeatures.js';
 /**
  * Reads Volt's contribution points from every enabled extension (an invalid entry is reported on
  * the extension and left out) and hands each extension one `IVoltPluginContext` whose `volt` API
- * runs in report mode: calls go to Volt's services as today, and what the manifest doesn't declare
- * is logged. An extension that goes away (disabled, uninstalled) has its context's registrations
+ * runs per feature (M5, `VoltFeatureCapabilityReporter`): a built-in on `FIRST_PARTY_ENFORCED` is
+ * held to its manifest within its compiled ceiling, with no prompt; every other one runs in report
+ * mode, where calls go to Volt's services as today and what the manifest doesn't declare is
+ * logged. An extension that goes away (disabled, uninstalled) has its context's registrations
  * disposed.
  */
 export class VoltPluginService extends Disposable implements IVoltPluginService {
@@ -32,7 +34,7 @@ export class VoltPluginService extends Disposable implements IVoltPluginService 
 
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	readonly onDidChange = this._onDidChange.event;
-	readonly reporter: ReportModeCapabilityReporter;
+	readonly reporter: VoltFeatureCapabilityReporter;
 
 	private readonly users = new Map<keyof IVoltContributes, readonly IExtensionPointUser<unknown>[]>();
 	private entries = new Map<string, IVoltPluginEntry>();
@@ -49,7 +51,7 @@ export class VoltPluginService extends Disposable implements IVoltPluginService 
 		@ILogService logService: ILogService,
 	) {
 		super();
-		this.reporter = new ReportModeCapabilityReporter(message => logService.warn(message));
+		this.reporter = new VoltFeatureCapabilityReporter(message => logService.warn(message));
 		this._register(toDisposable(() => this.reporter.dispose()));
 		this.backend = {
 			registerTool: (info, invoke) => hostTools.registerToolProvider({
@@ -151,7 +153,7 @@ class VoltPluginContextHandle implements IDisposable {
 	readonly context: IVoltPluginContext;
 	private readonly subscriptions = new DisposableStore();
 
-	constructor(entry: IVoltPluginEntry, backend: IVoltApiBackend, reporter: ReportModeCapabilityReporter) {
+	constructor(entry: IVoltPluginEntry, backend: IVoltApiBackend, reporter: VoltFeatureCapabilityReporter) {
 		const principal = { extensionId: entry.extensionId, firstParty: entry.firstParty, capabilities: entry.manifest.contributes?.voltCapabilities ?? {} };
 		this.context = Object.freeze({
 			extensionId: entry.extensionId,

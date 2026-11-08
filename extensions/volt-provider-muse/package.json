@@ -35,11 +35,26 @@
 		"voltAgents": [
 			{
 				"id": "muse",
-				"label": "Muse",
+				"label": "Muse Code",
+				"order": 90,
 				"binary": "muse",
+				"versionArgs": [
+					"--version"
+				],
 				"args": [
 					"acp"
 				],
+				"authProbe": "muse",
+				"state": {
+					"writable": [
+						".muse/sessions",
+						".muse/logs"
+					],
+					"readable": [
+						".muse",
+						".config/muse"
+					]
+				},
 				"models": {
 					"source": "acp"
 				}

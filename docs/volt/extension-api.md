@@ -45,6 +45,7 @@ if (!volt) { return; }
 ```
 
 - `contributes.voltCapabilities` entries: `id` (from the catalog), `class` (never lower than the catalog's), optional `targets` (`*` globs: hosts, chat ids, setting keys) and `reason` (shown to the user as *your* claim, beside Volt's own text). An invalid entry is reported on the extension and left out.
+- **`contributes.voltAgents`** (agent providers as data, spec H.12) runs an agent only when a built-in `volt.provider-*` extension declares it: Volt's providers live in those manifests and are compiled into core (`voltBuiltinAgents.generated.ts`). A third-party `voltAgents` entry is never launched; Volt reads it only as the capability requests it implies (its `apiHosts` become `net.connect` requests on those hosts, judged like any other declaration). Its `binary`, `args`, `state` and `footprint` are ignored, because only core decides what an agent process may touch.
 
 ## 2. Capabilities and consent
 
@@ -60,7 +61,7 @@ Every `vscode.volt` call needs a capability. Volt decides from the method and it
 
 - **Undeclared**: refused with `deniedBy: 'manifest'`. Nothing is asked.
 - **Consent.** The first call that needs a declared medium or high capability opens a Volt dialog: "Allow Notes to act in your chats?", Volt's description of the capability, then your `reason` marked "The extension says". *Don't Allow* has focus. The answer is kept per extension and capability (any target), and shown on the extension's page in Extensions (Features), where the user can revoke or allow it again. A refused or revoked capability is not asked again: calls fail with `deniedBy: 'consent'`.
-- **Built-ins** get what their manifest declares within their ceiling (`src/vs/platform/voltPlugins/common/firstPartyCeilings.ts`), with no prompt. A manifest that declares more is refused at call time (`deniedBy: 'ceiling'`) and fails CI (`EXT-CEIL-CI-1`). Only an extension shipped with the app counts as built-in; one installed under the `volt` publisher does not.
+- **Built-ins** get what their manifest declares within their ceiling (`src/vs/platform/voltPlugins/common/firstPartyCeilings.ts`), with no prompt. A manifest that declares more is refused at call time (`deniedBy: 'ceiling'`) and fails CI (`build/volt/ci/manifestCeiling.mjs` in the lint job, `EXT-CEIL-CI-1`). Only an extension shipped with the app counts as built-in; one installed under the `volt` publisher does not.
 - **Errors.** A refusal rejects with an `Error` whose `name` is `'VoltCapabilityError'` and which carries `capability`, `target` and `deniedBy` (`manifest`, `consent`, `critical`, `catalog`, `ceiling`):
 
 ```ts
@@ -217,4 +218,10 @@ await volt.pullRequests.link(chatId, 'https://github.com/acme/app/pull/12'); // 
 | Ceilings | `src/vs/platform/voltPlugins/common/firstPartyCeilings.ts` |
 | Backend, consent store and dialog | `contrib/voltCustomize/browser/voltExtensionApiService.ts`, `voltExtensionConsent.ts` |
 
-In-process feature code keeps using `IVoltPluginService.getContext` (trusted core, report mode, spec B-21); the enforcing policy applies to code in extension hosts.
+In-process feature code uses `IVoltPluginService.getContext` (trusted core, spec B-21), judged per feature (M5, `featureCapabilityMode.ts`). A built-in on `FIRST_PARTY_ENFORCED` (`firstPartyCeilings.ts`) is enforced: what its manifest declares within its ceiling runs with no prompt, anything else is refused. Every other built-in runs in report mode: calls run as before and each would-be denial is logged once. The switch is compiled into core, never a setting.
+
+- **Moving a feature to enforcement:** its report log shows 0 would-be denials over one release, and `M5-MODE-1` (`featureCapabilityMode.test.ts`) shows 0 for its manifest and its own API namespace. The test also fails when a feature shows 0 and is not on the list.
+- **Enforced:** `volt.browser`, `volt.code-intelligence`, `volt.customize`, `volt.git-graph`, `volt.playgrounds`, `volt.remote-devices`, `volt.scratch-board`, `volt.skills-and-plugins`, `volt.usage` and the 12 `volt.provider-*` extensions.
+- **Report mode:** `volt.agent-resources`, `volt.automations`, `volt.claude-accounts`, `volt.commit-review`, `volt.computer-use`, `volt.devices`, `volt.memory`, `volt.pull-requests`, `volt.visuals`.
+
+Code in extension hosts is always enforced.

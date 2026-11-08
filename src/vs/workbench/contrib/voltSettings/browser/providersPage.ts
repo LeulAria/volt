@@ -25,7 +25,7 @@ import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStd
 import { userExec } from '../../../services/voltRuntime/common/execContext.js';
 import { CLAUDE_ACCOUNT_SWITCHING_SETTING, CLAUDE_AUTO_SWITCH_THRESHOLD_SETTING, IVoltAccountsService, IVoltClaudeAccount, IVoltClaudeAccountsState } from '../../../../platform/voltAccounts/common/voltAccounts.js';
 import { IVoltUsageLimitWindow } from '../../../../platform/voltUsage/common/voltUsage.js';
-import { CLI_AGENT_DEFINITIONS } from '../../../services/voltRuntime/browser/agents/cliAgents.js';
+import { CLI_AGENTS } from '../../../services/voltRuntime/browser/agents/cliAgents.js';
 import { createBrandIcon } from '../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { providerFamily } from '../../../services/voltRuntime/browser/providers/providerFamily.js';
 import { IModelOptionDescriptor, IModelParamSpec, isSelectableDescriptor, MODEL_GENERATION_PARAMS, MODEL_OPTION_CONTEXT, MODEL_OPTION_FAST, MODEL_OPTION_REASONING, MODEL_OPTION_SERVICE_TIER, MODEL_OPTION_THINKING, MODEL_PARAM_MAX_OUTPUT, MODEL_PARAM_TEMPERATURE, MODEL_PARAM_TOP_P, optionValue, parseModelParam, traitDescriptors } from '../../../services/voltRuntime/common/models/modelOptions.js';
@@ -2102,7 +2102,7 @@ export class ProvidersPage {
 		} catch (error) {
 			output = String(error);
 		}
-		const def = CLI_AGENT_DEFINITIONS.find(candidate => candidate.id === status.providerId);
+		const def = CLI_AGENTS.find(candidate => candidate.id === status.providerId);
 		const next = def ? await this.setup.detect(def).catch(() => undefined) : undefined;
 		if (next) {
 			this.storeSetup(next);
@@ -2128,7 +2128,7 @@ export class ProvidersPage {
 	 */
 	private async signInOrInstallInTerminal(status: IVoltProviderStatus, setup: IAgentSetupState, action: 'install' | 'login'): Promise<void> {
 		const command = action === 'install' ? this.setup.installCommand(setup) : this.setup.loginCommand(setup);
-		const def = CLI_AGENT_DEFINITIONS.find(candidate => candidate.id === status.providerId);
+		const def = CLI_AGENTS.find(candidate => candidate.id === status.providerId);
 		if (!command || !def) {
 			return;
 		}
