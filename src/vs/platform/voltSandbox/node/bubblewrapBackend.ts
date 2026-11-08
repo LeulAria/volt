@@ -692,11 +692,17 @@ export interface IPatternWalkResult extends IBubblewrapPatternMatches {
  * writable roots and the home folder: walking the whole disk would only spend the budget on
  * system folders. Symlinks are not followed. Also collects socket files when asked.
  */
-export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { collectSockets: boolean }, limits: typeof PATTERN_WALK_LIMITS = PATTERN_WALK_LIMITS): Promise<IPatternWalkResult> {
+export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { collectSockets: boolean }, limits: { readonly [K in keyof typeof PATTERN_WALK_LIMITS]: number } = PATTERN_WALK_LIMITS): Promise<IPatternWalkResult> {
 	type Kind = 'deny' | 'protect';
 	const patterns: { kind: Kind; pattern: IResolvedPattern }[] = [];
+	// A pattern anywhere (`**/.env`) is looked for where the sandbox can see it: the workspace, the
+	// writes and the home. With narrow reads the home itself is not visible, only the read roots
+	// inside it are; walking all of it (a checkout, caches, a big home) would only make the walk
+	// incomplete, which refuses the run (B-27), for files the sandbox cannot reach anyway.
+	const homeVisible = policy.readAll || policy.read.some(root => isInside(policy.home, root));
+	const homeRoots = homeVisible ? [policy.home] : policy.read.filter(root => isInside(root, policy.home));
 	const expandRoot = (pattern: IResolvedPattern): IResolvedPattern[] => pattern.root === '/'
-		? [...new Set([policy.cwd, ...policy.write, policy.home])].map(root => ({ root, names: pattern.names }))
+		? [...new Set([policy.cwd, ...policy.write, ...homeRoots])].map(root => ({ root, names: pattern.names }))
 		: [pattern];
 	for (const pattern of policy.denyPatterns) {
 		patterns.push(...expandRoot(pattern).map(p => ({ kind: 'deny' as const, pattern: p })));

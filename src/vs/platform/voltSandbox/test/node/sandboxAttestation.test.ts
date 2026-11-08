@@ -26,8 +26,10 @@ import { BUBBLEWRAP_FDS } from '../../common/bwrap.js';
 import { composeSandboxPolicy } from '../../common/sandboxComposition.js';
 import { agentSandboxPolicy } from '../../common/sandboxPolicy.js';
 import { builtinProfile } from '../../common/sandboxProfiles.js';
+import { IResolvedSandboxPolicy } from '../../common/sandboxResolved.js';
 import { IVoltSandboxPolicy, parseSandboxPolicyLayer } from '../../common/sandboxSchema.js';
 import { SEATBELT_FDS } from '../../common/seatbelt.js';
+import { walkPatterns } from '../../node/bubblewrapBackend.js';
 import { SandboxFault } from '../../node/sandboxBackends.js';
 import { sandboxCacheKey } from '../../node/sandboxLauncher.js';
 import { IPreparedSandbox, ISandboxManagerOptions, SandboxManager } from '../../node/sandboxManager.js';
@@ -440,6 +442,46 @@ suite('Volt sandbox attestation and backend hardening (H7, real processes)', fun
 			assert.ok(capabilities.diagnostics.some(line => /CVE-2026-87766/.test(line) && /landed outside/.test(line) && /0\.12\.0 or later/.test(line)), capabilities.diagnostics.join('\n'));
 		} finally {
 			await manager.dispose();
+		}
+	});
+});
+
+suite('Volt sandbox pattern walk scope (B-27)', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('B-27: with narrow reads the home is not walked, only its read roots: a big unreadable home does not refuse the run', async () => {
+		const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'volt-walk-')));
+		try {
+			const home = join(root, 'home');
+			const tools = join(home, 'tools');
+			const ws = join(root, 'ws');
+			await fs.mkdir(join(tools, 'sdk'), { recursive: true });
+			await fs.mkdir(ws, { recursive: true });
+			await fs.writeFile(join(tools, 'sdk', '.env'), 'SECRET=1\n');
+			await fs.writeFile(join(ws, '.env'), 'SECRET=2\n');
+			// More than the walk may visit, outside every root the sandbox can read.
+			for (let d = 0; d < 40; d++) {
+				await fs.mkdir(join(home, 'checkout', `d${d}`), { recursive: true });
+			}
+			const limits = { maxEntries: 30, maxDepth: 12, budgetMs: 5_000 } as const;
+			const base: IResolvedSandboxPolicy = {
+				name: 'walk', platform: process.platform, readAll: false,
+				read: ['/usr', tools, ws], write: [ws], writeFiles: [], deny: [], protect: [],
+				denyPatterns: [{ root: '/', names: ['.env'] }], protectPatterns: [], newRepositoryGuard: [], gitDirs: [],
+				network: { mode: 'none', allow: [], loopbackPorts: [], listen: false },
+				unixSockets: [], systemServices: false, limits: {}, env: {},
+				cwd: ws, tmp: join(root, 'tmp'), home,
+			};
+			const narrow = await walkPatterns(base, { collectSockets: false }, limits);
+			assert.strictEqual(narrow.complete, true, 'the unreadable rest of the home is not walked');
+			assert.deepStrictEqual(narrow.deny.map(match => match.path).sort(), [join(tools, 'sdk', '.env'), join(ws, '.env')].sort());
+
+			// A home the sandbox can read is walked whole: then a walk that cannot finish still refuses.
+			const wide = await walkPatterns({ ...base, read: [...base.read, home] }, { collectSockets: false }, limits);
+			assert.strictEqual(wide.complete, false);
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
 		}
 	});
 });

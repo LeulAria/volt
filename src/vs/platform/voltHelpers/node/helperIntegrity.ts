@@ -445,7 +445,10 @@ export function helperIntegrity(): HelperIntegrity {
 		arch: process.arch,
 		developerMode: !!process.env['VSCODE_DEV'],
 		signing: () => product.voltHelperSigning,
-		appSigner: () => runningAppSigner(),
+		// The app is Electron (the window, or volt-server through ELECTRON_RUN_AS_NODE). A plain Node
+		// runtime (tests, scripts) is not Volt's app: Node's official macOS build is signed by the
+		// OpenJS Foundation, and its team must not be taken for the one that signed Volt's helpers.
+		appSigner: async () => process.versions['electron'] ? runningAppSigner() : undefined,
 		linuxLibc,
 	});
 	return defaultIntegrity;
