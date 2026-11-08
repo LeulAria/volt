@@ -8,7 +8,7 @@ import { promises as fs } from 'fs';
 import * as http from 'http';
 import { homedir, networkInterfaces } from 'os';
 import { dirname, join, sep } from '../../../base/common/path.js';
-import { IAgentServerRuntimeInfo, IVoltLocalLink, VOLT_LOCAL_LINK_PATH } from '../common/protocol.js';
+import { IAgentServerRuntimeInfo, IVoltExtensionHostTicket, IVoltLocalLink, VOLT_EXTHOST_TICKET_PATH, VOLT_LOCAL_LINK_PATH } from '../common/protocol.js';
 import { IVoltAgentServerEndpoint } from '../common/agentServerService.js';
 import { childEnvFromHost } from '../../voltHelpers/common/childEnv.js';
 import { agentServerPaths, IAgentServerPaths, isProcessAlive, readAgentServerRuntime, readAgentServerToken } from './agentServerFiles.js';
@@ -308,6 +308,42 @@ export class AgentServerLauncher {
 			webUrl: `http://${host}:${info.port}/`,
 			network,
 		};
+	}
+
+	/**
+	 * P6: a one-time ticket the desktop's sandboxed extension host connects to the workbench server
+	 * with, plus where to connect. Made with the server's own token over loopback, like a sign-in link.
+	 */
+	async createExtensionHostTicket(): Promise<IVoltExtensionHostTicket & { readonly port: number }> {
+		const info = await this.ensureRunning().then(() => this.healthy());
+		const token = await readAgentServerToken(this.paths);
+		if (!info || !token) {
+			throw new Error('The Volt agent server is not running.');
+		}
+		const host = info.host === 'localhost' ? 'localhost' : '127.0.0.1';
+		const ticket = await new Promise<IVoltExtensionHostTicket>((resolve, reject) => {
+			const req = http.request(`http://${host}:${info.port}${VOLT_EXTHOST_TICKET_PATH}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }, timeout: 5_000 }, res => {
+				let body = '';
+				res.setEncoding('utf8');
+				res.on('data', chunk => body += chunk);
+				res.on('end', () => {
+					try {
+						const parsed = JSON.parse(body) as Partial<IVoltExtensionHostTicket>;
+						if (res.statusCode === 200 && typeof parsed.ticket === 'string' && typeof parsed.connectionToken === 'string' && typeof parsed.globalStorageHome === 'string') {
+							resolve({ ticket: parsed.ticket, connectionToken: parsed.connectionToken, globalStorageHome: parsed.globalStorageHome, expiresAt: Number(parsed.expiresAt) });
+							return;
+						}
+					} catch {
+						// below
+					}
+					reject(new Error(res.statusCode === 404 ? 'This Volt agent server can\'t run sandboxed extensions (it is older, or has no workbench).' : `The Volt agent server refused an extension host ticket (${res.statusCode}).`));
+				});
+			});
+			req.on('error', reject);
+			req.on('timeout', () => req.destroy(new Error('The Volt agent server did not answer.')));
+			req.end();
+		});
+		return { ...ticket, port: info.port };
 	}
 
 	/**

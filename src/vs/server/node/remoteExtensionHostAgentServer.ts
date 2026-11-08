@@ -483,7 +483,7 @@ class RemoteExtensionHostAgentServer extends Disposable implements IServerAPI {
 				}
 
 				protocol.sendPause();
-				protocol.sendControl(VSBuffer.fromString(JSON.stringify(startParams.port ? { debugPort: startParams.port } : {})));
+				protocol.sendControl(VSBuffer.fromString(JSON.stringify({ ...(startParams.port ? { debugPort: startParams.port } : {}), ...(sandboxed ? { voltSandboxed: true } : {}) })));
 				const dataChunk = protocol.readEntireBuffer();
 				protocol.dispose();
 				const con = this._instantiationService.createInstance(ExtensionHostConnection, reconnectionToken, remoteAddress, socket, dataChunk);

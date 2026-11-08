@@ -21,6 +21,7 @@ import { ILogService } from '../../../platform/log/common/log.js';
 import product from '../../../platform/product/common/product.js';
 import { RemoteAgentConnectionContext } from '../../../platform/remote/common/remoteAgentEnvironment.js';
 import { IAgentServerAuth } from '../../../platform/voltAgentServer/common/protocolServer.js';
+import { IVoltExtensionHostTicket, VOLT_EXTHOST_TICKET_QUERY } from '../../../platform/voltAgentServer/common/protocol.js';
 import { VOLT_FS_BROWSE_CHANNEL_NAME } from '../../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { VoltFsBrowseService } from '../../../platform/voltFsBrowse/node/voltFsBrowseService.js';
 import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../../platform/voltGit/common/voltGit.js';
@@ -175,9 +176,50 @@ export class ServerWorkbench extends Disposable {
 		return true;
 	}
 
+	/**
+	 * P6: a single-use ticket (a minute) the desktop app's sandboxed extension hosts connect with,
+	 * in place of a browser's session cookie. Only the server's own token gets one (agentServerMain).
+	 */
+	async issueExtensionHostTicket(): Promise<IVoltExtensionHostTicket> {
+		const now = Date.now();
+		for (const [ticket, expiresAt] of this.tickets) {
+			if (expiresAt <= now) {
+				this.tickets.delete(ticket);
+			}
+		}
+		const ticket = randomBytes(24).toString('base64url');
+		const expiresAt = now + 60_000;
+		this.tickets.set(ticket, expiresAt);
+		return { ticket, connectionToken: await this.ensureConnectionToken(), globalStorageHome: join(this.options.serverDir, 'workbench', 'data', 'User', 'globalStorage'), expiresAt };
+	}
+
+	private readonly tickets = new Map<string, number>();
+
+	private consumeTicket(ticket: string): boolean {
+		const expiresAt = this.tickets.get(ticket);
+		this.tickets.delete(ticket);
+		return expiresAt !== undefined && expiresAt > Date.now();
+	}
+
 	/** The remote connection's sockets (management, extension host, terminals). False for any other path. */
 	handleUpgrade(req: http.IncomingMessage, socket: Socket): boolean {
 		const url = new URL(req.url ?? '/', 'http://localhost');
+		const ticket = url.searchParams.get(VOLT_EXTHOST_TICKET_QUERY);
+		if (ticket !== null && (url.pathname === WORKBENCH_BASE_PATH || url.pathname.startsWith(`${WORKBENCH_BASE_PATH}/`))) {
+			// The desktop app's sandboxed extension host (P6): its ticket stands in for the session
+			// cookie, once, from this computer only. The workbench server's own handshake still checks
+			// its connection token.
+			const remote = req.socket.remoteAddress ?? '';
+			if (!this.available || !this.consumeTicket(ticket) || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote)) {
+				socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+				return true;
+			}
+			this.ensureServer().then(server => server.handleUpgrade(req, socket), err => {
+				this.logService.error('[volt agent server] the workbench server failed to start', err);
+				socket.destroy();
+			});
+			return true;
+		}
 		if (url.pathname !== WORKBENCH_BASE_PATH && !url.pathname.startsWith(`${WORKBENCH_BASE_PATH}/`)) {
 			return false;
 		}

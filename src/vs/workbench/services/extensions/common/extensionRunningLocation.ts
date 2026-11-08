@@ -39,13 +39,29 @@ export class LocalWebWorkerRunningLocation {
 
 export class RemoteRunningLocation {
 	public readonly kind = ExtensionHostKind.Remote;
-	public readonly affinity = 0;
+	constructor(
+		/** Volt: 0 is the shared remote host; from {@link VOLT_SANDBOX_AFFINITY_BASE} up, one sandboxed extension's own host. */
+		public readonly affinity: number = 0
+	) { }
 	public equals(other: ExtensionRunningLocation) {
-		return (this.kind === other.kind);
+		return (this.kind === other.kind && this.affinity === other.affinity);
 	}
 	public asString(): string {
-		return 'Remote';
+		if (this.affinity === 0) {
+			return 'Remote';
+		}
+		return `Remote${this.affinity}`;
 	}
 }
 
 export type ExtensionRunningLocation = LocalProcessRunningLocation | LocalWebWorkerRunningLocation | RemoteRunningLocation;
+
+/**
+ * Volt (P2, P6): affinities from here up are hosts of one extension each, run in the OS sandbox
+ * (an opted-in extension). They never share a host with another extension (H.6).
+ */
+export const VOLT_SANDBOX_AFFINITY_BASE = 1000;
+
+export function isVoltSandboxedRunningLocation(location: ExtensionRunningLocation | null | undefined): boolean {
+	return !!location && location.affinity >= VOLT_SANDBOX_AFFINITY_BASE;
+}

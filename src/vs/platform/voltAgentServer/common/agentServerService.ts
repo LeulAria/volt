@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { createDecorator } from '../../instantiation/common/instantiation.js';
+import type { IVoltExtensionHostTicket } from './protocol.js';
 
 export const IVoltAgentServerMainService = createDecorator<IVoltAgentServerMainService>('voltAgentServerMainService');
 export const VOLT_AGENT_SERVER_CHANNEL_NAME = 'voltAgentServer';
@@ -49,4 +50,9 @@ export interface IVoltAgentServerMainService {
 	 * holds a single-use nonce valid for a minute. Starts the server if needed.
 	 */
 	createLocalWebLink(path?: string): Promise<string>;
+	/**
+	 * P6: a single-use ticket (a minute) for one connection of a sandboxed extension host to the
+	 * server's workbench, with its port and connection token. Starts the server if needed.
+	 */
+	createExtensionHostTicket(): Promise<IVoltExtensionHostTicket & { readonly port: number }>;
 }
