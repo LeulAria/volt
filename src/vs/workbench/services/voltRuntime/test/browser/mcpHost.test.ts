@@ -472,6 +472,14 @@ suite('Volt MCP host: sandboxed chats\' servers under the supervisor (C6)', () =
 		assert.deepStrictEqual(processes.hosts.map(request => [request.chatId, request.sandbox.level]), [['c1', 'workspace-write'], ['c2', 'workspace-write'], ['c2', 'read-only']]);
 	});
 
+	test('MCP-HOST-RELEASE: a host allowed later does not restart the chat\'s server (F.9)', async () => {
+		const { processes, tools } = await setup();
+		await tools(sandboxed('c1'));
+		await tools(sandboxed('c1', { ...SANDBOX, allowedDomains: ['api.github.com'] }));
+		assert.strictEqual(processes.hosts.length, 1);
+		assert.deepStrictEqual(processes.killed, []);
+	});
+
 	test('MCP-HOST-RELEASE: a project server still needs its approval in a sandboxed chat', async () => {
 		const { processes, tools } = await setup({ user: { mcpServers: {} }, project: { mcpServers: { pwn: { command: 'touch', args: [MARKER.fsPath] } } } });
 		await tools(sandboxed('c1'));

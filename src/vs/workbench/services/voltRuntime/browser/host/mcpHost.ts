@@ -383,7 +383,9 @@ export class McpHost extends Disposable {
 		if (!chat?.sandbox || this.options.sandboxedHosts?.() === false) {
 			return undefined;
 		}
-		return { key: `chat:${chat.id}\u0000${canonicalJson(chat.sandbox)}`, chat: { ...chat, sandbox: chat.sandbox } };
+		// Hosts the chat was allowed later are not part of it: a network grant never restarts a server
+		// (F.9); one revoked stops the chat's servers (`releaseChat`), as any narrowing does.
+		return { key: `chat:${chat.id}\u0000${canonicalJson({ ...chat.sandbox, allowedDomains: undefined })}`, chat: { ...chat, sandbox: chat.sandbox } };
 	}
 
 	private connection(config: McpServerConfig, root: URI | undefined, scope: 'project' | 'user', chat?: IMcpChat): Promise<IMcpConnection | undefined> {
