@@ -21,6 +21,7 @@ import { IVoltModelAccess } from './models/modelAccess.js';
 import type { IHumanAction } from './harness/humanLoop.js';
 import type { IAgentQuestionRequest, IAgentQuestionResponse } from './questions.js';
 import type { IRunMetrics } from './harness/runMetrics.js';
+import type { IVoltMcpApprovalRecord, IVoltMcpServerSpec } from './harness/mcpApprovals.js';
 
 export const IAgentRuntimeService = createDecorator<IAgentRuntimeService>('agentRuntimeService');
 
@@ -48,6 +49,28 @@ export interface IVoltMcpServerStatus {
 	readonly scope: 'project' | 'user';
 	/** `idle`: configured but not started yet (servers start with the first run that needs tools). */
 	readonly state: 'idle' | 'connecting' | 'ready' | 'error';
+	/**
+	 * Project servers only: whether Volt may start it. `needed` (never decided), `changed` (decided
+	 * for another command), `untrusted` (approved, but the folder is not trusted), `denied`.
+	 */
+	readonly approval?: VoltMcpApprovalState;
+}
+
+export type VoltMcpApprovalState = 'approved' | 'needed' | 'changed' | 'untrusted' | 'denied';
+
+/** A project MCP server waiting for the user's decision (the composer's approval card). */
+export interface IVoltMcpApprovalRequest {
+	/** The folder the chat works in; its real path is {@link realRoot}. */
+	readonly root: URI;
+	readonly realRoot: string;
+	readonly name: string;
+	readonly digest: string;
+	readonly approval: Exclude<VoltMcpApprovalState, 'approved' | 'denied'>;
+	readonly spec: IVoltMcpServerSpec;
+	/** The configuration file, relative to the folder. */
+	readonly file: string;
+	/** What the last decision was made for, when the server changed since. */
+	readonly previous?: IVoltMcpServerSpec;
 }
 
 /** A message of a chat's model transcript as history restores it. */
@@ -232,6 +255,25 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 
 	/** MCP servers configured for the project and the user, with their connection state. */
 	listMcpServers(root: URI | undefined): Promise<readonly IVoltMcpServerStatus[]>;
+
+	/**
+	 * The project MCP servers of the chat's folder that wait for the user's approval, for the model
+	 * the composer would send to (none for CLI agents, which read their configuration themselves, or
+	 * in a mode without MCP). Starts nothing.
+	 */
+	listMcpApprovalRequests(sessionId: string, providerRef: string | undefined, mode: VoltMode): Promise<readonly IVoltMcpApprovalRequest[]>;
+
+	/**
+	 * Records the user's decision for a project server. Refused when the server's configuration no
+	 * longer has `digest` (it changed after the card was drawn). The caller asks for Workspace Trust first.
+	 */
+	decideMcpServer(root: URI, name: string, digest: string, allow: boolean): Promise<void>;
+
+	/** Every decision on project MCP servers, all folders. */
+	listMcpApprovals(): Promise<readonly IVoltMcpApprovalRecord[]>;
+
+	/** Forgets the decision on a project server (every server of the folder without `name`) and stops it. */
+	revokeMcpApproval(realRoot: string, name?: string): Promise<void>;
 
 	/**
 	 * One small tool-less call for generated text (commit messages, pull request descriptions):

@@ -45,7 +45,7 @@ import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKe
 import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IModelRequest, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { cheapestReasoningLevel, resolveTabModel } from '../common/models/modelAccess.js';
-import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../common/runtime.js';
+import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../common/runtime.js';
 import { countUserTurns, IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
@@ -97,6 +97,8 @@ import { IToolDocuments, runtimeToolDocuments } from './tools/fileTools.js';
 import { ISubagentRequest, NATIVE_ASK_QUESTION_TOOL_NAME } from './tools/metaTools.js';
 import { createRuntimeCodeIntel, IRuntimeCodeIntel } from './host/codeIntelHost.js';
 import { McpHost } from './host/mcpHost.js';
+import { isMcpTrustAttestedByApproval, IVoltMcpApprovalRecord, VoltMcpApprovalStore } from '../common/harness/mcpApprovals.js';
+import { IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { INativeBackgroundAgent, INativeJournalEntry, NativeJournal } from './history/nativeJournal.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
 import { affectsInstructions, IInstructionsSnapshot, loadInstructions } from './prompt/instructionsLoader.js';
@@ -699,6 +701,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		@IVoltCodeIndexService codeIndexService: IVoltCodeIndexService,
 		@ICommandService private readonly commandService: ICommandService,
 		@IVoltTrajectoryService private readonly trajectory: IVoltTrajectoryService,
+		@IWorkspaceTrustManagementService private readonly workspaceTrust: IWorkspaceTrustManagementService,
 	) {
 		super();
 		this.codeIntel = this._register(createRuntimeCodeIntel(markerService, textModelService, languageFeaturesService, fileService));
@@ -712,7 +715,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		};
 		this.search = this._register(new VoltSearch(searchService, this.searchIndex, fileService.onDidFilesChange));
 		this.retriever = new ContextRetriever(this.search, fileService);
-		this.mcpHost = this._register(new McpHost(fileService, stdio, requestService, logService));
+		this.mcpHost = this._register(new McpHost(fileService, stdio, requestService, logService, {
+			approvals: new VoltMcpApprovalStore(joinPath(environmentService.userRoamingDataHome, 'voltMcpApprovals.json'), fileService, logService),
+			trusted: root => this.mcpFolderTrusted(root),
+		}));
 		this.journal = this._register(new NativeJournal(joinPath(environmentService.userRoamingDataHome, 'voltNative'), fileService, logService));
 		this.traces = this._register(new RunTraceJournal(joinPath(environmentService.userRoamingDataHome, 'voltTraces'), fileService, logService));
 		this.proofCases = new ProofCaseJournal(joinPath(environmentService.userRoamingDataHome, 'voltProofs', 'cases.jsonl'), fileService, logService);
@@ -2468,6 +2474,46 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	async listMcpServers(root: URI | undefined): Promise<readonly IVoltMcpServerStatus[]> {
 		const home = await this.pathService.userHome().catch(() => undefined);
 		return this.mcpHost.servers(root, home);
+	}
+
+	async listMcpApprovalRequests(sessionId: string, providerRef: string | undefined, mode: VoltMode): Promise<readonly IVoltMcpApprovalRequest[]> {
+		const session = this.sessions.get(sessionId);
+		const ref = providerRef ?? session?.providerRef ?? this.defaultRef(mode);
+		const item = this.catalog.find(candidate => candidate.ref === ref && candidate.enabled);
+		// CLI agents read their MCP files themselves; Volt's MCP host serves only the models it runs.
+		if (!session || !item || item.kind === 'agent' || !modePolicy(mode).allowMcp) {
+			return [];
+		}
+		const home = await this.pathService.userHome().catch(() => undefined);
+		return this.mcpHost.approvalRequests(this.executionRoot(session), home);
+	}
+
+	async decideMcpServer(root: URI, name: string, digest: string, allow: boolean): Promise<void> {
+		const home = await this.pathService.userHome().catch(() => undefined);
+		await this.mcpHost.decide(root, home, name, digest, allow);
+	}
+
+	listMcpApprovals(): Promise<readonly IVoltMcpApprovalRecord[]> {
+		return this.mcpHost.approvals();
+	}
+
+	async revokeMcpApproval(realRoot: string, name?: string): Promise<void> {
+		await this.mcpHost.revoke(realRoot, name);
+	}
+
+	/**
+	 * Workspace Trust of a project folder, for its own MCP servers. In the agent server, which has
+	 * no trust of its own, the approval (granted by a window only under trust) stands for it.
+	 */
+	private async mcpFolderTrusted(root: URI): Promise<boolean> {
+		if (isMcpTrustAttestedByApproval()) {
+			return true;
+		}
+		try {
+			return (await this.workspaceTrust.getUriTrustInfo(root)).trusted;
+		} catch {
+			return false;
+		}
 	}
 
 	/**
