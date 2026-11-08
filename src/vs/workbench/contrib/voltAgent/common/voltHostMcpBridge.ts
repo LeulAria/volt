@@ -9,6 +9,7 @@ import { generateUuid } from '../../../../base/common/uuid.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IVoltHostMcpResult, IVoltHostMcpService } from '../../../../platform/voltHostMcp/common/voltHostMcp.js';
 import { IVoltSandboxSettings } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { IAgentHistoryService } from '../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltHostToolResult, IVoltHostToolService, LEGACY_TOOL_NAMES } from '../../../services/voltRuntime/common/hostTools.js';
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
 
@@ -21,12 +22,17 @@ export class VoltHostMcpBridge extends Disposable {
 
 	private readonly serverId = generateUuid();
 	private readonly calls = this._register(new DisposableMap<string, CancellationTokenSource>());
+	/** Session ids that called a tool, and the chat each serves. */
+	private readonly callers = new Map<string, string>();
+	/** Chats among those that the history has stored, so a later absence means a deletion. */
+	private readonly storedChats = new Set<string>();
 
 	constructor(
 		@IVoltHostMcpService private readonly mcp: IVoltHostMcpService,
 		@IVoltHostToolService private readonly hostTools: IVoltHostToolService,
 		@ILogService private readonly logService: ILogService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+		@IAgentHistoryService private readonly history: IAgentHistoryService,
 	) {
 		super();
 		this._register(this.mcp.onDidCall(call => {
@@ -39,6 +45,12 @@ export class VoltHostMcpBridge extends Disposable {
 				this.calls.get(id)?.cancel();
 			}
 		}));
+		// A revoked chat's tokens die on the server too (B-07).
+		this._register(this.hostTools.onDidRevokeMcpSession(({ sessionId, epoch }) => {
+			void this.mcp.revokeSession(this.serverId, sessionId, epoch).catch(err => this.logService.warn('[volt] could not revoke a chat\'s host MCP token', err));
+		}));
+		// A deleted chat is closed for good: its agents' tokens are revoked.
+		this._register(this.history.onDidChange(() => this.revokeDeletedChats()));
 		// The gate judges calls that prompt another chat by that chat's sandbox and folder.
 		this.hostTools.setSandboxResolver({
 			settings: sessionId => this.sandboxOf(this.runtime.chatFor(sessionId)),
@@ -64,7 +76,32 @@ export class VoltHostMcpBridge extends Disposable {
 		}
 	}
 
+	/** Revokes the sessions that called in for a chat the history knew and no longer has. */
+	private revokeDeletedChats(): void {
+		for (const [sessionId, chat] of this.callers) {
+			if (this.history.get(chat)) {
+				this.storedChats.add(chat);
+			} else if (this.storedChats.has(chat)) {
+				this.callers.delete(sessionId);
+				this.hostTools.revokeMcpSession(sessionId);
+			}
+		}
+		const live = new Set(this.callers.values());
+		for (const chat of this.storedChats) {
+			if (!live.has(chat)) {
+				this.storedChats.delete(chat);
+			}
+		}
+	}
+
 	private async answer(id: string, name: string, args: unknown, sessionId: string | undefined): Promise<void> {
+		if (sessionId && !this.callers.has(sessionId)) {
+			const chat = this.runtime.chatFor(sessionId);
+			this.callers.set(sessionId, chat);
+			if (this.history.get(chat)) {
+				this.storedChats.add(chat);
+			}
+		}
 		const cancel = new CancellationTokenSource();
 		this.calls.set(id, cancel);
 		let result: IVoltHostToolResult;

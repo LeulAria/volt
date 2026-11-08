@@ -934,10 +934,16 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!session || isRunActive(session) || (session.run && !session.run.ended)) {
 			return;
 		}
+		// The released chat's agents go, and the host MCP tokens they held die with them (B-07),
+		// the ones issued under a spare's alias too. A later run gets new ones.
+		const mcpSessions = [key, ...[...this.sessionAliases].filter(([, target]) => target === key).map(([alias]) => alias)];
 		this.disposeSessionAgent(session);
 		this.releaseParked(session);
 		this.releaseNative(session);
 		session.retrievalSeen = undefined;
+		for (const id of mcpSessions) {
+			this.hostTools.revokeMcpSession(id);
+		}
 	}
 
 	/** Moves an idle chat's native transcript to disk only; the journal brings it back before its next run. */
