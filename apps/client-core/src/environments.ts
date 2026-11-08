@@ -3,17 +3,23 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { IWebSocketLike } from './connection';
 import {
-	AGENT_SERVER_PROTOCOL_VERSION, type IEnvironmentDescriptor, type IPairRequest, type IPairResponse, RemoteError, type RouteKind, type Role,
-	VOLT_ENVIRONMENT_PATH, VOLT_LOCAL_SESSION_PATH, VOLT_PAIR_PATH
+	AGENT_SERVER_PROTOCOL_VERSION, type IEnvironmentDescriptor, type IPairRequest, type IPairResponse, type IRefreshResponse, RemoteError, type RouteKind, type Role,
+	VOLT_ENVIRONMENT_PATH, VOLT_LOCAL_SESSION_PATH, VOLT_PAIR_PATH, VOLT_REFRESH_PATH
 } from './protocol';
 
 /** One address a saved machine answers at (its LAN IP, its Tailscale IP, loopback). */
 export interface IRoute {
-	/** `http://192.168.1.20:47321` */
+	/** `http://192.168.1.20:47321`, or `https://...` for the server's network listener */
 	readonly baseUrl: string;
 	readonly kind: RouteKind;
 	readonly lastOkAt?: number;
+	/**
+	 * The SHA-256 (base64url) of the certificate this route must present: the server's own
+	 * self-signed one, learned from the pairing QR or link (`fp=`), never from the connection.
+	 */
+	readonly pin?: string;
 }
 
 /** A paired machine running Volt: where it is, and this device's key for it. */
@@ -21,6 +27,8 @@ export interface ISavedEnvironment {
 	readonly environmentId: string;
 	readonly label: string;
 	readonly token: string;
+	/** When `token` stops working unless refreshed; unknown for tokens from older servers. */
+	readonly tokenExpiresAt?: number;
 	readonly deviceId: string;
 	readonly role: Role;
 	readonly routes: readonly IRoute[];
@@ -28,6 +36,49 @@ export interface ISavedEnvironment {
 	readonly lastConnectedAt?: number;
 	readonly platform?: { readonly os: string; readonly arch: string };
 }
+
+//#region Pinned TLS
+
+/**
+ * What a platform provides to talk to a server's network listener, whose certificate no
+ * authority signs: requests and sockets that go through only when the certificate hashes to
+ * `pin`. React Native's own `fetch` and `WebSocket` can't do that, so the app registers a native
+ * transport; without one, a pinned route is refused, never tried unpinned.
+ */
+export interface IPinnedTransport {
+	fetch(url: string, pin: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }): Promise<IFetchResponse>;
+	createSocket(url: string, pin: string): IWebSocketLike;
+}
+
+let pinnedTransport: IPinnedTransport | undefined;
+
+export function setPinnedTransport(transport: IPinnedTransport | undefined): void {
+	pinnedTransport = transport;
+}
+
+export function hasPinnedTransport(): boolean {
+	return !!pinnedTransport;
+}
+
+const PIN_UNSUPPORTED = 'This version of the app can\'t check your computer\'s certificate, so it won\'t connect over the network. Update the app, or connect through Tailscale Serve or a tunnel.';
+
+/** A socket for `url`: through the pinned transport when the route has a pin. */
+export function createRouteSocket(url: string, pin: string | undefined, fallback: (url: string) => IWebSocketLike): IWebSocketLike {
+	if (!pin) {
+		return fallback(url);
+	}
+	if (!pinnedTransport) {
+		throw new RemoteError('PinUnsupported', PIN_UNSUPPORTED);
+	}
+	return pinnedTransport.createSocket(url, pin);
+}
+
+/** `fp=` values are base64url SHA-256 digests: 43 characters. */
+export function isPin(value: string | null | undefined): value is string {
+	return !!value && /^[A-Za-z0-9_-]{43}$/.test(value);
+}
+
+//#endregion
 
 export interface IEnvironmentCatalog {
 	readonly version: 1;
@@ -39,7 +90,7 @@ export const EMPTY_CATALOG: IEnvironmentCatalog = { version: 1, environments: []
 
 /** What a scanned QR or typed address means. */
 export type PairingTarget =
-	| { readonly kind: 'code'; readonly baseUrl: string; readonly code: string }
+	| { readonly kind: 'code'; readonly baseUrl: string; readonly code: string; readonly pin?: string }
 	/** An owner token handed over directly (Volt's own "open in browser" link). */
 	| { readonly kind: 'token'; readonly baseUrl: string; readonly token: string };
 
@@ -122,6 +173,7 @@ export function normalizeBaseUrl(input: string): string | undefined {
 /**
  * Reads what a QR code or a pasted link holds:
  * - `http://host:port/pair#code=ABCD2345` (the server's pairing link)
+ * - `https://host:port/pair#code=ABCD2345&fp=<pin>` (its network listener, with the certificate's pin)
  * - `volt://pair?url=<pairing link>` (the deep link form)
  * - `http://host:port/#token=<token>` (Volt's own browser link)
  */
@@ -142,8 +194,9 @@ export function parsePairingLink(text: string): PairingTarget | undefined {
 		const baseUrl = `${deep.protocol}//${deep.host}`;
 		const fragment = new URLSearchParams(deep.hash.replace(/^#/, ''));
 		const code = fragment.get('code') ?? deep.searchParams.get('code');
+		const pin = fragment.get('fp');
 		if (code && normalizeCode(code).length >= 6) {
-			return { kind: 'code', baseUrl, code: normalizeCode(code) };
+			return { kind: 'code', baseUrl, code: normalizeCode(code), ...(deep.protocol === 'https:' && isPin(pin) ? { pin } : {}) };
 		}
 		const token = fragment.get('token');
 		if (token) {
@@ -177,16 +230,20 @@ function fetchImpl(): FetchLike {
 	return f;
 }
 
-async function request<T>(url: string, init: { method?: string; body?: unknown; timeoutMs?: number } = {}): Promise<T> {
+async function request<T>(url: string, init: { method?: string; body?: unknown; timeoutMs?: number; pin?: string; token?: string } = {}): Promise<T> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? 8_000);
 	try {
-		const res = await fetchImpl()(url, {
+		const fetchInit = {
 			method: init.method ?? 'GET',
-			headers: init.body !== undefined ? { 'Content-Type': 'application/json' } : {},
+			headers: { ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(init.token ? { Authorization: `Bearer ${init.token}` } : {}) },
 			...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
 			signal: controller.signal,
-		});
+		};
+		if (init.pin && !pinnedTransport) {
+			throw new RemoteError('PinUnsupported', PIN_UNSUPPORTED);
+		}
+		const res = init.pin ? await pinnedTransport!.fetch(url, init.pin, fetchInit) : await fetchImpl()(url, fetchInit);
 		const body = await res.json().catch(() => undefined) as { error?: string; message?: string } | undefined;
 		if (!res.ok) {
 			throw new RemoteError(body?.error ?? `http_${res.status}`, body?.message ?? `Volt answered ${res.status}.`);
@@ -199,15 +256,18 @@ async function request<T>(url: string, init: { method?: string; body?: unknown; 
 		if ((err as { name?: string }).name === 'AbortError') {
 			throw new RemoteError('Timeout', 'No answer. Check that this device is on the same network as your computer and that Volt is open.');
 		}
+		if ((err as { code?: string }).code === 'PinMismatch') {
+			throw new RemoteError('PinMismatch', 'That address answered with a different certificate than the one you paired with. Pair again from Volt\'s Devices page on your computer.');
+		}
 		throw new RemoteError('Unreachable', 'Can\'t reach that address. Check the address and that both devices are on the same network.');
 	} finally {
 		clearTimeout(timer);
 	}
 }
 
-/** Asks an address which machine it is (no token is sent). */
-export async function probeEnvironment(baseUrl: string, timeoutMs = 4_000): Promise<IEnvironmentDescriptor> {
-	const descriptor = await request<IEnvironmentDescriptor>(`${baseUrl}${VOLT_ENVIRONMENT_PATH}`, { timeoutMs });
+/** Asks an address which machine it is (no token is sent). A pinned address must present its certificate. */
+export async function probeEnvironment(baseUrl: string, timeoutMs = 4_000, pin?: string): Promise<IEnvironmentDescriptor> {
+	const descriptor = await request<IEnvironmentDescriptor>(`${baseUrl}${VOLT_ENVIRONMENT_PATH}`, { timeoutMs, ...(pin ? { pin } : {}) });
 	if (!descriptor || typeof descriptor.environmentId !== 'string') {
 		throw new RemoteError('NotVolt', 'That address is not a Volt agent server.');
 	}
@@ -219,9 +279,30 @@ export async function probeEnvironment(baseUrl: string, timeoutMs = 4_000): Prom
 	return descriptor;
 }
 
-export async function exchangePairingCode(baseUrl: string, code: string, client: IPairRequest['client']): Promise<IPairResponse> {
+export async function exchangePairingCode(baseUrl: string, code: string, client: IPairRequest['client'], pin?: string): Promise<IPairResponse> {
 	const body: IPairRequest = { code: normalizeCode(code), client };
-	return request<IPairResponse>(`${baseUrl}${VOLT_PAIR_PATH}`, { method: 'POST', body, timeoutMs: 10_000 });
+	return request<IPairResponse>(`${baseUrl}${VOLT_PAIR_PATH}`, { method: 'POST', body, timeoutMs: 10_000, ...(pin ? { pin } : {}) });
+}
+
+/** A token with less than this left is refreshed on the next connection. */
+export const TOKEN_REFRESH_WHEN_LEFT_MS = 15 * 24 * 60 * 60 * 1000;
+
+/** Whether a saved environment's token should be refreshed now (unknown expiry: yes, once). */
+export function tokenNeedsRefresh(env: ISavedEnvironment, now = Date.now()): boolean {
+	return env.tokenExpiresAt === undefined || env.tokenExpiresAt - now < TOKEN_REFRESH_WHEN_LEFT_MS;
+}
+
+/**
+ * The device's next token from the server at `route`. The old token keeps working for a
+ * minute. Rejects with the server's error (401: the device was removed; 404: an older server
+ * whose tokens don't expire).
+ */
+export async function refreshDeviceToken(route: IRoute, token: string): Promise<IRefreshResponse> {
+	const refreshed = await request<IRefreshResponse>(`${route.baseUrl}${VOLT_REFRESH_PATH}`, { method: 'POST', body: {}, token, timeoutMs: 8_000, ...(route.pin ? { pin: route.pin } : {}) });
+	if (!refreshed || typeof refreshed.token !== 'string' || typeof refreshed.expiresAt !== 'number') {
+		throw new RemoteError('BadResponse', 'Volt answered the token refresh with something else.');
+	}
+	return refreshed;
 }
 
 /** The browser on the machine Volt runs on signs itself in (loopback only). */
@@ -234,8 +315,9 @@ export async function requestLocalSession(baseUrl: string): Promise<IPairRespons
  * Pairing the same machine again (over Tailscale after the LAN) adds a route to the saved entry.
  */
 export async function pairEnvironment(target: PairingTarget, client: IPairRequest['client'], existing?: readonly ISavedEnvironment[]): Promise<ISavedEnvironment> {
-	const descriptor = await probeEnvironment(target.baseUrl);
-	const route: IRoute = { baseUrl: target.baseUrl, kind: classifyHost(new URL(target.baseUrl).hostname), lastOkAt: Date.now() };
+	const pin = target.kind === 'code' ? target.pin : undefined;
+	const descriptor = await probeEnvironment(target.baseUrl, undefined, pin);
+	const route: IRoute = { baseUrl: target.baseUrl, kind: classifyHost(new URL(target.baseUrl).hostname), lastOkAt: Date.now(), ...(pin ? { pin } : {}) };
 	const known = existing?.find(env => env.environmentId === descriptor.environmentId);
 	if (target.kind === 'token') {
 		return {
@@ -249,7 +331,7 @@ export async function pairEnvironment(target: PairingTarget, client: IPairReques
 			platform: descriptor.platform,
 		};
 	}
-	const paired = await exchangePairingCode(target.baseUrl, target.code, client);
+	const paired = await exchangePairingCode(target.baseUrl, target.code, client, pin);
 	if (paired.environmentId !== descriptor.environmentId) {
 		throw new RemoteError('Mismatch', 'The address changed machines while pairing. Try again.');
 	}
@@ -257,6 +339,7 @@ export async function pairEnvironment(target: PairingTarget, client: IPairReques
 		environmentId: paired.environmentId,
 		label: descriptor.label,
 		token: paired.token,
+		...(typeof paired.expiresAt === 'number' ? { tokenExpiresAt: paired.expiresAt } : {}),
 		deviceId: paired.deviceId,
 		role: paired.role,
 		routes: mergeRoutes(known?.routes ?? [], [route]),
@@ -284,7 +367,7 @@ export async function chooseRoute(env: ISavedEnvironment, timeoutMs = 2_500): Pr
 	}
 	const results = await Promise.all(env.routes.map(async route => {
 		try {
-			const descriptor = await probeEnvironment(route.baseUrl, timeoutMs);
+			const descriptor = await probeEnvironment(route.baseUrl, timeoutMs, route.pin);
 			return descriptor.environmentId === env.environmentId ? route : undefined;
 		} catch {
 			return undefined;

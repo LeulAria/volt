@@ -8,7 +8,7 @@ import { promises as fs } from 'fs';
 import * as http from 'http';
 import { homedir, networkInterfaces } from 'os';
 import { dirname, join, sep } from '../../../base/common/path.js';
-import { IAgentServerRuntimeInfo } from '../common/protocol.js';
+import { IAgentServerRuntimeInfo, IVoltLocalLink, VOLT_LOCAL_LINK_PATH } from '../common/protocol.js';
 import { IVoltAgentServerEndpoint } from '../common/agentServerService.js';
 import { agentServerPaths, IAgentServerPaths, isProcessAlive, readAgentServerRuntime, readAgentServerToken } from './agentServerFiles.js';
 import { installLaunchdJob, restartLaunchdJob, uninstallLaunchdJob } from './launchd.js';
@@ -252,7 +252,8 @@ export class AgentServerLauncher {
 
 	private probe(info: IAgentServerRuntimeInfo, token: string): Promise<boolean> {
 		return new Promise(resolve => {
-			const req = http.get({ host: info.host === '0.0.0.0' ? '127.0.0.1' : info.host, port: info.port, path: '/health', headers: { Authorization: `Bearer ${token}` }, timeout: 2_000 }, res => {
+			// `port` is plain HTTP on loopback whatever else the server listens on (network devices use `tlsPort`).
+			const req = http.get({ host: info.host === 'localhost' ? 'localhost' : '127.0.0.1', port: info.port, path: '/health', headers: { Authorization: `Bearer ${token}` }, timeout: 2_000 }, res => {
 				res.resume();
 				resolve(res.statusCode === 200);
 			});
@@ -283,16 +284,56 @@ export class AgentServerLauncher {
 		}
 		const network = info.host !== '127.0.0.1';
 		const host = network ? '127.0.0.1' : info.host;
-		const lan = network ? localNetworkAddress() : undefined;
 		return {
 			url: `ws://${host}:${info.port}/ws`,
 			token,
 			port: info.port,
 			pid: info.pid,
-			webUrl: `http://${host}:${info.port}/#token=${token}`,
+			// No token in it: a browser signs in with a one-time link ({@link createLocalWebLink}) or a pairing code.
+			webUrl: `http://${host}:${info.port}/`,
 			network,
-			pairingUrl: lan ? `http://${lan}:${info.port}/#token=${token}` : undefined,
 		};
+	}
+
+	/**
+	 * A link that signs this computer's browser in once: `http://127.0.0.1:<port><path>#local=<nonce>`.
+	 * The nonce is single use and valid for a minute, and only a holder of the server's own token
+	 * (this app, `npx volt-run`) can make one. A server from before nonces gets the plain address.
+	 */
+	async createLocalWebLink(path = '/'): Promise<string> {
+		const info = await this.ensureRunning().then(() => this.healthy());
+		const token = await readAgentServerToken(this.paths);
+		if (!info || !token) {
+			throw new Error('The Volt agent server is not running.');
+		}
+		const base = `http://${info.host === 'localhost' ? 'localhost' : '127.0.0.1'}:${info.port}`;
+		const link = await new Promise<IVoltLocalLink | undefined>((resolve, reject) => {
+			const req = http.request(`${base}${VOLT_LOCAL_LINK_PATH}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }, timeout: 5_000 }, res => {
+				let body = '';
+				res.setEncoding('utf8');
+				res.on('data', chunk => body += chunk);
+				res.on('end', () => {
+					if (res.statusCode === 404) {
+						resolve(undefined);
+						return;
+					}
+					try {
+						const parsed = JSON.parse(body) as Partial<IVoltLocalLink>;
+						if (res.statusCode === 200 && typeof parsed.nonce === 'string') {
+							resolve({ nonce: parsed.nonce, expiresAt: Number(parsed.expiresAt) });
+							return;
+						}
+					} catch {
+						// below
+					}
+					reject(new Error(`The Volt agent server refused a sign-in link (${res.statusCode}).`));
+				});
+			});
+			req.on('error', reject);
+			req.on('timeout', () => req.destroy(new Error('The Volt agent server did not answer.')));
+			req.end();
+		});
+		return link ? `${base}${path}#local=${link.nonce}` : `${base}${path}`;
 	}
 }
 

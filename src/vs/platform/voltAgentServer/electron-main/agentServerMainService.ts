@@ -59,4 +59,9 @@ export class VoltAgentServerMainService extends Disposable implements IVoltAgent
 	setNetworkAccess(enabled: boolean): Promise<IVoltAgentServerEndpoint> {
 		return this.launcher.setNetworkAccess(enabled);
 	}
+
+	createLocalWebLink(path?: string): Promise<string> {
+		this.wanted = true;
+		return this.launcher.createLocalWebLink(path);
+	}
 }

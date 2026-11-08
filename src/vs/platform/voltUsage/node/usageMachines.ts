@@ -7,7 +7,8 @@ import { createHash, randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import { homedir, hostname, platform, userInfo } from 'os';
 import { dirname } from '../../../base/common/path.js';
-import { IVoltPairRequest, IVoltPairResponse, VOLT_PAIR_PATH } from '../../voltAgentServer/common/protocol.js';
+import { IVoltPairRequest, IVoltPairResponse, IVoltRefreshResponse, VOLT_PAIR_PATH, VOLT_REFRESH_PATH } from '../../voltAgentServer/common/protocol.js';
+import { PinMismatchError, pinnedRequest } from '../../voltListeners/node/listenerTls.js';
 import {
 	IVoltUsageActivity, IVoltUsageLimitGroup, IVoltUsageMachine, IVoltUsageMachineReport, IVoltUsageMachineStatus, IVoltUsageNote, IVoltUsageSnapshot,
 	VoltResetCreditOutcome, VoltUsageProvider
@@ -38,13 +39,21 @@ export function localMachineId(): string {
 
 export interface IStoredMachine extends IVoltUsageMachine {
 	readonly token: string;
+	/** When `token` stops working unless refreshed; unknown for keys from older servers. */
+	readonly tokenExpiresAt?: number;
+	/** The SHA-256 (base64url) of the certificate an `https://` machine must present, from its pairing link. */
+	readonly pin?: string;
 }
 
+/** A key with less than this left is refreshed before it is used. */
+const MACHINE_TOKEN_REFRESH_WHEN_LEFT_MS = 15 * 24 * 60 * 60 * 1000;
+
 /**
- * A pairing link (`http://host:port/pair#code=...`) or an address with the server's key
- * (`#token=...`) to the server's origin and the code or key in it.
+ * A pairing link (`http://host:port/pair#code=...`, or `https://...#code=...&fp=<pin>` from a server's
+ * network listener) or an address with the server's key (`#token=...`) to the server's origin and
+ * the code, key and certificate pin in it.
  */
-export function parsePairingUrl(text: string): { url: string; code?: string; token?: string } | undefined {
+export function parsePairingUrl(text: string): { url: string; code?: string; token?: string; pin?: string } | undefined {
 	let parsed: URL;
 	try {
 		parsed = new URL(text.trim());
@@ -55,27 +64,44 @@ export function parsePairingUrl(text: string): { url: string; code?: string; tok
 		return undefined;
 	}
 	const hash = new URLSearchParams(parsed.hash.replace(/^#/, ''));
+	const fp = hash.get('fp');
+	const pin = parsed.protocol === 'https:' && fp && /^[A-Za-z0-9_-]{43}$/.test(fp) ? { pin: fp } : {};
 	const code = hash.get('code') ?? parsed.searchParams.get('code');
 	if (code?.trim()) {
-		return { url: parsed.origin, code: code.trim() };
+		return { url: parsed.origin, code: code.trim(), ...pin };
 	}
 	const token = hash.get('token') ?? parsed.searchParams.get('token');
-	return token ? { url: parsed.origin, token } : undefined;
+	return token ? { url: parsed.origin, token, ...pin } : undefined;
 }
 
-/** Trades a one-time pairing code for a device key on the machine at `url`. */
-export async function pairWithMachine(url: string, code: string): Promise<IVoltPairResponse> {
-	const request: IVoltPairRequest = { code, client: { label: `Volt usage on ${localMachineName()}`, kind: 'web', os: platform() } };
-	let response: Response;
+interface IMachineResponse {
+	readonly ok: boolean;
+	readonly status: number;
+	json(): Promise<unknown>;
+}
+
+/**
+ * One request to another machine's server: over a pinned TLS connection when its link carried
+ * a certificate pin (the server's own self-signed certificate), else with `fetch`.
+ */
+async function machineFetch(target: { readonly url: string; readonly pin?: string }, path: string, init: { readonly method?: string; readonly headers?: Record<string, string>; readonly body?: string; readonly timeoutMs: number }): Promise<IMachineResponse> {
+	if (target.pin) {
+		const response = await pinnedRequest(`${target.url}${path}`, target.pin, { method: init.method, headers: init.headers, body: init.body, timeoutMs: init.timeoutMs });
+		return { ok: response.status >= 200 && response.status < 300, status: response.status, json: async () => JSON.parse(response.body) };
+	}
+	return fetch(`${target.url}${path}`, { method: init.method, headers: init.headers, body: init.body, redirect: 'error', signal: AbortSignal.timeout(init.timeoutMs) });
+}
+
+/** Trades a one-time pairing code for a key on the machine at `url` that can only read its usage. */
+export async function pairWithMachine(url: string, code: string, pin?: string): Promise<IVoltPairResponse> {
+	const request: IVoltPairRequest = { code, client: { label: `Volt usage on ${localMachineName()}`, kind: 'web', os: platform() }, scope: 'usage' };
+	let response: IMachineResponse;
 	try {
-		response = await fetch(`${url}${VOLT_PAIR_PATH}`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(request),
-			redirect: 'error',
-			signal: AbortSignal.timeout(15_000),
-		});
-	} catch {
+		response = await machineFetch({ url, ...(pin ? { pin } : {}) }, VOLT_PAIR_PATH, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), timeoutMs: 15_000 });
+	} catch (err) {
+		if (err instanceof PinMismatchError) {
+			throw err;
+		}
 		throw new Error(`Volt could not reach ${url}. Check the other machine is awake, on the same network, and shares Volt on it.`);
 	}
 	const body = await response.json().catch(() => undefined) as Partial<IVoltPairResponse> & { message?: string } | undefined;
@@ -83,6 +109,30 @@ export async function pairWithMachine(url: string, code: string): Promise<IVoltP
 		throw new Error(body?.message ?? `${url} did not accept the pairing code. Make a new one on that machine and try again.`);
 	}
 	return body as IVoltPairResponse;
+}
+
+/**
+ * The machine with a fresh key when its key has less than half its life left; the same machine
+ * when it needn't (or can't: an older server, or offline; the old key is tried as it is).
+ */
+export async function refreshMachineToken(machine: IStoredMachine, now = Date.now()): Promise<IStoredMachine> {
+	if (machine.tokenExpiresAt !== undefined && machine.tokenExpiresAt - now >= MACHINE_TOKEN_REFRESH_WHEN_LEFT_MS) {
+		return machine;
+	}
+	try {
+		const response = await machineFetch(machine, VOLT_REFRESH_PATH, { method: 'POST', headers: { 'Authorization': `Bearer ${machine.token}` }, timeoutMs: 15_000 });
+		if (response.status === 404) {
+			// An older server: its keys don't expire. Asked again in a day.
+			return { ...machine, tokenExpiresAt: now + MACHINE_TOKEN_REFRESH_WHEN_LEFT_MS + 24 * 60 * 60 * 1000 };
+		}
+		const body = await response.json().catch(() => undefined) as Partial<IVoltRefreshResponse> | undefined;
+		if (response.ok && typeof body?.token === 'string' && typeof body.expiresAt === 'number') {
+			return { ...machine, token: body.token, tokenExpiresAt: body.expiresAt };
+		}
+	} catch {
+		// offline: tried again next time
+	}
+	return machine;
 }
 
 /** The machines added on this one, kept beside the usage cache. Tokens are secrets: the file is the user's only. */
@@ -142,11 +192,7 @@ function publicMachine(machine: IStoredMachine): IVoltUsageMachine {
 /** Asks one machine for its usage. Never throws: an unreachable machine is reported as offline. */
 export async function fetchMachineReport(machine: IStoredMachine, force: boolean, timeoutMs = 20_000): Promise<IMachineAnswer> {
 	try {
-		const response = await fetch(`${machine.url}${MACHINE_USAGE_PATH}${force ? '?force=1' : ''}`, {
-			headers: { 'Authorization': `Bearer ${machine.token}` },
-			redirect: 'error',
-			signal: AbortSignal.timeout(timeoutMs),
-		});
+		const response = await machineFetch(machine, `${MACHINE_USAGE_PATH}${force ? '?force=1' : ''}`, { headers: { 'Authorization': `Bearer ${machine.token}` }, timeoutMs });
 		if (response.status === 401 || response.status === 403) {
 			return { status: { ...publicMachine(machine), state: 'unauthorized' } };
 		}
@@ -165,14 +211,13 @@ export async function fetchMachineReport(machine: IStoredMachine, force: boolean
 
 /** Spends a reset credit for a login only `machine` holds. */
 export async function redeemOnMachine(machine: IStoredMachine, provider: VoltUsageProvider, accountId: string): Promise<VoltResetCreditOutcome> {
-	let response: Response;
+	let response: IMachineResponse;
 	try {
-		response = await fetch(`${machine.url}${MACHINE_REDEEM_PATH}`, {
+		response = await machineFetch(machine, MACHINE_REDEEM_PATH, {
 			method: 'POST',
 			headers: { 'Authorization': `Bearer ${machine.token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ provider, accountId }),
-			redirect: 'error',
-			signal: AbortSignal.timeout(60_000),
+			timeoutMs: 60_000,
 		});
 	} catch {
 		throw new ResetCreditError(`${machine.name} could not be reached to redeem the reset.`, false);

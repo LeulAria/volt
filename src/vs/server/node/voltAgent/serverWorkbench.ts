@@ -44,6 +44,8 @@ export const WORKBENCH_SESSION_PATH = '/api/workbench/session';
 const SESSION_COOKIE = 'volt-session';
 const CONNECTION_TOKEN_COOKIE = 'vscode-tkn';
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
+/** A session token with less than this left is renewed on the next page load. */
+const SESSION_RENEW_WITHIN_MS = 3 * 24 * 60 * 60 * 1000;
 
 /** The checkout in dev, the app's Resources/app when packaged. */
 const APP_ROOT = dirname(FileAccess.asFileUri('').fsPath);
@@ -58,8 +60,10 @@ export interface IServerWorkbenchOptions {
 	readonly serverDir: string;
 	readonly label: string;
 	readonly environmentId: () => string;
-	/** Whose device token this is; undefined once revoked. */
+	/** Whose device token this is; undefined once revoked or expired. */
 	readonly authorize: (token: string) => IAgentServerAuth | undefined;
+	/** The device's next token (the session cookie is renewed with it before it expires). */
+	readonly refresh?: (token: string) => Promise<{ readonly token: string; readonly expiresAt: number } | undefined>;
 	readonly resolveEnv: () => Promise<NodeJS.ProcessEnv>;
 	readonly git: IVoltGitService;
 	/** The code index (instant grep) the agents here use; the browser's settings page shows it. */
@@ -85,6 +89,8 @@ export class ServerWorkbench extends Disposable {
 
 	private server: Promise<IServerAPI> | undefined;
 	private connectionToken: Promise<string> | undefined;
+	/** The remote connection's sockets, by the device whose cookie opened them. */
+	private readonly sockets = new Map<Socket, string>();
 	private readonly isBuilt = !process.env['VSCODE_DEV'];
 
 	constructor(
@@ -117,14 +123,25 @@ export class ServerWorkbench extends Disposable {
 			res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('This Volt build does not include the browser workbench.');
 			return true;
 		}
-		if (!this.signedIn(req)) {
+		const signedIn = this.signedInAuth(req);
+		const pageLoad = req.method === 'GET' && /text\/html/.test(req.headers.accept ?? '');
+		if (!signedIn) {
 			// A page load goes through the sign-in page (pairing or the local session), which comes back here.
-			if (req.method === 'GET' && /text\/html/.test(req.headers.accept ?? '')) {
+			if (pageLoad) {
 				res.writeHead(302, { Location: `/?next=${encodeURIComponent(url.pathname + url.search)}`, 'Cache-Control': 'no-store' }).end();
 			} else {
 				res.writeHead(401, { 'Content-Type': 'text/plain' }).end('Sign in to Volt first.');
 			}
 			return true;
+		}
+		// Past half its life, a page load renews the session's token and reloads with the new cookie
+		// (the page hands it to the agent socket), so a browser in use never runs into the expiry.
+		if (pageLoad && signedIn.auth.expiresAt && this.options.refresh && signedIn.auth.expiresAt - Date.now() < SESSION_RENEW_WITHIN_MS) {
+			const next = await this.options.refresh(signedIn.token).catch(() => undefined);
+			if (next) {
+				res.writeHead(302, { Location: url.pathname + url.search, 'Cache-Control': 'no-store', 'Set-Cookie': sessionCookie(req, next.token) }).end();
+				return true;
+			}
 		}
 		// The workbench's own files: served here, compressed and (in a release) cached for good.
 		const staticFiles = this.staticFiles(url.pathname);
@@ -163,9 +180,16 @@ export class ServerWorkbench extends Disposable {
 		if (url.pathname !== WORKBENCH_BASE_PATH && !url.pathname.startsWith(`${WORKBENCH_BASE_PATH}/`)) {
 			return false;
 		}
-		if (!this.available || !this.signedIn(req) || !sameOrigin(req)) {
+		const signedIn = this.signedInAuth(req);
+		if (!this.available || !signedIn || !sameOrigin(req)) {
 			socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
 			return true;
+		}
+		// Remembered by device, so its connections close when the device is removed or expires.
+		const deviceId = signedIn.auth.deviceId;
+		if (deviceId) {
+			this.sockets.set(socket, deviceId);
+			socket.once('close', () => this.sockets.delete(socket));
 		}
 		this.ensureServer().then(server => server.handleUpgrade(req, socket), err => {
 			this.logService.error('[volt agent server] the workbench server failed to start', err);
@@ -174,26 +198,49 @@ export class ServerWorkbench extends Disposable {
 		return true;
 	}
 
+	/** Closes the workbench connections of devices that are no longer paired or whose token expired. */
+	closeInactive(isActive: (deviceId: string) => boolean): number {
+		let closed = 0;
+		for (const [socket, deviceId] of this.sockets) {
+			if (!isActive(deviceId)) {
+				this.sockets.delete(socket);
+				socket.destroy();
+				closed++;
+			}
+		}
+		return closed;
+	}
+
 	/** Whether the request carries a paired device's session cookie (the sign-in page sends it on). */
 	signedIn(req: http.IncomingMessage): boolean {
-		return !!this.signedInToken(req);
+		return !!this.signedInAuth(req);
 	}
 
 	/** The paired device's token from the session cookie, while that device is still paired. */
 	private signedInToken(req: http.IncomingMessage): string | undefined {
+		return this.signedInAuth(req)?.token;
+	}
+
+	private signedInAuth(req: http.IncomingMessage): { readonly token: string; readonly auth: IAgentServerAuth } | undefined {
 		const token = readCookie(req, SESSION_COOKIE);
-		return token && this.options.authorize(token) ? token : undefined;
+		const auth = token ? this.options.authorize(token) : undefined;
+		return token && auth ? { token, auth } : undefined;
 	}
 
 	private async handleSession(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-		const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
+		const secure = isSecure(req) ? '; Secure' : '';
+		// Signing in or out changes state: only this server's own page may do it (an Origin is required).
+		if (!sameOrigin(req)) {
+			res.writeHead(403, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'forbidden' }));
+			return;
+		}
 		if (req.method === 'DELETE') {
 			// The connection token cookies older builds set (the page gets its token from its configuration).
 			const tokenCookies = ['/', WORKBENCH_BASE_PATH].map(path => `${CONNECTION_TOKEN_COOKIE}=; Path=${path}; SameSite=Lax; Max-Age=0${secure}`);
 			res.writeHead(204, { 'Set-Cookie': [`${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`, ...tokenCookies] }).end();
 			return;
 		}
-		if (req.method !== 'POST' || !sameOrigin(req)) {
+		if (req.method !== 'POST') {
 			res.writeHead(405, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'method_not_allowed' }));
 			return;
 		}
@@ -210,7 +257,7 @@ export class ServerWorkbench extends Disposable {
 		res.writeHead(200, {
 			'Content-Type': 'application/json',
 			'Cache-Control': 'no-store',
-			'Set-Cookie': `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}${secure}`,
+			'Set-Cookie': sessionCookie(req, token),
 		}).end(JSON.stringify({ path: `${WORKBENCH_BASE_PATH}/` }));
 		// Warm the server while the browser follows the link.
 		void this.ensureServer().catch(() => undefined);
@@ -481,11 +528,24 @@ function withCookie(header: string | undefined, name: string, value: string): st
 	return [...others, `${name}=${value}`].join('; ');
 }
 
-/** Requests from another site's page (which would carry the cookies) are refused. */
+/** Over TLS here (the network listener), or behind a tunnel that terminates HTTPS. */
+function isSecure(req: http.IncomingMessage): boolean {
+	return !!(req.socket as Socket & { encrypted?: boolean }).encrypted || req.headers['x-forwarded-proto'] === 'https';
+}
+
+function sessionCookie(req: http.IncomingMessage, token: string): string {
+	return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}${isSecure(req) ? '; Secure' : ''}`;
+}
+
+/**
+ * Requests from another site's page (which would carry the cookies) are refused, and so are
+ * requests with no Origin at all: browsers always send one on these routes, other programs don't,
+ * and a missing Origin is never taken for this server's own page.
+ */
 function sameOrigin(req: http.IncomingMessage): boolean {
 	const origin = req.headers.origin;
 	if (!origin) {
-		return true;
+		return false;
 	}
 	try {
 		return new URL(origin).host === req.headers.host;

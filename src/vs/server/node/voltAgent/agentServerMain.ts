@@ -5,9 +5,10 @@
 
 import { randomBytes } from 'crypto';
 import { promises as fs } from 'fs';
-import * as http from 'http';
+import type * as http from 'http';
 import * as zlib from 'zlib';
-import type { AddressInfo, Socket } from 'net';
+import type { Socket } from 'net';
+import { hostname } from 'os';
 import minimist from 'minimist';
 import { Emitter } from '../../../base/common/event.js';
 import { DisposableStore, toDisposable } from '../../../base/common/lifecycle.js';
@@ -49,11 +50,13 @@ import { ISecretStorageService } from '../../../platform/secrets/common/secrets.
 import { getResolvedShellEnv } from '../../../platform/shell/node/shellEnv.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../platform/workspace/common/workspace.js';
-import { AGENT_SERVER_RESTART_EXIT_CODE, AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo, IVoltSshTunnelOptions, VOLT_PAIRING_CODE_PATH } from '../../../platform/voltAgentServer/common/protocol.js';
-import { AgentServerProtocol, IClientCallOptions, tokensEqual } from '../../../platform/voltAgentServer/common/protocolServer.js';
+import { AGENT_SERVER_RESTART_EXIT_CODE, AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo, IVoltSshTunnelOptions, VOLT_LOCAL_LINK_PATH, VOLT_PAIRING_CODE_PATH } from '../../../platform/voltAgentServer/common/protocol.js';
+import { AgentServerProtocol, IClientCallOptions } from '../../../platform/voltAgentServer/common/protocolServer.js';
 import { SessionTopicData } from '../../../platform/voltAgentServer/common/sessionPatch.js';
 import { agentServerPaths, clearAgentServerRuntime, ensureAgentServerToken, isProcessAlive, preferredAgentServerPort, writeAgentServerRuntime } from '../../../platform/voltAgentServer/node/agentServerFiles.js';
 import { acceptWebSocket } from '../../../platform/voltAgentServer/node/webSocket.js';
+import { bearerToken, createListenerServer, createTlsListenerServer, hostAllowed, IHostRule, ListenerAuth, listenPreferred, loopbackHostNames, secretsEqual } from '../../../platform/voltListeners/node/listenerAuth.js';
+import { loadOrCreateListenerIdentity } from '../../../platform/voltListeners/node/listenerTls.js';
 import { IVoltGitService } from '../../../platform/voltGit/common/voltGit.js';
 import { VoltGitService } from '../../../platform/voltGit/node/voltGitService.js';
 import { IVoltCodeIndexService } from '../../../platform/voltCodeIndex/common/voltCodeIndex.js';
@@ -265,7 +268,8 @@ export async function main(argv: string[]): Promise<void> {
 	const collections = createCollections(delta => sendDelta.fire(delta));
 	const protocol = disposables.add(new AgentServerProtocol({
 		token,
-		authorize: deviceToken => pairing.authorize(deviceToken),
+		// The socket is the agent: a usage-only token (another computer's Usage page) can't open it.
+		authorize: deviceToken => pairing.authorize(deviceToken, 'agent'),
 		epoch,
 		serverVersion: SERVER_VERSION,
 		pid: process.pid,
@@ -473,7 +477,8 @@ export async function main(argv: string[]): Promise<void> {
 		serverDir: paths.dir,
 		label: machineLabel(),
 		environmentId: () => pairing.environmentId,
-		authorize: deviceToken => pairing.authorize(deviceToken),
+		authorize: deviceToken => pairing.authorize(deviceToken, 'agent'),
+		refresh: deviceToken => pairing.refresh(deviceToken),
 		resolveEnv,
 		git: instantiationService.invokeFunction(accessor => accessor.get(IVoltGitService)),
 		codeIndex,
@@ -484,7 +489,17 @@ export async function main(argv: string[]): Promise<void> {
 	httpContext = { ...httpContext, workbench: workbench.available };
 	// Pages, diagrams and formulas for the phone and browser apps, and KaTeX's files for them.
 	const render = disposables.add(new ServerRender(protocol, history, logService));
-	const onUpgrade = (req: http.IncomingMessage, socket: Socket) => {
+	// The names each listener answers to. Any other Host (a DNS-rebound name pointing a web page at
+	// this port) is refused before a route runs; the routes still authenticate every request.
+	let tunnelPort = 0;
+	const loopbackHosts = (): IHostRule => ({ names: loopbackHostNames(httpContext.port) });
+	const networkHosts = (): IHostRule => ({ names: [...loopbackHostNames(httpContext.tls?.port ?? 0), ...machineHostNames()], anyIpLiteral: true, suffixes: ['.ts.net'] });
+	const tunnelHosts = (): IHostRule => ({ names: [...loopbackHostNames(tunnelPort), ...tunnels.urls().map(tunnel => hostOf(tunnel.url)).filter((host): host is string => !!host)] });
+	const onUpgrade = (hosts: () => IHostRule) => (req: http.IncomingMessage, socket: Socket) => {
+		if (!hostAllowed(req.headers.host, hosts())) {
+			ListenerAuth.rejectUpgrade(socket, { ok: false, status: 403, error: 'host_not_allowed' });
+			return;
+		}
 		const url = new URL(req.url ?? '/', 'http://localhost');
 		if (url.pathname !== '/ws' && workbench.handleUpgrade(req, socket)) {
 			return;
@@ -498,8 +513,15 @@ export async function main(argv: string[]): Promise<void> {
 			protocol.accept(ws);
 		}
 	};
-	const server = http.createServer((req, res) => void serveHttp(req, res, token, epoch, pairing, workbench, render, httpContext, usage, logService));
-	server.on('upgrade', onUpgrade);
+	const serve = (context: () => IPairingHttpContext, hosts: () => IHostRule) => (req: http.IncomingMessage, res: http.ServerResponse) => {
+		if (!hostAllowed(req.headers.host, hosts())) {
+			ListenerAuth.reject(res, { ok: false, status: 403, error: 'host_not_allowed' });
+			return;
+		}
+		void serveHttp(req, res, token, epoch, pairing, workbench, render, context(), usage, logService);
+	};
+	const server = createListenerServer(serve(() => httpContext, loopbackHosts));
+	server.on('upgrade', onUpgrade(loopbackHosts));
 	// Cloudflare and SSH tunnels forward to a second listener on loopback, opened with the first
 	// tunnel: the same routes, but its requests never count as this computer's own browser.
 	let tunnelListener: Promise<number> | undefined;
@@ -507,15 +529,15 @@ export async function main(argv: string[]): Promise<void> {
 		dir: paths.dir,
 		environmentId: () => pairing.environmentId,
 		resolveEnv,
-		port: () => httpContext.port,
+		port: () => httpContext.tls?.port ?? httpContext.port,
 		network: httpContext.network,
 		childLedger,
 		logService,
 		listen: () => tunnelListener ??= (async () => {
-			const tunnelServer = http.createServer((req, res) => void serveHttp(req, res, token, epoch, pairing, workbench, render, { ...httpContext, viaTunnel: true }, usage, logService));
-			tunnelServer.on('upgrade', onUpgrade);
+			const tunnelServer = createListenerServer(serve(() => ({ ...httpContext, viaTunnel: true }), tunnelHosts));
+			tunnelServer.on('upgrade', onUpgrade(tunnelHosts));
 			disposables.add(toDisposable(() => tunnelServer.close()));
-			const tunnelPort = await listen(tunnelServer, '127.0.0.1', httpContext.port + 1, true);
+			tunnelPort = await listenPreferred(tunnelServer, '127.0.0.1', httpContext.port + 1, true);
 			logService.info(`[volt agent server] tunnels forward to http://127.0.0.1:${tunnelPort}`);
 			return tunnelPort;
 		})().catch(err => {
@@ -552,8 +574,21 @@ export async function main(argv: string[]): Promise<void> {
 			return tunnels.installCloudflared();
 		},
 	}));
-	const port = await listen(server, args.host, args.port ?? preferredAgentServerPort(args.userDataDir), args.port === undefined);
+	// Plain HTTP only on loopback (this computer's windows, browser and tools). With network access
+	// on, devices use a second listener that speaks TLS with this server's own certificate, whose
+	// pin reaches them in the pairing QR (B-24): tokens and cookies never cross the network in clear.
+	const port = await listenPreferred(server, httpContext.network ? '127.0.0.1' : args.host, args.port ?? preferredAgentServerPort(args.userDataDir), args.port === undefined);
 	httpContext = { ...httpContext, port };
+	let tlsPort: number | undefined;
+	if (httpContext.network) {
+		const identity = await loadOrCreateListenerIdentity(join(paths.dir, 'tls'), `Volt on ${machineLabel()}`);
+		const tlsServer = createTlsListenerServer(identity, serve(() => ({ ...httpContext, viaNetwork: true }), networkHosts));
+		tlsServer.on('upgrade', onUpgrade(networkHosts));
+		disposables.add(toDisposable(() => tlsServer.close()));
+		tlsPort = await listenPreferred(tlsServer, args.host, port + 2, true);
+		httpContext = { ...httpContext, tls: { port: tlsPort, fingerprint: identity.fingerprint, fingerprintHex: identity.fingerprintHex } };
+		logService.info(`[volt agent server] devices on the network connect to https://${args.host}:${tlsPort} (certificate SHA-256 ${identity.fingerprintHex})`);
+	}
 	void tunnels.resume().catch(err => logService.warn('[volt agent server] could not start the saved tunnels', err));
 	const info: IAgentServerRuntimeInfo = {
 		version: 1,
@@ -565,9 +600,17 @@ export async function main(argv: string[]): Promise<void> {
 		startedAt: Date.now(),
 		appRoot,
 		...(product.commit ? { commit: product.commit } : {}),
+		...(tlsPort ? { tlsPort } : {}),
 	};
 	await writeAgentServerRuntime(paths, info);
-	logService.info(`[volt agent server] listening on http://${args.host}:${port} (epoch ${epoch})`);
+	logService.info(`[volt agent server] listening on http://${httpContext.network ? '127.0.0.1' : args.host}:${port} (epoch ${epoch})`);
+	// A revoked device, or one whose token expired, is disconnected within 5 s (INV-08): its socket
+	// and the browser workbench's connections opened with its cookie.
+	const sweep = setInterval(() => {
+		protocol.closeWhere(client => !!client.deviceId && !pairing.isActive(client.deviceId), AgentServerCloseCode.Unauthorized, 'device removed or expired');
+		workbench.closeInactive(deviceId => pairing.isActive(deviceId));
+	}, DEVICE_SWEEP_MS);
+	disposables.add(toDisposable(() => clearInterval(sweep)));
 
 	//#endregion
 
@@ -616,29 +659,29 @@ export async function main(argv: string[]): Promise<void> {
 	process.on('unhandledRejection', err => logService.error('[volt agent server] unhandled rejection', err));
 }
 
-/** Listens on `preferred`, or on any free port when it is taken and `fallback` allows. */
-function listen(server: http.Server, host: string, preferred: number, fallback: boolean): Promise<number> {
-	return new Promise((resolve, reject) => {
-		const onError = (err: NodeJS.ErrnoException) => {
-			if (fallback && err.code === 'EADDRINUSE') {
-				server.removeListener('error', onError);
-				server.listen(0, host, () => resolve((server.address() as AddressInfo).port));
-				server.once('error', reject);
-				return;
-			}
-			reject(err);
-		};
-		server.on('error', onError);
-		server.listen(preferred, host, () => {
-			server.removeListener('error', onError);
-			resolve((server.address() as AddressInfo).port);
-		});
-	});
+/** How often connections of revoked or expired devices are looked for (INV-08 allows 5 s). */
+const DEVICE_SWEEP_MS = 2_000;
+
+/** This computer's own names a device on the network may use (`Leuls-MacBook-Pro.local`). */
+function machineHostNames(): string[] {
+	const name = hostname().toLowerCase();
+	const bare = name.replace(/\.(local|lan|home)$/, '');
+	return [...new Set([name, bare, `${bare}.local`])];
+}
+
+/** `host:port` of a URL as a browser sends it in `Host` (the port only when not the scheme's default). */
+function hostOf(url: string): string | undefined {
+	try {
+		return new URL(url).host.toLowerCase();
+	} catch {
+		return undefined;
+	}
 }
 
 /**
- * The socket accepts the desktop renderer, the browser workbench served here, the phone app, and Node clients (no Origin).
- * Every connection still has to present the token; this only stops other web pages from trying.
+ * The socket accepts the desktop renderer, the browser workbench served here, the phone app, and
+ * Node clients (no Origin). An Origin authenticates nothing: every connection still has to present
+ * a token in its hello. This only stops other web pages from trying.
  */
 function originAllowed(origin: string | undefined, host: string | undefined): boolean {
 	if (!origin) {
@@ -724,7 +767,7 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, to
 		return;
 	}
 	if (req.url?.startsWith(MACHINE_USAGE_PATH)) {
-		await serveUsage(req, res, bearer => tokensEqual(bearer, token) || !!pairing.authorize(bearer), usage, logService);
+		await serveUsage(req, res, bearer => secretsEqual(bearer, token) || !!pairing.authorize(bearer, 'usage'), usage, logService);
 		return;
 	}
 	if (await workbench.handleHttp(req, res)) {
@@ -736,20 +779,21 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, to
 	const url = new URL(req.url ?? '/', 'http://localhost');
 	if (url.pathname === '/health') {
 		// Answers only with the token, so a stray process on the port can't pass for the server.
-		const ok = req.headers.authorization === `Bearer ${token}`;
+		const ok = secretsEqual(bearerToken(req), token);
 		res.writeHead(ok ? 200 : 401, { 'Content-Type': 'application/json' });
 		res.end(JSON.stringify(ok ? { ok: true, pid: process.pid, epoch } : { ok: false }));
 		return;
 	}
-	if (url.pathname === VOLT_PAIRING_CODE_PATH) {
-		// Tools on this computer (`npx volt-run pair`) make pairing codes with the server's own token; Volt's windows ask over the socket.
-		const header = req.headers.authorization ?? '';
+	if (url.pathname === VOLT_PAIRING_CODE_PATH || url.pathname === VOLT_LOCAL_LINK_PATH) {
+		// Tools on this computer (`npx volt-run pair`) make pairing codes with the server's own
+		// token, and the desktop app makes the one-time nonce of the local web page it opens; Volt's
+		// windows ask for codes over the socket. Never through a tunnel or the network listener.
 		if (req.method !== 'POST') {
 			sendJson(res, 405, { error: 'method_not_allowed' });
-		} else if (ctx.viaTunnel || !header.startsWith('Bearer ') || !tokensEqual(header.slice('Bearer '.length), token)) {
+		} else if (ctx.viaTunnel || ctx.viaNetwork || !isLoopbackAddress(req.socket.remoteAddress) || !secretsEqual(bearerToken(req), token)) {
 			sendJson(res, 401, { error: 'unauthorized' });
 		} else {
-			sendJson(res, 200, pairing.createCode(ctx));
+			sendJson(res, 200, url.pathname === VOLT_LOCAL_LINK_PATH ? pairing.createLocalNonce() : pairing.createCode(ctx));
 		}
 		return;
 	}
@@ -771,8 +815,8 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
  * need the server's token or a paired device's, like the socket.
  */
 async function serveUsage(req: http.IncomingMessage, res: http.ServerResponse, authorized: (bearer: string) => boolean, usage: VoltUsageService, logService: ILogService): Promise<void> {
-	const header = req.headers.authorization ?? '';
-	if (!header.startsWith('Bearer ') || !authorized(header.slice('Bearer '.length))) {
+	const bearer = bearerToken(req);
+	if (!bearer || !authorized(bearer)) {
 		sendJson(res, 401, { error: 'unauthorized' });
 		return;
 	}
