@@ -19,7 +19,7 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { INotificationService, IPromptChoice } from '../../../../../platform/notification/common/notification.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { asText, IRequestService } from '../../../../../platform/request/common/request.js';
-import { IVoltExecFileResult, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltExecFileResult, IVoltStdioService, runGitThrough } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IVoltPrRepo, IVoltPullRequestService, voltPrErrorCode, voltPrErrorMessage } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { isTurnOfRun } from '../../../../services/voltRuntime/common/automations/automations.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
@@ -802,7 +802,15 @@ export class WorkflowExecutors extends Disposable {
 	}
 
 	private async git(ctx: IWorkflowNodeContext, args: readonly string[], timeoutMs = GIT_TIMEOUT_MS): Promise<IVoltExecFileResult> {
-		const result = await this.execFile(ctx, 'git', args, this.requireFolder().fsPath, timeoutMs);
+		// HostGit (B-03): the repository's fsmonitor, hooks and `ext::` remotes never run for a workflow step.
+		const id = `wf-git-${generateUuid()}`;
+		const cancel = ctx.token.onCancellationRequested(() => void this.stdio.cancelExec(id).catch(() => undefined));
+		let result: IVoltExecFileResult;
+		try {
+			result = await raceCancellationError(runGitThrough(this.stdio, { id, cwd: this.requireFolder().fsPath, args, env: { GIT_TERMINAL_PROMPT: '0' }, timeoutMs }), ctx.token);
+		} finally {
+			cancel.dispose();
+		}
 		// Debug only: a non-zero exit is often the answer (`diff --quiet`); real failures throw with git's message.
 		ctx.log('debug', `git ${args.map(arg => arg.length > 80 ? `${arg.slice(0, 80)}…` : arg).join(' ')} → ${result.exitCode ?? result.error ?? '?'}`);
 		return result;

@@ -3,12 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { execFile } from 'child_process';
 import { createHash } from 'crypto';
 import { Dirent, promises as fs } from 'fs';
 import { basename, dirname, isAbsolute, join, normalize, resolve } from '../../../base/common/path.js';
 import { ILogService } from '../../log/common/log.js';
-import { withWorkingGitOnPath } from '../../voltGit/node/gitExecutable.js';
+import { runHostGit } from '../../voltGit/node/hostGit.js';
 import {
 	IVoltProjectStorageRequest,
 	IVoltStorageCleanResult,
@@ -531,12 +530,9 @@ export class VoltStorageService implements IVoltStorageService {
 	//#endregion
 
 	private async git(cwd: string, args: readonly string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-		const env = await withWorkingGitOnPath(await this.getEnv().catch(() => process.env));
-		return new Promise(resolvePromise => {
-			execFile('git', [...args], { cwd, env: { ...env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }, timeout: GIT_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
-				const code = err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : 1) : 0;
-				resolvePromise({ code, stdout: String(stdout), stderr: String(stderr) });
-			});
-		});
+		// HostGit: the repository's fsmonitor and hooks never run for a storage scan (B-03).
+		const env = await this.getEnv().catch(() => process.env);
+		const result = await runHostGit({ cwd, args, env: { GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }, timeoutMs: GIT_TIMEOUT_MS, maxBytes: 4 * 1024 * 1024 }, { baseEnv: env });
+		return { code: result.exitCode ?? 1, stdout: result.stdout, stderr: result.stderr || result.error || '' };
 	}
 }

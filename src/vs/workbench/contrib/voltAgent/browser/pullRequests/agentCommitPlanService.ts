@@ -34,6 +34,9 @@ import {
 import { AGENT_COMMIT_ATTRIBUTION_SETTING, withCommitAttribution } from '../../common/agentGitSettings.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
 import { followWorktreeBranch } from './agentWorktreeBranch.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { reviewBuildEntries } from '../review/buildEntryReview.js';
 
 export const IAgentCommitPlanService = createDecorator<IAgentCommitPlanService>('agentCommitPlanService');
 
@@ -133,6 +136,8 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 		@ILogService private readonly logService: ILogService,
 		@IVoltGitService private readonly git: IVoltGitService,
 		@IVoltHostToolService hostTools: IVoltHostToolService,
+		@IDialogService private readonly dialogService: IDialogService,
+		@IVoltStdioService private readonly stdio: IVoltStdioService,
 	) {
 		super();
 		this._register(hostTools.registerToolProvider({
@@ -293,6 +298,12 @@ export class AgentCommitPlanService extends Disposable implements IAgentCommitPl
 		plan.error = undefined;
 		plan.hookFailed = undefined;
 		plan.notice = undefined;
+		// The user's commit runs their git hooks: hooks or config an agent changed are shown first (I.6).
+		if (!options?.skipHooks && !await reviewBuildEntries(this.dialogService, this.stdio, [plan.root], 'commit')) {
+			plan.error = localize('voltCommitPlan.reviewDeclined', "Not committed: the git hooks or config changed while an agent worked here were not trusted.");
+			this._onDidChange.fire(plan.sessionId);
+			return;
+		}
 		const attribute = this.configurationService.getValue<boolean>(AGENT_COMMIT_ATTRIBUTION_SETTING) !== false;
 		try {
 			for (const [index, commit] of todo.entries()) {

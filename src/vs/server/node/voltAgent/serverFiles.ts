@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { execFile, spawn } from 'child_process';
+import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { rgPath } from '@vscode/ripgrep';
@@ -11,6 +11,7 @@ import { Disposable } from '../../../base/common/lifecycle.js';
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from '../../../base/common/path.js';
 import { ILogService } from '../../../platform/log/common/log.js';
 import { AgentServerProtocol } from '../../../platform/voltAgentServer/common/protocolServer.js';
+import { runHostGit } from '../../../platform/voltGit/node/hostGit.js';
 
 /** A folder paired clients may browse: a project, or a chat's worktree. */
 export interface IServerFileRoot {
@@ -81,10 +82,13 @@ function fail(code: string, message: string): never {
 /** ripgrep inside the packaged app lives outside the asar archive. */
 const rgDiskPath = rgPath.replace(/\bnode_modules\.asar\b/, 'node_modules.asar.unpacked');
 
-function run(cmd: string, args: readonly string[], cwd: string, maxBuffer = 48 * 1024 * 1024): Promise<string> {
-	return new Promise((resolve, reject) => {
-		execFile(cmd, args as string[], { cwd, maxBuffer, timeout: 20_000, windowsHide: true, encoding: 'utf8' }, (err, stdout, stderr) => err ? reject(Object.assign(err, { stdout, stderr })) : resolve(stdout));
-	});
+/** git through HostGit (B-03): no fsmonitor, hook or `ext::` remote of the repository runs. Rejects like `run`. */
+async function hostGit(args: readonly string[], cwd: string, options: { readonly hooks?: 'user' } = {}): Promise<string> {
+	const result = await runHostGit({ cwd, args, timeoutMs: 20_000, maxBytes: 48 * 1024 * 1024, ...options });
+	if (result.exitCode !== 0) {
+		throw Object.assign(new Error(result.error ?? `git ${args[0]} failed: ${result.stderr.trim()}`), { stdout: result.stdout, stderr: result.stderr });
+	}
+	return result.stdout;
 }
 
 /**
@@ -311,7 +315,7 @@ export class ServerFiles extends Disposable {
 
 	private async buildIndex(dir: string): Promise<{ files: string[]; truncated: boolean }> {
 		try {
-			const out = await run('git', ['ls-files', '-co', '--exclude-standard', '-z'], dir);
+			const out = await hostGit(['ls-files', '-co', '--exclude-standard', '-z'], dir);
 			const files = out.split('\0').filter(Boolean);
 			return { files: files.slice(0, MAX_INDEX), truncated: files.length > MAX_INDEX };
 		} catch {
@@ -423,14 +427,14 @@ export class ServerFiles extends Disposable {
 		const dir = await this.allowed(root);
 		let repoRoot: string;
 		try {
-			repoRoot = (await run('git', ['rev-parse', '--show-toplevel'], dir)).trim();
+			repoRoot = (await hostGit(['rev-parse', '--show-toplevel'], dir)).trim();
 		} catch {
 			return { changes: [] };
 		}
 		const [status, branch, numstat] = await Promise.all([
-			run('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], repoRoot),
-			run('git', ['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot).then(s => s.trim()).catch(() => undefined),
-			run('git', ['diff', 'HEAD', '--numstat', '-z'], repoRoot).catch(() => ''),
+			hostGit(['status', '--porcelain=v1', '-z', '--untracked-files=all'], repoRoot),
+			hostGit(['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot).then(s => s.trim()).catch(() => undefined),
+			hostGit(['diff', 'HEAD', '--numstat', '-z'], repoRoot).catch(() => ''),
 		]);
 		const counts = parseNumstat(numstat);
 		const changes: IServerGitChange[] = [];
@@ -468,9 +472,9 @@ export class ServerFiles extends Disposable {
 			fail('BadRef', 'That is not a git revision.');
 		}
 		try {
-			const repoRoot = (await run('git', ['rev-parse', '--show-toplevel'], dirname(file))).trim();
+			const repoRoot = (await hostGit(['rev-parse', '--show-toplevel'], dirname(file))).trim();
 			const rel = relative(repoRoot, file).split(sep).join('/');
-			return { text: await run('git', ['show', `${ref}:${rel}`], repoRoot), exists: true };
+			return { text: await hostGit(['show', `${ref}:${rel}`], repoRoot), exists: true };
 		} catch {
 			return { text: '', exists: false };
 		}
@@ -482,7 +486,7 @@ export class ServerFiles extends Disposable {
 			return { text: '', exists: false };
 		}
 		try {
-			return { text: await run('git', ['cat-file', '-p', sha], dir), exists: true };
+			return { text: await hostGit(['cat-file', '-p', sha], dir), exists: true };
 		} catch {
 			return { text: '', exists: false };
 		}
@@ -496,18 +500,19 @@ export class ServerFiles extends Disposable {
 		}
 		let repoRoot: string;
 		try {
-			repoRoot = (await run('git', ['rev-parse', '--show-toplevel'], dir)).trim();
+			repoRoot = (await hostGit(['rev-parse', '--show-toplevel'], dir)).trim();
 		} catch {
 			return fail('NotARepository', 'This folder is not a git repository.');
 		}
-		await run('git', ['add', '-A'], repoRoot);
+		await hostGit(['add', '-A'], repoRoot);
 		try {
-			await run('git', ['commit', '-m', message.trim()], repoRoot);
+			// The remote user's own commit: their hooks run, once the build-entry guard has nothing unreviewed.
+			await hostGit(['commit', '-m', message.trim()], repoRoot, { hooks: 'user' });
 		} catch (err) {
 			const detail = (err as { stderr?: string; stdout?: string }).stdout || (err as { stderr?: string }).stderr || '';
 			return fail('CommitFailed', detail.trim().split('\n').slice(-3).join(' ') || 'git commit failed.');
 		}
-		return { commit: (await run('git', ['rev-parse', '--short', 'HEAD'], repoRoot)).trim() };
+		return { commit: (await hostGit(['rev-parse', '--short', 'HEAD'], repoRoot)).trim() };
 	}
 
 	//#endregion

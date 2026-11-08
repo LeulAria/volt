@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IChannel, ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
+import { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../../../platform/voltGit/common/hostGit.js';
 import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { projectRunEnv } from './projectRunEnv.js';
 
@@ -50,6 +51,10 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	sandboxSupport(): Promise<IVoltSandboxSupportInfo> { return this.inner.sandboxSupport!(); }
 	allowSandboxDomains(id: string, domains: readonly string[]): Promise<void> { return this.inner.allowSandboxDomains!(id, domains); }
 	sandboxAllows(id: string, path: string, access: 'read' | 'write'): Promise<boolean> { return this.inner.sandboxAllows!(id, path, access); }
+	/** Git runs with the user's environment only: HostGit drops anything that would redirect it. */
+	git(request: IHostGitRequest): Promise<IHostGitResult> { return this.inner.git!(request); }
+	buildEntryChanges(root: string): Promise<readonly IBuildEntryChange[]> { return this.inner.buildEntryChanges!(root); }
+	acceptBuildEntries(root: string, paths?: readonly string[]): Promise<void> { return this.inner.acceptBuildEntries!(root, paths); }
 }
 
 function isStdioService(source: IChannel | IVoltStdioService): source is IVoltStdioService {

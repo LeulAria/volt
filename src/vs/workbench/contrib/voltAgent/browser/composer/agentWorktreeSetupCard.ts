@@ -10,6 +10,9 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { reviewBuildEntries } from '../review/buildEntryReview.js';
 import { IAgentWorktreeSetupService, IWorktreeSetupStatus, IWorktreeSetupStepStatus } from '../../../../services/voltRuntime/common/git/worktreeSetupPlan.js';
 import { formatElapsed } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
@@ -42,6 +45,8 @@ export class AgentWorktreeSetupCard extends Disposable {
 	constructor(
 		private readonly delegate: IAgentWorktreeSetupCardDelegate,
 		@IAgentWorktreeSetupService private readonly setup: IAgentWorktreeSetupService,
+		@IDialogService private readonly dialogs: IDialogService,
+		@IVoltStdioService private readonly stdio: IVoltStdioService,
 	) {
 		super();
 		this.element = $('.volt-worktree-setup.hidden');
@@ -126,6 +131,17 @@ export class AgentWorktreeSetupCard extends Disposable {
 		const actions = append(head, $('.volt-worktree-setup-actions'));
 		if (status.phase === 'running') {
 			this.button(actions, localize('voltWorktreeSetup.cancel', "Cancel"), () => void this.setup.cancel(status.chatId));
+		} else if (status.review?.length && status.reviewRoots?.length) {
+			// I.6: what the agent changed in files setup runs is shown before any of it runs.
+			const roots = status.reviewRoots;
+			const review = status.review;
+			this.button(actions, localize('voltWorktreeSetup.review', "Review Changes"), () => {
+				void reviewBuildEntries(this.dialogs, this.stdio, roots, 'setup', review).then(trusted => {
+					if (trusted) {
+						this.delegate.onRetry(status.chatId);
+					}
+				});
+			}, true);
 		} else if (status.phase === 'failed' || status.phase === 'cancelled') {
 			this.button(actions, localize('voltWorktreeSetup.retry', "Retry"), () => this.delegate.onRetry(status.chatId), true);
 		}

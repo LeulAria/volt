@@ -22,7 +22,7 @@ export const CREDENTIAL_HOME_PATHS: readonly string[] = [
 	'.netrc', '.npmrc', '.yarnrc.yml', '.pypirc', '.gem/credentials', '.cargo/credentials', '.cargo/credentials.toml',
 	'.git-credentials', '.config/git/credentials', '.config/gh', '.config/hub', '.config/op', '.config/configstore',
 	'.terraform.d/credentials.tfrc.json', '.vault-token', '.password-store', '.local/share/keyrings',
-	'.volt/accounts', 'Library/Keychains', 'Library/Cookies',
+	'.volt/accounts', '.volt/trust', 'Library/Keychains', 'Library/Cookies',
 	// Browser profiles: cookies and saved passwords.
 	'Library/Application Support/Google/Chrome', 'Library/Application Support/Chromium', 'Library/Application Support/BraveSoftware',
 	'Library/Application Support/Microsoft Edge', 'Library/Application Support/Arc', 'Library/Application Support/Firefox', 'Library/Safari',

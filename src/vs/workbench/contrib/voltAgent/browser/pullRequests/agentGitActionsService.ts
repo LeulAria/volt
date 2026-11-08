@@ -46,6 +46,8 @@ import { IAgentCommitPlanService } from './agentCommitPlanService.js';
 import { followWorktreeBranch } from './agentWorktreeBranch.js';
 import { openPullRequest } from './agentPullRequestUi.js';
 import { showAgentGitCommitDialog } from './agentGitCommitDialog.js';
+import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { reviewBuildEntries } from '../review/buildEntryReview.js';
 import { resolveRunModelRef } from '../../../../services/voltRuntime/common/models/modelAccess.js';
 
 export const IAgentGitActionsService = createDecorator<IAgentGitActionsService>('agentGitActionsService');
@@ -131,6 +133,7 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IAgentCommitPlanService private readonly commitPlans: IAgentCommitPlanService,
+		@IVoltStdioService private readonly stdio: IVoltStdioService,
 	) {
 		super();
 		// A pull request linked or created elsewhere changes what the quick action offers.
@@ -474,6 +477,10 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 		}
 
 		const includesCommit = actionIncludesCommit(action, status);
+		// The user's commit and push run their git hooks: hooks or config an agent changed are shown first (I.6).
+		if ((includesCommit || actionIncludesPush(action)) && !await reviewBuildEntries(this.dialogService, this.stdio, [status.root], includesCommit ? 'commit' : 'push')) {
+			return undefined;
+		}
 		const result: { -readonly [K in keyof IAgentGitActionResult]: IAgentGitActionResult[K] } = {};
 		try {
 			let message = options.message?.trim();
@@ -508,7 +515,7 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 			if (actionIncludesPush(action)) {
 				const branch = result.branchCreated ?? status.branch;
 				this.setProgress(folder, status.remote ? localize('voltGit.stage.pushTo', "Pushing to {0}…", `${status.remote}/${branch}`) : localize('voltGit.stage.push', "Pushing…"));
-				const pushed = await this.pullRequests.api.push({ folder });
+				const pushed = await this.pullRequests.api.push({ folder, runHooks: true });
 				result.pushed = { branch: pushed.branch, remote: pushed.remote };
 				if (sessionId) {
 					this.pullRequests.didPush(sessionId);

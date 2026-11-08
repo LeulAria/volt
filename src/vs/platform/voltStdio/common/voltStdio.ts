@@ -5,6 +5,7 @@
 
 import { Event } from '../../../base/common/event.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
+import type { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../voltGit/common/hostGit.js';
 import type { ISandboxDenial } from '../../voltSandbox/common/sandboxDenials.js';
 import type { IVoltSandboxRequest } from '../../voltSandbox/common/sandboxPolicy.js';
 
@@ -152,4 +153,27 @@ export interface IVoltStdioService {
 	 * spawn is not sandboxed.
 	 */
 	sandboxAllows?(id: string, path: string, access: 'read' | 'write'): Promise<boolean>;
+	/**
+	 * Runs git through HostGit (`platform/voltGit/common/hostGit.ts`): the only way Volt's own code
+	 * runs git. No repository fsmonitor, hook or `ext::` remote runs, and a redirected repository
+	 * (a planted `commondir`) is refused. Cancel with `cancelExec(request.id)`.
+	 */
+	git?(request: IHostGitRequest): Promise<IHostGitResult>;
+	/** Execution-bearing files in `root` that changed since a sandboxed writer started there (I.6). */
+	buildEntryChanges?(root: string): Promise<readonly IBuildEntryChange[]>;
+	/** The user reviewed the changes in `root` (all, or `paths`): they become the baseline. */
+	acceptBuildEntries?(root: string, paths?: readonly string[]): Promise<void>;
+}
+
+/** HostGit through the stdio service; a service without it (a test double, a null host) refuses. */
+export async function runGitThrough(stdio: IVoltStdioService, request: IHostGitRequest): Promise<IHostGitResult> {
+	if (!stdio.git) {
+		return { exitCode: null, stdout: '', stderr: 'git is not available here', error: 'git is not available here', refused: true };
+	}
+	try {
+		return await stdio.git(request);
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return { exitCode: null, stdout: '', stderr: message, error: message };
+	}
 }
