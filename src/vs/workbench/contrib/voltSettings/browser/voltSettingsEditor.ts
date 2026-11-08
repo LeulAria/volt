@@ -64,7 +64,9 @@ import { CustomizeVoltPage } from './customizeVoltPage.js';
 import { CanvasScratchPage } from './canvasScratchPage.js';
 import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
-import { SandboxWorkloadsSection } from '../../voltSecurity/browser/sandboxWorkloadsSection.js';
+import { ISandboxWorkloadsKit, SandboxWorkloadsSection } from '../../voltSecurity/browser/sandboxWorkloadsSection.js';
+import { AccessPageSection } from '../../voltSecurity/browser/accessPage.js';
+import { PermissionsSummarySection } from '../../voltSecurity/browser/permissionsSummary.js';
 import { IDevicesPage, IDevicesPageHost, IVoltRemoteDevicesModule, REMOTE_DEVICES_FEATURE_ID, VoltConnectionKind } from '../../voltRemoteDevices/common/voltRemoteDevices.js';
 import { createSettingsIcon } from './settingsIcons.js';
 import { USAGE_FEATURE_ID, USAGE_SECTION_ID } from '../../voltUsage/common/voltUsage.js';
@@ -91,7 +93,7 @@ import { SettingsThemeList } from './settingsThemeList.js';
 type TabToggle = 'enabled' | 'partialAccepts' | 'inComments' | 'whitespaceOnly' | 'autoImport' | 'autoImportPython';
 
 /** Volt's own pages, then every registered setting by category (`cat:`), Extensions included. */
-type SettingsSection = 'general' | 'appearance' | 'customizeVolt' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'connected' | 'devices' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
+type SettingsSection = 'general' | 'appearance' | 'customizeVolt' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'access' | 'connected' | 'devices' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
 type CatalogSection = `cat:${string}`;
 
 function isCatalogSection(section: string): section is CatalogSection {
@@ -127,6 +129,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: nu
 	{ id: 'canvas', label: localize('voltSettings.canvasScratch', "Canvas & Scratch"), icon: Codicon.symbolColor, group: 1 },
 	{ id: 'beta', label: localize('voltSettings.betaPage', "Beta"), icon: Codicon.beaker, group: 1 },
 	{ id: 'security', label: localize('voltSettings.security', "Security"), icon: Codicon.shield, group: 2 },
+	{ id: 'access', label: localize('voltSettings.access', "Access"), icon: Codicon.key, group: 2 },
 	{ id: 'connected', label: localize('voltSettings.connectedAgents', "Connected agents"), icon: Codicon.link, group: 2 },
 	{ id: 'devices', label: localize('voltSettings.devices', "Devices"), icon: Codicon.deviceMobile, group: 2 },
 	{ id: 'projects', label: localize('voltSettings.projects', "Projects"), icon: Codicon.repo, group: 2 },
@@ -799,6 +802,9 @@ export class VoltSettingsEditor extends EditorPane {
 				break;
 			case 'security':
 				this.renderSecurity();
+				break;
+			case 'access':
+				this.renderAccess();
 				break;
 			case 'connected': {
 				this.pageHead(
@@ -1716,6 +1722,26 @@ export class VoltSettingsEditor extends EditorPane {
 		);
 	}
 
+	/** Settings, Access (sandbox P4): every subject's permissions, revocable, and the history (contrib/voltSecurity). */
+	private renderAccess(): void {
+		this.pageHead(
+			localize('voltSettings.access', "Access"),
+			localize('voltSettings.accessLead', "What extensions, Volt's built-in features and chats may do beyond their sandbox, and what they did lately."),
+		);
+		this.instantiationService.createInstance(AccessPageSection, this.securityKit('access')).render();
+	}
+
+	/** What the Security and Access sections draw with. */
+	private securityKit(section: SettingsSection): ISandboxWorkloadsKit {
+		return {
+			store: this.renderStore,
+			sectionLabel: label => this.sectionLabel(label),
+			sectionHint: text => void (append(this.target, $('.volt-settings-section-hint')).textContent = text),
+			settingsGroup: () => this.settingsGroup(),
+			isCurrent: () => this.section === section,
+		};
+	}
+
 	private renderSecurity(): void {
 		this.pageHead(
 			localize('voltSettings.security', "Security"),
@@ -1729,13 +1755,9 @@ export class VoltSettingsEditor extends EditorPane {
 		);
 
 		// Every sandboxed process with its attestation, policy and resources (contrib/voltSecurity).
-		this.instantiationService.createInstance(SandboxWorkloadsSection, {
-			store: this.renderStore,
-			sectionLabel: label => this.sectionLabel(label),
-			sectionHint: text => void (append(this.target, $('.volt-settings-section-hint')).textContent = text),
-			settingsGroup: () => this.settingsGroup(),
-			isCurrent: () => this.section === 'security',
-		}).render();
+		this.instantiationService.createInstance(SandboxWorkloadsSection, this.securityKit('security')).render();
+		// What holds permissions and what was denied lately, in one line; the Access page has the rest (P4).
+		this.instantiationService.createInstance(PermissionsSummarySection, this.securityKit('security'), () => this.setSection('access')).render();
 
 		this.sectionLabel(localize('voltSettings.projectRules', "Project rules"));
 		append(this.target, $('.volt-settings-section-hint')).textContent = localize('voltSettings.projectRulesDesc', "Explicit deny rules still win under Full access. Format: action resource effect.");

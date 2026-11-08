@@ -20,7 +20,9 @@ export type TrustRecordOrigin =
 	/** "Allow for This Chat" on a transcript approval card (a trusted click only). */
 	| 'approval-card'
 	/** The install sheet's Allow (its own gesture-armed button). */
-	| 'install-sheet';
+	| 'install-sheet'
+	/** "Let It Ask Again" on the Access page: refusals forgotten, nothing granted. */
+	| 'access-page';
 
 /**
  * The window's side of the grant store (spec P4): a cached copy of `~/.volt/trust/grants.json`

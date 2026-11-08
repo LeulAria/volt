@@ -514,6 +514,10 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 		this.features.setEnablement(new ExtensionIdentifier(extensionId), voltCapabilityFeatureId(capability), false);
 	}
 
+	subjectOf(extensionId: string): SubjectKey {
+		return this.consentStore.subject(extensionId);
+	}
+
 	/** The extension page's copy of a consent, set without mirroring it back into the grant store. */
 	private setPage(extensionId: string, capability: string, granted: boolean): void {
 		this.ensureFeature(capability);
