@@ -116,6 +116,8 @@ import { IQuickInputService } from '../../../../../platform/quickinput/common/qu
 import { IVoltMemoryService, MEMORY_BODY_LIMIT, memoryDescriptionFromReply } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
 import { OPEN_RUN_GROUP_COMMAND_ID } from '../runGroups/agentRunGroupCommands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
+import { IVoltTrustService } from '../../../../services/voltTrust/common/voltTrust.js';
+import { renderSandboxDenialCard } from './sandboxDenialCard.js';
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -5351,19 +5353,28 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (running) {
 			return;
 		}
-		const row = append(tray, $('.volt-agent-run-tray-actions'));
 		const settings = this.runtime.getSandboxSettings(this.sessionKey);
-		if (denial.kind === 'network') {
-			// The network broker says when no "Allow" may be offered: a private or metadata address, or the prompt budget is spent (G.12).
-			if (denial.promptable !== false) {
-				this.appendTrayButton(row, localize('voltAgent.sandbox.allowHost', "Allow {0}", denial.target), localize('voltAgent.sandbox.allowHost.hint', "Let this chat reach {0} through the sandbox", denial.target), 'primary', () => this.retrySandboxed(withAllowedDomain(settings, denial.target)));
-			}
-		} else if (denial.kind === 'write') {
-			const folder = denial.target.slice(0, denial.target.lastIndexOf('/')) || '/';
+		const folder = denial.target.slice(0, denial.target.lastIndexOf('/')) || '/';
+		// The denial card (P4): Skip / Allow for This Chat / Allow by the broker's record, budget-aware; Off only typed.
+		renderSandboxDenialCard(tray, {
+			denial,
+			chatId: this.sessionKey,
+			trust: this.instantiationService.invokeFunction(accessor => accessor.get(IVoltTrustService)),
+			processId: () => this.runtime.sandboxProcessId?.(this.sessionKey),
+			dismiss: () => {
+				message.blockState[`tr:dismiss:${partId}`] = { expanded: true };
+				this.rerenderExchangeOf(message);
+			},
+			retry: () => this.continueTurn(
+				localize('voltAgent.sandbox.retry.prompt', "The sandbox blocked your last step. Its settings have changed; retry that step now."),
+				localize('voltAgent.sandbox.retry.display', "Retry")),
+			// Without the broker's record (the legacy proxy) the host joins the chat's allowed hosts, as before.
+			...(denial.kind === 'network' && !denial.denialId ? { allowHostSetting: () => this.retrySandboxed(withAllowedDomain(settings, denial.target)) } : {}),
 			// The agent picks the path, so the folder is checked before it is granted (home, system, credentials, .git).
-			this.appendTrayButton(row, localize('voltAgent.sandbox.allowFolder', "Allow folder"), localize('voltAgent.sandbox.allowFolder.hint', "Let this chat write in {0}", folder), 'primary', () => void this.allowSandboxFolder(tray, settings, folder));
-		}
-		this.appendTrayButton(row, localize('voltAgent.sandbox.outside', "Run outside sandbox"), localize('voltAgent.sandbox.outside.hint', "Turn the sandbox off for this chat and retry the step"), 'secondary', () => this.retrySandboxed({ ...settings, level: 'off' }));
+			...(denial.kind === 'write' ? { allowFolder: () => void this.allowSandboxFolder(tray, settings, folder) } : {}),
+			runOutside: () => this.retrySandboxed({ ...settings, level: 'off' }),
+			openAccess: () => void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID, 'access'),
+		}, this.threadListeners);
 	}
 
 	private sandboxDetail(denial: ISandboxDenial): string {

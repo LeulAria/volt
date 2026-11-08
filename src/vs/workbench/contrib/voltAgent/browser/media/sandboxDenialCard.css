@@ -1,0 +1,49 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* The sandbox denial card (sandboxDenialCard.ts): why, the fixes, the typed confirmation. */
+.volt-sandbox-denial-why {
+	color: var(--volt-md-fg-tertiary);
+}
+
+.volt-sandbox-denial-actions .monaco-button.volt-gesture-inert {
+	cursor: default;
+}
+
+.volt-sandbox-denial-note {
+	padding-top: 6px;
+}
+
+.volt-sandbox-denial-confirm {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-top: 8px;
+}
+
+.volt-sandbox-denial-confirm-line {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-sandbox-denial-confirm-input {
+	flex: 1;
+	min-width: 0;
+	height: 22px;
+	padding: 0 6px;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-input-border, transparent);
+	border-radius: 6px;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	font: inherit;
+	font-size: 13px;
+}
+
+.volt-sandbox-denial-confirm-input:focus {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
