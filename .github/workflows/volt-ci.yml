@@ -288,19 +288,42 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm ci --ignore-scripts --no-audit --no-fund --prefix build
 
+      # Volt runs only /usr/bin/bwrap, and refuses one that fails its CVE-2026-87766 trial (Ubuntu
+      # 24.04's own 0.9.0 does), so the runner gets the pinned 0.13.1 release built from source, as
+      # the Linux rig does (build/volt-sandbox/Dockerfile.linux-test).
       # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor; bubblewrap needs them.
       # Volt's probe reports this exact setting to users who hit it.
-      - name: Install bubblewrap, socat and prlimit (Linux)
+      - name: Build bubblewrap 0.13.1, install socat and prlimit (Linux)
         if: runner.os == 'Linux'
+        env:
+          BWRAP_VERSION: 0.13.1
+          BWRAP_SHA256: 0e85c8702248b8dd64144f594147553650cdd0e4c951690345faace79c217c4d
         run: |
           set -e
           sudo apt-get update
-          sudo apt-get install -y bubblewrap socat util-linux
+          sudo apt-get install -y --no-install-recommends socat util-linux gcc libc6-dev libcap-dev meson ninja-build pkg-config
+          curl -fsSL -o "$RUNNER_TEMP/bwrap.tar.xz" "https://github.com/containers/bubblewrap/releases/download/v${BWRAP_VERSION}/bubblewrap-${BWRAP_VERSION}.tar.xz"
+          echo "${BWRAP_SHA256}  $RUNNER_TEMP/bwrap.tar.xz" | sha256sum -c -
+          tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/bwrap.tar.xz"
+          cd "$RUNNER_TEMP/bubblewrap-${BWRAP_VERSION}"
+          meson setup _build --prefix=/usr -Dman=disabled -Dselinux=disabled -Dtests=false -Dbash_completion=disabled -Dzsh_completion=disabled
+          ninja -C _build
+          sudo ninja -C _build install
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          bwrap --version
+          /usr/bin/bwrap --version | grep -qx "bubblewrap ${BWRAP_VERSION}"
 
       - name: Transpile src/
         run: npm run gulp transpile-client-esbuild
+
+      # The Seatbelt backend spawns through its helper (TCC disclaim, attestation from outside);
+      # tests run without VSCODE_DEV, so it goes into out/ and the helper manifest as in a package.
+      - name: Build the sandbox helper (macOS)
+        if: runner.os == 'macOS'
+        run: node build/volt/sandbox-helper/build.mjs --force --install out
+
+      # The LIFE-PATH terminal tests start real PTYs; the install above skipped native builds.
+      - name: Build node-pty for Node
+        run: cd node_modules/node-pty && npx --yes node-gyp@11 rebuild
 
       - name: Policy, composition, capability and profile tests
         run: >-
@@ -310,11 +333,19 @@ jobs:
           --run src/vs/platform/voltSandbox/test/common/sandboxInheritance.test.ts
           --run src/vs/platform/voltSandbox/test/common/seccomp.test.ts
           --run src/vs/platform/voltSandbox/test/common/bwrap.test.ts
+          --run src/vs/platform/voltSandbox/test/node/sandboxProxy.test.ts
 
-      - name: Adversarial sandbox suite
+      # Every suite that runs real sandboxes, required here: the generic test jobs only skip them
+      # when their runner's backend cannot run them (no socat, a refused bubblewrap).
+      - name: Adversarial sandbox suites
         env:
           VOLT_SANDBOX_REQUIRED: '1'
-        run: npm run test-node -- --run src/vs/platform/voltSandbox/test/node/sandboxSecurity.test.ts
+        run: >-
+          npm run test-node --
+          --run src/vs/platform/voltSandbox/test/node/sandboxSecurity.test.ts
+          --run src/vs/platform/voltSandbox/test/node/sandboxAttestation.test.ts
+          --run src/vs/platform/voltSandbox/test/node/sandboxPty.test.ts
+          --run src/vs/platform/voltStdio/test/node/voltStdioSandbox.test.ts
 
       # The seccomp filter's syscall numbers must match the kernel headers of the runner's architecture.
       - name: Seccomp syscall numbers against kernel headers (Linux)

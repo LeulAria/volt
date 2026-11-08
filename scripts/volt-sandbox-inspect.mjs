@@ -15,6 +15,8 @@ import { dirname, join, resolve } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+// As bootstrap-esm sets it: the macOS backend finds its helper (.build/volt-helpers) from the app root.
+globalThis._VSCODE_FILE_ROOT = join(root, 'out');
 const load = path => import(pathToFileURL(join(root, 'out', path)).href);
 const { createBackend } = await load('vs/platform/voltSandbox/node/sandboxManager.js');
 const { builtinProfile } = await load('vs/platform/voltSandbox/common/sandboxProfiles.js');

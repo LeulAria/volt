@@ -111,3 +111,20 @@ export function sandboxBrowserProxyConfig(rules: ISandboxBrowserRules, proxyPort
 	const direct = rules.listenPorts.flatMap(port => [`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`]);
 	return { mode: 'fixed_servers', proxyRules, proxyBypassRules: ['<-loopback>', ...direct].join(',') };
 }
+
+/** The user name a chat's browser signs in to its own proxy with; the password is the proxy's route token. */
+export const SANDBOX_BROWSER_PROXY_USER = 'volt';
+
+/**
+ * The answer to a sandboxed chat's browser asking to sign in to a proxy (Chromium's `login` event,
+ * B-31): a session proxy rule cannot carry credentials, so the proxy's 407 is answered with its
+ * route token. Only for the chat's own proxy (127.0.0.1 at its port) and only on the first
+ * attempt: a second ask means the token was refused. Undefined: cancel, never a dialog, never the
+ * token for anything else (another chat's proxy, a site, a proxy elsewhere).
+ */
+export function sandboxBrowserProxyLogin(proxy: { readonly port: number; readonly token?: string } | undefined, authInfo: { readonly isProxy: boolean; readonly host: string; readonly port: number }, firstAttempt: boolean): { readonly username: string; readonly password: string } | undefined {
+	if (!proxy?.token || !authInfo.isProxy || !firstAttempt || authInfo.host !== '127.0.0.1' || authInfo.port !== proxy.port) {
+		return undefined;
+	}
+	return { username: SANDBOX_BROWSER_PROXY_USER, password: proxy.token };
+}

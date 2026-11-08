@@ -17,6 +17,8 @@ import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+// As bootstrap-esm sets it: the macOS backend finds its helper (.build/volt-helpers) from the app root.
+globalThis._VSCODE_FILE_ROOT = join(root, 'out');
 const load = path => import(pathToFileURL(join(root, 'out', path)).href);
 const { SandboxManager } = await load('vs/platform/voltSandbox/node/sandboxManager.js');
 const { builtinProfile } = await load('vs/platform/voltSandbox/common/sandboxProfiles.js');
@@ -28,7 +30,10 @@ const runs = Number(process.argv[process.argv.indexOf('--runs') + 1]) || 30;
 const work = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'volt-sbx-bench-')));
 const ws = join(work, 'ws');
 await fs.mkdir(ws);
-const manager = new SandboxManager(undefined, { runRoot: work });
+// Run folders apart from the workspace: every run's sibling folders are hidden from it (B-35).
+const runRoot = join(work, 'runs');
+await fs.mkdir(runRoot);
+const manager = new SandboxManager(undefined, { runRoot });
 const capabilities = await manager.capabilities();
 if (!capabilities.available) {
 	console.error(`No sandbox backend: ${capabilities.diagnostics.join(' ')}`);
@@ -51,7 +56,7 @@ const direct = (command, args) => new Promise((resolve, reject) => {
 const sandboxed = async (policy, command, args) => {
 	const result = await manager.run({ command, args, policy, context: { workspaceRoots: [ws], hostEnv } });
 	if (result.status !== 'completed' || result.exitCode !== 0) {
-		throw new Error(`${command}: ${result.status} ${result.exitCode} ${result.error ?? ''} ${result.stderr}`);
+		throw new Error(`${command}: ${result.status} ${result.exitCode} ${result.signal ?? ''} ${result.error ?? ''} ${result.stderr}`);
 	}
 	return result;
 };

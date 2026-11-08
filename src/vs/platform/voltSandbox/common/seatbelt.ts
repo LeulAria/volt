@@ -27,21 +27,35 @@ export const SANDBOX_EXEC_PATH = '/usr/bin/sandbox-exec';
 /** Every Volt denial carries this prefix plus the run's tag, so `log stream` can attribute it. */
 export const SEATBELT_TAG_PREFIX = 'VOLTSBX-';
 
-/** Device files every process reads or writes (terminals, /dev/null, the dtrace helper Node and git open). */
-const DEVICE_FILES = '#"^/dev/(null|zero|tty|ttys[0-9]+|ptmx|dtracehelper|fd/[0-9]+|stdout|stderr|stdin|random|urandom)$"';
+/**
+ * Device files every process reads or writes (its controlling terminal as `/dev/tty`, /dev/null,
+ * the dtrace helper Node and git open). Never `/dev/ttys*`: those are the user's other terminals,
+ * whose input a sandbox could read (a sudo password) or write to (B-26). A terminal the run was
+ * given arrives as an inherited fd, which needs no path.
+ */
+const DEVICE_FILES = '#"^/dev/(null|zero|tty|ptmx|dtracehelper|fd/[0-9]+|stdout|stderr|stdin|random|urandom)$"';
+
+/** Every terminal device by path: denied in every profile, the allow-default one included. */
+const TERMINAL_DEVICES = '#"^/dev/ttys[0-9]+$"';
 
 /** mDNSResponder: DNS for every process, reached as a unix socket. Only allowed with an open network. */
-const MDNS_SOCKET = '/private/var/run/mDNSResponder';
+export const MDNS_SOCKET = '/private/var/run/mDNSResponder';
 
-/** Mach services that run code or act for us outside the sandbox. Denied even with system services on. */
+/** Mach services that run code or act for us outside the sandbox. Denied even with system services on (J.1). */
 const ESCAPE_SERVICES = [
 	'com.apple.coreservices.appleevents',
+	// LaunchServices: opens apps and documents for us (`lsopen` is denied as an operation too).
+	'com.apple.CoreServices.coreservicesd',
 	// Synthetic keyboard and mouse input to other apps (Volt itself may hold Accessibility).
 	'com.apple.windowserver.active',
 	'com.apple.pasteboard.1',
-	// Writes preferences of any app for us, past the file write rules (Terminal startup commands).
+	// Write preferences of any app for us, past the file write rules (Terminal startup commands).
 	'com.apple.cfprefsd.agent',
+	'com.apple.cfprefsd.daemon',
 ];
+
+/** DNS lookups outside the broker: denied unless the network is open (B-31, J.1 "DNS"). */
+const DNS_SERVICES = ['com.apple.dnssd.service'];
 
 /** A string literal for SBPL: backslashes and quotes escaped (string literals honour `\"`; regex literals do not). */
 export function sbplString(value: string): string {
@@ -126,7 +140,7 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 			// Python's multiprocessing semaphores.
 			'(allow ipc-posix-sem)',
 			'(allow pseudo-tty)',
-			'(allow file-read* file-write* file-ioctl (literal "/dev/ptmx") (regex #"^/dev/ttys[0-9]+$"))',
+			'(allow file-read* file-write* file-ioctl (literal "/dev/ptmx") (literal "/dev/tty"))',
 			`(allow file-read* file-write-data file-ioctl (regex ${DEVICE_FILES}))`,
 		);
 	}
@@ -194,10 +208,14 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 	const deny = [
 		...policy.deny.map(path => subpathFilter(path, ci)),
 		...policy.denyPatterns.map(pattern => `(regex ${patternRegex(pattern, ci)})`),
+		// Other runs' folders and other principals' caches: everything below the root but our own.
+		...(policy.isolated ?? []).map(({ root, keep }) => `(require-all ${subpathFilter(root, ci)} (require-not (subpath ${sbplString(keep)})))`),
 	];
 	if (deny.length) {
 		out.push(`(deny file-read* file-write* ${message}\n\t${deny.join('\n\t')})`);
 	}
+	// Other terminals, whatever the base: their input and output belong to the user (B-26).
+	out.push(`(deny file-read* file-write* file-ioctl ${message} (regex ${TERMINAL_DEVICES}))`);
 
 	// Network.
 	if (policy.network.mode === 'host') {
@@ -243,6 +261,14 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 	const sockets = [...policy.unixSockets, ...(policy.network.mode === 'host' ? [MDNS_SOCKET] : [])];
 	if (sockets.length) {
 		out.push(`(allow network-outbound\n\t${sockets.map(socket => `(remote unix-socket (path-literal ${sbplString(socket)}))`).join('\n\t')})`);
+	}
+	if (policy.network.mode !== 'host') {
+		// The system resolver is a DNS channel past the proxy (exfiltration in names): closed even
+		// when a granted socket list or the allow-default base would reach it.
+		out.push(`(deny network-outbound ${message} (remote unix-socket (path-literal ${sbplString(MDNS_SOCKET)})))`);
+		if (policy.systemServices) {
+			out.push(`(deny mach-lookup ${message}\n\t${DNS_SERVICES.map(name => `(global-name ${sbplString(name)})`).join('\n\t')})`);
+		}
 	}
 
 	// Escape hatches: these run code or act for us outside the sandbox.
@@ -296,18 +322,27 @@ export function parseSeatbeltLogLine(line: string): ISeatbeltViolation | undefin
 	};
 }
 
+/** File descriptors of the launch protocol (F.5), in `extraStdio` order from fd 3. */
+export const SEATBELT_FDS = { status: 3, go: 4 } as const;
+
 /**
- * The prologue that runs inside the sandbox before the workload: sets limits, proves the sandbox
- * is applied by writing to fd 3 (sandbox-exec only execs after `sandbox_init` succeeded), closes
- * fd 3 and execs. Constant text: values arrive as positional arguments only.
- * Arguments: <cpu seconds|-> <file size in 512-byte blocks|-> <open files|-> <command> <args...>
+ * The prologue that runs inside the sandbox before the workload (F.5): sets limits, runs the
+ * canary (the run's sentinel credential must be unreadable), writes `ready` with its pid and the
+ * canary's result to fd 3, then blocks on fd 4 for the go byte. Volt sends `g` and a newline (and closes the
+ * pipe) only after it attested this very process from outside with `sandbox_check`; any other
+ * byte, EOF (Volt gone or refusing) or nothing at all means the workload never runs: exit 125.
+ * The ready line is informational: an unsandboxed process can write the same text. Constant
+ * text: values arrive as positional arguments only.
+ * Arguments: <cpu seconds|-> <file size in 512-byte blocks|-> <open files|-> <sentinel> <command> <args...>
  */
 export const SEATBELT_PROLOGUE = [
-	'c=$1 f=$2 n=$3; shift 3',
+	'c=$1 f=$2 n=$3 s=$4; shift 4',
 	'[ "$c" = - ] || ulimit -t "$c" || exit 125',
 	'[ "$f" = - ] || ulimit -f "$f" || exit 125',
 	'[ "$n" = - ] || ulimit -n "$n" || exit 125',
-	'printf "volt-sandbox-ready %s\\n" "$$" >&3 || exit 125',
+	'l=; { read -r l < "$s"; } 2>/dev/null; if [ -n "$l" ]; then k=open; else k=denied; fi',
+	'printf "volt-sandbox-ready %s cred=%s\\n" "$$" "$k" >&3 || exit 125',
 	'exec 3>&-',
+	'g=; read -r g <&4; exec 4<&-; [ "$g" = g ] || exit 125',
 	'exec "$@"',
 ].join('\n');

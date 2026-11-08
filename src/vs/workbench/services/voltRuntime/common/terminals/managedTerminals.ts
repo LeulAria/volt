@@ -399,7 +399,8 @@ export class ManagedTerminals extends Disposable {
 		}
 		// Ctrl+C first, as a person would: servers shut down cleanly and print why.
 		await process.sendText('\u0003', false).catch(() => undefined);
-		const exited = await new Promise<boolean>(resolve => {
+		// It may have ended already, before anything could listen: then there is nothing to wait for.
+		const exited = terminal.status !== 'stopping' || await new Promise<boolean>(resolve => {
 			const timer = setTimeout(() => resolve(false), STOP_GRACE_MS);
 			terminal.listeners.add(function check() {
 				if (!isTerminalLive(terminal.status) || terminal.status !== 'stopping') {

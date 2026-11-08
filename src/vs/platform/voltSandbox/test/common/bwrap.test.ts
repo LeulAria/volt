@@ -13,7 +13,7 @@ const ARITY: Readonly<Record<string, number>> = {
 	'--unshare-user': 0, '--unshare-pid': 0, '--unshare-ipc': 0, '--unshare-uts': 0, '--unshare-cgroup-try': 0, '--unshare-net': 0,
 	'--die-with-parent': 0, '--disable-userns': 0, '--new-session': 0,
 	'--args': 1, '--json-status-fd': 1, '--seccomp': 1, '--hostname': 1, '--cap-drop': 1, '--tmpfs': 1, '--remount-ro': 1, '--chdir': 1, '--dev': 1, '--proc': 1,
-	'--ro-bind': 2, '--ro-bind-try': 2, '--bind': 2, '--bind-try': 2, '--symlink': 2, '--dev-bind': 2,
+	'--ro-bind': 2, '--ro-bind-try': 2, '--bind': 2, '--bind-try': 2, '--symlink': 2, '--dev-bind': 2, '--bind-fd': 2, '--ro-bind-fd': 2,
 };
 
 interface IOp { readonly option: string; readonly values: readonly string[] }
@@ -45,6 +45,7 @@ function has(ops: readonly IOp[], option: string, ...values: string[]): boolean 
 
 const REPO = '/home/me/repo';
 const TMP = '/tmp/volt-sbx-a/tmp';
+const SENTINEL = '/tmp/volt-sbx-a/canary';
 
 function policy(overrides: Partial<IResolvedSandboxPolicy> = {}): IResolvedSandboxPolicy {
 	return {
@@ -68,7 +69,7 @@ function host(kinds: Record<string, BubblewrapPathKind> = {}): IBubblewrapHostLa
 }
 
 function options(overrides: Partial<IBubblewrapArgsOptions> = {}): IBubblewrapArgsOptions {
-	return { terminal: false, disableUserns: true, bridged: false, host: host(), matches: { deny: [], protect: [], sockets: [] }, shell: '/usr/bin/dash', ...overrides };
+	return { terminal: false, disableUserns: true, bridged: false, host: host(), matches: { deny: [], protect: [], sockets: [] }, shell: '/usr/bin/dash', sentinel: SENTINEL, ...overrides };
 }
 
 function build(p: IResolvedSandboxPolicy, o: IBubblewrapArgsOptions = options(), command = '/usr/bin/node', args: readonly string[] = ['app.js']) {
@@ -212,11 +213,56 @@ suite('Volt sandbox bubblewrap arguments', () => {
 		const p = policy({ limits: { cpuSeconds: 300, processes: 512, fileSizeMB: 10, openFiles: 4096, memoryMB: 2048, wallClockSeconds: 600 } });
 		const { command } = build(p, options({ prlimit: { path: '/usr/bin/prlimit', hard: { nofile: 1024 } } }), 'node', ['--inspect', 'x.js']);
 		assert.deepStrictEqual(command, [
-			'/usr/bin/dash', '-c', BUBBLEWRAP_READY_SCRIPT, BUBBLEWRAP_READY_ARGV0,
+			'/usr/bin/dash', '-c', BUBBLEWRAP_READY_SCRIPT, BUBBLEWRAP_READY_ARGV0, SENTINEL,
 			'/usr/bin/prlimit', '--cpu=300:300', `--fsize=${10 * 1024 * 1024}:${10 * 1024 * 1024}`, '--nofile=1024:1024', '--nproc=512:512', `--as=${2048 * 1024 * 1024}:${2048 * 1024 * 1024}`, '--',
 			'node', '--inspect', 'x.js',
 		]);
-		assert.deepStrictEqual(build(policy()).command, ['/usr/bin/dash', '-c', BUBBLEWRAP_READY_SCRIPT, BUBBLEWRAP_READY_ARGV0, '/usr/bin/node', 'app.js'], 'no limits, no prlimit');
+		assert.deepStrictEqual(build(policy()).command, ['/usr/bin/dash', '-c', BUBBLEWRAP_READY_SCRIPT, BUBBLEWRAP_READY_ARGV0, SENTINEL, '/usr/bin/node', 'app.js'], 'no limits, no prlimit');
+	});
+
+	test('the readiness script waits for the go byte on its own fd before the workload (B-29)', () => {
+		const script = BUBBLEWRAP_READY_SCRIPT;
+		const ready = script.indexOf('volt-sandbox-ready');
+		const go = script.indexOf(`read -r g <&${BUBBLEWRAP_FDS.go}`);
+		const exec = script.indexOf('exec "$@"');
+		assert.ok(ready > 0 && go > ready && exec > go, 'ready, then the go byte, then the workload');
+		assert.ok(script.includes('[ "$g" = g ] || exit 125'), 'anything but the go byte stops it');
+		assert.ok(script.includes(`exec ${BUBBLEWRAP_FDS.go}<&-`) && script.includes(`exec ${BUBBLEWRAP_FDS.marker}>&-`), 'no control fd reaches the workload');
+		assert.throws(() => bubblewrapArgs(policy(), 'node', [], options({ sentinel: 'relative' })));
+	});
+
+	test('B-33: roots opened as fds are bound from the fd, read-only or writable as the policy says', () => {
+		const fds = new Map([[REPO, BUBBLEWRAP_FDS.firstRoot], ['/etc', BUBBLEWRAP_FDS.firstRoot + 1]]);
+		const { ops } = build(policy(), options({ bindFds: fds }));
+		assert.ok(has(ops, '--bind-fd', String(BUBBLEWRAP_FDS.firstRoot), REPO));
+		assert.ok(has(ops, '--ro-bind-fd', String(BUBBLEWRAP_FDS.firstRoot + 1), '/etc'));
+		assert.ok(!has(ops, '--bind-try', REPO, REPO) && !has(ops, '--ro-bind-try', '/etc', '/etc'), 'never also by path');
+		assert.ok(has(ops, '--ro-bind-try', '/usr', '/usr'), 'roots without an fd stay bound by path');
+	});
+
+	test('B-33: bubblewrap closes a bound fd, so a root bound more than once uses its fd only for the last bind', () => {
+		// A workspace under /tmp that is read (a base root, then again under the /tmp mask) and written.
+		const ws = '/tmp/volt-ws/repo';
+		const fds = new Map([[ws, BUBBLEWRAP_FDS.firstRoot], ['/etc', BUBBLEWRAP_FDS.firstRoot + 1]]);
+		const { ops } = build(policy({ read: ['/usr', '/etc', ws], write: [ws, TMP], cwd: ws }), options({ bindFds: fds }));
+		const uses = (fd: number) => ops.filter(op => (op.option === '--bind-fd' || op.option === '--ro-bind-fd') && op.values[0] === String(fd));
+		assert.deepStrictEqual(uses(BUBBLEWRAP_FDS.firstRoot), [{ option: '--bind-fd', values: [String(BUBBLEWRAP_FDS.firstRoot), ws] }], 'once, writable, after the /tmp mask');
+		assert.ok(indexOf(ops, '--bind-fd', ws) > indexOf(ops, '--tmpfs', '/tmp'));
+		assert.ok(!ops.some(op => op.values.includes(ws) && op.option.endsWith('-try')), 'never also by path');
+		assert.deepStrictEqual(uses(BUBBLEWRAP_FDS.firstRoot + 1).length, 1);
+		assert.ok(has(ops, '--bind-try', TMP, TMP), 'a root without an fd keeps every bind');
+	});
+
+	test('B-35: an isolated folder is emptied, frozen at the end, and the run\'s own child is bound back', () => {
+		const runs = '/home/me/.volt/sandbox/runs';
+		const own = `${runs}/volt-sbx-a`;
+		const p = policy({ readAll: true, read: [], write: [REPO, `${own}/tmp`], isolated: [{ root: runs, keep: own }] });
+		const { ops } = build(p);
+		const tmpfs = indexOf(ops, '--tmpfs', runs);
+		assert.ok(tmpfs > 0, 'other runs are hidden');
+		assert.ok(indexOf(ops, '--bind-try', `${own}/tmp`) > tmpfs, 'the run\'s own temp is bound after the mask');
+		assert.ok(indexOf(ops, '--remount-ro', runs) > indexOf(ops, '--bind-try', `${own}/tmp`), 'and the mask is frozen last');
+		assert.strictEqual(indexOf(build(policy({ isolated: [{ root: runs, keep: own }] })).ops, '--tmpfs', runs), -1, 'nothing to hide where the folder is not visible');
 	});
 
 	test('argument injection: paths are always option values, never options or shell text', () => {
@@ -229,7 +275,7 @@ suite('Volt sandbox bubblewrap arguments', () => {
 			assert.ok(has(parsed.ops, '--ro-bind', `${path}/.git/config`, `${path}/.git/config`), path);
 		}
 		assert.ok(has(parsed.ops, '--chdir', '/home/me/repo/a b'));
-		assert.deepStrictEqual(parsed.command.slice(4), ['/usr/bin/env', '--', '--bind', '/', '/'], 'the workload\'s own arguments are not bubblewrap\'s');
+		assert.deepStrictEqual(parsed.command.slice(5), ['/usr/bin/env', '--', '--bind', '/', '/'], 'the workload\'s own arguments are not bubblewrap\'s');
 		assert.ok(!BUBBLEWRAP_READY_SCRIPT.includes('/home/me'), 'the script is constant');
 	});
 

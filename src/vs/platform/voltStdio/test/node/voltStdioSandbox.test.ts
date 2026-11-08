@@ -23,11 +23,12 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/c
 import { TestConfigurationService } from '../../../configuration/test/common/testConfigurationService.js';
 import { NullLogService } from '../../../log/common/log.js';
 import { IVoltSandboxRequest } from '../../../voltSandbox/common/sandboxPolicy.js';
+import { VoltSandboxLauncher } from '../../../voltSandbox/node/sandboxLauncher.js';
 import { ptyLauncherScript, PTY_GATE_SCRIPT } from '../../../voltSandbox/node/sandboxPty.js';
+import { realSandboxAvailable } from '../../../voltSandbox/test/node/sandboxSuiteGate.js';
 import { execRefusal, IVoltExecContext, IVoltExecRequest, VoltExecRefusedError } from '../../common/voltStdio.js';
 import { VoltStdioService } from '../../node/voltStdioService.js';
 
-const required = !!process.env.VOLT_SANDBOX_REQUIRED;
 const posix = process.platform !== 'win32';
 
 const chat = (sandboxed: boolean, reason: IVoltExecContext['reason'] = 'post-turn-check'): IVoltExecContext => ({ principal: 'chat:life', reason, sandboxed });
@@ -84,7 +85,9 @@ suite('Volt exec context against real sandboxes (LIFE-PATH, B-04, F.6)', functio
 		if (!posix) {
 			return;
 		}
-		root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'volt-life-path-')));
+		// Not under a shared temp folder on Linux: a terminal cannot carry --bind-fd's folder fds, so
+		// the backend refuses a workspace there (B-33, sandboxPty.test.ts).
+		root = await fs.realpath(await fs.mkdtemp(join(process.platform === 'linux' ? homedir() : tmpdir(), '.volt-life-path-')));
 		ws = join(root, 'ws');
 		await fs.mkdir(join(root, 'user-data'), { recursive: true });
 		await fs.mkdir(ws, { recursive: true });
@@ -92,14 +95,13 @@ suite('Volt exec context against real sandboxes (LIFE-PATH, B-04, F.6)', functio
 		stdio = service;
 		// The user's shell environment, resolved once up front.
 		await service.which('sh');
-		const support = await service.sandboxSupport();
-		available = support.mechanism !== 'none';
-		if (!available) {
-			const message = `[volt-sandbox] NO SANDBOX BACKEND on ${process.platform}: ${support.detail}`;
-			if (required) {
-				throw new Error(`${message} (CI requires the sandbox; failing instead of skipping)`);
-			}
-			console.warn(`\n\n!!! ${message}\n!!! The LIFE-PATH suite is SKIPPED. Set VOLT_SANDBOX_REQUIRED=1 to make this fail.\n`);
+		// The backend the service uses, asked for its capabilities: a chat's sandbox with the network
+		// off runs through the proxy, which bubblewrap without socat cannot enforce.
+		const probe = new VoltSandboxLauncher(join(root, 'user-data'), new NullLogService());
+		try {
+			available = realSandboxAvailable(await probe.capabilities(), 'LIFE-PATH suite');
+		} finally {
+			probe.dispose();
 		}
 	});
 
@@ -213,17 +215,19 @@ suite('Volt exec context against real sandboxes (LIFE-PATH, B-04, F.6)', functio
 		assert.strictEqual(await exists(inside), false);
 	});
 
-	// macOS confirms by the prologue's ready line until external attestation lands (H7, ATTEST-*):
-	// a forger is caught there by `sandbox_check`, not yet here. The gate still never runs the shell
-	// without the go line, and Linux needs bubblewrap's own status and seccomp evidence today.
-	(process.platform === 'linux' ? test : test.skip)('F.6: a process that is not the launcher Volt prepared is not confirmed', async () => {
+	// The evidence is attested from outside (H7, ATTEST-*): Linux reads the sandbox's /proc status
+	// beside bubblewrap's, macOS asks its helper (`sandbox_check`) about the ready line's process.
+	test('F.6: a process that is not the launcher Volt prepared is not confirmed', async () => {
 		const id = `term-forged-${counter++}`;
 		const launch = await stdio.prepareSandboxedTerminal({ id, file: '/bin/sh', args: ['-c', 'true'], cwd: ws, env: {}, sandbox: chatSandbox(), context: chat(true, 'terminal') });
 		const [fifo3, fifo4] = [launch.args[3], launch.args[4]];
-		// Something else writes plausible evidence into the channels: no bubblewrap, no sandbox.
+		// Something else writes plausible evidence into the channels: no bubblewrap or Seatbelt, no sandbox.
+		const forgery = process.platform === 'linux'
+			? `printf 'NoNewPrivs:1 Seccomp:2\\n' > ${quote(fifo3)}; printf '{"child-pid": %s}\\n' "$$" > ${quote(fifo4)}; sleep 30`
+			: `printf 'volt-sandbox-ready %s cred=denied\\n' "$$" > ${quote(fifo3)}; sleep 30`;
 		const loaded = await import('node-pty') as unknown as { spawn?: typeof import('node-pty').spawn; default?: { spawn: typeof import('node-pty').spawn } };
 		const spawn = loaded.spawn ?? loaded.default!.spawn;
-		const forged = spawn('/bin/sh', ['-c', `printf 'NoNewPrivs:1 Seccomp:2\\n' > ${quote(fifo3)}; printf '{"child-pid": %s}\\n' "$$" > ${quote(fifo4)}; sleep 30`], { name: 'xterm', cols: 80, rows: 24, cwd: ws, env: { PATH: '/usr/bin:/bin' } });
+		const forged = spawn('/bin/sh', ['-c', forgery], { name: 'xterm', cols: 80, rows: 24, cwd: ws, env: { PATH: '/usr/bin:/bin' } });
 		try {
 			await assert.rejects(stdio.confirmSandboxedTerminal(id, forged.pid), /could not be established/);
 		} finally {

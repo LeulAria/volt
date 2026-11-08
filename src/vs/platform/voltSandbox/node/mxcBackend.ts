@@ -20,7 +20,7 @@ import { allEnforcement, ISandboxBackendCapabilities, SandboxUnavailableError } 
 import { IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { SandboxDimension } from '../common/sandboxSchema.js';
 import { gitAllowListProtections, walkPatterns } from './bubblewrapBackend.js';
-import { ISandboxBackend, ISandboxLaunchOptions, ISandboxLaunchSpec, SandboxConfirmation } from './sandboxBackends.js';
+import { ISandboxBackend, ISandboxLaunchOptions, ISandboxLaunchSpec, SandboxConfirmation, SandboxFault } from './sandboxBackends.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -35,8 +35,11 @@ const execFileAsync = promisify(execFile);
  *      prologue, never the workload.
  *   3. The prologue starts inside the container, runs the canary, writes `ready` and waits.
  *   4. Volt attests the prologue from OUTSIDE (`volt-mxc-helper attest`: AppContainer token, Low
- *      integrity, job membership, image, parent = this run's wxc-exec) and checks the canary.
- *   5. Only then does it write the go file; the prologue starts the workload with exactly the
+ *      integrity, job membership, image, parent = this run's wxc-exec) and checks the canary
+ *      (the run's sentinel, which the manager's policy denies). That evidence is the run's
+ *      attestation (F.12).
+ *   5. Only then does it write the go file (the launch protocol's go byte, F.5: `go <nonce>`;
+ *      anything else and the prologue exits); the prologue starts the workload with exactly the
  *      standard handles and polls the job's CPU, memory and process count.
  * Killing wxc-exec closes MXC's job (KILL_ON_JOB_CLOSE), which ends the whole tree.
  */
@@ -60,10 +63,14 @@ interface IMxcState {
 	readonly helper: string;
 	readonly arch: MxcArch;
 	readonly systemRoot: string;
+	/** For the attestation: the Windows build and the wxc-exec release, as the probe reported them. */
+	readonly version: string;
 }
 
 const CONFIRM_TIMEOUT_MS = 120_000;
 const ATTEST_TIMEOUT_MS = 10_000;
+/** `fault: withhold-go`: how long the backend waits, without writing the go file, before refusing. */
+const WITHHELD_GO_MS = 750;
 const LIMIT_POLL_MS = 1_000;
 
 /**
@@ -164,7 +171,7 @@ export class MxcBackend implements ISandboxBackend {
 			backend: 'mxc', available: true, enforcement, notes, details, diagnostics: [],
 			optional: ['filesystem.protectNew', 'limits.cpu', 'limits.memory', 'limits.processes', 'limits.fileSize', 'limits.openFiles'],
 		};
-		const state: IMxcState = { capabilities, wxcExec: binaries.wxcExec, helper: binaries.helper, arch, systemRoot };
+		const state: IMxcState = { capabilities, wxcExec: binaries.wxcExec, helper: binaries.helper, arch, systemRoot, version: details.join(', ') };
 
 		// A real trial: a deny-by-default container must start, attest, and keep a write outside
 		// its policy (and any surrogate spawn) from landing.
@@ -310,8 +317,11 @@ export class MxcBackend implements ISandboxBackend {
 		const goFile = join(ctlDir, `go-${nonce}`);
 		const controlFile = join(ctlDir, 'prologue.txt');
 		const requestFile = join(runDir, 'mxc-request.json');
-		const sentinel = join(runDir, 'sentinel');
-		await fs.writeFile(sentinel, 'volt sandbox canary\n');
+		// The manager's canary (a file of this run its policy denies); the probe's trial brings none.
+		const sentinel = policy.sentinel ?? join(runDir, 'sentinel');
+		if (!policy.sentinel) {
+			await fs.writeFile(sentinel, 'volt sandbox canary\n');
+		}
 
 		const walk = await walkPatterns(policy, { collectSockets: false });
 		const existing = new Set<string>();
@@ -329,7 +339,7 @@ export class MxcBackend implements ISandboxBackend {
 				timeoutMs: policy.limits.wallClockSeconds ? (policy.limits.wallClockSeconds + 30) * 1000 : 0,
 			});
 			// The helper copy lives in Volt's own folder: the container reads (runs) it from there.
-			request = { ...request, filesystem: { ...request.filesystem, readonlyPaths: [...request.filesystem.readonlyPaths, dirname(state.helper)] } };
+			request = { ...request, filesystem: { ...request.filesystem, readonlyPaths: [...request.filesystem.readonlyPaths, dirname(state.helper)], deniedPaths: [...request.filesystem.deniedPaths, ...await isolatedSiblings(policy, request.filesystem)] } };
 			await fs.writeFile(controlFile, mxcControlText({
 				nonce, statusFile, goFile, sentinel, network: policy.network.mode, canaryPort: this.options.canaryPort, limits: policy.limits, temp: normalizeWindowsPath(policy.tmp), commandLine,
 			}));
@@ -362,7 +372,7 @@ export class MxcBackend implements ISandboxBackend {
 			extraStdioDirections: [],
 			confirm: async (child: ChildProcess): Promise<SandboxConfirmation> => {
 				launcherPid = child.pid;
-				const confirmation = await this.confirm(state, child, readStatus, { nonce, goFile, network: policy.network.mode });
+				const confirmation = await this.confirm(state, child, readStatus, { nonce, goFile, network: policy.network.mode, fault: options.fault });
 				if (confirmation.ok) {
 					poll = setInterval(() => void reportLimit(), LIMIT_POLL_MS);
 				}
@@ -390,7 +400,7 @@ export class MxcBackend implements ISandboxBackend {
 		};
 	}
 
-	private async confirm(state: IMxcState, child: ChildProcess, readStatus: () => Promise<IMxcStatus>, run: { nonce: string; goFile: string; network: IResolvedSandboxPolicy['network']['mode'] }): Promise<SandboxConfirmation> {
+	private async confirm(state: IMxcState, child: ChildProcess, readStatus: () => Promise<IMxcStatus>, run: { nonce: string; goFile: string; network: IResolvedSandboxPolicy['network']['mode']; fault: SandboxFault | undefined }): Promise<SandboxConfirmation> {
 		let stderr = '';
 		child.stderr?.on('data', (data: Buffer | string) => { stderr = (stderr + data.toString()).slice(-4_000); });
 		let exited = false;
@@ -407,14 +417,27 @@ export class MxcBackend implements ISandboxBackend {
 		const attestation = await execFileAsync(state.helper, ['attest', String(status.ready.pid)], { timeout: ATTEST_TIMEOUT_MS, windowsHide: true, env: launcherEnv(state.systemRoot) })
 			.then(r => parseMxcAttestation(r.stdout), err => parseMxcAttestation((err as { stdout?: string }).stdout ?? ''));
 		const check = checkMxcEvidence(status, attestation, { nonce: run.nonce, helperPath: state.helper, launcherPid: child.pid, network: run.network, canaryPort: this.options.canaryPort });
-		if (!check.ok) {
-			return { ok: false, error: `Windows sandbox attestation failed: ${check.error}` };
+		if (!check.ok || run.fault === 'attest') {
+			return { ok: false, error: `Windows sandbox attestation failed: ${check.error ?? 'fault injection'}` };
+		}
+		if (run.fault === 'withhold-go') {
+			await new Promise(resolve => setTimeout(resolve, WITHHELD_GO_MS));
+			return { ok: false, error: 'the go file was withheld (fault injection)' };
 		}
 		// Written beside it and renamed: the prologue polls the go file and must never see it half written.
+		// A go file without this run's nonce makes the prologue exit (fault `wrong-go`).
 		const partial = `${run.goFile}.partial`;
-		await fs.writeFile(partial, `go ${run.nonce}`);
+		await fs.writeFile(partial, run.fault === 'wrong-go' ? 'go wrong-nonce' : `go ${run.nonce}`);
 		await fs.rename(partial, run.goFile);
-		return { ok: true, detail: `MXC ProcessContainer attested (pid ${check.evidence.pid}, ${check.evidence.appContainerSid}, Low integrity, in job)` };
+		if (run.fault === 'wrong-go') {
+			return { ok: false, error: 'a wrong go file was written (fault injection)' };
+		}
+		const sentinel = status.ready?.sentinel;
+		return {
+			ok: true,
+			detail: `MXC ProcessContainer attested (pid ${check.evidence.pid}, ${check.evidence.appContainerSid}, Low integrity, in job)`,
+			attestation: { evidence: check.evidence, canary: { credOpen: sentinel === 0 ? 'open' : 'denied', sentinelError: String(sentinel) }, backendVersion: state.version },
+		};
 	}
 }
 
@@ -429,6 +452,28 @@ function defaultMxcDir(): string | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * Folders hidden from the run except one child (B-35: other runs' folders, other principals'
+ * package caches). MXC grants only listed folders, so they are out of reach unless a grant holds
+ * one of their roots; then every existing child but the kept one is denied. A child created
+ * after launch inherits the grant: the residual is noted in 05-limitations.md.
+ */
+async function isolatedSiblings(policy: IResolvedSandboxPolicy, filesystem: { readonly readonlyPaths: readonly string[]; readonly readwritePaths: readonly string[] }): Promise<string[]> {
+	const out: string[] = [];
+	for (const { root, keep } of policy.isolated ?? []) {
+		if (![...filesystem.readonlyPaths, ...filesystem.readwritePaths].some(grant => isWindowsPathInside(root, grant))) {
+			continue;
+		}
+		for (const name of await fs.readdir(root).catch(() => [] as string[])) {
+			const child = join(root, name);
+			if (windowsPathKey(child) !== windowsPathKey(keep)) {
+				out.push(normalizeWindowsPath(child));
+			}
+		}
+	}
+	return out;
 }
 
 /** wxc-exec's environment: nothing of Volt's, nothing of the user's (F.7.3). */

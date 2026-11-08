@@ -46,6 +46,19 @@ export interface IResolvedSandboxPolicy {
 	readonly tmp: string;
 	/** The real home folder, for redaction and the backends' own masks. */
 	readonly home: string;
+	/**
+	 * Folders hidden except one child: every run folder but this run's own, every principal's
+	 * package cache but its own (B-35). Neither readable nor writable, like `deny`.
+	 */
+	readonly isolated?: readonly ISandboxIsolatedRoot[];
+	/** A file the policy denies, read by the prologue's canary and checked from outside (F.5). */
+	readonly sentinel?: string;
+}
+
+export interface ISandboxIsolatedRoot {
+	readonly root: string;
+	/** The one child of `root` that stays as the rest of the policy says. */
+	readonly keep: string;
 }
 
 export interface IResolvedPattern {
@@ -105,6 +118,9 @@ export function resolvedPolicyAllows(policy: IResolvedSandboxPolicy, path: strin
 	if (policy.deny.some(insideFolded) || policy.denyPatterns.some(matches)) {
 		return false;
 	}
+	if ((policy.isolated ?? []).some(({ root, keep }) => insideFolded(root) && !inside(keep))) {
+		return false;
+	}
 	if (access === 'read') {
 		return policy.readAll || [...policy.read, ...policy.write].some(root => inside(root)) || policy.writeFiles.some(file => inside(file, true));
 	}
@@ -132,14 +148,19 @@ export function resolvedPolicyAllows(policy: IResolvedSandboxPolicy, path: strin
 		|| policy.writeFiles.some(file => p === file || (p.startsWith(`${file}.`) && /^\.(lock|tmp|backup|bak|swp)/.test(p.slice(file.length))));
 }
 
-/** Inside the sandbox, Volt's proxy is reached at this address on both platforms. */
-export function sandboxProxyUrl(port: number): string {
-	return `http://127.0.0.1:${port}`;
+/**
+ * Inside the sandbox, Volt's proxy is reached at this address on both platforms. With a token,
+ * the URL carries it as Basic credentials (`volt:<token>`), which curl, git, Node, Python and Go
+ * send as `Proxy-Authorization`: the proxy serves only this run (B-31). The token is a per-run
+ * route key, not a user secret; it opens nothing but this run's own egress rules.
+ */
+export function sandboxProxyUrl(port: number, token?: string): string {
+	return token ? `http://volt:${encodeURIComponent(token)}@127.0.0.1:${port}` : `http://127.0.0.1:${port}`;
 }
 
 /** Proxy variables most HTTP clients honour. Set by the manager only; no policy may set them. */
-export function sandboxProxyEnv(port: number): Record<string, string> {
-	const url = sandboxProxyUrl(port);
+export function sandboxProxyEnv(port: number, token?: string): Record<string, string> {
+	const url = sandboxProxyUrl(port, token);
 	const noProxy = 'localhost,127.0.0.1,::1';
 	return {
 		HTTP_PROXY: url, HTTPS_PROXY: url, http_proxy: url, https_proxy: url,

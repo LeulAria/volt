@@ -17,7 +17,11 @@ import { IManagedTerminalBackend, IManagedTerminalExit, IManagedTerminalLaunch, 
 
 const SANDBOX: IVoltSandboxSettings = { level: 'workspace-write', network: false };
 
-/** Starts nothing: records each launch, and what was typed. */
+/**
+ * Starts nothing: records each launch, and what was typed. Ctrl+C ends the process, as it ends a
+ * dev server: a stop (and so a restart) settles at once instead of waiting out the grace period
+ * and its kill, which outlasts the test's timeout.
+ */
 class FakeBackend implements IManagedTerminalBackend {
 	readonly launches: IManagedTerminalLaunch[] = [];
 	readonly typed: string[] = [];
@@ -33,7 +37,13 @@ class FakeBackend implements IManagedTerminalBackend {
 			onClosed: Event.None,
 			ready: Promise.resolve(),
 			viewable: true,
-			sendText: async text => { this.typed.push(text); },
+			sendText: async text => {
+				if (text === '\u0003') {
+					exit.fire({ code: 130 });
+					return;
+				}
+				this.typed.push(text);
+			},
 			kill: () => exit.fire({ code: 137 }),
 		};
 	}

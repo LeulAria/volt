@@ -200,6 +200,10 @@ suite('Volt sandbox enforcement check', () => {
 		const memory = completeSandboxPolicy({ schemaVersion: 1, process: { limits: { memoryMB: 512 } } });
 		assert.deepStrictEqual(checkEnforcement(memory, caps({ 'limits.memory': 'unsupported' })).blocking, ['limits.memory']);
 		assert.ok(dimensionsUsed(builtinProfile('network')).includes('network.proxy'));
+		// B-27: `**/.env` denies are their own mandatory dimension, refused when not enforced.
+		const patterns = completeSandboxPolicy({ schemaVersion: 1, filesystem: { deny: ['**/.env'] } });
+		assert.ok(dimensionsUsed(patterns).includes('filesystem.denyPatterns'));
+		assert.deepStrictEqual(checkEnforcement(patterns, caps({ 'filesystem.denyPatterns': 'partial' })).blocking.includes('filesystem.denyPatterns'), true);
 	});
 
 	test('secret-looking variables and reserved names', () => {
@@ -266,6 +270,38 @@ suite('Volt sandbox Seatbelt profile', () => {
 		assert.ok(profile.includes('(deny lsopen') && profile.includes('(deny appleevent-send'));
 		assert.ok(profile.includes('(path-literal "/private/var/run/mDNSResponder")'), 'DNS with an open network');
 		assert.ok(!profile.includes('(deny network* '), 'open network is not denied');
+	});
+
+	test('B-26: other terminals are out of reach in every profile; /dev/tty stays', () => {
+		for (const policy of [RESOLVED, { ...RESOLVED, readAll: true, systemServices: true, network: { ...RESOLVED.network, mode: 'host' as const } }]) {
+			const profile = buildSeatbeltProfile(policy, { tag: 'tty' });
+			assert.ok(!/allow[^\n]*ttys\[0-9\]/.test(profile), 'no allow names /dev/ttys*');
+			const deny = profile.indexOf('(deny file-read* file-write* file-ioctl (with message "VOLTSBX-tty") (regex #"^/dev/ttys[0-9]+$"))');
+			assert.ok(deny > 0, profile);
+			assert.ok(deny > profile.lastIndexOf('(allow file-read* file-write*'), 'after every allow');
+		}
+		assert.ok(buildSeatbeltProfile(RESOLVED, { tag: 'tty' }).includes('(literal "/dev/tty")'));
+	});
+
+	test('J.1: the system resolver is closed unless the network is open; the escape services are denied', () => {
+		const agentProxy = buildSeatbeltProfile({ ...RESOLVED, readAll: true, systemServices: true, unixSockets: ['/private/var/run/mDNSResponder'] }, { tag: 'd' });
+		const allowSocket = agentProxy.indexOf('(remote unix-socket (path-literal "/private/var/run/mDNSResponder"))');
+		const denySocket = agentProxy.indexOf('(deny network-outbound (with message "VOLTSBX-d") (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))');
+		assert.ok(denySocket > allowSocket, 'even a granted socket list cannot reopen DNS');
+		assert.ok(agentProxy.includes('(global-name "com.apple.dnssd.service")'), 'the allow-default base denies the DNS service');
+		for (const name of ['com.apple.cfprefsd.daemon', 'com.apple.CoreServices.coreservicesd', 'com.apple.coreservices.appleevents', 'com.apple.pasteboard.1']) {
+			assert.ok(agentProxy.includes(`(global-name "${name}")`), name);
+		}
+		const agentHost = buildSeatbeltProfile({ ...RESOLVED, readAll: true, systemServices: true, network: { ...RESOLVED.network, mode: 'host' } }, { tag: 'h' });
+		assert.ok(!agentHost.includes('(deny network-outbound (with message "VOLTSBX-h") (remote unix-socket (path-literal'), 'an open network keeps DNS');
+	});
+
+	test('B-35: an isolated folder is denied except the run\'s own child', () => {
+		const profile = buildSeatbeltProfile({ ...RESOLVED, isolated: [{ root: '/Users/me/.volt/sandbox/runs', keep: '/Users/me/.volt/sandbox/runs/volt-sbx-a' }] }, { tag: 'i' });
+		assert.ok(profile.includes('(require-all (regex #"^/[uU][sS][eE][rR][sS]/[mM][eE]/\\.[vV][oO][lL][tT]/[sS][aA][nN][dD][bB][oO][xX]/[rR][uU][nN][sS](/.*)?$") (require-not (subpath "/Users/me/.volt/sandbox/runs/volt-sbx-a")))'), profile);
+		const policy: IResolvedSandboxPolicy = { ...RESOLVED, readAll: true, isolated: [{ root: '/Users/me/.volt/sandbox/runs', keep: '/Users/me/.volt/sandbox/runs/volt-sbx-a' }] };
+		assert.ok(!resolvedPolicyAllows(policy, '/Users/me/.volt/sandbox/runs/volt-sbx-b/tmp/x', 'read'), 'another run');
+		assert.ok(resolvedPolicyAllows(policy, '/Users/me/.volt/sandbox/runs/volt-sbx-a/tmp/x', 'read'), 'its own');
 	});
 
 	test('hostile path text cannot break out of a string or regex', () => {

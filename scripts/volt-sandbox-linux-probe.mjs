@@ -165,6 +165,17 @@ async function start(ctx, script, policy) {
 }
 
 /**
+ * What the manager adds before a launch: the run's canary, a file its own policy denies, which
+ * the prologue reads and the backend checks before the go byte (F.5).
+ * @param {any} policy @param {string} runDir
+ */
+async function withSentinel(policy, runDir) {
+	const sentinel = join(runDir, 'canary');
+	await fs.writeFile(sentinel, 'volt-canary\n', { mode: 0o600 });
+	return { ...policy, deny: [...policy.deny, sentinel], sentinel };
+}
+
+/**
  * Runs through the backend directly with a hand-adjusted resolved policy, for what the manager
  * does not expose (pointing the bridge at a fake proxy).
  * @param {Context} ctx @param {any} policy @param {string} script @param {{ proxyPort?: number; mutate?: (p: any) => any }} options
@@ -176,7 +187,7 @@ async function runDirect(ctx, policy, script, options) {
 	await fs.mkdir(tmp, { mode: 0o700 });
 	try {
 		const { policy: resolved } = await ctx.resolver.resolveSandboxPolicy(policy, { workspaceRoots: [ctx.ws], cwd: ctx.ws, hostEnv: ctx.hostEnv }, host, tmp);
-		let final = options.mutate ? options.mutate(resolved) : resolved;
+		let final = await withSentinel(options.mutate ? options.mutate(resolved) : resolved, runDir);
 		if (options.proxyPort) {
 			final = { ...final, env: { ...final.env, ...ctx.sandboxProxyEnv(options.proxyPort) } };
 		}
@@ -611,7 +622,7 @@ export async function bench(ctx, n = 20) {
 			const tmp = join(runDir, 'tmp');
 			await fs.mkdir(tmp);
 			const { policy } = await ctx.resolver.resolveSandboxPolicy(workspacePolicy(ctx), { workspaceRoots: [ctx.ws], cwd: ctx.ws, hostEnv: ctx.hostEnv }, host, tmp);
-			const resolved = mutate ? mutate(policy) : policy;
+			const resolved = await withSentinel(mutate ? mutate(policy) : policy, runDir);
 			list.push(await time(async () => {
 				const spec = await ctx.backend.launch(resolved, '/usr/bin/true', [], { tag: 'bench', terminal: false, onDenial: () => undefined });
 				const child = spawn(spec.command, [...spec.args], { env: spec.env, cwd: spec.cwd, stdio: ['ignore', 'ignore', 'pipe', ...spec.extraStdio], detached: true });

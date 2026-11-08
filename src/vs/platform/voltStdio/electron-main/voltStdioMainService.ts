@@ -57,6 +57,10 @@ export function createVoltStdioChannel(service: VoltStdioMainService, disposable
 			if (command === 'prepareSandboxedTerminal') {
 				return service.prepareSandboxedTerminalFor(ctx, (arg as [IVoltSandboxedTerminalRequest])[0]) as Promise<unknown> as Promise<T>;
 			}
+			if (command === 'allowSandboxDomains' && service.ownerOf((arg as [string])[0]) !== ctx) {
+				// A window widens only its own agents' network, never another window's or one no window started.
+				return Promise.resolve(undefined as T);
+			}
 			return proxied.call<T>(ctx, command, arg, cancellationToken);
 		},
 		listen<T>(ctx: string, event: string, arg?: unknown): Event<T> {

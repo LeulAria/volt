@@ -16,14 +16,23 @@ import * as http from 'http';
 import * as net from 'net';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { SandboxNetworkProxy } from '../../../voltSandbox/node/sandboxProxy.js';
-import { isSandboxBrowserPartition, ISandboxBrowserRules, sandboxBrowserPartition, sandboxBrowserProxyConfig, sandboxBrowserRequestVerdict } from '../../common/sandboxBrowser.js';
+import { isSandboxBrowserPartition, ISandboxBrowserRules, sandboxBrowserPartition, sandboxBrowserProxyConfig, sandboxBrowserProxyLogin, sandboxBrowserRequestVerdict } from '../../common/sandboxBrowser.js';
 import { isPreviewPartition } from '../../common/browserCookies.js';
 
 const OFF: ISandboxBrowserRules = { network: false, allowedDomains: [], listenPorts: [] };
 
-/** What Chromium does with one request of a page in the partition: the dispatcher, then direct or through the session proxy. */
+/**
+ * What Chromium does with one request of a page in the partition: the dispatcher, then direct or
+ * through the session proxy. A proxy's 407 goes to the `login` event, which Volt answers with
+ * {@link sandboxBrowserProxyLogin} for the partition's own proxy (`ownProxy`: its port and token),
+ * as sandboxBrowserSessions.ts does; a second 407 is asked again as not the first attempt.
+ */
 class FakeSandboxPartition {
-	constructor(private readonly rules: ISandboxBrowserRules | undefined, private readonly proxyPort: number | undefined) { }
+	constructor(
+		private readonly rules: ISandboxBrowserRules | undefined,
+		private readonly proxyPort: number | undefined,
+		private readonly ownProxy?: { readonly port: number; readonly token?: string },
+	) { }
 
 	async request(url: string, options: { readonly hasFrame?: boolean } = {}): Promise<'blocked' | number> {
 		const verdict = sandboxBrowserRequestVerdict(this.rules, { url, hasFrame: options.hasFrame ?? true });
@@ -38,7 +47,16 @@ class FakeSandboxPartition {
 			return send({ host: target.hostname.replace(/^\[|\]$/g, ''), port, path: target.pathname });
 		}
 		const proxy = new URL(config.proxyRules);
-		return send({ host: proxy.hostname, port: Number(proxy.port), path: target.href, headers: { host: target.host } });
+		const viaProxy = (authorization?: string) => send({ host: proxy.hostname, port: Number(proxy.port), path: target.href, headers: { host: target.host, ...(authorization ? { 'proxy-authorization': authorization } : {}) } });
+		let status = await viaProxy();
+		for (let attempt = 0; status === 407 && attempt < 2; attempt++) {
+			const credentials = sandboxBrowserProxyLogin(this.ownProxy, { isProxy: true, host: proxy.hostname, port: Number(proxy.port) }, attempt === 0);
+			if (!credentials) {
+				break;
+			}
+			status = await viaProxy(`Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64')}`);
+		}
+		return status;
 	}
 }
 
@@ -149,5 +167,39 @@ suite('Volt sandboxed chat browser (B-16)', () => {
 		const granted = new FakeSandboxPartition({ ...OFF, listenPorts: [port] }, proxy.port);
 		assert.strictEqual(await granted.request(`http://127.0.0.1:${port}/granted`), 200);
 		assert.deepStrictEqual(hits, ['POST /granted']);
+	});
+
+	test('B-16/B-31: the chat\'s browser reaches an allowed host through its own token-protected proxy, and only with its own token', async () => {
+		const refused: string[] = [];
+		// The allowed host resolves to a public address; the connector delivers to the local test host.
+		proxy = await SandboxNetworkProxy.start([`api.example:${port}`], (_host, reason) => refused.push(reason), {
+			token: 'route-token-a',
+			lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+			connect: () => net.connect({ host: '127.0.0.1', port }),
+		});
+		const rules: ISandboxBrowserRules = { ...OFF, allowedDomains: ['api.example'] };
+
+		const own = new FakeSandboxPartition(rules, proxy.port, { port: proxy.port, token: proxy.token });
+		assert.strictEqual(await own.request(`http://api.example:${port}/allowed`), 200, 'answered the 407 with the route token');
+		assert.deepStrictEqual(hits, ['POST /allowed']);
+
+		// No answer to the 407, another chat's token, or the token offered to a different proxy port: nothing lands.
+		assert.strictEqual(await new FakeSandboxPartition(rules, proxy.port).request(`http://api.example:${port}/anonymous`), 407);
+		assert.strictEqual(await new FakeSandboxPartition(rules, proxy.port, { port: proxy.port, token: 'route-token-b' }).request(`http://api.example:${port}/other-chat`), 407);
+		assert.strictEqual(await new FakeSandboxPartition(rules, proxy.port, { port: proxy.port + 1, token: proxy.token }).request(`http://api.example:${port}/wrong-proxy`), 407);
+		assert.deepStrictEqual(hits, ['POST /allowed']);
+		// Chromium asks without credentials first: one 407 each, plus the second ask of the wrong token, then cancelled.
+		assert.deepStrictEqual(refused, ['auth', 'auth', 'auth', 'auth', 'auth']);
+	});
+
+	test('B-31: the proxy sign-in answer is only for the partition\'s own proxy, on the first attempt', () => {
+		const own = { port: 4321, token: 'tok' };
+		assert.deepStrictEqual(sandboxBrowserProxyLogin(own, { isProxy: true, host: '127.0.0.1', port: 4321 }, true), { username: 'volt', password: 'tok' });
+		assert.strictEqual(sandboxBrowserProxyLogin(own, { isProxy: true, host: '127.0.0.1', port: 4321 }, false), undefined, 'a second ask means the token was refused');
+		assert.strictEqual(sandboxBrowserProxyLogin(own, { isProxy: false, host: '127.0.0.1', port: 4321 }, true), undefined, 'a site\'s sign-in');
+		assert.strictEqual(sandboxBrowserProxyLogin(own, { isProxy: true, host: 'proxy.corp.example', port: 4321 }, true), undefined, 'a proxy elsewhere');
+		assert.strictEqual(sandboxBrowserProxyLogin(own, { isProxy: true, host: '127.0.0.1', port: 4322 }, true), undefined, 'another chat\'s proxy');
+		assert.strictEqual(sandboxBrowserProxyLogin({ port: 4321 }, { isProxy: true, host: '127.0.0.1', port: 4321 }, true), undefined, 'no token');
+		assert.strictEqual(sandboxBrowserProxyLogin(undefined, { isProxy: true, host: '127.0.0.1', port: 4321 }, true), undefined, 'no proxy yet');
 	});
 });

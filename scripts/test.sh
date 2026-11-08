@@ -28,6 +28,9 @@ npm run electron
 
 # Unit Tests
 if [[ "$OSTYPE" == "darwin"* ]]; then
+	# The macOS sandbox backend needs its native helper: tests run without VSCODE_DEV, so it goes
+	# into out/volt-helpers and the helper manifest, as a packaged build carries it.
+	node build/volt/sandbox-helper/build.mjs --install out >/dev/null
 	cd $ROOT ; ulimit -n 4096 ; \
 		ELECTRON_ENABLE_LOGGING=1 \
 		"$CODE" \

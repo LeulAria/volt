@@ -271,7 +271,7 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 		const voltHelpersDir = `.build/volt-helpers/${platform}-${arch}`;
 		const voltHelpers = gulp.src(`${voltHelpersDir}/**`, { base: voltHelpersDir })
 			.pipe(rename(function (file) { file.dirname = path.join('out', file.dirname); }))
-			.pipe(util.setExecutableBit(['**/volt-helpers/volt-speech', '**/volt-helpers/volt-desktop']));
+			.pipe(util.setExecutableBit(['**/volt-helpers/volt-speech', '**/volt-helpers/volt-desktop', '**/volt-helpers/volt-sandbox-helper']));
 
 		const sources = es.merge(src, extensions, serverResources, voltHelpers)
 			.pipe(filter(['**', '!**/*.{js,mjs,cjs,css}.map'], { dot: true }));

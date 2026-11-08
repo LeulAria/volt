@@ -176,16 +176,18 @@ export class HelperIntegrity {
 			this.passed.set(real, key);
 			return { ok: true };
 		}
+		// Developer mode: what this session built and pinned (trustDeveloperHelper) is checked against
+		// its pin, before and without the manifest (a module loader without Volt's out/ has none).
+		const pinned = this.options.developerMode ? this.developerPins.get(pinKey(helperId, real)) : undefined;
+		if (pinned) {
+			const digest = sha256(await fs.readFile(real));
+			return digest === pinned ? { ok: true, reason: 'unsigned helpers developer mode' } : refuse(`${path} changed since Volt built it in this session`);
+		}
 		const manifest = await this.readManifest();
 		const entry = manifest?.helpers[helperId];
 		const outRoot = await fs.realpath(this.options.outRoot()).catch(() => this.options.outRoot());
 		const file = entry?.files.find(candidate => samePath(join(outRoot, ...candidate.path.split('/')), real));
 		if (!file) {
-			const pinned = this.developerPins.get(pinKey(helperId, real));
-			if (pinned && this.options.developerMode) {
-				const digest = sha256(await fs.readFile(real));
-				return digest === pinned ? { ok: true, reason: 'unsigned helpers developer mode' } : refuse(`${path} changed since Volt built it in this session`);
-			}
 			return refuse(manifest
 				? `${path} is not the ${helperId} helper this build ships`
 				: `this build has no helper manifest (${VOLT_HELPERS_MANIFEST}), so ${path} cannot be checked`);

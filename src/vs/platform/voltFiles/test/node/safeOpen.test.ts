@@ -24,24 +24,17 @@ import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { helperIntegrity } from '../../../voltHelpers/node/helperIntegrity.js';
 import { IResolvedSandboxPolicy } from '../../../voltSandbox/common/sandboxResolved.js';
+import { SANDBOX_REQUIRED as required, writeSkipNotice } from '../../../voltSandbox/test/node/sandboxSuiteGate.js';
 import { brokerReadFile, brokerWriteFile, policyFileRequest } from '../../node/sandboxFileBroker.js';
 import { componentsBelow, ISafeOpenOptions, SafeOpenError, safeReadFile, safeWriteFile } from '../../node/safeOpen.js';
 
 const isMac = process.platform === 'darwin';
 const isLinux = process.platform === 'linux';
-const required = !!process.env.VOLT_SANDBOX_REQUIRED;
 /** The Linux helper: built by the rig into this path, or into `.build` of a checkout. */
 const fsdPath = isLinux ? [process.env.VOLT_FSD_PATH, join(process.cwd(), '.build', 'volt-fsd')].find((path): path is string => !!path && existsSync(path)) : undefined;
 const supported = isMac || (isLinux && !!fsdPath);
 const RACE_OPS = 1_000;
 
-if (isLinux && !fsdPath) {
-	const message = 'volt-fsd is not built here: the race-free file tests cannot run on Linux';
-	if (required) {
-		throw new Error(`${message} (VOLT_SANDBOX_REQUIRED is set; failing instead of skipping)`);
-	}
-	console.warn(`\n\n!!! ${message}. They are SKIPPED. Build it with scripts/volt-sandbox-linux-test.sh files.\n`);
-}
 if (fsdPath) {
 	// The rig built it from sources for this run: the unsigned helpers developer mode (VSCODE_DEV,
 	// set by the rig) pins it, as a build from sources pins what it compiled.
@@ -171,6 +164,16 @@ suite('Volt race-free host file operations (B-17)', () => {
 
 	let f: IFixture;
 	const flippers: ChildProcess[] = [];
+
+	suiteSetup(() => {
+		if (isLinux && !fsdPath) {
+			const message = 'volt-fsd is not built here: the race-free file tests cannot run on Linux';
+			if (required) {
+				throw new Error(`${message} (VOLT_SANDBOX_REQUIRED is set; failing instead of skipping)`);
+			}
+			writeSkipNotice(`${message}. Build it with scripts/volt-sandbox-linux-test.sh files.`, 'They are');
+		}
+	});
 
 	setup(async () => {
 		f = await fixture();

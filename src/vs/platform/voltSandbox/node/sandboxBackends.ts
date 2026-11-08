@@ -6,6 +6,7 @@
 import type { ChildProcess } from 'child_process';
 import { ISandboxBackendCapabilities, ISandboxRunDenial, SandboxBackendId } from '../common/sandboxBackend.js';
 import { IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
+import { SandboxDimension } from '../common/sandboxSchema.js';
 
 /**
  * The contract between the manager and an OS backend. A backend turns a resolved policy into a
@@ -21,10 +22,28 @@ export interface ISandboxLaunchOptions {
 	/** A PTY or a pipe: on a PTY the backend keeps the terminal's session (job control) and blocks TIOCSTI instead. */
 	readonly terminal: boolean;
 	readonly onDenial: (denial: ISandboxRunDenial) => void;
+	/** Test builds only: make one launch step fail (FAULT-*). A fault can only refuse, never widen. */
+	readonly fault?: SandboxFault;
+}
+
+/**
+ * Launch steps a test can make fail.
+ * - `attest`: the external attestation reports a failure, as if the evidence were wrong.
+ * - `withhold-go`: attestation passes but the go byte is never sent (the backend waits until killed).
+ * - `wrong-go`: a byte other than the go byte is sent.
+ */
+export type SandboxFault = 'attest' | 'withhold-go' | 'wrong-go';
+
+/** What the parent observed about the sandboxed process from outside it, and what the canary reported (F.12). */
+export interface ISandboxEvidence {
+	readonly evidence: Readonly<Record<string, string | number | boolean>>;
+	readonly canary: Readonly<Record<string, string>>;
+	/** `bubblewrap --version`, the helper and macOS version. */
+	readonly backendVersion: string;
 }
 
 export type SandboxConfirmation =
-	| { readonly ok: true; readonly detail: string }
+	| { readonly ok: true; readonly detail: string; readonly attestation?: ISandboxEvidence }
 	| { readonly ok: false; readonly error: string };
 
 export interface ISandboxLaunchSpec {
@@ -43,16 +62,22 @@ export interface ISandboxLaunchSpec {
 	readonly extraStdio: readonly (number | 'pipe')[];
 	/**
 	 * Which way each `pipe` in {@link extraStdio} carries data: `out` the launcher or the workload
-	 * writes it and Volt reads it, `in` Volt writes it. A PTY launch carries them as FIFOs, which
-	 * have one direction (see sandboxPty.ts).
+	 * writes it and Volt reads it, `in` Volt writes it (the go byte, bubblewrap's arguments and
+	 * filter). One entry per `extraStdio` entry. A PTY launch carries them as FIFOs, which have one
+	 * direction (see sandboxPty.ts).
 	 */
 	readonly extraStdioDirections: readonly ('in' | 'out')[];
 	/**
-	 * Resolves once the backend has evidence the sandbox is in place (bubblewrap's status fd,
-	 * Seatbelt's post-`sandbox_init` marker), or with an error when the launcher failed before
-	 * running the workload. Never resolves `ok` on a guess.
+	 * The launch protocol's second half (F.5): waits for the prologue's ready line, attests the
+	 * process from outside (Seatbelt: `sandbox_check` on its pid; bubblewrap: its `/proc` status
+	 * and namespaces; MXC: `volt-mxc-helper attest`), checks the canary, and only then sends the go
+	 * byte (MXC: writes the go file) that lets the workload run. Resolves with an error, and never
+	 * sends the go byte, when any of it fails or the launcher died first. Never resolves `ok` on a
+	 * guess or on the workload's own word.
 	 */
 	confirm(child: ChildProcess): Promise<SandboxConfirmation>;
+	/** Dimensions this launch cannot enforce beyond the backend's report (shown, never blocking). */
+	readonly unenforced?: readonly SandboxDimension[];
 	/** Kills the whole process tree; resolves once every process found is signalled. Safe to call more than once and after exit. */
 	terminate(child: ChildProcess): Promise<void> | void;
 	/** Closes fds, stops bridges, deletes the backend's temp files. */

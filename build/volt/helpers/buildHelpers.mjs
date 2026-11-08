@@ -15,9 +15,10 @@
 // bundled, verified helpers instead of the unsigned helpers developer mode.
 //
 // What it builds:
-//   darwin: volt-helpers/volt-speech (speech, from voltSpeechHelper.ts) and volt-helpers/volt-desktop
-//           (desktop control, VoltDesktop.swift), thin for --arch; the universal build lipo's them and
-//           merges the manifests (build/darwin/create-universal-app.ts).
+//   darwin: volt-helpers/volt-speech (speech, from voltSpeechHelper.ts), volt-helpers/volt-desktop
+//           (desktop control, VoltDesktop.swift) and volt-helpers/volt-sandbox-helper (the sandbox's
+//           TCC disclaim and external attestation, build/volt/sandbox-helper), thin for --arch; the
+//           universal build lipo's them and merges the manifests (build/darwin/create-universal-app.ts).
 //   win32:  volt-helpers/volt-desktop.dll (VoltDesktop.windows.cs, compiled by Windows PowerShell),
 //           and the digest of VoltDesktop.windows.ps1 that loads it.
 //   linux:  volt-helpers/volt-fsd (race-free file opens for sandboxed agents, build/volt/volt-fsd.c)
@@ -32,6 +33,7 @@ import { promises as fs } from 'node:fs';
 import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import { parseArgs } from 'node:util';
+import { buildSandboxHelper, SANDBOX_HELPER_NAME } from '../sandbox-helper/build.mjs';
 
 const root = path.resolve(import.meta.dirname, '..', '..', '..');
 const require = createRequire(import.meta.url);
@@ -66,7 +68,8 @@ async function buildDarwin(arch, work, helpersDir) {
 	swiftc(arch, ['-swift-version', '5', speechSource, '-o', speech, '-Xlinker', '-sectcreate', '-Xlinker', '__TEXT', '-Xlinker', '__info_plist', '-Xlinker', plist]);
 	const desktop = path.join(helpersDir, 'volt-desktop');
 	swiftc(arch, [path.join(root, 'src', ...HELPER_SOURCES.split('/'), 'VoltDesktop.swift'), '-o', desktop]);
-	return { speech: [speech], desktop: [desktop] };
+	const sandboxHelper = buildSandboxHelper({ force: true, outDir: helpersDir, arch });
+	return { speech: [speech], desktop: [desktop], [SANDBOX_HELPER_NAME]: [sandboxHelper] };
 }
 
 async function buildWin32(work, helpersDir, source) {

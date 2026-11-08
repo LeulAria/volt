@@ -9,8 +9,9 @@
 #   scripts/volt-sandbox-linux-test.sh probe                               print the backend's capability report
 #   scripts/volt-sandbox-linux-test.sh shell                               a shell in the rig (out/ mounted at /volt/out)
 #   scripts/volt-sandbox-linux-test.sh verify-syscalls                     check seccomp.ts's syscall numbers on arm64 and amd64
-#   scripts/volt-sandbox-linux-test.sh suite                               the adversarial mocha suites (sandboxSecurity.test.ts, hostGit.test.ts), required to run
+#   scripts/volt-sandbox-linux-test.sh suite                               the adversarial mocha suites (sandboxSecurity, hostGit, sandboxAttestation, sandboxProxy, sandboxPty), required to run
 #   scripts/volt-sandbox-linux-test.sh files                               race-free host file opens (safeOpen.test.ts, RACE-1..3) with volt-fsd built here
+#   scripts/volt-sandbox-linux-test.sh cve                                 LNX-BWRAP-CVE: bubblewrap 0.9.0 must be refused, 0.13.1 must pass
 #
 # Set VOLT_SANDBOX_NO_TRANSPILE=1 to skip `npm run transpile-client-oxc` (out/ is already fresh).
 #
@@ -23,8 +24,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE=volt-sandbox-linux-test
+# Named for its bubblewrap: an older checkout's rig (Ubuntu's 0.9.0) must not be mistaken for it.
+IMAGE=volt-sandbox-linux-test-bwrap013
 DOCKERFILE="$ROOT/build/volt-sandbox/Dockerfile.linux-test"
+# Ubuntu 24.04's own bubblewrap 0.9.0 (CVE-2026-87766): the image the probe must refuse.
+CVE_IMAGE=volt-sandbox-linux-test-bwrap09
+CVE_DOCKERFILE="$ROOT/build/volt-sandbox/Dockerfile.linux-test-bwrap-0.9"
 # The rig mounts a snapshot of the modules it needs, not out/ itself: another build in the same
 # checkout starts by deleting out/, which would pull files from under a running test.
 SNAPSHOT="$(mktemp -d "${TMPDIR:-/tmp}/volt-sandbox-rig.XXXXXX")"
@@ -52,7 +57,9 @@ transpile() {
 snapshot() {
 	local dir
 	# voltAccounts/node: the agent state overlay checks a refreshed Claude login's account with it.
-	for dir in vs/base/common vs/base/test/common vs/platform/voltSandbox vs/platform/voltGit vs/platform/voltAccounts/node; do
+	# voltHelpers (and what it imports): the one helper checker the macOS and Windows backends load.
+	for dir in vs/base/common vs/base/test/common vs/base/parts/sandbox/common vs/platform/voltSandbox vs/platform/voltGit vs/platform/voltAccounts/node \
+		vs/platform/voltHelpers vs/platform/product/common vs/platform/voltCodeIndex/common vs/platform/voltDevices/common; do
 		if [[ ! -d "$ROOT/out/$dir" ]]; then
 			echo "out/$dir is missing (another build cleaning out/?); run again" >&2
 			exit 1
@@ -67,6 +74,18 @@ snapshot() {
 build_image() {
 	echo "Building $IMAGE ..." >&2
 	docker build -q -t "$IMAGE" -f "$DOCKERFILE" "$ROOT/build/volt-sandbox" >/dev/null
+}
+
+build_cve_image() {
+	echo "Building $CVE_IMAGE ..." >&2
+	docker build -q -t "$CVE_IMAGE" -f "$CVE_DOCKERFILE" "$ROOT/build/volt-sandbox" >/dev/null
+}
+
+# mocha inside a rig image with one environment variable set, the host's node_modules (plain JavaScript) and the arguments given.
+mocha_in() {
+	local image="$1" env="$2"; shift 2
+	docker run --rm "${DOCKER_FLAGS[@]}" -v "$ROOT/node_modules:/volt/node_modules:ro" -e "$env" "$image" \
+		node /volt/node_modules/mocha/bin/mocha.js --ui tdd --timeout 120000 --exit "$@"
 }
 
 # Prints `name number` for every syscall in seccomp.ts's table for one architecture, from the
@@ -145,11 +164,16 @@ case "$cmd" in
 		build_image
 		# mocha and its dependencies are plain JavaScript, so the host's node_modules work here.
 		docker run --rm "${DOCKER_FLAGS[@]}" -v "$ROOT/node_modules:/volt/node_modules:ro" -e VOLT_SANDBOX_REQUIRED=1 "$IMAGE" \
-			node /volt/node_modules/mocha/bin/mocha.js --ui tdd --timeout 120000 --exit /volt/out/vs/platform/voltSandbox/test/node/sandboxSecurity.test.js /volt/out/vs/platform/voltGit/test/node/hostGit.test.js "$@"
+			node /volt/node_modules/mocha/bin/mocha.js --ui tdd --timeout 120000 --exit \
+			/volt/out/vs/platform/voltSandbox/test/node/sandboxSecurity.test.js \
+			/volt/out/vs/platform/voltGit/test/node/hostGit.test.js \
+			/volt/out/vs/platform/voltSandbox/test/node/sandboxAttestation.test.js \
+			/volt/out/vs/platform/voltSandbox/test/node/sandboxProxy.test.js \
+			/volt/out/vs/platform/voltSandbox/test/node/sandboxPty.test.js "$@"
 		;;
 	files)
 		transpile
-		for dir in vs/platform/voltFiles vs/platform/voltHelpers vs/platform/product/common vs/base/parts/sandbox/common; do
+		for dir in vs/platform/voltFiles; do
 			mkdir -p "$SNAPSHOT/out/$dir"
 			cp -R "$ROOT/out/$dir/." "$SNAPSHOT/out/$dir/"
 		done
@@ -162,8 +186,17 @@ case "$cmd" in
 		docker run --rm "${DOCKER_FLAGS[@]}" -v "$SNAPSHOT/bin:/volt/bin:ro" -v "$ROOT/node_modules:/volt/node_modules:ro" -e VOLT_SANDBOX_REQUIRED=1 -e VSCODE_DEV=1 -e VOLT_FSD_PATH=/volt/bin/volt-fsd "$IMAGE" \
 			node /volt/node_modules/mocha/bin/mocha.js --ui tdd --timeout 120000 --exit /volt/out/vs/platform/voltFiles/test/node/safeOpen.test.js "$@"
 		;;
+	cve)
+		transpile
+		build_image
+		build_cve_image
+		echo "LNX-BWRAP-CVE on bubblewrap 0.9.0: expect refusal" >&2
+		mocha_in "$CVE_IMAGE" VOLT_SANDBOX_EXPECT_BWRAP_CVE_REFUSAL=1 --grep 'LNX-BWRAP-CVE refusal' /volt/out/vs/platform/voltSandbox/test/node/sandboxAttestation.test.js
+		echo "LNX-BWRAP-CVE on bubblewrap 0.13.1: expect the trial to pass" >&2
+		mocha_in "$IMAGE" VOLT_SANDBOX_REQUIRED=1 --grep 'LNX-BWRAP-CVE: the probe' /volt/out/vs/platform/voltSandbox/test/node/sandboxAttestation.test.js
+		;;
 	*)
-		sed -n '2,21p' "$0"
+		sed -n '2,22p' "$0"
 		exit 64
 		;;
 esac

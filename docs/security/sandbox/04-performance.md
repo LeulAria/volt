@@ -30,6 +30,8 @@ On macOS, the end-to-end time breaks down roughly as:
 - the post-exit tree sweep: one `ps` scan with environments, about 24 ms;
 - removing the run folder.
 
+**After H7 (external attestation, go byte, disclaimed spawn), 2026-11-08,** same machine but busy (load average about 9, 615 processes): `workspace` end to end **41 ms** (p90 52), agent profile 58 ms (p90 69), prepare 7 ms, spawn to attested 27 ms, of which the attestation itself (four `sandbox_check` queries to the running helper) about 0.2 ms. The tree sweep now asks the running `volt-sandbox-helper` (`proc_listallpids` + `KERN_PROCARGS2`, about 6 ms) instead of spawning `ps -E`, which took 60 to 80 ms with that many processes; `ps` stays as the fallback when the helper is gone.
+
 Agent CLIs pay this once per process, which lives for a whole chat. Workload commands pay it per command.
 
 ## Inside a sandbox

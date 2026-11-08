@@ -3,9 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { app, session, webContents, type OnBeforeRequestListenerDetails, type Session, type WebContents } from 'electron';
+import { randomBytes } from 'crypto';
+import { app, session, webContents, type AuthenticationResponseDetails, type AuthInfo, type Event as ElectronEvent, type OnBeforeRequestListenerDetails, type Session, type WebContents } from 'electron';
 import { SandboxNetworkProxy } from '../../voltSandbox/node/sandboxProxy.js';
-import { isSandboxBrowserPartition, ISandboxBrowserRules, sandboxBrowserProxyConfig, sandboxBrowserRequestVerdict } from '../common/sandboxBrowser.js';
+import { isSandboxBrowserPartition, ISandboxBrowserRules, sandboxBrowserProxyConfig, sandboxBrowserProxyLogin, sandboxBrowserRequestVerdict } from '../common/sandboxBrowser.js';
 
 interface IPartitionState {
 	readonly session: Session;
@@ -15,10 +16,23 @@ interface IPartitionState {
 	applying: Promise<void>;
 }
 
+/** Every sandboxed chat's browser session, so the app-wide proxy sign-in prompt leaves them alone. */
+const sandboxSessions = new WeakSet<Session>();
+
+/** Whether `target` is a sandboxed chat's browser session (its proxy sign-in is answered by {@link SandboxBrowserSessions}). */
+export function isSandboxBrowserSession(target: Session | undefined): boolean {
+	return !!target && sandboxSessions.has(target);
+}
+
 /**
  * The sandboxed chats' browser profiles in the main process (B-16; see `common/sandboxBrowser.ts`).
  * A profile is locked down the moment Volt first sees it (a `<webview>` about to attach with it,
  * or the window setting its rules): until its chat's rules arrive, every request is refused.
+ *
+ * Each profile's proxy has its own route token (B-31): a request without it gets a 407. Chromium
+ * cannot carry credentials in a proxy rule, so it asks through the `login` event, which is
+ * answered with that profile's token, only for that profile's own proxy, and only once per
+ * challenge (a second ask means the token was refused: cancelled, never a dialog).
  */
 export class SandboxBrowserSessions {
 
@@ -29,6 +43,22 @@ export class SandboxBrowserSessions {
 
 	constructor(private readonly log: (message: string) => void) {
 		app.on('web-contents-created', (_event, contents) => this.onWebContents(contents));
+		app.on('login', (event, contents, details, authInfo, callback) => this.onLogin(event, contents, details, authInfo, callback));
+	}
+
+	private onLogin(event: ElectronEvent, contents: WebContents | null | undefined, details: AuthenticationResponseDetails & { firstAuthAttempt?: boolean }, authInfo: AuthInfo, callback: (username?: string, password?: string) => void): void {
+		const partition = contents && !contents.isDestroyed() ? this.partitionOf(contents.session) : undefined;
+		if (!partition || !authInfo.isProxy) {
+			return;
+		}
+		event.preventDefault();
+		const credentials = sandboxBrowserProxyLogin(this.partitions.get(partition)?.proxy, authInfo, details.firstAuthAttempt !== false);
+		if (credentials) {
+			callback(credentials.username, credentials.password);
+		} else {
+			this.log(`[volt-sandbox-browser] ${partition} refused a proxy sign-in for ${authInfo.host}:${authInfo.port}`);
+			callback();
+		}
 	}
 
 	/** A `<webview>` of a sandboxed partition is about to attach: lock its session first, and give it nothing extra. */
@@ -76,6 +106,7 @@ export class SandboxBrowserSessions {
 			return state;
 		}
 		const ses = session.fromPartition(partition);
+		sandboxSessions.add(ses);
 		state = { session: ses, rules: undefined, proxy: undefined, applying: Promise.resolve() };
 		this.partitions.set(partition, state);
 		ses.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !this.dispatch(partition, details) }));
@@ -129,7 +160,8 @@ export class SandboxBrowserSessions {
 				if (state.proxy) {
 					state.proxy.allow(next.allowedDomains);
 				} else {
-					state.proxy = await SandboxNetworkProxy.start(next.allowedDomains, (host, reason) => this.log(`[volt-sandbox-browser] ${partition} proxy refused ${host}: ${reason}`));
+					// Its own route token: no other process on this machine can use this chat's grants (B-31).
+					state.proxy = await SandboxNetworkProxy.start(next.allowedDomains, (host, reason) => this.log(`[volt-sandbox-browser] ${partition} proxy refused ${host}: ${reason}`), { token: randomBytes(24).toString('base64url') });
 				}
 			}
 			// The dispatcher's rules first: the proxy only ever narrows further.

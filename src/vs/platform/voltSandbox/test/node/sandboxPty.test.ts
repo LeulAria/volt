@@ -24,8 +24,8 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/c
 import { IVoltSandboxRequest } from '../../common/sandboxPolicy.js';
 import { VoltSandboxLauncher } from '../../node/sandboxLauncher.js';
 import { SandboxedPtySession } from '../../node/sandboxPty.js';
+import { realSandboxAvailable } from './sandboxSuiteGate.js';
 
-const required = !!process.env.VOLT_SANDBOX_REQUIRED;
 const posix = process.platform !== 'win32';
 
 suite('Volt sandbox PTY launch (F.6)', function () {
@@ -54,20 +54,16 @@ suite('Volt sandbox PTY launch (F.6)', function () {
 		if (!posix) {
 			return;
 		}
-		root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'volt-pty-')));
+		// Not under a shared temp folder on Linux: a terminal cannot carry --bind-fd's folder fds, so
+		// the backend refuses a workspace there (B-33; the refusal is the test below).
+		root = await fs.realpath(await fs.mkdtemp(join(process.platform === 'linux' ? homedir() : tmpdir(), '.volt-pty-')));
 		ws = join(root, 'ws');
 		await fs.mkdir(ws, { recursive: true });
 		await fs.mkdir(join(root, 'user-data'), { recursive: true });
 		launcher = new VoltSandboxLauncher(join(root, 'user-data'), { info: () => undefined, warn: () => undefined });
-		const support = await launcher.getSupport();
-		available = support.mechanism !== 'none';
-		if (!available) {
-			const message = `[volt-sandbox] NO SANDBOX BACKEND on ${process.platform}: ${support.detail}`;
-			if (required) {
-				throw new Error(`${message} (CI requires the sandbox; failing instead of skipping)`);
-			}
-			console.warn(`\n\n!!! ${message}\n!!! The PTY launch suite is SKIPPED. Set VOLT_SANDBOX_REQUIRED=1 to make this fail.\n`);
-		}
+		// A chat's sandbox with the network off runs through the proxy: a backend without it (bubblewrap
+		// without socat) cannot start these terminals, as it cannot run sandboxSecurity.test.ts.
+		available = realSandboxAvailable(await launcher.capabilities(), 'PTY launch suite');
 	});
 
 	suiteTeardown(async () => {
@@ -149,17 +145,35 @@ suite('Volt sandbox PTY launch (F.6)', function () {
 		}
 	});
 
-	// Linux needs bubblewrap's status and seccomp evidence; macOS reads the prologue's line until
-	// external attestation lands (H7, ATTEST-*), which is why this is Linux-only for now.
-	(process.platform === 'linux' ? test : test.skip)('evidence written into the channels by something else is not accepted', async () => {
+	// The evidence is attested from outside (H7, ATTEST-*): Linux reads the sandbox's /proc status
+	// beside bubblewrap's, macOS asks its helper about the ready line's process. A forger writing
+	// what the prologue would write proves nothing.
+	test('evidence written into the channels by something else is not accepted', async () => {
 		const session = await SandboxedPtySession.prepare(launcher, '/bin/sh', ['-c', 'true'], request(), { cwd: ws, hostEnv: { PATH: '/usr/bin:/bin', HOME: homedir() } });
 		const [fifo3, fifo4] = [session.launch.args[3], session.launch.args[4]];
-		const forged = spawn('/bin/sh', ['-c', `printf 'NoNewPrivs:1 Seccomp:2\\n' > ${quote(fifo3)}; printf '{"child-pid": %s}\\n' "$$" > ${quote(fifo4)}; sleep 30`], { stdio: 'ignore', detached: true });
+		const forgery = process.platform === 'linux'
+			? `printf 'NoNewPrivs:1 Seccomp:2\\n' > ${quote(fifo3)}; printf '{"child-pid": %s}\\n' "$$" > ${quote(fifo4)}; sleep 30`
+			: `printf 'volt-sandbox-ready %s cred=denied\\n' "$$" > ${quote(fifo3)}; sleep 30`;
+		const forged = spawn('/bin/sh', ['-c', forgery], { stdio: 'ignore', detached: true });
 		try {
 			await assert.rejects(session.confirm(forged.pid!), /could not be established/);
 		} finally {
 			forged.kill('SIGKILL');
 			await session.end();
+		}
+	});
+
+	(process.platform === 'linux' ? test : test.skip)('B-33: a terminal whose workspace is under a shared temp folder is refused, as it cannot be bound race-free', async () => {
+		const shared = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'volt-pty-shared-')));
+		try {
+			const inside = join(shared, 'ran');
+			await assert.rejects(
+				SandboxedPtySession.prepare(launcher, '/bin/sh', ['-c', `touch ${quote(inside)}`], { ...request(), workspaceRoots: [shared] }, { cwd: shared, hostEnv: { PATH: '/usr/bin:/bin', HOME: homedir() } }),
+				/cannot bind .* race-free/,
+			);
+			assert.strictEqual(await exists(inside), false);
+		} finally {
+			await fs.rm(shared, { recursive: true, force: true });
 		}
 	});
 });

@@ -2238,8 +2238,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	async setSandboxSettings(sessionId: string, settings: IVoltSandboxSettings): Promise<void> {
-		this.sandboxChats = { ...this.sandboxChats, [sessionId]: normalizeSandboxSettings(settings) };
+		const before = this.getSandboxSettings(sessionId);
+		const next = normalizeSandboxSettings(settings);
+		this.sandboxChats = { ...this.sandboxChats, [sessionId]: next };
 		this.storeSandbox();
+		// "Allow host": hosts are not part of the launch key, so the running agent keeps its process
+		// and its proxy lets the new hosts through from its next connection (F.9, B-31).
+		const added = (next.allowedDomains ?? []).filter(domain => !(before.allowedDomains ?? []).includes(domain));
+		const session = this.sessions.get(sessionId) as ISessionState | undefined;
+		if (added.length && session?.agentHandle && session.agentProviderId && session.agentSandboxKey === sandboxLaunchKey(next)) {
+			await this.agentProviders.get(session.agentProviderId)?.allowSandboxDomains?.(session.agentHandle, added).catch(err => this.logService.warn('[volt] could not allow hosts for the running agent', err));
+		}
 	}
 
 	getDefaultSandboxSettings(): IVoltSandboxSettings {

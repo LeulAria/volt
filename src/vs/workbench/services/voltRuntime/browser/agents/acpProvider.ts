@@ -439,6 +439,13 @@ export class AcpAgentProvider implements IAgentProvider {
 		live.mode = context.mode;
 	}
 
+	async allowSandboxDomains(session: IAgentSessionHandle, domains: readonly string[]): Promise<void> {
+		const live = this.sessions.get(session.id);
+		if (live) {
+			await this.stdio.allowSandboxDomains?.(live.processId, domains);
+		}
+	}
+
 	async applyAccessPolicy(session: IAgentSessionHandle, policy: ICompiledPolicy): Promise<void> {
 		const live = this.sessions.get(session.id);
 		if (!live) {
