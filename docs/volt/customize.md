@@ -177,7 +177,7 @@ Each `extensions/volt-*/package.json` now says what its feature owns, in Volt's 
 | `voltAgents` | model providers as data (H.12 shape: `binary`, `args`, `apiHosts`, `state`, `probe`, `models`) | `providers` |
 | `voltCapabilities` | `required` / `optional` capabilities with their G.8 class | (the API's report mode) |
 
-`node scripts/volt-generate-features.mjs` writes `common/voltFeatureManifests.generated.ts` from the manifests, and `VOLT_FEATURES` is built from it plus the core features (`VOLT_CORE_FEATURES`). Tests check the generated file is current and that the generated catalog deep-equals the hand-written one (`VOLT_FEATURES_HAND_WRITTEN`), which also stands in if the manifests' data doesn't validate. The `volt.*` API (`services/voltPlugins/common/voltApi.ts`) runs in report mode: every call checks the plugin's declared capabilities through `ICapabilityReporter` and logs what it would deny, but runs as today.
+`node scripts/volt-generate-features.mjs` writes `common/voltFeatureManifests.generated.ts` from the manifests, and `VOLT_FEATURES` is built from it plus the core features (`VOLT_CORE_FEATURES`). Tests check the generated file is current and that the generated catalog deep-equals the hand-written one (`VOLT_FEATURES_HAND_WRITTEN`), which also stands in if the manifests' data doesn't validate. The `volt.*` API (`services/voltPlugins/common/voltApi.ts`) runs in report mode for in-process feature code (trusted core): every call checks the plugin's declared capabilities through `ICapabilityReporter` and logs what it would deny, but runs as today. Extensions reach the same facade as `vscode.volt` (the `volt` API proposal, open to every extension), where `VoltExtensionCapabilityPolicy` enforces it: built-ins within their compiled ceilings (`platform/voltPlugins/common/firstPartyCeilings.ts`), third parties by their declared capabilities plus a one-time Volt consent for medium and high ones. See [extension-api.md](extension-api.md).
 
 ### 6.2 Volt UI SDK
 - **Built-in code** uses the workbench kit: `createVoltButton`, `createVoltDropdown`, `WorkbenchList` / trees (see the volt-ui-controls and volt-lists rules).
@@ -213,9 +213,9 @@ This is the riskiest change; it touches `layout.ts` and the grid's serialized st
 ## 8. Security
 - **Looks and layouts are data.** They may set window-scoped settings only (the same rule VS Code applies to `configurationDefaults`); app- and machine-scoped settings (updates, proxies, telemetry) are refused.
 - **`rightPanel.commands`** runs commands. An extension's layout has that extension's trust; home files are the person's own.
-- **Extension code** follows VS Code's model: trusted once installed, run in the extension host, not in the window. Designed:
-  - a Volt API in the extension host gated by `contributes.voltCapabilities` (`agents.read`, `agents.send`, `terminals.run`, `network`), checked in the main-thread proxy and shown on install;
-  - panels get only `postMessage`.
+- **Extension code** follows VS Code's model: trusted once installed, run in the extension host, not in the window.
+  - Built: the `vscode.volt` API, gated by `contributes.voltCapabilities` and checked in the main-thread proxy (`MainThreadVolt`), with Volt's consent dialog for medium and high capabilities, kept and revocable on the extension's page ([extension-api.md](extension-api.md)).
+  - Designed: panels get only `postMessage`.
 - **The Playground** edits only its draft folder and previews at memory level. Nothing reaches other windows before Apply or Install.
 
 ## 9. Testing

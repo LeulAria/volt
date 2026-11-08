@@ -7,7 +7,7 @@ import { Event } from '../../../../base/common/event.js';
 import { DisposableStore, IDisposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IVoltHostToolInfo, IVoltHostToolResult } from '../../voltRuntime/common/hostTools.js';
-import { HOST_TOOL_SANDBOX_CLASSES } from '../../voltRuntime/common/hostToolSandbox.js';
+import { HOST_TOOL_SANDBOX_CLASSES, hostToolSandboxUse } from '../../voltRuntime/common/hostToolSandbox.js';
 import { ICapabilityReporter, ICapabilityRequest, IVoltPluginPrincipal, toolClassCapability, VoltCapabilityError } from './capabilities.js';
 import { IVoltContributes, IVoltPluginManifest, IVoltToolContribution } from './voltContributions.js';
 
@@ -28,9 +28,25 @@ export const VOLT_API_VERSION = '1.0.0';
 export type VoltToolHandler = (args: Record<string, unknown>, call: { readonly sessionId?: string }) => Promise<IVoltHostToolResult> | IVoltHostToolResult;
 export type VoltCommandHandler = (...args: unknown[]) => unknown;
 
+/** What a registration may add when the manifest entry leaves it out. */
+export interface IVoltToolRegistrationOptions {
+	readonly title?: string;
+	readonly description?: string;
+	/** JSON schema of the tool's input. */
+	readonly inputSchema?: object;
+}
+
 export interface IVoltToolsApi {
-	/** Serves a tool the manifest declares in `contributes.voltTools` (`tools.register`, plus the capability its class implies). */
-	register(name: string, handler: VoltToolHandler): IDisposable;
+	/**
+	 * Serves a tool the manifest declares in `contributes.voltTools` (`tools.register`, plus the
+	 * capability its class implies). A third party can't serve a tool name Volt serves itself.
+	 */
+	register(name: string, handler: VoltToolHandler, options?: IVoltToolRegistrationOptions): IDisposable;
+	/**
+	 * Runs one of Volt's own agent tools, for `chatId` when given: `agents.send` (it acts in a chat
+	 * the way the chat's agent would) plus what the call's class implies (G.8).
+	 */
+	invoke(name: string, args: Record<string, unknown>, options?: { readonly chatId?: string }): Promise<IVoltHostToolResult>;
 	/** The tools this plugin declares. */
 	readonly declared: readonly IVoltToolContribution[];
 }
@@ -43,16 +59,151 @@ export interface IVoltStorageApi {
 	keys(): readonly string[];
 }
 
-/** Other chats, through the same tools agents use (`thread_*`). */
+/** One chat, as the chats list shows it. */
+export interface IVoltChatSummary {
+	readonly id: string;
+	readonly title: string;
+	/** `running`, `idle`, `done`, `failed`, ... (the history's status). */
+	readonly status: string;
+	readonly createdAt: number;
+	readonly updatedAt: number;
+	readonly turnCount: number;
+	/** The project folder it runs in. */
+	readonly project?: string;
+}
+
+/** A turn of a chat started or ended. */
+export interface IVoltTurnEvent {
+	readonly chatId: string;
+	readonly turnId: string;
+	/** `prompt`, `notification`, `followup`, ... */
+	readonly kind: string;
+	/** Set when it ended: `done`, `failed`, `cancelled` or `interrupted`. */
+	readonly outcome?: string;
+}
+
+/** Other chats, through the same tools agents use (`thread_*`) and the chats list. */
 export interface IVoltAgentsApi {
 	/** `agents.read:any`. */
 	list(options?: { readonly project?: string; readonly query?: string }): Promise<IVoltHostToolResult>;
-	/** `agents.read:any`; a chat's turns. */
+	/** `agents.read:any`: the chats list, newest first. */
+	chats(options?: { readonly query?: string; readonly limit?: number }): Promise<readonly IVoltChatSummary[]>;
+	/** `agents.read:current`: the chat the user has in front. */
+	current(): IVoltChatSummary | undefined;
+	/** A chat's turns: `agents.read:current` for the chat in front, `agents.read:any` for another. */
 	read(chatId: string): Promise<IVoltHostToolResult>;
 	/** `agents.send`. */
 	send(chatId: string, message: string): Promise<IVoltHostToolResult>;
 	/** `agents.create`. */
-	create(options: { readonly title: string; readonly message?: string; readonly model?: string }): Promise<IVoltHostToolResult>;
+	create(options: { readonly title: string; readonly message?: string; readonly model?: string; readonly project?: string }): Promise<IVoltHostToolResult>;
+	/** `agents.read:any`, checked when a listener is added. */
+	readonly onDidStartTurn: Event<IVoltTurnEvent>;
+	readonly onDidFinishTurn: Event<IVoltTurnEvent>;
+}
+
+export type VoltMemoryType = 'user' | 'feedback' | 'project' | 'reference';
+export type VoltMemoryScope = 'user' | 'project';
+
+/** A note Volt keeps across chats and providers (`IVoltMemoryService`). */
+export interface IVoltMemoryNote {
+	readonly name: string;
+	readonly description: string;
+	readonly type: VoltMemoryType;
+	readonly body: string;
+	readonly scope: VoltMemoryScope;
+}
+
+/**
+ * Volt's memory: notes every later chat recalls. Reading is `agents.read:any` (it is what agents
+ * remembered from chats); writing and deleting is `agents.context` (later chats read it).
+ */
+export interface IVoltMemoryApi {
+	list(scope?: VoltMemoryScope | 'all'): Promise<readonly IVoltMemoryNote[]>;
+	read(name: string, scope?: VoltMemoryScope): Promise<IVoltMemoryNote | undefined>;
+	write(note: { readonly name: string; readonly description: string; readonly body: string; readonly type?: VoltMemoryType; readonly scope?: VoltMemoryScope }): Promise<IVoltMemoryNote>;
+	delete(name: string, scope?: VoltMemoryScope): Promise<boolean>;
+}
+
+/** Volt's in-app browser. */
+export interface IVoltBrowserApi {
+	/** `browser.drive`: opens an http(s) URL in Volt's browser, beside the chat. */
+	open(url: string): Promise<void>;
+	/** `browser.read`: the page in a chat's browser tab (the chat in front by default), as an accessibility snapshot. */
+	readPage(options?: { readonly chatId?: string }): Promise<{ readonly url?: string; readonly snapshot: IVoltHostToolResult }>;
+}
+
+/** Charts and Scratch board drawings. */
+export interface IVoltVisualsApi {
+	/**
+	 * `ui.contribute`: renders charts (`render_chart` specs) and returns the result with its
+	 * `visual`; a tool that returns it shows the chart in the chat, above the agent's reply.
+	 */
+	renderChart(chart: { readonly title?: string; readonly subtitle?: string; readonly charts: readonly object[] }): Promise<IVoltHostToolResult>;
+	/** `agents.send`: draws on the user's Scratch board (`scratch_draw` input: `title` plus `mermaid`, `diagram`, `page`, `elements`, `notes` or `cards`). */
+	drawOnScratch(drawing: { readonly title: string } & Record<string, unknown>, options?: { readonly chatId?: string }): Promise<IVoltHostToolResult>;
+}
+
+export type VoltAutomationSchedule =
+	| { readonly type: 'hourly'; readonly minute: number }
+	| { readonly type: 'daily'; readonly time: string }
+	| { readonly type: 'weekly'; readonly weekdays: readonly number[]; readonly time: string }
+	| { readonly type: 'cron'; readonly expr: string }
+	| { readonly type: 'interval'; readonly everyMs: number }
+	| { readonly type: 'once'; readonly at: number };
+
+export interface IVoltAutomationSummary {
+	readonly id: string;
+	readonly name: string;
+	readonly enabled: boolean;
+	readonly schedules: readonly VoltAutomationSchedule[];
+	/** The earliest next run (epoch ms). */
+	readonly nextRun?: number;
+	readonly createdBy: string;
+	readonly runCount: number;
+}
+
+export interface IVoltAutomationsApi {
+	/** `agents.read:any`: automations run agents with prompts the user wrote. */
+	list(): Promise<readonly IVoltAutomationSummary[]>;
+	/** `automations.schedule`: a scheduled agent run (a new chat each time, or `chatId`'s chat). */
+	schedule(options: { readonly name: string; readonly instructions: string; readonly schedule: VoltAutomationSchedule; readonly chatId?: string; readonly enabled?: boolean }): Promise<IVoltAutomationSummary>;
+}
+
+export interface IVoltUsageModelTotal {
+	readonly provider: string;
+	readonly model: string;
+	readonly inputTokens: number;
+	readonly outputTokens: number;
+	readonly costUsd: number;
+}
+
+export interface IVoltUsageSummary {
+	readonly generatedAt: number;
+	readonly since: number;
+	readonly sessionCount: number;
+	readonly costUsd: number;
+	readonly models: readonly IVoltUsageModelTotal[];
+}
+
+/** `usage.report`: token use and cost across providers (Settings > Usage). */
+export interface IVoltUsageApi {
+	get(): Promise<IVoltUsageSummary>;
+}
+
+export interface IVoltPullRequestLink {
+	readonly url: string;
+	readonly number: number;
+	readonly repository: string;
+	readonly title?: string;
+	readonly state?: string;
+	readonly watched: boolean;
+}
+
+export interface IVoltPullRequestsApi {
+	/** `hosting.read`: the pull requests linked to a chat. */
+	list(chatId: string): Promise<readonly IVoltPullRequestLink[]>;
+	/** `hosting.read` and `agents.send`: links a pull request to a chat (Volt then shows and syncs it). */
+	link(chatId: string, url: string): Promise<IVoltHostToolResult>;
 }
 
 /** What the plugin shows (`ui.contribute`): its manifest entries, and whether each is on. */
@@ -118,6 +269,21 @@ export interface IVoltApi {
 	readonly commands: IVoltCommandsApi;
 	readonly net: IVoltNetApi;
 	readonly secrets: IVoltSecretsApi;
+	readonly memory: IVoltMemoryApi;
+	readonly browser: IVoltBrowserApi;
+	readonly visuals: IVoltVisualsApi;
+	readonly automations: IVoltAutomationsApi;
+	readonly usage: IVoltUsageApi;
+	readonly pullRequests: IVoltPullRequestsApi;
+}
+
+/** Who a backend call is for, set by core from the principal (never from a payload). */
+export interface IVoltApiCaller {
+	readonly extensionId: string;
+	/** The extension's display name, for what the user sees ("Message from ..."). */
+	readonly label: string;
+	/** The chat the call acts in, when the method names one. */
+	readonly chatId?: string;
 }
 
 /** What a feature or plugin gets when it activates. Disposing `subscriptions` unloads what it registered. */
@@ -137,7 +303,7 @@ export interface IVoltPluginContext {
  */
 export interface IVoltApiBackend {
 	registerTool(info: IVoltHostToolInfo, invoke: (args: Record<string, unknown>, sessionId: string | undefined) => Promise<IVoltHostToolResult>): IDisposable;
-	invokeTool(name: string, args: Record<string, unknown>): Promise<IVoltHostToolResult>;
+	invokeTool(name: string, args: Record<string, unknown>, caller?: IVoltApiCaller): Promise<IVoltHostToolResult>;
 	storageGet(key: string): string | undefined;
 	storageSet(key: string, value: string | undefined): void;
 	storageKeys(prefix: string): readonly string[];
@@ -147,6 +313,23 @@ export interface IVoltApiBackend {
 	executeCommand(id: string, args: readonly unknown[]): Promise<unknown>;
 	registerCommand(id: string, handler: VoltCommandHandler): IDisposable;
 	isOn(part: 'item' | 'section' | 'surface' | 'dock', id: string): boolean;
+
+	// The feature APIs. A window that has the feature binds them; without one the method throws
+	// `VoltApiUnavailableError` (after its capability check, so a refusal is still a refusal).
+	listChats?(options: { readonly query?: string; readonly limit?: number }): Promise<readonly IVoltChatSummary[]>;
+	currentChat?(): IVoltChatSummary | undefined;
+	readonly onDidStartTurn?: Event<IVoltTurnEvent>;
+	readonly onDidFinishTurn?: Event<IVoltTurnEvent>;
+	listMemories?(scope: VoltMemoryScope | 'all'): Promise<readonly IVoltMemoryNote[]>;
+	readMemory?(name: string, scope: VoltMemoryScope | undefined): Promise<IVoltMemoryNote | undefined>;
+	writeMemory?(note: { readonly name: string; readonly description: string; readonly body: string; readonly type?: VoltMemoryType; readonly scope?: VoltMemoryScope }): Promise<IVoltMemoryNote>;
+	deleteMemory?(name: string, scope: VoltMemoryScope | undefined): Promise<boolean>;
+	openBrowser?(url: string): Promise<void>;
+	browserPageUrl?(chatId: string): Promise<string | undefined>;
+	listAutomations?(): Promise<readonly IVoltAutomationSummary[]>;
+	scheduleAutomation?(options: { readonly name: string; readonly instructions: string; readonly schedule: VoltAutomationSchedule; readonly chatId?: string; readonly enabled: boolean }, caller: IVoltApiCaller): Promise<IVoltAutomationSummary>;
+	readUsage?(): Promise<IVoltUsageSummary>;
+	listPullRequests?(chatId: string): Promise<readonly IVoltPullRequestLink[]>;
 }
 
 /** The facade could not do this yet: the broker behind it isn't built. */
@@ -168,27 +351,37 @@ function matchesSetting(declared: readonly string[], key: string): boolean {
 export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPluginManifest, backend: IVoltApiBackend, reporter: ICapabilityReporter, subscriptions: DisposableStore): IVoltApi {
 	const contributes = manifest.contributes ?? {};
 	const ownCommands = contributes.voltModule?.commands ?? [];
-	const ownSettings = contributes.voltModule?.settings ?? [];
+	const ownSettings = [...contributes.voltModule?.settings ?? [], ...principal.ownSettings ?? []];
 	const declaredTools = contributes.voltTools ?? [];
 	const storagePrefix = `volt.plugin.${principal.extensionId}.`;
+	const caller = (chatId?: string): IVoltApiCaller => ({ extensionId: principal.extensionId, label: principal.label ?? principal.extensionId, ...(chatId ? { chatId } : {}) });
 
 	const check = (request: ICapabilityRequest): void => {
 		const verdict = reporter.check(principal, request);
 		if (!verdict.allowed) {
 			const denial = verdict.denial;
-			throw new VoltCapabilityError(request.capability, request.target, denial?.deniedBy ?? 'manifest', denial?.reason ?? `${request.capability} was denied`);
+			throw new VoltCapabilityError(request.capability, request.target, denial?.deniedBy ?? 'manifest', denial?.reason ?? `${request.capability} was denied`, !!denial?.promptable);
 		}
+	};
+	/** The backend method, or a refusal that says the window has no such feature. */
+	const bound = <T>(method: T | undefined, api: string): T => {
+		if (method === undefined) {
+			throw new VoltApiUnavailableError(api, 'a window that serves this feature');
+		}
+		return method;
 	};
 
 	const tools: IVoltToolsApi = {
 		declared: declaredTools,
-		register(name, handler) {
+		register(name, handler, options) {
 			check({ api: 'tools.register', capability: 'tools.register', target: name });
 			const declared = declaredTools.find(tool => tool.name === name);
-			// The class Volt knows for the name wins over a lower one; an undeclared tool is treated as escaping.
-			const toolClass = Object.prototype.hasOwnProperty.call(HOST_TOOL_SANDBOX_CLASSES, name) ? HOST_TOOL_SANDBOX_CLASSES[name] : declared?.class ?? 'escapes';
-			if (!declared) {
-				check({ api: 'tools.register', capability: 'full', target: `undeclared tool ${name}` });
+			const volts = Object.prototype.hasOwnProperty.call(HOST_TOOL_SANDBOX_CLASSES, name);
+			// The class Volt knows for the name wins over a lower one; an undeclared tool is treated as
+			// escaping, and so is a third party serving a name Volt serves itself (it would shadow it).
+			const toolClass = volts ? HOST_TOOL_SANDBOX_CLASSES[name] : declared?.class ?? 'escapes';
+			if (!declared || (volts && !principal.firstParty)) {
+				check({ api: 'tools.register', capability: 'full', target: declared ? `Volt's own tool ${name}` : `undeclared tool ${name}` });
 			}
 			const implied = toolClassCapability(toolClass);
 			if (implied !== 'tools.register') {
@@ -196,14 +389,28 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 			}
 			const info: IVoltHostToolInfo = {
 				name,
-				title: declared?.title ?? name,
-				description: declared?.description ?? '',
-				inputSchema: declared?.inputSchema ?? { type: 'object', properties: {} },
+				title: declared?.title ?? options?.title ?? name,
+				description: declared?.description ?? options?.description ?? '',
+				inputSchema: declared?.inputSchema ?? options?.inputSchema ?? { type: 'object', properties: {} },
 				...(declared?.approvalInReadOnlyModes ? { approvalInReadOnlyModes: declared.approvalInReadOnlyModes } : {}),
 			};
 			const registration = backend.registerTool(info, async (args, sessionId) => handler(args, { sessionId }));
 			subscriptions.add(registration);
 			return registration;
+		},
+		invoke(name, args, options) {
+			const use = hostToolSandboxUse(name, args);
+			if (!use) {
+				// Only Volt's own tools: another plugin's tool is that plugin's to call (H.5).
+				check({ api: 'tools.invoke', capability: 'full', target: `not a Volt tool: ${name}` });
+				throw new VoltCapabilityError('full', name, 'catalog', `${name} is not one of Volt's tools`);
+			}
+			check({ api: 'tools.invoke', capability: 'agents.send', target: options?.chatId ?? name });
+			const implied = toolClassCapability(use.kind);
+			if (implied !== 'tools.register') {
+				check({ api: 'tools.invoke', capability: implied, target: name });
+			}
+			return backend.invokeTool(name, args, caller(options?.chatId));
 		},
 	};
 
@@ -234,23 +441,41 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 		},
 	};
 
+	/** An event whose listener is added only after its capability check. */
+	const checkedEvent = <T>(event: () => Event<T> | undefined, api: string, capability: string): Event<T> => (listener, thisArgs, disposables) => {
+		check({ api, capability });
+		return bound(event(), api)(listener, thisArgs, disposables);
+	};
+
 	const agents: IVoltAgentsApi = {
 		list(options) {
 			check({ api: 'agents.list', capability: 'agents.read:any' });
-			return backend.invokeTool('thread_list', { ...(options?.project ? { project: options.project } : {}), ...(options?.query ? { query: options.query } : {}) });
+			return backend.invokeTool('thread_list', { ...(options?.project ? { project: options.project } : {}), ...(options?.query ? { query: options.query } : {}) }, caller());
+		},
+		chats(options) {
+			check({ api: 'agents.chats', capability: 'agents.read:any' });
+			return bound(backend.listChats, 'agents.chats').call(backend, { ...(options?.query ? { query: options.query } : {}), ...(options?.limit ? { limit: options.limit } : {}) });
+		},
+		current() {
+			check({ api: 'agents.current', capability: 'agents.read:current' });
+			return bound(backend.currentChat, 'agents.current').call(backend);
 		},
 		read(chatId) {
-			check({ api: 'agents.read', capability: 'agents.read:any', target: chatId });
-			return backend.invokeTool('thread_read', { thread_id: chatId });
+			// The chat in front is `agents.read:current`; any other is `agents.read:any`.
+			const current = backend.currentChat?.()?.id;
+			check({ api: 'agents.read', capability: current !== undefined && current === chatId ? 'agents.read:current' : 'agents.read:any', target: chatId });
+			return backend.invokeTool('thread_read', { thread_id: chatId }, caller());
 		},
 		send(chatId, message) {
 			check({ api: 'agents.send', capability: 'agents.send', target: chatId });
-			return backend.invokeTool('thread_send', { thread_id: chatId, message });
+			return backend.invokeTool('thread_send', { thread_id: chatId, message }, caller());
 		},
 		create(options) {
 			check({ api: 'agents.create', capability: 'agents.create' });
-			return backend.invokeTool('thread_launch', { title: options.title, ...(options.message ? { message: options.message } : {}), ...(options.model ? { model: options.model } : {}) });
+			return backend.invokeTool('thread_launch', { title: options.title, ...(options.message ? { message: options.message } : {}), ...(options.model ? { model: options.model } : {}), ...(options.project ? { project: options.project } : {}) }, caller());
 		},
+		onDidStartTurn: checkedEvent(() => backend.onDidStartTurn, 'agents.onDidStartTurn', 'agents.read:any'),
+		onDidFinishTurn: checkedEvent(() => backend.onDidFinishTurn, 'agents.onDidFinishTurn', 'agents.read:any'),
 	};
 
 	const ui: IVoltUiApi = {
@@ -317,7 +542,96 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 		},
 	};
 
-	return Object.freeze({ version: VOLT_API_VERSION, tools, storage, agents, ui, settings, commands, net, secrets });
+	const memory: IVoltMemoryApi = {
+		list(scope) {
+			check({ api: 'memory.list', capability: 'agents.read:any', target: scope ?? 'all' });
+			return bound(backend.listMemories, 'memory.list').call(backend, scope ?? 'all');
+		},
+		read(name, scope) {
+			check({ api: 'memory.read', capability: 'agents.read:any', target: name });
+			return bound(backend.readMemory, 'memory.read').call(backend, name, scope);
+		},
+		write(note) {
+			check({ api: 'memory.write', capability: 'agents.context', target: note.name });
+			return bound(backend.writeMemory, 'memory.write').call(backend, note);
+		},
+		delete(name, scope) {
+			check({ api: 'memory.delete', capability: 'agents.context', target: name });
+			return bound(backend.deleteMemory, 'memory.delete').call(backend, name, scope);
+		},
+	};
+
+	const browser: IVoltBrowserApi = {
+		async open(url) {
+			let parsed: URL;
+			try {
+				parsed = new URL(url);
+			} catch {
+				throw new Error(`volt.browser.open needs an absolute http(s) URL, not ${JSON.stringify(url)}.`);
+			}
+			if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+				throw new Error(`volt.browser.open opens http(s) pages only, not ${parsed.protocol} URLs.`);
+			}
+			check({ api: 'browser.open', capability: 'browser.drive', target: parsed.host });
+			return bound(backend.openBrowser, 'browser.open').call(backend, parsed.href);
+		},
+		async readPage(options) {
+			const chatId = options?.chatId ?? backend.currentChat?.()?.id;
+			check({ api: 'browser.readPage', capability: 'browser.read', target: chatId });
+			if (!chatId) {
+				return { snapshot: { error: 'No chat is open: pass the chat whose browser tab to read.' } };
+			}
+			const url = await bound(backend.browserPageUrl, 'browser.readPage').call(backend, chatId);
+			const snapshot = await backend.invokeTool('browser_snapshot', {}, caller(chatId));
+			return { ...(url ? { url } : {}), snapshot };
+		},
+	};
+
+	const visuals: IVoltVisualsApi = {
+		renderChart(chart) {
+			check({ api: 'visuals.renderChart', capability: 'ui.contribute' });
+			return backend.invokeTool('render_chart', { ...(chart.title ? { title: chart.title } : {}), ...(chart.subtitle ? { subtitle: chart.subtitle } : {}), charts: chart.charts }, caller());
+		},
+		drawOnScratch(drawing, options) {
+			check({ api: 'visuals.drawOnScratch', capability: 'agents.send', target: options?.chatId ?? 'scratch' });
+			return backend.invokeTool('scratch_draw', { ...drawing }, caller(options?.chatId));
+		},
+	};
+
+	const automations: IVoltAutomationsApi = {
+		list() {
+			check({ api: 'automations.list', capability: 'agents.read:any' });
+			return bound(backend.listAutomations, 'automations.list').call(backend);
+		},
+		schedule(options) {
+			check({ api: 'automations.schedule', capability: 'automations.schedule', target: options.name });
+			if (options.chatId) {
+				check({ api: 'automations.schedule', capability: 'agents.send', target: options.chatId });
+			}
+			return bound(backend.scheduleAutomation, 'automations.schedule').call(backend, { ...options, enabled: options.enabled !== false }, caller(options.chatId));
+		},
+	};
+
+	const usage: IVoltUsageApi = {
+		get() {
+			check({ api: 'usage.get', capability: 'usage.report' });
+			return bound(backend.readUsage, 'usage.get').call(backend);
+		},
+	};
+
+	const pullRequests: IVoltPullRequestsApi = {
+		list(chatId) {
+			check({ api: 'pullRequests.list', capability: 'hosting.read', target: chatId });
+			return bound(backend.listPullRequests, 'pullRequests.list').call(backend, chatId);
+		},
+		link(chatId, url) {
+			check({ api: 'pullRequests.link', capability: 'hosting.read', target: chatId });
+			check({ api: 'pullRequests.link', capability: 'agents.send', target: chatId });
+			return backend.invokeTool('link_pull_request', { url }, caller(chatId));
+		},
+	};
+
+	return Object.freeze({ version: VOLT_API_VERSION, tools, storage, agents, ui, settings, commands, net, secrets, memory, browser, visuals, automations, usage, pullRequests });
 }
 
 /** One extension's validated Volt contributions, as the window loaded them. */

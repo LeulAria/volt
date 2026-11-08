@@ -1,0 +1,26 @@
+{
+	"name": "@volt/extension-api",
+	"version": "1.0.0",
+	"description": "Types for vscode.volt, Volt's extension API: chats and agents, agent tools, memory, browser, visuals, automations, usage and pull requests. See docs/volt/extension-api.md.",
+	"license": "MIT",
+	"author": "Volt ADK",
+	"homepage": "https://volt.leularia.com",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/LeulAria/VOLT.git",
+		"directory": "apps/volt-extension-api"
+	},
+	"keywords": [
+		"volt",
+		"vscode",
+		"extension",
+		"agents"
+	],
+	"types": "vscode.proposed.volt.d.ts",
+	"files": [
+		"vscode.proposed.volt.d.ts"
+	],
+	"peerDependencies": {
+		"@types/vscode": "^1.105.0"
+	}
+}

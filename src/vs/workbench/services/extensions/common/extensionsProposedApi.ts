@@ -16,6 +16,7 @@ import { IWorkbenchEnvironmentService } from '../../environment/common/environme
 import { Extensions, IExtensionFeatureMarkdownRenderer, IExtensionFeaturesRegistry, IRenderedData } from '../../extensionManagement/common/extensionFeatures.js';
 import { IMarkdownString, MarkdownString } from '../../../../base/common/htmlContent.js';
 import { Mutable } from '../../../../base/common/types.js';
+import { VOLT_OPEN_API_PROPOSALS } from '../../../../platform/voltPlugins/common/voltApiProposals.js';
 
 export class ExtensionsProposedApi {
 
@@ -97,7 +98,9 @@ export class ExtensionsProposedApi {
 				}
 			}
 
-			extension.enabledApiProposals = productEnabledProposals;
+			// Volt: its own proposals stay open to an extension product.json lists too.
+			const open = (extension.enabledApiProposals ?? []).filter(name => VOLT_OPEN_API_PROPOSALS.has(name) && !productSet.has(name));
+			extension.enabledApiProposals = [...productEnabledProposals, ...open];
 			return;
 		}
 
@@ -108,9 +111,14 @@ export class ExtensionsProposedApi {
 		}
 
 		if (!extension.isBuiltin && isNonEmptyArray(extension.enabledApiProposals)) {
-			// restrictive: extension cannot use proposed API in this context and its declaration is nulled
-			this._logService.error(`Extension '${extension.identifier.value} CANNOT USE these API proposals '${extension.enabledApiProposals?.join(', ') || '*'}'. You MUST start in extension development mode or use the --enable-proposed-api command line flag`);
-			extension.enabledApiProposals = [];
+			// restrictive: extension cannot use proposed API in this context and its declaration is nulled,
+			// except Volt's own proposals, which every extension may declare (the `volt` API checks capabilities per call)
+			const open = extension.enabledApiProposals.filter(name => VOLT_OPEN_API_PROPOSALS.has(name));
+			const closed = extension.enabledApiProposals.filter(name => !VOLT_OPEN_API_PROPOSALS.has(name));
+			if (closed.length) {
+				this._logService.error(`Extension '${extension.identifier.value} CANNOT USE these API proposals '${closed.join(', ')}'. You MUST start in extension development mode or use the --enable-proposed-api command line flag`);
+			}
+			extension.enabledApiProposals = open;
 		}
 	}
 }
