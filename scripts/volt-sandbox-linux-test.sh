@@ -10,6 +10,7 @@
 #   scripts/volt-sandbox-linux-test.sh shell                               a shell in the rig (out/ mounted at /volt/out)
 #   scripts/volt-sandbox-linux-test.sh verify-syscalls                     check seccomp.ts's syscall numbers on arm64 and amd64
 #   scripts/volt-sandbox-linux-test.sh suite                               the adversarial mocha suite (sandboxSecurity.test.ts), required to run
+#   scripts/volt-sandbox-linux-test.sh files                               race-free host file opens (safeOpen.test.ts, RACE-1..3) with volt-fsd built here
 #
 # Set VOLT_SANDBOX_NO_TRANSPILE=1 to skip `npm run transpile-client-oxc` (out/ is already fresh).
 #
@@ -145,8 +146,23 @@ case "$cmd" in
 		docker run --rm "${DOCKER_FLAGS[@]}" -v "$ROOT/node_modules:/volt/node_modules:ro" -e VOLT_SANDBOX_REQUIRED=1 "$IMAGE" \
 			node /volt/node_modules/mocha/bin/mocha.js --ui tdd --timeout 120000 --exit /volt/out/vs/platform/voltSandbox/test/node/sandboxSecurity.test.js "$@"
 		;;
+	files)
+		transpile
+		for dir in vs/platform/voltFiles vs/platform/voltHelpers vs/platform/product/common vs/base/parts/sandbox/common; do
+			mkdir -p "$SNAPSHOT/out/$dir"
+			cp -R "$ROOT/out/$dir/." "$SNAPSHOT/out/$dir/"
+		done
+		build_image
+		# volt-fsd, built statically in a throwaway container with gcc, for the rig's architecture.
+		mkdir -p "$SNAPSHOT/bin"
+		docker run --rm -v "$ROOT/build/volt/volt-fsd.c:/src/volt-fsd.c:ro" -v "$SNAPSHOT/bin:/out" ubuntu:24.04 bash -c '
+			apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gcc libc6-dev >/dev/null 2>&1 \
+				&& gcc -O2 -static -Wall -Wextra -o /out/volt-fsd /src/volt-fsd.c'
+		docker run --rm "${DOCKER_FLAGS[@]}" -v "$SNAPSHOT/bin:/volt/bin:ro" -v "$ROOT/node_modules:/volt/node_modules:ro" -e VOLT_SANDBOX_REQUIRED=1 -e VOLT_FSD_PATH=/volt/bin/volt-fsd "$IMAGE" \
+			node /volt/node_modules/mocha/bin/mocha.js --ui tdd --timeout 120000 --exit /volt/out/vs/platform/voltFiles/test/node/safeOpen.test.js "$@"
+		;;
 	*)
-		sed -n '2,20p' "$0"
+		sed -n '2,21p' "$0"
 		exit 64
 		;;
 esac

@@ -149,7 +149,26 @@ export interface IVoltStdioService {
 	/**
 	 * Whether the sandbox of spawn `id` lets it read or write `path`. For file access the agent
 	 * routes through Volt (ACP `fs/*`), which happens outside the agent's process. True when the
-	 * spawn is not sandboxed.
+	 * spawn is running and not sandboxed; false for an id this service does not know (fails closed).
 	 */
 	sandboxAllows?(id: string, path: string, access: 'read' | 'write'): Promise<boolean>;
+	/**
+	 * Reads `path` for sandboxed spawn `id`: checked against its sandbox on the real path, opened
+	 * without following a symlink anywhere in the path (B-17). Refused for an id that is not a
+	 * running sandboxed spawn.
+	 */
+	sandboxReadFile?(id: string, path: string): Promise<IVoltSandboxFileResult>;
+	/** Writes `path` for sandboxed spawn `id`, the same way; a file with more than one link is refused. */
+	sandboxWriteFile?(id: string, path: string, content: string): Promise<IVoltSandboxFileResult>;
 }
+
+/** A file read or written for a sandboxed spawn. */
+export type IVoltSandboxFileResult =
+	| {
+		readonly ok: true;
+		/** The final path of the opened file. */
+		readonly path: string;
+		/** Read: the file's text. Write: what it held before (undefined when the write created it). */
+		readonly content?: string;
+	}
+	| { readonly ok: false; readonly reason: string };
