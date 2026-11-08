@@ -83,6 +83,8 @@ export interface IAccessRequest {
 	preview?: IAccessPreview;
 	reason?: string;
 	createdAt: number;
+	/** `chat`: the card's "always" choice means "for this chat" and is not saved as a rule (G.6 flow cards). */
+	alwaysScope?: 'chat';
 }
 
 export interface IAccessDecision {

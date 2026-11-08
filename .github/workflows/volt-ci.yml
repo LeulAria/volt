@@ -115,6 +115,11 @@ jobs:
       - name: Spawn audit
         run: node build/volt/ci/spawnAudit.mjs
 
+      # Permission decisions are made by the Policy Authority's `evaluate` only (sandbox spec C2);
+      # reviewed exceptions are in build/volt/ci/authority-allowlist.json.
+      - name: Policy Authority gate
+        run: node build/volt/ci/authorityGate.mjs
+
   typecheck:
     name: Typecheck
     needs: changes

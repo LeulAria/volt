@@ -156,6 +156,8 @@ export interface IApprovalBlock extends IAgentBaseBlock {
 	scope?: 'once' | 'always';
 	blocked?: boolean;
 	policySource?: string;
+	/** The "always" choice holds for this chat only (a flow card, G.6): labelled "Allow for This Chat". */
+	alwaysForChat?: boolean;
 }
 
 /** The user's answers to an agent's questions, as Cursor's "Answers" card shows them. */
@@ -246,6 +248,7 @@ export function createApprovalBlock(partial: Omit<IApprovalBlock, 'type' | 'stat
 		scope: partial.scope,
 		blocked: partial.blocked,
 		policySource: partial.policySource,
+		...(partial.alwaysForChat ? { alwaysForChat: true } : {}),
 	};
 }
 

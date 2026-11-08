@@ -6,7 +6,7 @@
 import { Event } from '../../../../base/common/event.js';
 import { DisposableStore, IDisposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
-import { IVoltHostToolInfo, IVoltHostToolResult } from '../../voltRuntime/common/hostTools.js';
+import { IVoltHostToolInfo, IVoltHostToolOwner, IVoltHostToolResult } from '../../voltRuntime/common/hostTools.js';
 import { HOST_TOOL_SANDBOX_CLASSES, hostToolSandboxUse } from '../../voltRuntime/common/hostToolSandbox.js';
 import { ICapabilityReporter, ICapabilityRequest, IVoltPluginPrincipal, toolClassCapability, VoltCapabilityError } from './capabilities.js';
 import { IVoltContributes, IVoltPluginManifest, IVoltToolContribution } from './voltContributions.js';
@@ -302,7 +302,8 @@ export interface IVoltPluginContext {
  * it to workbench services (`voltPluginService.ts`); the brokers replace parts of it later.
  */
 export interface IVoltApiBackend {
-	registerTool(info: IVoltHostToolInfo, invoke: (args: Record<string, unknown>, sessionId: string | undefined) => Promise<IVoltHostToolResult>): IDisposable;
+	/** `owner`: core's record of who serves the tool and the class it is held to, for the sandbox gate (G.6). */
+	registerTool(info: IVoltHostToolInfo, invoke: (args: Record<string, unknown>, sessionId: string | undefined) => Promise<IVoltHostToolResult>, owner?: IVoltHostToolOwner): IDisposable;
 	invokeTool(name: string, args: Record<string, unknown>, caller?: IVoltApiCaller): Promise<IVoltHostToolResult>;
 	storageGet(key: string): string | undefined;
 	storageSet(key: string, value: string | undefined): void;
@@ -394,7 +395,14 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 				inputSchema: declared?.inputSchema ?? options?.inputSchema ?? { type: 'object', properties: {} },
 				...(declared?.approvalInReadOnlyModes ? { approvalInReadOnlyModes: declared.approvalInReadOnlyModes } : {}),
 			};
-			const registration = backend.registerTool(info, async (args, sessionId) => handler(args, { sessionId }));
+			const owner: IVoltHostToolOwner = {
+				extensionId: principal.extensionId,
+				label: principal.label ?? principal.extensionId,
+				firstParty: principal.firstParty,
+				toolClass,
+				declared: [...principal.capabilities.required ?? [], ...principal.capabilities.optional ?? []].map(entry => ({ id: entry.id, ...(entry.targets?.length ? { targets: entry.targets } : {}) })),
+			};
+			const registration = backend.registerTool(info, async (args, sessionId) => handler(args, { sessionId }), owner);
 			subscriptions.add(registration);
 			return registration;
 		},

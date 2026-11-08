@@ -4,6 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { posix } from '../../../../base/common/path.js';
+import { chatCovers } from '../../../../platform/voltSandbox/common/authority.js';
+import { chatSubject } from '../../../../platform/voltSandbox/common/principals.js';
 import { domainAllowed, isPathInside, IVoltSandboxSettings, normalizeSandboxPath, planAllowsWrite, resolveSandboxPlan, SandboxStrategy, strategyAtLeast, VoltSandboxLevel } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { threadIdArg } from './orchestration/agentThreadTools.js';
 import { parseActScript } from './tools/actScript.js';
@@ -453,9 +455,62 @@ export interface ISandboxCoverScopes {
  * is as strict, its agent's sandbox no weaker (`native` < `wrap`, B-10), its network no wider, its
  * extra folders, hosts and listen ports within the caller's, and (when it may write its workspace)
  * its workspace is one the caller may write too (B-11). Pass real paths: a symlinked folder
- * compared by its name could point anywhere.
+ * compared by its name could point anywhere. The Policy Authority decides (`chatCovers`).
  */
 export function sandboxCovers(target: IVoltSandboxSettings | undefined, caller: IVoltSandboxSettings | undefined, cwds?: ISandboxCoverScopes): boolean {
+	if (!isSandboxed(caller)) {
+		return true;
+	}
+	const targetView = target ? { subject: chatSubject('target'), settings: target, ...(cwds?.targetStrategy ? { strategy: cwds.targetStrategy } : {}), ...(cwds?.target ? { folder: cwds.target } : {}) } : undefined;
+	return chatCovers(targetView, { subject: chatSubject('caller'), settings: caller, ...(cwds?.callerStrategy ? { strategy: cwds.callerStrategy } : {}), ...(cwds?.caller ? { folder: cwds.caller } : {}) });
+}
+
+/**
+ * The capability a host tool class needs (G.8: tool classes map onto capabilities). `tools.register`
+ * alone covers tools that only change or read Volt's own state.
+ */
+export function hostToolClassCapability(toolClass: HostToolSandboxClass): string {
+	switch (toolClass) {
+		case 'safe': return 'tools.register';
+		case 'browser': return 'browser.drive';
+		case 'reads': return 'files.read:workspace';
+		case 'network': return 'net.connect';
+		case 'writes': return 'files.write';
+		case 'sandboxed': return 'terminals.run';
+		case 'reads-other': return 'agents.read:other';
+		case 'persists': return 'agents.context';
+		case 'delegates': return 'agents.send';
+		case 'spawns': return 'agents.create';
+		case 'escapes': return 'spawn.unsandboxed';
+	}
+}
+
+/**
+ * The gate's rules before the Policy Authority (C2), kept for shadow mode for one release (M.3):
+ * the class of a sandboxed chat's call that is refused, or undefined when the class allows it.
+ * `covers`: whether the chat a `delegates` call prompts is confined at least as much.
+ */
+export function legacyHostToolRefusal(use: IHostToolSandboxUse | undefined, callerSessionId: string | undefined, sandbox: IVoltSandboxSettings, covers: boolean): boolean {
+	if (!use) {
+		return true;
+	}
+	switch (use.kind) {
+		case 'escapes':
+		case 'persists':
+		case 'spawns':
+			return true;
+		case 'network':
+			return !sandbox.network;
+		case 'delegates':
+			return !!use.target && use.target !== callerSessionId && !covers;
+		case 'reads-other':
+			return !!use.readsAnyChat || (use.target !== undefined && use.target !== callerSessionId);
+	}
+	return false;
+}
+
+/** `sandboxCovers` before the Policy Authority, kept for shadow mode for one release (M.3). */
+export function legacySandboxCovers(target: IVoltSandboxSettings | undefined, caller: IVoltSandboxSettings | undefined, cwds?: ISandboxCoverScopes): boolean {
 	if (!isSandboxed(caller)) {
 		return true;
 	}
