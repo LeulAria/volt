@@ -479,6 +479,12 @@ function chatConnect(snapshot: PolicySnapshot, request: IAccessRequest, principa
 	return deny(epoch, 'authority', 'chat-sandbox', `this chat's network is off and ${target.host}:${port} is not one of its allowed hosts`);
 }
 
+/** The host part of a `net.*` target, unbracketed; a bare IPv6 address has colons that are not a port. */
+function addressHostOf(target: string): string {
+	const raw = target.trim();
+	return (!raw.includes('://') && raw.split(':').length > 2 && !raw.startsWith('[') ? raw : hostOf(raw)).replace(/^\[|\]$/g, '');
+}
+
 /**
  * The floor for `net.*` targets that are addresses (I.4 "Special ranges"): cloud metadata and the
  * reserved ranges are never reachable, and `net.connect` never reaches a local or loopback address
@@ -489,9 +495,7 @@ function networkAddressFloor(epoch: number, capability: string, target: string |
 	if (!target || !bare.startsWith('net.')) {
 		return undefined;
 	}
-	const raw = target.trim();
-	// A bare IPv6 address has colons that are not a port.
-	const host = (!raw.includes('://') && raw.split(':').length > 2 && !raw.startsWith('[') ? raw : hostOf(raw)).replace(/^\[|\]$/g, '');
+	const host = addressHostOf(target);
 	const address = classifyAddress(host);
 	if (!address) {
 		return undefined;
@@ -923,6 +927,12 @@ export function launchAccessRequests(view: IChatView, workspaceRoots: readonly s
 		add('net.connect', '*');
 	} else {
 		for (const host of new Set([...view.apiHosts ?? [], ...settings.allowedDomains ?? []])) {
+			// A non-public address in the chat's list is the broker's to refuse per connection (the
+			// address floor); at launch it would refuse the whole chat.
+			const address = classifyAddress(addressHostOf(host));
+			if (address && address.class !== 'public') {
+				continue;
+			}
 			add('net.connect', host);
 		}
 	}

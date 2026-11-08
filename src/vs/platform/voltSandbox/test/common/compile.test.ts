@@ -191,6 +191,16 @@ suite('Volt policy compiler and launch authority (C2 step 4)', () => {
 		assert.strictEqual(refused(unknown), 'manifest/unknown-subject', 'a chat the snapshot doesn\'t hold');
 	});
 
+	test('LAUNCH-AUTH-1 (addresses): a non-public address in the chat\'s hosts is refused per connection, not at launch', () => {
+		for (const address of ['192.168.1.20', '10.0.0.5:8080', '127.0.0.1', '[::1]:3000', 'http://172.16.0.1']) {
+			const decision = judge({ ...request, allowedDomains: ['example.com', address] }, host);
+			assert.strictEqual(decision.allow, true, `${address} does not refuse the chat`);
+			assert.ok(!decision.requests.some(r => r.target === address), `${address} is not a launch request`);
+		}
+		assert.ok(judge({ ...request, allowedDomains: ['93.184.216.34'] }, host).requests.some(r => r.target === '93.184.216.34'), 'a public address is still a launch request');
+		assert.strictEqual(judge(request, host, { denyHosts: ['example.com'] }).deniedBy, 'admin', 'host rules still refuse at launch');
+	});
+
 	test('POL-DET-1 (compile): a logged launch replays to byte-identical policy', () => {
 		forAll('POL-DET-1 compile', gen => {
 			const { request, host } = randomLaunch(gen);
