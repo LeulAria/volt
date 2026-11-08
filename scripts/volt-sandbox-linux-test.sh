@@ -170,17 +170,17 @@ case "$cmd" in
 	run)
 		transpile
 		build_image
-		docker run --rm "${DOCKER_FLAGS[@]}" "$IMAGE" node /volt/probe.mjs "$@"
+		docker run --rm "${DOCKER_FLAGS[@]}" "$IMAGE" node "${FILE_ROOT[@]}" /volt/probe.mjs "$@"
 		;;
 	bench)
 		transpile
 		build_image
-		docker run --rm "${DOCKER_FLAGS[@]}" "$IMAGE" node /volt/probe.mjs --bench "$@"
+		docker run --rm "${DOCKER_FLAGS[@]}" "$IMAGE" node "${FILE_ROOT[@]}" /volt/probe.mjs --bench "$@"
 		;;
 	probe)
 		transpile
 		build_image
-		docker run --rm "${DOCKER_FLAGS[@]}" "$IMAGE" node /volt/probe.mjs --probe "$@"
+		docker run --rm "${DOCKER_FLAGS[@]}" "$IMAGE" node "${FILE_ROOT[@]}" /volt/probe.mjs --probe "$@"
 		;;
 	shell)
 		snapshot

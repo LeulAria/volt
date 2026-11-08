@@ -154,7 +154,8 @@ suite('Volt sandbox second layers (C4, real processes)', function () {
 		assert.strictEqual(result.resourceViolation?.dimension, 'limits.memory', JSON.stringify(result.resourceViolation));
 		assert.strictEqual(result.resourceViolation.by, 'footprint');
 		assert.ok(result.resourceViolation.observed > 64, `observed ${result.resourceViolation.observed} MB`);
-		assert.ok(Date.now() - started < 10_000, `killed after ${Date.now() - started} ms`);
+		// The allocation crosses the limit within a few hundred ms; the poll is 1 Hz (2 s budget, CI margin).
+		assert.ok(Date.now() - started < 5_000, `killed after ${Date.now() - started} ms`);
 		assert.ok(result.denials.some(denial => denial.kind === 'limit' && denial.target === 'memory 64 MB'), JSON.stringify(result.denials));
 		assert.ok(result.unenforced.includes('limits.memory'), 'best effort, so reported partial');
 		assert.strictEqual(result.attestation?.layers.footprint?.active, true, JSON.stringify(result.attestation?.layers));

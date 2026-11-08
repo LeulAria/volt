@@ -1477,15 +1477,18 @@ class CgroupScope {
 		}
 	}
 
-	private async check(options: Pick<ISandboxLaunchOptions, 'onDenial' | 'onResourceViolation'>): Promise<void> {
+	/** Reads the scope's events; answers whether memory.events could be read (the scope still exists). */
+	private async check(options: Pick<ISandboxLaunchOptions, 'onDenial' | 'onResourceViolation'>): Promise<boolean> {
 		const dir = this.dir;
 		if (!dir) {
-			return;
+			return false;
 		}
 		const count = (text: string, name: string) => Number(new RegExp(`^${name} (\\d+)$`, 'm').exec(text)?.[1] ?? 0);
+		let memoryRead = false;
 		if (this.limits.memoryMB !== undefined && !this.memoryReported) {
-			const events = await fs.readFile(join(dir, 'memory.events'), 'utf8').catch(() => '');
-			if (!this.memoryReported && (count(events, 'oom_kill') > 0 || count(events, 'oom_group_kill') > 0)) {
+			const events = await fs.readFile(join(dir, 'memory.events'), 'utf8').catch(() => undefined);
+			memoryRead = events !== undefined;
+			if (events !== undefined && !this.memoryReported && (count(events, 'oom_kill') > 0 || count(events, 'oom_group_kill') > 0)) {
 				this.memoryReported = true;
 				const peak = await fs.readFile(join(dir, 'memory.peak'), 'utf8').then(value => Math.round(Number(value.trim()) / MB), () => 0);
 				options.onResourceViolation?.({ dimension: 'limits.memory', limit: this.limits.memoryMB, observed: peak > 0 ? peak : this.limits.memoryMB, by: 'cgroup' });
@@ -1499,6 +1502,7 @@ class CgroupScope {
 				options.onDenial({ kind: 'limit', target: `processes ${this.limits.processes}`, source: 'os' });
 			}
 		}
+		return memoryRead;
 	}
 
 	/** Every process of the scope, at once (Linux 5.14+); older kernels rely on the pid namespace. */
@@ -1520,8 +1524,13 @@ class CgroupScope {
 		}
 		this.watcher?.close();
 		this.watcher = undefined;
-		await this.check(options);
+		const memoryRead = await this.check(options);
 		this.dir = undefined;
+		// The run is over: counters read now are final. No OOM in them, nothing to ask (a scope that
+		// ends well unloads itself); otherwise the user manager has the answer and a failed unit to clear.
+		if (this.limits.memoryMB === undefined || (memoryRead && !this.memoryReported)) {
+			return;
+		}
 		const ended = await this.ended();
 		if (ended?.result === 'oom-kill' && this.limits.memoryMB !== undefined && !this.memoryReported) {
 			this.memoryReported = true;
