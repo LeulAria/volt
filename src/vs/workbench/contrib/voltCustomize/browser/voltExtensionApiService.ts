@@ -33,6 +33,7 @@ import { POLICY_AUTHORITY_MODE_SETTING, readPolicyAuthorityMode } from '../../..
 import { BROWSER_PAGE_URL_COMMAND_ID, IVoltHostToolCall, IVoltHostToolService, THREAD_TOOL_NAMES } from '../../../services/voltRuntime/common/hostTools.js';
 import { IVoltMemoryService } from '../../../services/voltRuntime/common/memory/voltMemory.js';
 import { IAgentOrchestratorService } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../services/voltRuntime/common/sessionContext.js';
 import { shownAgentChat } from '../../voltAgent/browser/editor/agentShownChat.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../../voltAgent/browser/preview/browserEditorInput.js';
@@ -40,6 +41,9 @@ import { IAgentPullRequestService } from '../../voltAgent/browser/pullRequests/a
 import { GIT_GRAPH_ASK_AGENT_COMMAND_ID, GIT_GRAPH_FEATURE_ID, OPEN_GIT_GRAPH_COMMAND_ID } from '../../voltGitGraph/common/voltGitGraph.js';
 import { IAgentResourcesService } from '../../voltAgent/browser/resources/agentResourcesService.js';
 import { agentResourceScopeKind } from '../../voltAgent/common/agentResources.js';
+import { IAgentCustomizeService } from '../../voltAgent/browser/customize/agentCustomizeService.js';
+import { OPEN_AUTOMATIONS_COMMAND_ID } from '../../voltAutomations/common/voltAutomations.js';
+import { OPEN_SKILLS_COMMAND_ID, OPEN_SKILLS_MARKETPLACE_COMMAND_ID } from '../../voltSkills/common/voltSkills.js';
 import { IVoltFeatureService } from '../common/voltFeatures.js';
 import { showVoltExtensionConsent, voltCapabilityCopy } from './voltExtensionConsent.js';
 
@@ -226,7 +230,7 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 				await automations.whenReady;
 				return automations.list().map(automationSummary);
 			},
-			scheduleAutomation: async options => {
+			scheduleAutomation: async (options, caller) => {
 				const automations = this.get(IAutomationService);
 				await automations.whenReady;
 				const project = options.chatId ? undefined : this.get(IVoltSessionContextService).activeProject;
@@ -238,8 +242,32 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 					repositories: project ? [{ root: project.root.toString(), name: project.displayName }] : [],
 					tools: [],
 					...(options.chatId ? { threadId: options.chatId } : {}),
+					createdByExtension: caller.extensionId,
 				}));
 			},
+			showAutomations: async automationId => { await commandService.executeCommand(OPEN_AUTOMATIONS_COMMAND_ID, ...(automationId ? [automationId] : [])); },
+			runAutomation: async (automationId, caller) => {
+				const automations = this.get(IAutomationService);
+				await automations.whenReady;
+				ownAutomation(automations.get(automationId), automationId, caller);
+				return (await automations.runNow(automationId)).map(run => ({ id: run.id, status: run.status, ...(run.threadId ? { chatId: run.threadId } : {}) }));
+			},
+			deleteAutomation: async (automationId, caller) => {
+				const automations = this.get(IAutomationService);
+				await automations.whenReady;
+				ownAutomation(automations.get(automationId), automationId, caller);
+				await automations.delete(automationId);
+			},
+			listSkills: async () => (await this.get(IAgentCustomizeService).getItems()).filter(item => item.kind !== 'memory').map(item => ({
+				kind: item.kind,
+				name: item.name,
+				description: item.description,
+				scope: item.scope,
+				...(item.origin ? { origin: item.origin } : {}),
+				...(item.plugin && item.kind !== 'plugin' ? { plugin: item.plugin.name } : {}),
+			})),
+			showSkills: async marketplace => { await commandService.executeCommand(marketplace ? OPEN_SKILLS_MARKETPLACE_COMMAND_ID : OPEN_SKILLS_COMMAND_ID); },
+			showRemoteDevices: async addDevice => { await commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID, addDevice ? 'devices:add' : 'devices'); },
 			readUsage: async () => {
 				const snapshot = await this.get(IVoltUsageService).getUsage();
 				const models = new Map<string, { -readonly [K in keyof IVoltUsageModelTotal]: IVoltUsageModelTotal[K] }>();
@@ -488,6 +516,13 @@ function chatSummary(meta: IAgentSessionMeta): IVoltChatSummary {
 
 function memoryNote(note: IVoltMemoryNote): IVoltMemoryNote {
 	return { name: note.name, description: note.description, type: note.type, body: note.body, scope: note.scope };
+}
+
+/** An extension runs or deletes only the automations it scheduled; the user's own (and other extensions') stay out of reach. */
+function ownAutomation(automation: IAutomation | undefined, automationId: string, caller: IVoltApiCaller): void {
+	if (!automation || automation.createdByExtension !== caller.extensionId) {
+		throw new Error(`volt.automations: ${automationId} is not an automation ${caller.label} scheduled.`);
+	}
 }
 
 function automationSummary(automation: IAutomation): IVoltAutomationSummary {

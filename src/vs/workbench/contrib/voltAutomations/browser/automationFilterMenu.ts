@@ -3,13 +3,13 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { localize } from '../../../../../nls.js';
-import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
-import { AUTOMATION_RUN_TOOLS, AUTOMATION_TOOL_STATUSES, AutomationRunToolKind, AutomationToolStatus, RUN_STATUS_BUCKETS, RunStatusBucket } from '../../../../services/voltRuntime/common/automations/automations.js';
-import { AUTOMATION_TRIGGER_GROUPS, AutomationTriggerGroup, triggerGroupLabel } from '../../../../services/voltRuntime/common/automations/automationTriggers.js';
-import { IVoltMenuHandle, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
-import { providerIcon, statusIcon, toolKindIcon } from './automationIcons.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { localize } from '../../../../nls.js';
+import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
+import { AUTOMATION_RUN_TOOLS, AUTOMATION_TOOL_STATUSES, AutomationRunToolKind, AutomationToolStatus, RUN_STATUS_BUCKETS, RunStatusBucket } from '../../../services/voltRuntime/common/automations/automations.js';
+import { AUTOMATION_TRIGGER_GROUPS, AutomationTriggerGroup, triggerGroupLabel } from '../../../services/voltRuntime/common/automations/automationTriggers.js';
+import { IVoltMenuHandle, IVoltMenuSection, showVoltMenu } from '../../voltAgent/browser/ui/menu/voltMenu.js';
+import { providerIcon, statusIcon, toolKindIcon } from '../../voltAgent/browser/automations/automationIcons.js';
 
 /** The filter the Run History table applies; the menu edits it in place. */
 export interface IMutableRunFilter {

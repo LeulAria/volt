@@ -163,11 +163,53 @@ export interface IVoltAutomationSummary {
 	readonly runCount: number;
 }
 
+/** One run an automation started. */
+export interface IVoltAutomationRun {
+	readonly id: string;
+	/** `queued`, `running`, `succeeded`, `failed`, ... */
+	readonly status: string;
+	/** The chat the run went to. */
+	readonly chatId?: string;
+}
+
 export interface IVoltAutomationsApi {
 	/** `agents.read:any`: automations run agents with prompts the user wrote. */
 	list(): Promise<readonly IVoltAutomationSummary[]>;
 	/** `automations.schedule`: a scheduled agent run (a new chat each time, or `chatId`'s chat). */
 	schedule(options: { readonly name: string; readonly instructions: string; readonly schedule: VoltAutomationSchedule; readonly chatId?: string; readonly enabled?: boolean }): Promise<IVoltAutomationSummary>;
+	/** `ui.contribute`: shows the Automations page, or one automation's. Nothing comes back. */
+	show(automationId?: string): Promise<void>;
+	/** `automations.schedule`: runs now an automation this plugin scheduled (anyone else's is refused). */
+	run(automationId: string): Promise<readonly IVoltAutomationRun[]>;
+	/** `automations.schedule`: deletes an automation this plugin scheduled (anyone else's is refused). */
+	remove(automationId: string): Promise<void>;
+}
+
+/** A skill, subagent, rule, command, hook, MCP server or plugin agents load here (its name and what it says it does; no file contents). */
+export interface IVoltSkillSummary {
+	/** `skill`, `subagent`, `rule`, `command`, `hook`, `mcp` or `plugin`. */
+	readonly kind: string;
+	readonly name: string;
+	readonly description: string;
+	/** `user` (the home folder) or `workspace`. */
+	readonly scope: string;
+	/** Whose folder layout it came from: `volt`, `claude`, `cursor`, `codex`, `agents`, `builtin`. */
+	readonly origin?: string;
+	/** The plugin that ships it. */
+	readonly plugin?: string;
+}
+
+export interface IVoltSkillsApi {
+	/** `agents.read:any`: what agents load here, optionally of one `kind` (memories are `memory`'s). */
+	list(kind?: string): Promise<readonly IVoltSkillSummary[]>;
+	/** `ui.contribute`: shows Skills & Plugins, or its marketplace. Nothing comes back. */
+	show(options?: { readonly marketplace?: boolean }): Promise<void>;
+}
+
+/** Phones and browsers paired with this computer's agent server. Pairing itself stays with the user. */
+export interface IVoltRemoteDevicesApi {
+	/** `ui.contribute`: shows Settings > Devices, or Add Device on it. Nothing comes back. */
+	show(options?: { readonly addDevice?: boolean }): Promise<void>;
 }
 
 export interface IVoltUsageModelTotal {
@@ -390,6 +432,8 @@ export interface IVoltApi {
 	readonly browser: IVoltBrowserApi;
 	readonly visuals: IVoltVisualsApi;
 	readonly automations: IVoltAutomationsApi;
+	readonly skills: IVoltSkillsApi;
+	readonly remoteDevices: IVoltRemoteDevicesApi;
 	readonly usage: IVoltUsageApi;
 	readonly pullRequests: IVoltPullRequestsApi;
 	readonly gitGraph: IVoltGitGraphApi;
@@ -449,6 +493,14 @@ export interface IVoltApiBackend {
 	browserPageUrl?(chatId: string): Promise<string | undefined>;
 	listAutomations?(): Promise<readonly IVoltAutomationSummary[]>;
 	scheduleAutomation?(options: { readonly name: string; readonly instructions: string; readonly schedule: VoltAutomationSchedule; readonly chatId?: string; readonly enabled: boolean }, caller: IVoltApiCaller): Promise<IVoltAutomationSummary>;
+	showAutomations?(automationId: string | undefined): Promise<void>;
+	/** Refuses an automation `caller` didn't schedule. */
+	runAutomation?(automationId: string, caller: IVoltApiCaller): Promise<readonly IVoltAutomationRun[]>;
+	/** Refuses an automation `caller` didn't schedule. */
+	deleteAutomation?(automationId: string, caller: IVoltApiCaller): Promise<void>;
+	listSkills?(): Promise<readonly IVoltSkillSummary[]>;
+	showSkills?(marketplace: boolean): Promise<void>;
+	showRemoteDevices?(addDevice: boolean): Promise<void>;
 	readUsage?(): Promise<IVoltUsageSummary>;
 	readUsageLimits?(): Promise<readonly IVoltUsageLimit[]>;
 	listAgentResources?(): Promise<readonly IVoltAgentResource[]>;
@@ -742,6 +794,37 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 			}
 			return bound(backend.scheduleAutomation, 'automations.schedule').call(backend, { ...options, enabled: options.enabled !== false }, caller(options.chatId));
 		},
+		async show(automationId) {
+			check({ api: 'automations.show', capability: 'ui.contribute', ...(automationId ? { target: automationId } : {}) });
+			return bound(backend.showAutomations, 'automations.show').call(backend, automationId);
+		},
+		async run(automationId) {
+			check({ api: 'automations.run', capability: 'automations.schedule', target: automationId });
+			return bound(backend.runAutomation, 'automations.run').call(backend, automationId, caller());
+		},
+		async remove(automationId) {
+			check({ api: 'automations.remove', capability: 'automations.schedule', target: automationId });
+			return bound(backend.deleteAutomation, 'automations.remove').call(backend, automationId, caller());
+		},
+	};
+
+	const skills: IVoltSkillsApi = {
+		async list(kind) {
+			check({ api: 'skills.list', capability: 'agents.read:any', ...(kind ? { target: kind } : {}) });
+			const items = await bound(backend.listSkills, 'skills.list').call(backend);
+			return kind ? items.filter(item => item.kind === kind) : items;
+		},
+		async show(options) {
+			check({ api: 'skills.show', capability: 'ui.contribute' });
+			return bound(backend.showSkills, 'skills.show').call(backend, options?.marketplace === true);
+		},
+	};
+
+	const remoteDevices: IVoltRemoteDevicesApi = {
+		async show(options) {
+			check({ api: 'remoteDevices.show', capability: 'ui.contribute' });
+			return bound(backend.showRemoteDevices, 'remoteDevices.show').call(backend, options?.addDevice === true);
+		},
 	};
 
 	const usage: IVoltUsageApi = {
@@ -816,7 +899,7 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 		},
 	};
 
-	return Object.freeze({ version: VOLT_API_VERSION, tools, storage, agents, ui, settings, commands, net, secrets, memory, browser, visuals, automations, usage, pullRequests, gitGraph, code, agentResources });
+	return Object.freeze({ version: VOLT_API_VERSION, tools, storage, agents, ui, settings, commands, net, secrets, memory, browser, visuals, automations, skills, remoteDevices, usage, pullRequests, gitGraph, code, agentResources });
 }
 
 /** One extension's validated Volt contributions, as the window loaded them. */

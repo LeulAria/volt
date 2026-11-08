@@ -3,29 +3,29 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, clearNode, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { IntervalTimer, RunOnceScheduler } from '../../../../../base/common/async.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
-import { localize } from '../../../../../nls.js';
-import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
-import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
-import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
-import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { INotificationService } from '../../../../../platform/notification/common/notification.js';
-import { IAutomation, IAutomationService, isActiveRun, nextRunOf, runStats } from '../../../../services/voltRuntime/common/automations/automations.js';
-import { AUTOMATION_TEMPLATE_CATEGORIES, automationTemplate, AutomationTemplateCategory, IAutomationTemplate, templatesIn } from '../../../../services/voltRuntime/common/automations/automationTemplates.js';
-import { providerLabel } from '../../../../services/voltRuntime/common/automations/automationTriggers.js';
-import { setAgentTooltip } from '../chrome/agentTooltip.js';
-import { startOfDay } from '../ui/dateTime/voltDateTime.js';
-import { showVoltMenu } from '../ui/menu/voltMenu.js';
+import { $, addDisposableListener, append, clearNode, getWindow, isHTMLElement } from '../../../../base/browser/dom.js';
+import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { IntervalTimer, RunOnceScheduler } from '../../../../base/common/async.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { Disposable, DisposableStore, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { localize } from '../../../../nls.js';
+import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
+import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
+import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
+import { IAutomation, IAutomationService, isActiveRun, nextRunOf, runStats } from '../../../services/voltRuntime/common/automations/automations.js';
+import { AUTOMATION_TEMPLATE_CATEGORIES, automationTemplate, AutomationTemplateCategory, IAutomationTemplate, templatesIn } from '../../../services/voltRuntime/common/automations/automationTemplates.js';
+import { providerLabel } from '../../../services/voltRuntime/common/automations/automationTriggers.js';
+import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
+import { startOfDay } from '../../voltAgent/browser/ui/dateTime/voltDateTime.js';
+import { showVoltMenu } from '../../voltAgent/browser/ui/menu/voltMenu.js';
 import { AutomationCalendarView, CalendarView } from './automationCalendarView.js';
 import { automationJson } from './automationDetailView.js';
-import { formatAge, formatNextShort, formatScheduleWhen } from './automationFormat.js';
-import { arrowUpRightIcon, clockIcon, providerIcon, templateIcon, toolKindIcon } from './automationIcons.js';
-import { AutomationsRoute, AutomationsView, IAutomationsHost, IAutomationsPage } from './automationRoutes.js';
-import { button, iconButton, pillTabs } from './automationUi.js';
+import { formatAge, formatNextShort, formatScheduleWhen } from '../../voltAgent/browser/automations/automationFormat.js';
+import { arrowUpRightIcon, clockIcon, providerIcon, templateIcon, toolKindIcon } from '../../voltAgent/browser/automations/automationIcons.js';
+import { AutomationsRoute, AutomationsView, IAutomationsHost, IAutomationsPage } from '../../voltAgent/browser/automations/automationRoutes.js';
+import { button, iconButton, pillTabs } from '../../voltAgent/browser/automations/automationUi.js';
 
 /** Volt's own agents, shown under the table: each opens its automation (made from the template on first use). */
 const BUILT_IN: readonly string[] = ['review-prs', 'fix-ci', 'triage-sentry'];

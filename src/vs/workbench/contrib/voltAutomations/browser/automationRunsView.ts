@@ -3,23 +3,23 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, clearNode, getWindow } from '../../../../../base/browser/dom.js';
-import { RunOnceScheduler } from '../../../../../base/common/async.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
-import { localize } from '../../../../../nls.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
-import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { activeFilterCount, AutomationRunStatus, filterRuns, formatDuration, IAutomationRun, IAutomationService, isActiveRun, runDuration, runStats } from '../../../../services/voltRuntime/common/automations/automations.js';
-import { setAgentTooltip } from '../chrome/agentTooltip.js';
-import { OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
-import { createHomeFilterIcon, createHomeSearchIcon } from '../home/agentHomeIcons.js';
+import { $, addDisposableListener, append, clearNode, getWindow } from '../../../../base/browser/dom.js';
+import { RunOnceScheduler } from '../../../../base/common/async.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { Disposable, DisposableStore, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { localize } from '../../../../nls.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { activeFilterCount, AutomationRunStatus, filterRuns, formatDuration, IAutomationRun, IAutomationService, isActiveRun, runDuration, runStats } from '../../../services/voltRuntime/common/automations/automations.js';
+import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
+import { OPEN_AGENT_COMMAND_ID } from '../../voltAgent/browser/editor/agentEditorInput.js';
+import { createHomeFilterIcon, createHomeSearchIcon } from '../../voltAgent/browser/home/agentHomeIcons.js';
 import { IMutableRunFilter, newRunFilter, runToolLabel, showRunFilterMenu, statusLabel } from './automationFilterMenu.js';
-import { formatScheduleWhen } from './automationFormat.js';
-import { providerIcon, statusIcon, toolKindIcon } from './automationIcons.js';
-import { IAutomationsHost, IAutomationsPage } from './automationRoutes.js';
-import { button, iconButton } from './automationUi.js';
+import { formatScheduleWhen } from '../../voltAgent/browser/automations/automationFormat.js';
+import { providerIcon, statusIcon, toolKindIcon } from '../../voltAgent/browser/automations/automationIcons.js';
+import { IAutomationsHost, IAutomationsPage } from '../../voltAgent/browser/automations/automationRoutes.js';
+import { button, iconButton } from '../../voltAgent/browser/automations/automationUi.js';
 
 interface IRunRow extends IAutomationRun {
 	readonly automationId: string;

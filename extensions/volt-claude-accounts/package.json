@@ -25,6 +25,7 @@
 	"contributes": {
 		"voltModule": {
 			"feature": "claudeAccounts",
+			"entry": "voltClaudeAccounts",
 			"label": "Claude accounts",
 			"description": "Several Claude logins with one switch, and switching when one runs out.",
 			"category": "providers",

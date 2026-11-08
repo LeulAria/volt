@@ -3,32 +3,32 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import '../media/agentComposerInput.css';
-import '../media/agentAutomationComposer.css';
-import { $, addDisposableListener, append, getDomNodePagePosition, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
-import { AnchorPosition } from '../../../../../base/browser/ui/contextview/contextview.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { Disposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
-import { URI } from '../../../../../base/common/uri.js';
-import { localize } from '../../../../../nls.js';
-import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
-import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { INotificationService } from '../../../../../platform/notification/common/notification.js';
-import { AutomationToolKind, IAutomationDraft } from '../../../../services/voltRuntime/common/automations/automations.js';
-import { AUTOMATION_PROVIDERS, eventLabel, providerLabel } from '../../../../services/voltRuntime/common/automations/automationTriggers.js';
-import { IAgentRuntimeService, IVoltMcpServerStatus } from '../../../../services/voltRuntime/common/runtime.js';
-import { IWorkflowService, IWorkflowSummary, IWorkflowTrigger } from '../../../../services/voltRuntime/common/workflows/workflowTypes.js';
-import { createModeIcon, createStrokeIcon, ModeIconId } from '../chrome/agentModeIcons.js';
-import { setAgentTooltip } from '../chrome/agentTooltip.js';
-import { createSlashIcon } from '../composer/agentSkillHoverCard.js';
-import { AgentSlashMenu, rankSlashItems } from '../composer/agentSlashMenu.js';
-import { AgentVoiceDictation } from '../composer/agentVoiceDictation.js';
-import { AgentVoiceVisuals } from '../composer/agentVoiceVisuals.js';
-import { IAgentCustomizeService, IAgentSlashItem } from '../customize/agentCustomizeService.js';
-import { AgentModelPicker } from '../picker/agentModelPicker.js';
-import { IVoltMenuHandle, IVoltMenuItem, IVoltMenuOptions, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
-import { mcpIcon, memoriesIcon, providerIcon } from './automationIcons.js';
+import '../../voltAgent/browser/media/agentComposerInput.css';
+import './media/agentAutomationComposer.css';
+import { $, addDisposableListener, append, getDomNodePagePosition, getWindow, isHTMLElement } from '../../../../base/browser/dom.js';
+import { AnchorPosition } from '../../../../base/browser/ui/contextview/contextview.js';
+import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { Disposable, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { URI } from '../../../../base/common/uri.js';
+import { localize } from '../../../../nls.js';
+import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
+import { AutomationToolKind, IAutomationDraft } from '../../../services/voltRuntime/common/automations/automations.js';
+import { AUTOMATION_PROVIDERS, eventLabel, providerLabel } from '../../../services/voltRuntime/common/automations/automationTriggers.js';
+import { IAgentRuntimeService, IVoltMcpServerStatus } from '../../../services/voltRuntime/common/runtime.js';
+import { IWorkflowService, IWorkflowSummary, IWorkflowTrigger } from '../../../services/voltRuntime/common/workflows/workflowTypes.js';
+import { createModeIcon, createStrokeIcon, ModeIconId } from '../../voltAgent/browser/chrome/agentModeIcons.js';
+import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
+import { createSlashIcon } from '../../voltAgent/browser/composer/agentSkillHoverCard.js';
+import { AgentSlashMenu, rankSlashItems } from '../../voltAgent/browser/composer/agentSlashMenu.js';
+import { AgentVoiceDictation } from '../../voltAgent/browser/composer/agentVoiceDictation.js';
+import { AgentVoiceVisuals } from '../../voltAgent/browser/composer/agentVoiceVisuals.js';
+import { IAgentCustomizeService, IAgentSlashItem } from '../../voltAgent/browser/customize/agentCustomizeService.js';
+import { AgentModelPicker } from '../../voltAgent/browser/picker/agentModelPicker.js';
+import { IVoltMenuHandle, IVoltMenuItem, IVoltMenuOptions, IVoltMenuSection, showVoltMenu } from '../../voltAgent/browser/ui/menu/voltMenu.js';
+import { mcpIcon, memoriesIcon, providerIcon } from '../../voltAgent/browser/automations/automationIcons.js';
 
 /** What the instructions box reads and changes on the automation's draft. */
 export interface IAutomationComposerHost {

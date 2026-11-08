@@ -128,6 +128,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 			voltModule: {
 				feature: 'automations',
+				entry: 'voltAutomations',
 				label: 'Automations',
 				description: 'Scheduled and triggered runs, the calendar, and the tools agents manage them with.',
 				category: 'productivity',
@@ -311,6 +312,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 			voltModule: {
 				feature: 'claudeAccounts',
+				entry: 'voltClaudeAccounts',
 				label: 'Claude accounts',
 				description: 'Several Claude logins with one switch, and switching when one runs out.',
 				category: 'providers',
@@ -1517,6 +1519,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 			voltModule: {
 				feature: 'remoteDevices',
+				entry: 'voltRemoteDevices',
 				label: 'Remote devices',
 				description: 'Pair phones and browsers with this machine\'s agent server (Settings > Devices).',
 				category: 'workspace',
@@ -1616,6 +1619,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 			voltModule: {
 				feature: 'skills',
+				entry: 'voltSkills',
 				label: 'Skills & Plugins',
 				description: 'Skills, subagents, rules, hooks and MCP servers, and installing more from skills.sh and plugin marketplaces.',
 				category: 'resources',

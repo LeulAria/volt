@@ -7,7 +7,7 @@ declare module 'vscode' {
 
 	/**
 	 * Volt's own API: its chats and agents, agent tools, memory, browser, visuals, automations,
-	 * usage and pull requests, for any extension running in Volt.
+	 * skills, remote devices, usage and pull requests, for any extension running in Volt.
 	 *
 	 * Use it by adding `"volt"` to `enabledApiProposals` in `package.json`. Unlike the editor's other
 	 * proposals it works for every extension, including ones installed from Open VSX, with no flag.
@@ -228,12 +228,55 @@ declare module 'vscode' {
 			readonly runCount: number;
 		}
 
+		/** One run an automation started. */
+		export interface AutomationRun {
+			readonly id: string;
+			/** `queued`, `running`, `succeeded`, `failed`, ... */
+			readonly status: string;
+			/** The chat the run went to. */
+			readonly chatId?: string;
+		}
+
 		/** Scheduled agent runs. */
 		export namespace automations {
 			/** Capability: `agents.read:any`. */
 			export function list(): Thenable<readonly Automation[]>;
 			/** Runs an agent with `instructions` on a schedule (a new chat each run, or `chatId`). Capability: `automations.schedule`. */
 			export function schedule(options: { readonly name: string; readonly instructions: string; readonly schedule: AutomationSchedule; readonly chatId?: string; readonly enabled?: boolean }): Thenable<Automation>;
+			/** Shows the Automations page, or one automation's page. Capability: `ui.contribute`. */
+			export function show(automationId?: string): Thenable<void>;
+			/** Runs now an automation this extension scheduled; anyone else's is refused. Capability: `automations.schedule`. */
+			export function run(automationId: string): Thenable<readonly AutomationRun[]>;
+			/** Deletes an automation this extension scheduled; anyone else's is refused. Capability: `automations.schedule`. */
+			export function remove(automationId: string): Thenable<void>;
+		}
+
+		/** A skill, subagent, rule, command, hook, MCP server or plugin agents load (its name and description; no file contents). */
+		export interface Skill {
+			/** `skill`, `subagent`, `rule`, `command`, `hook`, `mcp` or `plugin`. */
+			readonly kind: string;
+			readonly name: string;
+			readonly description: string;
+			/** `user` (the home folder) or `workspace`. */
+			readonly scope: string;
+			/** Whose folder layout it came from: `volt`, `claude`, `cursor`, `codex`, `agents` or `builtin`. */
+			readonly origin?: string;
+			/** The plugin that ships it. */
+			readonly plugin?: string;
+		}
+
+		/** What agents load: skills, subagents, rules, commands, hooks, MCP servers and plugins. */
+		export namespace skills {
+			/** Optionally of one `kind`. Memories are `memory`'s. Capability: `agents.read:any`. */
+			export function list(kind?: string): Thenable<readonly Skill[]>;
+			/** Shows Skills & Plugins, or its marketplace. Capability: `ui.contribute`. */
+			export function show(options?: { readonly marketplace?: boolean }): Thenable<void>;
+		}
+
+		/** Phones and browsers paired with this computer. Pairing itself stays with the user. */
+		export namespace remoteDevices {
+			/** Shows Settings > Devices, or Add Device on it. Capability: `ui.contribute`. */
+			export function show(options?: { readonly addDevice?: boolean }): Thenable<void>;
 		}
 
 		export interface UsageSummary {

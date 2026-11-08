@@ -12,12 +12,22 @@ import { MenuId } from '../../../../platform/actions/common/actions.js';
 import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { AGENT_RESOURCES_SECTIONS } from '../../voltAgent/browser/resources/agentResourcesPage.js';
+import { OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID } from '../../voltAgent/browser/workspace/agentSurfaceMenu.js';
 import { AGENT_RESOURCES_FEATURE_ID, AGENT_RESOURCES_INPUT_ID, OPEN_AGENT_RESOURCES_COMMAND_ID } from '../../voltAgentResources/common/voltAgentResources.js';
+import {
+	AUTOMATIONS_EDITOR_INPUT_TYPE_ID, AUTOMATIONS_FEATURE_ID, NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATION_RUNS_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID,
+	OPEN_AUTOMATIONS_ROUTE_COMMAND_ID,
+} from '../../voltAutomations/common/voltAutomations.js';
+import { CLAUDE_ACCOUNTS_FEATURE_ID } from '../../voltClaudeAccounts/common/voltClaudeAccounts.js';
 import { CODE_INTELLIGENCE_FEATURE_ID } from '../../voltCodeIntelligence/common/voltCodeIntelligence.js';
 import { COMMIT_PLAN_TOOLS, COMMIT_REVIEW_FEATURE_ID } from '../../voltCommitReview/common/voltCommitReview.js';
 import { GIT_GRAPH_ASK_AGENT_COMMAND_ID, GIT_GRAPH_EXPLAIN_COMMIT_COMMAND_ID, GIT_GRAPH_EXPLAIN_LINES_COMMAND_ID, GIT_GRAPH_FEATURE_ID, GIT_GRAPH_FILE_HISTORY_COMMAND_ID, GIT_GRAPH_INPUT_TYPE_ID, GIT_GRAPH_LINE_HISTORY_COMMAND_ID, GIT_GRAPH_REVEAL_COMMIT_COMMAND_ID, GIT_GRAPH_REVIEW_COMMIT_COMMAND_ID, InGitGraphContext, OPEN_GIT_GRAPH_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID } from '../../voltGitGraph/common/voltGitGraph.js';
+import { REMOTE_DEVICES_FEATURE_ID } from '../../voltRemoteDevices/common/voltRemoteDevices.js';
+import { OPEN_SKILLS_COMMAND_ID, OPEN_SKILLS_MARKETPLACE_COMMAND_ID, SKILLS_EDITOR_INPUT_TYPE_ID, SKILLS_FEATURE_ID } from '../../voltSkills/common/voltSkills.js';
 import { AGENT_USAGE_INPUT_ID, OPEN_AGENT_USAGE_COMMAND_ID, USAGE_FEATURE_ID } from '../../voltUsage/common/voltUsage.js';
 import { IVoltFeatureModuleEntry } from './voltFeatureModules.js';
+
+const AGENT_CATEGORY = localize2('voltAgent.category', "Agent");
 
 /**
  * Volt's feature modules: one entry per built-in extension whose `voltModule.entry` names a
@@ -133,6 +143,24 @@ export const VOLT_FEATURE_MODULES: readonly IVoltFeatureModuleEntry[] = [
 		editors: [AGENT_RESOURCES_INPUT_ID],
 	},
 	{
+		feature: AUTOMATIONS_FEATURE_ID,
+		load: async () => (await import('../../voltAutomations/browser/voltAutomations.module.js')).voltAutomationsModule,
+		commands: [
+			{ id: OPEN_AUTOMATIONS_COMMAND_ID, visibility: 'public', f1: true, title: localize2('voltAutomations.open', "Show Automations"), category: AGENT_CATEGORY },
+			{ id: NEW_AUTOMATION_COMMAND_ID, f1: true, title: localize2('voltAutomations.newCommand', "New Automation…"), category: AGENT_CATEGORY },
+			{ id: OPEN_AUTOMATION_RUNS_COMMAND_ID, visibility: 'public', f1: true, title: localize2('voltAutomations.runsCommand', "Show All Automation Runs"), category: AGENT_CATEGORY },
+			{ id: OPEN_AUTOMATIONS_ROUTE_COMMAND_ID },
+			{ id: OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, visibility: 'public' },
+			{ id: OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, visibility: 'public' },
+		],
+		editors: [AUTOMATIONS_EDITOR_INPUT_TYPE_ID],
+	},
+	{
+		// No commands or editors: Providers & Models asks for its section. The broker is core.
+		feature: CLAUDE_ACCOUNTS_FEATURE_ID,
+		load: async () => (await import('../../voltClaudeAccounts/browser/voltClaudeAccounts.module.js')).voltClaudeAccountsModule,
+	},
+	{
 		feature: CODE_INTELLIGENCE_FEATURE_ID,
 		load: async () => (await import('../../voltCodeIntelligence/browser/voltCodeIntelligence.module.js')).codeIntelligenceModule,
 		// Its tools serve agents, which may call them before anyone opens its page.
@@ -140,6 +168,20 @@ export const VOLT_FEATURE_MODULES: readonly IVoltFeatureModuleEntry[] = [
 	},
 	COMMIT_REVIEW_MODULE,
 	GIT_GRAPH_MODULE,
+	{
+		// No commands or editors: Volt Settings asks for its page. Pair a Phone or Browser is core.
+		feature: REMOTE_DEVICES_FEATURE_ID,
+		load: async () => (await import('../../voltRemoteDevices/browser/voltRemoteDevices.module.js')).voltRemoteDevicesModule,
+	},
+	{
+		feature: SKILLS_FEATURE_ID,
+		load: async () => (await import('../../voltSkills/browser/voltSkills.module.js')).voltSkillsModule,
+		commands: [
+			{ id: OPEN_SKILLS_COMMAND_ID, visibility: 'public', f1: true, title: localize2('voltAgent.customize', "Customize Agent"), category: Categories.View },
+			{ id: OPEN_SKILLS_MARKETPLACE_COMMAND_ID, visibility: 'public', f1: true, title: localize2('voltAgent.marketplace', "Browse Skills and Plugins Marketplace"), category: Categories.View },
+		],
+		editors: [SKILLS_EDITOR_INPUT_TYPE_ID],
+	},
 	{
 		feature: USAGE_FEATURE_ID,
 		load: async () => (await import('../../voltUsage/browser/voltUsage.module.js')).usageModule,

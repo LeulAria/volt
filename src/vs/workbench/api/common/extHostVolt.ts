@@ -154,6 +154,18 @@ export class ExtHostVolt implements ExtHostVoltShape {
 		const automations: typeof vscode.volt.automations = {
 			list: () => call('automations.list'),
 			schedule: options => call('automations.schedule', options),
+			show: automationId => call('automations.show', automationId),
+			run: automationId => call('automations.run', automationId),
+			remove: automationId => call('automations.remove', automationId),
+		};
+
+		const skills: typeof vscode.volt.skills = {
+			list: kind => call('skills.list', kind),
+			show: options => call('skills.show', options),
+		};
+
+		const remoteDevices: typeof vscode.volt.remoteDevices = {
+			show: options => call('remoteDevices.show', options),
 		};
 
 		const usage: typeof vscode.volt.usage = {
@@ -181,7 +193,7 @@ export class ExtHostVolt implements ExtHostVoltShape {
 			list: () => call('agentResources.list'),
 		};
 
-		return Object.freeze({ version: VOLT_EXTENSION_API_VERSION, tools, chats, storage, settings, memory, browser, visuals, automations, usage, pullRequests, gitGraph, code, agentResources });
+		return Object.freeze({ version: VOLT_EXTENSION_API_VERSION, tools, chats, storage, settings, memory, browser, visuals, automations, skills, remoteDevices, usage, pullRequests, gitGraph, code, agentResources });
 	}
 
 	/** One pair of emitters per extension; the renderer is asked to stream while either has listeners. */

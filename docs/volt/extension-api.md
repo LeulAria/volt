@@ -1,6 +1,6 @@
 # Building a Volt extension (`vscode.volt`)
 
-A Volt extension is a normal VS Code extension. It installs from Open VSX, a `.vsix` or a folder, and it can use every VS Code API. Running in Volt, it also gets `vscode.volt`: Volt's chats and agents, agent tools, memory, the in-app browser, charts and the Scratch board, automations, usage and pull requests.
+A Volt extension is a normal VS Code extension. It installs from Open VSX, a `.vsix` or a folder, and it can use every VS Code API. Running in Volt, it also gets `vscode.volt`: Volt's chats and agents, agent tools, memory, the in-app browser, charts and the Scratch board, automations, skills, remote devices, usage and pull requests.
 
 Volt's own features are built the same way. The 30 `extensions/volt-*` folders are built-in extensions: they ship with the app (no download, no `.vsix`), can't be uninstalled, are enabled by default and can be disabled in Extensions. They get their access from a ceiling compiled into Volt (below). Third-party extensions get theirs from what they declare and what the user allows.
 
@@ -173,17 +173,39 @@ Chart specs are the ones the `render_chart` tool takes; Scratch drawings take wh
 
 ```ts
 const automations = await volt.automations.list();                  // [agents.read:any]
-await volt.automations.schedule({                                     // [automations.schedule]
+const automation = await volt.automations.schedule({                  // [automations.schedule]
   name: 'Morning triage',
   instructions: 'Triage the issues opened since yesterday.',
   schedule: { type: 'weekly', weekdays: [1, 2, 3, 4, 5], time: '09:00' },
   // chatId: run in this chat instead of a new one each time (also needs agents.send)
 });
+await volt.automations.show(automation.id);                           // [ui.contribute] the Automations page, or one automation's
+const runs = await volt.automations.run(automation.id);               // [automations.schedule] runs it now: [{ id, status, chatId? }]
+await volt.automations.remove(automation.id);                         // [automations.schedule]
 ```
 
-Schedules: `hourly {minute}`, `daily {time}`, `weekly {weekdays, time}`, `cron {expr}`, `interval {everyMs}`, `once {at}`. An automation made by an extension has no tools or secrets of its own; it runs in the active project.
+Schedules: `hourly {minute}`, `daily {time}`, `weekly {weekdays, time}`, `cron {expr}`, `interval {everyMs}`, `once {at}`. An automation made by an extension has no tools or secrets of its own; it runs in the active project. Volt records which extension scheduled it: `run` and `remove` work only on those, and refuse the user's own automations and other extensions'.
 
-### 3.9 `volt.usage`
+### 3.9 `volt.skills`
+
+```ts
+const skills = await volt.skills.list();                              // [agents.read:any] what agents load here
+// [{ kind: 'skill' | 'subagent' | 'rule' | 'command' | 'hook' | 'mcp' | 'plugin', name, description, scope: 'user' | 'workspace', origin?, plugin? }]
+const servers = await volt.skills.list('mcp');
+await volt.skills.show({ marketplace: true });                        // [ui.contribute] Skills & Plugins, or its marketplace
+```
+
+Names and descriptions only: no file paths, file contents or MCP server configs (their env can hold tokens). Memories are `volt.memory`'s.
+
+### 3.10 `volt.remoteDevices`
+
+```ts
+await volt.remoteDevices.show({ addDevice: true });                   // [ui.contribute] Settings > Devices, or Add Device on it
+```
+
+Pairing a phone or browser stays the user's: the extension can only open the page.
+
+### 3.11 `volt.usage`
 
 ```ts
 const usage = await volt.usage.get();                                 // [usage.report]
@@ -194,7 +216,7 @@ const limits = await volt.usage.limits();                             // [usage.
 
 `limits()` returns each signed-in subscription's limits as Volt last read them (the Usage page in Settings shows the same). It never names the account. To open the Usage page, run the public command `workbench.action.voltAgent.usage`.
 
-### 3.10 `volt.pullRequests`
+### 3.12 `volt.pullRequests`
 
 ```ts
 const links = await volt.pullRequests.list(chatId);                   // [hosting.read]
@@ -202,7 +224,7 @@ const links = await volt.pullRequests.list(chatId);                   // [hostin
 await volt.pullRequests.link(chatId, 'https://github.com/acme/app/pull/12'); // [hosting.read + agents.send]
 ```
 
-### 3.11 `volt.gitGraph`
+### 3.13 `volt.gitGraph`
 
 ```ts
 await volt.gitGraph.open({ repositoryRoot, query: 'author:ann path:src/login.ts', revealCommit: 'abc1234' }); // [git.read]
@@ -214,7 +236,7 @@ await volt.gitGraph.askAgent({ action: 'explain', path: 'src/login.ts', startLin
 - `askAgent` opens a side chat and sends it a prompt built from git's facts (subject, files, stats): `explain` or `review` a commit or lines, or `ask` your `question` about them. The SHA must be hex.
 - Both reject while the user has turned the Git Graph off (its `volt.git-graph` extension is disabled). The first call loads the feature; nothing of it runs before.
 
-### 3.12 `volt.code`
+### 3.14 `volt.code`
 
 ```ts
 const hits = await volt.code.grep('createServer', { glob: 'src/**/*.ts', limit: 20 }); // [files.read:workspace]
@@ -224,7 +246,7 @@ const files = await volt.code.findFiles('settings editor');                     
 
 Volt's code index over the open project, from the Code Intelligence feature (`volt.code-intelligence`): the same `instant_grep`, `find_symbol` and `find_files` agents use, answered as the text an agent gets. A `path` option is a folder under the project root; an absolute path or one with `..` is refused (`deniedBy: 'workspace'`). With Code Intelligence turned off, or in a browser window, the calls fail with an error.
 
-### 3.13 `volt.agentResources`
+### 3.15 `volt.agentResources`
 
 ```ts
 const files = await volt.agentResources.list();                       // [files.read:workspace]

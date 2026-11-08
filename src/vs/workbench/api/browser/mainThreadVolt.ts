@@ -278,6 +278,18 @@ export class MainThreadVolt extends Disposable implements MainThreadVoltShape {
 						...(options.enabled === false ? { enabled: false } : {}),
 					});
 				}
+				case 'automations.show': {
+					const automationId = optionalStr(arg(0), 'automationId');
+					return volt.automations.show(automationId || undefined);
+				}
+				case 'automations.run': return volt.automations.run(str(arg(0), 'automationId'));
+				case 'automations.remove': return volt.automations.remove(str(arg(0), 'automationId'));
+				case 'skills.list': {
+					const kind = optionalStr(arg(0), 'kind');
+					return volt.skills.list(kind || undefined);
+				}
+				case 'skills.show': return volt.skills.show({ marketplace: record(arg(0), 'options').marketplace === true });
+				case 'remoteDevices.show': return volt.remoteDevices.show({ addDevice: record(arg(0), 'options').addDevice === true });
 				case 'usage.get': return volt.usage.get();
 				case 'usage.limits': return volt.usage.limits();
 				case 'pullRequests.list': return volt.pullRequests.list(str(arg(0), 'chatId'));

@@ -3,42 +3,41 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import '../media/agentAutomations.css';
-import { $, append, clearNode, Dimension } from '../../../../../base/browser/dom.js';
-import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
-import { CancellationToken } from '../../../../../base/common/cancellation.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { Emitter } from '../../../../../base/common/event.js';
-import { MutableDisposable } from '../../../../../base/common/lifecycle.js';
-import { Schemas } from '../../../../../base/common/network.js';
-import { ThemeIcon } from '../../../../../base/common/themables.js';
-import { URI } from '../../../../../base/common/uri.js';
-import { localize } from '../../../../../nls.js';
-import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
-import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { IStorageService } from '../../../../../platform/storage/common/storage.js';
-import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
-import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
-import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
-import { IEditorOpenContext, IEditorSerializer, IUntypedEditorInput } from '../../../../common/editor.js';
-import { EditorInput } from '../../../../common/editor/editorInput.js';
-import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
-import { IAutomationService } from '../../../../services/voltRuntime/common/automations/automations.js';
-import { createAgentScrollable } from '../editor/agentScrollable.js';
+import './media/agentAutomations.css';
+import { $, append, clearNode, Dimension } from '../../../../base/browser/dom.js';
+import { DomScrollableElement } from '../../../../base/browser/ui/scrollbar/scrollableElement.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { Emitter } from '../../../../base/common/event.js';
+import { MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { Schemas } from '../../../../base/common/network.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
+import { URI } from '../../../../base/common/uri.js';
+import { localize } from '../../../../nls.js';
+import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { IStorageService } from '../../../../platform/storage/common/storage.js';
+import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
+import { IThemeService } from '../../../../platform/theme/common/themeService.js';
+import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
+import { IEditorOpenContext, IEditorSerializer, IUntypedEditorInput } from '../../../common/editor.js';
+import { EditorInput } from '../../../common/editor/editorInput.js';
+import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
+import { IAutomationService } from '../../../services/voltRuntime/common/automations/automations.js';
+import { createAgentScrollable } from '../../voltAgent/browser/editor/agentScrollable.js';
 import { AutomationDetailView } from './automationDetailView.js';
 import { AutomationListView } from './automationListView.js';
 import { AllRunsView } from './automationRunsView.js';
-import { IAgentPageCrumb } from '../customize/agentMarketplaceView.js';
-import { AutomationsRoute, IAutomationsHost, IAutomationsPage } from './automationRoutes.js';
-import { WorkflowBuilderPage } from '../workflows/workflowBuilderPage.js';
-import { WorkflowLibraryPage } from '../workflows/workflowLibraryPage.js';
+import { AutomationsRoute, IAutomationsHost, IAutomationsPage } from '../../voltAgent/browser/automations/automationRoutes.js';
+import { WorkflowBuilderPage } from '../../voltAgent/browser/workflows/workflowBuilderPage.js';
+import { WorkflowLibraryPage } from '../../voltAgent/browser/workflows/workflowLibraryPage.js';
+import { AUTOMATIONS_EDITOR_ID, AUTOMATIONS_EDITOR_INPUT_TYPE_ID, IAutomationsTrail } from '../common/voltAutomations.js';
 
-export const AUTOMATIONS_EDITOR_ID = 'workbench.editor.voltAutomations';
-const AUTOMATIONS_INPUT_ID = 'workbench.input.voltAutomations';
+type IAgentPageCrumb = IAutomationsTrail['crumbs'][number];
 
-export class AutomationsEditorInput extends EditorInput {
+export class AutomationsEditorInput extends EditorInput implements IAutomationsTrail {
 
-	static readonly TypeID = AUTOMATIONS_INPUT_ID;
+	static readonly TypeID = AUTOMATIONS_EDITOR_INPUT_TYPE_ID;
 	static readonly EditorID = AUTOMATIONS_EDITOR_ID;
 
 	readonly resource = URI.from({ scheme: Schemas.voltAutomations, path: 'automations' });

@@ -3,26 +3,26 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import '../media/agentAutomationCalendar.css';
-import { $, addDisposableListener, append } from '../../../../../base/browser/dom.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { RunOnceScheduler } from '../../../../../base/common/async.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { DisposableStore } from '../../../../../base/common/lifecycle.js';
-import { localize } from '../../../../../nls.js';
-import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
+import './media/agentAutomationCalendar.css';
+import { $, addDisposableListener, append } from '../../../../base/browser/dom.js';
+import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { RunOnceScheduler } from '../../../../base/common/async.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { DisposableStore } from '../../../../base/common/lifecycle.js';
+import { localize } from '../../../../nls.js';
+import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import {
 	AutomationSchedule, formatTimeOfDay, gmtOffsetLabel, IAutomation, IAutomationTrigger, nextRunsPreview, nextScheduleAt, parseTimeOfDay, scheduleKindOf, scheduleSaveError, weekdayName,
-} from '../../../../services/voltRuntime/common/automations/automations.js';
-import { describeCron } from '../../../../services/voltRuntime/common/automations/automationCron.js';
-import { isLocalTimeZone, timeZoneLabel, wallClock } from '../../../../services/voltRuntime/common/automations/automationTime.js';
-import { setAgentTooltip } from '../chrome/agentTooltip.js';
-import { dateTimeFormat, startOfDay } from '../ui/dateTime/voltDateTime.js';
-import { VoltDateField, VoltTimeField } from '../ui/dateTime/voltDateTimeFields.js';
-import { formatNextRun, formatScheduleWhen } from './automationFormat.js';
-import { clockIcon } from './automationIcons.js';
-import { showCronPresetMenu, showIntervalMenu, showMinuteMenu, showTimeMenu, showTimeZoneMenu, showWeekdayMenu } from './automationPickers.js';
-import { button } from './automationUi.js';
+} from '../../../services/voltRuntime/common/automations/automations.js';
+import { describeCron } from '../../../services/voltRuntime/common/automations/automationCron.js';
+import { isLocalTimeZone, timeZoneLabel, wallClock } from '../../../services/voltRuntime/common/automations/automationTime.js';
+import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
+import { dateTimeFormat, startOfDay } from '../../voltAgent/browser/ui/dateTime/voltDateTime.js';
+import { VoltDateField, VoltTimeField } from '../../voltAgent/browser/ui/dateTime/voltDateTimeFields.js';
+import { formatNextRun, formatScheduleWhen } from '../../voltAgent/browser/automations/automationFormat.js';
+import { clockIcon } from '../../voltAgent/browser/automations/automationIcons.js';
+import { showCronPresetMenu, showIntervalMenu, showMinuteMenu, showTimeMenu, showTimeZoneMenu, showWeekdayMenu } from '../../voltAgent/browser/automations/automationPickers.js';
+import { button } from '../../voltAgent/browser/automations/automationUi.js';
 
 export interface IScheduleRowContext {
 	readonly contextView: IContextViewService;

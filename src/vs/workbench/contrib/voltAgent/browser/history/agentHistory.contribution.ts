@@ -13,18 +13,14 @@ import { Categories } from '../../../../../platform/action/common/actionCommonCa
 import { Action2, MenuId, MenuRegistry, registerAction2 } from '../../../../../platform/actions/common/actions.js';
 import { IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
-import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
-import { Registry } from '../../../../../platform/registry/common/platform.js';
-import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../../browser/editor.js';
 import { ContextKeyExpr } from '../../../../../platform/contextkey/common/contextkey.js';
 import { InputFocusedContext } from '../../../../../platform/contextkey/common/contextkeys.js';
 import { EditorContextKeys } from '../../../../../editor/common/editorContextKeys.js';
 import { ActiveEditorContext } from '../../../../common/contextkeys.js';
-import { EditorExtensions, IEditorFactoryRegistry } from '../../../../common/editor.js';
 import { IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { getLayoutMode, revealAgentSidePanel } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
@@ -40,13 +36,12 @@ import {
 	AgentEditorInput,
 	EXPORT_AGENT_TRANSCRIPT_COMMAND_ID,
 	OPEN_AGENT_COMMAND_ID,
-	OPEN_AGENT_CUSTOMIZE_COMMAND_ID,
 	NEW_AGENT_TAB_COMMAND_ID,
 	OPEN_AGENT_HISTORY_COMMAND_ID,
 	REPLACE_AGENT_COMMAND_ID,
 	TOGGLE_AGENT_DRAWER_COMMAND_ID,
 } from '../editor/agentEditorInput.js';
-import { AGENT_CUSTOMIZE_EDITOR_ID, AgentCustomizeEditor, AgentCustomizeEditorInput, AgentCustomizeEditorInputSerializer } from '../customize/agentCustomizeEditor.js';
+import { SKILLS_EDITOR_ID } from '../../../voltSkills/common/voltSkills.js';
 import { findEditorCommandsContext } from '../editor/agentEditorCommandsContext.js';
 import { CONTEXT_IN_AGENT_INPUT } from '../editor/agentFindWidget.js';
 import { AgentSidePanel } from '../chrome/agentSidePanel.js';
@@ -58,7 +53,7 @@ import { SEARCH_AGENT_CHATS_COMMAND_ID } from '../search/agentChatSearchService.
 
 const agentTitleActions = ContextKeyExpr.or(
 	ActiveEditorContext.isEqualTo(AGENT_EDITOR_ID),
-	ActiveEditorContext.isEqualTo(AGENT_CUSTOMIZE_EDITOR_ID),
+	ActiveEditorContext.isEqualTo(SKILLS_EDITOR_ID),
 );
 
 async function showAgentSidePanel(accessor: ServicesAccessor, focus: boolean): Promise<AgentSidePanel | undefined> {
@@ -347,56 +342,8 @@ registerAction2(class PreviousAgentTabAction extends Action2 {
 
 //#region Customize tab
 
-Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
-	EditorPaneDescriptor.create(AgentCustomizeEditor, AGENT_CUSTOMIZE_EDITOR_ID, localize('voltCustomize.editorLabel', "Customize")),
-	[new SyncDescriptor(AgentCustomizeEditorInput)]
-);
-
-Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEditorSerializer(
-	AgentCustomizeEditorInput.TypeID,
-	AgentCustomizeEditorInputSerializer
-);
-
-registerAction2(class OpenAgentCustomizeAction extends Action2 {
-	constructor() {
-		super({
-			id: OPEN_AGENT_CUSTOMIZE_COMMAND_ID,
-			visibility: 'public',
-			title: localize2('voltAgent.customize', "Customize Agent"),
-			category: Categories.View,
-			icon: Codicon.extensions,
-			f1: true,
-		});
-	}
-
-	override async run(accessor: ServicesAccessor): Promise<void> {
-		const view = await showAgentSidePanel(accessor, false);
-		if (view) {
-			await view.openCustomize();
-			return;
-		}
-		const input = accessor.get(IInstantiationService).createInstance(AgentCustomizeEditorInput);
-		await accessor.get(IEditorService).openEditor(input, { pinned: true });
-	}
-});
-
-registerAction2(class OpenAgentMarketplaceAction extends Action2 {
-	constructor() {
-		super({
-			id: 'workbench.action.voltAgent.customize.marketplace',
-			visibility: 'public',
-			title: localize2('voltAgent.marketplace', "Browse Skills and Plugins Marketplace"),
-			category: Categories.View,
-			icon: Codicon.extensions,
-			f1: true,
-		});
-	}
-
-	override async run(accessor: ServicesAccessor): Promise<void> {
-		AgentCustomizeEditor.requestView('marketplace');
-		await accessor.get(ICommandService).executeCommand(OPEN_AGENT_CUSTOMIZE_COMMAND_ID);
-	}
-});
+// The Skills & Plugins tab and its commands are a module of the `volt.skills-and-plugins` built-in
+// extension: `contrib/voltSkills/`.
 
 //#endregion
 

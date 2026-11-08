@@ -5,7 +5,6 @@
 
 import { fromNow } from '../../../../base/common/date.js';
 import { toErrorMessage } from '../../../../base/common/errorMessage.js';
-import { DisposableStore } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
@@ -15,17 +14,8 @@ import { IVoltConnectStatus, IVoltPairedDevice, IVoltTunnelStatus } from '../../
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { IAgentServerClientService } from '../../../services/voltAgentServer/common/agentServerClient.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
-import { kindLabel, showAddDeviceModal, VoltConnectionKind } from './addDeviceModal.js';
-
-export interface IDevicesPageHost {
-	readonly store: DisposableStore;
-	target(): HTMLElement;
-	sectionLabel(label: string): void;
-	settingsGroup(): HTMLElement;
-	settingRow(parent: HTMLElement, title: string, desc: string | undefined, renderControl?: (host: HTMLElement) => void): HTMLElement;
-	empty(text: string): void;
-	rerender(): void;
-}
+import { IDevicesPage, IDevicesPageHost, VoltConnectionKind } from '../common/voltRemoteDevices.js';
+import { kindLabel, showAddDeviceModal } from './addDeviceModal.js';
 
 /** Desktop only (electron-browser): stops listening on the network. */
 const STOP_NETWORK_COMMAND_ID = 'volt.agentServer.stopNetwork';
@@ -36,7 +26,7 @@ const STOP_NETWORK_COMMAND_ID = 'volt.agentServer.stopNetwork';
  * computer's agents. It talks to the agent server, so it works the same on the desktop and in the
  * browser workbench; connecting devices is for the computer's owner, a paired device sees the list.
  */
-export class DevicesPage {
+export class DevicesPage implements IDevicesPage {
 
 	private readonly client: IAgentServerClientService | undefined;
 	private readonly dialogs: IDialogService;
