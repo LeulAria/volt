@@ -64,7 +64,8 @@ export class VoltPluginService extends Disposable implements IVoltPluginService 
 			updateSetting: (key, value) => configurationService.updateValue(key, value),
 			onDidChangeSettings: Event.map(configurationService.onDidChangeConfiguration, e => ({ affects: (key: string) => e.affectsConfiguration(key) })),
 			executeCommand: (id, args) => commandService.executeCommand(id, ...args),
-			registerCommand: (id, handler) => CommandsRegistry.registerCommand(id, (_accessor, ...args: unknown[]) => handler(...args)),
+			// A plugin's commands are its own: private to Volt until a capability exports them (I.14).
+			registerCommand: (id, handler) => CommandsRegistry.registerCommand(id, (_accessor, ...args: unknown[]) => handler(...args), 'internal'),
 			isOn: (part, id) => featureService.isOn(part, id),
 		};
 		for (const point of VOLT_CONTRIBUTION_POINTS) {

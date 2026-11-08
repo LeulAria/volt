@@ -23,6 +23,7 @@ import { IVoltBrowserAccessService } from '../../../../workbench/services/voltRu
 import { BROWSER_TOOL_NAMES } from '../../../../workbench/services/voltRuntime/common/hostTools.js';
 import { VOLT_MEMORY_TOOLS } from '../../../../workbench/services/voltRuntime/common/memory/voltMemory.js';
 import { IAgentRuntimeService } from '../../../../workbench/services/voltRuntime/common/runtime.js';
+import { IAgentHistoryService } from '../../../../workbench/services/voltRuntime/common/history/agentHistory.js';
 import { DISABLED_FEATURES_STORAGE_KEY, IFeatureEnablementProtocol, ServerFeatureEnablement } from '../../../node/voltAgent/serverFeatureEnablement.js';
 
 /**
@@ -56,10 +57,12 @@ suite('Agent server feature enablement mirror', () => {
 				return { url: 'http://127.0.0.1:1/mcp', token: 't' };
 			},
 			respond: async () => { },
+			revokeSession: async () => { },
 			stop: async () => { },
 		};
 		const runtime = { chatFor: (id: string) => id } as unknown as IAgentRuntimeService;
-		store.add(new VoltHostMcpBridge(mcp, service, new NullLogService(), runtime));
+		const history = { onDidChange: Event.None, get: () => undefined } as unknown as IAgentHistoryService;
+		store.add(new VoltHostMcpBridge(mcp, service, new NullLogService(), runtime, history));
 		return { newSessionTools: () => (lists.at(-1) ?? []).map(tool => tool.name) };
 	}
 
