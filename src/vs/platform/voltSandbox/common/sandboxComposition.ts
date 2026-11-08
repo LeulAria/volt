@@ -38,6 +38,20 @@ export interface ISandboxComposition {
 	readonly policy: IVoltSandboxPolicy;
 	readonly ignored: readonly ISandboxCompositionNote[];
 	readonly sources: readonly SandboxLayerSource[];
+	/**
+	 * The layer each path, host and port entry of the result came from (`filesystem.write:/a`,
+	 * `network.allow:x.com`, `network.listenPorts:3000`): the base profile's are `builtin`.
+	 */
+	readonly origins: Readonly<Record<string, SandboxLayerSource>>;
+}
+
+export interface ISandboxCompositionOptions {
+	/**
+	 * The real path of an absolute path entry (symlinks resolved; for a path that does not exist
+	 * yet, its nearest existing parent's real path plus the rest), or undefined when it cannot be
+	 * told (a token). Without it, containment is judged on the text alone, which a symlink fools.
+	 */
+	realpath?(path: string): string | undefined;
 }
 
 const NETWORK_ORDER: Record<SandboxNetworkMode, number> = { none: 0, proxy: 1, host: 2 };
@@ -50,17 +64,31 @@ export function entryInside(child: string, parent: string): boolean {
 	return child === parent || child.startsWith(`${parent}/`);
 }
 
-/** Whether allow entry `parent` covers `child`. An entry without a port means ports 80 and 443. */
-export function allowCovers(parent: string, child: string): boolean {
-	if (parent === '*') {
-		return true;
+/** Ports an allow entry without one stands for. */
+const DEFAULT_PORTS: readonly number[] = [80, 443];
+
+/** Whether port `child` (undefined: 80 and 443) is within port `parent` (undefined: 80 and 443). */
+function portCovered(parent: number | undefined, child: number | undefined): boolean {
+	if (parent === undefined) {
+		return child === undefined || DEFAULT_PORTS.includes(child);
 	}
+	return child === parent;
+}
+
+/**
+ * Whether allow entry `parent` covers `child`. An entry without a port means ports 80 and 443, and
+ * so does `*` (every public host on the web ports): `*` never covers `evil.com:6379` (B-32).
+ */
+export function allowCovers(parent: string, child: string): boolean {
 	if (child === '*') {
-		return false;
+		return parent === '*';
+	}
+	const c = splitAllowEntry(child);
+	if (parent === '*') {
+		return portCovered(undefined, c.port);
 	}
 	const p = splitAllowEntry(parent);
-	const c = splitAllowEntry(child);
-	if (p.port !== c.port) {
+	if (!portCovered(p.port, c.port)) {
 		return false;
 	}
 	if (p.host === c.host) {
@@ -78,19 +106,49 @@ function union<T>(a: readonly T[], b: readonly T[]): T[] {
 	return [...new Set([...a, ...b])];
 }
 
-export function composeSandboxPolicy(base: IVoltSandboxPolicy, layers: readonly ISandboxLayer[]): ISandboxComposition {
+export function composeSandboxPolicy(base: IVoltSandboxPolicy, layers: readonly ISandboxLayer[], options: ISandboxCompositionOptions = {}): ISandboxComposition {
 	let policy = base;
 	const ignored: ISandboxCompositionNote[] = [];
+	const origins: Record<string, SandboxLayerSource> = {};
+	const record = (from: IVoltSandboxPolicy, source: SandboxLayerSource) => {
+		for (const [field, values] of originFields(from)) {
+			for (const value of values) {
+				origins[`${field}:${value}`] ??= source;
+			}
+		}
+	};
+	record(base, 'builtin');
 	for (const entry of layers) {
-		policy = entry.trusted ? widen(policy, entry.layer) : narrow(policy, entry, ignored);
+		policy = entry.trusted ? widen(policy, entry.layer) : narrow(policy, entry, ignored, options);
+		record(policy, entry.source);
 	}
-	return { policy, ignored, sources: layers.map(layer => layer.source) };
+	// Only what the result holds.
+	const kept = new Set(originFields(policy).flatMap(([field, values]) => values.map(value => `${field}:${value}`)));
+	for (const key of Object.keys(origins)) {
+		if (!kept.has(key)) {
+			delete origins[key];
+		}
+	}
+	return { policy, ignored, sources: layers.map(layer => layer.source), origins };
+}
+
+function originFields(policy: IVoltSandboxPolicy): [string, readonly (string | number)[]][] {
+	return [
+		['filesystem.read', policy.filesystem.read],
+		['filesystem.write', policy.filesystem.write],
+		['filesystem.unmask', policy.filesystem.unmask],
+		['network.allow', policy.network.allow],
+		['network.loopbackPorts', policy.network.loopbackPorts],
+		['network.listenPorts', policy.network.listenPorts ?? []],
+		['host.unixSockets', policy.host.unixSockets],
+	];
 }
 
 /** A trusted layer: lists add, scalars replace, denies and protections still only grow. */
 function widen(current: IVoltSandboxPolicy, layer: IVoltSandboxPolicyLayer): IVoltSandboxPolicy {
 	const fs = layer.filesystem ?? {};
 	const net = layer.network ?? {};
+	const listenPorts = union(current.network.listenPorts ?? [], net.listenPorts ?? []);
 	return {
 		...current,
 		...(layer.name ? { name: layer.name } : {}),
@@ -106,6 +164,7 @@ function widen(current: IVoltSandboxPolicy, layer: IVoltSandboxPolicyLayer): IVo
 			allow: union(current.network.allow, net.allow ?? []),
 			loopbackPorts: union(current.network.loopbackPorts, net.loopbackPorts ?? []),
 			listen: net.listen ?? current.network.listen,
+			...(listenPorts.length ? { listenPorts } : {}),
 		},
 		process: { limits: { ...current.process.limits, ...layer.process?.limits } },
 		env: {
@@ -125,10 +184,22 @@ function withoutReserved(set: Readonly<Record<string, string>> | undefined): Rec
 }
 
 /** An untrusted layer: only what it can prove is inside the current policy survives. */
-function narrow(current: IVoltSandboxPolicy, entry: ISandboxLayer, ignored: ISandboxCompositionNote[]): IVoltSandboxPolicy {
+function narrow(current: IVoltSandboxPolicy, entry: ISandboxLayer, ignored: ISandboxCompositionNote[], options: ISandboxCompositionOptions): IVoltSandboxPolicy {
 	const { layer, source } = entry;
 	const note = (field: string, value: string, reason: string) => ignored.push({ source, field, value, reason });
 	const fs = layer.filesystem ?? {};
+	const real = (path: string): string | undefined => path.startsWith('/') ? options.realpath?.(path) : undefined;
+	/** Inside `parent` by text, and still inside once both are resolved (a symlink cannot carry it out, B-32). */
+	const insideReally = (path: string, parent: string): boolean => {
+		if (!entryInside(path, parent)) {
+			return false;
+		}
+		const resolved = real(path);
+		if (resolved === undefined || parent === '/') {
+			return true;
+		}
+		return entryInside(resolved, real(parent) ?? parent);
+	};
 
 	const intersectPaths = (field: string, have: readonly string[], want: readonly string[] | undefined): readonly string[] => {
 		if (!want) {
@@ -136,8 +207,10 @@ function narrow(current: IVoltSandboxPolicy, entry: ISandboxLayer, ignored: ISan
 		}
 		const out: string[] = [];
 		for (const path of want) {
-			if (have.some(parent => entryInside(path, parent))) {
+			if (have.some(parent => insideReally(path, parent))) {
 				out.push(path);
+			} else if (have.some(parent => entryInside(path, parent))) {
+				note(field, path, 'resolves outside what the policy already allows through a symlink');
 			} else {
 				note(field, path, 'not inside what the policy already allows');
 			}
@@ -196,6 +269,16 @@ function narrow(current: IVoltSandboxPolicy, entry: ISandboxLayer, ignored: ISan
 			note('network.listen', 'true', 'cannot allow listening');
 		}
 		listen = listen && net.listen;
+	}
+	let listenPorts = current.network.listenPorts ?? [];
+	if (net.listenPorts) {
+		for (const port of net.listenPorts) {
+			if (!listenPorts.includes(port) && !current.network.listen) {
+				note('network.listenPorts', String(port), 'port not already allowed for listening');
+			}
+		}
+		// A port the policy may already listen on (by grant, or because it may listen anywhere) stays.
+		listenPorts = net.listenPorts.filter(port => listenPorts.includes(port) || current.network.listen);
 	}
 
 	const limits: { -readonly [K in keyof ISandboxLimits]: ISandboxLimits[K] } = { ...current.process.limits };
@@ -268,7 +351,7 @@ function narrow(current: IVoltSandboxPolicy, entry: ISandboxLayer, ignored: ISan
 			protect: union(current.filesystem.protect, fs.protect ?? []),
 			unmask: current.filesystem.unmask,
 		},
-		network: { mode, allow, loopbackPorts, listen },
+		network: { mode, allow, loopbackPorts, listen, ...(listenPorts.length ? { listenPorts: [...new Set(listenPorts)] } : {}) },
 		process: { limits },
 		env: { inherit, set },
 		host: { unixSockets, systemServices },
