@@ -15,6 +15,8 @@ export interface ISandboxDenial {
 	readonly source: 'os' | 'proxy' | 'volt' | 'output';
 	/** The process that tried (`touch`, `node`), when known. */
 	readonly process?: string;
+	/** False: the network broker says no "Allow" may be offered for it (a private address, the prompt budget spent). */
+	readonly promptable?: boolean;
 }
 
 /** Seatbelt operation names as denial kinds. */

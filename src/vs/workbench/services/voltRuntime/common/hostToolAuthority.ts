@@ -12,6 +12,8 @@ import { decisionRecord, IAccessRequest, IChatView, IDecision, IDecisionLogRecor
 import { FLOW_CAPABILITY, IGrant } from '../../../../platform/voltSandbox/common/grants.js';
 import { chatSubject, corePrincipal, extensionSubject, ICallContext, SubjectKey } from '../../../../platform/voltSandbox/common/principals.js';
 import { IVoltSandboxSettings, SandboxStrategy } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+// Registers `volt.sandbox.networkBroker` beside the Authority's own setting (the main process and agent server read it).
+import '../../../../platform/voltSandbox/common/networkBrokerSetting.js';
 import { hostToolClassCapability, HostToolSandboxClass, IHostToolSandboxUse } from './hostToolSandbox.js';
 
 /**

@@ -10,6 +10,8 @@ import { bareCapability, capabilityClass, capabilityIdCovers, capabilityTargetMa
 import { FIRST_PARTY_CEILINGS, IVoltCeilingEntry } from '../../voltPlugins/common/firstPartyCeilings.js';
 import { canonicalJson, FLOW_CAPABILITY, GrantKind, grantCovers, grantValid, hasRefusal, IGrant, IGrantContext, IRefusal, nextGrantExpiry } from './grants.js';
 import { gestureValid, ICallContext, IPrincipal, isChatSubject, isFirstPartySubject, isPluginSubject, MAX_CALL_CHAIN, SubjectKey, subjectChatId, subjectExtensionId } from './principals.js';
+import { classifyAddress } from './networkAddress.js';
+import { isExfilHost, networkRulesCover, normalizeNetworkHost } from './networkRules.js';
 import { agentApiDomains, domainAllowed, isPathInside, IVoltSandboxRequest, IVoltSandboxSettings, normalizeSandboxPath, SandboxStrategy, strategyAtLeast, VoltSandboxLevel } from './sandboxPolicy.js';
 import { CREDENTIAL_HOME_PATHS } from './sandboxProfiles.js';
 import { SandboxDimension, splitAllowEntry } from './sandboxSchema.js';
@@ -39,7 +41,8 @@ export type DecisionCode =
 	| 'ceiling' | 'consent' | 'refused'
 	| 'untrusted-workspace' | 'workspace-policy'
 	| 'admin-capability' | 'admin-host' | 'admin-class' | 'admin-unreadable'
-	| 'caller' | 'egress' | 'covers' | 'unenforced';
+	| 'caller' | 'egress' | 'covers' | 'unenforced'
+	| 'metadata' | 'special-address' | 'exfil' | 'port';
 
 /** A data-flow edge (G.6): data moves from the chain to the principal, and on to `target` when it is a subject. */
 export type DataFlowEdge = 'tool' | 'send' | 'context' | 'hook';
@@ -55,6 +58,12 @@ export interface IAccessRequest {
 	readonly surface?: 'extension-api' | 'host-tool' | 'broker' | 'launch';
 	/** B-34: the broker's or OS's record of the denial a prompt would answer. */
 	readonly denialId?: string;
+	/**
+	 * `net.*` from the network broker (I.4): the destination port, `target` then being the host the
+	 * broker normalised (lower-case ASCII, or an address in canonical text). Absent: a host-only
+	 * check (the host-tool gate, the extension API), judged on the web ports.
+	 */
+	readonly port?: number;
 }
 
 /** What a denial may offer the user (G.3, G.6). */
@@ -328,13 +337,17 @@ function evaluateSubject(snapshot: PolicySnapshot, request: IAccessRequest, prin
 	if (credentialTarget(capability, request.target, snapshot.input.home)) {
 		return deny(epoch, 'floor', 'credential', `${request.target} holds credentials, which no permission opens`);
 	}
+	const addressFloor = networkAddressFloor(epoch, capability, request.target);
+	if (addressFloor) {
+		return addressFloor;
+	}
 	if (subject === 'user') {
 		// The user's own action through core: only the floor applies.
 		return allow(epoch);
 	}
 	// 2 + 3. Manifest and grants.
 	const granted = isChatSubject(subject)
-		? chatGrants(snapshot, request, subject, cls)
+		? chatGrants(snapshot, request, principal, context, cls)
 		: pluginGrants(snapshot, request, principal, context, cls, primary);
 	if (!granted.allow) {
 		return granted;
@@ -384,11 +397,12 @@ const SANDBOXED_CHAT_MANIFEST: readonly string[] = [
 	'ui.contribute', 'storage.own', 'config.own', 'commands.own', 'files.read:picked',
 	'tools.register', 'usage.report', 'agents.read:current', 'agents.send',
 	'files.read:workspace', 'files.write', 'browser.read', 'browser.drive', 'terminals.read', 'terminals.run',
-	'net.connect', 'net.listen:*', 'net.loopback.connect:*',
+	'net.connect', 'net.local.connect', 'net.listen:*', 'net.loopback.connect:*',
 ];
 
-function chatGrants(snapshot: PolicySnapshot, request: IAccessRequest, subject: SubjectKey, cls: VoltCapabilityClass): IDecision {
+function chatGrants(snapshot: PolicySnapshot, request: IAccessRequest, principal: IPrincipal, context: ICallContext, cls: VoltCapabilityClass): IDecision {
 	const epoch = snapshot.epoch;
+	const subject = principal.subject;
 	const view = snapshot.chat(subject);
 	if (!view) {
 		return deny(epoch, 'manifest', 'unknown-subject', `Volt has no record of ${describeSubject(subject)}`);
@@ -407,10 +421,25 @@ function chatGrants(snapshot: PolicySnapshot, request: IAccessRequest, subject: 
 	if (bare === 'files.write' && settings.level === 'read-only' && !(request.target && (settings.extraWritableRoots ?? []).some(root => isPathInside(request.target!, root)))) {
 		return deny(epoch, 'authority', 'chat-sandbox', 'this chat\'s sandbox is read-only');
 	}
-	if (bare === 'net.connect') {
+	if (bare === 'net.connect' && !settings.network) {
+		if (request.port !== undefined) {
+			// The broker's request: port-aware rules, exfil hosts by exact name only, and this chat's live grants (I.4).
+			return chatConnect(snapshot, request, principal, context, view);
+		}
 		const host = request.target ? hostOf(request.target) : undefined;
-		if (!settings.network && !(host && domainAllowed(host, [...view.apiHosts ?? [], ...settings.allowedDomains ?? []]))) {
+		if (!(host && domainAllowed(host, [...view.apiHosts ?? [], ...settings.allowedDomains ?? []]))) {
 			return deny(epoch, 'authority', 'chat-sandbox', `this chat's network is off${host ? ` and ${host} is not one of its allowed hosts` : ''}`);
+		}
+	}
+	if (bare === 'net.local.connect' && !settings.network) {
+		// A LAN address: only a grant naming that address or CIDR, and the port (I.4 "Local network").
+		const target = request.target ? normalizeNetworkHost(request.target) : undefined;
+		const port = request.port;
+		const context3 = grantContext(snapshot, principal, context);
+		const granted = typeof target === 'object' && !!target.ip && port !== undefined && snapshot.grants(subject).some(grant => grantValid(grant, context3)
+			&& capabilityIdCovers(grant.capability, 'net.local.connect') && networkRulesCover(grant.scope.targets ?? [], target, port));
+		if (!granted) {
+			return deny(epoch, 'authority', 'chat-sandbox', `${request.target ?? 'the address'}${port !== undefined ? ` port ${port}` : ''} is on the local network, which this chat was not granted`);
 		}
 	}
 	if (bare.startsWith('net.listen:') || bare.startsWith('net.loopback.connect:')) {
@@ -420,6 +449,66 @@ function chatGrants(snapshot: PolicySnapshot, request: IAccessRequest, subject: 
 		}
 	}
 	return allow(epoch);
+}
+
+/**
+ * A network-off chat's `net.connect` from the broker: its allowed hosts (agent API hosts, the
+ * user's "Allow host" choices) and its valid `net.connect` grants, by I.4's rules: port-aware,
+ * descendants-only wildcards, and an exfil-capable host only by its exact name.
+ */
+function chatConnect(snapshot: PolicySnapshot, request: IAccessRequest, principal: IPrincipal, context: ICallContext, view: IChatView): IDecision {
+	const epoch = snapshot.epoch;
+	const port = request.port!;
+	const target = request.target ? normalizeNetworkHost(request.target) : 'no host';
+	if (typeof target === 'string') {
+		return deny(epoch, 'authority', 'chat-sandbox', `the destination is refused: ${target}`);
+	}
+	const context3 = grantContext(snapshot, principal, context);
+	const granted = snapshot.grants(principal.subject).filter(grant => grantValid(grant, context3) && capabilityIdCovers(grant.capability, 'net.connect')).flatMap(grant => grant.scope.targets ?? ['*']);
+	const entries = [...view.apiHosts ?? [], ...view.settings.allowedDomains ?? [], ...granted];
+	if (networkRulesCover(entries, target, port)) {
+		return allow(epoch);
+	}
+	const elsewhere = [443, 80].find(other => other !== port && networkRulesCover(entries, target, other));
+	if (!target.ip && isExfilHost(target.host)) {
+		return deny(epoch, 'authority', 'exfil', `${target.host} takes data from anyone (paste, webhook, tunnel or storage service): only a rule naming it exactly opens it, not a wildcard`);
+	}
+	if (elsewhere !== undefined) {
+		return deny(epoch, 'authority', 'port', `${target.host} is allowed on port ${elsewhere}, not ${port}`);
+	}
+	return deny(epoch, 'authority', 'chat-sandbox', `this chat's network is off and ${target.host}:${port} is not one of its allowed hosts`);
+}
+
+/**
+ * The floor for `net.*` targets that are addresses (I.4 "Special ranges"): cloud metadata and the
+ * reserved ranges are never reachable, and `net.connect` never reaches a local or loopback address
+ * (that is `net.local.connect` or `net.loopback.connect:<port>`).
+ */
+function networkAddressFloor(epoch: number, capability: string, target: string | undefined): IDecision | undefined {
+	const bare = bareCapability(capability);
+	if (!target || !bare.startsWith('net.')) {
+		return undefined;
+	}
+	const raw = target.trim();
+	// A bare IPv6 address has colons that are not a port.
+	const host = (!raw.includes('://') && raw.split(':').length > 2 && !raw.startsWith('[') ? raw : hostOf(raw)).replace(/^\[|\]$/g, '');
+	const address = classifyAddress(host);
+	if (!address) {
+		return undefined;
+	}
+	if (address.class === 'metadata') {
+		return deny(epoch, 'floor', 'metadata', `${host} is a cloud metadata address, which no permission opens`);
+	}
+	if (address.class === 'special') {
+		return deny(epoch, 'floor', 'special-address', `${host} is a reserved address, which no permission opens`);
+	}
+	if (bare === 'net.connect' && address.class !== 'public') {
+		return deny(epoch, 'floor', 'special-address', `${host} is a ${address.class === 'local' ? 'local-network' : 'loopback'} address: it needs its own permission, not a host rule`);
+	}
+	if (bare === 'net.local.connect' && address.class !== 'local') {
+		return deny(epoch, 'floor', 'special-address', `${host} is not a local-network address`);
+	}
+	return undefined;
 }
 
 /** The manifest entry that declares `capability` on `target`, if any. */
@@ -453,7 +542,28 @@ function pluginGrants(snapshot: PolicySnapshot, request: IAccessRequest, princip
 		return allow(epoch);
 	}
 	const capability = request.capability;
-	const declared = declaration(manifest, capability, request.target);
+	let target = request.target;
+	let exfilHost: string | undefined;
+	if (bareCapability(capability) === 'net.connect' && target) {
+		// I.4: no glob widens a port (`*.x.com` never covers `a.x.com:6379`) or opens an exfil-capable host.
+		const host = hostOf(target);
+		const declaresExactly = (text: string) => manifest.declared.some(entry => bareCapability(entry.id) === 'net.connect' && !!entry.targets?.some(pattern => pattern.toLowerCase() === text));
+		if (request.port !== undefined && request.port !== 443 && request.port !== 80) {
+			if (!declaresExactly(`${host}:${request.port}`)) {
+				return deny(epoch, 'manifest', 'port', `${host}:${request.port} is not declared: a port other than 80 and 443 is declared with the host`);
+			}
+			target = `${host}:${request.port}`;
+		}
+		if (isExfilHost(host)) {
+			if (!declaresExactly(host) && !declaresExactly(target)) {
+				return deny(epoch, 'manifest', 'exfil', `${host} takes data from anyone: it must be declared by its exact name`);
+			}
+			exfilHost = host;
+			// Exfil-capable hosts are high (G.8): no install-time grant.
+			cls = 'high';
+		}
+	}
+	const declared = declaration(manifest, capability, target);
 	if (!declared) {
 		const scoped = manifest.declared.some(entry => bareCapability(entry.id) === bareCapability(capability));
 		return deny(epoch, 'manifest', scoped ? 'undeclared-target' : 'undeclared', scoped
@@ -464,7 +574,9 @@ function pluginGrants(snapshot: PolicySnapshot, request: IAccessRequest, princip
 		// Grants(P) = Ceiling(P): what is both declared and in the ceiling, no prompt (G.10).
 		const ceiling = snapshot.ceiling(subject);
 		const within = !!ceiling?.some(entry => capabilityIdCovers(entry.id, capability)
-			&& (!entry.targets?.length || (request.target !== undefined && entry.targets.some(pattern => capabilityTargetMatches(pattern, request.target!)))));
+			&& (exfilHost
+				? !!entry.targets?.some(pattern => pattern.toLowerCase() === exfilHost || pattern.toLowerCase() === target)
+				: !entry.targets?.length || (target !== undefined && entry.targets.some(pattern => capabilityTargetMatches(pattern, target!)))));
 		return within ? allow(epoch) : deny(epoch, 'authority', 'ceiling', `${capability} is beyond ${subjectExtensionId(subject)}'s first-party ceiling`);
 	}
 	if (cls === 'low' && isPluginSubject(subject)) {
@@ -472,7 +584,8 @@ function pluginGrants(snapshot: PolicySnapshot, request: IAccessRequest, princip
 		return allow(epoch);
 	}
 	const context3 = grantContext(snapshot, principal, context);
-	if (snapshot.grants(subject).some(grant => grant.capability !== FLOW_CAPABILITY && grantValid(grant, context3) && grantCovers(grant, capability, request.target))) {
+	if (snapshot.grants(subject).some(grant => grant.capability !== FLOW_CAPABILITY && grantValid(grant, context3) && grantCovers(grant, capability, target)
+		&& (!exfilHost || !!grant.scope.targets?.some(pattern => pattern.toLowerCase() === exfilHost || pattern.toLowerCase() === target)))) {
 		return allow(epoch);
 	}
 	const refused = hasRefusal(snapshot.input.refusals ?? [], subject, capability);

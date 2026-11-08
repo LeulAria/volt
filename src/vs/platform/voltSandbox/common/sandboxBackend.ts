@@ -120,6 +120,10 @@ export interface ISandboxRunDenial {
 	/** `os`: kernel log or a backend report. `proxy`: Volt's network proxy. `manager`: limits and timeouts. */
 	readonly source: 'os' | 'proxy' | 'manager';
 	readonly process?: string;
+	/** The network broker's id for it (I.4 "Denials"): what an approval names. */
+	readonly denialId?: string;
+	/** False: no "Allow" may be offered (a private or metadata address, or the prompt budget is spent, G.12). */
+	readonly promptable?: boolean;
 }
 
 export interface ISandboxRunResult {

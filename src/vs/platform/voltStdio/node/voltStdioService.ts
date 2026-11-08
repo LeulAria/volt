@@ -25,6 +25,7 @@ import { SafeOpenError } from '../../voltFiles/node/safeOpen.js';
 import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.js';
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
 import { ISandboxWorkloadInfo, SANDBOX_SUPERVISOR_SETTING } from '../../voltSandbox/common/sandboxWorkloads.js';
+import { NETWORK_BROKER_SETTING, readNetworkBrokerMode } from '../../voltSandbox/common/networkBrokerSetting.js';
 import { ChildLedger } from './childLedger.js';
 import { SandboxedPtySession } from '../../voltSandbox/node/sandboxPty.js';
 import { describeExecContext, execRefusal, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../common/voltStdio.js';
@@ -101,6 +102,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		this.sandbox = this._register(new VoltSandboxLauncher(userDataPath, logService, {
 			mode: () => readPolicyAuthorityMode(this.configurationService.getValue(POLICY_AUTHORITY_MODE_SETTING)),
 			supervisorEnabled,
+			networkMode: () => readNetworkBrokerMode(this.configurationService.getValue(NETWORK_BROKER_SETTING)),
 		}));
 		this._register(this.sandbox.onViolation(e => {
 			const id = this.sandboxTags.get(e.tag);
