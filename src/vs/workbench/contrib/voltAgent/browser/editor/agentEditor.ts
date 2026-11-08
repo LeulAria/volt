@@ -5368,10 +5368,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			retry: () => this.continueTurn(
 				localize('voltAgent.sandbox.retry.prompt', "The sandbox blocked your last step. Its settings have changed; retry that step now."),
 				localize('voltAgent.sandbox.retry.display', "Retry")),
-			// Without the broker's record (the legacy proxy) the host joins the chat's allowed hosts, as before.
-			...(denial.kind === 'network' && !denial.denialId ? { allowHostSetting: () => this.retrySandboxed(withAllowedDomain(settings, denial.target)) } : {}),
+			// Without the broker's record (the legacy proxy) the host joins the chat's allowed hosts, as
+			// before. A denial read from a command's output gets no grant button (B-34).
+			...(denial.kind === 'network' && !denial.denialId && denial.source === 'proxy' ? { allowHostSetting: () => this.retrySandboxed(withAllowedDomain(settings, denial.target)) } : {}),
 			// The agent picks the path, so the folder is checked before it is granted (home, system, credentials, .git).
-			...(denial.kind === 'write' ? { allowFolder: () => void this.allowSandboxFolder(tray, settings, folder) } : {}),
+			...(denial.kind === 'write' && denial.source !== 'output' ? { allowFolder: () => void this.allowSandboxFolder(tray, settings, folder) } : {}),
 			runOutside: () => this.retrySandboxed({ ...settings, level: 'off' }),
 			openAccess: () => void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID, 'access'),
 		}, this.threadListeners);
