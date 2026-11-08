@@ -8,6 +8,7 @@ import { createDecorator } from '../../instantiation/common/instantiation.js';
 import type { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../voltGit/common/hostGit.js';
 import type { ISandboxDenial } from '../../voltSandbox/common/sandboxDenials.js';
 import type { IVoltSandboxRequest } from '../../voltSandbox/common/sandboxPolicy.js';
+import type { ISandboxWorkloadInfo } from '../../voltSandbox/common/sandboxWorkloads.js';
 
 export const IVoltStdioService = createDecorator<IVoltStdioService>('voltStdioService');
 export const VOLT_STDIO_CHANNEL_NAME = 'voltStdio';
@@ -301,6 +302,15 @@ export interface IVoltStdioService {
 	 * user's config (B-05) and says what it kept out. Undefined when the spawn has no overlay.
 	 */
 	syncSandboxState?(id: string): Promise<IVoltSandboxStateSync | undefined>;
+	/**
+	 * Every sandboxed process this service runs (agents, commands, terminals, long-lived hosts),
+	 * with its principal, backend, attestation evidence, policy and resource use: the Security page.
+	 */
+	sandboxWorkloads?(): Promise<readonly ISandboxWorkloadInfo[]>;
+	/** Stops sandboxed workload `id` (a row of {@link sandboxWorkloads}) and its whole process tree. */
+	stopSandboxWorkload?(id: string): Promise<boolean>;
+	/** A sandboxed workload started, changed state or ended. */
+	readonly onDidChangeSandboxWorkloads?: Event<void>;
 }
 
 /** What one merge of an agent's config overlay did. */

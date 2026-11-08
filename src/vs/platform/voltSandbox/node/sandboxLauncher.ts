@@ -19,6 +19,7 @@ import { AgentStateOverlay, IAgentStateSync } from './agentStateOverlay.js';
 import { IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { SandboxDimension } from '../common/sandboxSchema.js';
 import { SandboxManager } from './sandboxManager.js';
+import { SandboxSupervisor } from './supervisor.js';
 import { sandboxHostFacts } from './sandboxResolver.js';
 import { SandboxConfirmation } from './sandboxBackends.js';
 
@@ -92,6 +93,8 @@ export class VoltSandboxLauncher extends Disposable {
 	readonly onViolation: Event<ISandboxViolationEvent> = this._onViolation.event;
 
 	private readonly manager: SandboxManager;
+	/** Long-lived hosts (plugin hosts, MCP servers) and the Security page's view of every sandboxed process. */
+	readonly supervisor: SandboxSupervisor;
 	private agentHost: Promise<Omit<IAgentSandboxHost, 'sshAuthSock'>> | undefined;
 	private readonly recent = new Map<string, number>();
 
@@ -100,11 +103,28 @@ export class VoltSandboxLauncher extends Disposable {
 		private readonly userDataDir: string,
 		private readonly logger: ILogger,
 		platform: string = process.platform,
+		/** The supervisor's feature flag (`volt.sandbox.supervisor.enabled`). */
+		supervisorEnabled?: () => boolean,
 	) {
 		super();
-		this.manager = new SandboxManager({ info: m => logger.info(m), warn: m => logger.warn(m) }, { platform });
-		this._register(toDisposable(() => void this.manager.dispose()));
+		const sandboxLogger = { info: (m: string) => logger.info(m), warn: (m: string) => logger.warn(m) };
+		this.manager = new SandboxManager(sandboxLogger, { platform });
+		this.supervisor = new SandboxSupervisor(this.manager, sandboxLogger, { ...(supervisorEnabled ? { enabled: supervisorEnabled } : {}) });
+		// Hosts first (their whole trees), then every other run the manager still has.
+		this._register(toDisposable(() => void this.shutdown()));
 	}
+
+	/** Volt quits: every sandboxed process tree goes. */
+	async shutdown(): Promise<void> {
+		this.shutdownDone ??= (async () => {
+			await this.supervisor.shutdown();
+			this.supervisor.dispose();
+			await this.manager.dispose();
+		})();
+		return this.shutdownDone;
+	}
+
+	private shutdownDone: Promise<void> | undefined;
 
 	async getSupport(): Promise<IVoltSandboxSupport> {
 		const capabilities = await this.manager.capabilities();

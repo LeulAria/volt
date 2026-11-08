@@ -23,6 +23,7 @@ import { brokerReadFile, brokerWriteFile, defaultFsdPath } from '../../voltFiles
 import { SafeOpenError } from '../../voltFiles/node/safeOpen.js';
 import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.js';
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
+import { ISandboxWorkloadInfo, SANDBOX_SUPERVISOR_SETTING } from '../../voltSandbox/common/sandboxWorkloads.js';
 import { ChildLedger } from './childLedger.js';
 import { SandboxedPtySession } from '../../voltSandbox/node/sandboxPty.js';
 import { describeExecContext, execRefusal, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../common/voltStdio.js';
@@ -94,13 +95,31 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		private readonly ledger?: ChildLedger,
 	) {
 		super();
-		this.sandbox = this._register(new VoltSandboxLauncher(userDataPath, logService));
+		// The supervisor path's rollback flag (application scope): off, no long-lived host starts.
+		const supervisorEnabled = () => this.configurationService.getValue<boolean>(SANDBOX_SUPERVISOR_SETTING) !== false;
+		this.sandbox = this._register(new VoltSandboxLauncher(userDataPath, logService, process.platform, supervisorEnabled));
 		this._register(this.sandbox.onViolation(e => {
 			const id = this.sandboxTags.get(e.tag);
 			if (id) {
 				this._onSandboxEvent.fire({ id, denial: e.denial });
 			}
 		}));
+		this.onDidChangeSandboxWorkloads = Event.any(this.sandbox.supervisor.onDidChange, this.sandbox.supervisor.manager.onDidChangeWorkloads);
+		// F.11: hosts a crashed Volt left behind are reaped once, at start.
+		if (supervisorEnabled()) {
+			void this.sandbox.supervisor.recover().catch(err => this.logService.warn(`[volt-sandbox] recovery of earlier hosts failed: ${err}`));
+		}
+	}
+
+	readonly onDidChangeSandboxWorkloads: Event<void>;
+
+	async sandboxWorkloads(): Promise<readonly ISandboxWorkloadInfo[]> {
+		return this.sandbox.supervisor.workloads();
+	}
+
+	async stopSandboxWorkload(id: string): Promise<boolean> {
+		this.logService.info(`[volt-sandbox] stop requested for workload ${id}`);
+		return this.sandbox.supervisor.stop(id);
 	}
 
 	private track(child: ChildProcess, command: string): void {
@@ -449,6 +468,8 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		for (const run of this.runs.values()) {
 			run.stop();
 		}
+		// Long-lived sandboxed hosts and their whole trees.
+		void this.sandbox.supervisor.shutdown();
 	}
 
 	async which(command: string): Promise<string | undefined> {
