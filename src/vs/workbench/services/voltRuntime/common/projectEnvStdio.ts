@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IChannel, ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
-import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { projectRunEnv } from './projectRunEnv.js';
 
 /**
@@ -50,6 +50,12 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	sandboxSupport(): Promise<IVoltSandboxSupportInfo> { return this.inner.sandboxSupport!(); }
 	allowSandboxDomains(id: string, domains: readonly string[]): Promise<void> { return this.inner.allowSandboxDomains!(id, domains); }
 	sandboxAllows(id: string, path: string, access: 'read' | 'write'): Promise<boolean> { return this.inner.sandboxAllows!(id, path, access); }
+	prepareSandboxedTerminal(request: IVoltSandboxedTerminalRequest): Promise<IVoltSandboxedTerminalLaunch> {
+		const env = projectRunEnv(request.cwd);
+		return this.inner.prepareSandboxedTerminal!(env ? { ...request, env: { ...env, ...request.env } } : request);
+	}
+	confirmSandboxedTerminal(id: string, pid: number): Promise<string> { return this.inner.confirmSandboxedTerminal!(id, pid); }
+	endSandboxedTerminal(id: string): Promise<void> { return this.inner.endSandboxedTerminal!(id); }
 }
 
 function isStdioService(source: IChannel | IVoltStdioService): source is IVoltStdioService {

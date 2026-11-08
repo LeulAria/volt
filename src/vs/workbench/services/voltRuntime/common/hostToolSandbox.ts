@@ -29,11 +29,17 @@ import { localImagePaths } from './tools/localImages.js';
  *   sandboxed at least as strictly as the caller.
  * - `spawns`: starts a new chat or subagent. Refused until new chats inherit the caller's
  *   sandbox (`SPAWNED_CHATS_INHERIT_SANDBOX`).
+ * - `sandboxed`: runs a process for the chat inside the chat's own OS sandbox, with its rules
+ *   (managed terminals on a PTY, see sandboxPty.ts). Runs; the tool carries the chat's sandbox and
+ *   refuses when it cannot be set up, never running the process without it.
+ * - `reads-other`: reads another chat (its transcript, or chats in general). Needs
+ *   `agents.read:other` (spec INV-26, G.8), which sandboxed chats do not have: refused, except
+ *   for the caller's own chat.
  * - `escapes`: runs code, git, apps or screen capture on the user's machine. Refused.
  *
  * A tool that is not listed is refused for sandboxed chats: a new tool must be classified here.
  */
-export type HostToolSandboxClass = 'safe' | 'browser' | 'reads' | 'network' | 'writes' | 'persists' | 'delegates' | 'spawns' | 'escapes';
+export type HostToolSandboxClass = 'safe' | 'browser' | 'reads' | 'network' | 'writes' | 'persists' | 'delegates' | 'spawns' | 'sandboxed' | 'reads-other' | 'escapes';
 
 /**
  * A chat that a sandboxed chat starts (thread_launch, thread_fork, delegate_task, message_task's
@@ -129,14 +135,18 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	skill_write: 'persists',
 	memory_delete: 'persists',
 
-	// Terminals Volt runs, outside the sandbox. Reading them is reading Volt's UI.
-	terminal_start: 'escapes',
-	terminal_send: 'escapes',
-	terminal_stop: 'escapes',
+	// The chat's terminals run in its own sandbox (on a PTY, sandboxPty.ts); one that started
+	// outside it (before the sandbox was on) cannot be typed into. Reading them is reading Volt's
+	// UI, and the tools serve only the caller's own terminals.
+	terminal_start: 'sandboxed',
+	terminal_send: 'sandboxed',
+	terminal_stop: 'sandboxed',
 	terminal_list: 'safe',
 	terminal_output: 'safe',
 	terminal_wait: 'safe',
-	docker_ensure: 'escapes',
+	// Asks Docker in the chat's sandbox (which does not reach Docker's socket); starting Docker is refused for it.
+	docker_ensure: 'sandboxed',
+	// The app it opens runs outside any sandbox.
 	app_open: 'escapes',
 	task_watch: 'escapes',
 	task_watch_status: 'safe',
@@ -178,11 +188,12 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	message_task: 'spawns',
 	handoff: 'safe',
 
-	// Orchestration: other chats. Reading them, renaming, stopping and picking their model is Volt's state.
+	// Orchestration: other chats. Renaming, stopping and picking their model is Volt's state; reading
+	// what other chats said (their transcripts) needs agents.read:other.
 	orchestrator_capabilities: 'safe',
 	thread_list: 'safe',
-	thread_search: 'safe',
-	thread_read: 'safe',
+	thread_search: 'reads-other',
+	thread_read: 'reads-other',
 	thread_send: 'delegates',
 	thread_wait: 'safe',
 	thread_interrupt: 'safe',
@@ -212,8 +223,14 @@ export interface IHostToolSandboxUse {
 	readonly writes?: readonly string[];
 	/** Pages it opens. */
 	readonly urls?: readonly string[];
-	/** `delegates`: the chat it prompts; undefined for the caller itself. */
+	/**
+	 * `delegates`: the chat it prompts; undefined for the caller itself. `reads-other`: the chat it
+	 * reads; undefined when it reads the caller's own chat (thread_read) or many chats (thread_search,
+	 * see `readsAnyChat`).
+	 */
 	readonly target?: string;
+	/** `reads-other`: it reads chats in general, never only the caller's own. */
+	readonly readsAnyChat?: boolean;
 }
 
 const MANAGE_AUTOMATION_SAFE = new Set(['list', 'delete']);
@@ -273,7 +290,10 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 		case 'queue_edit':
 		case 'queue_send_now':
 		case 'queue_resume':
+		case 'thread_read':
 			return { kind, target: threadIdArg(args.thread_id) };
+		case 'thread_search':
+			return { kind, readsAnyChat: true };
 	}
 	if (kind === 'browser') {
 		return { kind, urls: browserCallUrls(args) };
@@ -553,6 +573,8 @@ export function sandboxRefusalMessage(name: string, kind: HostToolSandboxClass |
 			return `${head}, and ${name} would have a chat that is less confined act on your message. Do the work in this chat, or ask the user.`;
 		case 'network':
 			return `${head} with the network off, and ${name} would reach the internet for you. Ask the user to do it, or to turn the network on for this chat.`;
+		case 'reads-other':
+			return `${head}, and ${name} would read other chats, which needs the agents.read:other permission that sandboxed chats do not have. Work from this chat's own context, or ask the user for what the other chat said.`;
 		default:
 			return `${head}, and ${name} is not cleared to run from a sandboxed chat. Continue without it, or ask the user to turn the sandbox off for this chat.`;
 	}

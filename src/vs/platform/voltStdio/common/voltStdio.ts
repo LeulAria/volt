@@ -11,6 +11,88 @@ import type { IVoltSandboxRequest } from '../../voltSandbox/common/sandboxPolicy
 export const IVoltStdioService = createDecorator<IVoltStdioService>('voltStdioService');
 export const VOLT_STDIO_CHANNEL_NAME = 'voltStdio';
 
+/**
+ * Why Volt starts a process. Every spawn and command says, so the log and the spawn audit can tell
+ * work done for a chat (which must run in the chat's sandbox when it has one) from the user's own
+ * clicks and Volt's bookkeeping.
+ */
+export type VoltExecReason =
+	/** A chat's agent CLI (ACP, Codex app server, a CLI agent's print mode). */
+	| 'agent'
+	/** A command a chat's own model runs (the native loop's shell and git tools). */
+	| 'agent-shell'
+	/** The project's tests, run after a chat's turn changed files. */
+	| 'post-turn-check'
+	/** A terminal or a helper a chat's agent asked for (terminal_start, docker_ensure, app_open). */
+	| 'terminal'
+	/** Setup scripts of a chat's new worktree. */
+	| 'worktree-setup'
+	/** A workflow step. */
+	| 'workflow'
+	/** A hook the user or the project defined, around a chat's tool calls and turns. */
+	| 'hook'
+	/** A chat's title or commit message, written by a one-off agent call. */
+	| 'title'
+	/** Volt asks an agent CLI what it offers (models, login), for no chat. */
+	| 'probe'
+	/** A Volt MCP server from the project's or the user's config. */
+	| 'mcp'
+	/** Volt's own bookkeeping for a chat (git status for its change list), with no agent input. */
+	| 'volt'
+	/** The user clicked something (an install, a setup check, a settings page). */
+	| 'user-action';
+
+/**
+ * Who a process runs for (spec B-04, B-06, INV-03). A chat's own work names the chat; work Volt
+ * does around a chat names it in `onBehalfOf`. A chat in Volt's OS sandbox gets its processes in
+ * that sandbox, with its rules: a request that says `sandboxed` but carries no `sandbox` is
+ * refused, never run unconfined.
+ */
+export interface IVoltExecContext {
+	/** `chat:<id>`: a chat's agent or tools; `volt`: Volt's own work; `user`: the user's click. */
+	readonly principal: `chat:${string}` | 'volt' | 'user';
+	/** The chat a `volt` or `user` process acts for, if any. */
+	readonly onBehalfOf?: string;
+	readonly reason: VoltExecReason;
+	/** The chat (principal or `onBehalfOf`) runs in Volt's OS sandbox. */
+	readonly sandboxed: boolean;
+}
+
+/** Why a spawn or command was refused before anything ran. */
+export interface IVoltExecRefusal {
+	/** `no-context`: nobody said who it runs for. `no-sandbox`: a sandboxed chat's process without its sandbox. `sandbox`: the sandbox could not be set up. */
+	readonly kind: 'no-context' | 'no-sandbox' | 'sandbox';
+	readonly reason: string;
+}
+
+/** A spawn refused by {@link execRefusal} or by the sandbox: it did not start. */
+export class VoltExecRefusedError extends Error {
+	constructor(readonly refusal: IVoltExecRefusal) {
+		super(refusal.reason);
+		this.name = 'VoltExecRefusedError';
+	}
+}
+
+/**
+ * Why a process must not start as asked, or undefined when it may. Fails closed: a request with no
+ * context, or a sandboxed chat's request without its sandbox, is refused.
+ */
+export function execRefusal(context: IVoltExecContext | undefined, sandbox: IVoltSandboxRequest | undefined): IVoltExecRefusal | undefined {
+	if (!context || typeof context.reason !== 'string' || typeof context.principal !== 'string') {
+		return { kind: 'no-context', reason: 'Volt did not say who this process runs for, so it was not started.' };
+	}
+	if (context.sandboxed && !sandbox) {
+		const chat = context.principal.startsWith('chat:') ? context.principal.slice('chat:'.length) : context.onBehalfOf;
+		return { kind: 'no-sandbox', reason: `This chat${chat ? ` (${chat})` : ''} runs in Volt's sandbox, and this ${context.reason} process was asked for without it, so it was not started.` };
+	}
+	return undefined;
+}
+
+/** One line for logs: `chat:abc post-turn-check sandboxed`. */
+export function describeExecContext(context: IVoltExecContext): string {
+	return `${context.principal}${context.onBehalfOf ? ` for ${context.onBehalfOf}` : ''} ${context.reason}${context.sandboxed ? ' sandboxed' : ''}`;
+}
+
 export interface IVoltStdioSpawnOptions {
 	command: string;
 	args?: string[];
@@ -21,6 +103,30 @@ export interface IVoltStdioSpawnOptions {
 	 * `SandboxUnavailableError` when the sandbox cannot be established; it never runs without it.
 	 */
 	sandbox?: IVoltSandboxRequest;
+	/** Who it runs for; see {@link IVoltExecContext}. */
+	readonly context: IVoltExecContext;
+}
+
+/** A command for a sandboxed chat, to run on a PTY (a managed terminal) inside the chat's sandbox. */
+export interface IVoltSandboxedTerminalRequest {
+	/** Caller-chosen; names the terminal in the later calls. */
+	readonly id: string;
+	/** The shell, and its arguments (`-c <command line>`). */
+	readonly file: string;
+	readonly args: readonly string[];
+	readonly cwd?: string;
+	readonly env?: Record<string, string>;
+	readonly sandbox: IVoltSandboxRequest;
+	readonly context: IVoltExecContext;
+}
+
+/** What to start on the PTY: a fixed launcher that opens the sandbox's control channels, then the sandbox. */
+export interface IVoltSandboxedTerminalLaunch {
+	readonly file: string;
+	readonly args: readonly string[];
+	/** The complete environment. Nothing else may be merged in. */
+	readonly env: Record<string, string>;
+	readonly cwd: string;
 }
 
 /** Something the OS sandbox of a spawned process did: a denial, or a warning that it is weaker than asked. */
@@ -69,6 +175,8 @@ export interface IVoltExecRequest {
 	 * sandboxed does not run: the result has `exitCode: null` and says why in `stderr`.
 	 */
 	readonly sandbox?: IVoltSandboxRequest;
+	/** Who it runs for; see {@link IVoltExecContext}. A refused command has `refused` set. */
+	readonly context: IVoltExecContext;
 }
 
 /** A program run directly, without a shell: its arguments are passed as they are, never parsed. */
@@ -108,6 +216,8 @@ export interface IVoltExecResult {
 	readonly cancelled: boolean;
 	/** A background job that is still running. */
 	readonly running: boolean;
+	/** Nothing ran: who it was for did not allow it, or its sandbox could not be set up. */
+	readonly refused?: IVoltExecRefusal;
 }
 
 export interface IVoltJobOutput {
@@ -152,4 +262,19 @@ export interface IVoltStdioService {
 	 * spawn is not sandboxed.
 	 */
 	sandboxAllows?(id: string, path: string, access: 'read' | 'write'): Promise<boolean>;
+	/**
+	 * A sandboxed chat's terminal (spec F.6). node-pty passes no extra file descriptors, so the
+	 * sandbox's control channels are FIFOs in the run's private folder, opened by the launcher this
+	 * returns. Start it on a PTY, then {@link confirmSandboxedTerminal}. Rejects (nothing to start)
+	 * when the sandbox cannot be set up.
+	 */
+	prepareSandboxedTerminal?(request: IVoltSandboxedTerminalRequest): Promise<IVoltSandboxedTerminalLaunch>;
+	/**
+	 * Confirms from outside that process `pid` (the PTY's) is in its sandbox, and resolves with the
+	 * line to type so the shell starts; until then the shell does not run and no other input may be
+	 * written. Rejects when the sandbox was not established: the process tree is killed.
+	 */
+	confirmSandboxedTerminal?(id: string, pid: number): Promise<string>;
+	/** The terminal exited or is being stopped: its sandbox's whole tree is killed and its run folder removed. */
+	endSandboxedTerminal?(id: string): Promise<void>;
 }

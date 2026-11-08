@@ -7,6 +7,7 @@ import { Event } from '../../../../base/common/event.js';
 import { isMacintosh, isWindows } from '../../../../base/common/platform.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { voltExec } from '../../../services/voltRuntime/common/execContext.js';
 import { CLI_AGENT_DEFINITIONS, detectCliAgent, ICliAgentDefinition } from '../../../services/voltRuntime/browser/agents/cliAgents.js';
 import { IDetectResult } from '../../../services/voltRuntime/common/providers.js';
 import { ITerminalService } from '../../terminal/browser/terminal.js';
@@ -78,7 +79,8 @@ export class AgentSetupService {
 
 	private async exec(command: string): Promise<{ exitCode: number | null; stdout: string; stderr: string } | undefined> {
 		try {
-			const result = await this.stdio.exec({ id: `volt-setup-${generateUuid().slice(0, 8)}`, command, timeoutMs: STATUS_TIMEOUT_MS, inlineChars: 8_000, env: { NO_COLOR: '1' } });
+			// Setup's checks of the user's own CLIs (versions, sign-in), for no chat.
+			const result = await this.stdio.exec({ id: `volt-setup-${generateUuid().slice(0, 8)}`, command, timeoutMs: STATUS_TIMEOUT_MS, inlineChars: 8_000, env: { NO_COLOR: '1' }, ...voltExec('probe') });
 			return result.timedOut ? undefined : { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
 		} catch {
 			return undefined;

@@ -16,12 +16,16 @@ import { InMemoryFileSystemProvider } from '../../../../../platform/files/common
 import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { AgentWorktreeSetupService } from '../../browser/git/agentWorktreeSetupService.js';
+import { IWorktreeSetupRequest } from '../../common/git/worktreeSetupPlan.js';
 
 /** Runs nothing: each command's exit code comes from `exits` (by substring), output echoes its markers. */
 class FakeStdio {
 	readonly commands: string[] = [];
 	readonly cwds: (string | undefined)[] = [];
 	readonly exits = new Map<string, number>();
+	readonly requests: IVoltExecRequest[] = [];
+	/** Set: every command is refused with this reason, as the stdio service refuses one it cannot sandbox. */
+	refuse: string | undefined;
 	/** Commands containing this never finish on their own (until cancelled). */
 	hang: string | undefined;
 	private readonly hanging = new Set<string>();
@@ -45,6 +49,11 @@ class FakeStdio {
 	}
 
 	private async exec(request: IVoltExecRequest): Promise<IVoltExecResult> {
+		this.requests.push(request);
+		if (this.refuse) {
+			const reason = this.refuse;
+			return { id: request.id, exitCode: null, stdout: '', stderr: reason, combined: reason, truncated: false, durationMs: 0, timedOut: false, cancelled: false, running: false, refused: { kind: 'sandbox', reason } };
+		}
 		this.commands.push(request.command);
 		this.cwds.push(request.cwd);
 		const markers = [...request.command.matchAll(/::volt-setup-step (\d+)/g)].map(match => `::volt-setup-step ${match[1]}`);
@@ -83,7 +92,27 @@ suite('Agent worktree setup service', () => {
 		return { service, stdio };
 	}
 
-	const request = { repoRoot: '/repo', worktreePath: '/wt/a', branch: 'volt/a' };
+	const request: IWorktreeSetupRequest = { repoRoot: '/repo', worktreePath: '/wt/a', branch: 'volt/a', sandbox: undefined };
+
+	test('LIFE-PATH-4: a sandboxed chat\'s worktree setup runs in its sandbox, with its rules, or not at all', async () => {
+		const { service, stdio } = await setup({ '/repo/.cursor/worktrees.json': JSON.stringify({ 'setup-worktree': ['npm ci'] }) });
+		await service.run('chat', { ...request, sandbox: { level: 'workspace-write', network: true, allowedDomains: ['registry.example'] } });
+		const sent = stdio.requests[0];
+		assert.deepStrictEqual(sent.context, { principal: 'chat:chat', reason: 'worktree-setup', sandboxed: true });
+		assert.deepStrictEqual(sent.sandbox, { level: 'workspace-write', network: true, providerId: '', workspaceRoots: ['/wt/a', '/repo/.git'], allowedDomains: ['registry.example'] }, 'the chat\'s own rules, the worktree and its repository as the workspace');
+
+		// The stdio service refuses (the sandbox could not be set up): the setup fails and says why.
+		const refused = await setup({ '/repo/.cursor/worktrees.json': JSON.stringify({ 'setup-worktree': ['npm ci'] }) });
+		refused.stdio.refuse = 'No OS sandbox available';
+		await assert.rejects(refused.service.run('chat', { ...request, sandbox: { level: 'read-only', network: false } }), /No OS sandbox available/);
+		assert.strictEqual(refused.service.get('chat')?.phase, 'failed');
+
+		// An unsandboxed chat's setup runs as before, unconfined, and says so.
+		const open = await setup({ '/repo/.cursor/worktrees.json': JSON.stringify({ 'setup-worktree': ['npm ci'] }) });
+		await open.service.run('chat', request);
+		assert.deepStrictEqual(open.stdio.requests[0].context, { principal: 'chat:chat', reason: 'worktree-setup', sandboxed: false });
+		assert.strictEqual(open.stdio.requests[0].sandbox, undefined);
+	});
 
 	test('nothing to set up shows nothing; a project file runs its steps in order', async () => {
 		const empty = await setup({});

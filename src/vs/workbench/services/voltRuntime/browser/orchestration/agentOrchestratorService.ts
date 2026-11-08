@@ -1149,6 +1149,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				worktreePath: created.path,
 				branch: created.branch,
 				isCancelled: () => isTerminalTaskState(this.state.tasks[taskId]?.state ?? 'cancelled'),
+				sandbox: this.runtime.getSandboxSettings(task.childId),
 			});
 			this.apply({ type: 'task.worktree', taskId, path: created.path, branch: created.branch });
 		} catch (err) {

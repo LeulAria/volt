@@ -105,6 +105,8 @@ class FakeAgent implements IAgentProvider {
 class FakeStdio {
 	readonly execs: IVoltExecRequest[] = [];
 	readonly checkOutputs: { output: string; exitCode: number }[] = [];
+	/** Every command is refused, as the stdio service refuses one whose sandbox cannot be set up. */
+	refuse = false;
 	asService(): IVoltStdioService {
 		return {
 			onData: Event.None,
@@ -115,6 +117,9 @@ class FakeStdio {
 			which: async () => undefined,
 			exec: async (request: IVoltExecRequest): Promise<IVoltExecResult> => {
 				this.execs.push(request);
+				if (this.refuse) {
+					return { id: request.id, exitCode: null, stdout: '', stderr: 'Not run', combined: 'Not run', truncated: false, durationMs: 0, timedOut: false, cancelled: false, running: false, refused: { kind: 'sandbox', reason: 'No OS sandbox available' } };
+				}
 				const scripted = request.command === 'npm test' ? this.checkOutputs.shift() : undefined;
 				const output = scripted?.output ?? '';
 				return { id: request.id, exitCode: scripted?.exitCode ?? 127, stdout: output, stderr: '', combined: output, truncated: false, durationMs: 5, timedOut: false, cancelled: false, running: false };
@@ -447,6 +452,44 @@ suite('Agent runtime orchestration', () => {
 		const context = await setup('agent', { 'package.json': JSON.stringify({ scripts: { test: 'node --test' } }) });
 		await checkedChanges(context, BEFORE, BEFORE);
 		assert.ok(!context.events.some(envelope => envelope.event.type === 'notice' && envelope.event.severity === 'warning'));
+	});
+
+	test('B-04 / LIFE-PATH-8: a sandboxed chat\'s post-turn check runs in the chat\'s sandbox, with its rules', async () => {
+		const context = await setup('agent', { 'package.json': JSON.stringify({ scripts: { test: 'touch $HOME/pwned' } }) });
+		await context.service.setSandboxSettings('chat', { level: 'workspace-write', network: true, allowedDomains: ['registry.example'] });
+		await checkedChanges(context, BEFORE, BEFORE);
+		const checks = context.stdio.execs.filter(exec => exec.command === 'npm test');
+		assert.strictEqual(checks.length, 2);
+		for (const check of checks) {
+			assert.deepStrictEqual(check.context, { principal: 'chat:chat', reason: 'post-turn-check', sandboxed: true });
+			assert.deepStrictEqual(check.sandbox, { level: 'workspace-write', network: true, providerId: '', workspaceRoots: [ROOT.fsPath], allowedDomains: ['registry.example'] }, 'the chat\'s own rules, not forced network-off');
+		}
+	});
+
+	test('a check whose sandbox cannot be set up does not run and reports nothing', async () => {
+		const context = await setup('agent', { 'package.json': JSON.stringify({ scripts: { test: 'node --test' } }) });
+		await context.service.setSandboxSettings('chat', { level: 'read-only', network: false });
+		context.stdio.refuse = true;
+		await checkedChanges(context, BEFORE, REGRESSED);
+		assert.ok(!context.events.some(envelope => envelope.event.type === 'notice' && envelope.event.severity === 'warning'), 'a refused check is no regression');
+	});
+
+	test('LIFE-PATH-2: a sandboxed chat\'s native shell commands run in its sandbox', async () => {
+		const { service, stdio, ref, waitEnd, fileService } = await setup('model');
+		await service.setAccessMode('full-access');
+		await service.setSandboxSettings('chat', { level: 'workspace-write', network: false });
+		await crashedChat(service, fileService, 'chat', {
+			messages: [
+				{ role: 'user', content: 'run it', turn: true },
+				{ role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'shell', args: { command: 'touch $HOME/pwned' } }] },
+			],
+			pending: ['c1'],
+		}, 'run it');
+		await waitEnd(await service.send('chat', { text: '[Volt] Volt restarted while you were working. Continue where you left off.', mode: 'agent', providerRef: ref }));
+		const shell = stdio.execs.find(exec => exec.command === 'touch $HOME/pwned' || Object.values(exec.env ?? {}).includes('touch $HOME/pwned'));
+		assert.ok(shell, 'the shell call ran');
+		assert.deepStrictEqual(shell.context, { principal: 'chat:chat', reason: 'agent-shell', sandboxed: true });
+		assert.deepStrictEqual(shell.sandbox, { level: 'workspace-write', network: false, providerId: '', workspaceRoots: [ROOT.fsPath] });
 	});
 
 	test('Ask mode and supervised access never run project checks', async () => {

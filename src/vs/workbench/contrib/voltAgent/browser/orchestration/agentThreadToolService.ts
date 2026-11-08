@@ -1090,7 +1090,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 	private async runSetup(threadId: string, root: string, path: string, branch: string): Promise<void> {
 		await this.orchestrator.dispatch({ type: 'thread.block', threadId, reason: SETUP_BLOCK });
 		try {
-			await this.worktreeSetup.run(threadId, { repoRoot: root, worktreePath: path, branch, isCancelled: () => false });
+			await this.worktreeSetup.run(threadId, { repoRoot: root, worktreePath: path, branch, isCancelled: () => false, sandbox: this.runtime.getSandboxSettings(threadId) });
 		} catch (err) {
 			// The setup card shows what failed; the chat's next turn retries it first.
 			this.logService.warn('[volt threads] worktree setup failed', err);

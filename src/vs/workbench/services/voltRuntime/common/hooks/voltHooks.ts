@@ -5,6 +5,7 @@
 
 import { Event } from '../../../../../base/common/event.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
+import type { IChatExec } from '../execContext.js';
 import type { IVoltTool } from '../tools/tool.js';
 
 /**
@@ -311,6 +312,12 @@ export interface IVoltHookRunContext {
 	readonly cwd?: string;
 	readonly model?: string;
 	readonly mode?: string;
+	/**
+	 * Who the hook's command runs for: the chat, in its sandbox when it has one. A hook runs around
+	 * the chat's agent, often over files that agent wrote (a lint or test hook), so for a sandboxed
+	 * chat it runs inside that chat's sandbox with the chat's rules (B-06).
+	 */
+	readonly exec: IChatExec;
 	/** A hook answered "stop": end the run. */
 	stop?(reason: string): void;
 }

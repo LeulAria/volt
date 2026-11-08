@@ -78,11 +78,36 @@ class PtyTerminalProcess implements IManagedTerminalProcess {
 	private readonly _onExit = new Emitter<IManagedTerminalExit>();
 	readonly onExit: Event<IManagedTerminalExit> = this._onExit.event;
 	readonly onClosed: Event<void> = Event.None;
-	readonly ready = Promise.resolve();
+	readonly ready: Promise<void>;
 	readonly viewable = true;
 	private exited = false;
+	/** A sandboxed terminal takes no input until its sandbox is confirmed and the go line is typed. */
+	private gated: boolean;
+	private readonly held: string[] = [];
 
-	constructor(readonly pty: IPty, private readonly onEnd: () => void) {
+	constructor(
+		readonly pty: IPty,
+		private readonly onEnd: () => void,
+		/** A sandboxed terminal: resolves with the go line once the sandbox is confirmed; `end` kills its whole sandbox. */
+		private readonly sandbox?: { readonly confirmed: Promise<string>; readonly end: () => Promise<void> },
+	) {
+		this.gated = !!sandbox;
+		this.ready = sandbox
+			? sandbox.confirmed.then(go => {
+				if (this.exited) {
+					throw new Error('The terminal ended before its sandbox was confirmed.');
+				}
+				// The go line first: until it arrives the shell does not exist, only Volt's gate does.
+				this.pty.write(go);
+				this.gated = false;
+				for (const data of this.held.splice(0)) {
+					this.pty.write(data);
+				}
+			}, err => {
+				this.kill();
+				throw err;
+			})
+			: Promise.resolve();
 		pty.onData(data => this._onData.fire(data));
 		pty.onExit(({ exitCode, signal }) => {
 			this.exited = true;
@@ -97,15 +122,18 @@ class PtyTerminalProcess implements IManagedTerminalProcess {
 	}
 
 	async sendText(text: string, enter: boolean): Promise<void> {
-		if (!this.exited) {
-			this.pty.write(enter ? `${text}\r` : text);
-		}
+		this.write(enter ? `${text}\r` : text);
 	}
 
 	write(data: string): void {
-		if (!this.exited) {
-			this.pty.write(data);
+		if (this.exited) {
+			return;
 		}
+		if (this.gated) {
+			this.held.push(data);
+			return;
+		}
+		this.pty.write(data);
 	}
 
 	resize(cols: number, rows: number): void {
@@ -122,6 +150,8 @@ class PtyTerminalProcess implements IManagedTerminalProcess {
 		if (this.exited) {
 			return;
 		}
+		// The sandbox's own kill reaches processes that left the group.
+		void this.sandbox?.end();
 		try {
 			// The whole group: a dev server's children (watchers, workers) go with it.
 			process.kill(-this.pty.pid, 'SIGKILL');
@@ -145,15 +175,24 @@ class PtyTerminalBackend implements IManagedTerminalBackend {
 		private readonly resolveEnv: () => Promise<NodeJS.ProcessEnv>,
 		private readonly ledger: ChildLedger,
 		private readonly logService: ILogService,
+		private readonly stdio: IVoltStdioService,
 	) { }
 
 	async spawn(launch: IManagedTerminalLaunch): Promise<IManagedTerminalProcess> {
 		const pty = await this.loadPty();
 		const shell = this.shell();
+		const shellArgs = isWindows ? ['/d', '/s', '/c', launch.command] : ['-c', launch.command];
+		if (launch.exec.sandbox) {
+			return this.spawnSandboxed(pty, shell, shellArgs, launch);
+		}
+		if (launch.exec.context.sandboxed) {
+			// A sandboxed chat's terminal without its sandbox: refused, never started outside it.
+			throw new Error(`${launch.label} was not started: this chat runs in Volt's sandbox, and the terminal came without it.`);
+		}
 		const env = await this.env(launch.env);
 		let child: IPty;
 		try {
-			child = pty.spawn(shell, isWindows ? ['/d', '/s', '/c', launch.command] : ['-c', launch.command], {
+			child = pty.spawn(shell, shellArgs, {
 				name: 'xterm-256color',
 				cols: DEFAULT_COLS,
 				rows: DEFAULT_ROWS,
@@ -171,6 +210,56 @@ class PtyTerminalBackend implements IManagedTerminalBackend {
 		});
 		this.processes.set(launch.id, running);
 		this.logService.trace(`[volt agent server] terminal ${launch.id} started (pid ${child.pid}): ${launch.command}`);
+		return running;
+	}
+
+	/**
+	 * A sandboxed chat's terminal (spec F.6): the stdio service prepares the chat's sandbox for the
+	 * shell and the launcher that carries its control channels as FIFOs; the PTY starts that
+	 * launcher; the shell starts only once the sandbox is confirmed from outside. Every failure
+	 * refuses the terminal; nothing runs unsandboxed.
+	 */
+	private async spawnSandboxed(pty: IPtyModule, shell: string, shellArgs: readonly string[], launch: IManagedTerminalLaunch): Promise<IManagedTerminalProcess> {
+		const stdio = this.stdio;
+		const sandbox = launch.exec.sandbox!;
+		if (isWindows || !stdio.prepareSandboxedTerminal || !stdio.confirmSandboxedTerminal || !stdio.endSandboxedTerminal) {
+			throw new Error(`${launch.label} was not started: terminals cannot run in Volt's sandbox here.`);
+		}
+		const prepared = await stdio.prepareSandboxedTerminal({
+			id: launch.id,
+			file: shell,
+			args: shellArgs,
+			cwd: launch.cwd,
+			env: { ...launch.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
+			sandbox,
+			context: launch.exec.context,
+		}).catch(err => {
+			throw new Error(`${launch.label} was not started: ${err instanceof Error ? err.message : String(err)}`);
+		});
+		const end = () => stdio.endSandboxedTerminal!(launch.id).catch(() => undefined);
+		let child: IPty;
+		try {
+			child = pty.spawn(prepared.file, [...prepared.args], {
+				name: 'xterm-256color',
+				cols: DEFAULT_COLS,
+				rows: DEFAULT_ROWS,
+				cwd: prepared.cwd,
+				// Exactly the sandbox's environment: nothing of the server's is merged in.
+				env: { ...prepared.env },
+			});
+		} catch (err) {
+			await end();
+			throw new Error(`Could not start ${launch.label}: ${err instanceof Error ? err.message : String(err)}`);
+		}
+		this.ledger.add(child.pid, prepared.file);
+		const confirmed = stdio.confirmSandboxedTerminal(launch.id, child.pid);
+		const running = new PtyTerminalProcess(child, () => {
+			this.ledger.delete(child.pid);
+			this.processes.delete(launch.id);
+			void end();
+		}, { confirmed, end });
+		this.processes.set(launch.id, running);
+		this.logService.info(`[volt agent server] sandboxed terminal ${launch.id} started (pid ${child.pid})`);
 		return running;
 	}
 
@@ -256,7 +345,7 @@ export class ServerTerminals extends Disposable {
 		@ILogService private readonly logService: ILogService,
 	) {
 		super();
-		this.backend = new PtyTerminalBackend(resolveEnv, ledger, logService);
+		this.backend = new PtyTerminalBackend(resolveEnv, ledger, logService, stdio);
 		// Ids carry this server's mark: a window still showing a terminal of a server that restarted never mixes them up.
 		this.core = this._register(new ManagedTerminals(this.backend, runtime, fileService, () => undefined, `term-${generateUuid().slice(0, 4)}-`));
 		const tools = new ManagedTerminalTools(this.core, stdio, fileService);

@@ -42,6 +42,12 @@ export interface ISandboxLaunchSpec {
 	/** File descriptors from 3 up: a number passes that open fd, `pipe` makes a pipe the backend reads in `confirm`. */
 	readonly extraStdio: readonly (number | 'pipe')[];
 	/**
+	 * Which way each `pipe` in {@link extraStdio} carries data: `out` the launcher or the workload
+	 * writes it and Volt reads it, `in` Volt writes it. A PTY launch carries them as FIFOs, which
+	 * have one direction (see sandboxPty.ts).
+	 */
+	readonly extraStdioDirections: readonly ('in' | 'out')[];
+	/**
 	 * Resolves once the backend has evidence the sandbox is in place (bubblewrap's status fd,
 	 * Seatbelt's post-`sandbox_init` marker), or with an error when the launcher failed before
 	 * running the workload. Never resolves `ok` on a guess.

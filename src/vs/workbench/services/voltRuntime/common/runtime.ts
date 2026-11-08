@@ -8,6 +8,8 @@ import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import type { IVoltSandboxSettings } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import type { VoltExecReason } from '../../../../platform/voltStdio/common/voltStdio.js';
+import type { IChatExec } from './execContext.js';
 import { VoltAccessMode } from './access/accessModes.js';
 import { AccessDecisionScope, IAccessRequest, IExecutionReceipt, IPermissionRule, PermissionEffect } from './access/accessTypes.js';
 import type { IHandoffActivity } from './contextHandoff.js';
@@ -207,6 +209,11 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	setAccessMode(mode: VoltAccessMode, sessionId?: string): Promise<void>;
 	/** The chat's OS sandbox, or the default for chats that never set one. */
 	getSandboxSettings(sessionId: string): IVoltSandboxSettings;
+	/**
+	 * Who a process Volt starts for this chat runs for, and the chat's sandbox (with its own rules
+	 * and its checkout as the workspace) when it has one. Spread into every spawn and command.
+	 */
+	chatExec(sessionId: string, reason: VoltExecReason, providerId?: string): IChatExec;
 	setSandboxSettings(sessionId: string, settings: IVoltSandboxSettings): Promise<void>;
 	getDefaultSandboxSettings(): IVoltSandboxSettings;
 	setDefaultSandboxSettings(settings: IVoltSandboxSettings): Promise<void>;

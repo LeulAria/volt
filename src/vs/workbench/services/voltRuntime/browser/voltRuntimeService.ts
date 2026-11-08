@@ -49,7 +49,8 @@ import { cheapestReasoningLevel, resolveTabModel } from '../common/models/modelA
 import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../common/runtime.js';
 import { countUserTurns, IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { Schemas } from '../../../../base/common/network.js';
-import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltStdioService, VoltExecReason } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { chatExec, IChatExec, voltExec } from '../common/execContext.js';
 import { IVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { codeIndexEnabled, INSTANT_GREP_TOOL_NAME, lspAllowedFor, readCodeIndexOptions, readFffSettings, readRtkExclusions, retrievalEnabled, rtkEnabled } from '../common/codeIntelligence.js';
 import { ContextRetriever, IRetrievedContext, parsePorcelainZ } from './search/contextRetriever.js';
@@ -1251,7 +1252,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private async generateTitle(session: ISessionState, prompt: string, item: IVoltCatalogItem, pinned: boolean, first: boolean): Promise<void> {
 		let raw: string | undefined;
 		try {
-			raw = await this.generateWith(item, pinned, prompt, TITLE_TIMEOUT_MS, 2000);
+			raw = await this.generateWith(item, pinned, prompt, TITLE_TIMEOUT_MS, 2000, session.sessionId);
 		} catch (err) {
 			this.logService.trace('[volt runtime] title generation failed', err);
 		}
@@ -1275,8 +1276,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		await this.history.setAgentTitle(session.sessionId, title);
 	}
 
-	/** Runs `prompt` once, with no tools, on `item`: a native model streams it, a CLI agent answers in print mode. */
-	private async generateWith(item: IVoltCatalogItem | undefined, pinned: boolean, prompt: string, timeoutMs: number, maxChars: number): Promise<string | undefined> {
+	/**
+	 * Runs `prompt` once, with no tools, on `item`: a native model streams it, a CLI agent answers in
+	 * print mode. For a sandboxed chat (`sessionId`) the CLI runs in that chat's sandbox: the prompt
+	 * holds the chat's text, and the CLI reads state the chat's agent could have written.
+	 */
+	private async generateWith(item: IVoltCatalogItem | undefined, pinned: boolean, prompt: string, timeoutMs: number, maxChars: number, sessionId?: string): Promise<string | undefined> {
 		const profile = item ? this.profiles.find(p => p.id === item.profileId) : undefined;
 		if (item?.kind === 'model' && profile) {
 			return this.generateTitleWithModel(item, profile, prompt, pinned, timeoutMs, Math.max(400, Math.ceil(maxChars / 2)));
@@ -1298,6 +1303,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				cwd: isWindows ? undefined : '/tmp',
 				timeoutMs,
 				inlineChars: maxChars,
+				...(sessionId ? this.chatExec(sessionId, 'title', profile.providerId) : voltExec('title')),
 			});
 			return result.exitCode === 0 ? result.stdout : undefined;
 		};
@@ -1316,7 +1322,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			?? (chatRef ? this.catalog.find(candidate => candidate.ref === chatRef && candidate.enabled) : undefined)
 			?? this.catalog.find(candidate => candidate.enabled);
 		try {
-			return await this.generateWith(item, !!pinned, prompt, options?.timeoutMs ?? GENERATED_TEXT_TIMEOUT_MS, 20_000);
+			return await this.generateWith(item, !!pinned, prompt, options?.timeoutMs ?? GENERATED_TEXT_TIMEOUT_MS, 20_000, options?.sessionId);
 		} catch (err) {
 			this.logService.trace('[volt runtime] text generation failed', err);
 			return undefined;
@@ -2212,6 +2218,13 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return this.sandboxChats[sessionId] ?? this.sandboxDefaults;
 	}
 
+	chatExec(sessionId: string, reason: VoltExecReason, providerId?: string): IChatExec {
+		const session = this.sessions.get(sessionId) as ISessionState | undefined;
+		const cwd = session ? this.executionRoot(session)?.fsPath : undefined;
+		const sandbox = this.sandboxStart(sessionId, cwd);
+		return chatExec(sessionId, sandbox?.settings, sandbox?.workspaceRoots ?? [], reason, providerId);
+	}
+
 	async setSandboxSettings(sessionId: string, settings: IVoltSandboxSettings): Promise<void> {
 		this.sandboxChats = { ...this.sandboxChats, [sessionId]: normalizeSandboxSettings(settings) };
 		this.storeSandbox();
@@ -2762,7 +2775,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			} else if (ensured.recreated) {
 				session.announceWorktree = true;
 				// A checkout recreated from its branch has none of what setup installed.
-				await this.worktreeSetup.run(session.sessionId, { repoRoot: project.fsPath, worktreePath: session.worktreePath, branch: session.worktreeBranch, isCancelled });
+				await this.worktreeSetup.run(session.sessionId, { repoRoot: project.fsPath, worktreePath: session.worktreePath, branch: session.worktreeBranch, isCancelled, sandbox: this.getSandboxSettings(session.sessionId) });
 			} else if (this.worktreeSetup.needsRetry(session.sessionId)) {
 				// The last setup failed or was cancelled: finish it before the agent works there.
 				await this.worktreeSetup.retry(session.sessionId, { isCancelled });
@@ -2781,7 +2794,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.worktreeBranch = created.branch;
 		session.announceWorktree = true;
 		this.history.open(session.sessionId).setMeta({ worktreePath: created.path, worktreeBranch: created.branch });
-		await this.worktreeSetup.run(session.sessionId, { repoRoot: project.fsPath, worktreePath: created.path, branch: created.branch, isCancelled });
+		await this.worktreeSetup.run(session.sessionId, { repoRoot: project.fsPath, worktreePath: created.path, branch: created.branch, isCancelled, sandbox: this.getSandboxSettings(session.sessionId) });
 	}
 
 	private noteWorktree(session: ISessionState, runId: string): void {
@@ -2809,6 +2822,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			codeIndex: this.searchIndex,
 			rtk: () => rtkEnabled(this.configurationService),
 			rtkExclusions: () => readRtkExclusions(this.configurationService),
+			exec: () => this.chatExec(session.sessionId, 'agent-shell'),
 			meta: {
 				grantGroups: () => session.extraGroups ?? [],
 				...(state ? {
@@ -2962,6 +2976,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			cwd,
 			model: item.id,
 			mode: request.mode,
+			exec: this.chatExec(session.sessionId, 'hook'),
 			stop: reason => this.stopRunForHook(session, run, reason),
 		});
 		const hookNotes = await this.promptHooks(session, run, request, hookContext());
@@ -3758,7 +3773,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const startedAt = Date.now();
 		const preTokens = estimateTokens(input.system) + totalTokens(messages);
 		this.emitEngine(session, run, { type: 'context.compaction', id: compactionId, status: 'running', trigger: 'auto', preTokens });
-		void this.hooks.run('preCompact', { sessionId: session.sessionId, runId: run.runId, root: this.executionRoot(session)?.fsPath, cwd: state.cwd, model: input.item.id, mode: session.mode }, protocol => protocol === 'claude'
+		void this.hooks.run('preCompact', { sessionId: session.sessionId, runId: run.runId, root: this.executionRoot(session)?.fsPath, cwd: state.cwd, model: input.item.id, mode: session.mode, exec: this.chatExec(session.sessionId, 'hook') }, protocol => protocol === 'claude'
 			? { trigger: input.keepTokens !== undefined ? 'manual' : 'auto', custom_instructions: '' }
 			: { trigger: input.keepTokens !== undefined ? 'manual' : 'auto', context_tokens: preTokens });
 		// An overflowing prompt cannot carry the request on top of itself; that goes to the summarizer.
@@ -3880,6 +3895,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			cwd: root?.fsPath,
 			model: item.id,
 			mode: session.mode,
+			exec: this.chatExec(session.sessionId, 'hook'),
 			stop: reason => this.stopRunForHook(session, run, reason),
 		});
 		const started = await this.hooks.run('subagentStart', hookContext(), { subagent_type: label, description: request.description, prompt: request.prompt });
@@ -4672,7 +4688,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (cached && Date.now() - cached.at < 5_000) {
 			return cached.value;
 		}
-		const value = this.stdio.exec({ id: `volt-status-${generateUuid().slice(0, 8)}`, command: 'git status --porcelain=v1 -z --untracked-files=normal', cwd: root.fsPath, timeoutMs: 2_000, inlineChars: 400_000 })
+		// Volt's own read of the change list; making git itself safe in an agent-written repository is HostGit's (B-03).
+		const value = this.stdio.exec({ id: `volt-status-${generateUuid().slice(0, 8)}`, command: 'git status --porcelain=v1 -z --untracked-files=normal', cwd: root.fsPath, timeoutMs: 2_000, inlineChars: 400_000, ...voltExec('volt') })
 			.then(result => result.exitCode === 0 ? parsePorcelainZ(result.combined) : new Set<string>(), () => new Set<string>());
 		this.workingTreeChangesByRoot.set(key, { at: Date.now(), value });
 		return value;
@@ -5501,7 +5518,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.postRunChecks.set(session.sessionId, id);
 		void quality.baseline.then(async cached => {
 			const before = cached ?? quality.agentBaseline;
-			const after = this.postRunChecks.get(session.sessionId) === id ? await this.runCheck(quality.root, quality.command, id) : undefined;
+			const after = this.postRunChecks.get(session.sessionId) === id ? await this.runCheck(session.sessionId, quality.root, quality.command, id) : undefined;
 			if (this.postRunChecks.get(session.sessionId) !== id) {
 				return;
 			}
@@ -5594,10 +5611,19 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return evaluateAccess(request, policy, { accessMode: this.getAccessMode(session.sessionId) }).effect === 'allow';
 	}
 
-	private async runCheck(root: URI, command: string, id: string, token?: CancellationToken): Promise<ICheckReport | undefined> {
+	/**
+	 * The project's test command after a chat's turn (B-04). The agent could have written it (the
+	 * `test` script, a conftest, a jest config), so for a sandboxed chat it runs inside that chat's
+	 * sandbox with the chat's rules; when the sandbox cannot be set up it does not run at all.
+	 */
+	private async runCheck(sessionId: string, root: URI, command: string, id: string, token?: CancellationToken): Promise<ICheckReport | undefined> {
 		const listener = token?.onCancellationRequested(() => void this.stdio.cancelExec(id).catch(() => undefined));
 		try {
-			const result = await this.stdio.exec({ id, command, cwd: root.fsPath, timeoutMs: CHECK_TIMEOUT_MS, inlineChars: CHECK_INLINE_CHARS, env: { CI: '1', FORCE_COLOR: '0', NO_COLOR: '1' } });
+			const result = await this.stdio.exec({ id, command, cwd: root.fsPath, timeoutMs: CHECK_TIMEOUT_MS, inlineChars: CHECK_INLINE_CHARS, env: { CI: '1', FORCE_COLOR: '0', NO_COLOR: '1' }, ...this.chatExec(sessionId, 'post-turn-check') });
+			if (result.refused) {
+				this.logService.info(`[volt check] \`${command}\` in ${root.fsPath} did not run: ${result.refused.reason}`);
+				return undefined;
+			}
 			if (result.cancelled || token?.isCancellationRequested) {
 				return undefined;
 			}

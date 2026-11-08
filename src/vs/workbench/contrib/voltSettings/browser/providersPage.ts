@@ -22,6 +22,7 @@ import { IInstantiationService } from '../../../../platform/instantiation/common
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { WorkbenchList } from '../../../../platform/list/browser/listService.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { userExec } from '../../../services/voltRuntime/common/execContext.js';
 import { CLAUDE_ACCOUNT_SWITCHING_SETTING, CLAUDE_AUTO_SWITCH_THRESHOLD_SETTING, IVoltAccountsService, IVoltClaudeAccount, IVoltClaudeAccountsState } from '../../../../platform/voltAccounts/common/voltAccounts.js';
 import { IVoltUsageLimitWindow } from '../../../../platform/voltUsage/common/voltUsage.js';
 import { CLI_AGENT_DEFINITIONS } from '../../../services/voltRuntime/browser/agents/cliAgents.js';
@@ -2095,7 +2096,7 @@ export class ProvidersPage {
 		let output = '';
 		let ok = false;
 		try {
-			const result = await this.stdio.exec({ id: `volt-install-${generateUuid().slice(0, 8)}`, command, timeoutMs: INSTALL_TIMEOUT_MS, inlineChars: 16_000, env: { NO_COLOR: '1', CI: '1' } });
+			const result = await this.stdio.exec({ id: `volt-install-${generateUuid().slice(0, 8)}`, command, timeoutMs: INSTALL_TIMEOUT_MS, inlineChars: 16_000, env: { NO_COLOR: '1', CI: '1' }, ...userExec() });
 			output = result.combined;
 			ok = result.exitCode === 0 && !result.timedOut;
 		} catch (error) {

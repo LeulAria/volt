@@ -7,6 +7,7 @@ import { toErrorMessage } from '../../../../../base/common/errorMessage.js';
 import { isWindows } from '../../../../../base/common/platform.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { voltExec } from '../../../../services/voltRuntime/common/execContext.js';
 
 // DOM-free, so the agent server (scratch folders for automation runs) can use it too.
 
@@ -27,6 +28,8 @@ export async function runGit(stdio: IVoltStdioService, cwd: string, args: readon
 			env: { GIT_TERMINAL_PROMPT: '0' },
 			timeoutMs,
 			inlineChars: 20_000,
+			// Volt's own (branch menus, scratch folders); git's repository-controlled behaviour is HostGit's (B-03).
+			...voltExec('volt'),
 		});
 		return { exitCode: result.exitCode, stderr: result.stderr, timedOut: result.timedOut };
 	} catch (err) {

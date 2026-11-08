@@ -8,6 +8,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IRequestService } from '../../../../../platform/request/common/request.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { ISearchService } from '../../../search/common/search.js';
+import { IChatExec } from '../../common/execContext.js';
 import { FileLedger } from '../../common/harness/fileLedger.js';
 import { IVoltHostToolService } from '../../common/hostTools.js';
 import { IVoltTool } from '../../common/tools/tool.js';
@@ -45,6 +46,8 @@ export interface IBuiltinToolServices {
 	readonly rtkExclusions?: () => readonly string[];
 	readonly spillDir?: () => string | undefined;
 	readonly onLog?: (path: string) => void;
+	/** Whose chat the shell and git tools run for, and its sandbox. */
+	readonly exec: () => IChatExec;
 }
 
 /**
@@ -63,9 +66,9 @@ export function createBuiltinTools(services: IBuiltinToolServices): IVoltTool[] 
 		}),
 		...createSearchTools(services.search, services.root),
 		...(services.codeIntel ? createCodeTools(services.codeIntel, services.root, services.codeIndex ? createCodeIndexNav(services.codeIndex) : undefined) : []),
-		...createShellTools({ stdio: services.stdio, root: services.root, spillDir: services.spillDir, onLog: services.onLog, hostTools: services.hostTools, rtk: services.rtk, rtkExclusions: services.rtkExclusions }),
+		...createShellTools({ stdio: services.stdio, root: services.root, spillDir: services.spillDir, onLog: services.onLog, hostTools: services.hostTools, rtk: services.rtk, rtkExclusions: services.rtkExclusions, exec: services.exec }),
 		...createTerminalTools(services.hostTools),
-		...createGitTools(services.stdio, services.root),
+		...createGitTools(services.stdio, services.root, services.exec),
 		...createWebTools(services.requestService),
 		...createBrowserTools(services.hostTools),
 		...createMetaTools(services.meta),

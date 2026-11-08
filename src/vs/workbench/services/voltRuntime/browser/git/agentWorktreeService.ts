@@ -12,6 +12,7 @@ import { FileOperationError, FileOperationResult, IFileService } from '../../../
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { voltExec } from '../../common/execContext.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
 import { IPathService } from '../../../path/common/pathService.js';
 import { IAgentHistoryService } from '../../common/history/agentHistory.js';
@@ -202,6 +203,8 @@ export class AgentWorktreeService implements IAgentWorktreeService {
 				cwd,
 				timeoutMs: GIT_TIMEOUT_MS,
 				inlineChars: 20_000,
+				// Volt's own worktree management; git's repository-controlled behaviour is HostGit's (B-03).
+				...voltExec('volt'),
 			});
 			return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
 		} catch (err) {

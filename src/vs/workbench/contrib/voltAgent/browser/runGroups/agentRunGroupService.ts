@@ -19,6 +19,7 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IVoltGitService } from '../../../../../platform/voltGit/common/voltGit.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { worktreeSetupExec } from '../../../../services/voltRuntime/common/execContext.js';
 import { IAgentWorktreeService } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentOrchestratorService, IOrchPrompt } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
@@ -425,7 +426,12 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 			background: true,
 			backgroundWaitMs: 400,
 			inlineChars: 20_000,
+			// The run's chat sandbox, with its rules: setup runs the branch's install scripts (B-06).
+			...worktreeSetupExec(runId, this.runtime.getSandboxSettings(runId), group.repoRoot, worktreePath),
 		});
+		if (first.refused) {
+			throw new Error(`Setup did not run: ${first.refused.reason}`);
+		}
 		output = first.combined;
 		let running = first.running;
 		let exitCode = first.exitCode;

@@ -60,6 +60,8 @@ export interface IPreparedSandbox {
 	readonly cwd: string;
 	/** stdio entries from fd 3 up, to append after stdin/stdout/stderr. */
 	readonly extraStdio: readonly (number | 'pipe')[];
+	/** See {@link ISandboxLaunchSpec.extraStdioDirections}. */
+	readonly extraStdioDirections: readonly ('in' | 'out')[];
 	readonly onDenial: Event<ISandboxRunDenial>;
 	confirm(child: ChildProcess): Promise<SandboxConfirmation>;
 	/** Kills the whole tree: the workload and everything it started. */
@@ -207,6 +209,7 @@ export class SandboxManager {
 				env: launched.env,
 				cwd: launched.cwd,
 				extraStdio: launched.extraStdio,
+				extraStdioDirections: launched.extraStdioDirections,
 				onDenial: denials.event,
 				confirm: child => {
 					const entry = this.live.get(tag);

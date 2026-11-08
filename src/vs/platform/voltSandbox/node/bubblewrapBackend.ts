@@ -338,6 +338,8 @@ export class BubblewrapBackend implements ISandboxBackend {
 			env: {},
 			cwd: '/',
 			extraStdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+			// BUBBLEWRAP_FDS: the readiness line and the status are read; the arguments and the filter are written.
+			extraStdioDirections: ['out', 'out', 'in', 'in'],
 			confirm: async child => {
 				const result = await confirmLaunch(child, {
 					envArgs, seccomp, home: policy.home, hostNamespaces: state.hostNamespaces,

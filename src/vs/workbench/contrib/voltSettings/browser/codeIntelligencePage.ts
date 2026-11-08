@@ -13,6 +13,7 @@ import { IConfigurationService } from '../../../../platform/configuration/common
 import { IVoltCodeIndexService, IVoltCodeIndexStatus, IVoltFffStatus } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { userExec } from '../../../services/voltRuntime/common/execContext.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, clampLspWorkspaces, FFF_MODE_SETTING, readFffSettings, RETRIEVAL_ENABLED_SETTING, LSP_ENABLED_SETTING, LSP_MAX_LOCAL_SETTING, LSP_MAX_REMOTE_SETTING, LSP_WORKTREES_SETTING, readCodeIndexOptions, RTK_ENABLED_SETTING } from '../../../services/voltRuntime/common/codeIntelligence.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
@@ -222,7 +223,7 @@ export class CodeIntelligencePage {
 
 	private async run(command: string, timeoutMs = 15_000): Promise<{ ok: boolean; out: string }> {
 		try {
-			const result = await this.stdio.exec({ id: `rtk-${generateUuid().slice(0, 8)}`, command, timeoutMs, inlineChars: 20_000 });
+			const result = await this.stdio.exec({ id: `rtk-${generateUuid().slice(0, 8)}`, command, timeoutMs, inlineChars: 20_000, ...userExec() });
 			return { ok: result.exitCode === 0, out: result.stdout.trim() };
 		} catch {
 			return { ok: false, out: '' };
