@@ -480,12 +480,19 @@ export class FrameDecoder {
 	}
 }
 
+const ENVELOPE_FIELDS: ReadonlySet<string> = new Set(['jsonrpc', 'id', 'method', 'params', 'result', 'error']);
+
 /** What a frame is, by shape: anything else is a protocol error. */
 export function classifyMessage(value: unknown): { kind: 'request'; message: IRpcRequest } | { kind: 'notification'; message: IRpcNotification } | { kind: 'response'; message: IRpcResponse } | undefined {
 	if (!value || typeof value !== 'object' || Array.isArray(value) || (value as { jsonrpc?: unknown }).jsonrpc !== '2.0') {
 		return undefined;
 	}
 	const message = value as Record<string, unknown>;
+	// The envelope is JSON-RPC 2.0's and nothing more: a field beside them (a `principal` claimed
+	// outside `params`) makes the frame no message at all, which breaks the stream (H.3, INV-01).
+	if (Object.keys(message).some(key => !ENVELOPE_FIELDS.has(key))) {
+		return undefined;
+	}
 	const id = message.id;
 	const hasId = typeof id === 'number' && Number.isSafeInteger(id) && id >= 0;
 	if (typeof message.method === 'string') {

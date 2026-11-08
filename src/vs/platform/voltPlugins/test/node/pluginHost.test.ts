@@ -10,10 +10,12 @@
  *   the Authority on every storage and files call, quotas (H.8), crashes and the restart budget
  *   (H.9), idle stop (H.2), deadlines.
  * - IPC-1/3/4/5: identity forging: payload identity fields, one host acting as another, a channel
- *   reused after its principal is revoked, an unknown principal.
+ *   reused after its principal is revoked, an unknown principal; and the same from an escaped host
+ *   writing its own requests and frames past the SDK.
  * - ESC-T2-1: a simulated SES escape (a host with Node's fs, net and child_process deliberately
  *   endowed) hits the OS sandbox's denials.
- * - PERF-T2-1..4: cold start, warm call, empty-handler round trip and throughput, against Part L.
+ * - PERF-T2-1..5: cold start, warm call, empty-handler round trip, throughput and an idle host's
+ *   memory, against Part L.
  *
  * Like the other real-sandbox suites: a machine without a working backend skips loudly, and with
  * `VOLT_SANDBOX_REQUIRED` set it fails instead. Linux: the rig (scripts/volt-sandbox-linux-test.sh).
@@ -31,7 +33,7 @@ import { SandboxManager } from '../../../voltSandbox/node/sandboxManager.js';
 import { ISandboxHostFacts, sandboxHostFacts } from '../../../voltSandbox/node/sandboxResolver.js';
 import { SandboxSupervisor } from '../../../voltSandbox/node/supervisor.js';
 import { realSandboxAvailable } from '../../../voltSandbox/test/node/sandboxSuiteGate.js';
-import { IT2PluginDescriptor, IVoltPluginHostServiceOptions, VoltPluginHostService } from '../../node/pluginHost.js';
+import { IT2PluginDescriptor, IVoltPluginHostServiceOptions, T2_LIMITS, VoltPluginHostService } from '../../node/pluginHost.js';
 
 /** A plugin: tools that exercise the API, and context. */
 const NOTES_PLUGIN = `
@@ -75,6 +77,28 @@ module.exports.activate = function (volt) {
 		return JSON.stringify(out);
 	});
 	volt.tools.register('spawn', async () => leak.spawn('/bin/echo'));
+	// Identity forging from an escaped host: its own channel, past the SDK.
+	volt.tools.register('forge', async (args) => {
+		await volt.storage.write('secret.txt', 'mine');
+		const read = (params) => leak.rpc('storage/read', params);
+		return JSON.stringify({
+			own: await read({ path: 'secret.txt' }),
+			principal: await read({ path: 'secret.txt', principal: args.as }),
+			extensionId: await read({ path: 'secret.txt', extensionId: args.id }),
+			caller: await read({ path: 'secret.txt', caller: { principal: args.as } }),
+			onBehalfOf: await read({ path: 'secret.txt', onBehalfOf: [args.as] }),
+			subject: await read({ path: 'secret.txt', subject: args.as }),
+			traversal: await read({ path: '../' + args.id + '/secret.txt' }),
+			absolute: await read({ path: args.file }),
+			filesAs: await leak.rpc('files/read', { root: 'workspace', path: 'b.md', principal: args.as }),
+			guessedCall: await leak.rpc('files/read', { root: 'project', path: 'b.md', call: 'AAAAAAAAAAAAAAAAAAAAAAAA' }),
+			direct: leak.read(args.file),
+		});
+	});
+	volt.tools.register('forge_envelope', async (args) => {
+		leak.frame({ jsonrpc: '2.0', id: 4242, method: 'storage/read', params: { path: 'secret.txt' }, principal: args.as });
+		return new Promise(() => {});
+	});
 };
 `;
 
@@ -328,10 +352,41 @@ suite('Volt T2 plugin host (P1, real sandboxes)', function () {
 		process.stderr.write(`\n[ESC-T2-1] ${JSON.stringify({ ...result, env: undefined, spawn: spawned })}\n`);
 	});
 
+	test('IPC-1 / IPC-3 / IPC-5 (escaped host): raw requests naming another plugin are refused, its storage is unreachable, and a forged envelope ends the host', async () => {
+		const { service: svc, supervisor, registry } = service({ hostEntry: FileAccess.asFileUri('vs/platform/voltPlugins/test/node/fixtures/escapeHostMain.js').fsPath });
+		store.add(svc.register(notes('volt.b-test')));
+		store.add(svc.register({ ...notes('volt.forge-test'), bundle: join(root, 'bundles', 'escape.js'), tools: [{ name: 'forge' }, { name: 'forge_envelope', deadlineMs: 5_000 }] }));
+		assert.deepStrictEqual(await svc.invokeTool('volt.b-test', 'note_write', { path: 'secret.txt', text: 'b only' }), { text: 'saved secret.txt' });
+		const bFile = join(root, 'storage', 'volt.b-test', 'secret.txt');
+		const as = subjectOf('volt.b-test');
+		const answer = await svc.invokeTool('volt.forge-test', 'forge', { as, id: 'volt.b-test', file: bFile });
+		assert.ok(answer.text, answer.error);
+		const result = JSON.parse(answer.text) as Record<string, string>;
+		process.stderr.write(`\n[IPC-T2-FORGE] ${answer.text}\n`);
+		assert.strictEqual(result.own, 'ok:{"text":"mine"}', 'the channel decides whose storage: its own');
+		for (const field of ['principal', 'extensionId', 'caller', 'onBehalfOf', 'subject', 'traversal', 'absolute', 'filesAs']) {
+			assert.strictEqual(result[field], 'err:InvalidArgument', `${field}: ${result[field]}`);
+		}
+		assert.strictEqual(result.guessedCall, 'err:NotFound', 'a call id it was not given names no one\'s folder');
+		assert.match(result.direct, /^err:E(PERM|ACCES|NOENT)/, `the other plugin's storage, straight from disk: ${result.direct}`);
+
+		// An identity claimed beside the envelope breaks the stream: the host is stopped, its principal revoked.
+		const before = supervisor.list().find(host => host.label.startsWith('volt.forge-test'))!;
+		const principalId = before.principal.id;
+		const channelId = before.channelId!;
+		assert.ok(registry.contextFor(channelId, 'probe'), 'bound while it runs');
+		const forged = await svc.invokeTool('volt.forge-test', 'forge_envelope', { as });
+		assert.ok(forged.error, `the call ends with the host: ${JSON.stringify(forged)}`);
+		assert.ok(await waitFor(() => !registry.isLive(principalId), 10_000), 'the forging host\'s principal is revoked');
+		assert.strictEqual(registry.contextFor(channelId, 'probe'), undefined, 'its channel names no one now');
+		assert.strictEqual(await fs.readFile(bFile, 'utf8'), 'b only');
+		assert.deepStrictEqual(await svc.invokeTool('volt.b-test', 'note_read', { path: 'secret.txt' }), { text: 'b only' }, 'the other plugin is untouched');
+	});
+
 	// --- Part L budgets -----------------------------------------------------------------------------
 
-	test('PERF-T2-1..4: cold start, warm call, empty round trip and 1 KB throughput (reported; generous gates)', async () => {
-		const { service: svc } = service();
+	test('PERF-T2-1..5: cold start, warm call, empty round trip, 1 KB throughput and an idle host\'s memory (reported; generous gates)', async () => {
+		const { service: svc, supervisor } = service();
 		store.add(svc.register(notes()));
 		const coldStarted = performance.now();
 		await svc.invokeTool('volt.notes-test', 'empty', {});
@@ -357,11 +412,19 @@ suite('Volt T2 plugin host (P1, real sandboxes)', function () {
 			}
 		}));
 		const seconds = (performance.now() - t0) / 1000;
-		const numbers = { coldMs: Math.round(cold), handshakeMs: status.handshakeMs, activatedMs: status.coldStartMs, warmP50: +warm[100].toFixed(2), warmP95: +warm[190].toFixed(2), callsPerSecond: Math.round(n / seconds), messagesPerSecond: Math.round(2 * n / seconds) };
+		// An idle host's resident memory: the supervisor's next sample after a quiet second.
+		await new Promise(resolve => setTimeout(resolve, 1000));
+		const sampledAt = Date.now();
+		const host = supervisor.list()[0];
+		assert.ok(await waitFor(() => (host.lastResources?.at ?? 0) >= sampledAt, 5_000), 'a resource sample of the idle host');
+		const idleMB = Math.round(host.lastResources!.memoryBytes / 1024 / 1024);
+		const numbers = { coldMs: Math.round(cold), handshakeMs: status.handshakeMs, activatedMs: status.coldStartMs, warmP50: +warm[100].toFixed(2), warmP95: +warm[190].toFixed(2), callsPerSecond: Math.round(n / seconds), messagesPerSecond: Math.round(2 * n / seconds), idleMB };
 		process.stderr.write(`\n[PERF-T2] ${JSON.stringify(numbers)}\n`);
-		// Budgets (L.1): cold 150/300 ms, round trip 1/3 ms, >= 20k msg/s. Gated loosely here (loaded CI machines); the numbers are reported.
+		// Budgets (L.1): cold 150/300 ms, round trip 1/3 ms, >= 20k msg/s, an idle host <= 80 MB.
+		// Gated loosely here (loaded CI machines); the numbers are reported.
 		assert.ok(cold < 3000, `cold start ${cold} ms`);
 		assert.ok(warm[100] < 20, `round trip p50 ${warm[100]} ms`);
+		assert.ok(idleMB > 0 && idleMB < T2_LIMITS.memoryMB, `idle host ${idleMB} MB, under its ${T2_LIMITS.memoryMB} MB quota`);
 	});
 });
 

@@ -51,7 +51,16 @@ export interface IPluginHostRunOptions {
 	 * (`test/node/fixtures/escapeHostMain.ts`) and show the OS sandbox still holds. The production
 	 * entry (`pluginHostMain.ts`) never passes it.
 	 */
-	readonly testEndowments?: (rpcNotify: (method: string, params: unknown) => void) => Record<string, unknown>;
+	readonly testEndowments?: (channel: IPluginHostTestChannel) => Record<string, unknown>;
+}
+
+/** What an escaped plugin would reach of its own channel (test builds only): requests past the SDK, and raw bytes. */
+export interface IPluginHostTestChannel {
+	/** A request with exactly these params: no SDK in between, nothing dropped or copied. */
+	request(method: string, params: unknown): Promise<unknown>;
+	notify(method: string, params: unknown): void;
+	/** Bytes written to the channel as they are, outside the host's RPC. */
+	write(bytes: Uint8Array): void;
 }
 
 type ToolHandler = (args: Record<string, unknown>, context: unknown) => unknown;
@@ -245,7 +254,7 @@ export async function runPluginHost(options: IPluginHostRunOptions): Promise<voi
 				URL,
 				crypto: harden({ getRandomValues: (array: Uint8Array) => getRandomValues(array) }),
 				WebAssembly,
-				...(options.testEndowments ? options.testEndowments((method, value) => rpc.notify(method, value)) : {}),
+				...(options.testEndowments ? options.testEndowments({ request: (method, value) => rpc.request(method, value), notify: (method, value) => rpc.notify(method, value), write: bytes => { socket.write(bytes); } }) : {}),
 			},
 			__options__: true,
 		});

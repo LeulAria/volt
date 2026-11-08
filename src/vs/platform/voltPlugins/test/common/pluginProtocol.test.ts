@@ -124,6 +124,17 @@ suite('volt-plugin/1 protocol (H.3)', () => {
 		validatePluginValue({ args: { callerName: 'fine', principalText: 'fine' } }, schema);
 	});
 
+	test('IPC-1: identity claimed in the envelope, beside JSON-RPC\'s fields, is no message: the stream breaks', () => {
+		for (const field of ['principal', 'extensionId', 'caller', 'onBehalfOf', 'subject']) {
+			const { server, fatal } = pair();
+			const [head, body] = encodeMessage({ jsonrpc: '2.0', id: 1, method: 'echo', params: { text: 'a' }, [field]: 'plugin:volt.other@volt' } as never, () => 1);
+			server.receive(new Uint8Array([...head, ...body]));
+			assert.strictEqual(fatal.length, 1, field);
+			assert.match(fatal[0].message, /not a JSON-RPC 2.0 message/);
+			assert.ok(server.isClosed, `${field}: the channel closed`);
+		}
+	});
+
 	test('T2-RPC-4: schemas refuse unknown fields, wrong types, non-NFC and over-long strings, and deep nesting', () => {
 		const schema: PluginSchema = { type: 'object', properties: { name: { type: 'string', maxLength: 5 }, n: { type: 'integer', minimum: 0 } }, required: ['name'] };
 		validatePluginValue({ name: 'abc', n: 2 }, schema);
