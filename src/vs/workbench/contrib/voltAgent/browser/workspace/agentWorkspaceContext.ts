@@ -65,7 +65,7 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 	) {
 		super();
 		this._register(CommandsRegistry.registerCommand(WORKSPACE_SNAPSHOT_COMMAND_ID, (_accessor, sessionId: string) =>
-			raceTimeout(this.snapshot(sessionId, false), SNAPSHOT_BUDGET_MS)));
+			raceTimeout(this.snapshot(sessionId, false), SNAPSHOT_BUDGET_MS), 'internal'));
 		this._register(hostTools.registerToolProvider({
 			tools: [{
 				name: WORKSPACE_STATUS_TOOL_NAME,

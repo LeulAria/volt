@@ -369,7 +369,7 @@ export async function main(argv: string[]): Promise<void> {
 		if (request?.sessionId && request.turnId) {
 			await accessor.get(IAgentCheckpointService).beginTurn(request.sessionId, request.turnId);
 		}
-	}));
+	}, 'internal'));
 
 	// Volt's windows take patches as edits; the phone app and older clients take changed messages whole.
 	const sessionHost = disposables.add(instantiationService.createInstance(ServerSessionHost, (data: SessionTopicData, full?: () => SessionTopicData) => {

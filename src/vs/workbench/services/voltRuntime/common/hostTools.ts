@@ -1059,6 +1059,13 @@ export interface IVoltHostToolService {
 	getMcpServers(sessionId?: string, options?: { readonly groups?: readonly VoltHostToolGroup[] }): readonly IVoltMcpServer[];
 	/** The window's MCP server address and the bearer token agents must send. */
 	setMcpEndpoint(url: string | undefined, token?: string): void;
+	/**
+	 * The chat was closed or released: the MCP server refuses the tokens its agents hold (whoever
+	 * serves it listens to `onDidRevokeMcpSession`), and `getMcpServers` issues new ones.
+	 */
+	revokeMcpSession(sessionId: string): void;
+	/** A chat's host MCP tokens with key epoch `epoch` or below must be refused from now on. */
+	readonly onDidRevokeMcpSession: Event<{ readonly sessionId: string; readonly epoch: number }>;
 	setQuestionHandler(handler: IVoltQuestionHandler | undefined): void;
 	/** Mode and folder per chat, for the mode gate and relative image paths. */
 	setSessionResolver(resolver: IVoltHostSessionResolver | undefined): void;

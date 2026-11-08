@@ -38,6 +38,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: VoltProjectCommands.addProject,
+			visibility: 'internal',
 			title: localize2('voltProjects.addProject', "Add Project"),
 			category,
 			f1: true,
@@ -59,7 +60,7 @@ registerAction2(class extends Action2 {
 function registerTabCommand(id: string, title: string, tab: AddProjectTab, f1: boolean): void {
 	registerAction2(class extends Action2 {
 		constructor() {
-			super({ id, title: { value: title, original: title }, category, f1 });
+			super({ id, visibility: 'internal', title: { value: title, original: title }, category, f1 });
 		}
 
 		override async run(accessor: ServicesAccessor): Promise<void> {
@@ -74,7 +75,7 @@ registerTabCommand(VoltProjectCommands.cloneFromGitHub, localize('voltProjects.c
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: VoltProjectCommands.cancelClone, title: localize2('voltProjects.cancelClone', "Cancel Clone"), category, f1: false });
+		super({ id: VoltProjectCommands.cancelClone, visibility: 'internal', title: localize2('voltProjects.cancelClone', "Cancel Clone"), category, f1: false });
 	}
 
 	override async run(accessor: ServicesAccessor, projectId?: string): Promise<void> {
@@ -86,7 +87,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: VoltProjectCommands.retryClone, title: localize2('voltProjects.retryClone', "Retry Clone"), category, f1: false });
+		super({ id: VoltProjectCommands.retryClone, visibility: 'internal', title: localize2('voltProjects.retryClone', "Retry Clone"), category, f1: false });
 	}
 
 	override async run(accessor: ServicesAccessor, projectId?: string): Promise<void> {

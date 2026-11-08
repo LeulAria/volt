@@ -681,6 +681,7 @@ registerAction2(class SimulateUpdateStateAction extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.update.simulateState',
+			visibility: 'internal',
 			title: localize2('voltUpdate.simulate', "Simulate Update State"),
 			category: Categories.Developer,
 			f1: true,

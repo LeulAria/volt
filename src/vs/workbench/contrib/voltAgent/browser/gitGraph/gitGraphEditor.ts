@@ -1159,7 +1159,7 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 				for (const ref of refs) {
 					store.add(registerAction2(class extends Action2 {
 						constructor() {
-							super({ id: `${actionId}.voltGitGraph.${ref.id}`, title: ref.name, menu: { id: submenu, group: ref.category } });
+							super({ id: `${actionId}.voltGitGraph.${ref.id}`, visibility: 'internal', title: ref.name, menu: { id: submenu, group: ref.category } });
 						}
 						override run(accessor: ServicesAccessor, ...args: unknown[]): void {
 							void accessor.get(ICommandService).executeCommand(actionId, ...args, ref.id);

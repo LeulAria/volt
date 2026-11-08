@@ -94,6 +94,7 @@ registerAction2(class OpenGitGraphAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_GIT_GRAPH_COMMAND_ID,
+			visibility: 'exported:git.read',
 			title: localize2('voltGitGraph.open', "Open Git Graph"),
 			category: localize2('voltGitGraph.category', "Git"),
 			icon: Codicon.sourceControl,
@@ -113,7 +114,7 @@ registerAction2(class OpenGitGraphAction extends Action2 {
 
 registerAction2(class OpenGitGraphInToolsAction extends Action2 {
 	constructor() {
-		super({ id: OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, title: localize2('voltGitGraph.openInTools', "Open Git Graph Beside Chat") });
+		super({ id: OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, visibility: 'public', title: localize2('voltGitGraph.openInTools', "Open Git Graph Beside Chat") });
 	}
 
 	override async run(accessor: ServicesAccessor, sessionId?: unknown): Promise<void> {
@@ -151,6 +152,7 @@ registerAction2(class OpenFileHistoryAction extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.gitGraph.fileHistory',
+			visibility: 'public',
 			title: localize2('voltGitGraph.fileHistory', "Open File History"),
 			category: localize2('voltGitGraph.category', "Git"),
 			icon: Codicon.history,
@@ -178,6 +180,7 @@ registerAction2(class OpenLineHistoryAction extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.gitGraph.lineHistory',
+			visibility: 'public',
 			title: localize2('voltGitGraph.lineHistory', "Open Line History"),
 			category: localize2('voltGitGraph.category', "Git"),
 			icon: Codicon.history,
@@ -281,7 +284,7 @@ async function askAgent(accessor: ServicesAccessor, args: IGitAskAgentArgs): Pro
 
 registerAction2(class AskAgentAboutGitAction extends Action2 {
 	constructor() {
-		super({ id: ASK_AGENT_COMMAND_ID, title: localize2('voltGitGraph.askAgent', "Ask Agent About Commit") });
+		super({ id: ASK_AGENT_COMMAND_ID, visibility: 'exported:agents.send', title: localize2('voltGitGraph.askAgent', "Ask Agent About Commit") });
 	}
 
 	override async run(accessor: ServicesAccessor, args?: unknown): Promise<void> {
@@ -301,6 +304,7 @@ for (const [action, id, title, order] of [
 		constructor() {
 			super({
 				id,
+				visibility: 'internal',
 				title,
 				icon: Codicon.sparkle,
 				menu: { id: MenuId.SCMHistoryItemContext, group: '0_volt_agent', order, when: ContextKeyExpr.and(ContextKeyExpr.equals('scmProvider', 'git'), ContextKeyExpr.not('listMultiSelection')) },
@@ -319,6 +323,7 @@ registerAction2(class RevealInGitGraphAction extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.gitGraph.revealCommit',
+			visibility: 'public',
 			title: localize2('voltGitGraph.reveal', "Open in Git Graph"),
 			icon: Codicon.sourceControl,
 			menu: { id: MenuId.SCMHistoryItemContext, group: '0_view', order: 3, when: ContextKeyExpr.and(ContextKeyExpr.equals('scmProvider', 'git'), InGitGraphContext.negate()) },
@@ -334,6 +339,7 @@ registerAction2(class ExplainLinesAction extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.gitGraph.explainLines',
+			visibility: 'internal',
 			title: localize2('voltGitGraph.explainLines', "Explain Lines with Agent"),
 			category: localize2('voltGitGraph.category', "Git"),
 			icon: Codicon.sparkle,

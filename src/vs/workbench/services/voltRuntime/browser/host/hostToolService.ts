@@ -15,7 +15,7 @@ import { URI } from '../../../../../base/common/uri.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
-import { hostMcpSessionToken } from '../../../../../platform/voltHostMcp/common/voltHostMcpAuth.js';
+import { HOST_MCP_TOKEN_RENEW_MS, hostMcpSessionToken, IHostMcpLease, newHostMcpLease } from '../../../../../platform/voltHostMcp/common/voltHostMcpAuth.js';
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltHostFileChange, IVoltHostSandboxResolver, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, PREFLIGHT_BROWSER_COMMAND_ID, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
@@ -58,6 +58,11 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 
 	private mcpUrl: string | undefined;
 	private mcpToken: string | undefined;
+	/** Per chat, the lease its agents' host MCP tokens carry. */
+	private readonly mcpLeases = new Map<string, IHostMcpLease>();
+	private lastMcpEpoch = 0;
+	private readonly _onDidRevokeMcpSession = this._register(new Emitter<{ readonly sessionId: string; readonly epoch: number }>());
+	readonly onDidRevokeMcpSession: Event<{ readonly sessionId: string; readonly epoch: number }> = this._onDidRevokeMcpSession.event;
 	private readonly drafts = new Map<string, AgentQuestionDraft>();
 	private questionHandler: IVoltQuestionHandler | undefined;
 	private sessions: IVoltHostSessionResolver | undefined;
@@ -556,10 +561,43 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		}
 		// Each chat's agent gets a token for its own session and groups, never the server secret: a
 		// server without a session gets no credentials (the server refuses it), so nothing an agent
-		// holds lets it act as another chat.
-		const token = this.mcpToken && sessionId ? hostMcpSessionToken(this.mcpToken, sessionId, options?.groups) : undefined;
+		// holds lets it act as another chat. The token expires and dies when the chat is revoked.
+		const token = this.mcpToken && sessionId ? hostMcpSessionToken(this.mcpToken, sessionId, options?.groups, this.mcpLease(sessionId)) : undefined;
 		const headers = token ? [{ name: 'Authorization', value: `Bearer ${token}` }] : [];
 		return [{ type: 'http', name: 'volt', url, headers }];
+	}
+
+	/**
+	 * The chat's current lease. It stays the same until it nears expiry or the chat is revoked, so
+	 * the agent's MCP config (compared every turn) does not change under it.
+	 */
+	private mcpLease(sessionId: string): IHostMcpLease {
+		const now = Date.now();
+		const current = this.mcpLeases.get(sessionId);
+		if (current && current.expiry - now > HOST_MCP_TOKEN_RENEW_MS) {
+			return current;
+		}
+		if (this.mcpLeases.size > 256) {
+			for (const [id, lease] of this.mcpLeases) {
+				if (lease.expiry <= now) {
+					this.mcpLeases.delete(id);
+				}
+			}
+		}
+		const lease = newHostMcpLease(this.nextMcpEpoch());
+		this.mcpLeases.set(sessionId, lease);
+		return lease;
+	}
+
+	/** Monotonic: a revocation's epoch is below every epoch issued after it. */
+	private nextMcpEpoch(): number {
+		this.lastMcpEpoch = Math.max(Date.now(), this.lastMcpEpoch + 1);
+		return this.lastMcpEpoch;
+	}
+
+	revokeMcpSession(sessionId: string): void {
+		this.mcpLeases.delete(sessionId);
+		this._onDidRevokeMcpSession.fire({ sessionId, epoch: this.nextMcpEpoch() });
 	}
 
 	setMcpEndpoint(url: string | undefined, token?: string): void {

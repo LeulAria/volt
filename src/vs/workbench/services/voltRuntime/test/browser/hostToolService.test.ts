@@ -11,14 +11,14 @@ import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
-import { hostMcpSessionToken } from '../../../../../platform/voltHostMcp/common/voltHostMcpAuth.js';
+import { HOST_MCP_TOKEN_TTL_MS, hostMcpSessionToken, parseHostMcpSessionToken } from '../../../../../platform/voltHostMcp/common/voltHostMcpAuth.js';
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { VoltHostToolService } from '../../browser/host/hostToolService.js';
 import { dataUrlBytes, decodeDataUrl, encodeImage, scaleScreenshot } from '../../browser/host/imageCodec.js';
 import { createBrowserTools } from '../../browser/tools/browserTool.js';
 import { BrowserBlockReason, IVoltBrowserAccessService } from '../../common/browserAccess.js';
-import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, IVoltBrowserAutomationOptions, IVoltHostToolApproval, IVoltHostToolCall, IVoltHostToolInvocation, VOLT_HOST_TOOLS } from '../../common/hostTools.js';
+import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, IVoltBrowserAutomationOptions, IVoltHostToolApproval, IVoltHostToolCall, IVoltHostToolInvocation, IVoltMcpServer, VOLT_HOST_TOOLS } from '../../common/hostTools.js';
 import { VoltMode } from '../../common/modes.js';
 import { createImage, IRgbaImage } from '../../common/tools/imageAnalysis.js';
 
@@ -116,16 +116,46 @@ suite('Volt host tool service', () => {
 		const { service } = setup();
 		assert.deepStrictEqual(service.getMcpServers('s1'), []);
 		service.setMcpEndpoint('http://127.0.0.1:4000/mcp', 'tok');
-		assert.deepStrictEqual(service.getMcpServers('chat 1'), [{ type: 'http', name: 'volt', url: 'http://127.0.0.1:4000/mcp/chat%201', headers: [{ name: 'Authorization', value: `Bearer ${hostMcpSessionToken('tok', 'chat 1')}` }] }]);
+		// The token carries the lease it was issued with (key epoch, expiry) and is signed over it.
+		const bearer = (servers: readonly IVoltMcpServer[]) => servers[0].headers[0].value.replace(/^Bearer /, '');
+		const before = Date.now();
+		const lease = parseHostMcpSessionToken(bearer(service.getMcpServers('chat 1')));
+		assert.ok(lease && lease.epoch >= before && lease.expiry === lease.epoch + HOST_MCP_TOKEN_TTL_MS, 'a lease from now, valid for a day');
+		assert.deepStrictEqual(service.getMcpServers('chat 1'), [{ type: 'http', name: 'volt', url: 'http://127.0.0.1:4000/mcp/chat%201', headers: [{ name: 'Authorization', value: `Bearer ${hostMcpSessionToken('tok', 'chat 1', undefined, lease)}` }] }]);
 		const grouped = service.getMcpServers('s', { groups: ['core', 'image'] })[0];
 		assert.strictEqual(grouped.url, 'http://127.0.0.1:4000/mcp/s?groups=core,image');
-		assert.deepStrictEqual(grouped.headers, [{ name: 'Authorization', value: `Bearer ${hostMcpSessionToken('tok', 's', ['core', 'image'])}` }]);
-		assert.notStrictEqual(hostMcpSessionToken('tok', 's', ['core', 'image']), hostMcpSessionToken('tok', 's'));
+		const groupedLease = parseHostMcpSessionToken(bearer([grouped]))!;
+		assert.deepStrictEqual(grouped.headers, [{ name: 'Authorization', value: `Bearer ${hostMcpSessionToken('tok', 's', ['core', 'image'], groupedLease)}` }]);
+		assert.notStrictEqual(hostMcpSessionToken('tok', 's', ['core', 'image'], groupedLease), hostMcpSessionToken('tok', 's', undefined, groupedLease));
 		// The same chat always gets the same config, so a live agent session is not mistaken for a stale one.
 		assert.deepStrictEqual(service.getMcpServers('chat 1'), service.getMcpServers('chat 1'));
 		// Without a chat there is nothing to authenticate as: the server is listed (Volt has tools) with no credentials.
 		assert.deepStrictEqual(service.getMcpServers(), [{ type: 'http', name: 'volt', url: 'http://127.0.0.1:4000/mcp', headers: [] }]);
 		assert.ok(JSON.stringify([service.getMcpServers('chat 1'), service.getMcpServers()]).indexOf('Bearer tok') < 0);
+	});
+
+	test('IPC-2: revoking a chat announces an epoch at or above its tokens\' and issues later tokens above it', () => {
+		const { service } = setup();
+		service.setMcpEndpoint('http://127.0.0.1:4000/mcp', 'tok');
+		const leaseOf = (sessionId: string) => parseHostMcpSessionToken(service.getMcpServers(sessionId)[0].headers[0].value.replace(/^Bearer /, ''))!;
+		const first = leaseOf('chat 1');
+		const other = leaseOf('chat 2');
+		const revoked: { sessionId: string; epoch: number }[] = [];
+		store.add(service.onDidRevokeMcpSession(event => revoked.push(event)));
+		service.revokeMcpSession('chat 1');
+		assert.strictEqual(revoked.length, 1);
+		assert.strictEqual(revoked[0].sessionId, 'chat 1');
+		assert.ok(revoked[0].epoch >= first.epoch, 'the server refuses the old token (epoch <= the revoked one)');
+		const second = leaseOf('chat 1');
+		assert.ok(second.epoch > revoked[0].epoch, 'a token issued after the revocation is above it');
+		assert.notDeepStrictEqual(second, first);
+		assert.deepStrictEqual(leaseOf('chat 2'), other, 'another chat keeps its token');
+		// Many revocations in the same millisecond still order strictly.
+		for (let i = 0; i < 5; i++) {
+			service.revokeMcpSession('chat 1');
+		}
+		assert.ok(revoked.slice(1).every((event, i) => event.epoch > revoked[i].epoch));
+		assert.ok(leaseOf('chat 1').epoch > revoked.at(-1)!.epoch);
 	});
 
 	test('sandbox gate: escapes, memory, new chats and unknown tools are refused for a sandboxed chat; an unsandboxed chat is unaffected', async () => {

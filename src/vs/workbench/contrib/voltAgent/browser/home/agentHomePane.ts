@@ -3472,6 +3472,7 @@ registerAction2(class RenameAgentChatAction extends Action2 {
 	constructor() {
 		super({
 			id: RENAME_AGENT_CHAT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.home.renameChatCommand', "Rename Chat"),
 			f1: false,
 			keybinding: { primary: KeyCode.F2, weight: KeybindingWeight.WorkbenchContrib, when: agentRowShortcutWhen },
@@ -3490,6 +3491,7 @@ registerAction2(class ArchiveAgentChatAction extends Action2 {
 	constructor() {
 		super({
 			id: ARCHIVE_AGENT_CHAT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.home.archiveChatCommand', "Archive Chat"),
 			f1: false,
 			keybinding: { primary: KeyCode.Delete, mac: { primary: KeyMod.CtrlCmd | KeyCode.Backspace }, weight: KeybindingWeight.WorkbenchContrib, when: agentRowShortcutWhen },
@@ -3508,6 +3510,7 @@ registerAction2(class OpenAgentChatInNewWindowFromListAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_AGENT_CHAT_IN_NEW_WINDOW_FROM_LIST_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.home.openInNewWindowCommand', "Open Chat in New Window"),
 			f1: false,
 			keybinding: { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.Enter, weight: KeybindingWeight.WorkbenchContrib, when: agentRowShortcutWhen },

@@ -160,7 +160,7 @@ registerWorkbenchContribution2(VoltDevicesContribution.ID, VoltDevicesContributi
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: OPEN_DEVICE_PREVIEW_COMMAND_ID, title: localize2('voltDevices.open', "Open Device Preview (iOS Simulator / Android Emulator)"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: OPEN_DEVICE_PREVIEW_COMMAND_ID, visibility: 'internal', title: localize2('voltDevices.open', "Open Device Preview (iOS Simulator / Android Emulator)"), category: localize2('volt', "Volt"), f1: true });
 	}
 
 	/**

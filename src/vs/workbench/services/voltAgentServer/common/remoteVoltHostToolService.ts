@@ -5,7 +5,7 @@
 
 import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
-import { Emitter } from '../../../../base/common/event.js';
+import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltFeatureEnablementMirror, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../voltRuntime/common/hostTools.js';
 import { VoltMode } from '../../voltRuntime/common/modes.js';
@@ -227,6 +227,9 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 	// The server's own runtime answers questions, resolves sessions and approves calls; a window
 	// does not take those roles while its agents run there.
 	setMcpEndpoint(): void { }
+	/** The server issues and revokes its agents' tokens; its own runtime releases their chats. */
+	revokeMcpSession(): void { }
+	readonly onDidRevokeMcpSession = Event.None;
 	setQuestionHandler(): void { }
 	setSessionResolver(): void { }
 	setApprover(): void { }

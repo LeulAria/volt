@@ -107,6 +107,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.prediction.showStats',
+			visibility: 'public',
 			title: localize2('voltPrediction.showStats', "Volt: Tab Prediction Stats"),
 			category: Categories.View,
 			f1: true,

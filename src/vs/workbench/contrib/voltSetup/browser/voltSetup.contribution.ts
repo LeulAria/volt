@@ -53,7 +53,7 @@ const category = localize2('volt', "Volt");
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: VOLT_SETUP_COMMAND_ID, title: localize2('voltSetup.command', "Set Up Agents and Projects..."), category, f1: true });
+		super({ id: VOLT_SETUP_COMMAND_ID, visibility: 'public', title: localize2('voltSetup.command', "Set Up Agents and Projects..."), category, f1: true });
 	}
 
 	override run(accessor: ServicesAccessor, step?: SetupStep): void {
@@ -63,7 +63,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: VOLT_PROJECT_SETTINGS_COMMAND_ID, title: localize2('voltProjectSettings.command', "Project Settings..."), category, f1: true });
+		super({ id: VOLT_PROJECT_SETTINGS_COMMAND_ID, visibility: 'public', title: localize2('voltProjectSettings.command', "Project Settings..."), category, f1: true });
 	}
 
 	override async run(accessor: ServicesAccessor, target?: string | URI): Promise<void> {
@@ -98,7 +98,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: VOLT_MANAGE_STORAGE_COMMAND_ID, title: localize2('voltStorage.command', "Manage Storage..."), category, f1: true });
+		super({ id: VOLT_MANAGE_STORAGE_COMMAND_ID, visibility: 'public', title: localize2('voltStorage.command', "Manage Storage..."), category, f1: true });
 	}
 
 	override async run(accessor: ServicesAccessor): Promise<void> {

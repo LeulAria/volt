@@ -2572,6 +2572,7 @@ registerAction2(class OpenAgentToolsAddMenuAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_TOOLS_ADD_MENU_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.toolsAdd', "Open in Tools"),
 			icon: Codicon.add,
 			f1: false,
@@ -2592,6 +2593,7 @@ registerAction2(class ShowAgentFilesAction extends Action2 {
 	constructor() {
 		super({
 			id: SHOW_AGENT_FILES_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.tools.showFiles', "Show Files in Tools"),
 			f1: true,
 			precondition: LayoutModeContext.isEqualTo('agent'),
@@ -2608,6 +2610,7 @@ registerAction2(class ShowAgentSourceControlAction extends Action2 {
 	constructor() {
 		super({
 			id: SHOW_AGENT_SCM_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.tools.showScm', "Show Source Control in Tools"),
 			f1: true,
 			precondition: LayoutModeContext.isEqualTo('agent'),
@@ -2624,6 +2627,7 @@ registerAction2(class ShowAgentRelatedChatsAction extends Action2 {
 	constructor() {
 		super({
 			id: SHOW_AGENT_RELATED_CHATS_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.tools.showRelatedChats', "Show Related Chats in Tools"),
 			f1: true,
 			precondition: LayoutModeContext.isEqualTo('agent'),
@@ -2654,6 +2658,7 @@ registerAction2(class ToggleAgentToolsFullScreenAction extends Action2 {
 	constructor() {
 		super({
 			id: TOGGLE_TOOLS_FULLSCREEN_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.tools.toggleFullScreen', "Toggle Tools Full Screen"),
 			f1: true,
 			precondition: LayoutModeContext.isEqualTo('agent'),
@@ -2682,6 +2687,7 @@ for (const item of agentSurfaceMenuItems()) {
 		constructor() {
 			super({
 				id: surfaceOpenCommandId(item.id),
+				visibility: 'public',
 				title: localize2('voltAgent.tools.openSurface', "Open {0} in Right Panel", item.label),
 				category: localize2('voltAgent.category', "Agent"),
 				f1: true,
@@ -2717,6 +2723,7 @@ filesSidebarTabs().forEach((tab, index) => {
 		constructor() {
 			super({
 				id: filesSidebarViewCommandId(tab.id),
+				visibility: 'public',
 				title: localize2('voltAgent.tools.showSidebarTab', "Show {0} in Right Sidebar", tab.label),
 				category: localize2('voltAgent.category', "Agent"),
 				f1: true,
@@ -2740,6 +2747,7 @@ registerAction2(class ToggleAgentToolsPanelAction extends Action2 {
 	constructor() {
 		super({
 			id: TOGGLE_TOOLS_PANEL_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.tools.togglePanel', "Toggle Right Panel"),
 			f1: true,
 			precondition: LayoutModeContext.isEqualTo('agent'),
@@ -2842,7 +2850,7 @@ CommandsRegistry.registerCommand(EDIT_IN_AGENT_TOOLS_COMMAND_ID, async (accessor
 		await Event.toPromise(input.onWillDispose);
 	}
 	return true;
-});
+}, 'exported:ui.contribute');
 
 /**
  * The Explorer's Open in Browser for an .html file: a browser tab in the tools of the chat on screen
@@ -2852,6 +2860,7 @@ registerAction2(class OpenHtmlInBrowserAction extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.explorer.openInBrowser',
+			visibility: 'internal',
 			title: localize2('voltAgent.openInBrowser', "Open in Browser"),
 			menu: {
 				id: MenuId.ExplorerContext,

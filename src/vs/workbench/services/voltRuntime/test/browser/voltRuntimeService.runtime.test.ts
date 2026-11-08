@@ -208,6 +208,7 @@ suite('Agent runtime orchestration', () => {
 		const agent = new FakeAgent();
 		const history = new FakeHistory();
 		const stub = <T>(value: object) => value as unknown as T;
+		const revokedMcpSessions: string[] = [];
 		const service = disposables.add(new AgentRuntimeService(
 			disposables.add(new InMemoryStorageService()),
 			stub({ get: async () => undefined, set: async () => { }, delete: async () => { }, onDidChangeSecret: Event.None }),
@@ -216,7 +217,7 @@ suite('Agent runtime orchestration', () => {
 			fileService as IFileService,
 			new NullLogService(),
 			stdio.asService(),
-			stub({ setQuestionHandler: () => { }, setApprover: () => { }, setSessionResolver: () => { }, onDidInvokeTool: Event.None, onDidChangeMcp: Event.None, getMcpServers: () => [], listTools: () => [], invokeTool: async () => ({}) }),
+			stub({ setQuestionHandler: () => { }, setApprover: () => { }, setSessionResolver: () => { }, onDidInvokeTool: Event.None, onDidChangeMcp: Event.None, getMcpServers: () => [], listTools: () => [], invokeTool: async () => ({}), revokeMcpSession: (id: string) => revokedMcpSessions.push(id) }),
 			stub({ context: async () => undefined }),
 			stub({}),
 			stub({ rootFor: () => undefined }),
@@ -260,7 +261,7 @@ suite('Agent runtime orchestration', () => {
 			await waitFor(() => !!ended(runId), `run ${runId} to end`);
 			return ended(runId)!.event as Extract<IVoltEvent, { type: 'run.end' }>;
 		};
-		return { service, internals, model, agent, stdio, history, events, ref, waitEnd, ended, fileService };
+		return { service, internals, model, agent, stdio, history, events, ref, waitEnd, ended, fileService, revokedMcpSessions };
 	}
 
 	test('a native run streams, ends done, keeps the reply and records its timings', async () => {
@@ -670,13 +671,14 @@ suite('Agent runtime orchestration', () => {
 		assert.deepStrictEqual(session.messages.map(message => message.content), ['one', 'also this', 'ok']);
 	});
 	test('a native transcript let go to disk comes back for the next run, with an edit made meanwhile applied', async () => {
-		const { service, internals, model, ref, waitEnd } = await setup('model');
+		const { service, internals, model, ref, waitEnd, revokedMcpSessions } = await setup('model');
 		await waitEnd(await service.send('chat', { text: 'one', mode: 'agent', providerRef: ref }));
 		await waitEnd(await service.send('chat', { text: 'two', mode: 'agent', providerRef: ref }));
 		// The run's end writes the journal; give the write a moment to land.
 		await new Promise(resolve => setTimeout(resolve, 50));
 		service.releaseSession('chat');
 		assert.strictEqual(internals.sessions.get('chat')?.deepseek, undefined, 'the idle transcript left memory');
+		assert.deepStrictEqual(revokedMcpSessions, ['chat'], 'the released chat\'s host MCP tokens are revoked');
 		// Edit the second prompt away while the transcript is on disk only, then send.
 		service.truncateSession('chat', 1);
 		await waitEnd(await service.send('chat', { text: 'three', mode: 'agent', providerRef: ref }));

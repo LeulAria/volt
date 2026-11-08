@@ -26,7 +26,7 @@ export interface IVoltHostMcpEndpoint {
 	readonly url: string;
 	/**
 	 * The server secret. Random per server; never logged and never handed to an agent: an agent
-	 * gets `hostMcpSessionToken(token, sessionId, groups)` for `/mcp/<sessionId>` (see
+	 * gets `hostMcpSessionToken(token, sessionId, groups, lease)` for `/mcp/<sessionId>` (see
 	 * `voltHostMcpAuth.ts`). A request without a session needs this secret itself.
 	 */
 	readonly token: string;
@@ -63,5 +63,10 @@ export interface IVoltHostMcpService {
 	 */
 	start(serverId: string, tools: readonly IVoltHostMcpToolInfo[]): Promise<IVoltHostMcpEndpoint>;
 	respond(id: string, result: IVoltHostMcpResult): Promise<void>;
+	/**
+	 * The chat was closed or released: server `serverId` refuses its tokens with key epoch `epoch`
+	 * or below from now on (`voltHostMcpAuth.ts`). Tokens issued after carry a larger epoch.
+	 */
+	revokeSession(serverId: string, sessionId: string, epoch: number): Promise<void>;
 	stop(serverId: string): Promise<void>;
 }

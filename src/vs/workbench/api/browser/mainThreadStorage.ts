@@ -5,7 +5,7 @@
 
 import { IStorageService, StorageScope } from '../../../platform/storage/common/storage.js';
 import { MainThreadStorageShape, MainContext, ExtHostStorageShape, ExtHostContext } from '../common/extHost.protocol.js';
-import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
+import { assertHostsExtension, extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
 import { DisposableStore } from '../../../base/common/lifecycle.js';
 import { isWeb } from '../../../base/common/platform.js';
 import { IExtensionIdWithVersion, IExtensionStorageService } from '../../../platform/extensionManagement/common/extensionStorage.js';
@@ -21,13 +21,13 @@ export class MainThreadStorage implements MainThreadStorageShape {
 	private readonly _sharedStorageKeysToWatch: Map<string, boolean> = new Map<string, boolean>();
 
 	constructor(
-		extHostContext: IExtHostContext,
+		private readonly _extHostContext: IExtHostContext,
 		@IExtensionStorageService private readonly _extensionStorageService: IExtensionStorageService,
 		@IStorageService private readonly _storageService: IStorageService,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 		@ILogService private readonly _logService: ILogService,
 	) {
-		this._proxy = extHostContext.getProxy(ExtHostContext.ExtHostStorage);
+		this._proxy = _extHostContext.getProxy(ExtHostContext.ExtHostStorage);
 
 		this._storageListener.add(this._storageService.onDidChangeValue(StorageScope.PROFILE, undefined, this._storageListener)(e => {
 			if (this._sharedStorageKeysToWatch.has(e.key)) {
@@ -44,6 +44,8 @@ export class MainThreadStorage implements MainThreadStorageShape {
 	}
 
 	async $initializeExtensionStorage(shared: boolean, extensionId: string): Promise<string | undefined> {
+		// An extension's state is keyed on the id the payload names: only one this host runs (B-08).
+		assertHostsExtension(this._extHostContext, extensionId);
 
 		await this.checkAndMigrateExtensionStorage(extensionId, shared);
 
@@ -54,10 +56,13 @@ export class MainThreadStorage implements MainThreadStorageShape {
 	}
 
 	async $setValue(shared: boolean, key: string, value: object): Promise<void> {
+		// The key is the extension id (`ExtensionMemento`).
+		assertHostsExtension(this._extHostContext, key);
 		this._extensionStorageService.setExtensionState(key, value, shared);
 	}
 
 	$registerExtensionStorageKeysToSync(extension: IExtensionIdWithVersion, keys: string[]): void {
+		assertHostsExtension(this._extHostContext, extension.id);
 		this._extensionStorageService.setKeysForSync(extension, keys);
 	}
 

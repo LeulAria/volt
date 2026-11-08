@@ -4,19 +4,62 @@
  *--------------------------------------------------------------------------------------------*/
 
 /**
- * Per-session credentials for the host MCP server.
+ * Per-session credentials for the host MCP server (spec I.15, B-07).
  *
  * A server has one random secret that only Volt holds (the window or the agent server that
  * registered it). An agent never gets it: it gets a token for its own chat,
- * `HMAC-SHA256(secret, "<sessionId>\n<groups>")`, and the server accepts a request on
- * `/mcp/<sessionId>?groups=…` only with the token for exactly that session and those groups. So an
- * agent cannot act as another chat (its id is in `thread_list`) or widen its tool groups, and a
- * request without a session needs the secret itself.
+ * `<epoch>.<expiry>.HMAC-SHA256(secret, "<sessionId>\n<groups>\n<epoch>\n<expiry>")`, and the
+ * server accepts a request on `/mcp/<sessionId>?groups=…` only with a token for exactly that
+ * session and those groups, before its expiry, and with a key epoch above the last one the chat
+ * was revoked at. So an agent cannot act as another chat (its id is in `thread_list`) or widen its
+ * tool groups, a token stops working a day after it was issued, and a closed chat's token dies at
+ * once. A request without a session needs the secret itself.
+ *
+ * The key epoch is a number the issuer takes from a monotonic clock: a revocation records one,
+ * and every token issued after it carries a larger one.
  *
  * Pure and synchronous: the renderer builds an agent's MCP config synchronously (it is compared
  * on every turn to tell a stale session), and the main process checks the same value with Node's
  * crypto.
  */
+
+/** How long a session token is valid. */
+export const HOST_MCP_TOKEN_TTL_MS = 24 * 60 * 60_000;
+
+/**
+ * A new token is issued once the current one has less than this left. A new token restarts the
+ * chat's agent (its MCP config changed), so it happens at a turn boundary well before expiry.
+ */
+export const HOST_MCP_TOKEN_RENEW_MS = 6 * 60 * 60_000;
+
+/** When and until when a session's token was issued. */
+export interface IHostMcpLease {
+	/** The key epoch: above the chat's last revocation. */
+	readonly epoch: number;
+	/** Milliseconds since 1970; the token is refused from then on. */
+	readonly expiry: number;
+}
+
+/** A lease starting now, at `epoch` (a monotonic clock reading). */
+export function newHostMcpLease(epoch = Date.now()): IHostMcpLease {
+	return { epoch, expiry: epoch + HOST_MCP_TOKEN_TTL_MS };
+}
+
+/** The lease a token carries, and its MAC; undefined for anything that is not a session token. */
+export function parseHostMcpSessionToken(token: string): (IHostMcpLease & { readonly mac: string }) | undefined {
+	const match = /^(\d{1,16})\.(\d{1,16})\.([0-9a-f]{64})$/.exec(token);
+	if (!match) {
+		return undefined;
+	}
+	const epoch = Number(match[1]);
+	const expiry = Number(match[2]);
+	return Number.isSafeInteger(epoch) && Number.isSafeInteger(expiry) ? { epoch, expiry, mac: match[3] } : undefined;
+}
+
+/** `<epoch>.<expiry>.<mac>`: the token string for a lease and the hex MAC over its message. */
+export function formatHostMcpSessionToken(lease: IHostMcpLease, mac: string): string {
+	return `${lease.epoch}.${lease.expiry}.${mac}`;
+}
 
 /** The groups part of the signed message: `all` when the URL names none. */
 export function hostMcpGroupsKey(groups: Iterable<string> | undefined): string {
@@ -32,13 +75,16 @@ export function normalizeHostMcpGroups(groups: Iterable<string>): string[] {
 }
 
 /** What a session's token signs. Versioned, so a change of format never accepts an old token. */
-export function hostMcpSessionMessage(sessionId: string, groups: Iterable<string> | undefined): string {
-	return `volt-host-mcp/1\n${sessionId}\n${hostMcpGroupsKey(groups)}`;
+export function hostMcpSessionMessage(sessionId: string, groups: Iterable<string> | undefined, lease: IHostMcpLease): string {
+	return `volt-host-mcp/2\n${sessionId}\n${hostMcpGroupsKey(groups)}\n${lease.epoch}\n${lease.expiry}`;
 }
 
-/** The bearer token for one chat's agent: hex HMAC-SHA256 of the session message under the server secret. */
-export function hostMcpSessionToken(secret: string, sessionId: string, groups?: Iterable<string>): string {
-	return toHex(hmacSha256(utf8(secret), utf8(hostMcpSessionMessage(sessionId, groups))));
+/**
+ * The bearer token for one chat's agent: the lease and the hex HMAC-SHA256 of the session message
+ * under the server secret. Without a lease, one that starts now.
+ */
+export function hostMcpSessionToken(secret: string, sessionId: string, groups?: Iterable<string>, lease: IHostMcpLease = newHostMcpLease()): string {
+	return formatHostMcpSessionToken(lease, toHex(hmacSha256(utf8(secret), utf8(hostMcpSessionMessage(sessionId, groups, lease)))));
 }
 
 // --- SHA-256 / HMAC (FIPS 180-4, RFC 2104) ------------------------------------------------------

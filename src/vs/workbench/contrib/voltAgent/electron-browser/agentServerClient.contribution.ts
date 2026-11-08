@@ -446,7 +446,7 @@ registerWorkbenchContribution2(AgentServerClientContribution.ID, AgentServerClie
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.agentServer.restart', title: localize2('voltAgentServer.restart', "Restart Agent Server"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: 'volt.agentServer.restart', visibility: 'internal', title: localize2('voltAgentServer.restart', "Restart Agent Server"), category: localize2('volt', "Volt"), f1: true });
 	}
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const mainService = accessor.get(IVoltAgentServerMainService);
@@ -470,7 +470,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.agentServer.showLog', title: localize2('voltAgentServer.showLog', "Show Agent Server Log"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: 'volt.agentServer.showLog', visibility: 'internal', title: localize2('voltAgentServer.showLog', "Show Agent Server Log"), category: localize2('volt', "Volt"), f1: true });
 	}
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const environment = accessor.get(INativeEnvironmentService);
@@ -513,7 +513,7 @@ const REMOTE_INTRO_SEEN_KEY = 'volt.remoteControl.introSeen';
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.agentServer.pairDevice', title: localize2('voltAgentServer.pairDevice', "Pair a Phone or Browser..."), category: localize2('volt', "Volt"), f1: true });
+		super({ id: 'volt.agentServer.pairDevice', visibility: 'internal', title: localize2('voltAgentServer.pairDevice', "Pair a Phone or Browser..."), category: localize2('volt', "Volt"), f1: true });
 	}
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const mainService = accessor.get(IVoltAgentServerMainService);
@@ -546,7 +546,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.agentServer.openWebApp', title: localize2('voltAgentServer.openWebApp', "Open Volt in the Browser"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: 'volt.agentServer.openWebApp', visibility: 'internal', title: localize2('voltAgentServer.openWebApp', "Open Volt in the Browser"), category: localize2('volt', "Volt"), f1: true });
 	}
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const mainService = accessor.get(IVoltAgentServerMainService);
@@ -569,7 +569,7 @@ registerAction2(class extends Action2 {
 /** Add Device's "Allow Wi-Fi Connections": the user already chose it there, so no second prompt. */
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: VOLT_ALLOW_NETWORK_COMMAND_ID, title: localize2('voltAgentServer.allowNetworkCommand', "Let Devices on This Network Connect"), category: localize2('volt', "Volt"), f1: false });
+		super({ id: VOLT_ALLOW_NETWORK_COMMAND_ID, visibility: 'internal', title: localize2('voltAgentServer.allowNetworkCommand', "Let Devices on This Network Connect"), category: localize2('volt', "Volt"), f1: false });
 	}
 	override async run(accessor: ServicesAccessor): Promise<boolean> {
 		const mainService = accessor.get(IVoltAgentServerMainService);
@@ -583,7 +583,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.agentServer.stopNetwork', title: localize2('voltAgentServer.stopNetwork', "Stop Sharing Volt on This Network"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: 'volt.agentServer.stopNetwork', visibility: 'internal', title: localize2('voltAgentServer.stopNetwork', "Stop Sharing Volt on This Network"), category: localize2('volt', "Volt"), f1: true });
 	}
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const mainService = accessor.get(IVoltAgentServerMainService);
@@ -609,7 +609,7 @@ registerAction2(class extends Action2 {
  */
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: VOLT_USAGE_SHARE_MACHINE_COMMAND_ID, title: localize2('voltUsage.shareMachineCommand', "Share This Machine's Usage"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: VOLT_USAGE_SHARE_MACHINE_COMMAND_ID, visibility: 'internal', title: localize2('voltUsage.shareMachineCommand', "Share This Machine's Usage"), category: localize2('volt', "Volt"), f1: true });
 	}
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const mainService = accessor.get(IVoltAgentServerMainService);

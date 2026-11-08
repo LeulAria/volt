@@ -60,6 +60,7 @@ registerAction2(class OpenAutomationsAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_AUTOMATIONS_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAutomations.open', "Show Automations"),
 			category: localize2('voltAgent.category', "Agent"),
 			icon: Codicon.zap,
@@ -77,7 +78,7 @@ registerAction2(class OpenAutomationsAction extends Action2 {
 
 registerAction2(class OpenAutomationsInToolsAction extends Action2 {
 	constructor() {
-		super({ id: OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, title: localize2('voltAutomations.openInTools', "Open Automations Beside Chat") });
+		super({ id: OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, visibility: 'public', title: localize2('voltAutomations.openInTools', "Open Automations Beside Chat") });
 	}
 
 	/** A tab in the chat's right panel (its own input, so the main panel's tab stays where it is); no chat on screen opens the usual tab. */
@@ -96,7 +97,7 @@ registerAction2(class OpenAutomationsInToolsAction extends Action2 {
 
 registerAction2(class OpenWorkflowsInToolsAction extends Action2 {
 	constructor() {
-		super({ id: OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, title: localize2('voltAutomations.openWorkflowsInTools', "Open Workflows Beside Chat") });
+		super({ id: OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, visibility: 'public', title: localize2('voltAutomations.openWorkflowsInTools', "Open Workflows Beside Chat") });
 	}
 
 	/** The workflow library in the chat's right panel; no chat on screen opens the usual Automations tab there. */
@@ -117,6 +118,7 @@ registerAction2(class NewAutomationAction extends Action2 {
 	constructor() {
 		super({
 			id: NEW_AUTOMATION_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAutomations.newCommand', "New Automation…"),
 			category: localize2('voltAgent.category', "Agent"),
 			icon: Codicon.zap,
@@ -143,6 +145,7 @@ registerAction2(class OpenAutomationRunsAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_AUTOMATION_RUNS_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAutomations.runsCommand', "Show All Automation Runs"),
 			category: localize2('voltAgent.category', "Agent"),
 			f1: true,

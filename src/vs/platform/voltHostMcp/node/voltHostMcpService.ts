@@ -10,7 +10,7 @@ import { Disposable, toDisposable } from '../../../base/common/lifecycle.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
 import { IVoltHostMcpCall, IVoltHostMcpEndpoint, IVoltHostMcpResult, IVoltHostMcpService, IVoltHostMcpToolInfo } from '../common/voltHostMcp.js';
-import { hostMcpSessionMessage, normalizeHostMcpGroups } from '../common/voltHostMcpAuth.js';
+import { formatHostMcpSessionToken, HOST_MCP_TOKEN_TTL_MS, hostMcpSessionMessage, IHostMcpLease, normalizeHostMcpGroups, parseHostMcpSessionToken } from '../common/voltHostMcpAuth.js';
 
 interface IJsonRpc {
 	jsonrpc?: string;
@@ -25,6 +25,8 @@ interface IServer {
 	readonly token: string;
 	port: number;
 	tools: readonly IVoltHostMcpToolInfo[];
+	/** Per chat, the key epoch it was last revoked at. */
+	readonly revoked: Map<string, number>;
 }
 
 /** A question can wait on the user for a long time; past this the call answers with an error. */
@@ -36,6 +38,13 @@ export type HostMcpRequestVerdict =
 	/** `sessionId` and `groups` are the ones the token was issued for; the URL alone never sets them. */
 	| { readonly ok: true; readonly sessionId?: string; readonly groups?: ReadonlySet<string> }
 	| { readonly ok: false; readonly status: 401 | 403 | 404; readonly message: string };
+
+export interface IHostMcpCheckOptions {
+	/** The time to judge expiry by (default: now). */
+	readonly now?: number;
+	/** The key epoch a chat was last revoked at: its tokens with that epoch or a lower one are refused. */
+	readonly revokedThrough?: (sessionId: string) => number | undefined;
+}
 
 function isLoopbackHost(host: string | undefined, port: number): boolean {
 	if (!host) {
@@ -60,10 +69,11 @@ function sameSecret(given: string, expected: string): boolean {
  *   browser. No CORS headers are ever sent, so a preflight fails too.
  * - The bearer token Volt handed the agent in its MCP server config. On `/mcp/<sessionId>` that is
  *   the session's own token (`hostMcpSessionToken`), which also covers `?groups=`: another chat's
- *   token, or the right one with other groups, is refused. A request without a session needs
- *   `secret` itself, which only Volt holds.
+ *   token, or the right one with other groups, is refused, and so is one past its expiry or from
+ *   before the chat was revoked. A request without a session needs `secret` itself, which only
+ *   Volt holds.
  */
-export function checkHostMcpRequest(method: string | undefined, path: string | undefined, headers: http.IncomingHttpHeaders, port: number, secret: string): HostMcpRequestVerdict {
+export function checkHostMcpRequest(method: string | undefined, path: string | undefined, headers: http.IncomingHttpHeaders, port: number, secret: string, options: IHostMcpCheckOptions = {}): HostMcpRequestVerdict {
 	if (!isLoopbackHost(headers.host, port)) {
 		return { ok: false, status: 403, message: 'Host not allowed' };
 	}
@@ -86,16 +96,25 @@ export function checkHostMcpRequest(method: string | undefined, path: string | u
 		return { ok: false, status: 401, message: 'Missing or wrong bearer token' };
 	}
 	const groups = groupsFromPath(path);
-	const expected = session === undefined ? secret : sessionToken(secret, session, groups);
-	if (!sameSecret(match[1], expected)) {
+	if (session === undefined) {
+		return sameSecret(match[1], secret) ? { ok: true, ...(groups ? { groups } : {}) } : { ok: false, status: 401, message: 'Missing or wrong bearer token' };
+	}
+	const lease = parseHostMcpSessionToken(match[1]);
+	if (!lease || !sameSecret(match[1], sessionToken(secret, session, groups, lease))) {
 		return { ok: false, status: 401, message: 'Missing or wrong bearer token' };
 	}
-	return { ok: true, ...(session !== undefined ? { sessionId: session } : {}), ...(groups ? { groups } : {}) };
+	// Signed by Volt, so the lease is the one it issued: judge its age and the chat's revocations.
+	const now = options.now ?? Date.now();
+	const revoked = options.revokedThrough?.(session);
+	if (lease.expiry <= now || lease.expiry - lease.epoch > HOST_MCP_TOKEN_TTL_MS || (revoked !== undefined && lease.epoch <= revoked)) {
+		return { ok: false, status: 401, message: 'Expired or revoked bearer token' };
+	}
+	return { ok: true, sessionId: session, ...(groups ? { groups } : {}) };
 }
 
-/** Node's HMAC of the same message `hostMcpSessionToken` signs in the window. */
-function sessionToken(secret: string, sessionId: string, groups: ReadonlySet<string> | undefined): string {
-	return createHmac('sha256', secret).update(hostMcpSessionMessage(sessionId, groups)).digest('hex');
+/** Node's HMAC of the same message `hostMcpSessionToken` signs in the window, as a token string. */
+function sessionToken(secret: string, sessionId: string, groups: ReadonlySet<string> | undefined, lease: IHostMcpLease): string {
+	return formatHostMcpSessionToken(lease, createHmac('sha256', secret).update(hostMcpSessionMessage(sessionId, groups, lease)).digest('hex'));
 }
 
 export class VoltHostMcpService extends Disposable implements IVoltHostMcpService {
@@ -145,8 +164,23 @@ export class VoltHostMcpService extends Disposable implements IVoltHostMcpServic
 				resolve({ url, token });
 			});
 		});
-		this.servers.set(serverId, { http: server, endpoint, token, port: 0, tools });
+		this.servers.set(serverId, { http: server, endpoint, token, port: 0, tools, revoked: new Map() });
 		return endpoint;
+	}
+
+	async revokeSession(serverId: string, sessionId: string, epoch: number): Promise<void> {
+		const server = this.servers.get(serverId);
+		if (!server || !Number.isSafeInteger(epoch)) {
+			return;
+		}
+		server.revoked.set(sessionId, Math.max(epoch, server.revoked.get(sessionId) ?? 0));
+		// A revocation older than a token's lifetime outlived every token it could refuse.
+		const stale = Date.now() - HOST_MCP_TOKEN_TTL_MS;
+		for (const [id, at] of server.revoked) {
+			if (at < stale) {
+				server.revoked.delete(id);
+			}
+		}
 	}
 
 	async respond(id: string, result: IVoltHostMcpResult): Promise<void> {
@@ -172,7 +206,7 @@ export class VoltHostMcpService extends Disposable implements IVoltHostMcpServic
 	private async handle(serverId: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
 		const server = this.servers.get(serverId);
 		const verdict = server
-			? checkHostMcpRequest(req.method, req.url, req.headers, server.port, server.token)
+			? checkHostMcpRequest(req.method, req.url, req.headers, server.port, server.token, { revokedThrough: sessionId => server.revoked.get(sessionId) })
 			: { ok: false as const, status: 404 as const, message: 'Not found' };
 		if (!verdict.ok) {
 			req.resume();

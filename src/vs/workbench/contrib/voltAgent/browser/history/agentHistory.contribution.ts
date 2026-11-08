@@ -131,6 +131,7 @@ registerAction2(class NewAgentTabAction extends Action2 {
 	constructor() {
 		super({
 			id: NEW_AGENT_TAB_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.newAgentTab', "New Agent"),
 			icon: Codicon.plus,
 			f1: false,
@@ -148,6 +149,7 @@ registerAction2(class ReplaceAgentAction extends Action2 {
 	constructor() {
 		super({
 			id: REPLACE_AGENT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.replaceAgent', "Replace Agent"),
 			category: Categories.View,
 			f1: true,
@@ -164,6 +166,7 @@ registerAction2(class ShowAgentHistoryAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_AGENT_HISTORY_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.showHistory', "Show Agent History"),
 			icon: Codicon.history,
 			category: Categories.View,
@@ -195,6 +198,7 @@ registerAction2(class ToggleAgentDrawerAction extends Action2 {
 	constructor() {
 		super({
 			id: TOGGLE_AGENT_DRAWER_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.toggleDrawer', "Toggle Agents Side Bar"),
 			icon: Codicon.layoutSidebarRight,
 			category: Categories.View,
@@ -225,6 +229,7 @@ registerAction2(class OpenAgentSessionAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_AGENT_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.openSession', "Open Agent Session"),
 			f1: false,
 		});
@@ -263,6 +268,7 @@ registerAction2(class FocusAgentListAction extends Action2 {
 	constructor() {
 		super({
 			id: 'voltAgent.focusAgentList',
+			visibility: 'public',
 			title: localize2('voltAgent.focusAgentList', "Focus Agent List"),
 			f1: true,
 			precondition: ContextKeyExpr.equals(LAYOUT_MODE_CONTEXT_KEY, 'agent'),
@@ -300,6 +306,7 @@ registerAction2(class NextAgentTabAction extends Action2 {
 	constructor() {
 		super({
 			id: 'voltAgent.nextAgentTab',
+			visibility: 'public',
 			title: localize2('voltAgent.nextAgentTab', "Next Agent Tab"),
 			f1: true,
 			precondition: ContextKeyExpr.equals(LAYOUT_MODE_CONTEXT_KEY, 'agent'),
@@ -320,6 +327,7 @@ registerAction2(class PreviousAgentTabAction extends Action2 {
 	constructor() {
 		super({
 			id: 'voltAgent.previousAgentTab',
+			visibility: 'public',
 			title: localize2('voltAgent.previousAgentTab', "Previous Agent Tab"),
 			f1: true,
 			precondition: ContextKeyExpr.equals(LAYOUT_MODE_CONTEXT_KEY, 'agent'),
@@ -354,6 +362,7 @@ registerAction2(class OpenAgentCustomizeAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_AGENT_CUSTOMIZE_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.customize', "Customize Agent"),
 			category: Categories.View,
 			icon: Codicon.extensions,
@@ -376,6 +385,7 @@ registerAction2(class OpenAgentMarketplaceAction extends Action2 {
 	constructor() {
 		super({
 			id: 'workbench.action.voltAgent.customize.marketplace',
+			visibility: 'public',
 			title: localize2('voltAgent.marketplace', "Browse Skills and Plugins Marketplace"),
 			category: Categories.View,
 			icon: Codicon.extensions,
@@ -407,6 +417,7 @@ registerAction2(class OpenAgentUsageAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_AGENT_USAGE_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.usage', "Show Agent Usage and Limits"),
 			category: Categories.View,
 			icon: Codicon.graph,
@@ -445,6 +456,7 @@ registerAction2(class ExportAgentTranscriptAction extends Action2 {
 	constructor() {
 		super({
 			id: EXPORT_AGENT_TRANSCRIPT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.exportTranscript', "Export Transcript"),
 			category: Categories.View,
 			f1: true,
