@@ -62,8 +62,33 @@ export function hasPinnedTransport(): boolean {
 
 const PIN_UNSUPPORTED = 'This version of the app can\'t check your computer\'s certificate, so it won\'t connect over the network. Update the app, or connect through Tailscale Serve or a tunnel.';
 
-/** A socket for `url`: through the pinned transport when the route has a pin. */
+const INSECURE_ADDRESS = 'Volt answers other devices only over its own secure connection. Pair again: scan the QR code in Volt\'s Add Device window on your computer, or paste its pairing link.';
+
+/**
+ * Whether `url` may carry a token: TLS (`https:`, `wss:`), or plain HTTP to this device itself.
+ * Plain HTTP to any other address would send the token across the network in clear text, and
+ * Volt serves the network only over TLS (B-24).
+ */
+export function isSecureOrLocal(url: string): boolean {
+	const match = /^([a-z]+):\/\/(?:[^@/?#]*@)?(\[[^\]]+\]|[^/:?#]+)/i.exec(url);
+	if (!match) {
+		return false;
+	}
+	const scheme = match[1].toLowerCase();
+	if (scheme === 'https' || scheme === 'wss') {
+		return true;
+	}
+	return (scheme === 'http' || scheme === 'ws') && classifyHost(match[2]) === 'loopback';
+}
+
+/**
+ * A socket for `url`: through the pinned transport when the route has a pin. Refuses plain `ws:`
+ * to another device, and a pin on anything but `wss:`.
+ */
 export function createRouteSocket(url: string, pin: string | undefined, fallback: (url: string) => IWebSocketLike): IWebSocketLike {
+	if (!isSecureOrLocal(url) || (pin && !/^wss:/i.test(url))) {
+		throw new RemoteError('InsecureAddress', INSECURE_ADDRESS);
+	}
 	if (!pin) {
 		return fallback(url);
 	}
@@ -75,7 +100,31 @@ export function createRouteSocket(url: string, pin: string | undefined, fallback
 
 /** `fp=` values are base64url SHA-256 digests: 43 characters. */
 export function isPin(value: string | null | undefined): value is string {
-	return !!value && /^[A-Za-z0-9_-]{43}$/.test(value);
+	return !!value && /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(value);
+}
+
+const BASE64URL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+/**
+ * A pin as the certificate viewers (and Volt's Add Device window) show it: `AB:CD:...`, the 32
+ * bytes of the SHA-256 in hex. Undefined for anything that isn't a pin.
+ */
+export function pinFingerprint(pin: string | undefined): string | undefined {
+	if (!isPin(pin)) {
+		return undefined;
+	}
+	const bytes: string[] = [];
+	let buffer = 0;
+	let bits = 0;
+	for (const char of pin) {
+		buffer = ((buffer << 6) | BASE64URL.indexOf(char)) & 0xffff;
+		bits += 6;
+		if (bits >= 8) {
+			bits -= 8;
+			bytes.push(((buffer >> bits) & 0xff).toString(16).toUpperCase().padStart(2, '0'));
+		}
+	}
+	return bytes.join(':');
 }
 
 //#endregion
@@ -98,7 +147,7 @@ const ROUTE_RANK: Record<RouteKind, number> = { loopback: 0, lan: 1, tailnet: 2,
 
 export function classifyHost(host: string): RouteKind {
 	const bare = host.replace(/^\[|\]$/g, '').toLowerCase();
-	if (bare === 'localhost' || bare === '::1' || bare.startsWith('127.')) {
+	if (bare === 'localhost' || bare === '::1') {
 		return 'loopback';
 	}
 	if (bare.endsWith('.ts.net')) {
@@ -110,6 +159,10 @@ export function classifyHost(host: string): RouteKind {
 	const parts = bare.split('.').map(Number);
 	if (parts.length === 4 && parts.every(p => Number.isInteger(p) && p >= 0 && p <= 255)) {
 		const [a, b] = parts;
+		// Only an address literal is loopback (`127.0.0.1.example.com` is a name like any other).
+		if (a === 127) {
+			return 'loopback';
+		}
 		if (a === 100 && b >= 64 && b <= 127) {
 			return 'tailnet';
 		}
@@ -144,8 +197,10 @@ export function formatCode(code: string): string {
 }
 
 /**
- * `192.168.1.20:47321` → `http://192.168.1.20:47321`. IP literals and `.local` names are plain HTTP
- * (a LAN server has no certificate); other host names are HTTPS (Tailscale Serve, a tunnel).
+ * `192.168.1.20:47321` → `http://192.168.1.20:47321`. IP literals and `.local` names are plain HTTP;
+ * other host names are HTTPS (Tailscale Serve, a tunnel). Plain HTTP is used only for this device
+ * itself ({@link isSecureOrLocal}): Volt on another computer is reached through its pairing link,
+ * which carries its certificate's pin.
  */
 export function normalizeBaseUrl(input: string): string | undefined {
 	// Phone keyboards slip in spaces ("100. 68"), commas or ideographic dots for dots, and trailing punctuation.
@@ -240,6 +295,9 @@ async function request<T>(url: string, init: { method?: string; body?: unknown; 
 			...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
 			signal: controller.signal,
 		};
+		if (!isSecureOrLocal(url) || (init.pin && !/^https:/i.test(url))) {
+			throw new RemoteError('InsecureAddress', INSECURE_ADDRESS);
+		}
 		if (init.pin && !pinnedTransport) {
 			throw new RemoteError('PinUnsupported', PIN_UNSUPPORTED);
 		}

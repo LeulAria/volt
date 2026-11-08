@@ -10,6 +10,7 @@
 	"types": "src/index.ts",
 	"sideEffects": false,
 	"scripts": {
-		"typecheck": "tsc --noEmit -p tsconfig.json"
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"test": "node --experimental-transform-types --no-warnings=ExperimentalWarning --import ./test/setup.mjs --test 'test/*.test.ts'"
 	}
 }
