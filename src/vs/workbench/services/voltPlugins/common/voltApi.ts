@@ -6,6 +6,7 @@
 import { Event } from '../../../../base/common/event.js';
 import { DisposableStore, IDisposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import { FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME } from '../../voltRuntime/common/codeIntelligence.js';
 import { IVoltHostToolInfo, IVoltHostToolOwner, IVoltHostToolResult } from '../../voltRuntime/common/hostTools.js';
 import { HOST_TOOL_SANDBOX_CLASSES, hostToolSandboxUse } from '../../voltRuntime/common/hostToolSandbox.js';
 import { ICapabilityReporter, ICapabilityRequest, IVoltPluginPrincipal, toolClassCapability, VoltCapabilityError } from './capabilities.js';
@@ -207,6 +208,45 @@ export interface IVoltUsageLimit {
 	readonly checkedAt: number;
 }
 
+export interface IVoltGrepOptions {
+	/** A folder under the project root (relative). */
+	readonly path?: string;
+	/** File filter, e.g. `src/**\/*.ts`. */
+	readonly glob?: string;
+	/** File type shortcut: `ts`, `py`, `go`, ... */
+	readonly type?: string;
+	/** `pattern` is plain text, not a regular expression. */
+	readonly literal?: boolean;
+	readonly caseSensitive?: boolean;
+	readonly outputMode?: 'content' | 'files' | 'count';
+	/** Lines around each match, 0-5. */
+	readonly context?: number;
+	readonly limit?: number;
+}
+
+export interface IVoltFindSymbolOptions {
+	readonly match?: 'exact' | 'prefix' | 'fuzzy';
+	/** `function`, `class`, `interface`, ... */
+	readonly kind?: string;
+	readonly path?: string;
+	readonly limit?: number;
+}
+
+export interface IVoltFindFilesOptions {
+	readonly path?: string;
+	readonly limit?: number;
+}
+
+/**
+ * `files.read:workspace`: Volt's code index over the open project (the Code Intelligence feature's
+ * instant_grep, find_symbol and find_files). Each answer is the text an agent gets.
+ */
+export interface IVoltCodeApi {
+	grep(pattern: string, options?: IVoltGrepOptions): Promise<string>;
+	findSymbol(name: string, options?: IVoltFindSymbolOptions): Promise<string>;
+	findFiles(query: string, options?: IVoltFindFilesOptions): Promise<string>;
+}
+
 /** `usage.report`: token use and cost across providers, and each subscription's limits (Settings > Usage). */
 export interface IVoltUsageApi {
 	get(): Promise<IVoltUsageSummary>;
@@ -298,6 +338,7 @@ export interface IVoltApi {
 	readonly automations: IVoltAutomationsApi;
 	readonly usage: IVoltUsageApi;
 	readonly pullRequests: IVoltPullRequestsApi;
+	readonly code: IVoltCodeApi;
 }
 
 /** Who a backend call is for, set by core from the principal (never from a payload). */
@@ -667,7 +708,38 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 		},
 	};
 
-	return Object.freeze({ version: VOLT_API_VERSION, tools, storage, agents, ui, settings, commands, net, secrets, memory, browser, visuals, automations, usage, pullRequests });
+	/** Runs one of the index's tools over the open project; a `path` must stay under its root. */
+	const search = async (api: string, tool: string, args: Record<string, unknown>): Promise<string> => {
+		const path = args.path;
+		if (typeof path === 'string' && (/^([\\/]|[a-zA-Z]:|~)/.test(path) || path.split(/[\\/]/).includes('..'))) {
+			throw new VoltCapabilityError('files.read:workspace', path, 'workspace', `${api}: ${path} is outside the project`);
+		}
+		const result = await backend.invokeTool(tool, Object.fromEntries(Object.entries(args).filter(([, value]) => value !== undefined)), caller());
+		if (result.error !== undefined) {
+			throw new Error(result.error);
+		}
+		return result.text ?? '';
+	};
+
+	const code: IVoltCodeApi = {
+		grep(pattern, options) {
+			check({ api: 'code.grep', capability: 'files.read:workspace', target: INSTANT_GREP_TOOL_NAME });
+			return search('code.grep', INSTANT_GREP_TOOL_NAME, {
+				pattern, path: options?.path, glob: options?.glob, type: options?.type, literal: options?.literal, case_sensitive: options?.caseSensitive,
+				output_mode: options?.outputMode, context: options?.context, head_limit: options?.limit,
+			});
+		},
+		findSymbol(name, options) {
+			check({ api: 'code.findSymbol', capability: 'files.read:workspace', target: FIND_SYMBOL_TOOL_NAME });
+			return search('code.findSymbol', FIND_SYMBOL_TOOL_NAME, { name, match: options?.match, kind: options?.kind, path: options?.path, limit: options?.limit });
+		},
+		findFiles(query, options) {
+			check({ api: 'code.findFiles', capability: 'files.read:workspace', target: FIND_FILES_TOOL_NAME });
+			return search('code.findFiles', FIND_FILES_TOOL_NAME, { query, path: options?.path, limit: options?.limit });
+		},
+	};
+
+	return Object.freeze({ version: VOLT_API_VERSION, tools, storage, agents, ui, settings, commands, net, secrets, memory, browser, visuals, automations, usage, pullRequests, code });
 }
 
 /** One extension's validated Volt contributions, as the window loaded them. */

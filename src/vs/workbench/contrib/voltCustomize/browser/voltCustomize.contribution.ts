@@ -322,6 +322,15 @@ class VoltFeatureModulesContribution implements IWorkbenchContribution {
 }
 registerWorkbenchContribution2(VoltFeatureModulesContribution.ID, VoltFeatureModulesContribution, WorkbenchPhase.BlockRestore);
 
+/** Once the window has restored, the modules that serve agents (their tools) load: `activation: 'startup'`. */
+class VoltFeatureModulesStartupContribution implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.voltFeatureModulesStartup';
+	constructor(@IVoltFeatureModuleService modules: IVoltFeatureModuleService) {
+		modules.startupFinished();
+	}
+}
+registerWorkbenchContribution2(VoltFeatureModulesStartupContribution.ID, VoltFeatureModulesStartupContribution, WorkbenchPhase.AfterRestored);
+
 /** Lists each extension's Volt capabilities (and the user's consent) on its page once the window is idle. */
 class VoltExtensionApiContribution implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contrib.voltExtensionApi';

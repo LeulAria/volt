@@ -50,6 +50,21 @@ export interface IVoltFeatureSettingsPage extends IDisposable {
 	setVisible(visible: boolean): void;
 }
 
+/** The settings editor's building blocks, so a page a module draws looks like every other one. */
+export interface IVoltSettingsPageKit {
+	/** Cleared when the page is drawn again or left. */
+	readonly store: DisposableStore;
+	pageHead(title: string, lead?: string): void;
+	sectionLabel(label: string): void;
+	settingsGroup(): HTMLElement;
+	settingRow(parent: HTMLElement, title: string, desc: string | undefined, renderControl?: (host: HTMLElement) => void): HTMLElement;
+	toggle(parent: HTMLElement, on: boolean, label: string, onClick: () => void): void;
+	stepper(parent: HTMLElement, valueText: string, unit: string, onCommit: (next: number) => number, step: number): void;
+	/** Re-renders the page (after a setting changed). */
+	rerender(): void;
+	isCurrent(): boolean;
+}
+
 /** A side toolbar section a module draws. */
 export interface IVoltFeatureDockSection extends IDisposable {
 	readonly section: HTMLElement;
@@ -63,6 +78,8 @@ export type VoltFeatureHoverPlacement = 'above' | 'start';
 export interface IVoltFeatureModulePartTypes {
 	/** A Volt Settings page (`voltSettingsPages`). `container` is the element its dialogs center over. */
 	readonly settingsPage: { create(instantiationService: IInstantiationService, container: () => HTMLElement): IVoltFeatureSettingsPage };
+	/** A Volt Settings page drawn with the editor's own rows, afresh on every visit (`voltSettingsPages`). */
+	readonly settingsKitPage: { render(instantiationService: IInstantiationService, kit: IVoltSettingsPageKit): void };
 	/** What hovering a sidebar or footer button shows instead of its tooltip (`voltSlotItems`). */
 	readonly itemHover: { attach(instantiationService: IInstantiationService, anchor: HTMLElement, placement: VoltFeatureHoverPlacement): IDisposable };
 	/** A side toolbar section (`voltDock`). */
@@ -74,6 +91,7 @@ export type VoltFeatureModulePartKind = keyof IVoltFeatureModulePartTypes;
 /** The manifest contribution point that lists each kind of part's ids. */
 export const VOLT_FEATURE_MODULE_PART_POINTS = {
 	settingsPage: 'voltSettingsPages',
+	settingsKitPage: 'voltSettingsPages',
 	itemHover: 'voltSlotItems',
 	dockSection: 'voltDock',
 } as const satisfies Record<VoltFeatureModulePartKind, string>;
@@ -103,6 +121,11 @@ export interface IVoltFeatureModuleEntry {
 	readonly commands?: readonly IVoltFeatureModuleCommand[];
 	/** Editor input type ids the module serializes. */
 	readonly editors?: readonly string[];
+	/**
+	 * `use` (default): on first use. `startup`: also once the window has restored (`onStartupFinished`,
+	 * first party only, spec H.2), for a feature that serves agents rather than a view (its tools).
+	 */
+	readonly activation?: 'use' | 'startup';
 }
 
 export const IVoltFeatureModuleService = createDecorator<IVoltFeatureModuleService>('voltFeatureModuleService');
@@ -124,4 +147,6 @@ export interface IVoltFeatureModuleService {
 	partOwner(kind: VoltFeatureModulePartKind, id: string): string | undefined;
 	/** The part, loading its feature's module first; undefined while the feature is off. */
 	part<K extends VoltFeatureModulePartKind>(kind: K, id: string): Promise<IVoltFeatureModulePartTypes[K] | undefined>;
+	/** The window has restored: `startup` modules whose feature is on load now, and again whenever it is turned back on. */
+	startupFinished(): void;
 }

@@ -74,6 +74,8 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 	private readonly loading = new Map<string, Promise<IVoltFeatureModule | undefined>>();
 	private readonly stubs = this._register(new DisposableMap<string>());
 	private readonly owners: Map<string, string>;
+	private started = false;
+	private readonly failed = new Set<string>();
 
 	constructor(
 		entries: readonly IVoltFeatureModuleEntry[],
@@ -100,6 +102,11 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 
 	isActive(feature: string): boolean {
 		return this.active.has(feature);
+	}
+
+	startupFinished(): void {
+		this.started = true;
+		this.update();
 	}
 
 	async activate<T extends IVoltFeatureModule = IVoltFeatureModule>(feature: string): Promise<T | undefined> {
@@ -213,15 +220,24 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 		this.update();
 	}
 
-	/** Unloads what was turned off; puts stubs in for the commands of what is on and not loaded. */
+	/**
+	 * Unloads what was turned off; puts stubs in for the commands of what is on and not loaded, and
+	 * after startup loads the `startup` modules that are on (one that failed waits for a use).
+	 */
 	private update(): void {
 		for (const entry of this.entries.values()) {
 			const on = this.features.isEnabled(entry.feature);
 			if (!on) {
+				this.failed.delete(entry.feature);
 				this.stubs.deleteAndDispose(entry.feature);
 				this.deactivate(entry.feature);
-			} else if (!this.active.has(entry.feature) && !this.stubs.has(entry.feature) && entry.commands?.length) {
+				continue;
+			}
+			if (!this.active.has(entry.feature) && !this.stubs.has(entry.feature) && entry.commands?.length) {
 				this.stubs.set(entry.feature, this.registerStubs(entry));
+			}
+			if (this.started && entry.activation === 'startup' && !this._store.isDisposed && !this.active.has(entry.feature) && !this.loading.has(entry.feature) && !this.failed.has(entry.feature)) {
+				void this.activate(entry.feature).catch(() => this.failed.add(entry.feature));
 			}
 		}
 	}

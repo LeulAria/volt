@@ -201,6 +201,16 @@ const links = await volt.pullRequests.list(chatId);                   // [hostin
 await volt.pullRequests.link(chatId, 'https://github.com/acme/app/pull/12'); // [hosting.read + agents.send]
 ```
 
+### 3.11 `volt.code`
+
+```ts
+const hits = await volt.code.grep('createServer', { glob: 'src/**/*.ts', limit: 20 }); // [files.read:workspace]
+const defs = await volt.code.findSymbol('UserService', { kind: 'class' });             // [files.read:workspace]
+const files = await volt.code.findFiles('settings editor');                             // [files.read:workspace]
+```
+
+Volt's code index over the open project, from the Code Intelligence feature (`volt.code-intelligence`): the same `instant_grep`, `find_symbol` and `find_files` agents use, answered as the text an agent gets. A `path` option is a folder under the project root; an absolute path or one with `..` is refused (`deniedBy: 'workspace'`). With Code Intelligence turned off, or in a browser window, the calls fail with an error.
+
 ## 4. Developing and testing
 
 - Run your extension with **Run Extension** (`--extensionDevelopmentPath`) in Volt, or install its folder or `.vsix` from the Extensions view. `vscode.volt` works the same in both.

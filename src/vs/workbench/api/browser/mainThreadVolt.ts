@@ -11,7 +11,7 @@ import { ILogService } from '../../../platform/log/common/log.js';
 import { assertHostsExtension, ExtensionNotInHostError, extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
 import { IExtensionService } from '../../services/extensions/common/extensions.js';
 import { VoltCapabilityError } from '../../services/voltPlugins/common/capabilities.js';
-import { IVoltApi, IVoltPluginContext, VoltAutomationSchedule, VoltMemoryScope, VoltMemoryType } from '../../services/voltPlugins/common/voltApi.js';
+import { IVoltApi, IVoltFindFilesOptions, IVoltFindSymbolOptions, IVoltGrepOptions, IVoltPluginContext, VoltAutomationSchedule, VoltMemoryScope, VoltMemoryType } from '../../services/voltPlugins/common/voltApi.js';
 import { IVoltExtensionApiService } from '../../services/voltPlugins/common/voltExtensionApi.js';
 import { IVoltHostToolResult, IVoltVisualRef } from '../../services/voltRuntime/common/hostTools.js';
 import { ExtHostContext, ExtHostVoltShape, IVoltToolOptionsDto, IVoltToolResultDto, MainContext, MainThreadVoltShape, VoltApiMethod } from '../common/extHost.protocol.js';
@@ -38,6 +38,22 @@ function record(value: unknown, name: string): Record<string, unknown> {
 		throw new Error(`volt: ${name} must be an object.`);
 	}
 	return value as Record<string, unknown>;
+}
+
+/** `volt.code.*` options: only the known fields, each of its type (anything else is dropped). */
+function searchOptions(value: unknown): IVoltGrepOptions & IVoltFindSymbolOptions & IVoltFindFilesOptions {
+	const options = record(value, 'options');
+	const text = (key: string) => typeof options[key] === 'string' && options[key] ? options[key] as string : undefined;
+	const flag = (key: string) => typeof options[key] === 'boolean' ? options[key] as boolean : undefined;
+	const count = (key: string) => typeof options[key] === 'number' && Number.isFinite(options[key]) ? Math.max(0, Math.floor(options[key] as number)) : undefined;
+	const outputMode = text('outputMode');
+	const match = text('match');
+	return {
+		path: text('path'), glob: text('glob'), type: text('type'), kind: text('kind'),
+		literal: flag('literal'), caseSensitive: flag('caseSensitive'), context: count('context'), limit: count('limit'),
+		outputMode: outputMode === 'content' || outputMode === 'files' || outputMode === 'count' ? outputMode : undefined,
+		match: match === 'exact' || match === 'prefix' || match === 'fuzzy' ? match : undefined,
+	};
 }
 
 function memoryScope(value: unknown): VoltMemoryScope | undefined {
@@ -266,6 +282,9 @@ export class MainThreadVolt extends Disposable implements MainThreadVoltShape {
 				case 'usage.limits': return volt.usage.limits();
 				case 'pullRequests.list': return volt.pullRequests.list(str(arg(0), 'chatId'));
 				case 'pullRequests.link': return this.result(extensionId, await volt.pullRequests.link(str(arg(0), 'chatId'), str(arg(1), 'url')));
+				case 'code.grep': return volt.code.grep(str(arg(0), 'pattern'), searchOptions(arg(1)));
+				case 'code.findSymbol': return volt.code.findSymbol(str(arg(0), 'name'), searchOptions(arg(1)));
+				case 'code.findFiles': return volt.code.findFiles(str(arg(0), 'query'), searchOptions(arg(1)));
 				default: throw new Error(`volt: unknown method ${String(method)}`);
 			}
 		});

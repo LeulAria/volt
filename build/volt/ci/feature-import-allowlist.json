@@ -1,6 +1,16 @@
 {
 	"//": "Core modules each fenced feature (contrib/<voltModule.entry>/) still imports beyond the always-allowed set in featureImportLint.mjs. A ratchet: remove entries as features move to the volt facade; never add one without review.",
 	"features": {
+		"codeIntelligence": [
+			"src/vs/workbench/services/lifecycle/common/lifecycle.ts",
+			"src/vs/workbench/services/search/common/search.ts",
+			"src/vs/workbench/services/voltRuntime/browser/search/voltSearch.ts",
+			"src/vs/workbench/services/voltRuntime/browser/tools/searchTools.ts",
+			"src/vs/workbench/services/voltRuntime/common/codeIntelligence.ts",
+			"src/vs/workbench/services/voltRuntime/common/execContext.ts",
+			"src/vs/workbench/services/voltRuntime/common/hostToolSandbox.ts",
+			"src/vs/workbench/services/voltRuntime/common/hostTools.ts"
+		],
 		"usage": [
 			"src/vs/workbench/contrib/voltAgent/browser/chrome/agentDockSections.ts",
 			"src/vs/workbench/contrib/voltAgent/browser/editor/agentScrollable.ts",

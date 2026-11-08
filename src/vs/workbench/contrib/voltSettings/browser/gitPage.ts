@@ -25,7 +25,7 @@ import { AGENT_PR_AUTO_REVIEW_SETTING, AGENT_PR_POST_REVIEW_COMMENTS_SETTING } f
 import { IAgentPullRequestService } from '../../voltAgent/browser/pullRequests/agentPullRequestService.js';
 import { signInWithGh } from '../../voltAgent/browser/pullRequests/agentPullRequestUi.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
-import { ISettingsPageKit } from './codeIntelligencePage.js';
+import { IVoltSettingsPageKit as ISettingsPageKit } from '../../voltCustomize/browser/voltFeatureModules.js';
 
 /** The settings editor's blocks, plus the dropdown, text field and hint this page uses. */
 export interface IGitPageKit extends ISettingsPageKit {

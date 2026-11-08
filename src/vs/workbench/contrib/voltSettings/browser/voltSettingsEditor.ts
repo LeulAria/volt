@@ -59,7 +59,6 @@ import { renderProjectsSection, renderStorageSection } from '../../voltSetup/bro
 import { clampWorktreeMaxCount, clampWorktreeMaxSizeGB, WORKTREE_MAX_COUNT_SETTING, WORKTREE_MAX_SIZE_GB_SETTING } from '../../voltSetup/common/worktreeLimits.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { AppearancePage, ISettingsPageKit } from './appearancePage.js';
-import { CodeIntelligencePage } from './codeIntelligencePage.js';
 import { GitPage } from './gitPage.js';
 import { CustomizeVoltPage } from './customizeVoltPage.js';
 import { CanvasScratchPage } from './canvasScratchPage.js';
@@ -775,7 +774,7 @@ export class VoltSettingsEditor extends EditorPane {
 				this.renderTab();
 				break;
 			case 'codeIntelligence':
-				this.renderCodeIntelligence();
+				pending = this.renderModulePage(this.section);
 				break;
 			case 'canvas':
 				this.renderCanvasScratch();
@@ -1436,19 +1435,31 @@ export class VoltSettingsEditor extends EditorPane {
 		pill.textContent = label;
 	}
 
-	/** Instant grep's code index and the language servers agents use (codeIntelligencePage.ts). */
-	private renderCodeIntelligence(): void {
-		this.instantiationService.createInstance(CodeIntelligencePage, {
-			store: this.renderStore,
-			pageHead: (title, lead) => void this.pageHead(title, lead),
-			sectionLabel: label => this.sectionLabel(label),
-			settingsGroup: () => this.settingsGroup(),
-			settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
-			toggle: (parent, on, label, onClick) => void this.switch(parent, on, label, onClick),
-			stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
-			rerender: () => this.renderContent(),
-			isCurrent: () => this.section === 'codeIntelligence',
-		}).render();
+	/**
+	 * A page a feature module draws with the editor's rows (Code Intelligence: instant grep's code
+	 * index and the language servers agents use, contrib/voltCodeIntelligence). Its module loads on
+	 * the first visit if it hasn't yet.
+	 */
+	private renderModulePage(section: SettingsSection): Promise<void> {
+		const generation = this.renderGeneration;
+		const store = this.renderStore;
+		return this.modules.part('settingsKitPage', section).then(part => {
+			if (!part || generation !== this.renderGeneration || this.section !== section || store.isDisposed) {
+				return;
+			}
+			part.render(this.instantiationService, {
+				store,
+				pageHead: (title, lead) => void this.pageHead(title, lead),
+				sectionLabel: label => this.sectionLabel(label),
+				settingsGroup: () => this.settingsGroup(),
+				settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
+				toggle: (parent, on, label, onClick) => void this.switch(parent, on, label, onClick),
+				stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
+				rerender: () => this.renderContent(),
+				isCurrent: () => this.section === section,
+			});
+			this.scheduleScrollSync();
+		});
 	}
 
 	/** Scratch and the design canvas: on/off, new boards, drawing style, history (canvasScratchPage.ts). */

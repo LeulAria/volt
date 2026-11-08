@@ -18,13 +18,12 @@ import { IWorkbenchEnvironmentService } from '../../../services/environment/comm
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { IHostService } from '../../../services/host/browser/host.js';
 import { ILifecycleService } from '../../../services/lifecycle/common/lifecycle.js';
-import { LSP_ENABLED_SETTING, LSP_MAX_LOCAL_SETTING, LSP_MAX_REMOTE_SETTING, readLspLimits } from '../../../services/voltRuntime/common/codeIntelligence.js';
-import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
-import { CodeIntelligenceHostTools } from '../browser/voltCodeIntelligence.contribution.js';
+import { LSP_ENABLED_SETTING, LSP_MAX_LOCAL_SETTING, LSP_MAX_REMOTE_SETTING, readLspLimits } from '../common/codeIntelligence.js';
+import { IAgentRuntimeService } from '../common/runtime.js';
 
+// The index lives in the main process. The host tools that serve it to agents are the
+// volt.code-intelligence module's (contrib/voltCodeIntelligence/).
 registerMainProcessRemoteService(IVoltCodeIndexService, VOLT_CODE_INDEX_CHANNEL_NAME);
-
-registerWorkbenchContribution2(CodeIntelligenceHostTools.ID, CodeIntelligenceHostTools, WorkbenchPhase.AfterRestored);
 
 /** No project stops its language servers in its first minute (startup is busy enough). */
 const STARTUP_GRACE_MS = 60_000;

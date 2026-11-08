@@ -5,6 +5,7 @@
 
 import { localize2 } from '../../../../nls.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
+import { CODE_INTELLIGENCE_FEATURE_ID } from '../../voltCodeIntelligence/common/voltCodeIntelligence.js';
 import { AGENT_USAGE_INPUT_ID, OPEN_AGENT_USAGE_COMMAND_ID, USAGE_FEATURE_ID } from '../../voltUsage/common/voltUsage.js';
 import { IVoltFeatureModuleEntry } from './voltFeatureModules.js';
 
@@ -17,6 +18,12 @@ import { IVoltFeatureModuleEntry } from './voltFeatureModules.js';
  * Keep one entry per feature, in the manifests' order; each M3 feature adds its own.
  */
 export const VOLT_FEATURE_MODULES: readonly IVoltFeatureModuleEntry[] = [
+	{
+		feature: CODE_INTELLIGENCE_FEATURE_ID,
+		load: async () => (await import('../../voltCodeIntelligence/browser/voltCodeIntelligence.module.js')).codeIntelligenceModule,
+		// Its tools serve agents, which may call them before anyone opens its page.
+		activation: 'startup',
+	},
 	{
 		feature: USAGE_FEATURE_ID,
 		load: async () => (await import('../../voltUsage/browser/voltUsage.module.js')).usageModule,

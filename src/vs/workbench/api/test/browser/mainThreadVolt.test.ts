@@ -389,6 +389,28 @@ suite('Volt extension API (vscode.volt)', () => {
 		assert.strictEqual(h.invoked.find(call => call.name === 'link_pull_request')?.call?.sessionId, 'chat-1');
 	});
 
+	test('EXT-RT-code: the code index answers under files.read:workspace, inside the project only', async () => {
+		const search = description('acme.search', { contributes: { voltCapabilities: { required: [{ id: 'files.read:workspace', class: 'low' }] } } });
+		const h = host([search, description('acme.bare')], ['acme.search', 'acme.bare']);
+		const volt = h.voltFor('acme.search');
+		assert.strictEqual(await volt.code.grep('createServer', { glob: 'src/**/*.ts', caseSensitive: true, limit: 5 }), 'ran instant_grep');
+		assert.deepStrictEqual(h.invoked.at(-1)?.args, { pattern: 'createServer', glob: 'src/**/*.ts', case_sensitive: true, head_limit: 5 }, 'the tool\'s own argument names; nothing unset');
+		assert.strictEqual(await volt.code.findSymbol('UserService', { kind: 'class', match: 'nope' as 'exact' }), 'ran find_symbol');
+		assert.deepStrictEqual(h.invoked.at(-1)?.args, { name: 'UserService', kind: 'class' }, 'an unknown match mode is dropped');
+		assert.strictEqual(await volt.code.findFiles('settings', { path: 'src/vs' }), 'ran find_files');
+		assert.deepStrictEqual(h.invoked.at(-1)?.args, { query: 'settings', path: 'src/vs' });
+		assert.strictEqual(h.invoked.at(-1)?.call?.sessionId, undefined, 'no chat: the open project');
+		const calls = h.invoked.length;
+		for (const path of ['../secrets', '/etc', 'C:\\Users', '~/.ssh', 'src/../../x']) {
+			const err = await refusal(volt.code.grep('x', { path }));
+			assert.deepStrictEqual([err.capability, err.deniedBy], ['files.read:workspace', 'workspace'], path);
+		}
+		assert.strictEqual(h.invoked.length, calls, 'a path outside the project runs nothing');
+		const bare = await refusal(h.voltFor('acme.bare').code.findFiles('x'));
+		assert.deepStrictEqual([bare.capability, bare.deniedBy], ['files.read:workspace', 'manifest']);
+		assert.strictEqual(container.querySelector('.volt-extension-consent'), null);
+	});
+
 	test('EXT-RT-usage-limits: limits come without the account, from the cached reading, under usage.report', async () => {
 		const h = host([acme(), description('acme.bare'), description('volt.usage', { builtin: true, contributes: { voltCapabilities: { required: [{ id: 'usage.report', class: 'low' }] } } })], ['acme.notes', 'acme.bare', 'volt.usage']);
 		const expected = [

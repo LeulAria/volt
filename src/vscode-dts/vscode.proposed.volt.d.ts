@@ -283,5 +283,17 @@ declare module 'vscode' {
 			/** Links a pull request to a chat. Capabilities: `hosting.read` and `agents.send`. */
 			export function link(chatId: string, url: string): Thenable<ToolResult>;
 		}
+
+		/**
+		 * Volt's code index over the open project (Code Intelligence): instant grep, symbol and file
+		 * search. Each answer is the text an agent gets. A `path` is a folder under the project root.
+		 * `outputMode` is `content` (default), `files` or `count`; `match` is `exact`, `prefix` or `fuzzy`.
+		 * Capability: `files.read:workspace`.
+		 */
+		export namespace code {
+			export function grep(pattern: string, options?: { readonly path?: string; readonly glob?: string; readonly type?: string; readonly literal?: boolean; readonly caseSensitive?: boolean; readonly outputMode?: string; readonly context?: number; readonly limit?: number }): Thenable<string>;
+			export function findSymbol(name: string, options?: { readonly match?: string; readonly kind?: string; readonly path?: string; readonly limit?: number }): Thenable<string>;
+			export function findFiles(query: string, options?: { readonly path?: string; readonly limit?: number }): Thenable<string>;
+		}
 	}
 }

@@ -361,6 +361,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 			voltModule: {
 				feature: 'codeIntelligence',
+				entry: 'voltCodeIntelligence',
 				label: 'Code intelligence',
 				description: 'Volt\'s code index: instant grep, symbol and file search for agents.',
 				category: 'workspace',
