@@ -32,6 +32,8 @@ On macOS, the end-to-end time breaks down roughly as:
 
 **After H7 (external attestation, go byte, disclaimed spawn), 2026-11-08,** same machine but busy (load average about 9, 615 processes): `workspace` end to end **41 ms** (p90 52), agent profile 58 ms (p90 69), prepare 7 ms, spawn to attested 27 ms, of which the attestation itself (four `sandbox_check` queries to the running helper) about 0.2 ms. The tree sweep now asks the running `volt-sandbox-helper` (`proc_listallpids` + `KERN_PROCARGS2`, about 6 ms) instead of spawning `ps -E`, which took 60 to 80 ms with that many processes; `ps` stays as the fallback when the helper is gone.
 
+**After H7 merged with narrow reads (H3/H4), 2026-11-08,** Apple M4 Max: `workspace` end to end **59 ms** (p90 67), prepare 10 ms, start 42 ms. The agent profile now costs **704 ms** (p90 740): narrow reads made it a deny-by-default profile with 217 deny patterns (regexes), and `sandbox-exec` spends about 830 ms of CPU compiling that 91 KB profile (`/usr/bin/true` under it alone). Not from H7: its profile text is unchanged by the merge. Future: fold the patterns into fewer regexes, or compile once per chat in the helper.
+
 Agent CLIs pay this once per process, which lives for a whole chat. Workload commands pay it per command.
 
 ## Inside a sandbox
