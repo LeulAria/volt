@@ -933,6 +933,19 @@ class AddDeviceModal {
 			append(codeBlock, $('.expiry'));
 			this.updateExpiry();
 		}
+		// A network link carries the pin of this server's own certificate (`fp=`): the phone shows
+		// the same fingerprint before pairing, for the user to compare.
+		if (code?.fingerprint && link?.includes('&fp=')) {
+			const block = append(stage, $('.hero-fingerprint'));
+			append(block, $('.hero-fingerprint-label')).textContent = localize('addDevice.fingerprint', "Certificate SHA-256");
+			const value = append(block, $('.hero-fingerprint-value'));
+			value.setAttribute('aria-label', code.fingerprint);
+			value.title = code.fingerprint;
+			const bytes = code.fingerprint.split(':');
+			for (let i = 0; i < bytes.length; i += 8) {
+				append(value, $('span')).textContent = bytes.slice(i, i + 8).join(':');
+			}
+		}
 	}
 
 	private renderSteps(view: IView): void {
