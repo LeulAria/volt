@@ -158,6 +158,7 @@ export class ExtHostVolt implements ExtHostVoltShape {
 
 		const usage: typeof vscode.volt.usage = {
 			get: () => call('usage.get'),
+			limits: () => call('usage.limits'),
 		};
 
 		const pullRequests: typeof vscode.volt.pullRequests = {
@@ -170,7 +171,17 @@ export class ExtHostVolt implements ExtHostVoltShape {
 			askAgent: options => call('gitGraph.askAgent', options),
 		};
 
-		return Object.freeze({ version: VOLT_EXTENSION_API_VERSION, tools, chats, storage, settings, memory, browser, visuals, automations, usage, pullRequests, gitGraph });
+		const code: typeof vscode.volt.code = {
+			grep: (pattern, options) => call('code.grep', pattern, options),
+			findSymbol: (name, options) => call('code.findSymbol', name, options),
+			findFiles: (query, options) => call('code.findFiles', query, options),
+		};
+
+		const agentResources: typeof vscode.volt.agentResources = {
+			list: () => call('agentResources.list'),
+		};
+
+		return Object.freeze({ version: VOLT_EXTENSION_API_VERSION, tools, chats, storage, settings, memory, browser, visuals, automations, usage, pullRequests, gitGraph, code, agentResources });
 	}
 
 	/** One pair of emitters per extension; the renderer is asked to stream while either has listeners. */

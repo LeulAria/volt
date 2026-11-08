@@ -245,10 +245,25 @@ declare module 'vscode' {
 			readonly models: readonly { readonly provider: string; readonly model: string; readonly inputTokens: number; readonly outputTokens: number; readonly costUsd: number }[];
 		}
 
-		/** Token use and cost across providers. */
+		/** A subscription's limits as last read. Which account it is stays in Volt. */
+		export interface UsageLimit {
+			readonly provider: string;
+			/** Subscription name, e.g. "Max 5x". */
+			readonly plan?: string;
+			/** Its windows (a session, a week): how much is used, 0-100, and when it resets (epoch ms). */
+			readonly windows: readonly { readonly label: string; readonly usedPercent: number; readonly resetsAt?: number }[];
+			/** Why the windows could not be read. */
+			readonly error?: string;
+			/** Epoch ms the numbers were read. */
+			readonly checkedAt: number;
+		}
+
+		/** Token use and cost across providers, and each subscription's limits. */
 		export namespace usage {
 			/** Capability: `usage.report`. */
 			export function get(): Thenable<UsageSummary>;
+			/** Every signed-in subscription's limits (Settings > Usage). Capability: `usage.report`. */
+			export function limits(): Thenable<readonly UsageLimit[]>;
 		}
 
 		export interface PullRequestLink {
@@ -297,6 +312,40 @@ declare module 'vscode' {
 			export function open(options?: GitGraphOpenOptions): Thenable<void>;
 			/** A new side chat explains or reviews a commit (or lines), starting from git's facts. Capability: `agents.send`. */
 			export function askAgent(options: GitAskAgentOptions): Thenable<void>;
+		}
+
+		/**
+		 * Volt's code index over the open project (Code Intelligence): instant grep, symbol and file
+		 * search. Each answer is the text an agent gets. A `path` is a folder under the project root.
+		 * `outputMode` is `content` (default), `files` or `count`; `match` is `exact`, `prefix` or `fuzzy`.
+		 * Capability: `files.read:workspace`.
+		 */
+		export namespace code {
+			export function grep(pattern: string, options?: { readonly path?: string; readonly glob?: string; readonly type?: string; readonly literal?: boolean; readonly caseSensitive?: boolean; readonly outputMode?: string; readonly context?: number; readonly limit?: number }): Thenable<string>;
+			export function findSymbol(name: string, options?: { readonly match?: string; readonly kind?: string; readonly path?: string; readonly limit?: number }): Thenable<string>;
+			export function findFiles(query: string, options?: { readonly path?: string; readonly limit?: number }): Thenable<string>;
+		}
+
+		/** One agent file of the open project: an instruction file, a skill, a subagent, an MCP config... */
+		export interface AgentResource {
+			/** `instructions`, `skills`, `subagents`, `commands`, `hooks`, `integrations` or `config`. */
+			readonly group: string;
+			/** Whose format it is: `claude`, `cursor`, `codex`, `agents` (AGENTS.md), ... */
+			readonly ecosystem: string;
+			/** What it is, e.g. "Skill". */
+			readonly kind: string;
+			/** From the project root, `/`-separated. */
+			readonly path: string;
+			/** `project` (at the root, shared), `nested` (in a subfolder) or `local` (personal). */
+			readonly scope: string;
+			readonly name?: string;
+			readonly description?: string;
+		}
+
+		/** What each agent harness loads from the open project (Agent Resources). */
+		export namespace agentResources {
+			/** The project's own agent files; what lives in the home folder is not listed. Capability: `files.read:workspace`. */
+			export function list(): Thenable<readonly AgentResource[]>;
 		}
 	}
 }

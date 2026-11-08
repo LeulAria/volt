@@ -188,7 +188,11 @@ Schedules: `hourly {minute}`, `daily {time}`, `weekly {weekdays, time}`, `cron {
 ```ts
 const usage = await volt.usage.get();                                 // [usage.report]
 // { generatedAt, since, sessionCount, costUsd, models: [{ provider, model, inputTokens, outputTokens, costUsd }] }
+const limits = await volt.usage.limits();                             // [usage.report]
+// [{ provider: 'claude', plan?: 'Max 5x', windows: [{ label: 'Current session', usedPercent: 42, resetsAt?: 1767... }], error?, checkedAt }]
 ```
+
+`limits()` returns each signed-in subscription's limits as Volt last read them (the Usage page in Settings shows the same). It never names the account. To open the Usage page, run the public command `workbench.action.voltAgent.usage`.
 
 ### 3.10 `volt.pullRequests`
 
@@ -209,6 +213,25 @@ await volt.gitGraph.askAgent({ action: 'explain', path: 'src/login.ts', startLin
 - `open` opens the Git Graph tab (beside the chat in front, in the agent layout) or brings it forward, then searches or reveals. Queries use the graph's syntax: `author:`, `path:`, `lines:12-40:src/a.ts`, or text.
 - `askAgent` opens a side chat and sends it a prompt built from git's facts (subject, files, stats): `explain` or `review` a commit or lines, or `ask` your `question` about them. The SHA must be hex.
 - Both reject while the user has turned the Git Graph off (its `volt.git-graph` extension is disabled). The first call loads the feature; nothing of it runs before.
+
+### 3.12 `volt.code`
+
+```ts
+const hits = await volt.code.grep('createServer', { glob: 'src/**/*.ts', limit: 20 }); // [files.read:workspace]
+const defs = await volt.code.findSymbol('UserService', { kind: 'class' });             // [files.read:workspace]
+const files = await volt.code.findFiles('settings editor');                             // [files.read:workspace]
+```
+
+Volt's code index over the open project, from the Code Intelligence feature (`volt.code-intelligence`): the same `instant_grep`, `find_symbol` and `find_files` agents use, answered as the text an agent gets. A `path` option is a folder under the project root; an absolute path or one with `..` is refused (`deniedBy: 'workspace'`). With Code Intelligence turned off, or in a browser window, the calls fail with an error.
+
+### 3.13 `volt.agentResources`
+
+```ts
+const files = await volt.agentResources.list();                       // [files.read:workspace]
+// [{ group: 'skills', ecosystem: 'claude', kind, path: '.claude/skills/deploy/SKILL.md', scope: 'project' | 'nested' | 'local', name?, description? }]
+```
+
+What each agent harness loads from the open project (instructions, skills, subagents, commands, hooks, MCP configs), as the Agent Resources page shows it. Only the project's own files: what lives in the home folder, in plugin folders or under an organization's management is not listed. To open the page, run the public command `volt.agent.openAgentResources` (args: a section id such as `skills`, and a folder).
 
 ## 4. Developing and testing
 

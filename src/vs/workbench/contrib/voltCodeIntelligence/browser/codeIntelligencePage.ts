@@ -5,7 +5,7 @@
 
 import './media/codeIntelligence.css';
 import { $, append, clearNode } from '../../../../base/browser/dom.js';
-import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
+import { toDisposable } from '../../../../base/common/lifecycle.js';
 import { basename } from '../../../../base/common/path.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { localize } from '../../../../nls.js';
@@ -17,20 +17,7 @@ import { userExec } from '../../../services/voltRuntime/common/execContext.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, clampLspWorkspaces, FFF_MODE_SETTING, readFffSettings, RETRIEVAL_ENABLED_SETTING, LSP_ENABLED_SETTING, LSP_MAX_LOCAL_SETTING, LSP_MAX_REMOTE_SETTING, LSP_WORKTREES_SETTING, readCodeIndexOptions, RTK_ENABLED_SETTING } from '../../../services/voltRuntime/common/codeIntelligence.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
-
-/** The settings editor's building blocks, so this page looks like every other one. */
-export interface ISettingsPageKit {
-	readonly store: DisposableStore;
-	pageHead(title: string, lead?: string): void;
-	sectionLabel(label: string): void;
-	settingsGroup(): HTMLElement;
-	settingRow(parent: HTMLElement, title: string, desc: string | undefined, renderControl?: (host: HTMLElement) => void): HTMLElement;
-	toggle(parent: HTMLElement, on: boolean, label: string, onClick: () => void): void;
-	stepper(parent: HTMLElement, valueText: string, unit: string, onCommit: (next: number) => number, step: number): void;
-	/** Re-renders the page (after a setting changed). */
-	rerender(): void;
-	isCurrent(): boolean;
-}
+import { IVoltSettingsPageKit as ISettingsPageKit } from '../../voltCustomize/browser/voltFeatureModules.js';
 
 const POLL_BUSY_MS = 1_000;
 const POLL_IDLE_MS = 5_000;

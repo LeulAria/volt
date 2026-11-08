@@ -33,7 +33,7 @@ import { IEditorService } from '../../../../services/editor/common/editorService
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
 import { getLayoutMode, onDidChangeLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js';
-import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
+import { AGENT_USAGE_INPUT_ID } from '../../../voltUsage/common/voltUsage.js';
 import { AgentEditor } from '../editor/agentEditor.js';
 import { AgentEditorInput, TOGGLE_AGENT_DRAWER_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { AgentHistoryDrawer } from '../history/agentHistoryDrawer.js';
@@ -742,5 +742,5 @@ export class AgentSidePanel extends ViewPane {
 }
 
 function isSidebarEditor(editor: EditorInput): boolean {
-	return editor instanceof AgentEditorInput || editor instanceof AgentCustomizeEditorInput || editor instanceof AgentUsageEditorInput;
+	return editor instanceof AgentEditorInput || editor instanceof AgentCustomizeEditorInput || editor.typeId === AGENT_USAGE_INPUT_ID;
 }

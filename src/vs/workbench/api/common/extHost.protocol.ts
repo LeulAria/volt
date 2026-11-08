@@ -2778,9 +2778,11 @@ export type VoltApiMethod =
 	| 'browser.open' | 'browser.readPage'
 	| 'visuals.renderChart' | 'visuals.drawOnScratch'
 	| 'automations.list' | 'automations.schedule'
-	| 'usage.get'
+	| 'usage.get' | 'usage.limits'
 	| 'pullRequests.list' | 'pullRequests.link'
-	| 'gitGraph.open' | 'gitGraph.askAgent';
+	| 'gitGraph.open' | 'gitGraph.askAgent'
+	| 'code.grep' | 'code.findSymbol' | 'code.findFiles'
+	| 'agentResources.list';
 
 export interface IVoltToolResultDto {
 	readonly text?: string;

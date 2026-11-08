@@ -3,13 +3,13 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, append, getWindow } from '../../../../../base/browser/dom.js';
-import { Disposable, toDisposable } from '../../../../../base/common/lifecycle.js';
-import { VoltUsageProvider } from '../../../../../platform/voltUsage/common/voltUsage.js';
-import { voltCharts, voltChartStrings } from '../visuals/agentVisuals.js';
-import type { IVoltChartsHandle } from '../visuals/voltChartsRuntime.js';
+import { $, append, getWindow } from '../../../../base/browser/dom.js';
+import { Disposable, toDisposable } from '../../../../base/common/lifecycle.js';
+import { VoltUsageProvider } from '../../../../platform/voltUsage/common/voltUsage.js';
+import { voltCharts, voltChartStrings } from '../../voltAgent/browser/visuals/agentVisuals.js';
+import type { IVoltChartsHandle } from '../../voltAgent/browser/visuals/voltChartsRuntime.js';
 import { usageChartSpec } from './agentUsageInsights.js';
-import { IUsageSummary, UsageMetric } from './agentUsageModel.js';
+import { IUsageSummary, UsageMetric } from '../../voltAgent/browser/usage/agentUsageModel.js';
 
 /** Plot height of the main chart; the agents list sits beside it. */
 const CHART_HEIGHT = 280;

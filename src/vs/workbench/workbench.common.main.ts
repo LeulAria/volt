@@ -199,15 +199,16 @@ import './services/voltRuntime/browser/queryCache.js';
 import './contrib/voltSettings/browser/voltSettings.contribution.js';
 // Security page: sandboxed processes, the sandbox supervisor's flag
 import './contrib/voltSecurity/browser/voltSecurity.contribution.js';
-import './contrib/voltCodeIntelligence/browser/voltCodeIntelligence.contribution.js';
+// The code index service and its settings (the feature's own parts: contrib/voltCodeIntelligence, a module)
+import './services/voltRuntime/browser/codeIntelligence.contribution.js';
 
 // New Agent editor
 import './contrib/voltAgent/browser/editor/agentEditor.contribution.js';
 import './contrib/voltAgent/browser/history/agentHistory.contribution.js';
 import './contrib/voltAgent/browser/search/agentChatSearch.contribution.js';
 import './contrib/voltAgent/browser/customize/agentCustomize.contribution.js';
-// Agent Resources: instructions, skills, agents, MCP, hooks and the harness, by scope
-import './contrib/voltAgent/browser/resources/agentResources.contribution.js';
+// Agent Resources: the scan service the files sidebar and Customize share (its page is a module: contrib/voltAgentResources)
+import './contrib/voltAgent/browser/resources/agentResourcesService.js';
 import './contrib/voltAgent/browser/home/agentThreadLifecycle.contribution.js';
 // Per-project tokens, cost and agent time, for Project Settings
 import './contrib/voltAgent/browser/usage/agentProjectUsage.js';

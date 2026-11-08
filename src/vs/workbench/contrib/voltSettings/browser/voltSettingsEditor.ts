@@ -59,7 +59,6 @@ import { renderProjectsSection, renderStorageSection } from '../../voltSetup/bro
 import { clampWorktreeMaxCount, clampWorktreeMaxSizeGB, WORKTREE_MAX_COUNT_SETTING, WORKTREE_MAX_SIZE_GB_SETTING } from '../../voltSetup/common/worktreeLimits.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { AppearancePage, ISettingsPageKit } from './appearancePage.js';
-import { CodeIntelligencePage } from './codeIntelligencePage.js';
 import { GitPage } from './gitPage.js';
 import { CustomizeVoltPage } from './customizeVoltPage.js';
 import { CanvasScratchPage } from './canvasScratchPage.js';
@@ -69,7 +68,8 @@ import { DevicesPage } from './devicesPage.js';
 import { SandboxWorkloadsSection } from '../../voltSecurity/browser/sandboxWorkloadsSection.js';
 import type { VoltConnectionKind } from './addDeviceModal.js';
 import { createSettingsIcon } from './settingsIcons.js';
-import { AgentUsagePage } from '../../voltAgent/browser/usage/agentUsagePage.js';
+import { USAGE_FEATURE_ID, USAGE_SECTION_ID } from '../../voltUsage/common/voltUsage.js';
+import { IVoltFeatureModuleService, IVoltFeatureSettingsPage } from '../../voltCustomize/browser/voltFeatureModules.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { createAccessIcon } from '../../voltAgent/browser/chrome/accessIcons.js';
 import { createVoltDropdown, IVoltDropdownOption } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
@@ -219,8 +219,8 @@ export class VoltSettingsEditor extends EditorPane {
 	private appearance!: AppearancePage;
 	private connectedAgents!: ConnectedAgentsPage;
 	private devices!: DevicesPage;
-	/** Made on first visit and kept, so its data and range survive leaving the page. */
-	private usage: AgentUsagePage | undefined;
+	/** Made on first visit and kept, so its data and range survive leaving the page; dropped when its module unloads. */
+	private readonly usage = this._register(new MutableDisposable<IVoltFeatureSettingsPage>());
 	/**
 	 * Skills & Plugins: the agent's Customize page, hosted in place of the settings pages so the
 	 * nav stays. Made on first visit and kept, like Usage.
@@ -272,9 +272,16 @@ export class VoltSettingsEditor extends EditorPane {
 		@IPreferencesService private readonly preferencesService: IPreferencesService,
 		@ILogService private readonly logService: ILogService,
 		@IVoltFeatureService private readonly features: IVoltFeatureService,
+		@IVoltFeatureModuleService private readonly modules: IVoltFeatureModuleService,
 	) {
 		super(VoltSettingsEditor.ID, group, telemetryService, themeService, storageService);
 		this.voltPages = this.voltPageLinks();
+		// A module that unloads takes its page with it; one loaded again draws a fresh one.
+		this._register(this.modules.onDidChange(feature => {
+			if (feature === USAGE_FEATURE_ID && !this.modules.isActive(feature)) {
+				this.usage.clear();
+			}
+		}));
 		// A feature turned on or off adds or takes away its pages; a page on screen that went away
 		// gives way to General.
 		this._register(this.features.onDidChange(() => {
@@ -484,7 +491,7 @@ export class VoltSettingsEditor extends EditorPane {
 			this.layoutService.mainContainer.classList.add('volt-settings-open');
 			this.layoutService.mainContainer.appendChild(this.container);
 			this.syncSidebarWidth();
-			this.usage?.setVisible(this.section === 'usage');
+			this.usage.value?.setVisible(this.section === 'usage');
 			if (this.section === 'customize') {
 				this.showCustomize();
 			} else if (this.section === 'automations') {
@@ -493,7 +500,7 @@ export class VoltSettingsEditor extends EditorPane {
 			this.scheduleScrollSync();
 			return;
 		}
-		this.usage?.setVisible(false);
+		this.usage.value?.setVisible(false);
 		this.customizePane?.setVisible(false);
 		this.automationsPane?.setVisible(false);
 		this.container.classList.remove('volt-settings-overlay');
@@ -713,7 +720,7 @@ export class VoltSettingsEditor extends EditorPane {
 		const generation = this.renderGeneration;
 		let pending: Promise<unknown> | undefined;
 		if (this.section !== 'usage') {
-			this.usage?.setVisible(false);
+			this.usage.value?.setVisible(false);
 		}
 		// Skills & Plugins has its own search, header and scrolling: it takes the page area itself.
 		this.container.classList.toggle('volt-settings-customize-open', this.section === 'customize');
@@ -747,7 +754,7 @@ export class VoltSettingsEditor extends EditorPane {
 				this.renderGeneral();
 				break;
 			case 'usage':
-				this.renderUsage();
+				pending = this.renderUsage();
 				break;
 			case 'appearance':
 				pending = this.renderAppearance();
@@ -768,7 +775,7 @@ export class VoltSettingsEditor extends EditorPane {
 				this.renderTab();
 				break;
 			case 'codeIntelligence':
-				this.renderCodeIntelligence();
+				pending = this.renderModulePage(this.section);
 				break;
 			case 'canvas':
 				this.renderCanvasScratch();
@@ -853,15 +860,32 @@ export class VoltSettingsEditor extends EditorPane {
 		});
 	}
 
-	private renderUsage(): void {
+	private renderUsage(): Promise<void> | undefined {
 		this.pageHead(
 			localize('voltSettings.usage', "Usage"),
 			localize('voltSettings.usageLead', "What your agents cost at API prices, the tokens they used, and how much of each plan's limits is left."),
 		);
-		// The model dialog centers over the whole settings overlay, not the tall scrolled page.
-		this.usage ??= this._register(this.instantiationService.createInstance(AgentUsagePage, () => this.container));
-		this.target.appendChild(this.usage.element);
-		this.usage.setVisible(this.isVisible());
+		const show = (page: IVoltFeatureSettingsPage) => {
+			this.target.appendChild(page.element);
+			page.setVisible(this.isVisible());
+		};
+		if (this.usage.value) {
+			show(this.usage.value);
+			return undefined;
+		}
+		// The page is the Usage feature's (contrib/voltUsage), loaded on the first visit. The model
+		// dialog centers over the whole settings overlay, not the tall scrolled page.
+		const generation = this.renderGeneration;
+		return this.modules.part('settingsPage', USAGE_SECTION_ID).then(part => {
+			if (!part || this._store.isDisposed) {
+				return;
+			}
+			this.usage.value ??= part.create(this.instantiationService, () => this.container);
+			if (generation === this.renderGeneration && this.section === 'usage') {
+				show(this.usage.value);
+				this.scheduleScrollSync();
+			}
+		});
 	}
 
 	/** Shows the hosted Customize page, making it on first visit. */
@@ -1412,19 +1436,31 @@ export class VoltSettingsEditor extends EditorPane {
 		pill.textContent = label;
 	}
 
-	/** Instant grep's code index and the language servers agents use (codeIntelligencePage.ts). */
-	private renderCodeIntelligence(): void {
-		this.instantiationService.createInstance(CodeIntelligencePage, {
-			store: this.renderStore,
-			pageHead: (title, lead) => void this.pageHead(title, lead),
-			sectionLabel: label => this.sectionLabel(label),
-			settingsGroup: () => this.settingsGroup(),
-			settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
-			toggle: (parent, on, label, onClick) => void this.switch(parent, on, label, onClick),
-			stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
-			rerender: () => this.renderContent(),
-			isCurrent: () => this.section === 'codeIntelligence',
-		}).render();
+	/**
+	 * A page a feature module draws with the editor's rows (Code Intelligence: instant grep's code
+	 * index and the language servers agents use, contrib/voltCodeIntelligence). Its module loads on
+	 * the first visit if it hasn't yet.
+	 */
+	private renderModulePage(section: SettingsSection): Promise<void> {
+		const generation = this.renderGeneration;
+		const store = this.renderStore;
+		return this.modules.part('settingsKitPage', section).then(part => {
+			if (!part || generation !== this.renderGeneration || this.section !== section || store.isDisposed) {
+				return;
+			}
+			part.render(this.instantiationService, {
+				store,
+				pageHead: (title, lead) => void this.pageHead(title, lead),
+				sectionLabel: label => this.sectionLabel(label),
+				settingsGroup: () => this.settingsGroup(),
+				settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
+				toggle: (parent, on, label, onClick) => void this.switch(parent, on, label, onClick),
+				stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
+				rerender: () => this.renderContent(),
+				isCurrent: () => this.section === section,
+			});
+			this.scheduleScrollSync();
+		});
 	}
 
 	/** Scratch and the design canvas: on/off, new boards, drawing style, history (canvasScratchPage.ts). */

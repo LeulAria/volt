@@ -3,12 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, append } from '../../../../../base/browser/dom.js';
-import { safeIntl } from '../../../../../base/common/date.js';
-import { localize } from '../../../../../nls.js';
-import { IVoltUsageSnapshot } from '../../../../../platform/voltUsage/common/voltUsage.js';
-import { setAgentTooltip } from '../chrome/agentTooltip.js';
-import { formatCost, formatTokens } from './agentUsageFormat.js';
+import { $, append } from '../../../../base/browser/dom.js';
+import { safeIntl } from '../../../../base/common/date.js';
+import { localize } from '../../../../nls.js';
+import { IVoltUsageSnapshot } from '../../../../platform/voltUsage/common/voltUsage.js';
+import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
+import { formatCost, formatTokens } from '../../voltAgent/browser/usage/agentUsageFormat.js';
 
 export interface IUsageCalendarDay {
 	/** Local midnight. */

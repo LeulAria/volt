@@ -6,12 +6,17 @@
 import { Codicon } from '../../../../base/common/codicons.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { isWeb } from '../../../../base/common/platform.js';
-import { localize2 } from '../../../../nls.js';
+import { localize, localize2 } from '../../../../nls.js';
+import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
 import { MenuId } from '../../../../platform/actions/common/actions.js';
 import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
-import { GIT_GRAPH_ASK_AGENT_COMMAND_ID, GIT_GRAPH_EXPLAIN_COMMIT_COMMAND_ID, GIT_GRAPH_EXPLAIN_LINES_COMMAND_ID, GIT_GRAPH_FEATURE_ID, GIT_GRAPH_FILE_HISTORY_COMMAND_ID, GIT_GRAPH_INPUT_TYPE_ID, GIT_GRAPH_LINE_HISTORY_COMMAND_ID, GIT_GRAPH_REVEAL_COMMIT_COMMAND_ID, GIT_GRAPH_REVIEW_COMMIT_COMMAND_ID, InGitGraphContext, OPEN_GIT_GRAPH_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID } from '../../voltGitGraph/common/voltGitGraph.js';
+import { AGENT_RESOURCES_SECTIONS } from '../../voltAgent/browser/resources/agentResourcesPage.js';
+import { AGENT_RESOURCES_FEATURE_ID, AGENT_RESOURCES_INPUT_ID, OPEN_AGENT_RESOURCES_COMMAND_ID } from '../../voltAgentResources/common/voltAgentResources.js';
+import { CODE_INTELLIGENCE_FEATURE_ID } from '../../voltCodeIntelligence/common/voltCodeIntelligence.js';
 import { COMMIT_PLAN_TOOLS, COMMIT_REVIEW_FEATURE_ID } from '../../voltCommitReview/common/voltCommitReview.js';
+import { GIT_GRAPH_ASK_AGENT_COMMAND_ID, GIT_GRAPH_EXPLAIN_COMMIT_COMMAND_ID, GIT_GRAPH_EXPLAIN_LINES_COMMAND_ID, GIT_GRAPH_FEATURE_ID, GIT_GRAPH_FILE_HISTORY_COMMAND_ID, GIT_GRAPH_INPUT_TYPE_ID, GIT_GRAPH_LINE_HISTORY_COMMAND_ID, GIT_GRAPH_REVEAL_COMMIT_COMMAND_ID, GIT_GRAPH_REVIEW_COMMIT_COMMAND_ID, InGitGraphContext, OPEN_GIT_GRAPH_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID } from '../../voltGitGraph/common/voltGitGraph.js';
+import { AGENT_USAGE_INPUT_ID, OPEN_AGENT_USAGE_COMMAND_ID, USAGE_FEATURE_ID } from '../../voltUsage/common/voltUsage.js';
 import { IVoltFeatureModuleEntry } from './voltFeatureModules.js';
 
 /**
@@ -112,6 +117,33 @@ const COMMIT_REVIEW_MODULE: IVoltFeatureModuleEntry = {
 };
 
 export const VOLT_FEATURE_MODULES: readonly IVoltFeatureModuleEntry[] = [
-	GIT_GRAPH_MODULE,
+	{
+		feature: AGENT_RESOURCES_FEATURE_ID,
+		load: async () => (await import('../../voltAgentResources/browser/voltAgentResources.module.js')).agentResourcesModule,
+		commands: [
+			{ id: OPEN_AGENT_RESOURCES_COMMAND_ID, title: localize2('agentResources.open', "Open Agent Resources"), category: Categories.View, f1: true, visibility: 'public' },
+			// Shortcuts into each section.
+			...AGENT_RESOURCES_SECTIONS.filter(section => section.id !== 'overview').map(section => ({
+				id: `${OPEN_AGENT_RESOURCES_COMMAND_ID}.${section.id}`,
+				title: { value: localize('agentResources.openSection', "Agent Resources: {0}", section.label), original: `Agent Resources: ${section.label}` },
+				f1: true,
+				visibility: 'public' as const,
+			})),
+		],
+		editors: [AGENT_RESOURCES_INPUT_ID],
+	},
+	{
+		feature: CODE_INTELLIGENCE_FEATURE_ID,
+		load: async () => (await import('../../voltCodeIntelligence/browser/voltCodeIntelligence.module.js')).codeIntelligenceModule,
+		// Its tools serve agents, which may call them before anyone opens its page.
+		activation: 'startup',
+	},
 	COMMIT_REVIEW_MODULE,
+	GIT_GRAPH_MODULE,
+	{
+		feature: USAGE_FEATURE_ID,
+		load: async () => (await import('../../voltUsage/browser/voltUsage.module.js')).usageModule,
+		commands: [{ id: OPEN_AGENT_USAGE_COMMAND_ID, title: localize2('voltAgent.usage', "Show Agent Usage and Limits"), category: Categories.View, f1: true, visibility: 'public' }],
+		editors: [AGENT_USAGE_INPUT_ID],
+	},
 ];

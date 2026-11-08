@@ -3,32 +3,28 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, append, Dimension, getWindow } from '../../../../../base/browser/dom.js';
-import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
-import { CancellationToken } from '../../../../../base/common/cancellation.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { toDisposable } from '../../../../../base/common/lifecycle.js';
-import { Schemas } from '../../../../../base/common/network.js';
-import { ThemeIcon } from '../../../../../base/common/themables.js';
-import { URI } from '../../../../../base/common/uri.js';
-import { localize } from '../../../../../nls.js';
-import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
-import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { IStorageService } from '../../../../../platform/storage/common/storage.js';
-import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
-import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.js';
-import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
-import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
-import { IEditorOpenContext, IEditorSerializer, IUntypedEditorInput } from '../../../../common/editor.js';
-import { EditorInput } from '../../../../common/editor/editorInput.js';
-import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
-import { createAgentScrollable } from '../editor/agentScrollable.js';
+import { $, append, Dimension, getWindow } from '../../../../base/browser/dom.js';
+import { DomScrollableElement } from '../../../../base/browser/ui/scrollbar/scrollableElement.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { toDisposable } from '../../../../base/common/lifecycle.js';
+import { Schemas } from '../../../../base/common/network.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
+import { URI } from '../../../../base/common/uri.js';
+import { localize } from '../../../../nls.js';
+import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { IStorageService } from '../../../../platform/storage/common/storage.js';
+import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
+import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
+import { IThemeService } from '../../../../platform/theme/common/themeService.js';
+import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
+import { IEditorOpenContext, IEditorSerializer, IUntypedEditorInput } from '../../../common/editor.js';
+import { EditorInput } from '../../../common/editor/editorInput.js';
+import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
+import { createAgentScrollable } from '../../voltAgent/browser/editor/agentScrollable.js';
+import { AGENT_USAGE_EDITOR_ID, AGENT_USAGE_INPUT_ID } from '../common/voltUsage.js';
 import { AgentUsagePage } from './agentUsagePage.js';
-
-export const AGENT_USAGE_EDITOR_ID = 'workbench.editor.voltUsage';
-export const AGENT_USAGE_INPUT_ID = 'workbench.input.voltUsage';
-/** Opens Volt Settings on its Usage page (agentHistory.contribution.ts). */
-export const OPEN_AGENT_USAGE_COMMAND_ID = 'workbench.action.voltAgent.usage';
 
 const UsageTabIcon = registerIcon('volt-usage-editor-label-icon', Codicon.graph, localize('voltUsageIcon', 'Icon of the agent Usage tab.'));
 

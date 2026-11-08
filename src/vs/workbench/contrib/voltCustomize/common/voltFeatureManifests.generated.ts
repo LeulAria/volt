@@ -38,6 +38,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 			voltModule: {
 				feature: 'agentResources',
+				entry: 'voltAgentResources',
 				label: 'Agent Resources',
 				description: 'What each harness loads (instructions, skills, agents, MCP) and in what order, in the files sidebar and its own page.',
 				category: 'resources',
@@ -361,6 +362,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 			voltModule: {
 				feature: 'codeIntelligence',
+				entry: 'voltCodeIntelligence',
 				label: 'Code intelligence',
 				description: 'Volt\'s code index: instant grep, symbol and file search for agents.',
 				category: 'workspace',
@@ -1668,6 +1670,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 			voltModule: {
 				feature: 'usage',
+				entry: 'voltUsage',
 				label: 'Usage',
 				description: 'Usage limits and runway for every account, the Usage page and button, and its side toolbar section.',
 				category: 'productivity',

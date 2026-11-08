@@ -28,7 +28,7 @@ import { IVoltPluginContext, IVoltPluginService } from '../../../services/voltPl
 import { IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
 import { IVoltFeatureService, voltFeature } from '../common/voltFeatures.js';
 import { VOLT_FEATURE_MANIFESTS } from '../common/voltFeatureManifests.generated.js';
-import { IVoltFeatureModule, IVoltFeatureModuleEntry, IVoltFeatureModuleHost, IVoltFeatureModuleService } from './voltFeatureModules.js';
+import { IVoltFeatureModule, IVoltFeatureModuleEntry, IVoltFeatureModuleHost, IVoltFeatureModulePartTypes, IVoltFeatureModuleService, VOLT_FEATURE_MODULE_PART_POINTS, VoltFeatureModulePartKind } from './voltFeatureModules.js';
 
 /** The serializers loaded modules gave for their editors, by editor type id. */
 const moduleSerializers = new Map<string, IEditorSerializer>();
@@ -36,6 +36,26 @@ const moduleSerializers = new Map<string, IEditorSerializer>();
 interface IActiveModule {
 	readonly module: IVoltFeatureModule;
 	readonly store: DisposableStore;
+	/** The parts it registered, by `kind:id`. */
+	readonly parts: Map<string, unknown>;
+}
+
+/** The feature each part belongs to, from the manifests compiled into Volt, by `kind:id`. */
+function partOwners(entries: Iterable<IVoltFeatureModuleEntry>): Map<string, string> {
+	const owners = new Map<string, string>();
+	const features = new Set([...entries].map(entry => entry.feature));
+	for (const manifest of VOLT_FEATURE_MANIFESTS) {
+		const feature = manifest.contributes?.voltModule?.feature;
+		if (!feature || !features.has(feature)) {
+			continue;
+		}
+		for (const [kind, point] of Object.entries(VOLT_FEATURE_MODULE_PART_POINTS)) {
+			for (const contribution of manifest.contributes?.[point] ?? []) {
+				owners.set(`${kind}:${contribution.id}`, feature);
+			}
+		}
+	}
+	return owners;
 }
 
 /**
@@ -54,6 +74,9 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 	private readonly active = new Map<string, IActiveModule>();
 	private readonly loading = new Map<string, Promise<IVoltFeatureModule | undefined>>();
 	private readonly stubs = this._register(new DisposableMap<string>());
+	private readonly owners: Map<string, string>;
+	private started = false;
+	private readonly failed = new Set<string>();
 
 	constructor(
 		entries: readonly IVoltFeatureModuleEntry[],
@@ -70,6 +93,7 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 				this.entries.set(entry.feature, entry);
 			}
 		}
+		this.owners = partOwners(this.entries.values());
 		this.update();
 		this._register(features.onDidChange(() => this.update()));
 		this._register(toDisposable(() => {
@@ -85,6 +109,11 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 
 	getActive<T extends IVoltFeatureModule = IVoltFeatureModule>(feature: string): T | undefined {
 		return this.active.get(feature)?.module as T | undefined;
+	}
+
+	startupFinished(): void {
+		this.started = true;
+		this.update();
 	}
 
 	async activate<T extends IVoltFeatureModule = IVoltFeatureModule>(feature: string): Promise<T | undefined> {
@@ -104,6 +133,20 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 		return await loading as T | undefined;
 	}
 
+	partOwner(kind: VoltFeatureModulePartKind, id: string): string | undefined {
+		const feature = this.owners.get(`${kind}:${id}`);
+		return feature && this.features.isEnabled(feature) ? feature : undefined;
+	}
+
+	async part<K extends VoltFeatureModulePartKind>(kind: K, id: string): Promise<IVoltFeatureModulePartTypes[K] | undefined> {
+		const feature = this.partOwner(kind, id);
+		if (!feature) {
+			return undefined;
+		}
+		await this.activate(feature);
+		return this.active.get(feature)?.parts.get(`${kind}:${id}`) as IVoltFeatureModulePartTypes[K] | undefined;
+	}
+
 	private async load(entry: IVoltFeatureModuleEntry): Promise<IVoltFeatureModule | undefined> {
 		const context = await this.contextFor(entry.feature);
 		const module = await entry.load();
@@ -117,6 +160,7 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 		}
 		const store = new DisposableStore();
 		const serializers: string[] = [];
+		const parts = new Map<string, unknown>();
 		const host: IVoltFeatureModuleHost = {
 			plugin: context,
 			instantiationService: this.instantiationService,
@@ -128,13 +172,21 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 				moduleSerializers.set(typeId, serializer);
 				serializers.push(typeId);
 			},
+			registerPart: (kind, id, part) => {
+				const key = `${kind}:${id}`;
+				if (this.owners.get(key) !== entry.feature) {
+					throw new Error(`${entry.feature} draws ${key}, which its manifest doesn't contribute (${VOLT_FEATURE_MODULE_PART_POINTS[kind]})`);
+				}
+				parts.set(key, part);
+			},
 		};
 		store.add(toDisposable(() => {
 			for (const typeId of serializers) {
 				moduleSerializers.delete(typeId);
 			}
+			parts.clear();
 		}));
-		this.active.set(entry.feature, { module, store });
+		this.active.set(entry.feature, { module, store, parts });
 		this.stubs.deleteAndDispose(entry.feature);
 		// The extension going away (uninstalled, its manifest changed) disposes its context, and the module with it.
 		context.subscriptions.add(toDisposable(() => this.deactivate(entry.feature)));
@@ -175,15 +227,28 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 		this.update();
 	}
 
-	/** Unloads what was turned off; puts stubs in for the commands of what is on and not loaded. */
+	/**
+	 * Unloads what was turned off; puts stubs in for the commands of what is on and not loaded, and
+	 * after startup loads the `startup` modules that are on (one that failed waits for a use).
+	 */
 	private update(): void {
+		// Unloading everything on the way out: nothing is to come back.
+		if (this._store.isDisposed) {
+			return;
+		}
 		for (const entry of this.entries.values()) {
 			const on = this.features.isEnabled(entry.feature);
 			if (!on) {
+				this.failed.delete(entry.feature);
 				this.stubs.deleteAndDispose(entry.feature);
 				this.deactivate(entry.feature);
-			} else if (!this.active.has(entry.feature) && !this.stubs.has(entry.feature) && (entry.commands?.length || entry.tools?.length)) {
+				continue;
+			}
+			if (!this.active.has(entry.feature) && !this.stubs.has(entry.feature) && (entry.commands?.length || entry.tools?.length)) {
 				this.stubs.set(entry.feature, this.registerStubs(entry));
+			}
+			if (this.started && entry.activation === 'startup' && !this.active.has(entry.feature) && !this.loading.has(entry.feature) && !this.failed.has(entry.feature)) {
+				void this.activate(entry.feature).catch(() => this.failed.add(entry.feature));
 			}
 		}
 	}

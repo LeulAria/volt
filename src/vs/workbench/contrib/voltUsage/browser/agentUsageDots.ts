@@ -3,8 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, append, getWindow } from '../../../../../base/browser/dom.js';
-import { Disposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { $, append, getWindow } from '../../../../base/browser/dom.js';
+import { Disposable, toDisposable } from '../../../../base/common/lifecycle.js';
 
 /** Distance between dot centers and the size of one dot, in CSS px. */
 const PITCH = 2.3;

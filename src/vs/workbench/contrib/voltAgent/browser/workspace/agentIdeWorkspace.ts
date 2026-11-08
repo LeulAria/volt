@@ -29,7 +29,7 @@ import { IWorkspaceEditingService } from '../../../../services/workspaces/common
 import { AGENT_SIDE_PANEL_VIEW_ID, AgentEditorInput } from '../editor/agentEditorInput.js';
 import { SidebarEditorPart } from '../editor/sidebarEditorPart.js';
 import { AgentChangesEditorInput } from '../review/agentChangesEditor.js';
-import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
+import { AGENT_USAGE_INPUT_ID } from '../../../voltUsage/common/voltUsage.js';
 import { TerminalEditorInput } from '../../../terminal/browser/terminalEditorInput.js';
 import { ISCMRepository, ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
 import { findAgentPanelGroup, MAX_BACKGROUND_AGENT_PANELS } from './agentPanels.js';
@@ -207,7 +207,7 @@ class AgentIdeWorkspaceContribution extends Disposable {
 		}
 		// Usage is a page of the agent layout, not a tab: drop it before anything can return early.
 		for (const group of this.editorGroupsService.mainPart.groups) {
-			const pages = group.editors.filter(editor => editor instanceof AgentUsageEditorInput);
+			const pages = group.editors.filter(editor => editor.typeId === AGENT_USAGE_INPUT_ID);
 			if (pages.length) {
 				await group.closeEditors(pages, { preserveFocus: true });
 			}

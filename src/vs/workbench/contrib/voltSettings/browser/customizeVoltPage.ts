@@ -21,7 +21,7 @@ import { IVoltDropdownOption } from '../../voltAgent/browser/ui/dropdown/voltDro
 import { IVoltCustomizeService } from '../../voltCustomize/browser/voltCustomizeService.js';
 import { IVoltDraft, cloneDraft, listDrafts } from '../../voltCustomize/browser/voltPlayground.js';
 import { IVoltLookToken, VOLT_LOOK_TOKENS, VoltLookTokenGroup, clampVoltLookValue, voltLookSettingId } from '../../voltCustomize/common/voltLookTokens.js';
-import { ISettingsPageKit } from './codeIntelligencePage.js';
+import { IVoltSettingsPageKit as ISettingsPageKit } from '../../voltCustomize/browser/voltFeatureModules.js';
 
 export interface ICustomizeVoltPageKit extends ISettingsPageKit {
 	sectionHint(text: string): void;

@@ -3,42 +3,42 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import '../media/agentUsage.css';
-import { $, addDisposableListener, append, clearNode, EventType, getWindow } from '../../../../../base/browser/dom.js';
-import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Codicon } from '../../../../../base/common/codicons.js';
-import { ThemeIcon } from '../../../../../base/common/themables.js';
-import { fromNow } from '../../../../../base/common/date.js';
-import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
-import { localize } from '../../../../../nls.js';
-import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
-import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
-import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
-import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
-import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
-import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { IVoltAccountsService, IVoltClaudeAccount, IVoltClaudeAccountsState } from '../../../../../platform/voltAccounts/common/voltAccounts.js';
+import './media/agentUsage.css';
+import { $, addDisposableListener, append, clearNode, EventType, getWindow } from '../../../../base/browser/dom.js';
+import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
+import { fromNow } from '../../../../base/common/date.js';
+import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
+import { localize } from '../../../../nls.js';
+import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
+import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { IVoltAccountsService, IVoltClaudeAccount, IVoltClaudeAccountsState } from '../../../../platform/voltAccounts/common/voltAccounts.js';
 import {
 	IVoltUsageLimitGroup, IVoltUsageMachineStatus, IVoltUsageModelPrice, IVoltUsageService, IVoltUsageSnapshot, VOLT_USAGE_PROVIDERS, VOLT_USAGE_SHARE_MACHINE_COMMAND_ID,
 	VoltResetCreditOutcome, VoltUsageProvider
-} from '../../../../../platform/voltUsage/common/voltUsage.js';
-import { createVoltButton } from '../chrome/voltButton.js';
-import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
-import { IVoltQueryCache, IVoltQueryHandle, IVoltQueryState } from '../../../../services/voltRuntime/browser/queryCache.js';
-import { setAgentTooltip } from '../chrome/agentTooltip.js';
-import { showVoltMenu } from '../ui/menu/voltMenu.js';
-import { createVoltSegmented } from '../ui/segmented/voltSegmented.js';
+} from '../../../../platform/voltUsage/common/voltUsage.js';
+import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
+import { createBrandIcon } from '../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { IVoltQueryCache, IVoltQueryHandle, IVoltQueryState } from '../../../services/voltRuntime/browser/queryCache.js';
+import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
+import { showVoltMenu } from '../../voltAgent/browser/ui/menu/voltMenu.js';
+import { createVoltSegmented } from '../../voltAgent/browser/ui/segmented/voltSegmented.js';
 import { usageInsights } from './agentUsageInsights.js';
-import { voltCharts, voltChartStrings } from '../visuals/agentVisuals.js';
+import { voltCharts, voltChartStrings } from '../../voltAgent/browser/visuals/agentVisuals.js';
 import { DotMatrixMeter } from './agentUsageDots.js';
 import { showUsageModelDialog } from './agentUsageModelDialog.js';
 import { renderUsageCalendar, usageCalendar } from './agentUsageCalendar.js';
 import { IRunwayStyle, renderRunway, runwayHighlights } from './agentUsageRunway.js';
 import { costTypeSegments, hasFasterSpeeds, renderShareBar, speedCostSegments } from './agentUsageShareBar.js';
-import { formatCost, formatDay, formatDuration, formatResetTime, formatShare, formatSlot, formatTokens } from './agentUsageFormat.js';
-import { createRefreshSpinner, createTicketIcon, setRefreshSpinnerRunning } from './agentUsageIcons.js';
-import { IUsageModelRow, IUsageSummary, IUsageTotals, limitsQuery, metricValue, placeholderLimits, placeholderUsage, summarizeUsage, usageQuery, UsageMetric, UsageRange } from './agentUsageModel.js';
+import { formatCost, formatDay, formatDuration, formatResetTime, formatShare, formatSlot, formatTokens } from '../../voltAgent/browser/usage/agentUsageFormat.js';
+import { createRefreshSpinner, createTicketIcon, setRefreshSpinnerRunning } from '../../voltAgent/browser/usage/agentUsageIcons.js';
+import { IUsageModelRow, IUsageSummary, IUsageTotals, limitsQuery, metricValue, placeholderLimits, placeholderUsage, summarizeUsage, usageQuery, UsageMetric, UsageRange } from '../../voltAgent/browser/usage/agentUsageModel.js';
 
 const STORAGE_RANGE = 'volt.usage.range';
 const STORAGE_BREAKDOWN = 'volt.usage.breakdown';
