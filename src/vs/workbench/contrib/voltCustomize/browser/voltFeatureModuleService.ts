@@ -225,6 +225,10 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 	 * after startup loads the `startup` modules that are on (one that failed waits for a use).
 	 */
 	private update(): void {
+		// Unloading everything on the way out: nothing is to come back.
+		if (this._store.isDisposed) {
+			return;
+		}
 		for (const entry of this.entries.values()) {
 			const on = this.features.isEnabled(entry.feature);
 			if (!on) {
@@ -236,7 +240,7 @@ export class VoltFeatureModuleService extends Disposable implements IVoltFeature
 			if (!this.active.has(entry.feature) && !this.stubs.has(entry.feature) && entry.commands?.length) {
 				this.stubs.set(entry.feature, this.registerStubs(entry));
 			}
-			if (this.started && entry.activation === 'startup' && !this._store.isDisposed && !this.active.has(entry.feature) && !this.loading.has(entry.feature) && !this.failed.has(entry.feature)) {
+			if (this.started && entry.activation === 'startup' && !this.active.has(entry.feature) && !this.loading.has(entry.feature) && !this.failed.has(entry.feature)) {
 				void this.activate(entry.feature).catch(() => this.failed.add(entry.feature));
 			}
 		}

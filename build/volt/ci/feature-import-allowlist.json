@@ -1,6 +1,30 @@
 {
 	"//": "Core modules each fenced feature (contrib/<voltModule.entry>/) still imports beyond the always-allowed set in featureImportLint.mjs. A ratchet: remove entries as features move to the volt facade; never add one without review.",
 	"features": {
+		"agentResources": [
+			"src/vs/workbench/contrib/voltAgent/browser/chrome/agentNav.contribution.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/chrome/agentSidePanel.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/customize/agentMarketplaceView.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/editor/agentEditorInput.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/editor/agentScrollable.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/home/agentHomeIcons.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/media/agentCustomize.css",
+			"src/vs/workbench/contrib/voltAgent/browser/media/agentResourcesEditor.css",
+			"src/vs/workbench/contrib/voltAgent/browser/resources/agentHarnessSection.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/resources/agentResourceList.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/resources/agentResourcesPage.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/resources/agentResourcesSections.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/resources/agentResourcesService.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/workspace/agentSurfaceHost.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/workspace/agentSurfaceMenu.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/workspace/agentToolsEditorPart.ts",
+			"src/vs/workbench/contrib/voltAgent/common/agentResources.ts",
+			"src/vs/workbench/services/editor/common/editorGroupsService.ts",
+			"src/vs/workbench/services/editor/common/editorService.ts",
+			"src/vs/workbench/services/layout/browser/layoutService.ts",
+			"src/vs/workbench/services/textfile/common/textEditorService.ts",
+			"src/vs/workbench/services/views/common/viewsService.ts"
+		],
 		"codeIntelligence": [
 			"src/vs/workbench/services/lifecycle/common/lifecycle.ts",
 			"src/vs/workbench/services/search/common/search.ts",

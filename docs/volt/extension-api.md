@@ -211,6 +211,15 @@ const files = await volt.code.findFiles('settings editor');                     
 
 Volt's code index over the open project, from the Code Intelligence feature (`volt.code-intelligence`): the same `instant_grep`, `find_symbol` and `find_files` agents use, answered as the text an agent gets. A `path` option is a folder under the project root; an absolute path or one with `..` is refused (`deniedBy: 'workspace'`). With Code Intelligence turned off, or in a browser window, the calls fail with an error.
 
+### 3.12 `volt.agentResources`
+
+```ts
+const files = await volt.agentResources.list();                       // [files.read:workspace]
+// [{ group: 'skills', ecosystem: 'claude', kind, path: '.claude/skills/deploy/SKILL.md', scope: 'project' | 'nested' | 'local', name?, description? }]
+```
+
+What each agent harness loads from the open project (instructions, skills, subagents, commands, hooks, MCP configs), as the Agent Resources page shows it. Only the project's own files: what lives in the home folder, in plugin folders or under an organization's management is not listed. To open the page, run the public command `volt.agent.openAgentResources` (args: a section id such as `skills`, and a folder).
+
 ## 4. Developing and testing
 
 - Run your extension with **Run Extension** (`--extensionDevelopmentPath`) in Volt, or install its folder or `.vsix` from the Extensions view. `vscode.volt` works the same in both.

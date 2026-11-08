@@ -186,6 +186,30 @@ export interface IVoltUsageSummary {
 	readonly models: readonly IVoltUsageModelTotal[];
 }
 
+/** One agent file of the open project (an instruction file, a skill, a subagent, an MCP config...). */
+export interface IVoltAgentResource {
+	/** `instructions`, `skills`, `subagents`, `commands`, `hooks`, `integrations` or `config`. */
+	readonly group: string;
+	/** Whose format it is: `claude`, `cursor`, `codex`, `agents` (AGENTS.md), ... */
+	readonly ecosystem: string;
+	/** What it is, e.g. "Skill", "MCP config". */
+	readonly kind: string;
+	/** From the project root, `/`-separated. */
+	readonly path: string;
+	/** `project` (at the root, shared), `nested` (in a subfolder) or `local` (personal). */
+	readonly scope: string;
+	readonly name?: string;
+	readonly description?: string;
+}
+
+/**
+ * `files.read:workspace`: what each agent harness loads from the open project (the Agent Resources
+ * feature's scan). Only the project's own files: what lives in the home folder stays in Volt.
+ */
+export interface IVoltAgentResourcesApi {
+	list(): Promise<readonly IVoltAgentResource[]>;
+}
+
 /** One window of a subscription's limits (a session, a week). */
 export interface IVoltUsageLimitWindow {
 	/** The provider's own name for it, e.g. "Current session". */
@@ -339,6 +363,7 @@ export interface IVoltApi {
 	readonly usage: IVoltUsageApi;
 	readonly pullRequests: IVoltPullRequestsApi;
 	readonly code: IVoltCodeApi;
+	readonly agentResources: IVoltAgentResourcesApi;
 }
 
 /** Who a backend call is for, set by core from the principal (never from a payload). */
@@ -395,6 +420,7 @@ export interface IVoltApiBackend {
 	scheduleAutomation?(options: { readonly name: string; readonly instructions: string; readonly schedule: VoltAutomationSchedule; readonly chatId?: string; readonly enabled: boolean }, caller: IVoltApiCaller): Promise<IVoltAutomationSummary>;
 	readUsage?(): Promise<IVoltUsageSummary>;
 	readUsageLimits?(): Promise<readonly IVoltUsageLimit[]>;
+	listAgentResources?(): Promise<readonly IVoltAgentResource[]>;
 	listPullRequests?(chatId: string): Promise<readonly IVoltPullRequestLink[]>;
 }
 
@@ -739,7 +765,14 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 		},
 	};
 
-	return Object.freeze({ version: VOLT_API_VERSION, tools, storage, agents, ui, settings, commands, net, secrets, memory, browser, visuals, automations, usage, pullRequests, code });
+	const agentResources: IVoltAgentResourcesApi = {
+		list() {
+			check({ api: 'agentResources.list', capability: 'files.read:workspace' });
+			return bound(backend.listAgentResources, 'agentResources.list').call(backend);
+		},
+	};
+
+	return Object.freeze({ version: VOLT_API_VERSION, tools, storage, agents, ui, settings, commands, net, secrets, memory, browser, visuals, automations, usage, pullRequests, code, agentResources });
 }
 
 /** One extension's validated Volt contributions, as the window loaded them. */

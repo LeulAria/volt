@@ -19,6 +19,7 @@ import { Registry } from '../../../../platform/registry/common/platform.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { declarationsOutsideCeiling, firstPartyCeiling } from '../../../../platform/voltPlugins/common/firstPartyCeilings.js';
 import { IVoltUsageService } from '../../../../platform/voltUsage/common/voltUsage.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { Extensions, IExtensionFeatureMarkdownRenderer, IExtensionFeaturesManagementService, IExtensionFeaturesRegistry, IRenderedData } from '../../../services/extensionManagement/common/extensionFeatures.js';
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { capabilityClass, IVoltPluginPrincipal, IWouldBeDenial } from '../../../services/voltPlugins/common/capabilities.js';
@@ -36,6 +37,8 @@ import { IVoltSessionContextService } from '../../../services/voltRuntime/common
 import { shownAgentChat } from '../../voltAgent/browser/editor/agentShownChat.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../../voltAgent/browser/preview/browserEditorInput.js';
 import { IAgentPullRequestService } from '../../voltAgent/browser/pullRequests/agentPullRequestService.js';
+import { IAgentResourcesService } from '../../voltAgent/browser/resources/agentResourcesService.js';
+import { agentResourceScopeKind } from '../../voltAgent/common/agentResources.js';
 import { IVoltFeatureService } from '../common/voltFeatures.js';
 import { showVoltExtensionConsent, voltCapabilityCopy } from './voltExtensionConsent.js';
 
@@ -244,6 +247,24 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 				}
 				const list = [...models.values()].sort((a, b) => b.costUsd - a.costUsd);
 				return { generatedAt: snapshot.generatedAt, since: snapshot.sinceMs, sessionCount: snapshot.sessionCount, costUsd: list.reduce((sum, model) => sum + model.costUsd, 0), models: list };
+			},
+			// The open project's own agent files: home, plugin and managed ones stay in Volt.
+			listAgentResources: async () => {
+				const folder = this.get(IWorkspaceContextService).getWorkspace().folders[0]?.uri;
+				if (!folder) {
+					return [];
+				}
+				const resources = this.get(IAgentResourcesService);
+				const items = resources.get(folder) ?? await resources.load(folder);
+				return items.filter(item => agentResourceScopeKind(item.scope) === 'workspace').map(item => ({
+					group: item.group,
+					ecosystem: item.ecosystem,
+					kind: item.kind,
+					path: item.relativePath,
+					scope: item.scope,
+					...(item.name ? { name: item.name } : {}),
+					...(item.description ? { description: item.description } : {}),
+				}));
 			},
 			// Never forced, so an extension asking often is served the service's cached reading.
 			readUsageLimits: async () => (await this.get(IVoltUsageService).getLimits(false)).map(group => ({

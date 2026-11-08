@@ -285,6 +285,7 @@ export class MainThreadVolt extends Disposable implements MainThreadVoltShape {
 				case 'code.grep': return volt.code.grep(str(arg(0), 'pattern'), searchOptions(arg(1)));
 				case 'code.findSymbol': return volt.code.findSymbol(str(arg(0), 'name'), searchOptions(arg(1)));
 				case 'code.findFiles': return volt.code.findFiles(str(arg(0), 'query'), searchOptions(arg(1)));
+				case 'agentResources.list': return volt.agentResources.list();
 				default: throw new Error(`volt: unknown method ${String(method)}`);
 			}
 		});

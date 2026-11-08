@@ -2780,7 +2780,8 @@ export type VoltApiMethod =
 	| 'automations.list' | 'automations.schedule'
 	| 'usage.get' | 'usage.limits'
 	| 'pullRequests.list' | 'pullRequests.link'
-	| 'code.grep' | 'code.findSymbol' | 'code.findFiles';
+	| 'code.grep' | 'code.findSymbol' | 'code.findFiles'
+	| 'agentResources.list';
 
 export interface IVoltToolResultDto {
 	readonly text?: string;

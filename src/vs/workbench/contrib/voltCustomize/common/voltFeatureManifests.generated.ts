@@ -38,6 +38,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 			voltModule: {
 				feature: 'agentResources',
+				entry: 'voltAgentResources',
 				label: 'Agent Resources',
 				description: 'What each harness loads (instructions, skills, agents, MCP) and in what order, in the files sidebar and its own page.',
 				category: 'resources',

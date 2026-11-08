@@ -3,8 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { localize2 } from '../../../../nls.js';
+import { localize, localize2 } from '../../../../nls.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
+import { AGENT_RESOURCES_SECTIONS } from '../../voltAgent/browser/resources/agentResourcesPage.js';
+import { AGENT_RESOURCES_FEATURE_ID, AGENT_RESOURCES_INPUT_ID, OPEN_AGENT_RESOURCES_COMMAND_ID } from '../../voltAgentResources/common/voltAgentResources.js';
 import { CODE_INTELLIGENCE_FEATURE_ID } from '../../voltCodeIntelligence/common/voltCodeIntelligence.js';
 import { AGENT_USAGE_INPUT_ID, OPEN_AGENT_USAGE_COMMAND_ID, USAGE_FEATURE_ID } from '../../voltUsage/common/voltUsage.js';
 import { IVoltFeatureModuleEntry } from './voltFeatureModules.js';
@@ -18,6 +20,21 @@ import { IVoltFeatureModuleEntry } from './voltFeatureModules.js';
  * Keep one entry per feature, in the manifests' order; each M3 feature adds its own.
  */
 export const VOLT_FEATURE_MODULES: readonly IVoltFeatureModuleEntry[] = [
+	{
+		feature: AGENT_RESOURCES_FEATURE_ID,
+		load: async () => (await import('../../voltAgentResources/browser/voltAgentResources.module.js')).agentResourcesModule,
+		commands: [
+			{ id: OPEN_AGENT_RESOURCES_COMMAND_ID, title: localize2('agentResources.open', "Open Agent Resources"), category: Categories.View, f1: true, visibility: 'public' },
+			// Shortcuts into each section.
+			...AGENT_RESOURCES_SECTIONS.filter(section => section.id !== 'overview').map(section => ({
+				id: `${OPEN_AGENT_RESOURCES_COMMAND_ID}.${section.id}`,
+				title: { value: localize('agentResources.openSection', "Agent Resources: {0}", section.label), original: `Agent Resources: ${section.label}` },
+				f1: true,
+				visibility: 'public' as const,
+			})),
+		],
+		editors: [AGENT_RESOURCES_INPUT_ID],
+	},
 	{
 		feature: CODE_INTELLIGENCE_FEATURE_ID,
 		load: async () => (await import('../../voltCodeIntelligence/browser/voltCodeIntelligence.module.js')).codeIntelligenceModule,

@@ -29,6 +29,8 @@ import { setShownAgentChat } from '../../../contrib/voltAgent/browser/editor/age
 import { OPEN_BROWSER_COMMAND_ID } from '../../../contrib/voltAgent/browser/preview/browserEditorInput.js';
 import { IAgentPullRequestService } from '../../../contrib/voltAgent/browser/pullRequests/agentPullRequestService.js';
 import { IAgentPrLink } from '../../../contrib/voltAgent/common/agentPullRequests.js';
+import { IAgentResource, IAgentResourcesService } from '../../../contrib/voltAgent/browser/resources/agentResourcesService.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IVoltFeatureService } from '../../../contrib/voltCustomize/common/voltFeatures.js';
 import { isFirstPartyExtension, VoltExtensionApiService, voltCapabilityFeatureId } from '../../../contrib/voltCustomize/browser/voltExtensionApiService.js';
 import { IWorkbenchEnvironmentService } from '../../../services/environment/common/environmentService.js';
@@ -194,6 +196,24 @@ suite('Volt extension API (vscode.volt)', () => {
 		instantiation.stub(IAgentPullRequestService, new class extends mock<IAgentPullRequestService>() {
 			override links(chatId: string): readonly IAgentPrLink[] {
 				return chatId === 'chat-1' ? [{ key: 'k', repo: { host: 'github.com', owner: 'acme', name: 'app' }, number: 12, url: 'https://github.com/acme/app/pull/12', source: 'agent', linkedAt: 1, watch: {} } as unknown as IAgentPrLink] : [];
+			}
+		});
+		instantiation.stub(IWorkspaceContextService, new class extends mock<IWorkspaceContextService>() {
+			override getWorkspace() {
+				return { id: 'w', folders: [{ uri: URI.file('/repo/app'), name: 'app', index: 0 }] } as unknown as ReturnType<IWorkspaceContextService['getWorkspace']>;
+			}
+		});
+		instantiation.stub(IAgentResourcesService, new class extends mock<IAgentResourcesService>() {
+			override get(): undefined { return undefined; }
+			override async load(folder: URI): Promise<readonly IAgentResource[]> {
+				const at = (relativePath: string, scope: IAgentResource['scope'], root = folder) => ({ resource: URI.joinPath(root, relativePath), root, relativePath, scope, status: { state: 'ok' } });
+				return [
+					{ ...at('AGENTS.md', 'project'), group: 'instructions', ecosystem: 'agents', kind: 'Instructions' },
+					{ ...at('.claude/skills/deploy/SKILL.md', 'project'), group: 'skills', ecosystem: 'claude', kind: 'Skill', name: 'deploy', description: 'Ships it', skill: { files: 2, hasScripts: true } },
+					{ ...at('CLAUDE.local.md', 'local'), group: 'instructions', ecosystem: 'claude', kind: 'Instructions' },
+					{ ...at('.claude/CLAUDE.md', 'global', URI.file('/home/me')), group: 'instructions', ecosystem: 'claude', kind: 'Instructions' },
+					{ ...at('mcp.json', 'managed', URI.file('/Library/Managed')), group: 'integrations', ecosystem: 'claude', kind: 'MCP config' },
+				] as unknown as IAgentResource[];
 			}
 		});
 		instantiation.stub(IAgentOrchestratorService, new class extends mock<IAgentOrchestratorService>() {
@@ -409,6 +429,18 @@ suite('Volt extension API (vscode.volt)', () => {
 		const bare = await refusal(h.voltFor('acme.bare').code.findFiles('x'));
 		assert.deepStrictEqual([bare.capability, bare.deniedBy], ['files.read:workspace', 'manifest']);
 		assert.strictEqual(container.querySelector('.volt-extension-consent'), null);
+	});
+
+	test('EXT-RT-agentResources: the project\'s own agent files under files.read:workspace; nothing from home, plugins or management', async () => {
+		const reader = description('acme.reader', { contributes: { voltCapabilities: { required: [{ id: 'files.read:workspace', class: 'low' }] } } });
+		const h = host([reader, description('acme.bare')], ['acme.reader', 'acme.bare']);
+		assert.deepStrictEqual(await h.voltFor('acme.reader').agentResources.list(), [
+			{ group: 'instructions', ecosystem: 'agents', kind: 'Instructions', path: 'AGENTS.md', scope: 'project' },
+			{ group: 'skills', ecosystem: 'claude', kind: 'Skill', path: '.claude/skills/deploy/SKILL.md', scope: 'project', name: 'deploy', description: 'Ships it' },
+			{ group: 'instructions', ecosystem: 'claude', kind: 'Instructions', path: 'CLAUDE.local.md', scope: 'local' },
+		], 'relative paths only: no URIs, no home folder');
+		const err = await refusal(h.voltFor('acme.bare').agentResources.list());
+		assert.deepStrictEqual([err.capability, err.deniedBy], ['files.read:workspace', 'manifest']);
 	});
 
 	test('EXT-RT-usage-limits: limits come without the account, from the cached reading, under usage.report', async () => {

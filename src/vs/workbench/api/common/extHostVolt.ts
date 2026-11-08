@@ -172,7 +172,11 @@ export class ExtHostVolt implements ExtHostVoltShape {
 			findFiles: (query, options) => call('code.findFiles', query, options),
 		};
 
-		return Object.freeze({ version: VOLT_EXTENSION_API_VERSION, tools, chats, storage, settings, memory, browser, visuals, automations, usage, pullRequests, code });
+		const agentResources: typeof vscode.volt.agentResources = {
+			list: () => call('agentResources.list'),
+		};
+
+		return Object.freeze({ version: VOLT_EXTENSION_API_VERSION, tools, chats, storage, settings, memory, browser, visuals, automations, usage, pullRequests, code, agentResources });
 	}
 
 	/** One pair of emitters per extension; the renderer is asked to stream while either has listeners. */

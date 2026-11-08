@@ -295,5 +295,27 @@ declare module 'vscode' {
 			export function findSymbol(name: string, options?: { readonly match?: string; readonly kind?: string; readonly path?: string; readonly limit?: number }): Thenable<string>;
 			export function findFiles(query: string, options?: { readonly path?: string; readonly limit?: number }): Thenable<string>;
 		}
+
+		/** One agent file of the open project: an instruction file, a skill, a subagent, an MCP config... */
+		export interface AgentResource {
+			/** `instructions`, `skills`, `subagents`, `commands`, `hooks`, `integrations` or `config`. */
+			readonly group: string;
+			/** Whose format it is: `claude`, `cursor`, `codex`, `agents` (AGENTS.md), ... */
+			readonly ecosystem: string;
+			/** What it is, e.g. "Skill". */
+			readonly kind: string;
+			/** From the project root, `/`-separated. */
+			readonly path: string;
+			/** `project` (at the root, shared), `nested` (in a subfolder) or `local` (personal). */
+			readonly scope: string;
+			readonly name?: string;
+			readonly description?: string;
+		}
+
+		/** What each agent harness loads from the open project (Agent Resources). */
+		export namespace agentResources {
+			/** The project's own agent files; what lives in the home folder is not listed. Capability: `files.read:workspace`. */
+			export function list(): Thenable<readonly AgentResource[]>;
+		}
 	}
 }
