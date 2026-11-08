@@ -15,8 +15,8 @@ import { IConfigurationService } from '../../configuration/common/configuration.
 import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
 import { childEnvFromHost } from '../../voltHelpers/common/childEnv.js';
-import { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../voltGit/common/hostGit.js';
-import { buildEntryGuard } from '../../voltGit/node/buildEntryGuard.js';
+import { buildEntryPurposeOf, IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../voltGit/common/hostGit.js';
+import { BuildEntryGuard, buildEntryGuard } from '../../voltGit/node/buildEntryGuard.js';
 import { runHostGit } from '../../voltGit/node/hostGit.js';
 import type { IVoltSandboxRequest } from '../../voltSandbox/common/sandboxPolicy.js';
 import { brokerReadFile, brokerWriteFile, defaultFsdPath } from '../../voltFiles/node/sandboxFileBroker.js';
@@ -25,7 +25,7 @@ import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.j
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
 import { ChildLedger } from './childLedger.js';
 import { SandboxedPtySession } from '../../voltSandbox/node/sandboxPty.js';
-import { describeExecContext, execRefusal, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../common/voltStdio.js';
+import { describeExecContext, execRefusal, IVoltExecContext, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../common/voltStdio.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -116,7 +116,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 
 	/** {@link spawn} on behalf of one window; see {@link owners}. */
 	async spawnFor(owner: string | undefined, options: IVoltStdioSpawnOptions): Promise<string> {
-		const refusal = execRefusal(options.context, options.sandbox);
+		const refusal = execRefusal(options.context, options.sandbox) ?? await this.buildEntryRefusal(options.context, options.sandbox, options.cwd);
 		if (refusal) {
 			// Refused, never run unsandboxed (INV-03, INV-14).
 			this.logService.warn(`[volt-exec] refused spawn of ${basename(options.command)}: ${refusal.reason}`);
@@ -249,11 +249,11 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	}
 
 	async buildEntryChanges(root: string): Promise<readonly IBuildEntryChange[]> {
-		return buildEntryGuard().changes(root);
+		return this.buildEntries().changes(root);
 	}
 
 	async acceptBuildEntries(root: string, paths?: readonly string[]): Promise<void> {
-		await buildEntryGuard().accept(root, paths);
+		await this.buildEntries().accept(root, paths);
 		this.logService.info(`[volt-build-entry] the user accepted ${paths ? paths.length : 'all'} change(s) in ${root}`);
 	}
 
@@ -264,7 +264,30 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	private async snapshotBuildEntries(request: IVoltSandboxRequest): Promise<void> {
 		const roots = [...(request.level === 'workspace-write' ? request.workspaceRoots : []), ...(request.extraWritableRoots ?? [])]
 			.filter(root => !/[\\/]\.git$/.test(root));
-		await Promise.all(roots.map(root => buildEntryGuard().snapshot(root).catch(err => this.logService.warn(`[volt-build-entry] could not record ${root}`, err))));
+		await Promise.all(roots.map(root => this.buildEntries().snapshot(root).catch(err => this.logService.warn(`[volt-build-entry] could not record ${root}`, err))));
+	}
+
+	/** The build-entry guard this service records to and checks (I.6); the one every Volt process shares. */
+	protected buildEntries(): BuildEntryGuard {
+		return buildEntryGuard();
+	}
+
+	/**
+	 * I.6, enforced where the process starts: project-defined commands that run outside any sandbox
+	 * for the user (an unsandboxed chat's worktree setup) wait while files that run code changed in
+	 * their folder since a sandboxed writer worked there. The window shows the review and accepts it
+	 * first (`reviewBuildEntries`); a caller that skipped it is refused here, never run.
+	 */
+	private async buildEntryRefusal(context: IVoltExecContext, sandbox: IVoltSandboxRequest | undefined, cwd: string | undefined): Promise<IVoltExecRefusal | undefined> {
+		const purpose = buildEntryPurposeOf(context.reason, !!sandbox);
+		if (!purpose || !cwd) {
+			return undefined;
+		}
+		const changes = await this.buildEntries().unreviewed([cwd], purpose).catch(() => undefined);
+		if (changes === undefined) {
+			return { kind: 'build-entry', reason: `Volt could not check what changed in ${cwd} since a sandboxed agent worked there, so its ${context.reason} did not run.` };
+		}
+		return changes.length ? { kind: 'build-entry', reason: `${changes.length} file(s) that run code changed in ${cwd} since a sandboxed agent worked there (${changes.slice(0, 3).map(change => basename(change.path)).join(', ')}). Review them before Volt runs its ${context.reason} outside the sandbox.` } : undefined;
 	}
 
 	async sandboxSupport(): Promise<IVoltSandboxSupportInfo> {
@@ -496,7 +519,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			const message = `Not run: ${refusal.reason}`;
 			return { id: request.id, exitCode: null, stdout: '', stderr: message, combined: message, truncated: false, durationMs: Date.now() - started, timedOut: false, cancelled: false, running: false, refused: refusal };
 		};
-		const refusal = execRefusal(request.context, request.sandbox);
+		const refusal = execRefusal(request.context, request.sandbox) ?? await this.buildEntryRefusal(request.context, request.sandbox, request.cwd);
 		if (refusal) {
 			// Refused, never run unsandboxed (INV-03, INV-14).
 			this.logService.warn(`[volt-exec] refused command ${request.id}: ${refusal.reason}`);

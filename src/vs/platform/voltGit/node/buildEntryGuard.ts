@@ -9,7 +9,7 @@ import { homedir } from 'os';
 import { basename, isAbsolute, join, resolve } from '../../../base/common/path.js';
 import { BUILD_ENTRY_DIRS, BUILD_ENTRY_FILES, GIT_ENTRY_FILES } from '../../voltSandbox/common/executionBearing.js';
 import { gitConfigHooksPath } from '../../voltSandbox/node/sandboxResolver.js';
-import { IBuildEntryChange } from '../common/hostGit.js';
+import { BuildEntryPurpose, IBuildEntryChange, relevantBuildEntryChanges } from '../common/hostGit.js';
 
 /**
  * The build-entry guard (I.6, INV-14). When a sandboxed writer starts in a workspace, the guard
@@ -108,6 +108,12 @@ export class BuildEntryGuard {
 			});
 		}
 		return out;
+	}
+
+	/** What `purpose` would run that changed since the baseline, across `roots` (I.6's check, in one place). */
+	async unreviewed(roots: readonly string[], purpose: BuildEntryPurpose): Promise<IBuildEntryChange[]> {
+		const changes = await Promise.all([...new Set(roots)].map(root => this.changes(root)));
+		return relevantBuildEntryChanges(changes.flat(), purpose);
 	}
 
 	/** The user reviewed `paths` (all when omitted): they become the baseline. */

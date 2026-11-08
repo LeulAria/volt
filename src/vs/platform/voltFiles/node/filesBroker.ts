@@ -8,7 +8,8 @@ import { promises as fs } from 'fs';
 import { Disposable, toDisposable } from '../../../base/common/lifecycle.js';
 import { isAbsolute, normalize, sep } from '../../../base/common/path.js';
 import { BrokerError, brokerEvaluate, ByteBudget, contextChain, IBroker, IBrokerAudit, IBrokerAuthority, IBrokerCallers } from '../../voltSandbox/common/broker.js';
-import { ICallContext, IPrincipal } from '../../voltSandbox/common/principals.js';
+import { buildEntryGuard } from '../../voltGit/node/buildEntryGuard.js';
+import { ICallContext, IPrincipal, isFirstPartySubject } from '../../voltSandbox/common/principals.js';
 import { FILES_BROKER_LIMITS, FilesAccess, FilesBrokerPathError, filesPlan, IFilesScope, validateBrokerPath } from '../common/filesBroker.js';
 import { ISafeOpenOptions, ISafeOpenRequest, realPathOfNearest, SafeOpenError, safeOpenRead, safeWriteFile } from './safeOpen.js';
 
@@ -53,6 +54,12 @@ export interface IFilesBrokerOptions {
 	readonly now?: () => number;
 	/** Default: {@link FILES_BROKER_LIMITS}. */
 	readonly limits?: Partial<typeof FILES_BROKER_LIMITS>;
+	/**
+	 * The build-entry guard (I.6). A principal that is not first party is a sandboxed writer: before
+	 * its first write the execution-bearing files of the folder are recorded, so a build file it
+	 * changes (`package.json`, a Makefile) is shown before Volt runs it. Default: the shared guard.
+	 */
+	readonly guard?: { snapshot(root: string): Promise<void> };
 }
 
 const MODES: readonly FilesAccess[] = ['read', 'write'];
@@ -167,6 +174,9 @@ export class FilesBroker extends Disposable implements IBroker {
 			}
 			const path = await realPathOfNearest(given);
 			const root = await this.authorize(context, scope, given, path, mode as FilesAccess);
+			if (mode === 'write') {
+				await this.recordBuildEntries(context, scope, path);
+			}
 			const id = randomBytes(16).toString('base64url');
 			const handle: IOpenHandle = { id, principal: context.principal, mode: mode as FilesAccess, given, path, root };
 			let size: number | undefined;
@@ -289,6 +299,27 @@ export class FilesBroker extends Disposable implements IBroker {
 			throw new BrokerError('denied', `${given} is not inside a folder this principal may reach`);
 		}
 		return root;
+	}
+
+	/** Before a writer that is not first party (nor the user) changes a folder: the guard's baseline of it (I.6). */
+	private async recordBuildEntries(context: ICallContext, scope: IFilesScope, path: string): Promise<void> {
+		const subject = context.principal.subject;
+		if (subject === 'user' || isFirstPartySubject(subject)) {
+			return;
+		}
+		const fold = scope.platform === 'darwin' || scope.platform === 'win32';
+		const roots = await Promise.all([...scope.roots, ...scope.declaredRoots ?? []].filter(root => isAbsolute(root)).map(root => fs.realpath(root).catch(() => undefined)));
+		const guard = this.options.guard ?? buildEntryGuard();
+		for (const root of new Set(roots)) {
+			if (root && inside(path, root, fold)) {
+				try {
+					await guard.snapshot(root);
+				} catch (err) {
+					// Without a baseline its changes could not be shown before they run: the write is refused.
+					throw new BrokerError('io', `Volt could not record ${root} before this write: ${err instanceof Error ? err.message : String(err)}`);
+				}
+			}
+		}
 	}
 
 	private request(context: ICallContext, scope: IFilesScope, handle: IOpenHandle): ISafeOpenRequest {
