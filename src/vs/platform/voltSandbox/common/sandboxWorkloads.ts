@@ -85,6 +85,8 @@ export interface ISandboxWorkloadInfo {
 	readonly subject?: string;
 	/** "claude-code agent", "terminal_start", the host's name. */
 	readonly label: string;
+	/** Who a host works for (an MCP server's chat): `subject` is `chat:<id>`, `label` the chat's title when known. */
+	readonly onBehalfOf?: { readonly subject: string; readonly label?: string };
 	readonly lifetime: SandboxWorkloadLifetime;
 	readonly backend: SandboxBackendId;
 	readonly state: SandboxWorkloadState;

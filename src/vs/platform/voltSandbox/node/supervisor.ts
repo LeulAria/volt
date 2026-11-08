@@ -10,7 +10,7 @@ import { promisify } from 'util';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
 import { basename, dirname, join } from '../../../base/common/path.js';
-import { IPrincipal } from '../common/principals.js';
+import { IPrincipal, SubjectKey } from '../common/principals.js';
 import { composeSandboxPolicy } from '../common/sandboxComposition.js';
 import { IAttestation, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { IVoltSandboxPolicy, parseSandboxPolicyLayer, SandboxDimension } from '../common/sandboxSchema.js';
@@ -70,6 +70,14 @@ export interface IHostStartRequest {
 	readonly context: ISandboxRunContext;
 	/** The `NODE_CHANNEL_FD` channel. Default: on for Node hosts, off otherwise. */
 	readonly ipc?: boolean;
+	/**
+	 * `pipe`: the host speaks on stdin and stdout (a stdio MCP server). Like the channel, they are
+	 * open to the caller only after the go byte ({@link ISandboxedHost.write}, `onStdout`), and their
+	 * traffic is activity. Default: no stdin, stdout dropped.
+	 */
+	readonly stdio?: 'pipe';
+	/** Who the host works for (`chat:<id>`): shown with it, and {@link SandboxSupervisor.stopFor} stops it with them. */
+	readonly onBehalfOf?: { readonly subject: SubjectKey; readonly label?: string };
 	/** Crash restarts; `maxPerMinute: 0` never restarts. Default 3 (F.11). */
 	readonly restart?: { readonly maxPerMinute: number };
 	/** No activity (RPC either way, `touch`) for `afterMs`: idle; for `stopAfterMs`: stopped. Default: never. */
@@ -78,7 +86,8 @@ export interface IHostStartRequest {
 	readonly limits?: { readonly memoryMB?: number };
 }
 
-export type SandboxHostRefusal = 'disabled' | 'budget' | 'probe' | 'attest' | 'ipc' | 'launch' | SandboxDimension;
+/** Which step refused (F.5 rule 5); `policy`: the Policy Authority refused the launch. */
+export type SandboxHostRefusal = 'disabled' | 'budget' | 'probe' | 'attest' | 'ipc' | 'launch' | 'policy' | SandboxDimension;
 
 export type HostStartResult =
 	| { readonly ok: true; readonly host: ISandboxedHost }
@@ -113,6 +122,11 @@ export interface ISandboxedHost {
 	readonly onMessage: Event<unknown>;
 	/** Sends on the channel; false when it is not running or has no channel. */
 	send(message: unknown): boolean;
+	/** What a `stdio: 'pipe'` host writes to stdout; only after the go byte. */
+	readonly onStdout: Event<string>;
+	/** Writes to a `stdio: 'pipe'` host's stdin; false when it is not running or has no stdin. */
+	write(data: string): boolean;
+	readonly onBehalfOf: IHostStartRequest['onBehalfOf'];
 	/** Activity that is not RPC (its view is visible, a tool call is waiting): resets the idle budget. */
 	touch(): void;
 	/** Stops it and starts it again with the policy recompiled (an OS-level grant changed, F.9). */
@@ -259,6 +273,13 @@ export class SandboxSupervisor extends Disposable {
 			return true;
 		}
 		return this.manager.stop(id);
+	}
+
+	/** Stops every host working for `subject` (a chat that closed, or whose grants were revoked) with their trees. Returns how many. */
+	async stopFor(subject: SubjectKey, reason: SandboxExitReason = 'stopped'): Promise<number> {
+		const hosts = [...this.hosts.values()].filter(host => host.onBehalfOf?.subject === subject && host.state !== 'stopped' && host.state !== 'failed');
+		await Promise.all(hosts.map(host => host.terminate(reason)));
+		return hosts.length;
 	}
 
 	/**
@@ -465,6 +486,11 @@ class SandboxHost implements ISandboxedHost {
 	readonly onResource = this._onResource.event;
 	private readonly _onMessage = new Emitter<unknown>();
 	readonly onMessage = this._onMessage.event;
+	private readonly _onStdout = new Emitter<string>({ onDidAddFirstListener: () => this.flushStdout() });
+	readonly onStdout = this._onStdout.event;
+	private stdoutBuffer: string[] = [];
+	/** The current instance got its go byte: its stdin and stdout are the caller's. */
+	private released = false;
 
 	constructor(
 		readonly id: string,
@@ -479,6 +505,7 @@ class SandboxHost implements ISandboxedHost {
 
 	get principal(): IPrincipal { return this._principal; }
 	get label(): string { return this.request.label; }
+	get onBehalfOf(): IHostStartRequest['onBehalfOf'] { return this.request.onBehalfOf; }
 	get backend(): SandboxBackendId { return this._backend; }
 	get state(): SandboxWorkloadState { return this._state; }
 	get unenforced(): readonly SandboxDimension[] { return this.prepared?.unenforced ?? this._attestation?.unenforced ?? []; }
@@ -499,6 +526,7 @@ class SandboxHost implements ISandboxedHost {
 			principalId: this._principal.id,
 			subject: this._principal.subject,
 			label: this.label,
+			...(this.request.onBehalfOf ? { onBehalfOf: this.request.onBehalfOf } : {}),
 			lifetime: 'host',
 			backend: this._backend,
 			state: this._state,
@@ -526,6 +554,8 @@ class SandboxHost implements ISandboxedHost {
 	/** One launch: policy, prepare, spawn, attest, go. Undefined when it runs; else why it refused. */
 	async launch(): Promise<{ refused: SandboxHostRefusal; reason: string } | undefined> {
 		this.setState('launching');
+		this.released = false;
+		this.stdoutBuffer = [];
 		const request = this.request;
 		let policy: IVoltSandboxPolicy;
 		try {
@@ -564,13 +594,14 @@ class SandboxHost implements ISandboxedHost {
 		this.prepared = prepared;
 		this.tag = prepared.tag;
 		this._backend = prepared.backend;
+		const piped = request.stdio === 'pipe';
 		let child: ChildProcess;
 		try {
 			child = spawn(prepared.command, [...prepared.args], {
 				cwd: prepared.cwd,
 				// Reserved names last (F.7): Node as Node; `NODE_CHANNEL_FD` Node itself adds for the `ipc` entry.
 				env: { ...prepared.env, ...(fork ? { ELECTRON_RUN_AS_NODE: '1' } : {}) },
-				stdio: ['ignore', 'ignore', 'pipe', ...prepared.extraStdio, ...(this.ipc ? ['ipc' as const] : [])],
+				stdio: [piped ? 'pipe' : 'ignore', piped ? 'pipe' : 'ignore', 'pipe', ...prepared.extraStdio, ...(this.ipc ? ['ipc' as const] : [])],
 				detached: true,
 				windowsHide: true,
 			});
@@ -583,6 +614,26 @@ class SandboxHost implements ISandboxedHost {
 		child.stderr?.on('data', (data: Buffer) => {
 			this.stderr = (this.stderr + data.toString('utf8')).slice(-STDERR_TAIL_BYTES);
 		});
+		if (piped) {
+			// A host that exits while Volt writes must not take Volt down with EPIPE.
+			child.stdin?.on('error', () => undefined);
+			child.stdout?.setEncoding('utf8');
+			child.stdout?.on('data', (data: string) => {
+				// Nothing reaches the caller before the go byte (F.5 step 4); the workload has not run before it anyway.
+				if (this.child !== child || !this.released) {
+					return;
+				}
+				if (this._state === 'running' || this._state === 'idle') {
+					this.activity();
+				}
+				if (this._onStdout.hasListeners()) {
+					this._onStdout.fire(data);
+				} else {
+					// Between the go byte and the caller's first listener: kept, not lost.
+					this.stdoutBuffer.push(data);
+				}
+			});
+		}
 		this.exited = new Promise<void>(resolve => {
 			let done = false;
 			const finish = (code: number | null, signal: NodeJS.Signals | null) => {
@@ -609,6 +660,7 @@ class SandboxHost implements ISandboxedHost {
 			return this.fail('launch', 'It was stopped while it started.');
 		}
 		this._attestation = prepared.attestation();
+		this.released = true;
 		// Only now is the channel open to anyone (F.5 step 4).
 		if (this.ipc) {
 			child.on('message', message => {
@@ -797,6 +849,24 @@ class SandboxHost implements ISandboxedHost {
 		return child.send(message as object);
 	}
 
+	write(data: string): boolean {
+		const stdin = this.child?.stdin;
+		if (this.request.stdio !== 'pipe' || !this.released || !stdin?.writable || (this._state !== 'running' && this._state !== 'idle')) {
+			return false;
+		}
+		this.activity();
+		stdin.write(data);
+		return true;
+	}
+
+	private flushStdout(): void {
+		const pending = this.stdoutBuffer;
+		this.stdoutBuffer = [];
+		for (const data of pending) {
+			this._onStdout.fire(data);
+		}
+	}
+
 	touch(): void {
 		if (this._state === 'running' || this._state === 'idle') {
 			this.activity();
@@ -858,7 +928,7 @@ class SandboxHost implements ISandboxedHost {
 		this.disposed = true;
 		clearTimeout(this.idleTimer);
 		clearTimeout(this.backoffTimer);
-		for (const emitter of [this._onDidChangeState, this._onExit, this._onResource, this._onMessage] as Emitter<unknown>[]) {
+		for (const emitter of [this._onDidChangeState, this._onExit, this._onResource, this._onMessage, this._onStdout] as Emitter<unknown>[]) {
 			emitter.dispose();
 		}
 	}

@@ -155,6 +155,9 @@ export class AgentMcpApprovalCard extends Disposable {
 		row(fieldLabel('binary'), spec.binary ?? localize('voltMcpApproval.notFound', "(not found on PATH)"));
 		row(fieldLabel('cwd'), spec.cwd);
 		row(fieldLabel('env'), spec.envNames.join(', ') || localize('voltMcpApproval.none', "(none)"));
+		if (spec.allowedHosts?.length) {
+			row(fieldLabel('allowedHosts'), spec.allowedHosts.join(', '));
+		}
 	}
 
 	private async decide(request: IVoltMcpApprovalRequest, allow: boolean): Promise<void> {
@@ -209,6 +212,7 @@ function fieldLabel(field: IVoltMcpSpecChange['field']): string {
 		case 'cwd': return localize('voltMcpApproval.field.cwd', "Working folder");
 		case 'binary': return localize('voltMcpApproval.field.binary', "Runs");
 		case 'env': return localize('voltMcpApproval.field.env', "Environment");
+		case 'allowedHosts': return localize('voltMcpApproval.field.allowedHosts', "Network in a sandbox");
 		case 'url': return localize('voltMcpApproval.field.url', "URL");
 		case 'headers': return localize('voltMcpApproval.field.headers', "Headers");
 	}

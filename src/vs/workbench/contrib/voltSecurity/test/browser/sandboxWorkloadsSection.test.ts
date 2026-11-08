@@ -115,4 +115,45 @@ suite('Volt Security page: sandboxed processes (C5)', () => {
 		}).render();
 		assert.match(page.textContent ?? '', /not reported here/);
 	});
+
+	test('SEC-PAGE-MCP: an MCP server is listed with its server name and its chat; Stop ends it', async () => {
+		const disposables = store.add(new DisposableStore());
+		const changed = disposables.add(new Emitter<void>());
+		let rows = [
+			workload('m1', { label: 'MCP github', subject: `mcp:${'cd'.repeat(32)}`, onBehalfOf: { subject: 'chat:0f1e2d3c4b5a69788796' } }),
+			workload('m2', { label: 'MCP linear', subject: `mcp:${'ef'.repeat(32)}`, onBehalfOf: { subject: 'chat:abc', label: 'Fix the login page' } }),
+		];
+		const stopped: string[] = [];
+		const instantiation = workbenchInstantiationService(undefined, disposables);
+		const stdio: Partial<IVoltStdioService> = {
+			sandboxWorkloads: async () => rows,
+			stopSandboxWorkload: async (id: string) => {
+				stopped.push(id);
+				rows = rows.filter(row => row.id !== id);
+				changed.fire();
+				return true;
+			},
+			onDidChangeSandboxWorkloads: changed.event,
+		};
+		instantiation.stub(IVoltStdioService, stdio);
+		const page = mainWindow.document.body.appendChild(mainWindow.document.createElement('div'));
+		disposables.add({ dispose: () => page.remove() });
+		instantiation.createInstance(SandboxWorkloadsSection, {
+			store: disposables.add(new DisposableStore()),
+			sectionLabel: () => undefined,
+			sectionHint: () => undefined,
+			settingsGroup: () => page.appendChild(mainWindow.document.createElement('div')),
+			isCurrent: () => true,
+		}).render();
+		const rowsShown = () => [...page.querySelectorAll<HTMLElement>('.volt-security-workload')];
+		await until(() => rowsShown().length === 2);
+		const [byId, byTitle] = rowsShown();
+		assert.match(byId.querySelector('.volt-security-workload-title')?.textContent ?? '', /^MCP github, chat 0f1e2d3c$/);
+		assert.match(byTitle.querySelector('.volt-security-workload-title')?.textContent ?? '', /^MCP linear, chat Fix the login page$/);
+		assert.match(byId.getAttribute('data-volt-tooltip') ?? '', /Works for: chat:0f1e2d3c4b5a69788796/);
+		assert.match(byId.getAttribute('data-volt-tooltip') ?? '', new RegExp(`Principal: mcp:${'cd'.repeat(32)}`));
+		byId.querySelector<HTMLElement>('.monaco-button')!.click();
+		await until(() => rowsShown().length === 1);
+		assert.deepStrictEqual(stopped, ['m1']);
+	});
 });

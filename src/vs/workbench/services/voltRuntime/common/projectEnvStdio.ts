@@ -5,7 +5,7 @@
 
 import { IChannel, ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../../../platform/voltGit/common/hostGit.js';
-import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../../../../platform/voltStdio/common/voltStdio.js';
 import type { ISandboxWorkloadInfo } from '../../../../platform/voltSandbox/common/sandboxWorkloads.js';
 import { projectRunEnv } from './projectRunEnv.js';
 
@@ -68,6 +68,16 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	get onDidChangeSandboxWorkloads() { return this.inner.onDidChangeSandboxWorkloads; }
 	async sandboxWorkloads(): Promise<readonly ISandboxWorkloadInfo[]> { return this.inner.sandboxWorkloads ? this.inner.sandboxWorkloads() : []; }
 	async stopSandboxWorkload(id: string): Promise<boolean> { return this.inner.stopSandboxWorkload ? this.inner.stopSandboxWorkload(id) : false; }
+	/** A sandboxed chat's MCP server gets the project's environment too, as its unsandboxed spawn does. */
+	spawnSandboxedMcp(request: IVoltSandboxedMcpRequest): Promise<string> {
+		if (!this.inner.spawnSandboxedMcp) {
+			// Refused, never started another way: this host cannot run sandboxed MCP servers.
+			return Promise.reject(new VoltExecRefusedError({ kind: 'sandbox', step: 'disabled', reason: `Volt cannot run the ${request.server} MCP server in a sandbox here, so it was not started.` }));
+		}
+		const env = projectRunEnv(request.cwd);
+		return this.inner.spawnSandboxedMcp(env ? { ...request, env: { ...env, ...request.env } } : request);
+	}
+	async stopSandboxedHosts(chatId: string): Promise<number> { return this.inner.stopSandboxedHosts ? this.inner.stopSandboxedHosts(chatId) : 0; }
 }
 
 function isStdioService(source: IChannel | IVoltStdioService): source is IVoltStdioService {

@@ -9,7 +9,7 @@ import { homedir, tmpdir } from 'os';
 import { promisify } from 'util';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { basename, delimiter, dirname, join } from '../../../base/common/path.js';
-import { Disposable } from '../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore } from '../../../base/common/lifecycle.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
 import { ILogService } from '../../log/common/log.js';
@@ -28,7 +28,8 @@ import { ISandboxWorkloadInfo, SANDBOX_SUPERVISOR_SETTING } from '../../voltSand
 import { NETWORK_BROKER_SETTING, readNetworkBrokerMode } from '../../voltSandbox/common/networkBrokerSetting.js';
 import { ChildLedger } from './childLedger.js';
 import { SandboxedPtySession } from '../../voltSandbox/node/sandboxPty.js';
-import { describeExecContext, execRefusal, IVoltExecContext, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../common/voltStdio.js';
+import { ISandboxedHost } from '../../voltSandbox/node/supervisor.js';
+import { describeExecContext, execRefusal, IVoltExecContext, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../common/voltStdio.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -69,6 +70,9 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	/** The sandbox of each sandboxed spawn, and the spawn of each sandbox tag. */
 	private readonly sandboxes = new Map<string, ISandboxLaunch>();
 	private readonly sandboxTags = new Map<string, string>();
+
+	/** Sandboxed MCP servers (supervisor hosts) by spawn id: written, read and killed like spawns. */
+	private readonly hosts = new Map<string, { readonly host: ISandboxedHost; readonly listeners: DisposableStore }>();
 
 	/** Sandboxed terminals (PTY workloads), by caller-chosen id, and the window that asked. */
 	private readonly terminals = new Map<string, { readonly session: SandboxedPtySession; readonly owner: string | undefined }>();
@@ -126,6 +130,103 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	async stopSandboxWorkload(id: string): Promise<boolean> {
 		this.logService.info(`[volt-sandbox] stop requested for workload ${id}`);
 		return this.sandbox.supervisor.stop(id);
+	}
+
+	async spawnSandboxedMcp(request: IVoltSandboxedMcpRequest): Promise<string> {
+		return this.spawnSandboxedMcpFor(undefined, request);
+	}
+
+	/**
+	 * {@link spawnSandboxedMcp} on behalf of one window: its output and exit go to that window, and
+	 * it stops when the window does. Refused (typed, never run unsandboxed) when the request is not a
+	 * sandboxed chat's own, or when the supervisor refuses it at any step.
+	 */
+	async spawnSandboxedMcpFor(owner: string | undefined, request: IVoltSandboxedMcpRequest): Promise<string> {
+		const refuse = (refusal: IVoltExecRefusal): never => {
+			this.logService.warn(`[volt-exec] refused MCP server ${request.server}: ${refusal.reason}`);
+			throw new VoltExecRefusedError(refusal);
+		};
+		const refusal = execRefusal(request.context, request.sandbox);
+		if (refusal) {
+			refuse(refusal);
+		}
+		if (!request.sandbox || !request.context.sandboxed) {
+			refuse({ kind: 'no-sandbox', reason: `The ${request.server} MCP server was asked for without its chat's sandbox, so it was not started.` });
+		}
+		if (request.context.principal !== `chat:${request.chatId}`) {
+			refuse({ kind: 'no-context', reason: `The ${request.server} MCP server was asked for by ${request.context.principal}, not by the chat it would work for, so it was not started.` });
+		}
+		await this.snapshotBuildEntries(request.sandbox);
+		const result = await this.sandbox.startMcpHost({
+			chatId: request.chatId,
+			...(request.chatLabel ? { chatLabel: request.chatLabel } : {}),
+			server: request.server,
+			digest: request.digest,
+			command: request.command,
+			args: [...request.args ?? []],
+			...(request.cwd ? { cwd: request.cwd } : {}),
+			hostEnv: await this.env(),
+			...(request.env ? { env: request.env } : {}),
+			sandbox: request.sandbox,
+			...(request.allowedHosts?.length ? { allowedHosts: request.allowedHosts } : {}),
+		});
+		if (!result.ok) {
+			return refuse({ kind: 'sandbox', step: result.refused, reason: `Volt's sandbox refused the ${request.server} MCP server (${result.refused}): ${result.reason}` });
+		}
+		const host = result.host;
+		const id = generateUuid();
+		this.logService.info(`[volt-sandbox-spawn] ${id} MCP ${request.server} for chat ${request.chatId} as host ${host.id} (${host.backend}, ${host.principal.subject})`);
+		const listeners = new DisposableStore();
+		this.hosts.set(id, { host, listeners });
+		if (owner) {
+			this.owners.set(id, owner);
+		}
+		let restarts = host.restarts;
+		const finish = (code: number | null) => {
+			if (!this.hosts.has(id)) {
+				return;
+			}
+			this.flushData(id);
+			this.hosts.delete(id);
+			listeners.dispose();
+			const windowOwner = this.owners.get(id);
+			this.owners.delete(id);
+			const stderr = tailText(host.stderrTail(), 4_000);
+			if (windowOwner) {
+				this.exitOwners.set(id, windowOwner);
+			}
+			try {
+				this._onExit.fire({ id, code, ...(stderr ? { stderr } : {}) });
+			} finally {
+				this.exitOwners.delete(id);
+			}
+		};
+		listeners.add(host.onStdout(data => this.queueData(id, data)));
+		listeners.add(host.onExit(exit => {
+			if (exit.restarting) {
+				this.flushData(id);
+				this._onSandboxEvent.fire({ id, host: 'restarting', warning: `The ${request.server} MCP server stopped (${exit.reason}); Volt is starting it again.` });
+			} else {
+				finish(exit.code);
+			}
+		}));
+		listeners.add(host.onDidChangeState(state => {
+			if (state === 'running' && host.restarts > restarts) {
+				restarts = host.restarts;
+				this._onSandboxEvent.fire({ id, host: 'restarted' });
+			} else if (state === 'stopped' || state === 'failed' || state === 'broken') {
+				finish(null);
+			}
+		}));
+		return id;
+	}
+
+	async stopSandboxedHosts(chatId: string): Promise<number> {
+		const stopped = await this.sandbox.stopChatHosts(chatId);
+		if (stopped) {
+			this.logService.info(`[volt-sandbox] stopped ${stopped} host(s) of chat ${chatId}`);
+		}
+		return stopped;
 	}
 
 	private track(child: ChildProcess, command: string): void {
@@ -439,6 +540,13 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	}
 
 	async write(id: string, data: string): Promise<void> {
+		const host = this.hosts.get(id)?.host;
+		if (host) {
+			if (!host.write(data)) {
+				throw new Error(`The sandboxed process is not running (${host.state})`);
+			}
+			return;
+		}
 		const child = this.processes.get(id);
 		if (!child?.stdin.writable) {
 			throw new Error('ACP process is not writable');
@@ -449,6 +557,12 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	}
 
 	async kill(id: string): Promise<void> {
+		const host = this.hosts.get(id)?.host;
+		if (host) {
+			// Its whole tree; resolves (and the exit reaches the caller) when it is gone.
+			await host.terminate('stopped');
+			return;
+		}
 		const child = this.processes.get(id);
 		if (!child) {
 			return;
@@ -465,6 +579,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	}
 
 	protected killOwnedBy(owner: string): void {
+		// Agent processes and sandboxed MCP servers alike (`kill` knows which).
 		const ids = [...this.owners].filter(([, value]) => value === owner).map(([id]) => id);
 		if (ids.length) {
 			this.logService.info(`[volt-stdio] stopping ${ids.length} agent process(es) of ${owner}`);
@@ -748,6 +863,11 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			this.processes.delete(id);
 		}
 		this.owners.clear();
+		// The hosts themselves go with the launcher's supervisor (registered below), whole trees.
+		for (const { listeners } of this.hosts.values()) {
+			listeners.dispose();
+		}
+		this.hosts.clear();
 		for (const launch of this.sandboxes.values()) {
 			launch.dispose();
 		}

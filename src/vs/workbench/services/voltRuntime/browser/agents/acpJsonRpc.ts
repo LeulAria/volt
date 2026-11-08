@@ -143,6 +143,15 @@ export class AcpJsonRpcClient extends Disposable {
 		return result;
 	}
 
+	/**
+	 * The process behind the id was replaced (a sandboxed host restarted after a crash): what was
+	 * asked of the old one fails, and a half-received line is dropped. The client stays usable.
+	 */
+	abandonPending(err: Error): void {
+		this.partial.length = 0;
+		this.failAll(err);
+	}
+
 	/** Requests still waiting for the agent's reply. */
 	get pendingCount(): number {
 		return this.pending.size;

@@ -11,7 +11,7 @@ import { IConfigurationService } from '../../configuration/common/configuration.
 import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
 import { ILifecycleMainService } from '../../lifecycle/electron-main/lifecycleMainService.js';
 import { ILogService } from '../../log/common/log.js';
-import { IVoltExecRequest, IVoltSandboxedTerminalRequest, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
+import { IVoltExecRequest, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalRequest, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
 import { VoltStdioService } from '../node/voltStdioService.js';
 
 /** {@link VoltStdioService} for windows: a window's agent processes stop when it reloads or closes. */
@@ -53,6 +53,9 @@ export function createVoltStdioChannel(service: VoltStdioMainService, disposable
 			}
 			if (command === 'exec') {
 				return service.execFor(ctx, (arg as [IVoltExecRequest])[0]) as Promise<unknown> as Promise<T>;
+			}
+			if (command === 'spawnSandboxedMcp') {
+				return service.spawnSandboxedMcpFor(ctx, (arg as [IVoltSandboxedMcpRequest])[0]) as Promise<unknown> as Promise<T>;
 			}
 			if (command === 'prepareSandboxedTerminal') {
 				return service.prepareSandboxedTerminalFor(ctx, (arg as [IVoltSandboxedTerminalRequest])[0]) as Promise<unknown> as Promise<T>;
